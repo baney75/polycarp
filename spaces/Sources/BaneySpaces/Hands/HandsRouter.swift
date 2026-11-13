@@ -81,7 +81,11 @@ final class HandsRouter {
     func handleWire(_ r: Wire.Request) -> Wire.Reply {
         let env: HandsEnvelope
         if let data = r.text?.data(using: .utf8), let req = try? JSONDecoder().decode(HandsRequest.self, from: data) {
-            env = HandsNextCall.fill(handle(req), window: windowOf(req))
+            // A bare row number is resolved once, here: `handle` gets the full ref and the next call's window comes from it,
+            // also for a call refused before it acts (187 r1 first-F3, 192 r1 first-F6).
+            var resolved = req
+            if let r = req.string("ref"), SnapshotRows.browserRefError(r) == nil, let n = SnapshotRows.bareNumber(r), case .success(let full) = bareRef(n, req) { resolved.args["ref"] = .string(full) }
+            env = HandsNextCall.fill(handle(resolved), window: windowOf(resolved))
         } else {
             env = .failure(HandsError(.badArguments, "the request wasn't an agent command", suggestion: "Use `polycarp-spaces agent <command>`.", retry: .never))
         }
@@ -112,7 +116,7 @@ final class HandsRouter {
         case "find": return find(req)
         case "get": return get(req)
         case "click": return act(req, .click, "click")
-        case "type": return act(req, .typeText, "type", text: req.string("text"))
+        case "type": return act(req, .typeText, "type", text: req.string("text"), pasted: req.bool("paste"))
         case "set-value": return act(req, .setValue, "set-value", text: req.string("value"))
         case "press": return press(req)
         case "click-at": return clickAt(req)
@@ -120,6 +124,7 @@ final class HandsRouter {
         case "scroll": return scroll(req)
         case "select": return act(req, .select, "select", text: req.string("option"))
         case "toggle": return act(req, .toggle, "toggle")
+        case "menu": return menu(req)
         case "shot": return shot(req)
         case "open": return open(req)
         default: return .failure(HandsError(.badArguments, "unknown agent command \(req.verb)", suggestion: "Commands: " + HandsTools.all.map(\.verb).joined(separator: ", ")))
@@ -165,9 +170,10 @@ final class HandsRouter {
 
     /// The same for a call that changes something: Read Only, set after the request was let in, stops it here too, and so
     /// does Donovan coming back to the app after the wait found it free (the in-use rule, read again at this moment).
-    func actingCheck(_ w: HandsWindow, ref: String? = nil, verb: String, delivery: InUseDelivery, session: String = "") -> HandsEngine.Check {
+    /// `also`: a verb's own rule, read at the same moment (a menu command's key-window rule).
+    func actingCheck(_ w: HandsWindow, ref: String? = nil, verb: String, delivery: InUseDelivery, session: String = "", also: HandsEngine.Check? = nil) -> HandsEngine.Check {
         let scope = check(w, ref: ref, session: session)
-        return { [self] in AgentAccessGate.actingRefusal(mode: access) ?? scope() ?? inUseProblem(w, verb: verb, delivery: delivery) }
+        return { [self] in AgentAccessGate.actingRefusal(mode: access) ?? scope() ?? inUseProblem(w, verb: verb, delivery: delivery) ?? also?() }
     }
 
     // MARK: in use
@@ -552,6 +558,8 @@ final class HandsRouter {
         return .success((w, d))
     }
 
+    /// `type`'s text: the text argument, or with paste: true what this session copied (never both).
+
     private func get(_ req: HandsRequest) -> HandsEnvelope {
         let session = req.session ?? ""
         switch resolve(req.string("ref"), session: session) {
@@ -563,6 +571,15 @@ final class HandsRouter {
             case .ok(let d):
                 var o = d.object ?? [:]
                 o["target"] = targetJSON(w, scope)
+                // copy: true holds the value on the agent clipboard, never on the general pasteboard.
+                if req.bool("copy") {
+                    switch SessionClipboard.copyable(o["value"]) {
+                    case .failure(let e): return .failure(e)
+                    case .success(let text):
+                        if let e = SessionClipboardBox.shared.copy(text, session: session) { return .failure(e) }
+                        o["copied"] = .int(text.count)
+                    }
+                }
                 return .success(.object(o))
             }
         }
@@ -583,15 +600,26 @@ final class HandsRouter {
         return nil
     }
 
-    private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3) -> HandsEnvelope {
+    /// `pasted`: the text is what the session copied, read once the ref resolved and the app is free (198 r1 second-N1).
+    private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, pasted: Bool = false, direction: Int32 = 1, amount: UInt32 = 3) -> HandsEnvelope {
         guard let ref = req.string("ref") else { return .failure(HandsError(.badArguments, "ref is missing", suggestion: "usage: polycarp-spaces agent \(name) <ref>", retry: .safe)) }
         let session = req.session ?? ""
+        if kind == .click || kind == .select, let item = pasteboardItem(ref, option: kind == .select ? text : nil, session: session) {
+            return .failure(SessionClipboard.pasteboardRefusal("\(item)"))
+        }
         switch resolve(ref, session: session) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope)):
             // Before the mark: an activation while it waits is Donovan's, never taken for the agent's.
             // Every verb here goes through the engine's strict Headless accessibility path (`HandsEngine.act`).
             if let e = awaitUse(w, verb: name, delivery: .headlessAX, wait: req.int("wait"), session: session) { return .failure(e) }
+            var text = text
+            if pasted {
+                switch SessionClipboard.typed(text: nil, paste: true, from: { SessionClipboardBox.shared.paste(session: session) }) {
+                case .failure(let e): return .failure(e)
+                case .success(let t): text = t
+                }
+            }
             // The mark covers the whole action, queue wait and engine call included, and a short tail after it.
             let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
             defer { AgentActivity.shared.end(token) }
@@ -672,11 +700,18 @@ final class HandsRouter {
     }
 
     /// The window a request is about, for its error's next call: the window it names, or the one its ref's snapshot read.
-    /// A bare row number counts through what it stands for in this session (review r1 first-F2).
+    /// A bare row number counts through what `handle` resolved it to (review r1 first-F2); one it refused names no window.
     private func windowOf(_ req: HandsRequest) -> Int? {
-        RefWindow.of(window: req.int("window"), ref: req.string("ref"),
-                     bare: { n in if case .success(let full) = bareRef(n, req) { return full } else { return nil } },
+        RefWindow.of(window: req.int("window"), ref: req.string("ref"), bare: { _ in nil },
                      snapshotWindow: { sid in lock.lock(); defer { lock.unlock() }; return snaps[sid].map { Int($0.window) } })
+    }
+
+    /// The cut, copy or paste item a click on `ref` (or a select of `option` under it) would press, from the read it came from.
+    private func pasteboardItem(_ ref: String, option: String?, session: String) -> String? {
+        guard ref.hasPrefix("@"), let colon = ref.firstIndex(of: ":"), let n = SnapshotRows.refNumber(ref) else { return nil }
+        let sid = String(ref[ref.index(after: ref.startIndex)..<colon])
+        guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
+        return SessionClipboard.pasteboardItem(rows: read.rows, number: n, option: option)
     }
 
     /// The selection write a click on `ref` falls back to, when the ref is an item in an outline, table or list.

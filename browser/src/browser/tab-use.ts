@@ -1,5 +1,5 @@
 /**
- * Which tab a tool call acts on (docs/decisions.md, D46). Pure: veil.ts and dialog-guard.ts keep
+ * Which tab a tool call acts on (docs/decisions.md, D48). Pure: veil.ts and dialog-guard.ts keep
  * their own state and feed it calls. A tab that only sits in the agent's group, or is the session's
  * current tab, is not acted on until a call names it or runs on it.
  */

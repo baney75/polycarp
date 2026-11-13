@@ -89,7 +89,7 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// get_page_text's query adds 143 (32,824): finding a passage in a 400-page PDF or a long page by its words, with
 	// page numbers, instead of reading it whole or paging through it 50,000 characters at a time.
 	// on_dialog and on_dialog_text on click and press, and a line on the one actions step that may set it, add 503
-	// (33,327; D46): an answer set before the action is the only way to get past a box Polycarp must cancel within 3 s,
+	// (33,327; D48): an answer set before the action is the only way to get past a box Polycarp must cancel within 3 s,
 	// sooner than a model turn can send handle_dialog. Nearly all schema; the descriptions are one line.
 	assert.ok(bytes <= 33327, `tools/list is ${bytes} bytes, over the 33,327 budget`);
 	// The loop line teaching `changes` (D43) adds 47 bytes; it saves a read_page after most actions.

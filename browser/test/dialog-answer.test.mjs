@@ -1,4 +1,4 @@
-// handle_dialog answers the box it was called for, by identity (docs/decisions.md D46): fake chrome, real cdp events.
+// handle_dialog answers the box it was called for, by identity (docs/decisions.md D48): fake chrome, real cdp events.
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { installFakeChrome } from "./fake-chrome.mjs";

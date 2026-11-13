@@ -29,7 +29,7 @@ export function dialogError(tabId: number, dialog: PageDialog): BridgeError {
 	);
 }
 
-/** The tools that may set the answer for a box they open: a single click or press call, never a step of `actions` (D46). */
+/** The tools that may set the answer for a box they open: a single click or press call, never a step of `actions` (D48). */
 export const PRESET_METHODS: ReadonlySet<string> = new Set(["click", "press"]);
 
 /** A call's answer set in advance, and the one tab whose box it may answer. */
@@ -71,7 +71,7 @@ const has = (o: unknown, k: string) => !!o && typeof o === "object" && (o as Rec
 const setsDialog = (o: unknown) => has(o, "on_dialog") || has(o, "on_dialog_text");
 
 /**
- * An `actions` call never takes on_dialog (D46): not on the call, not beside a step's key, not inside it. Throws
+ * An `actions` call never takes on_dialog (D48): not on the call, not beside a step's key, not inside it. Throws
  * bad_params with the single click or press call to send instead. `normalize` reads a raw step as the handler does.
  */
 export function refuseStepPreset(

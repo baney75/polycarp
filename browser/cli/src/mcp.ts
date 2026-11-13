@@ -702,7 +702,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		x: z.number().optional().describe("Screenshot pixel x"),
 		y: z.number().optional().describe("Screenshot pixel y"),
 	};
-	/** An answer set before the action for the first box it opens (D46): a model turn is too slow for some boxes. */
+	/** An answer set before the action for the first box it opens (D48): a model turn is too slow for some boxes. */
 	const onDialog = {
 		on_dialog: z
 			.enum(["ok", "cancel"])

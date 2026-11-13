@@ -49,6 +49,8 @@ export interface PageDialog {
 	preset?: DialogPreset;
 	/** The call whose armed answer this box took: the only call that may report that answer. */
 	presetCall?: string;
+	/** The cross-origin frame's session it opened in (frames.ts), which alone can answer it; none for the tab's own. */
+	sessionId?: string;
 }
 
 /** An answer set before an action, for the first box it opens on its tab (an action's `on_dialog`). */
@@ -141,6 +143,7 @@ export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): (
 }
 
 /**
+/**
  * Called when a box's armed answer did not reach the page (first-F3 of the review of PR 200), after Polycarp tried
  * Cancel in its place: `cancelled` says whether that Cancel landed. Returns an unsubscribe function.
  */
@@ -162,7 +165,11 @@ async function presetFailed(tabId: number, dialog: PageDialog, err: unknown): Pr
 	for (const fn of presetFailWatchers) fn(tabId, dialog, cancelled);
 }
 
-/** Answer the open dialog: OK (accept) or Cancel, with text for a prompt(). */
+/**
+ * Answer the open dialog: OK (accept) or Cancel, with text for a prompt(). `seq` names the box: an answer meant for one
+ * never reaches the next. A box a cross-origin frame opened is answered in that frame's session (frames.ts), which
+ * alone can answer it.
+ */
 export async function answerDialog(
 	tabId: number,
 	accept: boolean,
@@ -173,7 +180,10 @@ export async function answerDialog(
 	if (!dialog) throw new Error("No dialog is open on this tab");
 	// Checked and sent with no await between: the answer goes to this box or to none.
 	if (seq !== undefined && dialog.seq !== seq) throw new Error("That dialog is gone; another one is open on this tab");
-	await send(tabId, "Page.handleJavaScriptDialog", { accept, ...(promptText !== undefined ? { promptText } : {}) });
+	const answer = { accept, ...(promptText !== undefined ? { promptText } : {}) };
+	if (dialog.sessionId)
+		await chrome.debugger.sendCommand({ tabId, sessionId: dialog.sessionId }, "Page.handleJavaScriptDialog", answer);
+	else await send(tabId, "Page.handleJavaScriptDialog", answer);
 	settleOutcome(dialog.seq, accept);
 	// Only the box answered: the page may have opened the next one before the answer's reply came back.
 	if (openDialogs.get(tabId)?.seq === dialog.seq) openDialogs.delete(tabId);
@@ -196,6 +206,9 @@ function installListeners(): void {
 				defaultPrompt: p.defaultPrompt,
 				url: p.url,
 				seq: ++dialogSeq,
+				...((source as { sessionId?: string }).sessionId
+					? { sessionId: (source as { sessionId?: string }).sessionId }
+					: {}),
 			};
 			const held = armed.get(tabId);
 			const preset = held?.preset;
@@ -395,6 +408,21 @@ export async function detachTab(tabId: number, force = false): Promise<void> {
 	} catch {
 		/* not attached or tab gone */
 	}
+}
+
+/**
+ * A command in one of the tab's child sessions: an out-of-process frame that frames.ts attached.
+ * No session means the tab's own.
+ */
+export async function cdpSendSession<T = unknown>(
+	tabId: number,
+	sessionId: string | undefined,
+	method: string,
+	params?: Record<string, unknown>,
+): Promise<T> {
+	if (!sessionId) return cdpSend<T>(tabId, method, params);
+	await ensureAttached(tabId);
+	return (await chrome.debugger.sendCommand({ tabId, sessionId }, method, params)) as T;
 }
 
 export async function cdpSend<T = unknown>(
@@ -934,6 +962,8 @@ function installCaptureListener(): void {
 		const tabId = source.tabId;
 		if (tabId === undefined) return;
 		const p = (params ?? {}) as Record<string, unknown>;
+		// A frame's own session (frames.ts) detaching or crashing is that frame's, not the tab's.
+		if ((source as { sessionId?: string }).sessionId) return;
 		if (method === "Inspector.detached") {
 			noteCaptureStopped(tabId, `the page's inspector detached (${String(p.reason ?? "unknown reason")})`);
 		} else if (method === "Inspector.targetCrashed") {

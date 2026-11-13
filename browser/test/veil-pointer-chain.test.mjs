@@ -1,5 +1,5 @@
-// The pointer never holds up the veil (src/browser/veil.ts, D47): a point inject that a busy page doesn't answer must
-// not delay the capture cover or the next call's veilBegin, which wait on the tab's veil changes. Fake chrome.
+// The pointer setting after a worker restart (src/browser/veil.ts, D47). Fake chrome. The stalled point is in
+// veil-pointer-stall.test.mjs.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { installFakeChrome } from "./fake-chrome.mjs";
@@ -12,7 +12,7 @@ chrome.scripting = {
 	async executeScript({ target, args: [cmd] }) {
 		injected.push({ tabId: target.tabId, cmd, at: performance.now() });
 		// A page whose main thread is busy runs nothing the worker sends it.
-		if (cmd.op === "point" && busy) return new Promise(() => undefined);
+		if (busy) return new Promise(() => undefined);
 		return [{ result: cmd.op === "show" ? { tag: cmd.tag } : {} }];
 	},
 };
@@ -25,7 +25,7 @@ chrome.storage.local.get = async (keys) => {
 	if (keys === "veil_pointer") await new Promise((r) => setTimeout(r, 300));
 	return get.call(chrome.storage.local, keys);
 };
-const { cuePointer, captureScreenshot } = await import("../src/browser/cdp.ts");
+const { cuePointer } = await import("../src/browser/cdp.ts");
 const { startVeil, veilBegin, veilEnd } = await import("../src/browser/veil.ts");
 startVeil();
 
@@ -50,36 +50,4 @@ test("first-F3: a veil drawn before the pointer setting is read waits for it, an
 	// The person turns it back on.
 	await chrome.storage.local.set({ veil_pointer: true });
 	assert.ok(await until(() => injected.find((i) => i.cmd.op === "set" && i.cmd.pointer === true)), "turning it on reached no page");
-});
-
-test("first-F1: a stalled point inject delays neither the capture cover nor the next call's veilBegin", async () => {
-	// The agent clicks: the veil is drawn, the call ends, and the character is sent to the point on a busy page.
-	veilEnd(session, "click", await veilBegin(session, "click", {}));
-	assert.ok(injected.some((i) => i.cmd.op === "show"), "no veil was drawn");
-	busy = true;
-	cuePointer(tabId, "click", 40, 40);
-	assert.ok(await until(() => injected.find((i) => i.cmd.op === "point")), "the point was never sent");
-
-	// The next screenshot conceals the veil first.
-	let t0 = performance.now();
-	const shot = captureScreenshot(tabId).catch(() => undefined);
-	const conceal = await until(() => after(t0, (c) => c.op === "set" && c.concealed === true));
-	assert.ok(conceal && conceal.at - t0 < 400, `the capture cover waited ${conceal ? Math.round(conceal.at - t0) : "over 3000"} ms behind the pointer`);
-	await shot;
-
-	// The next input call turns the pill's button off before it runs.
-	t0 = performance.now();
-	await veilBegin(session, "click", {});
-	assert.ok(performance.now() - t0 < 400, `veilBegin waited ${Math.round(performance.now() - t0)} ms behind the pointer`);
-	assert.ok(after(t0, (c) => c.op === "set" && c.interactive === false), "the button was not turned off");
-	// Cues that pile up behind the stalled one: only the newest is sent.
-	busy = false;
-	t0 = performance.now();
-	cuePointer(tabId, "click", 50, 50);
-	cuePointer(tabId, "click", 60, 60);
-	const sent = await until(() => after(t0, (c) => c.op === "point"));
-	await new Promise((r) => setTimeout(r, 100));
-	const points = injected.filter((i) => i.at >= t0 && i.cmd.op === "point").map((i) => i.cmd.cue.x);
-	assert.ok(sent, "no cue was sent after the stall");
-	assert.deepEqual(points, [60], "a cue a newer one replaced was sent");
 });

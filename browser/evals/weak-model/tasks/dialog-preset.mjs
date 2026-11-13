@@ -1,4 +1,4 @@
-// Confirm-gated actions while the person has the same site in front (docs/decisions.md D46, the #188 and #193 reviews).
+// Confirm-gated actions while the person has the same site in front (docs/decisions.md D48, the #188 and #193 reviews).
 // Polycarp cancels the agent's box after 3 s, sooner than a model turn can send handle_dialog.
 // - dialog-preset: passes only if the model clicks Delete with on_dialog "ok" on its tab, as the notes say, so the
 //   record is deleted.

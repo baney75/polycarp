@@ -1,6 +1,6 @@
 /**
  * A dialog on an agent's tab is answered Cancel only when it freezes the person (service worker;
- * docs/decisions.md, D46).
+ * docs/decisions.md, D48).
  *
  * Chrome itself cancels an alert, confirm or prompt that a hidden tab opens. With Polycarp's debugger attached it waits
  * for the agent's answer instead (cdp.ts turns on Page events), and while it waits the page's renderer runs nothing.
@@ -149,7 +149,7 @@ export interface DialogCause {
 }
 /** The call that opened each box, for the notice's next step. */
 const causes = new Map<number, DialogCause>();
-/** The steps on_dialog may be set on: a single action that, done again, does only that (D46). */
+/** The steps on_dialog may be set on: a single action that, done again, does only that (D48). */
 export const ONE_STEP = new Set(["click", "press"]);
 /** Boxes the guard cancelled, until the agent hears of it once. */
 const cancelled = new Map<number, { owner: string; tabId: number; text: string; at: number }>();
@@ -247,7 +247,7 @@ async function run(): Promise<void> {
 const READ_FIRST = "Read the page (read_page) to see what happened before you act again.";
 
 /**
- * What the agent may do about a box Polycarp answers without it: never "repeat the whole call" (D46). An alert, or a box
+ * What the agent may do about a box Polycarp answers without it: never "repeat the whole call" (D48). An alert, or a box
  * after one the call's on_dialog answered, needs nothing; a box with no known cause, or one a step that can't take
  * on_dialog opened, needs a look first; otherwise the one click or press that opened it, on its own tab, with on_dialog.
  */

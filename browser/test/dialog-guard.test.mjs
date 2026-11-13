@@ -1,4 +1,4 @@
-// The dialog guard (src/browser/dialog-guard.ts, docs/decisions.md D46): one pure decide() over facts, one serialized
+// The dialog guard (src/browser/dialog-guard.ts, docs/decisions.md D48): one pure decide() over facts, one serialized
 // reconcile(). Table tests name the review finding each row covers; a randomized run checks the two invariants after
 // every step. Fake timers, no browser.
 import assert from "node:assert/strict";

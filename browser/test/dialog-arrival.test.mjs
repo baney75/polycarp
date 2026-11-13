@@ -1,4 +1,4 @@
-// first-F4, second-G2 at the bridge (src/bridge/native.ts, docs/decisions.md D46): a handle_dialog holds its box from
+// first-F4, second-G2 at the bridge (src/bridge/native.ts, docs/decisions.md D48): a handle_dialog holds its box from
 // the moment it reaches the worker's socket, while it waits in the client's queue behind a slow call too. Fake chrome,
 // the real bridge and guard, the guard's clock mocked.
 import assert from "node:assert/strict";

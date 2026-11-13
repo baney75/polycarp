@@ -76,11 +76,13 @@ public enum HandsTools {
         HandsTool(verb: "get", summary: "Read one property of an element from the live window: value, text, title, role, bounds or states.", params: [
             refParam,
             HandsParam("property", .string, "value (default), text, title, role, bounds or states.", positional: true),
+            HandsParam("copy", .boolean, "Also hold the text on the agent clipboard, for type with paste: true. Never the Mac's clipboard."),
         ], acts: false),
         HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"}", params: [refParam], acts: true),
-        HandsTool(verb: "type", summary: "Type text into an element by ref: inserts it at the element's selection through accessibility, never by posting keys. Prints the value it read back.", params: [
+        HandsTool(verb: "type", summary: "Type text into an element by ref: inserts it at the element's selection through accessibility, never by posting keys. Prints the value it read back. paste: true types what you copied with get. Example: {\"ref\":\"7\",\"paste\":true}", params: [
             refParam,
-            HandsParam("text", .string, "The text.", required: true, positional: true, rest: true),
+            HandsParam("text", .string, "The text.", positional: true, rest: true),
+            HandsParam("paste", .boolean, "Type what this session copied (get with copy: true) instead of text."),
         ], acts: true),
         HandsTool(verb: "set-value", summary: "Replace an element's whole value (a text field, a slider). Prints the value it read back.", params: [
             refParam,
@@ -113,6 +115,10 @@ public enum HandsTools {
         HandsTool(verb: "select", summary: "Choose an option in a list, menu or popup by ref.", params: [
             refParam,
             HandsParam("option", .string, "The text of the option to choose.", required: true, positional: true, rest: true),
+        ], acts: true),
+        HandsTool(verb: "menu", summary: "Run a menu-bar command of the window's app by its titles, without opening the menu on screen. Only in a copy your own `open` started, with this its one window. Refused: the Apple, Window and Help menus, the app menu but About and Settings, full screen, Open and Open Recent, cut, copy and paste, and what leaves the app (Emoji, Dictation, Speech, Print, Share). A panel it raises within 1 s is cancelled and the call fails; so does a window it raises off the agent workspace, closed when Polycarp can. Example: {\"window\":4211,\"path\":\"Format > Font > Bold\"}", params: [
+            HandsParam("window", .integer, "Window id from `windows`.", required: true),
+            HandsParam("path", .string, "Menu titles from the menu bar down, separated by >.", required: true, positional: true, rest: true),
         ], acts: true),
         HandsTool(verb: "toggle", summary: "Flip a checkbox, switch or disclosure by ref. Prints the state it read back.", params: [refParam], acts: true),
         HandsTool(verb: "shot", summary: "Capture one window as a PNG, even while it is parked out of view. Over MCP the picture comes back fitted to 1280 pixels, labeled untrusted, with how its pixels map to window points. Needs Screen Recording for Polycarp. Example: {\"window\":4211,\"zoom\":\"0,0,400,300\"}", params: [
@@ -271,6 +277,9 @@ public enum HandsParse {
     private static func validated(_ r: HandsRequest, _ tool: HandsTool) -> Result<HandsRequest, HandsError> {
         for p in tool.params where p.required && r.args[p.name] == nil {
             return .failure(usage(tool, "\(p.name) is missing"))
+        }
+        if tool.verb == "type", (r.args["text"] == nil) != r.bool("paste") {
+            return .failure(usage(tool, r.bool("paste") ? "pass text or paste: true, not both" : "text is missing (or pass paste: true)"))
         }
         if let w = r.int("wait"), !(0...InUseRule.maxWait).contains(w) {
             return .failure(usage(tool, "wait is seconds from 0 to \(InUseRule.maxWait), not \(w)"))

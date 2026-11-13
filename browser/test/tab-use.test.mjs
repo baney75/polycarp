@@ -1,4 +1,4 @@
-// Which tab a call acts on (src/browser/tab-use.ts, docs/decisions.md D46): the veil and the dialog guard count only those.
+// Which tab a call acts on (src/browser/tab-use.ts, docs/decisions.md D48): the veil and the dialog guard count only those.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { callTab, movedTo } from "../src/browser/tab-use.ts";

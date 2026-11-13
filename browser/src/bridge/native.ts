@@ -372,14 +372,14 @@ function resolveDecision(requestId: string, decision: PermissionDecision): boole
 const tabIdParam = (params: Record<string, unknown> | undefined) =>
 	params?.tabId === undefined ? undefined : Number(params.tabId);
 
-/** The calls on each tab that could open a box there, across every client: a call with on_dialog runs alone (D46). */
+/** The calls on each tab that could open a box there, across every client: a call with on_dialog runs alone (D48). */
 const tabCalls = new Map<number, Set<string>>();
 /** Tabs a call with on_dialog holds until it ends: no other call acts on them meanwhile. */
 const heldTabs = new Map<number, string>();
 /** The actions whose box the guard's notice may name (dialog-guard.ts); a hover, scroll or drag box has no known cause. */
 const CAUSE_KINDS = new Set(["click", "press", "type", "fill"]);
 
-/** The answer a single click or press set in advance, checked. `actions` takes none (D46): refused here. */
+/** The answer a single click or press set in advance, checked. `actions` takes none (D48): refused here. */
 function wantedPreset(method: string, params: Record<string, unknown>): WantedPreset | undefined {
 	if (method !== "actions") return dialogPreset(method, params);
 	refuseStepPreset(params, normalizeStep);
@@ -491,6 +491,9 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			},
 			isGuarded: (url: string) => isGuardedUrl(url, req.guardedHosts),
 			guardedHosts: req.guardedHosts ?? [],
+			// A frame is the page's own when it is on the page's host; any other host needs the person's allow (D46).
+			frameAllowed: async (url, topUrl) =>
+				(!!topUrl && hostOf(url) === hostOf(topUrl) && !isOwnExtensionUrl(url)) || (await isUrlAllowed(url)),
 			askUpload: (url, files, askId) => askUpload(state, url, files, askId),
 			checkUrl: async (url: string) => {
 				if (isGuardedUrl(url, req.guardedHosts)) throw guardedError(url);

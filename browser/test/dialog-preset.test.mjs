@@ -1,4 +1,4 @@
-// on_dialog at the bridge (src/bridge/native.ts, src/bridge/dialogs.ts, src/browser/dialog-guard.ts, D46), the rules
+// on_dialog at the bridge (src/bridge/native.ts, src/bridge/dialogs.ts, src/browser/dialog-guard.ts, D48), the rules
 // of the #193 review: an answer set in advance only ever answers the box its own click or press opened, on its named
 // tab, armed for that call alone; the result says the answer that landed; and the guard's notice names a repeat only
 // when one is safe. Fake chrome, the real bridge, cdp and guard; the guard's clock mocked.
