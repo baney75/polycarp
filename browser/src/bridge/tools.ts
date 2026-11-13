@@ -43,6 +43,7 @@ import {
 	STILL_LOADING,
 	tabChanges,
 } from "../browser/changes.js";
+import { dialogSession, type FrameRule } from "../browser/frames.js";
 import { injectScript } from "../browser/inject.js";
 import {
 	fillElement,
@@ -103,6 +104,11 @@ export interface HandlerContext {
 	isGuarded(url: string): boolean;
 	/** The hosts behind `isGuarded`, as the CLI sent them ("host" or "host:port"). */
 	guardedHosts?: readonly string[];
+	/**
+	 * Whether a frame at `url` on a page at `topUrl` may be read and acted in: its host is the page's or one the
+	 * person allowed for agents. Unset (the side panel): every frame that isn't guarded.
+	 */
+	frameAllowed?(url: string, topUrl: string): Promise<boolean>;
 	/**
 	 * Ask the person whether these local files may go to the page at `url` (the files tool, D38). True only for a
 	 * yes to this one upload: no answer and a no are both false, and the answer is never remembered. `askId` is the
@@ -215,7 +221,13 @@ async function changesBefore(ctx: HandlerContext, tabId: number, params?: Params
 	if (ctx.batch) return undefined;
 	const tab = await chrome.tabs.get(tabId).catch(() => undefined);
 	if (!tab || ctx.isGuarded(tab.pendingUrl || tab.url || "")) return undefined;
-	return beforeAction(tabId, ctx.session.tabIds, params ? str(params, "ref") : undefined, ctx.guardedHosts ?? []);
+	return beforeAction(
+		tabId,
+		ctx.session.tabIds,
+		params ? str(params, "ref") : undefined,
+		ctx.guardedHosts ?? [],
+		skipFor(ctx, tabId),
+	);
 }
 
 function stopIfAborted(ctx: HandlerContext): void {
@@ -373,11 +385,31 @@ function watchGuardedCommits(ctx: HandlerContext, tabId: number): void {
 	setTimeout(() => chrome.webNavigation.onCommitted.removeListener(onCommitted), GUARD_WATCH_MS);
 }
 
+/** Which of a tab's frames no tool reads (frames.ts FrameRule): guarded ones, and those on hosts not allowed for agents. */
+function skipFor(ctx: HandlerContext, tabId: number): FrameRule {
+	let top: Promise<string> | undefined;
+	return async (u) => {
+		if (ctx.isGuarded(u)) return "guarded";
+		if (!ctx.frameAllowed) return undefined;
+		top ??= chrome.tabs.get(tabId).then(
+			(t) => t.url ?? "",
+			() => "",
+		);
+		return (await ctx.frameAllowed(u, await top)) ? undefined : "blocked";
+	};
+}
+
 function target(params: Params): { ref?: string; selector?: string } {
 	return { ref: str(params, "ref"), selector: str(params, "selector") };
 }
 
-async function pointFor(_ctx: HandlerContext, params: Params, tabId: number): Promise<{ x: number; y: number }> {
+async function pointFor(
+	ctx: HandlerContext,
+	params: Params,
+	tabId: number,
+	act: "click" | "hover" | "type",
+	before?: Before,
+): Promise<{ x: number; y: number }> {
 	const x = num(params, "x");
 	const y = num(params, "y");
 	if (x !== undefined && y !== undefined) return screenshotToCss(tabId, { x, y });
@@ -387,7 +419,7 @@ async function pointFor(_ctx: HandlerContext, params: Params, tabId: number): Pr
 			ERR.BAD_PARAMS,
 			"Give a ref from read_page (best), a selector, or x and y from your latest screenshot.",
 		);
-	const rect = await locate(tabId, t);
+	const rect = await locate(tabId, t, skipFor(ctx, tabId), act, before?.frame.hit);
 	return { x: rect.x, y: rect.y };
 }
 
@@ -725,6 +757,7 @@ export const handlers: Record<string, Handler> = {
 			filter,
 			maxNodes: num(params, "maxNodes"),
 			maxTextChars: num(params, "maxTextChars"),
+			skip: skipFor(ctx, tabId),
 		});
 	},
 
@@ -821,7 +854,7 @@ export const handlers: Record<string, Handler> = {
 	find: async (ctx, params) => {
 		const query = requireStr(params, "query").toLowerCase();
 		const tabId = await resolveTab(ctx, params, false);
-		const snap = await snapshot(tabId, { filter: "all", maxNodes: 600, maxTextChars: 0 });
+		const snap = await snapshot(tabId, { filter: "all", maxNodes: 600, maxTextChars: 0, skip: skipFor(ctx, tabId) });
 		return { matches: rankMatches(snap.nodes, query, num(params, "limit") ?? 20) };
 	},
 
@@ -830,7 +863,7 @@ export const handlers: Record<string, Handler> = {
 		// The look first: the point is found right before the input goes out, so a layout that
 		// moved during the look can't misplace the click.
 		const before = await changesBefore(ctx, tabId, params);
-		const p = await pointFor(ctx, params, tabId);
+		const p = await pointFor(ctx, params, tabId, "click", before);
 		const button = str(params, "button");
 		const since = await actionStart(ctx, tabId);
 		await click(tabId, p.x, p.y, {
@@ -845,7 +878,7 @@ export const handlers: Record<string, Handler> = {
 
 	hover: async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, true);
-		const p = await pointFor(ctx, params, tabId);
+		const p = await pointFor(ctx, params, tabId, "hover");
 		await hover(tabId, p.x, p.y);
 		return { hovered: p };
 	},
@@ -880,7 +913,7 @@ export const handlers: Record<string, Handler> = {
 		const since = await actionStart(ctx, tabId);
 		const attempt = async () => {
 			if (t.ref || t.selector) {
-				const rect = await locate(tabId, t);
+				const rect = await locate(tabId, t, skipFor(ctx, tabId), "type", before?.frame.hit);
 				await click(tabId, rect.x, rect.y);
 			}
 			stopIfAborted(ctx);
@@ -954,13 +987,17 @@ export const handlers: Record<string, Handler> = {
 		} else {
 			const to = str(params, "to");
 			cuePointer(tabId, "scroll-page");
-			scrolled = await scrollPage(tabId, {
-				dx,
-				dy,
-				ref: str(params, "ref"),
-				selector: str(params, "selector"),
-				to: to === "top" || to === "bottom" ? to : undefined,
-			});
+			scrolled = await scrollPage(
+				tabId,
+				{
+					dx,
+					dy,
+					ref: str(params, "ref"),
+					selector: str(params, "selector"),
+					to: to === "top" || to === "bottom" ? to : undefined,
+				},
+				skipFor(ctx, tabId),
+			);
 		}
 		// An infinite list loads its next rows after the scroll: they are in the report.
 		const result = scrolled as Record<string, unknown>;
@@ -975,7 +1012,7 @@ export const handlers: Record<string, Handler> = {
 			throw new BridgeError(ERR.BAD_PARAMS, "fill needs a ref from read_page, or a selector.");
 		const before = await changesBefore(ctx, tabId, params);
 		const since = await actionStart(ctx, tabId);
-		await fillElement(tabId, t, value);
+		await fillElement(tabId, t, value, skipFor(ctx, tabId), before?.frame.hit);
 		// fill focuses its field: the pointer goes there once it holds the value.
 		cuePointer(tabId, "fill");
 		return { filled: t, ...(await settleAfter(ctx, tabId, since, { filled: t }, { before })) };
@@ -1065,7 +1102,7 @@ export const handlers: Record<string, Handler> = {
 			);
 		if (typeof params.accept !== "boolean")
 			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");
-		const dialog = await answerDialog(tabId, params.accept, str(params, "promptText"));
+		const dialog = await answerDialog(tabId, params.accept, str(params, "promptText"), dialogSession(tabId));
 		return { tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
 	},
 
