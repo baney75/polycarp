@@ -1036,7 +1036,7 @@ final class BackgroundPosterSourceTests: XCTestCase {
         XCTAssertTrue(watch.contains(".cgSessionEventTap"))
         let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
         XCTAssertTrue(router.contains("PostGuard.span(activations: activations.activated, start: frontStart, now: frontPid()"), "the notifications and a look right now, together")
-        XCTAssertTrue(router.contains("PostGuard.verdict(spanFront(), hardware: hardware())"))
+        XCTAssertTrue(router.contains("frontVerdict(w, kind: kind, spanFront(), hardware: hardware())") && router.contains("PostGuard.verdict(span, hardware: hardware)"))
         XCTAssertTrue(router.contains("PointerAudit.verdict("))
         // The span closes after the proof loop, not after the post.
         let loop = try XCTUnwrap(router.range(of: "} while !verdict.verified"))
