@@ -22,6 +22,7 @@
 //
 // A measurement, not a gate: exit 0 even when probes fail, exit 1 only when the harness breaks.
 // Needs the CLI build (cli/dist) and Playwright's Chromium.
+import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -333,6 +334,8 @@ let exitCode = 0;
 try {
 	fx = await launchFixtureBrowser({ extensionDir: EXTENSION });
 	await fx.waitConnected();
+	// The cross-site frame's host (localhost), as a person allows it: a frame from a host not allowed for agents isn't read (D46).
+	execFileSync(process.execPath, [cli, "allow", "localhost"], { env: fx.env, encoding: "utf8" });
 	// One bridge session for both clients: the same client name and session name.
 	const env = { ...fx.env, TABKYRA_SESSION: "perception", TABKYRA_CLIENT_NAME: "perception" };
 	({ client } = await mcpClient(env));

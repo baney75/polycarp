@@ -1439,24 +1439,42 @@ is reached with `Target.setAutoAttach` (flatten), which gives it a session on th
 way the snapshot runs in Polycarp's isolated world in that frame (`Page.createIsolatedWorld`, the same world each time, so
 its refs stay), with the same code as the top page: the same masking, the same limits. Its refs get the frame's tag
 (`fk3z9e12`: "f", four characters from the frame id, then the ref inside), its points are moved by the frame's content box
-(`DOM.getFrameOwner` and its box model), and its text follows the page's under `[frame host]`.
+(`DOM.getFrameOwner` and its box model) and scaled by how large the frame is drawn (its quad against its layout width, so a
+`transform: scale()` maps too), and its text follows the page's under `[frame host]`. An out-of-process frame whose
+`<iframe>` sits in a same-process frame is placed inside that frame: the frame whose isolated world resolves the
+`<iframe>` element is its owner (`DOM.resolveNode` gives null in any other frame's context).
 
-An action by a frame ref resolves the ref in that frame, scrolls the frame into view, and before a click checks two things
-in the tab: the point is inside the viewport, and the hit test at that point lands in the frame, so a banner over the frame
+An action by a frame ref resolves the ref in that frame, scrolls the frame into view, and before a click or a fill checks two
+things in the tab: the point is inside the viewport, and the hit test at that point lands in the frame, so a banner over the frame
 is reported as a cover rather than clicked. The hit test skips `pointer-events: none` layers, as a real click does (the
 in-use veil, D37, is one). A ref whose frame navigated or went away fails as stale; a ref from a frame's earlier document
-fails the same way it does in the top page.
+fails the same way it does in the top page. The action's change report (D43) looks in that frame as well as the page, so a
+click's effect inside the frame is in its `changes`. A box (alert, confirm, prompt) a frame opens is answered in the session that
+reported it: the frame's when it comes from one, else the tab's. Chromium reports a box from another site's frame on the
+tab's session, which answers it, after a worker restart too (an e2e test checks this).
 
-Limits: 10 frames and 3 levels, outermost first; a frame past them, or one with no box, keeps its old line, so the agent
-still knows it is there and can `navigate` to it. Only http, https and file frames are read: never an extension page, an
+Only a frame a person can see is read: its `<iframe>` is listed by the document around it, at least 4 px each way, drawn
+(not `visibility: hidden` or `opacity: 0`, on it or above it), not kept off the page, and not under something that covers
+all of it (five points, where they are in view). A frame that fails keeps one line, "not shown, so not read", and nothing
+inside it is read either; this keeps the #73 rule that hidden text never reaches the agent, and an invisible field can't be
+filled. Limits: 10 frames read and 3 levels, outermost first (up to 30 are placed, so hidden ones don't use up the 10); a
+frame past them, or one with no box, keeps its old line, so the agent still knows it is there and can `navigate` to it.
+Every debugger call about a frame has its own time limit (1 s; 3 s for a frame's snapshot), so a frame that doesn't answer
+keeps its line instead of holding up the read. Frames get a small share past a page that used up the default budget, never
+past a `maxNodes` or `maxTextChars` the caller set. Only http, https and file frames are read: never an extension page, an
 error page or a browser page. A frame on a guarded host (#94) is left out with everything inside it; the side panel has no
 guarded hosts (D40), as before. Uploads and downloads (D38) run in the top page and refuse a frame ref with a clear message. Not done:
 `get_page_text` and `page_markdown` stay the top page's, and settle (D41) still doesn't count a frame's own requests.
 
-Safety: nothing here reaches more than the agent could before. A frame is part of the page it is on, which the person allowed;
-its pixels were already in screenshots, and a click at its x and y already reached it. What changes is that the agent reads
-it as text, with the same masking as the top page (passwords never shown, link URLs masked) and with the page's text still
-data, never instructions.
+Safety: the site permission is per host, and it applies to frames. A frame on the page's own host is the page's; a frame on
+any other host is read and acted in only when the person allowed that host for agents (Settings > Agents, `polycarp browser
+allow <host>`, or "allow all"). An unallowed frame is one line, `not allowed for agents: <host>`, with no text and no refs,
+and a by-ref action into it (a ref read before the host was taken back, or a forged one) fails with `permission_denied`,
+"Not allowed to open <host>", naming the command that allows it. Before this the agent had to `navigate` to the frame's
+URL, which asked; reading it in place must not skip that question. A guarded host (#94) is never read through a frame, even
+on an allowed page. The side panel has no site permissions (the person drives it), so it reads every frame that isn't
+guarded. What the agent reads has the same masking as the top page (passwords never shown, link URLs masked), and the page's
+text is still data, never instructions.
 
 Cost: a page with no cross-origin frame is unchanged (the extra step runs only when the snapshot found one). On a page with
 two, `read_page {"filter":"interactive"}` went from 368 to 831 bytes and from 2 to 6 ms (median of 7, headless Chromium);

@@ -8,13 +8,20 @@
 import { isGuardedUrl } from "../bridge/permissions.js";
 import { cdpSend, isRestrictedUrl } from "./cdp.js";
 import {
+	bounded,
 	crossOriginFrames,
 	evaluateInFrame,
+	type FrameRule,
 	frameForRef,
+	frameHost,
 	framePainted,
+	frameShown,
+	frameShownNow,
 	frameTakesPoint,
+	MAX_FRAMES,
 	type PageFrame,
 	scrollFrameIntoView,
+	splitFrameRef,
 } from "./frames.js";
 import { maskUrl } from "./mask-body.js";
 import { isUserScriptsGated, userScriptsApi } from "./userscripts-status.js";
@@ -104,9 +111,10 @@ async function runForRef<T>(
 	tabId: number,
 	ref: string | undefined,
 	code: (ref: string | undefined, inFrame: boolean) => string,
-	skip?: (url: string) => boolean,
+	rule?: FrameRule,
+	found?: { frame: PageFrame; inner: string },
 ): Promise<{ value: T; frame?: PageFrame }> {
-	const hit = ref ? await frameForRef(tabId, ref, skip) : undefined;
+	const hit = found ?? (ref ? await frameForRef(tabId, ref, rule) : undefined);
 	if (!hit) return { value: await runInPage<T>(tabId, code(ref, false)) };
 	try {
 		return { value: await runInFrame<T>(tabId, hit.frame, code(hit.inner, true)), frame: hit.frame };
@@ -410,6 +418,7 @@ function pageSnapshot(
 	live: (el: Element) => boolean,
 	print: (el: Element) => string,
 	keepStale = false,
+	frameShown: (el: Element) => boolean = () => true,
 ): unknown {
 	const w = window as unknown as {
 		__tabkyraRefs?: unknown;
@@ -650,7 +659,8 @@ function pageSnapshot(
 	};
 	visit({ root: document, dx: 0, dy: 0, sx: 1, sy: 1 }, 0);
 	const cross = new Set(crossFrames.map((c) => c.el));
-
+	// A cross-origin frame is read (D46) only when a person can see it: drawn (not hidden or see-through, here or
+	// above it), bigger than a tracking pixel, not kept off the page, and not under something that covers all of it.
 	const nodes: unknown[] = [];
 	// Elements in the viewport first, then the rest in document order: on long pages the
 	// cap used to be spent on navigation chrome above the fold and the content was cut.
@@ -720,7 +730,11 @@ function pageSnapshot(
 		if (tag === "a" && f.href) node.href = String(f.href).slice(0, 200);
 		if (cross.has(el)) {
 			node.href = frameUrl(el).slice(0, 200);
-			node.states = ["cross-origin: read it with navigate to its URL"];
+			node.states = [
+				frameShown(el)
+					? "cross-origin: read it with navigate to its URL"
+					: "cross-origin frame, not shown, so not read",
+			];
 		}
 		if (tag === "input") {
 			if (f.type === "checkbox" || f.type === "radio") node.value = f.checked ? "checked" : "unchecked";
@@ -954,18 +968,20 @@ export async function snapshot(
 		maxNodes?: number;
 		maxTextChars?: number;
 		filter?: "interactive" | "all";
-		/** A frame no tool may touch (the approval page): left listed, never read. */
-		skip?: (url: string) => boolean;
+		/** Bars a frame by URL (the approval page, a host not allowed for agents): see frames.ts FrameRule. */
+		skip?: FrameRule;
 	} = {},
 ): Promise<Snapshot> {
 	const { maxNodes = 300, maxTextChars = 20000, filter = "all" } = options;
+	// Frames get a small share past a page that used up the default budget, never past one the caller set.
+	const floor = options.maxNodes === undefined && options.maxTextChars === undefined;
 	const code = (n: number, t: number) =>
-		`(${pageSnapshot.toString()})(${n}, ${t}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()})`;
+		`(${pageSnapshot.toString()})(${n}, ${t}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()}, false, ${frameShown.toString()})`;
 	const snap = await runInPage<Snapshot & { crossFrames?: number }>(tabId, code(maxNodes, maxTextChars));
 	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
 	if (snap?.crossFrames) {
 		delete snap.crossFrames;
-		await readFrames(tabId, snap, maxNodes, maxTextChars, code, options.skip);
+		await readFrames(tabId, snap, { maxNodes, maxTextChars, floor }, code, options.skip);
 	}
 	return snap;
 }
@@ -1053,27 +1069,59 @@ export function refsRenewed(gone: string[], listed: Set<string>): Record<string,
 /**
  * One side of the change report, in one round trip: the interactive elements with their refs (the
  * same refs read_page gives, so they stay valid), focus, the document, and which of `before` went.
+ * An action on a ref in a cross-origin frame looks in that frame too (D46), at the same time: its
+ * controls and text join the page's, under the frame's tag.
  */
 export async function changeLook(
 	tabId: number,
 	maxNodes: number,
 	before: string[] = [],
 	guardedHosts: readonly string[] = [],
+	frame?: { ref?: string; rule?: FrameRule },
 ): Promise<ChangeLook | "guarded" | "large"> {
 	// The approval page (#94) can commit between the URL check and this script: the script checks
 	// again before it touches anything. A page this big is not read twice per action (D43).
-	const code = `(() => {
+	const code = (refs: string[]) => `(() => {
 		if ((${isGuardedUrl.toString()})(location.href, ${JSON.stringify(guardedHosts)})) return "guarded";
 		if (document.getElementsByTagName("*").length > ${LARGE_PAGE}) return "large";
-		const s = (${pageSnapshot.toString()})(${maxNodes}, 20000, "interactive", ${refLive.toString()}, ${refPrint.toString()}, true);
+		const s = (${pageSnapshot.toString()})(${maxNodes}, 20000, "interactive", ${refLive.toString()}, ${refPrint.toString()}, true, ${frameShown.toString()});
 		const listed = new Set(s.nodes.map((n) => n.ref));
-		const gone = (${refsGone.toString()})(${JSON.stringify(before)}.filter((r) => !listed.has(r)), ${refLive.toString()}, ${refPrint.toString()});
+		const gone = (${refsGone.toString()})(${JSON.stringify(refs)}.filter((r) => !listed.has(r)), ${refLive.toString()}, ${refPrint.toString()});
 		const same = (${refsRenewed.toString()})(gone, listed);
 		return { url: s.url, title: s.title, nodes: s.nodes, gone, same, text: s.text, ...(${focusProbe.toString()})() };
 	})()`;
-	const look = await runInPage<ChangeLook | "guarded" | "large">(tabId, code);
+	const split = frame?.ref ? splitFrameRef(frame.ref) : undefined;
+	const mine = split ? before.filter((r) => r.startsWith(split.tag)).map((r) => r.slice(split.tag.length)) : [];
+	const inFrame = async (): Promise<ChangeLook | "gone" | undefined> => {
+		if (!split || !frame?.ref) return undefined;
+		const hit = await frameForRef(tabId, frame.ref, frame.rule).catch(() => undefined);
+		if (!hit) return "gone";
+		const got = await runInFrame<ChangeLook | "guarded" | "large">(tabId, hit.frame, code(mine)).catch(
+			() => undefined,
+		);
+		return typeof got === "object" && got ? got : undefined;
+	};
+	const [look, inner] = await Promise.all([
+		runInPage<ChangeLook | "guarded" | "large">(tabId, code(before.filter((r) => !splitFrameRef(r)))),
+		inFrame(),
+	]);
 	if (typeof look === "string") return look;
 	if (typeof look?.url === "string") look.url = maskUrl(look.url);
+	if (!split || !look) return look;
+	// The frame closed or navigated: every ref it had is gone.
+	if (inner === "gone") look.gone.push(...mine.map((r) => split.tag + r));
+	else if (inner) {
+		const tagged = (r: string) => split.tag + r;
+		look.nodes.push(...inner.nodes.map((n) => ({ ...n, ref: tagged(n.ref) })));
+		look.gone.push(...inner.gone.map(tagged));
+		look.same = {
+			...look.same,
+			...Object.fromEntries(Object.entries(inner.same ?? {}).map(([a, b]) => [tagged(a), tagged(b)])),
+		};
+		if (inner.focus) look.focus = tagged(inner.focus);
+		// A new document in the frame reads as new controls in it, not as a new page.
+		if (inner.text) look.text = `${look.text}\n\n[frame ${frameHost(inner.url)}]\n${inner.text}`;
+	}
 	return look;
 }
 
@@ -1083,58 +1131,70 @@ export const LARGE_PAGE = 15000;
 /** The state pageSnapshot gives a cross-origin frame (written out there: it runs in the page). */
 const CROSS_NOTE = "cross-origin: read it with navigate to its URL";
 
+/** The most a frame's own snapshot may take: one that doesn't answer keeps its plain line. */
+const FRAME_READ_MS = 3000;
+
+/** Whether a listed cross-origin frame line is this frame's element: its box holds the frame's corner. */
+function lineOf(nodes: SnapshotNode[], f: PageFrame): number {
+	return nodes.findIndex(
+		(n) =>
+			(n as SnapshotNode & { states?: string[] }).states?.[0] === CROSS_NOTE &&
+			Math.abs(n.x - f.offset.x) <= n.width / 2 + 1 &&
+			Math.abs(n.y - f.offset.y) <= n.height / 2 + 1,
+	);
+}
+
 /**
  * Add each cross-origin frame's elements and text to a snapshot (D46): the elements right after
  * the frame's own element, with the frame's tag on their refs and the tab's coordinates, the text
- * under the frame's host. Frames get at least a small share when the page used up the budget.
+ * under the frame's host. Only a frame the page shows is read: its line is listed as shown, by
+ * the document around it (so a frame inside a hidden one is not either). A frame on a host not
+ * allowed for agents keeps its line, which names the host, and nothing of it is read.
  */
 async function readFrames(
 	tabId: number,
 	snap: Snapshot,
-	maxNodes: number,
-	maxTextChars: number,
+	budget: { maxNodes: number; maxTextChars: number; floor: boolean },
 	code: (n: number, t: number) => string,
-	skip?: (url: string) => boolean,
+	rule?: FrameRule,
 ): Promise<void> {
-	const frames = await crossOriginFrames(tabId, skip).catch(() => [] as PageFrame[]);
-	let room = Math.max(maxNodes - snap.nodes.length, 60);
-	let textRoom = maxTextChars > 0 ? Math.max(maxTextChars - snap.text.length, 2000) : 0;
+	const frames = await crossOriginFrames(tabId, rule).catch(() => [] as PageFrame[]);
+	const { maxNodes, maxTextChars, floor } = budget;
+	let room = Math.max(maxNodes - snap.nodes.length, floor ? 60 : 0);
+	let textRoom = maxTextChars > 0 ? Math.max(maxTextChars - snap.text.length, floor ? 2000 : 0) : 0;
 	const { width, height } = snap.viewport;
+	let read = 0;
 	for (const f of frames) {
-		if (room <= 0) break;
-		const s = await runInFrame<Snapshot>(tabId, f, code(room, textRoom)).catch(() => undefined);
-		if (!s?.nodes) continue;
-		let label = "";
-		try {
-			label = new URL(f.url).host;
-		} catch {
-			label = "(frame)";
+		const at = lineOf(snap.nodes, f);
+		if (at < 0) continue;
+		const own = snap.nodes[at] as SnapshotNode & { states?: string[] };
+		const label = frameHost(f.url);
+		if (f.blocked) {
+			own.states = [`not allowed for agents: ${label}`];
+			continue;
 		}
+		if (room <= 0 || read >= MAX_FRAMES) continue;
+		const s = await bounded(runInFrame<Snapshot>(tabId, f, code(room, textRoom)), FRAME_READ_MS);
+		if (!s?.nodes) continue;
+		read++;
 		const nodes = s.nodes.map((n) => {
-			const x = n.x + f.offset.x;
-			const y = n.y + f.offset.y;
+			const x = Math.round(f.offset.x + f.scale * n.x);
+			const y = Math.round(f.offset.y + f.scale * n.y);
 			const inner = (n as SnapshotNode & { frame?: string }).frame;
 			return {
 				...n,
 				ref: f.tag + n.ref,
 				x,
 				y,
+				width: Math.round(n.width * f.scale),
+				height: Math.round(n.height * f.scale),
 				visible: n.visible && x >= 0 && y >= 0 && x < width && y < height,
 				...(n.href ? { href: maskUrl(n.href) } : {}),
 				frame: inner ? `${label} > ${inner}` : label,
 			};
 		});
-		// The frame's own element: listed by the document around it, its box holding the frame's corner.
-		const at = snap.nodes.findIndex(
-			(n) =>
-				(n as SnapshotNode & { states?: string[] }).states?.[0] === CROSS_NOTE &&
-				Math.abs(n.x - f.offset.x) <= n.width / 2 + 1 &&
-				Math.abs(n.y - f.offset.y) <= n.height / 2 + 1,
-		);
-		if (at >= 0) {
-			(snap.nodes[at] as SnapshotNode & { states?: string[] }).states = ["cross-origin frame, its elements follow"];
-			snap.nodes.splice(at + 1, 0, ...nodes);
-		} else snap.nodes.push(...nodes);
+		own.states = ["cross-origin frame, its elements follow"];
+		snap.nodes.splice(at + 1, 0, ...nodes);
 		room -= nodes.length;
 		if (textRoom > 0 && s.text) {
 			const t = `[frame ${label}]\n${s.text}`.slice(0, textRoom);
@@ -1165,7 +1225,8 @@ export function elementCode(target: { ref?: string; selector?: string }): string
 export async function locate(
 	tabId: number,
 	target: { ref?: string; selector?: string },
-	skip?: (url: string) => boolean,
+	rule?: FrameRule,
+	act = "click",
 ): Promise<{ x: number; y: number; width: number; height: number }> {
 	const code = (r: string | undefined, inFrame: boolean) => `(async () => {
 		let el = null;
@@ -1219,20 +1280,26 @@ export async function locate(
 		}
 		return { x, y, width: w, height: h };
 	})()`;
-	const framed = target.ref ? await frameForRef(tabId, target.ref, skip) : undefined;
+	const framed = target.ref ? await frameForRef(tabId, target.ref, rule) : undefined;
 	if (framed) await scrollFrameIntoView(tabId, framed.frame);
 	const { value: p, frame } = await runForRef<{ x: number; y: number; width: number; height: number }>(
 		tabId,
 		target.ref,
 		code,
-		skip,
+		rule,
+		framed,
 	);
 	if (!frame) return p;
 	// The point in the frame, in the tab's viewport: it must be on screen and land in the frame.
 	// Measured again, once drawn: bringing the element into view can scroll the page around the frame too.
 	await framePainted(tabId);
-	const now = (await frameForRef(tabId, target.ref as string, skip))?.frame ?? frame;
-	const at = { ...p, x: p.x + now.offset.x, y: p.y + now.offset.y };
+	const now = (await frameForRef(tabId, target.ref as string, rule))?.frame ?? frame;
+	const at = {
+		x: now.offset.x + now.scale * p.x,
+		y: now.offset.y + now.scale * p.y,
+		width: p.width * now.scale,
+		height: p.height * now.scale,
+	};
 	const view = await cdpSend<{ cssLayoutViewport?: { clientWidth: number; clientHeight: number } }>(
 		tabId,
 		"Page.getLayoutMetrics",
@@ -1241,11 +1308,16 @@ export async function locate(
 	const vh = view?.cssLayoutViewport?.clientHeight ?? Number.POSITIVE_INFINITY;
 	if (at.x < 0 || at.y < 0 || at.x >= vw || at.y >= vh)
 		throw new Error(
-			`Ref ${target.ref} is outside the visible page (its frame is cut off), so a click can't reach it.`,
+			`Ref ${target.ref} is outside the visible page (its frame is cut off), so a ${act} can't reach it.`,
+		);
+	// The page can hide a frame after it was read: one a person can't see is never acted in.
+	if (!(await frameShownNow(tabId, now)))
+		throw new Error(
+			`Ref ${target.ref} isn't shown now: its frame is hidden, see-through, too small or covered. Call read_page for fresh refs.`,
 		);
 	if (!(await frameTakesPoint(tabId, now, at.x, at.y)))
 		throw new Error(
-			`Ref ${target.ref} is covered by something over its frame, which would take the click. Close or dismiss it, then call read_page.`,
+			`Ref ${target.ref} is covered by something over its frame, which would take the ${act}. Close or dismiss it, then call read_page.`,
 		);
 	return at;
 }
@@ -1255,7 +1327,7 @@ export async function fillElement(
 	tabId: number,
 	target: { ref?: string; selector?: string },
 	value: string,
-	skip?: (url: string) => boolean,
+	rule?: FrameRule,
 ): Promise<void> {
 	const code = (r: string | undefined, inFrame: boolean) => `(async () => {
 		let el = null;
@@ -1324,7 +1396,10 @@ export async function fillElement(
 		}
 		throw new Error("Element is not a form control: use click or type on it instead of fill.");
 	})()`;
-	await runForRef(tabId, target.ref, code, skip);
+	// A field in a frame: the frame's own document can't see a banner over the frame, so the page
+	// around it is checked as a click would be, before anything is written.
+	if (target.ref && splitFrameRef(target.ref)) await locate(tabId, { ref: target.ref }, rule, "fill");
+	await runForRef(tabId, target.ref, code, rule);
 }
 
 /** Characters get_page_text returns by default. */
@@ -1426,7 +1501,7 @@ export async function pageHtml(
 export async function scrollPage(
 	tabId: number,
 	options: { dx?: number; dy?: number; selector?: string; ref?: string; to?: "top" | "bottom" },
-	skip?: (url: string) => boolean,
+	rule?: FrameRule,
 ): Promise<{
 	scrollX: number;
 	scrollY: number;
@@ -1482,11 +1557,16 @@ export async function scrollPage(
 		else window.scrollBy(o.dx || 0, o.dy || 0);
 		return { scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY), pageHeight: document.documentElement.scrollHeight };
 	})()`;
-	if (options.ref) {
-		const framed = await frameForRef(tabId, options.ref, skip);
-		if (framed) await scrollFrameIntoView(tabId, framed.frame);
-	}
-	return (await runForRef<Awaited<ReturnType<typeof scrollPage>>>(tabId, options.ref, code, skip)).value;
+	const framed = options.ref ? await frameForRef(tabId, options.ref, rule) : undefined;
+	if (framed) await scrollFrameIntoView(tabId, framed.frame);
+	const { value } = await runForRef<Awaited<ReturnType<typeof scrollPage>>>(tabId, options.ref, code, rule, framed);
+	if (!framed) return value;
+	// In a frame the window is the frame's: the page's own position is what the result names.
+	const page = await runInPage<{ scrollX: number; scrollY: number; pageHeight: number }>(
+		tabId,
+		"({ scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY), pageHeight: document.documentElement.scrollHeight })",
+	);
+	return { ...value, ...page };
 }
 
 /** Wait until a selector appears, text is present, or the URL matches. */

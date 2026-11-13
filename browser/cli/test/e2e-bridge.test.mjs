@@ -2176,31 +2176,73 @@ test("cross-origin frames: read, click and fill inside a same-site and a cross-s
 	});
 	await new Promise((r) => inner.listen(0, "127.0.0.1", r));
 	const port = inner.address().port;
+	const hostsWere = await sw("chrome.storage.local.get('bridge_allowed_hosts').then((d) => d.bridge_allowed_hosts ?? [])");
+	const setHosts = (hosts) => sw(`chrome.storage.local.set({ bridge_allowed_hosts: ${JSON.stringify(hosts)} }).then(() => true)`);
 	try {
+		// localhost is another site the person never allowed for agents: its frame is named, never read.
+		await setHosts(hostsWere.filter((h) => h !== "localhost"));
 		extraPages["/xo"] = `<!doctype html><title>Polycarp frames</title><h1>Shop</h1>
 <iframe src="http://127.0.0.1:${port}/inner?k=same" style="width:400px;height:160px;border:3px solid #ccc;margin:10px"></iframe>
 <iframe src="http://localhost:${port}/inner?k=cross" style="width:400px;height:160px;border:0"></iframe>`;
 		// Below the fold, in a frame taller than the window: the click scrolls the page and the frame.
 		extraPages["/xo-far"] = `<!doctype html><title>Polycarp far frame</title><div style="height:1400px">Top</div>
 <iframe src="http://localhost:${port}/inner?k=far" style="width:400px;height:1200px;border:0"></iframe><div style="height:600px"></div>`;
+		// A banner over the frame's top, where its controls are: the frame is read, its covered controls refuse.
 		extraPages["/xo-cover"] = `<!doctype html><title>Polycarp covered frame</title>
-<div style="position:relative;width:420px;height:170px"><iframe src="http://localhost:${port}/inner?k=under" style="width:400px;height:160px;border:0"></iframe><div style="position:absolute;inset:0;background:rgba(0,0,0,.2)">Cookie wall</div></div>`;
+<div style="position:relative;width:420px;height:170px"><iframe src="http://localhost:${port}/inner?k=under" style="width:400px;height:160px;border:0"></iframe><div style="position:absolute;left:0;top:0;width:420px;height:60px;background:rgba(0,0,0,.2)">Cookie wall</div></div>`;
+		// Frames a person can't see are not read: see-through, hidden, a pixel, kept off the page, under a wall, in a see-through box.
+		extraPages["/xo-hidden"] = `<!doctype html><title>Polycarp hidden frames</title>
+<iframe src="http://localhost:${port}/inner?k=seen" style="width:300px;height:120px;border:0"></iframe>
+<iframe src="http://localhost:${port}/inner?k=op" style="width:300px;height:120px;border:0;opacity:0"></iframe>
+<iframe src="http://localhost:${port}/inner?k=vis" style="width:300px;height:120px;border:0;visibility:hidden"></iframe>
+<iframe src="http://localhost:${port}/inner?k=tiny" style="width:1px;height:1px;border:0"></iframe>
+<iframe src="http://localhost:${port}/inner?k=off" style="position:absolute;left:-9999px;top:0;width:300px;height:120px;border:0"></iframe>
+<div style="opacity:0"><iframe src="http://localhost:${port}/inner?k=box" style="width:300px;height:120px;border:0"></iframe></div>
+<div style="position:relative;width:300px;height:120px"><iframe src="http://localhost:${port}/inner?k=wall" style="width:300px;height:120px;border:0"></iframe><div style="position:absolute;inset:0;background:#fff">Sign in to continue</div></div>`;
+		// Drawn at half size: a point in the frame is half as far from its corner in the tab.
+		extraPages["/xo-half"] = `<!doctype html><title>Polycarp half frame</title>
+<iframe src="http://localhost:${port}/inner?k=half" style="width:600px;height:160px;border:0;transform:scale(0.5);transform-origin:0 0"></iframe>`;
+		extraPages["/xo-scroll"] = `<!doctype html><title>Polycarp frame scroll</title><div style="height:1500px">Top</div>
+<iframe src="http://localhost:${port}/inner?k=long" style="width:400px;height:200px;border:0"></iframe><div style="height:2000px"></div>`;
 		await go("xo");
 		// The frames load after the page: wait until both are in the snapshot.
 		let page = "";
 		await until(async () => {
 			page = await tool("read_page", { filter: "interactive" });
+			return frameRef(page, "Pay same") && /not allowed for agents: localhost/.test(page);
+		}, 10_000, "the same-site frame read and the cross-site one named");
+		assert.doesNotMatch(await tool("read_page", {}), /Pay cross|unpaid cross|Card name cross/, "nothing of a frame on a host not allowed for agents");
+		const forged = await mcp.callTool({ name: "click", arguments: { ref: "fzzzze1" } });
+		assert.ok(forged.isError, "a ref naming no frame fails");
+		assert.match(forged.content[0].text, /not found/);
+
+		tk("allow", "localhost");
+		await until(async () => {
+			page = await tool("read_page", { filter: "interactive" });
 			return frameRef(page, "Pay same") && frameRef(page, "Pay cross");
-		}, 10_000, "both frames in read_page");
+		}, 10_000, "both frames in read_page once localhost is allowed");
 		assert.doesNotMatch(page, /pinsameSECRET42|pincrossSECRET42/, "a password in a frame stays masked");
+		// Taken back: a ref read while it was allowed refuses, naming how to allow it again.
+		await setHosts(hostsWere.filter((h) => h !== "localhost"));
+		const refused = await mcp.callTool({ name: "click", arguments: { ref: frameRef(page, "Pay cross") } });
+		assert.ok(refused.isError, "a frame ref on a host no longer allowed refuses");
+		assert.match(refused.content[0].text, /permission_denied|Not allowed to open localhost:\d+: .*polycarp browser allow localhost/);
+		assert.doesNotMatch(await tool("read_page", {}), /Paid cross/, "and nothing was clicked");
+		tk("allow", "localhost");
 
 		for (const k of ["same", "cross"]) {
-			await tool("click", { ref: frameRef(page, `Pay ${k}`) });
-			await tool("fill", { ref: frameRef(page, `Card name ${k}`), value: `Ann ${k}` });
+			// The change report looks in the frame acted in: the click's effect and the filled value are in it.
+			const clicked = await tool("click", { ref: frameRef(page, `Pay ${k}`) });
+			assert.match(clicked, new RegExp(`Paid ${k}`), `the click's changes show what it did in the ${k} frame`);
+			const filled = await tool("fill", { ref: frameRef(page, `Card name ${k}`), value: `Ann ${k}` });
+			assert.match(filled, new RegExp(`Ann ${k}`), `the fill's changes show the ${k} frame's field`);
 			const all = await tool("read_page", {});
 			assert.match(all, new RegExp(`Paid ${k}`), `the click reached the ${k} frame`);
 			assert.match(all, new RegExp(`Name is Ann ${k}`), `fill reached the ${k} frame`);
 		}
+		await tool("type", { ref: frameRef(page, "Card name cross"), text: "!" });
+		assert.match(await tool("read_page", {}), /Name is Ann cross!/, "type reached the frame");
+		await tool("hover", { ref: frameRef(page, "Pay cross") });
 		const found = await tool("find", { query: "pay cross" });
 		assert.match(found, /f[0-9a-z]{4}e\d+/, "find returns the frame ref");
 
@@ -2220,6 +2262,27 @@ test("cross-origin frames: read, click and fill inside a same-site and a cross-s
 		await tool("click", { ref: frameRef(far, "Pay far") });
 		assert.match(await tool("read_page", {}), /Paid far/, "a click below the fold reaches the frame");
 
+		await go("xo-half");
+		let half = "";
+		await until(async () => {
+			half = await tool("read_page", { filter: "interactive" });
+			return frameRef(half, "Next half");
+		}, 10_000, "the half-size frame in read_page");
+		await tool("click", { ref: frameRef(half, "Next half") });
+		assert.match(await tool("read_page", {}), /Second page/, "the click landed on the link in the half-size frame");
+
+		await go("xo-scroll");
+		let long = "";
+		await until(async () => {
+			long = await tool("read_page", { filter: "interactive" });
+			return frameRef(long, "Pay long");
+		}, 10_000, "the frame to scroll to in read_page");
+		await tool("scroll", { to: "bottom" });
+		const scrolled = JSON.parse(await tool("scroll", { ref: frameRef(long, "Pay long") }));
+		const top = JSON.parse(await tool("run_js", { code: "({ y: Math.round(scrollY), h: document.documentElement.scrollHeight })" })).value;
+		assert.equal(scrolled.pageHeight, top.h, "the page's height, not the frame's");
+		assert.ok(top.y > 0 && Math.abs(scrolled.scrollY - top.y) <= 1, `the page's position, not the frame's: ${scrolled.scrollY} vs ${top.y}`);
+
 		await go("xo-cover");
 		let covered = "";
 		await until(async () => {
@@ -2229,8 +2292,64 @@ test("cross-origin frames: read, click and fill inside a same-site and a cross-s
 		const r = await mcp.callTool({ name: "click", arguments: { ref: frameRef(covered, "Pay under") } });
 		assert.ok(r.isError, "a click into a covered frame refuses");
 		assert.match(r.content[0].text, /covered/);
-		assert.doesNotMatch(await tool("read_page", {}), /Paid under/);
+		const f = await mcp.callTool({ name: "fill", arguments: { ref: frameRef(covered, "Card name under"), value: "Eve" } });
+		assert.ok(f.isError, "a fill into a covered field refuses");
+		assert.match(f.content[0].text, /covered/);
+		const after = await tool("read_page", {});
+		assert.doesNotMatch(after, /Paid under|Name is Eve/);
+
+		await go("xo-hidden");
+		let hidden = "";
+		await until(async () => {
+			hidden = await tool("read_page", {});
+			return /Pay seen/.test(hidden);
+		}, 10_000, "the shown frame in read_page");
+		await new Promise((r) => setTimeout(r, 500));
+		hidden = await tool("read_page", {});
+		for (const k of ["op", "vis", "tiny", "off", "box", "wall"])
+			assert.doesNotMatch(hidden, new RegExp(`(Pay|unpaid|Card name|Next) ${k}\\b`), `the ${k} frame is not read`);
+		// Shown when read, made see-through after: the refs from then must not act in it.
+		const seen = await tool("read_page", { filter: "interactive" });
+		await tool("run_js", { code: "document.querySelector('iframe').style.opacity = '0'" });
+		const ghost = await mcp.callTool({ name: "click", arguments: { ref: frameRef(seen, "Pay seen") } });
+		assert.ok(ghost.isError, "a click into a frame made see-through after the read refuses");
+		assert.match(ghost.content[0].text, /isn't shown now: its frame is hidden/);
+		const ghostFill = await mcp.callTool({ name: "fill", arguments: { ref: frameRef(seen, "Card name seen"), value: "Eve" } });
+		assert.ok(ghostFill.isError, "a fill into it refuses too");
+		await tool("run_js", { code: "document.querySelector('iframe').style.opacity = ''" });
+		assert.doesNotMatch(await tool("read_page", {}), /Paid seen|Name is Eve/, "nothing was clicked or filled in it");
 	} finally {
+		await setHosts(hostsWere).catch(() => undefined);
+		inner.close();
+	}
+});
+
+test("a confirm() a cross-site frame opens is answered there, after a worker restart too", async () => {
+	const inner = createServer((req, res) => {
+		res.writeHead(200, { "content-type": "text/html" });
+		res.end(`<!doctype html><button onclick="document.getElementById('r').textContent = confirm('Pay now?') ? 'answered yes' : 'answered no'">Ask</button><p id="r">unasked</p>`);
+	});
+	await new Promise((r) => inner.listen(0, "127.0.0.1", r));
+	const hostsWere = await sw("chrome.storage.local.get('bridge_allowed_hosts').then((d) => d.bridge_allowed_hosts ?? [])");
+	try {
+		tk("allow", "localhost");
+		extraPages["/xo-dialog"] = `<!doctype html><title>Polycarp frame dialog</title><iframe src="http://localhost:${inner.address().port}/" style="width:300px;height:100px;border:0"></iframe>`;
+		await go("xo-dialog");
+		const page = await until(async () => {
+			const p = await tool("read_page", { filter: "interactive" });
+			return frameRef(p, "Ask") && p;
+		}, 10_000, "the frame's button");
+		const clicked = JSON.parse(await tool("click", { ref: frameRef(page, "Ask") }));
+		assert.equal(clicked.dialog?.message, "Pay now?", JSON.stringify(clicked));
+		const version = await (await fetch(`http://${devtools}/json/version`)).json();
+		const worker = (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "service_worker" && t.url.includes(EXTENSION_ID));
+		await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId: worker.id });
+		await connected();
+		const answered = JSON.parse(await tool("handle_dialog", { accept: true }));
+		assert.equal(answered.accepted, true);
+		assert.match(await tool("read_page", {}), /answered yes/, "the box in the frame was answered, and the page goes on");
+	} finally {
+		await sw(`chrome.storage.local.set({ bridge_allowed_hosts: ${JSON.stringify(hostsWere)} }).then(() => true)`).catch(() => undefined);
 		inner.close();
 	}
 });

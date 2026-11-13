@@ -182,7 +182,9 @@ result text over MCP, plus navigate, so the same evals run against it:
 ## Seeing pages: perception eval
 
 `node cli/eval/perception.mjs --extension <build> [--out file.json]` drives the MCP tools against
-local fixture pages (no model) and scores 26 probes:
+local fixture pages (no model) and scores 26 probes. The table below has the 20 measured on 2026-10-28; the 4 settle
+probes and the 2 cross-origin frame probes (`xorigin-see`, `xorigin-click`) came later, and their results are in the
+paragraphs after it. The probes:
 - open shadow roots: see, click, fill a nested field, and read their text with `read_page`,
   `get_page_text`, and `get_page_text` on the host; a `display: contents` component
 - same-origin and cross-origin frames, including a scaled, padded frame, and inside cross-origin frames (D46): a

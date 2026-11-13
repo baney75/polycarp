@@ -24,14 +24,42 @@ export interface PageFrame {
 	offset: { x: number; y: number };
 	/** Where the owner session's viewport starts in the tab's: points sent to it subtract this. */
 	base: { x: number; y: number };
+	/** Tab CSS px per frame CSS px: below 1 for a frame drawn smaller (a transform). */
+	scale: number;
+	/** The same for the owner session's viewport (1 for the tab's own). */
+	baseScale: number;
 	/** The frame and the frames around it, outermost first, for scrolling and cover checks. */
 	chain: PageFrame[];
+	/** On a host not allowed for agents: listed by its host, never read or acted in. */
+	blocked?: boolean;
 }
 
+/**
+ * Why a frame is not read, by its URL: "guarded" (the approval page, #94) leaves it out with
+ * everything inside it; "blocked" (a host not allowed for agents) lists it by its host only.
+ */
+export type FrameBar = "guarded" | "blocked" | undefined;
+export type FrameRule = (url: string) => FrameBar | Promise<FrameBar>;
+
 const WORLD = "polycarp";
-/** At most this many frames are read, and this deep: an ad grid can't run up the cost. */
-const MAX_FRAMES = 10;
+/** At most this many frames are read (readFrames in page.ts), and this deep: an ad grid can't run up the cost. */
+export const MAX_FRAMES = 10;
 const MAX_DEPTH = 3;
+/** Frames placed per look, hidden ones included: those read are picked from them by what the page shows. */
+const MAX_PLACED = 30;
+/** The most one debugger call about a frame may take: a frame that doesn't answer is left out, not waited on. */
+export const FRAME_CALL_MS = 1000;
+
+/** A call's value, or undefined when it fails or takes longer than `ms`. */
+export function bounded<T>(work: Promise<T>, ms = FRAME_CALL_MS): Promise<T | undefined> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	return Promise.race([
+		work.catch(() => undefined),
+		new Promise<undefined>((done) => {
+			timer = setTimeout(done, ms, undefined);
+		}),
+	]).finally(() => clearTimeout(timer));
+}
 
 interface Child {
 	sessionId: string;
@@ -66,7 +94,7 @@ function install(): void {
 				url: p.targetInfo.url ?? "",
 				parent: source.sessionId,
 			});
-			// A frame inside it announces its own frames; its dialogs are the tab's (cdp.ts answers them there).
+			// A frame inside it announces its own frames. A box it opens is answered in its session (dialogSession).
 			void cdpSendSession(tabId, p.sessionId, "Target.setAutoAttach", AUTO).catch(() => undefined);
 			void cdpSendSession(tabId, p.sessionId, "Page.enable").catch(() => undefined);
 		} else if (method === "Target.detachedFromTarget") {
@@ -134,12 +162,10 @@ const web = (url: string) => /^(https?|file):/.test(url);
 /**
  * The tab's cross-origin frames, outermost first: each frame whose origin differs from the
  * document around it. A same-origin frame inside one is read with it, as the top document reads
- * its own. `skip` leaves out a frame by URL (the approval page) and everything inside it.
+ * its own. `rule` bars a frame by URL: a guarded one is left out with everything inside it, a
+ * blocked one is placed (so read_page can name it) and nothing inside it is.
  */
-export async function crossOriginFrames(
-	tabId: number,
-	skip: (url: string) => boolean = () => false,
-): Promise<PageFrame[]> {
+export async function crossOriginFrames(tabId: number, rule: FrameRule = () => undefined): Promise<PageFrame[]> {
 	await prime(tabId);
 	// Announcements arrive just after auto-attach turns on: wait until every frame the browser
 	// knows of is accounted for, briefly.
@@ -147,70 +173,84 @@ export async function crossOriginFrames(
 	const until = Date.now() + 300;
 	let found: { frames: PageFrame[]; seen: number };
 	for (;;) {
-		found = await collect(tabId, skip);
+		found = await collect(tabId, rule);
 		if (found.seen >= expected || Date.now() >= until) break;
 		await new Promise((r) => setTimeout(r, 25));
 	}
 	return found.frames;
 }
 
-async function collect(tabId: number, skip: (url: string) => boolean): Promise<{ frames: PageFrame[]; seen: number }> {
+/** Where a frame's contents stand: inside this frame (none: the tab's own document), or "out" (not read). */
+type Inside = PageFrame | undefined | "out";
+
+async function collect(tabId: number, rule: FrameRule): Promise<{ frames: PageFrame[]; seen: number }> {
 	const frames: PageFrame[] = [];
+	// Every frame looked at or left out is counted, so the caller stops waiting once all are.
 	let seen = 0;
-	const kids = children.get(tabId) ?? new Map<string, Child>();
-	const full = () => frames.length >= MAX_FRAMES;
-	/** One session's frame tree, then the out-of-process frames whose <iframe> is in it. */
-	const session = async (
-		sessionId: string | undefined,
-		tree: TreeNode,
+	const kids = [...(children.get(tabId) ?? new Map<string, Child>())];
+	const kidsOf = (sessionId: string | undefined) => kids.filter(([, c]) => c.parent === sessionId);
+	const tree = (sessionId: string | undefined) =>
+		bounded(cdpSendSession<{ frameTree: TreeNode }>(tabId, sessionId, "Page.getFrameTree")).then((t) => t?.frameTree);
+	/** A session left out with the frame that holds it: its frames and those of every session inside it are counted. */
+	const leaveOut = async (sessionId: string, known?: TreeNode | null): Promise<void> => {
+		const t = known === undefined ? await tree(sessionId) : known;
+		seen += t ? count(t) : 1;
+		for (const [, c] of kidsOf(sessionId)) await leaveOut(c.sessionId);
+	};
+	/** Place a cross-origin frame unless something bars it; a blocked one is placed but read no further. */
+	const admit = async (
+		frameId: string,
+		ownerSessionId: string | undefined,
+		url: string,
+		around: PageFrame | undefined,
 		root: PageFrame | undefined,
-	): Promise<void> => {
-		const visit = async (node: TreeNode, around: PageFrame | undefined): Promise<void> => {
+		sessionId?: string,
+	): Promise<PageFrame | undefined> => {
+		if (frames.length >= MAX_PLACED || (around?.chain.length ?? 0) >= MAX_DEPTH) return undefined;
+		const bar = await rule(url);
+		if (bar === "guarded") return undefined;
+		const f = await place(tabId, frameId, ownerSessionId, url, around, root, sessionId);
+		if (!f) return undefined;
+		if (bar === "blocked") f.blocked = true;
+		frames.push(f);
+		return f;
+	};
+	/** One session's frame tree, then the out-of-process frames whose <iframe> is in it. */
+	const session = async (sessionId: string | undefined, top: TreeNode, root: PageFrame | undefined): Promise<void> => {
+		const where = new Map<string, Inside>();
+		const visit = async (node: TreeNode, inside: Inside): Promise<void> => {
 			seen++;
+			where.set(node.frame.id, inside);
 			for (const child of node.childFrames ?? []) {
-				let inside = around;
 				const url = child.frame.url + (child.frame.urlFragment ?? "");
 				const cross =
 					originOf(child.frame) !== originOf(node.frame) && !/^(about|data|blob):/.test(child.frame.url);
+				if (inside === "out" || !cross) await visit(child, inside);
 				// A frame that isn't a web page is left out with everything inside it.
-				if (cross && !web(child.frame.url)) {
-					seen += count(child);
-					continue;
+				else if (!web(child.frame.url)) await visit(child, "out");
+				else {
+					const f = await admit(child.frame.id, sessionId, url, inside, root);
+					await visit(child, f && !f.blocked ? f : "out");
 				}
-				if (cross) {
-					const f =
-						skip(url) || full() || (around?.chain.length ?? 0) >= MAX_DEPTH
-							? undefined
-							: await place(tabId, child.frame.id, sessionId, url, around, root);
-					if (!f) {
-						seen += count(child);
-						continue;
-					}
-					frames.push(f);
-					inside = f;
-				}
-				await visit(child, inside);
 			}
 		};
-		await visit(tree, root);
-		for (const [targetId, c] of kids) {
-			if (c.parent !== sessionId) continue;
-			const sub = await cdpSendSession<{ frameTree: TreeNode }>(tabId, c.sessionId, "Page.getFrameTree").catch(
-				() => undefined,
-			);
-			if (!sub) continue;
-			const top = sub.frameTree;
-			const url = top.frame.url + (top.frame.urlFragment ?? "");
-			const f =
-				!web(url) || skip(url) || full() || (root?.chain.length ?? 0) >= MAX_DEPTH
-					? undefined
-					: await place(tabId, targetId, sessionId, url, root, root, c.sessionId);
-			if (!f) {
-				seen += count(top);
+		await visit(top, root);
+		for (const [targetId, c] of kidsOf(sessionId)) {
+			// The frame whose document holds this one's <iframe>: what is around it, and whether it is read at all.
+			const owner = await ownerFrame(tabId, sessionId, targetId, top);
+			const inside: Inside = owner !== undefined && where.has(owner) ? where.get(owner) : root;
+			const sub = await tree(c.sessionId);
+			if (!sub) {
+				await leaveOut(c.sessionId, null);
 				continue;
 			}
-			frames.push(f);
-			await session(c.sessionId, top, f);
+			const url = sub.frame.url + (sub.frame.urlFragment ?? "");
+			const f =
+				inside === "out" || !web(url)
+					? undefined
+					: await admit(targetId, sessionId, url, inside, root, c.sessionId);
+			if (!f || f.blocked) await leaveOut(c.sessionId, sub);
+			else await session(c.sessionId, sub, f);
 		}
 	};
 	const top = await cdpSend<{ frameTree: TreeNode }>(tabId, "Page.getFrameTree");
@@ -220,6 +260,123 @@ async function collect(tabId: number, skip: (url: string) => boolean): Promise<{
 
 /** Frames in a subtree, the root included. */
 const count = (n: TreeNode): number => 1 + (n.childFrames ?? []).reduce((s, c) => s + count(c), 0);
+
+/**
+ * Which frame of a session's tree holds an out-of-process frame's <iframe>: the one whose document
+ * the element resolves in. Undefined when the debugger can't say.
+ */
+async function ownerFrame(
+	tabId: number,
+	sessionId: string | undefined,
+	targetId: string,
+	top: TreeNode,
+): Promise<string | undefined> {
+	if (!top.childFrames?.length) return top.frame.id;
+	const own = await bounded(
+		cdpSendSession<{ backendNodeId?: number }>(tabId, sessionId, "DOM.getFrameOwner", { frameId: targetId }),
+	);
+	if (!own?.backendNodeId) return undefined;
+	const at = await resolveOwner(tabId, sessionId, own.backendNodeId, top);
+	if (at)
+		void cdpSendSession(tabId, sessionId, "Runtime.releaseObjectGroup", { objectGroup: WORLD }).catch(
+			() => undefined,
+		);
+	return at?.frameId;
+}
+
+/**
+ * An element of one session, as an object in Polycarp's world of the frame that holds it (in any
+ * other frame's context it resolves to null). The caller releases the WORLD object group.
+ */
+async function resolveOwner(
+	tabId: number,
+	sessionId: string | undefined,
+	backendNodeId: number,
+	top: TreeNode,
+): Promise<{ frameId: string; objectId: string } | undefined> {
+	const all: TreeNode[] = [];
+	const walk = (n: TreeNode) => {
+		all.push(n);
+		for (const c of n.childFrames ?? []) walk(c);
+	};
+	walk(top);
+	for (const n of all) {
+		const world = await bounded(
+			cdpSendSession<{ executionContextId: number }>(tabId, sessionId, "Page.createIsolatedWorld", {
+				frameId: n.frame.id,
+				worldName: WORLD,
+				grantUniveralAccess: false,
+			}),
+		);
+		if (!world) continue;
+		const got = await bounded(
+			cdpSendSession<{ object?: { subtype?: string; objectId?: string } }>(tabId, sessionId, "DOM.resolveNode", {
+				backendNodeId,
+				executionContextId: world.executionContextId,
+				objectGroup: WORLD,
+			}),
+		);
+		if (got?.object?.objectId && got.object.subtype !== "null")
+			return { frameId: n.frame.id, objectId: got.object.objectId };
+	}
+	return undefined;
+}
+
+/**
+ * Whether a person can see an <iframe>: at least 4 px each way, drawn (not hidden or see-through,
+ * on it or above it), not kept off the page, and not fully covered. Self-contained: it runs in a
+ * page, in read_page's snapshot and, through frameShownNow, before an action in the frame.
+ */
+export function frameShown(el: Element): boolean {
+	const r = el.getBoundingClientRect();
+	if (r.width < 4 || r.height < 4) return false;
+	const view = el.ownerDocument.defaultView ?? window;
+	const check = (el as Element & { checkVisibility?: (o?: Record<string, boolean>) => boolean }).checkVisibility;
+	if (check && !check.call(el, { visibilityProperty: true, opacityProperty: true })) return false;
+	if (r.right + view.scrollX <= 0 || r.bottom + view.scrollY <= 0) return false;
+	const points = [
+		[0.5, 0.5],
+		[0.1, 0.1],
+		[0.9, 0.1],
+		[0.1, 0.9],
+		[0.9, 0.9],
+	]
+		.map(([a, b]) => [r.left + a * r.width, r.top + b * r.height])
+		.filter(([x, y]) => x >= 0 && y >= 0 && x < view.innerWidth && y < view.innerHeight);
+	// Out of view (below the fold): nothing to test until it is scrolled to.
+	return !points.length || points.some(([x, y]) => el.ownerDocument.elementFromPoint(x, y) === el);
+}
+
+/**
+ * Whether the frame and each frame around it is still shown (frameShown), tested where its
+ * <iframe> is, in Polycarp's world, so the page can't answer for it. A frame the debugger
+ * can't find there is no evidence either way, as in frameTakesPoint.
+ */
+export async function frameShownNow(tabId: number, frame: PageFrame): Promise<boolean> {
+	for (const f of frame.chain) {
+		const own = await bounded(
+			cdpSendSession<{ backendNodeId?: number }>(tabId, f.ownerSessionId, "DOM.getFrameOwner", {
+				frameId: f.frameId,
+			}),
+		);
+		const top = await bounded(cdpSendSession<{ frameTree: TreeNode }>(tabId, f.ownerSessionId, "Page.getFrameTree"));
+		if (!own?.backendNodeId || !top?.frameTree) continue;
+		const at = await resolveOwner(tabId, f.ownerSessionId, own.backendNodeId, top.frameTree);
+		if (!at) continue;
+		const shown = await bounded(
+			cdpSendSession<{ result?: { value?: unknown } }>(tabId, f.ownerSessionId, "Runtime.callFunctionOn", {
+				objectId: at.objectId,
+				functionDeclaration: `function () { return (${frameShown.toString()})(this); }`,
+				returnByValue: true,
+			}),
+		);
+		void cdpSendSession(tabId, f.ownerSessionId, "Runtime.releaseObjectGroup", { objectGroup: WORLD }).catch(
+			() => undefined,
+		);
+		if (shown?.result?.value === false) return false;
+	}
+	return true;
+}
 
 /**
  * Where a frame's content box is, in the tab's viewport; undefined when it isn't drawn.
@@ -235,53 +392,66 @@ async function place(
 	root: PageFrame | undefined,
 	sessionId = ownerSessionId,
 ): Promise<PageFrame | undefined> {
-	const own = await cdpSendSession<{ backendNodeId?: number }>(tabId, ownerSessionId, "DOM.getFrameOwner", {
-		frameId,
-	}).catch(() => undefined);
+	const own = await bounded(
+		cdpSendSession<{ backendNodeId?: number }>(tabId, ownerSessionId, "DOM.getFrameOwner", { frameId }),
+	);
 	if (!own?.backendNodeId) return undefined;
 	const box = await contentBox(tabId, ownerSessionId, own.backendNodeId);
 	if (!box) return undefined;
 	const base = root?.offset ?? { x: 0, y: 0 };
+	const baseScale = root?.scale ?? 1;
 	const f: PageFrame = {
 		tag: frameTag(frameId),
 		frameId,
 		sessionId,
 		ownerSessionId,
 		url,
-		offset: { x: base.x + box.x, y: base.y + box.y },
+		offset: { x: base.x + baseScale * box.x, y: base.y + baseScale * box.y },
 		base,
+		scale: baseScale * box.scale,
+		baseScale,
 		chain: [],
 	};
 	f.chain = [...(around?.chain ?? []), f];
 	return f;
 }
 
-/** The content box's top left of an element, in its session's viewport. */
+/** The content box's top left of an element, in its session's viewport, and how much smaller or larger it is drawn. */
 async function contentBox(
 	tabId: number,
 	sessionId: string | undefined,
 	backendNodeId: number,
-): Promise<{ x: number; y: number } | undefined> {
-	const quads = await cdpSendSession<{ quads?: number[][] }>(tabId, sessionId, "DOM.getContentQuads", {
-		backendNodeId,
-	}).catch(() => undefined);
-	const model = await cdpSendSession<{ model?: { content: number[]; border: number[] } }>(
-		tabId,
-		sessionId,
-		"DOM.getBoxModel",
-		{ backendNodeId },
-	).catch(() => undefined);
+): Promise<{ x: number; y: number; scale: number } | undefined> {
+	const quads = await bounded(
+		cdpSendSession<{ quads?: number[][] }>(tabId, sessionId, "DOM.getContentQuads", { backendNodeId }),
+	);
+	const model = await bounded(
+		cdpSendSession<{ model?: { content: number[]; border: number[]; width?: number } }>(
+			tabId,
+			sessionId,
+			"DOM.getBoxModel",
+			{ backendNodeId },
+		),
+	);
 	const q = quads?.quads?.[0];
-	if (!q || !model?.model) return undefined;
-	// Quads are in the viewport; the box model gives the border and padding inside them.
+	const m = model?.model;
+	if (!q || !m) return undefined;
+	// The quad is the box as drawn, the model's width its size in layout: their ratio is the frame's
+	// transform. Quads are in the viewport; the box model gives the border and padding inside them.
+	const k = q.length >= 4 && m.width ? Math.hypot(q[2] - q[0], q[3] - q[1]) / m.width : 1;
 	return {
-		x: q[0] + model.model.content[0] - model.model.border[0],
-		y: q[1] + model.model.content[1] - model.model.border[1],
+		x: q[0] + m.content[0] - m.border[0],
+		y: q[1] + m.content[1] - m.border[1],
+		scale: Number.isFinite(k) && k > 0 ? k : 1,
 	};
 }
 
 /** Run page code (an expression that runInPage would wrap) in a frame's isolated world. */
-export async function evaluateInFrame(tabId: number, frame: PageFrame, expression: string): Promise<unknown> {
+export async function evaluateInFrame(
+	tabId: number,
+	frame: Pick<PageFrame, "frameId" | "sessionId">,
+	expression: string,
+): Promise<unknown> {
 	const world = await cdpSendSession<{ executionContextId: number }>(
 		tabId,
 		frame.sessionId,
@@ -321,14 +491,19 @@ export async function scrollFrameIntoView(tabId: number, frame: PageFrame): Prom
 
 /**
  * Wait until the page has drawn twice (at most 200 ms), after a scroll that moved a frame. The browser routes a
- * click to an out-of-process frame by where it was last drawn, so a click sent sooner can miss it.
+ * click to an out-of-process frame by where it was last drawn, so a click sent sooner can miss it. The wait runs
+ * in Polycarp's world of the top document, out of the page's reach, and never past 300 ms here.
  */
 export async function framePainted(tabId: number): Promise<void> {
-	await cdpSend(tabId, "Runtime.evaluate", {
-		expression:
+	const wait = (async () => {
+		const top = await cdpSend<{ frameTree: TreeNode }>(tabId, "Page.getFrameTree");
+		await evaluateInFrame(
+			tabId,
+			{ frameId: top.frameTree.frame.id },
 			"Promise.race([new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))), new Promise((ok) => setTimeout(ok, 200))])",
-		awaitPromise: true,
-	}).catch(() => undefined);
+		);
+	})();
+	await bounded(wait, 300);
 }
 
 /**
@@ -377,15 +552,31 @@ async function within(tabId: number, sessionId: string | undefined, id: string, 
 	return tree ? find(tree.frameTree, false) : false;
 }
 
-/** The frame a tagged ref names, among the tab's frames now. */
+/** A frame's host, as read_page and the errors name it. */
+export function frameHost(url: string): string {
+	try {
+		return new URL(url).host || "(frame)";
+	} catch {
+		return "(frame)";
+	}
+}
+
+/** The frame a tagged ref names, among the tab's frames now. One on a host not allowed for agents refuses. */
 export async function frameForRef(
 	tabId: number,
 	ref: string,
-	skip?: (url: string) => boolean,
+	rule?: FrameRule,
 ): Promise<{ frame: PageFrame; inner: string } | undefined> {
 	const split = splitFrameRef(ref);
 	if (!split) return undefined;
-	const frame = (await crossOriginFrames(tabId, skip)).find((f) => f.tag === split.tag);
+	const frame = (await crossOriginFrames(tabId, rule)).find((f) => f.tag === split.tag);
 	if (!frame) throw new Error(`Ref ${ref} not found: its frame is gone or changed. Call read_page for fresh refs.`);
+	if (frame.blocked) {
+		const host = frameHost(frame.url);
+		throw new Error(
+			`Not allowed to open ${host}: ref ${ref} is in a frame from a site not allowed for agents. ` +
+				`The user can allow it in the Polycarp side panel under Settings > Agents, or with \`polycarp browser allow ${new URL(frame.url).hostname}\`.`,
+		);
+	}
 	return { frame, inner: split.inner };
 }
