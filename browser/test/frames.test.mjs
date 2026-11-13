@@ -1000,6 +1000,20 @@ test("PR 228 r1 first-F2 and PR 235 r1: out of view, a frame is away only when a
 	assert.equal(frameShown(t.frameIn(box(10, 3000, 300, 120), scroller)), "away", "down a box that scrolls");
 	t = make({ htmlStyle: { overflowY: "auto" }, bodyStyle: { overflowY: "hidden" } });
 	assert.equal(frameShown(t.frameIn(low)), "away", "first-F4: html scrolls, so body's overflow clips only body's own box");
+	// PR 235 r2: per axis, right to left, the flat tree through a slot, and a cover fixed over the viewport.
+	t = make();
+	const pane = (style, extra = {}) => Object.assign(t.part(style, box(0, 0, 1280, 800), t.doc.body), extra);
+	assert.equal(frameShown(t.frameIn(low, pane({ overflowX: "hidden", overflowY: "auto" }))), "away", "first-F2: a pane that scrolls down only");
+	const rtl = pane({ overflowX: "auto", overflowY: "hidden", direction: "rtl" }, { scrollWidth: 5000, clientWidth: 1280 });
+	assert.equal(frameShown(t.frameIn(box(-2000, 10, 300, 120), rtl)), "away", "second-second-F3: past the end of a right-to-left carousel");
+	const sheet = t.part({}, box(0, 0, 1280, 5000), t.doc.body);
+	const slot = t.part({}, box(0, 900, 1280, 400), t.part({ position: "fixed" }, box(0, 900, 1280, 400), null, { nodeType: 11, host: sheet }));
+	assert.equal(frameShown(Object.assign(t.frameIn(low, sheet), { assignedSlot: slot })), "hidden", "second-second-F1: slotted in a fixed panel");
+	const wall = t.part({ position: "fixed" }, box(0, 0, 1280, 800), t.doc.body);
+	t.doc.elementFromPoint = () => wall;
+	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F1: under a cover fixed over the viewport");
+	t.doc.elementFromPoint = (x, y) => (y === 400 ? wall : t.doc.body);
+	assert.equal(frameShown(t.frameIn(low)), "away", "a fixed box in the middle only is no cover");
 });
 
 /** Two levels of frames (X holds Z), Z found once with no delay; `extra` is the fakeTab setup for the looks. */
@@ -1097,6 +1111,35 @@ test("PR 228 r1 first-F3 and second-S1: a redirected hidden frame says so on its
 });
 
 /** A page in a sandbox with one cross-origin <iframe>, to run page code as the tab would. */
+test("PR 235 r2 first-F3, first-F4, second-second-F2: query URLs bind their own lines; no frame notes throws; a refind that fails fast is unknown", async () => {
+	const { snapshot, changeLook, pageSnapshot } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	try {
+		// Stacked ad slots with queries; the snapshot writes each href with no query.
+		chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+		const pay = (id, path) => ({ frame: { id, url: `https://pay.example/${path}`, securityOrigin: "https://pay.example" } });
+		const lines = ["a", "b"].map((p, i) => ({ ...frameLine(`e${i + 1}`, [100, 50, 400, 150]), href: `https://pay.example/${p}` }));
+		fakeTab(56, { trees: { "": node("TOP", "https://shop.example", [pay("PA", "a?slot=1"), pay("PB", "b?slot=2")]) }, holds: { PA: "TOP", PB: "TOP" }, owners: { PA: 11, PB: 12 }, shown: { PA: "no answer", PB: "hidden" }, evaluate: (frameId) => (frameId === undefined ? pageWith(lines) : frameSnap("pay")) });
+		const got = (await snapshot(56, { skip: open })).nodes;
+		assert.deepEqual(got.find((n) => n.ref === "e1")?.states, ["cross-origin: read it with navigate to its URL"], "first-F3: /a keeps its line");
+		assert.deepEqual(got.find((n) => n.ref === "e2")?.states, ["cross-origin frame, not shown, so not read"], "first-F3: /b says not shown");
+		// first-F4: frame notes left out throw on any page, not only one with a cross-origin frame.
+		const page = crossPage();
+		page.document.querySelectorAll = () => [];
+		const call = `(${pageSnapshot.toString()})(300, 1000, "all", () => true, () => "p", false, () => "shown")`;
+		assert.throws(() => vm.runInContext(call, page), /pageSnapshot: its caller passed no frameShown/);
+		// second-second-F2: the refind's frame tree rejects at once; the frame may still be there.
+		const top = { ...zLook, url: "https://shop.example/", nodes: [], text: "" };
+		const z = await slowZ(57, { fail: new Set(["S2:Page.getFrameTree"]), evaluate: (frameId) => { if (frameId) throw new Error("Cannot find context with specified id"); return top; } });
+		const ref = `${frameTag("Z")}e5`;
+		const look = await changeLook(57, 400, [ref], [], { ref, rule: open, hit: { frame: z, inner: "e5" } });
+		assert.ok(!look.gone.includes(ref), `a refind with no answer is unknown, not gone: ${JSON.stringify(look.gone)}`);
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});
+
 function crossPage() {
 	const g = { innerWidth: 1280, innerHeight: 800, scrollX: 0, scrollY: 0, __name: (f) => f, crypto, CSS: { escape: (s) => s }, location: { href: "https://shop.example/" }, frameElement: null, getComputedStyle: () => ({ opacity: "1", filter: "none", visibility: "visible", display: "block", paddingLeft: "0", paddingTop: "0" }) };
 	const doc = { nodeType: 9, defaultView: g, title: "Shop", body: { innerText: "Shop" }, activeElement: null, documentElement: { scrollHeight: 800 }, getElementsByTagName: () => [] };
