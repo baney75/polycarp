@@ -89,6 +89,8 @@ const WHO = "(?:Ref \\S+|That element)";
 const KNOWN: Array<[RegExp, string]> = [
 	[new RegExp(`${START}${WHO} (?:not found|now shows something else|isn't shown now)`), ERR.STALE_REF],
 	[new RegExp(`${START}Element is no longer in the page`), ERR.STALE_REF],
+	// A slice of a ranked read the page no longer has (another read since, or a new page): read again from the top.
+	[new RegExp(`${START}Offset \\d+ is from (?:read \\S+|a read) this page no longer has`), ERR.STALE_REF],
 	[
 		new RegExp(`${START}(?:Selector not found|No option matches|No captured request|No dialog is open)`),
 		ERR.NOT_FOUND,

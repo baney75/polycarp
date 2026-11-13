@@ -278,6 +278,8 @@ export interface Snapshot {
 		near: number;
 		far: number;
 		offset: number;
+		/** Names this ranking: a later slice passes it with its offset, and one from another read is refused. */
+		snapshot: string;
 	};
 }
 
@@ -504,22 +506,26 @@ function resolveRef(ref: string, live: (el: Element) => boolean, print: (el: Ele
 	};
 	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : undefined;
 	const prints = w.__tabkyraRefPrints instanceof Map ? (w.__tabkyraRefPrints as Map<string, string>) : undefined;
-	const gone = w.__tabkyraGonePrints instanceof Map ? (w.__tabkyraGonePrints as Map<string, string>) : undefined;
+	const gone =
+		w.__tabkyraGonePrints instanceof Map
+			? (w.__tabkyraGonePrints as Map<string, { id: string; print: string }>)
+			: undefined;
 	const el = refs?.get(ref);
-	const was = prints?.get(ref) ?? gone?.get(ref);
-	if (el && live(el) && was === print(el)) return el;
-	// A page that rebuilt its list (a framework re-render, a todo ticked off and moved) put a new element where the old one
-	// was. When exactly one element on the page now shows what the ref did, down to its row's key and text, it is that
-	// control: the ref follows it. None or several, and the ref fails as before.
-	if (refs && was) {
-		const tag = was.split("|")[0];
-		const same = /^[a-z][a-z0-9-]*$/.test(tag)
-			? Array.from(document.querySelectorAll(tag)).filter((c) => c !== el && live(c) && print(c) === was)
-			: [];
-		if (same.length === 1) {
-			const found = same[0];
+	if (el && live(el)) {
+		if (prints?.get(ref) === print(el)) return el;
+		// The same node, showing something else: never healed.
+		throw new Error(`Ref ${ref} now shows something else: the page reused it. Call read_page for fresh refs.`);
+	}
+	// The element left the page. Only the same control may take the ref back: one the page put back under the same stable
+	// id (its id attribute) that shows what the ref did. Never a look-alike found by what it shows: after row A's "Remove"
+	// removed row A, row B's "Remove" looks the same and is another control, so a repeated click must fail, not remove B.
+	const printed = prints?.get(ref);
+	const was = gone?.get(ref) ?? (el && printed !== undefined && el.id ? { id: el.id, print: printed } : undefined);
+	if (refs && was?.id) {
+		const found = document.getElementById(was.id);
+		if (found && found !== el && live(found) && print(found) === was.print) {
 			refs.set(ref, found);
-			prints?.set(ref, was);
+			prints?.set(ref, was.print);
 			gone?.delete(ref);
 			if (w.__tabkyraRefOf instanceof WeakMap) {
 				const refOf = w.__tabkyraRefOf as WeakMap<Element, string>;
@@ -528,8 +534,9 @@ function resolveRef(ref: string, live: (el: Element) => boolean, print: (el: Ele
 			return found;
 		}
 	}
-	if (!el || !live(el)) throw new Error(`Ref ${ref} not found: the page changed. Call read_page for fresh refs.`);
-	throw new Error(`Ref ${ref} now shows something else: the page reused it. Call read_page for fresh refs.`);
+	throw new Error(
+		`Ref ${ref} not found: the element it named is gone from the page, so the action may already have happened. Call read_page to see the page now, and use its refs.`,
+	);
 }
 
 /**
@@ -553,6 +560,8 @@ function pageSnapshot(
 	keepStale = false,
 	rank?: {
 		offset: number;
+		/** The ranked read this offset continues (its `ranked.snapshot`); omitted, the page's last one. */
+		snapshot?: string;
 		veil: string;
 		point: (el: Element) => { x: number; y: number } | { cover: string } | { offscreen: true };
 	},
@@ -564,6 +573,7 @@ function pageSnapshot(
 		__tabkyraRefSeq?: unknown;
 		__tabkyraStale?: unknown;
 		__tabkyraGonePrints?: unknown;
+		__tabkyraRanked?: unknown;
 	};
 	// Adopt earlier state only when it is what this function wrote.
 	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : new Map<string, Element>();
@@ -587,15 +597,17 @@ function pageSnapshot(
 		}
 		stale.clear();
 	}
-	// Forget elements that left the page, so their refs fail instead of piling up. What each showed is kept a while
-	// (at most 300), so a ref to a row the page rebuilt can still find the one element that shows it now (resolveRef).
+	// Forget elements that left the page, so their refs fail instead of piling up. One with a stable id keeps that id and
+	// what it showed a while (at most 300), so its ref can follow the page putting the same control back (resolveRef).
 	const gone =
-		w.__tabkyraGonePrints instanceof Map ? (w.__tabkyraGonePrints as Map<string, string>) : new Map<string, string>();
+		w.__tabkyraGonePrints instanceof Map
+			? (w.__tabkyraGonePrints as Map<string, { id: string; print: string }>)
+			: new Map<string, { id: string; print: string }>();
 	w.__tabkyraGonePrints = gone;
 	for (const [ref, el] of refs)
 		if (!live(el)) {
 			const p = prints.get(ref);
-			if (p !== undefined) gone.set(ref, p);
+			if (p !== undefined && el.id) gone.set(ref, { id: el.id, print: p });
 			refs.delete(ref);
 			prints.delete(ref);
 		}
@@ -834,8 +846,23 @@ function pageSnapshot(
 	// Ranked (read_page's interactive look): what the agent can act on now comes first. The focused
 	// control and an open dialog's, then the viewport's, then within a screen of it, then the rest;
 	// a control something else covers is left out (a click on it would land on the cover) and counted.
-	let ranked: Record<string, number> | undefined;
-	if (rank) {
+	let ranked: Record<string, number | string> | undefined;
+	// A slice past the first continues the read it came from: the order is that read's, kept in the page, so a click
+	// that scrolled or moved focus in between doesn't reshuffle the slices (repeating some controls, skipping others).
+	type Kept = { id: string; order: Array<{ el: Element; at: Root }>; counts: Record<string, number> };
+	const kept = (w.__tabkyraRanked && typeof w.__tabkyraRanked === "object" ? w.__tabkyraRanked : undefined) as
+		| Kept
+		| undefined;
+	const offset = rank ? Math.max(0, Math.floor(rank.offset) || 0) : 0;
+	if (rank && (offset > 0 || rank.snapshot)) {
+		if (!kept || !Array.isArray(kept.order) || (rank.snapshot !== undefined && kept.id !== rank.snapshot))
+			throw new Error(
+				`Offset ${offset} is from ${rank.snapshot ? `read ${rank.snapshot}` : "a read"} this page no longer has: call read_page {"filter":"interactive"} again from the top.`,
+			);
+		ranked = { ...kept.counts, offset, snapshot: kept.id };
+		// Positions are the kept read's; a control that left the page since is skipped, not replaced by the next one.
+		order = kept.order.slice(offset).filter((item) => live(item.el));
+	} else if (rank) {
 		const vh = window.innerHeight;
 		let focus: Element | null = document.activeElement;
 		for (let i = 0; i < 20 && focus; i++) {
@@ -875,17 +902,17 @@ function pageSnapshot(
 			tiers[tier].push(item);
 		}
 		order = tiers.flat();
-		const offset = Math.max(0, Math.floor(rank.offset) || 0);
-		ranked = {
+		const counts = {
 			total: order.length,
 			covered,
 			first: tiers[0].length,
 			inView: tiers[1].length,
 			near: tiers[2].length,
 			far: tiers[3].length,
-			offset,
 		};
-		order = order.slice(offset);
+		const id = `r${Math.random().toString(36).slice(2, 7)}`;
+		w.__tabkyraRanked = { id, order, counts } satisfies Kept;
+		ranked = { ...counts, offset: 0, snapshot: id };
 	}
 	for (const { el, at } of order) {
 		if (nodes.length >= maxNodes) break;
@@ -1173,11 +1200,12 @@ export async function snapshot(
 		filter?: "interactive" | "all";
 		rank?: boolean;
 		offset?: number;
+		snapshot?: string;
 	} = {},
 ): Promise<Snapshot> {
 	const { maxNodes = 300, maxTextChars = 20000, filter = "all" } = options;
 	const rank = options.rank
-		? `, false, { offset: ${Math.max(0, Math.floor(options.offset ?? 0)) || 0}, veil: ${JSON.stringify((await veilTag(tabId)) ?? "")}, point: ${refPoint.toString()} }`
+		? `, false, { offset: ${Math.max(0, Math.floor(options.offset ?? 0)) || 0}, snapshot: ${options.snapshot === undefined ? "undefined" : JSON.stringify(options.snapshot)}, veil: ${JSON.stringify((await veilTag(tabId)) ?? "")}, point: ${refPoint.toString()} }`
 		: "";
 	const snap = await runInPage<Snapshot>(
 		tabId,

@@ -361,18 +361,35 @@ test("tunnel ports are validated, and Funnel is refused when other paths share p
 	assert.throws(() => readFileSync(join(root, "funnel.log"), "utf8"), "funnel was never called");
 });
 
-test("safety rules reach every scoped session, with a sign-in fallback when tabs_show is missing", async () => {
-	const client = await connect(token("actor", "browser.read,browser.act"));
-	try {
-		const text = client.getInstructions() ?? "";
-		assert.match(text, /Do not enter passwords or payment details, even ones the user gave you/);
-		assert.match(text, /Ask the user before you act under their sign-in/);
-		assert.match(text, /Then stop and ask the user to finish in their browser; do the same when a page needs a sign-in or captcha\./);
-		assert.doesNotMatch(text, /call tabs_show/);
-	} finally {
-		await client.close();
-	}
-});
+// Every tool name an instruction could mention.
+const NAMED = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "wait", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user", "threads_list", "thread_read", "thread_search", "search", "page_markdown", "map", "crawl", "site_edit", "site_script", "screenshot", "find"];
+
+// first-F2, second-F9: each scope profile in use gets instructions written for its tools. The password rule with its
+// handoff is whole and in one place (it once dropped out of a session without fill, and its "Then" followed another
+// line), and nothing names a tool the session lacks.
+for (const [profile, scopes, handoff] of [
+	["read only", "browser.read", /Then stop and ask the user to finish in their browser/],
+	["read and act", "browser.read,browser.act", /Then stop and ask the user to finish in their browser/],
+	["remote (the default grant)", "browser.read,browser.navigate,browser.act,library.read,library.write,skills.read,user.ask", /Then call tabs_show and ask the user to finish/],
+]) {
+	test(`a ${profile} session's instructions are written for its own tools, with every safety rule whole`, async () => {
+		const client = await connect(token(`instr-${profile.replace(/[^a-z]+/g, "-").replace(/-+$/, "")}`, scopes));
+		try {
+			const tools = new Set((await client.listTools()).tools.map((t) => t.name));
+			const text = client.getInstructions() ?? "";
+			const rules = text.replace(/ This session's tools: [^]*$/, "");
+			for (const t of NAMED) if (!tools.has(t)) assert.doesNotMatch(rules, new RegExp(`(^|[^a-z_])${t}([^a-z_]|$)`), `${profile}: mentions ${t}, which it lacks`);
+			assert.match(text, /untrusted data/);
+			assert.match(text, /Ask the user before you act under their sign-in/);
+			const rule = /Do not enter passwords or payment details, even ones the user gave you: enter the rest, leave those empty, don't submit\. (Then [^;]+); do the same when a page needs a sign-in or captcha\./.exec(text);
+			assert.ok(rule, `${profile}: the password rule and its handoff, in one piece: ${text}`);
+			assert.match(rule[1], handoff);
+			assert.equal(text.match(/\bThen\b/g).length, 1, "no other sentence starts with a Then that could follow the wrong one");
+		} finally {
+			await client.close();
+		}
+	});
+}
 
 test("a token can hold at most 8 sessions, and a malformed record doesn't break auth", async () => {
 	const secret = token("many", "library.read");

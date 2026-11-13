@@ -88,7 +88,9 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// above, the budget is theirs plus these 131 (32,676 measured).
 	// get_page_text's query adds 143 (32,824): finding a passage in a 400-page PDF or a long page by its words, with
 	// page numbers, instead of reading it whole or paging through it 50,000 characters at a time.
-	assert.ok(bytes <= 32824, `tools/list is ${bytes} bytes, over the 32,824 budget`);
+	// read_page's snapshot adds 111 (32,935): a later slice names the read it continues, so a click between two slices
+	// can't reshuffle them, and a slice from another read is refused.
+	assert.ok(bytes <= 32935, `tools/list is ${bytes} bytes, over the 32,935 budget`);
 	// The loop line teaching `changes` (D43) adds 47 bytes; it saves a read_page after most actions.
 	// The password rule covering one the user gave, with its tabs_show handoff, adds 92 (evals/weak-model: Haiku typed
 	// the password a signup prompt supplied, and submitted, when the rule didn't say it covered that).
@@ -105,7 +107,7 @@ test("instructions state the safety rules", () => {
 	// action: the clause must keep "anything more still needs one", or a lookup could turn into a booking.
 	assert.match(instructions, /No extra ask when the request names that exact action \(this booking, this message\); anything more still needs one\./);
 	// A password the user gave is still one Polycarp doesn't type: Haiku typed it when the rule didn't say so.
-	assert.match(instructions, /Do not enter passwords or payment details, even ones the user gave you: fill the rest, leave those empty, don't submit\. Then call tabs_show and ask the user to finish; do the same when a page needs a sign-in or captcha\./);
+	assert.match(instructions, /Do not enter passwords or payment details, even ones the user gave you: enter the rest, leave those empty, don't submit\. Then call tabs_show and ask the user to finish; do the same when a page needs a sign-in or captcha\./);
 });
 
 test("skill_match routes a task to one skill, or none, and skill_read returns that skill", async () => {
@@ -152,9 +154,14 @@ test("a tool call without a browser fails fast with the not-connected message", 
 
 test("skill_match doesn't send a plain page task to the browser skill the instructions already are", async () => {
 	// Round 1 of evals/weak-model: Haiku read polycarp-browser (8,000 characters) on six plain page tasks.
-	const plain = await mcp.callTool({ name: "skill_match", arguments: { task: "use the polycarp-browser skill to fill the RSVP form" } });
-	assert.match(plain.content[0].text, /^none: .*already loaded/);
-	assert.doesNotMatch(plain.content[0].text, /skill_read/);
+	const plain = await mcp.callTool({ name: "skill_match", arguments: { task: "fill the RSVP form on this page" } });
+	assert.match(plain.content[0].text, /^none: no skill fits this task/);
+	assert.doesNotMatch(plain.content[0].text, /polycarp-browser/);
+	// first-F3: the browser skill ranking first doesn't hide a real skill below it.
+	const bulk = await mcp.callTool({ name: "skill_match", arguments: { task: "use the browser to delete all my old drafts" } });
+	assert.match(bulk.content[0].text, /^bulk-actions /m);
+	assert.match(bulk.content[0].text, /Next: skill_read \{"name":"bulk-actions"\}/);
+	assert.doesNotMatch(bulk.content[0].text, /polycarp-browser/);
 	const research = await mcp.callTool({ name: "skill_match", arguments: { task: "find peer-reviewed studies on sleep and memory" } });
 	assert.match(research.content[0].text, /^academic-research/);
 });
@@ -910,6 +917,19 @@ test("read tools cap what they hand an agent, say when they cut, and page with o
 		assert.equal(last("snapshot").maxNodes, 301, "asks for one more than it shows, to know it cut");
 		assert.equal(last("snapshot").maxTextChars, 3001);
 		assert.doesNotMatch(page, /\be300\b/);
+		// first-F4: an extension from before ranking (this stand-in sends no ranked): the interactive read asks for one more
+		// than it shows, so it says it cut, and an offset is refused rather than answered with the first controls again.
+		const inter = await run("read_page", { filter: "interactive" });
+		assert.equal(last("snapshot").maxNodes, 51);
+		assert.match(inter, /element list stopped at 50/);
+		assert.doesNotMatch(inter, /\be50\b|text stopped/);
+		const onward = await c.callTool({ name: "read_page", arguments: { filter: "interactive", offset: 50 } });
+		assert.equal(onward.isError, true);
+		assert.match(onward.content[0].text, /older than ranked reads, so it can't continue a read from an offset/);
+		// second-F12: an offset on a full read is refused, not ignored.
+		const full = await c.callTool({ name: "read_page", arguments: { offset: 50 } });
+		assert.equal(full.isError, true);
+		assert.match(full.content[0].text, /^bad_params: offset and snapshot work only with \{"filter":"interactive"\}/);
 		// The net under every tool: a 300,000 character answer comes back at 100,000 with what was left out.
 		const html = await run("get_page_html");
 		assert.ok(html.length <= 100_000, `get_page_html returned ${html.length}`);
