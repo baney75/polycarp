@@ -258,6 +258,73 @@ test("the Appearance color box and hex box show the accent in use, never black, 
 	}
 });
 
+// Settings > Providers drew its rows in the default order, then moved the ones with a saved key to the top once it had
+// read them: OpenAI and OpenRouter jumped 45 px on every open (scripts/settings-speed.mjs, shift:open). It also read each
+// key twice, one after another. Now the tab shows once its keys (and the helper's subscription answer) are in.
+test("Settings > Providers opens with saved keys already first: no row moves, and each key is read once", async () => {
+	const page = await context.newPage();
+	try {
+		await page.goto(PANEL);
+		await page.evaluate(async () => {
+			await chrome.storage.local.set({ "tk-welcome-seen": true });
+			const db = await new Promise((ok, fail) => {
+				const req = indexedDB.open("tabkyra-storage");
+				req.onsuccess = () => ok(req.result);
+				req.onerror = () => fail(req.error);
+			});
+			await new Promise((ok) => {
+				const tx = db.transaction("provider-keys", "readwrite");
+				for (const p of ["anthropic", "openai", "openrouter"]) tx.objectStore("provider-keys").put(`test-${p}`, p);
+				tx.oncomplete = ok;
+			});
+			db.close();
+		});
+		await page.reload();
+		await page.getByPlaceholder(/Ask about this page/).waitFor({ timeout: 20_000 });
+		const seen = await page.evaluate(async () => {
+			// Every read of the key store from here on, by kind.
+			const reads = { get: 0, keys: 0 };
+			const proto = IDBObjectStore.prototype;
+			const wrap = (name, kind) => {
+				const real = proto[name];
+				proto[name] = function (...args) {
+					if (this.name === "provider-keys") reads[kind]++;
+					return real.apply(this, args);
+				};
+			};
+			wrap("get", "get");
+			wrap("getAllKeys", "keys");
+			wrap("openCursor", "keys");
+			wrap("openKeyCursor", "keys");
+			let shift = 0;
+			new PerformanceObserver((list) => {
+				for (const e of list.getEntries()) shift += e.value;
+			}).observe({ type: "layout-shift" });
+			const rows = () => [...document.querySelectorAll("tabkyra-provider-key")];
+			const shown = () => {
+				const search = document.querySelector('tabkyra-settings input[aria-label="Find a provider"]');
+				return search?.checkVisibility({ visibilityProperty: true }) && rows().length > 0;
+			};
+			document.querySelector('button[aria-label="Settings"]').click();
+			while (!shown()) await new Promise((r) => requestAnimationFrame(r));
+			const first = rows().map((r) => [r.provider, Math.round(r.getBoundingClientRect().top)]);
+			await new Promise((r) => setTimeout(r, 1000));
+			const later = rows().map((r) => [r.provider, Math.round(r.getBoundingClientRect().top)]);
+			return { first, later, shift, reads };
+		});
+		assert.deepEqual(
+			seen.first.slice(0, 3).map(([p]) => p),
+			["anthropic", "openai", "openrouter"],
+			"the providers with a key are first from the first frame",
+		);
+		assert.deepEqual(seen.later, seen.first, "no row moved after Settings showed");
+		assert.equal(seen.shift, 0, "nothing in Settings jumped as it opened");
+		assert.deepEqual(seen.reads, { get: 3, keys: 1 }, "one list of the keys and one read of each, by the tab only");
+	} finally {
+		await page.close();
+	}
+});
+
 for (const width of [400, 320]) {
 	test(`every Settings tab name is whole at ${width} px`, async () => {
 		const page = await settings("Agents", "light", width);

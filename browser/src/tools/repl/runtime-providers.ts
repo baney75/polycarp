@@ -230,10 +230,11 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 				// Get console output from the dedicated ConsoleRuntimeProvider for this execution
 				const consoleLogs = pageConsoleProvider.getLogs();
 
+				// Never a silent undefined: browserjs() throws this (the 2026-11-07 chat read undefined a dozen times).
 				if (!result) {
 					respond({
-						success: true,
-						error: "No result returned from script execution",
+						success: false,
+						error: "The script's result did not come back from the page. Call read_page to see the page before you act again.",
 						console: consoleLogs,
 					});
 					return;
