@@ -5,7 +5,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { NATIVE_HOST_NAME, NATIVE_HOST_NAMES } from "../../src/bridge/protocol.ts";
@@ -497,6 +497,38 @@ export function browserRunning(dir: string): boolean {
 	} catch (err) {
 		return (err as NodeJS.ErrnoException).code === "EPERM";
 	}
+}
+
+/**
+ * Whether a profile in this browser folder has the extension and it is on: its id under `extensions.settings` in the
+ * profile's Preferences or Secure Preferences, with no disable reason. A host manifest alone says nothing: install
+ * writes one into every browser folder.
+ */
+export function extensionInProfile(dir: string, ids: string[] = [EXTENSION_ID, STORE_EXTENSION_ID].filter(Boolean)): boolean {
+	let profiles: string[];
+	try {
+		profiles = readdirSync(dir, { withFileTypes: true })
+			.filter((e) => e.isDirectory())
+			.map((e) => e.name);
+	} catch {
+		return false;
+	}
+	for (const profile of profiles) {
+		for (const file of ["Preferences", "Secure Preferences"]) {
+			let settings: Record<string, { disable_reasons?: unknown }> | undefined;
+			try {
+				settings = JSON.parse(readFileSync(join(dir, profile, file), "utf8"))?.extensions?.settings;
+			} catch {
+				continue;
+			}
+			for (const id of ids) {
+				const reasons = settings?.[id]?.disable_reasons;
+				// A list in current Chromium, a bit mask in older ones.
+				if (settings?.[id] && !(Array.isArray(reasons) ? reasons.length : reasons)) return true;
+			}
+		}
+	}
+	return false;
 }
 
 /** True when at least one browser has a current manifest. */
