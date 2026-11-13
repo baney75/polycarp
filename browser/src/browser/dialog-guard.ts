@@ -302,7 +302,7 @@ export async function dialogSoon(tabId: number, dialog: PageDialog): Promise<str
 	if (!front) return undefined;
 	const secs = Math.max(1, Math.round(deps.grace() / 1000));
 	if (dialog.type === "alert")
-		return `The person has a tab of ${site} in front, so Polycarp dismisses this alert in about ${secs} s. ${dialogAdvice(dialog.seq, tabId, dialog)}`;
+		return `The person has a tab of ${site} in front, so Polycarp dismisses this alert in about ${secs} s; handle_dialog dismisses it now. ${dialogAdvice(dialog.seq, tabId, dialog)}`;
 	return `The person has a tab of ${site} in front, so Polycarp cancels this box in about ${secs} s, before a handle_dialog can arrive: do not call handle_dialog. ${dialogAdvice(dialog.seq, tabId, dialog)}`;
 }
 

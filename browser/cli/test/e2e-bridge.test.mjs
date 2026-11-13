@@ -830,7 +830,7 @@ test("a click that opens a confirm() box succeeds and says so; calls after it fa
 	assert.match(await tool("get_page_text"), /deleted/);
 	const none = await mcp.callTool({ name: "handle_dialog", arguments: { accept: true } });
 	assert.ok(none.isError);
-	assert.match(none.content[0].text, /No dialog is open/);
+	assert.match(none.content[0].text, /No box to answer/);
 });
 
 test("a click step in actions that opens a dialog succeeds and says how many steps did not run", async () => {
