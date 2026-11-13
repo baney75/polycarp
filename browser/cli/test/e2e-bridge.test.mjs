@@ -1950,9 +1950,9 @@ test("the pointer character goes to what the agent clicks and types into, only o
 // first-F2 of the #189 review: a press cues the character after its keys are up, so an Enter that submits a form and
 // leaves the page cues a document that is going or new. It does not move the character (D47); the call still works,
 // and the next pointer action on the new page moves it.
-extraPages["/mote-form"] = `<!doctype html><title>Search</title>
+extraPages["/mote-form"] = `<!doctype html><title>Pointer form</title>
 <body style="margin:0;background:#fff;font:16px sans-serif">
-<form action="/mote" method="get" style="position:absolute;left:200px;top:200px"><input name="t" aria-label="Search" style="width:200px;height:30px"></form></body>`;
+<form action="/mote" method="get" style="position:absolute;left:200px;top:200px"><input name="t" aria-label="Query" style="width:200px;height:30px"></form></body>`;
 
 test("the pointer character: an Enter that submits a form and leaves the page neither fails nor leaves it stuck", async () => {
 	await connected();
@@ -1965,7 +1965,8 @@ test("the pointer character: an Enter that submits a form and leaves the page ne
 		const tabId = JSON.parse(await on(agent, "navigate", { url: `${pageUrl}mote-form` })).tabId;
 		const form = await pageTarget("/mote-form");
 		await until(() => inPage(form, VEIL_PROBE), 10_000, "the veil");
-		await on(agent, "type", { ref: refFor(await on(agent, "read_page", { filter: "interactive" }), "Search"), text: "next" });
+		await on(agent, "type", { ref: refFor(await on(agent, "read_page", { filter: "interactive" }), "Query"), text: "next" });
+		assert.equal(await inPage(form, "document.querySelector('input').value"), "next", "the text did not reach the field");
 		await on(agent, "press", { key: "Enter" });
 		const next = await pageTarget("/mote?t=next");
 		await until(() => inPage(next, VEIL_PROBE), 10_000, "the veil on the new page");
