@@ -106,6 +106,10 @@ final class ClickFallbackTests: XCTestCase {
         XCTAssertNil(ClickFallback.plan(rows: rows, snapshot: "s", number: 3), "the checkbox")
         XCTAssertNil(ClickFallback.plan(rows: rows, snapshot: "s", number: 7), "a button in a cell")
         XCTAssertEqual(ClickFallback.plan(rows: rows, snapshot: "s", number: 4)?.itemRole, "row", "the row's text still falls back")
+        // 166 r2 first-F1: the label is the row's text, not the checkbox's name before it.
+        XCTAssertEqual(ClickFallback.plan(rows: rows, snapshot: "s", number: 4)?.label, "Wi-Fi")
+        let triangle = tree([node("outline", "", 1, [node("row", "", 2, [node("disclosuretriangle", "Expand", 3), node("cell", "", 4, [node("statictext", "Mail", 5)])])])])
+        XCTAssertEqual(ClickFallback.plan(rows: triangle, snapshot: "s", number: 5)?.label, "Mail", "a named triangle is skipped")
     }
 
     // Review r1 first-F3: selection is the row's, so a cell's click reads and writes it on the row.
@@ -116,6 +120,16 @@ final class ClickFallbackTests: XCTestCase {
         XCTAssertEqual(plan.label, "Draft")
         XCTAssertEqual(ClickFallback.plan(rows: rows, snapshot: "s", number: 4), plan)
         XCTAssertEqual(ClickFallback.selected(rows, plan), true, "the row's selected state, not the cell's")
+    }
+
+    // 166 r2 second-F6: a cell with no row above it is the item.
+    func testACellWithNoRowIsTheItem() throws {
+        let rows = tree([node("table", "", 1, [node("cell", "", 2, [node("statictext", "Draft", 3)]), node("cell", "", 4, [node("statictext", "Sent", 5)])])])
+        let plan = try XCTUnwrap(ClickFallback.plan(rows: rows, snapshot: "s", number: 3))
+        XCTAssertEqual(plan.itemRole, "cell")
+        XCTAssertEqual(plan.label, "Draft")
+        XCTAssertEqual(plan.container, "@s:e1")
+        XCTAssertNil(ClickFallback.plan(rows: rows, snapshot: "s", number: 1), "the table itself")
     }
 
     // Review r1 second-F8: two collections with a row of the same name; the readback stays in the clicked one.
@@ -149,9 +163,18 @@ final class ClickFallbackTests: XCTestCase {
         XCTAssertNil(ClickFallback.nextCode(verified: true, writeError: nil))
         let e = ClickFallback.failure(press: HandsError(.actionFailed, "no press", suggestion: ""), write: HandsError(.actionFailed, "no write", suggestion: ""))
         XCTAssertTrue(e.message.contains("selection write was tried too and failed: no write"), e.message)
+        // 166 r2 first-F3: a refused write answers with the refusal, so its code decides the next call.
+        let r = ClickFallback.failure(press: HandsError(.actionFailed, "no press", suggestion: ""), write: HandsError(.outsideAgentWorkspace, "moved", suggestion: ""), refused: true)
+        XCTAssertEqual(r.code, .outsideAgentWorkspace)
+        XCTAssertTrue(r.message.contains("the press had failed first: no press"), r.message)
+        // 166 r2 first-F4: a failed press is reported on a click that still answers.
+        XCTAssertEqual(ClickFallback.pressError(HandsError(.actionFailed, "no press", suggestion: "")), .object(["code": "action_failed", "message": "no press"]))
+        XCTAssertNil(ClickFallback.pressError(nil))
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+RowClick.swift")
-        XCTAssertTrue(src.contains("if let e = acting() { writeError = e; break }"))
         XCTAssertFalse(src.contains("acting() == nil else { break }"))
+        XCTAssertTrue(src.contains("if let e = acting() { writeError = e; refused = true; break }"))
+        XCTAssertTrue(src.contains("write: writeError, refused: refused"))
+        XCTAssertTrue(src.contains("o[\"press_error\"] = e"))
     }
 
     // Review r1 first-F2: a bare row number names its window for the next call.
@@ -172,6 +195,21 @@ final class ClickFallbackTests: XCTestCase {
         let wire = try XCTUnwrap(HandsSourceTests.block(after: "func handleWire(_ r: Wire.Request)", in: src))
         XCTAssertTrue(wire.contains("case .success(let full) = bareRef(n, req) { resolved.args[\"ref\"] = .string(full) }"))
         XCTAssertTrue(wire.contains("handle(resolved), window: windowOf(resolved)"))
+    }
+
+    // 166 r2 first-F2 (and 187 r1 second-F5): a plan from an interactive or compact read keeps that view, and the readbacks read in it, so row keys match.
+    func testTheReadbackReadsInTheViewThePlanCameFrom() throws {
+        var m = SnapshotRowsMemory()
+        m.remember(session: "a", window: 7, view: "false|true|6", snapshot: "sc", rows: [], now: Date())
+        m.remember(session: "a", window: 7, view: "false|false|10", snapshot: "sf", rows: [], now: Date())
+        XCTAssertEqual(m.read(snapshot: "sc", session: "a")?.view, SnapshotRowsMemory.View(interactive: false, compact: true, depth: 6))
+        XCTAssertEqual(m.read(snapshot: "sf", session: "a")?.view, .full)
+        XCTAssertEqual(SnapshotRowsMemory.View(key: "true|false|3"), SnapshotRowsMemory.View(interactive: true, compact: false, depth: 3))
+        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        XCTAssertTrue(router.contains("p.view = read.view"), "the plan carries its read's view")
+        let row = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+RowClick.swift")
+        XCTAssertTrue(row.contains("interactive: plan.view.interactive, compact: plan.view.compact"), "the readbacks use it")
+        XCTAssertFalse(row.contains("compact: false, depth: 10"))
     }
 
     /// The tree with only the item labeled `label` selected.
