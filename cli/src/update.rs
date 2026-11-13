@@ -754,6 +754,19 @@ pub struct Ran {
 
 pub trait Runner {
     fn run(&mut self, step: &Step) -> Ran;
+    /// A program and its arguments as the system gave them: a path need not be text (second-F6 of the
+    /// review of PR 236). A fake sees them as text.
+    fn run_os(&mut self, argv: &[OsString]) -> Ran {
+        let words: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        self.run(&Step::new(
+            Role::Soft,
+            "",
+            &words.iter().map(String::as_str).collect::<Vec<_>>(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -894,34 +907,48 @@ impl RealRunner {
 
 impl Runner for RealRunner {
     fn run(&mut self, step: &Step) -> Ran {
-        let Some(first) = step.argv.first() else {
+        let argv: Vec<OsString> = step.argv.iter().map(OsString::from).collect();
+        self.start(&argv, step.cwd.as_deref(), &step.env)
+    }
+    fn run_os(&mut self, argv: &[OsString]) -> Ran {
+        self.start(argv, None, &[])
+    }
+}
+
+impl RealRunner {
+    fn start(&self, argv: &[OsString], cwd: Option<&Path>, env: &[(String, String)]) -> Ran {
+        let Some(first) = argv.first() else {
             return Ran {
                 code: None,
                 output: "the step has no command".to_string(),
             };
         };
+        let shown = Path::new(first).display();
         let program = if Path::new(first).is_absolute() {
             PathBuf::from(first)
         } else {
-            match on_path(first, self.path.as_ref()) {
+            match first
+                .to_str()
+                .and_then(|name| on_path(name, self.path.as_ref()))
+            {
                 Some(p) => p,
                 None => {
                     return Ran {
                         code: None,
-                        output: format!("{first} is not installed, or not on PATH"),
+                        output: format!("{shown} is not installed, or not on PATH"),
                     }
                 }
             }
         };
         let mut cmd = Command::new(program);
-        cmd.args(&step.argv[1..]).stdin(Stdio::null());
+        cmd.args(&argv[1..]).stdin(Stdio::null());
         if let Some(path) = &self.path {
             cmd.env("PATH", path);
         }
-        if let Some(dir) = &step.cwd {
+        if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
-        for (k, v) in &step.env {
+        for (k, v) in env {
             cmd.env(k, v);
         }
         match cmd.status() {
@@ -931,7 +958,7 @@ impl Runner for RealRunner {
             },
             Err(e) => Ran {
                 code: None,
-                output: format!("could not start {first}: {e}"),
+                output: format!("could not start {shown}: {e}"),
             },
         }
     }
@@ -1237,7 +1264,7 @@ fn extension_connected(parts: &[Part]) -> bool {
 pub fn reload_wait(
     target: &str,
     wait: std::time::Duration,
-    reload: &mut dyn FnMut() -> Option<i32>,
+    reload: &mut dyn FnMut() -> Ran,
     parts: &dyn Fn() -> Vec<Part>,
     clock: &dyn Fn() -> std::time::Duration,
     pause: &mut dyn FnMut(),
@@ -1266,7 +1293,15 @@ pub fn reload_wait(
         .into_iter()
         .map(|n| (n, false))
         .collect();
-    match reload() {
+    // A reload's own words go out as the helper said them (second-F7 of the review of PR 236).
+    let mut reload = |out: &mut dyn Write| {
+        let ran = reload();
+        if ran.code == Some(0) && !ran.output.is_empty() {
+            let _ = writeln!(out, "{}", ran.output.trim_end());
+        }
+        ran.code
+    };
+    match reload(out) {
         Some(0) => {}
         code => return code.unwrap_or(1),
     }
@@ -1304,19 +1339,31 @@ pub fn reload_wait(
                 "{} still runs the build from before, so every browser's extension is reloaded once more.",
                 old.join(", ")
             );
-            if reload() == Some(RELOAD_BUSY) {
-                return RELOAD_BUSY;
+            match reload(out) {
+                Some(0) => {}
+                Some(RELOAD_BUSY) => return RELOAD_BUSY,
+                // second-F8 of the review of PR 236: a reload that failed is not "after two reloads".
+                code => {
+                    let _ = writeln!(
+                        out,
+                        "The second reload failed ({}), so {} may still run the build from before.",
+                        exit_text(code),
+                        old.join(", ")
+                    );
+                    return code.unwrap_or(1);
+                }
             }
             deadline = deadline.max(spent + RELOAD_SETTLE);
             continue;
         }
         if spent >= deadline {
             if last_old.is_empty() {
+                // The time it really waited: a reload gets at least `RELOAD_SETTLE`, even with `--wait 0` (first-F4).
                 let _ = writeln!(
                     out,
                     "note: {} reported no build in {} s, so it was not compared. `polycarp version` asks again.",
                     waiting.join(", "),
-                    wait.as_secs()
+                    spent.as_secs()
                 );
                 return 0;
             }
@@ -1388,19 +1435,13 @@ fn reload_wait_command(args: &[OsString], device: &Device, runner: &mut dyn Runn
         eprintln!("polycarp update: could not read {rev} in {}", dir.display());
         return 1;
     };
-    let words: Vec<String> = argv
-        .iter()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect();
-    let words: Vec<&str> = words.iter().map(String::as_str).collect();
-    let step = Step::new(Role::Soft, "Reload the browser extension", &words);
     let mut reload = || {
         let _ = std::io::stdout().flush();
-        let ran = runner.run(&step);
-        if !ran.output.is_empty() {
+        let ran = runner.run_os(&argv);
+        if ran.code != Some(0) && !ran.output.is_empty() {
             eprintln!("polycarp update: {}", ran.output);
         }
-        ran.code
+        ran
     };
     let started = std::time::Instant::now();
     let mut pause = || std::thread::sleep(std::time::Duration::from_secs(2));
@@ -2747,7 +2788,8 @@ mod tests {
     /// extension is gone for one look. `helium_late`: Helium gives no answer until the clock reaches
     /// that many seconds after the start. `absent_looks`: the first looks see no browser connected.
     /// `helium_quiet_from`: Helium gives no answer from then on; `helium_gone_from`: it is not listed
-    /// from then on. `chrome_quiet`: Chrome never answers, before the reload too.
+    /// from then on. `chrome_quiet`: Chrome never answers, before the reload too. `second_code` is the
+    /// second reload's code, and `said` what each reload prints.
     struct Browser {
         ready_after: u32,
         code: i32,
@@ -2758,6 +2800,8 @@ mod tests {
         helium_quiet_from: u64,
         helium_gone_from: u64,
         chrome_quiet: bool,
+        second_code: i32,
+        said: &'static str,
     }
     impl Browser {
         fn new(ready_after: u32) -> Browser {
@@ -2771,6 +2815,8 @@ mod tests {
                 helium_quiet_from: u64::MAX,
                 helium_gone_from: u64::MAX,
                 chrome_quiet: false,
+                second_code: 0,
+                said: "",
             }
         }
     }
@@ -2784,7 +2830,14 @@ mod tests {
         let mut reload = || {
             reloads.set(reloads.get() + 1);
             since_reload.set(0);
-            Some(b.code)
+            Ran {
+                code: Some(if reloads.get() == 1 {
+                    b.code
+                } else {
+                    b.second_code
+                }),
+                output: b.said.to_string(),
+            }
         };
         let parts = || {
             looks.set(looks.get() + 1);
@@ -2990,6 +3043,21 @@ mod tests {
     }
 
     #[test]
+    fn first_f4_review_of_pr_236_the_note_gives_the_time_really_waited() {
+        // Chrome never answers, so it was never seen on the old build: a note, not a failure (PR 244).
+        let silent = Browser {
+            chrome_quiet: true,
+            ..Browser::new(1)
+        };
+        let (rc, _, _, secs, out) = reload_run(silent, 0);
+        assert_eq!(rc, 0, "{out}");
+        assert!(
+            secs >= 4 && out.contains(&format!("reported no build in {secs} s")),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn first_f2_review_of_pr_244_one_that_went_quiet_before_halfway_gets_its_second_reload() {
         let quiet = Browser {
             helium_quiet_from: 10,
@@ -3011,6 +3079,24 @@ mod tests {
         let (rc, reloads, _, _, out) = reload_run(late, 30);
         assert_eq!((rc, reloads), (0, 2), "{out}");
         assert!(out.contains("reported no build"), "{out}");
+    }
+
+    #[test]
+    fn second_f7_f8_review_of_pr_236_the_helpers_words_and_a_failed_second_reload() {
+        let said = Browser {
+            said: "Reloaded 2 extensions.",
+            ..Browser::new(1)
+        };
+        let (_, _, _, _, out) = reload_run(said, 30);
+        assert_eq!(out.lines().next(), Some("Reloaded 2 extensions."), "{out}");
+        let failed = Browser {
+            second_code: 3,
+            ..Browser::new(0)
+        };
+        let (rc, reloads, _, _, out) = reload_run(failed, 30);
+        assert_eq!((rc, reloads), (3, 2), "{out}");
+        assert!(out.contains("The second reload failed (exit 3)"), "{out}");
+        assert!(!out.contains("two reloads"), "{out}");
     }
 
     /// A git repository of one empty commit in a temp folder, and that commit: no test reads the
@@ -3058,13 +3144,13 @@ mod tests {
         (dir, head.trim().to_string())
     }
 
-    /// second-F5 (review of PR 236): the reload runs through a real runner, made the one way every
-    /// runner is. A stub in a trusted PATH folder runs, with only the trusted folders on its PATH; one
-    /// in a folder under the current one never starts.
+    /// second-F5, second-F6 (review of PR 236): the reload runs through a real runner, made the one
+    /// way every runner is. A stub in a trusted PATH folder runs, with only the trusted folders on its
+    /// PATH and an argument that is not text intact; one in a folder under the current one never starts.
     #[cfg(unix)]
     #[test]
-    fn second_f5_review_of_pr_236_the_real_runner_starts_only_a_trusted_reload() {
-        use std::os::unix::fs::PermissionsExt;
+    fn second_f5_f6_review_of_pr_236_the_real_runner_starts_only_a_trusted_reload() {
+        use std::os::unix::{ffi::OsStringExt, fs::PermissionsExt};
         let (repo, head) = temp_repo("real-runner");
         let trusted = repo.join("bin");
         // cargo runs tests in the crate's folder, so a folder under it is not trusted.
@@ -3085,7 +3171,7 @@ mod tests {
             .unwrap();
             fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        let word = OsString::from("/tmp/cafe");
+        let word = OsString::from_vec(b"/tmp/caf\xe9".to_vec());
         let mut args: Vec<OsString> = [
             "--reload-wait",
             "",
