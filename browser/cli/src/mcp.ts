@@ -321,6 +321,25 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown) =>
 			!allow || allow(String(name)) ? register(name, config, guard(String(name), cb)) : undefined;
 	}
+	// The password field's hint names tabs_show (src/browser/page.ts), in read_page and in every change report that lists
+	// the field (a click that opens a sign-in form). A session without tabs_show gets the handoff it has, in every result.
+	if (!has("tabs_show")) {
+		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
+		const handoff =
+			(run: (...a: unknown[]) => unknown) =>
+			async (...a: unknown[]) => {
+				const r = (await run(...a)) as { content?: unknown } | undefined;
+				if (!r || !Array.isArray(r.content)) return r;
+				return {
+					...r,
+					content: r.content.map((c: { type?: unknown; text?: unknown }) =>
+						c?.type === "text" && typeof c.text === "string" ? { ...c, text: handoffFor(c.text) } : c,
+					),
+				};
+			};
+		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown, ...rest: unknown[]) =>
+			register(name, config, typeof cb === "function" ? handoff(cb as (...a: unknown[]) => unknown) : cb, ...rest);
+	}
 	// Behind a hub every tool takes an optional device. The hub sends a call naming another device there and strips the
 	// argument; a call that still names another device reached the wrong one (an older hub, or a batch the hub doesn't
 	// route), so it is refused here and nothing runs. Without a hub nothing is added, and tools are exactly as before.
@@ -608,7 +627,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				maxNodes: z.number().int().optional().describe(`Cap on elements (300, interactive ${INTERACTIVE_NODES})`),
 				maxTextChars: z.number().int().optional().describe("Cap on text (3000; interactive 0)"),
 				offset: z.number().int().optional().describe("Interactive: skip this many controls"),
-				snapshot: z.string().max(40).optional().describe("Interactive: the read offset continues"),
+				snapshot: z.string().regex(/^r[a-z0-9]+$/).optional().describe("Interactive: the read to continue"),
 			},
 		},
 		async (args) => {
@@ -633,13 +652,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 						const { nodes, next, shown } = rankedSlice(ranked, whole.nodes, maxNodes);
 						const { snap } = fitSnapshot({ ...whole, nodes }, maxNodes, maxTextChars);
 						const cut = whole.text.length > maxTextChars;
-						return { content: text(handoffFor(formatSnapshot(snap)) + rankNote(ranked, shown, { maxTextChars, cut }, { next, has })) };
+						return { content: text(formatSnapshot(snap) + rankNote(ranked, shown, { maxTextChars, cut }, { next, has })) };
 					}
 					const { snap, note } = fitSnapshot(whole, maxNodes, maxTextChars);
 					// An extension from before ranking can't skip controls: an offset there would give the first ones again.
 					if (args.offset || args.snapshot !== undefined)
 						return { content: text("This Polycarp extension is older than ranked reads, so it can't continue a read from an offset. Ask the user to update the extension; until then, use find for a control further down."), isError: true };
-					return { content: text(handoffFor(formatSnapshot(snap)) + note) };
+					return { content: text(formatSnapshot(snap) + note) };
 				}
 				const maxTextChars = Math.max(0, args.maxTextChars ?? 3000);
 				const maxNodes = Math.max(1, args.maxNodes ?? 300);
@@ -650,7 +669,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 					maxTextChars: maxTextChars ? maxTextChars + 1 : 0,
 				})) as Parameters<typeof formatSnapshot>[0];
 				const { snap, note } = fitSnapshot(raw, maxNodes, maxTextChars);
-				return { content: text(handoffFor(formatSnapshot(snap)) + note) };
+				return { content: text(formatSnapshot(snap) + note) };
 			} catch (err) {
 				return errorResult(err);
 			}
@@ -708,7 +727,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			try {
 				const found = (await client.call("find", args)) as { matches: SnapNode[] };
 				if (found.matches.length === 0) return { content: text(`No elements match "${args.query}". Try read_page or other words.`) };
-				return { content: text(handoffFor(formatNodes(found.matches, ""))) };
+				return { content: text(formatNodes(found.matches, "")) };
 			} catch (err) {
 				return errorResult(err);
 			}
