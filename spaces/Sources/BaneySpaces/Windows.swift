@@ -150,8 +150,13 @@ enum Windows {
     /// Asks a process again after a scan skipped it, once its cover is up or its watch is over (`Spaces.askAgain`).
     static var onHoldEnd: ((pid_t) -> Void)?
 
+    /// On the main thread. A launch with no cover up by `holdFor` loses its hold then, and a scan it skipped runs again.
     static func hold(_ pid: pid_t) {
-        unresponsiveLock.lock(); holds.hold(pid); unresponsiveLock.unlock()
+        unresponsiveLock.lock(); holds.hold(pid, at: ProcessInfo.processInfo.systemUptime); unresponsiveLock.unlock()
+        DispatchQueue.main.asyncAfter(deadline: .now() + OpenFlashGuard.holdFor) {
+            unresponsiveLock.lock(); let again = holds.lapse(now: ProcessInfo.processInfo.systemUptime); unresponsiveLock.unlock()
+            for pid in again { onHoldEnd?(pid) }
+        }
     }
 
     /// On the main thread, after main painted (or took down) `pid`'s covers: asks are let through only while one is up.
@@ -169,13 +174,13 @@ enum Windows {
     /// Whether `pid`'s launch hold is on: its watch is live and no cover of it is up.
     static func isHeld(_ pid: pid_t) -> Bool {
         unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
-        return holds.holds(pid)
+        return holds.holds(pid, now: ProcessInfo.processInfo.systemUptime)
     }
 
     static func isResponsive(_ pid: pid_t) -> Bool {
         unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
         let now = Date()
-        return !holds.skips(pid) && !bench.isBenched(pid, now: now)
+        return !holds.skips(pid, now: ProcessInfo.processInfo.systemUptime) && !bench.isBenched(pid, now: now)
     }
 
     static func markUnresponsive(_ pid: pid_t) {

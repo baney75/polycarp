@@ -644,9 +644,11 @@ final class SessionController {
             let launchToken = AgentLaunches.shared.current
             /// A new window from behind through the app's own New Window command, claimed first.
             func newWindow(_ app: NSRunningApplication) -> Bool {
+                // Claimed only once there is a command to press: a lookup that found none leaves the launch's claim
+                // alone (review of PR 232, sol-F1).
+                guard let item = Windows.newWindowItem(app.processIdentifier) else { return false }
                 h.claim(app.processIdentifier, n, false, nil)
-                guard let item = Windows.newWindowItem(app.processIdentifier),
-                      AXUIElementPerformAction(item, kAXPressAction as CFString) == .success else {
+                guard AXUIElementPerformAction(item, kAXPressAction as CFString) == .success else {
                     h.unclaim(app.processIdentifier)
                     return false
                 }

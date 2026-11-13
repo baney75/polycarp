@@ -78,17 +78,17 @@ final class OpenFlashGuardTests: XCTestCase {
 
     func testOverlappingLaunchesHoldAndReleaseOnlyTheirOwn() {
         var h = OpenFlashGuard.Holds()
-        h.hold(900); h.hold(950)
+        h.hold(900, at: 0); h.hold(950, at: 0)
         _ = h.release(900)
-        XCTAssertFalse(h.skips(900))
-        XCTAssertTrue(h.skips(950), "sol-F2, first-F3: the first launch's release leaves the second's hold")
-        XCTAssertFalse(h.skips(951), "a process with no hold is asked as before")
+        XCTAssertFalse(h.skips(900, now: 1))
+        XCTAssertTrue(h.skips(950, now: 1), "sol-F2, first-F3: the first launch's release leaves the second's hold")
+        XCTAssertFalse(h.skips(951, now: 1), "a process with no hold is asked as before")
     }
 
     func testAnAskSkippedByTheHoldIsAskedAgainWhenItEnds() {
         var h = OpenFlashGuard.Holds()
-        h.hold(900); h.hold(950)
-        XCTAssertTrue(h.skips(900))
+        h.hold(900, at: 0); h.hold(950, at: 0)
+        XCTAssertTrue(h.skips(900, now: 1))
         XCTAssertTrue(h.release(900), "second-F7: a scan skipped it, so the release asks again")
         XCTAssertFalse(h.release(950), "no scan skipped this one: nothing to ask again")
         XCTAssertFalse(h.release(900), "released once")
@@ -106,20 +106,61 @@ final class OpenFlashGuardTests: XCTestCase {
     // until it is parked. These each fail on 909894c7.
     let parked = CGRect(x: 1511, y: 981, width: 500, height: 400)
 
+    // Review of PR 232: each of these fails on 971826bf.
+    func testALaunchWithNoCoverUpByThreeSecondsIsAskedForNewWindow() {
+        var h = OpenFlashGuard.Holds()
+        h.hold(900, at: 10)
+        XCTAssertTrue(h.skips(900, now: 11), "no window yet: a scan is skipped")
+        XCTAssertFalse(OpenFlashGuard.newWindowWaits(held: h.holds(900, now: 13), waited: 3))
+        XCTAssertFalse(h.skips(900, now: 13), "first-F1, sol-F1: at 3 s New Window's ask reaches the app")
+        XCTAssertEqual(h.lapse(now: 13), [900], "and the scan it skipped runs again")
+        XCTAssertEqual(h.lapse(now: 14), [])
+        h.hold(950, at: 10)
+        _ = h.covered(950, true); _ = h.covered(950, false)
+        XCTAssertTrue(h.skips(950, now: 14), "a launch that had a cover keeps its hold for later windows")
+        XCTAssertEqual(h.lapse(now: 14), [])
+    }
+
+    func testACoverReportALaterDrainOvertookLetsNoAskThrough() {
+        var h = OpenFlashGuard.Holds(), r = OpenFlashGuard.CoverReports()
+        h.hold(900, at: 0)
+        XCTAssertTrue(h.skips(900, now: 0.2))
+        var main: [() -> Void] = [], painted = false, uncovered = false
+        func drain(_ cover: Bool) {
+            painted = cover
+            if let count = r.change(to: cover) { main.append { if r.current(count), h.covered(900, cover), !painted { uncovered = true } } }
+        }
+        func runMain() { let q = main; main = []; q.forEach { $0() } }
+        drain(true); drain(false)   // sol-F2: a drain queued ahead takes the cover down before the report runs
+        runMain()
+        XCTAssertFalse(uncovered, "no ask is let through with nothing painted")
+        XCTAssertTrue(h.skips(900, now: 0.3), "nothing is up, so the hold goes on")
+        drain(true); r.end(); painted = false   // the watch ends before the report runs
+        runMain()
+        XCTAssertFalse(uncovered)
+    }
+
+    func testNewWindowClaimsOnlyOnceThereIsACommandToPress() throws {
+        let c = try CursorSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
+        let nw = try XCTUnwrap(HandsSourceTests.between("func newWindow(_ app: NSRunningApplication) -> Bool {", "func claimLaunch(", in: c))
+        let item = try XCTUnwrap(nw.range(of: "Windows.newWindowItem(")), claim = try XCTUnwrap(nw.range(of: "h.claim("))
+        XCTAssertLessThan(item.lowerBound, claim.lowerBound, "sol-F1: a lookup that finds no command leaves the launch's claim")
+    }
+
     // Review of PR 225: each of these fails on cf29bd93.
     func testTheHoldEndsOnlyOnACoverMainPainted() {
         var h = OpenFlashGuard.Holds()
-        h.hold(900)
-        XCTAssertTrue(h.skips(900))
+        h.hold(900, at: 0)
+        XCTAssertTrue(h.skips(900, now: 1))
         XCTAssertFalse(h.covered(900, false), "sol-F1: a window seen, then gone before the drain: nothing painted")
-        XCTAssertTrue(h.skips(900), "sol-F1: so the hold goes on")
+        XCTAssertTrue(h.skips(900, now: 1), "sol-F1: so the hold goes on")
         XCTAssertTrue(h.covered(900, true), "painted after a skip: Spaces asks now, to park it")
-        XCTAssertFalse(h.skips(900), "while a cover is up the park may ask")
+        XCTAssertFalse(h.skips(900, now: 1), "while a cover is up the park may ask")
         XCTAssertFalse(h.covered(900, false))
-        XCTAssertTrue(h.skips(900), "first-F2: parked, the watch live: no ask blocks main before a later window's cover")
-        XCTAssertTrue(h.holds(900))
+        XCTAssertTrue(h.skips(900, now: 1), "first-F2: parked, the watch live: no ask blocks main before a later window's cover")
+        XCTAssertTrue(h.holds(900, now: 1))
         XCTAssertTrue(h.release(900), "first-F2: the skipped ask runs when the watch ends")
-        XCTAssertFalse(h.skips(900))
+        XCTAssertFalse(h.skips(900, now: 1))
         XCTAssertFalse(h.covered(900, true), "after the watch, a late paint changes nothing")
     }
 
@@ -177,7 +218,7 @@ final class OpenFlashGuardTests: XCTestCase {
         let post = try XCTUnwrap(HandsSourceTests.between("private func post(", "private func drain()", in: wch))
         XCTAssertFalse(post.contains("release"), "sol-F1: a newer step never carries an older one's release")
         XCTAssertFalse(wch.contains("step.release"))
-        XCTAssertTrue(wch.contains("if up != !panels.isEmpty { up = !panels.isEmpty"), "sol-F1: the hold follows the panels main drew")
+        XCTAssertTrue(wch.contains("let up = !panels.isEmpty\n            if let count = reports.change(to: up) {"), "sol-F1: the hold follows the panels main drew")
         XCTAssertTrue(wch.contains("alpha: alpha, bounds: b)"), "sol-F2: the window server's alpha reaches the plan")
         XCTAssertTrue(wch.contains("OpenFlashGuard.turn(busy: OpenFlashGuard.slotBusy(live.values.map(\\.step))"), "first-F1")
         let probe = try String(contentsOf: CursorSourceTests.root.appendingPathComponent("scripts/agent-open-probe.swift"), encoding: .utf8)
@@ -357,7 +398,7 @@ final class OpenFlashGuardTests: XCTestCase {
         let drain = try XCTUnwrap(HandsSourceTests.between("private func drain() {", "func finish(why: String) {", in: w))
         XCTAssertTrue(drain.contains("ticket.holds(live:"), "sol-F1: a queued cover is checked before it rises")
         let flush = try XCTUnwrap(drain.range(of: "if redraw() { CATransaction.flush() }"))
-        let release = try XCTUnwrap(drain.range(of: "DispatchQueue.main.async { Windows.covered(pid, up) }"))
+        let release = try XCTUnwrap(drain.range(of: "DispatchQueue.main.async { [self] in if reports.current(count) { Windows.covered(pid, up) } }"))
         XCTAssertLessThan(flush.lowerBound, release.lowerBound, "first-F1: the cover is committed, then the hold ends on a later turn")
         XCTAssertEqual(w.components(separatedBy: "Windows.release(").count - 1, w.components(separatedBy: "DispatchQueue.main.async { Windows.release(pid) }").count - 1,
                        "first-F1: every release waits a turn, never in the same one as the cover")
@@ -376,7 +417,7 @@ final class OpenFlashGuardTests: XCTestCase {
         XCTAssertTrue(d.contains("Windows.onHoldEnd = { [weak self] pid in self?.spaces.askAgain(pid) }"))
         let r = try CursorSourceTests.code("Sources/BaneySpaces/Windows.swift")
         let ask = try XCTUnwrap(HandsSourceTests.between("static func isResponsive(", "static func markUnresponsive", in: r))
-        XCTAssertTrue(ask.contains("holds.skips(pid)"))
+        XCTAssertTrue(ask.contains("holds.skips(pid, now:"))
         XCTAssertFalse(ask.contains("NSRunningApplication"))
         XCTAssertTrue(w.contains(".nonactivatingPanel"))
         XCTAssertFalse(w.contains(".hide()") || w.contains("app.hide"), "no hide: a hidden app lists no windows (PR 172)")

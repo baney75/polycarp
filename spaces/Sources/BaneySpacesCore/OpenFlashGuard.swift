@@ -213,35 +213,65 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
     /// one such ask blocks the main thread, where a cover is drawn, for a quarter second. So while a launch's watch is
     /// live its process isn't asked, unless one of its covers is up (the park needs the ask). One hold per pid, so
     /// overlapping opens never end each other's. A skipped ask is remembered, and only the watch consumes it: when a cover
-    /// is painted, or when the watch ends, Spaces asks again at once (review of PR 225, first-F2, first-F3).
+    /// is painted, or when the watch ends, Spaces asks again at once (review of PR 225, first-F2, first-F3). A launch
+    /// with no cover up by `holdFor` showed no window to guard, and New Window must ask it then: its hold lapses (review
+    /// of PR 232, first-F1, sol-F1).
     public struct Holds: Sendable {
-        private var held: Set<Int32> = [], up: Set<Int32> = [], skipped: Set<Int32> = []
+        private var held: [Int32: Double] = [:], up: Set<Int32> = [], everUp: Set<Int32> = [], skipped: Set<Int32> = []
 
         public init() {}
 
-        public mutating func hold(_ pid: Int32) { held.insert(pid) }
+        public mutating func hold(_ pid: Int32, at now: Double) { held[pid] = now; everUp.remove(pid) }
 
         /// Whether one of `pid`'s covers is painted, as main last drew them. True when it just went up after a skip.
         public mutating func covered(_ pid: Int32, _ isUp: Bool) -> Bool {
-            guard held.contains(pid) else { return false }
-            if isUp { up.insert(pid) } else { up.remove(pid) }
+            guard held[pid] != nil else { return false }
+            if isUp { up.insert(pid); everUp.insert(pid) } else { up.remove(pid) }
             return isUp && skipped.remove(pid) != nil
         }
 
         /// Whether Spaces must not ask `pid` now. A skip is remembered.
-        public mutating func skips(_ pid: Int32) -> Bool {
-            guard holds(pid) else { return false }
+        public mutating func skips(_ pid: Int32, now: Double) -> Bool {
+            guard holds(pid, now: now) else { return false }
             skipped.insert(pid)
             return true
         }
 
+        /// Ends the holds that lapsed by `now`: the pids whose skipped ask should run again now.
+        public mutating func lapse(now: Double) -> [Int32] {
+            let gone = held.keys.filter { lapsed($0, now: now) }.sorted()
+            return gone.filter { release($0) }
+        }
+
         /// The watch is over. True when an ask was skipped, so Spaces should ask again now.
         public mutating func release(_ pid: Int32) -> Bool {
-            guard held.remove(pid) != nil else { return false }
-            up.remove(pid)
+            guard held.removeValue(forKey: pid) != nil else { return false }
+            up.remove(pid); everUp.remove(pid)
             return skipped.remove(pid) != nil
         }
 
-        public func holds(_ pid: Int32) -> Bool { held.contains(pid) && !up.contains(pid) }
+        public func holds(_ pid: Int32, now: Double) -> Bool { held[pid] != nil && !up.contains(pid) && !lapsed(pid, now: now) }
+
+        private func lapsed(_ pid: Int32, now: Double) -> Bool {
+            guard let since = held[pid], !everUp.contains(pid) else { return false }
+            return now - since >= OpenFlashGuard.holdFor
+        }
+    }
+
+    /// What main last told `Holds` about one launch's covers. A report is posted to main's next turn, and a later drain
+    /// or the watch's end can overtake it, so each carries a count and runs only while it is the newest (review of PR 232,
+    /// sol-F2: a captured "up" landed after the cover was gone and let an ask through uncovered).
+    public struct CoverReports: Sendable {
+        private var seq: UInt64 = 0, up = false
+        public init() {}
+        /// The count for a report that the covers are now `isUp`, nil when that's no change.
+        public mutating func change(to isUp: Bool) -> UInt64? {
+            guard isUp != up else { return nil }
+            up = isUp; seq &+= 1
+            return seq
+        }
+        /// The launch is over: no report made before now runs.
+        public mutating func end() { seq &+= 1; up = false }
+        public func current(_ count: UInt64) -> Bool { count == seq }
     }
 }

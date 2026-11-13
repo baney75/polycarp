@@ -99,7 +99,7 @@ enum OpenFlashWatch {
         var shots: [CGImage] = [], shotAt = 0.0
         /// The last step main took (nil until the first): whether this launch holds the slot.
         private(set) var step: OpenFlashGuard.Plan.Step?
-        private var up = false
+        private var reports = OpenFlashGuard.CoverReports()
         private var pid: pid_t = 0, incarnation: UInt64 = 0
         private var want: [UInt32: CGRect] = [:]
         private var panels: [Key: (panel: NSPanel, frame: CGRect)] = [:]
@@ -197,7 +197,12 @@ enum OpenFlashWatch {
             if redraw() { CATransaction.flush() }
             // On the next turn, so a new cover is committed and drawn before Spaces may ask the app (a 0.25 s block):
             // asks are let through only while a cover main painted is up (sol-F1, first-F2).
-            if up != !panels.isEmpty { up = !panels.isEmpty; let pid = self.pid, up = self.up; DispatchQueue.main.async { Windows.covered(pid, up) } }
+            // Only while it is still the newest report: a later drain or the end can run first (review of PR 232, sol-F2).
+            let up = !panels.isEmpty
+            if let count = reports.change(to: up) {
+                let pid = self.pid
+                DispatchQueue.main.async { [self] in if reports.current(count) { Windows.covered(pid, up) } }
+            }
         }
 
         /// Ends this launch: no more covers, the hold released (after the panels are gone), the watch stopped.
@@ -208,6 +213,7 @@ enum OpenFlashWatch {
             OpenFlashWatch.live[gen] = nil
             want = [:]
             _ = redraw()
+            reports.end()
             if pid != 0 { let pid = self.pid; DispatchQueue.main.async { Windows.release(pid) } }
             Trace.log("flash guard cover: \(app) watch over at +\(ms())ms: \(why)")
         }
