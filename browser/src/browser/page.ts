@@ -174,6 +174,22 @@ export interface Snapshot {
 	nodes: SnapshotNode[];
 	/** Readable text of the page (truncated). */
 	text: string;
+	/** A ranked read's counts: controls in each tier, covered ones left out, and where this slice starts. */
+	ranked?: {
+		total: number;
+		covered: number;
+		first: number;
+		inView: number;
+		near: number;
+		far: number;
+		offset: number;
+		/** Names this ranking: a later slice passes it with its offset, and one from another read is refused. */
+		snapshot: string;
+		/** The offset the next slice starts at: where this one's window of the ranking ended. */
+		next: number;
+		/** A later slice's: each listed control's place in the ranking, since one that left the page is skipped. */
+		positions?: number[];
+	};
 }
 
 /**
@@ -394,14 +410,107 @@ export function refFrameCover(el: Element, x: number, y: number): string | { off
  * Self-contained; refLive and refPrint come in as arguments.
  */
 function resolveRef(ref: string, live: (el: Element) => boolean, print: (el: Element) => string): Element {
-	const w = window as unknown as { __tabkyraRefs?: unknown; __tabkyraRefPrints?: unknown };
+	const w = window as unknown as {
+		__tabkyraRefs?: unknown;
+		__tabkyraRefPrints?: unknown;
+		__tabkyraRefOf?: unknown;
+		__tabkyraGonePrints?: unknown;
+		__tabkyraActed?: unknown;
+		__tabkyraTwins?: unknown;
+		__tabkyraRefStart?: unknown;
+		__tabkyraRefSeq?: unknown;
+	};
 	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : undefined;
 	const prints = w.__tabkyraRefPrints instanceof Map ? (w.__tabkyraRefPrints as Map<string, string>) : undefined;
+	const gone =
+		w.__tabkyraGonePrints instanceof Map
+			? (w.__tabkyraGonePrints as Map<string, { id: string; print: string; ctx: string }>)
+			: undefined;
+	// Refs an action went through (refActed, once its input reached the element). Its element gone, such a ref is never
+	// healed: the action likely removed it. Resolving alone marks nothing: an action refused after this (covered, off
+	// screen) did nothing, and the agent must not be told it may have happened.
+	const acted = w.__tabkyraActed instanceof Set ? (w.__tabkyraActed as Set<string>) : new Set<string>();
+	// Refs whose read listed another control with the same look in a row with the same text: nothing tells them apart.
+	const twins = w.__tabkyraTwins instanceof Set ? (w.__tabkyraTwins as Set<string>) : new Set<string>();
+	// What surrounds a control: the text of the nearest ancestor that shows more than the control does, the row a
+	// checkbox or a Remove sits in, past wrappers (<span class=actions>) that hold only the control.
+	const ctx = (x: Element) => {
+		const squash = (t: string | null) => (t ?? "").replace(/\s+/g, " ").trim();
+		const own = squash(x.textContent);
+		let up = x.parentElement;
+		for (let i = 0; up && i < 8; i++, up = up.parentElement) {
+			const t = squash(up.textContent);
+			if (t !== own) return t.slice(0, 200);
+		}
+		return own.slice(0, 200);
+	};
 	const el = refs?.get(ref);
-	if (!el || !live(el)) throw new Error(`Ref ${ref} not found: the page changed. Call read_page for fresh refs.`);
-	if (prints?.get(ref) !== print(el))
+	if (el && live(el)) {
+		if (prints?.get(ref) === print(el)) return el;
+		// The same node, showing something else: never healed.
 		throw new Error(`Ref ${ref} now shows something else: the page reused it. Call read_page for fresh refs.`);
-	return el;
+	}
+	// The element left the page. Only the same control may take the ref back, and only when that is proven: the page put a
+	// control back under the same id attribute, it shows what the ref did, it sits in a row with the same text, and nothing
+	// else on the page looks the same. Ids that follow position (task-0, remove-1) move to another row when one is deleted,
+	// so the id alone proves nothing. A ref an action already went through is never healed.
+	const printed = prints?.get(ref);
+	const was =
+		gone?.get(ref) ??
+		(el && printed !== undefined && el.id ? { id: el.id, print: printed, ctx: ctx(el) } : undefined);
+	if (refs && was?.id && !acted.has(ref) && !twins.has(ref)) {
+		const found = document.getElementById(was.id);
+		if (found && found !== el && live(found) && print(found) === was.print && ctx(found) === was.ctx) {
+			const same = Array.from(document.getElementsByTagName(found.tagName));
+			const alike =
+				same.length <= 2000
+					? same.filter((x) => x !== found && print(x) === was.print && ctx(x) === was.ctx)
+					: same;
+			if (alike.length === 0) {
+				refs.set(ref, found);
+				prints?.set(ref, was.print);
+				gone?.delete(ref);
+				if (w.__tabkyraRefOf instanceof WeakMap) {
+					const refOf = w.__tabkyraRefOf as WeakMap<Element, string>;
+					if (!refOf.has(found)) refOf.set(found, ref);
+				}
+				return found;
+			}
+		}
+	}
+	if (acted.has(ref))
+		throw new Error(
+			`Ref ${ref} not found: the element it named is gone from the page, so the action may already have happened. Call read_page to see the page now, and use its refs.`,
+		);
+	// Whether this document ever gave the ref out: refs are numbered from a random start per document.
+	const n = /^e(\d+)$/.test(ref) ? Number(ref.slice(1)) : Number.NaN;
+	const start = typeof w.__tabkyraRefStart === "number" ? w.__tabkyraRefStart : undefined;
+	const seq = typeof w.__tabkyraRefSeq === "number" ? w.__tabkyraRefSeq : undefined;
+	const given =
+		el !== undefined || gone?.has(ref) || (start !== undefined && seq !== undefined && n > start && n <= seq);
+	if (given)
+		throw new Error(
+			`Ref ${ref} not found: the element it named left the page. Nothing was done. Call read_page for fresh refs.`,
+		);
+	throw new Error(
+		`Ref ${ref} not found: this page never gave it out (refs don't carry over from before the page loaded or changed). Nothing was done. Call read_page {"filter":"interactive"} for fresh refs.`,
+	);
+}
+
+/**
+ * Page side: mark a ref as one an action went through, once its input reached the element (locate's listener, fill
+ * before it writes). resolveRef never heals such a ref, and says the action may already have happened. Self-contained.
+ */
+function refActed(ref: string): void {
+	const w = window as unknown as { __tabkyraActed?: unknown };
+	const acted = w.__tabkyraActed instanceof Set ? (w.__tabkyraActed as Set<string>) : new Set<string>();
+	w.__tabkyraActed = acted;
+	acted.delete(ref);
+	acted.add(ref);
+	for (const old of acted) {
+		if (acted.size <= 500) break;
+		acted.delete(old);
+	}
 }
 
 /**
@@ -425,6 +534,13 @@ export function pageSnapshot(
 	keepStale = false,
 	frameShown: (el: Element) => "shown" | "hidden" | "away",
 	frameNotes: Record<"shown" | "hidden" | "away", string>,
+	rank?: {
+		offset: number;
+		/** The ranked read this offset continues (its `ranked.snapshot`); omitted, the page's last one. */
+		snapshot?: string;
+		veil: string;
+		point: (el: Element) => { x: number; y: number } | { cover: string } | { offscreen: true };
+	},
 ): unknown {
 	if (typeof frameShown !== "function" || !frameNotes)
 		throw new Error("pageSnapshot: its caller passed no frameShown and FRAME_STATES");
@@ -434,6 +550,10 @@ export function pageSnapshot(
 		__tabkyraRefOf?: unknown;
 		__tabkyraRefSeq?: unknown;
 		__tabkyraStale?: unknown;
+		__tabkyraGonePrints?: unknown;
+		__tabkyraRanked?: unknown;
+		__tabkyraRefStart?: unknown;
+		__tabkyraTwins?: unknown;
 	};
 	// Adopt earlier state only when it is what this function wrote.
 	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : new Map<string, Element>();
@@ -457,18 +577,43 @@ export function pageSnapshot(
 		}
 		stale.clear();
 	}
-	// Forget elements that left the page, so their refs fail instead of piling up.
+	// Forget elements that left the page, so their refs fail instead of piling up. One with a stable id keeps that id and
+	// what it showed a while (at most 300), so its ref can follow the page putting the same control back (resolveRef).
+	const gone =
+		w.__tabkyraGonePrints instanceof Map
+			? (w.__tabkyraGonePrints as Map<string, { id: string; print: string; ctx: string }>)
+			: new Map<string, { id: string; print: string; ctx: string }>();
+	w.__tabkyraGonePrints = gone;
+	// The row a control sits in, as resolveRef reads it: the nearest ancestor that shows more than the control does.
+	const rowText = (x: Element) => {
+		const squash = (t: string | null) => (t ?? "").replace(/\s+/g, " ").trim();
+		const own = squash(x.textContent);
+		let up = x.parentElement;
+		for (let i = 0; up && i < 8; i++, up = up.parentElement) {
+			const t = squash(up.textContent);
+			if (t !== own) return t.slice(0, 200);
+		}
+		return own.slice(0, 200);
+	};
 	for (const [ref, el] of refs)
 		if (!live(el)) {
+			const p = prints.get(ref);
+			if (p !== undefined && el.id) gone.set(ref, { id: el.id, print: p, ctx: rowText(el) });
 			refs.delete(ref);
 			prints.delete(ref);
 		}
+	for (const old of gone.keys()) {
+		if (gone.size <= 300) break;
+		gone.delete(old);
+	}
 	// A random start among about a billion, so a ref kept from the last page almost never
 	// names something on this one.
 	let seq =
 		typeof w.__tabkyraRefSeq === "number" && Number.isSafeInteger(w.__tabkyraRefSeq) && w.__tabkyraRefSeq > 0
 			? w.__tabkyraRefSeq
 			: 1_000_000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900_000_000);
+	// Where this document's numbering began, so a ref it never gave out is told apart from one whose element left.
+	if (typeof w.__tabkyraRefStart !== "number") w.__tabkyraRefStart = seq;
 	const interactiveSel =
 		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1'])";
 	const headingSel = "h1,h2,h3,h4,h5,h6,label,[role=heading],[role=alert],[role=status],[role=dialog]";
@@ -670,6 +815,8 @@ export function pageSnapshot(
 	// A cross-origin frame is read (D46) only when a person can see it: drawn (not hidden or see-through, here or
 	// above it), bigger than a tracking pixel, not kept off the page, and not under something that covers all of it.
 	const nodes: unknown[] = [];
+	// Listed controls with an id, by tag and look: two in rows with the same text are twins (below).
+	const looks = new Map<string, Array<[string, Element]>>();
 	// Elements in the viewport first, then the rest in document order: on long pages the
 	// cap used to be spent on navigation chrome above the fold and the content was cut.
 	const inView: Array<{ el: Element; at: Root }> = [];
@@ -691,7 +838,96 @@ export function pageSnapshot(
 		for (const el of Array.from(at.root.querySelectorAll(selector))) if (!cross.has(el)) place(el, at);
 	// A frame Polycarp can't look into (another site) is still listed, so the agent knows it's there.
 	for (const { el, at } of crossFrames) place(el, at);
-	for (const { el, at } of [...inView, ...offView]) {
+	let order = [...inView, ...offView];
+	// Ranked (read_page's interactive look): what the agent can act on now comes first. The focused
+	// control and an open dialog's, then the viewport's, then within a screen of it, then the rest;
+	// a control something else covers is left out (a click on it would land on the cover) and counted.
+	let ranked: Record<string, number | string | number[]> | undefined;
+	// Where each listed control sits in the ranking, when that is not just its place in this list (a later slice).
+	let positions: number[] | undefined;
+	// A slice past the first continues the read it came from: the order is that read's, kept in the page, so a click
+	// that scrolled or moved focus in between doesn't reshuffle the slices (repeating some controls, skipping others).
+	// Held weakly: a list the page threw away is not kept alive by a read the agent may never continue.
+	type Kept = { id: string; order: Array<WeakRef<Element>>; counts: Record<string, number> };
+	const kept = (w.__tabkyraRanked && typeof w.__tabkyraRanked === "object" ? w.__tabkyraRanked : undefined) as
+		| Kept
+		| undefined;
+	const offset = rank ? Math.max(0, Math.floor(rank.offset) || 0) : 0;
+	if (rank && (offset > 0 || rank.snapshot)) {
+		if (!kept || !Array.isArray(kept.order) || (rank.snapshot !== undefined && kept.id !== rank.snapshot))
+			throw new Error(
+				`Offset ${offset} is from ${rank.snapshot ? `read ${rank.snapshot}` : "a read"} this page no longer has: call read_page {"filter":"interactive"} again from the top.`,
+			);
+		ranked = { ...kept.counts, offset, snapshot: kept.id };
+		// The slice is positions offset to offset + maxNodes of the kept read. A control that left the page since is
+		// skipped, never replaced by the one after the window, and `next` is where the window ended: the next slice
+		// starts there whatever was skipped, so no control comes twice and none is missed.
+		const rootOf = new Map(roots.map((at) => [at.root as Node, at]));
+		const span = kept.order.slice(offset, offset + maxNodes);
+		order = [];
+		positions = [];
+		span.forEach((held, i) => {
+			const el = held instanceof WeakRef ? held.deref() : undefined;
+			const at = el && rootOf.get(el.getRootNode());
+			if (el && at && live(el)) {
+				order.push({ el, at });
+				positions?.push(offset + i);
+			}
+		});
+		ranked.next = offset + span.length;
+	} else if (rank) {
+		const vh = window.innerHeight;
+		let focus: Element | null = document.activeElement;
+		for (let i = 0; i < 20 && focus; i++) {
+			let deeper: Element | null =
+				(focus as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot?.activeElement ?? null;
+			if (!deeper && /^i?frame$/i.test(focus.tagName)) {
+				try {
+					deeper = (focus as HTMLIFrameElement).contentDocument?.activeElement ?? null;
+				} catch {
+					deeper = null;
+				}
+			}
+			if (!deeper || deeper === focus) break;
+			focus = deeper;
+		}
+		const DIALOG = "[role=dialog],[role=alertdialog],dialog[open],[aria-modal=true]";
+		const tiers: Array<Array<{ el: Element; at: Root }>> = [[], [], [], []];
+		let covered = 0;
+		for (const item of order) {
+			const b = box(item.el, item.at);
+			const tier =
+				item.el === focus || item.el.closest(DIALOG)
+					? 0
+					: b.onScreen
+						? 1
+						: b.top + b.height > -vh && b.top < 2 * vh
+							? 2
+							: 3;
+			if (b.onScreen && item.el !== focus && !cross.has(item.el)) {
+				const p = rank.point(item.el);
+				// Polycarp's own in-use veil is not the page's: it doesn't hide a control from the agent.
+				if ("cover" in p && !(rank.veil && p.cover.split(/[ (]/)[0] === rank.veil)) {
+					covered++;
+					continue;
+				}
+			}
+			tiers[tier].push(item);
+		}
+		order = tiers.flat();
+		const counts = {
+			total: order.length,
+			covered,
+			first: tiers[0].length,
+			inView: tiers[1].length,
+			near: tiers[2].length,
+			far: tiers[3].length,
+		};
+		const id = `r${Math.random().toString(36).slice(2, 7)}`;
+		w.__tabkyraRanked = { id, order: order.map((item) => new WeakRef(item.el)), counts } satisfies Kept;
+		ranked = { ...counts, offset: 0, snapshot: id };
+	}
+	for (const { el, at } of order) {
 		if (nodes.length >= maxNodes) break;
 		const b = box(el, at);
 		// The same element keeps its ref; one that now shows something else (a reused list
@@ -723,6 +959,13 @@ export function pageSnapshot(
 		}
 		refs.set(ref, el);
 		prints.set(ref, fp);
+		// Only a control with an id can be healed (resolveRef): those are the ones a twin could be mistaken for.
+		if (el.id) {
+			const key = `${el.tagName}\u0000${fp}`;
+			const group = looks.get(key);
+			if (group) group.push([ref, el]);
+			else looks.set(key, [[ref, el]]);
+		}
 		const tag = tagOf(el);
 		const f = field(el);
 		const node: Record<string, unknown> = {
@@ -747,11 +990,40 @@ export function pageSnapshot(
 		else if (tag === "select" && f.options && f.selectedIndex !== undefined)
 			node.value = f.options[f.selectedIndex]?.text ?? "";
 		const states = statesOf(el);
+		// Said where the model decides, not only in the rules it read long ago: a small model typed a password the user
+		// had given it when nothing at the field said otherwise (evals/weak-model, signup-validation). It names the
+		// handoff too: one left the field empty and only said so, and the user never saw the tab (r4 rerun, t1). In a session
+		// without tabs_show the MCP server rewrites it in every result, change reports too (cli/src/mcp.ts).
+		if (tag === "input" && f.type === "password")
+			states.push("password: never type one, call tabs_show and ask the person to type it");
 		if (states.length && !node.states) node.states = states;
 		if (at.frame) node.frame = at.frame.slice(0, 120);
 		nodes.push(node);
 	}
 	w.__tabkyraRefSeq = seq;
+	// Twins: the same look in a row with the same text. If the page later puts one back under the other's id, nothing
+	// proves which it is, so neither ref heals (resolveRef). Kept for the document, at most 500.
+	const twins = w.__tabkyraTwins instanceof Set ? (w.__tabkyraTwins as Set<string>) : new Set<string>();
+	w.__tabkyraTwins = twins;
+	for (const group of looks.values()) {
+		if (group.length < 2) continue;
+		const rows = new Map<string, string[]>();
+		for (const [ref, el] of group) {
+			const r = rowText(el);
+			const same = rows.get(r);
+			if (same) same.push(ref);
+			else rows.set(r, [ref]);
+		}
+		for (const same of rows.values()) if (same.length > 1) for (const ref of same) twins.add(ref);
+	}
+	for (const old of twins) {
+		if (twins.size <= 500) break;
+		twins.delete(old);
+	}
+	if (ranked) {
+		if (positions) ranked.positions = positions.slice(0, nodes.length);
+		else ranked.next = offset + nodes.length;
+	}
 
 	// Text: the document, then what shadow roots and same-origin frames render, which
 	// document.body.innerText leaves out. Rendered text only: nothing hidden reaches the agent.
@@ -808,6 +1080,7 @@ export function pageSnapshot(
 		},
 		nodes,
 		text,
+		...(ranked ? { ranked } : {}),
 		...(crossFrames.length ? { crossFrames: crossFrames.length } : {}),
 	};
 }
@@ -972,6 +1245,9 @@ export async function snapshot(
 		maxNodes?: number;
 		maxTextChars?: number;
 		filter?: "interactive" | "all";
+		rank?: boolean;
+		offset?: number;
+		snapshot?: string;
 		/** Bars a frame by URL (the approval page, a host not allowed for agents): see frames.ts FrameRule. */
 		skip?: FrameRule;
 	} = {},
@@ -979,9 +1255,13 @@ export async function snapshot(
 	const { maxNodes = 300, maxTextChars = 20000, filter = "all" } = options;
 	// Frames get a small share past a page that used up the default budget, never past one the caller set.
 	const floor = options.maxNodes === undefined && options.maxTextChars === undefined;
-	const code = (n: number, t: number) =>
-		`(${pageSnapshot.toString()})(${n}, ${t}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()}, false, ${frameShown.toString()}, ${JSON.stringify(FRAME_STATES)})`;
-	const snap = await runInPage<Snapshot & { crossFrames?: number }>(tabId, code(maxNodes, maxTextChars));
+	// Only the page's own read is ranked; a frame's controls follow the frame's line and hold no ranked position.
+	const rank = options.rank
+		? `, { offset: ${Math.max(0, Math.floor(options.offset ?? 0)) || 0}, snapshot: ${options.snapshot === undefined ? "undefined" : JSON.stringify(options.snapshot)}, veil: ${JSON.stringify((await veilTag(tabId)) ?? "")}, point: ${refPoint.toString()} }`
+		: "";
+	const code = (n: number, t: number, r = "") =>
+		`(${pageSnapshot.toString()})(${n}, ${t}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()}, false, ${frameShown.toString()}, ${JSON.stringify(FRAME_STATES)}${r})`;
+	const snap = await runInPage<Snapshot & { crossFrames?: number }>(tabId, code(maxNodes, maxTextChars, rank));
 	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
 	if (snap?.crossFrames) {
 		delete snap.crossFrames;
@@ -1369,11 +1649,12 @@ export async function locate(
 	const theAct = act === "type" ? "the typing" : `the ${act}`;
 	const code = (r: string | undefined, inFrame: boolean) => `(async () => {
 		let el = null;
+		let viaRef = false;
 		const ref = ${JSON.stringify(r ?? "")};
 		const sel = ${JSON.stringify(inFrame ? "" : (target.selector ?? ""))};
 		// A ref that no longer resolves falls back to a selector given with it, as before.
 		if (ref) {
-			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); }
+			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); viaRef = true; }
 			catch (e) { if (!sel) throw e; }
 		}
 		if (!el && sel) el = document.querySelector(sel);
@@ -1403,6 +1684,16 @@ export async function locate(
 		const frameCover = (${refFrameCover.toString()})(el, spot.x, spot.y);
 		if (frameCover && typeof frameCover === "object") throw new Error(who + " is outside the visible page (kept off screen), so ${aAct} can't reach it.");
 		if (frameCover) throw covered(frameCover);
+		// The ref counts as acted on only once the input reaches its element: a click that lands on something else, or
+		// never goes out, leaves it as it was (resolveRef).
+		if (viaRef && ${JSON.stringify(act === "click" || act === "type")}) {
+			const win = el.ownerDocument.defaultView || window;
+			const types = ["pointerdown", "mousedown", "click"];
+			const off = () => { for (const t of types) win.removeEventListener(t, on, true); clearTimeout(timer); };
+			const on = (e) => { if (e.composedPath().includes(el)) { (${refActed.toString()})(ref); off(); } };
+			for (const t of types) win.addEventListener(t, on, true);
+			const timer = setTimeout(off, 10000);
+		}
 		let x = spot.x;
 		let y = spot.y;
 		let w = r.width;
@@ -1487,7 +1778,13 @@ export async function fillElement(
 			el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
 			if (document.visibilityState === "visible")
 				await Promise.race([new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))), new Promise((ok) => setTimeout(ok, 200))]);
-			const again = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()});
+			let again = null;
+			try { again = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); }
+			catch (e) {
+				// Only a ref that no longer resolves left the page; any other error (the node now shows something else) is its own.
+				if (!/ not found: /.test(String(e && e.message))) throw e;
+				throw new Error("Ref " + ref + " not found: the element it named left the page as Polycarp scrolled to it (the page rebuilt it). Nothing was entered. Call read_page for fresh refs.");
+			}
 			if (again !== el) throw new Error("Ref " + ref + " now shows something else: the page reused it. Call read_page for fresh refs.");
 			// A field in a dialog that closed keeps its ref; writing into it would put a value
 			// the user can't see into the next submit.
@@ -1503,6 +1800,8 @@ export async function fillElement(
 			const cover = spot.cover || frame;
 			if (cover) throw new Error("Ref " + ref + " is covered by " + cover + ". Close or dismiss it, then call read_page.");
 		}
+		// Every check passed and the value goes in now: from here the ref is one an action went through (resolveRef).
+		if (byRef) (${refActed.toString()})(ref);
 		const value = ${JSON.stringify(value)};
 		// The element's own window: one in a frame belongs to another realm, where this
 		// window's HTMLInputElement and its value setter don't apply.

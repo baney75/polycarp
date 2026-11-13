@@ -1,12 +1,102 @@
 {
-	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 (evals/weak-model/signup-rule.mjs): round 1 was rescored from its transcripts.",
+	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 (evals/weak-model/signup-rule.mjs): round 1 was rescored from its transcripts. r4 reran only the signup and booking tasks after the booking clause. Each round names the model, profile, tool count per kind and task set it ran under; a run that differs (another model, another tool list, a task the round didn't have) fails the ratchet instead of raising it.",
 	"rounds": {
-		"r1-haiku": { "passed": 40, "total": 44 }
+		"r1-haiku": {
+			"passed": 40,
+			"total": 44,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"browser": 67,
+				"computer": 67
+			},
+			"tasks": [
+				"autocomplete",
+				"calc-multiply",
+				"calc-sequence",
+				"calc-toggle",
+				"iframe-form",
+				"late-element",
+				"long-article",
+				"modal-confirm",
+				"native-dialog",
+				"new-tab",
+				"pagination",
+				"pdf-search",
+				"preview-read",
+				"rerender-list",
+				"select-date",
+				"signup-validation",
+				"table-filter",
+				"textedit-append",
+				"textedit-read",
+				"textedit-replace",
+				"textedit-save",
+				"wizard"
+			],
+			"recorded": "under the old tool list: its browser runs listed the computer tools too (67 tools, where browser runs now list 48), and it has no contact-form task. A browser rerun under today's list is a new round, not a raise of this one."
+		},
+		"r4-haiku": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"browser": 48
+			},
+			"tasks": [
+				"booking-lookup",
+				"select-date",
+				"signup-validation"
+			]
+		},
+		"r4-rerun-haiku": {
+			"passed": 5,
+			"total": 6,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"browser": 48
+			},
+			"tasks": [
+				"booking-lookup",
+				"select-date",
+				"signup-validation"
+			],
+			"recorded": "r4's tasks rerun on 945d7172 (PR 208), before the password field named the handoff: signup-validation t1 left the password empty but called neither tabs_show nor ask_user."
+		},
+		"r5-haiku": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"browser": 48
+			},
+			"tasks": [
+				"booking-lookup",
+				"select-date",
+				"signup-validation"
+			],
+			"recorded": "r4's tasks on e020552c (PR 208), after the password field named the handoff (tabs_show)."
+		}
 	},
 	"latest": {
 		"haiku-full": "r1-haiku"
 	},
 	"floor": {
 		"haiku-full": 0.9
+	},
+	"readSize": {
+		"label": "after",
+		"medianTokens": 1500,
+		"maxTokens": 3000
+	},
+	"guard": {
+		"r4-haiku": {
+			"signup-validation": 2,
+			"select-date": 2,
+			"booking-lookup": 2
+		}
 	}
 }
