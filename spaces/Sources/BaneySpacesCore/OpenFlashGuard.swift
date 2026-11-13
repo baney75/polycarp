@@ -97,13 +97,17 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
     /// Every new ordinary window of the process in sight gets a cover until it is parked (out of sight), closes (off the
     /// list past `goneAfter`) or reaches `coverLife`. A window that never needed a cover (a helper, a splash or sliver of
     /// 50 pt or less, a floating panel, one already out of sight) is ignored: it neither ends the hold nor the watch. The
-    /// watch lasts while the claim does (`claimFor`), and ends sooner only once every covered window is done and no new
-    /// one came for `quietFor`.
+    /// watch lasts while its shot can still paint a cover (`coverUntil`, `shotLife` after the shot) and the claim is on
+    /// (`claimFor`), and ends sooner once every covered window is done and no new one came for `quietFor`. A window that
+    /// comes later can't be covered from that shot, so the watch, and the hold with it, is over by then (review of PR
+    /// 232, first-F2 in both rounds: a later window always hit the stale shot and ended the watch uncovered).
     public struct Plan: Sendable {
         public let pid: Int32
         /// The launched process's start time: a pid reused by another process isn't this launch's.
         public let incarnation: UInt64
         public let screens: [CGRect]
+        /// Watch time past which the shot is too old to paint a cover.
+        public let coverUntil: Double
         /// The windows with a cover now, by id: when it went up.
         private var upAt: [UInt32: Double] = [:]
         /// Windows parked, closed or past their cover: never covered again.
@@ -126,23 +130,29 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
             public var expired: [UInt32]
             /// No window is covered or pending: the watch polls at `idleInterval`, and it holds no slot (`slotBusy`).
             public var idle: Bool
+            /// A covered window was parked or closed: the app has answered, so the hold is let go and a window that comes
+            /// back can be parked again at once (review of PR 232, second-S1 in both rounds, round 2 sol-F2).
+            public var settled = false
         }
 
-        public init(pid: Int32, incarnation: UInt64, screens: [CGRect]) { self.pid = pid; self.incarnation = incarnation; self.screens = screens }
+        /// `coverUntil`: watch time when the shot reaches `shotLife` (the shot is taken before the watch starts).
+        public init(pid: Int32, incarnation: UInt64, screens: [CGRect], coverUntil: Double = OpenFlashGuard.claimFor) {
+            self.pid = pid; self.incarnation = incarnation; self.screens = screens; self.coverUntil = coverUntil
+        }
 
         /// `incarnation` is the pid's start time now, nil once it has exited.
         public mutating func tick(now: Double, windows: [Sighting], incarnation now_: UInt64?) -> Step {
-            guard now_ == incarnation, now < OpenFlashGuard.claimFor else {
+            guard now_ == incarnation, now < min(OpenFlashGuard.claimFor, coverUntil) else {
                 defer { last = [:] }
                 return Step(covers: [:], changed: !last.isEmpty, end: true, expired: [], idle: false)
             }
-            var want: [UInt32: CGRect] = [:], ran: [UInt32] = []
+            var want: [UInt32: CGRect] = [:], ran: [UInt32] = [], settled = false
             let mine = windows.filter { $0.pid == pid }
             for w in mine where !done.contains(w.id) {
                 missing[w.id] = nil
                 guard OpenFlashGuard.needsGuard(layer: w.layer, alpha: w.alpha, bounds: w.bounds, screens: screens) else {
                     // Out of sight now, so a covered window is parked; one that never had a cover is ignored.
-                    if upAt[w.id] != nil { finish(w.id, now) }
+                    if upAt[w.id] != nil { finish(w.id, now); settled = true }
                     continue
                 }
                 let up = upAt[w.id] ?? now
@@ -155,12 +165,13 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
             for id in Array(upAt.keys) where !listed.contains(id) {
                 let since = missing[id] ?? now
                 missing[id] = since
-                if now - since >= OpenFlashGuard.goneAfter { finish(id, now) }
+                if now - since >= OpenFlashGuard.goneAfter { finish(id, now); settled = true }
             }
             let idle = upAt.isEmpty
             defer { last = want; lastIdle = idle }
             return Step(covers: want, changed: want != last || idle != lastIdle,
-                        end: idle && lastDone.map { now - $0 >= OpenFlashGuard.quietFor } == true, expired: ran.sorted(), idle: idle)
+                        end: idle && lastDone.map { now - $0 >= OpenFlashGuard.quietFor } == true, expired: ran.sorted(), idle: idle,
+                        settled: settled)
         }
 
         private mutating func finish(_ id: UInt32, _ now: Double) {
