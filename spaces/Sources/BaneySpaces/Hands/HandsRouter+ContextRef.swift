@@ -11,18 +11,21 @@ extension HandsRouter {
         switch resolve(ref, session: session) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope)):
-            if let e = awaitUse(w, verb: "click", delivery: .headlessAX, wait: req.int("wait"), session: session) { return .failure(e) }
+            // The menu takes the keyboard and its cancel posts Escape: it waits while Donovan uses the app, as a posted key does (231 r1 first-F2).
+            if let e = awaitUse(w, verb: "click", delivery: .posted, wait: req.int("wait"), session: session) { return .failure(e) }
             let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
             defer { AgentActivity.shared.end(token) }
-            guard let frame = BackgroundAX.serverWindow(w.id)?.frame else {
-                return .failure(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows`.", retry: .afterSnapshot))
-            }
-            let displays = ContextMenuAX.displays()
-            // Rule 1, before the engine is asked for anything.
-            if let e = ContextMenu.gate(agentShown: agentShown(), agentWindow: onAgentWorkspace(w, scope), window: frame, displays: displays) { return .failure(e) }
-            let acting = actingCheck(w, ref: ref, verb: "click", delivery: .headlessAX, session: session)
+            let acting = actingCheck(w, ref: ref, verb: "click", delivery: .posted, session: session)
             var answer: Result<[String: JSONValue], HandsError> = .failure(HandsError(.engineError, "the right click didn't run", suggestion: "Try again.", retry: .safe))
             let reply = HandsEngine.shared.transaction(window: w, check: acting) { [self] cancelled in
+                // Rule 1, read when the work runs, not when it was queued: work ahead of it on this process's queue can hold it
+                // for up to the budget, long enough for Donovan to put the agent workspace away (231 r1 first-F1).
+                guard let frame = BackgroundAX.serverWindow(w.id)?.frame else {
+                    answer = .failure(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows`.", retry: .afterSnapshot))
+                    return .ok(.null)
+                }
+                let displays = ContextMenuAX.displays()
+                if let e = ContextMenu.gate(agentShown: agentShown(), agentWindow: onAgentWorkspace(w, scope), window: frame, displays: displays) { answer = .failure(e); return .ok(.null) }
                 // The cancel's key permit first: none, and the engine is asked for nothing (210 r1 first-F1).
                 guard let keyPermit = escapeKeys(w) else { answer = .failure(ContextMenu.noCancel(w.app)); return .ok(.null) }
                 let before = Set(ContextMenuAX.menus(w.pid, before: []).map(\.id))

@@ -332,7 +332,6 @@ extension HandsRouter {
         return .ok(.object(answer))
     }
 
-    /// The facts the planner decides on, read now, on the process queue. nil when the window is gone.
     /// A context menu's cancel: the key permit Escape is posted with, planned before anything is posted, with the
     /// transaction's verifier, or the one a read of the tree now gives (210 r1 first-F1). Nil: no right click.
     func escapeKeys(_ w: HandsWindow, verifier: VerifierPlan? = nil) -> BackgroundPermit? {
@@ -341,6 +340,7 @@ extension HandsRouter {
         return keys
     }
 
+    /// The facts the planner decides on, read now, on the process queue. nil when the window is gone.
     private func gatherFacts(_ w: HandsWindow, kind: InputKind, verifier: VerifierPlan, path: [CGPoint]) -> (BackgroundFacts, CGRect)? {
         let (live, agent, owned, seen) = onMain { (host.live(w.id), host.agentWorkspace(), host.agentOwned(), host.inspect(w.id)) }
         guard let live, live.pid == w.pid, let server = BackgroundAX.serverWindow(w.id) else { return nil }

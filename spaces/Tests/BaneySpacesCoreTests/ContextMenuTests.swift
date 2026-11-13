@@ -132,7 +132,8 @@ final class ContextMenuTests: XCTestCase {
     func testTheRouterGatesBeforePostingAndNeverLeavesAMenu() throws {
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextMenu.swift")
         let press = try XCTUnwrap(HandsSourceTests.block(after: "func contextPress(", in: src))
-        let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
+        let bg = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/BaneySpaces/Hands/HandsRouter+Background.swift"), encoding: .utf8)
         let gate = try XCTUnwrap(press.range(of: "ContextMenu.gate(")), post = try XCTUnwrap(press.range(of: "BackgroundPoster.pointer("))
         XCTAssertLessThan(gate.lowerBound, post.lowerBound)
         XCTAssertTrue(press.contains("contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: post.report.stopped"))
@@ -228,5 +229,29 @@ final class ContextMenuTests: XCTestCase {
         XCTAssertFalse(src.contains("BackgroundPoster.pointer") || src.contains("AXUIElementPerformAction"), "no posted click, no accessibility action of its own")
         let engine = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsEngine.swift")
         XCTAssertTrue(engine.contains("rightClick = 2") && engine.contains("Self.headlessPolicy, 0, &out"))
+    }
+
+    /// 231 r1 first-F1: rule 1 is read inside the transaction, when the work runs. Read before it, work ahead on the
+    /// process's queue could hold the right click while Donovan put the agent workspace away, and AXShowMenu would draw
+    /// the menu on his screen. first-F2: it waits while he uses the app, as a posted key does.
+    func testARightClickOnARefIsGatedWhenItRunsNotWhenItQueues() throws {
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextRef.swift")
+        let click = try XCTUnwrap(HandsSourceTests.block(after: "func contextClick(", in: src))
+        let tx = try XCTUnwrap(click.range(of: "HandsEngine.shared.transaction(window: w, check: acting) { [self] cancelled in"))
+        let frame = try XCTUnwrap(click.range(of: "guard let frame = BackgroundAX.serverWindow(w.id)?.frame else {"))
+        let displays = try XCTUnwrap(click.range(of: "let displays = ContextMenuAX.displays()"))
+        let gate = try XCTUnwrap(click.range(of: "ContextMenu.gate(agentShown: agentShown(), agentWindow: onAgentWorkspace(w, scope), window: frame, displays: displays) { answer = .failure(e); return .ok(.null) }"))
+        let keys = try XCTUnwrap(click.range(of: "escapeKeys(w)"))
+        for (name, r) in [("frame", frame), ("displays", displays), ("gate", gate)] {
+            XCTAssertLessThan(tx.lowerBound, r.lowerBound, "\(name) is read inside the transaction")
+            XCTAssertLessThan(r.lowerBound, keys.lowerBound, "\(name) before the cancel's permit and the engine")
+        }
+        XCTAssertEqual(click.components(separatedBy: "ContextMenu.gate(").count, 2, "one gate, the one inside")
+        XCTAssertTrue(click.contains(#"awaitUse(w, verb: "click", delivery: .posted"#))
+        XCTAssertTrue(click.contains(#"actingCheck(w, ref: ref, verb: "click", delivery: .posted"#))
+        XCTAssertFalse(click.contains(".headlessAX"))
+        let bg = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/BaneySpaces/Hands/HandsRouter+Background.swift"), encoding: .utf8)
+        XCTAssertTrue(bg.contains("/// The facts the planner decides on, read now, on the process queue. nil when the window is gone.\n    private func gatherFacts("), "231 r1 second-S4")
     }
 }
