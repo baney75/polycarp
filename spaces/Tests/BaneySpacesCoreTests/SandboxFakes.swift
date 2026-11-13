@@ -35,10 +35,10 @@ final class FakeTart: ProcessRunning {
     let lock = NSLock()
     /// Tests set these while the warm build's thread reads them, so both sides take the lock.
     private var _vms: [String: VM] = [:]
-    var vms: [String: VM] {
-        get { lock.lock(); defer { lock.unlock() }; return _vms }
-        set { lock.lock(); _vms = newValue; lock.unlock() }
-    }
+    var vms: [String: VM] { lock.lock(); defer { lock.unlock() }; return _vms }
+    /// A change to the VMs is one locked step: `vms["x"] = ...` through a getter and a setter let the warm build's
+    /// thread change them between the two (review of PR 233, first-F2).
+    func withVMs(_ change: (inout [String: VM]) -> Void) { lock.lock(); defer { lock.unlock() }; change(&_vms) }
     var imagePulled = false
     // What the fake recorded is read under its lock: the warm build records from its own thread while a test
     // reads. An unlocked read that met an append growing the array saw it empty (TSan, 11-12: buildWarm's spawn

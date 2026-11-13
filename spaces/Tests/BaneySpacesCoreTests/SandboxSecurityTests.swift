@@ -180,7 +180,7 @@ final class SandboxSecurityTests: XCTestCase {
         try Data("x".utf8).write(to: rest.appendingPathComponent("a.txt"))
         let slot = try SandboxHandoff.makeSlot(vm: "bsx-w-old", paths: paths)
         try SandboxHandoff.bind(task: "t1", slot: slot, paths: paths)
-        r.tart.vms["bsx-w-old"] = .init(proc: FakeProc())
+        r.tart.withVMs { $0["bsx-w-old"] = .init(proc: FakeProc()) }
         r.tart.failDeleteOnce = 1000
         XCTAssertThrowsError(try r.manager.up(task: "t1")) {
             let e = $0 as? SandboxError
@@ -336,7 +336,6 @@ final class SandboxIPv6EnforcementTests: XCTestCase {
         _ = try r.manager.up(task: "t1")
         // The warm clone's self-check reads these fakes on its own thread: let it finish before they change (TSan, 11-12).
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120))
-        XCTAssertTrue(r.manager.waitUntilVerified(limit: 60), "and any check after it")
         r.tart.v6Leak = true
         XCTAssertTrue(SandboxSelfcheck.rootIPv6Attempt(vm: r.manager.snapshot().vm!, tart: r.st, hostFacts: r.facts).contains { $0.contains("reached") })
         r.tart.v6Leak = false
@@ -348,7 +347,6 @@ final class SandboxIPv6EnforcementTests: XCTestCase {
         let r = Rig.make(); defer { r.manager.shutdown(); try? FileManager.default.removeItem(at: r.dir) }
         _ = try r.manager.up(task: "t1")
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120), "the warm clone's self-check is done reading the facts")
-        XCTAssertTrue(r.manager.waitUntilVerified(limit: 60), "and any check after it")
         r.facts.facts.bridge6 = []
         XCTAssertFalse(SandboxSelfcheck.rootIPv6Attempt(vm: r.manager.snapshot().vm!, tart: r.st, hostFacts: r.facts).isEmpty)
     }

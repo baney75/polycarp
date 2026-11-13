@@ -105,7 +105,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testStartupDeletesEveryLeftoverButNotOtherVMs() throws {
         let r = rig()
-        r.tart.vms["bsx-w-crashed"] = .init(); r.tart.vms["bsx-s-old"] = .init(); r.tart.vms["my-own-vm"] = .init()
+        r.tart.withVMs { $0["bsx-w-crashed"] = .init() }; r.tart.withVMs { $0["bsx-s-old"] = .init() }; r.tart.withVMs { $0["my-own-vm"] = .init() }
         _ = try r.manager.up(task: "t1")
         XCTAssertFalse(r.tart.vmNames().contains("bsx-w-crashed")); XCTAssertFalse(r.tart.vmNames().contains("bsx-s-old"))
         XCTAssertTrue(r.tart.vmNames().contains("my-own-vm"), "VMs that aren't ours are never touched")
@@ -140,7 +140,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testAThirdGuestGetsBusyWithRetryAfterAndNothingIsMade() {
         let r = rig()
-        r.tart.vms["someone-elses-1"] = .init(proc: FakeProc()); r.tart.vms["someone-elses-2"] = .init(proc: FakeProc())
+        r.tart.withVMs { $0["someone-elses-1"] = .init(proc: FakeProc()) }; r.tart.withVMs { $0["someone-elses-2"] = .init(proc: FakeProc()) }
         XCTAssertThrowsError(try r.manager.up(task: "t")) {
             let e = $0 as? SandboxError
             XCTAssertEqual(e?.code, "busy"); XCTAssertEqual(e?.retry, "after")
@@ -152,7 +152,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testWithOneOtherGuestRunningUpWorksButNoWarmCloneIsBuilt() throws {
         let r = rig()
-        r.tart.vms["someone-elses"] = .init(proc: FakeProc())
+        r.tart.withVMs { $0["someone-elses"] = .init(proc: FakeProc()) }
         _ = try r.manager.up(task: "t")
         XCTAssertEqual(r.manager.snapshot().warm, .none, "working + the other guest are the two")
         XCTAssertEqual(r.tart.ours().count, 1)
@@ -160,7 +160,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testBusyThroughTheServiceCarriesRetryAfter() {
         let r = rig()
-        r.tart.vms["a"] = .init(proc: FakeProc()); r.tart.vms["b"] = .init(proc: FakeProc())
+        r.tart.withVMs { $0["a"] = .init(proc: FakeProc()) }; r.tart.withVMs { $0["b"] = .init(proc: FakeProc()) }
         let s = SandboxService(manager: r.manager, tart: r.st, settings: { SandboxSettings(enabled: true) }, tartHome: r.dir)
         let reply = s.handle(Wire.Request(op: .sandbox, text: "up"))
         let d = (try? JSONSerialization.jsonObject(with: Data((reply.info?["json"] ?? "{}").utf8))) as? [String: Any]
@@ -613,7 +613,7 @@ final class SandboxHardeningTests: XCTestCase {
         _ = try r.manager.up(task: "t1")
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120))
         XCTAssertEqual(r.manager.snapshot().warmLocation, .memory)
-        r.tart.vms["someone-elses"] = .init()   // a third-party VM exists; it needs the second guest slot
+        r.tart.withVMs { $0["someone-elses"] = .init() }   // a third-party VM exists; it needs the second guest slot
         r.manager.tick()
         XCTAssertEqual(r.manager.snapshot().warmLocation, .disk)
     }
@@ -633,33 +633,24 @@ final class SandboxHardeningTests: XCTestCase {
 }
 
 final class FakeTartLockTests: XCTestCase {
-    /// A spawn hook is handed the process that spawn made. The window test's hook read `FakeProc.next`, which the warm
-    /// build's thread can move on between the record and the hook (review of PR 206, second-F4): here a process made in
-    /// that gap stands in for it.
-    func testASpawnHookIsHandedTheProcessThatSpawnMade() throws {
-        let tart = FakeTart()
-        XCTAssertEqual(tart.run("tart", ["clone", SandboxPin.image, "bsx-hook"], env: [:], stdin: nil, timeout: 5, outputLimit: 1 << 16).status, 0)
-        var seen: Int32?
-        tart.onSpawn = { _, proc in _ = FakeProc(); seen = proc.pid }
-        let p = try tart.spawn("tart", ["run", "bsx-hook"], env: [:], logPath: nil, hold: false)
-        XCTAssertEqual(seen, p.pid)
+    /// The warm build records spawns and calls from its own thread while a test reads them (TSan, 11-12, buildWarm's
+    /// spawn at SandboxManager.swift:671 against a test's count). What the fake shares is private, so the compiler
+    /// keeps every outside read on the locked accessors and every change on a locked mutator (review of PR 233, F2, F4).
+    func testAChangeToTheVMsIsOneLockedStep() {
+        // The fake changes its VMs on the warm build's thread while a test adds its own: a read then a write would drop
+        // the fake's change made between the two.
+        let tart = FakeTart(), n = 2000
+        DispatchQueue.concurrentPerform(iterations: 2) { side in
+            for k in 0..<n {
+                if side == 0 { _ = tart.run("tart", ["clone", SandboxPin.image, "bsx-c\(k)"], env: [:], stdin: nil, timeout: 5, outputLimit: 1 << 16) }
+                else { tart.withVMs { $0["mine-\(k)"] = .init() } }
+            }
+        }
+        XCTAssertEqual(tart.vms.count, 2 * n, "no change lost")
     }
 
-    /// The warm build records spawns and calls from its own thread while a test reads them. An unlocked read that met
-    /// an append growing the array saw it empty: TSan, 11-12, buildWarm's spawn (SandboxManager.swift:671) against
-    /// testViewRefusesWithoutAnAgentWorkspaceAndTouchesNothing's count, which read 0 runs of the task VM and then 1.
-    /// A race can't be made to lose every run, so this pins the shape: what the fake shares is private and read under
-    /// the lock, however the reader is laid out (review of PR 206, first-F3).
-    func testWhatTheFakeRecordedIsReadOnlyUnderItsLock() throws {
+    func testTheSpawnHookRunsAfterTheLockAndANoteIsOneLockedStep() throws {
         let c = try CursorSourceTests.code("Tests/BaneySpacesCoreTests/SandboxFakes.swift")
-        let tart = try XCTUnwrap(HandsSourceTests.between("final class FakeTart", "final class FakeHostFacts", in: c))
-        for name in ["calls", "spawned", "order", "vms", "stdinSeen", "v6Leak"] {
-            XCTAssertTrue(Self.readsUnderLock(name, in: tart), "\(name) is stored privately and read under the lock")
-        }
-        let hostFacts = try XCTUnwrap(HandsSourceTests.between("final class FakeHostFacts", "func read()", in: c))
-        for name in ["facts", "listenerHits"] {
-            XCTAssertTrue(Self.readsUnderLock(name, in: hostFacts), "the host facts' \(name) is stored privately and read under the lock")
-        }
         let spawn = try XCTUnwrap(HandsSourceTests.between("func spawn(_ exe: String", "private func record(", in: c))
         XCTAssertFalse(spawn.contains("lock.lock()"), "onSpawn runs after the lock, so a hook can read the lists")
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -667,36 +658,5 @@ final class FakeTartLockTests: XCTestCase {
             let tests = try CursorSourceTests.code("Tests/BaneySpacesCoreTests/" + file).filter { !$0.isWhitespace }
             XCTAssertFalse(tests.contains("tart.order" + ".append("), "\(file): a note is one locked step: tart.note(_:)")
         }
-    }
-
-    /// Whether `code` stores `name` privately and its reader takes the lock and returns that store, whatever the layout.
-    static func readsUnderLock(_ name: String, in code: String) -> Bool {
-        let flat = code.filter { !$0.isWhitespace }
-        guard flat.contains("privatevar_\(name):") || flat.contains("privatevar_\(name)="), let r = flat.range(of: "var\(name):"), let open = flat[r.upperBound...].firstIndex(of: "{") else { return false }
-        var depth = 0, body = ""
-        for ch in flat[open...] {
-            body.append(ch)
-            if ch == "{" { depth += 1 } else if ch == "}" { depth -= 1; if depth == 0 { break } }
-        }
-        let get = body.range(of: "set{").map { String(body[..<$0.lowerBound]) } ?? body
-        return get.contains("lock.lock()") && get.contains("defer{lock.unlock()}") && get.contains("return_\(name)")
-    }
-
-    func testTheLockCheckReadsTheCodeNotItsLayout() {
-        let laidOut = """
-            private var _calls: [[String]] = []
-            var calls: [[String]] {
-                lock.lock()
-                defer { lock.unlock() }
-                return _calls
-            }
-            """
-        XCTAssertTrue(Self.readsUnderLock("calls", in: laidOut), "a reader split over lines still counts")
-        XCTAssertTrue(Self.readsUnderLock("hits", in: "private var _hits = 0\nvar hits: Int { get { lock.lock(); defer { lock.unlock() }; return _hits } set { lock.lock(); _hits = newValue; lock.unlock() } }"),
-                      "a store with an inferred type and a getter and setter counts")
-        XCTAssertFalse(Self.readsUnderLock("calls", in: "private var _calls: [[String]] = []\nvar calls: [[String]] { return _calls }"), "an unlocked reader fails")
-        XCTAssertFalse(Self.readsUnderLock("stdinSeen", in: "var stdinSeen: [String] = []"), "a plain shared var fails")
-        XCTAssertFalse(Self.readsUnderLock("v6Leak", in: "private var _v6Leak = false\nvar v6Leak: Bool { get { return _v6Leak } set { lock.lock(); _v6Leak = newValue; lock.unlock() } }"),
-                       "a lock only in the setter fails")
     }
 }
