@@ -224,3 +224,19 @@ test("the pointer character is plain inline SVG, takes no clicks and holds still
 	assert.match(VEIL_CSS, /\.veil\.nomote \.mote \{ display: none; \}/);
 	assert.doesNotMatch(VEIL_CSS, /\.mote[^{]*\{[^}]*pointer-events/);
 });
+
+test("review of #184, the pointer's page side: first-F2, first-F4, second-G1, second-G2", () => {
+	const page = veilPage.toString();
+	// first-F2: a first cue with no point (type with nothing focused, a page scroll) leaves it hidden, not centered.
+	assert.match(page, /if\s*\(!at\)\s*return\s*\{\s*tag:\s*live\.tag\s*\}/);
+	assert.doesNotMatch(page, /vw\s*\/\s*2,\s*y:\s*vh\s*\/\s*2/);
+	// first-F4: forced colors map the caret, ping and chevrons to Highlight, as they do the body.
+	const forced = VEIL_CSS.slice(VEIL_CSS.indexOf("@media (forced-colors: active)"));
+	assert.match(forced, /\.mote \.caret \{ background: Highlight; forced-color-adjust: none; \}/);
+	assert.match(forced, /\.mote \.ping, \.mote \.chev \{ stroke: Highlight; \}/);
+	// second-G1: "slow" (a drag's follow) is cleared with the poses, so a cue that cuts a drag short can't leave it on.
+	assert.equal((page.match(/classList\.remove\("slow",\s*\.\.\.Object\.values\(pose\)\)/g) ?? []).length, 2);
+	// second-G2: frames are found by tag name; an element of a child frame fails the top frame's instanceof.
+	assert.doesNotMatch(page, /instanceof HTML(I)?Frame/);
+	assert.match(page, /localName\s*===\s*"iframe"\s*\|\|\s*el\.localName\s*===\s*"frame"/);
+});
