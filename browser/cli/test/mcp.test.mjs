@@ -88,7 +88,7 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// above, the budget is theirs plus these 131 (32,676 measured).
 	// get_page_text's query adds 143 (32,824): finding a passage in a 400-page PDF or a long page by its words, with
 	// page numbers, instead of reading it whole or paging through it 50,000 characters at a time.
-	// on_dialog and on_dialog_text on click and press, and a line on the one actions step that may set it, add 503
+	// on_dialog and on_dialog_text on click and press, and a line saying actions steps take none, add 503
 	// (33,327; D48): an answer set before the action is the only way to get past a box Polycarp must cancel within 3 s,
 	// sooner than a model turn can send handle_dialog. Nearly all schema; the descriptions are one line.
 	assert.ok(bytes <= 33327, `tools/list is ${bytes} bytes, over the 33,327 budget`);
@@ -1214,7 +1214,7 @@ test("files for a remote session: its own scope, never a path in, never a path o
 	}
 });
 
-test("second-S1 (review of PR 216): on_dialog on actions, type, fill, hover, scroll or drag is refused over MCP, never dropped", async () => {
+test("second-S1 (review of PR 216), F4 (review of PR 227): on_dialog on any tool but click and press is refused over MCP, never dropped", async () => {
 	// A fake native host that records every request and answers it: a refused call must send none.
 	const dir = join(root, "nodialog-sock");
 	mkdirSync(dir, { mode: 0o700 });
@@ -1260,6 +1260,11 @@ test("second-S1 (review of PR 216): on_dialog on actions, type, fill, hover, scr
 			["hover", { tabId: 41, ref: "e4", on_dialog: "ok" }],
 			["scroll", { tabId: 41, dy: 100, on_dialog: "ok" }],
 			["drag", { tabId: 41, from: { x: 1, y: 1 }, to: { x: 2, y: 2 }, on_dialog_text: "hi" }],
+			// Not only the input tools: a script, a navigation or a wait can open a box too (F4 of the review of PR 227).
+			["run_js", { tabId: 41, code: "confirm('Delete?')", on_dialog: "ok" }],
+			["navigate", { tabId: 41, url: "https://shop.example.com/", on_dialog: "ok" }],
+			["find", { tabId: 41, query: "Delete", on_dialog: "ok" }],
+			["wait", { tabId: 41, text: "Done", on_dialog: "cancel" }],
 		];
 		for (const [name, args] of calls) {
 			const r = await client.callTool({ name, arguments: args });

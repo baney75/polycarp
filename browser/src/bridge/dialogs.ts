@@ -56,6 +56,13 @@ export function dialogPreset(
 	if (!PRESET_METHODS.has(method))
 		throw new BridgeError(ERR.BAD_PARAMS, `on_dialog works on a single click or press call, not on ${method}`);
 	if (on !== "ok" && on !== "cancel") throw new BridgeError(ERR.BAD_PARAMS, 'on_dialog must be "ok" or "cancel"');
+	// A double click armed at its first press would answer the box the first click opened and then press again,
+	// on whatever the page moved under the pointer (second-S1 of the review of PR 227).
+	if (method === "click" && Number(params?.clickCount ?? 1) > 1)
+		throw new BridgeError(
+			ERR.BAD_PARAMS,
+			"on_dialog works on a single click: clickCount must be 1. Nothing was done. Send the click that opens the box with no clickCount.",
+		);
 	if (text !== undefined && text !== null && typeof text !== "string")
 		throw new BridgeError(ERR.BAD_PARAMS, "on_dialog_text must be a string");
 	const named = tabId === undefined || tabId === null ? Number.NaN : Number(tabId);

@@ -908,6 +908,7 @@ export const handlers: Record<string, Handler> = {
 			await click(tabId, p.x, p.y, {
 				button: button === "right" || button === "middle" ? button : "left",
 				clickCount: num(params, "clickCount") ?? 1,
+				stop: () => stopIfAborted(ctx),
 				// on_dialog's answer is armed before the press, the click's first event: a page may open its box on
 				// mousedown (first-F1 of the review of PR 216).
 				beforeFirstPress:
@@ -968,7 +969,7 @@ export const handlers: Record<string, Handler> = {
 		const attempt = async () => {
 			if (t.ref || t.selector) {
 				const rect = await locate(tabId, t, skipFor(ctx, tabId), "type", before?.frame.hit);
-				await click(tabId, rect.x, rect.y);
+				await click(tabId, rect.x, rect.y, { stop: () => stopIfAborted(ctx) });
 			}
 			stopIfAborted(ctx);
 			await typeText(tabId, text, ctx.aborted, () => {
@@ -1293,7 +1294,19 @@ export const handlers: Record<string, Handler> = {
 					last.id === firstId ? { before } : { watched: false, changes: { page: movedTo(last.id) } },
 				),
 			);
-		if (wantShot) out.screenshot = await handlers.screenshot(ctx, { tabId: params.tabId });
+		if (wantShot)
+			try {
+				out.screenshot = await handlers.screenshot(ctx, { tabId: params.tabId });
+			} catch (err) {
+				// The steps ran: a screenshot refused as not_sent must never read as "send it again" (F1 of the review of
+				// PR 227's first pass).
+				const { error } = classify(err, "screenshot");
+				if (error.code !== ERR.NOT_SENT) throw err;
+				throw new BridgeError(
+					ERR.INTERRUPTED,
+					`all ${done.length} steps ran, but the screenshot after them was not taken: ${error.message} Do not send the steps again: read_page or screenshot first.`,
+				);
+			}
 		return out;
 	},
 

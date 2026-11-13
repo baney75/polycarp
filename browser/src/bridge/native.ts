@@ -426,8 +426,13 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 	// Aborted from the moment it is taken off the queue: the host can go away during any await
 	// below, and once it has, the agent was told this may have run and may repeat it.
 	let aborted = false;
+	/** This call, for the answer it may arm (`on_dialog`) and the tab it holds. */
+	const call = `${state.clientId}:${req.id}`;
+	// The host went away: an answer this call armed is taken back at once, so no box that opens later gets the ended
+	// call's OK (F2 of the review of PR 227).
 	state.abort = () => {
 		aborted = true;
+		disarmDialog(call);
 	};
 	/** Set by a handler just before the input that completes its action goes out (HandlerContext.delivered). */
 	let deliveredResult: Delivered | undefined;
@@ -453,8 +458,6 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 	// In flight from here, before the first await, so the update idle gate sees it at once.
 	state.inFlight = { method: req.method, since: Date.now() };
 	state.lastActivityAt = Date.now();
-	/** This call, for the answer it may arm (`on_dialog`) and the tab it holds. */
-	const call = `${state.clientId}:${req.id}`;
 	/** The tabs this call is counted on in `tabCalls`; it holds them all when it has on_dialog. */
 	let onTabs: number[] = [];
 	let unwatch: (() => void) | undefined;
@@ -571,7 +574,11 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		// by another client of the session (sol-F3, first-F2 of the review of PR 216). A tab the call had not counted is
 		// counted now, so a call with on_dialog that starts later sees it.
 		ctx.claimTab = (tab) => {
-			if (dialogSafe || onTabs.includes(tab)) return;
+			if (dialogSafe) return;
+			// A call that ended (a box, a timeout, the host gone) counts on no tab again: its finally already ran, so a tab
+			// counted now would stay held by nothing (F3 of the review of PR 227).
+			if (aborted) throw new BridgeError(ERR.INTERRUPTED, "This call has ended, so this input was not sent.");
+			if (onTabs.includes(tab)) return;
 			const holder = heldTabs.get(tab);
 			if (holder && holder !== call)
 				throw new BridgeError(

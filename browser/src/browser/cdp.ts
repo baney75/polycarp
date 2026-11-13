@@ -718,11 +718,17 @@ export async function click(
 		button?: MouseButton;
 		clickCount?: number;
 		modifiers?: number;
+		/**
+		 * Called before every press and every release; it throws once the call has ended. Nothing more is pressed then,
+		 * and a button already down is let go off the page (F1 of the review of PR 227).
+		 */
+		stop?: () => void;
 		/** Called just before the click's first mousePressed is sent. */
 		beforeFirstPress?: () => void;
 		/**
 		 * Called just before the click's last mouse event is sent. If it throws (the call ended), the button is let go
-		 * off the page, so nothing is clicked and no button stays held (second-S3 of the review of PR 216).
+		 * off the page: the element at the spot gets no mouseup or click and no button stays held (second-S3 of the review
+		 * of PR 216). A best effort only: a document-level or click-outside handler may still see that release (D48).
 		 */
 		beforeLastEvent?: () => void;
 	} = {},
@@ -733,22 +739,23 @@ export async function click(
 	cuePointer(tabId, "click", x, y);
 	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
 	for (let i = 1; i <= clickCount; i++) {
+		options.stop?.();
 		if (i === 1) options.beforeFirstPress?.();
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button, clickCount: i, modifiers });
-		if (i === clickCount)
-			try {
-				options.beforeLastEvent?.();
-			} catch (err) {
-				await send(tabId, "Input.dispatchMouseEvent", {
-					type: "mouseReleased",
-					x: -1,
-					y: -1,
-					button,
-					clickCount: i,
-					modifiers,
-				}).catch(() => undefined);
-				throw err;
-			}
+		try {
+			options.stop?.();
+			if (i === clickCount) options.beforeLastEvent?.();
+		} catch (err) {
+			await send(tabId, "Input.dispatchMouseEvent", {
+				type: "mouseReleased",
+				x: -1,
+				y: -1,
+				button,
+				clickCount: i,
+				modifiers,
+			}).catch(() => undefined);
+			throw err;
+		}
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button, clickCount: i, modifiers });
 	}
 }

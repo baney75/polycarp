@@ -317,6 +317,36 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			});
 		};
 	}
+	// on_dialog (D48) works on a single click or press only. Every other tool's schema lets the key through, so a call
+	// that carries it is refused out loud instead of running with it silently dropped (second-S1 of the review of PR 216,
+	// F4 of the review of PR 227); every other key not in the schema is still dropped before the tool runs, as before.
+	// Installed after the wrappers above, so it sees each call first and the schema it widens is the final one.
+	{
+		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
+		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown, ...rest: unknown[]) => {
+			const given = (config as { inputSchema?: unknown } | undefined)?.inputSchema;
+			if (name === "click" || name === "press" || typeof cb !== "function" || given === undefined)
+				return register(name, config, cb, ...rest);
+			const handler = cb as (...a: unknown[]) => unknown;
+			let keys: Set<string> | undefined;
+			const tool = register(name, config, (args: Record<string, unknown> | undefined, ...more: unknown[]) => {
+				if (args?.on_dialog !== undefined || args?.on_dialog_text !== undefined)
+					return {
+						content: text(
+							`bad_params: on_dialog works on a single click or press only, not on ${String(name)}. Nothing was done. Send the click or press that opens the box on its own, e.g. click {"tabId":41,"ref":"e5","on_dialog":"ok"}.`,
+						),
+						isError: true,
+					};
+				const known = keys;
+				return handler(known && args ? Object.fromEntries(Object.entries(args).filter(([k]) => known.has(k))) : args, ...more);
+			}, ...rest) as { inputSchema?: unknown } | undefined;
+			if (tool?.inputSchema instanceof z.ZodObject) {
+				keys = new Set(Object.keys(tool.inputSchema.shape));
+				tool.inputSchema = tool.inputSchema.passthrough();
+			}
+			return tool;
+		};
+	}
 	const choice = options.session ? { name: options.session, auto: false } : chooseSession({ flag: options.sessionFlag });
 	const client = new BridgeClient({
 		name: options.name ?? harnessName(),
@@ -710,29 +740,6 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			.describe('Answer the box this opens at once (needs tabId); "ok" only if it confirms what the user asked'),
 		on_dialog_text: z.string().optional().describe("prompt() text"),
 	};
-	/**
-	 * An input tool that takes no on_dialog (D48: a single click or press only). Its schema lets the key through, so a
-	 * call that carries it is refused out loud instead of running with it silently dropped (second-S1 of the review of
-	 * PR 216); every other key not in the schema is still dropped before the bridge, as before.
-	 */
-	const noDialogTool = (
-		name: string,
-		config: { title: string; description: string; inputSchema: Record<string, z.ZodTypeAny> },
-		cb: (args: Record<string, unknown>) => unknown,
-	) => {
-		const shape = config.inputSchema;
-		const tool = server.registerTool(name, config, ((args: Record<string, unknown>) => {
-			if (args.on_dialog !== undefined || args.on_dialog_text !== undefined)
-				return {
-					content: text(
-						`bad_params: on_dialog works on a single click or press only, not on ${name}. Nothing was done. Send the click or press that opens the box on its own, e.g. click {"tabId":41,"ref":"e5","on_dialog":"ok"}.`,
-					),
-					isError: true,
-				};
-			return cb(Object.fromEntries(Object.entries(args).filter(([k]) => k in shape)));
-		}) as never) as { inputSchema?: unknown } | undefined;
-		if (tool?.inputSchema instanceof z.ZodObject) tool.inputSchema = tool.inputSchema.passthrough();
-	};
 	server.registerTool(
 		"click",
 		{
@@ -747,12 +754,12 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		(args) => call("click", args),
 	);
-	noDialogTool(
+	server.registerTool(
 		"hover",
 		{ title: "Hover", description: 'Move the mouse over an element to open menus or tooltips. Example: {"ref":"e7"}', inputSchema: targetSchema },
 		(args) => call("hover", args),
 	);
-	noDialogTool(
+	server.registerTool(
 		"type",
 		{
 			title: "Type text",
@@ -770,7 +777,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		(args) => call("press", args),
 	);
-	noDialogTool(
+	server.registerTool(
 		"fill",
 		{
 			title: "Set a field's value",
@@ -779,7 +786,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		(args) => call("fill", args),
 	);
-	noDialogTool(
+	server.registerTool(
 		"scroll",
 		{
 			title: "Scroll",
@@ -795,7 +802,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		(args) => call("scroll", args),
 	);
-	noDialogTool(
+	server.registerTool(
 		"drag",
 		{
 			title: "Drag",
@@ -808,7 +815,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		(args) => call("drag", args),
 	);
-	noDialogTool(
+	server.registerTool(
 		"actions",
 		{
 			title: "Run several input steps",

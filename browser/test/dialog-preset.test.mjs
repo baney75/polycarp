@@ -418,7 +418,7 @@ function holdPress(t, tabId, type = "mousePressed") {
 			seen.pressed++;
 			await held;
 		}
-		// A release at (-1, -1) lets go of the button off the page: it clicks nothing.
+		// A release at (-1, -1) lets go of the button off the page: the element at the spot gets no click.
 		if (target.tabId === tabId && method === "Input.dispatchMouseEvent" && params.type === "mouseReleased") {
 			if (params.x < 0) seen.offPage++;
 			else seen.released++;
@@ -482,7 +482,7 @@ test("sol-F1, first-F2, first-F6 (review of PR 200): a hold covers each step's o
 	assert.deepEqual(answers.map((x) => [x.message, x.accept]), [["Mine?", true]]);
 });
 
-test("sol-F2, first-F1 (review of PR 200), second-S3 (review of PR 216): a call that timed out mid-click takes its answer back, lets go of the button off the page and clicks nothing", async (t) => {
+test("sol-F2, first-F1 (review of PR 200), second-S3 (review of PR 216): a call that timed out mid-click takes its answer back, lets go of the button off the page and clicks nothing at its spot", async (t) => {
 	setup(t);
 	const tab = await agentTab(async (_i, id) => {
 		await box(id, "confirm", "Mine?");
@@ -712,3 +712,115 @@ test("first-F1 (review of PR 216): a confirm the page opens on mousedown is answ
 
 // first-F3 (a doubled /** opener above watchPresetFailures in cdp.ts) is a comment fix: biome and tsc pass either way, so
 // it has no test.
+
+// The review of PR 227 (PR 216's commits), round 1.
+
+test("F1 (review of PR 227): a double click that timed out at its first press clicks nothing at its spot and presses no more", async (t) => {
+	setup(t);
+	const tab = await agentTab(async () => undefined);
+	const hold = holdPress(t, tab);
+	handlerLimit = 300;
+	t.after(() => {
+		handlerLimit = undefined;
+	});
+	const r = await reply(deliver("c1", "click", { tabId: tab, x: 10, y: 10, clickCount: 2 }));
+	handlerLimit = undefined;
+	assert.equal(r.error?.code, "timeout", JSON.stringify(r));
+	hold.release();
+	await wait(100);
+	assert.equal(hold.seen.released, 0, "the timed-out double click released at its target");
+	assert.equal(hold.seen.pressed, 1, "the timed-out double click pressed again");
+	assert.equal(hold.seen.offPage, 1, "the timed-out double click left the button held down");
+	assert.deepEqual(answers, []);
+});
+
+test("F3 (review of PR 227): a call that ended before it resolved a new current tab leaves no hold on that tab", async (t) => {
+	setup(t);
+	const a = await agentTab(async () => undefined);
+	const b = await agentTab(async (_i, id) => {
+		await box(id, "confirm", "Mine?");
+	});
+	await request("tabs.select", { tabId: a }, "c2");
+	// c2's batch is counted on `a`; by its click step `b` is current, and the click's own read of the current tab is slow.
+	let slow = false;
+	const tabsGet = chrome.tabs.get;
+	chrome.tabs.get = async (id, ...rest) => {
+		if (slow && id === b && new Error().stack?.includes("requireCurrentTab")) await wait(600);
+		return tabsGet.call(chrome.tabs, id, ...rest);
+	};
+	t.after(() => {
+		chrome.tabs.get = tabsGet;
+		handlerLimit = undefined;
+	});
+	handlerLimit = 300;
+	const batch = deliver("c2", "actions", { settleMs: 0, steps: [{ wait: 100 }, { click: { x: 20, y: 20 } }] });
+	await wait(20);
+	await request("tabs.select", { tabId: b }, "c1");
+	slow = true;
+	const r = await reply(batch);
+	handlerLimit = undefined;
+	assert.equal(r.error?.code, "timeout", JSON.stringify(r));
+	// The read of `b` returns after c2's call ended: c2 must not be counted on `b` for good.
+	await wait(700);
+	slow = false;
+	const c = await request("click", { tabId: b, x: 10, y: 10, on_dialog: "ok" }, "c1");
+	assert.equal(c.error, undefined, JSON.stringify(c.error));
+	assert.deepEqual(answers.map((x) => [x.message, x.accept]), [["Mine?", true]]);
+});
+
+test("first-F1 (review of PR 227): an actions batch whose screenshot finds the current tab held says its steps ran, never not_sent", async (t) => {
+	setup(t);
+	const a = await agentTab(async () => undefined);
+	const held = await agentTab(async (_i, id) => {
+		await box(id, "confirm", "Mine?");
+	});
+	await request("tabs.select", { tabId: a }, "c2");
+	const batch = deliver("c2", "actions", { settleMs: 0, steps: [{ wait: 150 }], screenshot: true });
+	await wait(20);
+	await request("tabs.select", { tabId: held }, "c1");
+	const hold = holdPress(t, held);
+	const c1 = deliver("c1", "click", { tabId: held, x: 10, y: 10, on_dialog: "ok" });
+	for (let i = 0; i < 100 && !hold.seen.pressed; i++) await wait(5);
+	const r = await reply(batch);
+	assert.equal(r.error?.code, "interrupted", JSON.stringify(r));
+	assert.match(r.error.message, /all 1 steps ran, but the screenshot after them was not taken/);
+	assert.match(r.error.message, /Do not send the steps again/);
+	hold.release();
+	assert.equal((await reply(c1)).error, undefined);
+});
+
+test("second-S1 (review of PR 227): on_dialog on a double click is refused before anything is armed or sent", async (t) => {
+	setup(t);
+	let presses = 0;
+	const tab = await agentTab(async (_i, id) => {
+		presses++;
+		await box(id, "confirm", "Delete the record?");
+	});
+	const r = await request("click", { tabId: tab, x: 10, y: 10, clickCount: 2, on_dialog: "ok" });
+	assert.equal(r.error?.code, "bad_params", JSON.stringify(r));
+	assert.match(r.error.message, /^on_dialog works on a single click: clickCount must be 1\. Nothing was done/);
+	assert.equal(presses, 0);
+	assert.deepEqual(answers, []);
+	// A single click, with clickCount 1 said outright, still takes it.
+	const ok = await request("click", { tabId: tab, x: 10, y: 10, clickCount: 1, on_dialog: "ok" });
+	assert.equal(ok.error, undefined, JSON.stringify(ok.error));
+	assert.deepEqual(answers.map((x) => [x.message, x.accept]), [["Delete the record?", true]]);
+});
+
+// Last: it takes the native host away, and nothing after it could reach the bridge.
+test("F2 (review of PR 227): the host going away while a click's answer is armed takes the answer back at once", async (t) => {
+	setup(t);
+	const tab = await agentTab(async () => undefined);
+	const hold = holdPress(t, tab);
+	const a = deliver("c1", "click", { tabId: tab, x: 10, y: 10, on_dialog: "ok" });
+	// The press is on its way, so the answer is armed. Then the host goes.
+	for (let i = 0; i < 100 && !hold.seen.pressed; i++) await wait(5);
+	for (const fn of port.onDisconnect.listeners) fn();
+	// A box the page opens before the press returns: the ended call's OK must not answer it.
+	void box(tab, "confirm", "Delete the record?");
+	await wait(30);
+	assert.deepEqual(answers, [], "a box took the OK of a call whose host had gone");
+	assert.equal(openDialog(tab)?.message, "Delete the record?");
+	hold.release();
+	void a;
+});
