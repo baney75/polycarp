@@ -268,7 +268,9 @@ async function collect(tabId: number, rule: FrameRule, end: number): Promise<{ f
 			}),
 		);
 		for (const { targetId, c, owner, sub } of asked) {
-			const inside: Inside = owner !== undefined && where.has(owner) ? where.get(owner) : root;
+			// An owner the debugger couldn't name (out of time, no answer) may be a guarded or non-web frame:
+			// the frame is left out rather than placed as if it sat in the session's own document.
+			const inside: Inside = owner !== undefined && where.has(owner) ? where.get(owner) : "out";
 			if (!sub) {
 				await leaveOut(c.sessionId, null);
 				continue;
@@ -556,13 +558,17 @@ export async function evaluateInFrame(
 /** Bring a frame's <iframe> (and those around it) into view, outermost first. */
 export async function scrollFrameIntoView(tabId: number, frame: PageFrame): Promise<void> {
 	for (const f of frame.chain) {
-		const own = await cdpSendSession<{ backendNodeId?: number }>(tabId, f.ownerSessionId, "DOM.getFrameOwner", {
-			frameId: f.frameId,
-		}).catch(() => undefined);
+		const own = await bounded(
+			cdpSendSession<{ backendNodeId?: number }>(tabId, f.ownerSessionId, "DOM.getFrameOwner", {
+				frameId: f.frameId,
+			}),
+		);
 		if (own?.backendNodeId)
-			await cdpSendSession(tabId, f.ownerSessionId, "DOM.scrollIntoViewIfNeeded", {
-				backendNodeId: own.backendNodeId,
-			}).catch(() => undefined);
+			await bounded(
+				cdpSendSession(tabId, f.ownerSessionId, "DOM.scrollIntoViewIfNeeded", {
+					backendNodeId: own.backendNodeId,
+				}),
+			);
 	}
 }
 
@@ -589,31 +595,37 @@ export async function framePainted(tabId: number): Promise<void> {
  */
 export async function frameTakesPoint(tabId: number, frame: PageFrame, x: number, y: number): Promise<boolean> {
 	for (const f of frame.chain) {
-		const own = await cdpSendSession<{ backendNodeId?: number }>(tabId, f.ownerSessionId, "DOM.getFrameOwner", {
-			frameId: f.frameId,
-		}).catch(() => undefined);
+		const own = await bounded(
+			cdpSendSession<{ backendNodeId?: number }>(tabId, f.ownerSessionId, "DOM.getFrameOwner", {
+				frameId: f.frameId,
+			}),
+		);
 		const base = f.base;
 		// The hit test takes document coordinates: on a scrolled page a viewport point is elsewhere, or nowhere.
-		const view = await cdpSendSession<{ cssLayoutViewport?: { pageX?: number; pageY?: number } }>(
-			tabId,
-			f.ownerSessionId,
-			"Page.getLayoutMetrics",
-		).catch(() => undefined);
+		const view = await bounded(
+			cdpSendSession<{ cssLayoutViewport?: { pageX?: number; pageY?: number } }>(
+				tabId,
+				f.ownerSessionId,
+				"Page.getLayoutMetrics",
+			),
+		);
 		if (!view?.cssLayoutViewport) return false;
-		const hit = await cdpSendSession<{ backendNodeId?: number; frameId?: string }>(
-			tabId,
-			f.ownerSessionId,
-			"DOM.getNodeForLocation",
-			{
-				// The owner session measures in its own frame's CSS px, drawn at baseScale in the tab.
-				x: Math.round((x - base.x) / f.baseScale + (view.cssLayoutViewport.pageX ?? 0)),
-				y: Math.round((y - base.y) / f.baseScale + (view.cssLayoutViewport.pageY ?? 0)),
-				includeUserAgentShadowDOM: true,
-				// A click goes through a layer with pointer-events: none (the in-use veil, a page's
-				// own overlay), so the hit test does too.
-				ignorePointerEventsNone: false,
-			},
-		).catch(() => undefined);
+		const hit = await bounded(
+			cdpSendSession<{ backendNodeId?: number; frameId?: string }>(
+				tabId,
+				f.ownerSessionId,
+				"DOM.getNodeForLocation",
+				{
+					// The owner session measures in its own frame's CSS px, drawn at baseScale in the tab.
+					x: Math.round((x - base.x) / f.baseScale + (view.cssLayoutViewport.pageX ?? 0)),
+					y: Math.round((y - base.y) / f.baseScale + (view.cssLayoutViewport.pageY ?? 0)),
+					includeUserAgentShadowDOM: true,
+					// A click goes through a layer with pointer-events: none (the in-use veil, a page's
+					// own overlay), so the hit test does too.
+					ignorePointerEventsNone: false,
+				},
+			),
+		);
 		// No answer is no evidence the point is clear: the action is not sent on it.
 		if (!own?.backendNodeId || !hit?.backendNodeId) return false;
 		if (hit.backendNodeId === own.backendNodeId) continue;
@@ -627,9 +639,7 @@ export async function frameTakesPoint(tabId: number, frame: PageFrame, x: number
 /** Whether frame `id` is frame `outer` or inside it, in one session's frame tree. */
 async function within(tabId: number, sessionId: string | undefined, id: string, outer: string): Promise<boolean> {
 	if (id === outer) return true;
-	const tree = await cdpSendSession<{ frameTree: TreeNode }>(tabId, sessionId, "Page.getFrameTree").catch(
-		() => undefined,
-	);
+	const tree = await bounded(cdpSendSession<{ frameTree: TreeNode }>(tabId, sessionId, "Page.getFrameTree"));
 	const find = (n: TreeNode, inside: boolean): boolean => {
 		const here = inside || n.frame.id === outer;
 		if (n.frame.id === id) return here;
