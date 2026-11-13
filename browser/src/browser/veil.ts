@@ -47,8 +47,9 @@ const POLYCARP_CACHE_KEY = "tabkyra.polycarp";
 let state: VeilState = EMPTY_VEIL;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let enabled: boolean | undefined;
-/** Settings > Agents, "Show the agent's pointer". Read at start; storage changes keep it current. */
-let pointer = true;
+/** Settings > Agents, "Show the agent's pointer": unknown until read once; storage changes keep it current. */
+let pointer: boolean | undefined;
+let pointerRead: Promise<boolean> | undefined;
 let log: (line: string) => void = () => undefined;
 const chains = new Map<number, Promise<unknown>>();
 
@@ -121,7 +122,7 @@ async function apply(effect: VeilEffect): Promise<void> {
 				theme: await theme(),
 				interactive: effect.interactive,
 				concealed: effect.concealed,
-				pointer,
+				pointer: await pointerOn(),
 				mote: MOTE,
 			});
 			if (!result?.tag) await rememberVeilTag(tabId, undefined);
@@ -141,19 +142,28 @@ async function apply(effect: VeilEffect): Promise<void> {
 	}
 }
 
-/** Send the character to a point (cue), or apply the on/off setting (no cue), in the tab's order. */
+/** The pointer's own order per tab, and the latest cue: never on `chains`, which the cover and veilBegin wait on. */
+const points = new Map<number, { run: Promise<void>; latest: number }>();
+let pointSeq = 0;
+
+/**
+ * Send the character to a point (cue), or apply the on/off setting (no cue): after the veil changes already queued
+ * for the tab (a point after its show), but never in front of later ones. A cue a newer cue replaced is not sent.
+ */
 function queuePoint(tabId: number, cue: PointerAction | undefined): Promise<void> {
-	const prev = chains.get(tabId) ?? Promise.resolve();
-	const cmd: VeilCommand = cue ? { op: "point", cue } : { op: "set", pointer };
+	const id = ++pointSeq;
+	const cmd: VeilCommand = cue ? { op: "point", cue } : { op: "set", pointer: pointer !== false };
+	const mine = points.get(tabId);
+	const prev = Promise.all([chains.get(tabId), mine?.run]);
 	const run = prev
-		.then(() => withTimeout(inject(tabId, cmd)))
+		.then(() => (cue && points.get(tabId)?.latest !== id ? undefined : withTimeout(inject(tabId, cmd))))
 		.then(
 			() => undefined,
 			() => undefined,
 		);
-	chains.set(tabId, run);
+	points.set(tabId, { run, latest: cue ? id : (mine?.latest ?? id) });
 	void run.then(() => {
-		if (chains.get(tabId) === run) chains.delete(tabId);
+		if (points.get(tabId)?.run === run) points.delete(tabId);
 	});
 	return run;
 }
@@ -195,6 +205,18 @@ async function theme(): Promise<VeilTheme> {
 				: "auto";
 	themeCache = { light: pick(false), dark: pick(true), scheme, reduced: polycarp?.motion.reduced === true };
 	return themeCache;
+}
+
+/** The pointer setting, read once: a cue or a show that comes before the read waits for it, never for the default. */
+function pointerOn(): Promise<boolean> {
+	if (pointer !== undefined) return Promise.resolve(pointer);
+	pointerRead ??= isPointerEnabled()
+		.catch(() => true)
+		.then((on) => {
+			pointer ??= on;
+			return pointer;
+		});
+	return pointerRead;
 }
 
 async function veilOn(): Promise<boolean> {
@@ -279,15 +301,13 @@ export function startVeil(logger?: (line: string) => void): void {
 	setCaptureCover({
 		conceal: (tabId, reason, on) => dispatch({ type: "conceal", tabId, reason, on }),
 	});
-	void isPointerEnabled()
-		.then((on) => {
-			pointer = on;
-		})
-		.catch(() => undefined);
+	void pointerOn();
 	// Fire and forget, behind the tab's own veil changes: the input it marks never waits for it.
 	setPointerCue((tabId, cue) => {
-		const page = pointerCue(state, tabId, cue, pointer);
-		if (page) void queuePoint(tabId, page);
+		void pointerOn().then((on) => {
+			const page = pointerCue(state, tabId, cue, on);
+			if (page) void queuePoint(tabId, page);
+		});
 	});
 	// A worker that restarted lost its state: veils it left in pages go.
 	void storedVeilTags().then(async (tags) => {
