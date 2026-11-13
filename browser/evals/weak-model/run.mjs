@@ -276,6 +276,8 @@ async function runOne(task, trial) {
 	if (task.kind === "browser") {
 		const mount = mountId(label, task.id, trial);
 		const entry = `${h.mount(mount, task.pages)}${(task.entry ?? "/").slice(1)}`;
+		// What the person has open before the agent starts (a tab of the site in front, say); undone after scoring.
+		const setup = task.setup ? cleanup.add(`setup of ${task.id}`, (await task.setup(h, entry)) ?? (() => undefined)) : undefined;
 		const result = await runClaude(task.prompt(entry), session, "browser", wallBrowser);
 		run = result.run;
 		try {
@@ -283,6 +285,7 @@ async function runOne(task, trial) {
 		} finally {
 			// A browser run has no computer tools, so it starts no copies; close any all the same, before the next run.
 			await Promise.all(result.copies.map((c) => c.undo()));
+			await setup?.undo();
 		}
 	} else {
 		const dir = join(handoff, `weak-model-${process.pid}`, `${task.id}-${trial}`);

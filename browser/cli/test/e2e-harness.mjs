@@ -243,6 +243,8 @@ export async function startHarness() {
 		return {
 			origin,
 			origin2,
+			/** host:port of Chromium's DevTools HTTP endpoint (/json/new, /json/close). */
+			devtools,
 			home,
 			socketDir,
 			mcp,

@@ -21,6 +21,8 @@
 import { detachTab, ensureAttached, isRestrictedUrl, releaseAgentViewport } from "./cdp.js";
 
 const STORAGE_KEY = "browser_sessions";
+/** The session table: a change to it can change who owns a tab (dialog-guard.ts looks again). */
+export const SESSIONS_KEY = STORAGE_KEY;
 const GROUP_PREFIX = "Polycarp";
 /** Groups an earlier version named; still ours to tidy up. */
 const LEGACY_GROUP_PREFIX = "Tabkyra"; // product-name allowlist: legacy tab group title
@@ -133,6 +135,20 @@ export async function addNotice(sessionId: string, text: string): Promise<void> 
 		const all = (data[NOTICES_KEY] as Record<string, Array<{ at: number; text: string }>> | undefined) ?? {};
 		all[sessionId] = [...(all[sessionId] ?? []), { at: Date.now(), text }].slice(-MAX_NOTICES);
 		await chrome.storage.local.set({ [NOTICES_KEY]: all });
+	});
+}
+
+/** Take back a notice not read yet. True when it was still waiting. */
+export async function dropNotice(sessionId: string, text: string): Promise<boolean> {
+	return withTableLock(async () => {
+		const data = await chrome.storage.local.get(NOTICES_KEY);
+		const all = (data[NOTICES_KEY] as Record<string, Array<{ at: number; text: string }>> | undefined) ?? {};
+		const mine = all[sessionId] ?? [];
+		const i = mine.findIndex((n) => n.text === text);
+		if (i < 0) return false;
+		all[sessionId] = mine.filter((_, j) => j !== i);
+		await chrome.storage.local.set({ [NOTICES_KEY]: all });
+		return true;
 	});
 }
 
