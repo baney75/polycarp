@@ -205,6 +205,38 @@ test("page_markdown with no Firecrawl, in a session without navigate, names no t
 	}
 });
 
+// PR 208 second-F4: the page words a password field's hint with tabs_show. A scoped session without it was told so in a
+// click's change report, which read_page's rewrite never saw. And a snapshot id that isn't one is refused at the schema.
+test("in a session without tabs_show, no result names it: a click that reveals a password field asks the person", async () => {
+	const { build } = await import("esbuild");
+	const out = join(root, "mcp-bundle-scoped-pw.mjs");
+	await build({ entryPoints: [join(dirname(fileURLToPath(import.meta.url)), "..", "src", "mcp.ts")], bundle: true, platform: "node", format: "esm", outfile: out, loader: { ".md": "text", ".pub": "text" }, logLevel: "silent" });
+	const { createMcpServer } = await import(out);
+	const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+	const { server, client: bridge } = createMcpServer({ name: "pw", session: "scoped-pw", allowedTools: new Set(["click", "read_page"]) });
+	const sent = [];
+	bridge.call = async (method, params) => {
+		sent.push(method);
+		return { clicked: { x: 10, y: 20 }, changes: 'new: e7 textbox "Password" [required, password: never type one, call tabs_show and ask the person to type it]' };
+	};
+	const [a, b] = InMemoryTransport.createLinkedPair();
+	await server.connect(a);
+	const client = new Client({ name: "scoped-pw-test", version: "0.0.0" });
+	await client.connect(b);
+	try {
+		const clicked = await client.callTool({ name: "click", arguments: { ref: "e3" } });
+		const said = clicked.content.map((c) => c.text).join("\n");
+		assert.doesNotMatch(said, /tabs_show/, said);
+		assert.match(said, /password: never type one, ask the person to type it/);
+		const bad = await client.callTool({ name: "read_page", arguments: { filter: "interactive", offset: 50, snapshot: "r ab" } });
+		assert.equal(bad.isError, true);
+		assert.deepEqual(sent, ["click"], "a malformed snapshot id never reaches the page");
+	} finally {
+		await client.close();
+		bridge.close();
+	}
+});
+
 test("a plain wait {ms} pauses without a browser; a wait for the page still needs one", async () => {
 	// A weak model waiting on a native app used wait {ms} and got not-connected (evals/weak-model, round 1).
 	const started = Date.now();

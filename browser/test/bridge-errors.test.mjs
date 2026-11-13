@@ -100,3 +100,13 @@ test("page text quoted inside a Polycarp message does not choose its code", () =
 	assert.equal(classify(new Error("That element isn't shown now (hidden or closed). Call read_page for fresh refs."), "click").error.code, "stale_ref");
 	assert.equal(classify(new Error("Element is no longer in the page. Call read_page for fresh refs."), "click").error.code, "stale_ref");
 });
+
+// PR 208 second-F5: the snapshot id in this message is the one the agent sent. One with a space ("r ab") fell through to
+// internal, so the agent wasn't told to read again from the top.
+test("an offset from a read the page no longer has is stale_ref whatever id the agent sent", () => {
+	for (const id of ["rab12c", "r ab", "read 2 of them"]) {
+		const { error } = classify(new Error(`Error: Offset 50 is from read ${id} this page no longer has: call read_page {"filter":"interactive"} again from the top.${STACK}`), "snapshot");
+		assert.equal(error.code, "stale_ref", id);
+	}
+	assert.equal(classify(new Error("Error: Offset 50 is from a read this page no longer has: call read_page again."), "snapshot").error.code, "stale_ref");
+});
