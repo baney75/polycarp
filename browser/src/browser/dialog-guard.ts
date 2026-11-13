@@ -275,7 +275,7 @@ export function dialogAdvice(seq: number, tabId: number, dialog: PageDialog): st
 
 /**
  * A box an action just opened, for that call's own note: when the person has a tab of the site in front, Polycarp will
- * cancel it before a handle_dialog can arrive (first-F5 of the #193 review), so the note says what works instead.
+ * cancel it before a handle_dialog can arrive (first-F5 of the review of PR 193), so the note says what works instead.
  */
 export async function dialogSoon(tabId: number, dialog: PageDialog): Promise<string | undefined> {
 	const [tabs, owned] = await Promise.all([deps.tabs(), deps.owners()]).catch(() => [[], new Map()] as const);

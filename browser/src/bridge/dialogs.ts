@@ -147,7 +147,7 @@ export function dialogOpenedResult(
 const OUTCOME_WAIT_MS = 2000;
 
 /**
- * How the box the call's on_dialog took ended, as the page got it (sol-F1 of the #193 review): the answer that
+ * How the box the call's on_dialog took ended, as the page got it (sol-F1 of the review of PR 193): the answer that
  * landed, not the one asked for. Undefined when no answer is known.
  */
 async function landed(dialog: PageDialog): Promise<boolean | undefined> {

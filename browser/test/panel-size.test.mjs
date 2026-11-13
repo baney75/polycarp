@@ -10,7 +10,9 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 // 1 KB added for the agent's pointer switch in Settings > Agents (D47): the panel stood 11 bytes under 1.9 MB.
-const OPEN_BYTES_LIMIT = 1_901_000;
+// 1 KB more for the dialog guard's on_dialog rules (D46, PR 193's review), which reach the panel through cdp.ts: the
+// panel stood 421 bytes over 1,901,000.
+const OPEN_BYTES_LIMIT = 1_902_000;
 // Each of these is large and needed only by some chats. None may load with the panel.
 const ON_FIRST_USE = ["pdfjs-dist", "xlsx", "docx-preview", "jszip", "katex", "chart.js", "@lmstudio/sdk", "@mistralai", "@google/genai", "openai/", "@anthropic-ai/sdk", "library-skills", "highlight.js/lib/languages/1c", "ajv/"];
 

@@ -492,7 +492,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
 			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
 		}
-		// on_dialog is checked, and its tab's owner, before anything runs or is armed (sol-F3, first-F4 of the #193 review).
+		// on_dialog is checked, and its tab's owner, before anything runs or is armed (sol-F3, first-F4 of the review of PR 193).
 		const want = wantedPreset(req.method, req.params ?? {});
 		if (want && !session.tabIds.includes(want.tabId))
 			throw new BridgeError(

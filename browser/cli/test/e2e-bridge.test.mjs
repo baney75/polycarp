@@ -1964,6 +1964,7 @@ test("only the tab an agent uses is held up: when the user brings a same-site ta
 	execFileSync("git", ["init", "-q", project]);
 	const agent = await agentIn(project);
 	const attached = (tabId) => sw(`chrome.debugger.getTargets().then((ts) => ts.some((t) => t.tabId === ${tabId} && t.attached))`);
+	let userTab;
 	try {
 		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = 120000; globalThis.__POLYCARP_DIALOG_GRACE_MS = 1500");
 		const agentTab = JSON.parse(await on(agent, "navigate", { url: `${pageUrl}site?who=agent` })).tabId;
@@ -1971,7 +1972,7 @@ test("only the tab an agent uses is held up: when the user brings a same-site ta
 		// The agent opens a second tab of the site (it shares the first one's renderer process) and lets the user keep it.
 		await on(agent, "click", { x: 120, y: 60 });
 		const userPage = await pageTarget("/site?who=user");
-		const userTab = await until(async () => (await groupsOf()).find((t) => t.url?.includes("/site?who=user"))?.id, 10_000, "the second tab");
+		userTab = await until(async () => (await groupsOf()).find((t) => t.url?.includes("/site?who=user"))?.id, 10_000, "the second tab");
 		await until(async () => (await on(agent, "tabs_context")).includes(String(userTab)), 10_000, "the agent to have the tab it opened");
 		await on(agent, "tabs_release", { tabId: userTab });
 		await on(agent, "tabs_select", { tabId: agentTab });
@@ -2000,7 +2001,7 @@ test("only the tab an agent uses is held up: when the user brings a same-site ta
 		// The box got Cancel, Chrome's own answer for a hidden tab, and the agent hears so once.
 		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "cancelled");
 		const answer = await agent.callTool({ name: "handle_dialog", arguments: { accept: true } });
-		assert.match(answer.content[0].text, /was cancelled, because the person was using a tab on 127\.0\.0\.1 .*The page saw Cancel\./);
+		assert.match(answer.content[0].text, /was cancelled, because the person was using a tab on 127\.0\.0\.1\b.*The page saw Cancel\./);
 		// first-F1 (review of #188), sol-F3 (#193): the notice names the one step to repeat, on its own tab, answered in advance.
 		assert.ok(
 			answer.content[0].text.includes(`call click with {"tabId":${agentTab},"x":320,"y":60,"on_dialog":"ok"}`),
@@ -2032,6 +2033,8 @@ test("only the tab an agent uses is held up: when the user brings a same-site ta
 		assert.ok(await inPage(secondPage, VEIL_PROBE), "the tab the agent is using lost its veil");
 	} finally {
 		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = undefined; globalThis.__POLYCARP_DIALOG_GRACE_MS = undefined").catch(() => undefined);
+		// The person's tab of the site would keep later tests' boxes on the 3 s rule.
+		if (userTab !== undefined) await sw(`chrome.tabs.remove(${userTab})`).catch(() => undefined);
 		await agent.close();
 	}
 });
