@@ -19,16 +19,19 @@ extension HandsRouter {
             }
             let displays = ContextMenuAX.displays()
             // Rule 1, before the engine is asked for anything.
-            if let e = ContextMenu.gate(agentShown: agentShown(), window: frame, displays: displays) { return .failure(e) }
+            if let e = ContextMenu.gate(agentShown: agentShown(), agentWindow: onAgentWorkspace(w, scope), window: frame, displays: displays) { return .failure(e) }
             let acting = actingCheck(w, ref: ref, verb: "click", delivery: .headlessAX, session: session)
             var answer: Result<[String: JSONValue], HandsError> = .failure(HandsError(.engineError, "the right click didn't run", suggestion: "Try again.", retry: .safe))
             let reply = HandsEngine.shared.transaction(window: w, check: acting) { [self] cancelled in
+                // The cancel's key permit first: none, and the engine is asked for nothing (210 r1 first-F1).
+                guard let keyPermit = escapeKeys(w) else { answer = .failure(ContextMenu.noCancel(w.app)); return .ok(.null) }
                 let before = Set(ContextMenuAX.menus(w.pid, before: []).map(\.id))
-                var refused: HandsError?
+                var refused: HandsError?, open = false
                 if case .failed(let e) = HandsEngine.shared.actInline(window: w, ref: ref, kind: .rightClick, check: acting, cancelled: cancelled) { refused = e }
                 // The menu's own window is the proof, whatever the engine said; with no menu, the engine's refusal is the answer.
                 answer = contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: nil, none: refused,
-                                     escape: { [self] in escapeMenu(w) }, check: acting, cancelled: cancelled)
+                                     escape: { BackgroundPoster.keys([KeyChord(keyCode: 53, flags: 0, label: "escape")], permit: keyPermit, stop: { nil }).stopped == nil },
+                                     leftOpen: &open, check: acting, cancelled: cancelled)
                 return .ok(.null)
             }
             if case .failed(let e) = reply { return .failure(e) }
