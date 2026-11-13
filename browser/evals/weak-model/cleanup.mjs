@@ -3,7 +3,7 @@
 // claude -p that could not start. Held by test/weak-model-harness.test.mjs.
 import { spawn } from "node:child_process";
 import { cpSync, mkdirSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 /** An error whose message is the whole story: printed as one line, without a stack. */
 export class ClearError extends Error {}
@@ -91,24 +91,26 @@ export function onExits(cleanup, { proc = process, exit = (code) => proc.exit(co
  * group, so no claude outlives the run and keeps calling tools on the owner's sign-in. `closed` resolves on exit and
  * rejects with a ClearError when claude could not start (not on PATH).
  */
-export function spawnClaude(args, { cleanup, cwd, env, spawnFn = spawn, kill = process.kill, graceMs = 3000 }) {
+export function spawnClaude(args, { cleanup, cwd, env, spawnFn = spawn, kill = process.kill, graceMs = 3000, stepMs = 100 }) {
 	const child = spawnFn("claude", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
-	let exited = false;
-	const gone = new Promise((resolve) => {
-		child.once("close", resolve);
-		child.once("error", resolve);
-	}).then(() => {
-		exited = true;
-	});
+	/** Sends `sig` to the group; false once the group is gone. */
 	const signal = (sig) => {
-		if (!child.pid) return;
+		if (!child.pid) return false;
 		try {
 			kill(-child.pid, sig);
-		} catch {}
+			return true;
+		} catch {
+			return false;
+		}
 	};
+	// SIGTERM, then up to graceMs for the whole group (claude and the MCP server it started) to leave, then SIGKILL.
+	// The same grace applies after claude exited on its own, so the MCP server left in the group can shut down cleanly.
 	const killGroup = async () => {
-		signal("SIGTERM");
-		if (!exited) await Promise.race([gone, new Promise((r) => setTimeout(r, graceMs))]);
+		if (!signal("SIGTERM")) return;
+		for (const end = Date.now() + graceMs; Date.now() < end; ) {
+			await new Promise((r) => setTimeout(r, stepMs));
+			if (!signal(0)) return;
+		}
 		signal("SIGKILL");
 	};
 	const entry = cleanup.add(`claude -p (pid ${child.pid ?? "none"})`, killGroup);
@@ -138,8 +140,53 @@ export function restorePrefsOrKeep(backup, { exec, keepDir, log = console.error 
 		}
 	}
 	if (!failed.length) return true;
-	mkdirSync(keepDir, { recursive: true });
-	for (const { file } of backup) if (file) cpSync(file, join(keepDir, basename(file)));
-	log(`could not restore ${failed.join("; ")}. The backups are kept at ${keepDir}; import one with: defaults import <domain> <file>`);
+	try {
+		mkdirSync(keepDir, { recursive: true });
+		for (const { file } of backup) if (file) cpSync(file, join(keepDir, basename(file)));
+		log(`could not restore ${failed.join("; ")}. The backups are kept at ${keepDir}; import one with: defaults import <domain> <file>`);
+	} catch (err) {
+		const at = backup.find((b) => b.file)?.file;
+		log(`could not restore ${failed.join("; ")}, and could not copy the backups to ${keepDir} (${err?.message ?? err}); they stay at ${at ? dirname(at) : "scratch"}, which is kept`);
+	}
 	return false;
+}
+
+
+/**
+ * Backs up each app's preferences into `dir` before a computer run. A domain that doesn't exist yet is recorded as
+ * absent (restore deletes it); a domain that exists but can't be exported stops the run, since it couldn't be restored.
+ */
+export function backupPrefs(domains, { exec, dir }) {
+	const saved = [];
+	for (const domain of domains) {
+		const file = join(dir, `${domain}.plist`);
+		try {
+			exec("defaults", ["export", domain, file]);
+			saved.push({ domain, file });
+			continue;
+		} catch {}
+		let absent = false;
+		try {
+			exec("defaults", ["read", domain]);
+		} catch (err) {
+			absent = /does not exist/i.test(String(err?.stderr ?? err?.message));
+		}
+		if (!absent) throw new ClearError(`refusing to start computer tasks: could not back up ${domain} (it exists, but defaults export failed), so the run couldn't restore it`);
+		saved.push({ domain, file: undefined, absent: true });
+	}
+	return saved;
+}
+
+/**
+ * Registers a sweep for app copies a run started but never reported: a computer_open still in flight when claude's
+ * group was killed launched its app, but its answer never arrived. The sweep closes each agent-workspace window pid of
+ * the task's app that wasn't there before the run and wasn't reported (a reported copy has its own undo). Release it
+ * when the run ended on its own; undo it after a timeout; a signal runs it with the rest of cleanup.
+ */
+export function sweepCopies(cleanup, { app, before, known, list, kill }) {
+	return cleanup.add(`unreported ${app} copies`, async () => {
+		const mine = known();
+		const stray = new Set((await list()).filter((w) => w.app === app && w.scope === "agent_workspace" && !before.has(w.pid) && !mine.has(w.pid)).map((w) => w.pid));
+		for (const pid of stray) await kill(pid);
+	});
 }

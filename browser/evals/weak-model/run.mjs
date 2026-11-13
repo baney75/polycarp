@@ -13,9 +13,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Cleanup, onExits, restorePrefsOrKeep, spawnClaude } from "./cleanup.mjs";
+import { backupPrefs, Cleanup, onExits, restorePrefsOrKeep, spawnClaude, sweepCopies } from "./cleanup.mjs";
 import { HandsClient, treeText } from "./hands.mjs";
-import { childEnv, keyVarsSet, loadTasks, mountId, positiveInt, sessionName, settledState } from "./lib.mjs";
+import { childEnv, clashingIds, keepScored, keyVarsSet, loadTasks, mountId, positiveInt, safeId, sessionName, settledState, spacesBin } from "./lib.mjs";
 import { handedOff } from "./signup-rule.mjs";
 import { summarize } from "./summarize.mjs";
 import { Transcript } from "./transcript.mjs";
@@ -34,9 +34,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "..", "cli", "dist", "index.js");
 
 const argv = process.argv.slice(2);
+/** An option's value; a bare option (last, or followed by another --option) is refused. */
 const opt = (name, fallback) => {
 	const i = argv.indexOf(`--${name}`);
-	return i >= 0 ? argv[i + 1] : fallback;
+	if (i < 0) return fallback;
+	const v = argv[i + 1];
+	if (v === undefined || v.startsWith("--")) refuse(`--${name} needs a value`);
+	return v;
 };
 const int = (name, fallback) => {
 	const r = positiveInt(name, opt(name, fallback));
@@ -45,6 +49,8 @@ const int = (name, fallback) => {
 };
 const model = opt("model", "claude-haiku-5-5");
 const label = opt("label", `run-${model.replace(/^claude-/, "")}`);
+// The label names the results folder: no path parts, and the same name the mount and session use.
+if (safeId(label) !== label) refuse(`--label takes lower-case letters, digits, _ and -, not ${JSON.stringify(label)}`);
 const trials = int("trials", "2");
 // Computer runs open real apps on the owner's Mac. They are off until the lead turns them back on with
 // WM_ALLOW_COMPUTER=1; until then every run is browser only and its server lists no computer tools.
@@ -63,6 +69,8 @@ const profile = opt("profile", "");
 const tasksDir = process.env.WM_TASKS_DIR || join(here, "tasks");
 const all = await loadTasks(tasksDir);
 if (!all.length) refuse(`no tasks: ${tasksDir} has no task files (each tasks/*.mjs exports an array of { id, kind, prompt, ... })`);
+const clash = clashingIds(all.map((t) => t.id));
+if (clash) refuse(`task ids ${clash[0]} and ${clash[1]} share the page path ${clash[2]}: rename one`);
 const unknown = only.filter((id) => !all.some((t) => t.id === id));
 if (unknown.length) refuse(`unknown task: ${unknown.join(", ")}`);
 const chosen = all.filter((t) => (kind === "all" || t.kind === kind) && (!only.length || only.includes(t.id)));
@@ -110,27 +118,6 @@ const records = [];
 const jobs = [];
 for (const task of chosen) for (let t = 1; t <= trials; t++) jobs.push({ task, t });
 
-function backupPrefs() {
-	const saved = [];
-	for (const domain of ["com.apple.calculator", "com.apple.TextEdit", "com.apple.Preview"]) {
-		const file = join(scratch, `${domain}.plist`);
-		try {
-			execFileSync("defaults", ["export", domain, file], { stdio: "ignore" });
-			saved.push({ domain, file });
-		} catch {
-			// Only a domain that did not exist is deleted on restore; any other export failure leaves it alone.
-			let absent = false;
-			try {
-				execFileSync("defaults", ["read", domain], { stdio: "pipe" });
-			} catch (err) {
-				absent = /does not exist/i.test(String(err.stderr));
-			}
-			saved.push({ domain, file: undefined, absent });
-		}
-	}
-	return saved;
-}
-
 /** Closes one app copy this run's own computer_open started; never one the owner or another session opened. */
 async function killCopy(pid) {
 	try {
@@ -145,13 +132,13 @@ async function killCopy(pid) {
 	} catch {}
 }
 
-function mcpConfig(session) {
+function mcpConfig(session, kind) {
 	const config = {
 		mcpServers: {
 			polycarp: {
 				command: process.execPath,
 				args: [cli, "mcp", "--session", session, ...(profile ? ["--profile", profile] : [])],
-				env: { ...serverEnv, PATH: process.env.PATH ?? "", TABKYRA_CLIENT_NAME: "weak-model", POLYCARP_SPACES_BIN: allowComputer && helper ? wrapper : join(scratch, "no-computer-helper") },
+				env: { ...serverEnv, PATH: process.env.PATH ?? "", TABKYRA_CLIENT_NAME: "weak-model", POLYCARP_SPACES_BIN: spacesBin(kind, { allowComputer, wrapper: helper && wrapper, none: join(scratch, "no-computer-helper") }) },
 			},
 		},
 	};
@@ -160,14 +147,12 @@ function mcpConfig(session) {
 	return file;
 }
 
-const QUOTA = /usage limit|rate limit|quota|billing|upgrade your plan|out of credits|credit balance|limit reached/i;
-
 /**
  * One claude -p run; returns the compact transcript and the undo of each app copy it started. A copy registers its
  * undo as its computer_open answer streams in, so a stop mid-run still closes it.
  */
-async function runClaude(prompt, session, wallMs) {
-	const args = ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose", "--mcp-config", mcpConfig(session), "--strict-mcp-config", "--setting-sources", "project", "--tools", "", "--allowedTools", "mcp__polycarp", "--max-turns", String(turns), "--no-session-persistence"];
+async function runClaude(prompt, session, kind, wallMs) {
+	const args = ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose", "--mcp-config", mcpConfig(session, kind), "--strict-mcp-config", "--setting-sources", "project", "--tools", "", "--allowedTools", "mcp__polycarp", "--max-turns", String(turns), "--no-session-persistence"];
 	const copies = [];
 	const transcript = new Transcript({ onStarted: (pid) => copies.push(cleanup.add(`app copy ${pid}`, () => killCopy(pid))) });
 	const { child, closed, killGroup } = spawnClaude(args, { cleanup, cwd: emptyCwd, env: childEnv(process.env) });
@@ -202,7 +187,7 @@ async function runClaude(prompt, session, wallMs) {
 	} finally {
 		clearTimeout(timer);
 	}
-	return { run: transcript.done({ timedOut, ms: Date.now() - start, stderr: stderr.slice(-2000) }), copies };
+	return { run: transcript.done({ timedOut, ms: Date.now() - start, stderr: stderr.slice(-2000) }), copies, pids: () => new Set(transcript.calls.map((c) => c.startedPid).filter(Boolean)) };
 }
 
 async function scoreBrowser(task, mount, run) {
@@ -270,7 +255,17 @@ async function scoreComputer(task, dir, run, before) {
 }
 
 
-/** One task trial, or undefined when a stop cut it off: such a run is no result and writes no record. */
+/** A usage limit stops the round: no new run starts, and the run that hit it is no result. */
+const onLimit = (err) => {
+	stopAll = true;
+	console.error(`STOP: the sign-in reported a limit: ${err}`);
+};
+const keep = (run, score) => keepScored(run, score, { closing: () => cleanup.closing, onLimit });
+
+/**
+ * One task trial, or undefined when it is no result: a stop (signal or usage limit) before or during scoring. Such a
+ * run writes no record, so it never replaces a committed one.
+ */
 async function runOne(task, trial) {
 	const session = sessionName(label, task.id, trial);
 	let run;
@@ -280,10 +275,15 @@ async function runOne(task, trial) {
 		const entry = `${h.mount(mount, task.pages)}${(task.entry ?? "/").slice(1)}`;
 		// What the person has open before the agent starts (a tab of the site in front, say); undone after scoring.
 		const setup = task.setup ? cleanup.add(`setup of ${task.id}`, (await task.setup(h, entry)) ?? (() => undefined)) : undefined;
-		({ run } = await runClaude(task.prompt(entry), session, wallBrowser));
-		if (cleanup.closing) return undefined;
-		score = await scoreBrowser(task, mount, run);
-		await setup?.undo();
+		const result = await runClaude(task.prompt(entry), session, "browser", wallBrowser);
+		run = result.run;
+		try {
+			score = await keep(run, () => scoreBrowser(task, mount, run));
+		} finally {
+			// A browser run has no computer tools, so it starts no copies; close any all the same, before the next run.
+			await Promise.all(result.copies.map((c) => c.undo()));
+			await setup?.undo();
+		}
 	} else {
 		const dir = join(handoff, `weak-model-${process.pid}`, `${task.id}-${trial}`);
 		const folder = cleanup.add(`fixture folder ${dir}`, () => rmSync(dir, { recursive: true, force: true }));
@@ -291,17 +291,24 @@ async function runOne(task, trial) {
 		mkdirSync(dir, { recursive: true });
 		for (const [name, body] of Object.entries(task.files ?? {})) writeFileSync(join(dir, name), body);
 		const before = new Set((await hands.call("windows", {})).data?.windows?.map((w) => w.pid) ?? []);
-		const result = await runClaude(task.prompt(dir), session, wallComputer);
+		let pids = () => new Set();
+		const sweep = sweepCopies(cleanup, { app: task.app, before, known: () => pids(), list: async () => (await hands.call("windows", {})).data?.windows ?? [], kill: killCopy });
+		const result = await runClaude(task.prompt(dir), session, "computer", wallComputer);
+		pids = result.pids;
 		run = result.run;
+		// A run that ended on its own reported every copy it started; one cut off at the wall cap may have a launch in
+		// flight, so it sweeps now. On a signal the sweep stays registered and cleanup runs it, before the helper line closes.
 		if (cleanup.closing) return undefined;
-		score = await scoreComputer(task, dir, run, before);
-		await Promise.all(result.copies.map((c) => c.undo()));
-		await folder.undo();
+		if (run.stop === "timeout") await sweep.undo();
+		else sweep.release();
+		try {
+			score = await keep(run, () => scoreComputer(task, dir, run, before));
+		} finally {
+			await Promise.all(result.copies.map((c) => c.undo()));
+			await folder.undo();
+		}
 	}
-	if (run.apiError && QUOTA.test(run.apiError)) {
-		stopAll = true;
-		console.error(`STOP: the sign-in reported a limit: ${run.apiError}`);
-	}
+	if (!score) return undefined;
 	if (run.mcpStatus && run.mcpStatus !== "connected") score.why.push(`mcp server ${run.mcpStatus}`);
 	const record = { task: task.id, kind: task.kind, trial, model, pass: score.pass, why: score.why, ...(task.handoff ? { rule: "signup-v2" } : {}), ...run };
 	writeFileSync(join(outDir, `${task.id}-t${trial}.json`), `${JSON.stringify(record, null, 1)}\n`);
@@ -325,10 +332,12 @@ async function main() {
 	if (needsComputer) {
 		const runHandoff = join(handoff, `weak-model-${process.pid}`);
 		cleanup.add(`handoff folder ${runHandoff}`, () => rmSync(runHandoff, { recursive: true, force: true }));
-		const backup = backupPrefs();
+		const backup = backupPrefs(["com.apple.calculator", "com.apple.TextEdit", "com.apple.Preview"], { exec: (cmd, a) => execFileSync(cmd, a, { stdio: "pipe" }), dir: scratch });
 		const keepDir = join(homedir(), ".local", "state", "polycarp-weak-model", `prefs-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 		cleanup.add("app preferences", () => {
-			if (!restorePrefsOrKeep(backup, { exec: (cmd, a) => execFileSync(cmd, a, { stdio: "ignore" }), keepDir })) keepScratch = true;
+			// Scratch holds the backups: it is kept unless every restore is known to have worked.
+			keepScratch = true;
+			if (restorePrefsOrKeep(backup, { exec: (cmd, a) => execFileSync(cmd, a, { stdio: "ignore" }), keepDir })) keepScratch = false;
 		});
 		hands = new HandsClient(helper);
 		cleanup.add("helper line", () => hands.close());
@@ -355,9 +364,11 @@ async function main() {
 	}
 	// Stopped by a signal: cleanup is running and the exit code is already set; the round is left as it was.
 	if (cleanup.closing) return 130;
-	// A rerun of some tasks (--only) or one that stopped early never marks the round complete.
+	// A rerun of some tasks (--only) or one that stopped early never marks its kinds complete; a browser half that made
+	// every job clears only the browser stop mark, never one the computer half left.
 	const complete = !stopAll && !only.length && records.length === jobs.length;
-	const summary = summarize(label, { profile: profile || "full", date: new Date().toISOString(), stopped: stopAll, complete });
+	const kinds = [...new Set(chosen.map((t) => t.kind))];
+	const summary = summarize(label, { profile: profile || "full", date: new Date().toISOString(), stopped: stopAll, complete, kinds });
 	console.log(`${label}: this run ${records.filter((r) => r.pass).length}/${records.length}, folder ${summary.passed}/${summary.total}${stopAll ? " (stopped early)" : ""}`);
 	return 0;
 }
