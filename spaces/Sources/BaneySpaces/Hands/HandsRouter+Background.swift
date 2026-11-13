@@ -241,15 +241,17 @@ extension HandsRouter {
             }
         case .pointer where style.right:
             // Proved by the menu's own window, not by the target window's tree or pixels (`ContextMenu`).
-            // The cancel: Escape posted to the process, with a key permit of its own from the planner.
-            let escape: () -> Bool = { [self] in
-                guard let (keyFacts, _) = gatherFacts(w, kind: .keys, verifier: .none, path: []), case .success(let keys) = BackgroundPlanner.plan(keyFacts) else { return false }
-                return BackgroundPoster.keys([KeyChord(keyCode: 53, flags: 0, label: "escape")], permit: keys, stop: { nil }).stopped == nil
+            // The cancel: Escape posted to the process, with a key permit of its own from the planner, planned with this
+            // transaction's verifier before anything is posted (210 r1 first-F1).
+            let keys: () -> BackgroundPermit? = { [self] in
+                guard let (keyFacts, _) = gatherFacts(w, kind: .keys, verifier: verifier, path: []), case .success(let k) = BackgroundPlanner.plan(keyFacts) else { return nil }
+                return k
             }
-            let r = contextPress(w, frame: frame, point: path[0], permit: permit, stop: stop, item: style.item, escape: escape, check: scopeCheck, cancelled: cancelled)
+            let r = contextPress(w, frame: frame, point: path[0], permit: permit, stop: stop, item: style.item, agentWindow: onAgentWorkspace(w, scope),
+                                 keys: keys, check: scopeCheck, cancelled: cancelled)
             aimed += r.aimed; posted += r.posted; released = r.released; lastPostAt = r.lastPostAt
             switch r.result {
-            case .failure(let e): return .failed(r.posted > 0 ? frontFailure() ?? e : e)
+            case .failure(let e): return .failed(r.posted > 0 && !r.leftOpen ? frontFailure() ?? e : e)
             case .success(let d): context = d; verdict = DeliveryVerdict(verified: true, basis: "context_menu"); landed = 1
             }
         case .pointer:
