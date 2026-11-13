@@ -2917,8 +2917,11 @@ test("an action refused because the control was covered does not count as done",
 extraPages["/scroll-relabel"] = `<!doctype html><title>Polycarp scroll relabel</title><div style="height:3000px"></div><input id="far" aria-label="Row 1 note"><div style="height:3000px"></div>
 <script>addEventListener("scroll", () => document.getElementById("far").setAttribute("aria-label", "Row 9 note"), { once: true });</script>`;
 
-test("a field the page relabels as fill scrolls to it says it shows something else, not that it left", async () => {
+test("a field the page relabels as fill scrolls to it says it shows something else, not that it left", async (t) => {
 	await go("scroll-relabel");
+	// fill gives the page a frame after its scroll only in a tab that draws (a hidden one draws none, so nothing can
+	// change between its two looks there).
+	if (JSON.parse(await tool("run_js", { code: "document.visibilityState" })).value !== "visible") return t.skip("the tab is hidden here, so fill's scroll gives the page no frame to relabel the field in");
 	const far = refFor(await tool("read_page", { filter: "interactive" }), '"Row 1 note"');
 	const said = await failure("fill", { ref: far, value: "x" });
 	assert.match(said, /^stale_ref: Ref e\d+ now shows something else/);
