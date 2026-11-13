@@ -761,3 +761,67 @@ test("PR 226 r1 second-S1: the first navigate of a session to a 204 or a downloa
 	assert.deepEqual(reply.result.changes, { page: NOT_LOADED }, JSON.stringify(reply.result));
 	assert.ok(Date.now() - start < 3000, `${Date.now() - start} ms`);
 });
+
+test("PR 229 r1 second-S3: a commit whose onCommitted arrives just after the tab clears pendingUrl is a new page", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { navigateTabDetailed } = await import(`../src/browser/navigation.ts?s3=${Math.random()}`);
+	const tabId = fake.addTab({ url: "https://shop.example/", status: "complete" });
+	const at = { tabId, frameId: 0 };
+	const fire = (ev, d) => {
+		for (const fn of chrome.webNavigation[ev].listeners) fn(d);
+	};
+	let cleared = false;
+	let delivered = false;
+	const set = chrome.tabs.update;
+	chrome.tabs.update = async (id, p) => {
+		const t = await set(id, { pendingUrl: p.url });
+		// An earlier navigation this one cancelled, then the commit: Chrome clears pendingUrl at once.
+		setTimeout(() => fire("onErrorOccurred", { ...at, url: "https://shop.example/old", error: "net::ERR_ABORTED" }), 10);
+		setTimeout(async () => {
+			await set(id, { pendingUrl: undefined });
+			cleared = true;
+		}, 300);
+		return t;
+	};
+	// onCommitted reaches the extension only after the grace check has read the cleared tab.
+	const get = chrome.tabs.get;
+	chrome.tabs.get = async (id) => {
+		const t = await get(id);
+		if (cleared && !delivered && !t.pendingUrl) {
+			delivered = true;
+			setTimeout(() => {
+				fake.commitNav(id, "https://other.example/");
+				setTimeout(() => fire("onDOMContentLoaded", { ...at, url: "https://other.example/" }), 20);
+			}, 40);
+		}
+		return t;
+	};
+	const r = await navigateTabDetailed(tabId, "https://other.example/", { timeoutMs: 3000 });
+	assert.ok(delivered, "the grace check read the tab between the commit and onCommitted");
+	assert.deepEqual(r, { url: "https://other.example/", timedOut: false, committed: true });
+});
+
+test("PR 229 r1 first-F1: the old page's router replacing the very URL being reloaded does not end the wait", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { navigateTabDetailed } = await import(`../src/browser/navigation.ts?f1r=${Math.random()}`);
+	const tabId = fake.addTab({ url: "https://app.example/inbox", status: "complete" });
+	const at = { tabId, frameId: 0 };
+	const fire = (ev, d) => {
+		for (const fn of chrome.webNavigation[ev].listeners) fn(d);
+	};
+	const set = chrome.tabs.update;
+	chrome.tabs.update = async (id, p) => {
+		const t = await set(id, { pendingUrl: p.url });
+		setTimeout(() => fire("onHistoryStateUpdated", { ...at, url: "https://app.example/inbox" }), 10);
+		setTimeout(async () => {
+			await set(id, { pendingUrl: undefined });
+			fake.commitNav(id, p.url);
+			setTimeout(() => fire("onDOMContentLoaded", { ...at, url: p.url }), 20);
+		}, 200);
+		return t;
+	};
+	const r = await navigateTabDetailed(tabId, "https://app.example/inbox", { timeoutMs: 3000 });
+	assert.deepEqual(r, { url: "https://app.example/inbox", timedOut: false, committed: true });
+});

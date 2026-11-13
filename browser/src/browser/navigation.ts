@@ -47,10 +47,12 @@ export async function navigateTabDetailed(
 		// page it shows. So set the hash, then reload, and the viewer opens at that page.
 		// The hash change is quick; if a viewer reports no event for it, the reload still runs.
 		const hashWait = { ...options, timeoutMs: Math.min(options.timeoutMs ?? 20000, 3000) };
-		await waitForNavigation(tabId, url, hashWait, () => chrome.tabs.update(tabId, { url }));
-		return waitForNavigation(tabId, url, options, () => chrome.tabs.reload(tabId));
+		await waitForNavigation(tabId, url, hashWait, true, () => chrome.tabs.update(tabId, { url }));
+		return waitForNavigation(tabId, url, options, false, () => chrome.tabs.reload(tabId));
 	}
-	return waitForNavigation(tabId, url, options, () => chrome.tabs.update(tabId, { url }));
+	// Only a new hash on the page the tab shows can keep the document; any other URL, the same one included, loads one.
+	const jump = url.includes("#") && from !== undefined && sameDocumentUrl(from, url);
+	return waitForNavigation(tabId, url, options, jump, () => chrome.tabs.update(tabId, { url }));
 }
 
 /**
@@ -86,13 +88,17 @@ export function sameDocumentUrl(a: string, b: string): boolean {
 	}
 }
 
-/** How often an aborted navigation checks whether the tab still loads something before it counts as kept. */
+/** How often an aborted navigation checks whether the tab has a navigation pending before it counts as kept. */
 const ABORT_GRACE_MS = 500;
+/** Chrome clears pendingUrl at the commit, a moment before onCommitted arrives: an empty one is read twice, this far apart. */
+const COMMIT_TICK_MS = 150;
 
 function waitForNavigation(
 	tabId: number,
 	url: string,
 	options: NavigateOptions,
+	/** Whether this navigation can stay in the document (a new hash): only then does a same-document event end it. */
+	jump: boolean,
 	start: () => Promise<unknown>,
 ): Promise<NavigationResult> {
 	const { signal, timeoutMs = 20000, waitUntil = "domcontentloaded" } = options;
@@ -100,6 +106,8 @@ function waitForNavigation(
 	return new Promise<NavigationResult>((resolve, reject) => {
 		let committed = false;
 		let grace: ReturnType<typeof setTimeout> | undefined;
+		/** The last grace check found nothing pending; a second such check, a tick later, ends the wait. */
+		let clear = false;
 		const nav = chrome.webNavigation;
 		const doneEvent = waitUntil === "load" ? nav.onCompleted : nav.onDOMContentLoaded;
 		const cleanup = () => {
@@ -124,9 +132,11 @@ function waitForNavigation(
 		const onDone = (d: chrome.webNavigation.WebNavigationFramedCallbackDetails) => {
 			if (top(d) && committed) finish(() => resolve({ url: d.url, timedOut: false, committed }));
 		};
-		// Only this navigation's own jump: the old page's router can push a URL of its own while the new document loads.
+		// Only this navigation's own jump: the old page's router can push a URL of its own while the new document
+		// loads, the very URL of a reload included.
 		const onSameDocument = (d: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => {
-			if (top(d) && sameDocumentUrl(d.url, url)) finish(() => resolve({ url: d.url, timedOut: false, committed }));
+			if (jump && top(d) && sameDocumentUrl(d.url, url))
+				finish(() => resolve({ url: d.url, timedOut: false, committed }));
 		};
 		const onError = (d: chrome.webNavigation.WebNavigationFramedErrorCallbackDetails) => {
 			if (!top(d)) return;
@@ -142,8 +152,14 @@ function waitForNavigation(
 			chrome.tabs.get(tabId).then(
 				(tab) => {
 					if (committed || grace === undefined) return;
-					if (tab.pendingUrl) grace = setTimeout(kept, ABORT_GRACE_MS);
-					else finish(() => resolve({ url: tab.url ?? url, timedOut: false, committed }));
+					if (tab.pendingUrl) {
+						clear = false;
+						grace = setTimeout(kept, ABORT_GRACE_MS);
+					} else if (!clear) {
+						// Nothing pending: a 204, or a commit whose onCommitted is still on its way. A tick tells them apart.
+						clear = true;
+						grace = setTimeout(kept, COMMIT_TICK_MS);
+					} else finish(() => resolve({ url: tab.url ?? url, timedOut: false, committed }));
 				},
 				() => {
 					if (!committed && grace !== undefined)

@@ -1276,10 +1276,13 @@ reports the difference:
   nothing and ends in `ERR_ABORTED`, and the report says `"no new page loaded"`. The navigation's own events decide this,
   with no debugger call, so a hung renderer never holds `navigate` or keeps it from leaving the page. An `ERR_ABORTED` may
   instead belong to an earlier navigation this one cancelled, so the wait checks the tab every 0.5 s and goes on while it
-  has a navigation pending (`pendingUrl`), until a commit or the timeout; one timer does this and ends with the wait. The
+  has a navigation pending (`pendingUrl`), until a commit or the timeout; one timer does this and ends with the wait.
+  Chrome clears `pendingUrl` at the commit a moment before `onCommitted` arrives, so an empty one counts only when a
+  second check 0.15 s later finds it empty too. The
   tab's load status is not asked: a page that streams or never fires load stays "loading" whatever the navigation did. The
-  first navigate of a session reports a 204 or a download the same way. A same-document event ends the wait only for the
-  requested URL apart from the hash, so the old page's router pushing a URL of its own does not. Tabs the load opened or closed, the settle included, are in both, on the first navigate of a session too. A load that timed out says
+  first navigate of a session reports a 204 or a download the same way. A same-document event ends the wait only for a
+  jump (a URL with a hash, on the document the tab shows) and only for that URL apart from the hash, so the old page's
+  router pushing a URL of its own does not, nor its replacing the very URL being reloaded. Tabs the load opened or closed, the settle included, are in both, on the first navigate of a session too. A load that timed out says
   `"still loading"`, so `navigate` always returns `changes`. `actions` whose last step acted on another tab than the first
   says `"moved to tab N"`: the look was on the first tab; a batch that names a tab and only waits stays on it. `drag` waits briefly (0.6 s cap,
   0.2 s quiet, Network left as it is), so a drop that reorders a frame or a transition later is in the report, at most about
