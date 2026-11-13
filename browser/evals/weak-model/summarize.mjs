@@ -24,7 +24,7 @@ export function loadRuns(label, root = join(here, "results")) {
 	return [...byRun.values()].sort((a, b) => a.task.localeCompare(b.task) || a.trial - b.trial);
 }
 
-const KINDS = ["browser", "computer"];
+const KINDS = ["browser", "computer", "stub"];
 
 /**
  * Writes summary.json and runs.jsonl. The model and trials come from the merged runs, never from one rerun. The stop

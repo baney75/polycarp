@@ -1,6 +1,6 @@
 // Weak-model eval: a small model does real tasks with Polycarp's MCP tools and nothing else, and each run
 // is scored by machine. See README.md. Usage:
-//   node evals/weak-model/run.mjs --label r1-haiku [--model claude-haiku-5-5] [--trials 2] [--kind browser|computer|all]
+//   node evals/weak-model/run.mjs --label r1-haiku [--model claude-haiku-5-5] [--trials 2] [--kind browser|computer|stub|all]
 //        [--only id,id] [--concurrency 3] [--turns 30] [--wall 240] [--list]
 // Tasks come from every tasks/*.mjs file (WM_TASKS_DIR overrides the folder); --list prints them and starts nothing.
 // Needs `npm run build` at browser/ (dist-chrome) and in cli/, and a Playwright Chromium. Never calls an API key:
@@ -57,7 +57,7 @@ const trials = int("trials", "2");
 // WM_ALLOW_COMPUTER=1; until then every run is browser only and its server lists no computer tools.
 const allowComputer = process.env.WM_ALLOW_COMPUTER === "1";
 const kind = opt("kind", allowComputer ? "all" : "browser");
-if (!["browser", "computer", "all"].includes(kind)) refuse(`--kind takes browser, computer or all, not ${JSON.stringify(kind)}`);
+if (!["browser", "computer", "stub", "all"].includes(kind)) refuse(`--kind takes browser, computer, stub or all, not ${JSON.stringify(kind)}`);
 const only = opt("only", "")
 	.split(",")
 	.filter(Boolean);
@@ -74,7 +74,8 @@ const clash = clashingIds(all.map((t) => t.id));
 if (clash) refuse(`task ids ${clash[0]} and ${clash[1]} share the page path ${clash[2]}: rename one`);
 const unknown = only.filter((id) => !all.some((t) => t.id === id));
 if (unknown.length) refuse(`unknown task: ${unknown.join(", ")}`);
-const chosen = all.filter((t) => (kind === "all" || t.kind === kind) && (!only.length || only.includes(t.id)));
+// "all" is every kind this run may do: computer tasks only when the lead allowed them.
+const chosen = all.filter((t) => (kind === "all" ? t.kind !== "computer" || allowComputer : t.kind === kind) && (!only.length || only.includes(t.id)));
 if (!chosen.length) {
 	const off = !allowComputer && opt("kind") === undefined && only.length ? " (computer tasks are off without WM_ALLOW_COMPUTER=1, so --kind is browser)" : "";
 	refuse(`no task matches --kind ${kind}${only.length ? ` and --only ${only.join(",")}` : ""}${off}`);
@@ -133,13 +134,13 @@ async function killCopy(pid) {
 	} catch {}
 }
 
-function mcpConfig(session, kind) {
+function mcpConfig(session, kind, stub) {
 	const config = {
 		mcpServers: {
 			polycarp: {
 				command: process.execPath,
 				args: [cli, "mcp", "--session", session, ...(profile ? ["--profile", profile] : [])],
-				env: { ...serverEnv, PATH: process.env.PATH ?? "", TABKYRA_CLIENT_NAME: "weak-model", POLYCARP_SPACES_BIN: spacesBin(kind, { allowComputer, wrapper: helper && wrapper, none: join(scratch, "no-computer-helper") }) },
+				env: { ...serverEnv, PATH: process.env.PATH ?? "", TABKYRA_CLIENT_NAME: "weak-model", POLYCARP_SPACES_BIN: spacesBin(kind, { allowComputer, wrapper: helper && wrapper, stub, none: join(scratch, "no-computer-helper") }) },
 			},
 		},
 	};
@@ -152,8 +153,8 @@ function mcpConfig(session, kind) {
  * One claude -p run; returns the compact transcript and the undo of each app copy it started. A copy registers its
  * undo as its computer_open answer streams in, so a stop mid-run still closes it.
  */
-async function runClaude(prompt, session, kind, wallMs, watch = {}) {
-	const args = ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose", "--mcp-config", mcpConfig(session, kind), "--strict-mcp-config", "--setting-sources", "project", "--tools", "", "--allowedTools", "mcp__polycarp", "--max-turns", String(turns), "--no-session-persistence"];
+async function runClaude(prompt, session, kind, wallMs, watch = {}, stub = undefined) {
+	const args = ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose", "--mcp-config", mcpConfig(session, kind, stub), "--strict-mcp-config", "--setting-sources", "project", "--tools", "", "--allowedTools", "mcp__polycarp", "--max-turns", String(turns), "--no-session-persistence"];
 	const copies = [];
 	const transcript = new Transcript({ onStarted: (pid) => copies.push(cleanup.add(`app copy ${pid}`, () => killCopy(pid))) });
 	// The caller sees the transcript while the run is still going: a stop mid-run reads its reported copies from it.
@@ -257,6 +258,21 @@ async function scoreComputer(task, dir, run, before) {
 	return { pass, why };
 }
 
+/** A stub run is scored from the stub's world (stub/hands.mjs --state), its fixture files and the answer. */
+function scoreStub(task, dir, stateFile, run) {
+	let world;
+	try {
+		world = JSON.parse(readFileSync(stateFile, "utf8"));
+	} catch {
+		return { pass: false, why: ["the stub helper never started (no world file)"] };
+	}
+	const file = (name) => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8") : "");
+	try {
+		return task.check(world, { final: run.final ?? "", file, dir });
+	} catch (err) {
+		return { pass: false, why: [`check: ${err.message.slice(0, 160)}`] };
+	}
+}
 
 /** A usage limit stops the round: no new run starts, and the run that hit it is no result. */
 const onLimit = (err) => {
@@ -284,6 +300,17 @@ async function runOne(task, trial) {
 			// A browser run has no computer tools, so it starts no copies; close any all the same, before the next run.
 			await Promise.all(result.copies.map((c) => c.undo()));
 		}
+	} else if (task.kind === "stub") {
+		// The stub's handoff folder and world live in scratch: nothing of a stub run reaches the Mac's apps or folders.
+		const dir = join(scratch, "stub-handoff", `${task.id}-${trial}`);
+		mkdirSync(dir, { recursive: true });
+		for (const [name, body] of Object.entries(task.files ?? {})) writeFileSync(join(dir, name), body);
+		const stateFile = join(scratch, `${session}.world.json`);
+		const bin = join(scratch, `${session}.hands.sh`);
+		writeFileSync(bin, `#!/bin/sh\nexec '${process.execPath}' '${join(here, "stub", "hands.mjs")}' --state '${stateFile}' --handoff '${dir}' "$@"\n`, { mode: 0o755 });
+		const result = await runClaude(task.prompt(dir), session, "stub", wallComputer, {}, bin);
+		run = result.run;
+		score = await keep(run, () => scoreStub(task, dir, stateFile, run));
 	} else {
 		const dir = join(handoff, `weak-model-${process.pid}`, `${task.id}-${trial}`);
 		const folder = cleanup.add(`fixture folder ${dir}`, () => rmSync(dir, { recursive: true, force: true }));
@@ -355,7 +382,8 @@ async function main() {
 		cleanup.add("helper line", () => hands.close());
 	}
 	if (h) await h.connected();
-	const browserJobs = jobs.filter((j) => j.task.kind === "browser");
+	// Stub runs share nothing but scratch, so they go in the same pool as the browser runs.
+	const browserJobs = jobs.filter((j) => j.task.kind === "browser" || j.task.kind === "stub");
 	const computerJobs = jobs.filter((j) => j.task.kind === "computer");
 	// Browser runs share one headless Chromium, each in its own session and tab group.
 	let next = 0;

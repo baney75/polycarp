@@ -328,7 +328,7 @@ test("bad numbers, an unknown --kind or an empty selection exit 2 with the reaso
 		[["--concurrency", "x"], /--concurrency takes/],
 		[["--turns", "0"], /--turns takes/],
 		[["--wall", "1.5"], /--wall takes/],
-		[["--kind", "brwser"], /--kind takes browser, computer or all, not "brwser"/],
+		[["--kind", "brwser"], /--kind takes browser, computer, stub or all, not "brwser"/],
 		[["--only", "calc"], /no task matches --kind browser and --only calc \(computer tasks are off/],
 	]) {
 		const r = spawnSync(process.execPath, [run, ...(args.includes("--label") ? [] : ["--label", label]), ...args], { env: cleanEnv({ WM_TASKS_DIR: dir, WM_ALLOW_COMPUTER: "", PATH: `${bin}:${process.env.PATH}` }), encoding: "utf8", timeout: 30_000 });
