@@ -100,7 +100,8 @@ public enum HandsTools {
             HandsParam("x", .integer, "Points from the window's left edge.", required: true),
             HandsParam("y", .integer, "Points from the window's top edge.", required: true),
             HandsParam("count", .integer, "2 for a double click, 3 for a triple (default 1)."),
-            HandsParam("button", .string, "left only: right click is not available yet."),
+            HandsParam("button", .string, "left (default) or right. A right click opens the context menu only while the agent workspace is on screen under the window, then presses `item` or, without one, lists the items and cancels the menu; it never leaves a menu open."),
+            HandsParam("item", .string, "With button right: the context menu item to press, by its title. Items the menu bar refuses (clipboard, Services, sharing, opening documents) are refused here too."),
         ], acts: true),
         HandsTool(verb: "drag", summary: "Press at a point, drag to another and release, in a window that is not in front, by process, with window-local coordinates. Never moves the real pointer or raises the window. Verified by an accessibility change or by pixels changing along the path while the rest of the window stays put.", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),

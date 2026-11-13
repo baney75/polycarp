@@ -89,7 +89,11 @@ public enum MenuPath {
 
     /// The error for a path that didn't come out as one command. Its message lists the titles to choose from; next_call is
     /// a read or none, never another press.
-    public static func error(_ found: Found, path: [String], window: Int) -> HandsError? {
+    /// `background`: the app isn't active. macOS enables a window's commands only in the active app, whose window is key,
+    /// and Polycarp never brings an agent's copy forward, so a greyed command there stays greyed: no retry, no hint that a
+    /// selection would help. Measured on 952839c: Select All, Duplicate and Make Rich Text read disabled in such a copy, an
+    /// AXPress on them did nothing, and setting AXMain or AXFocused changed neither.
+    public static func error(_ found: Found, path: [String], window: Int, background: Bool = false, app: String = "the app") -> HandsError? {
         switch found {
         case .item: return nil
         case .missing(let level, let choices):
@@ -98,6 +102,9 @@ public enum MenuPath {
             return HandsError(.unknownRef, "no \"\(wanted)\" in \(at); there: \(choices.joined(separator: ", "))",
                               suggestion: "Pass a path of titles from the list.", retry: .safe,
                               nextCall: .null)
+        case .disabled(let p) where background:
+            return HandsError(.notSupported, "\(p.joined(separator: " > ")) is greyed out because \(app) is in the background: macOS enables a window's commands only in the app in front, and Polycarp never brings an agent's copy forward",
+                              suggestion: "Retrying won't change it. Do it on the element instead: click, type, set-value, select or toggle by ref.", retry: .never, nextCall: .null)
         case .disabled(let p):
             return HandsError(.notSupported, "\(p.joined(separator: " > ")) is greyed out now", suggestion: "Snapshot the window: the command may need a selection first.", retry: .afterSnapshot,
                               nextCall: HandsError.call("snapshot", ["window": .int(window)]))
@@ -225,23 +232,30 @@ public enum MenuPath {
         }
         for (k, step) in steps.enumerated().dropFirst() {
             let i = step.chosen
-            if i.chord("f", control: true) || i.id.contains("fullscreen") || i.name.contains("full screen") { return refuse(path, why: windows) }
-            if i.chord("\\", shift: true) || i.id.contains("taboverview") || i.name.contains("all tabs") { return refuse(path, why: windows) }
-            if i.command && ["c", "x", "v"].contains(i.key) || ["cut:", "copy:"].contains(i.id) || i.id.hasPrefix("paste") { return clipboard(path) }
-            if i.chord("o") || i.id.hasPrefix("opendocument") { return refuse(path, why: documents) }
-            // 197 r1 second-S3: the Versions browser takes the screen; Move To and Rename move the document out of the handoff folder.
-            if i.id == "browsedocumentversions:" || i.name.hasPrefix("browse all versions") { return refuse(path, why: windows) }
-            if ["movedocument:", "renamedocument:"].contains(i.id) { return refuse(path, why: documents) }
-            // 197 r1 first-F3: Use Selection for Find (cmd+e) puts the selection on the find text every app shares. Only this
-            // way in is closed: a search typed into a find bar writes it too (205 r1 first-F3).
-            if i.chord("e") || i.id.contains("selectionforfind") || i.name.hasPrefix("use selection for find") { return refuse(path, why: findText) }
             let afterOpen = step.at > 0 && step.items[step.at - 1].chord("o")
-            if i.submenu && (afterOpen || i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
+            if i.submenu && afterOpen { return refuse(path, why: documents) }
             if k == 1, isEditMenu(menu.items, title: top), clipboardGroup(menu.items, at: menu.at) { return clipboard(path) }
             if k == 1, isEditMenu(menu.items, title: top), appended(menu.items, at: menu.at, inside: steps.dropFirst(2).first?.items ?? menu.opens) { return refuse(path, why: outside) }
-            if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name.hasPrefix($0) }) { return clipboard(path) }
-            if leavesTheApp(i) { return refuse(path, why: outside) }
+            if let e = itemRule(i, path: path) { return e }
         }
+        return nil
+    }
+
+    /// The rules one item answers to by itself, wherever it sits: the menu bar's and a context menu's (`ContextMenu`).
+    static func itemRule(_ i: MenuItem, path: String) -> HandsError? {
+        if i.chord("f", control: true) || i.id.contains("fullscreen") || i.name.contains("full screen") { return refuse(path, why: windows) }
+        if i.chord("\\", shift: true) || i.id.contains("taboverview") || i.name.contains("all tabs") { return refuse(path, why: windows) }
+        if i.command && ["c", "x", "v"].contains(i.key) || ["cut:", "copy:"].contains(i.id) || i.id.hasPrefix("paste") { return clipboard(path) }
+        if i.chord("o") || i.id.hasPrefix("opendocument") { return refuse(path, why: documents) }
+        // 197 r1 second-S3: the Versions browser takes the screen; Move To and Rename move the document out of the handoff folder.
+        if i.id == "browsedocumentversions:" || i.name.hasPrefix("browse all versions") { return refuse(path, why: windows) }
+        if ["movedocument:", "renamedocument:"].contains(i.id) { return refuse(path, why: documents) }
+        // 197 r1 first-F3: Use Selection for Find (cmd+e) puts the selection on the find text every app shares. Only this
+        // way in is closed: a search typed into a find bar writes it too (205 r1 first-F3).
+        if i.chord("e") || i.id.contains("selectionforfind") || i.name.hasPrefix("use selection for find") { return refuse(path, why: findText) }
+        if i.submenu && (i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
+        if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name.hasPrefix($0) }) { return clipboard(path) }
+        if leavesTheApp(i) { return refuse(path, why: outside) }
         return nil
     }
 
