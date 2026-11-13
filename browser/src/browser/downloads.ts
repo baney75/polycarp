@@ -11,7 +11,6 @@ import { maskUrl } from "./mask-body.js";
 
 export interface Download {
 	name: string;
-	/** The name's extension, a guess at the kind of file. */
 	type?: string;
 	url: string;
 	state: "started" | "completed" | "canceled";
