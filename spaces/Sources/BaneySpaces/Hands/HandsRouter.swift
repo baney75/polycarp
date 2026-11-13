@@ -81,7 +81,7 @@ final class HandsRouter {
     func handleWire(_ r: Wire.Request) -> Wire.Reply {
         let env: HandsEnvelope
         if let data = r.text?.data(using: .utf8), let req = try? JSONDecoder().decode(HandsRequest.self, from: data) {
-            env = handle(req)
+            env = HandsNextCall.fill(handle(req), window: windowOf(req))
         } else {
             env = .failure(HandsError(.badArguments, "the request wasn't an agent command", suggestion: "Use `polycarp-spaces agent <command>`.", retry: .never))
         }
@@ -94,6 +94,7 @@ final class HandsRouter {
         if let e = AgentAccessGate.refusal(verb: req.verb, mode: access) { return .failure(e) }
         if remote, let e = WorkspaceVerbs.connectorRefusal(verb: req.verb) { return .failure(e) }
         var req = req
+        if let r = req.string("ref"), let e = SnapshotRows.browserRefError(r) { return .failure(e) }
         if let r = req.string("ref"), let n = SnapshotRows.bareNumber(r) {
             switch bareRef(n, req) {
             case .success(let full): req.args["ref"] = .string(full)
@@ -404,7 +405,30 @@ final class HandsRouter {
         }
     }
 
+    static func pointsJSON(_ s: CGSize) -> JSONValue { .object(["width": .double(Double(s.width)), "height": .double(Double(s.height))]) }
+
+    /// `snapshot` with screenshot: true: the read, then a capture of the same window under the same gate as `shot`. A
+    /// capture that fails leaves the read as it is, with `screenshot_error`.
     private func snapshot(_ req: HandsRequest) -> HandsEnvelope {
+        guard req.bool("screenshot") else {
+            if req.string("zoom") != nil { return .failure(HandsError(.badArguments, "zoom goes with screenshot: true", suggestion: #"Example: {"window":4211,"screenshot":true,"zoom":"0,0,400,300"}"#, retry: .safe, nextCall: .null)) }
+            return readSnapshot(req)
+        }
+        if case .failure(let e) = ShotImage.region(req.string("zoom")) { return .failure(e) }
+        let env = readSnapshot(req)
+        guard env.ok, var o = env.data?.object, let id = o["window"]?.int ?? o["target"]?["window"]?.int else { return env }
+        guard case .success(let (w, _, _)) = target(HandsRequest(verb: "shot", args: ["window": .int(id)], session: req.session)) else { return env }
+        if let e = gate(w, session: req.session ?? "") { o["screenshot_error"] = .string(e.message); return .success(.object(o)) }
+        let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
+        defer { AgentActivity.shared.end(token) }
+        switch WindowShot.capture(window: w.id, named: nil, check: check(w, session: req.session ?? "")) {
+        case .failure(let e): o["screenshot_error"] = .string(e.message)
+        case .success(let r): o["screenshot"] = .object(["path": .string(r.path), "width": .int(r.width), "height": .int(r.height), "points": Self.pointsJSON(r.points)])
+        }
+        return .success(.object(o))
+    }
+
+    private func readSnapshot(_ req: HandsRequest) -> HandsEnvelope {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope, note)):
@@ -571,7 +595,9 @@ final class HandsRouter {
             let beforeValue: String? = writes ? valueOf(w, ref, session: session) : nil
             // Tree before the action, to show what it changed.
             var before: JSONValue?
-            if !writes, kind != .toggle, case .success(let d) = read(w, interactive: false, compact: true, register: false, session: session) { before = d["tree"] }
+            // A row click reads the selection itself; the full read before is for the plain path only (first-F7).
+            let plan = kind == .click ? rowPlan(ref, session: session) : nil
+            if !writes, kind != .toggle, plan == nil, case .success(let d) = read(w, interactive: false, compact: true, register: false, session: session) { before = d["tree"] }
             // Scope again, at the moment of dispatch: the window may have moved since resolving.
             // Every action reports its target before dispatch. When the agent cursor will draw it (it is on, and Donovan is
             // looking at this window) the target's frame is measured on the process queue and follows as `frameMeasured`:
@@ -589,6 +615,9 @@ final class HandsRouter {
             }
             // The child windows the app has now: one that appears after this is the action's (`ChildAttribution`).
             let childrenBefore = noteAction(session: session, pid: w.pid)
+            if let plan {
+                return clickRow(w, scope: scope, ref: ref, plan: plan, session: session, childrenBefore: childrenBefore)
+            }
             // The scope and ref checks run again on the process queue, at the moment the call executes.
             let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session))
             switch reply {
@@ -623,6 +652,8 @@ final class HandsRouter {
                     "action": .string(name), "ref": .string(ref), "verified": .bool(verified), "evidence": evidence,
                     "engine": engine, "target": targetJSON(w, scope),
                 ]
+                // Not verified: the one read to make before anything else.
+                if !verified { result["next_call"] = HandsNextCall.after(.unverified, window: Int(w.id)) }
                 // A dialog or sheet the action raised: said here, so the agent need not poll.
                 if let opened = openedChildren(pid: w.pid, before: childrenBefore, session: session) { result["opened"] = opened }
                 return .success(.object(result))
@@ -630,11 +661,28 @@ final class HandsRouter {
         }
     }
 
+    /// The window a request is about, for its error's next call: the window it names, or the one its ref's snapshot read.
+    /// A bare row number counts through what it stands for in this session (review r1 first-F2).
+    private func windowOf(_ req: HandsRequest) -> Int? {
+        RefWindow.of(window: req.int("window"), ref: req.string("ref"),
+                     bare: { n in if case .success(let full) = bareRef(n, req) { return full } else { return nil } },
+                     snapshotWindow: { sid in lock.lock(); defer { lock.unlock() }; return snaps[sid].map { Int($0.window) } })
+    }
+
+    /// The selection write a click on `ref` falls back to, when the ref is an item in an outline, table or list.
+    private func rowPlan(_ ref: String, session: String) -> ClickFallback.Plan? {
+        guard ref.hasPrefix("@"), let colon = ref.firstIndex(of: ":"), let n = SnapshotRows.refNumber(ref) else { return nil }
+        let sid = String(ref[ref.index(after: ref.startIndex)..<colon])
+        guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
+        return ClickFallback.plan(rows: read.rows, snapshot: sid, number: n)
+    }
+
     private func shot(_ req: HandsRequest) -> HandsEnvelope {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope, _)):
             if let e = gate(w, session: req.session ?? "") { return .failure(e) }
+            if case .failure(let e) = ShotImage.region(req.string("zoom")) { return .failure(e) }
             let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
             defer { AgentActivity.shared.end(token) }
             switch WindowShot.capture(window: w.id, named: req.string("out"), cursor: req.bool("cursor") ? host.cursorMark(w.id) : nil, check: check(w, session: req.session ?? "")) {
@@ -642,6 +690,7 @@ final class HandsRouter {
             case .success(let r):
                 return .success(.object([
                     "path": .string(r.path), "width": .int(r.width), "height": .int(r.height), "cursor": .bool(r.cursorDrawn),
+                    "points": Self.pointsJSON(r.points),
                     // A capture with the cursor drawn in is an edited picture: it says so and keeps the hash of the raw capture.
                     "evidence": r.cursorDrawn
                         ? .object(["kind": "capture_hash_composited", "sha256": .string(r.sha256), "raw_sha256": r.rawSha256.map(JSONValue.string) ?? .null])

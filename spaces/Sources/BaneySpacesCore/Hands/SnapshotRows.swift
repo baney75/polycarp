@@ -80,13 +80,22 @@ public enum SnapshotRows {
         return Int(tail.dropFirst())
     }
 
-    /// A bare row number an agent may pass instead of a ref: `5`, `e5` or `[5]`. Nil for anything else.
+    /// A bare row number an agent may pass instead of a ref: `5` or `[5]`. Nil for anything else. `e5` is a browser
+    /// ref (read_page prints those), so it is refused by `browserRefError`, never read as native row 5.
     public static func bareNumber(_ ref: String) -> Int? {
         var s = Substring(ref.trimmingCharacters(in: .whitespaces))
         if s.hasPrefix("["), s.hasSuffix("]") { s = s.dropFirst().dropLast() }
-        if s.hasPrefix("e") { s = s.dropFirst() }
         guard !s.isEmpty, s.allSatisfy(\.isASCII), let n = Int(s), n > 0 else { return nil }
         return n
+    }
+
+    /// The error for a browser ref like `e12` passed to a computer_* tool, or nil when the ref isn't one.
+    public static func browserRefError(_ ref: String) -> HandsError? {
+        let s = ref.trimmingCharacters(in: .whitespaces)
+        guard s.hasPrefix("e"), s.count > 1, s.dropFirst().allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+        return HandsError(.badArguments, "\(quoted(s)) is a browser ref from read_page; computer_* tools act on native windows",
+                          suggestion: "For a web page, use the browser tools (click, fill, select) with \(s). For a native window, pass a row number like 5 or a full ref like @s8f3k2p9:e5 from computer_snapshot.",
+                          retry: .never)
     }
 
     static func quoted(_ s: String) -> String {
@@ -290,6 +299,9 @@ public struct SnapshotRowsMemory: Sendable {
         /// Refused; nothing was sent. `message`, and the call to make next (nil: snapshot first).
         case refused(code: HandsErrorCode, message: String, latest: Read?)
     }
+
+    /// The session's recent read that printed `snapshot`, for what a ref of it pointed at.
+    public func read(snapshot: String, session: String) -> Read? { recent[session]?.last { $0.snapshot == snapshot } }
 
     /// Row N of the session's latest snapshot, unless a recent earlier snapshot has a different row N (another window, or
     /// another element): then the number alone can't say which the agent saw, and it must pass the full ref.

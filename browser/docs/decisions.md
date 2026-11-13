@@ -1499,15 +1499,18 @@ Decision:
   no pointer events, the capture cover hides it with the veil, and the readers already skip the veil's element, so
   read_page, find, get_page_html and screenshots never see it.
 - **How it moves**: cdp.ts reports each pointer action (`cuePointer`: click, hover, drag, scroll, type, press; tools.ts
-  adds fill and a scroll to a ref). veil.ts sends a `point` command through the tab's veil queue without waiting for it,
-  so input never waits on it. It glides to the point (210 ms), then reacts: a squash and ring on click, a perk on hover, a
+  adds fill and a scroll to a ref). veil.ts sends a `point` command in its own order per tab, after the veil changes
+  already queued, without waiting for it, so input never waits on it. Nothing waits on a point: the capture cover and
+  the next call's veilBegin do not queue behind one a busy page leaves unanswered, and of the cues that pile up behind
+  it only the newest is sent. A press cues after its key is up, where focus moved to. It glides to the point (210 ms), then reacts: a squash and ring on click, a perk on hover, a
   tug and a slow follow on drag, a tap and caret on typing, a nudge on scroll; then idles with a slow sway and a blink.
   Typing has no point: the page finds the focused field through open shadow roots and same-origin frames; in a
   cross-origin frame it points at the frame's box, and with nothing focused it stays put.
 - **Coordinates**: the points are main-frame CSS pixels, the same ones page.ts reads from `getBoundingClientRect` (frame
   offsets added) and the overlay is drawn in, so scroll and page zoom need no conversion.
 - **Settings > Agents**: "Show the agent's pointer" (`veil_pointer`, on by default) sits under the veil's own switch. Off
-  hides the character on open veils at once and keeps the veil.
+  hides the character on open veils at once and keeps the veil. A veil drawn before a restarted worker has read the
+  setting waits for that read, so it never shows the character the person turned off.
 - **Motion**: off under prefers-reduced-motion or a Polycarp theme with motion off (it jumps and holds still); Highlight
   colors under forced colors.
 
