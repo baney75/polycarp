@@ -115,10 +115,6 @@ final class OpenFlashGuardTests: XCTestCase {
         XCTAssertFalse(h.skips(900, now: 13), "first-F1, sol-F1: at 3 s New Window's ask reaches the app")
         XCTAssertEqual(h.lapse(now: 13), [900], "and the scan it skipped runs again")
         XCTAssertEqual(h.lapse(now: 14), [])
-        h.hold(950, at: 10)
-        _ = h.covered(950, true); _ = h.covered(950, false)
-        XCTAssertTrue(h.skips(950, now: 14), "a launch that had a cover keeps its hold for later windows")
-        XCTAssertEqual(h.lapse(now: 14), [])
     }
 
     func testACoverReportALaterDrainOvertookLetsNoAskThrough() {
@@ -128,7 +124,9 @@ final class OpenFlashGuardTests: XCTestCase {
         var main: [() -> Void] = [], painted = false, uncovered = false
         func drain(_ cover: Bool) {
             painted = cover
-            if let count = r.change(to: cover) { main.append { if r.current(count), h.covered(900, cover), !painted { uncovered = true } } }
+            let d: OpenFlashGuard.CoverReports.Delivery? = r.change(to: cover)
+            if case .later(let count) = d { main.append { if r.current(count), h.covered(900, true), !painted { uncovered = true } } }
+            if d == .now { _ = h.covered(900, false) }
         }
         func runMain() { let q = main; main = []; q.forEach { $0() } }
         drain(true); drain(false)   // sol-F2: a drain queued ahead takes the cover down before the report runs
@@ -218,7 +216,7 @@ final class OpenFlashGuardTests: XCTestCase {
         let post = try XCTUnwrap(HandsSourceTests.between("private func post(", "private func drain()", in: wch))
         XCTAssertFalse(post.contains("release"), "sol-F1: a newer step never carries an older one's release")
         XCTAssertFalse(wch.contains("step.release"))
-        XCTAssertTrue(wch.contains("let up = !panels.isEmpty\n            if let count = reports.change(to: up) {"), "sol-F1: the hold follows the panels main drew")
+        XCTAssertTrue(wch.contains("switch reports.change(to: !panels.isEmpty) {"), "sol-F1: the hold follows the panels main drew")
         XCTAssertTrue(wch.contains("alpha: alpha, bounds: b)"), "sol-F2: the window server's alpha reaches the plan")
         XCTAssertTrue(wch.contains("OpenFlashGuard.turn(busy: OpenFlashGuard.slotBusy(live.values.map(\\.step))"), "first-F1")
         let probe = try String(contentsOf: CursorSourceTests.root.appendingPathComponent("scripts/agent-open-probe.swift"), encoding: .utf8)
@@ -398,7 +396,9 @@ final class OpenFlashGuardTests: XCTestCase {
         let drain = try XCTUnwrap(HandsSourceTests.between("private func drain() {", "func finish(why: String) {", in: w))
         XCTAssertTrue(drain.contains("ticket.holds(live:"), "sol-F1: a queued cover is checked before it rises")
         let flush = try XCTUnwrap(drain.range(of: "if redraw() { CATransaction.flush() }"))
-        let release = try XCTUnwrap(drain.range(of: "DispatchQueue.main.async { [self] in if reports.current(count) { Windows.covered(pid, up) } }"))
+        let release = try XCTUnwrap(drain.range(of: "case .later(let count): DispatchQueue.main.async { [self] in if reports.current(count) { Windows.covered(pid, true) } }"))
+        let down = try XCTUnwrap(drain.range(of: "case .now: Windows.covered(pid, false)"))
+        XCTAssertLessThan(flush.lowerBound, down.lowerBound, "round 2 sol-F1: down is told in the turn that took the cover away")
         XCTAssertLessThan(flush.lowerBound, release.lowerBound, "first-F1: the cover is committed, then the hold ends on a later turn")
         XCTAssertEqual(w.components(separatedBy: "Windows.release(").count - 1, w.components(separatedBy: "DispatchQueue.main.async { Windows.release(pid) }").count - 1,
                        "first-F1: every release waits a turn, never in the same one as the cover")
@@ -421,5 +421,44 @@ final class OpenFlashGuardTests: XCTestCase {
         XCTAssertFalse(ask.contains("NSRunningApplication"))
         XCTAssertTrue(w.contains(".nonactivatingPanel"))
         XCTAssertFalse(w.contains(".hide()") || w.contains("app.hide"), "no hide: a hidden app lists no windows (PR 172)")
+    }
+}
+
+/// Review of PR 232, round 2: each of these fails on aac125b2.
+final class OpenFlashGuardRound2Tests: XCTestCase {
+    func testAHoldLapsesAtThreeSecondsEvenAfterACoverWentUpAndDown() {
+        var h = OpenFlashGuard.Holds()
+        h.hold(950, at: 10)
+        XCTAssertTrue(h.skips(950, now: 10.2))
+        XCTAssertTrue(h.covered(950, true), "the cover is up: the skipped ask runs")
+        XCTAssertFalse(h.skips(950, now: 10.5))
+        XCTAssertFalse(h.covered(950, false))
+        XCTAssertTrue(h.skips(950, now: 11), "the cover is down and the watch is live: held")
+        XCTAssertFalse(OpenFlashGuard.newWindowWaits(held: h.holds(950, now: 13), waited: 3))
+        XCTAssertFalse(h.skips(950, now: 13), "first-F1: at 3 s New Window's ask reaches the app, cover or no cover")
+        XCTAssertEqual(h.lapse(now: 13), [950], "and the scan it skipped runs again")
+        XCTAssertFalse(h.covered(950, true), "a lapsed hold takes no more reports")
+        XCTAssertFalse(h.skips(950, now: 13.5))
+    }
+
+    func testAScanQueuedBeforeACoverComesDownDoesNotAskTheAppUncovered() {
+        var h = OpenFlashGuard.Holds(), r = OpenFlashGuard.CoverReports()
+        h.hold(900, at: 0)
+        var main: [() -> Void] = [], painted = false, uncovered = false
+        func runMain() { while !main.isEmpty { main.removeFirst()() } }
+        func drain(_ cover: Bool) {   // one main turn of OpenFlashWatch.drain
+            painted = cover
+            let d: OpenFlashGuard.CoverReports.Delivery? = r.change(to: cover)
+            if case .later(let count) = d { main.append { if r.current(count) { _ = h.covered(900, cover) } } }
+            if d == .now { _ = h.covered(900, false) }
+        }
+        func scan() { main.append { if !h.skips(900, now: 0.5), !painted { uncovered = true } } }
+        drain(true); runMain()
+        XCTAssertFalse(h.skips(900, now: 0.3), "the cover is drawn: asks go through")
+        scan()          // a refresh queued on main while the cover is up
+        drain(false)    // this turn parks the window and takes the cover down
+        runMain()
+        XCTAssertFalse(uncovered, "sol-F1: the queued scan sees the cover down and skips the app")
+        XCTAssertTrue(h.skips(900, now: 0.6))
     }
 }

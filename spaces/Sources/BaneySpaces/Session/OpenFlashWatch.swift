@@ -195,13 +195,15 @@ enum OpenFlashWatch {
             }
             want = step.covers
             if redraw() { CATransaction.flush() }
-            // On the next turn, so a new cover is committed and drawn before Spaces may ask the app (a 0.25 s block):
-            // asks are let through only while a cover main painted is up (sol-F1, first-F2).
-            // Only while it is still the newest report: a later drain or the end can run first (review of PR 232, sol-F2).
-            let up = !panels.isEmpty
-            if let count = reports.change(to: up) {
-                let pid = self.pid
-                DispatchQueue.main.async { [self] in if reports.current(count) { Windows.covered(pid, up) } }
+            // Asks are let through only while a cover main painted is up (sol-F1, first-F2). "Up" is told on the next
+            // turn, so the cover is committed and drawn before Spaces may ask the app (a 0.25 s block), and only while it
+            // is still the newest report (review of PR 232, sol-F2). "Down" is told at once, in this turn, so no scan
+            // queued before the report asks the app uncovered (round 2, sol-F1).
+            let pid = self.pid
+            switch reports.change(to: !panels.isEmpty) {
+            case .later(let count): DispatchQueue.main.async { [self] in if reports.current(count) { Windows.covered(pid, true) } }
+            case .now: Windows.covered(pid, false); Trace.log("flash guard cover: \(app) has no cover up at +\(ms())ms; its asks are held again")
+            case nil: break
             }
         }
 

@@ -150,12 +150,12 @@ enum Windows {
     /// Asks a process again after a scan skipped it, once its cover is up or its watch is over (`Spaces.askAgain`).
     static var onHoldEnd: ((pid_t) -> Void)?
 
-    /// On the main thread. A launch with no cover up by `holdFor` loses its hold then, and a scan it skipped runs again.
+    /// On the main thread. A launch's hold ends at `holdFor`, when no cover can be up, and a scan it skipped runs again.
     static func hold(_ pid: pid_t) {
         unresponsiveLock.lock(); holds.hold(pid, at: ProcessInfo.processInfo.systemUptime); unresponsiveLock.unlock()
         DispatchQueue.main.asyncAfter(deadline: .now() + OpenFlashGuard.holdFor) {
             unresponsiveLock.lock(); let again = holds.lapse(now: ProcessInfo.processInfo.systemUptime); unresponsiveLock.unlock()
-            for pid in again { onHoldEnd?(pid) }
+            for pid in again { Trace.log("flash guard cover: pid \(pid) hold over after \(OpenFlashGuard.holdFor) s; asked again"); onHoldEnd?(pid) }
         }
     }
 

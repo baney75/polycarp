@@ -213,20 +213,21 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
     /// one such ask blocks the main thread, where a cover is drawn, for a quarter second. So while a launch's watch is
     /// live its process isn't asked, unless one of its covers is up (the park needs the ask). One hold per pid, so
     /// overlapping opens never end each other's. A skipped ask is remembered, and only the watch consumes it: when a cover
-    /// is painted, or when the watch ends, Spaces asks again at once (review of PR 225, first-F2, first-F3). A launch
-    /// with no cover up by `holdFor` showed no window to guard, and New Window must ask it then: its hold lapses (review
-    /// of PR 232, first-F1, sol-F1).
+    /// is painted, or when the watch ends, Spaces asks again at once (review of PR 225, first-F2, first-F3). The hold
+    /// lapses at `holdFor` whether or not a cover went up: it starts after the shot, a cover rises only from a shot under
+    /// `shotLife` and lives `coverLife`, so by then none is up and none can rise, and New Window must ask the app
+    /// (review of PR 232, round 1 first-F1 and sol-F1; round 2 first-F1: a cover up and down by 1 s kept it held).
     public struct Holds: Sendable {
-        private var held: [Int32: Double] = [:], up: Set<Int32> = [], everUp: Set<Int32> = [], skipped: Set<Int32> = []
+        private var held: [Int32: Double] = [:], up: Set<Int32> = [], skipped: Set<Int32> = []
 
         public init() {}
 
-        public mutating func hold(_ pid: Int32, at now: Double) { held[pid] = now; everUp.remove(pid) }
+        public mutating func hold(_ pid: Int32, at now: Double) { held[pid] = now }
 
         /// Whether one of `pid`'s covers is painted, as main last drew them. True when it just went up after a skip.
         public mutating func covered(_ pid: Int32, _ isUp: Bool) -> Bool {
             guard held[pid] != nil else { return false }
-            if isUp { up.insert(pid); everUp.insert(pid) } else { up.remove(pid) }
+            if isUp { up.insert(pid) } else { up.remove(pid) }
             return isUp && skipped.remove(pid) != nil
         }
 
@@ -246,29 +247,31 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
         /// The watch is over. True when an ask was skipped, so Spaces should ask again now.
         public mutating func release(_ pid: Int32) -> Bool {
             guard held.removeValue(forKey: pid) != nil else { return false }
-            up.remove(pid); everUp.remove(pid)
+            up.remove(pid)
             return skipped.remove(pid) != nil
         }
 
         public func holds(_ pid: Int32, now: Double) -> Bool { held[pid] != nil && !up.contains(pid) && !lapsed(pid, now: now) }
 
         private func lapsed(_ pid: Int32, now: Double) -> Bool {
-            guard let since = held[pid], !everUp.contains(pid) else { return false }
+            guard let since = held[pid], !up.contains(pid) else { return false }
             return now - since >= OpenFlashGuard.holdFor
         }
     }
 
-    /// What main last told `Holds` about one launch's covers. A report is posted to main's next turn, and a later drain
-    /// or the watch's end can overtake it, so each carries a count and runs only while it is the newest (review of PR 232,
-    /// sol-F2: a captured "up" landed after the cover was gone and let an ask through uncovered).
+    /// What main last told `Holds` about one launch's covers. "Up" lets asks through, so it is told on main's next turn,
+    /// once the cover is drawn, and a later drain or the watch's end can overtake it: each carries a count and runs only
+    /// while it is the newest (review of PR 232, sol-F2). "Down" is told at once, in the turn that took the last cover
+    /// away, so no scan queued before a deferred report can ask the app uncovered (review of PR 232, round 2 sol-F1).
     public struct CoverReports: Sendable {
+        public enum Delivery: Equatable, Sendable { case now, later(UInt64) }
         private var seq: UInt64 = 0, up = false
         public init() {}
-        /// The count for a report that the covers are now `isUp`, nil when that's no change.
-        public mutating func change(to isUp: Bool) -> UInt64? {
+        /// How to tell `Holds` the covers are now `isUp`, nil when that's no change.
+        public mutating func change(to isUp: Bool) -> Delivery? {
             guard isUp != up else { return nil }
             up = isUp; seq &+= 1
-            return seq
+            return isUp ? .later(seq) : .now
         }
         /// The launch is over: no report made before now runs.
         public mutating func end() { seq &+= 1; up = false }
