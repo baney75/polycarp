@@ -24,7 +24,7 @@ window id, or a pid.
 | `agent move --window W [--frame x,y,w,h]` (the agent's verb; without `--window` it is yours) | yes | yes; a window that needs a lend or Full Access is `not_supported` | not supported yet |
 | `agent close --window W` (only windows this session's `open` made) | yes | yes | not supported yet |
 | `agent snapshot|find|get|click|set-value|type|toggle|select|scroll|shot` | yes | yes (AT-SPI) | yes (UI Automation) |
-| `agent get --ref R --copy`, `agent type --ref R --paste` (the agent clipboard: text held per session in Polycarp's memory, gone when the session ends or after an hour unused; never the Mac's pasteboard. cmd+c, cmd+x and cmd+v in `press`, by key code and by the key's character in the Mac's layouts, answer `not_supported`) | yes | not listed (`invalid_args`) | not listed |
+| `agent get <ref> --copy`, `agent type <ref> --paste` (the agent clipboard: text held per session in Polycarp's memory, gone when the session ends or after an hour unused; a call with no session of its own, or the shared `default`, gets none. cmd+c, cmd+x and cmd+v in `press`, by key code and by the key's character in the Mac's layouts, and a `click` or `select` of a Cut, Copy or Paste item answer `not_supported`) | yes | not listed (`invalid_args`) | not listed |
 | `agent snapshot` rows: `--format rows\|json`, `--query`, `--since latest`, `--max_elements N`; a bare row number as a ref (the MCP `snapshot` tool answers rows by default) | yes | `not_supported` (JSON tree only) | `not_supported` (JSON tree only) |
 | `agent press|key|pointer` | phase 3-4 | `not_supported` (part 1) | phase 3-4 |
 | `agent click-at --window W --x X --y Y [--count 1\|2\|3] [--button left]` (window-local points; `count` outside 1 to 3 is `bad_arguments`; `--button right` is not available yet and answers `not_supported`) | yes | `not_supported` | `not_supported` |
@@ -56,7 +56,9 @@ holds snapshot text, values, typed text or captures. Records older than 30 days 
 
 ## MCP
 
-`baneyspaces mcp` serves [mcp-tools.json](mcp-tools.json) over stdio. There is no tool that switches,
+`baneyspaces mcp` serves [mcp-tools.json](mcp-tools.json) over stdio: the Rust core's catalog, as Linux serves it. The Mac's
+`computer_*` tools come from its own catalog (`HandsTools` in Tools.swift) and add macOS-only arguments, such as `copy` on
+`get` and `paste` on `type`. There is no tool that switches,
 moves or lists your workspaces.
 
 ## Global flags

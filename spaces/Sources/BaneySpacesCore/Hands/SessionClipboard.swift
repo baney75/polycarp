@@ -16,6 +16,7 @@ public struct SessionClipboard: Equatable, Sendable {
 
     /// Holds `text` for `session`, replacing what it held. Fails when the text is too long to hold.
     public mutating func copy(_ text: String, session: String, now: Date) -> HandsError? {
+        if let e = Self.sessionRefusal(session) { return e }
         guard text.count <= Self.maxCharacters else {
             return HandsError(.badArguments, "the text is \(text.count) characters; the agent clipboard holds at most \(Self.maxCharacters)",
                               suggestion: "Copy a smaller element.", retry: .never, nextCall: .null)
@@ -28,6 +29,7 @@ public struct SessionClipboard: Equatable, Sendable {
 
     /// What `session` copied, or the error that says how to copy first.
     public mutating func paste(session: String, now: Date) -> Result<String, HandsError> {
+        if let e = Self.sessionRefusal(session) { return .failure(e) }
         expire(now: now)
         guard var e = entries[session] else {
             return .failure(HandsError(.badArguments, "nothing is on the agent clipboard for this session",
@@ -39,13 +41,22 @@ public struct SessionClipboard: Equatable, Sendable {
         return .success(e.text)
     }
 
+    /// No session, or the "default" every caller without a terminal shares: no clipboard, so two agents never share one
+    /// (198 r1 first-F3). An entry is keyed on the session id the caller gives; MCP gives each connection its own.
+    static func sessionRefusal(_ session: String) -> HandsError? {
+        guard session.isEmpty || session == "default" else { return nil }
+        return HandsError(.badArguments, "the agent clipboard needs a session of its own, and this call has none",
+                          suggestion: "Use the MCP server, which gives each connection its own session, or set BANEYSPACES_SESSION to a name only this agent uses.",
+                          retry: .never, nextCall: .null)
+    }
+
     public mutating func end(session: String) { entries[session] = nil }
 
     public mutating func expire(now: Date) { entries = entries.filter { now.timeIntervalSince($0.value.at) < Self.idle } }
 
     public var sessions: Int { entries.count }
 
-    /// The answer for anything that would reach the general pasteboard: a key, a menu item or a context-menu item.
+    /// The answer for anything that would reach the general pasteboard: a key, or a menu or context-menu item.
     public static func pasteboardRefusal(_ what: String) -> HandsError {
         HandsError(.notSupported, "\(what) uses the Mac's clipboard, which is Donovan's, so Polycarp doesn't send it",
                    suggestion: #"Use the agent clipboard: {"ref":"5","copy":true} on computer_get, then {"ref":"7","paste":true} on computer_type. To delete a selection, press Delete."#,
@@ -60,6 +71,23 @@ public struct SessionClipboard: Equatable, Sendable {
     public static func usesPasteboard(_ c: KeyChord, characters: [Character] = []) -> Bool {
         guard c.flags & KeyChord.command != 0 else { return false }
         return pasteboardKeyCodes.contains(c.keyCode) || characters.contains { ["c", "x", "v"].contains($0.lowercased()) }
+    }
+
+    /// Cut, copy and paste items, by the action AppKit names an item by (its AX identifier, in any language), and by
+    /// English title for a menu item that has none (198 r1 first-F2).
+    public static let pasteboardActions: Set<String> = ["cut:", "copy:", "paste:", "pasteasplaintext:", "pasteandmatchstyle:", "pasteasrichtext:"]
+    public static let pasteboardTitles: Set<String> = ["cut", "copy", "paste", "paste and match style", "paste as plain text"]
+
+    /// The title of the cut, copy or paste item a `click` on row `number`, or a `select` of `option` under it, would
+    /// press, or nil. A button an app titles Copy is the app's own and not caught.
+    public static func pasteboardItem(rows: [SnapshotRows.Row], number: Int, option: String?) -> String? {
+        guard let i = rows.firstIndex(where: { $0.number == number }) else { return nil }
+        func hit(_ r: SnapshotRows.Row) -> Bool {
+            pasteboardActions.contains(r.identifier.lowercased()) || (r.role == "menuitem" && pasteboardTitles.contains(r.name.lowercased()))
+        }
+        guard let option else { return hit(rows[i]) ? rows[i].name : nil }
+        if pasteboardTitles.contains(option.lowercased()) { return option }
+        return rows.first { r in r.name == option && hit(r) && SnapshotRows.descends(rows, r, from: i) }?.name
     }
 
     /// `type`'s text: the `text` argument, or with paste what this session copied, never both.

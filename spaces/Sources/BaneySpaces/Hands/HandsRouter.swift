@@ -112,7 +112,7 @@ final class HandsRouter {
         case "find": return find(req)
         case "get": return get(req)
         case "click": return act(req, .click, "click")
-        case "type": return act(req, .typeText, "type", typed: Self.typedText(req))
+        case "type": return act(req, .typeText, "type", text: req.string("text"), pasted: req.bool("paste"))
         case "set-value": return act(req, .setValue, "set-value", text: req.string("value"))
         case "press": return press(req)
         case "click-at": return clickAt(req)
@@ -553,9 +553,6 @@ final class HandsRouter {
     }
 
     /// `type`'s text: the text argument, or with paste: true what this session copied (never both).
-    static func typedText(_ req: HandsRequest) -> Result<String, HandsError> {
-        SessionClipboard.typed(text: req.string("text"), paste: req.bool("paste")) { SessionClipboardBox.shared.paste(session: req.session ?? "") }
-    }
 
     private func get(_ req: HandsRequest) -> HandsEnvelope {
         let session = req.session ?? ""
@@ -597,23 +594,26 @@ final class HandsRouter {
         return nil
     }
 
-    /// `type` text from the request or the session clipboard; a missing or doubled source fails before any input.
-    func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, typed: Result<String, HandsError>) -> HandsEnvelope {
-        switch typed {
-        case .failure(let e): return .failure(e)
-        case .success(let t): return act(req, kind, name, text: t)
-        }
-    }
-
-    private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3) -> HandsEnvelope {
+    /// `pasted`: the text is what the session copied, read once the ref resolved and the app is free (198 r1 second-N1).
+    private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, pasted: Bool = false, direction: Int32 = 1, amount: UInt32 = 3) -> HandsEnvelope {
         guard let ref = req.string("ref") else { return .failure(HandsError(.badArguments, "ref is missing", suggestion: "usage: polycarp-spaces agent \(name) <ref>", retry: .safe)) }
         let session = req.session ?? ""
+        if kind == .click || kind == .select, let item = pasteboardItem(ref, option: kind == .select ? text : nil, session: session) {
+            return .failure(SessionClipboard.pasteboardRefusal("\(item)"))
+        }
         switch resolve(ref, session: session) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope)):
             // Before the mark: an activation while it waits is Donovan's, never taken for the agent's.
             // Every verb here goes through the engine's strict Headless accessibility path (`HandsEngine.act`).
             if let e = awaitUse(w, verb: name, delivery: .headlessAX, wait: req.int("wait"), session: session) { return .failure(e) }
+            var text = text
+            if pasted {
+                switch SessionClipboard.typed(text: nil, paste: true, from: { SessionClipboardBox.shared.paste(session: session) }) {
+                case .failure(let e): return .failure(e)
+                case .success(let t): text = t
+                }
+            }
             // The mark covers the whole action, queue wait and engine call included, and a short tail after it.
             let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
             defer { AgentActivity.shared.end(token) }
@@ -699,6 +699,14 @@ final class HandsRouter {
         RefWindow.of(window: req.int("window"), ref: req.string("ref"),
                      bare: { n in if case .success(let full) = bareRef(n, req) { return full } else { return nil } },
                      snapshotWindow: { sid in lock.lock(); defer { lock.unlock() }; return snaps[sid].map { Int($0.window) } })
+    }
+
+    /// The cut, copy or paste item a click on `ref` (or a select of `option` under it) would press, from the read it came from.
+    private func pasteboardItem(_ ref: String, option: String?, session: String) -> String? {
+        guard ref.hasPrefix("@"), let colon = ref.firstIndex(of: ":"), let n = SnapshotRows.refNumber(ref) else { return nil }
+        let sid = String(ref[ref.index(after: ref.startIndex)..<colon])
+        guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
+        return SessionClipboard.pasteboardItem(rows: read.rows, number: n, option: option)
     }
 
     /// The selection write a click on `ref` falls back to, when the ref is an item in an outline, table or list.

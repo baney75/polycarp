@@ -68,6 +68,10 @@ final class SessionClipboardTests: XCTestCase {
         XCTAssertFalse(s.lowercased().contains("clipboard and") || s.contains("cmd+v"), s)
         XCTAssertTrue(s.contains("the Mac's clipboard is not used"), s)
         XCTAssertEqual(EngineVerdict.suggestion("Try again."), "Try again.")
+        // 198 r1 first-F6: the engine's real advice is replaced; other words about pasting are kept.
+        let engine = "This field has no semantic text-write action. If typing refuses because the field cannot be focused, use clipboard-set and the app's paste shortcut, then verify the field."
+        XCTAssertTrue(EngineVerdict.suggestion(engine).contains("the Mac's clipboard is not used"))
+        XCTAssertEqual(EngineVerdict.suggestion("The pasted value was rejected; check its format."), "The pasted value was rejected; check its format.")
         XCTAssertTrue(EngineVerdict.suggestion("Run list-windows").contains("agent windows"))
     }
 
@@ -79,9 +83,75 @@ final class SessionClipboardTests: XCTestCase {
         XCTAssertGreaterThan(files.count, 8)
         for f in files {
             let text = try HandsSourceTests.code(f)
-            for b in ["NSPasteboard", "ad_get_clipboard", "ad_set_clipboard", "UIPasteboard"] { XCTAssertFalse(text.contains(b), "\(f) must not use \(b)") }
+            // 198 r1 second-N2: Carbon's Pasteboard Manager and the pb tools are the other ways in.
+            for b in ["NSPasteboard", "ad_get_clipboard", "ad_set_clipboard", "UIPasteboard", "PasteboardCreate", "kPasteboardClipboard",
+                      "PasteboardCopyItemFlavorData", "pbcopy", "pbpaste", "import Carbon\n"] { XCTAssertFalse(text.contains(b), "\(f) must not use \(b)") }
         }
         let session = try HandsSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
         XCTAssertTrue(session.contains("SessionClipboardBox.shared.end(session: e.session)"), "an ended session's text goes")
+    }
+
+    /// 198 r1 first-F3: callers with no session of their own share one id, so they get no clipboard.
+    func testACallWithNoSessionOfItsOwnGetsNoClipboard() {
+        var b = SessionClipboard()
+        for none in ["", "default"] {
+            XCTAssertTrue(b.copy("secret", session: none, now: t0)?.message.contains("needs a session of its own") == true, none)
+            XCTAssertTrue(error(b.paste(session: none, now: t0))?.suggestion.contains("BANEYSPACES_SESSION") == true, none)
+        }
+        XCTAssertEqual(b.sessions, 0)
+        XCTAssertNil(b.copy("mine", session: "mcp:1", now: t0))
+    }
+
+    /// 198 r1 first-F2: a click or select of Cut, Copy or Paste would have the app write the Mac's pasteboard.
+    func testCutCopyAndPasteItemsAreRefused() {
+        func item(_ name: String, _ n: Int, id: String? = nil, role: String = "menuitem") -> JSONValue {
+            var o: [String: JSONValue] = ["role": .string(role), "name": .string(name), "ref_id": .string("@s:e\(n)")]
+            if let id { o["native_id"] = .object(["kind": "ax_identifier", "value": .string(id)]) }
+            return .object(o)
+        }
+        let rows = SnapshotRows.rows(of: .object(["role": "window", "children": .array([
+            .object(["role": "menu", "ref_id": "@s:e1", "children": .array([item("Kopieren", 2, id: "copy:"), item("Einf\u{FC}gen", 3, id: "paste:"),
+                                                                             item("Paste", 4), item("Alles ausw\u{E4}hlen", 5, id: "selectAll:")])]),
+            item("Copy", 6, role: "button"), .object(["role": "popupbutton", "ref_id": "@s:e7", "children": .array([item("Ausschneiden", 8, id: "cut:")])])])]))
+        typealias C = SessionClipboard
+        XCTAssertEqual(C.pasteboardItem(rows: rows, number: 2, option: nil), "Kopieren", "by its action, in any language")
+        XCTAssertEqual(C.pasteboardItem(rows: rows, number: 3, option: nil), "Einf\u{FC}gen")
+        XCTAssertEqual(C.pasteboardItem(rows: rows, number: 4, option: nil), "Paste", "by English title, with no action")
+        XCTAssertNil(C.pasteboardItem(rows: rows, number: 5, option: nil), "Select All")
+        XCTAssertNil(C.pasteboardItem(rows: rows, number: 6, option: nil), "an app's own button")
+        XCTAssertEqual(C.pasteboardItem(rows: rows, number: 7, option: "Ausschneiden"), "Ausschneiden", "select of an option under it")
+        XCTAssertEqual(C.pasteboardItem(rows: rows, number: 1, option: "Paste and Match Style"), "Paste and Match Style")
+        XCTAssertNil(C.pasteboardItem(rows: rows, number: 7, option: "Kopieren"), "the item must be under the ref")
+        XCTAssertNil(C.pasteboardItem(rows: rows, number: 1, option: "Alles ausw\u{E4}hlen"))
+    }
+
+    /// 198 r1 first-F1, first-F4, second-N1: the router's side, in its source.
+    func testTheRouterReadsTheLayoutOnMainAndTheClipboardAtDispatch() throws {
+        let layout = try HandsSourceTests.code("Sources/BaneySpaces/Hands/KeyLayout.swift")
+        let entry = try XCTUnwrap(HandsSourceTests.block(after: "static func characters(_ keyCode: UInt16) -> [Character]", in: layout))
+        XCTAssertTrue(entry.contains("Thread.isMainThread ? read(keyCode) : DispatchQueue.main.sync { read(keyCode) }"), "TIS only on main")
+        XCTAssertEqual(layout.components(separatedBy: "TISCopy").count - 1, 2, "the layouts are read in one place")
+        XCTAssertTrue(layout.contains("private static func read("))
+        XCTAssertTrue(layout.contains("OptionBits(kUCKeyTranslateNoDeadKeysMask)") && !layout.contains("NoDeadKeysBit"), "the mask, not the bit index")
+        XCTAssertTrue(layout.contains("[0, command]"), "with command held too")
+        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        let act = try XCTUnwrap(HandsSourceTests.block(after: "private func act(", in: router))
+        let refuse = try XCTUnwrap(act.range(of: "pasteboardItem(ref, option:"))
+        let resolve = try XCTUnwrap(act.range(of: "switch resolve(ref, session: session)"))
+        let wait = try XCTUnwrap(act.range(of: "awaitUse(w, verb: name"))
+        let paste = try XCTUnwrap(act.range(of: "SessionClipboardBox.shared.paste(session: session)"))
+        XCTAssertLessThan(refuse.lowerBound, resolve.lowerBound)
+        XCTAssertLessThan(wait.lowerBound, paste.lowerBound, "the copied text is read once the app is free")
+        XCTAssertFalse(router.contains("typedText"))
+    }
+
+    /// 198 r1 first-F5, second-N3: the spec's syntax, and which catalog the Mac's arguments live in.
+    func testTheSpecSaysHowAndWhere() throws {
+        let cli = try HandsSourceTests.code("spec/cli.md")
+        XCTAssertTrue(cli.contains("`agent get <ref> --copy`, `agent type <ref> --paste`"))
+        XCTAssertTrue(cli.contains("`computer_*` tools come from its own catalog"))
+        guard case .failure(let e) = HandsParse.command(["type", "@s1:e1", "hi", "--paste"]) else { return XCTFail("text and paste") }
+        XCTAssertTrue(e.message.contains("not both"), e.message)
+        XCTAssertEqual(try HandsParse.command(["type", "@s1:e1", "--paste"]).get().bool("paste"), true)
     }
 }
