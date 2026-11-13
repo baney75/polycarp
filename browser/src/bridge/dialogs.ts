@@ -3,7 +3,7 @@
  * one open fails with dialog_open; a call that opens one itself, by its last input, worked.
  */
 
-import { type PageDialog, watchDialogs } from "../browser/cdp.js";
+import { type DialogPreset, type PageDialog, watchDialogs } from "../browser/cdp.js";
 import type { BrowserSession } from "../browser/session.js";
 import { BridgeError } from "./errors.js";
 import { ERR } from "./protocol.js";
@@ -20,6 +20,26 @@ export function dialogError(tabId: number, dialog: PageDialog): BridgeError {
 			`Call handle_dialog with tabId ${tabId} and accept true (OK) or false (Cancel). Cancel is always safe. ` +
 			"OK is fine when the user already asked for exactly this action; otherwise ask them first if OK would act under their sign-in (delete, send, buy, post).",
 	);
+}
+
+/** The actions that may set the answer for a box they open (`on_dialog`, D46). */
+export const PRESET_METHODS: ReadonlySet<string> = new Set(["click", "press", "type", "fill", "actions"]);
+
+/** An action's `on_dialog` ("ok" or "cancel") and `on_dialog_text`, checked; undefined when it set none. */
+export function dialogPreset(method: string, params?: Record<string, unknown>): DialogPreset | undefined {
+	const on = params?.on_dialog;
+	const text = params?.on_dialog_text;
+	if (on === undefined || on === null) {
+		if (text !== undefined && text !== null)
+			throw new BridgeError(ERR.BAD_PARAMS, 'on_dialog_text needs on_dialog "ok"');
+		return undefined;
+	}
+	if (!PRESET_METHODS.has(method))
+		throw new BridgeError(ERR.BAD_PARAMS, `on_dialog works with ${[...PRESET_METHODS].join(", ")}, not ${method}`);
+	if (on !== "ok" && on !== "cancel") throw new BridgeError(ERR.BAD_PARAMS, 'on_dialog must be "ok" or "cancel"');
+	if (text !== undefined && text !== null && typeof text !== "string")
+		throw new BridgeError(ERR.BAD_PARAMS, "on_dialog_text must be a string");
+	return { accept: on === "ok", ...(typeof text === "string" && on === "ok" ? { promptText: text } : {}) };
 }
 
 /** Methods that still work while a dialog freezes the page. */
@@ -65,6 +85,19 @@ export function dialogOpenedResult(delivered: Record<string, unknown>, tabId: nu
 	};
 }
 
+/** What a call returns when its `on_dialog` answered the box its action opened. */
+function presetResult(result: unknown, tabId: number, dialog: PageDialog): unknown {
+	if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+	const answered = dialog.preset?.accept ? "ok" : "cancel";
+	const said = `${dialogKind(dialog)} opened on tab ${tabId} (${JSON.stringify(dialog.message)}) and was answered ${answered === "ok" ? "OK" : "Cancel"} at once, as on_dialog asked.`;
+	const r = result as Record<string, unknown>;
+	return {
+		...r,
+		dialog: { tabId, type: dialog.type, message: dialog.message, answered },
+		note: typeof r.note === "string" ? `${r.note} ${said}` : said,
+	};
+}
+
 /** An action whose last input is on its way: what it returns, and the tab the input went to. */
 export interface Delivered {
 	result: Record<string, unknown>;
@@ -85,8 +118,14 @@ export function raceDialogs<T>(
 	delivered: () => Delivered | undefined,
 ): Promise<T | ReturnType<typeof dialogOpenedResult>> {
 	return new Promise((resolve, reject) => {
+		/** The box the call's `on_dialog` answered as it opened: the call goes on. */
+		let answered: { tabId: number; dialog: PageDialog } | undefined;
 		const stop = watchDialogs((tabId, dialog) => {
 			if (!session.tabIds.includes(tabId)) return;
+			if (dialog.preset && !answered) {
+				answered = { tabId, dialog };
+				return;
+			}
 			stop();
 			onAbort();
 			const done = delivered();
@@ -96,7 +135,7 @@ export function raceDialogs<T>(
 		work.then(
 			(v) => {
 				stop();
-				resolve(v);
+				resolve((answered ? presetResult(v, answered.tabId, answered.dialog) : v) as T);
 			},
 			(e) => {
 				stop();

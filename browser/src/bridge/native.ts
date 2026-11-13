@@ -8,8 +8,14 @@
  */
 
 import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
-import { openDialog, type PageDialog, stopScreencastsOwnedBy } from "../browser/cdp.js";
-import { type DialogAnswer, dialogAnswerArrive, dialogAnswerEnd, dialogAsk } from "../browser/dialog-guard.js";
+import { openDialog, type PageDialog, presetDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
+import {
+	type DialogAnswer,
+	dialogAnswerArrive,
+	dialogAnswerEnd,
+	dialogAsk,
+	dialogCause,
+} from "../browser/dialog-guard.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, pruneSessions, type SessionMeta, sanitizeLabel } from "../browser/session.js";
 import { probeUserScripts } from "../browser/userscripts-status.js";
@@ -20,7 +26,7 @@ import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
 import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
 import type { UpdateAction } from "../update/logic.js";
 import { runningFromStore } from "../update/store-install.js";
-import { type Delivered, dialogError, isDialogSafe, raceDialogs } from "./dialogs.js";
+import { type Delivered, dialogError, dialogPreset, isDialogSafe, PRESET_METHODS, raceDialogs } from "./dialogs.js";
 import { BridgeError, classify, HANDLER_TIMEOUT_MS, withTimeout } from "./errors.js";
 import { dropAllTransfers, dropTransfersForClient } from "./files.js";
 import {
@@ -388,6 +394,9 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 	// In flight from here, before the first await, so the update idle gate sees it at once.
 	state.inFlight = { method: req.method, since: Date.now() };
 	state.lastActivityAt = Date.now();
+	/** Takes back the call's `on_dialog` when it ends; the box the call opened, for the guard's notice. */
+	let unpreset: (() => void) | undefined;
+	let unwatch: (() => void) | undefined;
 	/** The session and the tab the in-use veil counted this call on (src/browser/veil.ts). */
 	let veiled: { session: BrowserSession; tabId: number | undefined; currentBefore: number | undefined } | undefined;
 	try {
@@ -448,6 +457,17 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			currentBefore: session.currentTabId,
 			tabId: await veilBegin(session, req.method, req.params).catch(() => undefined),
 		};
+		const preset = dialogPreset(req.method, req.params);
+		if (PRESET_METHODS.has(req.method)) {
+			// A box this action opens: its notice, if the guard must cancel it, names this call to repeat (dialog-guard.ts).
+			unwatch = watchDialogs((tabId, dialog) => {
+				if (session.tabIds.includes(tabId) && !dialog.preset) dialogCause(dialog.seq, req.method, req.params ?? {});
+			});
+			// Set before the action goes out, on the tab it acts on: the first box there is answered as it opens.
+			const named = req.params?.tabId == null ? Number.NaN : Number(req.params.tabId);
+			const on = Number.isFinite(named) ? named : session.currentTabId;
+			if (preset && on !== undefined) unpreset = presetDialog(on, preset);
+		}
 		const work = handler(ctx, req.params ?? {});
 		const result = await withTimeout(
 			dialogSafe
@@ -474,6 +494,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		if (stack) trace(`${req.method} ${error.code}: ${stack.split("\n").slice(0, 6).join(" | ")}`);
 		reply(undefined, error);
 	} finally {
+		unpreset?.();
+		unwatch?.();
 		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId, veiled.currentBefore);
 		state.abort = undefined;
 		state.inFlight = undefined;

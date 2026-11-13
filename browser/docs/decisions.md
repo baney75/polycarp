@@ -1452,22 +1452,38 @@ Decision (`src/browser/dialog-guard.ts`, service worker):
   section, the list Polycarp already ships for site edits (`siteOf`; mail.web.de and www.web.de are one site,
   alice.github.io and bob.github.io two, as Chrome groups them). An IP address or a one-label host is its own site. The
   person's tabs are tabs no agent session owns; the side panel's count as theirs. Where the proxy errs it over-matches:
-  a box cancelled for nothing costs the agent one retry, a missed match freezes the person's tab.
+  a box is cancelled although the person was not frozen, and the agent repeats the action with `on_dialog`; a missed
+  match freezes the person's tab.
 - **No tab of the person's on the site: the box stays open**, with no timer. An agent that clicks Delete and gets
   `confirm()` may think for minutes or ask the person first.
 - **One of them in front:** Cancel 3 seconds after that began. **One open, none in front:** Cancel a minute after the
   person's tab appeared. A pending `ask_user` from the owning session leaves only the minute rule.
+- **The answer set in advance.** A model turn takes longer than 3 seconds, so with the person's same-site tab in front a
+  `handle_dialog` sent after the box opened never arrives in time; the deadline stays, for the person's sake. Instead
+  click, press, type, fill and actions take `on_dialog` ("ok" or "cancel", with `on_dialog_text` for a prompt). The
+  bridge sets it on the tab the call acts on before the action goes out (`presetDialog`, cdp.ts); the first box that
+  opens there is answered at once, the call goes on and says how it was answered, and the answer is taken back when the
+  call ends. The OK rule is the same as for handle_dialog: OK only when the box confirms exactly what the user asked for.
 - **Only a handle_dialog for that dialog defers its Cancel,** counted from the moment the request reaches the worker's
   socket, while it waits behind the client's earlier requests too, until it ends. Nothing else holds a box: not another
   call on the tab, not a screenshot of it, not an answer for another box.
-- **Answer by identity.** `handle_dialog` fixes its box (tab and seq) on arrival: the tab it names, or with no tabId the
-  one box open on the session's tabs. At send time the tab's open box must still be that one, checked with no await
-  before the send; otherwise it refuses, lists the boxes open now and says which call answers one.
-- **Cancel, then tell.** A box is marked in flight before its Cancel is sent, so no run sends two and no answer takes
-  it meanwhile. Only a Cancel that succeeded is recorded and noticed; a failed one leaves the box open and answerable
-  and is tried again a second later. The notice says the box was cancelled because the person was using (or had) a tab
-  on the site, that the page saw Cancel, and to do the action again when ready. `handle_dialog` waits for a Cancel in
-  flight and then says the same words instead if the notice is unread, taking it back; nothing repeats it.
+- **Answer by identity, on the session's own tabs.** `handle_dialog` fixes its box (tab and seq) on arrival: the tab it
+  names, or with no tabId the one box open on the session's tabs, including one whose Cancel is on its way. When it runs,
+  a tab that is not (or no longer) the session's is refused, and with no box fixed on arrival (a worker that had just
+  started) it looks again then. At send time the tab's open box must still be that one, checked with no await before the
+  send; otherwise it refuses, lists the boxes open now and says which call answers one. Answering removes only the box
+  answered: a box the page opens before the answer's reply comes back stays known.
+- **Cancel, then tell.** Each Cancel is decided on facts read after the last await and sent with none between: a box
+  whose tab changed hands, or whose person's tab closed, while an earlier Cancel went out is decided again first. A box
+  has at most one Cancel on its way, with no timer racing it: until it settles no second Cancel goes out, and a late one
+  is still recorded and told. Only a Cancel that succeeded is recorded and noticed. A failed one leaves the box open and
+  answerable and is tried again after 1, 2, 4 seconds and so on up to 30; one that says the box is not there (no dialog
+  showing, no tab, not attached) drops the box with no notice. The notice says the box was cancelled because the person
+  was using (or had) a tab on the site, that the page saw Cancel, that a handle_dialog cannot arrive in time, and names
+  the call to repeat: the same tool and arguments that opened the box, with `on_dialog` set, and the OK rule.
+  `handle_dialog` waits for a look in progress and up to 5 seconds for a Cancel on its way, then says the same words
+  instead if the session's notice is unread, taking it back; nothing repeats it. Another session's notice is never
+  read or cleared, and an unheard Cancel of one box never refuses the answer for another that is still open.
 - **The veil** credits only the tab a call acted on (`src/browser/tab-use.ts`), plus a tab the call moved the session to;
   before, a call that named a tab still counted on the current tab.
 
@@ -1479,10 +1495,14 @@ finding it covers, and a randomized run of 120 event sequences (boxes opening an
 owners changing, answers arriving and ending, tab replacement, worker restart, ask_user) that checks after every step
 that no person's tab stays frozen past its deadline unless an answer for that exact box is pending, and that no box is
 cancelled under its answer or twice. `test/dialog-answer.test.mjs` drives `handle_dialog` with real cdp events: a call
-for a box that closed while it waited never answers the next one. The e2e "only the tab an agent uses is held up" in
+for a box that closed while it waited never answers the next one, and the review of #188's ownership and in-flight
+cases. `test/dialog-preset.test.mjs` runs the real bridge: the guard cancels a click's confirm at 3 s, the notice names
+the click to repeat with `on_dialog`, the repeat is answered OK at once and nothing more is cancelled. The weak-model
+task `evals/weak-model/tasks/dialog-preset.mjs` gives a small model the same case from a plain prompt. The e2e "only the tab an agent uses is held up" in
 `cli/test/e2e-bridge.test.mjs` opens a same-site tab from the agent's tab (one process, checked by a busy loop), lets
 the user keep it, has the agent's page open a confirm and brings the user's tab to the front. On main the user's tab
-stays frozen and the test fails.
+stays frozen and the test fails. It then repeats the click with `on_dialog` "ok" and checks the page got OK within the
+grace and nothing froze or was cancelled again.
 
 ## D47. The agent's pointer: Mote (Claude, 2026-11-12)
 

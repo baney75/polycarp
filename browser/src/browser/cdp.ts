@@ -45,6 +45,14 @@ export interface PageDialog {
 	url?: string;
 	/** The box's identity: a new number for every box that opens, so an answer meant for one never reaches the next. */
 	seq: number;
+	/** Answered as it opened, by the answer the call that opened it set in advance (`presetDialog`). */
+	preset?: DialogPreset;
+}
+
+/** An answer set before an action, for the first box it opens on its tab (an action's `on_dialog`). */
+export interface DialogPreset {
+	accept: boolean;
+	promptText?: string;
 }
 
 /** Unique across worker restarts: a restarted worker starts above any number an earlier one gave out. */
@@ -52,6 +60,26 @@ let dialogSeq = Date.now() * 1000;
 
 const openDialogs = new Map<number, PageDialog>();
 const dialogWatchers = new Set<(tabId: number, dialog: PageDialog) => void>();
+const presets = new Map<number, DialogPreset>();
+
+/**
+ * Answer the next box that opens on the tab with this, at once, while a model turn would be too slow for a box that
+ * freezes the person's tabs (dialog-guard.ts). Used once; the returned function takes it back when the call ends.
+ */
+export function presetDialog(tabId: number, preset: DialogPreset): () => void {
+	const mine = { ...preset };
+	presets.set(tabId, mine);
+	return () => {
+		if (presets.get(tabId) === mine) presets.delete(tabId);
+	};
+}
+
+/** Drop a box Chrome no longer shows (its Cancel said so), if it is still this one. */
+export function forgetDialog(tabId: number, seq: number): void {
+	if (openDialogs.get(tabId)?.seq !== seq) return;
+	openDialogs.delete(tabId);
+	remember(tabId);
+}
 
 /** The dialog open on a tab, if any. */
 export function openDialog(tabId: number): PageDialog | undefined {
@@ -81,7 +109,8 @@ export async function answerDialog(
 	// Checked and sent with no await between: the answer goes to this box or to none.
 	if (seq !== undefined && dialog.seq !== seq) throw new Error("That dialog is gone; another one is open on this tab");
 	await send(tabId, "Page.handleJavaScriptDialog", { accept, ...(promptText !== undefined ? { promptText } : {}) });
-	openDialogs.delete(tabId);
+	// Only the box answered: the page may have opened the next one before the answer's reply came back.
+	if (openDialogs.get(tabId)?.seq === dialog.seq) openDialogs.delete(tabId);
 	remember(tabId);
 	return dialog;
 }
@@ -102,9 +131,18 @@ function installListeners(): void {
 				url: p.url,
 				seq: ++dialogSeq,
 			};
+			const preset = presets.get(tabId);
+			if (preset) {
+				presets.delete(tabId);
+				dialog.preset = preset;
+			}
 			openDialogs.set(tabId, dialog);
 			remember(tabId);
 			for (const fn of dialogWatchers) fn(tabId, dialog);
+			if (preset)
+				void answerDialog(tabId, preset.accept, preset.promptText, dialog.seq).catch((err) =>
+					console.warn("[cdp] the preset dialog answer failed:", err instanceof Error ? err.message : err),
+				);
 		} else if (method === "Page.javascriptDialogClosed") {
 			openDialogs.delete(tabId);
 			remember(tabId);

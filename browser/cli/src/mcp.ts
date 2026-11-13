@@ -702,6 +702,14 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		x: z.number().optional().describe("Screenshot pixel x"),
 		y: z.number().optional().describe("Screenshot pixel y"),
 	};
+	/** An answer set before the action for the first box it opens (D46): a model turn is too slow for some boxes. */
+	const onDialog = {
+		on_dialog: z
+			.enum(["ok", "cancel"])
+			.optional()
+			.describe('Answer a box this opens at once; "ok" only if it confirms what the user asked'),
+		on_dialog_text: z.string().optional().describe("prompt() text"),
+	};
 	server.registerTool(
 		"click",
 		{
@@ -711,6 +719,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				...targetSchema,
 				button: z.enum(["left", "right", "middle"]).optional().describe('Mouse button (default "left")'),
 				clickCount: z.number().int().optional().describe("2 for a double click"),
+				...onDialog,
 			},
 		},
 		(args) => call("click", args),
@@ -725,7 +734,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		{
 			title: "Type text",
 			description: "Type with real key events; with a ref or selector it clicks that field first. submit:true presses Enter after. fill sets a value without key events. Example: {\"ref\":\"e4\",\"text\":\"Ada Lovelace\",\"submit\":true}",
-			inputSchema: { text: z.string().describe("Text to type"), tabId, ref, selector, submit: z.boolean().optional().describe("Press Enter after typing") },
+			inputSchema: { text: z.string().describe("Text to type"), tabId, ref, selector, submit: z.boolean().optional().describe("Press Enter after typing"), ...onDialog },
 		},
 		(args) => call("type", args),
 	);
@@ -734,7 +743,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		{
 			title: "Press a key",
 			description: "Press a key or chord: Enter, Escape, Tab, ArrowDown, Control+a, Meta+Shift+p; clipboard chords (Control+v, Meta+c) are refused. Example: {\"key\":\"Escape\"}",
-			inputSchema: { key: z.string().describe("Key name or chord joined with +"), tabId, repeat: z.number().int().optional().describe("Times to press") },
+			inputSchema: { key: z.string().describe("Key name or chord joined with +"), tabId, repeat: z.number().int().optional().describe("Times to press"), ...onDialog },
 		},
 		(args) => call("press", args),
 	);
@@ -743,7 +752,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		{
 			title: "Set a field's value",
 			description: "Set a control's value directly: inputs, textareas, selects (by value or label), checkboxes (\"true\"/\"false\"), contenteditable. Faster than type for long text. Example: {\"ref\":\"e9\",\"value\":\"Missouri\"}",
-			inputSchema: { value: z.string().describe("New value"), tabId, ref, selector },
+			inputSchema: { value: z.string().describe("New value"), tabId, ref, selector, ...onDialog },
 		},
 		(args) => call("fill", args),
 	);
@@ -786,6 +795,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				screenshot: z.boolean().optional().describe("Return a screenshot after the last step"),
 				settleMs: z.number().int().optional().describe("Pause between steps in ms (default 80)"),
 				tabId,
+				...onDialog,
 			},
 		},
 		async (args) => {

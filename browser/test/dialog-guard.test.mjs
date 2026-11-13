@@ -219,7 +219,7 @@ test("first-F1: a Cancel that fails leaves the box open and answerable, with no 
 	await tick(3_100);
 	assert.deepEqual(cancels, []);
 	assert.equal(notices.length, 0, "a notice for a Cancel that never happened");
-	assert.equal(await dialogUnheard([1, 2]), undefined, "told it was cancelled when it wasn't");
+	assert.equal((await dialogUnheard(AGENT, { tabIds: [1, 2] })).text, undefined, "told it was cancelled when it wasn't");
 	assert.equal(arrive(undefined).target?.seq, 1, "the box can't be answered");
 	resetDialogGuard();
 	inFlight.clear();
@@ -245,29 +245,126 @@ test("first-F3, sol-F3: looks that overlap a slow Cancel send it once and tell i
 	assert.equal(notices.length, 1);
 });
 
+/** A Cancel sent at once (counted, checked) whose reply comes back only on `release`: the box stays until then. */
+const slowCancel = () => {
+	const c = { release: undefined, fail: undefined };
+	deps.cancel = (tabId, s) => {
+		if (dialogs.get(tabId)?.seq !== s) return Promise.resolve(false);
+		if (cancels.includes(s)) broken.push(`box ${s} cancelled twice`);
+		cancels.push(s);
+		return new Promise((resolve, reject) => {
+			c.release = () => {
+				dialogs.delete(tabId);
+				resolve(true);
+			};
+			c.fail = () => reject(new Error("detached mid-send"));
+		});
+	};
+	return c;
+};
+
 test("first-F2: the notice and handle_dialog say it once, whichever comes first", async () => {
-	const ok = deps.cancel;
-	let release;
-	deps.cancel = (tabId, s) => new Promise((r) => (release = () => r(ok(tabId, s))));
+	const c = slowCancel();
 	openBox(1);
 	await tick(3_100);
-	// handle_dialog arrives while the Cancel is in flight: it gets no box, and the notice's words, once.
-	const a = arrive(undefined);
-	assert.equal(a.target, undefined);
-	const said = dialogUnheard([1, 2]);
-	release();
+	// handle_dialog arrives while the Cancel is on its way: it keeps its box, and hears the notice's words, once.
+	const a = dialogAnswerArrive(AGENT, undefined, undefined);
+	assert.equal(a.target?.seq, 1);
+	const said = dialogUnheard(AGENT, { seq: a.target.seq });
+	c.release();
 	await tick(0);
-	assert.match(await said, /was cancelled/);
+	assert.match((await said).text, /was cancelled/);
 	assert.equal(notices.length, 0, "tabs_context would say it again");
-	end(a);
+	dialogAnswerEnd(a);
 	// Read by tabs_context first: handle_dialog for another box is not refused over it.
-	deps.cancel = ok;
+	const d = slowCancel();
 	openBox(1);
 	await tick(3_100);
+	d.release();
+	await tick(0);
 	notices.length = 0;
 	openBox(2, "Send?");
-	assert.equal(await dialogUnheard([1, 2]), undefined);
-	assert.equal(await dialogUnheard([1, 2]), undefined);
+	assert.equal((await dialogUnheard(AGENT, { tabIds: [1, 2] })).text, undefined);
+	assert.equal((await dialogUnheard(AGENT, { tabIds: [1, 2] })).text, undefined);
+});
+
+test("sol-F1, first-F2: a Cancel the page takes over 5 s to answer is sent once, and told once when it lands", async () => {
+	const c = slowCancel();
+	openBox(1);
+	await tick(3_100);
+	assert.deepEqual(cancels, [1]);
+	// Well past any timeout and retry: still the one Cancel on its way.
+	for (let i = 0; i < 10; i++) await tick(2_000);
+	assert.deepEqual(cancels, [1], "a second Cancel went out while the first was outstanding");
+	// handle_dialog meanwhile: never sent while that Cancel is out, and says it hasn't come back.
+	const a = dialogAnswerArrive(AGENT, undefined, 1);
+	const asked = dialogUnheard(AGENT, { seq: 1 });
+	await tick(5_100);
+	assert.deepEqual(await asked, { pending: true });
+	dialogAnswerEnd(a);
+	// It lands late: recorded and told, once.
+	c.release();
+	await tick(0);
+	assert.equal(notices.length, 1, "a late Cancel was never told");
+	assert.match(notices[0].text, /was cancelled/);
+	await tick(10_000);
+	assert.deepEqual(cancels, [1]);
+});
+
+test("sol-F2: each Cancel is decided on facts read after the one before it went out", async () => {
+	const ok = deps.cancel;
+	openBox(1);
+	openBox(2, "Send?");
+	// While the first Cancel is on its way, the second box's tab goes to the side panel's session.
+	deps.cancel = async (tabId, s) => {
+		if (s === 1) owners.set(2, "sidepanel-1");
+		return ok(tabId, s);
+	};
+	await tick(3_100);
+	assert.deepEqual(cancels, [1], "box 2 was cancelled on facts from before box 1's Cancel");
+	// The same with the person's last same-site tab closing instead.
+	resetDialogGuard();
+	owners.set(2, AGENT);
+	openBox(1);
+	openBox(2, "Send?");
+	let first = true;
+	deps.cancel = async (tabId, s) => {
+		if (first) tabs = tabs.filter((t) => t.id !== 5);
+		first = false;
+		return ok(tabId, s);
+	};
+	await tick(3_100);
+	assert.equal(cancels.length, 2, `cancels: ${cancels}: the second box was cancelled after the person's tab closed`);
+});
+
+test("second-S3: a box Chrome no longer shows is dropped; other failures back off instead of a run every second", async () => {
+	const forgot = [];
+	deps.forget = (tabId, s) => {
+		forgot.push(s);
+		if (dialogs.get(tabId)?.seq === s) dialogs.delete(tabId);
+	};
+	let tries = 0;
+	deps.cancel = async () => {
+		tries++;
+		throw new Error("No dialog is showing");
+	};
+	openBox(1);
+	await tick(3_100);
+	assert.deepEqual(forgot, [1]);
+	assert.equal(dialogs.size, 0);
+	await tick(60_000);
+	assert.equal(tries, 1);
+	assert.equal(notices.length, 0, "a notice for a box that was never there");
+	// A failure that may pass: tried again, less and less often.
+	tries = 0;
+	deps.cancel = async () => {
+		tries++;
+		throw new Error("detached mid-send");
+	};
+	openBox(2);
+	await tick(3_100);
+	for (let i = 0; i < 60; i++) await tick(1_000);
+	assert.ok(tries >= 3 && tries <= 8, `${tries} Cancels in a minute`);
 });
 
 test("a pending ask_user holds the box under the minute rule only", async () => {

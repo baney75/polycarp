@@ -2000,8 +2000,22 @@ test("only the tab an agent uses is held up: when the user brings a same-site ta
 		// The box got Cancel, Chrome's own answer for a hidden tab, and the agent hears so once.
 		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "cancelled");
 		const answer = await agent.callTool({ name: "handle_dialog", arguments: { accept: true } });
-		assert.match(answer.content[0].text, /was cancelled, because the person was using a tab on 127\.0\.0\.1 .*The page saw Cancel\. Do the action again/);
+		assert.match(answer.content[0].text, /was cancelled, because the person was using a tab on 127\.0\.0\.1 .*The page saw Cancel\./);
+		// first-F1 (review of #188): the notice names the exact call to repeat, with its answer set in advance.
+		assert.ok(
+			answer.content[0].text.includes('call click with {"x":320,"y":60,"on_dialog":"ok"}'),
+			`the notice names no repeat: ${answer.content[0].text}`,
+		);
 		assert.doesNotMatch(await on(agent, "tabs_context"), /was cancelled, because/, "told twice");
+		// The repeat, with the user's tab still in front: the box is answered OK as it opens, well inside the grace.
+		const t1 = Date.now();
+		assert.match(await on(agent, "click", { x: 320, y: 60, on_dialog: "ok" }), /answered OK at once, as on_dialog asked/);
+		assert.ok(Date.now() - t1 < 1500, `the repeat took ${Date.now() - t1} ms, the grace is 1500`);
+		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "ok");
+		await new Promise((r) => setTimeout(r, 2500));
+		assert.notEqual(await answerOrFrozen(userPage, "1", 3000), "frozen", "the user's tab froze on the repeat");
+		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "ok", "cancelled a second time");
+		assert.doesNotMatch(await on(agent, "tabs_context"), /was cancelled, because/, "a second Cancel was told");
 		assert.ok(await inPage(agentPage, VEIL_PROBE), "the agent's own tab lost its veil");
 
 		// A second tab in the agent's group that it stops using is not in use: its veil fades while the other's stays.

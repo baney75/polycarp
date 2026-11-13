@@ -11,13 +11,27 @@
  */
 
 import { registrableDomain } from "../site-edits/store.js";
-import { allDialogs, answerDialog, cdpMemoryReady, openDialog, watchDialogs } from "./cdp.js";
+import {
+	allDialogs,
+	answerDialog,
+	cdpMemoryReady,
+	forgetDialog,
+	openDialog,
+	type PageDialog,
+	watchDialogs,
+} from "./cdp.js";
 import { addNotice, dropNotice, isAgentSession, listSessions, SESSIONS_KEY } from "./session.js";
 
 export const GRACE_MS = 3_000;
 export const OPEN_MS = 60_000;
 const TOLD_MS = 10 * 60_000;
 const RETRY_MS = 1_000;
+const RETRY_MAX_MS = 30_000;
+/** How long handle_dialog waits for the guard's Cancel of its box to come back before it says so. */
+const SETTLE_MS = 5_000;
+/** CDP's words for a box that is no longer there: its Cancel will never work, and it is dropped. */
+const GONE =
+	/no dialog is showing|no tab with (given )?id|not attached|no target|cannot access|debugger is not attached/i;
 
 /**
  * The site a URL belongs to: its registrable domain by the Public Suffix List (src/site-edits/public-suffixes.ts), the
@@ -89,16 +103,16 @@ type Tab = { id?: number; url?: string; pendingUrl?: string; active: boolean };
 /** What the guard reads and does; tests swap these. */
 export const deps = {
 	dialogs: allDialogs,
-	/** Cancel the box only if it is still this one; false when it is gone. */
+	/**
+	 * Cancel the box only if it is still this one; false when it is gone. Sent before the first await, so the facts it
+	 * was decided on are the ones it acts on. Never raced against a timer: until it settles, no second Cancel goes out.
+	 */
 	cancel: async (tabId: number, seq: number): Promise<boolean> => {
 		if (openDialog(tabId)?.seq !== seq) return false;
-		// A send that never returns must not stall every later look.
-		await Promise.race([
-			answerDialog(tabId, false, undefined, seq),
-			new Promise((_, reject) => setTimeout(() => reject(new Error("no answer from the page in 5 s")), 5_000)),
-		]);
+		await answerDialog(tabId, false, undefined, seq);
 		return true;
 	},
+	forget: forgetDialog,
 	tabs: (): Promise<Tab[]> => chrome.tabs.query({}),
 	/** Tab id to the id of the session that owns it. */
 	owners: async (): Promise<Map<number, string>> =>
@@ -113,8 +127,12 @@ export const deps = {
 const answering = new Map<number, number>();
 const asking = new Map<string, number>();
 let since = new Map<number, Since>();
-/** Boxes being cancelled right now: an answer that arrives meanwhile is told it was cancelled. */
-const cancelling = new Set<number>();
+/** Each box's Cancel on its way to the page, one at most, until it settles; settling records it and tells. */
+const inflight = new Map<number, { tabId: number; job: Promise<void> }>();
+/** Boxes whose Cancel failed: how often, and not before when to try again. */
+const failures = new Map<number, { n: number; retryAt: number }>();
+/** The call that opened each box (an action), for the notice's repeat with on_dialog. */
+const causes = new Map<number, { method: string; params: Record<string, unknown> }>();
 /** Boxes the guard cancelled, until the agent hears of it once. */
 const cancelled = new Map<number, { owner: string; tabId: number; text: string; at: number }>();
 /** The ownership the last run read, for an answer that arrives before its session is open. */
@@ -144,67 +162,117 @@ export function reconcile(): Promise<void> {
 async function run(): Promise<void> {
 	const now0 = Date.now();
 	for (const [seq, c] of cancelled) if (now0 - c.at >= TOLD_MS) cancelled.delete(seq);
-	if (deps.dialogs().length === 0) {
+	const live = new Set(deps.dialogs().map(([, d]) => d.seq));
+	for (const m of [failures, causes] as Map<number, unknown>[])
+		for (const seq of m.keys()) if (!live.has(seq)) m.delete(seq);
+	if (live.size === 0) {
 		clearTimeout(wake);
 		since = new Map();
 		return;
 	}
-	const [tabs, owned] = await Promise.all([deps.tabs(), deps.owners()]);
-	owners = owned;
-	// Everything below is read after the await and decided with none before the cancels are marked.
-	const open = deps.dialogs();
-	const now = Date.now();
-	const v = decide(
-		{
-			dialogs: open.map(([tabId, d]) => ({
-				seq: d.seq,
-				tabId,
-				owner: owned.get(tabId),
-				site: siteOf(d.url || tabs.find((t) => t.id === tabId)?.url),
-			})),
-			tabs: tabs.flatMap((t) =>
-				t.id === undefined
-					? []
-					: [{ id: t.id, site: siteOf(t.url || t.pendingUrl), active: t.active, owner: owned.get(t.id) }],
-			),
-			answering: new Set(answering.keys()),
-			asking: new Set(asking.keys()),
-			since,
-		},
-		now,
-		deps.grace(),
-		deps.open(),
+	let wakeAt: number | undefined;
+	// One Cancel per look, each decided on facts read after the last await (sol-F2): a box whose tab changed hands, or
+	// whose person's tab closed, while an earlier one went out is decided again before anything is sent for it.
+	for (;;) {
+		const [tabs, owned] = await Promise.all([deps.tabs(), deps.owners()]);
+		owners = owned;
+		const open = deps.dialogs();
+		const now = Date.now();
+		const v = decide(
+			{
+				dialogs: open.map(([tabId, d]) => ({
+					seq: d.seq,
+					tabId,
+					owner: owned.get(tabId),
+					site: siteOf(d.url || tabs.find((t) => t.id === tabId)?.url),
+				})),
+				tabs: tabs.flatMap((t) =>
+					t.id === undefined
+						? []
+						: [{ id: t.id, site: siteOf(t.url || t.pendingUrl), active: t.active, owner: owned.get(t.id) }],
+				),
+				answering: new Set(answering.keys()),
+				asking: new Set(asking.keys()),
+				since,
+			},
+			now,
+			deps.grace(),
+			deps.open(),
+		);
+		since = v.since;
+		wakeAt = v.nextWakeAt;
+		for (const seq of v.cancel) {
+			const at = failures.get(seq)?.retryAt;
+			if (at !== undefined && at > now) wakeAt = Math.min(wakeAt ?? at, at);
+		}
+		const due = v.cancel.find((seq) => !inflight.has(seq) && !((failures.get(seq)?.retryAt ?? 0) > now));
+		const hit = due === undefined ? undefined : open.find(([, d]) => d.seq === due);
+		if (!hit) break;
+		// No await between the decision and the send.
+		startCancel(
+			hit[0],
+			hit[1],
+			owned.get(hit[0]) as string,
+			siteOf(hit[1].url || tabs.find((t) => t.id === hit[0])?.url),
+		);
+	}
+	clearTimeout(wake);
+	if (wakeAt !== undefined && Number.isFinite(wakeAt))
+		wake = setTimeout(() => void reconcile(), Math.max(0, wakeAt - Date.now()) + 20);
+}
+
+/** The words of a call to repeat with on_dialog set: the same tool and arguments. */
+function repeatCall(seq: number, dialog: PageDialog): string {
+	const cause = causes.get(seq);
+	const text = dialog.type === "prompt" ? ', "on_dialog_text": "<the text to enter>"' : "";
+	if (!cause)
+		return `To do it again, repeat the action that opened it with "on_dialog": "ok" or "cancel"${text ? ` (and "on_dialog_text" for the prompt)` : ""}: the box is then answered as it opens.`;
+	const args = Object.fromEntries(
+		Object.entries(cause.params).filter(([k]) => k !== "on_dialog" && k !== "on_dialog_text"),
 	);
-	since = v.since;
-	for (const seq of v.cancel) cancelling.add(seq);
-	let retry = false;
-	for (const [tabId, dialog] of open.filter(([, d]) => cancelling.has(d.seq))) {
-		const { seq } = dialog;
-		const owner = owned.get(tabId) as string;
+	const json = (on: string) => `${JSON.stringify({ ...args, on_dialog: on }).slice(0, -1)}${on === "ok" ? text : ""}}`;
+	return `To do it again, call ${cause.method} with ${json("ok")}: the box is then answered OK as it opens. Use "on_dialog": "ok" only if the box confirms exactly what the user asked for; otherwise ask the user first, or call ${cause.method} with ${json("cancel")}.`;
+}
+
+function startCancel(tabId: number, dialog: PageDialog, owner: string, site: string | undefined): void {
+	const { seq } = dialog;
+	const job = (async () => {
 		let done = false;
 		try {
 			done = await deps.cancel(tabId, seq);
 		} catch (err) {
-			retry = true;
-			deps.log(`dialog-guard: tab=${tabId} Cancel failed, will retry: ${errText(err)}`);
-		} finally {
-			cancelling.delete(seq);
+			// A box Chrome no longer shows (restored from an earlier worker, or its close was missed): drop it, say nothing.
+			if (GONE.test(errText(err))) {
+				deps.forget(tabId, seq);
+				deps.log(`dialog-guard: tab=${tabId} box is gone, dropped: ${errText(err)}`);
+				return;
+			}
+			const n = (failures.get(seq)?.n ?? 0) + 1;
+			failures.set(seq, { n, retryAt: Date.now() + Math.min(RETRY_MS * 2 ** (n - 1), RETRY_MAX_MS) });
+			deps.log(`dialog-guard: tab=${tabId} Cancel failed (${n}), will retry: ${errText(err)}`);
+			return;
 		}
-		if (!done) continue;
-		const site = siteOf(dialog.url || tabs.find((t) => t.id === tabId)?.url);
+		failures.delete(seq);
+		if (!done) return;
 		const why =
 			since.get(seq)?.active !== undefined
 				? `the person was using a tab on ${site}`
 				: `the person has a tab open on ${site}`;
-		const text = `The ${dialog.type === "beforeunload" ? "leave-page" : dialog.type} dialog on tab ${tabId} (${JSON.stringify(dialog.message)}) was cancelled, because ${why} and an open dialog freezes every tab of that site. The page saw Cancel. Do the action again when you are ready to answer its dialog at once.`;
+		const kind = dialog.type === "beforeunload" ? "leave-page" : dialog.type;
+		const text = `The ${kind} dialog on tab ${tabId} (${JSON.stringify(dialog.message)}) was cancelled, because ${why} and an open dialog freezes every tab of that site. The page saw Cancel. A handle_dialog sent after it opened cannot arrive in time while that tab is in front. ${repeatCall(seq, dialog)}`;
 		cancelled.set(seq, { owner, tabId, text, at: Date.now() });
 		deps.log(`dialog-guard: tab=${tabId} ${dialog.type} answered Cancel`);
 		await deps.notice(owner, text).catch(() => undefined);
-	}
-	const at = retry ? Math.min(v.nextWakeAt ?? Number.POSITIVE_INFINITY, Date.now() + RETRY_MS) : v.nextWakeAt;
-	clearTimeout(wake);
-	if (at !== undefined && Number.isFinite(at))
-		wake = setTimeout(() => void reconcile(), Math.max(0, at - Date.now()) + 20);
+	})().finally(() => {
+		inflight.delete(seq);
+		void reconcile();
+	});
+	inflight.set(seq, { tabId, job });
+}
+
+/** The call that opened a box, from the bridge: the guard's notice names it to repeat with on_dialog. */
+export function dialogCause(seq: number, method: string, params: Record<string, unknown>): void {
+	causes.set(seq, { method, params });
 }
 
 /** A handle_dialog, from the moment it reaches the worker: the box it answers, fixed then, or none. */
@@ -216,8 +284,10 @@ export interface DialogAnswer {
 }
 
 /**
- * A handle_dialog arrived (before any queue or await). With a tabId it is that tab's box; without, the one box open on
- * the session's tabs. Only this box's Cancel waits for it, until `dialogAnswerEnd`.
+ * A handle_dialog arrived (before any queue or await), or its handler found no box fixed at arrival and looks again.
+ * With a tabId it is that tab's box; without, the one box open on the session's tabs. A box whose Cancel is on its
+ * way is still its box: the handler learns how that Cancel ended. Only this box's Cancel waits for it, until
+ * `dialogAnswerEnd`.
  */
 export function dialogAnswerArrive(
 	sessionId: string,
@@ -225,7 +295,7 @@ export function dialogAnswerArrive(
 	requested: number | undefined,
 ): DialogAnswer {
 	const tabs = tabIds ?? [...owners].filter(([, s]) => s === sessionId).map(([t]) => t);
-	const open = deps.dialogs().filter(([t, d]) => tabs.includes(t) && !cancelling.has(d.seq));
+	const open = deps.dialogs().filter(([t]) => tabs.includes(t));
 	const hit =
 		requested === undefined ? (open.length === 1 ? open[0] : undefined) : open.find(([t]) => t === requested);
 	const answer: DialogAnswer = { session: sessionId, tabIds: tabs, requested };
@@ -245,17 +315,35 @@ export function dialogAnswerEnd(answer: DialogAnswer): void {
 }
 
 /**
- * Before handle_dialog answers: the guard's Cancel of a box on these tabs that the agent has not heard of yet, said
- * once. Waits for a Cancel in flight, so the notice and this answer are the same message, given once.
+ * Before handle_dialog answers: the guard's Cancel that the session has not heard of yet, said once. For a fixed box,
+ * only that box's (another box's notice reaches the agent with its next call); without one, any on `tabIds` the
+ * session owned. Waits for a look in progress and, up to 5 s, for a Cancel on its way, so the notice and this answer
+ * are the same message, given once. `pending`: that Cancel had not come back yet.
  */
-export async function dialogUnheard(tabIds: readonly number[]): Promise<string | undefined> {
+export async function dialogUnheard(
+	sessionId: string,
+	scope: { seq: number } | { tabIds: readonly number[] },
+): Promise<{ text?: string; pending?: boolean }> {
 	await chain;
-	for (const [seq, c] of cancelled) {
-		if (!tabIds.includes(c.tabId)) continue;
-		cancelled.delete(seq);
-		if (await deps.unnotice(c.owner, c.text)) return c.text;
+	const mine = (seq: number, tabId: number) => ("seq" in scope ? seq === scope.seq : scope.tabIds.includes(tabId));
+	const waiting = [...inflight].filter(([seq, c]) => mine(seq, c.tabId));
+	if (waiting.length) {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const late = await Promise.race([
+			Promise.all(waiting.map(([, c]) => c.job)).then(() => false),
+			new Promise<boolean>((r) => {
+				timer = setTimeout(() => r(true), SETTLE_MS);
+			}),
+		]);
+		clearTimeout(timer);
+		if (late) return { pending: true };
 	}
-	return undefined;
+	for (const [seq, c] of cancelled) {
+		if (c.owner !== sessionId || !mine(seq, c.tabId)) continue;
+		cancelled.delete(seq);
+		if (await deps.unnotice(c.owner, c.text)) return { text: c.text };
+	}
+	return {};
 }
 
 /** An ask_user from the session is waiting for the person, or no longer is. */
@@ -268,7 +356,7 @@ export function dialogAsk(sessionId: string, on: boolean): void {
 export function resetDialogGuard(): void {
 	clearTimeout(wake);
 	for (const m of [answering, asking, cancelled] as Map<unknown, unknown>[]) m.clear();
-	cancelling.clear();
+	for (const m of [inflight, failures, causes] as Map<unknown, unknown>[]) m.clear();
 	since = new Map();
 	owners = new Map();
 	chain = Promise.resolve();

@@ -1055,28 +1055,65 @@ export const handlers: Record<string, Handler> = {
 			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");
 		const own = ctx.dialogAnswer === undefined;
 		const answer = ctx.dialogAnswer ?? dialogAnswerArrive(ctx.session.id, ctx.session.tabIds, num(params, "tabId"));
+		/** The box looked up again here, when none was fixed on arrival: held from now on. */
+		let late: DialogAnswer | undefined;
 		try {
-			const open = ctx.session.tabIds.filter((id) => openDialog(id) !== undefined);
-			const list = open.map((id) => `tab ${id}: ${JSON.stringify(openDialog(id)?.message)}`).join("; ");
-			const next = list
-				? ` Open now: ${list}. To answer one, call handle_dialog with its tabId.`
-				: " Carry on with read_page.";
-			// A box the guard cancelled that the agent hasn't heard of: told here, once, in the notice's own words.
-			const unheard = await dialogUnheard(answer.requested !== undefined ? [answer.requested] : ctx.session.tabIds);
-			if (unheard) throw new BridgeError(ERR.NOT_FOUND, `${unheard}${next}`);
-			const target = answer.target;
+			const mine = ctx.session.tabIds;
+			const listOpen = () => {
+				const list = mine
+					.filter((id) => openDialog(id) !== undefined)
+					.map((id) => `tab ${id}: ${JSON.stringify(openDialog(id)?.message)}`)
+					.join("; ");
+				return list
+					? ` Open now: ${list}. To answer one, call handle_dialog with its tabId.`
+					: " Carry on with read_page.";
+			};
+			// Only this session's tabs, as they are now: a tab another session took is not this call's to answer.
+			if (answer.requested !== undefined && !mine.includes(answer.requested))
+				throw new BridgeError(ERR.NOT_FOUND, `Tab ${answer.requested} is not one of your tabs.${listOpen()}`);
+			if (answer.target && !mine.includes(answer.target.tabId))
+				throw new BridgeError(
+					ERR.NOT_FOUND,
+					`Tab ${answer.target.tabId} is no longer one of your tabs; its dialog is not yours to answer.${listOpen()}`,
+				);
+			// A Cancel by the guard this session has not heard of: told here, once, in the notice's own words.
+			const heard = await dialogUnheard(
+				ctx.session.id,
+				answer.target
+					? { seq: answer.target.seq }
+					: { tabIds: answer.requested !== undefined ? [answer.requested] : mine },
+			);
+			if (heard.text) throw new BridgeError(ERR.NOT_FOUND, `${heard.text}${listOpen()}`);
+			if (heard.pending)
+				throw new BridgeError(
+					ERR.TIMEOUT,
+					"Polycarp's Cancel for this dialog has not come back from the page in 5 s, so it may already be cancelled. Call handle_dialog again in a moment, or read_page to see the page.",
+				);
+			let target = answer.target;
 			if (!target) {
-				if (answer.requested === undefined && open.length > 1)
-					throw new BridgeError(ERR.BAD_PARAMS, `Dialogs are open on more than one tab (${list}). Pass tabId.`);
-				const where = answer.requested === undefined ? "on your tabs" : `on tab ${answer.requested}`;
-				throw new BridgeError(ERR.NOT_FOUND, `No dialog is open ${where}; nothing to answer.${next}`);
+				// Nothing was fixed when the call arrived (a worker that had just started, say): the box open now.
+				late = dialogAnswerArrive(ctx.session.id, mine, answer.requested);
+				target = late.target;
 			}
-			// The box this call was for, by identity: never one that opened after it on the same tab.
+			if (!target) {
+				const open = mine.filter((id) => openDialog(id) !== undefined);
+				if (answer.requested === undefined && open.length > 1)
+					throw new BridgeError(ERR.BAD_PARAMS, `Dialogs are open on more than one tab.${listOpen()} Pass tabId.`);
+				const where = answer.requested === undefined ? "on your tabs" : `on tab ${answer.requested}`;
+				throw new BridgeError(ERR.NOT_FOUND, `No dialog is open ${where}; nothing to answer.${listOpen()}`);
+			}
+			// The box this call was for, by identity, on a tab that is still this session's: checked with no await before the send.
+			if (!ctx.session.tabIds.includes(target.tabId))
+				throw new BridgeError(ERR.NOT_FOUND, `Tab ${target.tabId} is no longer one of your tabs.${listOpen()}`);
 			if (openDialog(target.tabId)?.seq !== target.seq)
-				throw new BridgeError(ERR.NOT_FOUND, `The dialog this call was for on tab ${target.tabId} is gone.${next}`);
+				throw new BridgeError(
+					ERR.NOT_FOUND,
+					`The dialog this call was for on tab ${target.tabId} is gone.${listOpen()}`,
+				);
 			const dialog = await answerDialog(target.tabId, params.accept, str(params, "promptText"), target.seq);
 			return { tabId: target.tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
 		} finally {
+			if (late) dialogAnswerEnd(late);
 			if (own) dialogAnswerEnd(answer);
 		}
 	},

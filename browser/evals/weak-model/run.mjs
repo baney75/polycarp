@@ -278,9 +278,12 @@ async function runOne(task, trial) {
 	if (task.kind === "browser") {
 		const mount = mountId(label, task.id, trial);
 		const entry = `${h.mount(mount, task.pages)}${(task.entry ?? "/").slice(1)}`;
+		// What the person has open before the agent starts (a tab of the site in front, say); undone after scoring.
+		const setup = task.setup ? cleanup.add(`setup of ${task.id}`, (await task.setup(h, entry)) ?? (() => undefined)) : undefined;
 		({ run } = await runClaude(task.prompt(entry), session, wallBrowser));
 		if (cleanup.closing) return undefined;
 		score = await scoreBrowser(task, mount, run);
+		await setup?.undo();
 	} else {
 		const dir = join(handoff, `weak-model-${process.pid}`, `${task.id}-${trial}`);
 		const folder = cleanup.add(`fixture folder ${dir}`, () => rmSync(dir, { recursive: true, force: true }));

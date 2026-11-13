@@ -88,7 +88,10 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// above, the budget is theirs plus these 131 (32,676 measured).
 	// get_page_text's query adds 143 (32,824): finding a passage in a 400-page PDF or a long page by its words, with
 	// page numbers, instead of reading it whole or paging through it 50,000 characters at a time.
-	assert.ok(bytes <= 32824, `tools/list is ${bytes} bytes, over the 32,824 budget`);
+	// on_dialog and on_dialog_text on click, type, press, fill and actions add 1,070 (33,894; D46): an answer set before
+	// the action is the only way to get past a box Polycarp must cancel within 3 s, sooner than a model turn can send
+	// handle_dialog. About 214 bytes a tool, nearly all schema; the descriptions are one line.
+	assert.ok(bytes <= 33894, `tools/list is ${bytes} bytes, over the 33,894 budget`);
 	// The loop line teaching `changes` (D43) adds 47 bytes; it saves a read_page after most actions.
 	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2995, "instructions over 2,995 bytes");
 });
