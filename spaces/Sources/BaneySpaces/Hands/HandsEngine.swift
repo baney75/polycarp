@@ -38,7 +38,8 @@ final class HandsEngine {
     static let resultOK: Int32 = 0
     static let resultPermDenied: Int32 = -1
     // AdActionKind values from agent_desktop.h. No key action: see the rules above.
-    enum Kind: Int32 { case click = 0, setValue = 4, select = 8, toggle = 9, scroll = 12, typeText = 17 }
+    /// `rightClick` runs under the headless policy like every ref action: AXShowMenu only, never a posted click.
+    enum Kind: Int32 { case click = 0, rightClick = 2, setValue = 4, select = 8, toggle = 9, scroll = 12, typeText = 17 }
 
     /// Seconds each kind of call may take before the caller gets `timeout`.
     /// How long an action waits for its target to become actionable before it gives up.

@@ -1478,8 +1478,11 @@ with no sample point in view (below the fold) can't be tested, so it is named, n
 read_page". It is out of view only when a test proves a scroll brings it into sight: nothing fixed or sticky around it, no
 clip-path, no paint containment, no overflow clip that cuts it, and the nearest box that scrolls, then the page, reach it;
 anything else is hidden. Each axis is tested alone, in the box's own direction (right to left too), along the flat tree
-(a slotted frame's slot and shadow boxes, then the host), and a cover fixed over the whole viewport hides it (the top box at the center and each corner in a fixed layer, one
-box there whole, seen and painting; or one on `body` the pointer goes through). Closed shadow roots and reversed scrollers are not modeled. Any other failure keeps one line, "not shown, so not read", and nothing inside it is read either; this keeps the
+(a slotted frame's slot and shadow boxes, then the host), and a cover fixed over the whole viewport hides it (at the center and each corner the top box is in a fixed
+layer that is seen, not under the page and paints there, and one such layer spans the viewport). A scroller that starts at its
+far end (column-reverse, row-reverse, vertical-rl) reaches back, and the debugger names an `<iframe>`'s slot in a closed
+shadow root (`DOM.describeNode`), lent to the walk on Polycarp's wrapper only. Not modeled: a cover the pointer goes
+through (`pointer-events: none`) and a frame inside an element slotted into a closed root. Any other failure keeps one line, "not shown, so not read", and nothing inside it is read either; this keeps the
 #73 rule that hidden text never reaches the agent, and an invisible field can't be filled. The same test runs again in the
 tab for each frame, level by level, before the frame claims its line (matched by the `<iframe>`'s border box, not its
 corner), so a see-through frame under a shown one can't take the shown one's line or its points; a frame whose test gets
@@ -1722,3 +1725,23 @@ after the deletion must not make it repeat. The e2e "only the tab an agent uses 
 the user keep it, has the agent's page open a confirm and brings the user's tab to the front. On main the user's tab
 stays frozen and the test fails. It then repeats the click with `on_dialog` "ok" and checks the page got OK within the
 grace and nothing froze or was cancelled again.
+
+## D49. A download an action starts is reported with its result, through the debugger (Claude, 2026-11-13)
+
+**Problem.** A click on an attachment link, a blob link or a button whose script makes a file starts a download, and
+the agent was told nothing. It saw an unchanged page and often clicked again, or said the export failed.
+
+**Decision.** `downloads.ts` listens for `Page.downloadWillBegin` and `Page.downloadProgress`, which Chrome sends once
+the `Page.enable` cdp.ts sends for dialogs is on. Every input tool's result, and navigate's, lists the downloads begun
+since the action started: suggested name, extension as type, size when complete, state (started, completed,
+canceled), and the URL through `maskUrl` as `files download` shows it. A data: URL keeps only its header. After the
+page settles the action waits up to 2 s for a download to end. No `chrome.downloads` permission: it would give the
+path and final name, but a new permission means store review again and a prompt for every user.
+
+**Limits.** The save folder is not known, and the result says so. Chrome adds " (1)" to a name already taken. A
+download waiting on a save box stays "started". A type the person set to open on its own still opens. Steps inside
+`actions` report no downloads. Polycarp opens nothing; to read a file the agent calls `files download` with the link's
+ref, under its 50 MiB limit and its rules for other sites.
+
+**Proof.** `test/downloads.test.mjs` drives `click` through the bridge on fake chrome (all four fail on main
+93a70440); the e2e "a click on a download link reports the file it started" runs real Chrome.

@@ -1007,6 +1007,12 @@ test("PR 228 r1 first-F2 and PR 235 r1: out of view, a frame is away only when a
 	assert.equal(frameShown(t.frameIn(low, pane({ overflowX: "hidden", overflowY: "auto" }))), "away", "first-F2: a pane that scrolls down only");
 	const rtl = pane({ overflowX: "auto", overflowY: "hidden", direction: "rtl" }, { scrollWidth: 5000, clientWidth: 1280 });
 	assert.equal(frameShown(t.frameIn(box(-2000, 10, 300, 120), rtl)), "away", "second-second-F3: past the end of a right-to-left carousel");
+	// PR 240 r1 second-S2: scrollers that start at the far end; a reversed row in rtl starts at the left again.
+	const chat = pane({ display: "flex", flexDirection: "column-reverse", overflowY: "auto", overflowX: "hidden" }, { scrollHeight: 5000, clientHeight: 800 });
+	assert.equal(frameShown(t.frameIn(box(10, -2000, 300, 120), chat)), "away", "up the history of a column-reverse chat");
+	const reversed = (style) => pane({ display: "flex", overflowX: "auto", overflowY: "hidden", ...style }, { scrollWidth: 5000, clientWidth: 1280 });
+	assert.equal(frameShown(t.frameIn(box(-2000, 10, 300, 120), reversed({ flexDirection: "row-reverse" }))), "away", "a row-reverse carousel");
+	assert.equal(frameShown(t.frameIn(box(-2000, 10, 300, 120), reversed({ flexDirection: "row-reverse", direction: "rtl" }))), "hidden", "rtl and row-reverse cancel");
 	const sheet = t.part({}, box(0, 0, 1280, 5000), t.doc.body);
 	const slot = t.part({}, box(0, 900, 1280, 400), t.part({ position: "fixed" }, box(0, 900, 1280, 400), null, { nodeType: 11, host: sheet }));
 	assert.equal(frameShown(Object.assign(t.frameIn(low, sheet), { assignedSlot: slot })), "hidden", "second-second-F1: slotted in a fixed panel");
@@ -1020,31 +1026,62 @@ test("PR 228 r1 first-F2 and PR 235 r1: out of view, a frame is away only when a
 	const fit = t.part({ position: "fixed", backgroundColor: "rgba(0, 0, 0, 0.8)" }, box(0, 0, 1265, 785), t.doc.body);
 	t.doc.stackAt((x, y) => (x < 1265 && y < 785 ? [fit] : [t.doc.documentElement]));
 	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F1: innerWidth counts the scrollbar");
-	const panel = t.part({ position: "fixed" }, box(440, 300, 400, 200), t.doc.body);
+	const panel = t.part({ position: "fixed", backgroundColor: "rgb(255, 255, 255)" }, box(440, 300, 400, 200), t.doc.body);
 	t.doc.stackAt((x, y) => (x > 440 && x < 840 && y > 300 && y < 500 ? [panel, fit] : [fit]));
 	assert.equal(frameShown(t.frameIn(low)), "hidden", "second-S1: a full overlay beside a centered dialog");
 	const consent = t.part({}, box(0, 0, 0, 0), t.doc.body);
-	consent.shadowRoot = { host: consent, elementsFromPoint: () => [fit, consent] };
+	consent.shadowRoot = { host: consent, elementFromPoint: () => fit };
 	t.doc.stackAt(() => [consent, t.doc.body]);
 	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F2: a cover in an open shadow root");
 	t.doc.stackAt(() => [t.doc.body]);
 	t.doc.body.children = [fit];
-	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F6: a cover with pointer-events: none");
-	// PR 240 r2: a cover must be seen, on top, and paint; none of these hide anything.
+	assert.equal(frameShown(t.frameIn(low)), "away", "a limit: a cover the pointer goes through (pointer-events: none) isn't hit");
+	// PR 240 r2: only the layer on top counts, and only when it is seen and paints; none of these hide anything.
 	const layer = (style, extra = {}) => Object.assign(t.part({ position: "fixed", ...style }, box(0, 0, 1265, 785), t.doc.body), extra);
-	t.doc.body.children = [layer({ backgroundColor: "rgb(0, 0, 0)", opacity: "0" })];
+	const closed = layer({ backgroundColor: "rgb(0, 0, 0)", opacity: "0" });
+	t.doc.body.children = [closed];
+	t.doc.stackAt(() => [closed]);
 	assert.equal(frameShown(t.frameIn(low)), "away", "first-F1: a closed overlay at opacity 0");
 	const canvas = layer({ zIndex: "-1" }, { tagName: "CANVAS" });
 	t.doc.body.children = [canvas];
 	t.doc.stackAt(() => [t.doc.body, canvas]);
 	assert.equal(frameShown(t.frameIn(low)), "away", "first-F2: a fixed canvas behind the page");
-	t.doc.stackAt(() => [t.doc.body]);
-	t.doc.body.children = [layer({ backgroundColor: "rgba(0, 0, 0, 0)" })];
+	const portal = layer({ backgroundColor: "rgba(0, 0, 0, 0)", zIndex: "9999" });
+	t.doc.body.children = [portal];
+	t.doc.stackAt(() => [portal]);
 	assert.equal(frameShown(t.frameIn(low)), "away", "second-F5: an empty portal root");
 	const backdrop = layer({});
 	t.doc.body.children = [];
 	t.doc.stackAt(() => [backdrop]);
 	assert.equal(frameShown(t.frameIn(low)), "away", "second-F5: a transparent click-away backdrop");
+});
+
+test("PR 240 r1 first-F5: a frame slotted into a closed shadow root is tested in the slot the debugger names", async () => {
+	const { frameState } = await import("../src/browser/frames.ts");
+	const sent = fakeTab(61, { trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example")]) }, holds: { PAY: "TOP" }, owners: { PAY: 31 } });
+	const send = chrome.debugger.sendCommand;
+	chrome.debugger.sendCommand = async (target, method, params = {}) => {
+		if (method === "DOM.describeNode") return { node: { assignedSlot: { backendNodeId: 77 } } };
+		if (method === "DOM.resolveNode" && params.backendNodeId === 77) return { object: { type: "object", objectId: "slot77" } };
+		return send(target, method, params);
+	};
+	await frameState(61, { chain: [{ frameId: "PAY" }] });
+	const call = sent.find((c) => c.method === "Runtime.callFunctionOn");
+	assert.deepEqual(call.params.arguments, [{ objectId: "slot77" }]);
+	// The page's walk can't see the slot in a closed root: from the static host the frame below the fold is away.
+	const view = { innerWidth: 1280, innerHeight: 800, scrollX: 0, scrollY: 0, getComputedStyle: (n) => n.style };
+	const doc = { defaultView: view, nodeType: 9, elementFromPoint: () => null };
+	const at = (top, height) => () => ({ left: 0, top, width: 1280, height, right: 1280, bottom: top + height });
+	const part = (style, rect, parent, root = doc) => ({ nodeType: 1, ownerDocument: doc, style: { opacity: "1", ...style }, parentElement: parent, getRootNode: () => root, getBoundingClientRect: rect, scrollHeight: 5000, scrollWidth: 1280 });
+	doc.documentElement = part({}, at(0, 5000), null);
+	doc.body = part({}, at(0, 5000), doc.documentElement);
+	const host = part({}, at(0, 5000), doc.body);
+	const slot = part({}, at(900, 400), part({ position: "fixed" }, at(900, 400), null, { nodeType: 11, host }));
+	const frame = part({}, at(3000, 120), host);
+	const run = new Function("__name", `return ${call.params.functionDeclaration}`)((f) => f);
+	assert.equal(run.call(frame), "away");
+	assert.equal(run.call(frame, slot), "hidden", "in the closed root's fixed panel");
+	assert.equal(frame.assignedSlot, undefined, "the lent slot is taken back");
 });
 
 /** Two levels of frames (X holds Z), Z found once with no delay; `extra` is the fakeTab setup for the looks. */
