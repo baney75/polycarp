@@ -116,7 +116,12 @@ final class HandsRouter {
         case "snapshot": return snapshot(req)
         case "find": return find(req)
         case "get": return get(req)
-        case "click": return act(req, .click, "click")
+        case "click":
+            switch ContextMenu.refClick(button: req.string("button"), item: req.string("item")) {
+            case .failure(let e): return .failure(e)
+            case .success(.right(let item)): return contextClick(req, item: item)
+            case .success(.press): return act(req, .click, "click")
+            }
         case "type": return act(req, .typeText, "type", text: req.string("text"), pasted: req.bool("paste"))
         case "set-value": return act(req, .setValue, "set-value", text: req.string("value"))
         case "press": return press(req)
@@ -126,6 +131,7 @@ final class HandsRouter {
         case "select": return act(req, .select, "select", text: req.string("option"))
         case "toggle": return act(req, .toggle, "toggle")
         case "menu": return menu(req)
+        case "run-steps": return runSteps(req)
         case "shot": return shot(req)
         case "open": return open(req)
         default: return .failure(HandsError(.badArguments, "unknown agent command \(req.verb)", suggestion: "Commands: " + HandsTools.all.map(\.verb).joined(separator: ", ")))
@@ -532,7 +538,7 @@ final class HandsRouter {
     // MARK: refs
 
     /// The full ref a bare row number stands for in this session, or why it can't stand for one, with the call to make instead.
-    private func bareRef(_ n: Int, _ req: HandsRequest) -> Result<String, HandsError> {
+    func bareRef(_ n: Int, _ req: HandsRequest) -> Result<String, HandsError> {
         switch withRows({ $0.resolve(bare: n, session: req.session ?? "", now: Date()) }) {
         case .ref(let full): return .success(full)
         case .refused(let code, let message, let latest): return .failure(SnapshotRowsMemory.error(code, message, latest: latest))
@@ -616,6 +622,8 @@ final class HandsRouter {
             // Before the mark: an activation while it waits is Donovan's, never taken for the agent's.
             // Every verb here goes through the engine's strict Headless accessibility path (`HandsEngine.act`).
             if let e = awaitUse(w, verb: name, delivery: .headlessAX, wait: req.int("wait"), session: session) { return .failure(e) }
+            // A select or click that opens a pop-up menu: only with the window on screen under the agent workspace.
+            if kind == .select || kind == .click, let e = popupRefusal(w, ref: ref, verb: name, session: session) { return .failure(e) }
             var text = text
             if pasted {
                 switch SessionClipboard.typed(text: text, paste: true, from: { SessionClipboardBox.shared.paste(session: session) }) {
@@ -704,7 +712,7 @@ final class HandsRouter {
 
     /// The window a request is about, for its error's next call: the window it names, or the one its ref's snapshot read.
     /// A bare row number counts through what `handle` resolved it to (review r1 first-F2); one it refused names no window.
-    private func windowOf(_ req: HandsRequest) -> Int? {
+    func windowOf(_ req: HandsRequest) -> Int? {
         RefWindow.of(window: req.int("window"), ref: req.string("ref"), bare: { _ in nil },
                      snapshotWindow: { sid in lock.lock(); defer { lock.unlock() }; return snaps[sid].map { Int($0.window) } })
     }
@@ -721,6 +729,14 @@ final class HandsRouter {
         }
         guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
         return SessionClipboard.pasteboardItem(rows: read.rows, number: n, option: option)
+    }
+
+    /// Why a select or click on `ref` may not run: it opens a pop-up menu, and the window isn't on screen under the agent
+    /// workspace (`ContextMenu.popupGate`). The role is read live; nothing is sent when it refuses.
+    private func popupRefusal(_ w: HandsWindow, ref: String, verb: String, session: String) -> HandsError? {
+        var role: String?
+        if case .ok(let v) = HandsEngine.shared.get(window: w, ref: ref, property: "role", check: check(w, ref: ref, session: session)) { role = v["value"]?.string }
+        return ContextMenu.popupGate(verb: verb, role: role, agentShown: agentShown(), window: BackgroundAX.serverWindow(w.id)?.frame, displays: ContextMenuAX.displays())
     }
 
     /// The selection write a click on `ref` falls back to, when the ref is an item in an outline, table or list.

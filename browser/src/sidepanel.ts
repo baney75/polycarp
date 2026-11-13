@@ -106,6 +106,7 @@ import { isToolNavigating, NavigateTool } from "./tools/navigate.js";
 import { panelPageTools, registerPageToolRenderers } from "./tools/page-tools.js";
 import { createReplTool } from "./tools/repl/repl.js";
 import { BrowserJsRuntimeProvider, NavigateRuntimeProvider } from "./tools/repl/runtime-providers.js";
+import { seedDefaultSkills, seedStamp } from "./tools/seed-skills.js";
 import { syncCustomProviderCorsRules } from "./utils/custom-provider-cors.js";
 import { chatToMarkdown } from "./utils/export-chat.js";
 import * as port from "./utils/port.js";
@@ -1604,9 +1605,8 @@ async function initApp() {
 	// to an isolated content-script world otherwise, so no permission prompt is needed.
 
 	performance.mark("panel:models");
-	// Initialize default skills
-	const { initializeDefaultSkills } = await import("./tools/skill.js");
-	await initializeDefaultSkills();
+	// The bundled skills, saved again only when the extension changed.
+	await seedDefaultSkills({ stamp: seedStamp(), storage: chrome.storage.local, skills: storage.skills });
 
 	// Proxy disabled — CORS is handled locally via declarativeNetRequest rules
 	await storage.settings.set("proxy.enabled", false);
