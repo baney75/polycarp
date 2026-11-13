@@ -334,7 +334,7 @@ async function openCapturedTab(
 	url: string | undefined,
 	timeoutMs: number,
 	tolerant: boolean,
-): Promise<{ tab: chrome.tabs.Tab; ready: boolean; note?: string }> {
+): Promise<{ tab: chrome.tabs.Tab; ready: boolean; committed?: boolean; note?: string }> {
 	const tab = await createCapped(ctx.session, "about:blank");
 	const tabId = tab.id as number;
 	watchGuardedCommits(ctx, tabId);
@@ -345,7 +345,8 @@ async function openCapturedTab(
 	if (failed) console.warn("[Bridge] capture did not start on a new tab:", failed);
 	if (!url) return { tab, ready: true, note };
 	try {
-		return { tab, ready: !(await navigateTabDetailed(tabId, url, { timeoutMs })).timedOut, note };
+		const { timedOut, committed } = await navigateTabDetailed(tabId, url, { timeoutMs });
+		return { tab, ready: !timedOut, committed, note };
 	} catch (err) {
 		if (tolerant && err instanceof Error && err.message.startsWith("Navigation to ")) {
 			// Opened, as tabs_create always did, but say the page is not there.
@@ -691,7 +692,12 @@ export const handlers: Record<string, Handler> = {
 		if (!history && num(params, "tabId") === undefined && !(await ctx.session.currentTab())) {
 			const since = await settleStart();
 			const was = [...ctx.session.tabIds];
-			const { tab, ready, note } = await openCapturedTab(ctx, url, num(params, "timeoutMs") ?? 20000, false);
+			const { tab, ready, committed, note } = await openCapturedTab(
+				ctx,
+				url,
+				num(params, "timeoutMs") ?? 20000,
+				false,
+			);
 			const tabId = tab.id as number;
 			// The new tab is the page itself, not one the page opened.
 			const tabs = [...was, tabId];
@@ -701,7 +707,11 @@ export const handlers: Record<string, Handler> = {
 			// The tab is new: settleStart had none to turn Network on in, so the wait does.
 			const settled = await settleAfter(ctx, tabId, since, landed, {
 				watched: false,
-				changes: async () => ({ ...(await tabChanges(tabs, ctx.session.tabIds, tabUrl)), page: NEW_PAGE }),
+				// A 204 or a download loads nothing into the blank tab.
+				changes: async () => ({
+					...(await tabChanges(tabs, ctx.session.tabIds, tabUrl)),
+					page: committed ? NEW_PAGE : NOT_LOADED,
+				}),
 			});
 			return refuseGuardedLanding(ctx, tabId, {
 				...(await tabSummary(tabId)),
