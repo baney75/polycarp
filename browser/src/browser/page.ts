@@ -423,11 +423,11 @@ export function pageSnapshot(
 	live: (el: Element) => boolean,
 	print: (el: Element) => string,
 	keepStale = false,
-	frameShown: (el: Element) => "shown" | "hidden" | "away" = () => {
-		throw new Error("pageSnapshot: its caller passed no frameShown and FRAME_STATES");
-	},
+	frameShown: (el: Element) => "shown" | "hidden" | "away",
 	frameNotes: Record<"shown" | "hidden" | "away", string>,
 ): unknown {
+	if (typeof frameShown !== "function" || !frameNotes)
+		throw new Error("pageSnapshot: its caller passed no frameShown and FRAME_STATES");
 	const w = window as unknown as {
 		__tabkyraRefs?: unknown;
 		__tabkyraRefPrints?: unknown;
@@ -1099,7 +1099,12 @@ export async function changeLook(
 	const inFrame = async (): Promise<ChangeLook | "gone" | undefined> => {
 		if (!split || !frame?.ref) return undefined;
 		const ref = frame.ref;
-		const find = () => frameForRef(tabId, ref, frame.rule ?? FRAMES_CLOSED).catch(() => undefined);
+		// Gone only on a definite answer: not found by a search that saw every frame, or barred. Else unknown.
+		const find = () =>
+			frameForRef(tabId, ref, frame.rule ?? FRAMES_CLOSED).then(
+				(h) => h ?? null,
+				(e) => (/ not found: |^Not allowed /.test(String(e?.message)) ? null : undefined),
+			);
 		// Its look, and whether a person sees the frame now: an action can hide it (#73). The test keeps
 		// to the look's budget, one deadline for the frame found once and again.
 		const end = Date.now() + FRAME_SHOWN_MS;
@@ -1117,8 +1122,7 @@ export async function changeLook(
 		if (!got) {
 			// Found again within what is left of the deadline; with none left, or none in time, it is unknown.
 			if (!left()) return undefined;
-			const found = find().then((h) => h ?? null);
-			const hit = await bounded(found, left());
+			const hit = await bounded(find(), left());
 			if (hit === undefined) return undefined;
 			if (!hit) return "gone";
 			frame.hit = hit;
@@ -1223,12 +1227,14 @@ function lineOf(
 	);
 	// Two frames of one box: the line that names this frame's URL is its own. `exact` takes no other, but a
 	// frame that redirected or navigated within its origin still owns the line its <iframe> names.
-	const named = fits.find((n) => n.href === f.url.slice(0, 200));
+	// The snapshot writes a frame's href with no query or fragment: both sides are compared so.
+	const bare = (u = "") => u.split(/[?#]/)[0].slice(0, 200);
+	const named = fits.find((n) => !!n.href && bare(n.href) === bare(f.url));
 	if (named || !exact) return named ?? fits[0];
 	// Only when it is plain: one line on its origin, naming no other frame's URL.
 	const kin = fits.filter((n) => !!n.href && sameOrigin(n.href, f.url));
 	const own = kin.length === 1 ? kin[0] : undefined;
-	return own && !frames.some((o) => o !== f && o.url.split(/[?#]/)[0].slice(0, 200) === own.href) ? own : undefined;
+	return own && !frames.some((o) => o !== f && bare(o.url) === bare(own.href)) ? own : undefined;
 }
 
 /**
