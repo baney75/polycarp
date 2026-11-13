@@ -176,14 +176,37 @@ async function cdpInject<T>(tabId: number, code: string, options: InjectOptions)
 	}
 }
 
+/** A stored result over this many characters is not kept in the page: a lost one then fails instead (see below). */
+const KEPT_RESULT_CHARS = 256_000;
+/** How long a run's mark stays on the page: the check after a lost result comes at once. */
+const MARK_MS = 60_000;
+
 /**
  * Run `code` (an expression or IIFE, may return a promise) in the page and return
  * its value, matching userScripts.execute's `results[0].result`.
+ *
+ * userScripts.execute can come back with no result for a run (a browserjs() that read `undefined` a dozen times in a
+ * row, 2026-11-07). The code is then run on the debugger path only when it never ran: each run first marks the page's
+ * DOM, the one thing both worlds share, with an attribute named for the call, and keeps its result there. A mark, or a
+ * new document, means the code ran, so it is never run twice: its kept result is returned, or the call fails.
  */
 export async function injectScript<T = unknown>(tabId: number, code: string, options: InjectOptions = {}): Promise<T> {
 	const api = userScriptsApi();
 	if (!api) return cdpInject<T>(tabId, code, options);
 	const worldId = options.worldId ?? "tabkyra";
+	const mark = `data-polycarp-run-${crypto.randomUUID()}`;
+	const marked = `(async () => {
+	const m = document.documentElement;
+	m?.setAttribute(${JSON.stringify(mark)}, "");
+	setTimeout(() => m?.removeAttribute(${JSON.stringify(mark)}), ${MARK_MS});
+	const v = await (${code});
+	try {
+		const kept = JSON.stringify([v]);
+		if (kept.length <= ${KEPT_RESULT_CHARS}) m?.setAttribute(${JSON.stringify(mark)}, kept);
+	} catch {}
+	return { v };
+})()`;
+	const before = await documentOf(tabId);
 	let results: Awaited<ReturnType<typeof api.execute>>;
 	try {
 		if (!configuredWorlds.has(worldId)) {
@@ -196,7 +219,7 @@ export async function injectScript<T = unknown>(tabId: number, code: string, opt
 			configuredWorlds.add(worldId);
 		}
 		results = await api.execute({
-			js: [{ code }],
+			js: [{ code: marked }],
 			target: { tabId, allFrames: false },
 			world: "USER_SCRIPT",
 			worldId,
@@ -210,7 +233,44 @@ export async function injectScript<T = unknown>(tabId: number, code: string, opt
 	}
 	const first = results[0];
 	if (first?.error) throw new PageException(String((first.error as { message?: string }).message ?? first.error));
-	return first?.result as T;
+	const envelope = first?.result as { v: T } | undefined;
+	// Any result object is the run's own envelope (a `v` of undefined may arrive with the key gone).
+	if (envelope && typeof envelope === "object") return envelope.v;
+	return lostResult<T>(tabId, code, options, mark, before);
+}
+
+/** The id of the document in the tab's top frame, or undefined when the browser won't say. */
+async function documentOf(tabId: number): Promise<string | undefined> {
+	try {
+		return (await chrome.webNavigation.getFrame({ tabId, frameId: 0 }))?.documentId;
+	} catch {
+		return undefined;
+	}
+}
+
+/** userScripts gave no result: run the code on the debugger path only if the page shows it never ran. */
+async function lostResult<T>(
+	tabId: number,
+	code: string,
+	options: InjectOptions,
+	mark: string,
+	before: string | undefined,
+): Promise<T> {
+	const lost = new PageException(
+		"The script ran, but its result was lost, so it was not run again: it may have acted on the page. Call read_page to see the page before you act again.",
+	);
+	const now = await documentOf(tabId);
+	// A new document (the code navigated, or the page did) holds no mark of a run that happened: never run it again.
+	if (!before || before !== now) throw lost;
+	const name = JSON.stringify(mark);
+	const seen = await cdpInject<string | null | undefined>(
+		tabId,
+		`(() => { const m = document.documentElement; if (!m) return undefined; const v = m.getAttribute(${name}); m.removeAttribute(${name}); return v; })()`,
+		{},
+	);
+	if (seen === null) return cdpInject<T>(tabId, code, options);
+	if (!seen) throw lost;
+	return (JSON.parse(seen) as [T])[0];
 }
 
 /** Cancel a running injection on either path. */
