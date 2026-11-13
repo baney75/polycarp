@@ -45,6 +45,37 @@ public enum ContextMenu {
                           suggestion: "Use `click` without button for the element's own action, or `menu` for the app's menu bar.", retry: .never, nextCall: .null)
     }
 
+    /// The roles whose `select` or `click` opens a pop-up menu. The engine names a pop-up button `combobox` (its
+    /// `ax_role_to_str`), and a combobox's select opens its list when the value can't be set. AppKit draws that menu on a
+    /// display a person can see, so a parked window's comes onto Donovan's screen.
+    public static let popups: Set<String> = ["combobox", "popupbutton", "menubutton"]
+
+    /// A role as the engine or AppKit spells it (`popupbutton`, `AXPopUpButton`, `pop_up_button`), in the engine's form.
+    public static func role(_ raw: String) -> String {
+        var r = raw.lowercased().filter { $0.isLetter }
+        if r.hasPrefix("ax") { r.removeFirst(2) }
+        return r
+    }
+
+    /// Rule 1 for a `select` or `click` on a ref that opens a pop-up: the window gate, before anything is sent. `role`
+    /// nil: it couldn't be read, so a select may open one (a click is let through: most clicks aren't on pop-ups).
+    /// `window` nil: not on any display.
+    public static func popupGate(verb: String, role: String?, agentShown: Bool, window: CGRect?, displays: [CGRect]) -> HandsError? {
+        let opens: Bool
+        switch verb {
+        case "select": opens = role.map { popups.contains(Self.role($0)) } ?? true
+        case "click": opens = role.map { popups.contains(Self.role($0)) } ?? false
+        default: opens = false
+        }
+        guard opens else { return nil }
+        // Only where the window sits: a pop-up in a lent window is the app Donovan lent, not a menu on a parked one.
+        if let window, gate(agentShown: agentShown, agentWindow: true, window: window, displays: displays) == nil { return nil }
+        return HandsError(.outsideAgentWorkspace,
+                          "a \(verb) on a pop-up opens its menu where Donovan can see it unless the agent workspace is on screen under the window; it isn't, so nothing was sent",
+                          suggestion: verb == "select" ? "Use set-value on a combobox, or ask Donovan to show the agent workspace." : "Ask Donovan to show the agent workspace, then try again.",
+                          retry: .never, nextCall: .null)
+    }
+
     /// `click` on a ref: the plain press, or a right click with the item it presses (nil lists the items and cancels).
     public enum RefClick: Equatable, Sendable { case press, right(item: String?) }
 

@@ -846,7 +846,14 @@ createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY }).o
 		const name = m.params?.name;
 		const env = call(name, { ...(m.params?.arguments ?? {}) });
 		const rowsText = env.ok && env.data?.format === "rows" ? env.data.text : undefined;
+		// As MCP.swift's splitRead: a run's closing read in rows goes out as its own part, after the step lines.
+		const read = rowsText === undefined && env.ok && env.data?.read?.format === "rows" && typeof env.data.read.text === "string" ? env.data.read.text : undefined;
+		if (read !== undefined) {
+			const { text: _rows, ...rest } = env.data.read;
+			env.data = { ...env.data, read: { ...rest, text_below: true } };
+		}
 		const content = [{ type: "text", text: rowsText ?? line(env) }];
+		if (read !== undefined) content.push({ type: "text", text: read });
 		if (rowsText !== undefined && env.data.screenshot_error) content.push({ type: "text", text: `screenshot failed: ${env.data.screenshot_error}` });
 		return reply(m.id, { content, isError: !env.ok });
 	}
