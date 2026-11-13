@@ -26,6 +26,10 @@ extension HandsRouter {
         case .failure(let e): return .failure(e)
         case .success(let c): chords = c
         }
+        // The key's character in the Mac's layouts too: cmd+i is copy on Dvorak.
+        if let c = chords.first(where: { SessionClipboard.usesPasteboard($0, characters: KeyLayout.characters($0.keyCode)) }) {
+            return .failure(SessionClipboard.pasteboardRefusal(c.label))
+        }
         switch resolve(req.string("ref"), session: req.session ?? "") {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope)):

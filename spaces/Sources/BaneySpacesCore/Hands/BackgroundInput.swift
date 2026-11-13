@@ -137,7 +137,10 @@ public enum KeyParse {
         var out: [KeyChord] = []
         for w in words {
             switch chord(w) {
-            case .success(let c): out.append(c)
+            case .success(let c):
+                // Cut, copy and paste reach the general pasteboard, which is Donovan's.
+                if SessionClipboard.usesPasteboard(c) { return .failure(SessionClipboard.pasteboardRefusal(c.label)) }
+                out.append(c)
             case .failure(let e): return .failure(e)
             }
         }

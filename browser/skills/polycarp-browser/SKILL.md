@@ -59,8 +59,8 @@ Repeat 2 to 4 until the task is done. Prefer refs over selectors, and selectors 
 
 ## When read_page isn't enough
 
-- Web components and same-origin frames are in `read_page`. A frame from another site shows
-  as `iframe` with its URL: `navigate` to that URL to read it.
+- Web components and frames, other sites' too, are in `read_page`. Past 10 frames or 3 deep a
+  frame shows as `iframe` with its URL: `navigate` there.
 - Data a page loads (results, prices, lists): call `read_network {"type":"Fetch"}` before you
   load or act, then `read_network {"requestId":"..."}` for its JSON and the shape of what it sent
   (same-origin only; fetch another site's API with `run_js`). Exact where page text is cut or paged.

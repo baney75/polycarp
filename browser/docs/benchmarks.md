@@ -182,10 +182,13 @@ result text over MCP, plus navigate, so the same evals run against it:
 ## Seeing pages: perception eval
 
 `node cli/eval/perception.mjs --extension <build> [--out file.json]` drives the MCP tools against
-local fixture pages (no model) and scores 24 probes:
+local fixture pages (no model) and scores 26 probes. The table below has the 20 measured on 2026-10-28; the 4 settle
+probes and the 2 cross-origin frame probes (`xorigin-see`, `xorigin-click`) came later, and their results are in the
+paragraphs after it. The probes:
 - open shadow roots: see, click, fill a nested field, and read their text with `read_page`,
   `get_page_text`, and `get_page_text` on the host; a `display: contents` component
-- same-origin and cross-origin frames, including a scaled, padded frame
+- same-origin and cross-origin frames, including a scaled, padded frame, and inside cross-origin frames (D46): a
+  button in a same-site frame (another port) and one in another site's frame, seen and clicked by ref
 - control states, including a disabled fieldset
 - a page's own `fetch()` and its response body
 - embedded JSON and forms
@@ -263,6 +266,11 @@ Schema cost: the MCP server instructions grow 47 bytes (about 12 tokens, 2,991 a
 side panel's system prompt grows 13 tokens (1,996 to 2,009, `cli/eval/panel-prompt-size.mjs`, o200k_base), and its tool
 list grows 9 tokens (8,613 to 8,622), since `act` now says to read its `changes`. Added time per action is bounded at
 1.5 s (two looks of at most 0.75 s), held by `test/changes.test.mjs`, "... both looks add at most 2 x LOOK_MS".
+Cross-origin frame probes, 2026-11-12, headless Chromium. `xorigin-see` (both buttons listed with frame refs) and
+`xorigin-click` (both clicks reach their frame, which posts to the page) pass on the D46 branch, 26/26, and fail on main
+(7f7491b0), 24/26: the frames there are one `iframe` line each. Through the side panel's tools (`--stack panel`) the
+branch scores 21/21 with 5 n/a. A page with two such frames reads in 831 bytes and 6 ms instead of 368 bytes and 2 ms
+(`read_page {"filter":"interactive"}`, median of 7); a page without one is unchanged (197 bytes, 3 ms on both).
 
 # Dictation, 2026-10-29
 

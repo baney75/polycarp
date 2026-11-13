@@ -33,6 +33,7 @@ import {
 	type UploadMeta,
 	type UploadTarget,
 } from "../browser/files-page.js";
+import { splitFrameRef } from "../browser/frames.js";
 import { maskUrl } from "../browser/mask-body.js";
 import { BridgeError } from "./errors.js";
 import { acceptsFile, base64Bytes, dispositionName, parseDataUrl, urlFileName } from "./file-util.js";
@@ -145,6 +146,15 @@ const pageOrigin = (url: string): string => {
 		return "null";
 	}
 };
+
+/** Uploads and downloads run in the top page; a ref inside a cross-origin frame gets a clear no. */
+function refuseFrameRef(ref: string | undefined): void {
+	if (ref && splitFrameRef(ref))
+		throw new BridgeError(
+			ERR.BAD_PARAMS,
+			`Ref ${ref} is inside a cross-origin frame, which upload and download can't reach. navigate to the frame's URL and use its refs there.`,
+		);
+}
 
 /** The refusal for a script that found the tab on another document than the one the upload was for. */
 function movedError(up: Upload, now: { host: string; sameOrigin: boolean }): BridgeError {
@@ -320,6 +330,7 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 					ERR.BAD_PARAMS,
 					"upload needs the ref of a file input or drop area (read_page gives refs).",
 				);
+			refuseFrameRef(target.ref);
 			const tabId = await resolveTab(ctx, params, false);
 			const { url, host } = await destination(ctx, tabId);
 			const probe = await probeUploadTarget(tabId, target, crypto.randomUUID());
@@ -453,6 +464,7 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 					ERR.BAD_PARAMS,
 					"download needs a url, or the ref of a link, image or media element.",
 				);
+			refuseFrameRef(target.ref);
 			const tabId = await resolveTab(ctx, params, false);
 			const pageUrl = (await chrome.tabs.get(tabId)).url ?? "";
 			let suggested = "";

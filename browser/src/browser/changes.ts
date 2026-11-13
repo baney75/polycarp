@@ -12,8 +12,9 @@
 
 import { CHANGES_MAX_CHARS, fitChanges } from "../bridge/fit-changes.js";
 import { openDialog } from "./cdp.js";
+import { FRAMES_CLOSED, type FrameRule, frameForRef, splitFrameRef } from "./frames.js";
 import { maskUrl } from "./mask-body.js";
-import { type ChangeLook, changeLook } from "./page.js";
+import { type ChangeLook, changeLook, type FrameLook } from "./page.js";
 
 /** Controls compared on each side; a page with more is compared on its first this many. */
 const MAX_NODES = 400;
@@ -41,6 +42,8 @@ export interface Before {
 	miss?: Miss;
 	/** The hosts no tool may read (#94): each look checks them in the page before it reads anything. */
 	hosts: readonly string[];
+	/** A target in a cross-origin frame is looked at there too (D46): its rule, and the frame once found. */
+	frame: FrameLook;
 	/**
 	 * False for a scroll: a list that recycles its rows shows new items in old elements, which would
 	 * read as renamed. Its report lists what went and what appeared instead.
@@ -79,11 +82,16 @@ function delta(a: Node, b: Node): string | undefined {
 		: undefined;
 }
 
-async function look(tabId: number, hosts: readonly string[], before: string[] = []): Promise<ChangeLook | Miss> {
+async function look(
+	tabId: number,
+	hosts: readonly string[],
+	before: string[] = [],
+	frame?: FrameLook,
+): Promise<ChangeLook | Miss> {
 	if (openDialog(tabId)) return "failed"; // the page is frozen: the dialog is the report
 	// The page goes on with a look that ran out (it can't be cancelled), but the call does not wait.
 	const got = await Promise.race([
-		changeLook(tabId, MAX_NODES, before, hosts).catch(() => undefined),
+		changeLook(tabId, MAX_NODES, before, hosts, frame).catch(() => undefined),
 		new Promise<undefined>((r) => setTimeout(() => r(undefined), LOOK_MS)),
 	]);
 	return got ?? "failed";
@@ -95,10 +103,16 @@ export async function beforeAction(
 	tabs: number[],
 	target?: string,
 	hosts: readonly string[] = [],
+	rule?: FrameRule,
 ): Promise<Before> {
-	const got = await look(tabId, hosts);
+	const frame: FrameLook = { ref: target, rule };
+	// A frame ref's frame is found once for the action, outside the look's time limit (finding frames may take
+	// FRAMES_MS): both looks and the action's point reuse it. Not found here, the action says why itself.
+	if (target && splitFrameRef(target))
+		frame.hit = await frameForRef(tabId, target, rule ?? FRAMES_CLOSED).catch(() => undefined);
+	const got = await look(tabId, hosts, [], frame);
 	const side = typeof got === "string" ? { miss: got } : { look: got };
-	return { tabId, tabs: [...tabs], target, hosts, ...side };
+	return { tabId, tabs: [...tabs], target, hosts, frame, ...side };
 }
 
 /** The note for a report with a side missing: never "nothing changed", which would read as a failed action. */
@@ -164,6 +178,7 @@ async function report(
 						b.tabId,
 						b.hosts,
 						b.look.nodes.map((n) => n.ref),
+						b.frame,
 					);
 	if (typeof got === "string" || !b.look) {
 		// A report is a diff of two real looks, or it says plainly that it isn't.

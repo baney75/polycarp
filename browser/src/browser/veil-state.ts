@@ -73,7 +73,7 @@ export interface VeilStep {
 
 const sameView = (a: VeilView, b: VeilView) => a.agent === b.agent && a.detail === b.detail && a.color === b.color;
 
-function isConcealed(state: VeilState, tabId: number): boolean {
+export function isConcealed(state: VeilState, tabId: number): boolean {
 	const c = state.concealed[tabId];
 	return c !== undefined && (c.shots > 0 || c.cast);
 }

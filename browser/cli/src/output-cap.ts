@@ -167,15 +167,34 @@ export interface RankCounts {
  * A ranked read cut to `maxNodes` positions of the ranking (a later slice skips controls that left the page, so it can
  * list fewer), and the offset the slice after it starts at: no control twice, none skipped.
  */
-export function rankedSlice<N>(r: RankCounts, nodes: N[], maxNodes: number): { nodes: N[]; next: number } {
+export function rankedSlice<N>(r: RankCounts, nodes: N[], maxNodes: number): { nodes: N[]; next: number; shown: number } {
+	// A cross-origin frame's controls (refs like fk3z9e12) follow the frame's own line and hold no ranked position.
+	const ranked = (n: N) => !/^f[0-9a-z]{4}e\d+$/.test(String((n as { ref?: unknown })?.ref ?? ""));
+	const own = nodes.filter(ranked);
+	let take: number;
+	let next: number;
 	if (r.positions) {
 		const end = r.offset + maxNodes;
-		const kept = nodes.slice(0, Math.min(maxNodes, r.positions.filter((p) => p < end).length));
-		const next = kept.length < r.positions.filter((p) => p < end).length ? r.positions[kept.length] : Math.min(r.next ?? end, end);
-		return { nodes: kept, next };
+		const due = r.positions.filter((p) => p < end).length;
+		take = Math.min(maxNodes, due);
+		next = take < due ? r.positions[take] : Math.min(r.next ?? end, end);
+	} else {
+		take = Math.min(maxNodes, own.length);
+		next = take < own.length ? r.offset + take : (r.next ?? r.offset + take);
 	}
-	const kept = nodes.slice(0, maxNodes);
-	return { nodes: kept, next: kept.length < nodes.length ? r.offset + kept.length : (r.next ?? r.offset + kept.length) };
+	const kept: N[] = [];
+	let taken = 0;
+	for (const n of nodes) {
+		if (kept.length >= maxNodes) break;
+		if (ranked(n)) {
+			if (taken === take) break;
+			taken++;
+		}
+		kept.push(n);
+	}
+	// A frame's controls filled the cap first: the next slice starts at the first ranked control left out.
+	if (taken < take) next = r.positions ? r.positions[taken] : r.offset + taken;
+	return { nodes: kept, next, shown: taken };
 }
 
 /**

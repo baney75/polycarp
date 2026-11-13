@@ -6,7 +6,7 @@ import { type Static, Type } from "@sinclair/typebox";
 import { html } from "lit";
 import { Loader2 } from "lucide";
 import { getCurrentBrowserSession } from "../browser/current.js";
-import { goBack, goForward, navigateTab, waitForLoad } from "../browser/page.js";
+import { goBack, goForward, navigateTab, waitForLoad } from "../browser/navigation.js";
 import { SkillPill } from "../components/SkillPill.js";
 import { TabPill } from "../components/TabPill.js";
 import { NAVIGATE_TOOL_DESCRIPTION } from "../prompts/prompts.js";
