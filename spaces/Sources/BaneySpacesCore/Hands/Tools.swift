@@ -3,7 +3,7 @@ import Foundation
 /// One argument of a hands command. The CLI reads it as a positional word or a `--flag`, MCP as a
 /// property of the tool's arguments object; the name is the same in both.
 public struct HandsParam: Equatable, Sendable {
-    public enum Kind: String, Sendable { case string, integer, boolean, stringList }
+    public enum Kind: String, Sendable { case string, integer, boolean, stringList, objectList }
     public var name: String
     public var kind: Kind
     public var help: String
@@ -120,6 +120,9 @@ public enum HandsTools {
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
             HandsParam("path", .string, "Menu titles from the menu bar down, separated by >.", required: true, positional: true, rest: true),
         ], acts: true),
+        HandsTool(verb: "run-steps", summary: "Several actions on one window in one call, then one read of what changed. Every step is checked before any runs; the steps run back to back with nothing else acting in between, and the run stops at the first step that fails, isn't verified or raises a dialog or sheet. Steps: click, type, set_value, press, click_at, drag, scroll, select, toggle, menu (at most \(RunSteps.maxSteps)). Row numbers mean your latest snapshot. Example: {\"steps\":[{\"tool\":\"click\",\"args\":{\"ref\":\"5\"}},{\"tool\":\"type\",\"args\":{\"ref\":\"7\",\"text\":\"hi\"}}]}", params: [
+            HandsParam("steps", .objectList, "The actions in order, each {tool, args} with the tool's own arguments.", required: true),
+        ], acts: true),
         HandsTool(verb: "toggle", summary: "Flip a checkbox, switch or disclosure by ref. Prints the state it read back.", params: [refParam], acts: true),
         HandsTool(verb: "shot", summary: "Capture one window as a PNG, even while it is parked out of view. Over MCP the picture comes back fitted to 1280 pixels, labeled untrusted, with how its pixels map to window points. Needs Screen Recording for Polycarp. Example: {\"window\":4211,\"zoom\":\"0,0,400,300\"}", params: [
             HandsParam("window", .integer, "Window id.", required: true),
@@ -218,6 +221,11 @@ public enum HandsParse {
                     args[p.name] = .bool(inline.map { $0 != "false" && $0 != "0" } ?? true)
                 case .stringList:
                     return .failure(usage(tool, "\(name) is not an option"))
+                case .objectList:
+                    guard let v = inline ?? (i + 1 < words.count ? words[i + 1] : nil) else { return .failure(usage(tool, "\(name) needs a value")) }
+                    if inline == nil { i += 1 }
+                    guard let a = JSONValue.parse(v), a.array != nil else { return .failure(usage(tool, "\(name) takes a JSON list")) }
+                    args[p.name] = a
                 case .integer, .string:
                     guard let v = inline ?? (i + 1 < words.count ? words[i + 1] : nil) else { return .failure(usage(tool, "\(name) needs a value")) }
                     if inline == nil { i += 1 }
@@ -263,6 +271,9 @@ public enum HandsParse {
             case .stringList:
                 guard let a = v.array, a.allSatisfy({ $0.string != nil }) else { return .failure(usage(tool, "\(k) takes a list of strings")) }
                 args[k] = v
+            case .objectList:
+                guard let a = v.array ?? v.string.flatMap(JSONValue.parse)?.array, a.allSatisfy({ $0.object != nil }) else { return .failure(usage(tool, "\(k) takes a list of objects")) }
+                args[k] = .array(a)
             case .integer:
                 guard let n = v.int else { return .failure(usage(tool, "\(k) takes a number")) }
                 args[k] = .int(n)
@@ -299,6 +310,7 @@ public enum HandsParse {
         if tool.verb == "move", let f = r.string("frame"), AgentArrange.parseFrame("0=" + f) == nil {
             return .failure(usage(tool, "frame is x,y,width,height, not \(f)"))
         }
+        if tool.verb == "run-steps", case .failure(let e) = RunSteps.parse(r.args["steps"], session: r.session, wait: r.int("wait")) { return .failure(e) }
         if tool.verb == "snapshot" || tool.verb == "find", r.args["app"] == nil, r.args["window"] == nil {
             return .failure(usage(tool, "say which window: app or window"))
         }

@@ -275,7 +275,7 @@ final class ClickFallbackTests: XCTestCase {
         XCTAssertTrue(src.contains("if !writes, kind != .toggle, plan == nil, case .success"))
         // 187 r1 first-F3, 192 r1 first-F6: the bare number is resolved once, before handle, which gets the full ref; the
         // next call's window reads that, also for a call refused before it acts. Never a second resolve.
-        let of = try XCTUnwrap(HandsSourceTests.block(after: "private func windowOf(_ req: HandsRequest) -> Int?", in: src))
+        let of = try XCTUnwrap(HandsSourceTests.block(after: "func windowOf(_ req: HandsRequest) -> Int?", in: src))
         XCTAssertFalse(of.contains("bareRef("), "no second resolve")
         let wire = try XCTUnwrap(HandsSourceTests.block(after: "func handleWire(_ r: Wire.Request)", in: src))
         XCTAssertTrue(wire.contains("case .success(let full) = bareRef(n, req) { resolved.args[\"ref\"] = .string(full) }"))

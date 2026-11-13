@@ -36,7 +36,7 @@ const LOCAL_NEVER = new Set(["lend", "return", "status"]);
 const CONNECTOR_SERVER = "polycarp-connector";
 
 const READ = ["windows", "snapshot", "find", "get", "shot"];
-const ACT = ["click", "type", "set_value", "press", "click_at", "drag", "scroll", "select", "toggle", "menu", "open"];
+const ACT = ["click", "type", "set_value", "press", "click_at", "drag", "scroll", "select", "toggle", "menu", "run_steps", "open"];
 
 /** Answered here, not by the helper: it's how a session granted computer use learns it isn't available right now. */
 export const COMPUTER_STATUS_TOOL = `${PREFIX}status`;

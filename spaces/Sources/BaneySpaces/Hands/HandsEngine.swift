@@ -105,6 +105,8 @@ final class HandsEngine {
     /// readings before and after. Nil when the queue isn't free within `wait`; work that starts after that sees `cancelled()`
     /// true and must do nothing.
     func serialized<T>(pid: Int32, wait: TimeInterval, _ work: @escaping (_ cancelled: @escaping () -> Bool) -> T) -> T? {
+        // Already on this queue (a `run-steps` transaction): run here, or the queue would wait on itself.
+        if isOnQueue(of: pid) { return work { false } }
         let lock = NSLock(), done = DispatchSemaphore(value: 0)
         var out: T?, gaveUp = false
         let cancelled = { () -> Bool in lock.lock(); defer { lock.unlock() }; return gaveUp }
@@ -120,6 +122,12 @@ final class HandsEngine {
     }
 
     private func run(window w: HandsWindow, budget: TimeInterval, mutating: Bool, check: @escaping Check, _ work: @escaping (_ cancelled: () -> Bool) -> Reply) -> Reply {
+        // A step of `run-steps` already holds this process's queue: its calls run inline, inside that transaction's budget.
+        if isOnQueue(of: w.pid) {
+            let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
+            defer { AgentActivity.shared.end(token) }
+            return check().map(Reply.failed) ?? work { false }
+        }
         let box = Box()
         let done = DispatchSemaphore(value: 0)
         let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
