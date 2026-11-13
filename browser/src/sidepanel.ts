@@ -55,6 +55,7 @@ import { CombinedTab } from "./dialogs/CombinedTab.js";
 import { ConnectTab } from "./dialogs/ConnectTab.js";
 import { CostsTab } from "./dialogs/CostsTab.js";
 import { PrivacyTab } from "./dialogs/PrivacyTab.js";
+import { providersWithKeys } from "./dialogs/provider-key-status.js";
 import { RecordSkillDialog } from "./dialogs/RecordSkillDialog.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
 import { TabkyraSessionListDialog } from "./dialogs/SessionListDialog.js";
@@ -591,13 +592,7 @@ async function selectDefaultModelForAvailableProvider() {
 }
 
 async function getProvidersWithKeys(): Promise<string[]> {
-	const providers = await storage.providerKeys.list();
-	const result: string[] = [];
-	for (const provider of providers) {
-		const key = await storage.providerKeys.get(provider);
-		if (key) result.push(provider);
-	}
-	return result;
+	return [...(await providersWithKeys(storage.providerKeys))];
 }
 
 /** No provider key and no subscription sign-in: the model button says what to do instead of naming a model. */
@@ -909,8 +904,8 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			defaultModel = savedModel;
 		} else {
 			// Try to find a default model for a provider the user already has a key for
-			const providersWithKeys = await getProvidersWithKeys();
-			for (const provider of providersWithKeys) {
+			const keyed = await getProvidersWithKeys();
+			for (const provider of keyed) {
 				const modelId = DEFAULT_MODELS[provider];
 				if (modelId) {
 					const model = getModel(provider as any, modelId);

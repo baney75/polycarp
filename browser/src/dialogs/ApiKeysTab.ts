@@ -10,8 +10,9 @@ import { isFreeModeOn, setFreeMode } from "../models/free-panel.js";
 import { SUBSCRIPTION_PROVIDERS } from "../subscriptions/constants.js";
 import { CustomProvidersTab } from "./CustomProvidersTab.js";
 import "../components/ProviderKeyRow.js";
-import "../subscriptions/SubscriptionsSection.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
+import { SUBSCRIPTIONS_LOADED } from "../subscriptions/SubscriptionsSection.js";
+import { knownProvidersWithKeys, providersWithKeys } from "./provider-key-status.js";
 
 // Providers to hide from the API key list: removed sign-ins, and clouds that need more than a key.
 const HIDDEN_PROVIDERS = new Set([
@@ -34,6 +35,8 @@ const HIDDEN_PROVIDERS = new Set([
  */
 /** Shown without asking. The rest wait behind "Show all providers" or a search. */
 const COMMON_PROVIDERS = new Set(["anthropic", "openai", "google", "openrouter"]);
+/** The longest the tab stays hidden waiting on the helper's subscription answer. */
+export const PROVIDERS_SHOW_CAP_MS = 300;
 
 export class ApiKeysTab extends SettingsTab {
 	/** Opens the model picker (the composer's own); set by the side panel. */
@@ -42,12 +45,20 @@ export class ApiKeysTab extends SettingsTab {
 	/** Providers with a key when the tab opened. They sort first; a key saved now doesn't move its
 	 * row out from under the pointer. */
 	private withKeys = new Set<string>();
+	/** Providers with a key now: a row drawn later (a search, Show all) starts from this instead of reading. */
+	private saved = new Set<string>();
 	/** The provider whose key was just saved: it gets the "Choose a model" prompt. */
 	private justSaved?: string;
 	private readonly custom = new CustomProvidersTab();
 	private showAll = false;
 	/** Custom providers someone set up never hide behind a button. */
 	private hasCustom = false;
+	/** The saved keys have been read: the list is drawn in its final order. */
+	private keysLoaded = false;
+	/** The tab shows once its keys and the subscription answer are in (or after PROVIDERS_SHOW_CAP_MS), so nothing in it jumps. */
+	private shown = false;
+	private showTimer?: ReturnType<typeof setTimeout>;
+	private subscriptionsLoaded = false;
 
 	getTabName(): string {
 		return "Providers";
@@ -57,36 +68,69 @@ export class ApiKeysTab extends SettingsTab {
 		super.connectedCallback();
 		this.addEventListener("provider-key-saved", this.onSaved);
 		this.addEventListener("provider-key-removed", this.onRemoved);
+		this.addEventListener(SUBSCRIPTIONS_LOADED, this.onSubscriptionsLoaded);
+		this.showTimer = setTimeout(() => this.show(), PROVIDERS_SHOW_CAP_MS);
+		// The panel read the keys when it started: the rows are drawn in order now, and checked again below.
+		const known = knownProvidersWithKeys();
+		if (known) this.takeKeys(known);
 		// Nothing takes focus when Settings opens: a focused search box far down the tab drew a ring
 		// and caught typing while out of sight.
-		try {
-			const storage = getAppStorage();
-			for (const p of await storage.providerKeys.list()) if (await storage.providerKeys.get(p)) this.withKeys.add(p);
-		} catch (error) {
-			console.error("Failed to load provider keys:", error);
-		}
-		try {
-			this.hasCustom = (await getTabkyraStorage().customProviders.getAll()).length > 0;
-		} catch (error) {
-			console.error("Failed to load custom providers:", error);
-		}
+		const [keys, custom] = await Promise.all([
+			providersWithKeys(getAppStorage().providerKeys).catch((error) => {
+				console.error("Failed to load provider keys:", error);
+				return new Set<string>();
+			}),
+			getTabkyraStorage()
+				.customProviders.getAll()
+				.catch((error) => {
+					console.error("Failed to load custom providers:", error);
+					return [];
+				}),
+		]);
+		this.takeKeys(keys);
+		this.hasCustom = custom.length > 0;
 		this.requestUpdate();
+	}
+
+	/** Keys read now: they sort first, and each row starts from whether its provider has one. */
+	private takeKeys(keys: ReadonlySet<string>) {
+		for (const p of keys) this.withKeys.add(p);
+		this.saved = new Set(keys);
+		this.keysLoaded = true;
+		this.requestUpdate();
+		if (this.subscriptionsLoaded) this.show();
 	}
 
 	override disconnectedCallback() {
 		super.disconnectedCallback();
 		this.removeEventListener("provider-key-saved", this.onSaved);
 		this.removeEventListener("provider-key-removed", this.onRemoved);
+		this.removeEventListener(SUBSCRIPTIONS_LOADED, this.onSubscriptionsLoaded);
+		clearTimeout(this.showTimer);
+	}
+
+	private onSubscriptionsLoaded = () => {
+		this.subscriptionsLoaded = true;
+		if (this.keysLoaded) this.show();
+	};
+
+	private show() {
+		clearTimeout(this.showTimer);
+		if (this.shown) return;
+		this.shown = true;
+		this.requestUpdate();
 	}
 
 	private onSaved = (e: Event) => {
 		this.justSaved = (e as CustomEvent<string>).detail;
 		// It stays in the short list once a search is cleared.
 		this.withKeys.add(this.justSaved);
+		this.saved.add(this.justSaved);
 		this.requestUpdate();
 	};
 
 	private onRemoved = (e: Event) => {
+		this.saved.delete((e as CustomEvent<string>).detail);
 		if (this.justSaved === (e as CustomEvent<string>).detail) this.justSaved = undefined;
 		this.requestUpdate();
 	};
@@ -116,7 +160,7 @@ export class ApiKeysTab extends SettingsTab {
 	render(): TemplateResult {
 		const providers = this.providers();
 		return html`
-			<div class="flex flex-col gap-5">
+			<div class="flex flex-col gap-5 ${this.shown ? "" : "invisible"}" data-providers-shown=${this.shown ? "true" : "false"}>
 				<div class="flex flex-col gap-1.5">
 					<label class="flex items-start justify-between gap-3 text-sm font-medium text-foreground cursor-pointer">
 						<span>Free mode: use the best free model (OpenRouter)</span>
@@ -165,14 +209,16 @@ export class ApiKeysTab extends SettingsTab {
 					/>
 					<div class="flex flex-col divide-y divide-border">
 						${
-							providers.length === 0
-								? html`<p class="text-sm text-muted-foreground">No provider matches. Add any OpenAI- or Anthropic-compatible endpoint under Custom providers below.</p>`
-								: repeat(
-										providers,
-										(provider) => provider,
-										(provider) =>
-											html`<tabkyra-provider-key .provider=${provider} .label=${providerDisplayName(provider)}></tabkyra-provider-key>`,
-									)
+							!this.keysLoaded
+								? nothing
+								: providers.length === 0
+									? html`<p class="text-sm text-muted-foreground">No provider matches. Add any OpenAI- or Anthropic-compatible endpoint under Custom providers below.</p>`
+									: repeat(
+											providers,
+											(provider) => provider,
+											(provider) =>
+												html`<tabkyra-provider-key .provider=${provider} .label=${providerDisplayName(provider)} .knownHasKey=${this.saved.has(provider)}></tabkyra-provider-key>`,
+										)
 						}
 					</div>
 				</section>
