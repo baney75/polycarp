@@ -23,8 +23,14 @@ extension HandsRouter {
             let acting = actingCheck(w, verb: "menu", delivery: .posted, session: session, also: menuRule(w, session: session, front: true))
             let childrenBefore = noteAction(session: session, pid: w.pid)
             var spelled: [String] = [], press: JSONValue = .null
+            // A panel already up before the press is not the command's (197 r1 second-S1), but nothing else would ever
+            // cancel it, so it is cancelled now, before the press, and the answer says so (205 r1 first-F1).
+            var cancelledEarlier = false
+            for _ in MenuAX.panelElements(w.pid) {
+                guard cancelOnePanel(w, old: []) == true else { break }
+                cancelledEarlier = true
+            }
             let before = MenuAX.ids(), agent = onMain { host.agentWorkspace() }
-            // A panel already up before the press is not the command's (197 r1 second-S1).
             let oldPanels = MenuAX.panelElements(w.pid)
             let watch = MenuWatch<MenuPath.Seen>()
             let reply = HandsEngine.shared.transaction(window: w, check: acting) { [self] cancelled in
@@ -59,6 +65,7 @@ extension HandsRouter {
             var o: [String: JSONValue] = ["action": "menu", "path": .array(spelled.map(JSONValue.string)), "engine": press, "target": targetJSON(w, scope),
                                           "verified": .bool(press["disposition"]?["delivery"]?.string == "delivered_verified")]
             if o["verified"] == false { o["next_call"] = HandsNextCall.after(.unverified, window: Int(w.id)) }
+            if cancelledEarlier { o["cancelled_earlier_panel"] = true }
             if let opened = openedChildren(pid: w.pid, before: childrenBefore, session: session) { o["opened"] = opened }
             return .success(.object(o))
         }
@@ -84,9 +91,11 @@ extension HandsRouter {
         return { [self] settled in
             let windows = MenuAX.windows(w.pid)
             let old = windows.map { x in oldPanels.contains { CFEqual($0, x.element) } }
-            let panel = MenuPath.panel(windows.map { MenuAX.node($0.element) }, old: old) != nil
+            let nodes = windows.map { MenuAX.node($0.element) }
+            let panel = MenuPath.panel(nodes, old: old) != nil
             let all = MenuAX.listed()
-            var new = all.filter { !before.contains($0.id) && $0.visible }
+            // A panel that is a window of its own is the panel, cancelled as one, never an escape (205 r1 second-S1).
+            var new = MenuPath.fresh(all, before: before, panels: Set(MenuPath.panels(nodes).compactMap { windows[$0].id }))
             guard !new.isEmpty else { return panel ? MenuPath.Seen(panel: true) : nil }
             // One trip to the main thread per look, not one per window (first-F1).
             let ids = new.map(\.id)
@@ -102,10 +111,11 @@ extension HandsRouter {
     /// Undoes what the watch saw, through the engine and Polycarp's own close, and says it as the call's error. Only a
     /// window tied to the press is closed; any other is reported and left alone (192 r1 first-F2).
     /// A panel and windows seen in the same watch are both undone; the panel's error leads.
+    /// A window that closed on its own since a look saw it is reported as gone, not closed or still open (205 r1 second-S2).
     private func undo(_ seen: MenuPath.Seen, _ w: HandsWindow, path: String, oldPanels: [AXUIElement]) -> HandsError {
-        let found = seen.escapes
+        let (found, gone) = seen.split(listed: MenuAX.ids())
         let closed = found.filter(\.tied).map { x in onMain { host.close(x.window.id) } }.allSatisfy { $0 }
-        let escape = found.isEmpty ? nil : MenuPath.escapeRefusal(path, found: found, closed: closed, window: Int(w.id))
+        let escape = seen.escapes.isEmpty ? nil : MenuPath.escapeRefusal(path, found: found, gone: gone, closed: closed, window: Int(w.id))
         guard seen.panel else { return escape ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true) }
         var e = cancelPanels(w, within: 0.3, old: oldPanels) ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true)
         if let escape { e.message += "; also: " + escape.message }
@@ -117,17 +127,21 @@ extension HandsRouter {
     private func cancelPanels(_ w: HandsWindow, within: TimeInterval, old oldPanels: [AXUIElement] = []) -> HandsError? {
         let deadline = Date().addingTimeInterval(within)
         repeat {
-            let windows = MenuAX.windows(w.pid)
-            let nodes = windows.map { MenuAX.node($0.element) }
-            if let i = MenuPath.panel(nodes, old: windows.map { x in oldPanels.contains { CFEqual($0, x.element) } }) {
-                var target = w
-                target.id = windows[i].id ?? w.id
-                let title = MenuPath.cancelTitle(nodes[i], cancelButton: MenuAX.cancelTitle(windows[i].element))
-                return MenuPath.panelRefusal(w.app, cancelled: title.map { cancelPanel(target, title: $0, scope: check(w)) } ?? false)
-            }
+            if let cancelled = cancelOnePanel(w, old: oldPanels) { return MenuPath.panelRefusal(w.app, cancelled: cancelled) }
             Thread.sleep(forTimeInterval: 0.05)
         } while Date() < deadline
         return nil
+    }
+
+    /// The app's first Open or Save panel not in `old`, cancelled: nil when there is none, else whether the cancel went through.
+    private func cancelOnePanel(_ w: HandsWindow, old oldPanels: [AXUIElement]) -> Bool? {
+        let windows = MenuAX.windows(w.pid)
+        let nodes = windows.map { MenuAX.node($0.element) }
+        guard let i = MenuPath.panel(nodes, old: windows.map { x in oldPanels.contains { CFEqual($0, x.element) } }) else { return nil }
+        var target = w
+        target.id = windows[i].id ?? w.id
+        let title = MenuPath.cancelTitle(nodes[i], cancelButton: MenuAX.cancelTitle(windows[i].element))
+        return title.map { cancelPanel(target, title: $0, scope: check(w)) } ?? false
     }
 
     /// Presses the panel's Cancel button through the engine; true when that press went through.
@@ -204,11 +218,11 @@ enum MenuAX {
             out.append(.init(items: items, at: at))
             level = children(level[at]).first.map(children) ?? []
         }
-        // A path that stops at a submenu lists it: its items are judged too (197 r1 second-S4).
-        if let last = out.last, last.items[last.at].submenu {
+        // A path that stops at a submenu of a menu (Edit > Find) lists it: its items are judged too (197 r1 second-S4). Only
+        // there, the one place `appended` reads them; one that can't be read is left out and `appended` refuses (205 r1 first-F2).
+        if out.count == 2, out[1].items[out[1].at].submenu {
             let opens = level.compactMap(item)
-            guard opens.count == level.count else { return nil }
-            out[out.count - 1].opens = opens
+            if opens.count == level.count { out[1].opens = opens }
         }
         return out
     }

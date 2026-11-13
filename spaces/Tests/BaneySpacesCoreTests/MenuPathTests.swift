@@ -456,4 +456,70 @@ final class MenuPathTests: XCTestCase {
         XCTAssertNotNil(MenuPath.policy(dictation))
         XCTAssertNotNil(MenuPath.policy(steps(3, edit, 4)), "unread items: refused")
     }
+
+    /// 205 r1 second-S1: an Open or Save panel that is a window of its own is the panel, never also an escape.
+    func testAPanelWindowIsNoEscape() throws {
+        typealias L = MenuPath.Listed
+        let panel = L(id: 21, pid: 50, owner: "TextEdit", visible: true, workspace: nil), other = L(id: 22, pid: 50, owner: "TextEdit", visible: true, workspace: nil)
+        let all = [L(id: 1, pid: 50, owner: "TextEdit", visible: true, workspace: 3), panel, other, L(id: 23, pid: 50, owner: "TextEdit", visible: false, workspace: nil)]
+        XCTAssertEqual(MenuPath.fresh(all, before: [1], panels: [21]), [other])
+        XCTAssertEqual(MenuPath.fresh(all, before: [1], panels: []).map(\.id), [21, 22])
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
+        let step = try XCTUnwrap(HandsSourceTests.block(after: "private func menuWatchStep", in: src))
+        XCTAssertTrue(step.contains("var new = MenuPath.fresh(all, before: before, panels: Set(MenuPath.panels(nodes).compactMap { windows[$0].id }))"))
+    }
+
+    /// 205 r1 second-S2: a window that closed on its own before the undo is said to be gone, never "still open".
+    func testAWindowThatClosedOnItsOwnIsReportedGone() throws {
+        typealias L = MenuPath.Listed
+        let tips = L(id: 31, pid: 88, owner: "Tips", visible: true, workspace: nil), viewer = L(id: 32, pid: 77, owner: "Character Viewer", visible: true, workspace: nil)
+        let seen = MenuPath.Seen(escapes: [.init(tips, tied: true), .init(viewer, tied: true)])
+        let (open, gone) = seen.split(listed: [1, 32])
+        XCTAssertEqual(open.map(\.window.id), [32])
+        XCTAssertEqual(gone.map(\.window.id), [31])
+        let e = MenuPath.escapeRefusal("Hilfe > Tipps", found: [], gone: gone, closed: true, window: 4)
+        XCTAssertEqual(e.code, .outsideAgentWorkspace)
+        XCTAssertTrue(e.message.contains("a window of Tips closed again on its own") && !e.message.contains("still open") && !e.message.contains("it was closed"), e.message)
+        let both = MenuPath.escapeRefusal("x", found: open, gone: gone, closed: false, window: 4)
+        XCTAssertTrue(both.message.contains("Character Viewer") && both.message.contains("still open") && both.message.contains("Tips closed again on its own"), both.message)
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
+        let undo = try XCTUnwrap(HandsSourceTests.block(after: "private func undo(", in: src))
+        let split = try XCTUnwrap(undo.range(of: "seen.split(listed: MenuAX.ids())")), close = try XCTUnwrap(undo.range(of: "host.close("))
+        XCTAssertLessThan(split.lowerBound, close.lowerBound, "listed again before anything is closed")
+    }
+
+    /// 205 r1 first-F1: a panel left from an earlier command is cancelled before the press and said, not left forever.
+    func testAnEarlierPanelIsCancelledBeforeThePress() throws {
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
+        let menu = try XCTUnwrap(HandsSourceTests.block(after: "func menu(_ req: HandsRequest) -> HandsEnvelope", in: src))
+        let cancel = try XCTUnwrap(menu.range(of: "guard cancelOnePanel(w, old: []) == true else { break }"))
+        let old = try XCTUnwrap(menu.range(of: "let oldPanels = MenuAX.panelElements(w.pid)")), tx = try XCTUnwrap(menu.range(of: "HandsEngine.shared.transaction("))
+        let wait = try XCTUnwrap(menu.range(of: #"awaitUse(w, verb: "menu""#))
+        XCTAssertTrue(wait.lowerBound < cancel.lowerBound && cancel.lowerBound < old.lowerBound && old.lowerBound < tx.lowerBound)
+        XCTAssertTrue(menu.contains(#"if cancelledEarlier { o["cancelled_earlier_panel"] = true }"#))
+        let panels = try XCTUnwrap(HandsSourceTests.block(after: "private func cancelPanels(", in: src))
+        XCTAssertTrue(panels.contains("cancelOnePanel(w, old: oldPanels)"), "one cancel, shared")
+    }
+
+    /// 205 r1 first-F2: only an Edit-menu submenu is listed for `appended`, and an unread listing refuses only through it.
+    func testOnlyAnEditSubmenuIsListedAndAnUnreadOneRefusesThroughAppended() throws {
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
+        let read = try XCTUnwrap(HandsSourceTests.block(after: "static func steps(pid: Int32, path: [String])", in: src))
+        XCTAssertTrue(read.contains("if out.count == 2, out[1].items[out[1].at].submenu {"))
+        XCTAssertTrue(read.contains("if opens.count == level.count { out[1].opens = opens }"))
+        XCTAssertFalse(read.contains("guard opens.count == level.count else { return nil }"), "an unread listing no longer fails the read")
+        let edit = [I(cmdChar: "Z", title: "Widerrufen"), Self.sep, I(cmdChar: "A", title: "Alles ausw\u{E4}hlen"), Self.sep, I(title: "Suchen", submenu: true)]
+        XCTAssertNotNil(MenuPath.policy(steps(3, edit, 4)), "Edit > Find unread: refused through appended")
+        let format = [I(title: "Schrift", submenu: true)]
+        XCTAssertNil(MenuPath.policy(steps(4, format, 0)), "Format > Font unread: listed as before")
+    }
+
+    /// 205 r1 first-F3: the refusal says what it closes, not that the shared find text is protected.
+    func testTheFindRefusalSaysWhatItRefuses() {
+        let edit = [I(cmdChar: "Z", title: "Widerrufen"), Self.sep, I(cmdChar: "A", title: "Alles ausw\u{E4}hlen"), Self.sep, I(title: "Suchen", submenu: true)]
+        let find = [I(cmdChar: "F", title: "Suchen \u{2026}"), I(cmdChar: "E", title: "Auswahl f\u{FC}r Suche verwenden")]
+        let m = MenuPath.policy(steps(3, edit, 4, sub: find, 1))?.message ?? ""
+        XCTAssertTrue(m.contains("Use Selection for Find puts the selection on the find text"), m)
+        XCTAssertFalse(m.contains("which is Donovan's"), m)
+    }
 }
