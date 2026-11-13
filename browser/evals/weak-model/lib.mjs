@@ -106,3 +106,72 @@ export function clashingIds(ids) {
 	}
 	return undefined;
 }
+
+
+/**
+ * A guarded round's per-task floors, counted from its transcripts: each task's pass and run count in summary.json must be
+ * what runs.jsonl holds, and the pass count must reach the floor. Returns what is wrong, empty when nothing is.
+ */
+export function checkGuard(label, floors, summary, runs) {
+	const wrong = [];
+	for (const [id, want] of Object.entries(floors)) {
+		const said = summary.tasks?.[id];
+		const of = runs.filter((r) => r.task === id);
+		const pass = of.filter((r) => r.pass === true).length;
+		if (!said) wrong.push(`${label} has no ${id} runs in summary.json`);
+		else if (said.pass !== pass || said.of !== of.length) wrong.push(`${label} ${id}: summary.json says ${said.pass}/${said.of}, runs.jsonl holds ${pass}/${of.length}`);
+		if (pass < want) wrong.push(`${label} ${id}: ${pass}/${of.length} in runs.jsonl, baseline ${want}`);
+	}
+	return wrong;
+}
+
+/**
+ * Why a committed round no longer matches its baseline entry, or nothing. Like is compared with like: the runs must be
+ * the round's model, list the round's tool count for their kind, and cover exactly the round's task set; then the
+ * total is fixed, and the score may only rise. A rerun with another model, another tool list or more tasks belongs
+ * under a new label.
+ */
+export function checkRound(label, want, s, runs) {
+	const p = [];
+	const tasks = new Set(runs.map((r) => r.task));
+	const extra = [...tasks].filter((t) => !want.tasks.includes(t));
+	const short = want.tasks.filter((t) => !tasks.has(t));
+	if (extra.length || short.length) p.push(`${label}: task set differs: ${[extra.length && `${extra.join(", ")} not in the round`, short.length && `${short.join(", ")} short`].filter(Boolean).join("; ")}`);
+	for (const r of runs) {
+		if (r.model !== want.model) p.push(`${label}: ${r.task} t${r.trial} ran ${r.model}, the round is ${want.model}`);
+		if (r.toolCount !== want.tools[r.kind]) p.push(`${label}: ${r.task} t${r.trial} listed ${r.toolCount} tools, the round's ${r.kind} runs listed ${want.tools[r.kind]}`);
+	}
+	if (want.profile && s.profile !== want.profile) p.push(`${label}: profile ${s.profile}, the round is ${want.profile}`);
+	if (s.total !== want.total) p.push(`${label}: ${s.total} runs, baseline has ${want.total}`);
+	if (s.passed < want.passed) p.push(`${label}: ${s.passed}/${s.total} passed, baseline ${want.passed}`);
+	if (runs.length !== s.total) p.push(`${label}: runs.jsonl has ${runs.length} runs`);
+	if (runs.filter((r) => r.pass).length !== s.passed) p.push(`${label}: summary.json disagrees with its runs`);
+	return p;
+}
+
+/**
+ * Why a round's classes.json disagrees with its runs, or nothing. Each friction entry's `match` names the calls it
+ * counts in passing runs ({ tools, kind?, tasks?, error = true, text? }); each listed failure must be a failed run.
+ */
+export function checkClasses(classes, runs) {
+	const p = [];
+	for (const e of classes.friction_in_passing_runs ?? []) {
+		if (!e.match) {
+			p.push(`${e.class}: no match, so its count can't be checked`);
+			continue;
+		}
+		const m = e.match;
+		const n = runs
+			.filter((r) => r.pass && (!m.kind || r.kind === m.kind) && (!m.tasks || m.tasks.includes(r.task)))
+			.flatMap((r) => r.calls)
+			.filter((c) => m.tools.includes(c.tool) && (m.error === false ? true : c.error === true) && (!m.text || (c.result ?? "").includes(m.text))).length;
+		if (n !== e.count) p.push(`${e.class} says ${e.count}, runs.jsonl has ${n} (${e.detail ?? m.tools.join(",")})`);
+	}
+	for (const f of classes.failures ?? []) {
+		const [task, t] = f.run.split(" t");
+		const r = runs.find((x) => x.task === task && x.trial === Number(t));
+		if (!r) p.push(`${f.run} is listed as a failure but has no run`);
+		else if (r.pass) p.push(`${f.run} is listed as a failure but passed`);
+	}
+	return p;
+}

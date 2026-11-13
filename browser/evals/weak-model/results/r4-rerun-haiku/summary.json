@@ -1,0 +1,17 @@
+{
+	"label": "r4-rerun-haiku",
+	"model": "claude-haiku-5-5",
+	"trials": 2,
+	"profile": "full",
+	"date": "2026-11-13T03:37:50.319Z",
+	"passed": 5,
+	"total": 6,
+	"calls": 66,
+	"toolErrors": 0,
+	"resultChars": 12820,
+	"tasks": {
+		"booking-lookup": {"pass":2,"of":2,"calls":[8,8],"errors":[0,0]},
+		"select-date": {"pass":2,"of":2,"calls":[17,15],"errors":[0,0]},
+		"signup-validation": {"pass":1,"of":2,"calls":[9,9],"errors":[0,0]}
+	}
+}

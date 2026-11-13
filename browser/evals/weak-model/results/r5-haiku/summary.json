@@ -1,0 +1,17 @@
+{
+	"label": "r5-haiku",
+	"model": "claude-haiku-5-5",
+	"trials": 2,
+	"profile": "full",
+	"date": "2026-11-13T03:45:14.447Z",
+	"passed": 6,
+	"total": 6,
+	"calls": 66,
+	"toolErrors": 0,
+	"resultChars": 14001,
+	"tasks": {
+		"booking-lookup": {"pass":2,"of":2,"calls":[9,9],"errors":[0,0]},
+		"select-date": {"pass":2,"of":2,"calls":[16,14],"errors":[0,0]},
+		"signup-validation": {"pass":2,"of":2,"calls":[9,9],"errors":[0,0]}
+	}
+}

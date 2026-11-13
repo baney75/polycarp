@@ -88,15 +88,26 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// above, the budget is theirs plus these 131 (32,676 measured).
 	// get_page_text's query adds 143 (32,824): finding a passage in a 400-page PDF or a long page by its words, with
 	// page numbers, instead of reading it whole or paging through it 50,000 characters at a time.
-	assert.ok(bytes <= 32824, `tools/list is ${bytes} bytes, over the 32,824 budget`);
+	// read_page's snapshot adds 111 (32,935): a later slice names the read it continues, so a click between two slices
+	// can't reshuffle them, and a slice from another read is refused.
+	assert.ok(bytes <= 32935, `tools/list is ${bytes} bytes, over the 32,935 budget`);
 	// The loop line teaching `changes` (D43) adds 47 bytes; it saves a read_page after most actions.
-	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2995, "instructions over 2,995 bytes");
+	// The password rule covering one the user gave, with its tabs_show handoff, adds 92 (evals/weak-model: Haiku typed
+	// the password a signup prompt supplied, and submitted, when the rule didn't say it covered that).
+	// The booking clause adds 115 (Haiku filled a booking the user asked for and stopped before "Book now"), and
+	// leading the handoff line with tabs_show adds 8 (a small-profile run told the user in text instead).
+	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 3210, "instructions over 3,210 bytes");
 });
 
 test("instructions state the safety rules", () => {
 	const instructions = mcp.getInstructions() ?? "";
 	assert.match(instructions, /untrusted data/);
 	assert.match(instructions, /Ask the user before you act under their sign-in/);
+	// A booking the user asked for needs no second ask (Haiku stopped before "Book now" on one), but only that exact
+	// action: the clause must keep "anything more still needs one", or a lookup could turn into a booking.
+	assert.match(instructions, /No extra ask when the request names that exact action \(this booking, this message\); anything more still needs one\./);
+	// A password the user gave is still one Polycarp doesn't type: Haiku typed it when the rule didn't say so.
+	assert.match(instructions, /Do not enter passwords or payment details, even ones the user gave you: enter the rest, leave those empty, don't submit\. Then call tabs_show and ask the user to finish; do the same when a page needs a sign-in or captcha\./);
 });
 
 test("skill_match routes a task to one skill, or none, and skill_read returns that skill", async () => {
@@ -139,6 +150,70 @@ test("a tool call without a browser fails fast with the not-connected message", 
 	assert.equal(result.isError, true);
 	assert.equal(result.content[0].text, NOT_CONNECTED);
 	assert.ok(Date.now() - started < 5000, "did not wait for a bridge that never existed");
+});
+
+test("skill_match doesn't send a plain page task to the browser skill the instructions already are", async () => {
+	// Round 1 of evals/weak-model: Haiku read polycarp-browser (8,000 characters) on six plain page tasks.
+	const plain = await mcp.callTool({ name: "skill_match", arguments: { task: "fill the RSVP form on this page" } });
+	assert.match(plain.content[0].text, /^none: no skill fits this task/);
+	assert.doesNotMatch(plain.content[0].text, /polycarp-browser/);
+	// first-F3: the browser skill ranking first doesn't hide a real skill below it.
+	const bulk = await mcp.callTool({ name: "skill_match", arguments: { task: "use the browser to delete all my old drafts" } });
+	assert.match(bulk.content[0].text, /^bulk-actions /m);
+	assert.match(bulk.content[0].text, /Next: skill_read \{"name":"bulk-actions"\}/);
+	assert.doesNotMatch(bulk.content[0].text, /polycarp-browser/);
+	const research = await mcp.callTool({ name: "skill_match", arguments: { task: "find peer-reviewed studies on sleep and memory" } });
+	assert.match(research.content[0].text, /^academic-research/);
+});
+
+test("page_markdown with no Firecrawl set up names the tools that work instead", async () => {
+	// Round 1 of evals/weak-model: Haiku tried page_markdown on a PDF and got only setup advice meant for the user.
+	const md = await mcp.callTool({ name: "page_markdown", arguments: { url: "https://example.com/" } });
+	assert.equal(md.isError, true);
+	assert.match(md.content[0].text, /Read the page with navigate, then get_page_text/);
+});
+
+// PR 201 second-F6: what a tool result says to do instead names only this session's tools. A session with page_markdown
+// but no navigate was told to read the page with navigate, and following that is a refusal.
+test("page_markdown with no Firecrawl, in a session without navigate, names no tool it lacks", async () => {
+	const { build } = await import("esbuild");
+	const out = join(root, "mcp-bundle-scoped-md.mjs");
+	await build({ entryPoints: [join(dirname(fileURLToPath(import.meta.url)), "..", "src", "mcp.ts")], bundle: true, platform: "node", format: "esm", outfile: out, loader: { ".md": "text", ".pub": "text" }, logLevel: "silent" });
+	const { createMcpServer } = await import(out);
+	const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+	const saved = { dir: process.env.TABKYRA_CONFIG_DIR, url: process.env.FIRECRAWL_API_URL };
+	const config = join(root, "scoped-md-config");
+	mkdirSync(config, { recursive: true });
+	process.env.TABKYRA_CONFIG_DIR = config;
+	delete process.env.FIRECRAWL_API_URL;
+	const { server, client: bridge } = createMcpServer({ name: "md", session: "scoped-md", allowedTools: new Set(["page_markdown", "read_page"]) });
+	const [a, b] = InMemoryTransport.createLinkedPair();
+	await server.connect(a);
+	const client = new Client({ name: "scoped-md-test", version: "0.0.0" });
+	await client.connect(b);
+	try {
+		const md = await client.callTool({ name: "page_markdown", arguments: { url: "https://example.com/" } });
+		assert.equal(md.isError, true);
+		assert.match(md.content[0].text, /^No Firecrawl server is set up here, so page_markdown, map and crawl can't run\. Ask the user to set one up/);
+		assert.doesNotMatch(md.content[0].text, /\bnavigate\b|get_page_text/);
+	} finally {
+		await client.close();
+		bridge.close();
+		if (saved.dir === undefined) delete process.env.TABKYRA_CONFIG_DIR;
+		else process.env.TABKYRA_CONFIG_DIR = saved.dir;
+		if (saved.url !== undefined) process.env.FIRECRAWL_API_URL = saved.url;
+	}
+});
+
+test("a plain wait {ms} pauses without a browser; a wait for the page still needs one", async () => {
+	// A weak model waiting on a native app used wait {ms} and got not-connected (evals/weak-model, round 1).
+	const started = Date.now();
+	const pause = await mcp.callTool({ name: "wait", arguments: { ms: 300 } });
+	assert.ok(!pause.isError, pause.content[0].text);
+	assert.deepEqual(JSON.parse(pause.content[0].text), { waited: 300 });
+	assert.ok(Date.now() - started >= 280);
+	const forText = await mcp.callTool({ name: "wait", arguments: { text: "Order confirmed", ms: 100 } });
+	assert.equal(forText.content[0].text, NOT_CONNECTED);
 });
 
 test("status reports not connected without failing", async () => {
@@ -874,6 +949,19 @@ test("read tools cap what they hand an agent, say when they cut, and page with o
 		assert.equal(last("snapshot").maxNodes, 301, "asks for one more than it shows, to know it cut");
 		assert.equal(last("snapshot").maxTextChars, 3001);
 		assert.doesNotMatch(page, /\be300\b/);
+		// first-F4: an extension from before ranking (this stand-in sends no ranked): the interactive read asks for one more
+		// than it shows, so it says it cut, and an offset is refused rather than answered with the first controls again.
+		const inter = await run("read_page", { filter: "interactive" });
+		assert.equal(last("snapshot").maxNodes, 51);
+		assert.match(inter, /element list stopped at 50/);
+		assert.doesNotMatch(inter, /\be50\b|text stopped/);
+		const onward = await c.callTool({ name: "read_page", arguments: { filter: "interactive", offset: 50 } });
+		assert.equal(onward.isError, true);
+		assert.match(onward.content[0].text, /older than ranked reads, so it can't continue a read from an offset/);
+		// second-F12: an offset on a full read is refused, not ignored.
+		const full = await c.callTool({ name: "read_page", arguments: { offset: 50 } });
+		assert.equal(full.isError, true);
+		assert.match(full.content[0].text, /^bad_params: offset and snapshot work only with \{"filter":"interactive"\}/);
 		// The net under every tool: a 300,000 character answer comes back at 100,000 with what was left out.
 		const html = await run("get_page_html");
 		assert.ok(html.length <= 100_000, `get_page_html returned ${html.length}`);
