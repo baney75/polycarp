@@ -23,11 +23,20 @@ import AppKit
 
 /// One window from the window server's on-screen list, front to back.
 struct Seen {
-    let pid: pid_t; let layer: Int; let alpha: Double; let bounds: CGRect; var owner = ""
-    /// Hides what is under it: alpha over 0.5 and a window known to draw opaque, an app's ordinary window or Polycarp's
-    /// open cover (a floating panel). A clear overlay with alpha 1 (another app's, the agent cursor's) hides nothing.
-    var hides: Bool { alpha > 0.5 && (layer == 0 || (owner == "Polycarp" && layer == 3)) }
+    let pid: pid_t; let layer: Int; let alpha: Double; let bounds: CGRect
+    /// Hides what is under it: fully opaque (alpha 1; a translucent window shows what is under it) and a window known
+    /// to draw opaque: Polycarp's open cover (its pid, at `OpenFlashGuard.coverLevel`), or another app's ordinary
+    /// window. Polycarp's own other windows (the agent cursor's overlay, at layer 0 or 25) and any other app's overlay
+    /// hide nothing.
+    func hides(cover polycarp: pid_t) -> Bool {
+        alpha >= 0.999 && (pid == polycarp ? layer == coverLevel : layer == 0)
+    }
 }
+
+/// `OpenFlashGuard.coverLevel`, the covers' window level (a Core test pins the two together).
+let coverLevel = 4
+/// Polycarp's pid, by bundle id, as the window server owns its covers (owner names can change; the pid can't).
+let polycarpPid: pid_t = NSRunningApplication.runningApplications(withBundleIdentifier: "com.baney.polycarp").first?.processIdentifier ?? -1
 
 /// The seen check gates only with the cover on (`agentOpenFlashGuard cover`). With it off (the default), the times are
 /// printed as known and fail nothing: every open of a starting app shows for about 1 s until the cover is on by default.
@@ -37,7 +46,7 @@ func seenFails(_ ms: Double, guardOn: Bool, bar: Double = 50) -> Bool { guardOn 
 /// so overlaps of several windows count right. Returns the shown area in pt² and the bounding box of what shows.
 func shown(_ i: Int, in list: [Seen], displays: [CGRect]) -> (area: CGFloat, box: CGRect) {
     let w = list[i].bounds
-    let front = list[..<i].filter(\.hides).map(\.bounds)
+    let front = list[..<i].filter { $0.hides(cover: polycarpPid) }.map(\.bounds)
     let step: CGFloat = 4
     var area: CGFloat = 0, box = CGRect.null
     var y = w.minY + step / 2
@@ -69,13 +78,20 @@ if CommandLine.arguments.contains("--selftest") {
     check("a window in the middle of the screen is seen", seen(0, in: [app], displays: screen) != nil)
     check("a parked window's 1 pt corner is not", seen(0, in: [Seen(pid: 7, layer: 0, alpha: 1, bounds: CGRect(x: 1511, y: 981, width: 500, height: 400))], displays: screen) == nil)
     check("a window macOS clamped to a 1x32 pt strip is not", seen(0, in: [Seen(pid: 7, layer: 0, alpha: 1, bounds: CGRect(x: 1511, y: 950, width: 500, height: 400))], displays: screen) == nil)
-    let cover = Seen(pid: 1, layer: 3, alpha: 1, bounds: CGRect(x: 0, y: 0, width: 1512, height: 982), owner: "Polycarp")
+    // The pid the real run uses, so the selftest goes through the same identity path (a stand-in when Polycarp isn't running).
+    let pc = polycarpPid > 0 ? polycarpPid : 4242
+    print("cover owner: pid \(pc)\(polycarpPid > 0 ? " (Polycarp, by bundle id)" : " (stand-in: Polycarp isn't running)")")
+    let full = CGRect(x: 0, y: 0, width: 1512, height: 982)
+    let cover = Seen(pid: pc, layer: coverLevel, alpha: 1, bounds: full)
     check("one under Polycarp's cover is not", seen(1, in: [cover, app], displays: screen) == nil)
-    check("one under another app's alpha-1 overlay is", seen(1, in: [Seen(pid: 3, layer: 25, alpha: 1, bounds: cover.bounds, owner: "Overlay"), app], displays: screen) != nil)
-    check("one under the agent cursor's overlay is", seen(1, in: [Seen(pid: 1, layer: 25, alpha: 1, bounds: cover.bounds, owner: "Polycarp"), app], displays: screen) != nil)
+    check("one under another app's window at the cover's level is", seen(1, in: [Seen(pid: 3, layer: coverLevel, alpha: 1, bounds: full), app], displays: screen) != nil)
+    check("one under another app's alpha-1 overlay is", seen(1, in: [Seen(pid: 3, layer: 25, alpha: 1, bounds: full), app], displays: screen) != nil)
+    check("one under the agent cursor's overlay is", seen(1, in: [Seen(pid: pc, layer: 25, alpha: 1, bounds: full), app], displays: screen) != nil)
+    check("one under a layer-0 Polycarp overlay is", seen(1, in: [Seen(pid: pc, layer: 0, alpha: 1, bounds: full), app], displays: screen) != nil)
+    check("one under a translucent ordinary window (alpha 0.6) is", seen(1, in: [Seen(pid: 3, layer: 0, alpha: 0.6, bounds: full), app], displays: screen) != nil)
     check("with the cover off, a 1 s open is known, not failed", !seenFails(1000, guardOn: false))
     check("with it on, 51 ms fails and 50 ms passes", seenFails(51, guardOn: true) && !seenFails(50, guardOn: true))
-    check("one under a clear overlay is", seen(1, in: [Seen(pid: 1, layer: 25, alpha: 0, bounds: cover.bounds, owner: "Polycarp"), app], displays: screen) != nil)
+    check("one under a clear overlay is", seen(1, in: [Seen(pid: pc, layer: 25, alpha: 0, bounds: full), app], displays: screen) != nil)
     let half = Seen(pid: 2, layer: 0, alpha: 1, bounds: CGRect(x: 400, y: 300, width: 250, height: 400))
     check("half covered, the other half shows", seen(1, in: [half, app], displays: screen).map { $0.minX >= 646 } == true)
     check("off every display is not", seen(0, in: [Seen(pid: 7, layer: 0, alpha: 1, bounds: CGRect(x: 3000, y: 0, width: 500, height: 400))], displays: screen) == nil)
@@ -183,8 +199,8 @@ final class Sampler {
                 let list = info.compactMap { w -> (Seen, String)? in
                     guard let pid = (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
                           let b = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }) else { return nil }
-                    let owner = (w[kCGWindowOwnerName as String] as? String) ?? ""
-                    return (Seen(pid: pid, layer: (w[kCGWindowLayer as String] as? Int) ?? 0, alpha: (w[kCGWindowAlpha as String] as? Double) ?? 1, bounds: b, owner: owner), owner)
+                    return (Seen(pid: pid, layer: (w[kCGWindowLayer as String] as? Int) ?? 0, alpha: (w[kCGWindowAlpha as String] as? Double) ?? 1, bounds: b),
+                            (w[kCGWindowOwnerName as String] as? String) ?? "")
                 }
                 let windows = list.map(\.0)
                 lock.lock()
@@ -234,6 +250,7 @@ defer { try? FileManager.default.removeItem(at: note) }
 
 if agentShown() { print("untested live: the agent workspace is shown, so a window there can't be told from a flash"); exit(3) }
 let seenBarMs = 50.0
+// The app's own domain, the one it reads the flag from (`OpenFlashGuard.defaultsDomain`).
 let guardOn = UserDefaults(suiteName: "com.baney.polycarp")?.string(forKey: "agentOpenFlashGuard") == "cover"
 print(guardOn ? "seen check: gating (agentOpenFlashGuard cover)" : "seen check: known, flag off (times printed, not failed)")
 var opens = 0, identified = 0, strays = 0, focusChanges = 0, closes = 0, closeMismatches = 0, flashes = 0

@@ -3,66 +3,135 @@ import BaneySpacesCore
 import ScreenCaptureKit
 
 /// Runs `OpenFlashGuard.cover` around one `agent open` launch when it is set in defaults. The watch starts when the
-/// launch hands back its process and covers only that process's windows (`OpenFlashGuard.Plan`). Trace lines carry ms
-/// since the watch began, for the probe's numbers.
+/// launch hands back its process and covers only that process's windows (`OpenFlashGuard.Plan`). Each queued cover
+/// carries a `Ticket` and is raised only while it still holds. Trace lines carry ms since the watch began.
 enum OpenFlashWatch {
-    static var mode: OpenFlashGuard { .from(UserDefaults.standard.string(forKey: OpenFlashGuard.defaultsKey)) }
-    /// The launches being watched, on the main thread, so a workspace switch can take their covers down.
-    private static var live: [ObjectIdentifier: Launch] = [:]
+    static var mode: OpenFlashGuard {
+        .from(UserDefaults(suiteName: OpenFlashGuard.defaultsDomain)?.string(forKey: OpenFlashGuard.defaultsKey))
+    }
+    /// The launches capturing or watching, on the main thread: one at a time (`OpenFlashGuard.turn`).
+    private static var live: [UInt64: Launch] = [:]
+    private static var launches: UInt64 = 0
+    /// Bumped on every workspace switch (and macOS Space change): a cover from before it is never raised.
+    private(set) static var workspaces: UInt64 = 0
+    private static var lastShowing: Set<Int> = []
+    private static var observing = false
 
     /// Runs `launch`, which must call `started` (on any thread) with what its completion handler got, before the claim.
-    static func around(app: String, before: Set<pid_t>, agentShown: @escaping () -> Bool,
+    /// `showing` is the workspaces on screen, `agent` the agent's.
+    static func around(app: String, before: Set<pid_t>, showing: @escaping () -> Set<Int>, agent: Int,
                        launch: @escaping (_ started: @escaping (NSRunningApplication?) -> Void) -> Void) {
-        guard mode == .cover, !agentShown() else { return launch { _ in } }
-        let screens = Windows.screens(), primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        // The screen as it was, taken before the launch so the new window isn't in it.
-        capture(screens) { shots in
-            DispatchQueue.main.async {
-                guard let shots else {
-                    Trace.log("flash guard cover: no shot of every display (Screen Recording off, or a capture failed); \(app) opens unguarded")
+        guard mode == .cover, !showing().contains(agent) else { return launch { _ in } }
+        observe(showing())
+        waitTurn(since: ProcessInfo.processInfo.systemUptime) { guarded in
+            guard guarded else {
+                Trace.log("flash guard cover: another guarded open still running after \(OpenFlashGuard.waitForTurn) s; \(app) opens unguarded")
+                return launch { _ in }
+            }
+            guard !showing().contains(agent) else { return launch { _ in } }
+            launches += 1
+            let screens = Windows.screens(), primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+            let l = Launch(gen: launches, workspaces: workspaces, app: app, screens: screens, primaryHeight: primaryHeight)
+            live[l.gen] = l
+            // The screen as it was, taken before the launch so the new window isn't in it, within `captureLimit`.
+            var fired = false
+            let go: ([CGImage]?, String) -> Void = { shots, why in
+                guard !fired else { return }
+                fired = true
+                guard let shots, l.workspaces == workspaces else {
+                    live[l.gen] = nil
+                    Trace.log("flash guard cover: \(shots == nil ? why : "a workspace switch during the capture"); \(app) opens unguarded")
                     return launch { _ in }
                 }
-                let l = Launch(app: app, screens: screens, shots: shots, primaryHeight: primaryHeight, agentShown: agentShown)
+                l.shots = shots
                 launch { got in DispatchQueue.main.async { l.started(got, before: before) } }
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + OpenFlashGuard.captureLimit) { go(nil, "no shot within \(Int(OpenFlashGuard.captureLimit * 1000)) ms") }
+            capture(screens) { shots in DispatchQueue.main.async { go(shots, "no shot of every display (Screen Recording off, or a capture failed)") } }
         }
     }
 
-    /// The agent workspace may be shown now: every launch drops its covers if so.
-    static func environmentChanged() { for l in live.values { l.redraw() } }
+    /// One guarded open at a time: waits for the one before it to finish, up to `waitForTurn`.
+    private static func waitTurn(since: Double, _ body: @escaping (Bool) -> Void) {
+        switch OpenFlashGuard.turn(busy: !live.isEmpty, waited: ProcessInfo.processInfo.systemUptime - since) {
+        case .go: body(true)
+        case .unguarded: body(false)
+        case .wait: DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { waitTurn(since: since, body) }
+        }
+    }
+
+    private static func observe(_ showing: Set<Int>) {
+        guard !observing else { return }
+        observing = true
+        lastShowing = showing
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { _ in
+            switched()
+        }
+    }
+
+    /// Spaces changed something (`spaces.onChange`): a switch, between any workspaces, ends every launch's covers.
+    static func environmentChanged(showing: Set<Int>) {
+        guard showing != lastShowing else { return }
+        lastShowing = showing
+        switched()
+    }
+
+    private static func switched() {
+        workspaces &+= 1
+        for l in live.values { l.finish(why: "a workspace switch") }
+    }
 
     final class Launch {
         struct Key: Hashable { let id: UInt32, screen: Int }
-        let app: String, screens: [CGRect], shots: [CGImage], primaryHeight: CGFloat, agentShown: () -> Bool
-        private var pid: pid_t = 0
+        let gen: UInt64, workspaces: UInt64, app: String, screens: [CGRect], primaryHeight: CGFloat
+        var shots: [CGImage] = []
+        private var pid: pid_t = 0, incarnation: UInt64 = 0
         private var want: [UInt32: CGRect] = [:]
         private var panels: [Key: (panel: NSPanel, frame: CGRect)] = [:]
         private var t0 = ProcessInfo.processInfo.systemUptime
+        /// The newest step from the watch thread, taken by one main-thread drain: a stale cover never runs after a
+        /// later cleanup.
+        private let lock = NSLock()
+        private var mailbox: OpenFlashGuard.Plan.Step?
+        private var cancelled = false
 
-        init(app: String, screens: [CGRect], shots: [CGImage], primaryHeight: CGFloat, agentShown: @escaping () -> Bool) {
-            self.app = app; self.screens = screens; self.shots = shots; self.primaryHeight = primaryHeight; self.agentShown = agentShown
+        init(gen: UInt64, workspaces: UInt64, app: String, screens: [CGRect], primaryHeight: CGFloat) {
+            self.gen = gen; self.workspaces = workspaces; self.app = app; self.screens = screens; self.primaryHeight = primaryHeight
         }
 
         private func ms() -> Int { Int((ProcessInfo.processInfo.systemUptime - t0) * 1000) }
+        private var ticket: OpenFlashGuard.Ticket { .init(launch: gen, workspaces: workspaces, incarnation: incarnation) }
 
         /// On the main thread, before the claim runs: hold Spaces' asks to the new process and watch its windows.
         func started(_ got: NSRunningApplication?, before: Set<pid_t>) {
-            guard let got, !got.isTerminated, !before.contains(got.processIdentifier) else {
-                return Trace.log("flash guard cover: the launch of \(app) gave no new process; nothing to cover")
+            guard OpenFlashWatch.live[gen] === self else { return }
+            guard let got, !got.isTerminated, !before.contains(got.processIdentifier),
+                  let inc = Self.start(got.processIdentifier) else {
+                return finish(why: "the launch gave no new process")
             }
             pid = got.processIdentifier
+            incarnation = inc
             t0 = ProcessInfo.processInfo.systemUptime
             Windows.hold(pid)
-            OpenFlashWatch.live[ObjectIdentifier(self)] = self
             watch()
+        }
+
+        /// The kernel's start time of `pid`, nil once it has exited: a reused pid has another.
+        static func start(_ pid: pid_t) -> UInt64? {
+            var info = proc_bsdinfo()
+            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+            return info.pbi_start_tvsec &* 1_000_000 &+ info.pbi_start_tvusec
         }
 
         private func watch() {
             let pid = self.pid, t0 = self.t0
-            var plan = OpenFlashGuard.Plan(pid: pid, screens: screens)
+            var plan = OpenFlashGuard.Plan(pid: pid, incarnation: incarnation, screens: screens)
             let t = Thread { [self] in
                 var released = false
                 while true {
+                    lock.lock(); let stop = cancelled; lock.unlock()
+                    if stop { break }
                     let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
                     let mine = info.compactMap { w -> OpenFlashGuard.Sighting? in
                         guard (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
@@ -70,14 +139,11 @@ enum OpenFlashWatch {
                               let b = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }) else { return nil }
                         return .init(pid: pid, id: id, layer: (w[kCGWindowLayer as String] as? Int) ?? 0, bounds: b)
                     }
-                    let alive = kill(pid, 0) == 0 || errno == EPERM
-                    let step = plan.tick(now: ProcessInfo.processInfo.systemUptime - t0, windows: mine, alive: alive)
+                    let step = plan.tick(now: ProcessInfo.processInfo.systemUptime - t0, windows: mine, incarnation: Self.start(pid))
                     for id in step.expired { Trace.log("flash guard cover: down for window \(id) of \(app) after \(OpenFlashGuard.coverLife) s, not parked yet") }
                     let release = step.release && !released
                     released = released || step.release
-                    if step.changed || release || step.end {
-                        DispatchQueue.main.async { self.apply(step.covers, release: release, end: step.end) }
-                    }
+                    if step.changed || release || step.end { post(step, release: release) }
                     if step.end { break }
                     Thread.sleep(forTimeInterval: OpenFlashGuard.interval)
                 }
@@ -87,34 +153,59 @@ enum OpenFlashWatch {
             t.start()
         }
 
-        /// On the main thread: the covers wanted, never while the agent workspace is shown. A panel is re-cropped only
-        /// when its window moved. The hold ends after the covers are up.
-        func apply(_ covers: [UInt32: CGRect], release: Bool, end: Bool) {
-            want = end ? [:] : covers
-            redraw()
-            if release || end || agentShown() { Windows.release(pid) }
-            if end { OpenFlashWatch.live[ObjectIdentifier(self)] = nil }
+        /// Keeps only the newest step (a release or end in an older one is kept too) and wakes the main thread once.
+        private func post(_ step: OpenFlashGuard.Plan.Step, release: Bool) {
+            lock.lock()
+            var s = step
+            s.release = release || (mailbox?.release ?? false)
+            s.end = step.end || (mailbox?.end ?? false)
+            let wake = mailbox == nil
+            mailbox = s
+            lock.unlock()
+            if wake { DispatchQueue.main.async { self.drain() } }
         }
 
-        func redraw() {
-            var keep = Set<Key>()
-            if !agentShown() {
-                for (id, bounds) in want {
-                    for part in OpenFlashGuard.coverParts(for: bounds, screens: screens) {
-                        let key = Key(id: id, screen: part.screen)
-                        keep.insert(key)
-                        if let p = panels[key], p.frame == part.frame { continue }
-                        let p = panels[key]?.panel ?? make()
-                        paint(p, part.frame, screen: part.screen)
-                        if panels[key] == nil { p.orderFrontRegardless(); Trace.log("flash guard cover: up for window \(id) of \(app) at +\(ms())ms") }
-                        panels[key] = (p, part.frame)
-                    }
+        private func drain() {
+            lock.lock(); let step = mailbox; mailbox = nil; lock.unlock()
+            guard let step else { return }
+            let ok = ticket.holds(live: Set(OpenFlashWatch.live.keys), workspaces: OpenFlashWatch.workspaces, incarnation: Self.start(pid))
+            guard ok, !step.end else { return finish(why: ok ? "parked or done" : "its moment passed (switch, exit or a reused pid)") }
+            want = step.covers
+            if redraw() { CATransaction.flush() }
+            // On the next turn: the new cover is committed and drawn before Spaces may ask the app (a 0.25 s block).
+            if step.release { let pid = self.pid; DispatchQueue.main.async { Windows.release(pid) } }
+        }
+
+        /// Ends this launch: no more covers, the hold released (after the panels are gone), the watch stopped.
+        func finish(why: String) {
+            lock.lock(); cancelled = true; mailbox = nil; lock.unlock()
+            guard OpenFlashWatch.live[gen] === self else { return }
+            OpenFlashWatch.live[gen] = nil
+            want = [:]
+            _ = redraw()
+            if pid != 0 { let pid = self.pid; DispatchQueue.main.async { Windows.release(pid) } }
+            Trace.log("flash guard cover: \(app) watch over at +\(ms())ms: \(why)")
+        }
+
+        /// The covers in `want`, one panel per screen part, re-cropped only when the window moved. True when a panel went up.
+        private func redraw() -> Bool {
+            var keep = Set<Key>(), raised = false
+            for (id, bounds) in want {
+                for part in OpenFlashGuard.coverParts(for: bounds, screens: screens) {
+                    let key = Key(id: id, screen: part.screen)
+                    keep.insert(key)
+                    if let p = panels[key], p.frame == part.frame { continue }
+                    let p = panels[key]?.panel ?? make()
+                    paint(p, part.frame, screen: part.screen)
+                    if panels[key] == nil { p.orderFrontRegardless(); raised = true; Trace.log("flash guard cover: up for window \(id) of \(app) at +\(ms())ms") }
+                    panels[key] = (p, part.frame)
                 }
             }
             for (key, p) in panels where !keep.contains(key) {
                 p.panel.orderOut(nil); panels[key] = nil
                 Trace.log("flash guard cover: down for window \(key.id) of \(app) at +\(ms())ms")
             }
+            return raised
         }
 
         /// Paints a panel from its own screen's shot, at the shot's backing scale.
@@ -129,13 +220,18 @@ enum OpenFlashWatch {
         }
 
         /// Non-activating, and it takes the clicks, so a click meant for what Donovan sees neither lands in the agent's app
-        /// nor brings Polycarp forward.
+        /// nor brings Polycarp forward. Layer-hosting: the layer is ours, so AppKit never redraws over the shot.
         private func make() -> NSPanel {
             let w = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            w.level = .floating; w.isOpaque = true; w.hasShadow = false; w.becomesKeyOnlyIfNeeded = true
+            w.level = NSWindow.Level(rawValue: OpenFlashGuard.coverLevel)
+            w.isOpaque = true; w.hasShadow = false; w.becomesKeyOnlyIfNeeded = true
             w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
             w.isReleasedWhenClosed = false
-            let v = NSView(); v.wantsLayer = true; w.contentView = v
+            let v = NSView(), layer = CALayer()
+            layer.contentsGravity = .resize
+            v.layer = layer
+            v.wantsLayer = true
+            w.contentView = v
             return w
         }
     }

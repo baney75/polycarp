@@ -18,8 +18,8 @@ struct AgentHost {
     var pidOf: (UInt32) -> pid_t? = { _ in nil }
     /// Whether a workspace holds any window.
     var occupied: (Int) -> Bool = { _ in false }
-    /// Whether a workspace is shown on any display.
-    var shown: (Int) -> Bool = { _ in false }
+    /// The workspaces on screen, one per display.
+    var showing: () -> Set<Int> = { [] }
 }
 
 /// Processes BaneySpaces started for an agent (`agent open` of an app, `agent run`): the only ones an agent
@@ -680,7 +680,7 @@ final class SessionController {
                 }
             }
             // Covers the new window on Donovan's workspace until it is parked; off unless set (`OpenFlashGuard`).
-            OpenFlashWatch.around(app: appName, before: before, agentShown: { h.shown(n) }) { started in
+            OpenFlashWatch.around(app: appName, before: before, showing: { h.showing() }, agent: n) { started in
                 if files.isEmpty {
                     NSWorkspace.shared.openApplication(at: url, configuration: cfg) { app, _ in started(app); finished(app) }
                 } else {
