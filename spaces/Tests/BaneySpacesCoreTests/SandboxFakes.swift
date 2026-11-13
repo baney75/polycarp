@@ -36,9 +36,11 @@ final class FakeTart: ProcessRunning {
     /// Tests set these while the warm build's thread reads them, so both sides take the lock.
     private var _vms: [String: VM] = [:]
     var vms: [String: VM] { lock.lock(); defer { lock.unlock() }; return _vms }
-    /// A change to the VMs is one locked step: `vms["x"] = ...` through a getter and a setter let the warm build's
-    /// thread change them between the two (review of PR 233, first-F2).
-    func withVMs(_ change: (inout [String: VM]) -> Void) { lock.lock(); defer { lock.unlock() }; change(&_vms) }
+    /// Adds a VM in one locked step: `vms["x"] = ...` through a getter and a setter let the warm build's thread change
+    /// them between the two (review of PR 233, first-F2). The VM is a value made before the lock, so no caller's code
+    /// runs under it: a `withVMs` closure that read the fake hung on the lock or trapped on exclusive access to the
+    /// list (round 2 second-F5).
+    func addVM(_ name: String, _ vm: VM = VM()) { lock.lock(); _vms[name] = vm; lock.unlock() }
     var imagePulled = false
     // What the fake recorded is read under its lock: the warm build records from its own thread while a test
     // reads. An unlocked read that met an append growing the array saw it empty (TSan, 11-12: buildWarm's spawn
@@ -66,11 +68,20 @@ final class FakeTart: ProcessRunning {
     var stdinSeen: [String] { lock.lock(); defer { lock.unlock() }; return _stdinSeen }
     /// Called after the lock with the process this spawn made: a hook that read `FakeProc.next` instead could see a pid
     /// the warm build's thread made in between (review of PR 206, second-F4).
-    var onSpawn: ((_ args: [String], _ proc: FakeProc) -> Void)?
+    /// A test sets the hooks while the warm build's thread reads them, so both sides take the lock (round 2 second-F6).
+    var onSpawn: ((_ args: [String], _ proc: FakeProc) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onSpawn }
+        set { lock.lock(); _onSpawn = newValue; lock.unlock() }
+    }
+    private var _onSpawn: ((_ args: [String], _ proc: FakeProc) -> Void)?
     var v6Addresses = 0
     var spawnImmortal = false
     /// Called inside `clone` so a test can delay a warm build.
-    var onClone: (() -> Void)?
+    var onClone: (() -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onClone }
+        set { lock.lock(); _onClone = newValue; lock.unlock() }
+    }
+    private var _onClone: (() -> Void)?
     /// Set by a test while the fake answers guest commands on other threads, so it is set under the lock.
     private var _v6Leak = false
     var v6Leak: Bool {
@@ -104,7 +115,7 @@ final class FakeTart: ProcessRunning {
             return ProcessResult(status: 0, stdout: _vms.keys.sorted().joined(separator: "\n"))
         case "clone":
             if failClone { return ProcessResult(status: 1, stderr: "no space left") }
-            let hook = onClone
+            let hook = _onClone
             lock.unlock()
             hook?()
             lock.lock()
@@ -163,7 +174,7 @@ final class FakeTart: ProcessRunning {
 
     func spawn(_ exe: String, _ args: [String], env: [String: String], logPath: String?, hold: Bool) throws -> RunningProcess {
         let p = try record(args, hold: hold)
-        onSpawn?(args, p)   // after the lock, like onClone, so a hook can read what the fake recorded
+        onSpawn?(args, p)   // a copy taken under the lock, called after it, so a hook can read what the fake recorded
         return p
     }
 
