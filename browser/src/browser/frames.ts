@@ -325,7 +325,7 @@ async function resolveOwner(
 	top: TreeNode,
 	objectGroup: string,
 	end?: number,
-): Promise<{ frameId: string; objectId: string } | undefined> {
+): Promise<{ frameId: string; objectId: string; context: number } | undefined> {
 	const all: TreeNode[] = [];
 	const walk = (n: TreeNode) => {
 		all.push(n);
@@ -351,7 +351,7 @@ async function resolveOwner(
 			callMs(end),
 		);
 		if (got?.object?.objectId && got.object.subtype !== "null")
-			return { frameId: n.frame.id, objectId: got.object.objectId };
+			return { frameId: n.frame.id, objectId: got.object.objectId, context: world.executionContextId };
 	}
 	return undefined;
 }
@@ -422,8 +422,15 @@ export function frameShown(el: Element): "shown" | "hidden" | "away" {
 					if (clips(ofAxis(st, a))) return "hidden";
 					const at = box[lo] - b[lo] + (a === "Y" ? n.scrollTop : n.scrollLeft);
 					const size = a === "Y" ? n.scrollHeight : n.scrollWidth;
-					// Right to left, the content runs left of the box: scrollLeft is 0 or below.
-					const start = a === "X" && st.direction === "rtl" ? n.clientWidth - size : 0;
+					// A scroller that starts at its far end (right to left, a reversed flex box, vertical-rl) runs
+					// before the box: its scroll offset is 0 or below. A reversed row in rtl starts at the left.
+					const flex = /flex/.test(String(st.display)) ? String(st.flexDirection || "") : "";
+					const far =
+						a === "Y"
+							? flex === "column-reverse"
+							: (st.direction === "rtl") !== (flex === "row-reverse") ||
+								String(st.writingMode).startsWith("vertical-rl");
+					const start = far ? (a === "Y" ? n.clientHeight : n.clientWidth) - size : 0;
 					if (!(at < start + size && at + box[hi] - box[lo] > start)) return "hidden";
 					box[lo] = b[lo];
 					box[hi] = b[hi];
@@ -515,11 +522,33 @@ export async function frameState(
 		if (!own?.backendNodeId || !top?.frameTree) return undefined;
 		const objects = group();
 		const at = await resolveOwner(tabId, f.ownerSessionId, own.backendNodeId, top.frameTree, objects, end);
+		// A slot in a closed shadow root is out of the page's reach; the debugger names the <iframe>'s, and it
+		// is lent to the walk as an own property of Polycarp's wrapper, which the page never sees.
+		const send = <T>(method: string, params: Record<string, unknown>) =>
+			bounded(cdpSendSession<T>(tabId, f.ownerSessionId, method, params), callMs(end));
+		type Described = { node?: { assignedSlot?: { backendNodeId?: number } } };
+		const slot =
+			at &&
+			(await send<Described>("DOM.describeNode", { backendNodeId: own.backendNodeId }))?.node?.assignedSlot
+				?.backendNodeId;
+		const lent = slot
+			? (
+					await send<{ object?: { objectId?: string } }>("DOM.resolveNode", {
+						backendNodeId: slot,
+						executionContextId: at?.context,
+						objectGroup: objects,
+					})
+				)?.object?.objectId
+			: undefined;
 		const shown = at
 			? await bounded(
 					cdpSendSession<{ result?: { value?: unknown } }>(tabId, f.ownerSessionId, "Runtime.callFunctionOn", {
 						objectId: at.objectId,
-						functionDeclaration: `function () { return (${frameShown.toString()})(this); }`,
+						functionDeclaration: `function (slot) {
+							if (slot && !this.assignedSlot) Object.defineProperty(this, "assignedSlot", { value: slot, configurable: true });
+							try { return (${frameShown.toString()})(this); } finally { if (slot) delete this.assignedSlot; }
+						}`,
+						arguments: lent ? [{ objectId: lent }] : [],
 						returnByValue: true,
 					}),
 					callMs(end),
