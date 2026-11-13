@@ -1,5 +1,4 @@
-// PR D (D49): a click that starts a download reports it with the result: name, type, size, state
-// and a masked URL, with the note that the save folder isn't known and nothing is opened.
+// D49: a click that starts a download says so in its result, and that the save folder is not known.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { installFakeChrome } from "./fake-chrome.mjs";
@@ -11,10 +10,7 @@ const look = { url: "https://shop.example/", title: "Shop", focus: "", doc: "d1"
 
 let bridge;
 /** One bridge for the file: the download listener, once installed, stays on the first fake chrome. */
-async function startBridge() {
-	bridge ??= open();
-	return bridge;
-}
+const startBridge = () => (bridge ??= open());
 
 async function open() {
 	const fake = installFakeChrome();
@@ -67,8 +63,7 @@ test("a click on an attachment link reports the file: name, type, size, state, m
 	const [d] = reply.result.downloads;
 	assert.deepEqual({ ...d, url: undefined }, { name: "orders.csv", type: "csv", state: "completed", bytes: 2048, url: undefined });
 	assert.ok(d.url.startsWith("https://shop.example/export?id=7") && !d.url.includes("s3cr3tvalue"), d.url);
-	assert.match(reply.result.downloadNote, /download folder; the path isn't known/);
-	assert.match(reply.result.downloadNote, /doesn't open/);
+	assert.match(reply.result.downloadNote, /download folder; the path isn't known\. Polycarp doesn't open/);
 });
 
 test("a script-made file (data: URL) is reported without its bytes; a canceled one says so", async () => {

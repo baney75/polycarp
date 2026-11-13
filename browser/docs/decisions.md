@@ -1726,28 +1726,17 @@ grace and nothing froze or was cancelled again.
 **Problem.** A click on an attachment link, a blob link or a button whose script makes a file starts a download, and
 the agent was told nothing. It saw an unchanged page and often clicked again, or said the export failed.
 
-**Decision.** `downloads.ts` listens for `Page.downloadWillBegin` and `Page.downloadProgress`. Chrome sends both once
-`Page.enable` is on, and cdp.ts already turns it on for dialogs. The result of every input tool and navigate lists the
-downloads that began since the action started: the suggested name, the extension as a type, the size when it
-completed, the state (started, completed, canceled) and the URL through `maskUrl`, as `files download` shows it. A
-data: URL keeps only its header, so a script-made file's bytes never reach the agent. After the page settles the
-action waits up to 2 s for a download to end, then reports it as it stands. A note beside the list says once what the
-agent can't know.
+**Decision.** `downloads.ts` listens for `Page.downloadWillBegin` and `Page.downloadProgress`, which Chrome sends once
+the `Page.enable` cdp.ts sends for dialogs is on. Every input tool's result, and navigate's, lists the downloads begun
+since the action started: suggested name, extension as type, size when complete, state (started, completed,
+canceled), and the URL through `maskUrl` as `files download` shows it. A data: URL keeps only its header. After the
+page settles the action waits up to 2 s for a download to end. No `chrome.downloads` permission: it would give the
+path and final name, but a new permission means store review again and a prompt for every user.
 
-**Why not the downloads permission.** `chrome.downloads` would give the saved path and the final name, but adding a
-permission sends the extension back through store review and shows every user a new prompt. The extension must stay
-store-ready, so the debugger alone it is.
+**Limits.** The save folder is not known, and the result says so. Chrome adds " (1)" to a name already taken. A
+download waiting on a save box stays "started". A type the person set to open on its own still opens. Steps inside
+`actions` report no downloads. Polycarp opens nothing; to read a file the agent calls `files download` with the link's
+ref, under its 50 MiB limit and its rules for other sites.
 
-**Limits.**
-- The save folder is not known. The note says so; the agent can't open or read the saved file.
-- The name is the one the page suggested. Chrome adds " (1)" when a file of that name is already there.
-- A download that waits on a save box (Chrome's "Ask where to save each file") stays "started".
-- A file type the person set to open on its own still opens; only the downloads permission could stop that.
-- A download from a cross-origin frame reaches the tab's events only when Chrome sends it on the top session.
-- Polycarp opens nothing. To read a file the agent calls `files download` with the link's ref, under that tool's 50
-  MiB limit and its rules for other sites.
-
-**Proof.** `test/downloads.test.mjs` drives `click` through the real bridge on fake chrome. A download that begins as
-the button comes up is reported with name, type, size, state and a masked token; a data: file shows no bytes and a
-canceled one says so; a download from the click before is not the next click's; one that never ends comes back as
-"started" in under 5 s. All four fail on main 93a70440.
+**Proof.** `test/downloads.test.mjs` drives `click` through the bridge on fake chrome (all four fail on main
+93a70440); the e2e "a click on a download link reports the file it started" runs real Chrome.
