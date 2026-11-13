@@ -33,7 +33,12 @@ final class FakeProc: RunningProcess {
 final class FakeTart: ProcessRunning {
     struct VM { var suspended = false; var proc: FakeProc? }
     let lock = NSLock()
-    var vms: [String: VM] = [:]
+    /// Tests set these while the warm build's thread reads them, so both sides take the lock.
+    private var _vms: [String: VM] = [:]
+    var vms: [String: VM] {
+        get { lock.lock(); defer { lock.unlock() }; return _vms }
+        set { lock.lock(); _vms = newValue; lock.unlock() }
+    }
     var imagePulled = false
     // What the fake recorded is read under its lock: the warm build records from its own thread while a test
     // reads. An unlocked read that met an append growing the array saw it empty (TSan, 11-12: buildWarm's spawn
@@ -57,13 +62,21 @@ final class FakeTart: ProcessRunning {
     var noInternet = false
     var guestReply: String?
     var guestTruncated = false
-    var stdinSeen: [String] = []
-    var onSpawn: ((_ args: [String]) -> Void)?
+    private var _stdinSeen: [String] = []
+    var stdinSeen: [String] { lock.lock(); defer { lock.unlock() }; return _stdinSeen }
+    /// Called after the lock with the process this spawn made: a hook that read `FakeProc.next` instead could see a pid
+    /// the warm build's thread made in between (review of PR 206, second-F4).
+    var onSpawn: ((_ args: [String], _ proc: FakeProc) -> Void)?
     var v6Addresses = 0
     var spawnImmortal = false
     /// Called inside `clone` so a test can delay a warm build.
     var onClone: (() -> Void)?
-    var v6Leak = false
+    /// Set by a test while the fake answers guest commands on other threads, so it is set under the lock.
+    private var _v6Leak = false
+    var v6Leak: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _v6Leak }
+        set { lock.lock(); _v6Leak = newValue; lock.unlock() }
+    }
     var firewallState = "Firewall is disabled. (State = 0)"
     var stubFail: ProcessResult?
 
@@ -72,7 +85,7 @@ final class FakeTart: ProcessRunning {
         return o["id"] as? String ?? "x"
     }
 
-    func vmNames() -> [String] { lock.lock(); defer { lock.unlock() }; return vms.keys.sorted() }
+    func vmNames() -> [String] { lock.lock(); defer { lock.unlock() }; return _vms.keys.sorted() }
     func ours() -> [String] { vmNames().filter { $0.hasPrefix(SandboxPin.vmPrefix) } }
 
     func run(_ exe: String, _ args: [String], env: [String: String], stdin: String?, timeout: TimeInterval, outputLimit: Int) -> ProcessResult {
@@ -85,10 +98,10 @@ final class FakeTart: ProcessRunning {
         case "list":
             if args.contains("oci") { return ProcessResult(status: 0, stdout: imagePulled ? SandboxPin.image + "\n" : "") }
             if args.contains("json") {
-                let items = vms.map { "{\"Name\":\"\($0.key)\",\"Running\":\($0.value.proc?.isRunning == true)}" }
+                let items = _vms.map { "{\"Name\":\"\($0.key)\",\"Running\":\($0.value.proc?.isRunning == true)}" }
                 return ProcessResult(status: 0, stdout: "[" + items.joined(separator: ",") + "]")
             }
-            return ProcessResult(status: 0, stdout: vms.keys.sorted().joined(separator: "\n"))
+            return ProcessResult(status: 0, stdout: _vms.keys.sorted().joined(separator: "\n"))
         case "clone":
             if failClone { return ProcessResult(status: 1, stderr: "no space left") }
             let hook = onClone
@@ -96,34 +109,34 @@ final class FakeTart: ProcessRunning {
             hook?()
             lock.lock()
             imagePulled = true
-            vms[args[2]] = VM()
+            _vms[args[2]] = VM()
             return ProcessResult(status: 0)
         case "set": return ProcessResult(status: 0)
         case "stop": return ProcessResult(status: 0)
         case "delete":
             if failDeleteOnce > 0 { failDeleteOnce -= 1; return ProcessResult(status: 0) }
-            vms[args[1]] = nil
+            _vms[args[1]] = nil
             return ProcessResult(status: 0)
         case "suspend":
-            guard vms[args[1]]?.proc?.isRunning == true else { return ProcessResult(status: 1, stderr: "not running") }
-            vms[args[1]]?.suspended = true
-            vms[args[1]]?.proc?.stop()
+            guard _vms[args[1]]?.proc?.isRunning == true else { return ProcessResult(status: 1, stderr: "not running") }
+            _vms[args[1]]?.suspended = true
+            _vms[args[1]]?.proc?.stop()
             return ProcessResult(status: 0)
         case "exec":
             let vm = args.first(where: { $0.hasPrefix(SandboxPin.vmPrefix) }) ?? args[1]
-            guard let rec = vms[vm], rec.proc?.isRunning == true, !agentNeverAnswers else { return ProcessResult(status: 1, stderr: "no agent") }
+            guard let rec = _vms[vm], rec.proc?.isRunning == true, !agentNeverAnswers else { return ProcessResult(status: 1, stderr: "no agent") }
             if args.last == "/usr/bin/true" { return ProcessResult(status: 0) }
             let script = args.last ?? ""
             if script.contains("GATEWAY") { return ProcessResult(status: 0, stdout: checkOutput(script)) }
             if script.contains("V6PROBE") {
                 let n = script.components(separatedBy: "echo \"V6PROBE ").count - 1
                 var out = "HAS6 2\n"
-                for i in 0..<n { out += "V6PROBE \(i) " + (v6Leak && i == 0 ? "RC=0 succeeded!" : "RC=1 nc: connectx failed: Operation timed out") + "\n" }
+                for i in 0..<n { out += "V6PROBE \(i) " + (_v6Leak && i == 0 ? "RC=0 succeeded!" : "RC=1 nc: connectx failed: Operation timed out") + "\n" }
                 return ProcessResult(status: 0, stdout: out)
             }
             if script.contains("route -n get default | awk") { return ProcessResult(status: 0, stdout: "192.168.64.1\n") }
             if script.contains("IFS= read -r line") {
-                stdinSeen.append(stdin ?? "")
+                _stdinSeen.append(stdin ?? "")
                 if let f = stubFail { return f }
                 if let g = guestReply { return ProcessResult(status: 0, stdout: g, truncated: guestTruncated) }
                 return ProcessResult(status: 0, stdout: "{\"v\":1,\"id\":\"\(requestID(stdin))\",\"ok\":true,\"data\":{\"daemon\":\"stub\",\"macos\":\"26.6\"}}\n")
@@ -150,7 +163,7 @@ final class FakeTart: ProcessRunning {
 
     func spawn(_ exe: String, _ args: [String], env: [String: String], logPath: String?, hold: Bool) throws -> RunningProcess {
         let p = try record(args, hold: hold)
-        onSpawn?(args)   // after the lock, like onClone, so a hook can read what the fake recorded
+        onSpawn?(args, p)   // after the lock, like onClone, so a hook can read what the fake recorded
         return p
     }
 
@@ -158,13 +171,13 @@ final class FakeTart: ProcessRunning {
         lock.lock(); defer { lock.unlock() }
         _calls.append(args)
         let vm = args.last ?? ""
-        guard vms[vm] != nil else { throw SandboxError("run_failed", "no such VM \(vm)") }
-        if vms[vm]?.suspended == true && failResume { throw SandboxError("run_failed", "cannot restore state") }
+        guard _vms[vm] != nil else { throw SandboxError("run_failed", "no such VM \(vm)") }
+        if _vms[vm]?.suspended == true && failResume { throw SandboxError("run_failed", "cannot restore state") }
         let p = FakeProc()
         p.immortal = spawnImmortal
         p.onRelease = { [unowned self] in self.note("release") }
-        vms[vm]?.proc = p
-        vms[vm]?.suspended = false
+        _vms[vm]?.proc = p
+        _vms[vm]?.suspended = false
         _spawned.append((args, p))
         _order.append("spawn " + (args.contains("--no-graphics") ? "headless" : "graphics") + (hold ? " held" : ""))
         return p

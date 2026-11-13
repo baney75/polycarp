@@ -864,15 +864,17 @@ final class CursorOverheadTests: XCTestCase {
     /// the pairs' differences: load that changes over the run (another build starting) lands on both halves of a pair,
     /// and a stall lands in one pair, which the median drops. Two blocks of 200 in a row let the drift in: the 11-12
     /// logs show the median without the cursor alone at 24.0 to 27.9 ms, so "added" ran from -3.8 to +1.8 ms with
-    /// the cursor's code unchanged.
+    /// the cursor's code unchanged. A run that is faster or slower for coming second in its pair would make the
+    /// differences two clusters, one per order, and one median of both picks an edge of one: so "added" is the mean of
+    /// the two orders' medians, and the order's effect cancels (review of PR 206, second-F5).
     static func paired(_ n: Int, _ timed: (_ i: Int, _ listening: Bool) -> Double) -> (without: Double, with: Double, added: Double) {
-        var withouts: [Double] = [], withs: [Double] = [], added: [Double] = []
+        var withouts: [Double] = [], withs: [Double] = [], byOrder: [[Double]] = [[], []]
         for i in 0..<n {
             let (wo, w): (Double, Double)
             if i % 2 == 0 { wo = timed(i, false); w = timed(i, true) } else { w = timed(i, true); wo = timed(i, false) }
-            withouts.append(wo); withs.append(w); added.append(w - wo)
+            withouts.append(wo); withs.append(w); byOrder[i % 2].append(w - wo)
         }
-        return (median(withouts), median(withs), median(added))
+        return (median(withouts), median(withs), (median(byOrder[0]) + median(byOrder[1])) / 2)
     }
 
     func testAPairedMeasurementIgnoresLoadThatChangesPartWay() {
@@ -885,6 +887,18 @@ final class CursorOverheadTests: XCTestCase {
         clock = 0
         let r = Self.paired(n) { _, listening in action(listening: listening) }
         XCTAssertEqual(r.added, 0.02, accuracy: 0.001, "pairs count only the cursor")
+    }
+
+    func testAPairedMeasurementCancelsTheOrderAndDropsAStall() {
+        // The same 24 ms action and 0.02 ms cursor, but a run that comes second in its pair is 1.5 ms faster (warm
+        // caches), and one run stalls 50 ms. One median over both orders reads 1.52 ms.
+        var calls = 0
+        func action(listening: Bool) -> Double {
+            defer { calls += 1 }
+            return 24 + (calls % 2 == 1 ? -1.5 : 0) + (calls == 137 ? 50 : 0) + (listening ? 0.02 : 0)
+        }
+        let r = Self.paired(200) { _, listening in action(listening: listening) }
+        XCTAssertEqual(r.added, 0.02, accuracy: 0.001, "the order's effect cancels and the stall is dropped")
     }
 
     func testTheCursorAddsUnderFiveMillisecondsToTheMedianAction() {
@@ -902,11 +916,14 @@ final class CursorOverheadTests: XCTestCase {
                                      frame: CGRect(x: p.x - 30, y: p.y - 10, width: 60, height: 20), session: "a", scope: "agent_workspace", workspace: 9)
             let t0 = ProcessInfo.processInfo.systemUptime
             hands.run(e)
-            return (ProcessInfo.processInfo.systemUptime - t0) * 1000
+            let ms = (ProcessInfo.processInfo.systemUptime - t0) * 1000
+            // The director's work for this run (the 8 ms bounds read among it) finishes here, outside the timing, so it
+            // never lands on the next run, which half the time is one without the cursor (review of PR 206, first-F2).
+            queue.sync {}
+            return ms
         }
         for i in 0..<20 { _ = timed(i, listening: true) }   // warm up
         let r = Self.paired(200) { timed($0, listening: $1) }
-        queue.sync {}
         print("CURSOR OVERHEAD (modelled engine: resolve 4 + act 12 + readback 8 ms, bounds read 8 ms on its own lane; the cursor's own code is real; 200 alternating pairs): median action without the cursor \(String(format: "%.2f", r.without)) ms, with it \(String(format: "%.2f", r.with)) ms, median added per pair \(String(format: "%.2f", r.added)) ms")
         XCTAssertLessThan(r.added, 5, "under 5 ms added to the median action")
         XCTAssertLessThan(r.added, 1, "the bounds read runs beside the action, so the action pays only the report")
