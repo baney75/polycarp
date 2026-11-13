@@ -410,7 +410,6 @@ function watchGuardedCommits(ctx: HandlerContext, tabId: number): void {
 	setTimeout(() => chrome.webNavigation.onCommitted.removeListener(onCommitted), GUARD_WATCH_MS);
 }
 
-/** Frames no tool may read or touch: the guarded hosts (the approval page among them). */
 /** Which of a tab's frames no tool reads (frames.ts FrameRule): guarded ones, and those on hosts not allowed for agents. */
 function skipFor(ctx: HandlerContext, tabId: number): FrameRule {
 	let top: Promise<string> | undefined;
@@ -429,7 +428,13 @@ function target(params: Params): { ref?: string; selector?: string } {
 	return { ref: str(params, "ref"), selector: str(params, "selector") };
 }
 
-async function pointFor(ctx: HandlerContext, params: Params, tabId: number): Promise<{ x: number; y: number }> {
+async function pointFor(
+	ctx: HandlerContext,
+	params: Params,
+	tabId: number,
+	act: "click" | "hover" | "type",
+	before?: Before,
+): Promise<{ x: number; y: number }> {
 	const x = num(params, "x");
 	const y = num(params, "y");
 	if (x !== undefined && y !== undefined) return screenshotToCss(tabId, { x, y });
@@ -439,7 +444,7 @@ async function pointFor(ctx: HandlerContext, params: Params, tabId: number): Pro
 			ERR.BAD_PARAMS,
 			"Give a ref from read_page (best), a selector, or x and y from your latest screenshot.",
 		);
-	const rect = await locate(tabId, t, skipFor(ctx, tabId));
+	const rect = await locate(tabId, t, skipFor(ctx, tabId), act, before?.frame.hit);
 	return { x: rect.x, y: rect.y };
 }
 
@@ -885,7 +890,7 @@ export const handlers: Record<string, Handler> = {
 		// The look first: the point is found right before the input goes out, so a layout that
 		// moved during the look can't misplace the click.
 		const before = await changesBefore(ctx, tabId, params);
-		const p = await pointFor(ctx, params, tabId);
+		const p = await pointFor(ctx, params, tabId, "click", before);
 		const button = str(params, "button");
 		const since = await actionStart(ctx, tabId);
 		await click(tabId, p.x, p.y, {
@@ -900,7 +905,7 @@ export const handlers: Record<string, Handler> = {
 
 	hover: async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, true);
-		const p = await pointFor(ctx, params, tabId);
+		const p = await pointFor(ctx, params, tabId, "hover");
 		await hover(tabId, p.x, p.y);
 		return { hovered: p };
 	},
@@ -935,7 +940,7 @@ export const handlers: Record<string, Handler> = {
 		const since = await actionStart(ctx, tabId);
 		const attempt = async () => {
 			if (t.ref || t.selector) {
-				const rect = await locate(tabId, t, skipFor(ctx, tabId));
+				const rect = await locate(tabId, t, skipFor(ctx, tabId), "type", before?.frame.hit);
 				await click(tabId, rect.x, rect.y);
 			}
 			stopIfAborted(ctx);
@@ -1034,7 +1039,7 @@ export const handlers: Record<string, Handler> = {
 			throw new BridgeError(ERR.BAD_PARAMS, "fill needs a ref from read_page, or a selector.");
 		const before = await changesBefore(ctx, tabId, params);
 		const since = await actionStart(ctx, tabId);
-		await fillElement(tabId, t, value, skipFor(ctx, tabId));
+		await fillElement(tabId, t, value, skipFor(ctx, tabId), before?.frame.hit);
 		// fill focuses its field: the pointer goes there once it holds the value.
 		cuePointer(tabId, "fill");
 		return { filled: t, ...(await settleAfter(ctx, tabId, since, { filled: t }, { before })) };

@@ -2203,7 +2203,14 @@ test("cross-origin frames: read, click and fill inside a same-site and a cross-s
 <iframe src="http://localhost:${port}/inner?k=tiny" style="width:1px;height:1px;border:0"></iframe>
 <iframe src="http://localhost:${port}/inner?k=off" style="position:absolute;left:-9999px;top:0;width:300px;height:120px;border:0"></iframe>
 <div style="opacity:0"><iframe src="http://localhost:${port}/inner?k=box" style="width:300px;height:120px;border:0"></iframe></div>
-<div style="position:relative;width:300px;height:120px"><iframe src="http://localhost:${port}/inner?k=wall" style="width:300px;height:120px;border:0"></iframe><div style="position:absolute;inset:0;background:#fff">Sign in to continue</div></div>`;
+<div style="position:relative;width:300px;height:120px"><iframe src="http://localhost:${port}/inner?k=wall" style="width:300px;height:120px;border:0"></iframe><div style="position:absolute;inset:0;background:#fff">Sign in to continue</div></div>
+<iframe src="http://localhost:${port}/inner?k=faint" style="width:300px;height:120px;border:0;opacity:0.01"></iframe>
+<iframe src="http://localhost:${port}/inner?k=filt" style="width:300px;height:120px;border:0;filter:opacity(0)"></iframe>
+<div id="shadowed"></div><script>document.getElementById("shadowed").attachShadow({ mode: "open" }).innerHTML = '<iframe src="http://localhost:${port}/inner?k=shad" style="width:300px;height:120px;border:0"></iframe>';</script>
+<div style="margin-top:3000px;position:relative;width:300px;height:120px"><iframe src="http://localhost:${port}/inner?k=low" style="width:300px;height:120px;border:0"></iframe><div style="position:absolute;inset:0;background:#fff">Sign in</div></div>`;
+		// A see-through frame under a shown one, the same box and first in the page: it never stands in for it.
+		extraPages["/xo-ghost"] = `<!doctype html><title>Polycarp ghost frame</title>
+<div style="position:relative;width:300px;height:120px"><iframe src="http://localhost:${port}/inner?k=ghost" style="position:absolute;left:0;top:0;width:300px;height:120px;border:0;opacity:0"></iframe><iframe src="http://localhost:${port}/inner?k=over" style="position:absolute;left:0;top:0;width:300px;height:120px;border:0"></iframe></div>`;
 		// Drawn at half size: a point in the frame is half as far from its corner in the tab.
 		extraPages["/xo-half"] = `<!doctype html><title>Polycarp half frame</title>
 <iframe src="http://localhost:${port}/inner?k=half" style="width:600px;height:160px;border:0;transform:scale(0.5);transform-origin:0 0"></iframe>`;
@@ -2259,11 +2266,20 @@ test("cross-origin frames: read, click and fill inside a same-site and a cross-s
 		assert.match(stale.content[0].text, /not found|something else/);
 
 		await go("xo-far");
+		// Below the fold nothing can be tested for a cover, so the frame is named, not read, until scrolled to.
 		let far = "";
 		await until(async () => {
 			far = await tool("read_page", { filter: "interactive" });
+			return /out of view: scroll to it/.test(far);
+		}, 10_000, "the far frame named as out of view");
+		assert.doesNotMatch(far, /Pay far/, "nothing of a frame out of view is read");
+		await tool("scroll", { ref: refFor(far, "out of view") });
+		await until(async () => {
+			far = await tool("read_page", { filter: "interactive" });
 			return frameRef(far, "Pay far");
-		}, 10_000, "the far frame in read_page");
+		}, 10_000, "the far frame in read_page once scrolled to");
+		// Its refs hold when the page scrolls away again: the click brings the frame back into view.
+		await tool("scroll", { to: "top" });
 		await tool("click", { ref: frameRef(far, "Pay far") });
 		assert.match(await tool("read_page", {}), /Paid far/, "a click below the fold reaches the frame");
 
@@ -2278,6 +2294,8 @@ test("cross-origin frames: read, click and fill inside a same-site and a cross-s
 
 		await go("xo-scroll");
 		let long = "";
+		await until(async () => /out of view/.test(await tool("read_page", { filter: "interactive" })), 10_000, "the frame below the fold");
+		await tool("scroll", { ref: refFor(await tool("read_page", { filter: "interactive" }), "out of view") });
 		await until(async () => {
 			long = await tool("read_page", { filter: "interactive" });
 			return frameRef(long, "Pay long");
@@ -2307,12 +2325,24 @@ test("cross-origin frames: read, click and fill inside a same-site and a cross-s
 		let hidden = "";
 		await until(async () => {
 			hidden = await tool("read_page", {});
-			return /Pay seen/.test(hidden);
+			return /Pay seen/.test(hidden) && /Pay shad/.test(hidden);
 		}, 10_000, "the shown frame in read_page");
 		await new Promise((r) => setTimeout(r, 500));
 		hidden = await tool("read_page", {});
-		for (const k of ["op", "vis", "tiny", "off", "box", "wall"])
+		assert.match(hidden, /Pay shad\b/, "a frame in a shadow root is read");
+		assert.match(hidden, /out of view: scroll to it/, "a frame below the fold is named, not read");
+		for (const k of ["op", "vis", "tiny", "off", "box", "wall", "faint", "filt", "low"])
 			assert.doesNotMatch(hidden, new RegExp(`(Pay|unpaid|Card name|Next) ${k}\\b`), `the ${k} frame is not read`);
+		await go("xo-ghost");
+		let under = "";
+		await until(async () => {
+			under = await tool("read_page", {});
+			return /Pay over/.test(under);
+		}, 10_000, "the shown frame over the see-through one");
+		assert.doesNotMatch(under, /(Pay|unpaid|Card name) ghost\b/, "nothing of the see-through frame under it");
+
+		await go("xo-hidden");
+		await until(async () => /Pay seen/.test(await tool("read_page", {})), 10_000, "the shown frame again");
 		// Shown when read, made see-through after: the refs from then must not act in it.
 		const seen = await tool("read_page", { filter: "interactive" });
 		await tool("run_js", { code: "document.querySelector('iframe').style.opacity = '0'" });

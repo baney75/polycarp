@@ -1458,16 +1458,25 @@ reported it: the frame's when it comes from one, else the tab's. Chromium report
 tab's session, which answers it, after a worker restart too (an e2e test checks this).
 
 Only a frame a person can see is read: its `<iframe>` is listed by the document around it, at least 4 px each way, drawn
-(not `visibility: hidden` or `opacity: 0`, on it or above it), not kept off the page, and not under something that covers
-all of it (five points, where they are in view). A frame that fails keeps one line, "not shown, so not read", and nothing
-inside it is read either; this keeps the #73 rule that hidden text never reaches the agent, and an invisible field can't be
-filled. Limits: 10 frames read and 3 levels, outermost first (up to 30 are placed, so hidden ones don't use up the 10); a
+(not `visibility: hidden`, and an opacity of at least 0.1 once `opacity` and `filter: opacity()` on it and above it,
+across shadow hosts, are multiplied), not kept off the page, and not under something that covers all of it. The cover test
+samples five points in view and asks the `<iframe>`'s own root (a shadow root's `elementFromPoint` for a frame inside one)
+what is there; one hit on the frame itself is enough, and a hit on anything else, another frame included, is not. A frame
+with no sample point in view (below the fold) can't be tested, so it is named, not read: "out of view: scroll to it, then
+read_page". Any other failure keeps one line, "not shown, so not read", and nothing inside it is read either; this keeps the
+#73 rule that hidden text never reaches the agent, and an invisible field can't be filled. The same test runs again in the
+tab for each frame, level by level, before the frame claims its line (matched by the `<iframe>`'s border box, not its
+corner), so a see-through frame under a shown one can't take the shown one's line or its points; a test that gets no
+answer counts as hidden. Each action resolves its frame once and reuses it for the change report and the point, re-measured
+after the scroll; a nested frame's points compose every level's scale. Limits: 10 frames read and 3 levels, outermost first (up to 30 are placed, so hidden ones don't use up the 10); a
 frame past them, or one with no box, keeps its old line, so the agent still knows it is there and can `navigate` to it.
-Every debugger call about a frame has its own time limit (1 s; 3 s for a frame's snapshot), so a frame that doesn't answer
-keeps its line instead of holding up the read. Frames get a small share past a page that used up the default budget, never
+Every debugger call about a frame has its own time limit (1 s; 3 s for a frame's snapshot), and the calls run in parallel
+under one deadline for the whole read (1.5 s to find the frames, 4 s to read them), so frames that don't answer keep their
+lines instead of adding their waits up. Frames get a small share past a page that used up the default budget, never
 past a `maxNodes` or `maxTextChars` the caller set. Only http, https and file frames are read: never an extension page, an
 error page or a browser page. A frame on a guarded host (#94) is left out with everything inside it; the side panel has no
-guarded hosts (D40), as before. Uploads and downloads (D38) run in the top page and refuse a frame ref with a clear message. Not done:
+guarded hosts (D40), as before. A caller that names no rule gets none of a frame read or acted in: the default rule is
+closed. Uploads and downloads (D38) run in the top page and refuse a frame ref with a clear message. Not done:
 `get_page_text` and `page_markdown` stay the top page's, and settle (D41) still doesn't count a frame's own requests.
 
 Safety: the site permission is per host, and it applies to frames. A frame on the page's own host is the page's; a frame on

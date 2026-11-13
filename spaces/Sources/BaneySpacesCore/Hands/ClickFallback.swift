@@ -21,6 +21,8 @@ public enum ClickFallback {
         public var itemRole: String
         /// The container's row key: the readback looks for the item only in it, the scope `plan` proved the label unique in.
         public var containerKey: String
+        /// The view of the read the plan came from: row keys depend on it, so the readbacks read the same way.
+        public var view = SnapshotRowsMemory.View.full
     }
 
     /// The selection write for row `number` of the read `rows` came from, or nil: not an item in a collection, a
@@ -31,6 +33,8 @@ public enum ClickFallback {
         while let i = at {
             let role = rows[i].role
             if items.contains(role) { item = i; break }
+            // A cell with no row above is the item; the walk stops at its collection (166 r2 second-F6).
+            if containers.contains(role) { break }
             if role == "cell" { cell = cell ?? i } else if !passive.contains(role) { return nil }
             at = rows[i].parent
         }
@@ -66,11 +70,22 @@ public enum ClickFallback {
     }
 
     /// The press failed and nothing landed: its error, saying a write was also tried when one was (review r1 first-F5).
-    public static func failure(press: HandsError, write: HandsError?) -> HandsError {
+    /// A write the acting check refused answers with the refusal, so its code decides the next call (166 r2 first-F3).
+    public static func failure(press: HandsError, write: HandsError?, refused: Bool = false) -> HandsError {
         guard let write else { return press }
+        if refused {
+            var e = write
+            e.message += "; the press had failed first: \(press.message)"
+            return e
+        }
         var e = press
         e.message += "; the selection write was tried too and failed: \(write.message)"
         return e
+    }
+
+    /// A failed press on a click that still answers: its code and message, so the agent learns of it (166 r2 first-F4).
+    public static func pressError(_ e: HandsError?) -> JSONValue? {
+        e.map { .object(["code": .string($0.code.rawValue), "message": .string($0.message)]) }
     }
 
     /// Which mechanism landed, as the click reports it.
@@ -89,14 +104,23 @@ public enum ClickFallback {
         return after == false ? .writeSelection : .done(.none)
     }
 
-    /// An item's label: its name, or the first name or text under it (System Information's rows hold a text field).
+    /// The roles an item's label may come from below it.
+    static let text: Set<String> = ["statictext", "textfield", "cell"]
+
+    /// An item's label: its name, or the first text under it (System Information's rows hold a text field). A control
+    /// under it and all it holds are skipped: a checkbox's or a disclosure triangle's name is no label (166 r2 first-F1).
     static func label(_ rows: [SnapshotRows.Row], _ i: Int) -> String? {
         if !rows[i].name.isEmpty { return rows[i].name }
         var j = i + 1
         while j < rows.count, rows[j].depth > rows[i].depth {
-            // A disclosure triangle's value (1) or a checkbox's is no label; text is.
-            if !rows[j].name.isEmpty { return rows[j].name }
-            if ["textfield", "statictext"].contains(rows[j].role), !rows[j].value.isEmpty { return rows[j].value }
+            let r = rows[j]
+            if !passive.contains(r.role) {
+                j += 1
+                while j < rows.count, rows[j].depth > r.depth { j += 1 }
+                continue
+            }
+            if text.contains(r.role), !r.name.isEmpty { return r.name }
+            if r.role != "cell", text.contains(r.role), !r.value.isEmpty { return r.value }
             j += 1
         }
         return nil
