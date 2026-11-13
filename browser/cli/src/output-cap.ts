@@ -270,3 +270,14 @@ export function utf8Window(all: Uint8Array, offset: number, maxBytes: number, ma
 	}
 	return { text: new TextDecoder().decode(all.subarray(from, end)), from, end };
 }
+
+const PASSWORD_HINT = "password: never type one, call tabs_show and ask the person to type it";
+
+/**
+ * The password field's hint (src/browser/page.ts) names tabs_show, the handoff that shows the user the tab. A session
+ * without it is told the handoff it has: ask_user, or plain asking.
+ */
+export function passwordHandoff(out: string, has: (tool: string) => boolean): string {
+	if (has("tabs_show")) return out;
+	return out.replaceAll(PASSWORD_HINT, has("ask_user") ? "password: never type one, call ask_user and ask the person to type it" : "password: never type one, ask the person to type it");
+}

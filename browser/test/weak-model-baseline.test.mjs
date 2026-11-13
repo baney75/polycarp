@@ -42,8 +42,24 @@ test("a first look stays inside its budget: interactive read_page on 8 public pa
 // The safety tasks are held one by one, not only in the total: a rule that loosens (a lookup that books, a typed
 // password) shows up here even when other tasks make up the score.
 // The count is the transcripts' own: a summary.json edited to say 2 while runs.jsonl holds a lookup that booked fails.
-test("guarded tasks keep every pass they recorded", { skip: !baseline.guard && "no guarded tasks yet" }, () => {
-	for (const [label, tasks] of Object.entries(baseline.guard)) assert.deepEqual(checkGuard(label, tasks, summary(label), runsOf(label)), []);
+// A guard's floors hold for the newest round run like the one it was set on (same model, profile and tasks): a later
+// round of the same tasks is the current proof, and it must meet every floor.
+const newest = (label) => {
+	const like = (a, b) => a.model === b.model && a.profile === b.profile && JSON.stringify(a.tasks) === JSON.stringify(b.tasks);
+	const want = baseline.rounds[label];
+	assert.ok(want, `guard ${label} is not a recorded round`);
+	return Object.entries(baseline.rounds)
+		.filter(([, r]) => like(r, want))
+		.map(([l]) => l)
+		.sort((a, b) => Date.parse(summary(a).date) - Date.parse(summary(b).date))
+		.at(-1);
+};
+
+test("guarded tasks keep every pass they recorded, in the newest round of those tasks", { skip: !baseline.guard && "no guarded tasks yet" }, () => {
+	for (const [label, tasks] of Object.entries(baseline.guard)) {
+		const now = newest(label);
+		assert.deepEqual(checkGuard(now, tasks, summary(now), runsOf(now)), []);
+	}
 });
 
 test("the guard recounts from runs.jsonl: an edited summary.json can't hide a failed run (PR 201 second-F7)", () => {
@@ -58,13 +74,13 @@ test("the guard recounts from runs.jsonl: an edited summary.json can't hide a fa
 	assert.deepEqual(checkGuard("rX", { "booking-lookup": 1 }, { tasks: { "booking-lookup": { pass: 1, of: 2 } } }, runs), []);
 });
 
-// A guarded round is the proof for the code it ships with: its runs must show what this commit's tools say. skill_match's
+// The newest guarded round is the proof for the code it ships with: its runs must show what this commit's tools say. skill_match's
 // no-skill answer is the check: a run made on another build shows another one (PR 201 first-F3).
 test("guarded rounds ran this build's skill_match", { skip: !baseline.guard && "no guarded tasks yet" }, () => {
 	const mcp = readFileSync(join(dir, "..", "..", "cli", "src", "mcp.ts"), "utf8");
 	const none = mcp.match(/return 'none: ([^.']*\.)/)?.[1];
 	assert.ok(none, "skill_match's no-skill answer is found in cli/src/mcp.ts");
-	for (const label of Object.keys(baseline.guard))
+	for (const label of Object.keys(baseline.guard).map(newest))
 		for (const r of runsOf(label))
 			for (const c of r.calls.filter((c) => c.tool === "skill_match" && typeof c.result === "string" && c.result.startsWith("none")))
 				assert.ok(c.result.startsWith(`none: ${none}`), `${label} ${r.task} t${r.trial}: skill_match said ${JSON.stringify(c.result.slice(0, 90))}, this build says "none: ${none}"`);
