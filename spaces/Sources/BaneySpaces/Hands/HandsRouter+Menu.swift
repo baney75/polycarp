@@ -42,7 +42,7 @@ extension HandsRouter {
                 // An item whose attributes couldn't be read (a busy app timed out) is unknown, and unknown is refused.
                 if let e = MenuPath.judge(MenuAX.steps(pid: w.pid, path: MenuPath.reached(found, path: path)), window: Int(w.id)) { return .failed(e) }
                 guard case .item(let ref, let names) = found else {
-                    return .failed(MenuPath.error(found, path: path, window: Int(w.id)) ?? HandsError(.engineError, "no menu item", suggestion: "Snapshot the window.", retry: .safe))
+                    return .failed(MenuPath.error(found, path: path, window: Int(w.id), background: NSRunningApplication(processIdentifier: w.pid)?.isActive != true, app: w.app) ?? HandsError(.engineError, "no menu item", suggestion: "Snapshot the window.", retry: .safe))
                 }
                 spelled = names
                 watch.start(menuWatchStep(w, before: before, agent: agent, oldPanels: oldPanels))
