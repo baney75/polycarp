@@ -2607,7 +2607,10 @@ test("navigate to a 204 says no new page loaded, without waiting out the load ti
 });
 
 // PR 226 review round 1, first-F1: a page that never fires load keeps its tab "loading"; a 204 from it is still
-// no new page, at once, not "still loading" at the timeout.
+// no new page, at once, not "still loading" at the timeout. The budget (PR 229 review, second-S4): the abort's
+// 0.5 s grace, then the settle's 0.3 s quiet and one probe of at most 0.4 s, about 1.2 s. The image that never
+// ends doesn't hold the settle: it started before the navigate, and requests from before an action don't count
+// (settle's `since`), while the document reads "interactive", not "loading".
 extraPages["/keeps-loading"] = `<!doctype html><title>Polycarp keeps loading</title><p>Streaming</p><img src="/never-ends.png" alt="">`;
 test("navigate to a 204 from a page that keeps loading says no new page loaded at once", async () => {
 	await go("keeps-loading");
