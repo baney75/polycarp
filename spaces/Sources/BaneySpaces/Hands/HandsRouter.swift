@@ -674,7 +674,8 @@ final class HandsRouter {
         guard ref.hasPrefix("@"), let colon = ref.firstIndex(of: ":"), let n = SnapshotRows.refNumber(ref) else { return nil }
         let sid = String(ref[ref.index(after: ref.startIndex)..<colon])
         guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
-        return ClickFallback.plan(rows: read.rows, snapshot: sid, number: n)
+        // The readbacks read in this read's view, so the row keys they compare match (second-F5).
+        return ClickFallback.plan(rows: read.rows, snapshot: sid, number: n).map { var p = $0; p.view = read.view; return p }
     }
 
     private func shot(_ req: HandsRequest) -> HandsEnvelope {
