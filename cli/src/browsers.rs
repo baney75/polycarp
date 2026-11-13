@@ -53,11 +53,16 @@ fn dirs(home: &Path) -> Vec<(&'static str, PathBuf)> {
 }
 
 /// The browsers on this computer that are running, with the extension on in a profile.
+/// None on Windows, which has no list here: there the step trusts the helper alone, as before.
 pub fn with_extension(home: &Path) -> Vec<String> {
+    let dirs = dirs(home);
+    if dirs.is_empty() {
+        return Vec::new();
+    }
     let Some(host) = hostname() else {
         return Vec::new();
     };
-    running_with_extension(&dirs(home), &host, &alive)
+    running_with_extension(&dirs, &host, &alive)
 }
 
 /// The names in `dirs` whose folder holds a `SingletonLock` naming `host` and a live pid, and a profile with the
@@ -137,7 +142,8 @@ fn alive(pid: u32) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-#[cfg(test)]
+// Unix only: the lock is a symlink there, and Windows has no browser list here yet.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -162,7 +168,6 @@ mod tests {
 
     const ON: &str = r#"{"extensions":{"settings":{"kenehmggpggpiolepbjojeenmeapgfoc":{"disable_reasons":[]}}}}"#;
 
-    #[cfg(unix)]
     #[test]
     fn a_running_browser_counts_only_with_its_lock_live_and_the_extension_on() {
         let alive = |pid: u32| pid == 702688;
