@@ -1225,3 +1225,38 @@ test("PR 235 r1 first-F3, second-S3, second-S4: a refind keeps to the deadline; 
 		chrome.tabs.get = getTab;
 	}
 });
+
+test("PR 240 leftovers: a refind tells a removed frame from one that did not answer, per frame, by a flag", async () => {
+	const { frameForRef } = await import("../src/browser/frames.ts");
+	const { snapshot } = await import("../src/browser/page.ts");
+	chrome.webNavigation.getAllFrames = async () => [{}, {}];
+	// r2 first-F3: the <iframe> was removed; its session fails fast and then says it detached. r1 first-F7: a flag says so.
+	const sent = fakeTab(71, { trees: { "": node("TOP", "https://shop.example") }, kids: { Z: { sessionId: "S2" } }, fail: new Set(["S2:Page.getFrameTree"]) });
+	const send = chrome.debugger.sendCommand;
+	chrome.debugger.sendCommand = async (target, method, params) => {
+		if (target.sessionId === "S2" && method === "Page.getFrameTree")
+			setTimeout(() => { for (const fn of chrome.debugger.onEvent.listeners) fn({ tabId: 71 }, "Target.detachedFromTarget", { sessionId: "S2" }); }, 20);
+		return send(target, method, params);
+	};
+	const err = await frameForRef(71, `${frameTag("Z")}e1`).catch((e) => e);
+	assert.match(err.message, /not found: its frame is gone/);
+	assert.equal(err.gone, true);
+	assert.ok(sent.some((c) => c.session === "S2"));
+	// r2 second-F6: an ad frame whose owner never answers leaves a ref in another frame "not found", not "did not answer".
+	fakeTab(72, { trees: { "": node("TOP", "https://shop.example", [node("SAME", "https://shop.example")]), S3: node("AD", "https://ads.example") }, kids: { AD: { sessionId: "S3" } }, hang: new Set([":DOM.getFrameOwner"]) });
+	assert.match((await frameForRef(72, `${frameTag("PAY")}e1`).catch((e) => e)).message, /not found: its frame is gone/);
+	assert.match((await frameForRef(72, `${frameTag("AD")}e1`).catch((e) => e)).message, /its frame did not answer/);
+	// r2 first-F4: a hidden ad slot alone in its box keeps "not shown" though a slot elsewhere has its URL.
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	try {
+		chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+		const ads = (id, q) => ({ frame: { id, url: `https://ads.example/slot?id=${q}`, securityOrigin: "https://ads.example" } });
+		const lines = [frameLine("e1", [100, 50, 400, 150]), frameLine("e2", [100, 300, 400, 400])].map((l) => ({ ...l, href: "https://ads.example/slot" }));
+		fakeTab(73, { trees: { "": node("TOP", "https://shop.example", [ads("A1", 1), ads("A2", 2)]) }, holds: { A1: "TOP", A2: "TOP" }, owners: { A1: 11, A2: 12 }, quads: { A2: quad(100, 300, 400, 400) }, shown: { A1: "no answer", A2: "hidden" }, evaluate: (frameId) => (frameId === undefined ? pageWith(lines) : frameSnap("ads")) });
+		const got = (await snapshot(73, { skip: open })).nodes;
+		assert.deepEqual(got.find((n) => n.ref === "e2")?.states, ["cross-origin frame, not shown, so not read"]);
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});

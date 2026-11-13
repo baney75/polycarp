@@ -1484,7 +1484,7 @@ box there whole, seen and painting; or one on `body` the pointer goes through). 
 tab for each frame, level by level, before the frame claims its line (matched by the `<iframe>`'s border box, not its
 corner), so a see-through frame under a shown one can't take the shown one's line or its points; a frame whose test gets
 no answer is not read and keeps its line, and a frame the tab found hidden or barred relabels only the line that names its
-own URL or, failing that, the one line of its origin that names no other frame (a redirect), so it can't take a shown frame's line. Each action resolves its frame once and reuses it for the change report and the point, re-measured
+own URL in its own box or, failing that, the one line of its origin that names no other frame (a redirect), so it can't take a shown frame's line. Each action resolves its frame once and reuses it for the change report and the point, re-measured
 after the scroll; a nested frame's points compose every level's scale. The change report's look in a frame tests it within
 the look's own 0.75 s: a frame only out of view is read (the action has not scrolled it in yet, or scrolled it away), and
 one hidden, gone to an error page or to the approval page (#94) is not, and its refs are listed as gone; one whose test
@@ -1495,7 +1495,7 @@ Every debugger call about a frame has its own time limit (1 s; 3 s for a frame's
 gets no answer counts as covered; the cover test of a point runs levels in different sessions at once, all within 2 s),
 and the calls run in parallel
 under one deadline for the whole read (1.5 s to find the frames, 4 s to read them), so frames that don't answer keep their
-lines instead of adding their waits up. An out-of-process frame whose holder the debugger can't name in time is left
+lines instead of adding their waits up. When a ref's frame must be found again, a frame whose session fails at once and detaches within 0.15 s is gone; one that gives no answer, or fails without detaching, makes only its own refs and its children's "did not answer", so a ref into a frame no longer there still says "not found". The error says which with a `gone` flag, not its words. An out-of-process frame whose holder the debugger can't name in time is left
 out, since its `<iframe>` may sit in a guarded or non-web frame. A line whose frame the tab finds hidden says "not shown",
 and a barred frame's line names its host whatever the page said of it. Frames get a small share past a page that used up the default budget, never
 past a `maxNodes` or `maxTextChars` the caller set. Only http, https and file frames are read: never an extension page, an

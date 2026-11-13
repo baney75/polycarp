@@ -79,6 +79,26 @@ export function bounded<T>(work: Promise<T>, ms = FRAME_CALL_MS): Promise<T | un
 	]).finally(() => clearTimeout(timer));
 }
 
+/** A call's value; null when it failed fast (an answer of a kind), undefined when it took longer than `ms`. */
+function reply<T>(work: Promise<T>, ms: number): Promise<T | null | undefined> {
+	return bounded(
+		work.then(
+			(v) => ({ v }),
+			() => ({ v: null }),
+		),
+		ms,
+	).then((got) => got?.v);
+}
+
+/** How long a refind waits for a session that failed fast to say it detached (its <iframe> removed). */
+const DETACH_MS = 150;
+
+/** What a search got no answer for: these frames by tag, or any frame when a whole tree is unknown. */
+export interface Missed {
+	all: boolean;
+	tags: Set<string>;
+}
+
 interface Child {
 	sessionId: string;
 	url: string;
@@ -173,14 +193,14 @@ export const web = (url: string) => /^(https?|file):/.test(url);
 export async function crossOriginFrames(
 	tabId: number,
 	rule: FrameRule = FRAMES_CLOSED,
-): Promise<PageFrame[] & { missed?: boolean }> {
+): Promise<PageFrame[] & { missed?: Missed }> {
 	const end = Date.now() + FRAMES_MS;
 	await prime(tabId);
 	// Announcements arrive just after auto-attach turns on: wait until every frame the browser
 	// knows of is accounted for, briefly.
 	const expected = (await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null))?.length ?? 0;
 	const until = Date.now() + 300;
-	let found: { frames: PageFrame[]; seen: number; missed: boolean };
+	let found: { frames: PageFrame[]; seen: number; missed: Missed };
 	for (;;) {
 		found = await collect(tabId, rule, end);
 		if (found.seen >= expected || Date.now() >= Math.min(until, end)) break;
@@ -196,14 +216,23 @@ async function collect(
 	tabId: number,
 	rule: FrameRule,
 	end: number,
-): Promise<{ frames: PageFrame[]; seen: number; missed: boolean }> {
+): Promise<{ frames: PageFrame[]; seen: number; missed: Missed }> {
 	const frames: PageFrame[] = [];
 	// A tree or an owner the debugger gave no answer for: a frame not found may still be there.
-	let missed = false;
+	const missed: Missed = { all: false, tags: new Set() };
 	// Every frame looked at or left out is counted, so the caller stops waiting once all are.
 	let seen = 0;
 	const kids = [...(children.get(tabId) ?? new Map<string, Child>())];
 	const kidsOf = (sessionId: string | undefined) => kids.filter(([, c]) => c.parent === sessionId);
+	/** A frame not answered for: it, the frames in its tree and those in sessions inside it. */
+	const lost = (id: string, t?: TreeNode | null) => {
+		missed.tags.add(frameTag(id));
+		for (const c of t?.childFrames ?? []) lost(c.frame.id, c);
+		const own = kids.find(([k]) => k === id)?.[1].sessionId;
+		if (own) for (const [kid] of kidsOf(own)) lost(kid);
+	};
+	// Frames whose calls failed fast: unknown unless their session went away meanwhile.
+	const fast: [string, () => void][] = [];
 	const tree = (sessionId: string | undefined) =>
 		bounded(cdpSendSession<{ frameTree: TreeNode }>(tabId, sessionId, "Page.getFrameTree"), callMs(end)).then(
 			(t) => t?.frameTree,
@@ -222,12 +251,13 @@ async function collect(
 		around: PageFrame | undefined,
 		root: PageFrame | undefined,
 		sessionId?: string,
+		node?: TreeNode,
 	): Promise<PageFrame | undefined> => {
 		if (frames.length >= MAX_PLACED || (around?.chain.length ?? 0) >= MAX_DEPTH) return undefined;
 		const bar = await rule(url);
 		if (bar === "guarded") return undefined;
 		const f = await place(tabId, frameId, ownerSessionId, url, around, root, sessionId, end);
-		if (f === null) missed = true;
+		if (f === null) lost(frameId, node);
 		if (!f) return undefined;
 		if (bar === "blocked") f.blocked = true;
 		frames.push(f);
@@ -247,7 +277,7 @@ async function collect(
 				// A frame that isn't a web page is left out with everything inside it.
 				else if (!web(child.frame.url)) await visit(child, "out");
 				else {
-					const f = await admit(child.frame.id, sessionId, url, inside, root);
+					const f = await admit(child.frame.id, sessionId, url, inside, root, undefined, child);
 					await visit(child, f && !f.blocked ? f : "out");
 				}
 			}
@@ -259,7 +289,10 @@ async function collect(
 				// The frame whose document holds this one's <iframe>: what is around it, and whether it is read at all.
 				const [owner, sub] = await Promise.all([
 					ownerFrame(tabId, sessionId, targetId, top, end),
-					tree(c.sessionId),
+					reply(
+						cdpSendSession<{ frameTree: TreeNode }>(tabId, c.sessionId, "Page.getFrameTree"),
+						callMs(end),
+					).then((t) => (t ? t.frameTree : t)),
 				]);
 				return { targetId, c, owner, sub };
 			}),
@@ -267,8 +300,14 @@ async function collect(
 		for (const { targetId, c, owner, sub } of asked) {
 			// An owner the debugger couldn't name (out of time, no answer) may be a guarded or non-web frame:
 			// the frame is left out rather than placed as if it sat in the session's own document.
-			const inside: Inside = owner !== undefined && where.has(owner) ? where.get(owner) : "out";
-			if (owner === undefined || !sub) missed = true;
+			const inside: Inside = owner && where.has(owner) ? where.get(owner) : "out";
+			// No tree: nothing inside it is known. A call that failed fast is an answer only once the session is gone.
+			const unknown = () => {
+				if (sub) lost(targetId, sub);
+				else missed.all = true;
+			};
+			if (owner === undefined || sub === undefined) unknown();
+			else if (owner === null || sub === null) fast.push([targetId, unknown]);
 			if (!sub) {
 				await leaveOut(c.sessionId, null);
 				continue;
@@ -283,8 +322,10 @@ async function collect(
 		}
 	};
 	const top = await bounded(cdpSend<{ frameTree: TreeNode }>(tabId, "Page.getFrameTree"), callMs(end));
-	if (!top) return { frames, seen: Number.POSITIVE_INFINITY, missed: true };
+	if (!top) return { frames, seen: Number.POSITIVE_INFINITY, missed: { all: true, tags: new Set() } };
 	await session(undefined, top.frameTree, undefined);
+	if (fast.length) await new Promise((done) => setTimeout(done, Math.min(DETACH_MS, Math.max(0, end - Date.now()))));
+	for (const [id, unknown] of fast) if (children.get(tabId)?.has(id)) unknown();
 	return { frames, seen, missed };
 }
 
@@ -301,12 +342,13 @@ async function ownerFrame(
 	targetId: string,
 	top: TreeNode,
 	end?: number,
-): Promise<string | undefined> {
+): Promise<string | null | undefined> {
 	if (!top.childFrames?.length) return top.frame.id;
-	const own = await bounded(
+	const own = await reply(
 		cdpSendSession<{ backendNodeId?: number }>(tabId, sessionId, "DOM.getFrameOwner", { frameId: targetId }),
 		callMs(end),
 	);
+	if (own === null) return null;
 	if (!own?.backendNodeId) return undefined;
 	const objects = group();
 	const at = await resolveOwner(tabId, sessionId, own.backendNodeId, top, objects, end);
@@ -790,6 +832,9 @@ async function within(
 	return tree ? find(tree.frameTree, false) : false;
 }
 
+/** An error that is a definite answer: the frame is gone, or barred. */
+const gone = (message: string) => Object.assign(new Error(message), { gone: true });
+
 /** A frame's host, as read_page and the errors name it. */
 export function frameHost(url: string): string {
 	try {
@@ -809,11 +854,13 @@ export async function frameForRef(
 	if (!split) return undefined;
 	const frames = await crossOriginFrames(tabId, rule);
 	const frame = frames.find((f) => f.tag === split.tag);
-	if (!frame && frames.missed) throw new Error(`Ref ${ref}: its frame did not answer. Try again, or call read_page.`);
-	if (!frame) throw new Error(`Ref ${ref} not found: its frame is gone or changed. Call read_page for fresh refs.`);
+	if (!frame && (frames.missed?.all || frames.missed?.tags.has(split.tag)))
+		throw new Error(`Ref ${ref}: its frame did not answer. Try again, or call read_page.`);
+	// `gone` marks a definite answer for the change look, so no message's wording decides it.
+	if (!frame) throw gone(`Ref ${ref} not found: its frame is gone or changed. Call read_page for fresh refs.`);
 	if (frame.blocked) {
 		const host = frameHost(frame.url);
-		throw new Error(
+		throw gone(
 			`Not allowed to open ${host}: ref ${ref} is in a frame from a site not allowed for agents. ` +
 				`The user can allow it in the Polycarp side panel under Settings > Agents, or with \`polycarp browser allow ${new URL(frame.url).hostname}\`.`,
 		);
