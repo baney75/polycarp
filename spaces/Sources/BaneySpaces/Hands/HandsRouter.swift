@@ -116,7 +116,12 @@ final class HandsRouter {
         case "snapshot": return snapshot(req)
         case "find": return find(req)
         case "get": return get(req)
-        case "click": return act(req, .click, "click")
+        case "click":
+            switch ContextMenu.refClick(button: req.string("button"), item: req.string("item")) {
+            case .failure(let e): return .failure(e)
+            case .success(.right(let item)): return contextClick(req, item: item)
+            case .success(.press): return act(req, .click, "click")
+            }
         case "type": return act(req, .typeText, "type", text: req.string("text"), pasted: req.bool("paste"))
         case "set-value": return act(req, .setValue, "set-value", text: req.string("value"))
         case "press": return press(req)

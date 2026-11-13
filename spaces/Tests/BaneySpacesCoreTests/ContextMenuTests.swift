@@ -107,12 +107,15 @@ final class ContextMenuTests: XCTestCase {
         let press = try XCTUnwrap(HandsSourceTests.block(after: "func contextPress(", in: src))
         let gate = try XCTUnwrap(press.range(of: "ContextMenu.gate(")), post = try XCTUnwrap(press.range(of: "BackgroundPoster.pointer("))
         XCTAssertLessThan(gate.lowerBound, post.lowerBound)
+        XCTAssertTrue(press.contains("contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: post.report.stopped"))
+        // The tail both right clicks share (a posted one and one on a ref).
+        let menu = try XCTUnwrap(HandsSourceTests.block(after: "func contextMenu(", in: src))
         XCTAssertFalse(src.contains("AXUIElementPerformAction"), "the router performs no accessibility action itself")
-        XCTAssertTrue(press.contains("_ = escape()"), "cancelled with Escape posted to the process")
+        XCTAssertTrue(menu.contains("_ = escape()"), "cancelled with Escape posted to the process")
         XCTAssertTrue(src.contains("surface: HandsEngine.surfaceMenu") && src.contains("actInline(window: w, ref: ref, kind: .click"), "the item is pressed through the engine")
-        XCTAssertTrue(press.contains("case .elsewhere:\n            out.result = .failure(ContextMenu.elsewhere(w.app, cancelled: cancel()))"))
-        XCTAssertTrue(press.contains("if !shown.isEmpty { _ = cancel() }"), "a stopped press cancels its menu")
-        XCTAssertTrue(press.contains("out.result = .failure(cancel() ? e : ContextMenu.stillOpen(w.app))"), "a refused item cancels the menu")
+        XCTAssertTrue(menu.contains("case .elsewhere:\n            return .failure(ContextMenu.elsewhere(w.app, cancelled: cancel()))"))
+        XCTAssertTrue(menu.contains("if !shown.isEmpty { _ = cancel() }"), "a stopped press cancels its menu")
+        XCTAssertTrue(menu.contains("return .failure(cancel() ? e : ContextMenu.stillOpen(w.app))"), "a refused item cancels the menu")
         let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
         let right = try XCTUnwrap(bg.range(of: "case .pointer where style.right:")), left = try XCTUnwrap(bg.range(of: "case .pointer:\n"))
         XCTAssertLessThan(right.lowerBound, left.lowerBound)
@@ -132,5 +135,48 @@ final class ContextMenuTests: XCTestCase {
         XCTAssertEqual(ContextMenu.ref(tree, title: "rename"), "@e3")
         XCTAssertNil(ContextMenu.ref(tree, title: "Name"), "not inside a submenu")
         XCTAssertNil(ContextMenu.ref(tree, title: "Delete"), "not disabled")
+    }
+
+    /// By ref: nothing reaches the app unless the agent workspace is on screen under the window, whose middle stands for
+    /// the element (AXShowMenu opens the menu at it); a parked window is refused, nothing sent. A menu that still opens
+    /// off the window's display is cancelled by the verdict, as after a posted click.
+    func testARightClickOnARefIsGatedLikeAPostedOne() throws {
+        let shown = CGRect(x: 200, y: 100, width: 800, height: 600)
+        XCTAssertNil(ContextMenu.gate(agentShown: true, window: shown, displays: [main, side]))
+        let parked = CGRect(origin: Geometry.hidingSpot(screens: [main, side]), size: shown.size)
+        for (window, agent) in [(parked, true), (shown, false)] {
+            let e = try XCTUnwrap(ContextMenu.gate(agentShown: agent, window: window, displays: [main, side]), "\(window) \(agent)")
+            XCTAssertEqual(e.code, .outsideAgentWorkspace)
+            XCTAssertTrue(e.message.contains("nothing was sent"), e.message)
+            XCTAssertEqual(e.retry, .never)
+        }
+    }
+
+    /// `click` takes button and item: left is the plain press, right opens the menu, item only with right.
+    func testClickOnARefTakesTheRightButton() throws {
+        XCTAssertEqual(try ContextMenu.refClick(button: nil, item: nil).get(), .press)
+        XCTAssertEqual(try ContextMenu.refClick(button: "Right", item: "Rename").get(), .right(item: "Rename"))
+        XCTAssertEqual(try ContextMenu.refClick(button: "right", item: nil).get(), .right(item: nil))
+        for (b, i) in [("left", "Rename"), ("right", " "), ("middle", nil)] as [(String, String?)] {
+            guard case .failure(let e) = ContextMenu.refClick(button: b, item: i) else { return XCTFail("\(b) \(String(describing: i))") }
+            XCTAssertEqual(e.code, .badArguments)
+        }
+        let click = try XCTUnwrap(HandsTools.all.first { $0.verb == "click" })
+        XCTAssertTrue(Set(click.params.map(\.name)).isSuperset(of: ["ref", "button", "item"]))
+    }
+
+    /// The router: a right click on a ref is gated before the engine is asked, goes to the engine as its RightClick
+    /// (kind 2, headless: AXShowMenu, never a posted click), and shares the posted right click's proof and cancel.
+    func testARightClickOnARefIsTheEnginesShowMenuWithTheSameProof() throws {
+        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        XCTAssertTrue(router.contains("case .success(.right(let item)): return contextClick(req, item: item)"))
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextRef.swift")
+        let click = try XCTUnwrap(HandsSourceTests.block(after: "func contextClick(", in: src))
+        let gate = try XCTUnwrap(click.range(of: "ContextMenu.gate(")), act = try XCTUnwrap(click.range(of: "kind: .rightClick"))
+        XCTAssertLessThan(gate.lowerBound, act.lowerBound)
+        XCTAssertTrue(click.contains("contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: nil, none: refused"))
+        XCTAssertFalse(src.contains("BackgroundPoster.pointer") || src.contains("AXUIElementPerformAction"), "no posted click, no accessibility action of its own")
+        let engine = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsEngine.swift")
+        XCTAssertTrue(engine.contains("rightClick = 2") && engine.contains("Self.headlessPolicy, 0, &out"))
     }
 }

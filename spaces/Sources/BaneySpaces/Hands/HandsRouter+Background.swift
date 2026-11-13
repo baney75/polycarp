@@ -241,12 +241,8 @@ extension HandsRouter {
             }
         case .pointer where style.right:
             // Proved by the menu's own window, not by the target window's tree or pixels (`ContextMenu`).
-            // The cancel: Escape posted to the process, with a key permit of its own from the planner.
-            let escape: () -> Bool = { [self] in
-                guard let (keyFacts, _) = gatherFacts(w, kind: .keys, verifier: .none, path: []), case .success(let keys) = BackgroundPlanner.plan(keyFacts) else { return false }
-                return BackgroundPoster.keys([KeyChord(keyCode: 53, flags: 0, label: "escape")], permit: keys, stop: { nil }).stopped == nil
-            }
-            let r = contextPress(w, frame: frame, point: path[0], permit: permit, stop: stop, item: style.item, escape: escape, check: scopeCheck, cancelled: cancelled)
+            let r = contextPress(w, frame: frame, point: path[0], permit: permit, stop: stop, item: style.item, escape: { [self] in escapeMenu(w) },
+                                 check: scopeCheck, cancelled: cancelled)
             aimed += r.aimed; posted += r.posted; released = r.released; lastPostAt = r.lastPostAt
             switch r.result {
             case .failure(let e): return .failed(r.posted > 0 ? frontFailure() ?? e : e)
@@ -326,6 +322,12 @@ extension HandsRouter {
     }
 
     /// The facts the planner decides on, read now, on the process queue. nil when the window is gone.
+    /// A context menu's cancel: Escape posted to the process, with a key permit of its own from the planner.
+    func escapeMenu(_ w: HandsWindow) -> Bool {
+        guard let (keyFacts, _) = gatherFacts(w, kind: .keys, verifier: .none, path: []), case .success(let keys) = BackgroundPlanner.plan(keyFacts) else { return false }
+        return BackgroundPoster.keys([KeyChord(keyCode: 53, flags: 0, label: "escape")], permit: keys, stop: { nil }).stopped == nil
+    }
+
     private func gatherFacts(_ w: HandsWindow, kind: InputKind, verifier: VerifierPlan, path: [CGPoint]) -> (BackgroundFacts, CGRect)? {
         let (live, agent, owned, seen) = onMain { (host.live(w.id), host.agentWorkspace(), host.agentOwned(), host.inspect(w.id)) }
         guard let live, live.pid == w.pid, let server = BackgroundAX.serverWindow(w.id) else { return nil }

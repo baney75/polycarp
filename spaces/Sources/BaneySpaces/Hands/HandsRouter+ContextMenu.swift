@@ -20,7 +20,6 @@ extension HandsRouter {
     }
 
     /// A right click at `point` (window-local) and its context menu, on the process queue (`ContextMenu` has the rules).
-    /// Every path that posted ends with no menu of this press open.
     /// `escape` posts Escape to the process with a key permit: the cancel (the engine has none for a menu, and the router
     /// never performs accessibility actions itself). The item is pressed by ref through the engine's menu surface.
     func contextPress(_ w: HandsWindow, frame: CGRect, point: CGPoint, permit: BackgroundPermit, stop: () -> HandsError?, item: String?,
@@ -32,6 +31,16 @@ extension HandsRouter {
         let before = Set(ContextMenuAX.menus(w.pid, before: []).map(\.id))
         let post = BackgroundPoster.pointer(InputScript.rightClick(at: point), frame: frame, drag: false, gesture: BackgroundPoster.newGesture(), permit: permit, stop: stop)
         out.aimed = post.screenPoints; out.posted = post.report.posted.count; out.released = post.report.released; out.lastPostAt = Date()
+        out.result = contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: post.report.stopped, none: nil,
+                                 escape: escape, check: check, cancelled: cancelled)
+        return out
+    }
+
+    /// After the press (a posted right click or the engine's show-menu): find the press's menu, prove where it is, then
+    /// press `item` in it or list its items and cancel it. Every path ends with no menu of this press open.
+    /// `stopped`: the press was cut short. `none`: what to answer when no menu showed (the engine's refusal), else `noMenu`.
+    func contextMenu(_ w: HandsWindow, frame: CGRect, displays: [CGRect], before: Set<UInt32>, item: String?, stopped: HandsError?, none: HandsError?,
+                     escape: () -> Bool, check: @escaping HandsEngine.Check, cancelled: () -> Bool) -> Result<[String: JSONValue], HandsError> {
         var shown: [ContextMenu.Shown] = []
         let deadline = Date().addingTimeInterval(ContextMenu.wait)
         repeat {
@@ -44,43 +53,35 @@ extension HandsRouter {
             _ = escape()
             return ContextMenuAX.gone(w.pid, before: before, within: 0.5)
         }
-        if let stopped = post.report.stopped {
+        if let stopped {
             if !shown.isEmpty { _ = cancel() }
-            out.result = .failure(stopped)
-            return out
+            return .failure(stopped)
         }
         switch ContextMenu.verdict(shown, agentShown: agentShown(), display: ContextMenu.display(window: frame, displays: displays)) {
         case .none:
-            out.result = .failure(ContextMenu.noMenu(w.app))
+            return .failure(none ?? ContextMenu.noMenu(w.app))
         case .elsewhere:
-            out.result = .failure(ContextMenu.elsewhere(w.app, cancelled: cancel()))
+            return .failure(ContextMenu.elsewhere(w.app, cancelled: cancel()))
         case .onAgent(let menus):
-            guard let read = ContextMenuAX.items(w.pid) else {
-                out.result = .failure(ContextMenu.unread(w.app, cancelled: cancel()))
-                return out
-            }
+            guard let read = ContextMenuAX.items(w.pid) else { return .failure(ContextMenu.unread(w.app, cancelled: cancel())) }
             var data: [String: JSONValue] = ["menu_windows": .array(menus.map { .int(Int($0.id)) }),
                                              "items": .array(read.items.map(\.title).filter { !$0.isEmpty }.map(JSONValue.string))]
             guard let item else {
-                guard cancel() else { out.result = .failure(ContextMenu.stillOpen(w.app)); return out }
+                guard cancel() else { return .failure(ContextMenu.stillOpen(w.app)) }
                 data["cancelled"] = true
-                out.result = .success(data)
-                return out
+                return .success(data)
             }
             switch ContextMenu.choose(read.items, enabled: read.enabled, want: item) {
             case .failure(let e):
-                out.result = .failure(cancel() ? e : ContextMenu.stillOpen(w.app))
+                return .failure(cancel() ? e : ContextMenu.stillOpen(w.app))
             case .success(let at):
                 guard pressItem(w, title: read.items[at].title, check: check, cancelled: cancelled), ContextMenuAX.gone(w.pid, before: before, within: 0.5) else {
-                    let cancelled = cancel()
-                    out.result = .failure(cancelled ? ContextMenu.notPressed(w.app, item: item) : ContextMenu.stillOpen(w.app))
-                    return out
+                    return .failure(cancel() ? ContextMenu.notPressed(w.app, item: item) : ContextMenu.stillOpen(w.app))
                 }
                 data["pressed"] = .string(read.items[at].title)
-                out.result = .success(data)
+                return .success(data)
             }
         }
-        return out
     }
 
     /// The item, by ref from the engine's read of the open menu, pressed through the engine. True when the press went through.

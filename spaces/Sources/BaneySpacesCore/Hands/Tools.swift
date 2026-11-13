@@ -78,7 +78,11 @@ public enum HandsTools {
             HandsParam("property", .string, "value (default), text, title, role, bounds or states.", positional: true),
             HandsParam("copy", .boolean, "Also hold the text on the agent clipboard, for type with paste: true. Never the Mac's clipboard."),
         ], acts: false),
-        HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"}", params: [refParam], acts: true),
+        HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"}", params: [
+            refParam,
+            HandsParam("button", .string, "left (default) or right. A right click opens the element's context menu (AXShowMenu, no pointer) only while the agent workspace is on screen under the window, then presses `item` or, without one, lists the items and cancels the menu; it never leaves a menu open."),
+            HandsParam("item", .string, "With button right: the context menu item to press, by its title. Items the menu bar refuses (clipboard, Services, sharing, opening documents) are refused here too."),
+        ], acts: true),
         HandsTool(verb: "type", summary: "Type text into an element by ref: inserts it at the element's selection through accessibility, never by posting keys. Prints the value it read back. paste: true types what you copied with get. Example: {\"ref\":\"7\",\"paste\":true}", params: [
             refParam,
             HandsParam("text", .string, "The text.", positional: true, rest: true),
