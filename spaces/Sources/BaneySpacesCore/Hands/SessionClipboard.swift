@@ -42,7 +42,9 @@ public struct SessionClipboard: Equatable, Sendable {
     }
 
     /// No session, or the "default" every caller without a terminal shares: no clipboard, so two agents never share one
-    /// (198 r1 first-F3). An entry is keyed on the session id the caller gives; MCP gives each connection its own.
+    /// (198 r1 first-F3). An entry is keyed on the session id the caller gives, and that id is trusted as given: MCP gives
+    /// each connection its own, but a CLI caller that sets BANEYSPACES_SESSION to another agent's id (or its tty name)
+    /// reads what that agent copied. Nothing here keeps apart two agents of the same user that choose ids (198 r2 second-S3).
     static func sessionRefusal(_ session: String) -> HandsError? {
         guard session.isEmpty || session == "default" else { return nil }
         return HandsError(.badArguments, "the agent clipboard needs a session of its own, and this call has none",
@@ -68,26 +70,56 @@ public struct SessionClipboard: Equatable, Sendable {
     /// Mac's current layouts, since an app reads cmd+c by its character (cmd+i is copy on Dvorak).
     public static let pasteboardKeyCodes: Set<UInt16> = [7, 8, 9]   // x, c, v on the ANSI layout
 
-    public static func usesPasteboard(_ c: KeyChord, characters: [Character] = []) -> Bool {
+    /// `characters` is read only for a chord with command held: reading the layout costs a hop to the main thread (198 r2 first-F4).
+    public static func usesPasteboard(_ c: KeyChord, characters: @autoclosure () -> [Character] = []) -> Bool {
         guard c.flags & KeyChord.command != 0 else { return false }
-        return pasteboardKeyCodes.contains(c.keyCode) || characters.contains { ["c", "x", "v"].contains($0.lowercased()) }
+        return pasteboardKeyCodes.contains(c.keyCode) || characters().contains { ["c", "x", "v"].contains($0.lowercased()) }
     }
 
     /// Cut, copy and paste items, by the action AppKit names an item by (its AX identifier, in any language), and by
-    /// English title for a menu item that has none (198 r1 first-F2).
+    /// English title only for a menu item that has no identifier (198 r1 first-F2, r2 first-F3).
     public static let pasteboardActions: Set<String> = ["cut:", "copy:", "paste:", "pasteasplaintext:", "pasteandmatchstyle:", "pasteasrichtext:"]
     public static let pasteboardTitles: Set<String> = ["cut", "copy", "paste", "paste and match style", "paste as plain text"]
 
+    /// Whether an element is a cut, copy or paste item. A button an app titles Copy, or an item titled Copy that AppKit
+    /// wires to another action, is the app's own and not caught.
+    public static func isPasteboardItem(role: String, name: String, identifier: String) -> Bool {
+        let id = identifier.trimmingCharacters(in: .whitespaces)
+        if !id.isEmpty { return pasteboardActions.contains(id.lowercased()) }
+        return role == "menuitem" && pasteboardTitles.contains(name.lowercased())
+    }
+
     /// The title of the cut, copy or paste item a `click` on row `number`, or a `select` of `option` under it, would
-    /// press, or nil. A button an app titles Copy is the app's own and not caught.
+    /// press, or nil. The option is matched ignoring case, at least as loosely as the engine matches it (198 r2
+    /// second-S1). A closed popup's items are in no read; the engine refuses those after the popup opens (`engineRefusal`).
     public static func pasteboardItem(rows: [SnapshotRows.Row], number: Int, option: String?) -> String? {
         guard let i = rows.firstIndex(where: { $0.number == number }) else { return nil }
-        func hit(_ r: SnapshotRows.Row) -> Bool {
-            pasteboardActions.contains(r.identifier.lowercased()) || (r.role == "menuitem" && pasteboardTitles.contains(r.name.lowercased()))
-        }
+        func hit(_ r: SnapshotRows.Row) -> Bool { isPasteboardItem(role: r.role, name: r.name, identifier: r.identifier) }
         guard let option else { return hit(rows[i]) ? rows[i].name : nil }
-        if pasteboardTitles.contains(option.lowercased()) { return option }
-        return rows.first { r in r.name == option && hit(r) && SnapshotRows.descends(rows, r, from: i) }?.name
+        let want = option.lowercased()
+        return rows.first { r in r.name.lowercased() == want && hit(r) && SnapshotRows.descends(rows, r, from: i) }?.name
+    }
+
+    /// `@e12` -> title for each cut, copy or paste item in a snapshot's `refmap.json`, read once when the snapshot is
+    /// taken and held as long as its refs resolve, so a click on one is refused however many reads came after (198 r2
+    /// first-F1). Empty when the file isn't the expected shape.
+    public static func pasteboardRefs(refmap data: Data) -> [String: String] {
+        guard let inner = JSONValue.parse(data)?["inner"]?.object else { return [:] }
+        var out: [String: String] = [:]
+        for (key, e) in inner {
+            let id = e["native_id"]?["kind"]?.string == "ax_identifier" ? e["native_id"]?["value"]?.string ?? "" : ""
+            let name = e["name"]?.string ?? ""
+            if isPasteboardItem(role: e["role"]?.string ?? "", name: name, identifier: id) { out[key] = name.isEmpty ? id : name }
+        }
+        return out
+    }
+
+    /// The engine's refusal of a cut, copy or paste item it found in an opened popup or menu, before pressing it
+    /// (engine/patches/0003), as Polycarp's own answer. Nil for any other engine error.
+    public static func engineRefusal(_ err: JSONValue) -> HandsError? {
+        guard err["details"]?["kind"]?.string == "pasteboard_item" else { return nil }
+        let title = err["details"]?["title"]?.string ?? "", id = err["details"]?["identifier"]?.string ?? ""
+        return pasteboardRefusal(title.isEmpty ? (id.isEmpty ? "that menu item" : id) : title)
     }
 
     /// `type`'s text: the `text` argument, or with paste what this session copied, never both.
