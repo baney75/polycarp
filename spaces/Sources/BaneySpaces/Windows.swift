@@ -145,9 +145,20 @@ enum Windows {
     private static var bench = AXBench()
     private static let unresponsiveLock = NSLock()
 
+    /// A launch being covered (`OpenFlashGuard.Hold`): its process isn't asked until the cover is up.
+    private static var launchHold: OpenFlashGuard.Hold?
+
+    static func hold(_ h: OpenFlashGuard.Hold?) {
+        unresponsiveLock.lock(); launchHold = h; unresponsiveLock.unlock()
+    }
+
     static func isResponsive(_ pid: pid_t) -> Bool {
-        unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
-        return !bench.isBenched(pid, now: Date())
+        unresponsiveLock.lock()
+        let now = Date(), benched = bench.isBenched(pid, now: now), held = launchHold
+        unresponsiveLock.unlock()
+        guard !benched else { return false }
+        guard let held, now < held.until else { return true }
+        return !held.holds(pid: pid, name: NSRunningApplication(processIdentifier: pid)?.localizedName, now: now)
     }
 
     static func markUnresponsive(_ pid: pid_t) {

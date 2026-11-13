@@ -675,10 +675,13 @@ final class SessionController {
                     claimLaunch(app)
                 }
             }
-            if files.isEmpty {
-                NSWorkspace.shared.openApplication(at: url, configuration: cfg) { app, _ in finished(app) }
-            } else {
-                NSWorkspace.shared.open(files, withApplicationAt: url, configuration: cfg) { app, _ in finished(app) }
+            // Covers the new window on Donovan's workspace until it is parked; off unless set (`OpenFlashGuard`).
+            OpenFlashWatch.around(app: appName, before: before, agentShown: h.current() == n) {
+                if files.isEmpty {
+                    NSWorkspace.shared.openApplication(at: url, configuration: cfg) { app, _ in finished(app) }
+                } else {
+                    NSWorkspace.shared.open(files, withApplicationAt: url, configuration: cfg) { app, _ in finished(app) }
+                }
             }
             return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "note": "starting a separate copy; its window opens there in a moment"])
         case "cursor":
