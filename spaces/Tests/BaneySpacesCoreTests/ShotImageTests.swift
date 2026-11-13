@@ -90,6 +90,7 @@ final class ShotImageTests: XCTestCase {
             return ShotImage.attach(to: read, zoom: zoom,
                 target: { calls.append("target"); return target ? .success(7) : .failure(HandsError(.windowNotFound, "window 7 isn't there", suggestion: "")) },
                 gate: { (_: Int) in calls.append("gate"); return gate ? nil : HandsError(.permissionDenied, "no Screen Recording", suggestion: "") },
+                points: { (_: Int) in calls.append("points"); return points },
                 capture: { (_: Int) in calls.append("capture")
                     return capture ? .success(.init(path: "/s.png", width: 3200, height: 2000, points: points)) : .failure(HandsError(.actionFailed, "capture failed", suggestion: "")) })
         }
@@ -106,6 +107,7 @@ final class ShotImageTests: XCTestCase {
         XCTAssertEqual(calls, ["target"])
         XCTAssertEqual(lost["screenshot_error"], "window 7 isn't there", "r1 first-F1: a lost window is said too")
         let far = run(zoom: .init(x: 2000, y: 0, width: 100, height: 100))
+        XCTAssertEqual(calls, ["target", "gate", "points"], "r1 second-S1: an outside zoom is refused before the capture, so no file is written")
         XCTAssertNil(far["screenshot"])
         XCTAssertEqual(far["screenshot_error"]?.string, "zoom 2000,0,100,100 lies outside the 1600x1000 pt window")
     }
@@ -133,8 +135,50 @@ final class ShotImageTests: XCTestCase {
                                                data: .object(["path": "/x.png", "points": .object(["width": .double(1600), "height": .double(1000)])])))
         let data = try XCTUnwrap(parts[1]["data"]?.string.flatMap { Data(base64Encoded: $0) })
         XCTAssertTrue(size(data) == (1280, 800), "fitted, never the raw capture")
-        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
-        XCTAssertTrue(src.contains("if let e = ShotImage.outside(zoom, points: r.points) { return .failure(e) }"), "shot refuses it")
+        XCTAssertTrue(parts[0]["text"]?.string?.contains("The zoom couldn't be applied, so this is the whole window") == true,
+                      "r1 first-F2: a fallback says the zoom wasn't applied")
+        let whole = try XCTUnwrap(s.imageParts(verb: "shot", arguments: ["window": .int(5)],
+                                               data: .object(["path": "/x.png", "points": .object(["width": .double(1600), "height": .double(1000)])])))
+        XCTAssertFalse(whole[0]["text"]?.string?.contains("zoom") == true, "no zoom asked, no note")
+    }
+
+    /// r1 first-F4, second-S1, first-F3: `shot` and `snapshot` judge the zoom on the window's size before capturing, by value.
+    func testAZoomOutsideTheWindowIsRefusedBeforeTheCapture() {
+        let size = CGSize(width: 1600, height: 1000)
+        var captured = 0
+        func capture() -> Result<String, HandsError> { captured += 1; return .success("/a.png") }
+        guard case .failure(let e) = ShotImage.beforeCapture(zoom: .init(x: 2000, y: 0, width: 100, height: 100), points: size, capture: capture) else { return XCTFail() }
+        XCTAssertEqual(e.code, .badArguments)
+        XCTAssertEqual(captured, 0, "refused before anything is captured or written")
+        XCTAssertEqual(try ShotImage.beforeCapture(zoom: .init(x: 10, y: 10, width: 100, height: 100), points: size, capture: capture).get(), "/a.png")
+        XCTAssertEqual(try ShotImage.beforeCapture(zoom: nil, points: size, capture: capture).get(), "/a.png")
+        XCTAssertEqual(try ShotImage.beforeCapture(zoom: .init(x: 2000, y: 0, width: 1, height: 1), points: nil, capture: capture).get(), "/a.png",
+                       "an unread size leaves the decision to the capture")
+        XCTAssertEqual(captured, 3)
+    }
+
+    /// r1 first-F1: a value no screen has is refused in every slot, and nothing on the zoom path traps on one.
+    func testHugeZoomValuesAreRefusedAndNeverTrap() throws {
+        for huge in ["1e20", "1e308", "9.3e18", "100000.5"] {
+            for slot in 0..<4 {
+                var parts = ["0", "0", "10", "10"]
+                parts[slot] = huge
+                let text = parts.joined(separator: ",")
+                guard case .failure(let e) = ShotImage.region(text) else { return XCTFail(text) }
+                XCTAssertEqual(e.code, .badArguments, text)
+            }
+        }
+        XCTAssertNotNil(try ShotImage.region("0,0,100000,100000").get(), "the bound itself is taken")
+        let size = CGSize(width: 1600, height: 1000)
+        for v in [1e20, 1e308, 9.3e18] {
+            let e = try XCTUnwrap(ShotImage.outside(.init(x: v, y: 0, width: v, height: 10), points: size))
+            XCTAssertTrue(e.message.contains("lies outside the 1600x1000 pt window"), e.message)
+            let p = try XCTUnwrap(ShotImage.picture(png: png(3200, 2000), points: size, zoom: .init(x: 0, y: 0, width: v, height: v)))
+            XCTAssertTrue(ShotImage.label(window: 1, p).contains("click_at x = image x * 1.25"), ShotImage.label(window: 1, p))
+            XCTAssertNil(ShotImage.picture(png: png(3200, 2000), points: size, zoom: .init(x: v, y: v, width: 10, height: 10)))
+        }
+        let odd = ShotImage.Picture(png: Data(), width: 1, height: 1, pointsPerPixel: 1, origin: CGPoint(x: 1e20, y: 9.3e18))
+        XCTAssertTrue(ShotImage.label(window: 1, odd).contains("y = 9.3e+18 + image y"), ShotImage.label(window: 1, odd))
     }
 
     /// r1 lows: non-finite zooms, the snapshot example, a fractional origin.

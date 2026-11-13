@@ -62,7 +62,7 @@ public enum HandsTools {
             HandsParam("compact", .boolean, "Collapse wrapper groups with no content."),
             HandsParam("depth", .integer, "How deep to read (default 10)."),
             HandsParam("screenshot", .boolean, "Also return a picture of the window (longest side 1280), with how its pixels map to window points."),
-            HandsParam("zoom", .string, "With screenshot: only this region, x,y,width,height in window points, like \"0,0,400,300\". Crops the MCP image; the saved file stays whole."),
+            HandsParam("zoom", .string, "With screenshot: only this region, x,y,width,height in window points, like \"0,0,400,300\". Crops the MCP image; the saved file stays whole. A zoom outside the window is refused before anything is captured."),
         ], acts: false),
         HandsTool(verb: "find", summary: "Search one window's accessibility tree and return the matching elements with refs.", params: [
             HandsParam("app", .string, "App name or bundle id."),
@@ -116,7 +116,7 @@ public enum HandsTools {
         HandsTool(verb: "shot", summary: "Capture one window as a PNG, even while it is parked out of view. Over MCP the picture comes back fitted to 1280 pixels, labeled untrusted, with how its pixels map to window points. Needs Screen Recording for Polycarp. Example: {\"window\":4211,\"zoom\":\"0,0,400,300\"}", params: [
             HandsParam("window", .integer, "Window id.", required: true),
             HandsParam("out", .string, "A file name (no folder) for the PNG; it is written in Polycarp's own shots folder."),
-            HandsParam("zoom", .string, "Only this region of the window, x,y,width,height in window points, like \"0,0,400,300\". Crops the MCP image; the saved file stays whole."),
+            HandsParam("zoom", .string, "Only this region of the window, x,y,width,height in window points, like \"0,0,400,300\". Crops the MCP image; the saved file stays whole. A zoom outside the window is refused before anything is captured."),
             HandsParam("cursor", .boolean, "Draw the agent cursor where it last acted in this window, if it did in the last 30 seconds and was on screen. Off by default, so the picture is the app itself."),
         ], acts: true),
         HandsTool(verb: "open", summary: "Start work in the background: open an app, or files from the agent handoff folder in it, on the agent workspace, without activating it or switching what Donovan sees. It answers with the new window's id once the window exists (it waits up to `wait` seconds, at most 7), and focus: {changed, returned} says whether macOS brought the app forward and Polycarp gave the keyboard back. Each call makes a fresh window by default (a separate copy, or New Window from behind in a running copy under Full Access; Donovan's windows never move); new_window: false reuses a window this session already opened in that app. Apps that hold the user's own data (Safari, Notes, Mail, Messages, Calendar, Photos) answer needs_sandbox; URLs wait for agent browser profiles.", params: [

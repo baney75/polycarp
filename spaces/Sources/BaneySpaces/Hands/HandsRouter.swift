@@ -423,6 +423,7 @@ final class HandsRouter {
         return .success(.object(ShotImage.attach(to: o, zoom: zoom,
             target: { target(HandsRequest(verb: "shot", args: ["window": .int(id)], session: req.session)).map { $0.0 } },
             gate: { gate($0, session: session) },
+            points: { Self.windowPoints($0.id) },
             capture: { w in
                 let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
                 defer { AgentActivity.shared.end(token) }
@@ -657,6 +658,12 @@ final class HandsRouter {
         }
     }
 
+    /// A window's size in points from the window server's list, which needs no Screen Recording and captures nothing.
+    static func windowPoints(_ id: UInt32) -> CGSize? {
+        let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(id)) as? [[String: Any]] ?? []
+        return (info.first?[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }?.size
+    }
+
     private func shot(_ req: HandsRequest) -> HandsEnvelope {
         switch target(req) {
         case .failure(let e): return .failure(e)
@@ -667,12 +674,14 @@ final class HandsRouter {
             case .failure(let e): return .failure(e)
             case .success(let z): zoom = z
             }
-            let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
-            defer { AgentActivity.shared.end(token) }
-            switch WindowShot.capture(window: w.id, named: req.string("out"), cursor: req.bool("cursor") ? host.cursorMark(w.id) : nil, check: check(w, session: req.session ?? "")) {
+            // The zoom is judged on the window's size first: a refused one captures nothing and writes no file.
+            switch ShotImage.beforeCapture(zoom: zoom, points: zoom == nil ? nil : Self.windowPoints(w.id), capture: {
+                let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
+                defer { AgentActivity.shared.end(token) }
+                return WindowShot.capture(window: w.id, named: req.string("out"), cursor: req.bool("cursor") ? host.cursorMark(w.id) : nil, check: check(w, session: req.session ?? ""))
+            }) {
             case .failure(let e): return .failure(e)
             case .success(let r):
-                if let e = ShotImage.outside(zoom, points: r.points) { return .failure(e) }
                 return .success(.object([
                     "path": .string(r.path), "width": .int(r.width), "height": .int(r.height), "cursor": .bool(r.cursorDrawn),
                     "points": ShotImage.pointsJSON(r.points),
