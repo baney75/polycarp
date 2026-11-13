@@ -81,17 +81,18 @@ final class HandsRouter {
     func handleWire(_ r: Wire.Request) -> Wire.Reply {
         let env: HandsEnvelope
         if let data = r.text?.data(using: .utf8), let req = try? JSONDecoder().decode(HandsRequest.self, from: data) {
-            // The ref as `handle` resolved it: a bare row number is resolved once, never again for the next call (first-F3).
+            // A bare row number is resolved once, here: `handle` gets the full ref and the next call's window comes from it,
+            // also for a call refused before it acts (187 r1 first-F3, 192 r1 first-F6).
             var resolved = req
-            env = HandsNextCall.fill(handle(req, resolved: &resolved), window: windowOf(resolved))
+            if let r = req.string("ref"), SnapshotRows.browserRefError(r) == nil, let n = SnapshotRows.bareNumber(r), case .success(let full) = bareRef(n, req) { resolved.args["ref"] = .string(full) }
+            env = HandsNextCall.fill(handle(resolved), window: windowOf(resolved))
         } else {
             env = .failure(HandsError(.badArguments, "the request wasn't an agent command", suggestion: "Use `polycarp-spaces agent <command>`.", retry: .never))
         }
         return Wire.Reply(ok: true, info: ["envelope": env.line])
     }
 
-    /// `resolved`: the request with a bare row number replaced by the full ref it stood for.
-    func handle(_ req: HandsRequest, resolved: inout HandsRequest) -> HandsEnvelope {
+    func handle(_ req: HandsRequest) -> HandsEnvelope {
         lends.expire()
         if HandsTools.userOnly.contains(req.verb) { return .failure(HandsParse.askedForLend(req.string("app"))) }
         if let e = AgentAccessGate.refusal(verb: req.verb, mode: access) { return .failure(e) }
@@ -100,7 +101,7 @@ final class HandsRouter {
         if let r = req.string("ref"), let e = SnapshotRows.browserRefError(r) { return .failure(e) }
         if let r = req.string("ref"), let n = SnapshotRows.bareNumber(r) {
             switch bareRef(n, req) {
-            case .success(let full): req.args["ref"] = .string(full); resolved = req
+            case .success(let full): req.args["ref"] = .string(full)
             case .failure(let e): return .failure(e)
             }
         }
@@ -129,8 +130,6 @@ final class HandsRouter {
         default: return .failure(HandsError(.badArguments, "unknown agent command \(req.verb)", suggestion: "Commands: " + HandsTools.all.map(\.verb).joined(separator: ", ")))
         }
     }
-
-    func handle(_ req: HandsRequest) -> HandsEnvelope { var r = req; return handle(req, resolved: &r) }
 
     // MARK: scope
 
@@ -397,8 +396,8 @@ final class HandsRouter {
     }
 
     /// `register: false` for the snapshots taken as evidence: the agent never sees their refs, so they must not push its refs out.
-    func read(_ w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8 = 10, register: Bool = true, surface: Int32 = HandsEngine.surfaceWindow, session: String = "") -> Result<JSONValue, HandsError> {
-        switch HandsEngine.shared.snapshot(window: w, interactive: interactive, compact: compact, depth: depth, evidence: !register, surface: surface, check: check(w, session: session)) {
+    func read(_ w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8 = 10, register: Bool = true, session: String = "") -> Result<JSONValue, HandsError> {
+        switch HandsEngine.shared.snapshot(window: w, interactive: interactive, compact: compact, depth: depth, evidence: !register, check: check(w, session: session)) {
         case .failed(let e): return .failure(e)
         case .ok(let data):
             // The engine must have read the window we asked for, never its neighbor.

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Item C: a menu-bar command by its path, like "Format > Font > Bold", found in a read of the app's menu bar
@@ -164,6 +165,17 @@ public enum MenuPath {
         var known: T?? { switch self { case .value(let v): return .some(v); case .absent: return .some(nil); case .failed: return nil } }
     }
 
+    /// A read from its AXError code: unset, unsupported or not implemented by the app is no value; any other failure (a
+    /// busy app's cannotComplete) is unknown (192 r1 second-F10). Codes: success 0, illegalArgument -25201,
+    /// attributeUnsupported -25205, notImplemented -25208, noValue -25212.
+    public static func read<T: Sendable>(code: Int32, value: T?) -> Read<T> {
+        switch code {
+        case 0: return value.map { .value($0) } ?? .absent
+        case -25201, -25205, -25208, -25212: return .absent
+        default: return .failed
+        }
+    }
+
     /// The item from its reads, or nil when any of them failed.
     public static func item(identifier: Read<String>, cmdChar: Read<String>, modifiers: Read<Int>, title: Read<String>, submenu: Bool?) -> MenuItem? {
         guard let submenu, let id = identifier.known, let key = cmdChar.known, let mods = modifiers.known, let t = title.known else { return nil }
@@ -214,6 +226,7 @@ public enum MenuPath {
             let afterOpen = step.at > 0 && step.items[step.at - 1].chord("o")
             if i.submenu && (afterOpen || i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
             if k == 1, isEditMenu(menu.items, title: top), clipboardGroup(menu.items, at: menu.at) { return clipboard(path) }
+            if k == 1, isEditMenu(menu.items, title: top), appended(menu.items, at: menu.at, next: steps.dropFirst(2).first) { return refuse(path, why: outside) }
             if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name.hasPrefix($0) }) { return clipboard(path) }
             if leavesTheApp(i) { return refuse(path, why: outside) }
         }
@@ -241,6 +254,20 @@ public enum MenuPath {
     /// The Edit menu: it undoes (cmd+z) or copies (cmd+c), or is titled so.
     static func isEditMenu(_ items: [MenuItem], title: String) -> Bool {
         title == "edit" || items.contains { $0.chord("z") || $0.chord("c") }
+    }
+
+    /// AppKit's own Edit items (AutoFill, Start Dictation, Writing Tools, Emoji & Symbols) are appended after the app's,
+    /// in any language and with or without an identifier (192 r1 first-F3). So past Select All's group (cmd+a or
+    /// selectAll:, from the first separator after it), an item is used only when the app gave it a command key
+    /// equivalent, or it is a submenu one of whose items has one (Find, Spelling and Grammar). Identifiers don't count:
+    /// AppKit's items carry them too. With no Select All, the rule has nothing to anchor on and other rules decide.
+    static func appended(_ items: [MenuItem], at: Int, next: Step?) -> Bool {
+        guard let all = items.firstIndex(where: { $0.chord("a") || $0.id == "selectall:" }),
+              let tail = items[all...].firstIndex(where: { $0.title.isEmpty }), at > tail else { return false }
+        let i = items[at]
+        if i.command { return false }
+        guard i.submenu, let next else { return true }
+        return !next.items.contains { $0.command }
     }
 
     /// The Edit menu's second group (after Undo and Redo): Cut, Copy, Paste, Paste and Match Style, Delete. Select All (cmd+a) stays.
@@ -272,41 +299,85 @@ public enum MenuPath {
     /// contents (`PanelDetector`), never by the menu's title. Each is cancelled at once and never offered to the agent.
     public static func panels(_ windows: [AXNodeInfo]) -> [Int] { windows.indices.filter { PanelDetector.windowIsOffLimits(windows[$0]) } }
 
-    public static func panelRefusal(_ app: String, cancelled: Bool) -> HandsError {
-        HandsError(.notSupported, "the command opened an Open or Save panel in \(app); agents never get one, and \(cancelled ? "it was cancelled" : "it could not be cancelled, so it is still open")",
+    /// The panel to cancel: a sheet before the window that holds it, since the window's read holds the sheet too and has
+    /// no Cancel button of its own (192 r1 second-F7).
+    public static func panel(_ windows: [AXNodeInfo]) -> Int? {
+        func holdsPanel(_ n: AXNodeInfo) -> Bool { n.children.contains { ($0.role == "AXSheet" && PanelDetector.windowIsOffLimits($0)) || holdsPanel($0) } }
+        let found = panels(windows)
+        return found.first { !holdsPanel(windows[$0]) } ?? found.first
+    }
+
+    /// `gone`: the panel was seen, but closed before Polycarp could cancel it (192 r1 first-F4).
+    public static func panelRefusal(_ app: String, cancelled: Bool, gone: Bool = false) -> HandsError {
+        let after = gone ? "it closed before Polycarp cancelled it" : cancelled ? "it was cancelled" : "it could not be cancelled, so it is still open"
+        return HandsError(.notSupported, "the command opened an Open or Save panel in \(app); agents never get one, and \(after)",
                    suggestion: "Work with files through the agent handoff folder: `open` the app with a file from it, and save to that document.", retry: .never, nextCall: .null)
     }
 
     /// A window the window server lists. `visible`: on screen, not clear, and inside a display (a parked window is not).
-    /// `workspace`: Polycarp's workspace for it, nil when it tracks none.
+    /// `workspace`: Polycarp's workspace for it, nil when it tracks none. `bundle` and `parent` (its process's bundle id
+    /// and parent pid) are filled in for new windows only.
     public struct Listed: Equatable, Sendable {
         public var id: UInt32, pid: Int32, owner: String, visible: Bool, workspace: Int?
-        public init(id: UInt32, pid: Int32, owner: String, visible: Bool, workspace: Int?) {
+        public var bounds: CGRect, bundle: String?, parent: Int32?
+        public init(id: UInt32, pid: Int32, owner: String, visible: Bool, workspace: Int?, bounds: CGRect = .zero, bundle: String? = nil, parent: Int32? = nil) {
             self.id = id; self.pid = pid; self.owner = owner; self.visible = visible; self.workspace = workspace
+            self.bounds = bounds; self.bundle = bundle; self.parent = parent
         }
+    }
+
+    /// A new window after the press. `tied`: the press provably raised it, so Polycarp may close it.
+    public struct Escape: Equatable, Sendable {
+        public var window: Listed, tied: Bool
+        public init(_ window: Listed, tied: Bool) { self.window = window; self.tied = tied }
     }
 
     /// How long after the press windows are watched.
     public static let watch: TimeInterval = 1
-    /// System processes a menu command can bring up: the Character Viewer, Help Viewer and Tips, dictation, printing,
-    /// the share sheet, the screenshot tool. By owner name, any case.
-    static let helpers = ["characterpalette", "character viewer", "helpviewer", "help viewer", "tips", "dictation", "printcenter", "print center",
-                          "printer", "sharingui", "sharesheet", "share sheet", "screencapture", "screenshot"]
+    /// System processes a menu command can bring up, by exact bundle id (read from each app's Info.plist on macOS 27):
+    /// the Character Viewer, Tips (Help Viewer's id), the screenshot UI and Screenshot, dictation, Writing Tools, the
+    /// share sheet, Passwords (AutoFill), adding a printer and the print queue (PrinterProxy, not checked on disk).
+    static let helperBundles: Set<String> = ["com.apple.CharacterPaletteIM", "com.apple.helpviewer", "com.apple.screencaptureui", "com.apple.screenshot.launcher",
+                                             "com.apple.inputmethod.ironwood", "com.apple.WritingTools.xpc.WritingToolsViewService", "com.apple.sharing.ShareSheetUI",
+                                             "com.apple.Passwords", "com.apple.print.add", "com.apple.print.PrinterProxy"]
 
-    /// After the press: windows that are new since `before`, visible and not on the agent workspace, of the app (once
-    /// `settled`, so Polycarp has had the watch to place a new window of its own) or of a system helper (at once).
-    public static func escaped(before: Set<UInt32>, now: [Listed], pid: Int32, agentWorkspace: Int?, settled: Bool) -> [Listed] {
-        now.filter { w in
-            guard !before.contains(w.id), w.visible, w.workspace == nil || w.workspace != agentWorkspace else { return false }
-            if w.pid == pid { return settled }
-            let owner = w.owner.lowercased()
-            return helpers.contains { owner.contains($0) }
+    /// After the press: windows new since `before`, visible and not on the agent workspace, that may be the press's
+    /// (192 r1 first-F2, second-F8):
+    /// - The app's own, once `settled` (Polycarp has had the watch to place it): tied. One untracked and lying on
+    ///   `parent` (the target window's frame) is a sheet or alert on the agent's window, not an escape.
+    /// - Another process's: tied when its parent is the app; a helper bundle's is tied only when no input from
+    ///   Donovan came in the watch (`userInput`), else it is reported untied: he may have opened it himself.
+    /// Any other process's window is his and is never listed.
+    public static func escaped(before: Set<UInt32>, now: [Listed], pid: Int32, agentWorkspace: Int?, settled: Bool, parent: CGRect?, userInput: Bool) -> [Escape] {
+        now.compactMap { w in
+            guard !before.contains(w.id), w.visible, w.workspace == nil || w.workspace != agentWorkspace else { return nil }
+            if w.pid == pid {
+                if w.workspace == nil, let parent, onTop(w.bounds, of: parent) { return nil }
+                return settled ? Escape(w, tied: true) : nil
+            }
+            if w.parent == pid { return Escape(w, tied: true) }
+            guard let b = w.bundle, helperBundles.contains(b) else { return nil }
+            return Escape(w, tied: !userInput)
         }
     }
 
-    public static func escapeRefusal(_ path: String, opened: [String], closed: Bool) -> HandsError {
-        HandsError(.outsideAgentWorkspace, "\(path) opened \(opened.joined(separator: ", ")) outside the agent workspace, where Donovan would see it; \(closed ? "it was closed" : "it could not be closed, so it is still open")",
-                   suggestion: "Don't use \(path) again: do it in the app's own window with click, type or set-value.", retry: .never, nextCall: .null)
+    /// Most of `w` lies on `parent`, as a sheet or an alert does on its window.
+    static func onTop(_ w: CGRect, of parent: CGRect) -> Bool {
+        let cut = w.intersection(parent)
+        return !cut.isNull && w.width > 0 && w.height > 0 && cut.width * cut.height >= 0.5 * w.width * w.height
+    }
+
+    /// `closed`: every tied window was closed (Polycarp closes only windows it tracks). Untied windows are never closed.
+    public static func escapeRefusal(_ path: String, found: [Escape], closed: Bool, window: Int) -> HandsError {
+        func names(_ l: [Escape]) -> String { l.map { "a window of \($0.window.owner)" }.joined(separator: ", ") }
+        let tied = found.filter(\.tied), untied = found.filter { !$0.tied }
+        let other = untied.isEmpty ? "" : "; \(names(untied)) also appeared, which Polycarp couldn't tie to the command (Donovan may have opened it), so it was left alone"
+        guard tied.isEmpty else {
+            return HandsError(.outsideAgentWorkspace, "\(path) opened \(names(tied)) outside the agent workspace, where Donovan would see it; \(closed ? "it was closed" : "Polycarp couldn't close it, so it is still open")\(other)",
+                              suggestion: "Don't use \(path) again: do it in the app's own window with click, type or set-value.", retry: .never, nextCall: .null)
+        }
+        return HandsError(.outsideAgentWorkspace, "while \(path) ran, \(names(untied)) appeared outside the agent workspace; Polycarp couldn't tie it to the command (Donovan may have opened it), so it closed nothing",
+                          suggestion: "Snapshot the window to see whether the command did what you wanted.", retry: .afterSnapshot, nextCall: HandsError.call("snapshot", ["window": .int(window)]))
     }
 
     /// The titles the path got through before it stopped: what `policy` judges, whatever `find` answered.
@@ -334,6 +405,8 @@ public enum MenuPath {
     }
 }
 
+extension MenuWatch.Outcome: Equatable where Found: Equatable {}
+
 /// Item C layer 2: a watch that starts with the press and runs until `MenuPath.watch` after the press ended. `step`
 /// looks once (settled: the watch is over, judge the app's own new windows too) and answers what it saw. It only looks:
 /// what it saw is undone through the engine once the press is back, since agents never act on AX directly.
@@ -341,8 +414,14 @@ public final class MenuWatch<Found: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var started = false, ended: Date?, found: Found?
     private let done = DispatchSemaphore(value: 0)
-    private let every: TimeInterval
-    public init(every: TimeInterval = 0.05) { self.every = every }
+    private let every: TimeInterval, watch: TimeInterval, margin: TimeInterval
+    /// `margin`: how long past the watch `finish` waits for a look that hangs (a hung app), before it answers unknown.
+    public init(every: TimeInterval = 0.05, watch: TimeInterval = MenuPath.watch, margin: TimeInterval = 2) {
+        self.every = every; self.watch = watch; self.margin = margin
+    }
+
+    /// Nothing seen, what was seen, or unknown: the watch didn't finish in time (192 r1 first-F1).
+    public enum Outcome { case quiet, seen(Found), unknown }
 
     public func start(_ step: @escaping @Sendable (_ settled: Bool) -> Found?) {
         lock.lock(); started = true; lock.unlock()
@@ -350,7 +429,7 @@ public final class MenuWatch<Found: Sendable>: @unchecked Sendable {
             defer { done.signal() }
             while true {
                 lock.lock(); let end = ended; lock.unlock()
-                let settled = end.map { Date() >= $0.addingTimeInterval(MenuPath.watch) } ?? false
+                let settled = end.map { Date() >= $0.addingTimeInterval(watch) } ?? false
                 if let e = step(settled) { lock.lock(); found = e; lock.unlock(); return }
                 if settled { return }
                 Thread.sleep(forTimeInterval: every)
@@ -358,12 +437,20 @@ public final class MenuWatch<Found: Sendable>: @unchecked Sendable {
         }
     }
 
-    /// The press ended: waits out the watch and answers what it found. Nil at once when no press started.
-    public func finish() -> Found? {
+    /// The press ended: waits out the watch, at most `watch` plus `margin`, and answers what it found. Quiet at once
+    /// when no press started.
+    public func finish() -> Outcome {
         lock.lock(); let was = started; if ended == nil { ended = Date() }; lock.unlock()
-        guard was else { return nil }
-        done.wait()
+        guard was else { return .quiet }
+        let timedOut = done.wait(timeout: .now() + watch + margin) == .timedOut
         lock.lock(); defer { lock.unlock() }
-        return found
+        if let found { return .seen(found) }
+        return timedOut ? .unknown : .quiet
+    }
+
+    /// The call's error when the watch couldn't finish: the command may have opened something, so it never answers ok.
+    public static func unknownRefusal(_ path: String, window: Int) -> HandsError {
+        HandsError(.engineError, "\(path) was sent, but the app didn't answer in time for Polycarp to check what it opened",
+                   suggestion: "Snapshot the window to see what the command did before anything else.", retry: .afterSnapshot, nextCall: HandsError.call("snapshot", ["window": .int(window)]))
     }
 }

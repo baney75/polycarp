@@ -221,9 +221,9 @@ final class HandsEngine {
 
     /// One window's tree with refs. `windowID` is the engine's id for it ("w-4211"). `evidence` reads use
     /// their own store, so they never push the agent's refs out.
-    func snapshot(window w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool = false, surface: Int32 = surfaceWindow, check: @escaping Check) -> Reply {
+    func snapshot(window w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool = false, check: @escaping Check) -> Reply {
         run(window: w, budget: Budget.snapshot, mutating: false, check: check) { [self] _ in
-            doSnapshot(windowID: w.id, interactive: interactive, compact: compact, depth: depth, evidence: evidence, surface: surface)
+            doSnapshot(windowID: w.id, interactive: interactive, compact: compact, depth: depth, evidence: evidence)
         }
     }
 

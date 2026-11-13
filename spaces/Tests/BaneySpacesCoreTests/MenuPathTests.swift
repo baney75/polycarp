@@ -1,3 +1,4 @@
+import ApplicationServices
 import XCTest
 @testable import BaneySpacesCore
 
@@ -233,37 +234,101 @@ final class MenuPathTests: XCTestCase {
         XCTAssertTrue(steps.contains("guard items.count == level.count"), "one unknown item fails the whole menu")
     }
 
-    /// r1 first-F1 layer 2: a new window outside the agent workspace after the press, of the app or a system helper.
-    func testAWindowOutsideTheAgentWorkspaceAfterThePressIsFound() {
+    /// r1 first-F1 layer 2, 192 r1 first-F2 and second-F8: a new window off the agent workspace counts only when it is
+    /// tied to the press, and only a tied one is ever closed.
+    func testOnlyAWindowTiedToThePressIsCountedAndClosed() {
         typealias L = MenuPath.Listed
+        let doc = CGRect(x: 100, y: 100, width: 800, height: 600)
         let before: Set<UInt32> = [1, 2]
-        let now = [L(id: 1, pid: 50, owner: "TextEdit", visible: true, workspace: 3), L(id: 2, pid: 9, owner: "Finder", visible: true, workspace: 1),
-                   L(id: 7, pid: 77, owner: "CharacterPalette", visible: true, workspace: nil), L(id: 8, pid: 50, owner: "TextEdit", visible: true, workspace: nil),
-                   L(id: 9, pid: 50, owner: "TextEdit", visible: true, workspace: 3), L(id: 10, pid: 88, owner: "Help Viewer", visible: false, workspace: nil),
-                   L(id: 11, pid: 99, owner: "Mail", visible: true, workspace: nil)]
-        XCTAssertEqual(MenuPath.escaped(before: before, now: now, pid: 50, agentWorkspace: 3, settled: false).map(\.id), [7], "a helper at once; the app's own window gets the watch")
-        XCTAssertEqual(MenuPath.escaped(before: before, now: now, pid: 50, agentWorkspace: 3, settled: true).map(\.id), [7, 8], "placed on the agent workspace or hidden: fine")
-        XCTAssertEqual(MenuPath.escaped(before: before, now: Array(now.prefix(2)), pid: 50, agentWorkspace: 3, settled: true), [], "nothing new: ok")
-        let e = MenuPath.escapeRefusal("Bearbeiten > Emoji & Symbole", opened: ["a window of CharacterPalette"], closed: true)
+        let palette = L(id: 7, pid: 77, owner: "CharacterPalette", visible: true, workspace: nil, bundle: "com.apple.CharacterPaletteIM", parent: 1)
+        let own = L(id: 8, pid: 50, owner: "TextEdit", visible: true, workspace: nil, bounds: CGRect(x: 2000, y: 0, width: 400, height: 300))
+        let sheet = L(id: 12, pid: 50, owner: "TextEdit", visible: true, workspace: nil, bounds: CGRect(x: 200, y: 122, width: 600, height: 180))
+        let now = [L(id: 1, pid: 50, owner: "TextEdit", visible: true, workspace: 3, bounds: doc), L(id: 2, pid: 9, owner: "Finder", visible: true, workspace: 1),
+                   palette, own, L(id: 9, pid: 50, owner: "TextEdit", visible: true, workspace: 3), L(id: 10, pid: 88, owner: "Tips", visible: false, workspace: nil, bundle: "com.apple.helpviewer"),
+                   L(id: 11, pid: 99, owner: "Tipster", visible: true, workspace: nil, bundle: "com.example.tipster", parent: 1), sheet,
+                   L(id: 13, pid: 66, owner: "helper", visible: true, workspace: 1, parent: 50)]
+        func run(settled: Bool, input: Bool) -> [MenuPath.Escape] {
+            MenuPath.escaped(before: before, now: now, pid: 50, agentWorkspace: 3, settled: settled, parent: doc, userInput: input)
+        }
+        XCTAssertEqual(run(settled: false, input: false), [.init(palette, tied: true), .init(now[8], tied: true)], "a helper by exact bundle, a child process of the app")
+        XCTAssertEqual(run(settled: true, input: false).map(\.window.id), [7, 8, 13], "the app's own once settled; a name like Tipster never counts; the sheet on its window is no escape")
+        XCTAssertEqual(run(settled: true, input: true).filter { !$0.tied }.map(\.window.id), [7], "Donovan typed or clicked: the helper's window may be his")
+        XCTAssertEqual(MenuPath.escaped(before: before, now: [sheet], pid: 50, agentWorkspace: 3, settled: true, parent: nil, userInput: false).map(\.window.id), [12],
+                       "with no frame for the window, an untracked one can't be shown on it")
+        let e = MenuPath.escapeRefusal("Bearbeiten > Emoji & Symbole", found: [.init(palette, tied: true)], closed: true, window: 4)
         XCTAssertEqual(e.code, .outsideAgentWorkspace)
         XCTAssertEqual(e.retry, .never)
         XCTAssertTrue(e.message.contains("it was closed") && e.suggestion.contains("Don't use Bearbeiten > Emoji & Symbole again"), e.message)
-        XCTAssertTrue(MenuPath.escapeRefusal("x", opened: ["y"], closed: false).message.contains("still open"))
+        XCTAssertTrue(MenuPath.escapeRefusal("x", found: [.init(palette, tied: true)], closed: false, window: 4).message.contains("still open"))
+        let mine = MenuPath.escapeRefusal("Hilfe > Tipps", found: [.init(palette, tied: false)], closed: true, window: 4)
+        XCTAssertTrue(mine.message.contains("closed nothing") && !mine.suggestion.contains("Don't use"), mine.message)
+        XCTAssertEqual(mine.nextCall, HandsError.call("snapshot", ["window": 4]))
     }
 
     /// r1 second-F6, second-F4: the watch runs a second past the press, so a late panel fails the call; none leaves it ok.
+    /// 192 r1 first-F1: a look that hangs ends the wait, and the answer is unknown, never quiet.
     func testALatePanelFailsTheCall() {
         let start = Date()
         let late = MenuWatch<String>(every: 0.01)
         late.start { _ in Date().timeIntervalSince(start) > 0.5 ? "panel" : nil }
-        XCTAssertEqual(late.finish(), "panel", "0.5 s after the press: still told, never ok")
+        XCTAssertEqual(late.finish(), .seen("panel"), "0.5 s after the press: still told, never ok")
         let quiet = MenuWatch<String>(every: 0.01)
         var settledSeen = false
         let lock = NSLock()
         quiet.start { settled in lock.lock(); if settled { settledSeen = true }; lock.unlock(); return nil }
-        XCTAssertNil(quiet.finish())
+        XCTAssertEqual(quiet.finish(), .quiet)
         lock.lock(); XCTAssertTrue(settledSeen, "the last look judges the app's own windows"); lock.unlock()
-        XCTAssertNil(MenuWatch<String>().finish(), "no press, no wait")
+        XCTAssertEqual(MenuWatch<String>().finish(), .quiet, "no press, no wait")
+        let hung = MenuWatch<String>(every: 0.01, watch: 0.05, margin: 0.1)
+        hung.start { _ in Thread.sleep(forTimeInterval: 2); return nil }
+        let t = Date()
+        XCTAssertEqual(hung.finish(), .unknown)
+        XCTAssertLessThan(Date().timeIntervalSince(t), 1)
+        XCTAssertTrue(MenuWatch<String>.unknownRefusal("Format > Bold", window: 4).message.contains("didn't answer in time"))
+    }
+
+    /// 192 r1 first-F3: AppKit's own Edit items, appended after Select All's group, are refused by place in any language.
+    func testWhatAppKitAppendsToTheEditMenuIsRefusedInAnyLanguage() {
+        func edit(_ t: [String]) -> [I] {
+            [I(cmdChar: "Z", modifiers: 0, title: t[0]), Self.sep, I(cmdChar: "X", modifiers: 0, title: t[1]), I(cmdChar: "A", modifiers: 0, title: t[2]), Self.sep,
+             I(title: t[3], submenu: true), I(title: t[4], submenu: true), Self.sep, I(title: t[5], submenu: true), I(title: t[6]), I(title: t[7]), I(identifier: "_NSAutoFillMenu", title: t[8], submenu: true)]
+        }
+        let menus = [
+            ["Widerrufen", "Ausschneiden", "Alles ausw\u{E4}hlen", "Suchen", "Transformationen", "Autom. ausf\u{FC}llen", "Diktat starten", "Schreibtools", "Ausf\u{FC}llen"],
+            ["\u{53D6}\u{308A}\u{6D88}\u{3059}", "\u{30AB}\u{30C3}\u{30C8}", "\u{3059}\u{3079}\u{3066}\u{3092}\u{9078}\u{629E}", "\u{691C}\u{7D22}", "\u{5909}\u{63DB}", "\u{81EA}\u{52D5}\u{5165}\u{529B}", "\u{97F3}\u{58F0}\u{5165}\u{529B}\u{3092}\u{958B}\u{59CB}", "\u{4F5C}\u{6587}\u{30C4}\u{30FC}\u{30EB}", "\u{5165}\u{529B}"],
+            ["\u{062A}\u{0631}\u{0627}\u{062C}\u{0639}", "\u{0642}\u{0635}", "\u{062A}\u{062D}\u{062F}\u{064A}\u{062F} \u{0627}\u{0644}\u{0643}\u{0644}", "\u{0628}\u{062D}\u{062B}", "\u{062A}\u{062D}\u{0648}\u{064A}\u{0644}\u{0627}\u{062A}", "\u{062A}\u{0639}\u{0628}\u{0626}\u{0629} \u{062A}\u{0644}\u{0642}\u{0627}\u{0626}\u{064A}\u{0629}", "\u{0628}\u{062F}\u{0621} \u{0627}\u{0644}\u{0625}\u{0645}\u{0644}\u{0627}\u{0621}", "\u{0623}\u{062F}\u{0648}\u{0627}\u{062A} \u{0627}\u{0644}\u{0643}\u{062A}\u{0627}\u{0628}\u{0629}", "\u{062A}\u{0639}\u{0628}\u{0626}\u{0629}"],
+        ]
+        let find = [I(cmdChar: "F", modifiers: 0, title: "1"), I(cmdChar: "G", modifiers: 0, title: "2")], plain = [I(title: "1"), I(title: "2")]
+        for t in menus {
+            let m = edit(t)
+            for at in [8, 9, 10] { XCTAssertTrue(MenuPath.policy(steps(3, m, at))?.message.contains("outside the agent workspace") == true, t[at - 3]) }
+            XCTAssertNotNil(MenuPath.policy(steps(3, m, 11, sub: plain, 0)), "AutoFill's passwords and contacts: \(t[8])")
+            XCTAssertNotNil(MenuPath.policy(steps(3, m, 8, sub: plain, 0)), "a submenu with no key inside")
+            XCTAssertNil(MenuPath.policy(steps(3, m, 5, sub: find, 0)), "Find, whose items have keys: \(t[3])")
+            XCTAssertNotNil(MenuPath.policy(steps(3, m, 6, sub: plain, 0)), "Transformations, with no key inside")
+            XCTAssertNil(MenuPath.policy(steps(3, m, 3)), "Select All itself")
+        }
+    }
+
+    /// 192 r1 second-F7: a Save sheet is cancelled on the sheet, not on the window whose read holds it.
+    func testTheSheetIsCancelledBeforeTheWindowThatHoldsIt() {
+        let save = AXNodeInfo(role: "AXSheet", children: [AXNodeInfo(role: "AXTextField"), AXNodeInfo(role: "AXPopUpButton"), AXNodeInfo(role: "AXStaticText", value: "Where:"),
+                                                           AXNodeInfo(role: "AXButton", title: "Cancel"), AXNodeInfo(role: "AXButton", title: "Save")])
+        let doc = AXNodeInfo(role: "AXWindow", subrole: "AXStandardWindow", title: "notes.txt", children: [AXNodeInfo(role: "AXTextArea"), save])
+        XCTAssertEqual(MenuPath.panel([doc, save]), 1)
+        XCTAssertEqual(MenuPath.panel([AXNodeInfo(role: "AXWindow", subrole: "AXDialog", identifier: "open-panel")]), 0)
+        XCTAssertNil(MenuPath.panel([AXNodeInfo(role: "AXWindow", subrole: "AXStandardWindow", children: [AXNodeInfo(role: "AXTextArea")])]))
+        // first-F4: a panel gone before the cancel is not said to be cancelled.
+        XCTAssertTrue(MenuPath.panelRefusal("TextEdit", cancelled: false, gone: true).message.contains("closed before Polycarp cancelled it"))
+    }
+
+    /// 192 r1 second-F10: an attribute the app doesn't implement is no value; a read that couldn't complete is unknown.
+    func testAnAttributeTheAppDoesntImplementIsNoValue() {
+        func kind(_ e: AXError) -> String { switch MenuPath.read(code: e.rawValue, value: "x" as String?) { case .value: "value"; case .absent: "absent"; case .failed: "failed" } }
+        XCTAssertEqual(kind(.success), "value")
+        for e in [AXError.noValue, .attributeUnsupported, .notImplemented, .illegalArgument] { XCTAssertEqual(kind(e), "absent", "\(e.rawValue)") }
+        for e in [AXError.cannotComplete, .failure, .invalidUIElement, .apiDisabled] { XCTAssertEqual(kind(e), "failed", "\(e.rawValue)") }
+        guard case .absent = MenuPath.read(code: 0, value: nil as String?) else { return XCTFail("success with no value") }
     }
 
     /// second-F7: found but no ref is said as such.
@@ -302,13 +367,19 @@ final class MenuPathTests: XCTestCase {
         XCTAssertTrue(try at("MenuPath.judge(") < at("guard case .item(let ref"), "r1 first-F1: judged before a submenu's choices are listed")
         XCTAssertTrue(try at("MenuPath.judge(") < at("actInline("), "and before the press")
         XCTAssertTrue(try at("watch.start(") < at("actInline("), "r2 second-F4: the watch starts with the press, so a modal panel is cancelled while it waits")
-        XCTAssertTrue(try at("if let seen = watch.finish()") < at("if case .failed(let e) = reply"), "r2 second-F4: the watch answers whatever the press did")
-        XCTAssertTrue(menu.contains("cancelPanels(w, within: 3)"), "r1 first-F4: a slow panel is still cancelled")
+        XCTAssertTrue(try at("switch watch.finish()") < at("if case .failed(let e) = reply"), "r2 second-F4: the watch answers whatever the press did")
+        XCTAssertFalse(menu.contains("cancelPanels(w, within: 3)"), "192 r1 second-F9: no silent cancel after the call answered")
+        XCTAssertTrue(menu.contains("case .unknown: return .failure("), "192 r1 first-F1: a watch that couldn't finish never answers ok")
         let rule = try XCTUnwrap(HandsSourceTests.block(after: "private func menuRule", in: src))
         XCTAssertTrue(rule.contains("sessionOwns: mine"), "r1 second-S2, r2 second-F7: in menuRule itself")
         let step = try XCTUnwrap(HandsSourceTests.block(after: "private func menuWatchStep", in: src))
-        XCTAssertTrue(step.contains("MenuPath.escaped(") && step.contains("MenuPath.panels("), "layer 2 looks for both")
+        XCTAssertTrue(step.contains("MenuPath.escaped(") && step.contains("MenuPath.panel("), "layer 2 looks for both")
         let undo = try XCTUnwrap(HandsSourceTests.block(after: "private func undo(", in: src))
-        XCTAssertTrue(undo.contains("cancelPanels(w, within: 0.3)") && undo.contains("host.close(x.id)"), "and undoes them through the engine and Polycarp's close")
+        XCTAssertTrue(undo.contains("cancelPanels(w, within: 0.3)") && undo.contains("found.filter(\\.tied).map { x in onMain { host.close(x.window.id) } }"),
+                      "192 r1 first-F2: only a tied window is closed")
+        XCTAssertTrue(step.contains("onMain { ids.map {"), "first-F1: one trip to main per look")
+        let ax = try XCTUnwrap(HandsSourceTests.block(after: "static func read<T: Sendable>(_ e: AXUIElement", in: src))
+        XCTAssertTrue(ax.contains("AXUIElementSetMessagingTimeout(e, timeout)"), "first-F1: the timeout on the element read")
+        XCTAssertFalse(src.contains("HandsAXTree.node("), "first-F1: panel reads use the short-timeout reader")
     }
 }

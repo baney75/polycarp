@@ -114,7 +114,7 @@ public enum HandsTools {
             refParam,
             HandsParam("option", .string, "The text of the option to choose.", required: true, positional: true, rest: true),
         ], acts: true),
-        HandsTool(verb: "menu", summary: "Run a menu-bar command of the window's app by its titles, without opening the menu on screen. Only in a copy your own `open` started, with this its one window. Refused: the Apple, Window and Help menus, the app menu but About and Settings, full screen, Open and Open Recent, cut, copy and paste, and what leaves the app (Emoji, Dictation, Speech, Print, Share). A panel, or a window off the agent workspace, it raises is closed and the call fails. Example: {\"window\":4211,\"path\":\"Format > Font > Bold\"}", params: [
+        HandsTool(verb: "menu", summary: "Run a menu-bar command of the window's app by its titles, without opening the menu on screen. Only in a copy your own `open` started, with this its one window. Refused: the Apple, Window and Help menus, the app menu but About and Settings, full screen, Open and Open Recent, cut, copy and paste, and what leaves the app (Emoji, Dictation, Speech, Print, Share). A panel it raises within 1 s is cancelled and the call fails; so does a window it raises off the agent workspace, closed when Polycarp can. Example: {\"window\":4211,\"path\":\"Format > Font > Bold\"}", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
             HandsParam("path", .string, "Menu titles from the menu bar down, separated by >.", required: true, positional: true, rest: true),
         ], acts: true),
