@@ -98,8 +98,24 @@ export async function startHarness() {
 	const misses = [];
 	let origin = "";
 	let origin2 = "";
+	/** What pages POSTed to `<base>/__state`, by base: a page's own record of what a task changed, kept after its tab closes. */
+	const posted = new Map();
 	const serve = (self) => (req, res) => {
 		const path = req.url.split("?")[0];
+		if (req.method === "POST" && path.endsWith("/__state")) {
+			let body = "";
+			req.on("data", (d) => {
+				body += d;
+			});
+			req.on("end", () => {
+				try {
+					posted.set(path.slice(0, -"/__state".length), JSON.parse(body));
+				} catch {}
+				res.writeHead(204);
+				res.end();
+			});
+			return;
+		}
 		const body = store.get(path);
 		if (body === undefined) {
 			if (path !== "/favicon.ico") misses.push(path);
@@ -108,6 +124,12 @@ export async function startHarness() {
 			return;
 		}
 		const other = self === "a" ? origin2 : origin;
+		// A file with its own type ({ type, body }, e.g. a PDF) is served as is.
+		if (typeof body !== "string") {
+			res.writeHead(200, { "content-type": body.type });
+			res.end(body.body);
+			return;
+		}
 		res.writeHead(200, { "content-type": path.endsWith(".js") ? "text/javascript" : "text/html" });
 		res.end(body.replaceAll("{{origin2}}", other).replaceAll("{{origin}}", self === "a" ? origin : origin2));
 	};
@@ -232,13 +254,15 @@ export async function startHarness() {
 			targets,
 			pageTarget,
 			evaluate,
-			/** Register html (a string, or a map of path -> html) under `/${id}`; returns the entry URL. */
+			/** The last state the page under `/${id}` POSTed to `/${id}/__state`, or undefined. */
+			posted: (id) => posted.get(`/${id}`),
+			/** Register html (a string, or a map of path -> html or { type, body }) under `/${id}`; returns the entry URL. */
 			misses,
 			mount(id, html) {
 				const files = typeof html === "string" ? { "/": html } : html;
 				for (const [path, body] of Object.entries(files)) {
 					const key = `/${id}${path === "/" ? "/" : path}`;
-					store.set(key, body.replaceAll("{{base}}", `/${id}`));
+					store.set(key, typeof body === "string" ? body.replaceAll("{{base}}", `/${id}`) : body);
 				}
 				return `${origin}/${id}/`;
 			},

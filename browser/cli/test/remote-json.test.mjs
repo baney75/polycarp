@@ -60,6 +60,8 @@ function scenario(name, { lock = "Tailnet lock is NOT enabled.", status = `{"Sel
 		TABKYRA_APPLICATIONS_DIR: apps,
 		// Nothing listens here, so the Cloudflare zone check never asks real DNS; a test that needs an answer starts a fake one.
 		TABKYRA_DOH_URL: "http://127.0.0.1:9/dns-query",
+		// A free port for setup's default, so a real Polycarp server on this machine's 8787 never decides a test.
+		POLYCARP_REMOTE_PORT: String(defaultPort),
 	};
 	const run = (args, extra = {}) => {
 		const r = spawnSync(process.execPath, [cli, ...args], { env: { ...env, ...extra }, encoding: "utf8" });
@@ -118,9 +120,44 @@ const freePort = () =>
 		});
 	});
 
+/** The scenarios' stand-in for 8787: free when the file loads. */
+const defaultPort = await freePort();
+
 const noFunnelChange = (s) => assert.deepEqual(s.calls().filter((x) => x.startsWith("tailscale funnel")), [], s.calls().join("\n"));
 
 // ---------- the pure parts ----------
+
+const funnelReady = { ok: true, bin: "/x/tailscale", state: { kind: "ok", dns: "mac.tail1.ts.net", web: {}, tcp: {}, allowFunnel: {} } };
+
+test("preflight probes the port setup will use, so a server on 8787 never blocks another port", async () => {
+	const { preflight } = await loadTs(`export { preflight } from "@src/remote-setup.ts";`);
+	// Something that isn't Polycarp on 8787; where a real server already holds it, that one stands in.
+	// It reads its socket: one that never reads isn't an active handle, so `close` below would wait on it forever and the
+	// process would exit with this test pending (CI, where nothing else holds 8787).
+	const holder = createNetServer((sock) => {
+		sock.on("error", () => {});
+		sock.resume();
+		sock.end("HTTP/1.1 418 Teapot\r\ncontent-length: 0\r\n\r\n");
+	});
+	await new Promise((resolve) => {
+		holder.once("error", resolve);
+		holder.listen(8787, "127.0.0.1", resolve);
+	});
+	try {
+		assert.equal((await preflight({}, funnelReady, 8787)).state, "port_busy", "the server on 8787 is seen");
+		const port = await freePort();
+		const other = await preflight({}, funnelReady, port);
+		assert.equal(other.state, "ready", other.message);
+	} finally {
+		await new Promise((resolve) => holder.close(resolve));
+	}
+});
+
+test("remotePort: POLYCARP_REMOTE_PORT when it holds a port number, else 8787", async () => {
+	const { remotePort } = await loadTs(`export { remotePort } from "@src/remote-setup.ts";`);
+	assert.equal(remotePort({ POLYCARP_REMOTE_PORT: "9123" }), 9123);
+	for (const bad of [undefined, "", "abc", "0", "70000", "80.5"]) assert.equal(remotePort({ POLYCARP_REMOTE_PORT: bad }), 8787, String(bad));
+});
 
 test("funnelAdminUrl takes the page Tailscale prints and drops sentence punctuation", () => {
 	assert.equal(funnelAdminUrl("Funnel is not enabled on your tailnet.\nTo enable, visit:\n\n  https://login.tailscale.com/f/funnel?node=n123abc\n"), "https://login.tailscale.com/f/funnel?node=n123abc");

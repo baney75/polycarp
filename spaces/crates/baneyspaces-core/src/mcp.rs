@@ -74,11 +74,23 @@ pub fn rows_flags_refusal(args: &[String]) -> Option<Envelope> {
     (!asked.is_empty()).then(|| rows_not_supported(&asked))
 }
 
-/// A bare row number (`5`, `e5`, `[5]`) as a ref is macOS only for now. Other malformed refs are left to the hands.
+fn digits(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// A bare row number (`5`, `[5]`) as a ref is macOS only for now; `e5` is a browser ref from read_page, named as one.
+/// Other malformed refs are left to the hands.
 pub fn bare_ref_refusal(r: &str) -> Option<Envelope> {
+    if r.strip_prefix('e').is_some_and(digits) {
+        return Some(Envelope::err(
+            "bad_arguments",
+            format!("{r:?} is a browser ref from read_page; computer_* tools act on native windows"),
+            Retry::Never,
+            format!("For a web page, use the browser tools (click, fill, select) with {r}. For a native window, pass the full ref from computer_snapshot, like @s8f3k2p9:e5."),
+        ));
+    }
     let n = r.strip_prefix('[').and_then(|r| r.strip_suffix(']')).unwrap_or(r);
-    let n = n.strip_prefix('e').unwrap_or(n);
-    (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then(|| {
+    digits(n).then(|| {
         Envelope::err(
             "not_supported",
             format!("{r:?} is a bare row number, which is macOS only for now; pass the full ref from a snapshot, like @s8f3k2p9:e5"),
@@ -91,6 +103,14 @@ pub fn bare_ref_refusal(r: &str) -> Option<Envelope> {
 fn rows_refusal(name: &str, args: &Value) -> Option<Envelope> {
     if let Some(e) = args.get("ref").and_then(Value::as_str).and_then(bare_ref_refusal) {
         return Some(e);
+    }
+    if name == "agent_snapshot" && (args.get("screenshot").is_some_and(|v| v != false) || args.get("zoom").is_some()) {
+        return Some(Envelope::err(
+            "not_supported",
+            "screenshot and zoom on snapshot are macOS only for now",
+            Retry::Never,
+            "Call agent_shot with the window for its picture.",
+        ));
     }
     let asked: Vec<&str> = ROWS_ARGS.iter().copied().filter(|k| args.get(*k).is_some_and(|v| !(*k == "format" && v == "json"))).collect();
     (name == "agent_snapshot" && !asked.is_empty()).then(|| rows_not_supported(&asked))
@@ -254,12 +274,26 @@ mod tests {
         assert!(rows_refusal("agent_snapshot", &json!({"window": "0x1", "format": "rows"})).is_some());
     }
 
+    // Item 6: a snapshot picture is macOS only; the answer names the call that works here.
+    #[test]
+    fn a_snapshot_screenshot_is_not_supported_here() {
+        let e = rows_refusal("agent_snapshot", &json!({"window": "0x1", "screenshot": true})).and_then(|e| e.error).unwrap();
+        assert_eq!(e.code, "not_supported");
+        assert!(e.suggestion.contains("agent_shot"));
+        assert!(rows_refusal("agent_snapshot", &json!({"window": "0x1", "zoom": "0,0,10,10"})).is_some());
+        assert!(rows_refusal("agent_snapshot", &json!({"window": "0x1", "screenshot": false})).is_none());
+    }
+
     // Review r1 second-F7: a bare row number as a ref is refused, from MCP and for the CLI.
     #[test]
     fn a_bare_row_number_ref_is_not_supported_here() {
-        for r in ["5", "e5", "[5]"] {
+        for r in ["5", "[5]"] {
             assert_eq!(bare_ref_refusal(r).and_then(|e| e.error).map(|e| e.code), Some("not_supported".to_string()), "{r}");
         }
+        // Weak-model item 3: a browser ref is named as one, with the tools that take it.
+        let e = bare_ref_refusal("e12").and_then(|e| e.error).unwrap();
+        assert_eq!(e.code, "bad_arguments");
+        assert!(e.message.contains("browser ref") && e.suggestion.contains("click, fill, select"), "{e:?}");
         for r in ["@s8f3k2p9:e5", "e", "[]", "five"] {
             assert!(bare_ref_refusal(r).is_none(), "{r}");
         }
