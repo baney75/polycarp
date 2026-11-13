@@ -438,8 +438,13 @@ points, from the window's top-left corner). They reach one process that is not i
 raise, switch a Space, move the real pointer or post to the session or a HID tap. Source tests read the one file
 that makes events (`BackgroundPoster.swift`) and fail if it names any of those. `click-at` takes `count` (2 for a
 double click, 3 for a triple; the click state counts up and the clicks follow within the double-click interval). If a
-later click's event can't be made, the clicks already pressed are released. `button: right` answers `not_supported` for now: a context
-menu is its own window the proof can't see, and AppKit draws it on a visible screen, where it takes the keyboard.
+later click's event can't be made, the clicks already pressed are released. `button: right` is one click of the right button (button
+number 1). A context menu is its own window, drawn on a display a person can see, and it takes the keyboard while it is
+open; agent windows wait parked off every display. So nothing is posted unless the agent workspace is on screen under the
+window, the menu is proved by a new window of that process at the pop-up menu level, and the call never leaves it open: it
+presses `item` (by title, judged by the menu bar's rules plus Services, Look Up, Translate, Open With and the Finder) or
+lists the items and cancels the menu. A menu anywhere else, or after the agent workspace was put away, is cancelled and the
+call answers `outside_agent_workspace` (`ContextMenu`, `HandsRouter+ContextMenu.swift`).
 
 | Order | Route | Used for | Needs |
 | --- | --- | --- | --- |

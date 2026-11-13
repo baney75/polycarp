@@ -222,22 +222,29 @@ public enum MenuPath {
         }
         for (k, step) in steps.enumerated().dropFirst() {
             let i = step.chosen
-            if i.chord("f", control: true) || i.id.contains("fullscreen") || i.name.contains("full screen") { return refuse(path, why: windows) }
-            if i.chord("\\", shift: true) || i.id.contains("taboverview") || i.name.contains("all tabs") { return refuse(path, why: windows) }
-            if i.command && ["c", "x", "v"].contains(i.key) || ["cut:", "copy:"].contains(i.id) || i.id.hasPrefix("paste") { return clipboard(path) }
-            if i.chord("o") || i.id.hasPrefix("opendocument") { return refuse(path, why: documents) }
-            // 197 r1 second-S3: the Versions browser takes the screen; Move To and Rename move the document out of the handoff folder.
-            if i.id == "browsedocumentversions:" || i.name.hasPrefix("browse all versions") { return refuse(path, why: windows) }
-            if ["movedocument:", "renamedocument:"].contains(i.id) { return refuse(path, why: documents) }
-            // 197 r1 first-F3: Use Selection for Find (cmd+e) writes the find text every app shares.
-            if i.chord("e") || i.id.contains("selectionforfind") || i.name.hasPrefix("use selection for find") { return refuse(path, why: findText) }
             let afterOpen = step.at > 0 && step.items[step.at - 1].chord("o")
-            if i.submenu && (afterOpen || i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
+            if i.submenu && afterOpen { return refuse(path, why: documents) }
             if k == 1, isEditMenu(menu.items, title: top), clipboardGroup(menu.items, at: menu.at) { return clipboard(path) }
             if k == 1, isEditMenu(menu.items, title: top), appended(menu.items, at: menu.at, inside: steps.dropFirst(2).first?.items ?? menu.opens) { return refuse(path, why: outside) }
-            if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name.hasPrefix($0) }) { return clipboard(path) }
-            if leavesTheApp(i) { return refuse(path, why: outside) }
+            if let e = itemRule(i, path: path) { return e }
         }
+        return nil
+    }
+
+    /// The rules one item answers to by itself, wherever it sits: the menu bar's and a context menu's (`ContextMenu`).
+    static func itemRule(_ i: MenuItem, path: String) -> HandsError? {
+        if i.chord("f", control: true) || i.id.contains("fullscreen") || i.name.contains("full screen") { return refuse(path, why: windows) }
+        if i.chord("\\", shift: true) || i.id.contains("taboverview") || i.name.contains("all tabs") { return refuse(path, why: windows) }
+        if i.command && ["c", "x", "v"].contains(i.key) || ["cut:", "copy:"].contains(i.id) || i.id.hasPrefix("paste") { return clipboard(path) }
+        if i.chord("o") || i.id.hasPrefix("opendocument") { return refuse(path, why: documents) }
+        // 197 r1 second-S3: the Versions browser takes the screen; Move To and Rename move the document out of the handoff folder.
+        if i.id == "browsedocumentversions:" || i.name.hasPrefix("browse all versions") { return refuse(path, why: windows) }
+        if ["movedocument:", "renamedocument:"].contains(i.id) { return refuse(path, why: documents) }
+        // 197 r1 first-F3: Use Selection for Find (cmd+e) writes the find text every app shares.
+        if i.chord("e") || i.id.contains("selectionforfind") || i.name.hasPrefix("use selection for find") { return refuse(path, why: findText) }
+        if i.submenu && (i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
+        if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name.hasPrefix($0) }) { return clipboard(path) }
+        if leavesTheApp(i) { return refuse(path, why: outside) }
         return nil
     }
 

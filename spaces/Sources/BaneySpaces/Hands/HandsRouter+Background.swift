@@ -35,7 +35,7 @@ extension HandsRouter {
 
     func clickAt(_ req: HandsRequest) -> HandsEnvelope {
         guard let x = req.int("x"), let y = req.int("y") else { return .failure(pointArguments("click-at --window <id> --x <points> --y <points>")) }
-        switch ClickStyle.parse(count: req.int("count"), button: req.string("button")) {
+        switch ClickStyle.parse(count: req.int("count"), button: req.string("button"), item: req.string("item")) {
         case .failure(let e): return .failure(e)
         case .success(let style): return pointer(req, path: [CGPoint(x: x, y: y)], drag: false, name: "click-at", style: style)
         }
@@ -195,6 +195,7 @@ extension HandsRouter {
         var verdict = DeliveryVerdict(verified: false, basis: "no_reading")
         var landed = 0, stepCount = 1
         var droppedKeys = false
+        var context: [String: JSONValue]?
 
         func treeAfter() -> (content: Bool?, tree: JSONValue?) {
             guard tree1 != nil, let after = inlineTree(w) else { return (nil, nil) }
@@ -233,6 +234,19 @@ extension HandsRouter {
                 // The next step is compared with how things stand now.
                 curRef = after.ref; curFocus = after.focus; curWindow = after.window
                 if let t = after.tree { baseEntries = ContentChange.entries(of: t) }
+            }
+        case .pointer where style.right:
+            // Proved by the menu's own window, not by the target window's tree or pixels (`ContextMenu`).
+            // The cancel: Escape posted to the process, with a key permit of its own from the planner.
+            let escape: () -> Bool = { [self] in
+                guard let (keyFacts, _) = gatherFacts(w, kind: .keys, verifier: .none, path: []), case .success(let keys) = BackgroundPlanner.plan(keyFacts) else { return false }
+                return BackgroundPoster.keys([KeyChord(keyCode: 53, flags: 0, label: "escape")], permit: keys, stop: { nil }).stopped == nil
+            }
+            let r = contextPress(w, frame: frame, point: path[0], permit: permit, stop: stop, item: style.item, escape: escape, check: scopeCheck, cancelled: cancelled)
+            aimed += r.aimed; posted += r.posted; released = r.released; lastPostAt = r.lastPostAt
+            switch r.result {
+            case .failure(let e): return .failed(r.posted > 0 ? frontFailure() ?? e : e)
+            case .success(let d): context = d; verdict = DeliveryVerdict(verified: true, basis: "context_menu"); landed = 1
             }
         case .pointer:
             let gesture = BackgroundPoster.newGesture()
@@ -298,11 +312,13 @@ extension HandsRouter {
             evidence["pixels"] = .object(["inside_changed": .int(p.insideChanged), "inside_total": .int(p.insideTotal),
                                           "outside_changed": .int(p.outsideChanged), "outside_total": .int(p.outsideTotal)])
         }
-        return .ok(.object([
+        var answer: [String: JSONValue] = [
             "action": .string(name), "verified": true, "route": .string(permit.route.rawValue),
             "transport": .string(permit.transport.rawValue), "events": .int(posted), "evidence": .object(evidence),
             "target": targetJSON(w, scope),
-        ]))
+        ]
+        if let context { answer["context_menu"] = .object(context) }
+        return .ok(.object(answer))
     }
 
     /// The facts the planner decides on, read now, on the process queue. nil when the window is gone.
