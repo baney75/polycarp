@@ -30,6 +30,11 @@ export interface PageFrame {
 	scale: number;
 	/** The same for the owner session's viewport (1 for the tab's own). */
 	baseScale: number;
+	/**
+	 * The frame the owner session measures from (none for the tab's): kept by id, since a same-process
+	 * frame shares its owner's session and can't be told from it by session.
+	 */
+	rootFrameId?: string;
 	/** The frame and the frames around it, outermost first, for scrolling and cover checks. */
 	chain: PageFrame[];
 	/** On a host not allowed for agents: listed by its host, never read or acted in. */
@@ -469,6 +474,7 @@ async function place(
 		base,
 		scale: baseScale * box.scale,
 		baseScale,
+		...(root ? { rootFrameId: root.frameId } : {}),
 		chain: [],
 	};
 	f.chain = [...(around?.chain ?? []), f];
@@ -587,22 +593,30 @@ export async function frameTakesPoint(tabId: number, frame: PageFrame, x: number
 			frameId: f.frameId,
 		}).catch(() => undefined);
 		const base = f.base;
+		// The hit test takes document coordinates: on a scrolled page a viewport point is elsewhere, or nowhere.
+		const view = await cdpSendSession<{ cssLayoutViewport?: { pageX?: number; pageY?: number } }>(
+			tabId,
+			f.ownerSessionId,
+			"Page.getLayoutMetrics",
+		).catch(() => undefined);
+		if (!view?.cssLayoutViewport) return false;
 		const hit = await cdpSendSession<{ backendNodeId?: number; frameId?: string }>(
 			tabId,
 			f.ownerSessionId,
 			"DOM.getNodeForLocation",
 			{
 				// The owner session measures in its own frame's CSS px, drawn at baseScale in the tab.
-				x: Math.round((x - base.x) / f.baseScale),
-				y: Math.round((y - base.y) / f.baseScale),
+				x: Math.round((x - base.x) / f.baseScale + (view.cssLayoutViewport.pageX ?? 0)),
+				y: Math.round((y - base.y) / f.baseScale + (view.cssLayoutViewport.pageY ?? 0)),
 				includeUserAgentShadowDOM: true,
 				// A click goes through a layer with pointer-events: none (the in-use veil, a page's
 				// own overlay), so the hit test does too.
 				ignorePointerEventsNone: false,
 			},
 		).catch(() => undefined);
-		// No answer: no evidence of a cover, as with a frame the browser won't hit-test.
-		if (!own?.backendNodeId || !hit?.backendNodeId || hit.backendNodeId === own.backendNodeId) continue;
+		// No answer is no evidence the point is clear: the action is not sent on it.
+		if (!own?.backendNodeId || !hit?.backendNodeId) return false;
+		if (hit.backendNodeId === own.backendNodeId) continue;
 		// A frame in the same process is hit-tested through: the node is inside it, or inside a frame it holds.
 		if (hit.frameId && (await within(tabId, f.ownerSessionId, hit.frameId, f.frameId))) continue;
 		return false;
@@ -661,7 +675,8 @@ export async function remeasure(tabId: number, frame: PageFrame): Promise<PageFr
 	const chain: PageFrame[] = [];
 	for (const f of frame.chain) {
 		// The frame whose session holds this one's <iframe>: the session measures from its corner.
-		const root = f.ownerSessionId ? [...chain].reverse().find((g) => g.sessionId === f.ownerSessionId) : undefined;
+		const root = f.rootFrameId ? chain.find((g) => g.frameId === f.rootFrameId) : undefined;
+		if (f.rootFrameId && !root) return undefined;
 		const g = await place(tabId, f.frameId, f.ownerSessionId, f.url, chain.at(-1), root, f.sessionId);
 		if (!g) return undefined;
 		if (f.blocked) g.blocked = true;

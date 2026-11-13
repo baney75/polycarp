@@ -1315,7 +1315,7 @@ export async function locate(
 			throw new Error((ref ? "Ref " + ref : "That element") + " isn't shown now (hidden or closed). Call read_page for fresh refs.");
 		const spot = (${refPoint.toString()})(el);
 		const who = ref ? "Ref " + ref : "That element";
-		const covered = (by) => new Error(who + " is covered by " + by + , which would take ${theAct}. Close or dismiss it, or click that instead, then call read_page.");
+		const covered = (by) => new Error(who + " is covered by " + by + ", which would take ${theAct}. Close or dismiss it, or click that instead, then call read_page.");
 		if (spot.offscreen) throw new Error(who + " is outside the visible page (kept off screen), so ${aAct} can't reach it.");
 		if (spot.cover) throw covered(spot.cover);
 		const frameCover = (${refFrameCover.toString()})(el, spot.x, spot.y);
@@ -1618,7 +1618,14 @@ export async function scrollPage(
 		return { scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY), pageHeight: document.documentElement.scrollHeight };
 	})()`;
 	const framed = options.ref ? await frameForRef(tabId, options.ref, rule) : undefined;
-	if (framed) await scrollFrameIntoView(tabId, framed.frame);
+	if (framed) {
+		await scrollFrameIntoView(tabId, framed.frame);
+		// As with click and fill: a frame the page hid after it was read is not scrolled in.
+		if (!(await frameShownNow(tabId, framed.frame)))
+			throw new Error(
+				`Ref ${options.ref} isn't shown now: its frame is hidden, see-through, too small or covered. Call read_page for fresh refs.`,
+			);
+	}
 	const { value } = await runForRef<Awaited<ReturnType<typeof scrollPage>>>(tabId, options.ref, code, rule, framed);
 	if (!framed) return value;
 	// In a frame the window is the frame's: the page's own position is what the result names.

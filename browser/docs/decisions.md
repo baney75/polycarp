@@ -1447,7 +1447,11 @@ its refs stay), with the same code as the top page: the same masking, the same l
 An action by a frame ref resolves the ref in that frame, scrolls the frame into view, and before a click or a fill checks two
 things in the tab: the point is inside the viewport, and the hit test at that point lands in the frame, so a banner over the frame
 is reported as a cover rather than clicked. The hit test skips `pointer-events: none` layers, as a real click does (the
-in-use veil, D37, is one). A ref whose frame navigated or went away fails as stale; a ref from a frame's earlier document
+in-use veil, D37, is one). It takes document coordinates, so each level adds its own scroll position, and a level that
+gives no answer counts as covered: nothing is sent on no evidence. Scroll by a frame ref refuses a frame hidden since the
+read, as click and fill do. A nested frame is measured from the frame its owner session draws, kept by frame id (a
+same-process frame shares its owner's session). A frame ref's frame is found before the change report's first look, so
+finding it never uses up the look's 750 ms. A ref whose frame navigated or went away fails as stale; a ref from a frame's earlier document
 fails the same way it does in the top page. The action's change report (D43) looks in that frame as well as the page, so a
 click's effect inside the frame is in its `changes`. A box (alert, confirm, prompt) a frame opens is answered in the session that
 reported it: the frame's when it comes from one, else the tab's. Chromium reports a box from another site's frame on the
