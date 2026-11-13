@@ -94,6 +94,7 @@ final class HandsRouter {
         if let e = AgentAccessGate.refusal(verb: req.verb, mode: access) { return .failure(e) }
         if remote, let e = WorkspaceVerbs.connectorRefusal(verb: req.verb) { return .failure(e) }
         var req = req
+        if let r = req.string("ref"), let e = SnapshotRows.browserRefError(r) { return .failure(e) }
         if let r = req.string("ref"), let n = SnapshotRows.bareNumber(r) {
             switch bareRef(n, req) {
             case .success(let full): req.args["ref"] = .string(full)
