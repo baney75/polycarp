@@ -131,8 +131,26 @@ let since = new Map<number, Since>();
 const inflight = new Map<number, { tabId: number; job: Promise<void> }>();
 /** Boxes whose Cancel failed: how often, and not before when to try again. */
 const failures = new Map<number, { n: number; retryAt: number }>();
-/** The call that opened each box (an action), for the notice's repeat with on_dialog. */
-const causes = new Map<number, { method: string; params: Record<string, unknown> }>();
+/**
+ * The action that opened a box: recorded by the bridge only for a box that opened on the tab its last input went to,
+ * while that input was on its way (native.ts). What the notice may tell the agent to do next comes from this alone.
+ */
+export interface DialogCause {
+	/** The tool called: click, press, type, fill, actions, ... */
+	method: string;
+	/** The tab the input went to: the box's own tab. */
+	tabId: number;
+	/** The single action that opened the box: the call's own arguments, or the batch step's. */
+	step: { kind: string; params: Record<string, unknown> };
+	/** In an `actions` call: the step's index, and how many steps there were. */
+	batch?: { index: number; total: number };
+	/** A box the same call's on_dialog had already answered: that answer stands, and the action went through. */
+	after?: { type: string; message: string };
+}
+/** The call that opened each box, for the notice's next step. */
+const causes = new Map<number, DialogCause>();
+/** The steps on_dialog may be set on: a single action that, done again, does only that (D46). */
+export const ONE_STEP = new Set(["click", "press"]);
 /** Boxes the guard cancelled, until the agent hears of it once. */
 const cancelled = new Map<number, { owner: string; tabId: number; text: string; at: number }>();
 /** The ownership the last run read, for an answer that arrives before its session is open. */
@@ -214,6 +232,11 @@ async function run(): Promise<void> {
 			hit[1],
 			owned.get(hit[0]) as string,
 			siteOf(hit[1].url || tabs.find((t) => t.id === hit[0])?.url),
+			// Which rule fired: the person's tab in front past the grace, or a minute open.
+			(() => {
+				const active = since.get(due as number)?.active;
+				return active !== undefined && active + deps.grace() <= now && !asking.has(owned.get(hit[0]) as string);
+			})(),
 		);
 	}
 	clearTimeout(wake);
@@ -221,20 +244,62 @@ async function run(): Promise<void> {
 		wake = setTimeout(() => void reconcile(), Math.max(0, wakeAt - Date.now()) + 20);
 }
 
-/** The words of a call to repeat with on_dialog set: the same tool and arguments. */
-function repeatCall(seq: number, dialog: PageDialog): string {
+const READ_FIRST = "Read the page (read_page) to see what happened before you act again.";
+
+/**
+ * What the agent may do about a box Polycarp answers without it: never "repeat the whole call" (D46). An alert, or a box
+ * after one the call's on_dialog answered, needs nothing; a box with no known cause, or one a step that can't take
+ * on_dialog opened, needs a look first; otherwise the one click or press that opened it, on its own tab, with on_dialog.
+ */
+export function dialogAdvice(seq: number, tabId: number, dialog: PageDialog): string {
 	const cause = causes.get(seq);
-	const text = dialog.type === "prompt" ? ', "on_dialog_text": "<the text to enter>"' : "";
-	if (!cause)
-		return `To do it again, repeat the action that opened it with "on_dialog": "ok" or "cancel"${text ? ` (and "on_dialog_text" for the prompt)` : ""}: the box is then answered as it opens.`;
+	if (dialog.type === "alert")
+		return "An alert has only one answer, so nothing was lost: the action that opened it went through. Do not repeat it.";
+	if (cause?.after)
+		return `It opened after the ${cause.after.type} (${JSON.stringify(cause.after.message)}) that your call's on_dialog answered. That answer stands and the action went through: do not repeat it. ${READ_FIRST}`;
+	if (!cause || cause.tabId !== tabId)
+		return `Polycarp does not know which action opened it (a script, a hover, a page timer, leaving the page): no call can answer it in advance. ${READ_FIRST} Ask the user if the page still needs this box answered.`;
+	const ran = cause.batch
+		? `${cause.batch.index === 0 ? "No step" : `The first ${cause.batch.index} step${cause.batch.index === 1 ? "" : "s"}`} of your actions call ran before it${cause.batch.index === 0 ? "" : ": do not run them again"}. Step ${cause.batch.index + 1} (${cause.step.kind}) opened it${cause.batch.total > cause.batch.index + 1 ? `, and the ${cause.batch.total - cause.batch.index - 1} after it did not run` : ""}. `
+		: "";
+	if (!ONE_STEP.has(cause.step.kind))
+		return `${ran}It opened during ${cause.step.kind}, which can't take on_dialog: done again, it would type again. ${READ_FIRST} If what the user asked for is not done, do the click or press that finishes it with "on_dialog".`;
 	const args = Object.fromEntries(
-		Object.entries(cause.params).filter(([k]) => k !== "on_dialog" && k !== "on_dialog_text"),
+		Object.entries(cause.step.params).filter(([k]) => k !== "on_dialog" && k !== "on_dialog_text" && k !== "tabId"),
 	);
-	const json = (on: string) => `${JSON.stringify({ ...args, on_dialog: on }).slice(0, -1)}${on === "ok" ? text : ""}}`;
-	return `To do it again, call ${cause.method} with ${json("ok")}: the box is then answered OK as it opens. Use "on_dialog": "ok" only if the box confirms exactly what the user asked for; otherwise ask the user first, or call ${cause.method} with ${json("cancel")}.`;
+	const text = dialog.type === "prompt" ? ', "on_dialog_text": "<the text to enter>"' : "";
+	const json = (on: string) =>
+		`${JSON.stringify({ tabId, ...args, on_dialog: on }).slice(0, -1)}${on === "ok" ? text : ""}}`;
+	return `${ran}To do that one step again, call ${cause.step.kind} with ${json("ok")}: the box is then answered OK as it opens. Use "on_dialog": "ok" only if the box confirms exactly what the user asked for; otherwise ask the user first, or call ${cause.step.kind} with ${json("cancel")}.`;
 }
 
-function startCancel(tabId: number, dialog: PageDialog, owner: string, site: string | undefined): void {
+/**
+ * A box an action just opened, for that call's own note: when the person has a tab of the site in front, Polycarp will
+ * cancel it before a handle_dialog can arrive (first-F5 of the #193 review), so the note says what works instead.
+ */
+export async function dialogSoon(tabId: number, dialog: PageDialog): Promise<string | undefined> {
+	const [tabs, owned] = await Promise.all([deps.tabs(), deps.owners()]).catch(() => [[], new Map()] as const);
+	const site = siteOf(dialog.url || tabs.find((t) => t.id === tabId)?.url);
+	if (!site) return undefined;
+	const front = tabs.some((t) => {
+		const owner = t.id === undefined ? undefined : owned.get(t.id);
+		return t.id !== tabId && t.active && siteOf(t.url || t.pendingUrl) === site && !(owner && isAgentSession(owner));
+	});
+	if (!front) return undefined;
+	const secs = Math.max(1, Math.round(deps.grace() / 1000));
+	if (dialog.type === "alert")
+		return `The person has a tab of ${site} in front, so Polycarp dismisses this alert in about ${secs} s. ${dialogAdvice(dialog.seq, tabId, dialog)}`;
+	return `The person has a tab of ${site} in front, so Polycarp cancels this box in about ${secs} s, before a handle_dialog can arrive: do not call handle_dialog. ${dialogAdvice(dialog.seq, tabId, dialog)}`;
+}
+
+function startCancel(
+	tabId: number,
+	dialog: PageDialog,
+	owner: string,
+	site: string | undefined,
+	// Read when the Cancel is decided (second-S4): once it lands, a look can drop the box's start times.
+	front: boolean,
+): void {
 	const { seq } = dialog;
 	const job = (async () => {
 		let done = false;
@@ -254,12 +319,13 @@ function startCancel(tabId: number, dialog: PageDialog, owner: string, site: str
 		}
 		failures.delete(seq);
 		if (!done) return;
-		const why =
-			since.get(seq)?.active !== undefined
-				? `the person was using a tab on ${site}`
-				: `the person has a tab open on ${site}`;
 		const kind = dialog.type === "beforeunload" ? "leave-page" : dialog.type;
-		const text = `The ${kind} dialog on tab ${tabId} (${JSON.stringify(dialog.message)}) was cancelled, because ${why} and an open dialog freezes every tab of that site. The page saw Cancel. A handle_dialog sent after it opened cannot arrive in time while that tab is in front. ${repeatCall(seq, dialog)}`;
+		const alert = dialog.type === "alert";
+		const what = `The ${kind} dialog on tab ${tabId} (${JSON.stringify(dialog.message)}) was ${alert ? "dismissed" : "cancelled"}`;
+		const rule = front
+			? `because the person was using a tab on ${site}, and an open dialog freezes every tab of that site. A handle_dialog sent after a box opens cannot arrive in time while that tab is in front.`
+			: `because it stayed open a minute while the person had a tab open on ${site}, and an open dialog freezes every tab of that site.`;
+		const text = `${what}, ${rule}${alert ? "" : " The page saw Cancel."} ${dialogAdvice(seq, tabId, dialog)}`;
 		cancelled.set(seq, { owner, tabId, text, at: Date.now() });
 		deps.log(`dialog-guard: tab=${tabId} ${dialog.type} answered Cancel`);
 		await deps.notice(owner, text).catch(() => undefined);
@@ -271,8 +337,8 @@ function startCancel(tabId: number, dialog: PageDialog, owner: string, site: str
 }
 
 /** The call that opened a box, from the bridge: the guard's notice names it to repeat with on_dialog. */
-export function dialogCause(seq: number, method: string, params: Record<string, unknown>): void {
-	causes.set(seq, { method, params });
+export function dialogCause(seq: number, cause: DialogCause): void {
+	causes.set(seq, cause);
 }
 
 /** A handle_dialog, from the moment it reaches the worker: the box it answers, fixed then, or none. */

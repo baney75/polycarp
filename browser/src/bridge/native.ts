@@ -8,13 +8,22 @@
  */
 
 import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
-import { openDialog, type PageDialog, presetDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
+import {
+	armDialog,
+	disarmDialog,
+	openDialog,
+	type PageDialog,
+	stopScreencastsOwnedBy,
+	watchDialogs,
+} from "../browser/cdp.js";
 import {
 	type DialogAnswer,
+	type DialogCause,
 	dialogAnswerArrive,
 	dialogAnswerEnd,
 	dialogAsk,
 	dialogCause,
+	dialogSoon,
 } from "../browser/dialog-guard.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, pruneSessions, type SessionMeta, sanitizeLabel } from "../browser/session.js";
@@ -26,7 +35,15 @@ import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
 import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
 import type { UpdateAction } from "../update/logic.js";
 import { runningFromStore } from "../update/store-install.js";
-import { type Delivered, dialogError, dialogPreset, isDialogSafe, PRESET_METHODS, raceDialogs } from "./dialogs.js";
+import {
+	type Delivered,
+	dialogError,
+	dialogPreset,
+	isDialogSafe,
+	raceDialogs,
+	stepPreset,
+	type WantedPreset,
+} from "./dialogs.js";
 import { BridgeError, classify, HANDLER_TIMEOUT_MS, withTimeout } from "./errors.js";
 import { dropAllTransfers, dropTransfersForClient } from "./files.js";
 import {
@@ -65,7 +82,7 @@ import {
 	UPDATE_STATUS_KEY,
 } from "./protocol.js";
 import { handleSessionsAdmin } from "./sessions-admin.js";
-import { extensionStatus, type HandlerContext, handlers } from "./tools.js";
+import { type DeliveredStep, extensionStatus, type HandlerContext, handlers, normalizeStep } from "./tools.js";
 
 const ALARM_NAME = "tabkyra-bridge-keepalive";
 const WORKER_STARTED_AT = Date.now();
@@ -355,6 +372,27 @@ function resolveDecision(requestId: string, decision: PermissionDecision): boole
 const tabIdParam = (params: Record<string, unknown> | undefined) =>
 	params?.tabId === undefined ? undefined : Number(params.tabId);
 
+/** The calls on each tab that could open a box there, across every client: a call with on_dialog runs alone (D46). */
+const tabCalls = new Map<number, Set<string>>();
+/** Tabs a call with on_dialog holds until it ends: no other call acts on them meanwhile. */
+const heldTabs = new Map<number, string>();
+/** The actions whose box the guard's notice may name (dialog-guard.ts); a hover, scroll or drag box has no known cause. */
+const CAUSE_KINDS = new Set(["click", "press", "type", "fill"]);
+
+/** The answer a call or one of its steps set in advance, checked; the step's index for `actions`. */
+function wantedPreset(
+	method: string,
+	params: Record<string, unknown>,
+): (WantedPreset & { index?: number }) | undefined {
+	if (method !== "actions") return dialogPreset(method, params);
+	const raw = params.steps;
+	if (!Array.isArray(raw) || raw.some((st) => !st || typeof st !== "object")) return stepPreset(params, []);
+	return stepPreset(
+		params,
+		raw.map((st, i) => normalizeStep(st as Record<string, unknown>, i)),
+	);
+}
+
 async function runRequest(state: ClientState, req: HostForwardedRequest, answer?: DialogAnswer): Promise<void> {
 	const reply = (result?: unknown, error?: BridgeError) =>
 		send({
@@ -394,8 +432,10 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 	// In flight from here, before the first await, so the update idle gate sees it at once.
 	state.inFlight = { method: req.method, since: Date.now() };
 	state.lastActivityAt = Date.now();
-	/** Takes back the call's `on_dialog` when it ends; the box the call opened, for the guard's notice. */
-	let unpreset: (() => void) | undefined;
+	/** This call, for the answer it may arm (`on_dialog`) and the tab it holds. */
+	const call = `${state.clientId}:${req.id}`;
+	/** The tab this call is counted on in `tabCalls`, and whether it holds it. */
+	let onTab: number | undefined;
 	let unwatch: (() => void) | undefined;
 	/** The session and the tab the in-use veil counted this call on (src/browser/veil.ts). */
 	let veiled: { session: BrowserSession; tabId: number | undefined; currentBefore: number | undefined } | undefined;
@@ -452,22 +492,69 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
 			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
 		}
+		// on_dialog is checked, and its tab's owner, before anything runs or is armed (sol-F3, first-F4 of the #193 review).
+		const want = wantedPreset(req.method, req.params ?? {});
+		if (want && !session.tabIds.includes(want.tabId))
+			throw new BridgeError(
+				ERR.NO_TAB,
+				`Tab ${want.tabId} is not one of your tabs: on_dialog answers a box on your own tab only (tabs_context lists yours).`,
+			);
+		if (!dialogSafe) {
+			const named = tabIdParam(req.params);
+			const tab = want?.tabId ?? (named !== undefined && Number.isInteger(named) ? named : session.currentTabId);
+			if (tab !== undefined) {
+				// One armed answer per tab across every client of the session (sol-F2, first-F2): while a call with on_dialog
+				// runs on a tab, no other call acts there, and it starts only when none does. Refused as not_sent, the
+				// client sends it again shortly.
+				const holder = heldTabs.get(tab);
+				const others = [...(tabCalls.get(tab) ?? [])].filter((c) => c !== call);
+				if ((holder && holder !== call) || (want && others.length))
+					throw new BridgeError(
+						ERR.NOT_SENT,
+						want
+							? `Another call is still running on tab ${tab}; a call with on_dialog waits until none is. It was not sent.`
+							: `A call with on_dialog is still running on tab ${tab}; this call waits until it ends. It was not sent.`,
+					);
+				onTab = tab;
+				tabCalls.set(tab, (tabCalls.get(tab) ?? new Set()).add(call));
+				if (want) heldTabs.set(tab, call);
+			}
+		}
+		/** The tab and step whose last input is on its way: a box that opens there now is that step's (second-S3). */
+		let delivering: { tabId: number; step?: DeliveredStep } | undefined;
+		/** The box this call's on_dialog answered: a box after it is no reason to do anything again (second-S1). */
+		let answeredBox: { type: string; message: string } | undefined;
+		ctx.delivered = (result, tabId, step) => {
+			deliveredResult = result && tabId !== undefined ? { result, tabId } : undefined;
+			delivering = result && tabId !== undefined ? { tabId, step } : undefined;
+			const mine = want && (step ? step.index === want.index : want.index === undefined);
+			// Armed while this step's last input is on its way, on its own tab, once: never for another call's box, and
+			// never once the call has failed on a box (its input may still land after that box is answered).
+			if (delivering && mine && want.tabId === tabId && !answeredBox && !aborted)
+				armDialog(tabId, call, want.preset);
+			else disarmDialog(call);
+		};
+		if (!dialogSafe)
+			unwatch = watchDialogs((tabId, dialog) => {
+				if (!delivering || delivering.tabId !== tabId) return;
+				const kind = delivering.step?.kind ?? req.method;
+				if (!CAUSE_KINDS.has(kind)) return;
+				const own = dialog.presetCall === call;
+				const cause: DialogCause = {
+					method: req.method,
+					tabId,
+					step: { kind, params: delivering.step?.params ?? req.params ?? {} },
+					...(delivering.step ? { batch: { index: delivering.step.index, total: delivering.step.total } } : {}),
+					...(!own && answeredBox ? { after: answeredBox } : {}),
+				};
+				dialogCause(dialog.seq, cause);
+				if (own) answeredBox = { type: dialog.type, message: dialog.message };
+			});
 		veiled = {
 			session,
 			currentBefore: session.currentTabId,
 			tabId: await veilBegin(session, req.method, req.params).catch(() => undefined),
 		};
-		const preset = dialogPreset(req.method, req.params);
-		if (PRESET_METHODS.has(req.method)) {
-			// A box this action opens: its notice, if the guard must cancel it, names this call to repeat (dialog-guard.ts).
-			unwatch = watchDialogs((tabId, dialog) => {
-				if (session.tabIds.includes(tabId) && !dialog.preset) dialogCause(dialog.seq, req.method, req.params ?? {});
-			});
-			// Set before the action goes out, on the tab it acts on: the first box there is answered as it opens.
-			const named = req.params?.tabId == null ? Number.NaN : Number(req.params.tabId);
-			const on = Number.isFinite(named) ? named : session.currentTabId;
-			if (preset && on !== undefined) unpreset = presetDialog(on, preset);
-		}
 		const work = handler(ctx, req.params ?? {});
 		const result = await withTimeout(
 			dialogSafe
@@ -477,8 +564,10 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 						work,
 						() => {
 							aborted = true;
+							disarmDialog(call);
 						},
 						() => deliveredResult,
+						{ call, soon: dialogSoon },
 					),
 			// An upload's begin may wait for the person's answer, which has its own, longer limit.
 			req.method === "files.upload.begin" ? FILE_ASK_TIMEOUT_MS + 30000 : HANDLER_TIMEOUT_MS,
@@ -494,8 +583,14 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		if (stack) trace(`${req.method} ${error.code}: ${stack.split("\n").slice(0, 6).join(" | ")}`);
 		reply(undefined, error);
 	} finally {
-		unpreset?.();
+		disarmDialog(call);
 		unwatch?.();
+		if (onTab !== undefined) {
+			const calls = tabCalls.get(onTab);
+			calls?.delete(call);
+			if (!calls?.size) tabCalls.delete(onTab);
+			if (heldTabs.get(onTab) === call) heldTabs.delete(onTab);
+		}
 		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId, veiled.currentBefore);
 		state.abort = undefined;
 		state.inFlight = undefined;

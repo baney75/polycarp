@@ -45,8 +45,10 @@ export interface PageDialog {
 	url?: string;
 	/** The box's identity: a new number for every box that opens, so an answer meant for one never reaches the next. */
 	seq: number;
-	/** Answered as it opened, by the answer the call that opened it set in advance (`presetDialog`). */
+	/** Answered as it opened, by the answer the call that opened it set in advance (`armDialog`). */
 	preset?: DialogPreset;
+	/** The call whose armed answer this box took: the only call that may report that answer. */
+	presetCall?: string;
 }
 
 /** An answer set before an action, for the first box it opens on its tab (an action's `on_dialog`). */
@@ -60,24 +62,64 @@ let dialogSeq = Date.now() * 1000;
 
 const openDialogs = new Map<number, PageDialog>();
 const dialogWatchers = new Set<(tabId: number, dialog: PageDialog) => void>();
-const presets = new Map<number, DialogPreset>();
+/** Per tab, the one answer set in advance, and the call it belongs to. */
+const armed = new Map<number, { call: string; preset: DialogPreset }>();
+/** Per open box, how it ended: OK (true) or Cancel (false), as the page got it; undefined when that is unknown. */
+const outcomes = new Map<
+	number,
+	{ done: Promise<boolean | undefined>; settle: (accept: boolean | undefined) => void }
+>();
 
 /**
  * Answer the next box that opens on the tab with this, at once, while a model turn would be too slow for a box that
- * freezes the person's tabs (dialog-guard.ts). Used once; the returned function takes it back when the call ends.
+ * freezes the person's tabs (dialog-guard.ts). Armed just before the call's own last input goes out, for that call
+ * only: false when another call's answer is armed on the tab. Used once; `disarmDialog` takes it back.
  */
-export function presetDialog(tabId: number, preset: DialogPreset): () => void {
-	const mine = { ...preset };
-	presets.set(tabId, mine);
-	return () => {
-		if (presets.get(tabId) === mine) presets.delete(tabId);
-	};
+export function armDialog(tabId: number, call: string, preset: DialogPreset): boolean {
+	const held = armed.get(tabId);
+	if (held && held.call !== call) return false;
+	armed.set(tabId, { call, preset: { ...preset } });
+	return true;
+}
+
+/** Take back a call's armed answer, if it is still armed (no box took it). */
+export function disarmDialog(call: string): void {
+	for (const [tabId, held] of armed) if (held.call === call) armed.delete(tabId);
+}
+
+/**
+ * How the box ended, from the page's side: the CDP reply of the answer that landed, or Chrome's own close event.
+ * Undefined when the box went without an answer anyone saw (its tab closed or detached).
+ */
+export function dialogOutcome(seq: number): Promise<boolean | undefined> {
+	return outcomes.get(seq)?.done ?? Promise.resolve(undefined);
+}
+
+/** The first answer seen wins: the box closed once. Kept after, so a call that asks later still learns it. */
+function settleOutcome(seq: number | undefined, accept: boolean | undefined): void {
+	if (seq !== undefined) outcomes.get(seq)?.settle(accept);
+}
+
+/** Outcomes kept for the boxes opened most recently: enough for any call still asking. */
+const OUTCOMES_KEPT = 100;
+
+function trackOutcome(seq: number): void {
+	let settle: (accept: boolean | undefined) => void = () => undefined;
+	const done = new Promise<boolean | undefined>((r) => {
+		settle = r;
+	});
+	outcomes.set(seq, { done, settle });
+	for (const old of outcomes.keys()) {
+		if (outcomes.size <= OUTCOMES_KEPT) break;
+		outcomes.delete(old);
+	}
 }
 
 /** Drop a box Chrome no longer shows (its Cancel said so), if it is still this one. */
 export function forgetDialog(tabId: number, seq: number): void {
 	if (openDialogs.get(tabId)?.seq !== seq) return;
 	openDialogs.delete(tabId);
+	settleOutcome(seq, undefined);
 	remember(tabId);
 }
 
@@ -109,6 +151,7 @@ export async function answerDialog(
 	// Checked and sent with no await between: the answer goes to this box or to none.
 	if (seq !== undefined && dialog.seq !== seq) throw new Error("That dialog is gone; another one is open on this tab");
 	await send(tabId, "Page.handleJavaScriptDialog", { accept, ...(promptText !== undefined ? { promptText } : {}) });
+	settleOutcome(dialog.seq, accept);
 	// Only the box answered: the page may have opened the next one before the answer's reply came back.
 	if (openDialogs.get(tabId)?.seq === dialog.seq) openDialogs.delete(tabId);
 	remember(tabId);
@@ -131,11 +174,14 @@ function installListeners(): void {
 				url: p.url,
 				seq: ++dialogSeq,
 			};
-			const preset = presets.get(tabId);
-			if (preset) {
-				presets.delete(tabId);
-				dialog.preset = preset;
+			const held = armed.get(tabId);
+			const preset = held?.preset;
+			if (held) {
+				armed.delete(tabId);
+				dialog.preset = held.preset;
+				dialog.presetCall = held.call;
 			}
+			trackOutcome(dialog.seq);
 			openDialogs.set(tabId, dialog);
 			remember(tabId);
 			for (const fn of dialogWatchers) fn(tabId, dialog);
@@ -144,6 +190,8 @@ function installListeners(): void {
 					console.warn("[cdp] the preset dialog answer failed:", err instanceof Error ? err.message : err),
 				);
 		} else if (method === "Page.javascriptDialogClosed") {
+			const closed = (params ?? {}) as { result?: boolean };
+			settleOutcome(openDialogs.get(tabId)?.seq, typeof closed.result === "boolean" ? closed.result : undefined);
 			openDialogs.delete(tabId);
 			remember(tabId);
 		}
@@ -151,6 +199,7 @@ function installListeners(): void {
 	chrome.debugger.onDetach.addListener((source, reason) => {
 		if (source.tabId === undefined) return;
 		noteCaptureStopped(source.tabId, describeDetach(reason));
+		settleOutcome(openDialogs.get(source.tabId)?.seq, undefined);
 		openDialogs.delete(source.tabId);
 		remember(source.tabId);
 		attachedTabs.delete(source.tabId);
@@ -161,6 +210,8 @@ function installListeners(): void {
 		if (details.frameId === 0) bannedTabs.delete(details.tabId);
 	});
 	chrome.tabs.onRemoved.addListener((tabId) => {
+		settleOutcome(openDialogs.get(tabId)?.seq, undefined);
+		armed.delete(tabId);
 		openDialogs.delete(tabId);
 		screenshotScale.delete(tabId);
 		remember(tabId);

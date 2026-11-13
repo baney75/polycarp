@@ -707,7 +707,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		on_dialog: z
 			.enum(["ok", "cancel"])
 			.optional()
-			.describe('Answer a box this opens at once; "ok" only if it confirms what the user asked'),
+			.describe('Answer the box this opens at once (needs tabId); "ok" only if it confirms what the user asked'),
 		on_dialog_text: z.string().optional().describe("prompt() text"),
 	};
 	server.registerTool(
@@ -734,7 +734,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		{
 			title: "Type text",
 			description: "Type with real key events; with a ref or selector it clicks that field first. submit:true presses Enter after. fill sets a value without key events. Example: {\"ref\":\"e4\",\"text\":\"Ada Lovelace\",\"submit\":true}",
-			inputSchema: { text: z.string().describe("Text to type"), tabId, ref, selector, submit: z.boolean().optional().describe("Press Enter after typing"), ...onDialog },
+			inputSchema: { text: z.string().describe("Text to type"), tabId, ref, selector, submit: z.boolean().optional().describe("Press Enter after typing") },
 		},
 		(args) => call("type", args),
 	);
@@ -752,7 +752,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		{
 			title: "Set a field's value",
 			description: "Set a control's value directly: inputs, textareas, selects (by value or label), checkboxes (\"true\"/\"false\"), contenteditable. Faster than type for long text. Example: {\"ref\":\"e9\",\"value\":\"Missouri\"}",
-			inputSchema: { value: z.string().describe("New value"), tabId, ref, selector, ...onDialog },
+			inputSchema: { value: z.string().describe("New value"), tabId, ref, selector },
 		},
 		(args) => call("fill", args),
 	);
@@ -791,11 +791,10 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			title: "Run several input steps",
 			description: "Up to 40 input steps in one call, optionally ending with a screenshot: for canvas apps and multi-step input instead of one call per key. Step kinds: press, click ({x,y}|{ref}|{selector}, clickCount), doubleClick, drag ({from,to}), type, hover, scroll ({dx,dy}|{to}), wait (ms); x/y are pixels of your latest screenshot. Steps are settleMs apart (default 80); the run stops at the first failing step. Example: {\"steps\":[{\"press\":\"r\"},{\"drag\":{\"from\":{\"x\":200,\"y\":200},\"to\":{\"x\":360,\"y\":300}}},{\"type\":\"Start\"},{\"press\":\"Escape\"}],\"screenshot\":true}",
 			inputSchema: {
-				steps: z.array(z.record(z.string(), z.any())).min(1).max(40).describe("Each step is an object with one key, e.g. {\"press\":\"Enter\"}"),
+				steps: z.array(z.record(z.string(), z.any())).min(1).max(40).describe("Each step is an object with one key, e.g. {\"press\":\"Enter\"}; on_dialog goes on one click or press step"),
 				screenshot: z.boolean().optional().describe("Return a screenshot after the last step"),
 				settleMs: z.number().int().optional().describe("Pause between steps in ms (default 80)"),
 				tabId,
-				...onDialog,
 			},
 		},
 		async (args) => {

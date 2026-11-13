@@ -374,7 +374,23 @@ test("a pending ask_user holds the box under the minute rule only", async () => 
 	assert.deepEqual(cancels, []);
 	await tick(30_100);
 	assert.deepEqual(cancels, [1]);
-	assert.match(notices[0].text, /the person was using a tab on example\.com/);
+	// second-S4 of the #193 review: the minute rule fired, and the notice says so, not the grace's words.
+	assert.match(notices[0].text, /because it stayed open a minute while the person had a tab open on example\.com/);
+	assert.doesNotMatch(notices[0].text, /cannot arrive in time while that tab is in front/);
+});
+
+test("second-S4: the reason is the one the Cancel was decided on, read before its await", async () => {
+	const c = slowCancel();
+	openBox(1);
+	await tick(3_100);
+	assert.deepEqual(cancels, [1]);
+	// While the Cancel is on its way, the person switches away and a look runs: the box's start times change.
+	tabs.find((t) => t.id === 5).active = false;
+	await reconcile();
+	c.release();
+	await tick(0);
+	assert.match(notices[0].text, /because the person was using a tab on example\.com/);
+	assert.match(notices[0].text, /cannot arrive in time while that tab is in front/);
 });
 
 test("a box an earlier worker kept gets the same rules after a restart", async () => {

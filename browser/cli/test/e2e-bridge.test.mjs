@@ -2001,15 +2001,15 @@ test("only the tab an agent uses is held up: when the user brings a same-site ta
 		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "cancelled");
 		const answer = await agent.callTool({ name: "handle_dialog", arguments: { accept: true } });
 		assert.match(answer.content[0].text, /was cancelled, because the person was using a tab on 127\.0\.0\.1 .*The page saw Cancel\./);
-		// first-F1 (review of #188): the notice names the exact call to repeat, with its answer set in advance.
+		// first-F1 (review of #188), sol-F3 (#193): the notice names the one step to repeat, on its own tab, answered in advance.
 		assert.ok(
-			answer.content[0].text.includes('call click with {"x":320,"y":60,"on_dialog":"ok"}'),
+			answer.content[0].text.includes(`call click with {"tabId":${agentTab},"x":320,"y":60,"on_dialog":"ok"}`),
 			`the notice names no repeat: ${answer.content[0].text}`,
 		);
 		assert.doesNotMatch(await on(agent, "tabs_context"), /was cancelled, because/, "told twice");
 		// The repeat, with the user's tab still in front: the box is answered OK as it opens, well inside the grace.
 		const t1 = Date.now();
-		assert.match(await on(agent, "click", { x: 320, y: 60, on_dialog: "ok" }), /answered OK at once, as on_dialog asked/);
+		assert.match(await on(agent, "click", { tabId: agentTab, x: 320, y: 60, on_dialog: "ok" }), /answered OK at once, as on_dialog asked/);
 		assert.ok(Date.now() - t1 < 1500, `the repeat took ${Date.now() - t1} ms, the grace is 1500`);
 		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "ok");
 		await new Promise((r) => setTimeout(r, 2500));

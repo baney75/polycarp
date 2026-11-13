@@ -96,6 +96,14 @@ export { BridgeError, detachedError };
 
 type Params = Record<string, unknown>;
 
+/** The step of an `actions` call whose input is on its way: which one, of how many, and its own arguments. */
+export interface DeliveredStep {
+	index: number;
+	total: number;
+	kind: string;
+	params: Record<string, unknown>;
+}
+
 export interface HandlerContext {
 	session: BrowserSession;
 	/** Ask before a navigation to a host that is not allowed yet; throws when denied. */
@@ -130,7 +138,7 @@ export interface HandlerContext {
 	 * `notRun`, if set, is how many later steps of the call did not run. Call with no result once
 	 * the action has finished, so a dialog from a later step is not blamed on this one.
 	 */
-	delivered(result?: Record<string, unknown>, tabId?: number): void;
+	delivered(result?: Record<string, unknown>, tabId?: number, step?: DeliveredStep): void;
 	/** Set for a step of `actions`: the batch settles once, after its last step. */
 	batch?: boolean;
 }
@@ -395,7 +403,7 @@ async function pointFor(_ctx: HandlerContext, params: Params, tabId: number): Pr
 }
 
 /** One `actions` step as [handler, params]; accepts the spellings models reach for. */
-function normalizeStep(step: Params, i: number): [string, Params] {
+export function normalizeStep(step: Params, i: number): [string, Params] {
 	const obj = (v: unknown): Params => (v && typeof v === "object" ? (v as Params) : {});
 	if ("press" in step) return ["press", typeof step.press === "string" ? { key: step.press } : obj(step.press)];
 	if ("key" in step) return ["press", { key: String(step.key), ...(step.repeat ? { repeat: step.repeat } : {}) }];
@@ -930,6 +938,8 @@ export const handlers: Record<string, Handler> = {
 		const since = await actionStart(ctx, tabId);
 		for (let i = 0; i < repeat; i++) {
 			stopIfAborted(ctx);
+			// The last press is the action: a box it opens worked (and its on_dialog may answer it), as a click's does.
+			if (i === repeat - 1) ctx.delivered({ pressed: key, repeat }, tabId);
 			await pressKey(tabId, key);
 		}
 		return { pressed: key, repeat, ...(await settleAfter(ctx, tabId, since, { pressed: key, repeat }, { before })) };
@@ -1158,6 +1168,7 @@ export const handlers: Record<string, Handler> = {
 					ctx.delivered(
 						result ? { ...result, steps: done.length + 1, notRun: steps.length - i - 1 } : undefined,
 						tabId,
+						{ index: i, total: steps.length, kind, params: withTab },
 					),
 			};
 			try {
