@@ -1720,3 +1720,34 @@ after the deletion must not make it repeat. The e2e "only the tab an agent uses 
 the user keep it, has the agent's page open a confirm and brings the user's tab to the front. On main the user's tab
 stays frozen and the test fails. It then repeats the click with `on_dialog` "ok" and checks the page got OK within the
 grace and nothing froze or was cancelled again.
+
+## D49. A download an action starts is reported with its result, through the debugger (Claude, 2026-11-13)
+
+**Problem.** A click on an attachment link, a blob link or a button whose script makes a file starts a download, and
+the agent was told nothing. It saw an unchanged page and often clicked again, or said the export failed.
+
+**Decision.** `downloads.ts` listens for `Page.downloadWillBegin` and `Page.downloadProgress`. Chrome sends both once
+`Page.enable` is on, and cdp.ts already turns it on for dialogs. The result of every input tool and navigate lists the
+downloads that began since the action started: the suggested name, the extension as a type, the size when it
+completed, the state (started, completed, canceled) and the URL through `maskUrl`, as `files download` shows it. A
+data: URL keeps only its header, so a script-made file's bytes never reach the agent. After the page settles the
+action waits up to 2 s for a download to end, then reports it as it stands. A note beside the list says once what the
+agent can't know.
+
+**Why not the downloads permission.** `chrome.downloads` would give the saved path and the final name, but adding a
+permission sends the extension back through store review and shows every user a new prompt. The extension must stay
+store-ready, so the debugger alone it is.
+
+**Limits.**
+- The save folder is not known. The note says so; the agent can't open or read the saved file.
+- The name is the one the page suggested. Chrome adds " (1)" when a file of that name is already there.
+- A download that waits on a save box (Chrome's "Ask where to save each file") stays "started".
+- A file type the person set to open on its own still opens; only the downloads permission could stop that.
+- A download from a cross-origin frame reaches the tab's events only when Chrome sends it on the top session.
+- Polycarp opens nothing. To read a file the agent calls `files download` with the link's ref, under that tool's 50
+  MiB limit and its rules for other sites.
+
+**Proof.** `test/downloads.test.mjs` drives `click` through the real bridge on fake chrome. A download that begins as
+the button comes up is reported with name, type, size, state and a masked token; a data: file shows no bytes and a
+canceled one says so; a download from the click before is not the next click's; one that never ends comes back as
+"started" in under 5 s. All four fail on main 93a70440.
