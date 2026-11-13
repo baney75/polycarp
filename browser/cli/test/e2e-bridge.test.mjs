@@ -2568,7 +2568,11 @@ test("settle: a box the page opens while it settles is the action's effect: ok w
 		// A failure here made agents repeat the action: submit the form twice, say.
 		assert.ok(!r.isError, `${name}: ${text}`);
 		// actions reports in prose, the other tools in JSON.
-		if (name === "actions") assert.match(text, new RegExp(`That worked\\. An alert dialog is now open on tab \\d+: "${message}"`));
+		// An alert may report a failure, so it is never called a success (first-F4 of the review of PR 200).
+		if (name === "actions") {
+			assert.match(text, new RegExp(`An alert dialog is now open on tab \\d+: "${message}"`));
+			assert.doesNotMatch(text, /That worked/);
+		}
 		else assert.equal(JSON.parse(text).dialog?.message, message, text);
 		assert.match(text, /handle_dialog/);
 		assert.equal(JSON.parse(await tool("handle_dialog", { accept: true })).message, message);
