@@ -70,3 +70,39 @@ export async function settledState(read, { quietMs = 1500, deadlineMs = 8000, st
 	}
 	return last;
 }
+
+
+/** The sign-in's usage and billing limits, as claude -p reports them. */
+export const QUOTA = /usage limit|rate limit|quota|billing|upgrade your plan|out of credits|credit balance|limit reached/i;
+
+/**
+ * The helper a run's MCP server may start for the computer tools: the connector wrapper for a computer task while
+ * computer runs are on, and for everything else a path that doesn't exist, so a browser run never lists them.
+ */
+export const spacesBin = (kind, { allowComputer, wrapper, none }) => (kind === "computer" && allowComputer && wrapper ? wrapper : none);
+
+/**
+ * Scores a finished run and says whether it is a result. Undefined when a stop began before or during scoring (the
+ * read-back may have failed on a closed helper line), or when the run hit the sign-in's usage limit (`onLimit` is
+ * told): such a run measured the stop, not the model, and must not replace a committed run.
+ */
+export async function keepScored(run, score, { closing, onLimit, quota = QUOTA }) {
+	if (closing()) return undefined;
+	if (run.apiError && quota.test(run.apiError)) {
+		onLimit(run.apiError);
+		return undefined;
+	}
+	const s = await score();
+	return closing() ? undefined : s;
+}
+
+/** Task ids that share a safeId share a page path and would score each other's state: the first such pair. */
+export function clashingIds(ids) {
+	const seen = new Map();
+	for (const id of ids) {
+		const k = safeId(id);
+		if (seen.has(k)) return [seen.get(k), id, k];
+		seen.set(k, id);
+	}
+	return undefined;
+}

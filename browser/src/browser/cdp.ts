@@ -523,6 +523,36 @@ export async function evaluateMain<T = unknown>(tabId: number, expression: strin
 
 export type MouseButton = "left" | "right" | "middle";
 
+// ---- Where input lands, for the veil's pointer (veil.ts) --------------------------------
+//
+// Told just before input goes out, never awaited: showing it adds no time to the call. Points are
+// main-frame viewport CSS pixels, the same as the input itself. Keys carry no point: the pointer
+// goes to the focused element.
+
+export type PointerAction = "click" | "hover" | "scroll" | "drag" | "type" | "fill" | "press" | "scroll-page";
+
+/** What one action reports: "scroll-page" is a scroll with no point (a ref, top or bottom), a nudge where it is. */
+export interface PointerCue {
+	action: PointerAction;
+	x?: number;
+	y?: number;
+	to?: { x: number; y: number };
+}
+
+let pointerCue: ((tabId: number, cue: PointerCue) => void) | undefined;
+
+export function setPointerCue(fn: (tabId: number, cue: PointerCue) => void): void {
+	pointerCue = fn;
+}
+
+export function cuePointer(tabId: number, action: PointerAction, x?: number, y?: number, to?: PointerCue["to"]): void {
+	try {
+		pointerCue?.(tabId, { action, x, y, to });
+	} catch {
+		/* the pointer never fails a call */
+	}
+}
+
 export async function click(
 	tabId: number,
 	x: number,
@@ -538,6 +568,7 @@ export async function click(
 	const button = options.button ?? "left";
 	const clickCount = options.clickCount ?? 1;
 	const modifiers = options.modifiers ?? 0;
+	cuePointer(tabId, "click", x, y);
 	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
 	for (let i = 1; i <= clickCount; i++) {
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button, clickCount: i, modifiers });
@@ -547,10 +578,12 @@ export async function click(
 }
 
 export async function hover(tabId: number, x: number, y: number): Promise<void> {
+	cuePointer(tabId, "hover", x, y);
 	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
 }
 
 export async function drag(tabId: number, from: { x: number; y: number }, to: { x: number; y: number }): Promise<void> {
+	cuePointer(tabId, "drag", from.x, from.y, to);
 	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x: from.x, y: from.y });
 	await send(tabId, "Input.dispatchMouseEvent", {
 		type: "mousePressed",
@@ -577,6 +610,7 @@ export async function drag(tabId: number, from: { x: number; y: number }, to: { 
 }
 
 export async function scroll(tabId: number, x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
+	cuePointer(tabId, "scroll", x, y);
 	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX, deltaY });
 }
 
@@ -595,6 +629,7 @@ export async function typeText(
 	beforeFirstKey: () => void = () => undefined,
 ): Promise<void> {
 	await ensureAttached(tabId);
+	cuePointer(tabId, "type");
 	let started = false;
 	for (const char of text) {
 		if (aborted()) throw new InputAbortedError("Stopped typing: a dialog interrupted this call");
@@ -675,6 +710,7 @@ export function keyInfo(name: string): KeyInfo {
  */
 export async function pressKey(tabId: number, chord: string): Promise<void> {
 	await ensureAttached(tabId);
+	cuePointer(tabId, "press");
 	const parts = chord.split("+").map((p) => p.trim());
 	// Modifier names in any case: "ctrl+V" must be the clipboard chord it is (refused below).
 	const alias: Record<string, string> = {

@@ -108,12 +108,28 @@ final class SnapshotRowsTests: XCTestCase {
 
     func testBareRowNumbers() {
         XCTAssertEqual(SnapshotRows.bareNumber("5"), 5)
-        XCTAssertEqual(SnapshotRows.bareNumber("e12"), 12)
+        XCTAssertNil(SnapshotRows.bareNumber("e12"), "e12 is a browser ref, not native row 12")
         XCTAssertEqual(SnapshotRows.bareNumber("[3]"), 3)
         XCTAssertNil(SnapshotRows.bareNumber("@s1:e5"))
         XCTAssertNil(SnapshotRows.bareNumber("0"))
         XCTAssertNil(SnapshotRows.bareNumber("five"))
         XCTAssertNil(SnapshotRows.bareNumber("٣"), "only ASCII digits")
+    }
+
+    // Weak-model item 3: Haiku passed read_page refs to computer_select. A browser ref is named as one, with the right tool.
+    func testBrowserRefsAreNamedAndPointToTheBrowserTools() throws {
+        let e = try XCTUnwrap(SnapshotRows.browserRefError("e12"))
+        XCTAssertEqual(e.code, .badArguments)
+        XCTAssertTrue(e.message.contains("browser ref"), e.message)
+        XCTAssertTrue(e.suggestion.contains("click, fill, select") && e.suggestion.contains("computer_snapshot"), e.suggestion)
+        for r in ["5", "[5]", "@s1:e5", "e", "eleven", "e1x"] { XCTAssertNil(SnapshotRows.browserRefError(r), r) }
+    }
+
+    func testTheRouterRefusesABrowserRefBeforeReadingARowNumber() throws {
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        let refusal = try XCTUnwrap(src.range(of: "SnapshotRows.browserRefError(r)"))
+        let bare = try XCTUnwrap(src.range(of: "SnapshotRows.bareNumber(r)"))
+        XCTAssertLessThan(refusal.lowerBound, bare.lowerBound)
     }
 
     func rows(_ names: [String]) -> [SnapshotRows.Row] {

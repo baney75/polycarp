@@ -211,3 +211,35 @@ export function veilViewFor(record: { label: string; color: string; agent?: stri
 		color: record.color,
 	};
 }
+
+/** What cdp.ts reports for one pointer action (see PointerCue there). */
+export interface PointerAction {
+	action: "click" | "hover" | "scroll" | "drag" | "type" | "fill" | "press" | "scroll-page";
+	x?: number;
+	y?: number;
+	to?: { x: number; y: number };
+}
+
+/**
+ * Where the pointer character goes for an action, or undefined when it doesn't move: the setting
+ * is off, the tab has no veil (it isn't in use), or the action named a point that isn't a number.
+ * Actions with no point (type, fill, press, scroll-page) pass through, and the page finds the target.
+ */
+export function pointerCue(
+	state: VeilState,
+	tabId: number,
+	cue: PointerAction,
+	pointerOn: boolean,
+): PointerAction | undefined {
+	if (!pointerOn || !state.tabs[tabId]) return undefined;
+	const ok = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+	const point = cue.x !== undefined || cue.y !== undefined;
+	if (point && !(ok(cue.x) && ok(cue.y))) return undefined;
+	const out: PointerAction = { action: cue.action };
+	if (point) {
+		out.x = cue.x;
+		out.y = cue.y;
+	}
+	if (cue.action === "drag" && cue.to && ok(cue.to.x) && ok(cue.to.y)) out.to = { x: cue.to.x, y: cue.to.y };
+	return out;
+}

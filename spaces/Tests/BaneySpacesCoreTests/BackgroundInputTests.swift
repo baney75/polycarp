@@ -49,6 +49,25 @@ final class KeyParseTests: XCTestCase {
         XCTAssertEqual(try chord("cmd++").flags, KeyChord.command | KeyChord.shift)
     }
 
+    // Weak-model item 4: "parenleft" was refused. X11 names are the same chord as the character they type.
+    func testX11KeyNamesAreTheirCharacters() throws {
+        let pairs = ["parenleft": "(", "parenright": ")", "braceleft": "{", "bracketright": "]", "quotedbl": "\"", "apostrophe": "'",
+                     "equal": "=", "numbersign": "#", "asciitilde": "~", "bar": "|", "less": "<", "exclam": "!"]
+        for (name, ch) in pairs {
+            XCTAssertEqual(try chord(name).withLabel("x"), try chord(ch).withLabel("x"), name)
+        }
+        XCTAssertEqual(try chord("ParenLeft").flags, KeyChord.shift)
+        XCTAssertEqual(try chord("cmd+parenleft").flags, KeyChord.command | KeyChord.shift)
+        XCTAssertEqual(try chord("Page_Up").keyCode, 116)
+        XCTAssertEqual(try chord("Prior").keyCode, 116)
+        XCTAssertEqual(try chord("Next").keyCode, 121)
+        XCTAssertEqual(try chord("BackSpace").keyCode, 51)
+        XCTAssertEqual(try chord("KP_Enter").keyCode, 36)
+        XCTAssertEqual(try chord("(").keyCode, 25, "the literal character works too")
+        guard case .failure(let e) = KeyParse.chord("parenlft") else { return XCTFail() }
+        XCTAssertTrue(e.suggestion.contains("parenleft"), "the error shows the accepted spelling")
+    }
+
     func testACapitalAfterAModifierIsTheSameKeyAsTheLowercase() throws {
         XCTAssertEqual(try chord("cmd+A").withLabel("x"), try chord("cmd+a").withLabel("x"))
         XCTAssertEqual(try chord("cmd+S").flags, KeyChord.command, "cmd+S is Save, not Save As")

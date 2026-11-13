@@ -1819,6 +1819,121 @@ test("the in-use veil: drawn over the agent's page, unseen by every read and scr
 	}
 });
 
+// The pointer character: a tall white page with a button far down, a field, and a same-origin frame with its own field.
+extraPages["/mote"] = `<!doctype html><title>Pointer</title>
+<body style="margin:0;background:#fff;height:2400px;font:16px sans-serif">
+<button id="go" style="position:absolute;left:300px;top:900px;width:180px;height:44px" onclick="window.goes = (window.goes || 0) + 1">Go here</button>
+<input id="name" aria-label="Your name" style="position:absolute;left:600px;top:960px;width:200px;height:30px">
+<iframe id="fr" src="/mote-frame" style="position:absolute;left:80px;top:1040px;width:420px;height:120px;border:0"></iframe></body>`;
+extraPages["/mote-frame"] = `<!doctype html><body style="margin:0;background:#fff"><input aria-label="Frame note" style="position:absolute;left:150px;top:40px;width:200px;height:30px"></body>`;
+
+/** Where the pointer's tip is, read in the extension's world; null when the tab has no character showing. */
+async function motePoint(tabId) {
+	return sw(`chrome.scripting.executeScript({ target: { tabId: ${tabId}, frameIds: [0] }, world: "ISOLATED", func: () => { const m = globalThis.__polycarpVeil?.mote; if (!m || getComputedStyle(m).display === "none" || !m.classList.contains("seen")) return null; const r = m.getBoundingClientRect(); return { x: r.left + 2.625, y: r.top + 2.625, action: m.dataset.action ?? null }; } }).then((r) => r[0].result)`);
+}
+
+/** Wait until the tip settles within 3 px of a point (it glides there). */
+async function moteAt(tabId, want, what) {
+	return until(
+		async () => {
+			const p = await motePoint(tabId);
+			return p && Math.abs(p.x - want.x) <= 3 && Math.abs(p.y - want.y) <= 3 ? p : undefined;
+		},
+		5_000,
+		`${what}: the pointer at ${JSON.stringify(want)} (last ${JSON.stringify(await motePoint(tabId).catch(() => null))})`,
+	);
+}
+
+const centerOf = (target, js) => inPage(target, `(() => { const r = (${js}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+
+test("the pointer character goes to what the agent clicks and types into, only on the tab in use, never in the agent's screenshot", async () => {
+	await connected();
+	const project = join(home, "projects", "mote-shop");
+	mkdirSync(project, { recursive: true });
+	execFileSync("git", ["init", "-q", project]);
+	const agent = await agentIn(project);
+	let tabId;
+	try {
+		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = 120000");
+		tabId = JSON.parse(await on(agent, "navigate", { url: `${pageUrl}mote?t=agent` })).tabId;
+		const page = await pageTarget("/mote?t=agent");
+		await until(() => inPage(page, VEIL_PROBE), 10_000, "the veil");
+		assert.equal(await motePoint(tabId), null, "the pointer shows before any pointer action");
+
+		// A scrolled page: the agent scrolls to the button and clicks it by ref.
+		await on(agent, "scroll", { dy: 700 });
+		assert.ok((await inPage(page, "scrollY")) > 500, "the page did not scroll");
+		const snap = await on(agent, "read_page", { filter: "interactive" });
+		await on(agent, "click", { ref: refFor(snap, "Go here") });
+		assert.equal(await inPage(page, "window.goes"), 1);
+		const go = await centerOf(page, "document.getElementById('go')");
+		assert.equal((await moteAt(tabId, go, "scrolled click")).action, "click");
+
+		// The agent's screenshot has no pointer in it; a capture straight from the page (the control) does.
+		const tip = await motePoint(tabId);
+		const body = { x: Math.round(tip.x + 10), y: Math.round(tip.y + 18) };
+		const shot = await agent.callTool({ name: "screenshot", arguments: {} });
+		const image = shot.content.find((c) => c.type === "image");
+		const [r1, g1, b1] = await pixel(image.data, image.mimeType, body.x, body.y);
+		// Under the pointer's body is the button's light grey face.
+		assert.ok(Math.min(r1, g1, b1) > 200 && Math.max(r1, g1, b1) - Math.min(r1, g1, b1) < 8, `the pointer is in the agent's screenshot: ${[r1, g1, b1]} at ${JSON.stringify(body)}`);
+		await new Promise((r) => setTimeout(r, 400));
+		const direct = await cdp(page.webSocketDebuggerUrl, "Page.captureScreenshot", { format: "png", fromSurface: true });
+		const [r2, g2, b2] = await pixel(direct.data, "image/png", body.x, body.y);
+		assert.ok(Math.abs(r2 - r1) + Math.abs(g2 - g1) + Math.abs(b2 - b1) > 60, `the control capture shows no pointer, so the check above proves nothing: ${[r2, g2, b2]}`);
+		// Nor does any read see it.
+		assert.doesNotMatch(await on(agent, "get_page_html"), /class="mote"|viewBox="0 0 32 32"/);
+		assert.doesNotMatch(await on(agent, "read_page", {}), /Take over|viewBox|caret/);
+
+		// Typing goes to the focused field's start; in a same-origin frame, to the field inside it.
+		const snap2 = await on(agent, "read_page", { filter: "interactive" });
+		await on(agent, "type", { ref: refFor(snap2, "Your name"), text: "Ada" });
+		const name = await inPage(page, "(() => { const r = document.getElementById('name').getBoundingClientRect(); return { x: r.left + 14, y: r.top + 14 }; })()");
+		assert.equal((await moteAt(tabId, name, "type")).action, "type");
+		await on(agent, "fill", { ref: refFor(snap2, "Frame note"), value: "hello" });
+		const note = await inPage(page, "(() => { const f = document.getElementById('fr'); const fr = f.getBoundingClientRect(); const r = f.contentDocument.querySelector('input').getBoundingClientRect(); return { x: fr.left + r.left + 14, y: fr.top + r.top + 14 }; })()");
+		assert.equal((await moteAt(tabId, note, "fill in a frame")).action, "fill");
+
+		// A zoomed page: the click and the pointer land on the same element.
+		await sw(`chrome.tabs.setZoom(${tabId}, 1.5)`);
+		await new Promise((r) => setTimeout(r, 300));
+		const snap3 = await on(agent, "read_page", { filter: "interactive" });
+		await on(agent, "click", { ref: refFor(snap3, "Go here") });
+		assert.equal(await inPage(page, "window.goes"), 2);
+		await moteAt(tabId, await centerOf(page, "document.getElementById('go')"), "zoomed click");
+		await sw(`chrome.tabs.setZoom(${tabId}, 1)`);
+
+		// A second tab of the same site, the user's own: no veil and no pointer.
+		const userTab = await sw(`chrome.tabs.create({ url: "${pageUrl}mote?t=user", active: false }).then((t) => t.id)`);
+		const userPage = await pageTarget("/mote?t=user");
+		await on(agent, "click", { ref: refFor(snap3, "Go here") });
+		await new Promise((r) => setTimeout(r, 400));
+		assert.equal(await inPage(userPage, VEIL_PROBE), null, "the user's tab has a veil");
+		assert.equal(await motePoint(userTab), null, "the user's tab has a pointer");
+		await sw(`chrome.tabs.remove(${userTab})`);
+
+		// Off in Settings > Agents: the pointer goes, the veil stays.
+		await sw("chrome.storage.local.set({ veil_pointer: false })");
+		await until(async () => (await motePoint(tabId)) === null, 3_000, "the pointer to go when turned off");
+		await on(agent, "click", { ref: refFor(snap3, "Go here") });
+		await new Promise((r) => setTimeout(r, 300));
+		assert.equal(await motePoint(tabId), null, "the pointer came back while turned off");
+		assert.ok(await inPage(page, VEIL_PROBE), "turning the pointer off took the veil away");
+		await sw("chrome.storage.local.remove('veil_pointer')");
+		await on(agent, "click", { ref: refFor(snap3, "Go here") });
+		await moteAt(tabId, await centerOf(page, "document.getElementById('go')"), "turned back on");
+
+		// It leaves with the veil.
+		await on(agent, "tabs_release", { tabId });
+		await until(async () => (await inPage(page, VEIL_PROBE)) === null, 2_000, "the veil to go on release");
+		assert.equal(await motePoint(tabId), null);
+	} finally {
+		if (tabId !== undefined) await sw(`chrome.tabs.setZoom(${tabId}, 1).catch(() => {})`).catch(() => undefined);
+		await sw("chrome.storage.local.remove('veil_pointer').then(() => { globalThis.__POLYCARP_VEIL_IDLE_MS = undefined; })").catch(() => undefined);
+		await agent.close();
+	}
+});
+
 // ---- the files tool (docs/decisions.md, D38) ----
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");

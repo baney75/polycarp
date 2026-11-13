@@ -12,6 +12,7 @@ import {
 	scroll as cdpScroll,
 	cdpSend,
 	click,
+	cuePointer,
 	drag,
 	enableConsoleCapture,
 	enableNetworkCapture,
@@ -954,6 +955,7 @@ export const handlers: Record<string, Handler> = {
 			);
 		} else {
 			const to = str(params, "to");
+			cuePointer(tabId, "scroll-page");
 			scrolled = await scrollPage(tabId, {
 				dx,
 				dy,
@@ -976,6 +978,8 @@ export const handlers: Record<string, Handler> = {
 		const before = await changesBefore(ctx, tabId, params);
 		const since = await actionStart(ctx, tabId);
 		await fillElement(tabId, t, value);
+		// fill focuses its field: the pointer goes there once it holds the value.
+		cuePointer(tabId, "fill");
 		return { filled: t, ...(await settleAfter(ctx, tabId, since, { filled: t }, { before })) };
 	},
 

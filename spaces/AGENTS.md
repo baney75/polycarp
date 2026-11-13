@@ -45,7 +45,9 @@ A change is done when steps 1 to 3 pass on its branch and step 4 passes on `main
    nothing drew).
    For agent `open` and `close` (`HandsRouter.open`/`close`, `SessionController.agent("open")`, claims, `AXBench`):
    `swift scripts/agent-open-probe.swift` (agent workspace only, no pointer; needs the build under test installed, so it
-   runs on `main` right after merge). It must print "agent-open-probe: pass".
+   runs on `main` after merge). Each open draws its window on Donovan's workspace for about a second before it is parked,
+   so it runs only when he has been idle 10 minutes (it prints "untested live" and exits 3 otherwise; say "untested live"
+   and run it when he is away). It must print "agent-open-probe: pass".
    For anything that decides what each display shows (`Workspaces.shown`, `displays`, `carry`,
    `noteMovedAcrossDisplays`): `swift scripts/displays-probe.swift` with two displays (Sidecar counts).
    For anything under `Sources/BaneySpacesCore/Sandbox/`: `swift scripts/sandbox-probe.swift` (headless, no window; needs

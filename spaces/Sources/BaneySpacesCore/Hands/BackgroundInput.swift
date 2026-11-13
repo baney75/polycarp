@@ -63,7 +63,7 @@ public enum KeyParse {
 
     static func bad(_ spec: String, _ why: String) -> HandsError {
         HandsError(.badArguments, "\(why): \(spec)",
-                   suggestion: "Write a key like Return, Tab, a, 9, asterisk, cmd+a or cmd+shift+z; several keys are separated by spaces (\"h i Return\"). Modifiers: cmd, shift, alt, ctrl, fn.",
+                   suggestion: "Write a key like Return, Tab, a, 9, cmd+a or cmd+shift+z; a symbol as itself (( or *) or by its X11 name (parenleft, asterisk); several keys are separated by spaces (\"h i Return\"). Modifiers: cmd, shift, alt, ctrl, fn.",
                    retry: .safe)
     }
 
@@ -75,12 +75,13 @@ public enum KeyParse {
         if s == "+" { parts = ["+"] }
         else if s.hasSuffix("+") && s.count > 1 { parts = s.dropLast().split(separator: "+", omittingEmptySubsequences: true).map(String.init) + ["+"] }
         else { parts = s.split(separator: "+", omittingEmptySubsequences: false).map(String.init) }
-        guard let keyName = parts.popLast(), !keyName.isEmpty else { return .failure(bad(spec, "no key after the modifiers")) }
+        guard var keyName = parts.popLast(), !keyName.isEmpty else { return .failure(bad(spec, "no key after the modifiers")) }
         var flags: UInt64 = 0
         for m in parts {
             guard let f = modifiers[m.lowercased()] else { return .failure(bad(spec, "\(m) is not a modifier")) }
             flags |= f
         }
+        if let symbol = x11Symbols[keyName.lowercased()] { keyName = String(symbol) }
         let lower = keyName.lowercased()
         var code: UInt16?
         if keyName.count == 1, let c = keyName.first {
@@ -101,7 +102,15 @@ public enum KeyParse {
         return .success(KeyChord(keyCode: code, flags: flags, label: s))
     }
 
+    /// X11 keysym names (what xdotool and many models write) for the punctuation keys, as the character they type.
+    static let x11Symbols: [String: Character] = [
+        "parenleft": "(", "parenright": ")", "bracketleft": "[", "bracketright": "]", "braceleft": "{", "braceright": "}",
+        "apostrophe": "'", "quotedbl": "\"", "equal": "=", "less": "<", "greater": ">", "bar": "|", "asciitilde": "~",
+        "asciicircum": "^", "exclam": "!", "at": "@", "numbersign": "#", "dollar": "$", "percent": "%", "ampersand": "&",
+    ]
+
     static let aliases: [String: String] = [
+        "prior": "pageup", "next": "pagedown", "kpenter": "return",
         "pgup": "pageup", "pgdn": "pagedown", "arrowleft": "left", "arrowright": "right", "arrowup": "up", "arrowdown": "down",
         "leftarrow": "left", "rightarrow": "right", "uparrow": "up", "downarrow": "down", "fwddelete": "forwarddelete", "bksp": "backspace",
     ]

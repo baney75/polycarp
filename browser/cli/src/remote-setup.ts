@@ -573,10 +573,10 @@ async function waitForFunnel(bin: string, dns: string, port: number, first: Funn
 	return opened;
 }
 
-/** In a terminal, when nothing says which route: use the one that's ready, or ask when both or neither is. */
-async function chooseRoute(say: (line: string) => void): Promise<"tailscale" | "cloudflare" | undefined> {
+/** In a terminal, when nothing says which route: use the one that's ready on `port`, or ask when both or neither is. */
+async function chooseRoute(say: (line: string) => void, port: number): Promise<"tailscale" | "cloudflare" | undefined> {
 	const routes = remoteRoutes();
-	const tailscale = (await preflight()).state === "ready";
+	const tailscale = (await preflight({}, undefined, port)).state === "ready";
 	const cloudflare = routes.cloudflare.installed && routes.cloudflare.signedIn;
 	if (tailscale && !cloudflare) {
 		say(`${sym.dot} Using Tailscale: it's installed and signed in. (--cloudflare name.yourdomain.com uses Cloudflare instead.)`);
@@ -661,7 +661,7 @@ async function runSetup(options: SetupOptions): Promise<number> {
 	} catch (err) {
 		return fail("problem", `${err instanceof Error ? err.message : String(err)} Nothing was changed; run ${COMMAND_NAME} remote off first.`, { code: "config" });
 	}
-	const port = options.port ?? previous?.port ?? DEFAULT_PORT;
+	const port = options.port ?? previous?.port ?? remotePort();
 	// Plan: everything that can refuse, before anything changes.
 	let publicUrl: string;
 	let route: RemoteConfig["route"];
@@ -671,7 +671,7 @@ async function runSetup(options: SetupOptions): Promise<number> {
 	// `remote setup` again on this route picks up where a failed run stopped, with the name it already has.
 	let cloudflareName = options.cloudflare ?? (previous?.route === "cloudflare" && !options.publicUrl && !options.tailscale ? new URL(previous.publicUrl).hostname : undefined);
 	if (input && !previous && cloudflareName === undefined && !options.publicUrl && !options.tailscale) {
-		const choice = await chooseRoute(say);
+		const choice = await chooseRoute(say, port);
 		if (choice === undefined) return fail("problem", `No route was chosen, so nothing was changed. Run ${COMMAND_NAME} remote setup --tailscale, or --cloudflare name.yourdomain.com.`);
 		if (choice === "cloudflare") cloudflareName = "";
 	}
@@ -1098,16 +1098,25 @@ export function routesFrom(tailscale: TailscaleReady): RemoteRoutes {
 }
 
 /**
- * Read-only: can setup go ahead? ready, or the first thing in the way. Runs the same checks setup runs before it changes
- * anything, without blocking the event loop (the native host asks it every few seconds).
+ * The local port remote setup uses when neither --port nor remote.json names one: POLYCARP_REMOTE_PORT when it holds a
+ * port number, else 8787. Tests set it so a real server on this machine's 8787 never decides their answer.
  */
-export async function preflight(seam: ProbeSeam = {}, read?: TailscaleReady): Promise<{ state: RemoteState; message: string; code?: string }> {
+export function remotePort(env: NodeJS.ProcessEnv = process.env): number {
+	const port = Number(env.POLYCARP_REMOTE_PORT);
+	return Number.isInteger(port) && port > 0 && port < 65536 ? port : DEFAULT_PORT;
+}
+
+/**
+ * Read-only: can setup go ahead on `port` (the one setup will use)? ready, or the first thing in the way. Runs the same
+ * checks setup runs before it changes anything, without blocking the event loop (the native host asks it every few seconds).
+ */
+export async function preflight(seam: ProbeSeam = {}, read?: TailscaleReady, port = remotePort()): Promise<{ state: RemoteState; message: string; code?: string }> {
 	if (existsSync(hubFile())) return { state: "problem", message: `This install is set up as a hub (${hubFile()}), and an install has one public route. Run ${COMMAND_NAME} hub off first.`, code: "hub" };
 	// `read`: Tailscale as the caller already read it this poll, so it is asked once (PR 136 first-F3).
-	const plan = planFrom(read ?? (await tailscaleReadyAsync(seam)), [DEFAULT_PORT]);
+	const plan = planFrom(read ?? (await tailscaleReadyAsync(seam)), [port]);
 	if (!plan.ok) return { state: plan.state, message: plan.message, ...(plan.code ? { code: plan.code } : {}) };
-	const probe = await probeLocal(DEFAULT_PORT, `https://${plan.dns}:${FUNNEL_PORT}`);
-	if (probe.state === "other") return { state: "port_busy", message: `Something already listens on 127.0.0.1:${DEFAULT_PORT} and isn't Polycarp serve (${probe.detail}).`, code: "local_port" };
+	const probe = await probeLocal(port, `https://${plan.dns}:${FUNNEL_PORT}`);
+	if (probe.state === "other") return { state: "port_busy", message: `Something already listens on 127.0.0.1:${port} and isn't Polycarp serve (${probe.detail}).`, code: "local_port" };
 	return { state: "ready", message: "Ready to turn on." };
 }
 

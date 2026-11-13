@@ -10,13 +10,15 @@
 
 import { checkPolycarpTheme } from "../appearance/polycarp.js";
 import { APPEARANCE_KEY, appearanceVariables, parseChoice } from "../appearance/tokens.js";
-import { isRestrictedUrl, setCaptureCover } from "./cdp.js";
+import { isRestrictedUrl, setCaptureCover, setPointerCue } from "./cdp.js";
 import { BrowserSession, isAgentSession, sessionOwningTab } from "./session.js";
-import { VEIL_CSS, type VeilCommand, type VeilPageResult, type VeilTheme, veilPage } from "./veil-page.js";
+import { MOTE, VEIL_CSS, type VeilCommand, type VeilPageResult, type VeilTheme, veilPage } from "./veil-page.js";
 import {
+	isPointerEnabled,
 	isVeilEnabled,
 	MODE_MIRROR_KEY,
 	newVeilTag,
+	POINTER_ENABLED_KEY,
 	rememberVeilTag,
 	storedVeilTags,
 	VEIL_ENABLED_KEY,
@@ -24,6 +26,8 @@ import {
 } from "./veil-shared.js";
 import {
 	EMPTY_VEIL,
+	type PointerAction,
+	pointerCue,
 	VEIL_IDLE_MS,
 	type VeilEffect,
 	type VeilEvent,
@@ -66,6 +70,8 @@ const POLYCARP_CACHE_KEY = "tabkyra.polycarp";
 let state: VeilState = EMPTY_VEIL;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let enabled: boolean | undefined;
+/** Settings > Agents, "Show the agent's pointer". Read at start; storage changes keep it current. */
+let pointer = true;
 let log: (line: string) => void = () => undefined;
 const chains = new Map<number, Promise<unknown>>();
 
@@ -138,6 +144,8 @@ async function apply(effect: VeilEffect): Promise<void> {
 				theme: await theme(),
 				interactive: effect.interactive,
 				concealed: effect.concealed,
+				pointer,
+				mote: MOTE,
 			});
 			if (!result?.tag) await rememberVeilTag(tabId, undefined);
 			return;
@@ -154,6 +162,23 @@ async function apply(effect: VeilEffect): Promise<void> {
 	} catch {
 		// A page the extension can't script (PDF viewer, an error page, a tab mid-close): no veil there.
 	}
+}
+
+/** Send the character to a point (cue), or apply the on/off setting (no cue), in the tab's order. */
+function queuePoint(tabId: number, cue: PointerAction | undefined): Promise<void> {
+	const prev = chains.get(tabId) ?? Promise.resolve();
+	const cmd: VeilCommand = cue ? { op: "point", cue } : { op: "set", pointer };
+	const run = prev
+		.then(() => withTimeout(inject(tabId, cmd)))
+		.then(
+			() => undefined,
+			() => undefined,
+		);
+	chains.set(tabId, run);
+	void run.then(() => {
+		if (chains.get(tabId) === run) chains.delete(tabId);
+	});
+	return run;
 }
 
 let themeCache: VeilTheme | undefined;
@@ -280,6 +305,16 @@ export function startVeil(logger?: (line: string) => void): void {
 	setCaptureCover({
 		conceal: (tabId, reason, on) => dispatch({ type: "conceal", tabId, reason, on }),
 	});
+	void isPointerEnabled()
+		.then((on) => {
+			pointer = on;
+		})
+		.catch(() => undefined);
+	// Fire and forget, behind the tab's own veil changes: the input it marks never waits for it.
+	setPointerCue((tabId, cue) => {
+		const page = pointerCue(state, tabId, cue, pointer);
+		if (page) void queuePoint(tabId, page);
+	});
 	// A worker that restarted lost its state: veils it left in pages go.
 	void storedVeilTags().then(async (tags) => {
 		for (const [tabId] of tags) {
@@ -310,6 +345,10 @@ export function startVeil(logger?: (line: string) => void): void {
 		if (VEIL_ENABLED_KEY in changes) {
 			enabled = changes[VEIL_ENABLED_KEY].newValue !== false;
 			if (!enabled) void dispatch({ type: "dropAll" });
+		}
+		if (POINTER_ENABLED_KEY in changes) {
+			pointer = changes[POINTER_ENABLED_KEY].newValue !== false;
+			for (const id of Object.keys(state.tabs)) void queuePoint(Number(id), undefined);
 		}
 		if (APPEARANCE_KEY in changes || POLYCARP_CACHE_KEY in changes || MODE_MIRROR_KEY in changes)
 			themeCache = undefined;

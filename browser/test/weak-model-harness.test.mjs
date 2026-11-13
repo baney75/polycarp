@@ -9,8 +9,8 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { HandsClient } from "../evals/weak-model/hands.mjs";
-import { Cleanup, ClearError, onExits, restorePrefsOrKeep, spawnClaude } from "../evals/weak-model/cleanup.mjs";
-import { childEnv, KEY_VARS, keyVarsSet, mountId, safeId, sessionName, settledState } from "../evals/weak-model/lib.mjs";
+import { backupPrefs, Cleanup, ClearError, onExits, restorePrefsOrKeep, spawnClaude, sweepCopies } from "../evals/weak-model/cleanup.mjs";
+import { childEnv, KEY_VARS, keepScored, keyVarsSet, mountId, safeId, sessionName, settledState, spacesBin } from "../evals/weak-model/lib.mjs";
 import { Transcript } from "../evals/weak-model/transcript.mjs";
 import { handedOff, rescoreSignup } from "../evals/weak-model/signup-rule.mjs";
 import { loadRuns, summarize } from "../evals/weak-model/summarize.mjs";
@@ -207,7 +207,7 @@ test("claude -p runs in its own process group, and cleanup kills the whole group
 	const { made, spawnFn } = fakeSpawn();
 	const kills = [];
 	const cleanup = new Cleanup({ log: () => {} });
-	const { closed } = spawnClaude(["-p", "x"], { cleanup, cwd: "/", env: {}, spawnFn, kill: (pid, sig) => kills.push([pid, sig]), graceMs: 10 });
+	const { closed } = spawnClaude(["-p", "x"], { cleanup, cwd: "/", env: {}, spawnFn, kill: (pid, sig) => sig !== 0 && kills.push([pid, sig]), graceMs: 10 });
 	assert.equal(made[0].opts.detached, true, "a group of its own");
 	await cleanup.run();
 	assert.deepEqual(kills, [
@@ -313,7 +313,17 @@ test("bad numbers, an unknown --kind or an empty selection exit 2 with the reaso
 	const dir = mkdtempSync(join(tmpdir(), "wm-tasks-"));
 	writeFileSync(join(dir, "demo.mjs"), `export const demo = [{ id: "demo", kind: "browser", prompt: (u) => u }, { id: "calc", kind: "computer", prompt: (u) => u }];\n`);
 	const label = `wm-test-${process.pid}`;
+	// A claude that refuses, first on PATH: should a check ever slip past, no real claude -p starts on the sign-in.
+	const bin = mkdtempSync(join(tmpdir(), "wm-bin-"));
+	writeFileSync(join(bin, "claude"), "#!/bin/sh\necho 'test claude: a bad option got past the checks' >&2\nexit 3\n");
+	chmodSync(join(bin, "claude"), 0o755);
+	const escaped = join(dirname(run), "..", `wm-escape-${process.pid}`);
 	for (const [args, why] of [
+		[["--label", `../../wm-escape-${process.pid}`], /--label takes lower-case letters, digits, _ and -/],
+		[["--label", "R2 haiku"], /--label takes/],
+		[["--only"], /--only needs a value/],
+		[["--only", "--trials", "1"], /--only needs a value/],
+		[["--model"], /--model needs a value/],
 		[["--trials", "two"], /--trials takes a whole number above 0, not "two"/],
 		[["--concurrency", "x"], /--concurrency takes/],
 		[["--turns", "0"], /--turns takes/],
@@ -321,12 +331,21 @@ test("bad numbers, an unknown --kind or an empty selection exit 2 with the reaso
 		[["--kind", "brwser"], /--kind takes browser, computer or all, not "brwser"/],
 		[["--only", "calc"], /no task matches --kind browser and --only calc \(computer tasks are off/],
 	]) {
-		const r = spawnSync(process.execPath, [run, "--label", label, ...args, "--list"], { env: cleanEnv({ WM_TASKS_DIR: dir, WM_ALLOW_COMPUTER: "" }), encoding: "utf8", timeout: 30_000 });
+		const r = spawnSync(process.execPath, [run, ...(args.includes("--label") ? [] : ["--label", label]), ...args], { env: cleanEnv({ WM_TASKS_DIR: dir, WM_ALLOW_COMPUTER: "", PATH: `${bin}:${process.env.PATH}` }), encoding: "utf8", timeout: 30_000 });
 		assert.equal(r.status, 2, `${args.join(" ")}: ${r.stdout}${r.stderr}`);
 		assert.match(r.stderr, why);
 		assert.equal(r.stdout, "");
 	}
 	assert.equal(existsSync(join(dirname(run), "results", label)), false, "no results folder");
+	assert.equal(existsSync(escaped), false, "nothing written outside results/");
+});
+
+test("two task ids that name the same page path stop the run before it starts", () => {
+	const dir = mkdtempSync(join(tmpdir(), "wm-tasks-"));
+	writeFileSync(join(dir, "demo.mjs"), `export const demo = [{ id: "Wizard", kind: "browser", prompt: (u) => u }, { id: "wizard", kind: "browser", prompt: (u) => u }];\n`);
+	const r = spawnSync(process.execPath, [run, "--list"], { env: cleanEnv({ WM_TASKS_DIR: dir }), encoding: "utf8", timeout: 30_000 });
+	assert.equal(r.status, 2, r.stdout + r.stderr);
+	assert.match(r.stderr, /Wizard and wizard share the page path wizard/);
 });
 
 test("one sanitizer names the mount and the session; the session keeps its trial and hash", () => {
@@ -341,4 +360,122 @@ test("one sanitizer names the mount and the session; the session keeps its trial
 	assert.notEqual(a, c, "trials stay apart");
 	assert.match(a, /-1-[0-9a-f]{8}$/);
 	assert.notEqual(sessionName("x", "wizard", 1), sessionName("x", "pagination", 1));
+});
+
+// ---------- round 2 of #186 ----------
+
+test("a browser run's server never gets the computer tools, even with computer runs on", () => {
+	const o = { allowComputer: true, wrapper: "/s/spaces-connector.sh", none: "/s/no-computer-helper" };
+	assert.equal(spacesBin("browser", o), o.none);
+	assert.equal(spacesBin("computer", o), o.wrapper);
+	assert.equal(spacesBin("computer", { ...o, allowComputer: false }), o.none);
+	assert.equal(spacesBin("computer", { ...o, wrapper: undefined }), o.none);
+});
+
+test("a stop during scoring or a usage limit keeps no record; another API error is still a result", async () => {
+	let closing = false;
+	const limits = [];
+	const opts = { closing: () => closing, onLimit: (e) => limits.push(e) };
+	assert.deepEqual(await keepScored({}, async () => ({ pass: true }), opts), { pass: true });
+	const cutOff = await keepScored(
+		{},
+		async () => {
+			closing = true;
+			return { pass: false, why: ["read back: helper line closed"] };
+		},
+		opts,
+	);
+	assert.equal(cutOff, undefined, "a signal while scoring");
+	closing = false;
+	let scored = false;
+	const limited = await keepScored(
+		{ apiError: "Claude AI usage limit reached" },
+		async () => {
+			scored = true;
+			return { pass: false };
+		},
+		opts,
+	);
+	assert.equal(limited, undefined, "a usage limit measured the quota, not the model");
+	assert.equal(scored, false);
+	assert.deepEqual(limits, ["Claude AI usage limit reached"]);
+	assert.deepEqual(await keepScored({ apiError: "Overloaded" }, async () => ({ pass: false }), opts), { pass: false });
+});
+
+test("a stopped half keeps the round stopped until that half finishes", () => {
+	const root = round();
+	writeFileSync(join(root, "r9", "runs.jsonl"), `${JSON.stringify(rec("a", 1, true))}\n`);
+	assert.equal(summarize("r9", { root, kinds: ["computer"], stopped: true, complete: false }).stopped, true);
+	const browser = summarize("r9", { root, kinds: ["browser"], stopped: false, complete: true });
+	assert.equal(browser.stopped, true, "a finished browser half doesn't clear the computer half's stop");
+	assert.deepEqual(browser.stoppedKinds, ["computer"]);
+	const both = summarize("r9", { root, kinds: ["computer"], stopped: false, complete: true });
+	assert.equal(both.stopped, undefined);
+	assert.equal(both.stoppedKinds, undefined);
+	writeFileSync(join(root, "r9", "summary.json"), JSON.stringify({ stopped: true }));
+	assert.equal(summarize("r9", { root, kinds: ["browser"], stopped: false, complete: true }).stopped, true, "an old mark with no kinds counts for both");
+});
+
+test("when the backups can't be copied out either, the restore still reports failure", () => {
+	const scratch = mkdtempSync(join(tmpdir(), "wm-scratch-"));
+	const file = join(scratch, "com.apple.TextEdit.plist");
+	writeFileSync(file, "plist");
+	const blocker = join(scratch, "not-a-folder");
+	writeFileSync(blocker, "x");
+	const lines = [];
+	let kept;
+	assert.doesNotThrow(() => {
+		kept = restorePrefsOrKeep([{ domain: "com.apple.TextEdit", file }], {
+			exec: () => {
+				throw new Error("rejected");
+			},
+			keepDir: join(blocker, "prefs-1"),
+			log: (l) => lines.push(l),
+		});
+	});
+	assert.equal(kept, false, "so the caller keeps scratch");
+	assert.match(lines.join("\n"), new RegExp(`could not copy the backups to .*; they stay at ${scratch}`));
+});
+
+test("a backup that fails for a domain that exists stops the computer run before it starts", () => {
+	const dir = mkdtempSync(join(tmpdir(), "wm-prefs-"));
+	const exec = (cmd, [verb, domain]) => {
+		if (verb === "export") throw new Error("export failed");
+		if (domain === "com.gone") throw Object.assign(new Error("read"), { stderr: "Domain com.gone does not exist" });
+	};
+	assert.deepEqual(backupPrefs(["com.gone"], { exec, dir }), [{ domain: "com.gone", file: undefined, absent: true }]);
+	assert.throws(() => backupPrefs(["com.here"], { exec, dir }), (err) => err instanceof ClearError && /could not back up com\.here/.test(err.message));
+});
+
+test("after claude exits, its group gets the grace period before SIGKILL", async () => {
+	const { made, spawnFn } = fakeSpawn();
+	const sent = [];
+	let alive = 2;
+	const kill = (pid, sig) => {
+		sent.push(sig);
+		if (sig === 0 && alive-- <= 0) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+	};
+	const { closed } = spawnClaude(["-p", "x"], { cleanup: new Cleanup({ log: () => {} }), cwd: "/", env: {}, spawnFn, kill, graceMs: 2000 });
+	made[0].child.emit("close", 0);
+	assert.equal(await closed, 0);
+	assert.deepEqual(
+		sent.filter((s) => s !== 0),
+		["SIGTERM"],
+		"the MCP server left the group within the grace period: no SIGKILL",
+	);
+});
+
+test("a computer_open cut off mid-call: cleanup still closes the new copy of the task's app", async () => {
+	const cleanup = new Cleanup({ log: () => {} });
+	const closedPids = [];
+	const windows = [
+		{ app: "TextEdit", scope: "agent_workspace", pid: 10 },
+		{ app: "TextEdit", scope: "agent_workspace", pid: 20 },
+		{ app: "TextEdit", scope: "agent_workspace", pid: 30 },
+		{ app: "TextEdit", scope: "lent", pid: 40 },
+		{ app: "Preview", scope: "agent_workspace", pid: 50 },
+	];
+	sweepCopies(cleanup, { app: "TextEdit", before: new Set([10]), known: () => new Set([30]), list: async () => windows, kill: async (pid) => closedPids.push(pid) });
+	await cleanup.run();
+	assert.deepEqual(closedPids, [20], "only the unreported copy this run started: not one there before, a reported one, a lent window or another app");
 });

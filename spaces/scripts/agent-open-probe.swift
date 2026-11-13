@@ -9,12 +9,22 @@
 // Apps already running are skipped (an open of a running app asks that copy, which isn't this probe's). It quits only
 // the copies it started: new pids, started after the probe, run with -ApplePersistenceIgnoreState.
 // Agent workspace only: it types, clicks and moves nothing. Run it with the build under test installed and running.
-//   swift scripts/agent-open-probe.swift [rounds] [App ...]
+// It runs only when Donovan has been idle 10 minutes. 11-12: each open drew its window on his workspace for 0.7 to 1.7 s
+// before it was parked, and a 10-open run while he worked read to him as "random windows keep opening like font book".
+// Otherwise it prints "untested live" and exits 3, opening nothing. --force is for a Mac nobody is using.
+//   swift scripts/agent-open-probe.swift [rounds] [App ...] [--force]
 import AppKit
+
+let force = CommandLine.arguments.contains("--force")
+let idleSeconds = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+if !force && idleSeconds < 600 {
+    print("untested live: you were active \(Int(idleSeconds)) s ago; the probe needs 10 idle minutes (or --force on an unused Mac)")
+    exit(3)
+}
 
 let defaults = ["Calculator", "Font Book", "Chess", "Dictionary", "Grapher", "Activity Monitor", "Console",
                 "Digital Color Meter", "System Information", "TextEdit"]
-var args = Array(CommandLine.arguments.dropFirst())
+var args = Array(CommandLine.arguments.dropFirst()).filter { $0 != "--force" }
 let rounds = args.first.flatMap(Int.init) ?? 3
 if Int(args.first ?? "") != nil { args.removeFirst() }
 let apps = args.isEmpty ? defaults : args
