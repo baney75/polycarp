@@ -81,7 +81,7 @@ final class HandsRouter {
     func handleWire(_ r: Wire.Request) -> Wire.Reply {
         let env: HandsEnvelope
         if let data = r.text?.data(using: .utf8), let req = try? JSONDecoder().decode(HandsRequest.self, from: data) {
-            env = handle(req)
+            env = HandsNextCall.fill(handle(req), window: windowOf(req))
         } else {
             env = .failure(HandsError(.badArguments, "the request wasn't an agent command", suggestion: "Use `polycarp-spaces agent <command>`.", retry: .never))
         }
@@ -94,6 +94,7 @@ final class HandsRouter {
         if let e = AgentAccessGate.refusal(verb: req.verb, mode: access) { return .failure(e) }
         if remote, let e = WorkspaceVerbs.connectorRefusal(verb: req.verb) { return .failure(e) }
         var req = req
+        if let r = req.string("ref"), let e = SnapshotRows.browserRefError(r) { return .failure(e) }
         if let r = req.string("ref"), let n = SnapshotRows.bareNumber(r) {
             switch bareRef(n, req) {
             case .success(let full): req.args["ref"] = .string(full)
@@ -404,7 +405,34 @@ final class HandsRouter {
         }
     }
 
+    /// `snapshot` with screenshot: true: the read, then a capture of the same window under the same gate as `shot`. A
+    /// capture that fails leaves the read as it is, with `screenshot_error`.
     private func snapshot(_ req: HandsRequest) -> HandsEnvelope {
+        guard req.bool("screenshot") else {
+            if req.string("zoom") != nil { return .failure(HandsError(.badArguments, "zoom goes with screenshot: true", suggestion: #"Example: {"window":4211,"screenshot":true,"zoom":"0,0,400,300"}"#, retry: .safe, nextCall: .null)) }
+            return readSnapshot(req)
+        }
+        let zoom: ShotImage.Region?
+        switch ShotImage.region(req.string("zoom"), snapshot: true) {
+        case .failure(let e): return .failure(e)
+        case .success(let z): zoom = z
+        }
+        let env = readSnapshot(req)
+        guard env.ok, let o = env.data?.object, let id = o["window"]?.int ?? o["target"]?["window"]?.int else { return env }
+        let session = req.session ?? ""
+        return .success(.object(ShotImage.attach(to: o, zoom: zoom,
+            target: { target(HandsRequest(verb: "shot", args: ["window": .int(id)], session: req.session)).map { $0.0 } },
+            gate: { gate($0, session: session) },
+            points: { Self.windowPoints($0.id) },
+            capture: { w in
+                let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
+                defer { AgentActivity.shared.end(token) }
+                return WindowShot.capture(window: w.id, named: nil, check: check(w, session: session))
+                    .map { ShotImage.Captured(path: $0.path, width: $0.width, height: $0.height, points: $0.points) }
+            })))
+    }
+
+    private func readSnapshot(_ req: HandsRequest) -> HandsEnvelope {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope, note)):
@@ -571,7 +599,9 @@ final class HandsRouter {
             let beforeValue: String? = writes ? valueOf(w, ref, session: session) : nil
             // Tree before the action, to show what it changed.
             var before: JSONValue?
-            if !writes, kind != .toggle, case .success(let d) = read(w, interactive: false, compact: true, register: false, session: session) { before = d["tree"] }
+            // A row click reads the selection itself; the full read before is for the plain path only (first-F7).
+            let plan = kind == .click ? rowPlan(ref, session: session) : nil
+            if !writes, kind != .toggle, plan == nil, case .success(let d) = read(w, interactive: false, compact: true, register: false, session: session) { before = d["tree"] }
             // Scope again, at the moment of dispatch: the window may have moved since resolving.
             // Every action reports its target before dispatch. When the agent cursor will draw it (it is on, and Donovan is
             // looking at this window) the target's frame is measured on the process queue and follows as `frameMeasured`:
@@ -589,6 +619,9 @@ final class HandsRouter {
             }
             // The child windows the app has now: one that appears after this is the action's (`ChildAttribution`).
             let childrenBefore = noteAction(session: session, pid: w.pid)
+            if let plan {
+                return clickRow(w, scope: scope, ref: ref, plan: plan, session: session, childrenBefore: childrenBefore)
+            }
             // The scope and ref checks run again on the process queue, at the moment the call executes.
             let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session))
             switch reply {
@@ -623,6 +656,8 @@ final class HandsRouter {
                     "action": .string(name), "ref": .string(ref), "verified": .bool(verified), "evidence": evidence,
                     "engine": engine, "target": targetJSON(w, scope),
                 ]
+                // Not verified: the one read to make before anything else.
+                if !verified { result["next_call"] = HandsNextCall.after(.unverified, window: Int(w.id)) }
                 // A dialog or sheet the action raised: said here, so the agent need not poll.
                 if let opened = openedChildren(pid: w.pid, before: childrenBefore, session: session) { result["opened"] = opened }
                 return .success(.object(result))
@@ -630,18 +665,50 @@ final class HandsRouter {
         }
     }
 
+    /// A window's size in points from the window server's list, which needs no Screen Recording and captures nothing.
+    static func windowPoints(_ id: UInt32) -> CGSize? {
+        let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(id)) as? [[String: Any]] ?? []
+        return (info.first?[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }?.size
+    }
+
+    /// The window a request is about, for its error's next call: the window it names, or the one its ref's snapshot read.
+    /// A bare row number counts through what it stands for in this session (review r1 first-F2).
+    private func windowOf(_ req: HandsRequest) -> Int? {
+        RefWindow.of(window: req.int("window"), ref: req.string("ref"),
+                     bare: { n in if case .success(let full) = bareRef(n, req) { return full } else { return nil } },
+                     snapshotWindow: { sid in lock.lock(); defer { lock.unlock() }; return snaps[sid].map { Int($0.window) } })
+    }
+
+    /// The selection write a click on `ref` falls back to, when the ref is an item in an outline, table or list.
+    private func rowPlan(_ ref: String, session: String) -> ClickFallback.Plan? {
+        guard ref.hasPrefix("@"), let colon = ref.firstIndex(of: ":"), let n = SnapshotRows.refNumber(ref) else { return nil }
+        let sid = String(ref[ref.index(after: ref.startIndex)..<colon])
+        guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
+        // The readbacks read in this read's view, so the row keys they compare match (second-F5).
+        return ClickFallback.plan(rows: read.rows, snapshot: sid, number: n).map { var p = $0; p.view = read.view; return p }
+    }
+
     private func shot(_ req: HandsRequest) -> HandsEnvelope {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope, _)):
             if let e = gate(w, session: req.session ?? "") { return .failure(e) }
-            let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
-            defer { AgentActivity.shared.end(token) }
-            switch WindowShot.capture(window: w.id, named: req.string("out"), cursor: req.bool("cursor") ? host.cursorMark(w.id) : nil, check: check(w, session: req.session ?? "")) {
+            let zoom: ShotImage.Region?
+            switch ShotImage.region(req.string("zoom")) {
+            case .failure(let e): return .failure(e)
+            case .success(let z): zoom = z
+            }
+            // The zoom is judged on the window's size first: a refused one captures nothing and writes no file.
+            switch ShotImage.beforeCapture(zoom: zoom, points: zoom == nil ? nil : Self.windowPoints(w.id), capture: {
+                let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
+                defer { AgentActivity.shared.end(token) }
+                return WindowShot.capture(window: w.id, named: req.string("out"), cursor: req.bool("cursor") ? host.cursorMark(w.id) : nil, check: check(w, session: req.session ?? ""))
+            }) {
             case .failure(let e): return .failure(e)
             case .success(let r):
                 return .success(.object([
                     "path": .string(r.path), "width": .int(r.width), "height": .int(r.height), "cursor": .bool(r.cursorDrawn),
+                    "points": ShotImage.pointsJSON(r.points),
                     // A capture with the cursor drawn in is an edited picture: it says so and keeps the hash of the raw capture.
                     "evidence": r.cursorDrawn
                         ? .object(["kind": "capture_hash_composited", "sha256": .string(r.sha256), "raw_sha256": r.rawSha256.map(JSONValue.string) ?? .null])

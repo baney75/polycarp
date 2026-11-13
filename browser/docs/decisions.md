@@ -1426,3 +1426,42 @@ Amended after review (PR 153 round 2, 2026-11-12):
 Amended (PR 162 round 1), replacing the "none" and "left out" rules above: "none" empties only Not finished. Past a
 line each, the person's part keeps the first, newest and newest others' starts, and a gap line names the rest. The drop
 note's room comes from the notes, never the latest message. Old goal sections are not sent.
+
+## D47. The agent's pointer: Mote (Claude, 2026-11-12)
+
+Problem: the veil (D37) says a tab is in use but not what the agent is doing in it. The owner asked for "a cool mouse guy
+thing" that shows it.
+
+Decision:
+
+- **What**: Mote, a drop in the session's group color with its tip up and to the left (the brand's pointer direction) and
+  two eyes that look along the tip. The tip is the exact point the agent's input lands on. Inline SVG (`MOTE` in
+  `src/browser/veil-page.ts`), an ink outline and a white halo, so it reads on light and dark pages at 1x. Picked from four
+  directions on a contact sheet (Mote, Kite, Helmsman, Gull): the others had an unclear tip, did not read as a pointer,
+  or were too busy at 28 px.
+- **Where**: inside the veil's closed shadow root, so it exists only on a tab in use (D37) and goes with the veil. It takes
+  no pointer events, the capture cover hides it with the veil, and the readers already skip the veil's element, so
+  read_page, find, get_page_html and screenshots never see it.
+- **How it moves**: cdp.ts reports each pointer action (`cuePointer`: click, hover, drag, scroll, type, press; tools.ts
+  adds fill and a scroll to a ref). veil.ts sends a `point` command in its own order per tab, after the veil changes
+  already queued, without waiting for it, so input never waits on it. Nothing waits on a point: the capture cover and
+  the next call's veilBegin do not queue behind one a busy page leaves unanswered, and of the cues that pile up behind
+  it only the newest is sent. A press cues after its key is up, where focus moved to. It glides to the point (210 ms), then reacts: a squash and ring on click, a perk on hover, a
+  tug and a slow follow on drag, a tap and caret on typing, a nudge on scroll; then idles with a slow sway and a blink.
+  Typing has no point: the page finds the focused field through open shadow roots and same-origin frames; in a
+  cross-origin frame it points at the frame's box, and with nothing focused it stays put.
+- **Coordinates**: the points are main-frame CSS pixels, the same ones page.ts reads from `getBoundingClientRect` (frame
+  offsets added) and the overlay is drawn in, so scroll and page zoom need no conversion.
+- **Settings > Agents**: "Show the agent's pointer" (`veil_pointer`, on by default) sits under the veil's own switch. Off
+  hides the character on open veils at once and keeps the veil. A veil drawn before a restarted worker has read the
+  setting waits for that read, so it never shows the character the person turned off.
+- **Motion**: off under prefers-reduced-motion or a Polycarp theme with motion off (it jumps and holds still); Highlight
+  colors under forced colors.
+
+Not done: a pointer for the side panel's own calls (its session has no veil), and for `actions` steps beyond the input
+calls they make through cdp.ts.
+
+Proof: `test/veil.test.mjs` (when it moves, the SVG and its CSS), and the e2e "the pointer character" in
+`cli/test/e2e-bridge.test.mjs`: at the clicked element on a scrolled page and at 150% zoom, at the field the agent typed
+into and at one inside a same-origin frame, absent on a same-site tab the user has, absent from the agent's screenshot
+while a direct capture shows it, gone when the setting is off while the veil stays, and gone with the veil.

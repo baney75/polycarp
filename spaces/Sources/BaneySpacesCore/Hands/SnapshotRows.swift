@@ -80,13 +80,22 @@ public enum SnapshotRows {
         return Int(tail.dropFirst())
     }
 
-    /// A bare row number an agent may pass instead of a ref: `5`, `e5` or `[5]`. Nil for anything else.
+    /// A bare row number an agent may pass instead of a ref: `5` or `[5]`. Nil for anything else. `e5` is a browser
+    /// ref (read_page prints those), so it is refused by `browserRefError`, never read as native row 5.
     public static func bareNumber(_ ref: String) -> Int? {
         var s = Substring(ref.trimmingCharacters(in: .whitespaces))
         if s.hasPrefix("["), s.hasSuffix("]") { s = s.dropFirst().dropLast() }
-        if s.hasPrefix("e") { s = s.dropFirst() }
         guard !s.isEmpty, s.allSatisfy(\.isASCII), let n = Int(s), n > 0 else { return nil }
         return n
+    }
+
+    /// The error for a browser ref like `e12` passed to a computer_* tool, or nil when the ref isn't one.
+    public static func browserRefError(_ ref: String) -> HandsError? {
+        let s = ref.trimmingCharacters(in: .whitespaces)
+        guard s.hasPrefix("e"), s.count > 1, s.dropFirst().allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+        return HandsError(.badArguments, "\(quoted(s)) is a browser ref from read_page; computer_* tools act on native windows",
+                          suggestion: "For a web page, use the browser tools (click, fill, select) with \(s). For a native window, pass a row number like 5 or a full ref like @s8f3k2p9:e5 from computer_snapshot.",
+                          retry: .never)
     }
 
     static func quoted(_ s: String) -> String {
@@ -216,6 +225,17 @@ public enum SnapshotRows {
 /// What each session last read, so `since: "latest"` has something to compare with and a bare row number (`5`) means one
 /// element. Per session: the last read of each window and view, and the last few snapshots in order.
 public struct SnapshotRowsMemory: Sendable {
+    /// How a read was made: `interactive`, `compact` and `depth`, as the router keys reads ("false|true|10").
+    public struct View: Equatable, Sendable {
+        public var interactive: Bool, compact: Bool, depth: Int
+        public init(interactive: Bool, compact: Bool, depth: Int) { self.interactive = interactive; self.compact = compact; self.depth = depth }
+        public static let full = View(interactive: false, compact: false, depth: 10)
+        public init(key: String) {
+            let p = key.split(separator: "|").map(String.init)
+            self.init(interactive: p.first == "true", compact: p.count > 1 && p[1] == "true", depth: p.count > 2 ? Int(p[2]) ?? 10 : 10)
+        }
+    }
+
     public struct Read: Equatable, Sendable {
         public var snapshot: String
         public var window: UInt32
@@ -224,6 +244,7 @@ public struct SnapshotRowsMemory: Sendable {
         /// Whether the read printed every row with its number. A since read or a find did not, so a bare number after one
         /// may mean a row the agent saw in an older read.
         public var listed: Bool = true
+        public var view = View.full
         /// The order the session's reads were made in.
         var seq = 0
         /// Row number to row key, for comparing two snapshots' row N.
@@ -269,6 +290,7 @@ public struct SnapshotRowsMemory: Sendable {
         seq += 1
         var read = Read(snapshot: snapshot, window: window, rows: rows, at: now, listed: listed)
         read.seq = seq
+        read.view = View(key: view)
         // The full read a refusal's next_call asked for: the agent has seen these numbers, so older reads don't count.
         if listed, needsRead[session] == window { floor[session] = seq; needsRead[session] = nil }
         if baseline { last[Self.viewKey(session: session, window: window, view: view)] = read }
@@ -290,6 +312,9 @@ public struct SnapshotRowsMemory: Sendable {
         /// Refused; nothing was sent. `message`, and the call to make next (nil: snapshot first).
         case refused(code: HandsErrorCode, message: String, latest: Read?)
     }
+
+    /// The session's recent read that printed `snapshot`, for what a ref of it pointed at.
+    public func read(snapshot: String, session: String) -> Read? { recent[session]?.last { $0.snapshot == snapshot } }
 
     /// Row N of the session's latest snapshot, unless a recent earlier snapshot has a different row N (another window, or
     /// another element): then the number alone can't say which the agent saw, and it must pass the full ref.

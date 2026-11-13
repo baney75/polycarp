@@ -23,6 +23,21 @@ export interface VeilTheme {
 	reduced: boolean;
 }
 
+/** Where the agent's input lands (cdp.ts PointerCue), in main-frame viewport CSS pixels. */
+export interface PagePointerCue {
+	action: "click" | "hover" | "scroll" | "drag" | "type" | "fill" | "press" | "scroll-page";
+	x?: number;
+	y?: number;
+	to?: { x: number; y: number };
+}
+
+/** One SVG element of the pointer character: tag, attributes, children. */
+export interface MoteNode {
+	tag: string;
+	attrs: Record<string, string>;
+	kids?: MoteNode[];
+}
+
 export type VeilCommand =
 	| {
 			op: "show";
@@ -34,8 +49,12 @@ export type VeilCommand =
 			theme: VeilTheme;
 			interactive: boolean;
 			concealed: boolean;
+			/** Draw the pointer character (Settings > Agents). */
+			pointer: boolean;
+			mote: MoteNode;
 	  }
-	| { op: "set"; interactive?: boolean; concealed?: boolean }
+	| { op: "set"; interactive?: boolean; concealed?: boolean; pointer?: boolean }
+	| { op: "point"; cue: PagePointerCue }
 	| { op: "hide"; fade: boolean };
 
 export interface VeilPageResult {
@@ -56,6 +75,9 @@ const GROUP_COLORS = `
 	--g-purple: #9334e6;
 	--g-cyan: #007b83;
 	--g-orange: #fa7b17;
+	/* The pointer's ink and halo stay the same on every page, so it reads on light and dark alike. */
+	--mote-ink: #0f1b24;
+	--mote-light: #fff;
 }
 .veil.dark {
 	--g-grey: #dadce0;
@@ -189,6 +211,52 @@ ${GROUP_COLORS}
 .take:hover { background: var(--accent); }
 .take:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .veil.locked .take, .veil.leaving .take, .veil.concealed .take { pointer-events: none; }
+.mote {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 28px;
+	height: 28px;
+	margin: -2.625px 0 0 -2.625px;
+	transform: translate3d(var(--mx, 0px), var(--my, 0px), 0);
+	opacity: 0;
+	transition: transform 210ms cubic-bezier(0.22, 0.9, 0.24, 1.04), opacity 160ms ease-out;
+}
+.mote.seen { opacity: 1; }
+.mote.jump { transition: none; }
+.mote.slow { transition-duration: 460ms, 160ms; }
+.mote svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.mote .bod { transform-box: view-box; transform-origin: 3px 3px; }
+.mote.seen .bod { animation: idle 3.4s ease-in-out infinite alternate; }
+.mote .rim { fill: var(--mote-light); stroke: var(--mote-light); stroke-width: 4.5; stroke-linejoin: round; }
+.mote .fill { fill: var(--session); stroke: var(--mote-ink); stroke-width: 1.4; stroke-linejoin: round; }
+.mote .shine { fill: var(--mote-light); opacity: 0.35; }
+.mote .white { fill: var(--mote-light); stroke: var(--mote-ink); stroke-width: 0.9; }
+.mote .pupil { fill: var(--mote-ink); }
+.mote .eyes { transform-box: fill-box; transform-origin: center; animation: blink 5.2s infinite; }
+.mote .ping { fill: none; stroke: var(--session); stroke-width: 1.6; opacity: 0; transform-box: fill-box; transform-origin: center; }
+.mote .chev { fill: none; stroke: var(--session); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+.mote .caret { position: absolute; left: -6px; top: 4px; width: 2px; height: 13px; border-radius: 1px; background: var(--session); opacity: 0; }
+.mote.r-press .bod { animation: press 300ms cubic-bezier(0.3, 0.7, 0.4, 1); }
+.mote.r-press .ping { animation: ping 440ms ease-out; }
+.mote.r-hover .bod { animation: perk 360ms ease-out; }
+.mote.r-tug .bod { animation: tug 700ms ease-in-out; }
+.mote.r-type .bod { animation: tap 150ms ease-in-out 6 alternate; }
+.mote.r-type .caret { animation: caret 1s steps(1); }
+.mote.r-nudge .bod { animation: nudge 420ms ease-out; }
+.mote.r-nudge .chev { animation: chev 420ms ease-out; }
+.veil.nomote .mote { display: none; }
+@keyframes idle { from { transform: none; } to { transform: translate(0.5px, 0.9px) rotate(-4deg); } }
+@keyframes blink { 0%, 93%, 100% { transform: none; } 95.5% { transform: scaleY(0.12); } }
+@keyframes press { 0% { transform: none; } 40% { transform: scale(0.78, 0.7); } 100% { transform: none; } }
+@keyframes ping { from { opacity: 0.9; transform: scale(0.4); } to { opacity: 0; transform: scale(2.4); } }
+@keyframes perk { 50% { transform: rotate(-10deg) scale(1.06); } }
+@keyframes tug { 25% { transform: rotate(16deg) scale(1.08, 0.9); } 75% { transform: rotate(12deg) scale(1.06, 0.92); } }
+@keyframes tap { to { transform: rotate(-9deg) translateY(1px); } }
+@keyframes caret { 0%, 50% { opacity: 1; } 25%, 75%, 100% { opacity: 0; } }
+@keyframes nudge { 35% { transform: translateY(3px); } 70% { transform: translateY(-1px); } }
+@keyframes chev { 30% { opacity: 0.9; } 100% { opacity: 0; } }
+.veil.reduced .mote, .veil.reduced .mote * { transition: none !important; animation: none !important; }
 @keyframes spin { to { transform: rotate(1turn); } }
 @keyframes breathe { from { opacity: 0.4; } to { opacity: 1; } }
 @keyframes pulse {
@@ -199,6 +267,7 @@ ${GROUP_COLORS}
 .veil.reduced .dot { animation: none; }
 .veil.reduced .edge { box-shadow: inset 0 0 0 3px var(--session); }
 @media (prefers-reduced-motion: reduce) {
+	.mote, .mote * { transition: none !important; animation: none !important; }
 	.ring, .glow { display: none; }
 	.dot { animation: none; }
 	.edge { box-shadow: inset 0 0 0 3px var(--session); }
@@ -215,9 +284,56 @@ ${GROUP_COLORS}
 	.status, .detail, .sep { color: CanvasText; }
 	.dot { background: Highlight; animation: none; }
 	.take { background: ButtonFace; color: ButtonText; border-color: ButtonText; }
+	.mote .fill { fill: Highlight; stroke: CanvasText; }
+	.mote .rim { fill: Canvas; stroke: Canvas; }
+	.mote .caret { background: Highlight; forced-color-adjust: none; }
+	.mote .ping, .mote .chev { stroke: Highlight; }
 }
 @media print { .veil { display: none; } }
 `;
+
+/**
+ * The pointer character, Mote: a drop of the session's color with its tip up and to the left (the
+ * brand's pointer direction) and two eyes looking at what it points at. Its tip, (3, 3) on this
+ * grid, is the point the agent's input lands on. Colors come from VEIL_CSS classes.
+ */
+export const MOTE: MoteNode = {
+	tag: "svg",
+	attrs: { viewBox: "0 0 32 32" },
+	kids: [
+		{
+			tag: "g",
+			attrs: { class: "bod" },
+			kids: [
+				{ tag: "path", attrs: { class: "rim", d: "M3 3 L19.15 6.21 A11 11 0 1 1 6.21 19.15 Z" } },
+				{ tag: "path", attrs: { class: "fill", d: "M3 3 L19.15 6.21 A11 11 0 1 1 6.21 19.15 Z" } },
+				{
+					tag: "ellipse",
+					attrs: {
+						class: "shine",
+						cx: "20.5",
+						cy: "12.5",
+						rx: "3.2",
+						ry: "1.6",
+						transform: "rotate(30 20.5 12.5)",
+					},
+				},
+				{
+					tag: "g",
+					attrs: { class: "eyes" },
+					kids: [
+						{ tag: "ellipse", attrs: { class: "white", cx: "15.2", cy: "17.6", rx: "2.5", ry: "2.9" } },
+						{ tag: "circle", attrs: { class: "pupil", cx: "14.4", cy: "16.7", r: "1.35" } },
+						{ tag: "ellipse", attrs: { class: "white", cx: "21.2", cy: "17.6", rx: "2.5", ry: "2.9" } },
+						{ tag: "circle", attrs: { class: "pupil", cx: "20.4", cy: "16.7", r: "1.35" } },
+					],
+				},
+			],
+		},
+		{ tag: "circle", attrs: { class: "ping", cx: "3", cy: "3", r: "4" } },
+		{ tag: "path", attrs: { class: "chev", d: "M27 3 l3 -3 l3 3 M27 29 l3 3 l3 -3" } },
+	],
+};
 
 /** Runs in the page (isolated world). Self-contained: Chrome sends only this function's text. */
 export function veilPage(cmd: VeilCommand): VeilPageResult {
@@ -230,11 +346,14 @@ export function veilPage(cmd: VeilCommand): VeilPageResult {
 		leaving?: ReturnType<typeof setTimeout>;
 		media?: MediaQueryList;
 		paint?: () => void;
+		mote?: HTMLElement;
+		react?: ReturnType<typeof setTimeout>;
 	}
 	const g = globalThis as unknown as { __polycarpVeil?: Live };
 	const remove = (live: Live) => {
 		live.observer.disconnect();
 		if (live.leaving) clearTimeout(live.leaving);
+		if (live.react) clearTimeout(live.react);
 		if (live.media && live.paint) live.media.removeEventListener("change", live.paint);
 		live.host.remove();
 		if (g.__polycarpVeil === live) g.__polycarpVeil = undefined;
@@ -257,11 +376,117 @@ export function veilPage(cmd: VeilCommand): VeilPageResult {
 	if (cmd.op === "set") {
 		if (!live) return {};
 		if (cmd.interactive !== undefined) live.box.classList.toggle("locked", !cmd.interactive);
+		if (cmd.pointer !== undefined) live.box.classList.toggle("nomote", !cmd.pointer);
 		if (cmd.concealed !== undefined) {
 			live.box.classList.toggle("concealed", cmd.concealed);
 			// Style now, so the capture that follows paints without the veil.
 			live.host.getBoundingClientRect();
 		}
+		return { tag: live.tag };
+	}
+
+	if (cmd.op === "point") {
+		const mote = live?.mote;
+		if (!live || !mote || live.box.classList.contains("nomote")) return {};
+		const cue = cmd.cue;
+		const num = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+		let at: { x: number; y: number } | undefined =
+			num(cue.x) && num(cue.y) ? { x: cue.x as number, y: cue.y as number } : undefined;
+		if (cue.action === "type" || cue.action === "fill" || cue.action === "press") {
+			// The focused field, through open shadow roots and same-origin frames. A cross-origin frame
+			// can't be read: point at its box. Nothing focused: stay put.
+			let doc: Document = document;
+			let dx = 0;
+			let dy = 0;
+			let el: Element | null = document.activeElement;
+			for (let hops = 0; el && hops < 12; hops++) {
+				const inner = (el as HTMLElement).shadowRoot?.activeElement;
+				if (inner) {
+					el = inner;
+					continue;
+				}
+				// By tag name: an element of a child frame fails the top frame's instanceof.
+				if (el.localName === "iframe" || el.localName === "frame") {
+					const frame = el as HTMLIFrameElement;
+					const r = frame.getBoundingClientRect();
+					let sub: Document | null = null;
+					try {
+						sub = frame.contentDocument;
+					} catch {
+						sub = null;
+					}
+					if (!sub?.activeElement || sub.activeElement === sub.body) {
+						at = { x: dx + r.left + Math.min(16, r.width / 2), y: dy + r.top + Math.min(16, r.height / 2) };
+						el = null;
+						break;
+					}
+					dx += r.left + frame.clientLeft;
+					dy += r.top + frame.clientTop;
+					doc = sub;
+					el = sub.activeElement;
+					continue;
+				}
+				break;
+			}
+			if (el && el !== doc.body && el !== doc.documentElement) {
+				const r = el.getBoundingClientRect();
+				// At the text's start, a little in: the eyes then look along the line.
+				at = { x: dx + r.left + Math.min(14, r.width / 2), y: dy + r.top + Math.min(r.height / 2, 14) };
+			}
+		}
+		const vw = document.documentElement.clientWidth || innerWidth;
+		const vh = document.documentElement.clientHeight || innerHeight;
+		const clamp = (p: { x: number; y: number }) => ({
+			x: Math.round(Math.min(Math.max(p.x, 0), vw - 1)),
+			y: Math.round(Math.min(Math.max(p.y, 0), vh - 1)),
+		});
+		const moveTo = (p: { x: number; y: number }) => {
+			const c = clamp(p);
+			mote.style.setProperty("--mx", `${c.x}px`);
+			mote.style.setProperty("--my", `${c.y}px`);
+			mote.dataset.x = String(c.x);
+			mote.dataset.y = String(c.y);
+		};
+		if (!mote.classList.contains("seen")) {
+			// The first cue places it there at once; later ones glide. With no point yet it stays hidden.
+			if (!at) return { tag: live.tag };
+			mote.classList.add("jump");
+			moveTo(at);
+			mote.getBoundingClientRect();
+			mote.classList.add("seen");
+			mote.classList.remove("jump");
+		} else if (at) moveTo(at);
+		const pose: Record<PagePointerCue["action"], string> = {
+			click: "r-press",
+			hover: "r-hover",
+			drag: "r-tug",
+			type: "r-type",
+			fill: "r-type",
+			press: "r-type",
+			scroll: "r-nudge",
+			"scroll-page": "r-nudge",
+		};
+		mote.classList.remove("slow", ...Object.values(pose));
+		mote.getBoundingClientRect();
+		mote.classList.add(pose[cue.action] ?? "r-hover");
+		mote.dataset.action = cue.action;
+		if (live.react) clearTimeout(live.react);
+		const to = cue.action === "drag" && cue.to && num(cue.to.x) && num(cue.to.y) ? cue.to : undefined;
+		if (to) {
+			// The drag runs while it holds on: grab, then follow to the drop.
+			live.react = setTimeout(() => {
+				mote.classList.add("slow");
+				moveTo(to);
+				live.react = setTimeout(() => {
+					mote.classList.remove("slow", "r-tug");
+					live.react = undefined;
+				}, 700);
+			}, 140);
+		} else
+			live.react = setTimeout(() => {
+				mote.classList.remove("slow", ...Object.values(pose));
+				live.react = undefined;
+			}, 1000);
 		return { tag: live.tag };
 	}
 
@@ -328,8 +553,28 @@ export function veilPage(cmd: VeilCommand): VeilPageResult {
 		});
 		pill.append(take);
 		box.append(pill);
+		// The pointer character. Its SVG comes in the command (MOTE), since only this function's text reaches the page.
+		const svgNs = "http://www.w3.org/2000/svg";
+		const draw = (node: MoteNode): Element => {
+			const el = document.createElementNS(svgNs, node.tag);
+			for (const [k, v] of Object.entries(node.attrs)) el.setAttribute(k, v);
+			for (const kid of node.kids ?? []) el.append(draw(kid));
+			return el;
+		};
+		const mote = document.createElement("div");
+		mote.className = "mote";
+		mote.setAttribute("aria-hidden", "true");
+		mote.append(draw(cmd.mote), Object.assign(document.createElement("div"), { className: "caret" }));
+		box.append(mote);
 		shadow.append(style, box);
-		const made: Live = { host, box, tag: cmd.tag, observer: new MutationObserver(() => undefined), reattached: 0 };
+		const made: Live = {
+			host,
+			box,
+			tag: cmd.tag,
+			observer: new MutationObserver(() => undefined),
+			reattached: 0,
+			mote,
+		};
 		// A page that rewrites <html> drops the element; put it back, a few times at most.
 		made.observer = new MutationObserver(() => {
 			if (made.host.isConnected || made.reattached >= 5 || g.__polycarpVeil !== made) return;
@@ -367,6 +612,7 @@ export function veilPage(cmd: VeilCommand): VeilPageResult {
 	box.classList.toggle("reduced", theme.reduced);
 	box.classList.toggle("locked", !cmd.interactive);
 	box.classList.toggle("concealed", cmd.concealed);
+	box.classList.toggle("nomote", !cmd.pointer);
 	if (cur.leaving) {
 		clearTimeout(cur.leaving);
 		cur.leaving = undefined;

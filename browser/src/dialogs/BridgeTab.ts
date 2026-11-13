@@ -21,7 +21,7 @@ import {
 import type { UserScriptsStatus } from "../bridge/protocol.js";
 import { listSessions } from "../browser/session.js";
 import { probeUserScripts, userScriptsHiddenHelp } from "../browser/userscripts-status.js";
-import { isVeilEnabled, setVeilEnabled } from "../browser/veil-shared.js";
+import { isPointerEnabled, isVeilEnabled, setPointerEnabled, setVeilEnabled } from "../browser/veil-shared.js";
 import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 import { runningFromStore } from "../update/store-install.js";
 
@@ -37,6 +37,7 @@ const fileSize = (n: number) =>
 export class BridgeTab extends SettingsTab {
 	@state() private enabled = true;
 	@state() private veil = true;
+	@state() private pointer = true;
 	@state() private mode: PermissionMode = "ask";
 	@state() private hosts: string[] = [];
 	@state() private pending: PendingRequest[] = [];
@@ -74,6 +75,7 @@ export class BridgeTab extends SettingsTab {
 	private async load() {
 		this.enabled = await isBridgeEnabled();
 		this.veil = await isVeilEnabled();
+		this.pointer = await isPointerEnabled();
 		this.mode = await getPermissionMode();
 		this.hosts = await getAllowedHosts();
 		this.pending = await getPendingRequests();
@@ -168,6 +170,29 @@ export class BridgeTab extends SettingsTab {
 		await this.load();
 	}
 
+	/** A setting with a line of help and a switch; `off` greys it out and locks it. */
+	private switchRow(title: string, help: string, checked: boolean, set: (on: boolean) => Promise<void>, off = false) {
+		return html`<label
+			class="flex items-start justify-between gap-3 text-sm text-foreground cursor-pointer ${off ? "opacity-50" : ""}"
+		>
+			<span class="space-y-1">
+				<span class="block">${title}</span>
+				${help ? html`<span class="block text-xs text-muted-foreground">${help}</span>` : ""}
+			</span>
+			<input
+				type="checkbox"
+				role="switch"
+				class="tk-switch"
+				.checked=${checked}
+				?disabled=${off}
+				@change=${async (e: Event) => {
+					await set((e.target as HTMLInputElement).checked);
+					await this.load();
+				}}
+			/>
+		</label>`;
+	}
+
 	render(): TemplateResult {
 		return html`
 			<div class="flex flex-col gap-5">
@@ -180,39 +205,21 @@ export class BridgeTab extends SettingsTab {
 				</div>
 				${agentSetupPromptButton()}
 
-				<label class="flex items-start justify-between gap-3 text-sm text-foreground cursor-pointer">
-					<span>Allow external agents to use the browser</span>
-					<input
-						type="checkbox"
-						role="switch"
-						class="tk-switch"
-						.checked=${this.enabled}
-						@change=${async (e: Event) => {
-							await setBridgeEnabled((e.target as HTMLInputElement).checked);
-							await this.load();
-						}}
-					/>
-				</label>
+				${this.switchRow("Allow external agents to use the browser", "", this.enabled, setBridgeEnabled)}
 
-				<label class="flex items-start justify-between gap-3 text-sm text-foreground cursor-pointer">
-					<span class="space-y-1">
-						<span class="block">Show when an agent is using a tab</span>
-						<span class="block text-xs text-muted-foreground">
-							A soft glow in the group's color and a small label at the top of the page while an agent
-							works in it. Clicks go through to the page; Take over in the label gives you the tab back.
-						</span>
-					</span>
-					<input
-						type="checkbox"
-						role="switch"
-						class="tk-switch"
-						.checked=${this.veil}
-						@change=${async (e: Event) => {
-							await setVeilEnabled((e.target as HTMLInputElement).checked);
-							await this.load();
-						}}
-					/>
-				</label>
+				${this.switchRow(
+					"Show when an agent is using a tab",
+					"A soft glow in the group's color and a small label at the top of the page while an agent works in it. Clicks go through to the page; Take over in the label gives you the tab back.",
+					this.veil,
+					setVeilEnabled,
+				)}
+				${this.switchRow(
+					"Show the agent's pointer",
+					"A character that moves to what the agent clicks or types into. It never takes your clicks.",
+					this.pointer,
+					setPointerEnabled,
+					!this.veil,
+				)}
 
 				<div class="space-y-2">
 					<div class="text-sm font-medium text-foreground">Site access</div>

@@ -61,6 +61,8 @@ public enum HandsTools {
             HandsParam("interactive", .boolean, "Only elements you can act on.", short: "i"),
             HandsParam("compact", .boolean, "Collapse wrapper groups with no content."),
             HandsParam("depth", .integer, "How deep to read (default 10)."),
+            HandsParam("screenshot", .boolean, "Also return a picture of the window (longest side 1280), with how its pixels map to window points."),
+            HandsParam("zoom", .string, "With screenshot: only this region, x,y,width,height in window points, like \"0,0,400,300\". Crops the MCP image; the saved file stays whole. A zoom outside the window is refused before anything is captured."),
         ], acts: false),
         HandsTool(verb: "find", summary: "Search one window's accessibility tree and return the matching elements with refs.", params: [
             HandsParam("app", .string, "App name or bundle id."),
@@ -75,7 +77,7 @@ public enum HandsTools {
             refParam,
             HandsParam("property", .string, "value (default), text, title, role, bounds or states.", positional: true),
         ], acts: false),
-        HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. Prints what it verified.", params: [refParam], acts: true),
+        HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"}", params: [refParam], acts: true),
         HandsTool(verb: "type", summary: "Type text into an element by ref: inserts it at the element's selection through accessibility, never by posting keys. Prints the value it read back.", params: [
             refParam,
             HandsParam("text", .string, "The text.", required: true, positional: true, rest: true),
@@ -88,10 +90,12 @@ public enum HandsTools {
             refParam,
             HandsParam("key", .string, "Key name with optional modifiers, like cmd+shift+z; several keys are separated by spaces (at most 64).", required: true, positional: true, rest: true),
         ], acts: true),
-        HandsTool(verb: "click-at", summary: "Click a point in a window that is not in front, by process, with window-local coordinates (points from the window's top-left corner). Never moves the real pointer or raises the window. For surfaces with no accessibility tree (a canvas); prefer `click` on a ref. Answers unverified (retry never) when neither the window's tree nor the pixels around the point changed.", params: [
+        HandsTool(verb: "click-at", summary: "Click a point in a window that is not in front, by process, with window-local coordinates (points from the window's top-left corner). Never moves the real pointer or raises the window. For surfaces with no accessibility tree (a canvas); prefer `click` on a ref. Double click: {\"window\":4211,\"x\":120,\"y\":80,\"count\":2}. Answers unverified (retry never) when neither the window's tree nor the pixels around the point changed.", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
             HandsParam("x", .integer, "Points from the window's left edge.", required: true),
             HandsParam("y", .integer, "Points from the window's top edge.", required: true),
+            HandsParam("count", .integer, "2 for a double click, 3 for a triple (default 1)."),
+            HandsParam("button", .string, "left only: right click is not available yet."),
         ], acts: true),
         HandsTool(verb: "drag", summary: "Press at a point, drag to another and release, in a window that is not in front, by process, with window-local coordinates. Never moves the real pointer or raises the window. Verified by an accessibility change or by pixels changing along the path while the rest of the window stays put.", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
@@ -111,9 +115,10 @@ public enum HandsTools {
             HandsParam("option", .string, "The text of the option to choose.", required: true, positional: true, rest: true),
         ], acts: true),
         HandsTool(verb: "toggle", summary: "Flip a checkbox, switch or disclosure by ref. Prints the state it read back.", params: [refParam], acts: true),
-        HandsTool(verb: "shot", summary: "Capture one window as a PNG, even while it is parked out of view. Needs Screen Recording for Polycarp. The file stays on this Mac.", params: [
+        HandsTool(verb: "shot", summary: "Capture one window as a PNG, even while it is parked out of view. Over MCP the picture comes back fitted to 1280 pixels, labeled untrusted, with how its pixels map to window points. Needs Screen Recording for Polycarp. Example: {\"window\":4211,\"zoom\":\"0,0,400,300\"}", params: [
             HandsParam("window", .integer, "Window id.", required: true),
             HandsParam("out", .string, "A file name (no folder) for the PNG; it is written in Polycarp's own shots folder."),
+            HandsParam("zoom", .string, "Only this region of the window, x,y,width,height in window points, like \"0,0,400,300\". Crops the MCP image; the saved file stays whole. A zoom outside the window is refused before anything is captured."),
             HandsParam("cursor", .boolean, "Draw the agent cursor where it last acted in this window, if it did in the last 30 seconds and was on screen. Off by default, so the picture is the app itself."),
         ], acts: true),
         HandsTool(verb: "open", summary: "Start work in the background: open an app, or files from the agent handoff folder in it, on the agent workspace, without activating it or switching what Donovan sees. It answers with the new window's id once the window exists (it waits up to `wait` seconds, at most 7), and focus: {changed, returned} says whether macOS brought the app forward and Polycarp gave the keyboard back. Each call makes a fresh window by default (a separate copy, or New Window from behind in a running copy under Full Access; Donovan's windows never move); new_window: false reuses a window this session already opened in that app. Apps that hold the user's own data (Safari, Notes, Mail, Messages, Calendar, Photos) answer needs_sandbox; URLs wait for agent browser profiles.", params: [
