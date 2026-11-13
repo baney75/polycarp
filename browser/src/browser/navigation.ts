@@ -25,12 +25,19 @@ export async function navigateTab(tabId: number, url: string, options: NavigateO
 	return (await navigateTabDetailed(tabId, url, options)).url;
 }
 
-/** navigateTab that also says whether the wait ran out before the page was ready. */
+/** Where a navigation ended, whether the wait ran out first, and whether a new document committed. */
+export interface NavigationResult {
+	url: string;
+	timedOut: boolean;
+	committed: boolean;
+}
+
+/** navigateTab that also says whether the wait ran out and whether a new document committed. */
 export async function navigateTabDetailed(
 	tabId: number,
 	url: string,
 	options: NavigateOptions = {},
-): Promise<{ url: string; timedOut: boolean }> {
+): Promise<NavigationResult> {
 	const from = await chrome.tabs.get(tabId).then(
 		(t) => t.url,
 		() => undefined,
@@ -66,7 +73,7 @@ export function isPdfPageJump(from: string | undefined, to: string): boolean {
 	return a.href === b.href;
 }
 
-/** How long an aborted navigation waits for a newer one to commit before the tab counts as kept. */
+/** How often an aborted navigation checks whether the tab still loads something before it counts as kept. */
 const ABORT_GRACE_MS = 500;
 
 function waitForNavigation(
@@ -74,11 +81,12 @@ function waitForNavigation(
 	url: string,
 	options: NavigateOptions,
 	start: () => Promise<unknown>,
-): Promise<{ url: string; timedOut: boolean }> {
+): Promise<NavigationResult> {
 	const { signal, timeoutMs = 20000, waitUntil = "domcontentloaded" } = options;
 	if (signal?.aborted) throw new Error("Aborted");
-	return new Promise<{ url: string; timedOut: boolean }>((resolve, reject) => {
+	return new Promise<NavigationResult>((resolve, reject) => {
 		let committed = false;
+		let grace: ReturnType<typeof setTimeout> | undefined;
 		const nav = chrome.webNavigation;
 		const doneEvent = waitUntil === "load" ? nav.onCompleted : nav.onDOMContentLoaded;
 		const cleanup = () => {
@@ -89,6 +97,8 @@ function waitForNavigation(
 			nav.onErrorOccurred.removeListener(onError);
 			signal?.removeEventListener("abort", onAbort);
 			clearTimeout(timer);
+			clearTimeout(grace);
+			grace = undefined;
 		};
 		const finish = (fn: () => void) => {
 			cleanup();
@@ -99,33 +109,38 @@ function waitForNavigation(
 			if (top(d)) committed = true;
 		};
 		const onDone = (d: chrome.webNavigation.WebNavigationFramedCallbackDetails) => {
-			if (top(d) && committed) finish(() => resolve({ url: d.url, timedOut: false }));
+			if (top(d) && committed) finish(() => resolve({ url: d.url, timedOut: false, committed }));
 		};
 		const onSameDocument = (d: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => {
-			if (top(d)) finish(() => resolve({ url: d.url, timedOut: false }));
+			if (top(d)) finish(() => resolve({ url: d.url, timedOut: false, committed }));
 		};
 		const onError = (d: chrome.webNavigation.WebNavigationFramedErrorCallbackDetails) => {
 			if (!top(d)) return;
 			if (!d.error.includes("ERR_ABORTED"))
 				finish(() => reject(new Error(`Navigation to ${url} failed: ${d.error}`)));
 			// ERR_ABORTED with nothing committed: a URL that loads no document (a 204, a download), so the tab
-			// stays on its page; or a newer navigation took over, which commits within moments and is waited for.
-			else if (!committed)
-				setTimeout(() => {
-					if (!committed)
-						finish(() =>
-							chrome.tabs.get(tabId).then(
-								(tab) => resolve({ url: tab.url ?? url, timedOut: false }),
-								() => reject(new Error("The tab closed during the navigation")),
-							),
-						);
-				}, ABORT_GRACE_MS);
+			// stays on its page; or an earlier navigation that this one cancelled. The tab says which: while it
+			// still loads something, the wait goes on until a commit or the timeout.
+			else if (!committed && grace === undefined) grace = setTimeout(kept, ABORT_GRACE_MS);
+		};
+		const kept = () => {
+			chrome.tabs.get(tabId).then(
+				(tab) => {
+					if (committed || grace === undefined) return;
+					if (tab.status === "loading" || tab.pendingUrl) grace = setTimeout(kept, ABORT_GRACE_MS);
+					else finish(() => resolve({ url: tab.url ?? url, timedOut: false, committed }));
+				},
+				() => {
+					if (!committed && grace !== undefined)
+						finish(() => reject(new Error("The tab closed during the navigation")));
+				},
+			);
 		};
 		const onAbort = () => finish(() => reject(new Error("Aborted")));
 		const timer = setTimeout(() => {
 			finish(() => {
 				chrome.tabs.get(tabId).then(
-					(tab) => resolve({ url: tab.url ?? tab.pendingUrl ?? url, timedOut: true }),
+					(tab) => resolve({ url: tab.url ?? tab.pendingUrl ?? url, timedOut: true, committed }),
 					() => reject(new Error("Navigation timed out and the tab is gone")),
 				);
 			});

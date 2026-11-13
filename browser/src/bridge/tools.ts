@@ -10,7 +10,6 @@ import {
 	answerDialog,
 	captureScreenshot,
 	scroll as cdpScroll,
-	cdpSend,
 	click,
 	cuePointer,
 	drag,
@@ -198,23 +197,8 @@ async function settleAfter(
 /** A drag's settle: short, so a drop that lands a frame or a transition later is seen (D41). */
 const DRAG_SETTLE = { capMs: 600, quietMs: 200 };
 
-/** The most reading the main frame's loader may take: a stuck or silently detached debugger is not worth more. */
-const LOADER_MS = 2000;
-
-/**
- * The main frame's loader: a new one is a new document. Undefined when the debugger can't say, and
- * "stuck" when it did not answer within LOADER_MS (settle.ts bounds Network.enable the same way).
- */
-async function mainLoader(tabId: number): Promise<string | undefined | "stuck"> {
-	const tree = await Promise.race([
-		cdpSend<{ frameTree?: { frame?: { loaderId?: string } } }>(tabId, "Page.getFrameTree").catch(() => undefined),
-		new Promise<"stuck">((r) => setTimeout(() => r("stuck"), LOADER_MS)),
-	]);
-	return tree === "stuck" ? tree : tree?.frameTree?.frame?.loaderId;
-}
-
-/** The report when the debugger stopped answering after the load: whether the document is new is not known. */
-export const LOADER_STUCK = "loaded; the debugger did not answer, so not compared; read_page shows the page";
+/** A tab's URL, or "" once it is gone. */
+const tabUrl = async (id: number) => (await chrome.tabs.get(id).catch(() => undefined))?.url ?? "";
 
 /** Same document, apart from the hash: `https://a.example#x` is on `https://a.example/`. */
 function sameDocument(url: string, from: string): boolean {
@@ -682,13 +666,19 @@ export const handlers: Record<string, Handler> = {
 		// The first navigate of a session opens its tab (blank, with capture on) and loads the URL into it.
 		if (!history && num(params, "tabId") === undefined && !(await ctx.session.currentTab())) {
 			const since = await settleStart();
+			const was = [...ctx.session.tabIds];
 			const { tab, ready, note } = await openCapturedTab(ctx, url, num(params, "timeoutMs") ?? 20000, false);
 			const tabId = tab.id as number;
+			// The new tab is the page itself, not one the page opened.
+			const tabs = [...was, tabId];
 			// The approval page is blanked before anything is run in it.
 			const landed = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, !ready));
 			if (!ready) return { ...landed, ...(note ? { note } : {}), changes: { page: STILL_LOADING } };
 			// The tab is new: settleStart had none to turn Network on in, so the wait does.
-			const settled = await settleAfter(ctx, tabId, since, landed, { watched: false, changes: { page: NEW_PAGE } });
+			const settled = await settleAfter(ctx, tabId, since, landed, {
+				watched: false,
+				changes: async () => ({ ...(await tabChanges(tabs, ctx.session.tabIds, tabUrl)), page: NEW_PAGE }),
+			});
 			return refuseGuardedLanding(ctx, tabId, {
 				...(await tabSummary(tabId)),
 				...settled,
@@ -702,14 +692,9 @@ export const handlers: Record<string, Handler> = {
 		const from = (await chrome.tabs.get(tabId).catch(() => undefined))?.url ?? "";
 		const samePage = history || sameDocument(url, from);
 		const before = samePage ? await changesBefore(ctx, tabId) : undefined;
-		// A URL that loads no document (a 204, a download) leaves the page as it was: the main frame's
-		// loader says which. The tabs a load opened or closed are reported either way.
-		const loader = samePage ? undefined : await mainLoader(tabId);
-		if (loader === "stuck")
-			throw new BridgeError(
-				ERR.TIMEOUT,
-				`The debugger on tab ${tabId} did not answer within ${LOADER_MS} ms, so nothing was navigated. Call navigate again; if it fails the same way, tabs_create a new tab and navigate there.`,
-			);
+		// A URL that loads no document (a 204, a download) commits nothing and leaves the page as it was.
+		// The tabs a load opened or closed are reported either way.
+		let committed = false;
 		const tabs = [...ctx.session.tabIds];
 		const since = await actionStart(ctx, tabId);
 		watchGuardedCommits(ctx, tabId);
@@ -717,16 +702,16 @@ export const handlers: Record<string, Handler> = {
 		else if (url === "forward") timedOut = !(await goForward(tabId));
 		else {
 			const waitUntil = str(params, "waitUntil") === "load" ? "load" : "domcontentloaded";
-			timedOut = (await navigateTabDetailed(tabId, url, { waitUntil, timeoutMs: num(params, "timeoutMs") ?? 20000 }))
-				.timedOut;
+			({ timedOut, committed } = await navigateTabDetailed(tabId, url, {
+				waitUntil,
+				timeoutMs: num(params, "timeoutMs") ?? 20000,
+			}));
 		}
 		// Content a script draws after the load (a fetch, a skeleton) is there before the agent reads.
 		// The approval page is blanked before anything is run in it.
 		const landed = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, timedOut));
 		if (timedOut) return { ...landed, changes: { page: STILL_LOADING } };
-		const now = loader === undefined ? undefined : await mainLoader(tabId);
-		const page = now === "stuck" ? LOADER_STUCK : loader !== undefined && now === loader ? NOT_LOADED : NEW_PAGE;
-		const urlOf = async (id: number) => (await chrome.tabs.get(id).catch(() => undefined))?.url ?? "";
+		const page = committed ? NEW_PAGE : NOT_LOADED;
 		// The tabs are compared after the settle: a script may open one while the page settles.
 		const settled = await settleAfter(
 			ctx,
@@ -735,7 +720,7 @@ export const handlers: Record<string, Handler> = {
 			landed,
 			samePage
 				? { before }
-				: { changes: async () => ({ ...(await tabChanges(tabs, ctx.session.tabIds, urlOf)), page }) },
+				: { changes: async () => ({ ...(await tabChanges(tabs, ctx.session.tabIds, tabUrl)), page }) },
 		);
 		return refuseGuardedLanding(ctx, tabId, { ...(await tabSummary(tabId)), ...settled });
 	},

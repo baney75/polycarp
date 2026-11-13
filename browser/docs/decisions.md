@@ -1273,11 +1273,11 @@ reports the difference:
 - A full navigation is a new document: `navigate` says `page: "new page; read_page lists it"` without looking, since every
   ref is new and the list would be the page; back, forward and a jump to a hash are compared (the URLs are parsed, so
   `https://a.example#x` is a jump on `https://a.example/`). A URL that loads no document (a 204, a download) commits
-  nothing and ends in `ERR_ABORTED`; after 0.5 s with no newer navigation committing, the load is over, and since the main
-  frame's loader is as it was (`Page.getFrameTree`) the report says `"no new page loaded"`. Each read of the loader is held
-  to 2 s: a debugger that does not answer before the load fails `navigate` with `timeout`, saying nothing was navigated and
-  to navigate again or use a new tab; after the load, the report says the page was not compared. Tabs the load opened or
-  closed, the settle included, are in both. A load that timed out says
+  nothing and ends in `ERR_ABORTED`, and the report says `"no new page loaded"`. The navigation's own events decide this,
+  with no debugger call, so a hung renderer never holds `navigate` or keeps it from leaving the page. An `ERR_ABORTED` may
+  instead belong to an earlier navigation this one cancelled, so the wait checks the tab every 0.5 s and goes on while it
+  still loads something (`status` loading or a `pendingUrl`), until a commit or the timeout; one timer does this and ends
+  with the wait. Tabs the load opened or closed, the settle included, are in both, on the first navigate of a session too. A load that timed out says
   `"still loading"`, so `navigate` always returns `changes`. `actions` whose last step acted on another tab than the first
   says `"moved to tab N"`: the look was on the first tab; a batch that names a tab and only waits stays on it. `drag` waits briefly (0.6 s cap,
   0.2 s quiet, Network left as it is), so a drop that reorders a frame or a transition later is in the report, at most about

@@ -17,9 +17,8 @@ browser is signed in as the user, so act as carefully as on their own laptop.
 
 ## Step 1: call `tabs_context`
 
-Call `tabs_context` first. It shows your session, your tab group and your tabs, including
-ones from earlier work in this project, and news from the user (a tab they took back,
-or gave you). If it says Polycarp isn't connected, stop and pass that to the user. Don't
+Call `tabs_context` first. It shows your session, your tab group and your tabs (earlier
+ones too), and news from the user (a tab they took back or gave you). If it says Polycarp isn't connected, stop and pass that to the user. Don't
 retry in a loop. `status` adds the site permissions when you need them.
 
 ## Step 2: the core loop
@@ -115,7 +114,8 @@ get_page_text {"maxChars":2000}                   -> the story list: answer with
 tabs_close {"tabId":41}
 ```
 
-**Fill and submit a form.** The user asks you to send the contact form.
+**Fill and submit a form.** The user asks you to send the contact form with their name
+and email.
 
 ```
 tabs_context {}
