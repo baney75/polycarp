@@ -936,6 +936,8 @@ export const handlers: Record<string, Handler> = {
 			if (keysStarted) throw interruptedError(err, "type", "some of the text may be in the field");
 			try {
 				await reattach(tabId);
+				// A frame's sessions died with the old attachment: the frame is looked up again on the new one.
+				if (before) before.frame.hit = undefined;
 				// The new debugging session has Network off: on again before the keys go out.
 				await settleStart(tabId);
 				await attempt();
