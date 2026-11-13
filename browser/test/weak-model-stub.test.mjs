@@ -40,8 +40,9 @@ function startStub(name, files = {}) {
 		});
 	const call = async (tool, args = {}) => {
 		const m = await rpc("tools/call", { name: tool, arguments: args });
-		const text = m.result.content.map((c) => c.text).join("\n");
-		return { text, isError: m.result.isError, json: text.startsWith("{") ? JSON.parse(text) : undefined };
+		const parts = m.result.content.map((c) => c.text);
+		const text = parts.join("\n");
+		return { text, parts, isError: m.result.isError, json: parts[0].startsWith("{") ? JSON.parse(parts[0]) : undefined };
 	};
 	/** Row number of the first row whose line matches. */
 	const row = (text, re) => {
@@ -167,7 +168,10 @@ test("run_steps runs several actions in one call and reads once; a bad step runs
 		});
 		assert.equal(run.isError, false, run.text);
 		assert.deepEqual([run.json.data.done, run.json.data.of, run.json.data.complete], [3, 3, true]);
-		assert.match(run.json.data.read.text, /since/, "one read of what changed ends it");
+		// As the helper since #275: the closing read's rows go out as their own part, read as lines, not a JSON string.
+		assert.equal(run.parts.length, 2, run.text);
+		assert.deepEqual([run.json.data.read.format, run.json.data.read.text_below, run.json.data.read.text], ["rows", true, undefined]);
+		assert.match(run.parts[1], /since/, "one read of what changed ends it");
 		const applied = s.world().windows.find((w) => w.app === "Thermo").state.applied;
 		assert.deepEqual([Number(applied.target), applied.eco], [21, true]);
 
@@ -178,7 +182,7 @@ test("run_steps runs several actions in one call and reads once; a bad step runs
 		assert.equal(sheet.json.data.stopped, "opened", sheet.text);
 		assert.deepEqual([sheet.json.data.done, sheet.json.data.of, sheet.json.data.complete], [2, 3, false]);
 		assert.match(sheet.json.data.note, /step 2 raised a dialog or sheet; the 1 after it did not run/);
-		assert.match(sheet.json.data.read.text, /button "Don't Save"/, "the read shows the sheet");
+		assert.match(sheet.parts[1], /button "Don't Save"/, "the read shows the sheet");
 		assert.equal(s.world().windows.find((w) => w.id === j).state.saves, 0, "the step after the sheet did not run");
 	} finally {
 		s.stop();

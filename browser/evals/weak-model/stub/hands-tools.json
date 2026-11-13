@@ -478,7 +478,7 @@
 				"openWorldHint": false,
 				"readOnlyHint": false
 			},
-			"description": "Several actions on one window in one call, then one read of what changed. Every step is checked before any runs; the steps run back to back with nothing else acting in between, and the run stops at the first step that fails, isn't verified or raises a dialog or sheet. Steps: click, type, set_value, press, click_at, drag, scroll, select, toggle, menu (at most 32). Row numbers mean your latest snapshot. Example: {\"steps\":[{\"tool\":\"click\",\"args\":{\"ref\":\"5\"}},{\"tool\":\"type\",\"args\":{\"ref\":\"7\",\"text\":\"hi\"}}]}",
+			"description": "Several actions in one call, on one window or more, then one read of what changed in the last. Every step is checked before any runs; consecutive steps on one window run back to back with nothing else acting in between, and the run stops at the first step that fails, isn't verified or raises a dialog or sheet. Steps: click, type, set_value, press, click_at, drag, scroll, select, toggle, menu (at most 32). Row numbers mean your latest snapshot. Example: {\"steps\":[{\"tool\":\"click\",\"args\":{\"ref\":\"5\"}},{\"tool\":\"type\",\"args\":{\"ref\":\"7\",\"text\":\"hi\"}}]}",
 			"inputSchema": {
 				"additionalProperties": false,
 				"properties": {
