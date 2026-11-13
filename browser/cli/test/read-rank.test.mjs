@@ -25,3 +25,15 @@ test("the last slice and a slice past the end say so", () => {
 	assert.doesNotMatch(rankNote(counts({ offset: 300 }), 43), /"offset"/);
 	assert.match(rankNote(counts({ offset: 400 }), 0), /No controls from 401 on \(343 in all\)/);
 });
+
+test("a ranked read's note says what text came: none asked, cut at the cap, or whole", () => {
+	assert.match(rankNote(counts(), 50), /No page text here: get_page_text reads it\./);
+	const cut = rankNote(counts(), 50, { maxTextChars: 2000, cut: true });
+	assert.doesNotMatch(cut, /No page text/);
+	assert.match(cut, /The text stopped at 2,000 characters: get_page_text reads all of it\./);
+	assert.doesNotMatch(rankNote(counts(), 50, { maxTextChars: 2000, cut: false }), /No page text|text stopped/);
+});
+
+test("the next slice's call names the read it continues", () => {
+	assert.match(rankNote(counts({ snapshot: "rab12c" }), 50), /read_page \{"filter":"interactive","offset":50,"snapshot":"rab12c"\}/);
+});

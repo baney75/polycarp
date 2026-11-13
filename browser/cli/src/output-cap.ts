@@ -155,13 +155,15 @@ export interface RankCounts {
 	near: number;
 	far: number;
 	offset: number;
+	/** Names the ranking a later slice continues (src/browser/page.ts); absent from an extension before it. */
+	snapshot?: string;
 }
 
 /**
  * The line under a ranked interactive read: which slice this is, what was left out and the exact call for more, so a
  * model that needs a control further down knows it exists and how to get it.
  */
-export function rankNote(r: RankCounts, shown: number): string {
+export function rankNote(r: RankCounts, shown: number, text: { maxTextChars: number; cut: boolean } = { maxTextChars: 0, cut: false }): string {
 	const from = r.offset + 1;
 	const to = r.offset + shown;
 	const tiers = [
@@ -178,8 +180,11 @@ export function rankNote(r: RankCounts, shown: number): string {
 				: `All ${fmt(r.total)} controls (${tiers.join(", ")}).`,
 	];
 	if (r.covered) parts.push(`${fmt(r.covered)} covered by something on top are left out: close or dismiss it first.`);
-	if (to < r.total) parts.push(`More: read_page {"filter":"interactive","offset":${to}}, or find {"query":"..."} for one.`);
-	parts.push("No page text here: get_page_text reads it.");
+	const more = r.snapshot ? `{"filter":"interactive","offset":${to},"snapshot":"${r.snapshot}"}` : `{"filter":"interactive","offset":${to}}`;
+	if (to < r.total) parts.push(`More: read_page ${more}, or find {"query":"..."} for one.`);
+	// The text is said as it is: none asked for, cut at the cap, or whole (then nothing to add).
+	if (!text.maxTextChars) parts.push("No page text here: get_page_text reads it.");
+	else if (text.cut) parts.push(`The text stopped at ${fmt(text.maxTextChars)} characters: get_page_text reads all of it.`);
 	return `\n\n[${parts.join(" ")}]`;
 }
 

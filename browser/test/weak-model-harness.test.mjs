@@ -480,9 +480,9 @@ const appWindows = [
 ];
 
 test("the window check never closes a copy it can't prove is this run's: it records it as left open", async () => {
-	const closed = [];
-	const left = await leftOpen({ app: "TextEdit", before: new Set([10]), known: new Set([30]), pending: false, list: async () => appWindows, kill: async (pid) => closed.push(pid), sleep: async () => {} });
-	assert.deepEqual(closed, [], "pid 20 may be another agent session's or a concurrent job's copy: the helper doesn't say whose it is");
+	// It takes no way to close anything: pid 20 may be another agent session's or a concurrent job's copy (the helper doesn't
+	// say whose a window is), so it can only be reported.
+	const left = await leftOpen({ app: "TextEdit", before: new Set([10]), known: new Set([30]), pending: false, list: async () => appWindows, sleep: async () => {} });
 	assert.deepEqual(left, [{ app: "TextEdit", pid: 20, window: 2 }], "not one there before, a reported one (its own undo closes it), a lent window or another app");
 });
 
@@ -503,17 +503,21 @@ test("an open cut off before its window was identified: windows are read again o
 });
 
 test("after a computer run: score first, then close its own copies, then check for leftovers, on every way it ended", async () => {
-	for (const timedOut of [true, false]) {
-		const order = [];
-		const r = await afterComputerRun({
-			timedOut,
-			score: async () => (order.push("score"), { pass: true }),
-			undo: async () => void order.push("undo"),
-			left: async () => (order.push("left"), []),
-		});
-		assert.deepEqual(order, ["score", "undo", "left"], `timedOut ${timedOut}`);
-		assert.deepEqual(r, { score: { pass: true }, left: [] });
-	}
+	const order = [];
+	const r = await afterComputerRun({
+		score: async () => (order.push("score"), { pass: true }),
+		undo: async () => void order.push("undo"),
+		left: async () => (order.push("left"), [{ app: "TextEdit", pid: 20, window: 2 }]),
+	});
+	assert.deepEqual(order, ["score", "undo", "left"], "scored before anything closes, leftovers read after");
+	assert.deepEqual(r, { score: { pass: true }, left: [{ app: "TextEdit", pid: 20, window: 2 }] });
+	// A scorer that throws still closes the run's own copies, and the error reaches the caller (cleanup reads leftovers then).
+	const after = [];
+	await assert.rejects(
+		afterComputerRun({ score: async () => { throw new Error("scorer broke"); }, undo: async () => void after.push("undo"), left: async () => (after.push("left"), []) }),
+		/scorer broke/,
+	);
+	assert.deepEqual(after, ["undo"]);
 });
 
 test("a reported copy is known the moment its answer arrives, and a record's call carries its pid", () => {

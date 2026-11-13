@@ -1,6 +1,6 @@
 // How big a first look is: read_page {"filter":"interactive"} and {} on 8 public pages, and the size of tools/list,
 // in tokens counted as chars / 4. Runs the throwaway headless browser from the e2e harness, never the user's own.
-// Public pages change, so this is a measurement, not a CI test: test/read-budget.test.mjs holds the ratchet on fixtures.
+// Public pages change, so this is a measurement, not a CI test: cli/test/e2e-bridge.test.mjs ("/rank") holds the budget on a fixture.
 //   node evals/weak-model/measure-read.mjs <label>   (writes results/read-size-<label>.json)
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

@@ -9,14 +9,15 @@ extension HandsRouter {
     /// only when the item is still not selected, write the selection on its container and read once more.
     func clickRow(_ w: HandsWindow, scope: ScopeDecision, ref: String, plan: ClickFallback.Plan, session: String, childrenBefore: Set<UInt32>) -> HandsEnvelope {
         var before: Bool?, afterPress: Bool?, afterWrite: Bool?
-        var press: JSONValue?, write: JSONValue?, pressError: HandsError?, writeError: HandsError?
+        var press: JSONValue?, write: JSONValue?, pressError: HandsError?, writeError: HandsError?, refused = false
         var landed = ClickFallback.Landed.none
         var treeBefore: JSONValue?, treeAfter: JSONValue?
         let reply = HandsEngine.shared.transaction(window: w, check: actingCheck(w, ref: ref, verb: "click", delivery: .headlessAX, session: session)) { [self] cancelled in
             let acting = actingCheck(w, ref: ref, verb: "click", delivery: .headlessAX, session: session)
             // Each read keeps its tree: with no readback, the change it shows is the press's evidence (first-F4).
             func selected(_ tree: inout JSONValue?) -> Bool? {
-                guard case .ok(let d) = HandsEngine.shared.snapshotInline(window: w, interactive: false, compact: false, depth: 10, evidence: true) else { return nil }
+                guard case .ok(let d) = HandsEngine.shared.snapshotInline(window: w, interactive: plan.view.interactive, compact: plan.view.compact,
+                                                                            depth: UInt8(clamping: plan.view.depth), evidence: true) else { return nil }
                 tree = d["tree"]
                 return ClickFallback.selected(SnapshotRows.rows(of: d["tree"] ?? .null), plan)
             }
@@ -31,7 +32,7 @@ extension HandsRouter {
             case .writeSelection:
                 guard !cancelled() else { break }
                 // A refusal here is kept: its code decides the next call (second-F9).
-                if let e = acting() { writeError = e; break }
+                if let e = acting() { writeError = e; refused = true; break }
                 switch HandsEngine.shared.actInline(window: w, ref: plan.container, kind: .select, text: plan.label, check: actingCheck(w, ref: plan.container, verb: "click", delivery: .headlessAX, session: session), cancelled: cancelled) {
                 case .ok(let d): write = d
                 case .failed(let e): writeError = e
@@ -44,7 +45,7 @@ extension HandsRouter {
         }
         if case .failed(let e) = reply { return .failure(e) }
         // Nothing landed and the press itself failed: its error, with what was tried.
-        if landed == .none, write == nil, let pressError { return .failure(ClickFallback.failure(press: pressError, write: writeError)) }
+        if landed == .none, write == nil, let pressError { return .failure(ClickFallback.failure(press: pressError, write: writeError, refused: refused)) }
         let diff = treeBefore.flatMap { b in treeAfter.map { AXDiff.between(b, $0) } }
         let engineVerified = press?["disposition"]?["delivery"]?.string == "delivered_verified"
         let verified = ClickFallback.verified(landed: landed, afterPress: afterPress, engineVerified: engineVerified, treeChanged: diff?.changed ?? false)
@@ -56,6 +57,7 @@ extension HandsRouter {
             "engine": press ?? .null, "target": targetJSON(w, scope),
         ]
         if afterPress == nil, let diff { o["press_evidence"] = diff.json() }
+        if let e = ClickFallback.pressError(pressError) { o["press_error"] = e }
         if let write { o["selection_write"] = .object(["container": .string(plan.container), "engine": write]) }
         if let writeError {
             o["selection_write"] = .object(["container": .string(plan.container), "error": .string(writeError.message), "code": .string(writeError.code.rawValue)])
