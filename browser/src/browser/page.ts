@@ -1230,7 +1230,9 @@ function lineOf(
 	// The snapshot writes a frame's href with no query or fragment: both sides are compared so.
 	const bare = (u = "") => u.split(/[?#]/)[0].slice(0, 200);
 	const named = fits.find((n) => !!n.href && bare(n.href) === bare(f.url));
-	if (named || !exact) return named ?? fits[0];
+	if (!exact) return named ?? fits[0];
+	// Exact: not when another frame has the same URL, as stacked ad slots of one path do.
+	if (named && !frames.some((o) => o !== f && bare(o.url) === bare(f.url))) return named;
 	// Only when it is plain: one line on its origin, naming no other frame's URL.
 	const kin = fits.filter((n) => !!n.href && sameOrigin(n.href, f.url));
 	const own = kin.length === 1 ? kin[0] : undefined;

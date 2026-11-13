@@ -240,6 +240,7 @@ async function collect(
 		const bar = await rule(url);
 		if (bar === "guarded") return undefined;
 		const f = await place(tabId, frameId, ownerSessionId, url, around, root, sessionId, end);
+		if (f === null) missed = true;
 		if (!f) return undefined;
 		if (bar === "blocked") f.blocked = true;
 		frames.push(f);
@@ -374,7 +375,7 @@ async function resolveOwner(
  * off the page or covered wherever it is in view; "away" when no part of it is in view and a test
  * proves a scroll brings it there: nothing fixed or sticky around it in the flat tree (slots and shadow
  * hosts included), no clip-path, no paint containment, no overflow clip that cuts it on its axis, the
- * nearest box that scrolls, then the page, reach it, and no cover fixed over the viewport. Anything else out of view is "hidden". Self-contained: it runs in a page, in read_page's
+ * nearest box that scrolls, then the page, reach it, and no box fixed over the whole viewport. Anything else out of view is "hidden". Self-contained: it runs in a page, in read_page's
  * snapshot and, through frameShownNow, before a frame is read and before an action in it.
  */
 export function frameShown(el: Element): "shown" | "hidden" | "away" {
@@ -452,21 +453,30 @@ export function frameShown(el: Element): "shown" | "hidden" | "away" {
 		if (!(left < Math.max(page.scrollWidth, view.innerWidth) && box.right + view.scrollX > 0)) return "hidden";
 		if ((box.top >= view.innerHeight || box.bottom <= 0) && clips(ofAxis(rootStyle, "Y"))) return "hidden";
 		if ((box.left >= view.innerWidth || box.right <= 0) && clips(ofAxis(rootStyle, "X"))) return "hidden";
-		// A cover fixed over the whole viewport stays put on a scroll, so the frame stays under it.
-		const [w, h] = [view.innerWidth, view.innerHeight];
-		const fixedAt = (x: number, y: number) => {
-			for (let n = el.ownerDocument.elementFromPoint(x, y); n; n = upOf(n))
-				if (styleOf(n).position === "fixed") return n;
-			return null;
+		// A cover fixed over the whole viewport stays put on a scroll, so the frame stays under it. Sampled
+		// inside the scrollbars; a fixed box can't hold the frame, as the walk above found none around it.
+		const [w, h] = [page.clientWidth || view.innerWidth, page.clientHeight || view.innerHeight];
+		const fixed = (n: Element) => styleOf(n).position === "fixed";
+		const whole = (n: Element) => {
+			const b = n.getBoundingClientRect();
+			return fixed(n) && b.left <= 0 && b.top <= 0 && b.right >= w && b.bottom >= h;
 		};
-		const cover = fixedAt(w / 2, h / 2);
-		const corners = [
-			[1, 1],
-			[w - 2, 1],
-			[1, h - 2],
-			[w - 2, h - 2],
-		];
-		return cover && corners.every(([x, y]) => fixedAt(x, y) === cover) ? "hidden" : "away";
+		// Every box at a point, open shadow roots' too.
+		const stack = (x: number, y: number) => {
+			const out: Element[] = [];
+			const add = (tree: Document | ShadowRoot) => {
+				for (const n of tree.elementsFromPoint?.(x, y) ?? [])
+					if (!out.includes(n) && out.push(n) && n.shadowRoot) add(n.shadowRoot);
+			};
+			add(el.ownerDocument);
+			return out;
+		};
+		const stacks = [stack(w / 2, h / 2), stack(1, 1), stack(w - 2, 1), stack(1, h - 2), stack(w - 2, h - 2)];
+		if (stacks.every((s) => s.some(fixed)) && stacks.some((s) => s.some(whole))) return "hidden";
+		// Hit tests skip a cover the pointer goes through (pointer-events: none): one placed on body is seen.
+		const drawn = (n: Element) => (n as Element & { checkVisibility?: () => boolean }).checkVisibility?.() !== false;
+		const loose = Array.from(el.ownerDocument.body?.children ?? []).some((n) => whole(n) && drawn(n));
+		return loose ? "hidden" : "away";
 	}
 	return points.some(([x, y]) => at.elementFromPoint(x, y) === el) ? "shown" : "hidden";
 }
@@ -538,14 +548,15 @@ async function place(
 	root: PageFrame | undefined,
 	sessionId = ownerSessionId,
 	end?: number,
-): Promise<PageFrame | undefined> {
+): Promise<PageFrame | undefined | null> {
+	// Null: no answer (its <iframe> not named, or a box not given in time), so the frame may well be there.
 	const own = await bounded(
 		cdpSendSession<{ backendNodeId?: number }>(tabId, ownerSessionId, "DOM.getFrameOwner", { frameId }),
 		callMs(end),
 	);
-	if (!own?.backendNodeId) return undefined;
+	if (!own?.backendNodeId) return null;
 	const box = await contentBox(tabId, ownerSessionId, own.backendNodeId, end);
-	if (!box) return undefined;
+	if (!box) return box;
 	const base = root?.offset ?? { x: 0, y: 0 };
 	const baseScale = root?.scale ?? 1;
 	const f: PageFrame = {
@@ -578,25 +589,33 @@ async function contentBox(
 	backendNodeId: number,
 	end?: number,
 ): Promise<
-	{ x: number; y: number; scale: number; border: { x: number; y: number; width: number; height: number } } | undefined
+	| { x: number; y: number; scale: number; border: { x: number; y: number; width: number; height: number } }
+	| undefined
+	| null
 > {
-	const [quads, model] = await Promise.all([
+	// A failure is an answer (a frame not drawn has no box); only a call out of time is none (null).
+	const answer = <T>(work: Promise<T>) =>
 		bounded(
-			cdpSendSession<{ quads?: number[][] }>(tabId, sessionId, "DOM.getContentQuads", { backendNodeId }),
+			work.then(
+				(v) => ({ v }),
+				() => ({ v: undefined }),
+			),
 			callMs(end),
-		),
-		bounded(
+		);
+	const [quads, model] = await Promise.all([
+		answer(cdpSendSession<{ quads?: number[][] }>(tabId, sessionId, "DOM.getContentQuads", { backendNodeId })),
+		answer(
 			cdpSendSession<{ model?: { content: number[]; border: number[]; width?: number } }>(
 				tabId,
 				sessionId,
 				"DOM.getBoxModel",
 				{ backendNodeId },
 			),
-			callMs(end),
 		),
 	]);
-	const q = quads?.quads?.[0];
-	const m = model?.model;
+	if (!quads || !model) return null;
+	const q = quads.v?.quads?.[0];
+	const m = model.v?.model;
 	if (!q || !m) return undefined;
 	// The quad is the box as drawn, the model's width its size in layout: their ratio is the frame's
 	// transform. Quads are in the viewport; the box model gives the border and padding inside them.

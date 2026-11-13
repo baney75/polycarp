@@ -1474,7 +1474,8 @@ with no sample point in view (below the fold) can't be tested, so it is named, n
 read_page". It is out of view only when a test proves a scroll brings it into sight: nothing fixed or sticky around it, no
 clip-path, no paint containment, no overflow clip that cuts it, and the nearest box that scrolls, then the page, reach it;
 anything else is hidden. Each axis is tested alone, in the box's own direction (right to left too), along the flat tree
-(a slotted frame's slot and shadow boxes, then the host), and a cover fixed over the whole viewport hides it. Any other failure keeps one line, "not shown, so not read", and nothing inside it is read either; this keeps the
+(a slotted frame's slot and shadow boxes, then the host), and a cover fixed over the whole viewport hides it (a fixed box at the center and each corner, one of them
+whole; or one on `body` the pointer goes through). Closed shadow roots and reversed scrollers are not modeled. Any other failure keeps one line, "not shown, so not read", and nothing inside it is read either; this keeps the
 #73 rule that hidden text never reaches the agent, and an invisible field can't be filled. The same test runs again in the
 tab for each frame, level by level, before the frame claims its line (matched by the `<iframe>`'s border box, not its
 corner), so a see-through frame under a shown one can't take the shown one's line or its points; a frame whose test gets

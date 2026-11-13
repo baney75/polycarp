@@ -970,7 +970,8 @@ test("PR 228 r1 first-F2 and PR 235 r1: out of view, a frame is away only when a
 		const part = (style, rect, parent = null, root = doc) => ({ nodeType: 1, ownerDocument: doc, style: { opacity: "1", filter: "none", ...style }, parentElement: parent, getRootNode: () => root, getBoundingClientRect: rect, scrollTop: 0, scrollLeft: 0, scrollHeight: 5000, scrollWidth: 1280 });
 		doc.documentElement = { ...part(htmlStyle, box(0, 0, 1280, scrollHeight)), scrollWidth: 1280, scrollHeight };
 		doc.body = part(bodyStyle, box(0, 0, 1280, scrollHeight), doc.documentElement);
-		doc.elementFromPoint = () => doc.body;
+		doc.stackAt = (f) => Object.assign(doc, { elementsFromPoint: f, elementFromPoint: (x, y) => f(x, y)[0] ?? null });
+		doc.stackAt(() => [doc.body]);
 		const frameIn = (rect, parent = doc.body, root = doc) => part({}, rect, parent, root);
 		return { doc, part, frameIn };
 	};
@@ -1010,10 +1011,25 @@ test("PR 228 r1 first-F2 and PR 235 r1: out of view, a frame is away only when a
 	const slot = t.part({}, box(0, 900, 1280, 400), t.part({ position: "fixed" }, box(0, 900, 1280, 400), null, { nodeType: 11, host: sheet }));
 	assert.equal(frameShown(Object.assign(t.frameIn(low, sheet), { assignedSlot: slot })), "hidden", "second-second-F1: slotted in a fixed panel");
 	const wall = t.part({ position: "fixed" }, box(0, 0, 1280, 800), t.doc.body);
-	t.doc.elementFromPoint = () => wall;
+	t.doc.stackAt(() => [wall]);
 	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F1: under a cover fixed over the viewport");
-	t.doc.elementFromPoint = (x, y) => (y === 400 ? wall : t.doc.body);
+	t.doc.stackAt((x, y) => (y === 400 ? [wall] : [t.doc.body]));
 	assert.equal(frameShown(t.frameIn(low)), "away", "a fixed box in the middle only is no cover");
+	// PR 240 r1: inside classic scrollbars; an overlay beside a centered panel; one in a shadow root; one the pointer goes through.
+	Object.assign(t.doc.documentElement, { clientWidth: 1265, clientHeight: 785 });
+	const fit = t.part({ position: "fixed" }, box(0, 0, 1265, 785), t.doc.body);
+	t.doc.stackAt((x, y) => (x < 1265 && y < 785 ? [fit] : [t.doc.documentElement]));
+	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F1: innerWidth counts the scrollbar");
+	const panel = t.part({ position: "fixed" }, box(440, 300, 400, 200), t.doc.body);
+	t.doc.stackAt((x, y) => (x > 440 && x < 840 && y > 300 && y < 500 ? [panel, fit] : [fit]));
+	assert.equal(frameShown(t.frameIn(low)), "hidden", "second-S1: a full overlay beside a centered dialog");
+	const consent = t.part({}, box(0, 0, 0, 0), t.doc.body);
+	consent.shadowRoot = { elementsFromPoint: () => [fit, consent] };
+	t.doc.stackAt(() => [consent, t.doc.body]);
+	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F2: a cover in an open shadow root");
+	t.doc.stackAt(() => [t.doc.body]);
+	t.doc.body.children = [fit];
+	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F6: a cover with pointer-events: none");
 });
 
 /** Two levels of frames (X holds Z), Z found once with no delay; `extra` is the fakeTab setup for the looks. */
@@ -1110,7 +1126,6 @@ test("PR 228 r1 first-F3 and second-S1: a redirected hidden frame says so on its
 	}
 });
 
-/** A page in a sandbox with one cross-origin <iframe>, to run page code as the tab would. */
 test("PR 235 r2 first-F3, first-F4, second-second-F2: query URLs bind their own lines; no frame notes throws; a refind that fails fast is unknown", async () => {
 	const { snapshot, changeLook, pageSnapshot } = await import("../src/browser/page.ts");
 	const getTab = chrome.tabs.get;
@@ -1124,6 +1139,12 @@ test("PR 235 r2 first-F3, first-F4, second-second-F2: query URLs bind their own 
 		const got = (await snapshot(56, { skip: open })).nodes;
 		assert.deepEqual(got.find((n) => n.ref === "e1")?.states, ["cross-origin: read it with navigate to its URL"], "first-F3: /a keeps its line");
 		assert.deepEqual(got.find((n) => n.ref === "e2")?.states, ["cross-origin frame, not shown, so not read"], "first-F3: /b says not shown");
+		// PR 240 r1 first-F3: one path, two queries; neither frame may take the line by its URL.
+		const ads = (id, q) => ({ frame: { id, url: `https://ads.example/slot?id=${q}`, securityOrigin: "https://ads.example" } });
+		const slots = ["e1", "e2"].map((r) => ({ ...frameLine(r, [100, 50, 400, 150]), href: "https://ads.example/slot" }));
+		fakeTab(58, { trees: { "": node("TOP", "https://shop.example", [ads("A1", 1), ads("A2", 2)]) }, holds: { A1: "TOP", A2: "TOP" }, owners: { A1: 11, A2: 12 }, shown: { A1: "no answer", A2: "hidden" }, evaluate: (frameId) => (frameId === undefined ? pageWith(slots) : frameSnap("ads")) });
+		const both = (await snapshot(58, { skip: open })).nodes.filter((n) => n.role === "iframe").map((n) => n.states?.[0]);
+		assert.deepEqual(both, ["cross-origin: read it with navigate to its URL", "cross-origin: read it with navigate to its URL"], "first-F3");
 		// first-F4: frame notes left out throw on any page, not only one with a cross-origin frame.
 		const page = crossPage();
 		page.document.querySelectorAll = () => [];
@@ -1135,11 +1156,17 @@ test("PR 235 r2 first-F3, first-F4, second-second-F2: query URLs bind their own 
 		const ref = `${frameTag("Z")}e5`;
 		const look = await changeLook(57, 400, [ref], [], { ref, rule: open, hit: { frame: z, inner: "e5" } });
 		assert.ok(!look.gone.includes(ref), `a refind with no answer is unknown, not gone: ${JSON.stringify(look.gone)}`);
+		// PR 240 r1 first-F4: the tree and owner answer, but the frame's box never comes: not found is not certain.
+		const { frameForRef } = await import("../src/browser/frames.ts");
+		await slowZ(59, { hang: new Set(["S1:DOM.getContentQuads"]) });
+		const err = await frameForRef(59, ref, open).catch((e) => e);
+		assert.match(String(err?.message), /did not answer/, "first-F4");
 	} finally {
 		chrome.tabs.get = getTab;
 	}
 });
 
+/** A page in a sandbox with one cross-origin <iframe>, to run page code as the tab would. */
 function crossPage() {
 	const g = { innerWidth: 1280, innerHeight: 800, scrollX: 0, scrollY: 0, __name: (f) => f, crypto, CSS: { escape: (s) => s }, location: { href: "https://shop.example/" }, frameElement: null, getComputedStyle: () => ({ opacity: "1", filter: "none", visibility: "visible", display: "block", paddingLeft: "0", paddingTop: "0" }) };
 	const doc = { nodeType: 9, defaultView: g, title: "Shop", body: { innerText: "Shop" }, activeElement: null, documentElement: { scrollHeight: 800 }, getElementsByTagName: () => [] };
