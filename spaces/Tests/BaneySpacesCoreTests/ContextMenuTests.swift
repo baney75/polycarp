@@ -183,19 +183,44 @@ final class ContextMenuTests: XCTestCase {
         XCTAssertNil(ContextMenu.ref(tree, title: "Delete"), "not disabled")
     }
 
-    /// By ref: nothing reaches the app unless the agent workspace is on screen under the window, whose middle stands for
-    /// the element (AXShowMenu opens the menu at it); a parked window is refused, nothing sent. A menu that still opens
+    /// By ref: nothing reaches the app unless the agent workspace is on screen under the window and the element
+    /// (AXShowMenu opens the menu at it); a parked window is refused, nothing sent. A menu that still opens
     /// off the window's display is cancelled by the verdict, as after a posted click.
     func testARightClickOnARefIsGatedLikeAPostedOne() throws {
         let shown = CGRect(x: 200, y: 100, width: 800, height: 600)
-        XCTAssertNil(ContextMenu.gate(agentShown: true, agentWindow: true, window: shown, displays: [main, side]))
+        let button = CGRect(x: 300, y: 200, width: 80, height: 24)
+        XCTAssertNil(ContextMenu.gate(agentShown: true, agentWindow: true, window: shown, element: button, displays: [main, side]))
         let parked = CGRect(origin: Geometry.hidingSpot(screens: [main, side]), size: shown.size)
         for (window, agent, own) in [(parked, true, true), (shown, false, true), (shown, true, false)] {
-            let e = try XCTUnwrap(ContextMenu.gate(agentShown: agent, agentWindow: own, window: window, displays: [main, side]), "\(window) \(agent) \(own)")
+            let e = try XCTUnwrap(ContextMenu.gate(agentShown: agent, agentWindow: own, window: window, element: button, displays: [main, side]), "\(window) \(agent) \(own)")
             XCTAssertEqual(e.code, .outsideAgentWorkspace)
             XCTAssertTrue(e.message.contains("nothing was sent"), e.message)
             XCTAssertEqual(e.retry, .never)
         }
+    }
+
+    /// 231 r1 second-S1: the window's middle doesn't stand for the element. A window across two displays, its middle on
+    /// the main one and the element on the other, would open the menu on a display Donovan may be looking at; an element
+    /// whose bounds can't be read is refused the same way, nothing sent.
+    func testARightClickOnARefIsGatedAtTheElementNotTheWindowsMiddle() throws {
+        let across = CGRect(x: 900, y: 100, width: 1000, height: 600)
+        XCTAssertTrue(main.contains(CGPoint(x: across.midX, y: across.midY)))
+        let onSide = CGRect(x: 1700, y: 300, width: 80, height: 24), onMain = CGRect(x: 1000, y: 300, width: 80, height: 24)
+        XCTAssertNil(ContextMenu.gate(agentShown: true, agentWindow: true, window: across, element: onMain, displays: [main, side]))
+        for element in [onSide, nil] as [CGRect?] {
+            let e = try XCTUnwrap(ContextMenu.gate(agentShown: true, agentWindow: true, window: across, element: element, displays: [main, side]), "\(String(describing: element))")
+            XCTAssertEqual(e.code, .outsideAgentWorkspace)
+            XCTAssertTrue(e.message.contains("nothing was sent"), e.message)
+        }
+    }
+
+    /// 231 r1 first-F5: a refusal that sent nothing (no such action, a ref gone stale) has no menu to watch for; any other
+    /// failure may have opened one, so it is watched and cancelled.
+    func testARefusalThatSentNothingIsNotWatchedForAMenu() {
+        XCTAssertTrue(ContextMenu.nothingSent(HandsError(.notSupported, "no AXShowMenu", suggestion: "")))
+        XCTAssertTrue(ContextMenu.nothingSent(HandsError(.staleRef, "gone", suggestion: "")))
+        XCTAssertFalse(ContextMenu.nothingSent(HandsError(.timeout, "slow", suggestion: "")))
+        XCTAssertFalse(ContextMenu.nothingSent(nil))
     }
 
     /// `click` takes button and item: left is the plain press, right opens the menu, item only with right.
@@ -225,10 +250,42 @@ final class ContextMenuTests: XCTestCase {
         XCTAssertLessThan(keys.lowerBound, act.lowerBound)
         XCTAssertTrue(click.contains("agentWindow: onAgentWorkspace(w, scope)") && click.contains("permit: keyPermit") && click.contains("leftOpen: &open"))
         XCTAssertFalse(src.contains("escapeMenu"))
-        XCTAssertTrue(click.contains("contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: nil, none: refused"))
-        XCTAssertFalse(src.contains("BackgroundPoster.pointer") || src.contains("AXUIElementPerformAction"), "no posted click, no accessibility action of its own")
+        XCTAssertTrue(click.contains("contextMenu(w, frame: frame, displays: displays, before: before, item: pressed == nil ? item : nil, stopped: nil, none: refused"))
+        // first-F5: nothing sent, no menu watch; it answers before contextMenu is asked.
+        let skip = try XCTUnwrap(click.range(of: "if ContextMenu.nothingSent(refused), let refused { answer = .failure(refused); return .ok(.null) }"))
+        let watch = try XCTUnwrap(click.range(of: "answer = contextMenu("))
+        XCTAssertLessThan(act.lowerBound, skip.lowerBound)
+        XCTAssertLessThan(skip.lowerBound, watch.lowerBound)
         let engine = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsEngine.swift")
         XCTAssertTrue(engine.contains("rightClick = 2") && engine.contains("Self.headlessPolicy, 0, &out"))
+    }
+
+    /// 231 r1 first-F3: an app that comes forward by itself on AXShowMenu is caught as after a posted click. The front app
+    /// is watched from before the press to after the cancel, by the same verdict; a press that brought it forward chooses
+    /// nothing from the menu and only cancels it.
+    func testARightClickOnARefWatchesTheFrontAppLikeAPostedOne() throws {
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextRef.swift")
+        let click = try XCTUnwrap(HandsSourceTests.block(after: "func contextClick(", in: src))
+        let front = try XCTUnwrap(click.range(of: "guard let front = frontWatch(w, kind: .pointer) else { answer = .failure(BackgroundRefusal.frontUnknown(w.app)); return .ok(.null) }"))
+        let after = try XCTUnwrap(click.range(of: "if let e = pressed ?? front.failure() { answer = .failure(e) }"))
+        XCTAssertLessThan(front.lowerBound, try XCTUnwrap(click.range(of: "kind: .rightClick")).lowerBound)
+        XCTAssertLessThan(try XCTUnwrap(click.range(of: "answer = contextMenu(")).lowerBound, after.lowerBound)
+        XCTAssertTrue(click.contains("let pressed = front.failure()") && click.contains("defer { front.stop() }"))
+        let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
+        XCTAssertEqual(bg.components(separatedBy: "PostGuard.verdict(span, hardware: hardware)").count, 2, "one front verdict, shared by transact and the ref")
+        XCTAssertTrue(bg.contains("func frontFailure() -> HandsError? { frontVerdict(w, kind: kind, spanFront(), hardware: hardware()) }"))
+        XCTAssertFalse(src.contains("BackgroundPoster.pointer") || src.contains("AXUIElementPerformAction"), "no posted click, no accessibility action of its own")
+    }
+
+    /// 231 r1 first-F4: "never a posted click" rests on the pinned engine; the note beside the kind quotes the lines
+    /// that make it so, and names the version they were read at.
+    func testTheRefRightClicksNoPostIsQuotedFromThePinnedEngine() throws {
+        let raw = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/BaneySpaces/Hands/HandsEngine.swift"), encoding: .utf8)
+        for quote in ["RIGHT_CLICK_CHAIN starts with `ChainStep::CGClick {", "`if !step_allowed(step, policy) { continue; }`", "|| policy.is_headed()`",
+                      "`Self::Headless => InteractionPolicy::headless()`", "agent-desktop 5261b52", "`assert!(!step_allowed(&physical, headless))`"] {
+            XCTAssertTrue(raw.contains(quote), quote)
+        }
     }
 
     /// 231 r1 first-F1: rule 1 is read inside the transaction, when the work runs. Read before it, work ahead on the
@@ -240,9 +297,11 @@ final class ContextMenuTests: XCTestCase {
         let tx = try XCTUnwrap(click.range(of: "HandsEngine.shared.transaction(window: w, check: acting) { [self] cancelled in"))
         let frame = try XCTUnwrap(click.range(of: "guard let frame = BackgroundAX.serverWindow(w.id)?.frame else {"))
         let displays = try XCTUnwrap(click.range(of: "let displays = ContextMenuAX.displays()"))
-        let gate = try XCTUnwrap(click.range(of: "ContextMenu.gate(agentShown: agentShown(), agentWindow: onAgentWorkspace(w, scope), window: frame, displays: displays) { answer = .failure(e); return .ok(.null) }"))
+        let gate = try XCTUnwrap(click.range(of: "ContextMenu.gate(agentShown: agentShown(), agentWindow: onAgentWorkspace(w, scope), window: frame, element: element, displays: displays) { answer = .failure(e); return .ok(.null) }"))
+        let bounds = try XCTUnwrap(click.range(of: #"HandsEngine.shared.getInline(window: w, ref: ref, property: "bounds")"#))
         let keys = try XCTUnwrap(click.range(of: "escapeKeys(w)"))
-        for (name, r) in [("frame", frame), ("displays", displays), ("gate", gate)] {
+        XCTAssertLessThan(bounds.lowerBound, gate.lowerBound)
+        for (name, r) in [("frame", frame), ("displays", displays), ("bounds", bounds), ("gate", gate)] {
             XCTAssertLessThan(tx.lowerBound, r.lowerBound, "\(name) is read inside the transaction")
             XCTAssertLessThan(r.lowerBound, keys.lowerBound, "\(name) before the cancel's permit and the engine")
         }

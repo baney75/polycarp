@@ -25,16 +25,28 @@ extension HandsRouter {
                     return .ok(.null)
                 }
                 let displays = ContextMenuAX.displays()
-                if let e = ContextMenu.gate(agentShown: agentShown(), agentWindow: onAgentWorkspace(w, scope), window: frame, displays: displays) { answer = .failure(e); return .ok(.null) }
+                // The element's own bounds: the menu opens at it, which can be on another display than the window's middle (231 r1 second-S1).
+                var element: CGRect?
+                if case .ok(let v) = HandsEngine.shared.getInline(window: w, ref: ref, property: "bounds") { element = HandsEvents.frame(ofBounds: v["value"]) }
+                if let e = ContextMenu.gate(agentShown: agentShown(), agentWindow: onAgentWorkspace(w, scope), window: frame, element: element, displays: displays) { answer = .failure(e); return .ok(.null) }
                 // The cancel's key permit first: none, and the engine is asked for nothing (210 r1 first-F1).
                 guard let keyPermit = escapeKeys(w) else { answer = .failure(ContextMenu.noCancel(w.app)); return .ok(.null) }
+                // The front app from before the press to after the cancel, as for a posted click: an app that comes forward by
+                // itself is shut out of the route (231 r1 first-F3).
+                guard let front = frontWatch(w, kind: .pointer) else { answer = .failure(BackgroundRefusal.frontUnknown(w.app)); return .ok(.null) }
+                defer { front.stop() }
                 let before = Set(ContextMenuAX.menus(w.pid, before: []).map(\.id))
                 var refused: HandsError?, open = false
                 if case .failed(let e) = HandsEngine.shared.actInline(window: w, ref: ref, kind: .rightClick, check: acting, cancelled: cancelled) { refused = e }
+                // Refused before anything was sent: no menu can come, so no watch for one (231 r1 first-F5).
+                if ContextMenu.nothingSent(refused), let refused { answer = .failure(refused); return .ok(.null) }
+                // The app came forward with its menu: nothing is chosen from it, it is only cancelled.
+                let pressed = front.failure()
                 // The menu's own window is the proof, whatever the engine said; with no menu, the engine's refusal is the answer.
-                answer = contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: nil, none: refused,
+                answer = contextMenu(w, frame: frame, displays: displays, before: before, item: pressed == nil ? item : nil, stopped: nil, none: refused,
                                      escape: { BackgroundPoster.keys([KeyChord(keyCode: 53, flags: 0, label: "escape")], permit: keyPermit, stop: { nil }).stopped == nil },
                                      leftOpen: &open, check: acting, cancelled: cancelled)
+                if let e = pressed ?? front.failure() { answer = .failure(e) }
                 return .ok(.null)
             }
             if case .failed(let e) = reply { return .failure(e) }
