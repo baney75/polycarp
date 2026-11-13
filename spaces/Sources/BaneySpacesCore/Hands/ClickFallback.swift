@@ -48,6 +48,15 @@ public enum ClickFallback {
         return Plan(container: "@\(snapshot):e\(boxNumber)", label: label, itemRole: role, containerKey: rows[box].key)
     }
 
+    /// The plan for row `number` of a remembered read, in that read's view, or nil when its container's ref is no good
+    /// now (`usable` says): the click is then the plain press (194 r1 first-F1, 203 r1 first-F2).
+    public static func plan(read: SnapshotRowsMemory.Read, snapshot: String, number: Int, usable: (String) -> Bool) -> Plan? {
+        guard var p = plan(rows: read.rows, snapshot: snapshot, number: number), usable(p.container) else { return nil }
+        // The readbacks read in this read's view, so the row keys they compare match (second-F5).
+        p.view = read.view
+        return p
+    }
+
     /// Whether the item is selected in a later read of the window: nil when its container isn't there, or the item
     /// isn't in it exactly once (review r1 second-F8: a same-named row in another collection is never read).
     public static func selected(_ rows: [SnapshotRows.Row], _ plan: Plan) -> Bool? {
@@ -55,7 +64,9 @@ public enum ClickFallback {
         let found = rows.indices.filter { rows[$0].role == plan.itemRole && inside(rows, $0, box) && label(rows, $0) == plan.label }
         guard found.count == 1 else { return nil }
         // A row the read hid (no ref, name or value) holds the selection for the cells it moved up (194 r1 second-F6).
-        return rows[found[0]].hiddenItemSelected ?? rows[found[0]].states.contains("selected")
+        // The item's own state still counts: a shown treeitem under a hidden one, or a cell a table selects by
+        // (203 r1 first-F1).
+        return (rows[found[0]].hiddenItemSelected ?? false) || rows[found[0]].states.contains("selected")
     }
 
     /// Whether the click is verified. With no readback (the row moved, the read didn't reach it) the press's own

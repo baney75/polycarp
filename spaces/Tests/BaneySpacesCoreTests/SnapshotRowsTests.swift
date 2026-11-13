@@ -142,28 +142,28 @@ final class SnapshotRowsTests: XCTestCase {
         var m = SnapshotRowsMemory()
         let t = Date()
         XCTAssertEqual(m.resolve(bare: 1, session: "a", now: t).code, .unknownRef, "no snapshot yet")
-        m.remember(session: "a", window: 9, view: "v", snapshot: "sOne", rows: rows(["OK", "Cancel"]), now: t)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sOne", rows: rows(["OK", "Cancel"]), now: t)
         XCTAssertEqual(m.resolve(bare: 2, session: "a", now: t), .ref("@sOne:e2"))
         XCTAssertEqual(m.resolve(bare: 2, session: "b", now: t).code, .unknownRef, "another session's snapshot is not this one's")
         XCTAssertEqual(m.resolve(bare: 3, session: "a", now: t).code, .unknownRef, "no row 3")
         // A new read with the same row 2: the number means one element, so it holds.
-        m.remember(session: "a", window: 9, view: "v", snapshot: "sTwo", rows: rows(["OK", "Cancel"]), now: t)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sTwo", rows: rows(["OK", "Cancel"]), now: t)
         XCTAssertEqual(m.resolve(bare: 2, session: "a", now: t), .ref("@sTwo:e2"))
     }
 
     func testABareRowFromAnOlderSnapshotIsRefused() {
         var m = SnapshotRowsMemory()
         let t = Date()
-        m.remember(session: "a", window: 9, view: "v", snapshot: "sOld", rows: rows(["OK", "Cancel"]), now: t)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sOld", rows: rows(["OK", "Cancel"]), now: t)
         // A row was added in front: row 2 is another element now.
-        m.remember(session: "a", window: 9, view: "v", snapshot: "sNew", rows: rows(["Delete", "OK", "Cancel"]), now: t)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sNew", rows: rows(["Delete", "OK", "Cancel"]), now: t)
         guard case .refused(let code, let message, let latest) = m.resolve(bare: 2, session: "a", now: t) else { return XCTFail("a bare 2 must be refused") }
         XCTAssertEqual(code, .staleBareRow)
         XCTAssertTrue(message.contains("button \"OK\"") && message.contains("button \"Cancel\""), message)
         XCTAssertEqual(latest?.snapshot, "sNew")
         // Another window's row 1 counts too.
-        m.remember(session: "c", window: 1, view: "v", snapshot: "sA", rows: rows(["Open"]), now: t)
-        m.remember(session: "c", window: 2, view: "v", snapshot: "sB", rows: rows(["Open"]), now: t)
+        m.remember(session: "c", window: 1, view: .full, as: "v", snapshot: "sA", rows: rows(["Open"]), now: t)
+        m.remember(session: "c", window: 2, view: .full, as: "v", snapshot: "sB", rows: rows(["Open"]), now: t)
         XCTAssertEqual(m.resolve(bare: 1, session: "c", now: t).code, .staleBareRow)
         // After the horizon the older snapshot no longer counts.
         XCTAssertEqual(m.resolve(bare: 1, session: "c", now: t.addingTimeInterval(SnapshotRowsMemory.horizon + 1)), .ref("@sB:e1"))
@@ -210,8 +210,8 @@ final class SnapshotRowsTests: XCTestCase {
     func testAfterASinceReadABareNumberIsRefusedAndTheNextCallIsARead() throws {
         var m = SnapshotRowsMemory()
         let t = Date()
-        m.remember(session: "a", window: 9, view: "v", snapshot: "sOld", rows: rows(["OK", "Cancel"]), now: t.addingTimeInterval(-SnapshotRowsMemory.horizon - 5))
-        m.remember(session: "a", window: 9, view: "v", snapshot: "sNew", rows: rows(["Delete", "OK", "Cancel"]), now: t, listed: false)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sOld", rows: rows(["OK", "Cancel"]), now: t.addingTimeInterval(-SnapshotRowsMemory.horizon - 5))
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sNew", rows: rows(["Delete", "OK", "Cancel"]), now: t, listed: false)
         guard case .refused(let code, let message, let latest) = m.resolve(bare: 2, session: "a", now: t) else { return XCTFail("click 2 after a since read must not act") }
         XCTAssertEqual(code, .staleBareRow)
         let e = SnapshotRowsMemory.error(code, message, latest: latest)
@@ -219,12 +219,12 @@ final class SnapshotRowsTests: XCTestCase {
         XCTAssertEqual(e.nextCall, HandsError.call("snapshot", ["window": 9]), "a read, never the click on a guessed row")
         // The disagreeing-snapshots refusal reads too.
         var n = SnapshotRowsMemory()
-        n.remember(session: "a", window: 9, view: "v", snapshot: "sOld", rows: rows(["OK", "Cancel"]), now: t)
-        n.remember(session: "a", window: 9, view: "v", snapshot: "sNew", rows: rows(["Delete", "OK", "Cancel"]), now: t)
+        n.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sOld", rows: rows(["OK", "Cancel"]), now: t)
+        n.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sNew", rows: rows(["Delete", "OK", "Cancel"]), now: t)
         guard case .refused(let c2, let m2, let l2) = n.resolve(bare: 2, session: "a", now: t) else { return XCTFail("stale") }
         XCTAssertEqual(SnapshotRowsMemory.error(c2, m2, latest: l2).nextCall?["tool"]?.string, "snapshot")
         // A full read afterwards makes its numbers good again.
-        m.remember(session: "a", window: 9, view: "v", snapshot: "sFull", rows: rows(["Delete", "OK", "Cancel"]), now: t)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sFull", rows: rows(["Delete", "OK", "Cancel"]), now: t)
         XCTAssertEqual(m.resolve(bare: 2, session: "a", now: t), .ref("@sFull:e2"))
     }
 
@@ -274,14 +274,14 @@ final class SnapshotRowsTests: XCTestCase {
     func testTheReReadNextCallAsksForClearsTheRefusal() {
         var m = SnapshotRowsMemory()
         let t = Date()
-        m.remember(session: "a", window: 9, view: "v", snapshot: "sOld", rows: rows(["OK", "Cancel"]), now: t)
-        m.remember(session: "a", window: 9, view: "v", snapshot: "sNew", rows: rows(["Delete", "OK", "Cancel"]), now: t)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sOld", rows: rows(["OK", "Cancel"]), now: t)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sNew", rows: rows(["Delete", "OK", "Cancel"]), now: t)
         XCTAssertEqual(m.resolve(bare: 2, session: "a", now: t).code, .staleBareRow)
-        m.remember(session: "a", window: 9, view: "v", snapshot: "sFull", rows: rows(["Delete", "OK", "Cancel"]), now: t)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sFull", rows: rows(["Delete", "OK", "Cancel"]), now: t)
         XCTAssertEqual(m.resolve(bare: 2, session: "a", now: t), .ref("@sFull:e2"))
         // A since read is not that re-read.
         XCTAssertEqual(m.resolve(bare: 9, session: "a", now: t).code, .unknownRef)
-        m.remember(session: "a", window: 9, view: "v", snapshot: "sSince", rows: rows(["Delete", "OK"]), now: t, listed: false)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "sSince", rows: rows(["Delete", "OK"]), now: t, listed: false)
         XCTAssertEqual(m.resolve(bare: 2, session: "a", now: t).code, .staleBareRow)
     }
 
@@ -295,8 +295,8 @@ final class SnapshotRowsTests: XCTestCase {
         XCTAssertEqual(SnapshotRowsMemory.kind(since: false, query: " ", rows: 10, max: nil).listed, true)
         var m = SnapshotRowsMemory()
         let t = Date()
-        m.remember(session: "a", window: 9, view: "v", snapshot: "s1", rows: rows(["OK"]), now: t)
-        m.remember(session: "a", window: 9, view: "v", snapshot: "s2", rows: rows(["OK", "Replace"]), now: t, listed: false, baseline: false)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "s1", rows: rows(["OK"]), now: t)
+        m.remember(session: "a", window: 9, view: .full, as: "v", snapshot: "s2", rows: rows(["OK", "Replace"]), now: t, listed: false, baseline: false)
         let base = m.previous(session: "a", window: 9, view: "v")
         XCTAssertEqual(base?.snapshot, "s1", "the query hid Replace, so the next since read still compares with s1")
         XCTAssertEqual(SnapshotRows.changes(from: base?.rows ?? [], to: rows(["OK", "Replace"])).map(\.row.name), ["Replace"])
