@@ -2,7 +2,7 @@ import CoreGraphics
 import XCTest
 @testable import BaneySpacesCore
 
-/// Item C: double and triple clicks through `click-at`'s pointer route; right click refused for now.
+/// Item C: double and triple clicks through `click-at`'s pointer route; right click through `ContextMenu`.
 final class ClickStyleTests: XCTestCase {
     let p = CGPoint(x: 120, y: 80)
 
@@ -49,24 +49,20 @@ final class ClickStyleTests: XCTestCase {
         XCTAssertEqual(held.released, 1)
     }
 
-    /// r1 first-F2 and second-F5: right click is refused until a context menu can be proved and kept off Donovan's screen.
-    func testCountIsCheckedAndRightClickIsNotAvailableYet() throws {
+    /// Context menus: a right click is one click, `item` goes only with it, and other buttons are refused.
+    func testCountIsCheckedAndARightClickIsOneClick() throws {
         XCTAssertEqual(try ClickStyle.parse(count: nil, button: nil).get(), .single)
         XCTAssertEqual(try ClickStyle.parse(count: 2, button: "LEFT").get(), ClickStyle(count: 2))
-        for (count, button) in [(0, "left"), (4, "left"), (1, "middle")] as [(Int, String)] {
-            guard case .failure(let e) = ClickStyle.parse(count: count, button: button) else { return XCTFail("\(count) \(button)") }
+        XCTAssertEqual(try ClickStyle.parse(count: nil, button: "right").get(), ClickStyle(count: 1, right: true))
+        XCTAssertEqual(try ClickStyle.parse(count: 1, button: "Right", item: "Rename").get(), ClickStyle(count: 1, right: true, item: "Rename"))
+        for (count, button, item) in [(0, "left", nil), (4, "left", nil), (1, "middle", nil), (2, "right", nil), (1, "left", "Rename"), (1, "right", " ")] as [(Int, String, String?)] {
+            guard case .failure(let e) = ClickStyle.parse(count: count, button: button, item: item) else { return XCTFail("\(count) \(button) \(item ?? "")") }
             XCTAssertEqual(e.code, .badArguments)
-            XCTAssertEqual(e.nextCall, .null)
-        }
-        for count in [nil, 1, 2] as [Int?] {
-            guard case .failure(let e) = ClickStyle.parse(count: count, button: "right") else { return XCTFail("right") }
-            XCTAssertEqual(e.code, .notSupported)
-            XCTAssertTrue(e.message.contains("right click is not available yet"), e.message)
-            XCTAssertEqual(e.retry, .never)
             XCTAssertEqual(e.nextCall, .null)
         }
         let tool = try XCTUnwrap(HandsTools.all.first { $0.verb == "click-at" })
         XCTAssertTrue(tool.summary.contains(#""count":2}"#), "one example call")
-        XCTAssertFalse(tool.params.contains { $0.help.contains("context menu") }, "nothing offers a right click")
+        XCTAssertTrue(tool.params.contains { $0.name == "item" })
+        XCTAssertTrue(tool.params.first { $0.name == "button" }?.help.contains("never leaves a menu open") == true)
     }
 }
