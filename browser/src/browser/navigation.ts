@@ -73,6 +73,19 @@ export function isPdfPageJump(from: string | undefined, to: string): boolean {
 	return a.href === b.href;
 }
 
+/** Whether two URLs are one document apart from the hash. */
+export function sameDocumentUrl(a: string, b: string): boolean {
+	try {
+		const x = new URL(a);
+		const y = new URL(b);
+		x.hash = "";
+		y.hash = "";
+		return x.href === y.href;
+	} catch {
+		return a === b;
+	}
+}
+
 /** How often an aborted navigation checks whether the tab still loads something before it counts as kept. */
 const ABORT_GRACE_MS = 500;
 
@@ -111,23 +124,25 @@ function waitForNavigation(
 		const onDone = (d: chrome.webNavigation.WebNavigationFramedCallbackDetails) => {
 			if (top(d) && committed) finish(() => resolve({ url: d.url, timedOut: false, committed }));
 		};
+		// Only this navigation's own jump: the old page's router can push a URL of its own while the new document loads.
 		const onSameDocument = (d: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => {
-			if (top(d)) finish(() => resolve({ url: d.url, timedOut: false, committed }));
+			if (top(d) && sameDocumentUrl(d.url, url)) finish(() => resolve({ url: d.url, timedOut: false, committed }));
 		};
 		const onError = (d: chrome.webNavigation.WebNavigationFramedErrorCallbackDetails) => {
 			if (!top(d)) return;
 			if (!d.error.includes("ERR_ABORTED"))
 				finish(() => reject(new Error(`Navigation to ${url} failed: ${d.error}`)));
 			// ERR_ABORTED with nothing committed: a URL that loads no document (a 204, a download), so the tab
-			// stays on its page; or an earlier navigation that this one cancelled. The tab says which: while it
-			// still loads something, the wait goes on until a commit or the timeout.
+			// stays on its page; or an earlier navigation that this one cancelled. The tab's pending navigation
+			// says which: while it has one, the wait goes on until a commit or the timeout. Its load status does
+			// not: a page that streams or never fires load stays "loading" whatever this navigation did.
 			else if (!committed && grace === undefined) grace = setTimeout(kept, ABORT_GRACE_MS);
 		};
 		const kept = () => {
 			chrome.tabs.get(tabId).then(
 				(tab) => {
 					if (committed || grace === undefined) return;
-					if (tab.status === "loading" || tab.pendingUrl) grace = setTimeout(kept, ABORT_GRACE_MS);
+					if (tab.pendingUrl) grace = setTimeout(kept, ABORT_GRACE_MS);
 					else finish(() => resolve({ url: tab.url ?? url, timedOut: false, committed }));
 				},
 				() => {

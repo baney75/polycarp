@@ -461,6 +461,13 @@ before(async () => {
 			res.writeHead(204);
 			return res.end();
 		}
+		// An image that never finishes: the page around it never fires load and its tab stays "loading".
+		if (req.url === "/never-ends.png") {
+			res.writeHead(200, { "content-type": "image/png" });
+			res.write(Buffer.alloc(8));
+			setTimeout(() => res.end(), 30_000).unref();
+			return;
+		}
 		res.writeHead(200, { "content-type": "text/html" });
 		if (req.url === "/counter") return res.end(COUNTER_PAGE);
 		if (req.url === "/refs") return res.end(REFS_PAGE);
@@ -2595,8 +2602,21 @@ test("navigate to a 204 says no new page loaded, without waiting out the load ti
 	const ms = Date.now() - start;
 	assert.deepEqual(kept.changes, { page: "no new page loaded; read_page shows the page" }, JSON.stringify(kept));
 	assert.match(kept.url, /\/pairing$/);
-	assert.ok(ms < 6000, `${ms} ms`);
+	assert.ok(ms < 2000, `${ms} ms`);
 	assert.match(JSON.parse(await tool("click", { ref: save })).changes.changed?.[0] ?? "", /button "Saved"/);
+});
+
+// PR 226 review round 1, first-F1: a page that never fires load keeps its tab "loading"; a 204 from it is still
+// no new page, at once, not "still loading" at the timeout.
+extraPages["/keeps-loading"] = `<!doctype html><title>Polycarp keeps loading</title><p>Streaming</p><img src="/never-ends.png" alt="">`;
+test("navigate to a 204 from a page that keeps loading says no new page loaded at once", async () => {
+	await go("keeps-loading");
+	const start = Date.now();
+	const kept = JSON.parse(await tool("navigate", { url: `${pageUrl}no-content`, timeoutMs: 15000 }));
+	const ms = Date.now() - start;
+	assert.deepEqual(kept.changes, { page: "no new page loaded; read_page shows the page" }, JSON.stringify(kept));
+	assert.match(kept.url, /\/keeps-loading$/);
+	assert.ok(ms < 2000, `${ms} ms`);
 });
 
 // PR 147 review round 2, first-F4 and second-N4: the skill's worked example is what the tool returns, and its
