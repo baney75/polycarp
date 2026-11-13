@@ -2,59 +2,67 @@ import CoreGraphics
 import XCTest
 @testable import BaneySpacesCore
 
-/// Item C: double, triple and right clicks through `click-at`'s pointer route.
+/// Item C: double and triple clicks through `click-at`'s pointer route; right click refused for now.
 final class ClickStyleTests: XCTestCase {
     let p = CGPoint(x: 120, y: 80)
 
-    func testOneLeftClickIsTheSameScriptAsBefore() {
-        XCTAssertEqual(InputScript.click(at: p, count: 1, right: false), [.mouseDown(p), .mouseUp(p)])
+    func testOneClickIsTheSameScriptAsBefore() {
+        XCTAssertEqual(InputScript.click(at: p, count: 1), [.mouseDown(p), .mouseUp(p)])
     }
 
     func testADoubleClickCountsItsClickStateUp() {
-        let one = InputEvent.Click(right: false, state: 1), two = InputEvent.Click(right: false, state: 2)
-        XCTAssertEqual(InputScript.click(at: p, count: 2, right: false), [.buttonDown(p, one), .buttonUp(p, one), .buttonDown(p, two), .buttonUp(p, two)])
-        XCTAssertEqual(InputScript.click(at: p, count: 3, right: false).count, 6)
-        let r = InputEvent.Click(right: true, state: 1)
-        XCTAssertEqual(InputScript.click(at: p, count: 1, right: true), [.buttonDown(p, r), .buttonUp(p, r)])
+        XCTAssertEqual(InputScript.click(at: p, count: 2), [.buttonDown(p, state: 1), .buttonUp(p, state: 1), .buttonDown(p, state: 2), .buttonUp(p, state: 2)])
+        XCTAssertEqual(InputScript.click(at: p, count: 3).count, 6)
     }
 
-    /// A stop after the first press still releases it, with the same click: no button is left held.
+    /// r1 first-F1 and first-F4: the stamped fields of the events a double click posts, by value. Every click says the
+    /// left button (field 3 is 0) with its own click state, and is a click (subtype 3), not part of a drag.
+    func testTheStampedFieldsOfADoubleClick() throws {
+        let stamps = try InputScript.click(at: p, count: 2).map { try XCTUnwrap(PointerStamp.of($0, drag: false)) }
+        XCTAssertEqual(stamps.map(\.kind), [.leftDown, .leftUp, .leftDown, .leftUp])
+        XCTAssertEqual(stamps.map(\.state), [1, 1, 2, 2])
+        XCTAssertEqual(stamps.map(\.button), [0, 0, 0, 0])
+        XCTAssertEqual(stamps.map(\.subtype), [3, 3, 3, 3])
+        XCTAssertLessThan(stamps.map(\.pause).reduce(0, +), 0.5, "inside the double-click interval")
+        let drag = try InputScript.drag(path: [p, CGPoint(x: 140, y: 80)]).map { try XCTUnwrap(PointerStamp.of($0, drag: true)) }
+        XCTAssertEqual(drag.map(\.kind), [.leftDown, .leftDragged, .leftUp])
+        XCTAssertEqual(drag.map(\.subtype), [0, 0, 0], "a drag's events are not clicks")
+        XCTAssertEqual(PointerStamp.of(.mouseMoved(p), drag: false)?.state, 0)
+        XCTAssertNil(PointerStamp.of(.keyDown(KeyChord(keyCode: 0, flags: 0, label: "a")), drag: false))
+    }
+
+    /// A stop after the first press still releases it, with the same click state: no button is left held.
     func testAStoppedDoubleClickLeavesNoButtonDown() {
         var calls = 0
-        let report = EventRunner.run(InputScript.click(at: p, count: 2, right: false), stop: {
+        let report = EventRunner.run(InputScript.click(at: p, count: 2), stop: {
             calls += 1
             return calls > 1 ? HandsError(.inUse, "back", suggestion: "") : nil
         }) { _ in {} }
-        let one = InputEvent.Click(right: false, state: 1)
-        XCTAssertEqual(report.posted, [.buttonDown(p, one), .buttonUp(p, one)])
+        XCTAssertEqual(report.posted, [.buttonDown(p, state: 1), .buttonUp(p, state: 1)])
         XCTAssertNotNil(report.stopped)
-        let right = InputEvent.Click(right: true, state: 1)
-        let held = EventRunner.run([.buttonDown(p, right)], stop: { nil }) { _ in {} }
-        XCTAssertEqual(held.posted, [.buttonDown(p, right), .buttonUp(p, right)], "a press the script never released is released at the end")
+        let held = EventRunner.run([.buttonDown(p, state: 2)], stop: { nil }) { _ in {} }
+        XCTAssertEqual(held.posted, [.buttonDown(p, state: 2), .buttonUp(p, state: 2)], "a press the script never released is released at the end")
         XCTAssertEqual(held.released, 1)
     }
 
-    func testCountAndButtonAreChecked() {
+    /// r1 first-F2 and second-F5: right click is refused until a context menu can be proved and kept off Donovan's screen.
+    func testCountIsCheckedAndRightClickIsNotAvailableYet() throws {
         XCTAssertEqual(try ClickStyle.parse(count: nil, button: nil).get(), .single)
-        XCTAssertEqual(try ClickStyle.parse(count: 2, button: "LEFT").get(), ClickStyle(count: 2, right: false))
-        XCTAssertEqual(try ClickStyle.parse(count: nil, button: "right").get(), ClickStyle(count: 1, right: true))
-        for (count, button) in [(0, "left"), (4, "left"), (2, "right"), (1, "middle")] as [(Int, String)] {
+        XCTAssertEqual(try ClickStyle.parse(count: 2, button: "LEFT").get(), ClickStyle(count: 2))
+        for (count, button) in [(0, "left"), (4, "left"), (1, "middle")] as [(Int, String)] {
             guard case .failure(let e) = ClickStyle.parse(count: count, button: button) else { return XCTFail("\(count) \(button)") }
             XCTAssertEqual(e.code, .badArguments)
             XCTAssertEqual(e.nextCall, .null)
         }
-        let tool = HandsTools.all.first { $0.verb == "click-at" }
-        XCTAssertEqual(tool?.params.filter { ["count", "button"].contains($0.name) }.count, 2)
-        XCTAssertTrue(tool?.summary.contains(#""count":2}"#) == true, "one example call")
-    }
-
-    /// The poster and router live in the app target: their source posts the right button with the counted click state.
-    func testThePosterAndRouterCarryTheStyle() throws {
-        let poster = try HandsSourceTests.code("Sources/BaneySpaces/Hands/BackgroundPoster.swift")
-        XCTAssertTrue(poster.contains("c.right ? .rightMouseDown : .leftMouseDown, p, Int64(c.state)"))
-        XCTAssertTrue(poster.contains("mouseButton: button"))
-        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
-        XCTAssertTrue(router.contains(#"ClickStyle.parse(count: req.int("count"), button: req.string("button"))"#))
-        XCTAssertTrue(router.contains("InputScript.click(at: path[0], count: style.count, right: style.right)"))
+        for count in [nil, 1, 2] as [Int?] {
+            guard case .failure(let e) = ClickStyle.parse(count: count, button: "right") else { return XCTFail("right") }
+            XCTAssertEqual(e.code, .notSupported)
+            XCTAssertTrue(e.message.contains("right click is not available yet"), e.message)
+            XCTAssertEqual(e.retry, .never)
+            XCTAssertEqual(e.nextCall, .null)
+        }
+        let tool = try XCTUnwrap(HandsTools.all.first { $0.verb == "click-at" })
+        XCTAssertTrue(tool.summary.contains(#""count":2}"#), "one example call")
+        XCTAssertFalse(tool.params.contains { $0.help.contains("context menu") }, "nothing offers a right click")
     }
 }

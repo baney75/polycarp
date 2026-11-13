@@ -26,6 +26,7 @@ window id, or a pid.
 | `agent snapshot|find|get|click|set-value|type|toggle|select|scroll|shot` | yes | yes (AT-SPI) | yes (UI Automation) |
 | `agent snapshot` rows: `--format rows\|json`, `--query`, `--since latest`, `--max_elements N`; a bare row number as a ref (the MCP `snapshot` tool answers rows by default) | yes | `not_supported` (JSON tree only) | `not_supported` (JSON tree only) |
 | `agent press|key|pointer` | phase 3-4 | `not_supported` (part 1) | phase 3-4 |
+| `agent click-at --window W --x X --y Y [--count 1\|2\|3]` (window-local points; `count` outside 1 to 3 is `invalid_args`; `--button right` is `not_supported` for now) | yes | `not_supported` | phase 3-4 |
 | `agent log [--since SECS]` | yes | yes | yes |
 | `agent lend|return` | the user only | `not_supported` (later) | the user only |
 | `keys [--platform P]` | yes | yes | yes |

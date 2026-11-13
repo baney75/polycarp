@@ -245,7 +245,7 @@ extension HandsRouter {
             Thread.sleep(forTimeInterval: verifier.hasPixels ? 0.2 : 0.05)
             let shotBefore = verifier.hasPixels ? WindowShot.pixels(window: w.id, check: scopeCheck) : nil
             if verifier == .pixels, shotBefore == nil { return .failed(BackgroundRefusal.noVerifier(w.app)) }     // nothing is pressed yet
-            let press = BackgroundPoster.pointer(drag ? InputScript.drag(path: path) : InputScript.click(at: path[0], count: style.count, right: style.right), frame: frame, drag: drag,
+            let press = BackgroundPoster.pointer(drag ? InputScript.drag(path: path) : InputScript.click(at: path[0], count: style.count), frame: frame, drag: drag,
                                                  gesture: gesture, permit: permit, stop: stop)
             aimed += press.screenPoints
             posted += press.report.posted.count; released = press.report.released; lastPostAt = Date()
