@@ -229,7 +229,8 @@ public enum MenuPath {
             // 197 r1 second-S3: the Versions browser takes the screen; Move To and Rename move the document out of the handoff folder.
             if i.id == "browsedocumentversions:" || i.name.hasPrefix("browse all versions") { return refuse(path, why: windows) }
             if ["movedocument:", "renamedocument:"].contains(i.id) { return refuse(path, why: documents) }
-            // 197 r1 first-F3: Use Selection for Find (cmd+e) writes the find text every app shares.
+            // 197 r1 first-F3: Use Selection for Find (cmd+e) puts the selection on the find text every app shares. Only this
+            // way in is closed: a search typed into a find bar writes it too (205 r1 first-F3).
             if i.chord("e") || i.id.contains("selectionforfind") || i.name.hasPrefix("use selection for find") { return refuse(path, why: findText) }
             let afterOpen = step.at > 0 && step.items[step.at - 1].chord("o")
             if i.submenu && (afterOpen || i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
@@ -289,7 +290,7 @@ public enum MenuPath {
     static let windows = "it moves, raises, fills or tiles windows or switches to full screen, which changes what Donovan sees"
     static let documents = "it opens documents, and an agent opens only files from the handoff folder"
     static let outside = "it opens a window outside the agent workspace or reaches Donovan's microphone, speakers, printer or other apps"
-    static let findText = "it writes the find text every app shares, which is Donovan's"
+    static let findText = "Use Selection for Find puts the selection on the find text every app shares"
 
     static func refuse(_ path: String, why: String) -> HandsError {
         let suggestion = why == documents ? "`open` the app with a file from the agent handoff folder."
@@ -343,6 +344,10 @@ public enum MenuPath {
         public init(panel: Bool = false, escapes: [Escape] = []) { self.panel = panel; self.escapes = escapes }
         /// Every look as one: a panel in any, each window once, tied only when every look that saw it tied it
         /// (197 r1 first-F2: the first sighting no longer ends the watch).
+        /// The escapes whose windows the window server still lists, and those that closed on their own since (205 r1 second-S2).
+        public func split(listed: Set<UInt32>) -> (open: [Escape], gone: [Escape]) {
+            (escapes.filter { listed.contains($0.window.id) }, escapes.filter { !listed.contains($0.window.id) })
+        }
         public static func merged(_ looks: [Seen]) -> Seen {
             var out = Seen()
             for l in looks {
@@ -417,16 +422,25 @@ public enum MenuPath {
     }
 
     /// `closed`: every tied window was closed (Polycarp closes only windows it tracks). Untied windows are never closed.
-    public static func escapeRefusal(_ path: String, found: [Escape], closed: Bool, window: Int) -> HandsError {
+    /// `gone`: windows a look saw that closed on their own before the undo (205 r1 second-S2).
+    public static func escapeRefusal(_ path: String, found: [Escape], gone: [Escape] = [], closed: Bool, window: Int) -> HandsError {
         func names(_ l: [Escape]) -> String { l.map { "a window of \($0.window.owner)" }.joined(separator: ", ") }
-        let tied = found.filter(\.tied), untied = found.filter { !$0.tied }
+        let tied = found.filter(\.tied), went = gone.filter(\.tied), untied = (found + gone).filter { !$0.tied }
         let other = untied.isEmpty ? "" : "; \(names(untied)) also appeared, which Polycarp couldn't tie to the command (Donovan may have opened it), so it was left alone"
-        guard tied.isEmpty else {
-            return HandsError(.outsideAgentWorkspace, "\(path) opened \(names(tied)) outside the agent workspace, where Donovan would see it; \(closed ? "it was closed" : "Polycarp couldn't close it, so it is still open")\(other)",
+        let closedItself = went.isEmpty ? "" : "\(tied.isEmpty ? "" : "; ")\(names(went)) closed again on its own"
+        guard tied.isEmpty && went.isEmpty else {
+            let state = tied.isEmpty ? "" : closed ? "it was closed" : "Polycarp couldn't close it, so it is still open"
+            return HandsError(.outsideAgentWorkspace, "\(path) opened \(names(tied + went)) outside the agent workspace, where Donovan would see it; \(state)\(closedItself)\(other)",
                               suggestion: "Don't use \(path) again: do it in the app's own window with click, type or set-value.", retry: .never, nextCall: .null)
         }
         return HandsError(.outsideAgentWorkspace, "while \(path) ran, \(names(untied)) appeared outside the agent workspace; Polycarp couldn't tie it to the command (Donovan may have opened it), so it closed nothing",
                           suggestion: "Snapshot the window to see whether the command did what you wanted.", retry: .afterSnapshot, nextCall: HandsError.call("snapshot", ["window": .int(window)]))
+    }
+
+    /// New windows a person could see, other than the app's own Open and Save panels (`panels`, by window number), which
+    /// the watch cancels as panels (205 r1 second-S1).
+    public static func fresh(_ all: [Listed], before: Set<UInt32>, panels: Set<UInt32>) -> [Listed] {
+        all.filter { !before.contains($0.id) && $0.visible && !panels.contains($0.id) }
     }
 
     /// The titles the path got through before it stopped: what `policy` judges, whatever `find` answered.
