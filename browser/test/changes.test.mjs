@@ -539,11 +539,7 @@ test("r2 second-N3: a hash added to a URL with no path is a jump within the page
 	await chrome.tabs.update(tabId, { url: "https://example.com/" });
 	loadsLand(fake);
 	const sent = recordCommands((method, params) =>
-		method === "Page.getFrameTree"
-			? { frameTree: { frame: { loaderId: "L1" } } }
-			: method === "Runtime.evaluate" && isLook(params)
-				? says(look([node("e1", "Buy")]))
-				: undefined,
+		method === "Runtime.evaluate" && isLook(params) ? says(look([node("e1", "Buy")])) : undefined,
 	);
 	const reply = await request("navigate", { url: "https://example.com#reviews" });
 	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
@@ -699,4 +695,69 @@ test("PR 196 r1 first-F4: the abort's grace timer ends with the wait, so nothing
 	const after = reads;
 	await new Promise((done) => setTimeout(done, 900));
 	assert.equal(reads, after, "the grace timer read the tab after the wait ended");
+});
+
+test("PR 226 r1 first-F1: a 204 from a page that keeps loading says no new page loaded in about 0.5 s", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { navigateTabDetailed } = await import(`../src/browser/navigation.ts?f1b=${Math.random()}`);
+	// A page with a stream or an image that never ends: the tab stays "loading" whatever this navigation does.
+	const tabId = fake.addTab({ url: "https://shop.example/", status: "loading" });
+	const set = chrome.tabs.update;
+	chrome.tabs.update = async (id, p) => {
+		const t = await set(id, {});
+		setTimeout(() => {
+			for (const fn of chrome.webNavigation.onErrorOccurred.listeners)
+				fn({ tabId: id, frameId: 0, url: p.url, error: "net::ERR_ABORTED" });
+		}, 10);
+		return t;
+	};
+	const start = Date.now();
+	const r = await navigateTabDetailed(tabId, "https://shop.example/report.csv", { timeoutMs: 4000 });
+	assert.deepEqual(r, { url: "https://shop.example/", timedOut: false, committed: false });
+	assert.ok(Date.now() - start < 1000, `${Date.now() - start} ms`);
+});
+
+test("PR 226 r1 first-F2: the old page pushing a URL of its own does not end the wait for the new document", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { navigateTabDetailed } = await import(`../src/browser/navigation.ts?f2=${Math.random()}`);
+	const tabId = fake.addTab({ url: "https://app.example/inbox", status: "complete" });
+	const fire = (ev, d) => {
+		for (const fn of chrome.webNavigation[ev].listeners) fn(d);
+	};
+	const set = chrome.tabs.update;
+	chrome.tabs.update = async (id, p) => {
+		const t = await set(id, { pendingUrl: p.url });
+		const at = { tabId: id, frameId: 0 };
+		// The old page's router, before the new document commits.
+		setTimeout(() => fire("onHistoryStateUpdated", { ...at, url: "https://app.example/inbox?tab=2" }), 10);
+		setTimeout(async () => {
+			await set(id, { pendingUrl: undefined });
+			fake.commitNav(id, p.url);
+			setTimeout(() => fire("onDOMContentLoaded", { ...at, url: p.url }), 20);
+		}, 200);
+		return t;
+	};
+	const r = await navigateTabDetailed(tabId, "https://other.example/", { timeoutMs: 3000 });
+	assert.deepEqual(r, { url: "https://other.example/", timedOut: false, committed: true });
+	// Its own jump to a hash still ends the wait at once.
+	chrome.tabs.update = async (id, p) => {
+		const t = await set(id, { url: p.url });
+		setTimeout(() => fire("onReferenceFragmentUpdated", { tabId: id, frameId: 0, url: "https://other.example/#reviews" }), 10);
+		return t;
+	};
+	const jump = await navigateTabDetailed(tabId, "https://other.example#reviews", { timeoutMs: 3000 });
+	assert.equal(jump.timedOut, false, JSON.stringify(jump));
+});
+
+test("PR 226 r1 second-S1: the first navigate of a session to a 204 or a download says no new page loaded", async () => {
+	const { fake, request } = await startBridge({ tab: false });
+	const { NOT_LOADED } = await import("../src/browser/changes.ts");
+	loadsLand(fake);
+	const start = Date.now();
+	const reply = await request("navigate", { url: "https://shop.example/report-204", timeoutMs: 5000 });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.deepEqual(reply.result.changes, { page: NOT_LOADED }, JSON.stringify(reply.result));
+	assert.ok(Date.now() - start < 3000, `${Date.now() - start} ms`);
 });
