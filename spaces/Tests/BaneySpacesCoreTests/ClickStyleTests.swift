@@ -31,15 +31,19 @@ final class ClickStyleTests: XCTestCase {
         XCTAssertNil(PointerStamp.of(.keyDown(KeyChord(keyCode: 0, flags: 0, label: "a")), drag: false))
     }
 
-    /// A stop after the first press still releases it, with the same click state: no button is left held.
-    func testAStoppedDoubleClickLeavesNoButtonDown() {
-        var calls = 0
-        let report = EventRunner.run(InputScript.click(at: p, count: 2), stop: {
-            calls += 1
-            return calls > 1 ? HandsError(.inUse, "back", suggestion: "") : nil
-        }) { _ in {} }
+    /// r2 second-F3: a stop is asked only before a press, never between a press and its release. The path that can
+    /// hold a click is an event that can't be made: the second press fails, and the first click is already released.
+    func testADoubleClickWhoseSecondPressCantBeMadeLeavesNoButtonDown() {
+        let report = EventRunner.run(InputScript.click(at: p, count: 2), stop: { nil }) { e in
+            e == .buttonDown(p, state: 2) ? nil : {}
+        }
         XCTAssertEqual(report.posted, [.buttonDown(p, state: 1), .buttonUp(p, state: 1)])
-        XCTAssertNotNil(report.stopped)
+        XCTAssertEqual(report.stopped?.code, .engineError)
+        let unmadeRelease = EventRunner.run([.buttonDown(p, state: 1), .buttonUp(p, state: 1)], stop: { nil }) { e in
+            e == .buttonUp(p, state: 1) ? nil : {}
+        }
+        XCTAssertEqual(unmadeRelease.posted, [], "a press whose release can't be made is never posted")
+        XCTAssertEqual(unmadeRelease.stopped?.code, .engineError)
         let held = EventRunner.run([.buttonDown(p, state: 2)], stop: { nil }) { _ in {} }
         XCTAssertEqual(held.posted, [.buttonDown(p, state: 2), .buttonUp(p, state: 2)], "a press the script never released is released at the end")
         XCTAssertEqual(held.released, 1)
