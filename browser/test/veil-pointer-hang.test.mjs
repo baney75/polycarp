@@ -13,8 +13,13 @@ chrome.scripting = {
 await chrome.storage.local.set({ veil_pointer: true });
 await new Promise((r) => setTimeout(r, 50));
 const get = chrome.storage.local.get;
+/** How many times the pointer setting was read. */
+let pointerReads = 0;
 chrome.storage.local.get = async (keys) => {
-	if (keys === "veil_pointer") return new Promise(() => undefined);
+	if (keys === "veil_pointer") {
+		pointerReads++;
+		return new Promise(() => undefined);
+	}
 	return get.call(chrome.storage.local, keys);
 };
 const { startVeil, veilBegin, veilEnd } = await import("../src/browser/veil.ts");
@@ -40,4 +45,14 @@ test("second-S1 (PR 204's second review): after that, a show on a fresh tab no l
 	assert.notEqual(begun, "hung", "veilBegin never returned");
 	assert.ok(took < 750, `the second veilBegin waited ${Math.round(took)} ms on the read that never settles`);
 	veilEnd(session, "click", begun);
+});
+
+test("first-F2 (PR 219's review): shows in later windows reuse the one read that never settles instead of starting more", async () => {
+	for (const name of ["three", "four", "five"]) {
+		const tabId = fake.addTab({ url: `https://shop.example.com/${name}` });
+		const session = { id: `bridge-claude-${name}`, tabIds: [tabId], currentTabId: tabId, ended: false, record: { label: "claude", color: "green" } };
+		veilEnd(session, "click", await veilBegin(session, "click", { tabId }));
+		await new Promise((r) => setTimeout(r, 1_600));
+	}
+	assert.equal(pointerReads, 1, `${pointerReads} reads of the setting are pending`);
 });

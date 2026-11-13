@@ -73,9 +73,9 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let enabled: boolean | undefined;
 /** Settings > Agents, "Show the agent's pointer": unknown until read once; storage changes keep it current. */
 let pointer: boolean | undefined;
-/** The read under way, if any. Dropped when a show gave up waiting on it, so the next show reads again. */
+/** The read under way, if any: one for the worker's life until it settles, never a second beside it (PR 219's review, first-F2). */
 let pointerRead: Promise<boolean> | undefined;
-/** A show gave up on the read: later shows start a read but draw at once, and the read sets the open veils. */
+/** A show gave up on the read: later shows draw at once without it, cues are dropped, and the read sets the open veils. */
 let pointerTimedOut = false;
 /** Settles EFFECT_TIMEOUT_MS after the read under way started: one deadline every show waiting on that read shares. */
 let pointerGiveUp: Promise<undefined> = Promise.resolve(undefined);
@@ -184,12 +184,15 @@ async function apply(
 			let { interactive, concealed, view } = effect;
 			if (late.fired) {
 				const now = state.tabs[tabId];
-				if (late.seq && newestShow.get(tabId) !== late.seq) return;
-				if (tagNow !== tag) return;
+				// No veil any more (a hide or a close came while it waited): the tag it stored goes, whatever else
+				// happened since. A newer show only owns the tag while the tab still has a veil (PR 219's review,
+				// second-S1).
 				if (!now) {
 					await rememberVeilTag(tabId, undefined);
 					return;
 				}
+				if (late.seq && newestShow.get(tabId) !== late.seq) return;
+				if (tagNow !== tag) return;
 				interactive = now.input === 0;
 				concealed = isConcealed(state, tabId);
 				view = now.view;
@@ -204,7 +207,9 @@ async function apply(
 				theme: pageTheme,
 				interactive,
 				concealed,
-				pointer: pointerShown,
+				// The setting as it is now: a read that settled while this show waited sent it to the open veils, and
+				// this inject must not undo that (PR 219's review, first-F1).
+				pointer: pointer ?? pointerShown,
 				mote: MOTE,
 			});
 			if (!result?.tag) await rememberVeilTag(tabId, undefined);
@@ -299,7 +304,7 @@ function pointerOn(): Promise<boolean> {
 	const read = isPointerEnabled()
 		.catch(() => true)
 		.then((on) => {
-			if (pointerRead === read) pointerRead = undefined;
+			pointerRead = undefined;
 			if (pointer !== undefined) return pointer;
 			pointer = on;
 			if (pointerTimedOut) for (const id of Object.keys(state.tabs)) void queuePoint(Number(id), undefined);
@@ -308,10 +313,7 @@ function pointerOn(): Promise<boolean> {
 	pointerRead = read;
 	pointerGiveUp = new Promise((r) =>
 		setTimeout(() => {
-			if (pointer === undefined) {
-				pointerTimedOut = true;
-				if (pointerRead === read) pointerRead = undefined;
-			}
+			if (pointer === undefined) pointerTimedOut = true;
 			r(undefined);
 		}, EFFECT_TIMEOUT_MS),
 	);
@@ -320,9 +322,9 @@ function pointerOn(): Promise<boolean> {
 
 /**
  * The setting for a show to draw with. The wait on a read is bounded by one deadline from when that read started, shared
- * by every show waiting on it; past it the show draws no character (the safe side) and the read is dropped, never kept
- * pending for the life of the worker. Each later show then starts a new read and draws at once, so a read that never
- * settles holds up no show after the first (PR 204's second review, second-S1).
+ * by every show waiting on it; past it the show draws no character (the safe side). Each later show draws at once, so a
+ * read that never settles holds up no show after the first (PR 204's second review, second-S1), and no show starts a
+ * second read beside it (PR 219's review, first-F2).
  */
 async function pointerForShow(): Promise<boolean> {
 	if (pointer !== undefined) return pointer;
@@ -418,11 +420,17 @@ export function startVeil(logger?: (line: string) => void): void {
 	});
 	void pointerOn();
 	// Fire and forget, behind the tab's own veil changes: the input it marks never waits for it.
+	// A cue before the setting is known waits on the one read, up to its shared deadline; past it the character is
+	// off (the shows drew none), so the cue is dropped rather than left waiting on a read that may never settle (PR
+	// 219's review, first-F2).
 	setPointerCue((tabId, cue) => {
-		void pointerOn().then((on) => {
-			const page = pointerCue(state, tabId, cue, on);
+		const send = (on: boolean | undefined) => {
+			const page = on === undefined ? undefined : pointerCue(state, tabId, cue, on);
 			if (page) void queuePoint(tabId, page);
-		});
+		};
+		if (pointer !== undefined) return send(pointer);
+		if (pointerTimedOut) return;
+		void Promise.race([pointerOn(), pointerGiveUp]).then((on) => send(on ?? pointer));
 	});
 	// A worker that restarted lost its state: veils it left in pages go.
 	void storedVeilTags().then(async (tags) => {
