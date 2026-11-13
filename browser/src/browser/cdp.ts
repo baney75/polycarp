@@ -710,7 +710,6 @@ export function keyInfo(name: string): KeyInfo {
  */
 export async function pressKey(tabId: number, chord: string): Promise<void> {
 	await ensureAttached(tabId);
-	cuePointer(tabId, "press");
 	const parts = chord.split("+").map((p) => p.trim());
 	// Modifier names in any case: "ctrl+V" must be the clipboard chord it is (refused below).
 	const alias: Record<string, string> = {
@@ -766,6 +765,8 @@ export async function pressKey(tabId: number, chord: string): Promise<void> {
 			nativeVirtualKeyCode: minfo.keyCode,
 		});
 	}
+	// After the keys: Tab or Enter may have moved focus, and the character goes where it is now.
+	cuePointer(tabId, "press");
 }
 
 // ---------------------------------------------------------------------------

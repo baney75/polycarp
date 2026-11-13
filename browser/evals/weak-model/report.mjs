@@ -1,9 +1,13 @@
 // Reads a round's transcripts and prints what a person classifying failures needs: per run the outcome, every
 // tool error with its text, repeated calls, and setup calls before the first real action.
-//   node evals/weak-model/report.mjs <label> [--errors] [--task id]
+//   node evals/weak-model/report.mjs <label> [--task id]
 import { loadRuns } from "./summarize.mjs";
 
 const [label, ...rest] = process.argv.slice(2);
+if (!label || label.startsWith("--")) {
+	console.error("usage: node evals/weak-model/report.mjs <label> [--task id]");
+	process.exit(2);
+}
 const onlyTask = rest.includes("--task") ? rest[rest.indexOf("--task") + 1] : undefined;
 const runs = loadRuns(label).filter((r) => !onlyTask || r.task === onlyTask);
 

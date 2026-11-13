@@ -9,7 +9,8 @@ platforms/linux/engine/
 # The hands engine: fetched, patched and built by scripts/build-engine.sh
 engine/.cache/
 engine/.src/
-engine/lib/
+# No trailing slash: a local symlink to a built copy is ignored too.
+engine/lib
 *.pyc
 __pycache__/
 .tools/
@@ -17,4 +18,4 @@ platforms/windows/third_party/
 platforms/windows/engine/
 .runs/
 # The voice core: built by scripts/build-core.sh from ../core
-core-lib/
+/core-lib

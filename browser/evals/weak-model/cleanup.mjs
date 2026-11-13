@@ -178,15 +178,30 @@ export function backupPrefs(domains, { exec, dir }) {
 }
 
 /**
- * Registers a sweep for app copies a run started but never reported: a computer_open still in flight when claude's
- * group was killed launched its app, but its answer never arrived. The sweep closes each agent-workspace window pid of
- * the task's app that wasn't there before the run and wasn't reported (a reported copy has its own undo). Release it
- * when the run ended on its own; undo it after a timeout; a signal runs it with the rest of cleanup.
+ * New agent-workspace windows of the task's app that no answer of this run reported. The helper knows which session
+ * opened a window but doesn't say, so nothing here proves such a window is this run's: it may be another agent
+ * session's or another job's, so it is never closed, only reported. With an open still pending (no answer yet, or
+ * window_identified false), the windows are read again until `waitMs` has passed, since such a window attaches late.
  */
-export function sweepCopies(cleanup, { app, before, known, list, kill }) {
-	return cleanup.add(`unreported ${app} copies`, async () => {
-		const mine = known();
-		const stray = new Set((await list()).filter((w) => w.app === app && w.scope === "agent_workspace" && !before.has(w.pid) && !mine.has(w.pid)).map((w) => w.pid));
-		for (const pid of stray) await kill(pid);
-	});
+export async function leftOpen({ app, before, known, pending, list, waitMs = 5000, stepMs = 500, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+	const end = now() + (pending ? waitMs : 0);
+	for (;;) {
+		const found = (await list()).filter((w) => w.app === app && w.scope === "agent_workspace" && !before.has(w.pid) && !known.has(w.pid)).map((w) => ({ app: w.app, pid: w.pid, window: w.id }));
+		if (found.length || now() >= end) return found;
+		await sleep(stepMs);
+	}
+}
+
+/**
+ * The end of a computer run, in this order on every way it ended: score it, close the copies it reported, then look
+ * for windows it left. Scoring first means a late window the model worked in still counts.
+ */
+export async function afterComputerRun({ score, undo, left }) {
+	let s;
+	try {
+		s = await score();
+	} finally {
+		await undo();
+	}
+	return { score: s, left: await left() };
 }

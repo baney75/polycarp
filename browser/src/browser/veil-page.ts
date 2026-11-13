@@ -286,6 +286,8 @@ ${GROUP_COLORS}
 	.take { background: ButtonFace; color: ButtonText; border-color: ButtonText; }
 	.mote .fill { fill: Highlight; stroke: CanvasText; }
 	.mote .rim { fill: Canvas; stroke: Canvas; }
+	.mote .caret { background: Highlight; forced-color-adjust: none; }
+	.mote .ping, .mote .chev { stroke: Highlight; }
 }
 @media print { .veil { display: none; } }
 `;
@@ -403,11 +405,13 @@ export function veilPage(cmd: VeilCommand): VeilPageResult {
 					el = inner;
 					continue;
 				}
-				if (el instanceof HTMLIFrameElement || el instanceof HTMLFrameElement) {
-					const r = el.getBoundingClientRect();
+				// By tag name: an element of a child frame fails the top frame's instanceof.
+				if (el.localName === "iframe" || el.localName === "frame") {
+					const frame = el as HTMLIFrameElement;
+					const r = frame.getBoundingClientRect();
 					let sub: Document | null = null;
 					try {
-						sub = el.contentDocument;
+						sub = frame.contentDocument;
 					} catch {
 						sub = null;
 					}
@@ -416,8 +420,8 @@ export function veilPage(cmd: VeilCommand): VeilPageResult {
 						el = null;
 						break;
 					}
-					dx += r.left + el.clientLeft;
-					dy += r.top + el.clientTop;
+					dx += r.left + frame.clientLeft;
+					dy += r.top + frame.clientTop;
 					doc = sub;
 					el = sub.activeElement;
 					continue;
@@ -444,9 +448,10 @@ export function veilPage(cmd: VeilCommand): VeilPageResult {
 			mote.dataset.y = String(c.y);
 		};
 		if (!mote.classList.contains("seen")) {
-			// The first cue places it there at once; later ones glide.
+			// The first cue places it there at once; later ones glide. With no point yet it stays hidden.
+			if (!at) return { tag: live.tag };
 			mote.classList.add("jump");
-			moveTo(at ?? { x: vw / 2, y: vh / 2 });
+			moveTo(at);
 			mote.getBoundingClientRect();
 			mote.classList.add("seen");
 			mote.classList.remove("jump");
@@ -461,7 +466,7 @@ export function veilPage(cmd: VeilCommand): VeilPageResult {
 			scroll: "r-nudge",
 			"scroll-page": "r-nudge",
 		};
-		for (const cls of Object.values(pose)) mote.classList.remove(cls);
+		mote.classList.remove("slow", ...Object.values(pose));
 		mote.getBoundingClientRect();
 		mote.classList.add(pose[cue.action] ?? "r-hover");
 		mote.dataset.action = cue.action;
@@ -479,7 +484,7 @@ export function veilPage(cmd: VeilCommand): VeilPageResult {
 			}, 140);
 		} else
 			live.react = setTimeout(() => {
-				for (const cls of Object.values(pose)) mote.classList.remove(cls);
+				mote.classList.remove("slow", ...Object.values(pose));
 				live.react = undefined;
 			}, 1000);
 		return { tag: live.tag };
