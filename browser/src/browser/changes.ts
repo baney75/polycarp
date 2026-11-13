@@ -14,7 +14,7 @@ import { CHANGES_MAX_CHARS, fitChanges } from "../bridge/fit-changes.js";
 import { openDialog } from "./cdp.js";
 import type { FrameRule } from "./frames.js";
 import { maskUrl } from "./mask-body.js";
-import { type ChangeLook, changeLook } from "./page.js";
+import { type ChangeLook, changeLook, type FrameLook } from "./page.js";
 
 /** Controls compared on each side; a page with more is compared on its first this many. */
 const MAX_NODES = 400;
@@ -42,8 +42,8 @@ export interface Before {
 	miss?: Miss;
 	/** The hosts no tool may read (#94): each look checks them in the page before it reads anything. */
 	hosts: readonly string[];
-	/** Which frames may be read: a target in a cross-origin frame is looked at there too (D46). */
-	rule?: FrameRule;
+	/** A target in a cross-origin frame is looked at there too (D46): its rule, and the frame once found. */
+	frame: FrameLook;
 	/**
 	 * False for a scroll: a list that recycles its rows shows new items in old elements, which would
 	 * read as renamed. Its report lists what went and what appeared instead.
@@ -86,7 +86,7 @@ async function look(
 	tabId: number,
 	hosts: readonly string[],
 	before: string[] = [],
-	frame?: { ref?: string; rule?: FrameRule },
+	frame?: FrameLook,
 ): Promise<ChangeLook | Miss> {
 	if (openDialog(tabId)) return "failed"; // the page is frozen: the dialog is the report
 	// The page goes on with a look that ran out (it can't be cancelled), but the call does not wait.
@@ -105,9 +105,10 @@ export async function beforeAction(
 	hosts: readonly string[] = [],
 	rule?: FrameRule,
 ): Promise<Before> {
-	const got = await look(tabId, hosts, [], { ref: target, rule });
+	const frame: FrameLook = { ref: target, rule };
+	const got = await look(tabId, hosts, [], frame);
 	const side = typeof got === "string" ? { miss: got } : { look: got };
-	return { tabId, tabs: [...tabs], target, hosts, rule, ...side };
+	return { tabId, tabs: [...tabs], target, hosts, frame, ...side };
 }
 
 /** The note for a report with a side missing: never "nothing changed", which would read as a failed action. */
@@ -173,7 +174,7 @@ async function report(
 						b.tabId,
 						b.hosts,
 						b.look.nodes.map((n) => n.ref),
-						{ ref: b.target, rule: b.rule },
+						b.frame,
 					);
 	if (typeof got === "string" || !b.look) {
 		// A report is a diff of two real looks, or it says plainly that it isn't.

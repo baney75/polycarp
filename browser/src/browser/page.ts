@@ -11,6 +11,7 @@ import {
 	bounded,
 	crossOriginFrames,
 	evaluateInFrame,
+	FRAMES_CLOSED,
 	type FrameRule,
 	frameForRef,
 	frameHost,
@@ -18,8 +19,10 @@ import {
 	frameShown,
 	frameShownNow,
 	frameTakesPoint,
+	MAX_DEPTH,
 	MAX_FRAMES,
 	type PageFrame,
+	remeasure,
 	scrollFrameIntoView,
 	splitFrameRef,
 } from "./frames.js";
@@ -111,7 +114,7 @@ async function runForRef<T>(
 	tabId: number,
 	ref: string | undefined,
 	code: (ref: string | undefined, inFrame: boolean) => string,
-	rule?: FrameRule,
+	rule: FrameRule = FRAMES_CLOSED,
 	found?: { frame: PageFrame; inner: string },
 ): Promise<{ value: T; frame?: PageFrame }> {
 	const hit = found ?? (ref ? await frameForRef(tabId, ref, rule) : undefined);
@@ -418,7 +421,7 @@ function pageSnapshot(
 	live: (el: Element) => boolean,
 	print: (el: Element) => string,
 	keepStale = false,
-	frameShown: (el: Element) => boolean = () => true,
+	frameShown: (el: Element) => "shown" | "hidden" | "away" = () => "shown",
 ): unknown {
 	const w = window as unknown as {
 		__tabkyraRefs?: unknown;
@@ -730,10 +733,13 @@ function pageSnapshot(
 		if (tag === "a" && f.href) node.href = String(f.href).slice(0, 200);
 		if (cross.has(el)) {
 			node.href = frameUrl(el).slice(0, 200);
+			const shown = frameShown(el);
 			node.states = [
-				frameShown(el)
+				shown === "shown"
 					? "cross-origin: read it with navigate to its URL"
-					: "cross-origin frame, not shown, so not read",
+					: shown === "away"
+						? "cross-origin frame out of view: scroll to it, then read_page"
+						: "cross-origin frame, not shown, so not read",
 			];
 		}
 		if (tag === "input") {
@@ -981,7 +987,7 @@ export async function snapshot(
 	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
 	if (snap?.crossFrames) {
 		delete snap.crossFrames;
-		await readFrames(tabId, snap, { maxNodes, maxTextChars, floor }, code, options.skip);
+		await readFrames(tabId, snap, { maxNodes, maxTextChars, floor }, code, options.skip ?? FRAMES_CLOSED);
 	}
 	return snap;
 }
@@ -1077,7 +1083,7 @@ export async function changeLook(
 	maxNodes: number,
 	before: string[] = [],
 	guardedHosts: readonly string[] = [],
-	frame?: { ref?: string; rule?: FrameRule },
+	frame?: FrameLook,
 ): Promise<ChangeLook | "guarded" | "large"> {
 	// The approval page (#94) can commit between the URL check and this script: the script checks
 	// again before it touches anything. A page this big is not read twice per action (D43).
@@ -1094,11 +1100,19 @@ export async function changeLook(
 	const mine = split ? before.filter((r) => r.startsWith(split.tag)).map((r) => r.slice(split.tag.length)) : [];
 	const inFrame = async (): Promise<ChangeLook | "gone" | undefined> => {
 		if (!split || !frame?.ref) return undefined;
-		const hit = await frameForRef(tabId, frame.ref, frame.rule).catch(() => undefined);
-		if (!hit) return "gone";
-		const got = await runInFrame<ChangeLook | "guarded" | "large">(tabId, hit.frame, code(mine)).catch(
-			() => undefined,
-		);
+		const ref = frame.ref;
+		const find = () => frameForRef(tabId, ref, frame.rule ?? FRAMES_CLOSED).catch(() => undefined);
+		const run = (hit: { frame: PageFrame }) =>
+			runInFrame<ChangeLook | "guarded" | "large">(tabId, hit.frame, code(mine)).catch(() => undefined);
+		// The frame found once for the action serves every look; it is looked for again only when it stops answering.
+		const known = frame.hit;
+		let got = known ? await run(known) : undefined;
+		if (!got) {
+			const hit = await find();
+			if (!hit) return "gone";
+			frame.hit = hit;
+			got = await run(hit);
+		}
 		return typeof got === "object" && got ? got : undefined;
 	};
 	const [look, inner] = await Promise.all([
@@ -1125,6 +1139,13 @@ export async function changeLook(
 	return look;
 }
 
+/** The frame an action's change report also looks in (D46): its ref, the rule, and the frame once found. */
+export interface FrameLook {
+	ref?: string;
+	rule?: FrameRule;
+	hit?: { frame: PageFrame; inner: string };
+}
+
 /** Elements in a document past which a change report does not look (each look reads the whole page). */
 export const LARGE_PAGE = 15000;
 
@@ -1133,74 +1154,105 @@ const CROSS_NOTE = "cross-origin: read it with navigate to its URL";
 
 /** The most a frame's own snapshot may take: one that doesn't answer keeps its plain line. */
 const FRAME_READ_MS = 3000;
+/** The most reading all frames may take, past finding them (FRAMES_MS): what hasn't answered is left out. */
+const FRAMES_READ_MS = 4000;
 
-/** Whether a listed cross-origin frame line is this frame's element: its box holds the frame's corner. */
-function lineOf(nodes: SnapshotNode[], f: PageFrame): number {
-	return nodes.findIndex(
+type Line = SnapshotNode & { states?: string[] };
+
+/**
+ * The listed cross-origin frame line that is this frame's own <iframe>: the same box, center and
+ * size, as drawn. A frame overlapping another's box, or a pixel at its corner, matches none.
+ */
+function lineOf(nodes: SnapshotNode[], f: PageFrame, taken: Set<SnapshotNode>): Line | undefined {
+	const near = (a: number, b: number) => Math.abs(a - b) <= 2;
+	return nodes.find(
 		(n) =>
-			(n as SnapshotNode & { states?: string[] }).states?.[0] === CROSS_NOTE &&
-			Math.abs(n.x - f.offset.x) <= n.width / 2 + 1 &&
-			Math.abs(n.y - f.offset.y) <= n.height / 2 + 1,
+			!taken.has(n) &&
+			(n as Line).states?.[0] === CROSS_NOTE &&
+			near(n.x, f.box.x) &&
+			near(n.y, f.box.y) &&
+			near(n.width, f.box.width) &&
+			near(n.height, f.box.height),
 	);
 }
 
 /**
  * Add each cross-origin frame's elements and text to a snapshot (D46): the elements right after
  * the frame's own element, with the frame's tag on their refs and the tab's coordinates, the text
- * under the frame's host. Only a frame the page shows is read: its line is listed as shown, by
- * the document around it (so a frame inside a hidden one is not either). A frame on a host not
- * allowed for agents keeps its line, which names the host, and nothing of it is read.
+ * under the frame's host. A frame is read only when its own line is listed as shown, by the
+ * document around it, and frameShownNow finds it shown too, so no other frame can stand in for
+ * it. A frame on a host not allowed for agents keeps its line, which names the host, and nothing
+ * of it is read. Frames of one level are read at once, all under one time limit.
  */
 async function readFrames(
 	tabId: number,
 	snap: Snapshot,
 	budget: { maxNodes: number; maxTextChars: number; floor: boolean },
 	code: (n: number, t: number) => string,
-	rule?: FrameRule,
+	rule: FrameRule,
 ): Promise<void> {
 	const frames = await crossOriginFrames(tabId, rule).catch(() => [] as PageFrame[]);
+	const end = Date.now() + FRAMES_READ_MS;
 	const { maxNodes, maxTextChars, floor } = budget;
 	let room = Math.max(maxNodes - snap.nodes.length, floor ? 60 : 0);
 	let textRoom = maxTextChars > 0 ? Math.max(maxTextChars - snap.text.length, floor ? 2000 : 0) : 0;
 	const { width, height } = snap.viewport;
+	const taken = new Set<SnapshotNode>();
 	let read = 0;
-	for (const f of frames) {
-		const at = lineOf(snap.nodes, f);
-		if (at < 0) continue;
-		const own = snap.nodes[at] as SnapshotNode & { states?: string[] };
-		const label = frameHost(f.url);
-		if (f.blocked) {
-			own.states = [`not allowed for agents: ${label}`];
-			continue;
-		}
-		if (room <= 0 || read >= MAX_FRAMES) continue;
-		const s = await bounded(runInFrame<Snapshot>(tabId, f, code(room, textRoom)), FRAME_READ_MS);
-		if (!s?.nodes) continue;
-		read++;
-		const nodes = s.nodes.map((n) => {
-			const x = Math.round(f.offset.x + f.scale * n.x);
-			const y = Math.round(f.offset.y + f.scale * n.y);
-			const inner = (n as SnapshotNode & { frame?: string }).frame;
-			return {
-				...n,
-				ref: f.tag + n.ref,
-				x,
-				y,
-				width: Math.round(n.width * f.scale),
-				height: Math.round(n.height * f.scale),
-				visible: n.visible && x >= 0 && y >= 0 && x < width && y < height,
-				...(n.href ? { href: maskUrl(n.href) } : {}),
-				frame: inner ? `${label} > ${inner}` : label,
-			};
+	// Outermost first: a frame's line is in the snapshot only once the frame around it is read.
+	for (let depth = 1; depth <= MAX_DEPTH; depth++) {
+		const level = frames.filter((f) => f.chain.length === depth);
+		// Each frame is tested as itself first: only a shown one may claim a line, so a hidden frame
+		// of the same box can't take a shown frame's line and leave it unread.
+		const shown = await Promise.all(level.map((f) => frameShownNow(tabId, f, end)));
+		const picks: Array<{ f: PageFrame; own: Line }> = [];
+		level.forEach((f, i) => {
+			if (!shown[i]) return;
+			const own = lineOf(snap.nodes, f, taken);
+			if (!own) return;
+			taken.add(own);
+			if (f.blocked) own.states = [`not allowed for agents: ${frameHost(f.url)}`];
+			else picks.push({ f, own });
 		});
-		own.states = ["cross-origin frame, its elements follow"];
-		snap.nodes.splice(at + 1, 0, ...nodes);
-		room -= nodes.length;
-		if (textRoom > 0 && s.text) {
-			const t = `[frame ${label}]\n${s.text}`.slice(0, textRoom);
-			snap.text = snap.text ? `${snap.text}\n\n${t}` : t;
-			textRoom -= t.length;
-		}
+		const wanted = room > 0 ? picks.slice(0, Math.max(0, MAX_FRAMES - read)) : [];
+		const got = await Promise.all(
+			wanted.map(({ f }) =>
+				bounded(
+					runInFrame<Snapshot>(tabId, f, code(room, textRoom)),
+					Math.max(0, Math.min(FRAME_READ_MS, end - Date.now())),
+				),
+			),
+		);
+		wanted.forEach(({ f, own }, i) => {
+			const s = got[i];
+			if (!s?.nodes || room <= 0) return;
+			read++;
+			const label = frameHost(f.url);
+			const nodes = s.nodes.slice(0, room).map((n) => {
+				const x = Math.round(f.offset.x + f.scale * n.x);
+				const y = Math.round(f.offset.y + f.scale * n.y);
+				const inner = (n as SnapshotNode & { frame?: string }).frame;
+				return {
+					...n,
+					ref: f.tag + n.ref,
+					x,
+					y,
+					width: Math.round(n.width * f.scale),
+					height: Math.round(n.height * f.scale),
+					visible: n.visible && x >= 0 && y >= 0 && x < width && y < height,
+					...(n.href ? { href: maskUrl(n.href) } : {}),
+					frame: inner ? `${label} > ${inner}` : label,
+				};
+			});
+			own.states = ["cross-origin frame, its elements follow"];
+			snap.nodes.splice(snap.nodes.indexOf(own) + 1, 0, ...nodes);
+			room -= nodes.length;
+			if (textRoom > 0 && s.text) {
+				const t = `[frame ${label}]\n${s.text}`.slice(0, textRoom);
+				snap.text = snap.text ? `${snap.text}\n\n${t}` : t;
+				textRoom -= t.length;
+			}
+		});
 	}
 }
 
@@ -1225,9 +1277,14 @@ export function elementCode(target: { ref?: string; selector?: string }): string
 export async function locate(
 	tabId: number,
 	target: { ref?: string; selector?: string },
-	rule?: FrameRule,
-	act = "click",
+	rule: FrameRule = FRAMES_CLOSED,
+	act: "click" | "hover" | "fill" | "type" = "click",
+	/** The ref's frame, when the action already found it (its change report's first look). */
+	found?: { frame: PageFrame; inner: string },
 ): Promise<{ x: number; y: number; width: number; height: number }> {
+	// What the errors call the action: "a click can't reach it", "which would take the click".
+	const aAct = act === "type" ? "typing" : `a ${act}`;
+	const theAct = act === "type" ? "the typing" : `the ${act}`;
 	const code = (r: string | undefined, inFrame: boolean) => `(async () => {
 		let el = null;
 		const ref = ${JSON.stringify(r ?? "")};
@@ -1258,11 +1315,11 @@ export async function locate(
 			throw new Error((ref ? "Ref " + ref : "That element") + " isn't shown now (hidden or closed). Call read_page for fresh refs.");
 		const spot = (${refPoint.toString()})(el);
 		const who = ref ? "Ref " + ref : "That element";
-		const covered = (by) => new Error(who + " is covered by " + by + ", which would take the click. Close or dismiss it, or click that instead, then call read_page.");
-		if (spot.offscreen) throw new Error(who + " is outside the visible page (kept off screen), so a click can't reach it.");
+		const covered = (by) => new Error(who + " is covered by " + by + , which would take ${theAct}. Close or dismiss it, or click that instead, then call read_page.");
+		if (spot.offscreen) throw new Error(who + " is outside the visible page (kept off screen), so ${aAct} can't reach it.");
 		if (spot.cover) throw covered(spot.cover);
 		const frameCover = (${refFrameCover.toString()})(el, spot.x, spot.y);
-		if (frameCover && typeof frameCover === "object") throw new Error(who + " is outside the visible page (kept off screen), so a click can't reach it.");
+		if (frameCover && typeof frameCover === "object") throw new Error(who + " is outside the visible page (kept off screen), so ${aAct} can't reach it.");
 		if (frameCover) throw covered(frameCover);
 		let x = spot.x;
 		let y = spot.y;
@@ -1280,7 +1337,7 @@ export async function locate(
 		}
 		return { x, y, width: w, height: h };
 	})()`;
-	const framed = target.ref ? await frameForRef(tabId, target.ref, rule) : undefined;
+	const framed = found ?? (target.ref ? await frameForRef(tabId, target.ref, rule) : undefined);
 	if (framed) await scrollFrameIntoView(tabId, framed.frame);
 	const { value: p, frame } = await runForRef<{ x: number; y: number; width: number; height: number }>(
 		tabId,
@@ -1293,7 +1350,7 @@ export async function locate(
 	// The point in the frame, in the tab's viewport: it must be on screen and land in the frame.
 	// Measured again, once drawn: bringing the element into view can scroll the page around the frame too.
 	await framePainted(tabId);
-	const now = (await frameForRef(tabId, target.ref as string, rule))?.frame ?? frame;
+	const now = (await remeasure(tabId, frame)) ?? frame;
 	const at = {
 		x: now.offset.x + now.scale * p.x,
 		y: now.offset.y + now.scale * p.y,
@@ -1308,7 +1365,7 @@ export async function locate(
 	const vh = view?.cssLayoutViewport?.clientHeight ?? Number.POSITIVE_INFINITY;
 	if (at.x < 0 || at.y < 0 || at.x >= vw || at.y >= vh)
 		throw new Error(
-			`Ref ${target.ref} is outside the visible page (its frame is cut off), so a ${act} can't reach it.`,
+			`Ref ${target.ref} is outside the visible page (its frame is cut off), so ${aAct} can't reach it.`,
 		);
 	// The page can hide a frame after it was read: one a person can't see is never acted in.
 	if (!(await frameShownNow(tabId, now)))
@@ -1317,7 +1374,7 @@ export async function locate(
 		);
 	if (!(await frameTakesPoint(tabId, now, at.x, at.y)))
 		throw new Error(
-			`Ref ${target.ref} is covered by something over its frame, which would take the ${act}. Close or dismiss it, then call read_page.`,
+			`Ref ${target.ref} is covered by something over its frame, which would take ${theAct}. Close or dismiss it, then call read_page.`,
 		);
 	return at;
 }
@@ -1327,7 +1384,8 @@ export async function fillElement(
 	tabId: number,
 	target: { ref?: string; selector?: string },
 	value: string,
-	rule?: FrameRule,
+	rule: FrameRule = FRAMES_CLOSED,
+	found?: { frame: PageFrame; inner: string },
 ): Promise<void> {
 	const code = (r: string | undefined, inFrame: boolean) => `(async () => {
 		let el = null;
@@ -1398,8 +1456,10 @@ export async function fillElement(
 	})()`;
 	// A field in a frame: the frame's own document can't see a banner over the frame, so the page
 	// around it is checked as a click would be, before anything is written.
-	if (target.ref && splitFrameRef(target.ref)) await locate(tabId, { ref: target.ref }, rule, "fill");
-	await runForRef(tabId, target.ref, code, rule);
+	const framed =
+		found ?? (target.ref && splitFrameRef(target.ref) ? await frameForRef(tabId, target.ref, rule) : undefined);
+	if (framed) await locate(tabId, { ref: target.ref }, rule, "fill", framed);
+	await runForRef(tabId, target.ref, code, rule, framed);
 }
 
 /** Characters get_page_text returns by default. */
@@ -1501,7 +1561,7 @@ export async function pageHtml(
 export async function scrollPage(
 	tabId: number,
 	options: { dx?: number; dy?: number; selector?: string; ref?: string; to?: "top" | "bottom" },
-	rule?: FrameRule,
+	rule: FrameRule = FRAMES_CLOSED,
 ): Promise<{
 	scrollX: number;
 	scrollY: number;
