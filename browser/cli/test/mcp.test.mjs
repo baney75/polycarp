@@ -1214,7 +1214,7 @@ test("files for a remote session: its own scope, never a path in, never a path o
 	}
 });
 
-test("second-S1 (review of PR 216), F4 (review of PR 227), second-S2, first-F2 (review of PR 230): on_dialog on any tool but click and press is refused by name over MCP", async () => {
+test("second-S1 (review of PR 216), F4 (review of PR 227): on_dialog on any tool but click and press is refused over MCP, never dropped", async () => {
 	// A fake native host that records every request and answers it: a refused call must send none.
 	const dir = join(root, "nodialog-sock");
 	mkdirSync(dir, { mode: 0o700 });

@@ -1636,9 +1636,10 @@ Decision (`src/browser/dialog-guard.ts`, service worker):
     which answer landed and not to do the action again.
   - What it cannot tell apart: a box the page opens by itself while the input is on its way, on that tab, takes the
     answer. CDP's dialog event names no cause.
-  - A box's cause is the sole call counted on its tab, or none and no repeat is named, nor for a double click. A call
-    reacts only to boxes on its own tabs. Over MCP every tool with arguments but click and press is strict: `on_dialog`,
-    or any key it lacks, fails by name (the review of PR 230).
+  - A box's cause is the sole call counted on its tab, or none and no repeat is named, nor for a double click. One that
+    another call's `on_dialog` answered stops no call: it froze nothing. Any other box on a session tab still fails the
+    call, since one site's tabs can share the frozen process. Over MCP every tool with arguments but click and press is
+    strict: `on_dialog`, or any key it lacks, fails by name (the review of PR 230).
   The OK rule is the same as for handle_dialog: OK only when the box confirms exactly what the user asked for.
 - **Only a handle_dialog for that dialog defers its Cancel,** counted from the moment the request reaches the worker's
   socket, while it waits behind the client's earlier requests too, until it ends. Nothing else holds a box: not another

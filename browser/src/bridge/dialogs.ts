@@ -296,8 +296,6 @@ export function raceDialogs<T>(
 		 * failure after the answer does (sol-F2, second-S2 of the review of PR 216).
 		 */
 		deadline?: { ms: number; label: string };
-		/** The tabs this call sends input to, when known. */
-		tabs?: () => number[];
 	} = {},
 ): Promise<T | Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
@@ -323,8 +321,8 @@ export function raceDialogs<T>(
 				answered = { tabId, dialog };
 				return;
 			}
-			// A box on a tab this call sends nothing to never froze it (second-S1 of the review of PR 230).
-			if (options.tabs?.().length && !options.tabs().includes(tabId)) return;
+			// Another call's on_dialog answered this box as it opened: it froze nothing (second-S1 of the review of PR 230).
+			if (dialog.preset && dialog.presetCall !== undefined && dialog.presetCall !== options.call) return;
 			stop();
 			onAbort();
 			opened = true;

@@ -280,12 +280,11 @@ test("sol-F2, first-F2: one armed answer per tab across the session's clients; a
 	await pastGrace();
 	assert.deepEqual(answers.map((x) => [x.message, x.accept]), [["A page timer's box", false]]);
 	assert.equal(openDialog(tab), undefined);
-	// And the other way: while c2 has a call running on the tab, a call with on_dialog there is not sent.
+	// And the other way: while c2 has a call running on the tab, a call with on_dialog there waits for it (PR 230).
 	const slow = deliver("c2", "wait", { tabId: tab, ms: 300 });
 	await wait(30);
 	const c = await request("click", { tabId: tab, x: 10, y: 10, on_dialog: "ok" });
-	assert.equal(c.error?.code, "not_sent", JSON.stringify(c));
-	await reply(slow);
+	assert.ok((await reply(slow)).result && c.result?.dialog?.answered === "ok", JSON.stringify(c));
 });
 
 test("first-F3 (review of PR 200): on_dialog's OK fails: Polycarp cancels the box at once and the call fails, with no wait for the guard", async (t) => {
@@ -677,10 +676,9 @@ test("sol-F3, first-F2 (review of PR 216): a step that resolved the current tab 
 	await request("tabs.select", { tabId: late }, "c1");
 	for (let i = 0; i < 100 && !clicks; i++) await wait(5);
 	assert.equal(clicks, 1, "c2's click step did not run");
-	// c2 is still running on `late`: a click with on_dialog there is not sent.
+	// c2 is still running on `late`: a click with on_dialog there waits until it has ended (PR 230).
 	const c = await request("click", { tabId: late, x: 10, y: 10, on_dialog: "ok" }, "c1");
-	assert.equal(c.error?.code, "not_sent", JSON.stringify(c));
-	assert.equal(clicks, 1, "c1's click reached the tab");
+	assert.equal(c.error, undefined, JSON.stringify(c));
 	const b = await reply(batch);
 	assert.equal(b.error, undefined, JSON.stringify(b.error));
 });
@@ -835,7 +833,6 @@ test("sol-F2, sol-F1 (review of PR 230): a press that outlived its call keeps th
 	});
 	assert.equal((await request("click", { tabId: tab, x: 10, y: 10 })).error?.code, "timeout");
 	handlerLimit = undefined;
-	// c1's press, and its release, are still on their way when c2's click opens the box: it is not sure to be c2's.
 	assert.equal((await request("click", { tabId: tab, x: 20, y: 20 }, "c2")).error, undefined);
 	await pastGrace();
 	const said = await notice(tab);
@@ -858,7 +855,6 @@ test("second-S1 (review of PR 230): another call's on_dialog box on another tab 
 	const b = await agentTab(async (_i, id) => {
 		await box(id, "confirm", "Delete the record?");
 	});
-	// c1's click on `a` is on its way while c2's on_dialog click on `b` opens its box and answers it.
 	const hold = holdPress(t, a);
 	const one = deliver("c1", "click", { tabId: a, x: 10, y: 10 });
 	for (let i = 0; i < 100 && !hold.seen.pressed; i++) await wait(5);

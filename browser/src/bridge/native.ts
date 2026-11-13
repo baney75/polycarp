@@ -461,7 +461,6 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 	/** The tabs this call is counted on in `tabCalls`; it holds them all when it has on_dialog. */
 	let onTabs: number[] = [];
 	let unwatch: (() => void) | undefined;
-	/** The handler's work: its input has returned once this settles. */
 	let work: Promise<unknown> | undefined;
 	/** The session and the tab the in-use veil counted this call on (src/browser/veil.ts). */
 	let veiled: { session: BrowserSession; tabId: number | undefined; currentBefore: number | undefined } | undefined;
@@ -626,7 +625,6 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		};
 		work = handler(ctx, req.params ?? {});
 		// An upload's begin may wait for the person's answer, which has its own, longer limit.
-		const scope = { call, method: req.method, soon: dialogSoon, tabs: () => onTabs };
 		const limit = (req.method === "files.upload.begin" ? FILE_ASK_TIMEOUT_MS + 30000 : HANDLER_TIMEOUT_MS) - waited;
 		// A call that can open a box runs out of time inside raceDialogs, which says what its on_dialog answered first
 		// (sol-F2, second-S2 of the review of PR 216); the outer limit only backs that up.
@@ -641,7 +639,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 							disarmDialog(call);
 						},
 						() => deliveredResult,
-						{ ...scope, deadline: { ms: limit, label: req.method } },
+						{ call, method: req.method, soon: dialogSoon, deadline: { ms: limit, label: req.method } },
 					),
 			dialogSafe ? limit : limit + 10_000,
 			req.method,
