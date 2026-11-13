@@ -1334,7 +1334,7 @@ test("files for a remote session: its own scope, never a path in, never a path o
 	}
 });
 
-test("second-S1 (review of PR 216), F4 (review of PR 227): on_dialog on any tool but click and press is refused over MCP, never dropped", async () => {
+test("second-S1 (review of PR 216), F4 (review of PR 227), first-F3, second-S2 (round 2 of the review of PR 230): a dialog key a tool lacks is refused over MCP, never dropped; other unknown keys are dropped", async () => {
 	// A fake native host that records every request and answers it: a refused call must send none.
 	const dir = join(root, "nodialog-sock");
 	mkdirSync(dir, { mode: 0o700 });
@@ -1385,19 +1385,19 @@ test("second-S1 (review of PR 216), F4 (review of PR 227): on_dialog on any tool
 			["navigate", { tabId: 41, url: "https://shop.example.com/", on_dialog: "ok" }],
 			["find", { tabId: 41, query: "Delete", on_dialog: "ok" }],
 			["wait", { tabId: 41, text: "Done", on_dialog: "cancel" }],
-			["type", { tabId: 41, text: "x", bogus: 1 }],
+			// A misspelt on_dialog on click or press would run the click with no answer set (first-F3).
+			["click", { tabId: 41, ref: "e5", onDialog: "ok" }],
+			["press", { tabId: 41, key: "Enter", on_dialog: "ok", on_dialog_txt: "hi" }],
 		];
 		for (const [name, args] of calls) {
 			const r = await client.callTool({ name, arguments: args });
 			const said = r.content.map((c) => c.text).join("\n");
-			assert.ok(r.isError, `${name} ran with on_dialog: ${said}`);
-			assert.match(said, /Unrecognized key\(s\) in object: '(on_dialog|on_dialog_text|bogus)'/, said);
+			assert.ok(r.isError, `${name} ran with a dialog key it lacks: ${said}`);
+			assert.match(said, new RegExp(`^bad_params: ${name} takes no (on_dialog|on_dialog_text|onDialog|on_dialog_txt)\\. Nothing was done`), said);
 		}
-		assert.deepEqual(requests.map((m) => m.method), [], "a call with on_dialog reached the browser");
-		// tools/list says each schema is closed; without a stray key the call goes through.
-		for (const t of (await client.listTools()).tools)
-			if (t.name !== "click" && t.name !== "press" && Object.keys(t.inputSchema.properties ?? {}).length) assert.equal(t.inputSchema.additionalProperties, false, t.name);
-		const ok = await client.callTool({ name: "type", arguments: { tabId: 41, text: "x" } });
+		assert.deepEqual(requests.map((m) => m.method), [], "a call with a stray dialog key reached the browser");
+		// Any other key a tool lacks is dropped, as before D48: the call goes through without it (second-S2).
+		const ok = await client.callTool({ name: "type", arguments: { tabId: 41, text: "x", bogus: 1 } });
 		assert.ok(!ok.isError, ok.content.map((c) => c.text).join("\n"));
 		assert.deepEqual(requests.map((m) => [m.method, m.params]), [["type", { tabId: 41, text: "x" }]]);
 	} finally {

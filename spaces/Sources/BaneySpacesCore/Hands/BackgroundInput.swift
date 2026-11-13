@@ -439,16 +439,18 @@ public enum InputEvent: Equatable, Sendable {
     case mouseMoved(CGPoint), mouseDown(CGPoint), mouseDragged(CGPoint), mouseUp(CGPoint)
     /// A click of a double or triple click: its click state, 1 for the first, 2 for the second, counts up.
     case buttonDown(CGPoint, state: Int), buttonUp(CGPoint, state: Int)
+    /// The right button: a right click, which opens a context menu (`ContextMenu`).
+    case rightDown(CGPoint), rightUp(CGPoint)
 
     public var isRelease: Bool {
         switch self {
-        case .keyUp, .mouseUp, .buttonUp: return true
+        case .keyUp, .mouseUp, .buttonUp, .rightUp: return true
         default: return false
         }
     }
     public var isPress: Bool {
         switch self {
-        case .keyDown, .mouseDown, .buttonDown: return true
+        case .keyDown, .mouseDown, .buttonDown, .rightDown: return true
         default: return false
         }
     }
@@ -465,6 +467,8 @@ public enum InputScript {
         if count <= 1 { return click(at: p) }
         return (1...count).flatMap { i -> [InputEvent] in [.buttonDown(p, state: i), .buttonUp(p, state: i)] }
     }
+    /// A right click: the pointer arrives, then the right button goes down and up.
+    public static func rightClick(at p: CGPoint) -> [InputEvent] { [.mouseMoved(p), .rightDown(p), .rightUp(p)] }
     public static func drag(path: [CGPoint]) -> [InputEvent] {
         guard let first = path.first else { return [] }
         return [.mouseDown(first)] + path.dropFirst().map(InputEvent.mouseDragged) + [.mouseUp(path.last ?? first)]
@@ -502,6 +506,7 @@ public enum EventRunner {
             case .keyDown(let c): return .keyUp(c)
             case .mouseDown(let p), .mouseDragged(let p): return .mouseUp(p)
             case .buttonDown(let p, let s): return .buttonUp(p, state: s)
+            case .rightDown(let p): return .rightUp(p)
             default: return nil
             }
         }
@@ -538,6 +543,7 @@ public enum EventRunner {
         case (.keyDown(let a), .keyUp(let b)): return a == b
         case (.mouseDown, .mouseUp): return true
         case (.buttonDown(_, let a), .buttonUp(_, let b)): return a == b
+        case (.rightDown, .rightUp): return true
         default: return false
         }
     }
@@ -863,6 +869,21 @@ public enum ContentChange {
         return Set(Set(a.keys).union(b.keys).filter { a[$0] != b[$0] })
     }
 
+    /// The baseline once the window holds still: read again until two reads in a row agree (at most `reads` more), and
+    /// every place that moved meanwhile is noise. A change still pending before the press (the title bar's Edited after
+    /// a type, drawn when the hover arrives) is then never taken for the press's effect.
+    public static func settle(first: JSONValue, reads: Int, read: () -> JSONValue?) -> (base: JSONValue, noise: Set<String>) {
+        var base = first, moved: Set<String> = []
+        for _ in 0..<reads {
+            guard let next = read() else { break }
+            let now = noise(base1: base, base2: next)
+            base = next
+            if now.isEmpty { break }
+            moved.formUnion(now)
+        }
+        return (base, moved)
+    }
+
     /// Whether anything outside the noise differs between the first baseline and now.
     public static func changed(base: [String: String], noise: Set<String>, after: JSONValue) -> Bool {
         let now = entries(of: after)
@@ -1008,20 +1029,27 @@ public enum PointerPath {
 }
 
 /// Item C: how `click-at` clicks. A double click is two clicks whose click state counts up, posted inside the
-/// double-click interval, through the same pointer route and proof as one click. Right click is not offered yet: a
-/// context menu is its own window the proof can't see, and AppKit draws it on a visible screen, where it takes the keyboard.
+/// double-click interval, through the same pointer route and proof as one click. A right click is one click of the right
+/// button; its proof is the context menu's own window, and the call presses `item` in it or cancels it (`ContextMenu`).
 public struct ClickStyle: Equatable, Sendable {
     public var count: Int
+    public var right = false
+    /// The context menu item a right click presses; nil lists the items and cancels the menu.
+    public var item: String?
     public static let single = ClickStyle(count: 1)
+    public init(count: Int, right: Bool = false, item: String? = nil) { self.count = count; self.right = right; self.item = item }
 
-    public static func parse(count: Int?, button: String?) -> Result<ClickStyle, HandsError> {
+    public static func parse(count: Int?, button: String?, item: String? = nil) -> Result<ClickStyle, HandsError> {
+        let example = #"Example: {"window":4211,"x":120,"y":80,"button":"right","item":"Rename"}"#
         switch (button ?? "left").lowercased() {
-        case "left": break
+        case "left":
+            if item != nil { return .failure(HandsError(.badArguments, "item goes with button: right", suggestion: example, retry: .safe, nextCall: .null)) }
         case "right":
-            return .failure(HandsError(.notSupported, "right click is not available yet: a context menu would open where Polycarp can't prove it or keep it off Donovan's screen",
-                                       suggestion: "Use `click` on a ref for the element's own action.", retry: .never, nextCall: .null))
+            guard count == nil || count == 1 else { return .failure(HandsError(.badArguments, "a right click is one click", suggestion: example, retry: .safe, nextCall: .null)) }
+            if let item, item.trimmingCharacters(in: .whitespaces).isEmpty { return .failure(HandsError(.badArguments, "item is empty", suggestion: example, retry: .safe, nextCall: .null)) }
+            return .success(ClickStyle(count: 1, right: true, item: item))
         default:
-            return .failure(HandsError(.badArguments, "button must be left", suggestion: #"Example: {"window":4211,"x":120,"y":80,"count":2}"#, retry: .safe, nextCall: .null))
+            return .failure(HandsError(.badArguments, "button must be left or right", suggestion: #"Example: {"window":4211,"x":120,"y":80,"count":2}"#, retry: .safe, nextCall: .null))
         }
         let n = count ?? 1
         guard (1...3).contains(n) else {
@@ -1034,7 +1062,7 @@ public struct ClickStyle: Equatable, Sendable {
 /// What the poster stamps on each pointer event: its type, click state (field 1), button number (field 3), subtype
 /// (field 7, 3 for a click, 0 in a drag) and the pause after it. The one table the poster reads, tested by value.
 public struct PointerStamp: Equatable, Sendable {
-    public enum Kind: Equatable, Sendable { case moved, leftDown, leftDragged, leftUp }
+    public enum Kind: Equatable, Sendable { case moved, leftDown, leftDragged, leftUp, rightDown, rightUp }
     public var kind: Kind, state: Int64, button: Int64, subtype: Int64, pause: TimeInterval
 
     public static func of(_ event: InputEvent, drag: Bool) -> PointerStamp? {
@@ -1046,6 +1074,9 @@ public struct PointerStamp: Equatable, Sendable {
         // The clicks of a double click follow well inside the double-click interval.
         case .buttonDown(_, let s): return .init(kind: .leftDown, state: Int64(s), button: 0, subtype: 3, pause: 0.05)
         case .buttonUp(_, let s): return .init(kind: .leftUp, state: Int64(s), button: 0, subtype: 3, pause: 0.04)
+        // The right button is button 1 (field 3), set on the event, never left at the left button's 0.
+        case .rightDown: return .init(kind: .rightDown, state: 1, button: 1, subtype: 3, pause: 0.06)
+        case .rightUp: return .init(kind: .rightUp, state: 1, button: 1, subtype: 3, pause: 0)
         default: return nil
         }
     }
