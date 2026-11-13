@@ -89,7 +89,11 @@ public enum MenuPath {
 
     /// The error for a path that didn't come out as one command. Its message lists the titles to choose from; next_call is
     /// a read or none, never another press.
-    public static func error(_ found: Found, path: [String], window: Int) -> HandsError? {
+    /// `background`: the app isn't active. macOS enables a window's commands only in the active app, whose window is key,
+    /// and Polycarp never brings an agent's copy forward, so a greyed command there stays greyed: no retry, no hint that a
+    /// selection would help. Measured on 952839c: Select All, Duplicate and Make Rich Text read disabled in such a copy, an
+    /// AXPress on them did nothing, and setting AXMain or AXFocused changed neither.
+    public static func error(_ found: Found, path: [String], window: Int, background: Bool = false, app: String = "the app") -> HandsError? {
         switch found {
         case .item: return nil
         case .missing(let level, let choices):
@@ -98,6 +102,9 @@ public enum MenuPath {
             return HandsError(.unknownRef, "no \"\(wanted)\" in \(at); there: \(choices.joined(separator: ", "))",
                               suggestion: "Pass a path of titles from the list.", retry: .safe,
                               nextCall: .null)
+        case .disabled(let p) where background:
+            return HandsError(.notSupported, "\(p.joined(separator: " > ")) is greyed out because \(app) is in the background: macOS enables a window's commands only in the app in front, and Polycarp never brings an agent's copy forward",
+                              suggestion: "Retrying won't change it. Do it on the element instead: click, type, set-value, select or toggle by ref.", retry: .never, nextCall: .null)
         case .disabled(let p):
             return HandsError(.notSupported, "\(p.joined(separator: " > ")) is greyed out now", suggestion: "Snapshot the window: the command may need a selection first.", retry: .afterSnapshot,
                               nextCall: HandsError.call("snapshot", ["window": .int(window)]))

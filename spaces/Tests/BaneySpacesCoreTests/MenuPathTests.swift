@@ -41,6 +41,16 @@ final class MenuPathTests: XCTestCase {
         XCTAssertEqual(miss.nextCall, .null)
         let grey = try XCTUnwrap(MenuPath.error(.disabled(path: ["Format", "Font", "Italic"]), path: ["Format", "Font", "Italic"], window: 7))
         XCTAssertEqual(grey.nextCall, HandsError.call("snapshot", ["window": 7]))
+        // The live check on 952839c: in an agent's copy, which is never in front, every window command read greyed and
+        // the "may need a selection" hint sent a weak model round forever. In the background it is never retried.
+        for path in [["Edit", "Select All"], ["File", "Duplicate"], ["Format", "Make Rich Text"]] {
+            let bg = try XCTUnwrap(MenuPath.error(.disabled(path: path), path: path, window: 7, background: true, app: "TextEdit"))
+            XCTAssertEqual(bg.retry, .never, path.joined())
+            XCTAssertEqual(bg.nextCall, .null)
+            XCTAssertTrue(bg.message.contains("TextEdit is in the background") && !bg.suggestion.contains("selection"), bg.message)
+        }
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
+        XCTAssertTrue(src.contains("background: NSRunningApplication(processIdentifier: w.pid)?.isActive != true, app: w.app"))
         XCTAssertNil(MenuPath.error(.item(ref: "@sm:e11", path: []), path: [], window: 7))
     }
 
