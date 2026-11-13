@@ -90,7 +90,10 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// page numbers, instead of reading it whole or paging through it 50,000 characters at a time.
 	// read_page's snapshot adds 111 (32,935): a later slice names the read it continues, so a click between two slices
 	// can't reshuffle them, and a slice from another read is refused.
-	assert.ok(bytes <= 32935, `tools/list is ${bytes} bytes, over the 32,935 budget`);
+	// on_dialog and on_dialog_text on click and press, and a line saying actions steps take none, add 503
+	// (33,438; D48): an answer set before the action is the only way to get past a box Polycarp must cancel within 3 s,
+	// sooner than a model turn can send handle_dialog. Nearly all schema; the descriptions are one line.
+	assert.ok(bytes <= 33438, `tools/list is ${bytes} bytes, over the 33,438 budget`);
 	// The loop line teaching `changes` (D43) adds 47 bytes; it saves a read_page after most actions.
 	// The password rule covering one the user gave, with its tabs_show handoff, adds 92 (evals/weak-model: Haiku typed
 	// the password a signup prompt supplied, and submitted, when the rule didn't say it covered that).
@@ -202,6 +205,38 @@ test("page_markdown with no Firecrawl, in a session without navigate, names no t
 		if (saved.dir === undefined) delete process.env.TABKYRA_CONFIG_DIR;
 		else process.env.TABKYRA_CONFIG_DIR = saved.dir;
 		if (saved.url !== undefined) process.env.FIRECRAWL_API_URL = saved.url;
+	}
+});
+
+// PR 208 second-F4: the page words a password field's hint with tabs_show. A scoped session without it was told so in a
+// click's change report, which read_page's rewrite never saw. And a snapshot id that isn't one is refused at the schema.
+test("in a session without tabs_show, no result names it: a click that reveals a password field asks the person", async () => {
+	const { build } = await import("esbuild");
+	const out = join(root, "mcp-bundle-scoped-pw.mjs");
+	await build({ entryPoints: [join(dirname(fileURLToPath(import.meta.url)), "..", "src", "mcp.ts")], bundle: true, platform: "node", format: "esm", outfile: out, loader: { ".md": "text", ".pub": "text" }, logLevel: "silent" });
+	const { createMcpServer } = await import(out);
+	const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+	const { server, client: bridge } = createMcpServer({ name: "pw", session: "scoped-pw", allowedTools: new Set(["click", "read_page"]) });
+	const sent = [];
+	bridge.call = async (method, params) => {
+		sent.push(method);
+		return { clicked: { x: 10, y: 20 }, changes: 'new: e7 textbox "Password" [required, password: never type one, call tabs_show and ask the person to type it]' };
+	};
+	const [a, b] = InMemoryTransport.createLinkedPair();
+	await server.connect(a);
+	const client = new Client({ name: "scoped-pw-test", version: "0.0.0" });
+	await client.connect(b);
+	try {
+		const clicked = await client.callTool({ name: "click", arguments: { ref: "e3" } });
+		const said = clicked.content.map((c) => c.text).join("\n");
+		assert.doesNotMatch(said, /tabs_show/, said);
+		assert.match(said, /password: never type one, ask the person to type it/);
+		const bad = await client.callTool({ name: "read_page", arguments: { filter: "interactive", offset: 50, snapshot: "r ab" } });
+		assert.equal(bad.isError, true);
+		assert.deepEqual(sent, ["click"], "a malformed snapshot id never reaches the page");
+	} finally {
+		await client.close();
+		bridge.close();
 	}
 });
 
@@ -1296,5 +1331,77 @@ test("files for a remote session: its own scope, never a path in, never a path o
 			if (v === undefined) delete process.env[k];
 			else process.env[k] = v;
 		}
+	}
+});
+
+test("second-S1 (review of PR 216), F4 (review of PR 227): on_dialog on any tool but click and press is refused over MCP, never dropped", async () => {
+	// A fake native host that records every request and answers it: a refused call must send none.
+	const dir = join(root, "nodialog-sock");
+	mkdirSync(dir, { mode: 0o700 });
+	const path = join(dir, `${process.pid}.sock`);
+	const frame = (m) => {
+		const body = Buffer.from(JSON.stringify(m));
+		const head = Buffer.alloc(4);
+		head.writeUInt32LE(body.length);
+		return Buffer.concat([head, body]);
+	};
+	const requests = [];
+	const server = createServer((socket) => {
+		let buffered = Buffer.alloc(0);
+		socket.on("data", (chunk) => {
+			buffered = Buffer.concat([buffered, chunk]);
+			while (buffered.length >= 4 && buffered.length >= 4 + buffered.readUInt32LE(0)) {
+				const msg = JSON.parse(buffered.subarray(4, 4 + buffered.readUInt32LE(0)).toString());
+				buffered = buffered.subarray(4 + buffered.readUInt32LE(0));
+				if (msg.type === "hello") socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: true }));
+				else if (msg.type === "request") {
+					requests.push(msg);
+					socket.write(frame({ type: "response", id: msg.id, result: { steps: 1, typed: 1 } }));
+				}
+			}
+		});
+	});
+	await new Promise((r) => server.listen(path, r));
+	chmodSync(path, 0o600);
+	const client = new Client({ name: "tabkyra-mcp-nodialog", version: "0.0.0" });
+	try {
+		await client.connect(
+			new StdioClientTransport({
+				command: process.execPath,
+				args: [cli, "mcp"],
+				env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: dir, POLYCARP_SPACES_BIN: join(root, "no-helper") },
+				stderr: "ignore",
+			}),
+		);
+		const calls = [
+			["actions", { tabId: 41, on_dialog: "ok", steps: [{ click: { x: 10, y: 10 } }] }],
+			["type", { tabId: 41, text: "x", on_dialog: "ok" }],
+			["fill", { tabId: 41, ref: "e4", value: "x", on_dialog: "cancel" }],
+			["hover", { tabId: 41, ref: "e4", on_dialog: "ok" }],
+			["scroll", { tabId: 41, dy: 100, on_dialog: "ok" }],
+			["drag", { tabId: 41, from: { x: 1, y: 1 }, to: { x: 2, y: 2 }, on_dialog_text: "hi" }],
+			// Not only the input tools: a script, a navigation or a wait can open a box too (F4 of the review of PR 227).
+			["run_js", { tabId: 41, code: "confirm('Delete?')", on_dialog: "ok" }],
+			["navigate", { tabId: 41, url: "https://shop.example.com/", on_dialog: "ok" }],
+			["find", { tabId: 41, query: "Delete", on_dialog: "ok" }],
+			["wait", { tabId: 41, text: "Done", on_dialog: "cancel" }],
+			["type", { tabId: 41, text: "x", bogus: 1 }],
+		];
+		for (const [name, args] of calls) {
+			const r = await client.callTool({ name, arguments: args });
+			const said = r.content.map((c) => c.text).join("\n");
+			assert.ok(r.isError, `${name} ran with on_dialog: ${said}`);
+			assert.match(said, /Unrecognized key\(s\) in object: '(on_dialog|on_dialog_text|bogus)'/, said);
+		}
+		assert.deepEqual(requests.map((m) => m.method), [], "a call with on_dialog reached the browser");
+		// tools/list says each schema is closed; without a stray key the call goes through.
+		for (const t of (await client.listTools()).tools)
+			if (t.name !== "click" && t.name !== "press" && Object.keys(t.inputSchema.properties ?? {}).length) assert.equal(t.inputSchema.additionalProperties, false, t.name);
+		const ok = await client.callTool({ name: "type", arguments: { tabId: 41, text: "x" } });
+		assert.ok(!ok.isError, ok.content.map((c) => c.text).join("\n"));
+		assert.deepEqual(requests.map((m) => [m.method, m.params]), [["type", { tabId: 41, text: "x" }]]);
+	} finally {
+		await client.close().catch(() => {});
+		server.close();
 	}
 });

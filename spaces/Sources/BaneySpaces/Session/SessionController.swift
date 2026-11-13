@@ -18,6 +18,8 @@ struct AgentHost {
     var pidOf: (UInt32) -> pid_t? = { _ in nil }
     /// Whether a workspace holds any window.
     var occupied: (Int) -> Bool = { _ in false }
+    /// The workspaces on screen, one per display.
+    var showing: () -> OpenFlashGuard.Showing = { .init(current: 1, byDisplay: [:]) }
 }
 
 /// Processes BaneySpaces started for an agent (`agent open` of an app, `agent run`): the only ones an agent
@@ -642,9 +644,11 @@ final class SessionController {
             let launchToken = AgentLaunches.shared.current
             /// A new window from behind through the app's own New Window command, claimed first.
             func newWindow(_ app: NSRunningApplication) -> Bool {
+                // Claimed only once there is a command to press: a lookup that found none leaves the launch's claim
+                // alone (review of PR 232, sol-F1).
+                guard let item = Windows.newWindowItem(app.processIdentifier) else { return false }
                 h.claim(app.processIdentifier, n, false, nil)
-                guard let item = Windows.newWindowItem(app.processIdentifier),
-                      AXUIElementPerformAction(item, kAXPressAction as CFString) == .success else {
+                guard AXUIElementPerformAction(item, kAXPressAction as CFString) == .success else {
                     h.unclaim(app.processIdentifier)
                     return false
                 }
@@ -660,12 +664,20 @@ final class SessionController {
                 guard !before.contains(app.processIdentifier) else { return }
                 adoptAgentStartedProcess(app.processIdentifier, workspace: n, title: nil, host: h, grantAccess: !separate)
                 if files.isEmpty {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        // The mode may have narrowed in the 1.5 s since the request was let in.
+                    /// No window yet: New Window must ask the app. While the launch's hold is on it waits, up to
+                    /// `holdFor`, since asking blocks main when a cover may need to rise (review of PR 213, first-F2).
+                    /// It leaves the hold to the watch, the one owner of a skipped ask (review of PR 225, first-F3).
+                    func newWindowCheck(waited: Double) {
+                        let pid = app.processIdentifier
+                        if OpenFlashGuard.newWindowWaits(held: Windows.isHeld(pid), waited: waited) {
+                            return DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { newWindowCheck(waited: waited + 0.1) }
+                        }
+                        // The mode may have narrowed since the request was let in.
                         let now = AgentAccess.shared.current
                         guard AgentAccessGate.sessionRefusal(op: "open", mode: now) == nil, separate || now == .full else { return }
-                        if Windows.standardIDs(of: app.processIdentifier).isEmpty { _ = newWindow(app) }
+                        if Windows.standardIDs(of: pid).isEmpty { _ = newWindow(app) }
                     }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { newWindowCheck(waited: 1.5) }
                 }
             }
             func finished(_ app: NSRunningApplication?) {
@@ -675,10 +687,13 @@ final class SessionController {
                     claimLaunch(app)
                 }
             }
-            if files.isEmpty {
-                NSWorkspace.shared.openApplication(at: url, configuration: cfg) { app, _ in finished(app) }
-            } else {
-                NSWorkspace.shared.open(files, withApplicationAt: url, configuration: cfg) { app, _ in finished(app) }
+            // Covers the new window on Donovan's workspace until it is parked; off unless set (`OpenFlashGuard`).
+            OpenFlashWatch.around(app: appName, before: before, showing: { h.showing() }, agent: n) { started in
+                if files.isEmpty {
+                    NSWorkspace.shared.openApplication(at: url, configuration: cfg) { app, _ in started(app); finished(app) }
+                } else {
+                    NSWorkspace.shared.open(files, withApplicationAt: url, configuration: cfg) { app, _ in started(app); finished(app) }
+                }
             }
             return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "note": "starting a separate copy; its window opens there in a moment"])
         case "cursor":
@@ -723,7 +738,7 @@ final class SessionController {
             h.move(id, n)
             return .init(ok: true, info: ["workspace": "\(n)", "moved": "window \(id)"])
         default:
-            return .init(ok: false, error: "usage: polycarp-spaces agent status|mode|on [N]|off|open <app> [file…]|lend <app>|run [--dir D] -- <cmd>|move <row>|cursor on|theme <name>")
+            return .init(ok: false, error: "usage: polycarp-spaces agent status|mode|on [N]|off|open <app> [file…]|lend <app>|run [--dir D] -- <cmd>|move <row>|cursor on|theme <name>, or a hands verb: \(HandsTools.verbLine)")
         }
     }
 

@@ -616,6 +616,15 @@ final class Spaces {
         }.keys)
     }
 
+    /// A launch's hold ended after a scan skipped its process (`OpenFlashGuard.Holds`): ask it now, not when something
+    /// else wakes Spaces, since the window server's list may not change again.
+    func askAgain(_ pid: pid_t) {
+        guard active else { return }
+        if switching { return scheduleRetry() }
+        refresh(full: true)
+        persist()
+    }
+
     /// Re-reads apps that a scan couldn't, once they're willing to answer again, in the
     /// background between switches, so the wait never lands on a key press.
     private var retry: (work: DispatchWorkItem, due: Date)?

@@ -96,7 +96,15 @@ export function installFakeChrome() {
 	const fire = (ev, ...args) => setTimeout(() => {
 		for (const fn of ev.listeners) fn(...args);
 	}, 0);
-	const tabEvents = { onActivated: event(), onCreated: event(), onRemoved: event(), onUpdated: event() };
+	const tabEvents = {
+		onActivated: event(),
+		onCreated: event(),
+		onRemoved: event(),
+		onUpdated: event(),
+		onAttached: event(),
+		onDetached: event(),
+		onReplaced: event(),
+	};
 	/** Chrome removes a group once its last tab leaves. */
 	const dropEmptyGroup = (g) => {
 		if (g !== -1 && g !== undefined && ![...tabs.values()].some((t) => t.groupId === g)) groups.delete(g);
@@ -194,6 +202,7 @@ export function installFakeChrome() {
 			},
 		},
 		windows: {
+			onFocusChanged: event(),
 			async get(id) {
 				await tick();
 				return id === 1 ? { ...win } : err("No window");
