@@ -157,6 +157,28 @@ public enum MenuPath {
         var name: String { title.lowercased() }
     }
 
+    /// One accessibility read: a value, no value (the attribute is unset or unsupported), or a read that failed (a busy
+    /// app times out). A failed read never counts as unset: an item with one is unknown, and unknown is refused.
+    public enum Read<T: Sendable>: Sendable {
+        case value(T), absent, failed
+        var known: T?? { switch self { case .value(let v): return .some(v); case .absent: return .some(nil); case .failed: return nil } }
+    }
+
+    /// The item from its reads, or nil when any of them failed.
+    public static func item(identifier: Read<String>, cmdChar: Read<String>, modifiers: Read<Int>, title: Read<String>, submenu: Bool?) -> MenuItem? {
+        guard let submenu, let id = identifier.known, let key = cmdChar.known, let mods = modifiers.known, let t = title.known else { return nil }
+        return MenuItem(identifier: id, cmdChar: key, modifiers: mods, title: t ?? "", submenu: submenu)
+    }
+
+    /// `policy`, or the refusal for a path whose items couldn't all be read (`steps` nil).
+    public static func judge(_ steps: [Step]?, window: Int) -> HandsError? {
+        guard let steps else {
+            return HandsError(.engineError, "the menu's key equivalents couldn't be read, so Polycarp can't tell whether the command is safe",
+                              suggestion: "Snapshot the window, then try the menu command again.", retry: .afterSnapshot, nextCall: HandsError.call("snapshot", ["window": .int(window)]))
+        }
+        return policy(steps)
+    }
+
     /// One menu on the path: its items in order and the one the path takes. The first step is the bar itself.
     public struct Step: Equatable, Sendable {
         public var items: [MenuItem], at: Int
@@ -179,6 +201,10 @@ public enum MenuPath {
             return steps.count == 2 && (menu.at == first || menu.chosen.chord(",")) ? nil : refuse(path, why: appMenu)
         }
         if isWindowMenu(menu.items, title: top) { return refuse(path, why: windows) }
+        // The Help menu, the bar's last: search and help pages open Help Viewer or Tips on Donovan's screen.
+        if bar.at == bar.items.lastIndex(where: { !$0.title.isEmpty }) || top == "help" || menu.items.contains(where: { $0.id == "showhelp:" }) {
+            return refuse(path, why: outside)
+        }
         for (k, step) in steps.enumerated().dropFirst() {
             let i = step.chosen
             if i.chord("f", control: true) || i.id.contains("fullscreen") || i.name.contains("full screen") { return refuse(path, why: windows) }
@@ -189,8 +215,22 @@ public enum MenuPath {
             if i.submenu && (afterOpen || i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
             if k == 1, isEditMenu(menu.items, title: top), clipboardGroup(menu.items, at: menu.at) { return clipboard(path) }
             if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name.hasPrefix($0) }) { return clipboard(path) }
+            if leavesTheApp(i) { return refuse(path, why: outside) }
         }
         return nil
+    }
+
+    /// Items macOS adds or that reach past the app: the Character Viewer, dictation (his microphone), speech (his speakers),
+    /// AutoFill, Writing Tools, the Substitutions panel, print and page setup, Share, Import from iPhone or iPad, screenshots.
+    /// By identifier and key equivalent first, English title last.
+    static let systemActions: Set<String> = ["orderfrontcharacterpalette:", "startdictation:", "stopdictation:", "showhelp:", "print:", "printdocument:",
+                                             "runpagelayout:", "startspeaking:", "stopspeaking:", "orderfrontsubstitutionspanel:", "showwritingtools:"]
+    static let systemFragments = ["autofill", "writingtools", "dictation", "speaking", "speech", "share", "sharing", "importfromdevice", "continuitycamera", "screenshot", "screencapture"]
+    static let systemTitles = ["emoji", "dictation", "autofill", "writing tools", "show substitutions", "speech", "print", "page setup", "share", "import from", "take screenshot"]
+    static func leavesTheApp(_ i: MenuItem) -> Bool {
+        if systemActions.contains(i.id) || systemFragments.contains(where: { i.id.contains($0) }) { return true }
+        if i.chord(" ", control: true) || i.chord("p") || i.chord("p", shift: true) || (i.command && i.key == "?") { return true }
+        return systemTitles.contains { i.name.hasPrefix($0) || i.name.contains(" " + $0) }
     }
 
     /// The Window menu: it minimizes (cmd+m), or is titled so. Every command in it moves, sizes, tiles or raises windows.
@@ -212,10 +252,12 @@ public enum MenuPath {
     static let appMenu = "the app menu's commands quit, hide or act on other apps (only About and Settings are used)"
     static let windows = "it moves, raises, fills or tiles windows or switches to full screen, which changes what Donovan sees"
     static let documents = "it opens documents, and an agent opens only files from the handoff folder"
+    static let outside = "it opens a window outside the agent workspace or reaches Donovan's microphone, speakers, printer or other apps"
 
     static func refuse(_ path: String, why: String) -> HandsError {
         let suggestion = why == documents ? "`open` the app with a file from the agent handoff folder."
-            : why == windows ? "Lay out agent windows with `arrange` or `move`." : "Close your window with `close`."
+            : why == windows ? "Lay out agent windows with `arrange` or `move`."
+            : why == outside ? "Do it in the app's own window with click, type or set-value." : "Close your window with `close`."
         return HandsError(.notSupported, "\(path) is never used: \(why)", suggestion: suggestion, retry: .never, nextCall: .null)
     }
 
@@ -233,6 +275,38 @@ public enum MenuPath {
     public static func panelRefusal(_ app: String, cancelled: Bool) -> HandsError {
         HandsError(.notSupported, "the command opened an Open or Save panel in \(app); agents never get one, and \(cancelled ? "it was cancelled" : "it could not be cancelled, so it is still open")",
                    suggestion: "Work with files through the agent handoff folder: `open` the app with a file from it, and save to that document.", retry: .never, nextCall: .null)
+    }
+
+    /// A window the window server lists. `visible`: on screen, not clear, and inside a display (a parked window is not).
+    /// `workspace`: Polycarp's workspace for it, nil when it tracks none.
+    public struct Listed: Equatable, Sendable {
+        public var id: UInt32, pid: Int32, owner: String, visible: Bool, workspace: Int?
+        public init(id: UInt32, pid: Int32, owner: String, visible: Bool, workspace: Int?) {
+            self.id = id; self.pid = pid; self.owner = owner; self.visible = visible; self.workspace = workspace
+        }
+    }
+
+    /// How long after the press windows are watched.
+    public static let watch: TimeInterval = 1
+    /// System processes a menu command can bring up: the Character Viewer, Help Viewer and Tips, dictation, printing,
+    /// the share sheet, the screenshot tool. By owner name, any case.
+    static let helpers = ["characterpalette", "character viewer", "helpviewer", "help viewer", "tips", "dictation", "printcenter", "print center",
+                          "printer", "sharingui", "sharesheet", "share sheet", "screencapture", "screenshot"]
+
+    /// After the press: windows that are new since `before`, visible and not on the agent workspace, of the app (once
+    /// `settled`, so Polycarp has had the watch to place a new window of its own) or of a system helper (at once).
+    public static func escaped(before: Set<UInt32>, now: [Listed], pid: Int32, agentWorkspace: Int?, settled: Bool) -> [Listed] {
+        now.filter { w in
+            guard !before.contains(w.id), w.visible, w.workspace == nil || w.workspace != agentWorkspace else { return false }
+            if w.pid == pid { return settled }
+            let owner = w.owner.lowercased()
+            return helpers.contains { owner.contains($0) }
+        }
+    }
+
+    public static func escapeRefusal(_ path: String, opened: [String], closed: Bool) -> HandsError {
+        HandsError(.outsideAgentWorkspace, "\(path) opened \(opened.joined(separator: ", ")) outside the agent workspace, where Donovan would see it; \(closed ? "it was closed" : "it could not be closed, so it is still open")",
+                   suggestion: "Don't use \(path) again: do it in the app's own window with click, type or set-value.", retry: .never, nextCall: .null)
     }
 
     /// The titles the path got through before it stopped: what `policy` judges, whatever `find` answered.
@@ -257,5 +331,39 @@ public enum MenuPath {
         if tree["role"]?.string == "button", tree["name"]?.string == title, let ref = tree["ref_id"]?.string { return ref }
         for c in tree["children"]?.array ?? [] { if let r = cancelRef(c, title: title) { return r } }
         return nil
+    }
+}
+
+/// Item C layer 2: a watch that starts with the press and runs until `MenuPath.watch` after the press ended. `step`
+/// looks once (settled: the watch is over, judge the app's own new windows too) and answers what it saw. It only looks:
+/// what it saw is undone through the engine once the press is back, since agents never act on AX directly.
+public final class MenuWatch<Found: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false, ended: Date?, found: Found?
+    private let done = DispatchSemaphore(value: 0)
+    private let every: TimeInterval
+    public init(every: TimeInterval = 0.05) { self.every = every }
+
+    public func start(_ step: @escaping @Sendable (_ settled: Bool) -> Found?) {
+        lock.lock(); started = true; lock.unlock()
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            defer { done.signal() }
+            while true {
+                lock.lock(); let end = ended; lock.unlock()
+                let settled = end.map { Date() >= $0.addingTimeInterval(MenuPath.watch) } ?? false
+                if let e = step(settled) { lock.lock(); found = e; lock.unlock(); return }
+                if settled { return }
+                Thread.sleep(forTimeInterval: every)
+            }
+        }
+    }
+
+    /// The press ended: waits out the watch and answers what it found. Nil at once when no press started.
+    public func finish() -> Found? {
+        lock.lock(); let was = started; if ended == nil { ended = Date() }; lock.unlock()
+        guard was else { return nil }
+        done.wait()
+        lock.lock(); defer { lock.unlock() }
+        return found
     }
 }

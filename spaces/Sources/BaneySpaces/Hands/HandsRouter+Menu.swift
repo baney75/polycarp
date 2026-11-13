@@ -23,30 +23,31 @@ extension HandsRouter {
             let acting = actingCheck(w, verb: "menu", delivery: .posted, session: session, also: menuRule(w, session: session, front: true))
             let childrenBefore = noteAction(session: session, pid: w.pid)
             var spelled: [String] = [], press: JSONValue = .null
+            let before = MenuAX.ids(), agent = onMain { host.agentWorkspace() }
+            let watch = MenuWatch<MenuSeen>()
             let reply = HandsEngine.shared.transaction(window: w, check: acting) { [self] cancelled in
                 guard case .ok(let bar) = HandsEngine.shared.snapshotInline(window: w, interactive: false, compact: false, depth: 12, evidence: true, surface: HandsEngine.surfaceMenubar) else {
                     return .failed(HandsError(.engineError, "the menu bar couldn't be read", suggestion: "Snapshot the window and try again.", retry: .safe))
                 }
                 let found = MenuPath.find(bar["tree"] ?? .null, path: path)
                 // Every level the path reached is judged before anything is pressed or listed (a submenu's choices too).
-                guard let steps = MenuAX.steps(pid: w.pid, path: MenuPath.reached(found, path: path)) else {
-                    return .failed(HandsError(.engineError, "the menu's key equivalents couldn't be read, so Polycarp can't tell whether the command is safe",
-                                              suggestion: "Snapshot the window, then try the menu command again.", retry: .afterSnapshot, nextCall: HandsError.call("snapshot", ["window": .int(Int(w.id))])))
-                }
-                if let e = MenuPath.policy(steps) { return .failed(e) }
+                // An item whose attributes couldn't be read (a busy app timed out) is unknown, and unknown is refused.
+                if let e = MenuPath.judge(MenuAX.steps(pid: w.pid, path: MenuPath.reached(found, path: path)), window: Int(w.id)) { return .failed(e) }
                 guard case .item(let ref, let names) = found else {
                     return .failed(MenuPath.error(found, path: path, window: Int(w.id)) ?? HandsError(.engineError, "no menu item", suggestion: "Snapshot the window.", retry: .safe))
                 }
                 spelled = names
+                watch.start(menuWatchStep(w, before: before, agent: agent))
                 switch HandsEngine.shared.actInline(window: w, ref: ref, kind: .click, evidence: true, check: acting, cancelled: cancelled) {
                 case .failed(let e): return .failed(e)
                 case .ok(let d): press = d
                 }
                 return .ok(.null)
             }
+            // Whatever the press answered: a panel, or a window outside the agent workspace, it raised within the watch is
+            // undone and the call fails, named so it isn't retried. A slower panel is still cancelled.
+            if let seen = watch.finish() { return .failure(undo(seen, w, path: (spelled.isEmpty ? path : spelled).joined(separator: " > "))) }
             if case .failed(let e) = reply { return .failure(e) }
-            // Off the app's queue, so other calls on it don't wait: a panel now is refused, a slower one still cancelled.
-            if let e = cancelPanels(w, within: 0.3) { return .failure(e) }
             DispatchQueue.global(qos: .utility).async { [weak self] in _ = self?.cancelPanels(w, within: 3) }
             var o: [String: JSONValue] = ["action": "menu", "path": .array(spelled.map(JSONValue.string)), "engine": press, "target": targetJSON(w, scope),
                                           "verified": .bool(press["disposition"]?["delivery"]?.string == "delivered_verified")]
@@ -66,6 +67,28 @@ extension HandsRouter {
             return MenuPath.refusal(app: w.app, window: w.id, agentOwned: owned.contains(w.pid), sessionOwns: mine, otherWindows: count,
                                     focusedWindow: BackgroundAX.focus(pid: w.pid).window,
                                     front: front && NSWorkspace.shared.frontmostApplication?.processIdentifier == w.pid)
+        }
+    }
+
+    /// One look for layer 2: an Open or Save panel of the app, or a new window outside the agent workspace, of the app
+    /// (once settled) or of a system helper.
+    private func menuWatchStep(_ w: HandsWindow, before: Set<UInt32>, agent: Int?) -> @Sendable (Bool) -> MenuSeen? {
+        { [self] settled in
+            if MenuPath.panels(MenuAX.windows(w.pid).map { HandsAXTree.node($0.element, depth: 5) }).first != nil { return .panel }
+            var new = MenuAX.listed().filter { !before.contains($0.id) && $0.visible }
+            for i in new.indices { let id = new[i].id; new[i].workspace = onMain { host.live(id)?.workspace } }
+            let found = MenuPath.escaped(before: before, now: new, pid: w.pid, agentWorkspace: agent, settled: settled)
+            return found.isEmpty ? nil : .escaped(found)
+        }
+    }
+
+    /// Undoes what the watch saw, through the engine and Polycarp's own close, and says it as the call's error.
+    private func undo(_ seen: MenuSeen, _ w: HandsWindow, path: String) -> HandsError {
+        switch seen {
+        case .panel: return cancelPanels(w, within: 0.3) ?? MenuPath.panelRefusal(w.app, cancelled: true)
+        case .escaped(let found):
+            let closed = found.map { x in onMain { host.close(x.id) } }.allSatisfy { $0 }
+            return MenuPath.escapeRefusal(path, opened: found.map { "a window of \($0.owner)" }, closed: closed)
         }
     }
 
@@ -101,6 +124,9 @@ extension HandsRouter {
     }
 }
 
+/// What the menu watch saw after a press.
+enum MenuSeen: Sendable { case panel, escaped([MenuPath.Listed]) }
+
 /// Reads only, with a short timeout.
 enum MenuAX {
     static func app(_ pid: Int32) -> AXUIElement {
@@ -111,6 +137,15 @@ enum MenuAX {
     static func copy(_ e: AXUIElement, _ attribute: String) -> CFTypeRef? {
         var out: CFTypeRef?
         return AXUIElementCopyAttributeValue(e, attribute as CFString, &out) == .success ? out : nil
+    }
+    /// A read that tells "no value" from "the read failed" (a busy app times out after 0.25 s): first-F2.
+    static func read<T: Sendable>(_ e: AXUIElement, _ attribute: String, _ cast: (CFTypeRef) -> T?) -> MenuPath.Read<T> {
+        var out: CFTypeRef?
+        switch AXUIElementCopyAttributeValue(e, attribute as CFString, &out) {
+        case .success: return out.flatMap(cast).map { .value($0) } ?? .absent
+        case .noValue, .attributeUnsupported: return .absent
+        default: return .failed
+        }
     }
     static func children(_ e: AXUIElement) -> [AXUIElement] { (copy(e, kAXChildrenAttribute) as? [AXUIElement]) ?? [] }
     /// The app's windows with their sheets (a Save panel is often a sheet), and the window number where there is one.
@@ -128,18 +163,36 @@ enum MenuAX {
         guard let raw = copy(app(pid), kAXMenuBarAttribute), CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
         var level = children(raw as! AXUIElement), out: [MenuPath.Step] = []
         for want in path {
-            let items = level.map(item)
-            guard let at = items.firstIndex(where: { MenuPath.same($0.title, want) }) else { return nil }
+            let items = level.compactMap(item)
+            guard items.count == level.count, let at = items.firstIndex(where: { MenuPath.same($0.title, want) }) else { return nil }
             out.append(.init(items: items, at: at))
             level = children(level[at]).first.map(children) ?? []
         }
         return out
     }
-    static func item(_ e: AXUIElement) -> MenuPath.MenuItem {
-        .init(identifier: copy(e, kAXIdentifierAttribute) as? String, cmdChar: copy(e, kAXMenuItemCmdCharAttribute) as? String,
-              modifiers: (copy(e, kAXMenuItemCmdModifiersAttribute) as? NSNumber)?.intValue, title: (copy(e, kAXTitleAttribute) as? String) ?? "",
-              submenu: !children(e).isEmpty)
+    static func item(_ e: AXUIElement) -> MenuPath.MenuItem? {
+        let kids = read(e, kAXChildrenAttribute) { ($0 as? [AXUIElement])?.count }
+        let submenu: Bool? = switch kids { case .value(let n): n > 0; case .absent: false; case .failed: nil }
+        return MenuPath.item(identifier: read(e, kAXIdentifierAttribute) { $0 as? String }, cmdChar: read(e, kAXMenuItemCmdCharAttribute) { $0 as? String },
+                             modifiers: read(e, kAXMenuItemCmdModifiersAttribute) { ($0 as? NSNumber)?.intValue }, title: read(e, kAXTitleAttribute) { $0 as? String },
+                             submenu: submenu)
     }
+    /// Every window the window server lists, with whether a person could see it now. Workspaces are filled in by the caller.
+    static func listed() -> [MenuPath.Listed] {
+        let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16), count: UInt32 = 0
+        CGGetActiveDisplayList(16, &ids, &count)
+        let displays = ids.prefix(Int(count)).map(CGDisplayBounds)
+        return info.compactMap { w in
+            guard let id = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value, let pid = (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value else { return nil }
+            let b = (w[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) } ?? .zero
+            let on = (w[kCGWindowIsOnscreen as String] as? Bool) ?? false
+            let alpha = (w[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
+            return .init(id: id, pid: pid, owner: w[kCGWindowOwnerName as String] as? String ?? "",
+                         visible: on && alpha > 0 && b.width > 1 && b.height > 1 && displays.contains { $0.intersects(b) }, workspace: nil)
+        }
+    }
+    static func ids() -> Set<UInt32> { Set(listed().map(\.id)) }
     static func cancelTitle(_ e: AXUIElement) -> String? {
         guard let b = copy(e, kAXCancelButtonAttribute), CFGetTypeID(b) == AXUIElementGetTypeID() else { return nil }
         return copy(b as! AXUIElement, kAXTitleAttribute) as? String

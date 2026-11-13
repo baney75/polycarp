@@ -21,6 +21,8 @@ public enum ClickFallback {
         public var itemRole: String
         /// The container's row key: the readback looks for the item only in it, the scope `plan` proved the label unique in.
         public var containerKey: String
+        /// The view of the read the plan came from: row keys depend on it, so the readbacks read the same way.
+        public var view = SnapshotRowsMemory.View.full
     }
 
     /// The selection write for row `number` of the read `rows` came from, or nil: not an item in a collection, a

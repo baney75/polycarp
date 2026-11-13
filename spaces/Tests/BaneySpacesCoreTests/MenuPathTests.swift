@@ -193,6 +193,79 @@ final class MenuPathTests: XCTestCase {
         XCTAssertNil(MenuPath.cancelRef(tree, title: "Cancel"))
     }
 
+    /// r1 first-F1 layer 1: what macOS adds and what reaches past the app, refused in a German menu by identifier and key.
+    func testSystemItemsAreRefusedByIdentifierAndKeyInAnyLanguage() {
+        let edit = [I(cmdChar: "Z", modifiers: 0, title: "Widerrufen"), Self.sep, Self.sep, I(title: "Autom. ausf\u{FC}llen", submenu: true),
+                    I(identifier: "startDictation:", title: "Diktat starten \u{2026}"), I(identifier: "orderFrontCharacterPalette:", title: "Emoji & Symbole"),
+                    I(cmdChar: " ", modifiers: 4, title: "Zeichen"), I(identifier: "showWritingTools:", title: "Schreibtools"),
+                    I(identifier: "orderFrontSubstitutionsPanel:", title: "Ersetzungen einblenden"), I(identifier: "stopDictation:", title: "Diktat beenden"),
+                    I(identifier: "_NSAutoFillMenu", title: "Ausf\u{FC}llen", submenu: true)]
+        for at in 4...10 { XCTAssertTrue(MenuPath.policy(steps(3, edit, at))?.message.contains("outside the agent workspace") == true, edit[at].title) }
+        let file = [I(cmdChar: "N", modifiers: 0, title: "Neu"), I(identifier: "print:", title: "Drucken \u{2026}"), I(cmdChar: "P", modifiers: 0, title: "Ausgeben"),
+                    I(identifier: "runPageLayout:", title: "Papierformat \u{2026}"), I(cmdChar: "P", modifiers: 1, title: "Format"),
+                    I(identifier: "NSSharingServicePickerMenuItem", title: "Teilen", submenu: true), I(identifier: "importFromDevice:", title: "Vom iPhone importieren", submenu: true)]
+        XCTAssertNil(MenuPath.policy(steps(2, file, 0)), "New")
+        for at in 1...6 { XCTAssertNotNil(MenuPath.policy(steps(2, file, at)), file[at].title) }
+        let speech = [I(identifier: "startSpeaking:", title: "Sprechen starten"), I(identifier: "stopSpeaking:", title: "Sprechen stoppen")]
+        for at in 0...1 { XCTAssertNotNil(MenuPath.policy(steps(3, [I(title: "Sprachausgabe", submenu: true)], 0, sub: speech, at)), "his speakers: \(speech[at].title)") }
+        let help = [I(title: "Suche"), I(cmdChar: "?", modifiers: 0, title: "TextEdit-Hilfe")]
+        for at in 0...1 { XCTAssertNotNil(MenuPath.policy(steps(7, help, at)), "the Help menu, by being last: \(help[at].title)") }
+        XCTAssertNotNil(MenuPath.policy(steps(4, [I(cmdChar: "?", modifiers: 0, title: "Hilfe zu Format")], 0)), "help by key elsewhere")
+        XCTAssertNil(MenuPath.policy(steps(4, [I(cmdChar: "B", modifiers: 0, title: "Fett"), I(title: "Ersetzungen", submenu: true)], 1)), "the Substitutions submenu itself")
+    }
+
+    /// r1 first-F2: a read that failed never counts as unset; an item with one is unknown and the path is refused.
+    func testAnUnreadAttributeRefusesTheCommand() throws {
+        typealias R = MenuPath.Read
+        let ok = MenuPath.item(identifier: R<String>.absent, cmdChar: .value("C"), modifiers: .absent, title: .value("Kopieren"), submenu: false)
+        XCTAssertEqual(ok, I(cmdChar: "C", title: "Kopieren"))
+        XCTAssertNil(MenuPath.item(identifier: .failed, cmdChar: .absent, modifiers: .absent, title: .value("Kopieren"), submenu: false), "identifier timed out")
+        XCTAssertNil(MenuPath.item(identifier: .absent, cmdChar: .failed, modifiers: .absent, title: .value("\u{D6}ffnen"), submenu: false), "key timed out")
+        XCTAssertNil(MenuPath.item(identifier: .absent, cmdChar: .absent, modifiers: .failed, title: .value("Im Dock ablegen"), submenu: false))
+        XCTAssertNil(MenuPath.item(identifier: .absent, cmdChar: .absent, modifiers: .absent, title: .failed, submenu: false))
+        XCTAssertNil(MenuPath.item(identifier: .absent, cmdChar: .absent, modifiers: .absent, title: .value("Benutzte"), submenu: nil), "children timed out")
+        let e = try XCTUnwrap(MenuPath.judge(nil, window: 7))
+        XCTAssertEqual(e.code, .engineError)
+        XCTAssertTrue(e.message.contains("can't tell whether the command is safe"), e.message)
+        XCTAssertNil(MenuPath.judge(steps(4, [I(cmdChar: "B", modifiers: 0, title: "Fett")], 0), window: 7))
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
+        let steps = try XCTUnwrap(HandsSourceTests.block(after: "static func steps(pid: Int32, path: [String])", in: src))
+        XCTAssertTrue(steps.contains("guard items.count == level.count"), "one unknown item fails the whole menu")
+    }
+
+    /// r1 first-F1 layer 2: a new window outside the agent workspace after the press, of the app or a system helper.
+    func testAWindowOutsideTheAgentWorkspaceAfterThePressIsFound() {
+        typealias L = MenuPath.Listed
+        let before: Set<UInt32> = [1, 2]
+        let now = [L(id: 1, pid: 50, owner: "TextEdit", visible: true, workspace: 3), L(id: 2, pid: 9, owner: "Finder", visible: true, workspace: 1),
+                   L(id: 7, pid: 77, owner: "CharacterPalette", visible: true, workspace: nil), L(id: 8, pid: 50, owner: "TextEdit", visible: true, workspace: nil),
+                   L(id: 9, pid: 50, owner: "TextEdit", visible: true, workspace: 3), L(id: 10, pid: 88, owner: "Help Viewer", visible: false, workspace: nil),
+                   L(id: 11, pid: 99, owner: "Mail", visible: true, workspace: nil)]
+        XCTAssertEqual(MenuPath.escaped(before: before, now: now, pid: 50, agentWorkspace: 3, settled: false).map(\.id), [7], "a helper at once; the app's own window gets the watch")
+        XCTAssertEqual(MenuPath.escaped(before: before, now: now, pid: 50, agentWorkspace: 3, settled: true).map(\.id), [7, 8], "placed on the agent workspace or hidden: fine")
+        XCTAssertEqual(MenuPath.escaped(before: before, now: Array(now.prefix(2)), pid: 50, agentWorkspace: 3, settled: true), [], "nothing new: ok")
+        let e = MenuPath.escapeRefusal("Bearbeiten > Emoji & Symbole", opened: ["a window of CharacterPalette"], closed: true)
+        XCTAssertEqual(e.code, .outsideAgentWorkspace)
+        XCTAssertEqual(e.retry, .never)
+        XCTAssertTrue(e.message.contains("it was closed") && e.suggestion.contains("Don't use Bearbeiten > Emoji & Symbole again"), e.message)
+        XCTAssertTrue(MenuPath.escapeRefusal("x", opened: ["y"], closed: false).message.contains("still open"))
+    }
+
+    /// r1 second-F6, second-F4: the watch runs a second past the press, so a late panel fails the call; none leaves it ok.
+    func testALatePanelFailsTheCall() {
+        let start = Date()
+        let late = MenuWatch<String>(every: 0.01)
+        late.start { _ in Date().timeIntervalSince(start) > 0.5 ? "panel" : nil }
+        XCTAssertEqual(late.finish(), "panel", "0.5 s after the press: still told, never ok")
+        let quiet = MenuWatch<String>(every: 0.01)
+        var settledSeen = false
+        let lock = NSLock()
+        quiet.start { settled in lock.lock(); if settled { settledSeen = true }; lock.unlock(); return nil }
+        XCTAssertNil(quiet.finish())
+        lock.lock(); XCTAssertTrue(settledSeen, "the last look judges the app's own windows"); lock.unlock()
+        XCTAssertNil(MenuWatch<String>().finish(), "no press, no wait")
+    }
+
     /// second-F7: found but no ref is said as such.
     func testAnItemWithNoRefIsNotCalledMissing() throws {
         guard case .object(var bold) = Self.item("Bold", 11) else { return XCTFail() }
@@ -226,10 +299,16 @@ final class MenuPathTests: XCTestCase {
         XCTAssertTrue(menu.contains("evidence: true, surface: HandsEngine.surfaceMenubar"), "the menu bar read never takes the agent's snapshot slots")
         XCTAssertTrue(menu.contains("kind: .click, evidence: true"), "pressed from that read")
         XCTAssertFalse(menu.contains("read(w,"), "never through the registered read")
-        XCTAssertTrue(try at("MenuPath.policy(steps)") < at("guard case .item(let ref"), "r1 first-F1: judged before a submenu's choices are listed")
-        XCTAssertTrue(try at("MenuPath.policy(steps)") < at("actInline("), "and before the press")
-        XCTAssertTrue(try at("cancelPanels(w, within: 0.3)") > at("if case .failed(let e) = reply"), "r1 second-S4: panels are looked for after the transaction, off the app's queue")
+        XCTAssertTrue(try at("MenuPath.judge(") < at("guard case .item(let ref"), "r1 first-F1: judged before a submenu's choices are listed")
+        XCTAssertTrue(try at("MenuPath.judge(") < at("actInline("), "and before the press")
+        XCTAssertTrue(try at("watch.start(") < at("actInline("), "r2 second-F4: the watch starts with the press, so a modal panel is cancelled while it waits")
+        XCTAssertTrue(try at("if let seen = watch.finish()") < at("if case .failed(let e) = reply"), "r2 second-F4: the watch answers whatever the press did")
         XCTAssertTrue(menu.contains("cancelPanels(w, within: 3)"), "r1 first-F4: a slow panel is still cancelled")
-        XCTAssertTrue(menu.contains("sessionOwns: mine") || src.contains("sessionOwns: mine"), "r1 second-S2")
+        let rule = try XCTUnwrap(HandsSourceTests.block(after: "private func menuRule", in: src))
+        XCTAssertTrue(rule.contains("sessionOwns: mine"), "r1 second-S2, r2 second-F7: in menuRule itself")
+        let step = try XCTUnwrap(HandsSourceTests.block(after: "private func menuWatchStep", in: src))
+        XCTAssertTrue(step.contains("MenuPath.escaped(") && step.contains("MenuPath.panels("), "layer 2 looks for both")
+        let undo = try XCTUnwrap(HandsSourceTests.block(after: "private func undo(", in: src))
+        XCTAssertTrue(undo.contains("cancelPanels(w, within: 0.3)") && undo.contains("host.close(x.id)"), "and undoes them through the engine and Polycarp's close")
     }
 }

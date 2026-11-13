@@ -165,6 +165,25 @@ final class ClickFallbackTests: XCTestCase {
         XCTAssertTrue(src.contains("RefWindow.of(window: req.int(\"window\"), ref: req.string(\"ref\")"))
         // first-F7: a row click skips the plain path's full read before.
         XCTAssertTrue(src.contains("if !writes, kind != .toggle, plan == nil, case .success"))
+        // 187 r1 first-F3: the bare number is resolved once, in handle; the next call's window reads that, never a second resolve.
+        let of = try XCTUnwrap(HandsSourceTests.block(after: "private func windowOf(_ req: HandsRequest) -> Int?", in: src))
+        XCTAssertFalse(of.contains("bareRef("), "no second resolve")
+        XCTAssertTrue(src.contains("handle(req, resolved: &resolved), window: windowOf(resolved)"))
+    }
+
+    // 187 r1 second-F5: a plan from a compact read keeps that view, and the readbacks read in it, so row keys match.
+    func testTheReadbackReadsInTheViewThePlanCameFrom() throws {
+        var m = SnapshotRowsMemory()
+        m.remember(session: "a", window: 7, view: "false|true|6", snapshot: "sc", rows: [], now: Date())
+        m.remember(session: "a", window: 7, view: "false|false|10", snapshot: "sf", rows: [], now: Date())
+        XCTAssertEqual(m.read(snapshot: "sc", session: "a")?.view, SnapshotRowsMemory.View(interactive: false, compact: true, depth: 6))
+        XCTAssertEqual(m.read(snapshot: "sf", session: "a")?.view, .full)
+        XCTAssertEqual(SnapshotRowsMemory.View(key: "true|false|3"), SnapshotRowsMemory.View(interactive: true, compact: false, depth: 3))
+        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        XCTAssertTrue(router.contains("p.view = read.view"), "the plan carries its read's view")
+        let row = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+RowClick.swift")
+        XCTAssertTrue(row.contains("interactive: plan.view.interactive, compact: plan.view.compact"), "the readbacks use it")
+        XCTAssertFalse(row.contains("compact: false, depth: 10"))
     }
 
     /// The tree with only the item labeled `label` selected.

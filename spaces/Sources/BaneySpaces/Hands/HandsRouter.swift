@@ -81,14 +81,17 @@ final class HandsRouter {
     func handleWire(_ r: Wire.Request) -> Wire.Reply {
         let env: HandsEnvelope
         if let data = r.text?.data(using: .utf8), let req = try? JSONDecoder().decode(HandsRequest.self, from: data) {
-            env = HandsNextCall.fill(handle(req), window: windowOf(req))
+            // The ref as `handle` resolved it: a bare row number is resolved once, never again for the next call (first-F3).
+            var resolved = req
+            env = HandsNextCall.fill(handle(req, resolved: &resolved), window: windowOf(resolved))
         } else {
             env = .failure(HandsError(.badArguments, "the request wasn't an agent command", suggestion: "Use `polycarp-spaces agent <command>`.", retry: .never))
         }
         return Wire.Reply(ok: true, info: ["envelope": env.line])
     }
 
-    func handle(_ req: HandsRequest) -> HandsEnvelope {
+    /// `resolved`: the request with a bare row number replaced by the full ref it stood for.
+    func handle(_ req: HandsRequest, resolved: inout HandsRequest) -> HandsEnvelope {
         lends.expire()
         if HandsTools.userOnly.contains(req.verb) { return .failure(HandsParse.askedForLend(req.string("app"))) }
         if let e = AgentAccessGate.refusal(verb: req.verb, mode: access) { return .failure(e) }
@@ -97,7 +100,7 @@ final class HandsRouter {
         if let r = req.string("ref"), let e = SnapshotRows.browserRefError(r) { return .failure(e) }
         if let r = req.string("ref"), let n = SnapshotRows.bareNumber(r) {
             switch bareRef(n, req) {
-            case .success(let full): req.args["ref"] = .string(full)
+            case .success(let full): req.args["ref"] = .string(full); resolved = req
             case .failure(let e): return .failure(e)
             }
         }
@@ -126,6 +129,8 @@ final class HandsRouter {
         default: return .failure(HandsError(.badArguments, "unknown agent command \(req.verb)", suggestion: "Commands: " + HandsTools.all.map(\.verb).joined(separator: ", ")))
         }
     }
+
+    func handle(_ req: HandsRequest) -> HandsEnvelope { var r = req; return handle(req, resolved: &r) }
 
     // MARK: scope
 
@@ -664,10 +669,9 @@ final class HandsRouter {
     }
 
     /// The window a request is about, for its error's next call: the window it names, or the one its ref's snapshot read.
-    /// A bare row number counts through what it stands for in this session (review r1 first-F2).
+    /// A bare row number counts through what `handle` resolved it to (review r1 first-F2); one it refused names no window.
     private func windowOf(_ req: HandsRequest) -> Int? {
-        RefWindow.of(window: req.int("window"), ref: req.string("ref"),
-                     bare: { n in if case .success(let full) = bareRef(n, req) { return full } else { return nil } },
+        RefWindow.of(window: req.int("window"), ref: req.string("ref"), bare: { _ in nil },
                      snapshotWindow: { sid in lock.lock(); defer { lock.unlock() }; return snaps[sid].map { Int($0.window) } })
     }
 
@@ -676,7 +680,8 @@ final class HandsRouter {
         guard ref.hasPrefix("@"), let colon = ref.firstIndex(of: ":"), let n = SnapshotRows.refNumber(ref) else { return nil }
         let sid = String(ref[ref.index(after: ref.startIndex)..<colon])
         guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
-        return ClickFallback.plan(rows: read.rows, snapshot: sid, number: n)
+        // The readbacks read in this read's view, so the row keys they compare match (second-F5).
+        return ClickFallback.plan(rows: read.rows, snapshot: sid, number: n).map { var p = $0; p.view = read.view; return p }
     }
 
     private func shot(_ req: HandsRequest) -> HandsEnvelope {
