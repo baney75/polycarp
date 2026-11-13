@@ -367,22 +367,39 @@ public enum MenuPath {
     }
 
     /// A panel left up by an earlier command, cancelled one at a time just before the press (`cancelOne`: nil when none
-    /// is left, else whether the cancel went through). A cancel that fails stops the call (217 r1 first-F1).
-    public enum Earlier: Equatable, Sendable { case none, cancelled, stuck }
-    public static func cancelEarlier(count: Int, cancelOne: () -> Bool?) -> Earlier {
-        var out = Earlier.none
+    /// is left, else whether the cancel went through). A cancel that fails stops the call (217 r1 first-F1), but only
+    /// once a new read after a pause still finds a panel it can't cancel: a sheet cancelled a moment ago is still read
+    /// while it goes away, and its window counts in `count` too (246 r1 first-F3). A panel gone by the retry, after a cancel
+    /// that answered false, was cancelled: Polycarp's Cancel was pressed, and the bar is read again (258 r1 second-S1).
+    public enum Earlier: Equatable, Sendable { case none, cancelled, stuck(afterCancelling: Bool) }
+    public static func cancelEarlier(count: Int, tries: Int = 3, pause: () -> Void = {}, cancelOne: () -> Bool?) -> Earlier {
+        // `tried`: a cancel ran. Its read of the panel replaced the evidence store's, so the bar must be read again before the
+        // press even when the panel is gone by the retry (258 r1 second-S1).
+        var done = false, tried = false
         for _ in 0..<count {
-            switch cancelOne() {
-            case nil: return out
-            case false?: return .stuck
-            case true?: out = .cancelled
+            var r = cancelOne()
+            if r != nil { tried = true }
+            for _ in 1..<max(1, tries) where r == false { pause(); r = cancelOne() }
+            switch r {
+            case nil: return done || tried ? .cancelled : .none
+            case false?: return .stuck(afterCancelling: done)
+            case true?: done = true
             }
         }
-        return out
+        return done ? .cancelled : .none
     }
-    public static func earlierStuck(_ app: String) -> HandsError {
-        HandsError(.notSupported, "an Open or Save panel was already up in \(app) and couldn't be cancelled, so nothing was pressed",
-                   suggestion: "Close your window with `close`, then `open` the app again.", retry: .never, nextCall: .null)
+    public static func earlierStuck(_ app: String, afterCancelling: Bool = false) -> HandsError {
+        let first = afterCancelling ? "; one before it was cancelled" : ""
+        return HandsError(.notSupported, "an Open or Save panel was already up in \(app) and couldn't be cancelled, so nothing was pressed\(first)",
+                          suggestion: "Close your window with `close`, then `open` the app again.", retry: .never, nextCall: .null)
+    }
+    /// A stuck cancel's answer. `engine`: why the cancel's own engine call failed. A check that failed under it (the window
+    /// left scope, the app is in use, the call ran out of time) is that call's answer, with its own code and next call,
+    /// not a panel that won't cancel (246 r1 second-S2).
+    public static func earlierError(_ app: String, afterCancelling: Bool, engine: HandsError?) -> HandsError {
+        let passOn: Set<HandsErrorCode> = [.outsideAgentWorkspace, .agentWorkspaceOff, .needsLend, .needsSandbox, .windowNotFound, .inUse, .timeout, .notRunning, .permissionDenied]
+        if let engine, passOn.contains(engine.code) { return engine }
+        return earlierStuck(app, afterCancelling: afterCancelling)
     }
     public static let earlierNote = "; an Open or Save panel left by an earlier command was cancelled first"
 
@@ -415,8 +432,9 @@ public enum MenuPath {
         public func split(listed: Set<UInt32>) -> (open: [Escape], gone: [Escape]) {
             (escapes.filter { listed.contains($0.window.id) }, escapes.filter { !listed.contains($0.window.id) })
         }
-        /// On the windows a person could see: one ordered out, still listed, closed too (217 r1 second-S1).
-        public func split(_ all: [Listed]) -> (open: [Escape], gone: [Escape]) { split(listed: Set(all.filter(\.visible).map(\.id))) }
+        /// On every window the window server still lists, seen or not: one ordered out, parked off the displays or
+        /// minimized still exists, so it is closed, and only an unlisted one is gone (246 r1 second-S1).
+        public func split(_ all: [Listed]) -> (open: [Escape], gone: [Escape]) { split(listed: Set(all.map(\.id))) }
         public static func merged(_ looks: [Seen]) -> Seen {
             var out = Seen()
             for l in looks {

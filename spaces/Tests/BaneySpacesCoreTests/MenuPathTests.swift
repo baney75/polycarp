@@ -501,9 +501,11 @@ final class MenuPathTests: XCTestCase {
         let (open, gone) = seen.split(listed: [1, 32])
         XCTAssertEqual(open.map(\.window.id), [32])
         XCTAssertEqual(gone.map(\.window.id), [31])
-        // 217 r1 second-S1: a palette ordered out is still listed, but no one sees it: gone.
+        // 246 r1 second-S1: a palette ordered out, parked or minimized is still listed, so it still exists and is closed.
         var hidden = viewer; hidden.visible = false
-        XCTAssertEqual(seen.split([hidden, L(id: 1, pid: 50, owner: "TextEdit", visible: true, workspace: 3)]).gone.map(\.window.id), [31, 32])
+        let parked = seen.split([hidden, L(id: 1, pid: 50, owner: "TextEdit", visible: false, workspace: 3)])
+        XCTAssertEqual(parked.open.map(\.window.id), [32], "listed but not visible is chosen for closing")
+        XCTAssertEqual(parked.gone.map(\.window.id), [31], "only an unlisted window is gone")
         let e = MenuPath.escapeRefusal("Hilfe > Tipps", found: [], gone: gone, closed: true, window: 4)
         XCTAssertEqual(e.code, .outsideAgentWorkspace)
         XCTAssertTrue(e.message.contains("a window of Tips closed again on its own") && !e.message.contains("still open") && !e.message.contains("it was closed"), e.message)
@@ -515,6 +517,56 @@ final class MenuPathTests: XCTestCase {
         XCTAssertLessThan(split.lowerBound, close.lowerBound, "listed again before anything is closed")
     }
 
+    /// 246 r1 first-F3: a sheet cancelled a moment ago is still read while it goes away, and its window counts too. A
+    /// false cancel is tried again after a pause, and the call is stuck only when the panel is still there.
+    func testASheetCancelledAMomentAgoIsNoStuckPanel() {
+        // Sheet and window counted: the sheet's cancel lands, the closing sheet's second cancel fails, then it is gone.
+        var answers: [Bool?] = [true, false, nil], pauses = 0
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 2, pause: { pauses += 1 }) { answers.removeFirst() }, .cancelled)
+        XCTAssertEqual(pauses, 1)
+        answers = [false, false, true]
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 1) { answers.removeFirst() }, .cancelled, "a cancel that lands on a later try")
+        answers = [false, false, false]
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 1) { answers.removeFirst() }, .stuck(afterCancelling: false))
+    }
+
+    /// 258 r1 second-S1: a cancel answered false, and the retry found the panel gone. Polycarp's Cancel was pressed and
+    /// its read replaced the evidence store's, so it is `.cancelled` (the router reads the bar again), never `.none`,
+    /// which would press the first read's ref in the panel's tree.
+    func testAPanelGoneByTheRetryWasCancelled() throws {
+        var answers: [Bool?] = [false, nil]
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 1) { answers.removeFirst() }, .cancelled)
+        answers = [false, false, nil]
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 2) { answers.removeFirst() }, .cancelled)
+        answers = [nil]
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 1) { answers.removeFirst() }, .none, "no panel: no cancel ran")
+        // first-F2: the error is the last attempt's, never one an earlier attempt left behind.
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
+        let menu = try XCTUnwrap(HandsSourceTests.block(after: "func menu(_ req: HandsRequest) -> HandsEnvelope", in: src))
+        XCTAssertTrue(menu.contains("why = nil\n                            return cancelOnePanel(w, old: [], inline: c, failed: { why = $0 })"))
+        XCTAssertTrue(menu.contains("case .cancelled: cancelledEarlier = true; item = pressable()"))
+    }
+
+    /// 246 r1 second-S2: when the cancel's own engine call failed a check (the window left scope, the call ran out of
+    /// time), that is the answer, not a stuck panel; a Cancel that just didn't go through is still one.
+    func testACheckThatFailedUnderTheCancelIsTheAnswer() throws {
+        let scope = HandsError(.outsideAgentWorkspace, "left", suggestion: "s")
+        XCTAssertEqual(MenuPath.earlierError("TextEdit", afterCancelling: false, engine: scope), scope)
+        XCTAssertEqual(MenuPath.earlierError("TextEdit", afterCancelling: false, engine: HandsError(.timeout, "t", suggestion: "s")).code, .timeout)
+        let pressed = MenuPath.earlierError("TextEdit", afterCancelling: true, engine: HandsError(.actionFailed, "no", suggestion: "s"))
+        XCTAssertTrue(pressed.message.contains("couldn't be cancelled") && pressed.message.contains("one before it was cancelled"), pressed.message)
+        XCTAssertTrue(MenuPath.earlierError("TextEdit", afterCancelling: false, engine: nil).message.contains("nothing was pressed"))
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
+        let menu = try XCTUnwrap(HandsSourceTests.block(after: "func menu(_ req: HandsRequest) -> HandsEnvelope", in: src))
+        XCTAssertTrue(menu.contains("cancelOnePanel(w, old: [], inline: c, failed: { why = $0 })"))
+        XCTAssertTrue(menu.contains("case .stuck(let after): return .failed(MenuPath.earlierError(w.app, afterCancelling: after, engine: why))"))
+        // 246 r1 first-F4: the item is switched on, so no path answers ok with nothing pressed.
+        XCTAssertTrue(menu.contains("switch item {\n                case .failure(let e): return .failed(e)\n                case .success(let f): found = f"))
+        XCTAssertFalse(menu.contains("return .ok(.null) }"))
+        let inline = try XCTUnwrap(HandsSourceTests.block(after: "private func cancelInline(", in: src))
+        XCTAssertTrue(inline.contains("if case .failed(let e) = read { return e }") && inline.contains("check: scope, cancelled: cancelled) { return e }"))
+    }
+
     /// 205 r1 first-F1, 217 r1 first-F1: a panel left from an earlier command is cancelled once the path is judged and
     /// found, just before the press, and said on every answer after it; one that won't cancel stops the call.
     func testAnEarlierPanelIsCancelledBeforeThePress() throws {
@@ -522,8 +574,10 @@ final class MenuPathTests: XCTestCase {
         XCTAssertEqual(MenuPath.cancelEarlier(count: 2) { calls += 1; return true }, .cancelled)
         XCTAssertEqual(calls, 2)
         XCTAssertEqual(MenuPath.cancelEarlier(count: 2) { nil }, .none)
-        XCTAssertEqual(MenuPath.cancelEarlier(count: 2) { calls += 1; return calls < 4 }, .stuck)
+        calls = 0
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 2) { calls += 1; return calls == 1 }, .stuck(afterCancelling: true))
         XCTAssertTrue(MenuPath.earlierStuck("TextEdit").message.contains("nothing was pressed"))
+        XCTAssertTrue(MenuPath.earlierStuck("TextEdit", afterCancelling: true).message.contains("one before it was cancelled"))
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
         let menu = try XCTUnwrap(HandsSourceTests.block(after: "func menu(_ req: HandsRequest) -> HandsEnvelope", in: src))
         let found = try XCTUnwrap(menu.range(of: "var item = pressable()")), cancel = try XCTUnwrap(menu.range(of: "MenuPath.cancelEarlier("))
