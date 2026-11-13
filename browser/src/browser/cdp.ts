@@ -225,7 +225,9 @@ function installListeners(): void {
 					? { sessionId: (source as { sessionId?: string }).sessionId }
 					: {}),
 			};
-			const held = armed.get(tabId);
+			// An armed answer is for the confirm or prompt the agent expects: a leave-page box or an alert is left to the
+			// guard, and the answer stays armed (second-S1 of round 2 of the review of PR 230).
+			const held = dialog.type === "confirm" || dialog.type === "prompt" ? armed.get(tabId) : undefined;
 			const preset = held?.preset;
 			if (held) {
 				armed.delete(tabId);

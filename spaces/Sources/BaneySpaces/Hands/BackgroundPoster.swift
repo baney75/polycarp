@@ -109,7 +109,7 @@ enum BackgroundPoster {
         let report = EventRunner.run(events, stop: stop) { event in
             let local: CGPoint
             switch event {
-            case .mouseMoved(let p), .mouseDown(let p), .mouseDragged(let p), .mouseUp(let p), .buttonDown(let p, _), .buttonUp(let p, _): local = p
+            case .mouseMoved(let p), .mouseDown(let p), .mouseDragged(let p), .mouseUp(let p), .buttonDown(let p, _), .buttonUp(let p, _), .rightDown(let p), .rightUp(let p): local = p
             default: return nil
             }
             guard let stamp = PointerStamp.of(event, drag: drag) else { return nil }
@@ -119,10 +119,12 @@ enum BackgroundPoster {
             case .leftDown: type = .leftMouseDown
             case .leftDragged: type = .leftMouseDragged
             case .leftUp: type = .leftMouseUp
+            case .rightDown: type = .rightMouseDown
+            case .rightUp: type = .rightMouseUp
             }
             let pause = stamp.pause
             let screen = PointerPath.screenPoint(local: local, frame: frame)
-            guard let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: screen, mouseButton: .left) else { return nil }
+            guard let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: screen, mouseButton: stamp.button == 1 ? .right : .left) else { return nil }
             let raw = Unmanaged.passUnretained(e).toOpaque()
             setField(raw, 1, stamp.state)
             setField(raw, 3, stamp.button)

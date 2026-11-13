@@ -920,6 +920,61 @@ test("sol-F1 (round 2 of the review of PR 230): handle_dialog for a box on_dialo
 	assert.deepEqual(answers.map((x) => `${x.message} ${x.accept}`), ["Delete A? true", "Delete B? false"]);
 });
 
+// Round 2 of the review of PR 230, its mediums and lows.
+
+test("first-F1 (round 2 of the review of PR 230): a box the input on_dialog waited for opened fails the call at once, with nothing sent", async (t) => {
+	setup(t);
+	let sent = 0;
+	const tab = await agentTab(async ({ x }, id) => {
+		if (x < 0) void box(id, "confirm", "Delete the record?");
+		else sent++;
+	});
+	const hold = holdPress(t, tab, "mousePressed", (p) => p.x === 10);
+	handlerLimit = 300;
+	t.after(() => {
+		handlerLimit = undefined;
+	});
+	assert.equal((await request("click", { tabId: tab, x: 10, y: 10 })).error?.code, "timeout");
+	handlerLimit = undefined;
+	const two = deliver("c2", "click", { tabId: tab, x: 20, y: 20, on_dialog: "ok" });
+	await wait(100);
+	// The late release opens a confirm and returns: the wait ends with the page frozen, and no guard has cancelled it.
+	hold.release();
+	const r = await reply(two, 3000);
+	assert.equal(r.error?.code, "dialog_open", JSON.stringify(r));
+	assert.equal(sent, 0, "c2's click was sent into the frozen page");
+	assert.deepEqual(answers, [], "c2's OK answered a box its click never opened");
+});
+
+test("first-F2 (round 2 of the review of PR 230): on_dialog waits at most 30 s for other input on its tab", async (t) => {
+	setup(t);
+	const tab = await agentTab(async () => undefined);
+	const hold = holdPress(t, tab);
+	const one = deliver("c1", "click", { tabId: tab, x: 10, y: 10 });
+	for (let i = 0; i < 100 && !hold.seen.pressed; i++) await wait(5);
+	const two = deliver("c2", "click", { tabId: tab, x: 20, y: 20, on_dialog: "ok" });
+	await wait(100);
+	mock.timers.tick(31_000);
+	const r = await reply(two, 2000);
+	assert.equal(r.error?.code, "not_sent", JSON.stringify(r));
+	hold.release();
+	assert.equal((await reply(one)).error, undefined);
+});
+
+test("second-S1 (round 2 of the review of PR 230): on_dialog ok never answers a leave-page box: it stays open for the guard", async (t) => {
+	setup(t);
+	const tab = await agentTab(async (_i, id) => {
+		await box(id, "beforeunload", "");
+	});
+	const r = await request("click", { tabId: tab, x: 10, y: 10, on_dialog: "ok" });
+	assert.equal(r.result?.dialog?.type, "beforeunload", JSON.stringify(r));
+	assert.notEqual(r.result.dialog.answered, "ok");
+	assert.deepEqual(answers, [], "the armed OK left the page");
+	assert.equal(openDialog(tab)?.type, "beforeunload");
+	await pastGrace();
+	assert.deepEqual(answers.map((x) => x.accept), [false]);
+});
+
 // Last: it takes the native host away, and nothing after it could reach the bridge.
 test("F2 (review of PR 227): the host going away while a click's answer is armed takes the answer back at once", async (t) => {
 	setup(t);
