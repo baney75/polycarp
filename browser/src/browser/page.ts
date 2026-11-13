@@ -280,6 +280,10 @@ export interface Snapshot {
 		offset: number;
 		/** Names this ranking: a later slice passes it with its offset, and one from another read is refused. */
 		snapshot: string;
+		/** The offset the next slice starts at: where this one's window of the ranking ended. */
+		next: number;
+		/** A later slice's: each listed control's place in the ranking, since one that left the page is skipped. */
+		positions?: number[];
 	};
 }
 
@@ -503,39 +507,80 @@ function resolveRef(ref: string, live: (el: Element) => boolean, print: (el: Ele
 		__tabkyraRefPrints?: unknown;
 		__tabkyraRefOf?: unknown;
 		__tabkyraGonePrints?: unknown;
+		__tabkyraActed?: unknown;
+		__tabkyraRefStart?: unknown;
+		__tabkyraRefSeq?: unknown;
 	};
 	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : undefined;
 	const prints = w.__tabkyraRefPrints instanceof Map ? (w.__tabkyraRefPrints as Map<string, string>) : undefined;
 	const gone =
 		w.__tabkyraGonePrints instanceof Map
-			? (w.__tabkyraGonePrints as Map<string, { id: string; print: string }>)
+			? (w.__tabkyraGonePrints as Map<string, { id: string; print: string; ctx: string }>)
 			: undefined;
+	// Refs an action already went through. Its element gone, such a ref is never healed: the action likely removed it.
+	const acted = w.__tabkyraActed instanceof Set ? (w.__tabkyraActed as Set<string>) : new Set<string>();
+	w.__tabkyraActed = acted;
+	const use = (found: Element) => {
+		acted.delete(ref);
+		acted.add(ref);
+		for (const old of acted) {
+			if (acted.size <= 500) break;
+			acted.delete(old);
+		}
+		return found;
+	};
+	// What surrounds a control: its parent's text. The row a checkbox or a Remove sits in, which its own print lacks.
+	const ctx = (x: Element) => (x.parentElement?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
 	const el = refs?.get(ref);
 	if (el && live(el)) {
-		if (prints?.get(ref) === print(el)) return el;
+		if (prints?.get(ref) === print(el)) return use(el);
 		// The same node, showing something else: never healed.
 		throw new Error(`Ref ${ref} now shows something else: the page reused it. Call read_page for fresh refs.`);
 	}
-	// The element left the page. Only the same control may take the ref back: one the page put back under the same stable
-	// id (its id attribute) that shows what the ref did. Never a look-alike found by what it shows: after row A's "Remove"
-	// removed row A, row B's "Remove" looks the same and is another control, so a repeated click must fail, not remove B.
+	// The element left the page. Only the same control may take the ref back, and only when that is proven: the page put a
+	// control back under the same id attribute, it shows what the ref did, it sits in a row with the same text, and nothing
+	// else on the page looks the same. Ids that follow position (task-0, remove-1) move to another row when one is deleted,
+	// so the id alone proves nothing. A ref an action already went through is never healed.
 	const printed = prints?.get(ref);
-	const was = gone?.get(ref) ?? (el && printed !== undefined && el.id ? { id: el.id, print: printed } : undefined);
-	if (refs && was?.id) {
+	const was =
+		gone?.get(ref) ??
+		(el && printed !== undefined && el.id ? { id: el.id, print: printed, ctx: ctx(el) } : undefined);
+	if (refs && was?.id && !acted.has(ref)) {
 		const found = document.getElementById(was.id);
-		if (found && found !== el && live(found) && print(found) === was.print) {
-			refs.set(ref, found);
-			prints?.set(ref, was.print);
-			gone?.delete(ref);
-			if (w.__tabkyraRefOf instanceof WeakMap) {
-				const refOf = w.__tabkyraRefOf as WeakMap<Element, string>;
-				if (!refOf.has(found)) refOf.set(found, ref);
+		if (found && found !== el && live(found) && print(found) === was.print && ctx(found) === was.ctx) {
+			const same = Array.from(document.getElementsByTagName(found.tagName));
+			const alike =
+				same.length <= 2000
+					? same.filter((x) => x !== found && print(x) === was.print && ctx(x) === was.ctx)
+					: same;
+			if (alike.length === 0) {
+				refs.set(ref, found);
+				prints?.set(ref, was.print);
+				gone?.delete(ref);
+				if (w.__tabkyraRefOf instanceof WeakMap) {
+					const refOf = w.__tabkyraRefOf as WeakMap<Element, string>;
+					if (!refOf.has(found)) refOf.set(found, ref);
+				}
+				return use(found);
 			}
-			return found;
 		}
 	}
+	if (acted.has(ref))
+		throw new Error(
+			`Ref ${ref} not found: the element it named is gone from the page, so the action may already have happened. Call read_page to see the page now, and use its refs.`,
+		);
+	// Whether this document ever gave the ref out: refs are numbered from a random start per document.
+	const n = /^e(\d+)$/.test(ref) ? Number(ref.slice(1)) : Number.NaN;
+	const start = typeof w.__tabkyraRefStart === "number" ? w.__tabkyraRefStart : undefined;
+	const seq = typeof w.__tabkyraRefSeq === "number" ? w.__tabkyraRefSeq : undefined;
+	const given =
+		el !== undefined || gone?.has(ref) || (start !== undefined && seq !== undefined && n > start && n <= seq);
+	if (given)
+		throw new Error(
+			`Ref ${ref} not found: the element it named left the page. Nothing was done. Call read_page for fresh refs.`,
+		);
 	throw new Error(
-		`Ref ${ref} not found: the element it named is gone from the page, so the action may already have happened. Call read_page to see the page now, and use its refs.`,
+		`Ref ${ref} not found: this page never gave it out (refs don't carry over from before the page loaded or changed). Nothing was done. Call read_page {"filter":"interactive"} for fresh refs.`,
 	);
 }
 
@@ -574,6 +619,7 @@ function pageSnapshot(
 		__tabkyraStale?: unknown;
 		__tabkyraGonePrints?: unknown;
 		__tabkyraRanked?: unknown;
+		__tabkyraRefStart?: unknown;
 	};
 	// Adopt earlier state only when it is what this function wrote.
 	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : new Map<string, Element>();
@@ -601,13 +647,14 @@ function pageSnapshot(
 	// what it showed a while (at most 300), so its ref can follow the page putting the same control back (resolveRef).
 	const gone =
 		w.__tabkyraGonePrints instanceof Map
-			? (w.__tabkyraGonePrints as Map<string, { id: string; print: string }>)
-			: new Map<string, { id: string; print: string }>();
+			? (w.__tabkyraGonePrints as Map<string, { id: string; print: string; ctx: string }>)
+			: new Map<string, { id: string; print: string; ctx: string }>();
 	w.__tabkyraGonePrints = gone;
 	for (const [ref, el] of refs)
 		if (!live(el)) {
 			const p = prints.get(ref);
-			if (p !== undefined && el.id) gone.set(ref, { id: el.id, print: p });
+			const ctx = (el.parentElement?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+			if (p !== undefined && el.id) gone.set(ref, { id: el.id, print: p, ctx });
 			refs.delete(ref);
 			prints.delete(ref);
 		}
@@ -621,6 +668,8 @@ function pageSnapshot(
 		typeof w.__tabkyraRefSeq === "number" && Number.isSafeInteger(w.__tabkyraRefSeq) && w.__tabkyraRefSeq > 0
 			? w.__tabkyraRefSeq
 			: 1_000_000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900_000_000);
+	// Where this document's numbering began, so a ref it never gave out is told apart from one whose element left.
+	if (typeof w.__tabkyraRefStart !== "number") w.__tabkyraRefStart = seq;
 	const interactiveSel =
 		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1'])";
 	const headingSel = "h1,h2,h3,h4,h5,h6,label,[role=heading],[role=alert],[role=status],[role=dialog]";
@@ -846,10 +895,13 @@ function pageSnapshot(
 	// Ranked (read_page's interactive look): what the agent can act on now comes first. The focused
 	// control and an open dialog's, then the viewport's, then within a screen of it, then the rest;
 	// a control something else covers is left out (a click on it would land on the cover) and counted.
-	let ranked: Record<string, number | string> | undefined;
+	let ranked: Record<string, number | string | number[]> | undefined;
+	// Where each listed control sits in the ranking, when that is not just its place in this list (a later slice).
+	let positions: number[] | undefined;
 	// A slice past the first continues the read it came from: the order is that read's, kept in the page, so a click
 	// that scrolled or moved focus in between doesn't reshuffle the slices (repeating some controls, skipping others).
-	type Kept = { id: string; order: Array<{ el: Element; at: Root }>; counts: Record<string, number> };
+	// Held weakly: a list the page threw away is not kept alive by a read the agent may never continue.
+	type Kept = { id: string; order: Array<WeakRef<Element>>; counts: Record<string, number> };
 	const kept = (w.__tabkyraRanked && typeof w.__tabkyraRanked === "object" ? w.__tabkyraRanked : undefined) as
 		| Kept
 		| undefined;
@@ -860,8 +912,22 @@ function pageSnapshot(
 				`Offset ${offset} is from ${rank.snapshot ? `read ${rank.snapshot}` : "a read"} this page no longer has: call read_page {"filter":"interactive"} again from the top.`,
 			);
 		ranked = { ...kept.counts, offset, snapshot: kept.id };
-		// Positions are the kept read's; a control that left the page since is skipped, not replaced by the next one.
-		order = kept.order.slice(offset).filter((item) => live(item.el));
+		// The slice is positions offset to offset + maxNodes of the kept read. A control that left the page since is
+		// skipped, never replaced by the one after the window, and `next` is where the window ended: the next slice
+		// starts there whatever was skipped, so no control comes twice and none is missed.
+		const rootOf = new Map(roots.map((at) => [at.root as Node, at]));
+		const span = kept.order.slice(offset, offset + maxNodes);
+		order = [];
+		positions = [];
+		span.forEach((held, i) => {
+			const el = held instanceof WeakRef ? held.deref() : undefined;
+			const at = el && rootOf.get(el.getRootNode());
+			if (el && at && live(el)) {
+				order.push({ el, at });
+				positions?.push(offset + i);
+			}
+		});
+		ranked.next = offset + span.length;
 	} else if (rank) {
 		const vh = window.innerHeight;
 		let focus: Element | null = document.activeElement;
@@ -911,7 +977,7 @@ function pageSnapshot(
 			far: tiers[3].length,
 		};
 		const id = `r${Math.random().toString(36).slice(2, 7)}`;
-		w.__tabkyraRanked = { id, order, counts } satisfies Kept;
+		w.__tabkyraRanked = { id, order: order.map((item) => new WeakRef(item.el)), counts } satisfies Kept;
 		ranked = { ...counts, offset: 0, snapshot: id };
 	}
 	for (const { el, at } of order) {
@@ -978,6 +1044,10 @@ function pageSnapshot(
 		nodes.push(node);
 	}
 	w.__tabkyraRefSeq = seq;
+	if (ranked) {
+		if (positions) ranked.positions = positions.slice(0, nodes.length);
+		else ranked.next = offset + nodes.length;
+	}
 
 	// Text: the document, then what shadow roots and same-origin frames render, which
 	// document.body.innerText leaves out. Rendered text only: nothing hidden reaches the agent.
@@ -1426,7 +1496,9 @@ export async function fillElement(
 			el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
 			if (document.visibilityState === "visible")
 				await Promise.race([new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))), new Promise((ok) => setTimeout(ok, 200))]);
-			const again = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()});
+			let again = null;
+			try { again = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); }
+			catch { throw new Error("Ref " + ref + " not found: the element it named left the page as Polycarp scrolled to it (the page rebuilt it). Nothing was entered. Call read_page for fresh refs."); }
 			if (again !== el) throw new Error("Ref " + ref + " now shows something else: the page reused it. Call read_page for fresh refs.");
 			// A field in a dialog that closed keeps its ref; writing into it would put a value
 			// the user can't see into the next submit.

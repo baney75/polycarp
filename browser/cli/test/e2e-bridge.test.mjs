@@ -2357,6 +2357,23 @@ test("an interactive read lists controls nearest first, leaves out covered ones,
 	await tool("click", { ref: row.match(/\b(e\d+)\b/)[1] });
 	assert.match(await tool("get_page_text"), new RegExp(`clicked ${row.match(/Row \d+/)[0].toLowerCase()}`));
 
+	// PR 201 first-F2: controls the next slice would list leave the page between slices. The slice keeps the first read's
+	// positions and says where it ends, so the slice after starts there: no control twice, none of the rest skipped.
+	await go("rank");
+	const one = await tool("read_page", { filter: "interactive" });
+	const id = one.match(/"snapshot":"(r\w+)"/)[1];
+	const last = Math.max(...rows(one));
+	const removed = [last + 5, last + 6, last + 7];
+	await tool("run_js", { code: `(() => { for (const n of ${JSON.stringify(removed)}) [...document.querySelectorAll("button")].find((b) => b.textContent === "Row " + n).parentNode.remove(); return true; })()` });
+	const two = await tool("read_page", { filter: "interactive", offset: 50, snapshot: id });
+	assert.match(two, /Controls 51-100 of 343, nearest first .*3 of them left the page since that read\./);
+	assert.match(two, new RegExp(`"offset":100,"snapshot":"${id}"`));
+	const three = await tool("read_page", { filter: "interactive", offset: 100, snapshot: id });
+	const got = [...rows(one), ...rows(two), ...rows(three)];
+	assert.equal(new Set(got).size, got.length, "no row twice");
+	const want = Array.from({ length: Math.max(...got) }, (_, i) => i + 1).filter((n) => !removed.includes(n));
+	assert.deepEqual(got, want, "rows in order, only the removed ones missing");
+
 	// The full read is as before: text and the covered control included.
 	const all = await tool("read_page", {});
 	assert.match(all, /Covered save/);
@@ -2366,6 +2383,29 @@ test("an interactive read lists controls nearest first, leaves out covered ones,
 	// A slice from a read this page no longer has (a new document since) is refused: read again from the top.
 	await go("rank");
 	assert.match(await failure("read_page", { filter: "interactive", offset: 50, snapshot }), /^stale_ref: Offset 50 is from read r\w+ this page no longer has: call read_page \{"filter":"interactive"\} again from the top\./);
+});
+
+// PR 201 first-F4: the kept order of a ranked read holds its controls weakly. A list the page threw away is not kept
+// alive by a read the agent may never continue (a long-lived app that replaces big lists).
+test("a ranked read does not keep a list the page removed alive", async () => {
+	await go("rank");
+	await tool("read_page", { filter: "interactive" });
+	const target = await until(
+		async () => (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "page" && t.url.endsWith("/rank")),
+		5_000,
+		"the /rank tab",
+	);
+	const evaluate = async (expression) => (await cdp(target.webSocketDebuggerUrl, "Runtime.evaluate", { expression, returnByValue: true })).result?.value;
+	// The probe is the main world's, which never held the rows: only Polycarp's world could keep them.
+	assert.equal(await evaluate(`(() => { const b = [...document.querySelectorAll("button")].find((x) => x.textContent === "Row 300"); window.__probe = new WeakRef(b); b.parentNode.parentNode.remove(); return true; })()`), true);
+	// A full read forgets refs whose element left; only the kept ranking could still hold the rows.
+	await tool("read_page", {});
+	let freed = false;
+	for (let i = 0; i < 5 && !freed; i++) {
+		await cdp(target.webSocketDebuggerUrl, "HeapProfiler.collectGarbage");
+		freed = await evaluate("window.__probe.deref() === undefined");
+	}
+	assert.equal(freed, true, "the removed rows were collected");
 });
 
 // A list that rebuilds every row after each tick and moves done items down, each checkbox under the same id: refs from
@@ -2418,11 +2458,65 @@ test("a ref whose element is gone is refused, never moved to a look-alike: click
 	assert.deepEqual(await rows(), [""], `row B is still there (the repeat said: ${said})`);
 	assert.equal(again.isError, true, said);
 	assert.match(said, /^stale_ref: Ref e\d+ not found: the element it named is gone from the page, so the action may already have happened\. Call read_page/);
-	for (const [name, args] of [["fill", { ref: noteA, value: "x" }], ["type", { ref: noteA, text: "x" }]]) assert.match(await failure(name, args), /^stale_ref: .*gone from the page/, name);
+	// Row A's note was never acted on: it left the page and nothing was done, which is what the agent is told.
+	for (const [name, args] of [["fill", { ref: noteA, value: "x" }], ["type", { ref: noteA, text: "x" }]]) assert.match(await failure(name, args), /^stale_ref: Ref e\d+ not found: the element it named left the page\. Nothing was done\./, name);
 	assert.deepEqual(await rows(), [""], "row B's note is untouched");
 	// Row B's own ref still works.
 	await tool("click", { ref: removeB });
 	assert.deepEqual(await rows(), []);
+});
+
+// PR 201 first-F1: a list rebuilt from an array with ids that follow position (rm-0, rm-1, ...), the way a key-less
+// re-render numbers its rows. After row 0 is removed, row 1's button comes back as rm-0, showing the same "Remove": the
+// id and the look match, and it is another row. The ids prove nothing, so a ref whose element left is refused.
+extraPages["/remove-ids"] = `<!doctype html><title>Polycarp remove ids</title><ul id="rows"></ul><ul id="twins"></ul>
+<script>
+const items = ["Buy milk", "Walk the dog", "Call mom"]; const twins = ["Draft", "Draft", "Draft"];
+function render() {
+  document.getElementById("rows").innerHTML = items.map((t, i) => '<li>' + t + ' <button id="rm-' + i + '" onclick="items.splice(' + i + ',1);render()">Remove</button></li>').join("");
+  document.getElementById("twins").innerHTML = twins.map((t, i) => '<li>' + t + ' <button id="tw-' + i + '" onclick="twins.splice(' + i + ',1);render()">Discard</button></li>').join("");
+}
+render();
+</script>`;
+
+test("a ref never heals onto another row because the page reused its position id", async () => {
+	await go("remove-ids");
+	const refsOf = (label, read) => read.split("\n").filter((l) => l.includes(`"${label}"`)).map((l) => l.match(/\b(e\d+)\b/)[1]);
+	const left = async () => JSON.parse(JSON.parse(await tool("run_js", { code: "JSON.stringify([items, twins.length])" })).value);
+	// Identical rows: after tw-0's row goes, the next "Draft" row comes back as tw-0, the same in id, look and row text.
+	// The repeat of the click that removed it must fail, not remove a second draft.
+	const [tw0, tw1] = refsOf("Discard", await tool("read_page", { filter: "interactive" }));
+	await tool("click", { ref: tw0 });
+	assert.deepEqual(await left(), [["Buy milk", "Walk the dog", "Call mom"], 2], "one draft removed");
+	const again = await mcp.callTool({ name: "click", arguments: { ref: tw0 } });
+	const said = again.content.map((c) => c.text).join("\n");
+	assert.deepEqual(await left(), [["Buy milk", "Walk the dog", "Call mom"], 2], `no second draft removed (the repeat said: ${said})`);
+	assert.match(said, /^stale_ref: Ref e\d+ not found: the element it named is gone from the page, so the action may already have happened\./);
+	// tw-1 is now the last draft's, which looks like tw-0's: nothing proves which one the old ref named.
+	assert.match(await failure("click", { ref: tw1 }), /^stale_ref: /);
+	assert.deepEqual(await left(), [["Buy milk", "Walk the dog", "Call mom"], 2]);
+	// Rows with their own text: rm-0's repeat, and rm-1 (never acted on) now in "Call mom"'s row, are refused.
+	const page = await tool("read_page", { filter: "interactive" });
+	const [rm0, rm1] = refsOf("Remove", page);
+	await tool("click", { ref: rm0 });
+	assert.deepEqual(await left(), [["Walk the dog", "Call mom"], 2], "row 0 removed");
+	assert.match(await failure("click", { ref: rm0 }), /^stale_ref: .*may already have happened/);
+	assert.match(await failure("click", { ref: rm1 }), /^stale_ref: Ref e\d+ not found: the element it named left the page\. Nothing was done\./);
+	assert.deepEqual(await left(), [["Walk the dog", "Call mom"], 2]);
+});
+
+// PR 201 second-F5: a ref this page never gave out (one kept from before a navigation, or a made-up one) was never acted
+// on here, so the agent must not be told its action may already have happened: it would report a click it never made.
+test("a ref from before a navigation, or a made-up one, says nothing was done and to read again", async () => {
+	await go("remove");
+	const old = refFor(await tool("read_page", { filter: "interactive" }), '"Remove"');
+	await go("pw");
+	await tool("read_page", { filter: "interactive" });
+	for (const ref of [old, "e12"]) {
+		const said = await failure("click", { ref });
+		assert.match(said, /^stale_ref: Ref e\d+ not found: this page never gave it out .*Nothing was done\. Call read_page \{"filter":"interactive"\} for fresh refs\./, ref);
+		assert.doesNotMatch(said, /may already have happened/, ref);
+	}
 });
 
 extraPages["/chain"] = `<!doctype html><title>Polycarp chain</title><button onclick="const n=prompt('Name?');document.getElementById('r').textContent=confirm('Save '+n+'?')?'saved '+n:'kept'">Rename</button><p id="r">idle</p>`;

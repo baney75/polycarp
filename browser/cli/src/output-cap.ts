@@ -157,15 +157,40 @@ export interface RankCounts {
 	offset: number;
 	/** Names the ranking a later slice continues (src/browser/page.ts); absent from an extension before it. */
 	snapshot?: string;
+	/** Where the next slice starts; absent from an extension before it, then offset plus what was shown. */
+	next?: number;
+	/** A later slice's: each listed control's place in the ranking (controls that left the page are skipped). */
+	positions?: number[];
+}
+
+/**
+ * A ranked read cut to `maxNodes` positions of the ranking (a later slice skips controls that left the page, so it can
+ * list fewer), and the offset the slice after it starts at: no control twice, none skipped.
+ */
+export function rankedSlice<N>(r: RankCounts, nodes: N[], maxNodes: number): { nodes: N[]; next: number } {
+	if (r.positions) {
+		const end = r.offset + maxNodes;
+		const kept = nodes.slice(0, Math.min(maxNodes, r.positions.filter((p) => p < end).length));
+		const next = kept.length < r.positions.filter((p) => p < end).length ? r.positions[kept.length] : Math.min(r.next ?? end, end);
+		return { nodes: kept, next };
+	}
+	const kept = nodes.slice(0, maxNodes);
+	return { nodes: kept, next: kept.length < nodes.length ? r.offset + kept.length : (r.next ?? r.offset + kept.length) };
 }
 
 /**
  * The line under a ranked interactive read: which slice this is, what was left out and the exact call for more, so a
  * model that needs a control further down knows it exists and how to get it.
  */
-export function rankNote(r: RankCounts, shown: number, text: { maxTextChars: number; cut: boolean } = { maxTextChars: 0, cut: false }): string {
+export function rankNote(
+	r: RankCounts,
+	shown: number,
+	text: { maxTextChars: number; cut: boolean } = { maxTextChars: 0, cut: false },
+	opts: { next?: number; has?: (tool: string) => boolean } = {},
+): string {
+	const has = opts.has ?? (() => true);
 	const from = r.offset + 1;
-	const to = r.offset + shown;
+	const to = opts.next ?? r.offset + shown;
 	const tiers = [
 		r.first ? `${fmt(r.first)} focused or in a dialog` : "",
 		`${fmt(r.inView)} in view`,
@@ -173,18 +198,23 @@ export function rankNote(r: RankCounts, shown: number, text: { maxTextChars: num
 		r.far ? `${fmt(r.far)} further away` : "",
 	].filter(Boolean);
 	const parts = [
-		shown === 0
+		shown === 0 && to === r.offset
 			? `No controls from ${fmt(from)} on (${fmt(r.total)} in all).`
 			: to < r.total || r.offset
 				? `Controls ${fmt(from)}-${fmt(to)} of ${fmt(r.total)}, nearest first (${tiers.join(", ")}).`
 				: `All ${fmt(r.total)} controls (${tiers.join(", ")}).`,
 	];
+	// Positions are the read's, so a control that left the page since leaves a gap rather than pulling the next one in.
+	const left = to - r.offset - shown;
+	if (left > 0) parts.push(`${fmt(left)} of them left the page since that read.`);
 	if (r.covered) parts.push(`${fmt(r.covered)} covered by something on top are left out: close or dismiss it first.`);
 	const more = r.snapshot ? `{"filter":"interactive","offset":${to},"snapshot":"${r.snapshot}"}` : `{"filter":"interactive","offset":${to}}`;
-	if (to < r.total) parts.push(`More: read_page ${more}, or find {"query":"..."} for one.`);
+	// Only tools this session has are named: a scoped session told about one it lacks gets a refusal for following it.
+	if (to < r.total) parts.push(has("find") ? `More: read_page ${more}, or find {"query":"..."} for one.` : `More: read_page ${more}.`);
 	// The text is said as it is: none asked for, cut at the cap, or whole (then nothing to add).
-	if (!text.maxTextChars) parts.push("No page text here: get_page_text reads it.");
-	else if (text.cut) parts.push(`The text stopped at ${fmt(text.maxTextChars)} characters: get_page_text reads all of it.`);
+	const whole = has("get_page_text") ? ": get_page_text reads it." : ".";
+	if (!text.maxTextChars) parts.push(`No page text here${whole}`);
+	else if (text.cut) parts.push(`The text stopped at ${fmt(text.maxTextChars)} characters${has("get_page_text") ? ": get_page_text reads all of it." : "."}`);
 	return `\n\n[${parts.join(" ")}]`;
 }
 
