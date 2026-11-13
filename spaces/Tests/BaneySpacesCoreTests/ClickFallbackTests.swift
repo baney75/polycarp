@@ -171,21 +171,6 @@ final class ClickFallbackTests: XCTestCase {
         XCTAssertTrue(src.contains("handle(req, resolved: &resolved), window: windowOf(resolved)"))
     }
 
-    // 187 r1 second-F5: a plan from a compact read keeps that view, and the readbacks read in it, so row keys match.
-    func testTheReadbackReadsInTheViewThePlanCameFrom() throws {
-        var m = SnapshotRowsMemory()
-        m.remember(session: "a", window: 7, view: "false|true|6", snapshot: "sc", rows: [], now: Date())
-        m.remember(session: "a", window: 7, view: "false|false|10", snapshot: "sf", rows: [], now: Date())
-        XCTAssertEqual(m.read(snapshot: "sc", session: "a")?.view, SnapshotRowsMemory.View(interactive: false, compact: true, depth: 6))
-        XCTAssertEqual(m.read(snapshot: "sf", session: "a")?.view, .full)
-        XCTAssertEqual(SnapshotRowsMemory.View(key: "true|false|3"), SnapshotRowsMemory.View(interactive: true, compact: false, depth: 3))
-        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
-        XCTAssertTrue(router.contains("p.view = read.view"), "the plan carries its read's view")
-        let row = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+RowClick.swift")
-        XCTAssertTrue(row.contains("interactive: plan.view.interactive, compact: plan.view.compact"), "the readbacks use it")
-        XCTAssertFalse(row.contains("compact: false, depth: 10"))
-    }
-
     /// The tree with only the item labeled `label` selected.
     static func select(_ n: JSONValue, label: String) -> JSONValue {
         guard case .object(var o) = n else { return n }

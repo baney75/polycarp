@@ -225,17 +225,6 @@ public enum SnapshotRows {
 /// What each session last read, so `since: "latest"` has something to compare with and a bare row number (`5`) means one
 /// element. Per session: the last read of each window and view, and the last few snapshots in order.
 public struct SnapshotRowsMemory: Sendable {
-    /// How a read was made: `interactive`, `compact` and `depth`, as the router keys reads ("false|true|10").
-    public struct View: Equatable, Sendable {
-        public var interactive: Bool, compact: Bool, depth: Int
-        public init(interactive: Bool, compact: Bool, depth: Int) { self.interactive = interactive; self.compact = compact; self.depth = depth }
-        public static let full = View(interactive: false, compact: false, depth: 10)
-        public init(key: String) {
-            let p = key.split(separator: "|").map(String.init)
-            self.init(interactive: p.first == "true", compact: p.count > 1 && p[1] == "true", depth: p.count > 2 ? Int(p[2]) ?? 10 : 10)
-        }
-    }
-
     public struct Read: Equatable, Sendable {
         public var snapshot: String
         public var window: UInt32
@@ -244,7 +233,6 @@ public struct SnapshotRowsMemory: Sendable {
         /// Whether the read printed every row with its number. A since read or a find did not, so a bare number after one
         /// may mean a row the agent saw in an older read.
         public var listed: Bool = true
-        public var view = View.full
         /// The order the session's reads were made in.
         var seq = 0
         /// Row number to row key, for comparing two snapshots' row N.
@@ -290,7 +278,6 @@ public struct SnapshotRowsMemory: Sendable {
         seq += 1
         var read = Read(snapshot: snapshot, window: window, rows: rows, at: now, listed: listed)
         read.seq = seq
-        read.view = View(key: view)
         // The full read a refusal's next_call asked for: the agent has seen these numbers, so older reads don't count.
         if listed, needsRead[session] == window { floor[session] = seq; needsRead[session] = nil }
         if baseline { last[Self.viewKey(session: session, window: window, view: view)] = read }

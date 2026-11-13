@@ -16,8 +16,7 @@ extension HandsRouter {
             let acting = actingCheck(w, ref: ref, verb: "click", delivery: .headlessAX, session: session)
             // Each read keeps its tree: with no readback, the change it shows is the press's evidence (first-F4).
             func selected(_ tree: inout JSONValue?) -> Bool? {
-                guard case .ok(let d) = HandsEngine.shared.snapshotInline(window: w, interactive: plan.view.interactive, compact: plan.view.compact,
-                                                                            depth: UInt8(clamping: plan.view.depth), evidence: true) else { return nil }
+                guard case .ok(let d) = HandsEngine.shared.snapshotInline(window: w, interactive: false, compact: false, depth: 10, evidence: true) else { return nil }
                 tree = d["tree"]
                 return ClickFallback.selected(SnapshotRows.rows(of: d["tree"] ?? .null), plan)
             }
