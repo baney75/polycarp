@@ -487,7 +487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // The agent cursor hides the moment you leave the agent workspace.
             CursorController.shared.environmentChanged()
             // Any workspace switch ends every launch's covers: they show the screen from before it.
-            if let self { OpenFlashWatch.environmentChanged(showing: Set([self.spaces.model.current] + self.spaces.model.shown.values)) }
+            if let self { OpenFlashWatch.environmentChanged(showing: self.showing) }
         }
         // A new theme redraws the menu bar indicator as well as the panels.
         NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
@@ -912,6 +912,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if listening { statusItem.button?.toolTip = "Silas is listening" }
     }
 
+    /// The workspace each display shows and the current one, for the open cover (`OpenFlashGuard.Showing`).
+    var showing: OpenFlashGuard.Showing { .init(current: spaces.model.current, byDisplay: spaces.model.shown) }
+
     private func startSession() {
         session.onUnseenChange = { [weak self] _ in self?.updateIcon(); self?.dock.reload() }
         var h = AgentHost()
@@ -928,7 +931,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         h.windows = { [weak self] in self?.spaces.agentWindows() ?? [] }
         h.pidOf = { [weak self] id in self?.spaces.handsLive(id)?.pid }
         h.occupied = { [weak self] n in self?.spaces.isOccupied(n) ?? false }
-        h.showing = { [weak self] in self.map { Set([$0.spaces.model.current] + $0.spaces.model.shown.values) } ?? [] }
+        h.showing = { [weak self] in self?.showing ?? .init(current: 1, byDisplay: [:]) }
         Windows.onHoldEnd = { [weak self] pid in self?.spaces.askAgain(pid) }
         session.agentHost = h
         // The agent hands: what the scope guard needs from the workspaces, and what to do when a lend changes.

@@ -19,7 +19,7 @@ struct AgentHost {
     /// Whether a workspace holds any window.
     var occupied: (Int) -> Bool = { _ in false }
     /// The workspaces on screen, one per display.
-    var showing: () -> Set<Int> = { [] }
+    var showing: () -> OpenFlashGuard.Showing = { .init(current: 1, byDisplay: [:]) }
 }
 
 /// Processes BaneySpaces started for an agent (`agent open` of an app, `agent run`): the only ones an agent
@@ -662,14 +662,21 @@ final class SessionController {
                 guard !before.contains(app.processIdentifier) else { return }
                 adoptAgentStartedProcess(app.processIdentifier, workspace: n, title: nil, host: h, grantAccess: !separate)
                 if files.isEmpty {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        // No window yet: Spaces must be able to ask the app for New Window (`OpenFlashGuard.Holds`).
-                        Windows.release(app.processIdentifier)
-                        // The mode may have narrowed in the 1.5 s since the request was let in.
+                    /// No window yet: New Window must ask the app. While a cover's hold is on it waits, up to the hold's
+                    /// length, since asking blocks main when the cover may need to rise (review of PR 213, first-F2).
+                    func newWindowCheck(waited: Double) {
+                        let pid = app.processIdentifier
+                        if OpenFlashGuard.newWindowWaits(held: Windows.isHeld(pid), waited: waited) {
+                            return DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { newWindowCheck(waited: waited + 0.1) }
+                        }
+                        // The next line asks the app itself, so the release doesn't run a skipped scan as well.
+                        Windows.release(pid, askAgain: false)
+                        // The mode may have narrowed since the request was let in.
                         let now = AgentAccess.shared.current
                         guard AgentAccessGate.sessionRefusal(op: "open", mode: now) == nil, separate || now == .full else { return }
-                        if Windows.standardIDs(of: app.processIdentifier).isEmpty { _ = newWindow(app) }
+                        if Windows.standardIDs(of: pid).isEmpty { _ = newWindow(app) }
                     }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { newWindowCheck(waited: 1.5) }
                 }
             }
             func finished(_ app: NSRunningApplication?) {

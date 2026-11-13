@@ -15,14 +15,19 @@ import Foundation
 /// whether or not the window was parked, since a still image that eats clicks is worse than a late window. Review of
 /// PR 212: a cover dies with its moment (any workspace switch, the process gone or replaced, the watch over), the hold
 /// ends only after the cover has painted, one guarded open runs at a time, and a capture that takes over 300 ms means
-/// no guard.
+/// no guard. Review of PR 213: the watch lasts while the launch's claim does, and every new ordinary window of the
+/// process gets a cover until it is parked; a helper, splash, panel or sliver neither ends the hold nor the watch.
 public enum OpenFlashGuard: String, Sendable, CaseIterable {
     case off
     case cover
 
     public static let defaultsKey = "agentOpenFlashGuard"
-    /// The domain the flag is read from, the app's own: `defaults write com.baney.polycarp agentOpenFlashGuard cover`.
+    /// The domain the flag is written to, the app's own: `defaults write com.baney.polycarp agentOpenFlashGuard cover`.
+    /// The app reads it from `UserDefaults.standard`, which is that domain (a suite named after the app's own bundle id
+    /// is unsupported: CFPreferences ignores it). Scripts, which are other processes, read it by this suite name.
     public static let defaultsDomain = Product.bundleID
+    /// The flag as `defaults` holds it for this process.
+    public static func current(_ d: UserDefaults = .standard) -> OpenFlashGuard { from(d.string(forKey: defaultsKey)) }
     /// The covers' window level, one no other Polycarp window uses (it has 0, 3, 8, 25 and 1000), so the probe can tell a
     /// cover from Polycarp's other windows by owner pid and layer.
     public static let coverLevel = 4
@@ -32,10 +37,18 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
     public static let waitForTurn: Double = 2
     public static func from(_ raw: String?) -> OpenFlashGuard { raw.flatMap(Self.init(rawValue:)) ?? .off }
 
-    /// How long a launch is watched: past the 8 s claim.
-    public static let watchFor: Double = 9
-    /// The window server is read this often while watching.
+    /// How long a launch is watched and its windows covered: the claim on a process the agent started (`claimNextWindow`
+    /// within 8 s), counted from when the launch handed back its process.
+    public static let claimFor: Double = 8
+    /// The watch ends this long after the last of its covered windows was parked, closed or past its cover, with no new
+    /// one since: a document chooser parked at 0.6 s and the main window at 2 s both get a cover.
+    public static let quietFor: Double = 2.5
+    /// A covered window off the list this long has closed. A shorter gap is the park's move (hidden, then moved).
+    public static let goneAfter: Double = 0.3
+    /// The window server is read this often while a window has a cover or none has come yet.
     public static let interval: Double = 0.004
+    /// And this often once every covered window is parked or closed, waiting out `quietFor` for another.
+    public static let idleInterval: Double = 0.016
     /// The longest a cover stays up for one window, counted from when it first went up.
     public static let coverLife: Double = 1.5
     /// The longest Spaces' asks to the launching process are held back.
@@ -72,13 +85,25 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
 
     /// One launch's watch, bound to the pid its launch returned. Fed the window server's list each tick (time in seconds
     /// since the watch began), it says which windows to cover, when the hold may end and when the watch is over.
+    ///
+    /// Every new ordinary window of the process in sight gets a cover until it is parked (out of sight), closes (off the
+    /// list past `goneAfter`) or reaches `coverLife`. A window that never needed a cover (a helper, a splash or sliver of
+    /// 50 pt or less, a floating panel, one already out of sight) is ignored: it neither ends the hold nor the watch. The
+    /// watch lasts while the claim does (`claimFor`), and ends sooner only once every covered window is done and no new
+    /// one came for `quietFor`.
     public struct Plan: Sendable {
         public let pid: Int32
         /// The launched process's start time: a pid reused by another process isn't this launch's.
         public let incarnation: UInt64
         public let screens: [CGRect]
+        /// The windows with a cover now, by id: when it went up.
         private var upAt: [UInt32: Double] = [:]
-        private var expired: Set<UInt32> = []
+        /// Windows parked, closed or past their cover: never covered again.
+        private var done: Set<UInt32> = []
+        /// Covered windows off the list, since when.
+        private var missing: [UInt32: Double] = [:]
+        private var lastDone: Double?
+        private var covered = false
         private var last: [UInt32: CGRect] = [:]
 
         public struct Step: Equatable, Sendable {
@@ -86,41 +111,55 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
             public var covers: [UInt32: CGRect]
             /// Whether `covers` differs from the last step's: only then does the main thread redraw.
             public var changed: Bool
-            /// The hold may end (after `covers` is up): a window of this launch was seen, or the hold ran out.
+            /// The hold may end (after `covers` is up): a cover went up, or the hold ran out. Never for a sighting alone.
             public var release: Bool
-            /// The watch is over: its process exited or was replaced, its windows are parked or past their cover, or it ran
-            /// its course.
+            /// The watch is over: its process exited or was replaced, the claim ran out, or its covered windows are done
+            /// and no new one came for `quietFor`.
             public var end: Bool
             /// Windows whose cover came down at `coverLife` without being parked.
             public var expired: [UInt32]
+            /// Nothing is covered and a window was done with: the watch may poll at `idleInterval`.
+            public var idle: Bool
         }
 
         public init(pid: Int32, incarnation: UInt64, screens: [CGRect]) { self.pid = pid; self.incarnation = incarnation; self.screens = screens }
 
         /// `incarnation` is the pid's start time now, nil once it has exited.
         public mutating func tick(now: Double, windows: [Sighting], incarnation now_: UInt64?) -> Step {
-            guard now_ == incarnation, now < OpenFlashGuard.watchFor else {
+            guard now_ == incarnation, now < OpenFlashGuard.claimFor else {
                 defer { last = [:] }
-                return Step(covers: [:], changed: !last.isEmpty, release: true, end: true, expired: [])
+                return Step(covers: [:], changed: !last.isEmpty, release: true, end: true, expired: [], idle: false)
             }
-            var want: [UInt32: CGRect] = [:], ran: [UInt32] = [], seen = false
-            for w in windows where w.pid == pid {
-                seen = true
-                guard !expired.contains(w.id), OpenFlashGuard.needsGuard(layer: w.layer, bounds: w.bounds, screens: screens) else { continue }
+            var want: [UInt32: CGRect] = [:], ran: [UInt32] = []
+            let mine = windows.filter { $0.pid == pid }
+            for w in mine where !done.contains(w.id) {
+                missing[w.id] = nil
+                guard OpenFlashGuard.needsGuard(layer: w.layer, bounds: w.bounds, screens: screens) else {
+                    // Out of sight now, so a covered window is parked; one that never had a cover is ignored.
+                    if upAt[w.id] != nil { finish(w.id, now) }
+                    continue
+                }
                 let up = upAt[w.id] ?? now
                 upAt[w.id] = up
-                if now - up >= OpenFlashGuard.coverLife { expired.insert(w.id); ran.append(w.id); continue }
+                if now - up >= OpenFlashGuard.coverLife { finish(w.id, now); ran.append(w.id); continue }
                 want[w.id] = w.bounds
             }
+            // A covered window off the list: hidden for the park's move for a moment, or closed once it stays away.
+            let listed = Set(mine.map(\.id))
+            for id in Array(upAt.keys) where !listed.contains(id) {
+                let since = missing[id] ?? now
+                missing[id] = since
+                if now - since >= OpenFlashGuard.goneAfter { finish(id, now) }
+            }
+            if !want.isEmpty { covered = true }
             defer { last = want }
-            // Parked or past its cover: the launch has an ordinary window listed, each one is parked (stranded) or past its
-            // cover, and every one that had a cover is still listed (not hidden for the park's move) or expired. The poll
-            // stops there.
-            let present = Dictionary(windows.filter { $0.pid == pid && $0.layer == 0 }.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-            let settled = want.isEmpty && !present.isEmpty
-                && present.values.allSatisfy { expired.contains($0.id) || Geometry.isStranded($0.bounds, screens: screens) }
-                && upAt.keys.allSatisfy { expired.contains($0) || present[$0] != nil }
-            return Step(covers: want, changed: want != last || settled && !last.isEmpty, release: seen || now >= OpenFlashGuard.holdFor, end: settled, expired: ran.sorted())
+            let quiet = upAt.isEmpty && lastDone != nil
+            return Step(covers: want, changed: want != last, release: covered || now >= OpenFlashGuard.holdFor,
+                        end: quiet && now - lastDone! >= OpenFlashGuard.quietFor, expired: ran.sorted(), idle: quiet)
+        }
+
+        private mutating func finish(_ id: UInt32, _ now: Double) {
+            upAt[id] = nil; missing[id] = nil; done.insert(id); lastDone = now
         }
     }
 
@@ -134,6 +173,25 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
             live.contains(launch) && workspaces == now && inc == incarnation
         }
     }
+
+    /// What is on screen: the workspace each display shows, and the current one. Two displays that trade workspaces
+    /// show the same set of numbers, but a shot of either is stale, so the whole map is compared.
+    public struct Showing: Equatable, Sendable {
+        public var current: Int
+        public var byDisplay: [String: Int]
+        public init(current: Int, byDisplay: [String: Int]) { self.current = current; self.byDisplay = byDisplay }
+        public func contains(_ n: Int) -> Bool { current == n || byDisplay.values.contains(n) }
+    }
+
+    /// Runs `work` on the main thread: at once when already there, else on its next turn. `agent open` arrives on the
+    /// hands engine's and the session socket's queues, and the guard's state and AppKit live on main.
+    public static func onMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread { work() } else { DispatchQueue.main.async { work() } }
+    }
+
+    /// Whether the New Window step after a launch still waits: while the launch's hold is on (its cover not up yet), up
+    /// to `holdFor`. Asking the app sooner blocks main for up to 0.35 s, when the cover may need to rise.
+    public static func newWindowWaits(held: Bool, waited: Double) -> Bool { held && waited < holdFor }
 
     /// Whether a guarded open may start: alone, after waiting for the one before it, or, past `waitForTurn`, unguarded.
     public enum Turn: Equatable, Sendable { case go, wait, unguarded }

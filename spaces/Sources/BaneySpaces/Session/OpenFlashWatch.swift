@@ -6,22 +6,30 @@ import ScreenCaptureKit
 /// launch hands back its process and covers only that process's windows (`OpenFlashGuard.Plan`). Each queued cover
 /// carries a `Ticket` and is raised only while it still holds. Trace lines carry ms since the watch began.
 enum OpenFlashWatch {
-    static var mode: OpenFlashGuard {
-        .from(UserDefaults(suiteName: OpenFlashGuard.defaultsDomain)?.string(forKey: OpenFlashGuard.defaultsKey))
-    }
+    /// The app's own domain is `UserDefaults.standard` (`OpenFlashGuard.current`).
+    static var mode: OpenFlashGuard { OpenFlashGuard.current() }
     /// The launches capturing or watching, on the main thread: one at a time (`OpenFlashGuard.turn`).
     private static var live: [UInt64: Launch] = [:]
     private static var launches: UInt64 = 0
     /// Bumped on every workspace switch (and macOS Space change): a cover from before it is never raised.
     private(set) static var workspaces: UInt64 = 0
-    private static var lastShowing: Set<Int> = []
+    private static var lastShowing: OpenFlashGuard.Showing?
     private static var observing = false
 
     /// Runs `launch`, which must call `started` (on any thread) with what its completion handler got, before the claim.
-    /// `showing` is the workspaces on screen, `agent` the agent's.
-    static func around(app: String, before: Set<pid_t>, showing: @escaping () -> Set<Int>, agent: Int,
+    /// `showing` is what is on screen (read on main), `agent` the agent's workspace. Called on any thread: `agent open`
+    /// comes from the hands engine's and the session socket's queues, so with the cover on everything after the flag
+    /// runs on main (review of PR 213, first-F1). With it off the launch runs where it was called, as before.
+    static func around(app: String, before: Set<pid_t>, showing: @escaping () -> OpenFlashGuard.Showing, agent: Int,
                        launch: @escaping (_ started: @escaping (NSRunningApplication?) -> Void) -> Void) {
-        guard mode == .cover, !showing().contains(agent) else { return launch { _ in } }
+        guard mode == .cover else { return launch { _ in } }
+        OpenFlashGuard.onMain { guarded(app: app, before: before, showing: showing, agent: agent, launch: launch) }
+    }
+
+    private static func guarded(app: String, before: Set<pid_t>, showing: @escaping () -> OpenFlashGuard.Showing, agent: Int,
+                                launch: @escaping (_ started: @escaping (NSRunningApplication?) -> Void) -> Void) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !showing().contains(agent) else { return launch { _ in } }
         observe(showing())
         waitTurn(since: ProcessInfo.processInfo.systemUptime) { guarded in
             guard guarded else {
@@ -53,6 +61,7 @@ enum OpenFlashWatch {
 
     /// One guarded open at a time: waits for the one before it to finish, up to `waitForTurn`.
     private static func waitTurn(since: Double, _ body: @escaping (Bool) -> Void) {
+        dispatchPrecondition(condition: .onQueue(.main))
         switch OpenFlashGuard.turn(busy: !live.isEmpty, waited: ProcessInfo.processInfo.systemUptime - since) {
         case .go: body(true)
         case .unguarded: body(false)
@@ -60,7 +69,7 @@ enum OpenFlashWatch {
         }
     }
 
-    private static func observe(_ showing: Set<Int>) {
+    private static func observe(_ showing: OpenFlashGuard.Showing) {
         guard !observing else { return }
         observing = true
         lastShowing = showing
@@ -69,8 +78,10 @@ enum OpenFlashWatch {
         }
     }
 
-    /// Spaces changed something (`spaces.onChange`): a switch, between any workspaces, ends every launch's covers.
-    static func environmentChanged(showing: Set<Int>) {
+    /// Spaces changed something (`spaces.onChange`): a switch, between any workspaces, ends every launch's covers. The
+    /// whole map is compared, so two displays trading workspaces count (review of PR 213, sol-F2, second-F8).
+    static func environmentChanged(showing: OpenFlashGuard.Showing) {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard showing != lastShowing else { return }
         lastShowing = showing
         switched()
@@ -104,6 +115,7 @@ enum OpenFlashWatch {
 
         /// On the main thread, before the claim runs: hold Spaces' asks to the new process and watch its windows.
         func started(_ got: NSRunningApplication?, before: Set<pid_t>) {
+            dispatchPrecondition(condition: .onQueue(.main))
             guard OpenFlashWatch.live[gen] === self else { return }
             guard let got, !got.isTerminated, !before.contains(got.processIdentifier),
                   let inc = Self.start(got.processIdentifier) else {
@@ -145,7 +157,7 @@ enum OpenFlashWatch {
                     released = released || step.release
                     if step.changed || release || step.end { post(step, release: release) }
                     if step.end { break }
-                    Thread.sleep(forTimeInterval: OpenFlashGuard.interval)
+                    Thread.sleep(forTimeInterval: step.idle ? OpenFlashGuard.idleInterval : OpenFlashGuard.interval)
                 }
             }
             t.name = "open-flash-guard"
@@ -166,6 +178,7 @@ enum OpenFlashWatch {
         }
 
         private func drain() {
+            dispatchPrecondition(condition: .onQueue(.main))
             lock.lock(); let step = mailbox; mailbox = nil; lock.unlock()
             guard let step else { return }
             let ok = ticket.holds(live: Set(OpenFlashWatch.live.keys), workspaces: OpenFlashWatch.workspaces, incarnation: Self.start(pid))
@@ -178,6 +191,7 @@ enum OpenFlashWatch {
 
         /// Ends this launch: no more covers, the hold released (after the panels are gone), the watch stopped.
         func finish(why: String) {
+            dispatchPrecondition(condition: .onQueue(.main))
             lock.lock(); cancelled = true; mailbox = nil; lock.unlock()
             guard OpenFlashWatch.live[gen] === self else { return }
             OpenFlashWatch.live[gen] = nil

@@ -154,10 +154,17 @@ enum Windows {
         unresponsiveLock.lock(); holds.hold(pid, now: Date()); unresponsiveLock.unlock()
     }
 
-    /// Ends `pid`'s hold, on the main thread; a scan that skipped it is run again now.
-    static func release(_ pid: pid_t) {
+    /// Ends `pid`'s hold, on the main thread; a scan that skipped it is run again now, unless the caller asks the app
+    /// itself next (`askAgain: false`).
+    static func release(_ pid: pid_t, askAgain: Bool = true) {
         unresponsiveLock.lock(); let again = holds.release(pid); unresponsiveLock.unlock()
-        if again { onHoldEnd?(pid) }
+        if again && askAgain { onHoldEnd?(pid) }
+    }
+
+    /// Whether `pid`'s launch hold is on: its cover isn't up yet.
+    static func isHeld(_ pid: pid_t) -> Bool {
+        unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
+        return holds.holds(pid, now: Date())
     }
 
     static func isResponsive(_ pid: pid_t) -> Bool {

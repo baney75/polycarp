@@ -76,15 +76,6 @@ final class OpenFlashGuardTests: XCTestCase {
         XCTAssertTrue(p.tick(now: 0.108, windows: [S(pid: 900, id: 6, layer: 0, bounds: w.offsetBy(dx: 10, dy: 0))], incarnation: 77).changed, "it moved")
     }
 
-    func testTheHoldEndsOnceAWindowIsSeenOrItRunsOut() {
-        var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
-        XCTAssertFalse(p.tick(now: 0.1, windows: [], incarnation: 77).release)
-        XCTAssertTrue(p.tick(now: 0.2, windows: [S(pid: 900, id: 7, layer: 0, bounds: CGRect(x: 0, y: 0, width: 30, height: 30))], incarnation: 77).release,
-                      "first-F1: a window it won't cover doesn't keep the claim waiting")
-        var q = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
-        XCTAssertTrue(q.tick(now: OpenFlashGuard.holdFor, windows: [], incarnation: 77).release)
-    }
-
     func testOverlappingLaunchesHoldAndReleaseOnlyTheirOwn() {
         var h = OpenFlashGuard.Holds()
         let t = Date(timeIntervalSince1970: 1_000)
@@ -114,20 +105,153 @@ final class OpenFlashGuardTests: XCTestCase {
         XCTAssertEqual(s.covers, [:])
     }
 
-    func testTheWatchStopsOnceTheWindowIsParkedOrPastItsCover() {
-        let parked = CGRect(x: 1511, y: 981, width: 500, height: 400)
+    // Review of PR 213: the watch and the hold follow the launch's claim, and each new ordinary window gets a cover
+    // until it is parked. These each fail on 909894c7.
+    let parked = CGRect(x: 1511, y: 981, width: 500, height: 400)
+
+    func testTheHoldEndsOnlyOnceACoverIsUpOrItRunsOut() {
         var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
-        XCTAssertFalse(p.tick(now: 0.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77).end)
+        XCTAssertFalse(p.tick(now: 0.1, windows: [], incarnation: 77).release)
+        XCTAssertFalse(p.tick(now: 0.2, windows: [S(pid: 900, id: 7, layer: 0, bounds: CGRect(x: 400, y: 300, width: 30, height: 30))], incarnation: 77).release,
+                       "second-F6: a splash sliver doesn't end the hold")
+        XCTAssertFalse(p.tick(now: 0.3, windows: [S(pid: 900, id: 8, layer: 3, bounds: w)], incarnation: 77).release, "sol-F1: nor a floating helper panel")
+        XCTAssertFalse(p.tick(now: 0.4, windows: [S(pid: 900, id: 9, layer: 0, bounds: parked)], incarnation: 77).release, "nor a window already out of sight")
+        let up = p.tick(now: 0.5, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
+        XCTAssertEqual(up.covers, [6: w])
+        XCTAssertTrue(up.release, "its cover goes up in this step, so the hold may end after it has painted")
+        var q = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
+        XCTAssertFalse(q.tick(now: OpenFlashGuard.holdFor - 0.1, windows: [S(pid: 900, id: 7, layer: 3, bounds: w)], incarnation: 77).release)
+        XCTAssertTrue(q.tick(now: OpenFlashGuard.holdFor, windows: [], incarnation: 77).release, "or it runs out")
+    }
+
+    func testAHelperWindowNeverEndsTheWatch() {
+        var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
+        let splash = S(pid: 900, id: 7, layer: 0, bounds: CGRect(x: 400, y: 300, width: 30, height: 30))
+        for t in stride(from: 0.1, to: OpenFlashGuard.claimFor - 0.1, by: 0.5) {
+            XCTAssertFalse(p.tick(now: t, windows: [splash, S(pid: 900, id: 8, layer: 3, bounds: w)], incarnation: 77).end, "sol-F1: at \(t) s")
+        }
+        XCTAssertTrue(p.tick(now: OpenFlashGuard.claimFor, windows: [splash], incarnation: 77).end, "the claim ran out")
+    }
+
+    func testALaterWindowOfTheLaunchGetsACover() {
+        var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
+        XCTAssertEqual(p.tick(now: 0.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77).covers, [6: w])
+        let atPark = p.tick(now: 0.6, windows: [S(pid: 900, id: 6, layer: 0, bounds: parked)], incarnation: 77)
+        XCTAssertEqual(atPark.covers, [:], "parked: its cover comes down")
+        XCTAssertFalse(atPark.end, "second-F7, sol-F3: the claim is still on, so another window may come")
+        XCTAssertTrue(atPark.idle, "nothing covered: the slower poll")
+        XCTAssertFalse(p.tick(now: 1.9, windows: [S(pid: 900, id: 6, layer: 0, bounds: parked)], incarnation: 77).end)
+        let second = p.tick(now: 2.0, windows: [S(pid: 900, id: 6, layer: 0, bounds: parked), S(pid: 900, id: 11, layer: 0, bounds: w)], incarnation: 77)
+        XCTAssertEqual(second.covers, [11: w], "the main window after a chooser gets its own cover")
+        XCTAssertFalse(second.idle)
+        _ = p.tick(now: 2.4, windows: [S(pid: 900, id: 11, layer: 0, bounds: parked)], incarnation: 77)
+        XCTAssertFalse(p.tick(now: 2.4 + OpenFlashGuard.quietFor - 0.1, windows: [], incarnation: 77).end)
+        XCTAssertTrue(p.tick(now: 2.4 + OpenFlashGuard.quietFor, windows: [], incarnation: 77).end, "quiet since the last park")
+    }
+
+    func testAClosedWindowLeavesThePendingSet() {
+        var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
+        _ = p.tick(now: 0.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
         let hidden = p.tick(now: 0.5, windows: [], incarnation: 77)
-        XCTAssertFalse(hidden.end, "hidden for the park's move: it may come back in sight")
-        XCTAssertTrue(hidden.changed, "its cover comes down while it is out of sight")
-        XCTAssertTrue(p.tick(now: 0.6, windows: [S(pid: 900, id: 6, layer: 0, bounds: parked)], incarnation: 77).end, "first-F4: parked, so the 4 ms poll stops")
+        XCTAssertTrue(hidden.changed, "off the list: its cover comes down")
+        XCTAssertFalse(hidden.idle, "hidden for the park's move for a moment: still pending")
+        XCTAssertTrue(p.tick(now: 0.5 + OpenFlashGuard.goneAfter, windows: [], incarnation: 77).idle, "first-F4: away past goneAfter, it closed")
+        XCTAssertTrue(p.tick(now: 0.5 + OpenFlashGuard.goneAfter + OpenFlashGuard.quietFor, windows: [], incarnation: 77).end,
+                      "first-F4: a closed splash doesn't keep the poll going to the end of the claim")
         var q = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
         _ = q.tick(now: 0.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
-        XCTAssertTrue(q.tick(now: 1.7, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77).end, "past its cover")
-        var r = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
-        XCTAssertFalse(r.tick(now: 0.1, windows: [S(pid: 900, id: 7, layer: 0, bounds: CGRect(x: 400, y: 300, width: 30, height: 30))], incarnation: 77).end,
-                       "a splash sliver in sight isn't parked: the main window may still come")
+        _ = q.tick(now: 0.2, windows: [], incarnation: 77)
+        XCTAssertFalse(q.tick(now: 0.3, windows: [S(pid: 900, id: 6, layer: 0, bounds: parked)], incarnation: 77).end, "back out of sight within goneAfter: parked")
+        XCTAssertTrue(q.tick(now: 0.3, windows: [], incarnation: 77).idle)
+    }
+
+    func testAWindowPastItsCoverIsDoneButTheWatchGoesOn() {
+        var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
+        _ = p.tick(now: 0.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
+        let s = p.tick(now: 1.7, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
+        XCTAssertEqual(s.expired, [6])
+        XCTAssertFalse(s.end)
+        XCTAssertTrue(p.tick(now: 1.7 + OpenFlashGuard.quietFor, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77).end)
+    }
+
+    func testTwoDisplaysTradingWorkspacesIsASwitch() {
+        let before = OpenFlashGuard.Showing(current: 1, byDisplay: ["A": 1, "B": 2])
+        let traded = OpenFlashGuard.Showing(current: 1, byDisplay: ["A": 2, "B": 1])
+        XCTAssertNotEqual(before, traded, "sol-F2, second-F8: the same numbers on other displays")
+        XCTAssertEqual(Set(before.byDisplay.values), Set(traded.byDisplay.values), "which a set of numbers missed")
+        XCTAssertNotEqual(before, OpenFlashGuard.Showing(current: 2, byDisplay: ["A": 1, "B": 2]), "the current one moving counts too")
+        XCTAssertTrue(before.contains(2) && !before.contains(9))
+    }
+
+    func testTheFlagIsReadFromTheAppsStandardDefaults() throws {
+        let d = UserDefaults.standard, key = OpenFlashGuard.defaultsKey, old = d.object(forKey: key)
+        defer { d.set(old, forKey: key) }
+        d.set("cover", forKey: key)
+        XCTAssertEqual(OpenFlashGuard.current(), .cover, "first-F3: the app's own domain is .standard")
+        d.removeObject(forKey: key)
+        XCTAssertEqual(OpenFlashGuard.current(), .off)
+        let plist = try String(contentsOf: CursorSourceTests.root.appendingPathComponent("Resources/Info.plist"), encoding: .utf8)
+        XCTAssertTrue(plist.contains("<key>CFBundleIdentifier</key><string>\(OpenFlashGuard.defaultsDomain)</string>"),
+                      "so `defaults write com.baney.polycarp` is the domain the running app reads")
+        let w = try CursorSourceTests.code("Sources/BaneySpaces/Session/OpenFlashWatch.swift")
+        XCTAssertFalse(w.contains("UserDefaults(suiteName:"), "first-F3: a suite named after the app's own id is unsupported")
+        XCTAssertTrue(w.contains("OpenFlashGuard.current()"))
+    }
+
+    func testWorkFromABackgroundQueueRunsOnMain() {
+        let done = expectation(description: "ran")
+        DispatchQueue.global(qos: .userInitiated).async {
+            OpenFlashGuard.onMain {
+                XCTAssertTrue(Thread.isMainThread, "first-F1: the guard's state and AppKit stay on main")
+                done.fulfill()
+            }
+        }
+        wait(for: [done], timeout: 5)
+        var ranNow = false
+        OpenFlashGuard.onMain { ranNow = true }
+        XCTAssertTrue(ranNow, "already on main: at once")
+    }
+
+    func testTheGuardedOpenRunsOnMain() throws {
+        let w = try CursorSourceTests.code("Sources/BaneySpaces/Session/OpenFlashWatch.swift")
+        let around = try XCTUnwrap(HandsSourceTests.between("static func around(", "private static func guarded(", in: w))
+        let flag = try XCTUnwrap(around.range(of: "guard mode == .cover else")), hop = try XCTUnwrap(around.range(of: "OpenFlashGuard.onMain {"))
+        XCTAssertLessThan(flag.lowerBound, hop.lowerBound)
+        XCTAssertFalse(around.contains("showing()"), "first-F1: Spaces' model is read only after the hop")
+        for f in ["private static func guarded(", "private static func waitTurn(", "func started(", "private func drain()", "func finish(why: String)", "static func environmentChanged("] {
+            let body = try XCTUnwrap(HandsSourceTests.between(f, "\n        }\n", in: w) ?? HandsSourceTests.between(f, "\n    }\n", in: w), f)
+            XCTAssertTrue(body.contains("dispatchPrecondition(condition: .onQueue(.main))"), "first-F1: \(f) is main-only")
+        }
+        XCTAssertTrue(w.contains("Thread.sleep(forTimeInterval: step.idle ? OpenFlashGuard.idleInterval : OpenFlashGuard.interval)"))
+        let d = try CursorSourceTests.code("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertTrue(d.contains("OpenFlashWatch.environmentChanged(showing: self.showing)"), "sol-F2: the display map, not a set")
+        XCTAssertTrue(d.contains("byDisplay: spaces.model.shown"))
+    }
+
+    func testTheNewWindowStepWaitsForTheCover() throws {
+        XCTAssertTrue(OpenFlashGuard.newWindowWaits(held: true, waited: 1.5), "first-F2: the cover isn't up, so the app isn't asked")
+        XCTAssertFalse(OpenFlashGuard.newWindowWaits(held: true, waited: OpenFlashGuard.holdFor), "up to the hold's length")
+        XCTAssertFalse(OpenFlashGuard.newWindowWaits(held: false, waited: 1.5), "no hold: as before")
+        let c = try CursorSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
+        let check = try XCTUnwrap(HandsSourceTests.between("func newWindowCheck(waited: Double) {", "_ = newWindow(app)", in: c))
+        XCTAssertTrue(check.contains("OpenFlashGuard.newWindowWaits(held: Windows.isHeld(pid), waited: waited)"))
+        XCTAssertTrue(check.contains("Windows.release(pid, askAgain: false)"), "first-F2: never a skipped scan right before its own ask")
+        XCTAssertFalse(check.contains("Windows.release(pid)\n"))
+    }
+
+    func testAgentsMdNamesOneDomainForTheAppsSettings() throws {
+        let a = try String(contentsOf: CursorSourceTests.root.appendingPathComponent("AGENTS.md"), encoding: .utf8)
+        XCTAssertFalse(a.contains("defaults write com.baney.baneyspaces"), "first-F5: the app reads .standard, com.baney.polycarp")
+        XCTAssertTrue(a.contains("defaults write com.baney.polycarp crashLoopLimit"))
+        XCTAssertTrue(a.contains("com.baney.polycarp agentOpenFlashGuard cover"))
+        XCTAssertFalse(a.contains("is the retired app's"))
+    }
+
+    func testTheProbeSelftestClassifiesWithItsFixturePid() throws {
+        let probe = try String(contentsOf: CursorSourceTests.root.appendingPathComponent("scripts/agent-open-probe.swift"), encoding: .utf8)
+        XCTAssertTrue(probe.contains("func seen(_ i: Int, in list: [Seen], displays: [CGRect], cover: pid_t = polycarpPid)"), "sol-F4")
+        XCTAssertTrue(probe.contains("$0.hides(cover: cover)"))
+        XCTAssertTrue(probe.contains("let owners = polycarpPid > 0 ? [polycarpPid, 4242] : [4242]"), "sol-F4: run with and without Polycarp")
     }
 
     func testACoverRisesOnlyWhileItsMomentHolds() {
@@ -148,7 +272,6 @@ final class OpenFlashGuardTests: XCTestCase {
     func testTheAppAndTheProbeNameTheSameDomainAndCoverLevel() throws {
         XCTAssertEqual(OpenFlashGuard.defaultsDomain, "com.baney.polycarp", "second-S2: the app's own bundle id")
         let w = try CursorSourceTests.code("Sources/BaneySpaces/Session/OpenFlashWatch.swift")
-        XCTAssertTrue(w.contains("UserDefaults(suiteName: OpenFlashGuard.defaultsDomain)"), "second-S2: read from that domain")
         let probe = try String(contentsOf: CursorSourceTests.root.appendingPathComponent("scripts/agent-open-probe.swift"), encoding: .utf8)
         XCTAssertTrue(probe.contains("UserDefaults(suiteName: \"com.baney.polycarp\")"))
         XCTAssertTrue(probe.contains("let coverLevel = \(OpenFlashGuard.coverLevel)\n"), "second-S1: the probe knows the covers' level")
@@ -161,8 +284,7 @@ final class OpenFlashGuardTests: XCTestCase {
         let c = try CursorSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
         let open = try XCTUnwrap(HandsSourceTests.between("OpenFlashWatch.around(", "starting a separate copy", in: c))
         XCTAssertTrue(open.contains("{ app, _ in started(app); finished(app) }"), "sol-F1: the watch gets the pid the launch returned, before the claim")
-        let newWindow = try XCTUnwrap(HandsSourceTests.between("DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {", "_ = newWindow(app)", in: c))
-        XCTAssertTrue(newWindow.contains("Windows.release(app.processIdentifier)"), "first-F2 (r1): New Window can ask the app")
+        XCTAssertTrue(c.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { newWindowCheck(waited: 1.5) }"), "first-F2 (r1): New Window can ask the app")
         let w = try CursorSourceTests.code("Sources/BaneySpaces/Session/OpenFlashWatch.swift")
         XCTAssertFalse(w.contains("kCGWindowOwnerName"), "never matched by app name")
         let go = try XCTUnwrap(HandsSourceTests.between("let go: ([CGImage]?, String) -> Void = {", "DispatchQueue.main.asyncAfter(deadline: .now() + OpenFlashGuard.captureLimit)", in: w))

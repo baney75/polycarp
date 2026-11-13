@@ -44,9 +44,9 @@ func seenFails(_ ms: Double, guardOn: Bool, bar: Double = 50) -> Bool { guardOn 
 
 /// The part of `list[i]` a person can see: on a display, not under an opaque window in front of it, measured on a grid
 /// so overlaps of several windows count right. Returns the shown area in pt² and the bounding box of what shows.
-func shown(_ i: Int, in list: [Seen], displays: [CGRect]) -> (area: CGFloat, box: CGRect) {
+func shown(_ i: Int, in list: [Seen], displays: [CGRect], cover: pid_t = polycarpPid) -> (area: CGFloat, box: CGRect) {
     let w = list[i].bounds
-    let front = list[..<i].filter { $0.hides(cover: polycarpPid) }.map(\.bounds)
+    let front = list[..<i].filter { $0.hides(cover: cover) }.map(\.bounds)
     let step: CGFloat = 4
     var area: CGFloat = 0, box = CGRect.null
     var y = w.minY + step / 2
@@ -64,9 +64,10 @@ func shown(_ i: Int, in list: [Seen], displays: [CGRect]) -> (area: CGFloat, box
     return (area, box)
 }
 
-/// Seen by a person: at least an 8x8 pt part shows. A parked window's corner sliver (1 pt) doesn't count.
-func seen(_ i: Int, in list: [Seen], displays: [CGRect]) -> CGRect? {
-    let s = shown(i, in: list, displays: displays)
+/// Seen by a person: at least an 8x8 pt part shows. A parked window's corner sliver (1 pt) doesn't count. `cover` is the
+/// pid that owns the covers: Polycarp's in a real run, the fixtures' in the selftest.
+func seen(_ i: Int, in list: [Seen], displays: [CGRect], cover: pid_t = polycarpPid) -> CGRect? {
+    let s = shown(i, in: list, displays: displays, cover: cover)
     return s.area >= 64 && s.box.width >= 8 && s.box.height >= 8 ? s.box : nil
 }
 
@@ -78,23 +79,26 @@ if CommandLine.arguments.contains("--selftest") {
     check("a window in the middle of the screen is seen", seen(0, in: [app], displays: screen) != nil)
     check("a parked window's 1 pt corner is not", seen(0, in: [Seen(pid: 7, layer: 0, alpha: 1, bounds: CGRect(x: 1511, y: 981, width: 500, height: 400))], displays: screen) == nil)
     check("a window macOS clamped to a 1x32 pt strip is not", seen(0, in: [Seen(pid: 7, layer: 0, alpha: 1, bounds: CGRect(x: 1511, y: 950, width: 500, height: 400))], displays: screen) == nil)
-    // The pid the real run uses, so the selftest goes through the same identity path (a stand-in when Polycarp isn't running).
-    let pc = polycarpPid > 0 ? polycarpPid : 4242
-    print("cover owner: pid \(pc)\(polycarpPid > 0 ? " (Polycarp, by bundle id)" : " (stand-in: Polycarp isn't running)")")
+    // The cover fixtures run under the pid the real run uses (Polycarp's, by bundle id) and under a stand-in, so both
+    // the running and the not-running case are checked on every selftest; each classifies with its own fixture pid.
+    let owners = polycarpPid > 0 ? [polycarpPid, 4242] : [4242]
     let full = CGRect(x: 0, y: 0, width: 1512, height: 982)
-    let cover = Seen(pid: pc, layer: coverLevel, alpha: 1, bounds: full)
-    check("one under Polycarp's cover is not", seen(1, in: [cover, app], displays: screen) == nil)
-    check("one under another app's window at the cover's level is", seen(1, in: [Seen(pid: 3, layer: coverLevel, alpha: 1, bounds: full), app], displays: screen) != nil)
-    check("one under another app's alpha-1 overlay is", seen(1, in: [Seen(pid: 3, layer: 25, alpha: 1, bounds: full), app], displays: screen) != nil)
-    check("one under the agent cursor's overlay is", seen(1, in: [Seen(pid: pc, layer: 25, alpha: 1, bounds: full), app], displays: screen) != nil)
-    check("one under a layer-0 Polycarp overlay is", seen(1, in: [Seen(pid: pc, layer: 0, alpha: 1, bounds: full), app], displays: screen) != nil)
-    check("one under a translucent ordinary window (alpha 0.6) is", seen(1, in: [Seen(pid: 3, layer: 0, alpha: 0.6, bounds: full), app], displays: screen) != nil)
+    for pc in owners {
+        print("cover owner: pid \(pc)\(pc == polycarpPid ? " (Polycarp, by bundle id)" : " (stand-in, as when Polycarp isn't running)")")
+        let cover = Seen(pid: pc, layer: coverLevel, alpha: 1, bounds: full)
+        check("one under Polycarp's cover is not", seen(1, in: [cover, app], displays: screen, cover: pc) == nil)
+        check("one under another app's window at the cover's level is", seen(1, in: [Seen(pid: 3, layer: coverLevel, alpha: 1, bounds: full), app], displays: screen, cover: pc) != nil)
+        check("one under another app's alpha-1 overlay is", seen(1, in: [Seen(pid: 3, layer: 25, alpha: 1, bounds: full), app], displays: screen, cover: pc) != nil)
+        check("one under the agent cursor's overlay is", seen(1, in: [Seen(pid: pc, layer: 25, alpha: 1, bounds: full), app], displays: screen, cover: pc) != nil)
+        check("one under a layer-0 Polycarp overlay is", seen(1, in: [Seen(pid: pc, layer: 0, alpha: 1, bounds: full), app], displays: screen, cover: pc) != nil)
+        check("one under a translucent ordinary window (alpha 0.6) is", seen(1, in: [Seen(pid: 3, layer: 0, alpha: 0.6, bounds: full), app], displays: screen, cover: pc) != nil)
+    }
     check("with the cover off, a 1 s open is known, not failed", !seenFails(1000, guardOn: false))
     check("with it on, 51 ms fails and 50 ms passes", seenFails(51, guardOn: true) && !seenFails(50, guardOn: true))
-    check("one under a clear overlay is", seen(1, in: [Seen(pid: pc, layer: 25, alpha: 0, bounds: full), app], displays: screen) != nil)
+    check("one under a clear overlay is", seen(1, in: [Seen(pid: 4242, layer: 25, alpha: 0, bounds: full), app], displays: screen, cover: 4242) != nil)
     let half = Seen(pid: 2, layer: 0, alpha: 1, bounds: CGRect(x: 400, y: 300, width: 250, height: 400))
-    check("half covered, the other half shows", seen(1, in: [half, app], displays: screen).map { $0.minX >= 646 } == true)
-    check("off every display is not", seen(0, in: [Seen(pid: 7, layer: 0, alpha: 1, bounds: CGRect(x: 3000, y: 0, width: 500, height: 400))], displays: screen) == nil)
+    check("half covered, the other half shows", seen(1, in: [half, app], displays: screen, cover: 4242).map { $0.minX >= 646 } == true)
+    check("off every display is not", seen(0, in: [Seen(pid: 7, layer: 0, alpha: 1, bounds: CGRect(x: 3000, y: 0, width: 500, height: 400))], displays: screen, cover: 4242) == nil)
     print(bad == 0 ? "selftest: pass" : "selftest: fail"); exit(bad == 0 ? 0 : 1)
 }
 
