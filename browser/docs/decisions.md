@@ -1458,10 +1458,11 @@ Decision:
   offsets added) and the overlay is drawn in, so scroll and page zoom need no conversion.
 - **Settings > Agents**: "Show the agent's pointer" (`veil_pointer`, on by default) sits under the veil's own switch. Off
   hides the character on open veils at once and keeps the veil. A veil drawn before a restarted worker has read the
-  setting waits for that read, so it never shows the character the person turned off. The input call reads it before
-  the veil's change is queued, so a slow read never holds a timed change. A show that still waits on the browser when
-  its time runs out draws the tab as it is by then (concealed for a capture queued after it), or nothing if the veil
-  is gone.
+  setting waits for that read, so it never shows the character the person turned off. The read runs inside the show's
+  own 1.5 s, so a tool call never waits on it for longer; one that never settles draws no character. A show that still
+  waits on the browser when its time runs out (that read, the theme's, the tab's) does every wait first, then decides
+  with nothing awaited before it draws: the tab's view as it is by then, concealed for a capture queued after it, or
+  nothing if the veil is gone or a newer show was queued.
 - **Motion**: off under prefers-reduced-motion or a Polycarp theme with motion off (it jumps and holds still); Highlight
   colors under forced colors.
 
