@@ -88,7 +88,7 @@ public enum AgentAccessMode: String, CaseIterable, Codable, Sendable {
 
 /// What Read Only refuses: every verb that changes something. `shot` only reads.
 public enum AgentAccessGate {
-    public static let changes: Set<String> = ["click", "type", "set-value", "press", "click-at", "drag", "scroll", "select", "toggle", "open", "arrange", "move", "close"]
+    public static let changes: Set<String> = ["click", "type", "set-value", "press", "click-at", "drag", "scroll", "select", "toggle", "menu", "open", "arrange", "move", "close"]
     /// The session engine's own agent ops that start or move something.
     public static let sessionChanges: Set<String> = ["open", "run", "move", "on"]
 

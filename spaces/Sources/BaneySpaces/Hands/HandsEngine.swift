@@ -33,6 +33,7 @@ final class HandsEngine {
     static let headlessPolicy: Int32 = 0
     // AdResult values from agent_desktop.h (the type itself is ambiguous in Swift).
     static let surfaceWindow: Int32 = 0 // AD_SNAPSHOT_SURFACE_WINDOW
+    static let surfaceMenubar: Int32 = 3 // AD_SNAPSHOT_SURFACE_MENUBAR: the window's app's menu bar, refs still of this window
     static let resultOK: Int32 = 0
     static let resultPermDenied: Int32 = -1
     // AdActionKind values from agent_desktop.h. No key action: see the rules above.
@@ -227,12 +228,12 @@ final class HandsEngine {
     }
 
     /// The same read, directly, for a caller already on the process's queue (`transaction`). Never queues, so it cannot wait on itself.
-    func snapshotInline(window w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool = false) -> Reply {
+    func snapshotInline(window w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool = false, surface: Int32 = surfaceWindow) -> Reply {
         precondition(isOnQueue(of: w.pid), "snapshotInline runs inside a transaction")
-        return doSnapshot(windowID: w.id, interactive: interactive, compact: compact, depth: depth, evidence: evidence)
+        return doSnapshot(windowID: w.id, interactive: interactive, compact: compact, depth: depth, evidence: evidence, surface: surface)
     }
 
-    private func doSnapshot(windowID: UInt32, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool) -> Reply {
+    private func doSnapshot(windowID: UInt32, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool, surface: Int32 = surfaceWindow) -> Reply {
         if let e = ready() { return .failed(e) }
         guard let adapter = evidence ? evidenceAdapter : adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)) }
         var out: UnsafeMutablePointer<CChar>?
@@ -240,7 +241,7 @@ final class HandsEngine {
         // The exact window id alone names the window. The app's name is not passed: two copies of an app share
         // it, and the engine would match by name first.
         let code = id.withCString { w in
-            ad_snapshot_window(adapter, nil, w, Self.surfaceWindow, depth, interactive, compact, &out)
+            ad_snapshot_window(adapter, nil, w, surface, depth, interactive, compact, &out)
         }
         return finish(code, out)
     }
@@ -290,14 +291,15 @@ final class HandsEngine {
     }
 
     /// The same action, directly, for a caller already on the process's queue (`transaction`).
-    func actInline(window w: HandsWindow, ref: String, kind: Kind, text: String? = nil, check: @escaping Check, cancelled: () -> Bool) -> Reply {
+    /// `evidence`: a ref from an evidence read in the same transaction (a menu bar read that must not cost the agent's refs).
+    func actInline(window w: HandsWindow, ref: String, kind: Kind, text: String? = nil, evidence: Bool = false, check: @escaping Check, cancelled: () -> Bool) -> Reply {
         precondition(isOnQueue(of: w.pid), "actInline runs inside a transaction")
-        return doAct(ref: ref, kind: kind, text: text, direction: 1, amount: 3, check: check, cancelled: cancelled)
+        return doAct(ref: ref, kind: kind, text: text, direction: 1, amount: 3, evidence: evidence, check: check, cancelled: cancelled)
     }
 
-    private func doAct(ref: String, kind: Kind, text: String?, direction: Int32, amount: UInt32, check: @escaping Check, cancelled: () -> Bool) -> Reply {
+    private func doAct(ref: String, kind: Kind, text: String?, direction: Int32, amount: UInt32, evidence: Bool = false, check: @escaping Check, cancelled: () -> Bool) -> Reply {
             if let e = ready() { return .failed(e) }
-            guard let adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)) }
+            guard let adapter = evidence ? evidenceAdapter : adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)) }
             var out: UnsafeMutablePointer<CChar>?
             var action = AdAction()
             action.kind = kind.rawValue
