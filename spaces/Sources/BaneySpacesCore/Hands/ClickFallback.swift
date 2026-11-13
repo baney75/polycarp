@@ -65,8 +65,9 @@ public enum ClickFallback {
         guard found.count == 1 else { return nil }
         // A row the read hid (no ref, name or value) holds the selection for the cells it moved up (194 r1 second-F6).
         // The item's own state still counts: a shown treeitem under a hidden one, or a cell a table selects by
-        // (203 r1 first-F1).
-        return (rows[found[0]].hiddenItemSelected ?? false) || rows[found[0]].states.contains("selected")
+        // (203 r1 first-F1). A shown item is its own item: a selected hidden parent says nothing about it (224 r1 first-F1).
+        let row = rows[found[0]]
+        return items.contains(row.role) ? row.states.contains("selected") : (row.hiddenItemSelected ?? false) || row.states.contains("selected")
     }
 
     /// Whether the click is verified. With no readback (the row moved, the read didn't reach it) the press's own

@@ -8,7 +8,23 @@
  */
 
 import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
-import { openDialog, type PageDialog, stopScreencastsOwnedBy } from "../browser/cdp.js";
+import {
+	armDialog,
+	disarmDialog,
+	openDialog,
+	type PageDialog,
+	stopScreencastsOwnedBy,
+	watchDialogs,
+} from "../browser/cdp.js";
+import {
+	type DialogAnswer,
+	type DialogCause,
+	dialogAnswerArrive,
+	dialogAnswerEnd,
+	dialogAsk,
+	dialogCause,
+	dialogSoon,
+} from "../browser/dialog-guard.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, pruneSessions, type SessionMeta, sanitizeLabel } from "../browser/session.js";
 import { probeUserScripts } from "../browser/userscripts-status.js";
@@ -19,7 +35,15 @@ import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
 import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
 import type { UpdateAction } from "../update/logic.js";
 import { runningFromStore } from "../update/store-install.js";
-import { type Delivered, dialogError, isDialogSafe, raceDialogs } from "./dialogs.js";
+import {
+	type Delivered,
+	dialogError,
+	dialogPreset,
+	isDialogSafe,
+	raceDialogs,
+	refuseStepPreset,
+	type WantedPreset,
+} from "./dialogs.js";
 import { BridgeError, classify, HANDLER_TIMEOUT_MS, withTimeout } from "./errors.js";
 import { dropAllTransfers, dropTransfersForClient } from "./files.js";
 import {
@@ -58,7 +82,7 @@ import {
 	UPDATE_STATUS_KEY,
 } from "./protocol.js";
 import { handleSessionsAdmin } from "./sessions-admin.js";
-import { extensionStatus, type HandlerContext, handlers } from "./tools.js";
+import { type DeliveredStep, extensionStatus, type HandlerContext, handlers, normalizeStep } from "./tools.js";
 
 const ALARM_NAME = "tabkyra-bridge-keepalive";
 const WORKER_STARTED_AT = Date.now();
@@ -345,7 +369,61 @@ function resolveDecision(requestId: string, decision: PermissionDecision): boole
 	return true;
 }
 
-async function runRequest(state: ClientState, req: HostForwardedRequest): Promise<void> {
+const tabIdParam = (params: Record<string, unknown> | undefined) =>
+	params?.tabId === undefined ? undefined : Number(params.tabId);
+
+/** The calls on each tab that could open a box there, across every client: a call with on_dialog runs alone (D48). */
+const tabCalls = new Map<number, Set<string>>();
+/** Tabs a call with on_dialog holds until it ends: no other call acts on them meanwhile. */
+const heldTabs = new Map<number, string>();
+/**
+ * Tabs a call's input was still out on when its 30 s count ran out: a box there may be that input's, so on_dialog is
+ * refused and no box gets a cause until it returns (sol-sol-F2 of round 2 of the review of PR 230).
+ */
+const stuckTabs = new Map<number, Set<string>>();
+/** The longest a call with on_dialog waits for other input on its tab to return. */
+const WAIT_CAP_MS = 30_000;
+const othersOn = (tab: number, call: string) =>
+	[...(tabCalls.get(tab) ?? []), ...(stuckTabs.get(tab) ?? [])].some((c) => c !== call);
+/** The actions whose box the guard's notice may name (dialog-guard.ts); a hover, scroll or drag box has no known cause. */
+const CAUSE_KINDS = new Set(["click", "press", "type", "fill"]);
+
+/** The answer a single click or press set in advance, checked. `actions` takes none (D48): refused here. */
+function wantedPreset(method: string, params: Record<string, unknown>): WantedPreset | undefined {
+	if (method !== "actions") return dialogPreset(method, params);
+	refuseStepPreset(params, normalizeStep);
+	return undefined;
+}
+
+/**
+ * Every tab a call may send input to (sol-F1, first-F2 of the review of PR 200): the one it names, else the current
+ * one, and for `actions` each step's own tabId too. A hold covers them all.
+ */
+function targetTabs(
+	method: string,
+	params: Record<string, unknown> | undefined,
+	current: number | undefined,
+): number[] {
+	const named = tabIdParam(params);
+	const tabs = new Set<number>();
+	const top = named !== undefined && Number.isInteger(named) ? named : current;
+	if (top !== undefined) tabs.add(top);
+	if (method === "actions" && Array.isArray(params?.steps))
+		for (const [i, st] of params.steps.entries()) {
+			if (!st || typeof st !== "object") continue;
+			let sub: Record<string, unknown>;
+			try {
+				sub = normalizeStep(st as Record<string, unknown>, i)[1];
+			} catch {
+				continue;
+			}
+			const own = tabIdParam(sub);
+			if (own !== undefined && Number.isInteger(own)) tabs.add(own);
+		}
+	return [...tabs];
+}
+
+async function runRequest(state: ClientState, req: HostForwardedRequest, answer?: DialogAnswer): Promise<void> {
 	const reply = (result?: unknown, error?: BridgeError) =>
 		send({
 			type: "response",
@@ -357,8 +435,13 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	// Aborted from the moment it is taken off the queue: the host can go away during any await
 	// below, and once it has, the agent was told this may have run and may repeat it.
 	let aborted = false;
+	/** This call, for the answer it may arm (`on_dialog`) and the tab it holds. */
+	const call = `${state.clientId}:${req.id}`;
+	// The host went away: an answer this call armed is taken back at once, so no box that opens later gets the ended
+	// call's OK (F2 of the review of PR 227).
 	state.abort = () => {
 		aborted = true;
+		disarmDialog(call);
 	};
 	/** Set by a handler just before the input that completes its action goes out (HandlerContext.delivered). */
 	let deliveredResult: Delivered | undefined;
@@ -384,8 +467,12 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	// In flight from here, before the first await, so the update idle gate sees it at once.
 	state.inFlight = { method: req.method, since: Date.now() };
 	state.lastActivityAt = Date.now();
+	/** The tabs this call is counted on in `tabCalls`; it holds them all when it has on_dialog. */
+	let onTabs: number[] = [];
+	let unwatch: (() => void) | undefined;
+	let work: Promise<unknown> | undefined;
 	/** The session and the tab the in-use veil counted this call on (src/browser/veil.ts). */
-	let veiled: { session: BrowserSession; tabId: number | undefined } | undefined;
+	let veiled: { session: BrowserSession; tabId: number | undefined; currentBefore: number | undefined } | undefined;
 	try {
 		if (!(await isBridgeEnabled())) {
 			throw new BridgeError(ERR.DISABLED, "The Polycarp bridge is disabled in Settings > Agents.");
@@ -409,6 +496,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		const ctx: HandlerContext = {
 			session,
 			clientId: state.clientId,
+			dialogAnswer: answer,
 			emit: (event, data) => send({ type: "event", clientId: state.clientId, event, data }),
 			aborted: () => aborted,
 			delivered: (result, tabId) => {
@@ -441,8 +529,125 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
 			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
 		}
-		veiled = { session, tabId: await veilBegin(session, req.method, req.params).catch(() => undefined) };
-		const work = handler(ctx, req.params ?? {});
+		// on_dialog is checked, and its tab's owner, before anything runs or is armed (sol-F3, first-F4 of the review of PR 193).
+		const want = wantedPreset(req.method, req.params ?? {});
+		let waited = 0;
+		if (want && !session.tabIds.includes(want.tabId))
+			throw new BridgeError(
+				ERR.NO_TAB,
+				`Tab ${want.tabId} is not one of your tabs: on_dialog answers a box on your own tab only (tabs_context lists yours).`,
+			);
+		if (!dialogSafe) {
+			const tabs = want ? [want.tabId] : targetTabs(req.method, req.params, session.currentTabId);
+			// One armed answer per tab across every client of the session (sol-F2, first-F2 of the review of PR 193): while a
+			// call with on_dialog runs on a tab, no other call sends input there, and it starts only when none does. Refused
+			// as not_sent: it never ran, and the client sends it again a little later.
+			for (const tab of tabs) {
+				const holder = heldTabs.get(tab);
+				if ((holder && holder !== call) || (want && holder))
+					throw new BridgeError(
+						ERR.NOT_SENT,
+						want
+							? `Another call is still running on tab ${tab}, so this call with on_dialog was not sent. Send it again once that call has ended.`
+							: `A call with on_dialog is still running on tab ${tab}, so this call was not sent. Send it again once that call has ended.`,
+					);
+			}
+			onTabs = tabs;
+			for (const tab of tabs) {
+				tabCalls.set(tab, (tabCalls.get(tab) ?? new Set()).add(call));
+				if (want) heldTabs.set(tab, call);
+			}
+			// The tab is held at once, so no new input starts there; the call with on_dialog then waits, within its own
+			// limit, until every other call's input on it has returned (sol-F2 of the review of PR 230). The wait is capped
+			// at WAIT_CAP_MS, so the click itself keeps most of its limit (first-F2 of round 2 of the review of PR 230).
+			const start = Date.now();
+			while (want && [...(tabCalls.get(want.tabId) ?? [])].some((c) => c !== call)) {
+				if (aborted || Date.now() - start > WAIT_CAP_MS)
+					throw new BridgeError(
+						ERR.NOT_SENT,
+						`Other input on tab ${want.tabId} is still running, so this call with on_dialog was not sent. Send it again once it has ended.`,
+					);
+				await new Promise((r) => setTimeout(r, 50));
+			}
+			waited = Date.now() - start;
+			// A box the other input opened while this call waited froze the page: nothing is sent into it, and the OK is
+			// not armed for it (first-F1 of round 2 of the review of PR 230).
+			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
+			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
+			if (want && stuckTabs.get(want.tabId)?.size)
+				throw new BridgeError(
+					ERR.NOT_SENT,
+					`Input an earlier call sent on tab ${want.tabId} has not come back, and a box it opens could take this answer, so this call with on_dialog was not sent. Send it again later, or send it without on_dialog and answer the box with handle_dialog.`,
+				);
+		}
+		/** The tab and step whose last input is on its way: a box that opens there now is that step's (second-S3). */
+		let delivering: { tabId: number; step?: DeliveredStep } | undefined;
+		/** The box this call's on_dialog answered: a box after it is no reason to do anything again (second-S1). */
+		let answeredBox: { type: string; message: string } | undefined;
+		/** The input that can open the call's box has returned: nothing arms again (second-S2 of the review of PR 200). */
+		let inputEnded = false;
+		ctx.delivered = (result, tabId, step) => {
+			deliveredResult = result && tabId !== undefined ? { result, tabId } : undefined;
+			// A box is blamed on an input only while that input is on its way: one that opens in the settle after a click
+			// or press returned has no known cause (sol-F1 of the review of PR 216). A step's input is always on its way.
+			delivering = result && tabId !== undefined && (step || !inputEnded) ? { tabId, step } : undefined;
+			// Armed just before the call's last input goes out, on its own tab, once: never after that input returned,
+			// never for another call's box, and never once the call has failed or ended (sol-F2, first-F1).
+			if (delivering && want && !step && want.tabId === tabId && !inputEnded && !answeredBox && !aborted)
+				armDialog(tabId, call, want.preset);
+			else disarmDialog(call);
+		};
+		ctx.inputDone = () => {
+			inputEnded = true;
+			delivering = undefined;
+			disarmDialog(call);
+		};
+		// The tab each input resolves to is checked again then: the current tab may have changed since the check above,
+		// by another client of the session (sol-F3, first-F2 of the review of PR 216). A tab the call had not counted is
+		// counted now, so a call with on_dialog that starts later sees it.
+		ctx.claimTab = (tab) => {
+			if (dialogSafe) return;
+			// A call that ended (a box, a timeout, the host gone) counts on no tab again: its finally already ran, so a tab
+			// counted now would stay held by nothing (F3 of the review of PR 227).
+			if (aborted) throw new BridgeError(ERR.INTERRUPTED, "This call has ended, so this input was not sent.");
+			if (onTabs.includes(tab)) return;
+			const holder = heldTabs.get(tab);
+			if (holder && holder !== call)
+				throw new BridgeError(
+					ERR.NOT_SENT,
+					`A call with on_dialog is still running on tab ${tab}, so this input was not sent. Send it again once that call has ended.`,
+				);
+			onTabs.push(tab);
+			tabCalls.set(tab, (tabCalls.get(tab) ?? new Set()).add(call));
+		};
+		if (!dialogSafe)
+			unwatch = watchDialogs((tabId, dialog) => {
+				if (!delivering || delivering.tabId !== tabId) return;
+				const kind = delivering.step?.kind ?? req.method;
+				if (!CAUSE_KINDS.has(kind)) return;
+				const own = dialog.presetCall === call;
+				// While another call counts on the tab, a timed-out press's release included, no cause is known (sol-F1, PR 230).
+				const rivals = othersOn(tabId, call);
+				const cause: DialogCause = {
+					method: req.method,
+					tabId,
+					step: { kind, params: delivering.step?.params ?? req.params ?? {} },
+					...(delivering.step ? { batch: { index: delivering.step.index, total: delivering.step.total } } : {}),
+					...(!own && answeredBox ? { after: answeredBox } : {}),
+				};
+				if (own || !rivals) dialogCause(dialog.seq, cause);
+				if (own) answeredBox = { type: dialog.type, message: dialog.message };
+			});
+		veiled = {
+			session,
+			currentBefore: session.currentTabId,
+			tabId: await veilBegin(session, req.method, req.params).catch(() => undefined),
+		};
+		work = handler(ctx, req.params ?? {});
+		// An upload's begin may wait for the person's answer, which has its own, longer limit.
+		const limit = (req.method === "files.upload.begin" ? FILE_ASK_TIMEOUT_MS + 30000 : HANDLER_TIMEOUT_MS) - waited;
+		// A call that can open a box runs out of time inside raceDialogs, which says what its on_dialog answered first
+		// (sol-F2, second-S2 of the review of PR 216); the outer limit only backs that up.
 		const result = await withTimeout(
 			dialogSafe
 				? work
@@ -451,11 +656,12 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 						work,
 						() => {
 							aborted = true;
+							disarmDialog(call);
 						},
 						() => deliveredResult,
+						{ call, method: req.method, soon: dialogSoon, deadline: { ms: limit, label: req.method } },
 					),
-			// An upload's begin may wait for the person's answer, which has its own, longer limit.
-			req.method === "files.upload.begin" ? FILE_ASK_TIMEOUT_MS + 30000 : HANDLER_TIMEOUT_MS,
+			dialogSafe ? limit : limit + 10_000,
 			req.method,
 		);
 		trace(`${state.name} ${req.method} session=${tSession}ms total=${Math.round(performance.now() - t0)}ms`);
@@ -468,7 +674,36 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		if (stack) trace(`${req.method} ${error.code}: ${stack.split("\n").slice(0, 6).join(" | ")}`);
 		reply(undefined, error);
 	} finally {
-		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId);
+		// For good (sol-F2, first-F1 of the review of PR 200): a handler still running after a timeout arms nothing and
+		// sends no more input.
+		aborted = true;
+		disarmDialog(call);
+		unwatch?.();
+		// Counted until the handler's input has returned, not just the call: a press that outlived the call's limit, and its
+		// release, can still open a box there (sol-F2 of the review of PR 230). Past 30 s the tab is stuck (`stuckTabs`).
+		const tabs = onTabs;
+		const release = () => {
+			clearTimeout(cap);
+			for (const tab of tabs) {
+				const calls = tabCalls.get(tab);
+				calls?.delete(call);
+				if (!calls?.size) tabCalls.delete(tab);
+				if (heldTabs.get(tab) === call) heldTabs.delete(tab);
+			}
+		};
+		const settled = () => {
+			release();
+			for (const tab of tabs)
+				if (stuckTabs.get(tab)?.delete(call) && !stuckTabs.get(tab)?.size) stuckTabs.delete(tab);
+		};
+		const stuck = () => {
+			release();
+			for (const tab of tabs) stuckTabs.set(tab, (stuckTabs.get(tab) ?? new Set()).add(call));
+		};
+		const cap = work && tabs.length ? setTimeout(stuck, 30_000) : undefined;
+		if (cap === undefined) release();
+		else void work?.then(settled, settled);
+		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId, veiled.currentBefore);
 		state.abort = undefined;
 		state.inFlight = undefined;
 		state.lastActivityAt = Date.now();
@@ -498,7 +733,14 @@ async function runAsk(state: ClientState, req: HostForwardedRequest): Promise<vo
 			});
 		// The client may have hung up during the awaits; its question would have nobody to answer to.
 		if (clients.get(state.clientId) !== state) return;
-		respond(await handleBridgeAsk(state, req.params ?? {}));
+		// A box on the session's tab may wait for the person's answer too (dialog-guard.ts).
+		const asker = state.sessionKey;
+		dialogAsk(asker, true);
+		try {
+			respond(await handleBridgeAsk(state, req.params ?? {}));
+		} finally {
+			dialogAsk(asker, false);
+		}
 	} catch (err) {
 		respond({ error: { code: ERR.INTERNAL, message: err instanceof Error ? err.message : String(err) } });
 	}
@@ -814,7 +1056,17 @@ function onHostMessage(message: HostToExt): void {
 				return;
 			}
 			const current = state;
-			current.queue = current.queue.then(() => runRequest(current, message)).catch(() => undefined);
+			// A handle_dialog holds its box's Cancel from here, queued behind other calls included (dialog-guard.ts).
+			const answer =
+				message.method === "dialog"
+					? dialogAnswerArrive(current.sessionKey, current.session?.tabIds, tabIdParam(message.params))
+					: undefined;
+			current.queue = current.queue
+				.then(() => runRequest(current, message, answer))
+				.catch(() => undefined)
+				.then(() => {
+					if (answer) dialogAnswerEnd(answer);
+				});
 			return;
 		}
 	}

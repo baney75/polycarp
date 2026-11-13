@@ -864,15 +864,64 @@ final class CursorOverheadTests: XCTestCase {
     /// the pairs' differences: load that changes over the run (another build starting) lands on both halves of a pair,
     /// and a stall lands in one pair, which the median drops. Two blocks of 200 in a row let the drift in: the 11-12
     /// logs show the median without the cursor alone at 24.0 to 27.9 ms, so "added" ran from -3.8 to +1.8 ms with
-    /// the cursor's code unchanged.
-    static func paired(_ n: Int, _ timed: (_ i: Int, _ listening: Bool) -> Double) -> (without: Double, with: Double, added: Double) {
-        var withouts: [Double] = [], withs: [Double] = [], added: [Double] = []
+    /// the cursor's code unchanged. A run that is faster or slower for coming second in its pair would make the
+    /// differences two clusters, one per order, and one median of both picks an edge of one: so "added" is the mean of
+    /// the two orders' medians, and the order's effect cancels (review of PR 206, second-F5). `drain` runs before each
+    /// pair, outside its timing: work one pair left behind (the bounds read finishing late on a loaded Mac) would land on
+    /// the next pair's first run, which is the one with the cursor in one order and without it in the other, and pull
+    /// the two orders' medians apart (11-13 at load 83 to 248: 8.97 against -4.27 ms; drained, 0.06 against 0.04).
+    static func paired(_ n: Int, drain: () -> Void = {}, _ timed: (_ i: Int, _ listening: Bool) -> Double) -> (without: Double, with: Double, added: Double, half: Double) {
+        var withouts: [Double] = [], withs: [Double] = [], byOrder: [[Double]] = [[], []]
         for i in 0..<n {
+            drain()
             let (wo, w): (Double, Double)
             if i % 2 == 0 { wo = timed(i, false); w = timed(i, true) } else { w = timed(i, true); wo = timed(i, false) }
-            withouts.append(wo); withs.append(w); added.append(w - wo)
+            withouts.append(wo); withs.append(w); byOrder[i % 2].append(w - wo)
         }
-        return (median(withouts), median(withs), median(added))
+        return (median(withouts), median(withs), (median(byOrder[0]) + median(byOrder[1])) / 2, halfWidth(byOrder))
+    }
+
+    /// The 95% half-width of a median of differences, from their spread (1.4826 times the median absolute deviation,
+    /// each group centred on its own median). On a Mac at load 80 to 250 (10 cores, 11-13) "added" swung 0.4 to 8.8 ms
+    /// with no change to the code, and the hidden cursor's test, which reads no bounds, missed its 4 ms by up to 5.5 ms:
+    /// a run that noisy can't tell 1 ms from 0 (review of PR 233, first-F1).
+    static func halfWidth(_ groups: [[Double]]) -> Double {
+        let centred = groups.flatMap { g in g.map { $0 - median(g) } }
+        return 1.96 * 1.2533 * 1.4826 * median(centred.map(abs)) / Double(centred.count).squareRoot()
+    }
+
+    enum Verdict: Equatable { case under, over, unresolved }
+    /// A bar is judged only when the run resolves it, but an "added" over it even at its lower bound fails however
+    /// noisy the run: the gate can only hold a verdict back, never pass one.
+    static func verdict(_ added: Double, half: Double, bar: Double) -> Verdict {
+        if added - half >= bar { return .over }
+        if half >= bar { return .unresolved }
+        return added < bar ? .under : .over
+    }
+
+    /// Judges each bar, printing `CURSOR BAR <what> <bar> ms: judged|skipped` for counting, then skips, never silently,
+    /// when any bar was past what the run could resolve.
+    static func judge(_ what: String, added: Double, half: Double, bars: [(Double, String)]) throws {
+        var load = [Double](repeating: 0, count: 3); getloadavg(&load, 3)
+        var unresolved: [String] = []
+        for (bar, why) in bars {
+            let line = "\(what): added \(String(format: "%.2f", added)) ms ± \(String(format: "%.2f", half)) (95%) against \(bar) ms at load \(String(format: "%.1f", load[0]))"
+            let v = verdict(added, half: half, bar: bar)
+            print("CURSOR BAR \(what) \(bar) ms: \(v == .unresolved ? "skipped" : "judged")")
+            if v == .unresolved { unresolved.append(line) } else { XCTAssertEqual(v, .under, "\(line): \(why)") }
+        }
+        if !unresolved.isEmpty { throw XCTSkip("too noisy to judge: " + unresolved.joined(separator: "; ")) }
+    }
+
+    func testTheGateHoldsBackAVerdictButNeverPassesOne() {
+        XCTAssertEqual(Self.verdict(3, half: 5, bar: 1), .unresolved, "a noisy run can't tell")
+        XCTAssertEqual(Self.verdict(7, half: 5, bar: 1), .over, "over even at its lower bound: fails however noisy")
+        XCTAssertEqual(Self.verdict(0.1, half: 0.05, bar: 1), .under)
+        XCTAssertEqual(Self.verdict(1.2, half: 0.1, bar: 1), .over)
+        let quiet = Self.halfWidth([[0.01, 0.02, 0.03, 0.02], [0.52, 0.51, 0.53, 0.52]])
+        let noisy = Self.halfWidth([[-9, 4, 12, -3], [6, -8, 1, 10]])
+        XCTAssertLessThan(quiet, 0.05, "the order's offset is not noise")
+        XCTAssertGreaterThan(noisy, 5)
     }
 
     func testAPairedMeasurementIgnoresLoadThatChangesPartWay() {
@@ -887,7 +936,25 @@ final class CursorOverheadTests: XCTestCase {
         XCTAssertEqual(r.added, 0.02, accuracy: 0.001, "pairs count only the cursor")
     }
 
-    func testTheCursorAddsUnderFiveMillisecondsToTheMedianAction() {
+    func testAPairedMeasurementDrainsBeforeEachPairAndNeverInsideOne() {
+        var log: [String] = []
+        _ = Self.paired(4, drain: { log.append("drain") }) { _, listening in log.append(listening ? "with" : "without"); return 0 }
+        XCTAssertEqual(log, ["drain", "without", "with", "drain", "with", "without", "drain", "without", "with", "drain", "with", "without"])
+    }
+
+    func testAPairedMeasurementCancelsTheOrderAndDropsAStall() {
+        // The same 24 ms action and 0.02 ms cursor, but a run that comes second in its pair is 1.5 ms faster (warm
+        // caches), and one run stalls 50 ms. One median over both orders reads 1.52 ms.
+        var calls = 0
+        func action(listening: Bool) -> Double {
+            defer { calls += 1 }
+            return 24 + (calls % 2 == 1 ? -1.5 : 0) + (calls == 137 ? 50 : 0) + (listening ? 0.02 : 0)
+        }
+        let r = Self.paired(200) { _, listening in action(listening: listening) }
+        XCTAssertEqual(r.added, 0.02, accuracy: 0.001, "the order's effect cancels and the stall is dropped")
+    }
+
+    func testTheCursorAddsUnderFiveMillisecondsToTheMedianAction() throws {
         let hands = FakeHands()
         let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let queue = DispatchQueue(label: "overhead")
@@ -905,14 +972,14 @@ final class CursorOverheadTests: XCTestCase {
             return (ProcessInfo.processInfo.systemUptime - t0) * 1000
         }
         for i in 0..<20 { _ = timed(i, listening: true) }   // warm up
-        let r = Self.paired(200) { timed($0, listening: $1) }
-        queue.sync {}
+        // The bounds read runs on the fake engine's lane and reports to the director's queue: drain both, in that order.
+        let r = Self.paired(200, drain: { FakeHands.lane.sync(flags: .barrier) {}; queue.sync {} }) { timed($0, listening: $1) }
         print("CURSOR OVERHEAD (modelled engine: resolve 4 + act 12 + readback 8 ms, bounds read 8 ms on its own lane; the cursor's own code is real; 200 alternating pairs): median action without the cursor \(String(format: "%.2f", r.without)) ms, with it \(String(format: "%.2f", r.with)) ms, median added per pair \(String(format: "%.2f", r.added)) ms")
-        XCTAssertLessThan(r.added, 5, "under 5 ms added to the median action")
-        XCTAssertLessThan(r.added, 1, "the bounds read runs beside the action, so the action pays only the report")
+        try Self.judge("paired", added: r.added, half: r.half, bars: [(5, "under 5 ms added to the median action"),
+                                                                    (1, "the bounds read runs beside the action, so the action pays only the report")])
     }
 
-    func testWithTheCursorHiddenTheActionPaysNothing() {
+    func testWithTheCursorHiddenTheActionPaysNothing() throws {
         let hands = FakeHands()
         let director = CursorDirector(surface: FakeSurface(), queue: DispatchQueue(label: "hidden"))
         var env = CursorEnvironment(); env.current = 2; env.agentWorkspace = 9
@@ -941,8 +1008,8 @@ final class CursorOverheadTests: XCTestCase {
         HandsEvents.setListener(director)
         // Not timed, so a slow runner can't hide it: a hidden cursor makes no action read bounds.
         XCTAssertEqual(FakeHands.framesWanted, 0, "with the cursor hidden, no action asks for bounds")
-        XCTAssertLessThan(with - without, hands.boundsRead * 1000 / 2,
-                          "no bounds read: \(with) ms with the cursor hidden against \(without) ms without it")
+        try CursorOverheadTests.judge("hidden", added: with - without, half: CursorOverheadTests.halfWidth([zip(withs, withouts).map { $0 - $1 }]),
+                                      bars: [(hands.boundsRead * 1000 / 2, "no bounds read: \(with) ms with the cursor hidden against \(without) ms without it")])
     }
 }
 

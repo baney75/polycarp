@@ -395,8 +395,10 @@ final class HandsRouter {
     private func remember(_ data: JSONValue, _ w: HandsWindow) -> Bool {
         guard let id = data["snapshot_id"]?.string, let file = try? Data(contentsOf: refmapURL(id)),
               let table = RefmapIdentity.table(from: file), RefmapIdentity.allTarget(table, window: w.id, pid: w.pid) else { return false }
+        // Parsed before the lock, which every session's calls take (214 r1 second-S2).
+        let pasteboard = SessionClipboard.pasteboardRefs(refmap: file)
         lock.lock(); defer { lock.unlock() }
-        snaps[id] = Snap(window: w.id, pid: w.pid, app: w.app, at: Date(), identity: table, pasteboard: SessionClipboard.pasteboardRefs(refmap: file))
+        snaps[id] = Snap(window: w.id, pid: w.pid, app: w.app, at: Date(), identity: table, pasteboard: pasteboard)
         if snaps.count > 256, let oldest = snaps.min(by: { $0.value.at < $1.value.at })?.key { snaps[oldest] = nil }
         return true
     }
@@ -469,7 +471,7 @@ final class HandsRouter {
                 let sid = o["snapshot_id"]?.string ?? ""
                 let rows = SnapshotRows.rows(of: o["tree"] ?? .null)
                 let session = req.session ?? ""
-                let view = SnapshotRowsMemory.View.of(req)
+                let view = SnapshotRowsMemory.View.reading(req)
                 let since = req.snapshotFormat == "rows" && req.string("since") == "latest"
                 let previous = withRows { m -> SnapshotRowsMemory.Read? in
                     let p = m.previous(session: session, window: w.id, view: view.key)
@@ -499,7 +501,7 @@ final class HandsRouter {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, _, _)):
-            let view = SnapshotRowsMemory.View.find
+            let view = SnapshotRowsMemory.View.reading(req)
             switch read(w, interactive: view.interactive, compact: view.compact, depth: UInt8(clamping: view.depth), session: req.session ?? "") {
             case .failure(let e): return .failure(e)
             case .success(let data):
@@ -609,6 +611,7 @@ final class HandsRouter {
     private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, pasted: Bool = false, direction: Int32 = 1, amount: UInt32 = 3) -> HandsEnvelope {
         guard let ref = req.string("ref") else { return .failure(HandsError(.badArguments, "ref is missing", suggestion: "usage: polycarp-spaces agent \(name) <ref>", retry: .safe)) }
         let session = req.session ?? ""
+        if let e = SessionClipboard.both(text: text, paste: pasted) { return .failure(e) }
         if kind == .click || kind == .select, let item = pasteboardItem(ref, option: kind == .select ? text : nil, session: session) {
             return .failure(SessionClipboard.pasteboardRefusal("\(item)"))
         }

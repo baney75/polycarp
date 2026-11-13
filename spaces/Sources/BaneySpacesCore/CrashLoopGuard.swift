@@ -11,7 +11,7 @@ import Foundation
 public struct CrashLoopGuard: Equatable {
     public static let defaultLimit = 3
     public static let defaultWindow: TimeInterval = 5 * 60
-    /// Settings that override the defaults: `defaults write com.baney.baneyspaces crashLoopLimit 5`.
+    /// Settings that override the defaults: `defaults write com.baney.polycarp crashLoopLimit 5`.
     public static let limitKey = "crashLoopLimit"
     public static let windowKey = "crashLoopWindowMinutes"
 

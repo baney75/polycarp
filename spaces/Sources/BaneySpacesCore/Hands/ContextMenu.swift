@@ -98,6 +98,7 @@ public enum ContextMenu {
         let i = items[at]
         if let e = MenuPath.itemRule(i, path: path) { return .failure(e) }
         if leavesTheApp(i) { return .failure(MenuPath.refuse(path, why: MenuPath.outside)) }
+        if raisesAPanel(i) { return .failure(MenuPath.refuse(path, why: panelOrWindow)) }
         if i.submenu {
             return .failure(HandsError(.notSupported, "\(path) opens a submenu, and a context menu's submenus are not used yet",
                                        suggestion: "Do it in the app's own window with click, type or set-value.", retry: .never, nextCall: .null))
@@ -113,6 +114,16 @@ public enum ContextMenu {
     /// itself, never one inside a submenu.
     public static func ref(_ tree: JSONValue, title: String) -> String? {
         MenuPath.items(under: tree).first { MenuPath.same($0["name"]?.string ?? "", title) && !($0["states"]?.array ?? []).contains("disabled") }?["ref_id"]?.string
+    }
+
+    /// An item that can raise an Open or Save panel or a new window: a title ending in an ellipsis (AppKit's sign that
+    /// more is asked), a save or export identifier, or cmd+S or shift+cmd+S. On the menu bar `MenuWatch` cancels such a
+    /// panel and closes such a window; nothing watches a context item's press yet, so these are refused (210 r2 first-F1).
+    static let panelOrWindow = "it can raise an Open or Save panel or a new window, which agents never get, and nothing watches a context menu's press for one yet"
+    static func raisesAPanel(_ i: MenuPath.MenuItem) -> Bool {
+        let t = i.title.trimmingCharacters(in: .whitespaces)
+        return t.hasSuffix("\u{2026}") || t.hasSuffix("...") || ["save", "export", "download"].contains { i.id.contains($0) }
+            || i.chord("s") || i.chord("s", shift: true) || i.chord("s", shift: true, option: true)
     }
 
     /// What context menus add past the menu bar's rules: Services, Look Up, web search, Translate, Open With, Finder.

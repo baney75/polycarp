@@ -31,6 +31,7 @@ import { VERSION } from "./version.ts";
 import { COMPUTER_INSTRUCTION, COMPUTER_STATUS_TOOL, type ComputerClient, LOCAL_COMPUTER_INSTRUCTION, LocalComputer } from "./computer.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
+import { hideOutsideCore, SMALL_CORE, SMALL_INSTRUCTION } from "./small-profile.ts";
 import type { RosterDevice } from "./link-protocol.ts";
 
 /** Controls an interactive read lists by default: a first look of about 1,500 tokens on a busy page (evals/weak-model). */
@@ -93,6 +94,30 @@ function stripSchemaDialect(server: McpServer): void {
 			if (tool.execution?.taskSupport === "forbidden" && Object.keys(tool.execution).length === 1) delete tool.execution;
 		}
 		return result;
+	});
+}
+
+/**
+ * A key about a dialog that the tool doesn't take (on_dialog on navigate, onDialog or on_dialog_txt on click) fails by
+ * name instead of being dropped, which would run the call with no answer set (D48). Any other key a tool lacks is
+ * dropped, as the SDK does (second-S2, first-F3 of round 2 of the review of PR 230). Seen before the SDK strips it.
+ */
+function refuseStrayDialogKeys(server: McpServer): void {
+	const handlers = (server.server as unknown as { _requestHandlers?: Map<string, (req: unknown, extra: unknown) => Promise<unknown>> })._requestHandlers;
+	const tools = (server as unknown as { _registeredTools?: Record<string, { inputSchema?: { shape?: object } }> })._registeredTools;
+	const call = handlers?.get("tools/call");
+	if (!handlers || !tools || !call) return;
+	handlers.set("tools/call", async (req, extra) => {
+		const { name, arguments: args } = (req as { params?: { name?: string; arguments?: object } }).params ?? {};
+		const shape = tools[String(name)]?.inputSchema?.shape ?? {};
+		const stray = Object.keys(args ?? {}).find((k) => /dialog/i.test(k) && !(k in shape));
+		if (stray === undefined) return call(req, extra);
+		return {
+			content: text(
+				`bad_params: ${name} takes no ${stray}. Nothing was done. on_dialog and on_dialog_text work on a single click or press only: send the click or press that opens the box on its own, e.g. click {"tabId":41,"ref":"e5","on_dialog":"ok"}.`,
+			),
+			isError: true,
+		};
 	});
 }
 
@@ -195,6 +220,8 @@ export interface McpServerOptions {
 	hub?: McpHub;
 	/** Asked before every tool call; a string refuses it with that text. `link run` reads its live cap here, so a removal applies to open sessions. */
 	callCheck?: CallCheck;
+	/** "small": the core tools listed, the rest behind more_tools (cli/src/small-profile.ts). */
+	profile?: "small";
 }
 
 /** What a session behind a hub knows about it: which device it runs on, and the hub's last roster (undefined until one arrives). */
@@ -284,15 +311,18 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	const allowedTools = options.allowedTools && options.hub ? new Set([...options.allowedTools, DEVICES_TOOL]) : options.allowedTools;
 	// Fail closed: the local helper runs without --connector, so a scoped or remote session never gets it.
 	const local = allowedTools || options.remote ? undefined : options.localComputer;
+	const small = options.profile === "small";
 
 	const server = new McpServer(
 		{ name: "polycarp", version: VERSION },
 		{
-			instructions: browserInstructions(allowedTools ? (t) => allowedTools.has(t) : () => true)
+			// The small profile names only its core tools, so a small model isn't sent after one it has to unlock.
+			instructions: browserInstructions((t) => (!allowedTools || allowedTools.has(t)) && (!small || SMALL_CORE.has(t)))
 				.concat(
 					options.computer?.tools.length ? [COMPUTER_INSTRUCTION] : [],
 					local?.present ? [LOCAL_COMPUTER_INSTRUCTION] : [],
 					options.hub ? [DEVICES_INSTRUCTION] : [],
+					small ? [SMALL_INSTRUCTION] : [],
 					allowedTools ? [`This session's tools: ${[...allowedTools].sort().filter((t) => !t.startsWith("computer_") || t === COMPUTER_STATUS_TOOL || options.computer?.tools.some((c) => c.name === t)).join(", ")}.`] : [],
 				)
 				.join(" "),
@@ -300,7 +330,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	);
 	const allow = allowedTools ? (tool: string) => allowedTools.has(tool) : undefined;
 	/** Whether this session can call a tool: what a tool result may tell the model to call next. */
-	const has = allow ?? (() => true);
+	const has = (tool: string) => (!allowedTools || allowedTools.has(tool)) && (!small || SMALL_CORE.has(tool));
 	const handoffFor = (out: string) => passwordHandoff(out, has);
 	const check = options.callCheck;
 	// Handlers that go through the check, so the end of this function can prove none was missed.
@@ -320,6 +350,25 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
 		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown) =>
 			!allow || allow(String(name)) ? register(name, config, guard(String(name), cb)) : undefined;
+	}
+	// The password field's hint names tabs_show (src/browser/page.ts), in read_page and in every change report that lists
+	// the field (a click that opens a sign-in form). A session without tabs_show gets the handoff it has, in every result.
+	if (!has("tabs_show")) {
+		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
+		const handoff =
+			(run: (...a: unknown[]) => unknown) =>
+			async (...a: unknown[]) => {
+				const r = (await run(...a)) as { content?: unknown } | undefined;
+				if (!r || !Array.isArray(r.content)) return r;
+				return {
+					...r,
+					content: r.content.map((c: { type?: unknown; text?: unknown }) =>
+						c?.type === "text" && typeof c.text === "string" ? { ...c, text: handoffFor(c.text) } : c,
+					),
+				};
+			};
+		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown, ...rest: unknown[]) =>
+			register(name, config, typeof cb === "function" ? handoff(cb as (...a: unknown[]) => unknown) : cb, ...rest);
 	}
 	// Behind a hub every tool takes an optional device. The hub sends a call naming another device there and strips the
 	// argument; a call that still names another device reached the wrong one (an older hub, or a batch the hub doesn't
@@ -341,6 +390,8 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			});
 		};
 	}
+	// Last, so a hidden tool's handler is the one the gates above wrapped.
+	const addMoreTools = small ? hideOutsideCore(server) : undefined;
 	const choice = options.session ? { name: options.session, auto: false } : chooseSession({ flag: options.sessionFlag });
 	const client = new BridgeClient({
 		name: options.name ?? harnessName(),
@@ -608,7 +659,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				maxNodes: z.number().int().optional().describe(`Cap on elements (300, interactive ${INTERACTIVE_NODES})`),
 				maxTextChars: z.number().int().optional().describe("Cap on text (3000; interactive 0)"),
 				offset: z.number().int().optional().describe("Interactive: skip this many controls"),
-				snapshot: z.string().max(40).optional().describe("Interactive: the read offset continues"),
+				snapshot: z.string().regex(/^r[a-z0-9]+$/).optional().describe("Interactive: the read to continue"),
 			},
 		},
 		async (args) => {
@@ -633,13 +684,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 						const { nodes, next, shown } = rankedSlice(ranked, whole.nodes, maxNodes);
 						const { snap } = fitSnapshot({ ...whole, nodes }, maxNodes, maxTextChars);
 						const cut = whole.text.length > maxTextChars;
-						return { content: text(handoffFor(formatSnapshot(snap)) + rankNote(ranked, shown, { maxTextChars, cut }, { next, has })) };
+						return { content: text(formatSnapshot(snap) + rankNote(ranked, shown, { maxTextChars, cut }, { next, has })) };
 					}
 					const { snap, note } = fitSnapshot(whole, maxNodes, maxTextChars);
 					// An extension from before ranking can't skip controls: an offset there would give the first ones again.
 					if (args.offset || args.snapshot !== undefined)
 						return { content: text("This Polycarp extension is older than ranked reads, so it can't continue a read from an offset. Ask the user to update the extension; until then, use find for a control further down."), isError: true };
-					return { content: text(handoffFor(formatSnapshot(snap)) + note) };
+					return { content: text(formatSnapshot(snap) + note) };
 				}
 				const maxTextChars = Math.max(0, args.maxTextChars ?? 3000);
 				const maxNodes = Math.max(1, args.maxNodes ?? 300);
@@ -650,7 +701,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 					maxTextChars: maxTextChars ? maxTextChars + 1 : 0,
 				})) as Parameters<typeof formatSnapshot>[0];
 				const { snap, note } = fitSnapshot(raw, maxNodes, maxTextChars);
-				return { content: text(handoffFor(formatSnapshot(snap)) + note) };
+				return { content: text(formatSnapshot(snap) + note) };
 			} catch (err) {
 				return errorResult(err);
 			}
@@ -708,7 +759,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			try {
 				const found = (await client.call("find", args)) as { matches: SnapNode[] };
 				if (found.matches.length === 0) return { content: text(`No elements match "${args.query}". Try read_page or other words.`) };
-				return { content: text(handoffFor(formatNodes(found.matches, ""))) };
+				return { content: text(formatNodes(found.matches, "")) };
 			} catch (err) {
 				return errorResult(err);
 			}
@@ -756,6 +807,14 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		x: z.number().optional().describe("Screenshot pixel x"),
 		y: z.number().optional().describe("Screenshot pixel y"),
 	};
+	/** An answer set before the action for the first box it opens (D48): a model turn is too slow for some boxes. */
+	const onDialog = {
+		on_dialog: z
+			.enum(["ok", "cancel"])
+			.optional()
+			.describe('Answer the box this opens at once (needs tabId); "ok" only if it confirms what the user asked'),
+		on_dialog_text: z.string().optional().describe("prompt() text"),
+	};
 	server.registerTool(
 		"click",
 		{
@@ -765,6 +824,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				...targetSchema,
 				button: z.enum(["left", "right", "middle"]).optional().describe('Mouse button (default "left")'),
 				clickCount: z.number().int().optional().describe("2 for a double click"),
+				...onDialog,
 			},
 		},
 		(args) => call("click", args),
@@ -788,7 +848,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		{
 			title: "Press a key",
 			description: "Press a key or chord: Enter, Escape, Tab, ArrowDown, Control+a, Meta+Shift+p; clipboard chords (Control+v, Meta+c) are refused. Example: {\"key\":\"Escape\"}",
-			inputSchema: { key: z.string().describe("Key name or chord joined with +"), tabId, repeat: z.number().int().optional().describe("Times to press") },
+			inputSchema: { key: z.string().describe("Key name or chord joined with +"), tabId, repeat: z.number().int().optional().describe("Times to press"), ...onDialog },
 		},
 		(args) => call("press", args),
 	);
@@ -836,7 +896,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			title: "Run several input steps",
 			description: "Up to 40 input steps in one call, optionally ending with a screenshot: for canvas apps and multi-step input instead of one call per key. Step kinds: press, click ({x,y}|{ref}|{selector}, clickCount), doubleClick, drag ({from,to}), type, hover, scroll ({dx,dy}|{to}), wait (ms); x/y are pixels of your latest screenshot. Steps are settleMs apart (default 80); the run stops at the first failing step. Example: {\"steps\":[{\"press\":\"r\"},{\"drag\":{\"from\":{\"x\":200,\"y\":200},\"to\":{\"x\":360,\"y\":300}}},{\"type\":\"Start\"},{\"press\":\"Escape\"}],\"screenshot\":true}",
 			inputSchema: {
-				steps: z.array(z.record(z.string(), z.any())).min(1).max(40).describe("Each step is an object with one key, e.g. {\"press\":\"Enter\"}"),
+				steps: z.array(z.record(z.string(), z.any())).min(1).max(40).describe("Each step is an object with one key, e.g. {\"press\":\"Enter\"}; no on_dialog: use a single click or press"),
 				screenshot: z.boolean().optional().describe("Return a screenshot after the last step"),
 				settleMs: z.number().int().optional().describe("Pause between steps in ms (default 80)"),
 				tabId,
@@ -1286,7 +1346,9 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		);
 	}
 
+	addMoreTools?.();
 	stripSchemaDialect(server);
+	refuseStrayDialogKeys(server);
 	if (local) waitForLocalComputer(server, local);
 
 	if (allowedTools) {
@@ -1431,14 +1493,15 @@ function registerSkillManagement(server: McpServer, library: <T>(fn: () => Promi
 	);
 }
 
-export async function runMcpServer(options: { session?: string } = {}): Promise<void> {
+export async function runMcpServer(options: { session?: string; profile?: "small" } = {}): Promise<void> {
 	if (!isInstalled()) {
 		// First run from any harness completes setup; the extension reconnects on its alarm.
 		const result = install();
 		process.stderr.write(`[polycarp] installed native host manifests (${result.written.length} file(s))\n`);
 	}
 	const localComputer = new LocalComputer();
-	const { server, client } = createMcpServer({ sessionFlag: options.session, localComputer });
+	const profile = options.profile ?? (envVar("PROFILE") === "small" ? "small" : undefined);
+	const { server, client } = createMcpServer({ sessionFlag: options.session, localComputer, profile });
 	process.stdin.on("end", () => localComputer.close());
 	// Community skills, about daily, in the background: many harnesses keep this server running.
 	// The whole reconciliation (skill.ts syncCommunity), not just the fetch: pulled skills lose their installed copies here too.

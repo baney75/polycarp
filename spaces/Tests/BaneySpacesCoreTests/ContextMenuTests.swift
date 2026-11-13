@@ -111,6 +111,22 @@ final class ContextMenuTests: XCTestCase {
         XCTAssertTrue(off.message.contains("disabled"))
     }
 
+    /// No press may raise an Open or Save panel or a new window: nothing watches a context item's press for one, so an
+    /// item that can is refused before anything is posted (210 r2 first-F1).
+    func testAnItemThatCanRaiseAPanelOrWindowIsRefused() throws {
+        let items = [I(title: "Save Image As\u{2026}"), I(title: "Download Linked File As..."), I(title: "Export as PDF\u{2026}"),
+                     I(identifier: "WKMenuItemIdentifierDownloadImage", title: "Bild laden"), I(identifier: "saveDocument:", title: "Sichern"),
+                     I(cmdChar: "S", modifiers: 1, title: "Duplizieren"), I(title: "Copy Image Address"), I(title: "Reload")]
+        let enabled = [Bool?](repeating: true, count: items.count)
+        for want in ["Save Image As\u{2026}", "Download Linked File As...", "Export as PDF\u{2026}", "Bild laden", "Sichern", "Duplizieren"] {
+            guard case .failure(let e) = ContextMenu.choose(items, enabled: enabled, want: want) else { XCTFail("\(want) was chosen"); continue }
+            XCTAssertEqual(e.code, .notSupported, want)
+            XCTAssertEqual(e.retry, .never, want)
+            XCTAssertTrue(e.message.contains("Open or Save panel"), e.message)
+        }
+        XCTAssertEqual(try ContextMenu.choose(items, enabled: enabled, want: "Reload").get(), 7, "an item that asks nothing more is pressed")
+    }
+
     /// The router: the gate runs before anything is posted, a right click takes its own branch (the menu's window is the
     /// proof), and every path that posted cancels a menu it didn't press.
     func testTheRouterGatesBeforePostingAndNeverLeavesAMenu() throws {
