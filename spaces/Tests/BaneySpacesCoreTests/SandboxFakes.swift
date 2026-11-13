@@ -32,15 +32,15 @@ final class FakeProc: RunningProcess {
 /// A fake `tart`: VMs in memory, every verb recorded, failures injectable.
 final class FakeTart: ProcessRunning {
     struct VM { var suspended = false; var proc: FakeProc? }
-    /// Recursive, so a `withVMs` change that reads the fake (`tart.vms`, `tart.spawned`) takes it again instead of
-    /// hanging on itself (review of PR 233, round 2 second-F5).
-    let lock = NSRecursiveLock()
+    let lock = NSLock()
     /// Tests set these while the warm build's thread reads them, so both sides take the lock.
     private var _vms: [String: VM] = [:]
     var vms: [String: VM] { lock.lock(); defer { lock.unlock() }; return _vms }
-    /// A change to the VMs is one locked step: `vms["x"] = ...` through a getter and a setter let the warm build's
-    /// thread change them between the two (review of PR 233, first-F2).
-    func withVMs(_ change: (inout [String: VM]) -> Void) { lock.lock(); defer { lock.unlock() }; change(&_vms) }
+    /// Adds a VM in one locked step: `vms["x"] = ...` through a getter and a setter let the warm build's thread change
+    /// them between the two (review of PR 233, first-F2). The VM is a value made before the lock, so no caller's code
+    /// runs under it: a `withVMs` closure that read the fake hung on the lock or trapped on exclusive access to the
+    /// list (round 2 second-F5).
+    func addVM(_ name: String, _ vm: VM = VM()) { lock.lock(); _vms[name] = vm; lock.unlock() }
     var imagePulled = false
     // What the fake recorded is read under its lock: the warm build records from its own thread while a test
     // reads. An unlocked read that met an append growing the array saw it empty (TSan, 11-12: buildWarm's spawn
