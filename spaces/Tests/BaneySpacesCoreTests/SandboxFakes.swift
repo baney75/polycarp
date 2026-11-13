@@ -35,8 +35,20 @@ final class FakeTart: ProcessRunning {
     let lock = NSLock()
     var vms: [String: VM] = [:]
     var imagePulled = false
-    var calls: [[String]] = []
-    var spawned: [(args: [String], proc: FakeProc)] = []
+    // What the fake recorded is read under its lock: the warm build records from its own thread while a test
+    // reads. An unlocked read that met an append growing the array saw it empty (TSan, 11-12: buildWarm's spawn
+    // against the view test's count, which read 0 runs of the task VM and then 1).
+    private var _calls: [[String]] = []
+    private var _spawned: [(args: [String], proc: FakeProc)] = []
+    private var _order: [String] = []
+    var calls: [[String]] { lock.lock(); defer { lock.unlock() }; return _calls }
+    var spawned: [(args: [String], proc: FakeProc)] { lock.lock(); defer { lock.unlock() }; return _spawned }
+    var order: [String] {
+        get { lock.lock(); defer { lock.unlock() }; return _order }
+        set { lock.lock(); _order = newValue; lock.unlock() }
+    }
+    /// Adds to `order` in one locked step, so a test's note can't drop a spawn the warm build adds at the same time.
+    func note(_ step: String) { lock.lock(); _order.append(step); lock.unlock() }
     var failClone = false
     var failDeleteOnce = 0          // deletes that silently do nothing
     var failResume = false
@@ -47,7 +59,6 @@ final class FakeTart: ProcessRunning {
     var guestTruncated = false
     var stdinSeen: [String] = []
     var onSpawn: ((_ args: [String]) -> Void)?
-    var order: [String] = []
     var v6Addresses = 0
     var spawnImmortal = false
     /// Called inside `clone` so a test can delay a warm build.
@@ -66,7 +77,7 @@ final class FakeTart: ProcessRunning {
 
     func run(_ exe: String, _ args: [String], env: [String: String], stdin: String?, timeout: TimeInterval, outputLimit: Int) -> ProcessResult {
         lock.lock(); defer { lock.unlock() }
-        calls.append(args)
+        _calls.append(args)
         if exe.hasSuffix("socketfilterfw") { return ProcessResult(status: 0, stdout: args.contains("--getglobalstate") ? firewallState : "") }
         if exe.hasSuffix("route") { return ProcessResult(status: 0, stdout: "   gateway: 192.168.1.1\n") }
         guard let verb = args.first else { return ProcessResult(status: 2) }
@@ -138,30 +149,46 @@ final class FakeTart: ProcessRunning {
     }
 
     func spawn(_ exe: String, _ args: [String], env: [String: String], logPath: String?, hold: Bool) throws -> RunningProcess {
+        let p = try record(args, hold: hold)
+        onSpawn?(args)   // after the lock, like onClone, so a hook can read what the fake recorded
+        return p
+    }
+
+    private func record(_ args: [String], hold: Bool) throws -> FakeProc {
         lock.lock(); defer { lock.unlock() }
-        calls.append(args)
+        _calls.append(args)
         let vm = args.last ?? ""
         guard vms[vm] != nil else { throw SandboxError("run_failed", "no such VM \(vm)") }
         if vms[vm]?.suspended == true && failResume { throw SandboxError("run_failed", "cannot restore state") }
         let p = FakeProc()
         p.immortal = spawnImmortal
-        p.onRelease = { [unowned self] in self.lock.lock(); self.order.append("release"); self.lock.unlock() }
+        p.onRelease = { [unowned self] in self.note("release") }
         vms[vm]?.proc = p
         vms[vm]?.suspended = false
-        spawned.append((args, p))
-        order.append("spawn " + (args.contains("--no-graphics") ? "headless" : "graphics") + (hold ? " held" : ""))
-        onSpawn?(args)
+        _spawned.append((args, p))
+        _order.append("spawn " + (args.contains("--no-graphics") ? "headless" : "graphics") + (hold ? " held" : ""))
         return p
     }
 }
 
 final class FakeHostFacts: HostFactsReading {
-    var facts = HostFacts(addresses: [.init("this Mac's address on en0", "192.168.1.20", iface: "en0"), .init("this Mac's tailnet address", "100.101.102.103", iface: "utun4")],
+    // Read by the warm build's self-check on its own thread while a test changes them, so both sides take the lock
+    // (TSan, 11-12: buildWarm at SandboxManager.swift:680 against testTheMacsAddressesChangingStopsTheGuest).
+    private let lock = NSLock()
+    var facts: HostFacts {
+        get { lock.lock(); defer { lock.unlock() }; return _facts }
+        set { lock.lock(); _facts = newValue; lock.unlock() }
+    }
+    var listenerHits: Int {
+        get { lock.lock(); defer { lock.unlock() }; return _listenerHits }
+        set { lock.lock(); _listenerHits = newValue; lock.unlock() }
+    }
+    private var _listenerHits = 0
+    private var _facts = HostFacts(addresses: [.init("this Mac's address on en0", "192.168.1.20", iface: "en0"), .init("this Mac's tailnet address", "100.101.102.103", iface: "utun4")],
                           router: "192.168.1.1", tailscaleInstalled: true,
                           bridge6: [.init("this Mac's IPv6 address on bridge100", "fe80::5c9b:a6ff:fe68:4164", iface: "bridge100"),
                                     .init("this Mac's IPv6 address on bridge100", "fdc5:5ced:8bd3:9a9f:1447:5955:8b2d:5e2d", iface: "bridge100")])
     final class L: ProbeListener { var port: UInt16 = 51000; var hits = 0; func accepted() -> Int { hits }; func close() {} }
-    var listenerHits = 0
     func read() -> HostFacts { facts }
     func currentAddresses() -> [String] { facts.ipv4 }
     func listener6() -> ProbeListener? { let l = L(); l.hits = listenerHits; return l }
