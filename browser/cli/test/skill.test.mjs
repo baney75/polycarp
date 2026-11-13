@@ -251,3 +251,9 @@ test("the worked examples act on changes: no read_page straight after an input t
 			);
 	}
 });
+
+test("PR 196 r1 first-F3: the form example's request gives the name and email it fills, so none is invented", () => {
+	const form = skill.slice(skill.indexOf("**Fill and submit a form.**"));
+	assert.match(form, /^\*\*Fill and submit a form\.\*\* The user asks you to send the contact form with their name\s+and email\./);
+	assert.match(form, /fill \{"ref":"e7","value":"ada@example\.com"\}/, "the example fills an email, so the request must give one");
+});

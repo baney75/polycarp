@@ -456,6 +456,11 @@ before(async () => {
 		}
 		if (serveFileData(req, res)) return;
 		if (req.url.startsWith("/settle/")) return serveSettle(req, res);
+		// No document: a 204 leaves the tab on the page it was on.
+		if (req.url === "/no-content") {
+			res.writeHead(204);
+			return res.end();
+		}
 		res.writeHead(200, { "content-type": "text/html" });
 		if (req.url === "/counter") return res.end(COUNTER_PAGE);
 		if (req.url === "/refs") return res.end(REFS_PAGE);
@@ -2578,6 +2583,49 @@ test("change report: the same element relabeled names its old ref; a node put in
 	assert.deepEqual(redrawn.gone, [`${email} textbox "Email"`], JSON.stringify(redrawn));
 	assert.match(redrawn.appeared?.[0] ?? "", /^e\d+ textbox "Email"$/, JSON.stringify(redrawn));
 	assert.equal(redrawn.changed, undefined, JSON.stringify(redrawn));
+});
+
+// PR 147 review round 2, first-F2: a URL that loads no document (a 204) reports the page as kept, at once,
+// and the page's refs still work. A 204 commits nothing and fires no DOMContentLoaded.
+test("navigate to a 204 says no new page loaded, without waiting out the load timeout", async () => {
+	await go("pairing");
+	const save = refFor(await tool("read_page", { filter: "interactive" }), "Save");
+	const start = Date.now();
+	const kept = JSON.parse(await tool("navigate", { url: `${pageUrl}no-content`, timeoutMs: 15000 }));
+	const ms = Date.now() - start;
+	assert.deepEqual(kept.changes, { page: "no new page loaded; read_page shows the page" }, JSON.stringify(kept));
+	assert.match(kept.url, /\/pairing$/);
+	assert.ok(ms < 6000, `${ms} ms`);
+	assert.match(JSON.parse(await tool("click", { ref: save })).changes.changed?.[0] ?? "", /button "Saved"/);
+});
+
+// PR 147 review round 2, first-F4 and second-N4: the skill's worked example is what the tool returns, and its
+// loop acts on the refs in changes instead of reading before every action.
+extraPages["/contact"] = `<!doctype html><title>Contact</title>
+<input aria-label="Name" oninput="if (!window.drawn) { window.drawn = true; const r = document.getElementById('rest'); r.replaceWith(r.cloneNode(true)); }">
+<div id="rest"><input aria-label="Email"><button>Send</button></div>`;
+test("the skill's form example is the change report fill really returns", async () => {
+	await go("contact");
+	const page = await tool("read_page", { filter: "interactive" });
+	const filled = JSON.parse(await tool("fill", { ref: refFor(page, "Name"), value: "Ada" }));
+	const skill = readFileSync(join(here, "..", "..", "skills", "polycarp-browser", "SKILL.md"), "utf8");
+	const shown = /fill \{"ref":"e3","value":"Ada"\}\n {2}-> changes: (.+)\n/.exec(skill);
+	assert.ok(shown, "the skill's form example shows fill's changes");
+	// Refs differ run to run: name each by the order it first shows up, the read's three refs first.
+	const order = (refs, text) => {
+		const seen = [...refs];
+		return text.replace(/\be\d+\b/g, (r) => {
+			if (!seen.includes(r)) seen.push(r);
+			return `R${seen.indexOf(r)}`;
+		});
+	};
+	const read = ["Name", "Email", "Send"];
+	assert.equal(
+		order(read.map((n) => refFor(page, n)), JSON.stringify(filled.changes)),
+		order(["e3", "e4", "e5"], JSON.stringify(JSON.parse(shown[1]))),
+	);
+	assert.match(skill, /Repeat 3 and 4, acting on the refs in `changes`; call `read_page` again to verify when they say too little\./);
+	assert.doesNotMatch(skill, /Repeat 2 to 4/);
 });
 
 test("change report: controls with live counters do not pile up refs between reads", async () => {
