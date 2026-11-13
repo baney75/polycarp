@@ -306,7 +306,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	);
 	const allow = allowedTools ? (tool: string) => allowedTools.has(tool) : undefined;
 	/** Whether this session can call a tool: what a tool result may tell the model to call next. */
-	const has = allow ?? (() => true);
+	const has = (tool: string) => (!allowedTools || allowedTools.has(tool)) && (!small || SMALL_CORE.has(tool));
 	const handoffFor = (out: string) => passwordHandoff(out, has);
 	const check = options.callCheck;
 	// Handlers that go through the check, so the end of this function can prove none was missed.
