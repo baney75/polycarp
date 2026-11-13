@@ -537,9 +537,10 @@ final class HandsMCPTests: XCTestCase {
                          readImage: { _ in Data([1, 2, 3]) })
         let r = reply(s, #"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"shot","arguments":{"window":5}}}"#)
         let content = try XCTUnwrap(r?["result"]?["content"]?.array)
-        XCTAssertEqual(content.count, 2)
-        XCTAssertEqual(content[1]["type"]?.string, "image")
-        XCTAssertEqual(content[1]["data"]?.string, Data([1, 2, 3]).base64EncodedString())
+        XCTAssertEqual(content.count, 3)
+        XCTAssertTrue(content[1]["text"]?.string?.contains("untrusted window content") == true, "every image is labeled untrusted")
+        XCTAssertEqual(content[2]["type"]?.string, "image")
+        XCTAssertEqual(content[2]["data"]?.string, Data([1, 2, 3]).base64EncodedString(), "bytes it can't decode go as they are")
     }
 }
 
