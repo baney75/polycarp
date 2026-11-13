@@ -135,15 +135,59 @@
 				"wizard"
 			],
 			"recorded": "All 16 browser tasks on this branch rebased onto main 93734628 (PR 208 merged). Small profile: 17 tools listed, the rest behind more_tools."
+		},
+		"r7-stub-haiku": {
+			"passed": 16,
+			"total": 16,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"stub": 69
+			},
+			"tasks": [
+				"stub-jotter-append",
+				"stub-jotter-close",
+				"stub-jotter-save",
+				"stub-leaflet-find",
+				"stub-roster-lookup",
+				"stub-tally-multiply",
+				"stub-tally-sequence",
+				"stub-thermo-settings"
+			],
+			"recorded": "All 8 stub computer tasks (tasks/stub.mjs) on the stub helper, headless; no window opened on the Mac. Measured on this branch merged with main cbc29ed7. Full profile: 69 tools listed (browser and computer_*, with run_steps)."
+		},
+		"r7-stub-small": {
+			"passed": 16,
+			"total": 16,
+			"model": "claude-haiku-5-5",
+			"profile": "small",
+			"tools": {
+				"stub": 24
+			},
+			"tasks": [
+				"stub-jotter-append",
+				"stub-jotter-close",
+				"stub-jotter-save",
+				"stub-leaflet-find",
+				"stub-roster-lookup",
+				"stub-tally-multiply",
+				"stub-tally-sequence",
+				"stub-thermo-settings"
+			],
+			"recorded": "The same 8 stub computer tasks on the small profile: 24 tools listed, the rest (run_steps, toggle, select, menu, find, get, scroll, close and the browser extras) behind more_tools."
 		}
 	},
 	"latest": {
 		"haiku-full": "r6-haiku",
-		"haiku-small": "r6-small"
+		"haiku-small": "r6-small",
+		"haiku-stub-full": "r7-stub-haiku",
+		"haiku-stub-small": "r7-stub-small"
 	},
 	"floor": {
 		"haiku-full": 0.9,
-		"haiku-small": 0.85
+		"haiku-small": 0.85,
+		"haiku-stub-full": 0.85,
+		"haiku-stub-small": 0.8
 	},
 	"readSize": {
 		"label": "after",

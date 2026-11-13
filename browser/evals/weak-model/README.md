@@ -19,6 +19,22 @@ helper in connector mode (`hands.mjs`). With no task files, the runner says so a
   tab, a late element, a list that re-renders, autocomplete.
 - `tasks/computer.mjs`: 8 Mac tasks in Calculator, TextEdit and Preview, scored from the window and, for a save task,
   the saved file.
+- `tasks/stub.mjs`: 8 computer tasks on the stub helper (`stub/`): a calculator (Tally), a plain-text editor (Jotter:
+  append, save, close with unsaved changes), a long document (Leaflet), a settings window (Thermo: a popup, a text
+  field, a switch, Apply) and a contact list (Roster: pick a row, read its details). Scored from the stub's world file,
+  the fixture files and the answer.
+
+The stub (`stub/hands.mjs`) stands in for `polycarp-spaces mcp`. It serves the real helper's `tools/list` and
+instructions (`stub/hands-tools.json`, refreshed from the helper by `stub/refresh-tools.mjs`, and held to
+`spaces/.../Hands/Tools.swift` by `test/weak-model-stub.test.mjs`), and answers with the real snapshot rows, refs,
+envelopes and error codes (`stale_ref`, `stale_bare_row`, `unverified`, a sheet on close or Command-W, a read cut at 400
+rows, `run_steps` with its stop rules and closing read, a right click refused as on a parked agent window) over the small
+apps in `stub/apps.mjs`. When the helper's tools change, refresh the list (from a local `swift build --product
+baneyspaces-cli` if the installed helper is older) and teach the stub the new verb. It never touches a window, the Mac's handoff folder or an app's preferences, so stub
+runs need no `WM_ALLOW_COMPUTER` and run headless anywhere, alongside the browser runs. They measure whether a model
+can drive the computer tools from their own descriptions and answers; they don't measure a real app's accessibility
+quirks, which the Mac tasks in `tasks/computer.mjs` still do. Each stub task has a scripted solution in the test that
+must pass, and an untouched world that must fail.
 
 Each run is `claude -p` on the owner's sign-in. The runner refuses to start while `ANTHROPIC_API_KEY` or another key
 variable (`lib.mjs` KEY_VARS) is set, and removes them from the child's environment. Each run has only the `polycarp` MCP server, a fresh throwaway headless
@@ -58,6 +74,7 @@ node evals/weak-model/run.mjs --list                              # the tasks a 
 node evals/weak-model/run.mjs --label r2-haiku                    # all tasks, 2 trials, claude-haiku-5-5
 node evals/weak-model/run.mjs --label s-sonnet --model claude-sonnet-5-5 --trials 1 --only wizard,pagination
 node evals/weak-model/run.mjs --label r2-small --profile small    # the small tool profile
+node evals/weak-model/run.mjs --label r7-stub-haiku --kind stub    # the stub computer tasks; opens nothing on the Mac
 node evals/weak-model/report.mjs r2-haiku                         # per run: calls, errors, repeats, failures
 node evals/weak-model/rescore.mjs r1-haiku                        # rescore saved signup runs under the signup-v2 rule
 node evals/weak-model/measure-read.mjs after                      # read_page and tools/list sizes on 8 public pages
@@ -89,6 +106,6 @@ logic, and the cheap deterministic tests in `cli/test` hold each fix.
 
 ## Platforms
 
-The browser half runs wherever the e2e harness runs (Chromium on Mac, Linux, Windows). The computer half needs the Mac
-helper; on Linux and Windows the runner refuses computer tasks, and `computer_status` tells the model to use the
+The browser half and the stub computer tasks run wherever the e2e harness runs (Chromium on Mac, Linux, Windows). The
+Mac computer tasks need the Mac helper; on Linux and Windows the runner refuses computer tasks, and `computer_status` tells the model to use the
 browser tools instead.

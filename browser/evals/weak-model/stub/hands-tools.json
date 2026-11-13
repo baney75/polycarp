@@ -1,0 +1,685 @@
+{
+	"note": "tools/list and initialize of `polycarp-spaces mcp --connector` (spaces/Sources/BaneySpacesCore/Hands/Tools.swift, MCP.swift). Refresh with: node evals/weak-model/stub/refresh-tools.mjs. test/weak-model-stub.test.mjs checks the verbs and arguments against Tools.swift.",
+	"instructions": "Polycarp's hands: read and act on apps on the user's Mac without touching their screen. Work in a loop: `open` an app (it lands on the agent workspace), `windows` for its window id, `snapshot` that window (one row per element, `[N] role \"name\"`), act on a row (`click`, `type`, `set_value`, `press`, `scroll`, `select`, `toggle`) with ref \"N\" or the full ref, then read the evidence in the result and snapshot again with since \"latest\" to see only what changed. On an error or an unverified result, make the call in `next_call`; null means nothing to call. Refs go stale when the UI changes: on a stale_ref error take a new snapshot. Only windows on the agent workspace or of apps Donovan has lent are allowed; anything else returns outside_agent_workspace (you cannot lend). Never ask the user to switch away from what they are doing. Work in the background: `open` the app (it returns the window id), `arrange` the agent workspace, act; when an action's result says `opened`, a dialog or sheet came up: snapshot that window and answer it; then `close` what you opened.",
+	"tools": [
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": true
+			},
+			"description": "List the windows an agent may use now: those on the agent workspace and those of lent apps, with their ids, plus the dialogs, alerts, sheets and palettes those apps raised (kind, parent, waiting: true when the app is blocked until it is answered). A dialog you may not use is listed with usable: false and the rule that refused it. A window of an app Donovan is using carries in_use: true and in_use_note; reads on it work now, and an action on it waits.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {},
+				"type": "object"
+			},
+			"name": "windows"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": true
+			},
+			"description": "Read only. List the workspaces (number, name, shown or not, which one is the agent workspace) and where each window you may use is. Use it before `move` or `arrange`, or to see whether Donovan is looking at the agent workspace (agent_workspace_shown). Agents never switch, create, rename or delete workspaces.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {},
+				"type": "object"
+			},
+			"name": "workspaces"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": true
+			},
+			"description": "Read one window, one row per element: [N] role \"name\" =value (states), indented under its parent. Act on row N with ref \"N\" (this snapshot) or the full ref the header shows. After acting, read again with since: \"latest\" to see only what changed. Example: {\"window\":4211,\"query\":\"Save\"}",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"app": {
+						"description": "App name or bundle id. With several windows on the agent workspace the newest is read; pass window to choose.",
+						"type": "string"
+					},
+					"compact": {
+						"description": "Collapse wrapper groups with no content.",
+						"type": "boolean"
+					},
+					"depth": {
+						"description": "How deep to read (default 10).",
+						"type": "integer"
+					},
+					"format": {
+						"description": "rows (default over MCP) or json (the full tree, default on the command line).",
+						"type": "string"
+					},
+					"interactive": {
+						"description": "Only elements you can act on.",
+						"type": "boolean"
+					},
+					"max_elements": {
+						"description": "At most this many rows (default 400); a last line says how to get the rest. A since read lists every change.",
+						"type": "integer"
+					},
+					"query": {
+						"description": "Only rows whose role, name or value has this text (any case; several with |), with their parents.",
+						"type": "string"
+					},
+					"screenshot": {
+						"description": "Also return a picture of the window (longest side 1280), with how its pixels map to window points.",
+						"type": "boolean"
+					},
+					"since": {
+						"description": "latest: only rows added (+), changed (~) or removed (-) since your last read of this window.",
+						"type": "string"
+					},
+					"window": {
+						"description": "Window id from `windows`, `open` or a previous snapshot.",
+						"type": "integer"
+					},
+					"zoom": {
+						"description": "With screenshot: only this region, x,y,width,height in window points, like \"0,0,400,300\". Crops the MCP image; the saved file stays whole. A zoom outside the window is refused before anything is captured.",
+						"type": "string"
+					}
+				},
+				"type": "object"
+			},
+			"name": "snapshot"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": true
+			},
+			"description": "Search one window's accessibility tree and return the matching elements with refs.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"app": {
+						"description": "App name or bundle id.",
+						"type": "string"
+					},
+					"limit": {
+						"description": "At most this many matches (default 20).",
+						"type": "integer"
+					},
+					"name": {
+						"description": "Part of the accessible name.",
+						"type": "string"
+					},
+					"role": {
+						"description": "Role, like button or textfield.",
+						"type": "string"
+					},
+					"text": {
+						"description": "Part of any text the element shows.",
+						"type": "string"
+					},
+					"value": {
+						"description": "Part of its value.",
+						"type": "string"
+					},
+					"window": {
+						"description": "Window id.",
+						"type": "integer"
+					}
+				},
+				"type": "object"
+			},
+			"name": "find"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": true
+			},
+			"description": "Read one property of an element from the live window: value, text, title, role, bounds or states.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"copy": {
+						"description": "Also hold the text on the agent clipboard, for type with paste: true. Never the Mac's clipboard.",
+						"type": "boolean"
+					},
+					"property": {
+						"description": "value (default), text, title, role, bounds or states.",
+						"type": "string"
+					},
+					"ref": {
+						"description": "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5.",
+						"type": "string"
+					}
+				},
+				"required": [
+					"ref"
+				],
+				"type": "object"
+			},
+			"name": "get"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Click an element by ref, without moving the pointer or raising the window. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"}",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"button": {
+						"description": "left (default) or right. A right click opens the element's context menu (AXShowMenu, no pointer) only while the agent workspace is on screen under the window, then presses `item` or, without one, lists the items and cancels the menu; it never leaves a menu open.",
+						"type": "string"
+					},
+					"item": {
+						"description": "With button right: the context menu item to press, by its title. Items the menu bar refuses (clipboard, Services, sharing, opening documents) are refused here too.",
+						"type": "string"
+					},
+					"ref": {
+						"description": "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"ref"
+				],
+				"type": "object"
+			},
+			"name": "click"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Type text into an element by ref: inserts it at the element's selection through accessibility, never by posting keys. Prints the value it read back. paste: true types what you copied with get. Example: {\"ref\":\"7\",\"paste\":true}",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"paste": {
+						"description": "Type what this session copied (get with copy: true) instead of text.",
+						"type": "boolean"
+					},
+					"ref": {
+						"description": "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5.",
+						"type": "string"
+					},
+					"text": {
+						"description": "The text.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"ref"
+				],
+				"type": "object"
+			},
+			"name": "type"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Replace an element's whole value (a text field, a slider). Prints the value it read back.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"ref": {
+						"description": "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5.",
+						"type": "string"
+					},
+					"value": {
+						"description": "The new value.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"ref",
+					"value"
+				],
+				"type": "object"
+			},
+			"name": "set_value"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Press keys (Return, cmd+a, \"h i Return\") in a window that is not in front: posted to that one process, never to the session, without activating or raising anything. The ref names the window (and the element you expect to change). Refused unless Polycarp started the process, nothing else of its windows could take the key, and the window is where the app's keys go. Answers unverified (retry never) when nothing read back from the window shows the keys landed.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"key": {
+						"description": "Key name with optional modifiers, like cmd+shift+z; several keys are separated by spaces (at most 64).",
+						"type": "string"
+					},
+					"ref": {
+						"description": "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"ref",
+					"key"
+				],
+				"type": "object"
+			},
+			"name": "press"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Click a point in a window that is not in front, by process, with window-local coordinates (points from the window's top-left corner). Never moves the real pointer or raises the window. For surfaces with no accessibility tree (a canvas); prefer `click` on a ref. Double click: {\"window\":4211,\"x\":120,\"y\":80,\"count\":2}. Answers unverified (retry never) when neither the window's tree nor the pixels around the point changed.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"button": {
+						"description": "left (default) or right. A right click opens the context menu only while the agent workspace is on screen under the window, then presses `item` or, without one, lists the items and cancels the menu; it never leaves a menu open.",
+						"type": "string"
+					},
+					"count": {
+						"description": "2 for a double click, 3 for a triple (default 1).",
+						"type": "integer"
+					},
+					"item": {
+						"description": "With button right: the context menu item to press, by its title. Items the menu bar refuses (clipboard, Services, sharing, opening documents) are refused here too.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					},
+					"window": {
+						"description": "Window id from `windows`.",
+						"type": "integer"
+					},
+					"x": {
+						"description": "Points from the window's left edge.",
+						"type": "integer"
+					},
+					"y": {
+						"description": "Points from the window's top edge.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"window",
+					"x",
+					"y"
+				],
+				"type": "object"
+			},
+			"name": "click_at"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Press at a point, drag to another and release, in a window that is not in front, by process, with window-local coordinates. Never moves the real pointer or raises the window. Verified by an accessibility change or by pixels changing along the path while the rest of the window stays put.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"steps": {
+						"description": "Intermediate moves (default 12, at most 200).",
+						"type": "integer"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					},
+					"window": {
+						"description": "Window id from `windows`.",
+						"type": "integer"
+					},
+					"x": {
+						"description": "Start, points from the window's left edge.",
+						"type": "integer"
+					},
+					"x2": {
+						"description": "End, points from the window's left edge.",
+						"type": "integer"
+					},
+					"y": {
+						"description": "Start, points from the window's top edge.",
+						"type": "integer"
+					},
+					"y2": {
+						"description": "End, points from the window's top edge.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"window",
+					"x",
+					"y",
+					"x2",
+					"y2"
+				],
+				"type": "object"
+			},
+			"name": "drag"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Scroll an element by ref.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"amount": {
+						"description": "Notches (default 3).",
+						"type": "integer"
+					},
+					"direction": {
+						"description": "up, down, left or right.",
+						"type": "string"
+					},
+					"ref": {
+						"description": "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"ref",
+					"direction"
+				],
+				"type": "object"
+			},
+			"name": "scroll"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Choose an option in a list, menu or popup by ref.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"option": {
+						"description": "The text of the option to choose.",
+						"type": "string"
+					},
+					"ref": {
+						"description": "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"ref",
+					"option"
+				],
+				"type": "object"
+			},
+			"name": "select"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Run a menu-bar command of the window's app by its titles, without opening the menu on screen. Only in a copy your own `open` started, with this its one window. Refused: the Apple, Window and Help menus, the app menu but About and Settings, full screen, Open and Open Recent, cut, copy and paste, and what leaves the app (Emoji, Dictation, Speech, Print, Share). A panel it raises within 1 s is cancelled and the call fails; so does a window it raises off the agent workspace, closed when Polycarp can. Example: {\"window\":4211,\"path\":\"Format > Font > Bold\"}",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"path": {
+						"description": "Menu titles from the menu bar down, separated by >.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					},
+					"window": {
+						"description": "Window id from `windows`.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"window",
+					"path"
+				],
+				"type": "object"
+			},
+			"name": "menu"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Several actions in one call, on one window or more, then one read of what changed in the last. Every step is checked before any runs; consecutive steps on one window run back to back with nothing else acting in between, and the run stops at the first step that fails, isn't verified or raises a dialog or sheet. Steps: click, type, set_value, press, click_at, drag, scroll, select, toggle, menu (at most 32). Row numbers mean your latest snapshot. Example: {\"steps\":[{\"tool\":\"click\",\"args\":{\"ref\":\"5\"}},{\"tool\":\"type\",\"args\":{\"ref\":\"7\",\"text\":\"hi\"}}]}",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"steps": {
+						"description": "The actions in order, each {tool, args} with the tool's own arguments.",
+						"items": {
+							"type": "object"
+						},
+						"type": "array"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"steps"
+				],
+				"type": "object"
+			},
+			"name": "run_steps"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Flip a checkbox, switch or disclosure by ref. Prints the state it read back.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"ref": {
+						"description": "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"ref"
+				],
+				"type": "object"
+			},
+			"name": "toggle"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Capture one window as a PNG, even while it is parked out of view. Over MCP the picture comes back fitted to 1280 pixels, labeled untrusted, with how its pixels map to window points. Needs Screen Recording for Polycarp. Example: {\"window\":4211,\"zoom\":\"0,0,400,300\"}",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"cursor": {
+						"description": "Draw the agent cursor where it last acted in this window, if it did in the last 30 seconds and was on screen. Off by default, so the picture is the app itself.",
+						"type": "boolean"
+					},
+					"out": {
+						"description": "A file name (no folder) for the PNG; it is written in Polycarp's own shots folder.",
+						"type": "string"
+					},
+					"window": {
+						"description": "Window id.",
+						"type": "integer"
+					},
+					"zoom": {
+						"description": "Only this region of the window, x,y,width,height in window points, like \"0,0,400,300\". Crops the MCP image; the saved file stays whole. A zoom outside the window is refused before anything is captured.",
+						"type": "string"
+					}
+				},
+				"required": [
+					"window"
+				],
+				"type": "object"
+			},
+			"name": "shot"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Start work in the background: open an app, or files from the agent handoff folder in it, on the agent workspace, without activating it or switching what Donovan sees. It answers with the new window's id once the window exists (it waits up to `wait` seconds, at most 7), and focus: {changed, returned} says whether macOS brought the app forward and Polycarp gave the keyboard back. Each call makes a fresh window by default (a separate copy, or New Window from behind in a running copy under Full Access; Donovan's windows never move); new_window: false reuses a window this session already opened in that app. Apps that hold the user's own data (Safari, Notes, Mail, Messages, Calendar, Photos) answer needs_sandbox; URLs wait for agent browser profiles.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"app": {
+						"description": "App name or bundle id.",
+						"type": "string"
+					},
+					"new_window": {
+						"description": "true (default): always a fresh window. false: reuse a window this session opened in the app, when there is one and no files are given.",
+						"type": "boolean"
+					},
+					"targets": {
+						"description": "Files in the agent handoff folder to open in it. URLs need an agent browser profile (a later phase).",
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"app"
+				],
+				"type": "object"
+			},
+			"name": "open"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Lay out the agent workspace's windows so screenshots and reads are stable: full, halves, thirds, grid, or frames with explicit frames. Only windows on the agent workspace; while it is out of sight they keep their new size and take the position when it is shown. Never touches Donovan's workspaces.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"layout": {
+						"description": "full, halves, thirds, grid or frames.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					},
+					"windows": {
+						"description": "Window ids in the order to place them (default: every agent workspace window you may use, oldest first). With frames: id=x,y,width,height in points from the top-left of the screen's usable area.",
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					}
+				},
+				"required": [
+					"layout"
+				],
+				"type": "object"
+			},
+			"name": "arrange"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Move a window you may use onto the agent workspace (a lent window, or any window under Full Access, comes off Donovan's workspace), or give a window already there a new frame. A moved window goes back when its lend ends or Full Access is narrowed. Never onto a workspace Donovan is looking at, never one of his windows he hasn't lent, never a dialog (it goes with its app).",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"frame": {
+						"description": "x,y,width,height in points from the top-left of the screen's usable area (optional).",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					},
+					"window": {
+						"description": "Window id from `windows`.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"window"
+				],
+				"type": "object"
+			},
+			"name": "move"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Close a window this session opened with `open`, through its close button, from behind. Anything else is refused, and no app is ever quit. If the app asks to save, the sheet appears in the result as opened: answer it (Don't Save or Cancel; a Save panel stays refused, so save first through a document you opened from the handoff folder).",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					},
+					"window": {
+						"description": "Window id that your `open` returned.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"window"
+				],
+				"type": "object"
+			},
+			"name": "close"
+		}
+	]
+}
