@@ -1469,14 +1469,14 @@ across shadow hosts, are multiplied), not kept off the page, and not under somet
 samples five points in view and asks the `<iframe>`'s own root (a shadow root's `elementFromPoint` for a frame inside one)
 what is there; one hit on the frame itself is enough, and a hit on anything else, another frame included, is not. A frame
 with no sample point in view (below the fold) can't be tested, so it is named, not read: "out of view: scroll to it, then
-read_page". It is out of view only where a scroll can bring it into sight: a frame past the page's end, past an edge of a
-box that clips (`overflow: hidden` or `clip`, the page's own included) and does not scroll, or where a box fixed over the
-whole viewport would cover it, is hidden. Any other failure keeps one line, "not shown, so not read", and nothing inside it is read either; this keeps the
+read_page". It is out of view only when a test proves a scroll brings it into sight: nothing fixed or sticky around it, no
+clip-path, no paint containment, no overflow clip that cuts it, and the nearest box that scrolls, then the page, reach it;
+anything else is hidden. No cover is looked for out of view: one as tall as the page leaves the frame out of view. Any other failure keeps one line, "not shown, so not read", and nothing inside it is read either; this keeps the
 #73 rule that hidden text never reaches the agent, and an invisible field can't be filled. The same test runs again in the
 tab for each frame, level by level, before the frame claims its line (matched by the `<iframe>`'s border box, not its
 corner), so a see-through frame under a shown one can't take the shown one's line or its points; a frame whose test gets
 no answer is not read and keeps its line, and a frame the tab found hidden or barred relabels only the line that names its
-own URL or, failing that, its origin (a redirect), so it can't take the line of a shown frame that was never placed. Each action resolves its frame once and reuses it for the change report and the point, re-measured
+own URL or, failing that, the one line of its origin that names no other frame (a redirect), so it can't take a shown frame's line. Each action resolves its frame once and reuses it for the change report and the point, re-measured
 after the scroll; a nested frame's points compose every level's scale. The change report's look in a frame tests it within
 the look's own 0.75 s: a frame only out of view is read (the action has not scrolled it in yet, or scrolled it away), and
 one hidden, gone to an error page or to the approval page (#94) is not, and its refs are listed as gone; one whose test

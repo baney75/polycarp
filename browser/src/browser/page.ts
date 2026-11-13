@@ -416,14 +416,16 @@ function resolveRef(ref: string, live: (el: Element) => boolean, print: (el: Ele
  * Numbering starts at a random block per document, so a ref kept from the previous page
  * is very unlikely to name anything on the next one.
  */
-function pageSnapshot(
+export function pageSnapshot(
 	maxNodes: number,
 	maxTextChars: number,
 	filter: string,
 	live: (el: Element) => boolean,
 	print: (el: Element) => string,
 	keepStale = false,
-	frameShown: (el: Element) => "shown" | "hidden" | "away",
+	frameShown: (el: Element) => "shown" | "hidden" | "away" = () => {
+		throw new Error("pageSnapshot: its caller passed no frameShown and FRAME_STATES");
+	},
 	frameNotes: Record<"shown" | "hidden" | "away", string>,
 ): unknown {
 	const w = window as unknown as {
@@ -1101,19 +1103,26 @@ export async function changeLook(
 		// Its look, and whether a person sees the frame now: an action can hide it (#73). The test keeps
 		// to the look's budget, one deadline for the frame found once and again.
 		const end = Date.now() + FRAME_SHOWN_MS;
-		const run = (hit: { frame: PageFrame }) =>
-			Promise.all([
-				runInFrame<ChangeLook | "guarded" | "large">(tabId, hit.frame, code(mine)).catch(() => undefined),
+		const left = () => Math.max(0, end - Date.now());
+		const run = (hit: { frame: PageFrame }, again = false) => {
+			const look = runInFrame<ChangeLook | "guarded" | "large">(tabId, hit.frame, code(mine));
+			return Promise.all([
+				again ? bounded(look, left()) : look.catch(() => undefined),
 				frameState(tabId, hit.frame, end).catch(() => undefined),
 			]);
+		};
 		// The frame found once for the action serves every look; it is looked for again only when it stops answering.
 		const known = frame.hit;
 		let [got, state] = known ? await run(known) : [undefined, undefined];
 		if (!got) {
-			const hit = await find();
+			// Found again within what is left of the deadline; with none left, or none in time, it is unknown.
+			if (!left()) return undefined;
+			const found = find().then((h) => h ?? null);
+			const hit = await bounded(found, left());
+			if (hit === undefined) return undefined;
 			if (!hit) return "gone";
 			frame.hit = hit;
-			[got, state] = await run(hit);
+			[got, state] = await run(hit, true);
 		}
 		// The approval page (#94) is the strictest bar: the frame's refs are gone.
 		if (got === "guarded") return "gone";
@@ -1200,6 +1209,7 @@ function lineOf(
 	taken: Set<SnapshotNode>,
 	states: readonly string[] = [CROSS_NOTE],
 	exact = false,
+	frames: readonly PageFrame[] = [],
 ): Line | undefined {
 	const near = (a: number, b: number) => Math.abs(a - b) <= 2;
 	const fits = nodes.filter(
@@ -1214,8 +1224,11 @@ function lineOf(
 	// Two frames of one box: the line that names this frame's URL is its own. `exact` takes no other, but a
 	// frame that redirected or navigated within its origin still owns the line its <iframe> names.
 	const named = fits.find((n) => n.href === f.url.slice(0, 200));
-	if (!exact) return named ?? fits[0];
-	return named ?? fits.find((n) => !!n.href && sameOrigin(n.href, f.url));
+	if (named || !exact) return named ?? fits[0];
+	// Only when it is plain: one line on its origin, naming no other frame's URL.
+	const kin = fits.filter((n) => !!n.href && sameOrigin(n.href, f.url));
+	const own = kin.length === 1 ? kin[0] : undefined;
+	return own && !frames.some((o) => o !== f && o.url.split(/[?#]/)[0].slice(0, 200) === own.href) ? own : undefined;
 }
 
 /**
@@ -1249,7 +1262,7 @@ async function readFrames(
 		const shown = await Promise.all(level.map((f) => frameState(tabId, f, end)));
 		const picks: Array<{ f: PageFrame; own: Line }> = [];
 		const bind = (f: PageFrame, states: readonly string[], exact = false) => {
-			const own = lineOf(snap.nodes, f, taken, states, exact);
+			const own = lineOf(snap.nodes, f, taken, states, exact, frames);
 			if (own) taken.add(own);
 			return own;
 		};

@@ -340,6 +340,7 @@ test("frameShown: a frame out of view is not taken as shown; shadow roots, faint
 	const { frameShown } = await import("../src/browser/frames.ts");
 	const view = { innerWidth: 1280, innerHeight: 800, scrollX: 0, scrollY: 0, getComputedStyle: (n) => n.style };
 	const doc = { defaultView: view, elementFromPoint: () => null, nodeType: 9 };
+	doc.documentElement = { ownerDocument: doc, style: {}, scrollHeight: 5000, scrollWidth: 1280 };
 	const el = (rect, { style = {}, parent = null, root = doc, hit } = {}) => {
 		const e = {
 			nodeType: 1,
@@ -960,31 +961,32 @@ test("PR 223 r1 first-F4: pageSnapshot writes the frame states readFrames matche
 	}
 });
 
-test("PR 228 r1 first-F2: a frame out of view that no scroll can bring into sight, or under a cover over the viewport, is hidden", async () => {
+test("PR 228 r1 first-F2 and PR 235 r1: out of view, a frame is away only when a test proves a scroll brings it into sight", async () => {
 	const { frameShown } = await import("../src/browser/frames.ts");
 	const view = { innerWidth: 1280, innerHeight: 800, scrollX: 0, scrollY: 0, getComputedStyle: (n) => n.style };
 	const box = (left, top, width, height) => () => ({ left, top, width, height, right: left + width, bottom: top + height });
-	const make = ({ scrollHeight = 5000, bodyStyle = {}, overlay } = {}) => {
+	const make = ({ scrollHeight = 5000, bodyStyle = {}, htmlStyle = {} } = {}) => {
 		const doc = { defaultView: view, nodeType: 9 };
-		const part = (style, rect, parent = null) => ({ nodeType: 1, ownerDocument: doc, style: { opacity: "1", filter: "none", ...style }, parentElement: parent, getRootNode: () => doc, getBoundingClientRect: rect, contains: () => false });
-		doc.documentElement = { ...part({}, box(0, 0, 1280, scrollHeight)), scrollWidth: 1280, scrollHeight };
+		const part = (style, rect, parent = null, root = doc) => ({ nodeType: 1, ownerDocument: doc, style: { opacity: "1", filter: "none", ...style }, parentElement: parent, getRootNode: () => root, getBoundingClientRect: rect, scrollTop: 0, scrollLeft: 0, scrollHeight: 5000, scrollWidth: 1280 });
+		doc.documentElement = { ...part(htmlStyle, box(0, 0, 1280, scrollHeight)), scrollWidth: 1280, scrollHeight };
 		doc.body = part(bodyStyle, box(0, 0, 1280, scrollHeight), doc.documentElement);
-		const frameIn = (rect, parent = doc.body) => {
-			const e = { ...part({}, rect, parent), contains: () => false };
-			doc.elementFromPoint = () => overlay ?? doc.body;
-			return e;
-		};
+		doc.elementFromPoint = () => doc.body;
+		const frameIn = (rect, parent = doc.body, root = doc) => part({}, rect, parent, root);
 		return { doc, part, frameIn };
 	};
 	// Moved far to the right inside a box that clips and does not scroll.
 	let t = make();
 	const clipper = t.part({ overflowX: "hidden", overflowY: "visible" }, box(0, 0, 1280, 800), t.doc.body);
 	assert.equal(frameShown(t.frameIn(box(100000, 10, 300, 120), clipper)), "hidden", "clipped off by overflow: hidden");
-	// Below the fold, with a box fixed over the whole viewport: it covers the frame wherever it scrolls to.
-	t = make({ overlay: null });
-	const cover = t.part({ position: "fixed" }, box(0, 0, 1280, 800), t.doc.body);
-	t = make({ overlay: cover });
-	assert.equal(frameShown(t.frameIn(box(10, 3000, 300, 120))), "hidden", "under a cover over the viewport");
+	// PR 235 r1: fixed (a closed drawer) or sticky, clip-path, paint containment, across shadow hosts too.
+	const low = box(10, 3000, 300, 120);
+	const under = (style, rect = box(0, 2900, 1280, 300), frame = low) => frameShown(t.frameIn(frame, t.part(style, rect, t.doc.body)));
+	for (const style of [{ position: "fixed" }, { position: "sticky" }, { clipPath: "inset(50%)" }, { contain: "paint" }]) assert.equal(under(style), "hidden", JSON.stringify(style));
+	assert.equal(under({ position: "fixed" }, box(0, 900, 1280, 300), box(0, 900, 300, 120)), "hidden", "first-F1: a fixed box off the viewport");
+	const host = t.part({ overflowY: "hidden" }, box(0, 0, 1280, 300), t.doc.body);
+	assert.equal(frameShown(t.frameIn(low, null, { nodeType: 11, host })), "hidden", "second-S1: a shadow root's host clips");
+	const shell = t.part({ position: "fixed", overflowY: "auto" }, box(0, 0, 1280, 800), t.doc.body);
+	assert.equal(frameShown(t.frameIn(low, t.part({}, box(0, 0, 1280, 5000), null, { nodeType: 11, host: shell }))), "hidden", "second-S2: a fixed shell, across a shadow host");
 	// Past the end of the page, where no scroll goes; and a page whose scroll is turned off.
 	t = make({ scrollHeight: 2000 });
 	assert.equal(frameShown(t.frameIn(box(10, 3000, 300, 120))), "hidden", "past the page's end");
@@ -996,6 +998,8 @@ test("PR 228 r1 first-F2: a frame out of view that no scroll can bring into sigh
 	t = make({ bodyStyle: { overflowY: "hidden", overflowX: "visible" } });
 	const scroller = t.part({ overflowY: "auto", overflowX: "visible" }, box(0, 0, 1280, 800), t.doc.body);
 	assert.equal(frameShown(t.frameIn(box(10, 3000, 300, 120), scroller)), "away", "down a box that scrolls");
+	t = make({ htmlStyle: { overflowY: "auto" }, bodyStyle: { overflowY: "hidden" } });
+	assert.equal(frameShown(t.frameIn(low)), "away", "first-F4: html scrolls, so body's overflow clips only body's own box");
 });
 
 /** Two levels of frames (X holds Z), Z found once with no delay; `extra` is the fakeTab setup for the looks. */
@@ -1092,24 +1096,46 @@ test("PR 228 r1 first-F3 and second-S1: a redirected hidden frame says so on its
 	}
 });
 
-test("PR 228 r1 first-F4: pageSnapshot has no fallback frame states: every call passes FRAME_STATES", async () => {
-	const { snapshot } = await import("../src/browser/page.ts");
+/** A page in a sandbox with one cross-origin <iframe>, to run page code as the tab would. */
+function crossPage() {
+	const g = { innerWidth: 1280, innerHeight: 800, scrollX: 0, scrollY: 0, __name: (f) => f, crypto, CSS: { escape: (s) => s }, location: { href: "https://shop.example/" }, frameElement: null, getComputedStyle: () => ({ opacity: "1", filter: "none", visibility: "visible", display: "block", paddingLeft: "0", paddingTop: "0" }) };
+	const doc = { nodeType: 9, defaultView: g, title: "Shop", body: { innerText: "Shop" }, activeElement: null, documentElement: { scrollHeight: 800 }, getElementsByTagName: () => [] };
+	const frame = { nodeType: 1, tagName: "IFRAME", src: "https://pay.example/checkout", ownerDocument: doc, isConnected: true, parentElement: null, textContent: "", offsetWidth: 400, offsetHeight: 150, clientLeft: 0, clientTop: 0, getAttribute: () => null, getRootNode: () => doc, getBoundingClientRect: () => ({ left: 100, top: 50, width: 400, height: 150, right: 500, bottom: 200 }), matches: () => false, closest: () => null, querySelector: () => null, checkVisibility: () => true };
+	Object.assign(doc, { querySelectorAll: (sel) => (sel === "*" ? [frame] : []), elementFromPoint: () => frame });
+	return vm.createContext(Object.assign(g, { document: doc, window: g, parent: g }));
+}
+
+test("PR 235 r1 first-F3, second-S3, second-S4: a refind keeps to the deadline; no taking a kin frame's line; every caller labels a frame", async () => {
+	const { snapshot, changeLook, pageSnapshot } = await import("../src/browser/page.ts");
+	const { LOOK_MS } = await import("../src/browser/changes.ts");
 	const getTab = chrome.tabs.get;
 	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
 	try {
+		// first-F3: the look failed and finding the frame again hangs; it is unknown, not gone, by the deadline.
+		const top = { ...zLook, url: "https://shop.example/", nodes: [], text: "" };
+		const z = await slowZ(53, { hang: new Set(["S2:Page.getFrameTree"]), evaluate: (frameId) => { if (frameId) throw new Error("Cannot find context with specified id"); return top; } });
+		const ref = `${frameTag("Z")}e5`;
+		const start = Date.now();
+		const look = await changeLook(53, 400, [ref], [], { ref, rule: open, hit: { frame: z, inner: "e5" } });
+		assert.ok(Date.now() - start < LOOK_MS + 450, `the look took ${Date.now() - start} ms`);
+		assert.ok(!look.gone.includes(ref), `not found again in time is unknown, not gone: ${JSON.stringify(look.gone)}`);
+		const note = ["cross-origin: read it with navigate to its URL"];
+		// Stacked ad slots of one origin and box: /a on top, untested; /b hidden under it.
+		chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+		const pay = (id, path) => ({ frame: { id, url: `https://pay.example/${path}`, securityOrigin: "https://pay.example" } });
+		const line = { ...frameLine("e1", [100, 50, 400, 150]), href: "https://pay.example/a" };
+		fakeTab(54, { trees: { "": node("TOP", "https://shop.example", [pay("PA", "a"), pay("PB", "b")]) }, holds: { PA: "TOP", PB: "TOP" }, owners: { PA: 11, PB: 12 }, shown: { PA: "no answer", PB: "hidden" }, evaluate: (frameId) => (frameId === undefined ? pageWith([line]) : frameSnap("pay")) });
+		assert.deepEqual((await snapshot(54, { skip: open })).nodes.find((n) => n.ref === "e1")?.states, note, "the /a frame keeps its line");
+		// The page code of snapshot, find and changeLook, run on a page with a cross-origin frame.
 		chrome.webNavigation.getAllFrames = async () => [{}];
-		let expression = "";
-		fakeTab(52, {
-			trees: { "": node("TOP", "https://shop.example") },
-			evaluate: (frameId, e) => {
-				if (frameId === undefined && /frameNotes/.test(e)) expression ||= e;
-				return pageWith([]);
-			},
-		});
-		await snapshot(52, { skip: open });
-		assert.ok(expression, "the snapshot ran");
-		assert.doesNotMatch(expression, /frameNotes\s*=/, "a call that left the states out would write empty ones");
-		assert.doesNotMatch(expression, /frameShown\s*=/);
+		const run = async (frameId, e) => { const r = await vm.runInContext(e, crossPage()); if (!r.ok) throw new Error(r.error); return r.value; };
+		fakeTab(55, { trees: { "": node("TOP", "https://shop.example") }, evaluate: run });
+		const states = (look) => Array.from(look.nodes.find((n) => n.role === "iframe")?.states ?? []);
+		assert.deepEqual(states(await snapshot(55, { skip: open })), note, "snapshot");
+		assert.deepEqual(states(await snapshot(55, { filter: "all", maxNodes: 600, maxTextChars: 0, skip: open })), note, "find");
+		assert.deepEqual(states(await changeLook(55, 400, [], [])), note, "changeLook");
+		const bare = `(${pageSnapshot.toString()})(300, 1000, "all", () => true, () => "p", false)`;
+		assert.throws(() => vm.runInContext(bare, crossPage()), /pageSnapshot: its caller passed no frameShown/);
 	} finally {
 		chrome.tabs.get = getTab;
 	}
