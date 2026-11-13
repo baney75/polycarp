@@ -2564,6 +2564,6 @@ extraPages["/pw"] = `<!doctype html><title>Polycarp pw</title><label>Email <inpu
 test("read_page marks a password field as the user's to type", async () => {
 	await go("pw");
 	const page = await tool("read_page", { filter: "interactive" });
-	assert.match(page, /textbox "Password" \[password: leave it empty, the user types it\]/);
+	assert.match(page, /textbox "Password" \[password: never type one, call tabs_show and ask the person to type it\]/);
 	assert.doesNotMatch(page, /"Email" \[password/);
 });

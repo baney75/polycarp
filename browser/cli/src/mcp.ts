@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { checkSkill, listSkills, matchTask, readSkill, removeSkill, skillInfo, syncCommunity, writeSkill } from "./skill.ts";
 import { stageCases } from "./skill-submit.ts";
 import { firecrawlCrawl, firecrawlMap, pageMarkdown } from "./firecrawl.ts";
-import { capCrawl, capJson, capOutput, fitSnapshot, MARKDOWN_CHARS, type RankCounts, rankedSlice, rankNote, sliceText, VALUE_CHARS } from "./output-cap.ts";
+import { capCrawl, capJson, capOutput, fitSnapshot, MARKDOWN_CHARS, passwordHandoff, type RankCounts, rankedSlice, rankNote, sliceText, VALUE_CHARS } from "./output-cap.ts";
 import { searxSearch } from "./searx.ts";
 import { selfExec, selfPrefix } from "./self.ts";
 import { VERSION } from "./version.ts";
@@ -301,6 +301,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	const allow = allowedTools ? (tool: string) => allowedTools.has(tool) : undefined;
 	/** Whether this session can call a tool: what a tool result may tell the model to call next. */
 	const has = allow ?? (() => true);
+	const handoffFor = (out: string) => passwordHandoff(out, has);
 	const check = options.callCheck;
 	// Handlers that go through the check, so the end of this function can prove none was missed.
 	const checked = new WeakSet<object>();
@@ -632,13 +633,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 						const { nodes, next } = rankedSlice(ranked, whole.nodes, maxNodes);
 						const { snap } = fitSnapshot({ ...whole, nodes }, maxNodes, maxTextChars);
 						const cut = whole.text.length > maxTextChars;
-						return { content: text(formatSnapshot(snap) + rankNote(ranked, snap.nodes.length, { maxTextChars, cut }, { next, has })) };
+						return { content: text(handoffFor(formatSnapshot(snap)) + rankNote(ranked, snap.nodes.length, { maxTextChars, cut }, { next, has })) };
 					}
 					const { snap, note } = fitSnapshot(whole, maxNodes, maxTextChars);
 					// An extension from before ranking can't skip controls: an offset there would give the first ones again.
 					if (args.offset || args.snapshot !== undefined)
 						return { content: text("This Polycarp extension is older than ranked reads, so it can't continue a read from an offset. Ask the user to update the extension; until then, use find for a control further down."), isError: true };
-					return { content: text(formatSnapshot(snap) + note) };
+					return { content: text(handoffFor(formatSnapshot(snap)) + note) };
 				}
 				const maxTextChars = Math.max(0, args.maxTextChars ?? 3000);
 				const maxNodes = Math.max(1, args.maxNodes ?? 300);
@@ -649,7 +650,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 					maxTextChars: maxTextChars ? maxTextChars + 1 : 0,
 				})) as Parameters<typeof formatSnapshot>[0];
 				const { snap, note } = fitSnapshot(raw, maxNodes, maxTextChars);
-				return { content: text(formatSnapshot(snap) + note) };
+				return { content: text(handoffFor(formatSnapshot(snap)) + note) };
 			} catch (err) {
 				return errorResult(err);
 			}
@@ -707,7 +708,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			try {
 				const found = (await client.call("find", args)) as { matches: SnapNode[] };
 				if (found.matches.length === 0) return { content: text(`No elements match "${args.query}". Try read_page or other words.`) };
-				return { content: text(formatNodes(found.matches, "")) };
+				return { content: text(handoffFor(formatNodes(found.matches, ""))) };
 			} catch (err) {
 				return errorResult(err);
 			}

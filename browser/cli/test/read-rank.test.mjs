@@ -2,7 +2,7 @@
 // call for more. No browser.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { rankedSlice, rankNote } from "../src/output-cap.ts";
+import { passwordHandoff, rankedSlice, rankNote } from "../src/output-cap.ts";
 
 const counts = (o) => ({ total: 343, covered: 0, first: 2, inView: 41, near: 12, far: 288, offset: 0, ...o });
 
@@ -66,4 +66,14 @@ test("a ranked read's note in a session without find or get_page_text names neit
 	assert.doesNotMatch(note, /find|get_page_text/);
 	assert.match(note, /No page text here\./);
 	assert.doesNotMatch(rankNote(counts(), 50, { maxTextChars: 2000, cut: true }, { has }), /get_page_text/);
+});
+
+// The password field's handoff names a tool the session has: tabs_show, else ask_user, else none.
+test("the password hint names the handoff the session has", () => {
+	const line = 'e1 textbox "Password" [required, password: never type one, call tabs_show and ask the person to type it]';
+	assert.equal(passwordHandoff(line, () => true), line);
+	assert.match(passwordHandoff(line, (t) => t === "ask_user"), /\[required, password: never type one, call ask_user and ask the person to type it\]/);
+	const bare = passwordHandoff(line, () => false);
+	assert.match(bare, /password: never type one, ask the person to type it\]/);
+	assert.doesNotMatch(bare, /tabs_show|ask_user/);
 });

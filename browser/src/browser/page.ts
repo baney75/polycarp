@@ -1037,8 +1037,11 @@ function pageSnapshot(
 			node.value = f.options[f.selectedIndex]?.text ?? "";
 		const states = statesOf(el);
 		// Said where the model decides, not only in the rules it read long ago: a small model typed a password the user
-		// had given it when nothing at the field said otherwise (evals/weak-model, signup-validation).
-		if (tag === "input" && f.type === "password") states.push("password: leave it empty, the user types it");
+		// had given it when nothing at the field said otherwise (evals/weak-model, signup-validation). It names the
+		// handoff too: one left the field empty and only said so, and the user never saw the tab (r4 rerun, t1). The MCP
+		// server puts ask_user in for a session without tabs_show (cli/src/mcp.ts handoffFor).
+		if (tag === "input" && f.type === "password")
+			states.push("password: never type one, call tabs_show and ask the person to type it");
 		if (states.length && !node.states) node.states = states;
 		if (at.frame) node.frame = at.frame.slice(0, 120);
 		nodes.push(node);
