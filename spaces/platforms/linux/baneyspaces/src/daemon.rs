@@ -480,7 +480,8 @@ impl Core {
             }
             let _ = self.apply(Event::AgentExit { pid });
         }
-        let Some(tok) = proc::token_of(pid) else {
+        // A window can map right after its process's exec, while its environ still reads empty.
+        let Some(tok) = proc::settled_token_of(pid) else {
             return false;
         };
         if !self.tokens.contains_key(&tok) {
