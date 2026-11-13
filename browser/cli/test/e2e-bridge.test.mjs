@@ -188,6 +188,21 @@ function serveSettle(req, res) {
 	}
 	return later(0, "text/plain", "ok");
 }
+// An editor that takes a paste itself, as rich text and sheet editors do, and a plain field; keys are counted on both.
+extraPages["/paste"] = `<!doctype html><title>Polycarp paste</title>
+<div id="ed" contenteditable="true" style="min-height:40px"></div><textarea id="plain"></textarea><pre id="got"></pre>
+<script>
+window.keys = 0;
+window.inputs = [];
+for (const el of [document.getElementById("ed"), document.getElementById("plain")]) {
+	el.addEventListener("keydown", () => window.keys++);
+	el.addEventListener("input", (e) => window.inputs.push(e.inputType));
+}
+document.getElementById("ed").addEventListener("paste", (e) => {
+	e.preventDefault();
+	document.getElementById("got").textContent = e.clipboardData.getData("text/plain");
+});
+</script>`;
 extraPages["/edit"] = `<!doctype html><title>Polycarp edit</title>
 <input id="t" aria-label="Task" value="first task"><p id="r">untouched</p>`;
 
@@ -1162,6 +1177,23 @@ test("press select-all (Meta+a and Control+a) selects the field's text, so typin
 		await tool("type", { text: "edited task" });
 		assert.equal(await js("document.getElementById('t').value"), "edited task", `${chord} did not select all`);
 	}
+});
+
+test("type paste:true pastes: an editor's own paste handler gets the text, a plain field gets it at once, no key is sent", async () => {
+	await go("paste");
+	const toEditor = await tool("type", { selector: "#ed", text: "line one\nline two", paste: true });
+	assert.match(toEditor, /"handledBy":\s*"page"/, toEditor);
+	assert.equal(await js("document.getElementById('got').textContent"), "line one\nline two");
+	const toField = await tool("type", { selector: "#plain", text: "a\nb", paste: true });
+	assert.match(toField, /"handledBy":\s*"inserted"/, toField);
+	assert.equal(await js("document.getElementById('plain').value"), "a\nb");
+	assert.equal(await js("window.keys"), 0, "a key event went out");
+	// Inserted, not typed: Chromium sends one insertText input per line.
+	assert.match(await js("window.inputs.join(',')"), /^insertText(,insertText)*$/);
+	// Steps take the same paste, as {paste: text}.
+	await tool("actions", { steps: [{ click: { selector: "#plain" } }, { paste: "!" }] });
+	assert.equal(await js("document.getElementById('plain').value"), "a\nb!");
+	assert.equal(await js("window.keys"), 0, "a key event went out in steps");
 });
 
 /**

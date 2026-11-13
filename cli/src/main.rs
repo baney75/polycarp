@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+mod browsers;
 mod features;
 mod mcp;
 mod theme;
@@ -136,6 +137,7 @@ fn main() {
                 spaces: find(&SPACES).ok().filter(|p| trusted_tool(p)),
                 config: theme::config_dir(),
                 parts: &|| version::gather(&version_device(&ask_helper)),
+                running: &|| home().map_or_else(Vec::new, |h| browsers::with_extension(&h)),
             },
         ),
         Some("--version") | Some("-V") => {

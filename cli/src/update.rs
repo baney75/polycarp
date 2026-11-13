@@ -1080,6 +1080,8 @@ pub struct Device<'a> {
     pub config: Result<PathBuf, String>,
     /// Every part on this device, for the up-to-date check.
     pub parts: &'a dyn Fn() -> Vec<Part>,
+    /// The browsers that run with the extension on, read from their own folders (`browsers::with_extension`).
+    pub running: &'a dyn Fn() -> Vec<String>,
 }
 
 pub const USAGE: &str = "\
@@ -1244,6 +1246,35 @@ fn old_builds(parts: &[Part], target: &str) -> Vec<String> {
         .collect()
 }
 
+/// The longest a browser that runs with the extension gets to connect before the reload: the extension dials the
+/// helper again on a 30 s alarm and a backoff of at most 30 s.
+const WAKE_WAIT: std::time::Duration = std::time::Duration::from_secs(40);
+
+/// The browsers that run with the extension but have not connected yet (`version::ASLEEP`).
+fn asleep(parts: &[Part]) -> Vec<String> {
+    parts
+        .iter()
+        .filter(|p| p.found == version::Found::Absent(version::ASLEEP))
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+/// `parts`, plus each browser that runs with the extension on (`running`, read from its own folder) as `version::ASLEEP`
+/// when no extension is connected. The helper's word alone is not enough: the reload step's reads of the helper just
+/// replaced named no browser while Helium ran with the extension (the Parish1 deploy of 53e4c4b).
+fn with_running(mut parts: Vec<Part>, running: &dyn Fn() -> Vec<String>) -> Vec<Part> {
+    if extension_connected(&parts) {
+        return parts;
+    }
+    for b in running() {
+        let name = format!("extension ({b})");
+        if !parts.iter().any(|p| p.name == name) {
+            parts.push(Part::absent(&name, version::ASLEEP));
+        }
+    }
+    parts
+}
+
 /// Whether any browser's extension is there to reload: it reports a build, or it is there but slow
 /// to answer. "No browser is connected" and "not installed" are not.
 fn extension_connected(parts: &[Part]) -> bool {
@@ -1275,13 +1306,35 @@ pub fn reload_wait(
     // review of PR 236).
     let first = clock();
     let mut before = parts();
+    let mut told = false;
     while !extension_connected(&before) {
-        if clock().saturating_sub(first) >= RELOAD_SETTLE {
+        let spent = clock().saturating_sub(first);
+        let sleeping = asleep(&before);
+        // A browser that runs with the extension is not "no browser": it connects soon, and then it is reloaded.
+        if sleeping.is_empty() && spent >= RELOAD_SETTLE {
             let _ = writeln!(
                 out,
                 "No browser is connected, so there is no extension to reload: the browser loads {at} when it starts."
             );
             return 0;
+        }
+        if !sleeping.is_empty() && spent >= WAKE_WAIT {
+            let _ = writeln!(
+                out,
+                "{} did not connect in {} s, though its browser is running, so it was not reloaded. Run `polycarp browser reload` once it connects.",
+                sleeping.join(", "),
+                WAKE_WAIT.as_secs()
+            );
+            return 0;
+        }
+        if !sleeping.is_empty() && !told {
+            told = true;
+            let _ = writeln!(
+                out,
+                "{} is not connected yet, though its browser is running: waiting up to {} s for it.",
+                sleeping.join(", "),
+                WAKE_WAIT.as_secs()
+            );
         }
         pause();
         before = parts();
@@ -1449,7 +1502,7 @@ fn reload_wait_command(args: &[OsString], device: &Device, runner: &mut dyn Runn
         &target,
         std::time::Duration::from_secs(wait),
         &mut reload,
-        device.parts,
+        &|| with_running((device.parts)(), device.running),
         &|| started.elapsed(),
         &mut pause,
         &mut std::io::stdout(),
@@ -2922,6 +2975,94 @@ mod tests {
         assert_eq!((rc, reloads), (0, 2));
     }
 
+    /// `reload_wait` on a browser that runs with the extension but is not connected until `connects_at` s (never:
+    /// u64::MAX), as the helper reports it. Returns the code, the reloads, the seconds spent and the output.
+    fn asleep_run(connects_at: u64) -> (i32, u32, u64, String) {
+        let sleeping =
+            version::extension_parts(r#"{"connected":false,"extensions":[],"running":["Helium"]}"#);
+        unseen_run(connects_at, sleeping, &[])
+    }
+
+    /// `asleep_run`, but until it connects the helper says `early` and the browsers' folders say `running`.
+    fn unseen_run(connects_at: u64, early: Vec<Part>, running: &[&str]) -> (i32, u32, u64, String) {
+        use std::cell::Cell;
+        let (reloads, now) = (Cell::new(0u32), Cell::new(0u64));
+        let running = || running.iter().map(|b| b.to_string()).collect::<Vec<_>>();
+        let mut reload = || {
+            reloads.set(reloads.get() + 1);
+            Ran {
+                code: Some(0),
+                output: String::new(),
+            }
+        };
+        let parts = || match reloads.get() {
+            0 if now.get() < connects_at => early.clone(),
+            0 => vec![at("extension (Helium)", OLD)],
+            _ => vec![at("extension (Helium)", T)],
+        };
+        let clock = || std::time::Duration::from_secs(now.get());
+        let mut pause = || now.set(now.get() + 2);
+        let mut out = Vec::new();
+        let rc = reload_wait(
+            T,
+            std::time::Duration::from_secs(30),
+            &mut reload,
+            &|| with_running(parts(), &running),
+            &clock,
+            &mut pause,
+            &mut out,
+        );
+        (
+            rc,
+            reloads.get(),
+            now.get(),
+            String::from_utf8(out).unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_running_browser_whose_extension_has_not_connected_is_waited_for_and_reloaded() {
+        // Parish1 at 0da29cc: Helium ran with the extension, which had not dialed the replaced helper yet. The step
+        // said "No browser is connected" and skipped the reload; the final check then said "reload pending".
+        let (rc, reloads, _, out) = asleep_run(20);
+        assert_eq!((rc, reloads), (0, 1), "{out}");
+        assert!(!out.contains("No browser is connected"), "{out}");
+        assert!(
+            out.contains("extension (Helium) is not connected yet")
+                && out.contains(&format!("runs {}", version::short(T))),
+            "{out}"
+        );
+        // One that never connects is not waited on past WAKE_WAIT, and says what to run.
+        let (rc, reloads, secs, out) = asleep_run(u64::MAX);
+        assert_eq!((rc, reloads), (0, 0), "{out}");
+        assert!(secs <= 40 + 2, "waited {secs} s: {out}");
+        assert!(out.contains("did not connect in 40 s"), "{out}");
+    }
+
+    #[test]
+    fn a_browser_running_with_the_extension_is_waited_for_when_the_helper_names_none() {
+        // The Parish1 deploy of 53e4c4b: Helium (702688) ran with the extension the whole time, but the step's reads
+        // of the just-replaced helper named no browser, and it said "No browser is connected". The browsers' own
+        // folders say it runs: whether the helper says no browser, gives no parts, or gives no answer, it is reloaded.
+        let none = || version::extension_parts(r#"{"connected":false,"extensions":[]}"#);
+        for (what, early) in [("no browser", none()), ("nothing", Vec::new())] {
+            let (rc, reloads, _, out) = unseen_run(20, early, &["Helium"]);
+            assert_eq!((rc, reloads), (0, 1), "{what}: {out}");
+            assert!(!out.contains("No browser is connected"), "{what}: {out}");
+            assert!(
+                out.contains("extension (Helium) is not connected yet")
+                    && out.contains(&format!("runs {}", version::short(T))),
+                "{what}: {out}"
+            );
+        }
+        let (rc, reloads, _, out) = unseen_run(20, version::extension_parts(""), &["Helium"]);
+        assert_eq!((rc, reloads), (0, 1), "no answer: {out}");
+        // With no browser running, it still ends after the settle time.
+        let (rc, reloads, secs, out) = unseen_run(u64::MAX, none(), &[]);
+        assert_eq!((rc, reloads, secs), (0, 0, 4), "{out}");
+        assert!(out.contains("No browser is connected"), "{out}");
+    }
+
     #[test]
     fn first_f1_review_of_pr_218_no_browser_connected_ends_the_wait_at_once() {
         let none = Browser {
@@ -3192,6 +3333,7 @@ mod tests {
             spaces: None,
             config: Err("none".to_string()),
             parts: &parts,
+            running: &Vec::new,
         };
         let both = std::env::join_paths([&trusted, &untrusted]).unwrap();
         let mut runner = RealRunner::with_path(&repo, Some(both));
@@ -3230,6 +3372,7 @@ mod tests {
             spaces: None,
             config: Err("none".to_string()),
             parts: &parts,
+            running: &Vec::new,
         };
         let mut fake = Recorder::default();
         let rc = reload_wait_command(&args, &device, &mut fake);
