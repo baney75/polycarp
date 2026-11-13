@@ -38,7 +38,8 @@ final class HandsEngine {
     static let resultOK: Int32 = 0
     static let resultPermDenied: Int32 = -1
     // AdActionKind values from agent_desktop.h. No key action: see the rules above.
-    enum Kind: Int32 { case click = 0, setValue = 4, select = 8, toggle = 9, scroll = 12, typeText = 17 }
+    /// `rightClick` runs under the headless policy like every ref action: AXShowMenu only, never a posted click.
+    enum Kind: Int32 { case click = 0, rightClick = 2, setValue = 4, select = 8, toggle = 9, scroll = 12, typeText = 17 }
 
     /// Seconds each kind of call may take before the caller gets `timeout`.
     /// How long an action waits for its target to become actionable before it gives up.
@@ -68,6 +69,13 @@ final class HandsEngine {
         func get() -> Reply? { lock.lock(); defer { lock.unlock() }; return reply }
         func cancel() { lock.lock(); cancelled = true; lock.unlock() }
         var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+    }
+
+    /// The deadline of the `run-steps` transaction holding a process's queue, read by the calls that run inline on it.
+    private var inlineUntil: [Int32: Date] = [:]
+    private func inlineCancelled(_ pid: Int32) -> () -> Bool {
+        initLock.lock(); let until = inlineUntil[pid]; initLock.unlock()
+        return { until.map { Date() >= $0 } ?? false }
     }
 
     private static let queueKey = DispatchSpecificKey<Int32>()
@@ -106,6 +114,8 @@ final class HandsEngine {
     /// readings before and after. Nil when the queue isn't free within `wait`; work that starts after that sees `cancelled()`
     /// true and must do nothing.
     func serialized<T>(pid: Int32, wait: TimeInterval, _ work: @escaping (_ cancelled: @escaping () -> Bool) -> T) -> T? {
+        // Already on this queue (a `run-steps` transaction): run here, or the queue would wait on itself.
+        if isOnQueue(of: pid) { return work(inlineCancelled(pid)) }
         let lock = NSLock(), done = DispatchSemaphore(value: 0)
         var out: T?, gaveUp = false
         let cancelled = { () -> Bool in lock.lock(); defer { lock.unlock() }; return gaveUp }
@@ -121,6 +131,12 @@ final class HandsEngine {
     }
 
     private func run(window w: HandsWindow, budget: TimeInterval, mutating: Bool, check: @escaping Check, _ work: @escaping (_ cancelled: () -> Bool) -> Reply) -> Reply {
+        // A step of `run-steps` already holds this process's queue: its calls run inline, inside that transaction's budget.
+        if isOnQueue(of: w.pid) {
+            let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
+            defer { AgentActivity.shared.end(token) }
+            return check().map(Reply.failed) ?? work(inlineCancelled(w.pid))
+        }
         let box = Box()
         let done = DispatchSemaphore(value: 0)
         let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
@@ -339,8 +355,16 @@ final class HandsEngine {
     /// calls use, which is why the transaction reads through `getInline` and `snapshotInline`. The focus guard is
     /// held, and the scope check runs right before it starts. The events themselves are BackgroundPoster's; this
     /// file never makes one.
-    func transaction(window w: HandsWindow, check: @escaping Check, _ work: @escaping (_ cancelled: () -> Bool) -> Reply) -> Reply {
-        run(window: w, budget: Budget.transaction, mutating: true, check: check, work)
+    /// `until`: a `run-steps` deadline. The calls its steps run inline see `cancelled()` true once it passes, so an inline
+    /// act stops retrying there and nothing a step does inline outlives the transaction's budget by waiting.
+    func transaction(window w: HandsWindow, until: Date? = nil, check: @escaping Check, _ work: @escaping (_ cancelled: () -> Bool) -> Reply) -> Reply {
+        run(window: w, budget: Budget.transaction, mutating: true, check: check) { [self] cancelled in
+            // A step's own transaction runs inline and passes no deadline: the run's stays in force.
+            guard let until else { return work(cancelled) }
+            initLock.lock(); inlineUntil[w.pid] = until; initLock.unlock()
+            defer { initLock.lock(); inlineUntil[w.pid] = nil; initLock.unlock() }
+            return work(cancelled)
+        }
     }
 
     /// Whether the engine can read windows at all (Accessibility granted).

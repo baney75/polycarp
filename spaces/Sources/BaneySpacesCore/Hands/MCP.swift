@@ -38,6 +38,8 @@ public struct HandsMCP {
             for p in t.params {
                 if p.kind == .stringList {
                     props[p.name] = .object(["type": "array", "items": .object(["type": "string"]), "description": .string(p.help)])
+                } else if p.kind == .objectList {
+                    props[p.name] = .object(["type": "array", "items": .object(["type": "object"]), "description": .string(p.help)])
                 } else {
                     props[p.name] = .object(["type": .string(p.kind.rawValue), "description": .string(p.help)])
                 }
@@ -91,7 +93,10 @@ public struct HandsMCP {
             }
             // Rows go out as they are: one line per element, not a JSON string full of escapes.
             let rows = envelope.ok && envelope.data?["format"]?.string == "rows" ? envelope.data?["text"]?.string : nil
-            var content: [JSONValue] = [.object(["type": "text", "text": .string(rows ?? envelope.line)])]
+            // A run's closing read in rows goes out as its own part, after the step lines (251 r1 second-S3).
+            let (lines, read) = rows == nil ? Self.splitRead(envelope) : (envelope, nil)
+            var content: [JSONValue] = [.object(["type": "text", "text": .string(rows ?? lines.line)])]
+            if let read { content.append(.object(["type": "text", "text": .string(read)])) }
             // Rows carry no other field, so a failed capture is said in its own part.
             if rows != nil, let failed = envelope.data?["screenshot_error"]?.string {
                 content.append(.object(["type": "text", "text": .string("screenshot failed: \(failed)")]))
@@ -103,6 +108,15 @@ public struct HandsMCP {
         default:
             return reply(id: id, error: (-32601, "method not found: \(method)"))
         }
+    }
+
+    /// `run-steps`' answer without its closing read's rows text, and that text: rows read as lines, not a JSON string.
+    static func splitRead(_ envelope: HandsEnvelope) -> (HandsEnvelope, String?) {
+        guard envelope.ok, var data = envelope.data?.object, var read = data["read"]?.object, read["format"]?.string == "rows",
+              let text = read.removeValue(forKey: "text")?.string else { return (envelope, nil) }
+        read["text_below"] = .bool(true)
+        data["read"] = .object(read)
+        return (.success(.object(data)), text)
     }
 
     /// The picture a `shot`, or a `snapshot` with screenshot: true, carries: a label that it is untrusted and how its pixels
