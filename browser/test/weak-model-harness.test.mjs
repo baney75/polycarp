@@ -9,8 +9,8 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { HandsClient } from "../evals/weak-model/hands.mjs";
-import { backupPrefs, Cleanup, ClearError, onExits, restorePrefsOrKeep, spawnClaude, sweepCopies } from "../evals/weak-model/cleanup.mjs";
-import { childEnv, KEY_VARS, keepScored, keyVarsSet, mountId, safeId, sessionName, settledState, spacesBin } from "../evals/weak-model/lib.mjs";
+import { afterComputerRun, backupPrefs, Cleanup, ClearError, leftOpen, onExits, restorePrefsOrKeep, spawnClaude } from "../evals/weak-model/cleanup.mjs";
+import { checkClasses, checkRound, childEnv, KEY_VARS, keepScored, keyVarsSet, mountId, safeId, sessionName, settledState, spacesBin } from "../evals/weak-model/lib.mjs";
 import { Transcript } from "../evals/weak-model/transcript.mjs";
 import { handedOff, rescoreSignup } from "../evals/weak-model/signup-rule.mjs";
 import { loadRuns, summarize } from "../evals/weak-model/summarize.mjs";
@@ -458,24 +458,109 @@ test("after claude exits, its group gets the grace period before SIGKILL", async
 	const { closed } = spawnClaude(["-p", "x"], { cleanup: new Cleanup({ log: () => {} }), cwd: "/", env: {}, spawnFn, kill, graceMs: 2000 });
 	made[0].child.emit("close", 0);
 	assert.equal(await closed, 0);
-	assert.deepEqual(
-		sent.filter((s) => s !== 0),
-		["SIGTERM"],
-		"the MCP server left the group within the grace period: no SIGKILL",
-	);
+	assert.deepEqual(sent, ["SIGTERM", 0, 0, 0], "probed until the group left within the grace period: no SIGKILL");
+	const late = fakeSpawn();
+	const lateSent = [];
+	const { closed: lateClosed } = spawnClaude(["-p", "x"], { cleanup: new Cleanup({ log: () => {} }), cwd: "/", env: {}, spawnFn: late.spawnFn, kill: (pid, sig) => lateSent.push(sig), graceMs: 60, stepMs: 10 });
+	late.made[0].child.emit("close", 0);
+	assert.equal(await lateClosed, 0);
+	assert.equal(lateSent[0], "SIGTERM");
+	assert.ok(lateSent.filter((x) => x === 0).length >= 2, `probed through the grace period: ${lateSent.join(" ")}`);
+	assert.equal(lateSent.at(-1), "SIGKILL", "a group that outlives the grace period is killed");
 });
 
-test("a computer_open cut off mid-call: cleanup still closes the new copy of the task's app", async () => {
-	const cleanup = new Cleanup({ log: () => {} });
-	const closedPids = [];
-	const windows = [
-		{ app: "TextEdit", scope: "agent_workspace", pid: 10 },
-		{ app: "TextEdit", scope: "agent_workspace", pid: 20 },
-		{ app: "TextEdit", scope: "agent_workspace", pid: 30 },
-		{ app: "TextEdit", scope: "lent", pid: 40 },
-		{ app: "Preview", scope: "agent_workspace", pid: 50 },
-	];
-	sweepCopies(cleanup, { app: "TextEdit", before: new Set([10]), known: () => new Set([30]), list: async () => windows, kill: async (pid) => closedPids.push(pid) });
-	await cleanup.run();
-	assert.deepEqual(closedPids, [20], "only the unreported copy this run started: not one there before, a reported one, a lent window or another app");
+// ---------- round 1 of #169 ----------
+
+const appWindows = [
+	{ app: "TextEdit", scope: "agent_workspace", pid: 10, id: 1 },
+	{ app: "TextEdit", scope: "agent_workspace", pid: 20, id: 2 },
+	{ app: "TextEdit", scope: "agent_workspace", pid: 30, id: 3 },
+	{ app: "TextEdit", scope: "lent", pid: 40, id: 4 },
+	{ app: "Preview", scope: "agent_workspace", pid: 50, id: 5 },
+];
+
+test("the window check never closes a copy it can't prove is this run's: it records it as left open", async () => {
+	// It takes no way to close anything: pid 20 may be another agent session's or a concurrent job's copy (the helper doesn't
+	// say whose a window is), so it can only be reported.
+	const left = await leftOpen({ app: "TextEdit", before: new Set([10]), known: new Set([30]), pending: false, list: async () => appWindows, sleep: async () => {} });
+	assert.deepEqual(left, [{ app: "TextEdit", pid: 20, window: 2 }], "not one there before, a reported one (its own undo closes it), a lent window or another app");
+});
+
+test("an open cut off before its window was identified: windows are read again over a bounded wait", async () => {
+	let t = 0;
+	const clock = { now: () => t, sleep: async (ms) => void (t += ms) };
+	let reads = 0;
+	const late = async () => (++reads < 3 ? [] : appWindows);
+	const found = await leftOpen({ app: "TextEdit", before: new Set([10, 30]), known: new Set(), pending: true, list: late, waitMs: 5000, stepMs: 500, ...clock });
+	assert.deepEqual(found, [{ app: "TextEdit", pid: 20, window: 2 }], "the window that attached on the third read");
+	reads = 0;
+	t = 0;
+	assert.deepEqual(await leftOpen({ app: "TextEdit", before: new Set(), known: new Set(), pending: true, list: async () => (reads++, []), waitMs: 5000, stepMs: 500, ...clock }), []);
+	assert.ok(reads <= 11 && t <= 5000, `bounded: ${reads} reads over ${t} ms`);
+	reads = 0;
+	await leftOpen({ app: "TextEdit", before: new Set(), known: new Set(), pending: false, list: async () => (reads++, []), ...clock });
+	assert.equal(reads, 1, "no open pending: one read");
+});
+
+test("after a computer run: score first, then close its own copies, then check for leftovers, on every way it ended", async () => {
+	const order = [];
+	const r = await afterComputerRun({
+		score: async () => (order.push("score"), { pass: true }),
+		undo: async () => void order.push("undo"),
+		left: async () => (order.push("left"), [{ app: "TextEdit", pid: 20, window: 2 }]),
+	});
+	assert.deepEqual(order, ["score", "undo", "left"], "scored before anything closes, leftovers read after");
+	assert.deepEqual(r, { score: { pass: true }, left: [{ app: "TextEdit", pid: 20, window: 2 }] });
+	// A scorer that throws still closes the run's own copies, and the error reaches the caller (cleanup reads leftovers then).
+	const after = [];
+	await assert.rejects(
+		afterComputerRun({ score: async () => { throw new Error("scorer broke"); }, undo: async () => void after.push("undo"), left: async () => (after.push("left"), []) }),
+		/scorer broke/,
+	);
+	assert.deepEqual(after, ["undo"]);
+});
+
+test("a reported copy is known the moment its answer arrives, and a record's call carries its pid", () => {
+	const t = new Transcript();
+	t.push(toolUse("a", "computer_open", { app: "TextEdit" }));
+	assert.equal(t.pendingOpens(), 1, "an open with no answer yet is pending");
+	t.push(toolResult("a", opened({ app: "TextEdit", pid: 101, reused: false })));
+	assert.ok(t.started.has(101), "from the answer itself, not re-read from a call field");
+	assert.equal(t.done({ ms: 1 }).calls[0].startedPid, 101, "live records carry startedPid; round 1's predate transcript.mjs");
+	t.push(toolUse("b", "computer_open", { app: "Calculator" }));
+	t.push(toolResult("b", opened({ app: "Calculator", window_identified: false })));
+	assert.equal(t.pendingOpens(), 1, "window_identified false: its window may still attach");
+});
+
+const roundWant = { passed: 3, total: 4, model: "claude-haiku-5-5", profile: "full", tools: { browser: 48 }, tasks: ["a", "b"] };
+const roundRuns = () => [rec("a", 1, true, { toolCount: 48 }), rec("a", 2, true, { toolCount: 48 }), rec("b", 1, true, { toolCount: 48 }), rec("b", 2, false, { toolCount: 48 })].map((r) => ({ ...r, model: "claude-haiku-5-5" }));
+const roundSum = (runs) => ({ total: runs.length, passed: runs.filter((r) => r.pass).length, profile: "full" });
+
+test("the ratchet compares like with like: same model, tool list and task set", () => {
+	assert.deepEqual(checkRound("r9", roundWant, roundSum(roundRuns()), roundRuns()), []);
+	const sonnet = roundRuns();
+	sonnet[3] = { ...sonnet[3], model: "claude-sonnet-5-5", pass: true };
+	assert.match(checkRound("r9", roundWant, roundSum(sonnet), sonnet).join("\n"), /b t2 ran claude-sonnet-5-5, the round is claude-haiku-5-5/, "a rerun with another model never raises the score");
+	const tools = roundRuns().map((r) => ({ ...r, toolCount: 67 }));
+	assert.match(checkRound("r9", roundWant, roundSum(tools), tools).join("\n"), /listed 67 tools, the round's browser runs listed 48/);
+	const more = roundRuns().map((r) => (r.task === "b" ? { ...r, task: "contact-form" } : r));
+	assert.match(checkRound("r9", roundWant, roundSum(more), more).join("\n"), /task set differs: contact-form not in the round; b short/);
+});
+
+test("a classification's counts are the transcripts' own", () => {
+	const runs = [rec("calc", 1, true, { kind: "computer", calls: [{ tool: "wait", error: true }, { tool: "wait", error: false }] }), rec("toggle", 1, false, { kind: "computer", calls: [{ tool: "wait", error: true }, { tool: "wait", error: true }] })];
+	const entry = (count) => ({ friction_in_passing_runs: [{ class: "wrong_tool", count, match: { tools: ["wait"], kind: "computer" } }], failures: [{ run: "toggle t1", class: "tool_bug" }] });
+	assert.deepEqual(checkClasses(entry(1), runs), []);
+	assert.match(checkClasses(entry(3), runs).join("\n"), /wrong_tool says 3, runs.jsonl has 1/, "a failed run's errors are not friction in passing runs");
+	assert.match(checkClasses({ ...entry(1), failures: [{ run: "calc t1", class: "tool_bug" }] }, runs).join("\n"), /calc t1 is listed as a failure but passed/);
+});
+
+test("a default label from a model id with a dot is made safe; report.mjs with no label prints its usage", () => {
+	const dir = mkdtempSync(join(tmpdir(), "wm-tasks-"));
+	writeFileSync(join(dir, "demo.mjs"), `export const demo = [{ id: "demo", kind: "browser", prompt: (u) => u }];\n`);
+	const r = spawnSync(process.execPath, [run, "--model", "claude-sonnet-5.5", "--list"], { env: cleanEnv({ WM_TASKS_DIR: dir }), encoding: "utf8", timeout: 30_000 });
+	assert.equal(r.status, 0, r.stderr);
+	const rep = spawnSync(process.execPath, [join(dirname(run), "report.mjs")], { encoding: "utf8", timeout: 30_000 });
+	assert.equal(rep.status, 2, rep.stderr);
+	assert.match(rep.stderr, /usage: node evals\/weak-model\/report.mjs <label> \[--task id\]/);
 });

@@ -5,7 +5,8 @@ import Foundation
 /// display a person can see and which takes the keyboard while it is open. Agent windows wait parked off every display
 /// (`Geometry.hidingSpot`), so a right click there would bring the menu onto Donovan's screen. Three rules:
 ///
-/// 1. Nothing is posted unless the agent workspace is shown on the display that holds most of the window (`gate`).
+/// 1. Nothing is posted unless the window is the agent workspace's own (not lent, not Full Access) and the agent
+///    workspace is shown on the display that holds most of it (`gate`), and unless the cancel's key permit is planned.
 /// 2. The menu is proved by its own window: one of the app's, at the pop-up menu level, new since the press (`menus`).
 /// 3. It never stays open. The call presses the item it names, or lists the items and cancels the menu. A menu anywhere
 ///    but that display, or one shown after the agent workspace was put away, is cancelled and the call fails (`verdict`).
@@ -23,9 +24,10 @@ public enum ContextMenu {
         return Geometry.display(of: window, in: keyed).map { displays[$0] }
     }
 
-    /// Rule 1, before anything is posted. `point` is the click in screen coordinates.
-    public static func gate(agentShown: Bool, window: CGRect, point: CGPoint, displays: [CGRect]) -> HandsError? {
-        guard agentShown, let d = display(window: window, displays: displays), d.contains(point) else {
+    /// Rule 1, before anything is posted. `point` is the click in screen coordinates. `agentWindow`: the window is on
+    /// the agent workspace by scope and by placement now; a lent window is Donovan's, wherever it sits (210 r1 second-S4).
+    public static func gate(agentShown: Bool, agentWindow: Bool, window: CGRect, point: CGPoint, displays: [CGRect]) -> HandsError? {
+        guard agentShown, agentWindow, let d = display(window: window, displays: displays), d.contains(point) else {
             return HandsError(.outsideAgentWorkspace,
                               "a right click opens its menu where Donovan can see it unless the agent workspace is on screen under the window; it isn't, so nothing was posted",
                               suggestion: "Use `click` on a ref for the element's own action, or `menu` for the app's menu bar.", retry: .never, nextCall: .null)
@@ -36,8 +38,8 @@ public enum ContextMenu {
     /// Rule 1 for a right click on a ref (`click` with `button: right`): the engine's AXShowMenu opens the menu at the
     /// element, inside the window, so the window must be on screen under the agent workspace just the same. Nothing is
     /// sent to the app otherwise.
-    public static func gate(agentShown: Bool, window: CGRect, displays: [CGRect]) -> HandsError? {
-        guard gate(agentShown: agentShown, window: window, point: CGPoint(x: window.midX, y: window.midY), displays: displays) != nil else { return nil }
+    public static func gate(agentShown: Bool, agentWindow: Bool, window: CGRect, displays: [CGRect]) -> HandsError? {
+        guard gate(agentShown: agentShown, agentWindow: agentWindow, window: window, point: CGPoint(x: window.midX, y: window.midY), displays: displays) != nil else { return nil }
         return HandsError(.outsideAgentWorkspace,
                           "a right click opens its menu where Donovan can see it unless the agent workspace is on screen under the window; it isn't, so nothing was sent",
                           suggestion: "Use `click` without button for the element's own action, or `menu` for the app's menu bar.", retry: .never, nextCall: .null)
@@ -64,10 +66,11 @@ public enum ContextMenu {
         public init(id: UInt32, frame: CGRect) { self.id = id; self.frame = frame }
     }
 
-    /// Rule 2: the windows of `pid` at the pop-up menu level that `before` didn't list, from a window server list.
+    /// Rule 2: the on-screen windows of `pid` at the pop-up menu level that `before` didn't list, from a window server
+    /// list. One ordered out or kept off screen is no menu a person sees (210 r1 second-S3).
     public static func menus(_ list: [[String: Any]], pid: Int32, before: Set<UInt32>) -> [Shown] {
         list.compactMap { w in
-            guard (w[kCGWindowLayer as String] as? NSNumber)?.intValue == level, (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+            guard (w[kCGWindowLayer as String] as? NSNumber)?.intValue == level, (w[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true, (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
                   let id = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value, !before.contains(id),
                   let b = w[kCGWindowBounds as String] as? NSDictionary, let r = CGRect(dictionaryRepresentation: b) else { return nil }
             return Shown(id: id, frame: r)
@@ -113,6 +116,8 @@ public enum ContextMenu {
     }
 
     /// What context menus add past the menu bar's rules: Services, Look Up, web search, Translate, Open With, Finder.
+    /// AppKit gives these items no identifier, so past Services' they are known by English title only: in another
+    /// language Look Up or Translate is not caught (210 r1 second-S6).
     static let outsideTitles = ["services", "look up", "search with", "translate", "open with", "show in finder", "reveal in finder"]
     static func leavesTheApp(_ i: MenuPath.MenuItem) -> Bool {
         i.id.contains("services") || i.id.contains("lookup") || outsideTitles.contains { i.name.hasPrefix($0) }
@@ -133,6 +138,25 @@ public enum ContextMenu {
     public static func stillOpen(_ app: String) -> HandsError {
         HandsError(.actionFailed, "\(app)'s context menu is still open on the agent workspace: Polycarp couldn't cancel it",
                    suggestion: "Press Escape with `press` on the window, then take a shot to check.", retry: .never, nextCall: .null)
+    }
+
+    /// The cancel's key permit couldn't be planned, so nothing is posted: a menu that couldn't be cancelled would hold
+    /// Donovan's keyboard (210 r1 first-F1).
+    public static func noCancel(_ app: String) -> HandsError {
+        HandsError(.notSupported, "a right click in \(app) would open a menu Polycarp couldn't cancel: Escape can't be sent to this window now, so nothing was posted",
+                   suggestion: "Use `click` on a ref for the element's own action, or `menu` for the app's menu bar.", retry: .never, nextCall: .null)
+    }
+
+    /// A menu that came after the wait (210 r1 first-F2): cancelled, and said.
+    public static func late(_ app: String) -> HandsError {
+        HandsError(.unverified, "\(app)'s context menu came late, after Polycarp stopped waiting, so it was cancelled",
+                   suggestion: "Try the right click again once the app is idle.", retry: .afterSnapshot, nextCall: .null)
+    }
+
+    /// The item was pressed but its menu stayed open and wouldn't cancel. Never retried: the command may have run (210 r1 second-S1).
+    public static func pressedOpen(_ app: String, item: String) -> HandsError {
+        HandsError(.actionFailed, "context menu > \(item) was pressed in \(app), but its menu is still open: Polycarp couldn't cancel it",
+                   suggestion: "Take a shot to see whether the command ran before doing anything else.", retry: .never, nextCall: .null)
     }
 
     public static func notPressed(_ app: String, item: String) -> HandsError {

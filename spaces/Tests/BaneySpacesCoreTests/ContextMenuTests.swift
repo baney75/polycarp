@@ -5,6 +5,7 @@ import XCTest
 /// Context menus: a right click (a) carries the right button number, (b) is proved by the menu's own window, and (c)
 /// never leaves a menu where Donovan can see it.
 final class ContextMenuTests: XCTestCase {
+    struct ChosenError: Error {}
     typealias I = MenuPath.MenuItem
     let p = CGPoint(x: 120, y: 80)
     let main = CGRect(x: 0, y: 0, width: 1512, height: 982)
@@ -31,13 +32,15 @@ final class ContextMenuTests: XCTestCase {
     /// would bring the menu onto Donovan's screen, so nothing is posted.
     func testNothingIsPostedUnlessTheAgentWorkspaceIsOnScreenUnderTheWindow() throws {
         let shown = CGRect(x: 200, y: 100, width: 800, height: 600)
-        XCTAssertNil(ContextMenu.gate(agentShown: true, window: shown, point: CGPoint(x: 320, y: 180), displays: [main, side]))
+        XCTAssertNil(ContextMenu.gate(agentShown: true, agentWindow: true, window: shown, point: CGPoint(x: 320, y: 180), displays: [main, side]))
         let spot = Geometry.hidingSpot(screens: [main, side])
         let parked = CGRect(origin: spot, size: shown.size)
         let refusals = [
-            ContextMenu.gate(agentShown: true, window: parked, point: CGPoint(x: spot.x + 120, y: spot.y + 80), displays: [main, side]),
-            ContextMenu.gate(agentShown: false, window: shown, point: CGPoint(x: 320, y: 180), displays: [main, side]),
-            ContextMenu.gate(agentShown: true, window: shown, point: CGPoint(x: 1600, y: 180), displays: [main, side]),
+            ContextMenu.gate(agentShown: true, agentWindow: true, window: parked, point: CGPoint(x: spot.x + 120, y: spot.y + 80), displays: [main, side]),
+            ContextMenu.gate(agentShown: false, agentWindow: true, window: shown, point: CGPoint(x: 320, y: 180), displays: [main, side]),
+            ContextMenu.gate(agentShown: true, agentWindow: true, window: shown, point: CGPoint(x: 1600, y: 180), displays: [main, side]),
+            // 210 r1 second-S4: a lent window on Donovan's workspace, on a display the agent workspace is also shown on.
+            ContextMenu.gate(agentShown: true, agentWindow: false, window: shown, point: CGPoint(x: 320, y: 180), displays: [main, side]),
         ]
         for r in refusals {
             let e = try XCTUnwrap(r)
@@ -49,11 +52,12 @@ final class ContextMenuTests: XCTestCase {
 
     /// (b): the press's menu is a window of that process at the pop-up menu level, new since the press.
     func testTheMenuIsTheProcesssNewPopUpWindow() {
-        func w(_ id: Int, pid: Int32, layer: Int) -> [String: Any] {
+        func w(_ id: Int, pid: Int32, layer: Int, on: Bool = true) -> [String: Any] {
             [kCGWindowNumber as String: NSNumber(value: id), kCGWindowOwnerPID as String: NSNumber(value: pid), kCGWindowLayer as String: NSNumber(value: layer),
-             kCGWindowBounds as String: CGRect(x: 300, y: 200, width: 220, height: 180).dictionaryRepresentation]
+             kCGWindowBounds as String: CGRect(x: 300, y: 200, width: 220, height: 180).dictionaryRepresentation, kCGWindowIsOnscreen as String: NSNumber(value: on)]
         }
-        let list = [w(1, pid: 42, layer: 0), w(2, pid: 42, layer: 101), w(3, pid: 7, layer: 101), w(4, pid: 42, layer: 101), w(5, pid: 42, layer: 25)]
+        // 210 r1 second-S3: window 6 is at the menu level but off screen.
+        let list = [w(1, pid: 42, layer: 0), w(2, pid: 42, layer: 101), w(3, pid: 7, layer: 101), w(4, pid: 42, layer: 101), w(5, pid: 42, layer: 25), w(6, pid: 42, layer: 101, on: false)]
         XCTAssertEqual(ContextMenu.menus(list, pid: 42, before: [4]), [ContextMenu.Shown(id: 2, frame: CGRect(x: 300, y: 200, width: 220, height: 180))])
         XCTAssertEqual(ContextMenu.menus(list, pid: 42, before: [2, 4]), [])
     }
@@ -73,6 +77,13 @@ final class ContextMenuTests: XCTestCase {
         XCTAssertTrue(ContextMenu.elsewhere("Notes", cancelled: true).message.contains("it was cancelled"))
         XCTAssertTrue(ContextMenu.elsewhere("Notes", cancelled: false).message.contains("may still be open"))
         XCTAssertEqual(ContextMenu.noMenu("Notes").code, .unverified)
+        // 210 r1 first-F1, first-F2, second-S1.
+        XCTAssertTrue(ContextMenu.noCancel("Notes").message.contains("nothing was posted"))
+        XCTAssertEqual(ContextMenu.noCancel("Notes").retry, .never)
+        XCTAssertTrue(ContextMenu.late("Notes").message.contains("it was cancelled"))
+        let pressed = ContextMenu.pressedOpen("Notes", item: "Duplicate")
+        XCTAssertTrue(pressed.message.contains("Duplicate was pressed") && pressed.message.contains("still open"), pressed.message)
+        XCTAssertEqual(pressed.retry, .never)
     }
 
     /// An item is pressed only by its title, enabled, not a submenu, and only if the menu bar's rules would let it through.
@@ -83,7 +94,7 @@ final class ContextMenuTests: XCTestCase {
         let enabled: [Bool?] = [true, true, false, true, true, true, true, true, true, nil]
         XCTAssertEqual(try ContextMenu.choose(items, enabled: enabled, want: "rename").get(), 3)
         func refusal(_ want: String) throws -> HandsError {
-            guard case .failure(let e) = ContextMenu.choose(items, enabled: enabled, want: want) else { throw XCTSkip("\(want) was chosen") }
+            guard case .failure(let e) = ContextMenu.choose(items, enabled: enabled, want: want) else { XCTFail("\(want) was chosen"); throw ChosenError() }
             return e
         }
         XCTAssertTrue(try refusal("Kopieren").message.contains("clipboard"), "by identifier in any language")
@@ -105,6 +116,7 @@ final class ContextMenuTests: XCTestCase {
     func testTheRouterGatesBeforePostingAndNeverLeavesAMenu() throws {
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextMenu.swift")
         let press = try XCTUnwrap(HandsSourceTests.block(after: "func contextPress(", in: src))
+        let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
         let gate = try XCTUnwrap(press.range(of: "ContextMenu.gate(")), post = try XCTUnwrap(press.range(of: "BackgroundPoster.pointer("))
         XCTAssertLessThan(gate.lowerBound, post.lowerBound)
         XCTAssertTrue(press.contains("contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: post.report.stopped"))
@@ -114,14 +126,31 @@ final class ContextMenuTests: XCTestCase {
         XCTAssertTrue(menu.contains("_ = escape()"), "cancelled with Escape posted to the process")
         XCTAssertTrue(src.contains("surface: HandsEngine.surfaceMenu") && src.contains("actInline(window: w, ref: ref, kind: .click"), "the item is pressed through the engine")
         XCTAssertTrue(menu.contains("case .elsewhere:\n            return .failure(ContextMenu.elsewhere(w.app, cancelled: cancel()))"))
-        XCTAssertTrue(menu.contains("if !shown.isEmpty { _ = cancel() }"), "a stopped press cancels its menu")
+        XCTAssertTrue(menu.contains("return .failure(shown.isEmpty || cancel() ? stopped : ContextMenu.stillOpen(w.app))"), "a stopped press cancels its menu, and says when it couldn't")
+        // 210 r1 first-F1: the cancel's key permit is planned before anything is posted, with the transaction's verifier.
+        let keys = try XCTUnwrap(press.range(of: "guard let keyPermit = keys() else { out.result = .failure(ContextMenu.noCancel(w.app)); return out }"))
+        XCTAssertLessThan(keys.lowerBound, post.lowerBound)
+        XCTAssertTrue(bg.contains("escapeKeys(w, verifier: verifier)") && !bg.contains("verifier: .none, path: []"))
+        // first-F2: a late menu is cancelled. first-F3: a menu left open is said over the front app's failure.
+        XCTAssertTrue(menu.contains("let late = waitShown(ContextMenu.wait)") && menu.contains("cancel() ? ContextMenu.late(w.app) : ContextMenu.stillOpen(w.app)"))
+        XCTAssertTrue(menu.contains("defer { if open { leftOpen = true } }") && bg.contains("r.posted > 0 && !r.leftOpen ? frontFailure() ?? e : e"))
+        // second-S1: a pressed item is never notPressed. second-S3, S4: on-screen menus only, the window's own scope.
+        let pressed = try XCTUnwrap(menu.range(of: "data[\"pressed\"] = .string(read.items[at].title)"))
+        XCTAssertNil(menu[pressed.upperBound...].range(of: "notPressed"))
+        XCTAssertTrue(src.contains("CGWindowListCopyWindowInfo([.optionOnScreenOnly]") && bg.contains("agentWindow: onAgentWorkspace(w, scope)"))
         XCTAssertTrue(menu.contains("return .failure(cancel() ? e : ContextMenu.stillOpen(w.app))"), "a refused item cancels the menu")
-        let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
         let right = try XCTUnwrap(bg.range(of: "case .pointer where style.right:")), left = try XCTUnwrap(bg.range(of: "case .pointer:\n"))
         XCTAssertLessThan(right.lowerBound, left.lowerBound)
         let poster = try HandsSourceTests.code("Sources/BaneySpaces/Hands/BackgroundPoster.swift")
         XCTAssertTrue(poster.contains("mouseButton: stamp.button == 1 ? .right : .left"))
         XCTAssertTrue(poster.contains("case .rightDown: type = .rightMouseDown"))
+    }
+
+    /// 210 r1 second-S6: the docs say which outside items are known only by English title.
+    func testTheDocsSayLookUpAndTranslateAreKnownByEnglishTitleOnly() throws {
+        for doc in ["CHANGELOG.md", "spec/cli.md"] {
+            XCTAssertTrue(try HandsSourceTests.code(doc).contains("by English title only"), doc)
+        }
     }
 
     /// The item is pressed by its ref in the engine's read of the menu: the menu's own item, enabled, never a submenu's.
@@ -142,10 +171,10 @@ final class ContextMenuTests: XCTestCase {
     /// off the window's display is cancelled by the verdict, as after a posted click.
     func testARightClickOnARefIsGatedLikeAPostedOne() throws {
         let shown = CGRect(x: 200, y: 100, width: 800, height: 600)
-        XCTAssertNil(ContextMenu.gate(agentShown: true, window: shown, displays: [main, side]))
+        XCTAssertNil(ContextMenu.gate(agentShown: true, agentWindow: true, window: shown, displays: [main, side]))
         let parked = CGRect(origin: Geometry.hidingSpot(screens: [main, side]), size: shown.size)
-        for (window, agent) in [(parked, true), (shown, false)] {
-            let e = try XCTUnwrap(ContextMenu.gate(agentShown: agent, window: window, displays: [main, side]), "\(window) \(agent)")
+        for (window, agent, own) in [(parked, true, true), (shown, false, true), (shown, true, false)] {
+            let e = try XCTUnwrap(ContextMenu.gate(agentShown: agent, agentWindow: own, window: window, displays: [main, side]), "\(window) \(agent) \(own)")
             XCTAssertEqual(e.code, .outsideAgentWorkspace)
             XCTAssertTrue(e.message.contains("nothing was sent"), e.message)
             XCTAssertEqual(e.retry, .never)
@@ -174,6 +203,11 @@ final class ContextMenuTests: XCTestCase {
         let click = try XCTUnwrap(HandsSourceTests.block(after: "func contextClick(", in: src))
         let gate = try XCTUnwrap(click.range(of: "ContextMenu.gate(")), act = try XCTUnwrap(click.range(of: "kind: .rightClick"))
         XCTAssertLessThan(gate.lowerBound, act.lowerBound)
+        // 210 r1 first-F1, S4: the window's own scope, and the cancel's key permit before the engine is asked.
+        let keys = try XCTUnwrap(click.range(of: "guard let keyPermit = escapeKeys(w) else { answer = .failure(ContextMenu.noCancel(w.app)); return .ok(.null) }"))
+        XCTAssertLessThan(keys.lowerBound, act.lowerBound)
+        XCTAssertTrue(click.contains("agentWindow: onAgentWorkspace(w, scope)") && click.contains("permit: keyPermit") && click.contains("leftOpen: &open"))
+        XCTAssertFalse(src.contains("escapeMenu"))
         XCTAssertTrue(click.contains("contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: nil, none: refused"))
         XCTAssertFalse(src.contains("BackgroundPoster.pointer") || src.contains("AXUIElementPerformAction"), "no posted click, no accessibility action of its own")
         let engine = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsEngine.swift")
