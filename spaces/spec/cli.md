@@ -27,6 +27,7 @@ window id, or a pid.
 | `agent snapshot` rows: `--format rows\|json`, `--query`, `--since latest`, `--max_elements N`; a bare row number as a ref (the MCP `snapshot` tool answers rows by default) | yes | `not_supported` (JSON tree only) | `not_supported` (JSON tree only) |
 | `agent menu --window W "Format > Font > Bold"` (AXPress on the menu-bar item; only a copy this session's `open` started, with W its one window and focused; waits while that copy is in front; refused by bar position, key equivalent and identifier, before anything is pressed or listed: the Apple and Window menus, the app menu but About and Settings, full screen and the tab overview, Open and Open Recent, cut, copy and paste; a file panel it raises is cancelled and refused) | yes | not listed; `invalid_args` (unknown agent command) | not listed |
 | `agent press|key|pointer` | phase 3-4 | `not_supported` (part 1) | phase 3-4 |
+| `agent click-at --window W --x X --y Y [--count 1\|2\|3] [--button left]` (window-local points; `count` outside 1 to 3 is `bad_arguments`; `--button right` is not available yet and answers `not_supported`) | yes | `not_supported` | `not_supported` |
 | `agent log [--since SECS]` | yes | yes | yes |
 | `agent lend|return` | the user only | `not_supported` (later) | the user only |
 | `keys [--platform P]` | yes | yes | yes |
