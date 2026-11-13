@@ -455,28 +455,46 @@ export function frameShown(el: Element): "shown" | "hidden" | "away" {
 		if ((box.left >= view.innerWidth || box.right <= 0) && clips(ofAxis(rootStyle, "X"))) return "hidden";
 		// A cover fixed over the whole viewport stays put on a scroll, so the frame stays under it. Sampled
 		// inside the scrollbars; a fixed box can't hold the frame, as the walk above found none around it.
+		// Each point's top box must be in a fixed layer, and one cover must be at some point.
 		const [w, h] = [page.clientWidth || view.innerWidth, page.clientHeight || view.innerHeight];
-		const fixed = (n: Element) => styleOf(n).position === "fixed";
-		const whole = (n: Element) => {
+		// Fixed, and not painted under the page (a negative z-index, as a canvas background has).
+		const fixed = (n: Element) => styleOf(n).position === "fixed" && !(Number.parseInt(styleOf(n).zIndex, 10) < 0);
+		// A cover spans the viewport, can be seen, and paints: a color, an image, a backdrop filter, media,
+		// or a child that is such a cover. An empty layer (a portal root, a click-away backdrop) hides nothing.
+		const cover = (n: Element): boolean => {
 			const b = n.getBoundingClientRect();
-			return fixed(n) && b.left <= 0 && b.top <= 0 && b.right >= w && b.bottom >= h;
+			if (!fixed(n) || b.left > 0 || b.top > 0 || b.right < w || b.bottom < h) return false;
+			const st = styleOf(n);
+			const seen = (n as Element & { checkVisibility?: (o: object) => boolean }).checkVisibility?.({
+				opacityProperty: true,
+				visibilityProperty: true,
+			});
+			if (seen === false || st.visibility === "hidden" || Number.parseFloat(st.opacity) < 0.1) return false;
+			const color = String(st.backgroundColor || "transparent");
+			const paints =
+				!/^transparent$|^rgba\(.*,\s*0(\.0*)?\)$/.test(color) ||
+				String(st.backgroundImage || "none") !== "none" ||
+				String(st.backdropFilter || "none") !== "none" ||
+				/^(canvas|video|img|svg)$/i.test(n.tagName ?? "");
+			return paints || Array.from(n.children ?? []).some(cover);
 		};
-		// Every box at a point, open shadow roots' too.
+		// At each point: every box (open shadow roots' too) and the one drawn on top of them all.
 		const stack = (x: number, y: number) => {
-			const out: Element[] = [];
+			const all: Element[] = [];
+			let top: Element | null | undefined;
 			const add = (tree: Document | ShadowRoot) => {
-				for (const n of tree.elementsFromPoint?.(x, y) ?? [])
-					if (!out.includes(n) && out.push(n) && n.shadowRoot) add(n.shadowRoot);
+				const hits = tree.elementsFromPoint?.(x, y) ?? [];
+				if (hits[0] && (!top || (tree as ShadowRoot).host === top)) top = hits[0];
+				for (const n of hits) if (!all.includes(n) && all.push(n) && n.shadowRoot) add(n.shadowRoot);
 			};
 			add(el.ownerDocument);
-			return out;
+			while (top && !fixed(top)) top = upOf(top);
+			return { all, onTop: !!top };
 		};
 		const stacks = [stack(w / 2, h / 2), stack(1, 1), stack(w - 2, 1), stack(1, h - 2), stack(w - 2, h - 2)];
-		if (stacks.every((s) => s.some(fixed)) && stacks.some((s) => s.some(whole))) return "hidden";
+		if (stacks.every((s) => s.onTop) && stacks.some((s) => s.all.some(cover))) return "hidden";
 		// Hit tests skip a cover the pointer goes through (pointer-events: none): one placed on body is seen.
-		const drawn = (n: Element) => (n as Element & { checkVisibility?: () => boolean }).checkVisibility?.() !== false;
-		const loose = Array.from(el.ownerDocument.body?.children ?? []).some((n) => whole(n) && drawn(n));
-		return loose ? "hidden" : "away";
+		return Array.from(el.ownerDocument.body?.children ?? []).some(cover) ? "hidden" : "away";
 	}
 	return points.some(([x, y]) => at.elementFromPoint(x, y) === el) ? "shown" : "hidden";
 }

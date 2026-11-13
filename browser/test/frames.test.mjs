@@ -1010,26 +1010,41 @@ test("PR 228 r1 first-F2 and PR 235 r1: out of view, a frame is away only when a
 	const sheet = t.part({}, box(0, 0, 1280, 5000), t.doc.body);
 	const slot = t.part({}, box(0, 900, 1280, 400), t.part({ position: "fixed" }, box(0, 900, 1280, 400), null, { nodeType: 11, host: sheet }));
 	assert.equal(frameShown(Object.assign(t.frameIn(low, sheet), { assignedSlot: slot })), "hidden", "second-second-F1: slotted in a fixed panel");
-	const wall = t.part({ position: "fixed" }, box(0, 0, 1280, 800), t.doc.body);
+	const wall = t.part({ position: "fixed", backgroundColor: "rgb(0, 0, 0)" }, box(0, 0, 1280, 800), t.doc.body);
 	t.doc.stackAt(() => [wall]);
 	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F1: under a cover fixed over the viewport");
 	t.doc.stackAt((x, y) => (y === 400 ? [wall] : [t.doc.body]));
 	assert.equal(frameShown(t.frameIn(low)), "away", "a fixed box in the middle only is no cover");
 	// PR 240 r1: inside classic scrollbars; an overlay beside a centered panel; one in a shadow root; one the pointer goes through.
 	Object.assign(t.doc.documentElement, { clientWidth: 1265, clientHeight: 785 });
-	const fit = t.part({ position: "fixed" }, box(0, 0, 1265, 785), t.doc.body);
+	const fit = t.part({ position: "fixed", backgroundColor: "rgba(0, 0, 0, 0.8)" }, box(0, 0, 1265, 785), t.doc.body);
 	t.doc.stackAt((x, y) => (x < 1265 && y < 785 ? [fit] : [t.doc.documentElement]));
 	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F1: innerWidth counts the scrollbar");
 	const panel = t.part({ position: "fixed" }, box(440, 300, 400, 200), t.doc.body);
 	t.doc.stackAt((x, y) => (x > 440 && x < 840 && y > 300 && y < 500 ? [panel, fit] : [fit]));
 	assert.equal(frameShown(t.frameIn(low)), "hidden", "second-S1: a full overlay beside a centered dialog");
 	const consent = t.part({}, box(0, 0, 0, 0), t.doc.body);
-	consent.shadowRoot = { elementsFromPoint: () => [fit, consent] };
+	consent.shadowRoot = { host: consent, elementsFromPoint: () => [fit, consent] };
 	t.doc.stackAt(() => [consent, t.doc.body]);
 	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F2: a cover in an open shadow root");
 	t.doc.stackAt(() => [t.doc.body]);
 	t.doc.body.children = [fit];
 	assert.equal(frameShown(t.frameIn(low)), "hidden", "first-F6: a cover with pointer-events: none");
+	// PR 240 r2: a cover must be seen, on top, and paint; none of these hide anything.
+	const layer = (style, extra = {}) => Object.assign(t.part({ position: "fixed", ...style }, box(0, 0, 1265, 785), t.doc.body), extra);
+	t.doc.body.children = [layer({ backgroundColor: "rgb(0, 0, 0)", opacity: "0" })];
+	assert.equal(frameShown(t.frameIn(low)), "away", "first-F1: a closed overlay at opacity 0");
+	const canvas = layer({ zIndex: "-1" }, { tagName: "CANVAS" });
+	t.doc.body.children = [canvas];
+	t.doc.stackAt(() => [t.doc.body, canvas]);
+	assert.equal(frameShown(t.frameIn(low)), "away", "first-F2: a fixed canvas behind the page");
+	t.doc.stackAt(() => [t.doc.body]);
+	t.doc.body.children = [layer({ backgroundColor: "rgba(0, 0, 0, 0)" })];
+	assert.equal(frameShown(t.frameIn(low)), "away", "second-F5: an empty portal root");
+	const backdrop = layer({});
+	t.doc.body.children = [];
+	t.doc.stackAt(() => [backdrop]);
+	assert.equal(frameShown(t.frameIn(low)), "away", "second-F5: a transparent click-away backdrop");
 });
 
 /** Two levels of frames (X holds Z), Z found once with no delay; `extra` is the fakeTab setup for the looks. */
