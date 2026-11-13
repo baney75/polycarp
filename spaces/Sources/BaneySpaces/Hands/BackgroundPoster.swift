@@ -107,20 +107,26 @@ enum BackgroundPoster {
         let window = Int64(permit.window)
         var aimed: [CGPoint] = []
         let report = EventRunner.run(events, stop: stop) { event in
-            let type: CGEventType, local: CGPoint, state: Int64, subtype: Int64, pause: TimeInterval
+            let local: CGPoint
             switch event {
-            case .mouseMoved(let p): (type, local, state, subtype, pause) = (.mouseMoved, p, 0, 3, 0.02)
-            case .mouseDown(let p): (type, local, state, subtype, pause) = (.leftMouseDown, p, 1, drag ? 0 : 3, drag ? 0.03 : 0.06)
-            case .mouseDragged(let p): (type, local, state, subtype, pause) = (.leftMouseDragged, p, 1, 0, 0.012)
-            case .mouseUp(let p): (type, local, state, subtype, pause) = (.leftMouseUp, p, 1, drag ? 0 : 3, 0)
+            case .mouseMoved(let p), .mouseDown(let p), .mouseDragged(let p), .mouseUp(let p), .buttonDown(let p, _), .buttonUp(let p, _): local = p
             default: return nil
             }
+            guard let stamp = PointerStamp.of(event, drag: drag) else { return nil }
+            let type: CGEventType
+            switch stamp.kind {
+            case .moved: type = .mouseMoved
+            case .leftDown: type = .leftMouseDown
+            case .leftDragged: type = .leftMouseDragged
+            case .leftUp: type = .leftMouseUp
+            }
+            let pause = stamp.pause
             let screen = PointerPath.screenPoint(local: local, frame: frame)
             guard let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: screen, mouseButton: .left) else { return nil }
             let raw = Unmanaged.passUnretained(e).toOpaque()
-            setField(raw, 1, state)
-            setField(raw, 3, 0)
-            setField(raw, 7, subtype)
+            setField(raw, 1, stamp.state)
+            setField(raw, 3, stamp.button)
+            setField(raw, 7, stamp.subtype)
             setField(raw, 40, Int64(permit.pid))
             setField(raw, 51, window)
             setField(raw, 91, window)

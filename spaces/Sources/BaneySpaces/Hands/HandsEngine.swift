@@ -285,6 +285,17 @@ final class HandsEngine {
     /// An action on a ref. Always the strict Headless policy; the auto-wait is the engine's default.
     func act(window w: HandsWindow, ref: String, kind: Kind, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3, check: @escaping Check) -> Reply {
         run(window: w, budget: Budget.act, mutating: true, check: check) { [self] cancelled in
+            doAct(ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: check, cancelled: cancelled)
+        }
+    }
+
+    /// The same action, directly, for a caller already on the process's queue (`transaction`).
+    func actInline(window w: HandsWindow, ref: String, kind: Kind, text: String? = nil, check: @escaping Check, cancelled: () -> Bool) -> Reply {
+        precondition(isOnQueue(of: w.pid), "actInline runs inside a transaction")
+        return doAct(ref: ref, kind: kind, text: text, direction: 1, amount: 3, check: check, cancelled: cancelled)
+    }
+
+    private func doAct(ref: String, kind: Kind, text: String?, direction: Int32, amount: UInt32, check: @escaping Check, cancelled: () -> Bool) -> Reply {
             if let e = ready() { return .failed(e) }
             guard let adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)) }
             var out: UnsafeMutablePointer<CChar>?
@@ -317,7 +328,6 @@ final class HandsEngine {
             case .success(let d): return .ok(d)
             case .failure(let e): return .failed(e)
             }
-        }
     }
 
     /// Runs a whole input transaction (readings before, the post, the proof) on the window's process queue, so no other
