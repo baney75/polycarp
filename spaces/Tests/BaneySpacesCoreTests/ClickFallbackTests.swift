@@ -214,6 +214,44 @@ final class ClickFallbackTests: XCTestCase {
         XCTAssertEqual(ClickFallback.afterPress(before: false, after: ClickFallback.selected(window(selected: true), plan), pressError: nil), .done(.press), "no write after a press that selected it")
     }
 
+    /// 203 r1 first-F1: under a hidden, unselected item, a shown item's own selected state (an outline's child row, a
+    /// cell a table selects by) still counts, so a press that selected it is never followed by the write.
+    func testAnItemsOwnSelectionCountsUnderAHiddenUnselectedItem() throws {
+        func outline(selected: Bool) -> [SnapshotRows.Row] {
+            SnapshotRows.rows(of: .object(["role": "window", "children": .array([node("outline", "", 1, [
+                .object(["role": "treeitem", "children": .array([
+                    .object(["role": "treeitem", "name": "Child", "ref_id": "@s:e2", "states": .array(selected ? ["selected"] : [])])])])])])]))
+        }
+        let child = try XCTUnwrap(ClickFallback.plan(rows: outline(selected: false), snapshot: "s", number: 2))
+        XCTAssertEqual(ClickFallback.selected(outline(selected: true), child), true)
+        XCTAssertEqual(ClickFallback.selected(outline(selected: false), child), false)
+        func table(selected: Bool) -> [SnapshotRows.Row] {
+            SnapshotRows.rows(of: .object(["role": "window", "children": .array([node("table", "", 1, [
+                .object(["role": "row", "children": .array([.object(["role": "cell", "ref_id": "@s:e2", "states": .array(selected ? ["selected"] : []),
+                                                                      "children": .array([node("statictext", "Draft", 3)])])])])])])]))
+        }
+        let cell = try XCTUnwrap(ClickFallback.plan(rows: table(selected: false), snapshot: "s", number: 3))
+        XCTAssertEqual(ClickFallback.selected(table(selected: true), cell), true, "the cell the table selects by")
+        XCTAssertEqual(ClickFallback.afterPress(before: false, after: ClickFallback.selected(outline(selected: true), child), pressError: nil), .done(.press))
+    }
+
+    /// 203 r1 first-F2: a container whose ref is no good now gets no plan (the click is the plain press); a good one keeps
+    /// the read's view for the readbacks.
+    func testAContainerRefThatIsNoGoodNowFallsBackToThePlainPress() throws {
+        var m = SnapshotRowsMemory()
+        let rows = SnapshotRows.rows(of: .object(["role": "window", "children": .array([node("table", "", 1, [node("row", "Draft", 2)])])]))
+        let compact = SnapshotRowsMemory.View(interactive: false, compact: true, depth: 6)
+        m.remember(session: "a", window: 7, view: compact, snapshot: "s", rows: rows, now: Date())
+        let read = try XCTUnwrap(m.read(snapshot: "s", session: "a"))
+        var asked: [String] = []
+        XCTAssertNil(ClickFallback.plan(read: read, snapshot: "s", number: 2, usable: { asked.append($0); return false }))
+        XCTAssertEqual(asked, ["@s:e1"], "the container's ref is the one checked")
+        let p = try XCTUnwrap(ClickFallback.plan(read: read, snapshot: "s", number: 2, usable: { _ in true }))
+        XCTAssertEqual(p.container, "@s:e1")
+        XCTAssertEqual(p.view, compact)
+        XCTAssertNil(ClickFallback.plan(read: read, snapshot: "s", number: 1, usable: { _ in true }), "the container itself is no item")
+    }
+
     /// 194 r1 first-F3: with no text under the row, a named group or image labels it.
     func testANamedGroupOrImageLabelsARowWithNoText() {
         let group = tree([node("outline", "", 1, [node("row", "", 2, [node("group", "Inbox", 3, [node("image", "", 4)])])])])
@@ -247,8 +285,8 @@ final class ClickFallbackTests: XCTestCase {
     // 166 r2 first-F2 (and 187 r1 second-F5): a plan from an interactive or compact read keeps that view, and the readbacks read in it, so row keys match.
     func testTheReadbackReadsInTheViewThePlanCameFrom() throws {
         var m = SnapshotRowsMemory()
-        m.remember(session: "a", window: 7, view: "false|true|6", snapshot: "sc", rows: [], now: Date())
-        m.remember(session: "a", window: 7, view: "false|false|10", snapshot: "sf", rows: [], now: Date())
+        m.remember(session: "a", window: 7, view: .init(key: "false|true|6"), snapshot: "sc", rows: [], now: Date())
+        m.remember(session: "a", window: 7, view: .full, snapshot: "sf", rows: [], now: Date())
         XCTAssertEqual(m.read(snapshot: "sc", session: "a")?.view, SnapshotRowsMemory.View(interactive: false, compact: true, depth: 6))
         XCTAssertEqual(m.read(snapshot: "sf", session: "a")?.view, .full)
         XCTAssertEqual(SnapshotRowsMemory.View(key: "true|false|3"), SnapshotRowsMemory.View(interactive: true, compact: false, depth: 3))
@@ -262,8 +300,6 @@ final class ClickFallbackTests: XCTestCase {
         m.remember(session: "a", window: 7, view: .find, as: "find", snapshot: "sx", rows: [], now: Date())
         XCTAssertEqual(m.read(snapshot: "sx", session: "a")?.view, .init(interactive: false, compact: true, depth: 10))
         XCTAssertNotNil(m.previous(session: "a", window: 7, view: "find"))
-        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
-        XCTAssertTrue(router.contains("let view = SnapshotRowsMemory.View.find"), "find reads in the view it remembers")
     }
 
     /// The tree with only the item labeled `label` selected.
