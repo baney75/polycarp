@@ -520,6 +520,23 @@ final class MenuPathTests: XCTestCase {
         XCTAssertEqual(MenuPath.cancelEarlier(count: 1) { answers.removeFirst() }, .stuck(afterCancelling: false))
     }
 
+    /// 258 r1 second-S1: a cancel answered false, and the retry found the panel gone. Polycarp's Cancel was pressed and
+    /// its read replaced the evidence store's, so it is `.cancelled` (the router reads the bar again), never `.none`,
+    /// which would press the first read's ref in the panel's tree.
+    func testAPanelGoneByTheRetryWasCancelled() throws {
+        var answers: [Bool?] = [false, nil]
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 1) { answers.removeFirst() }, .cancelled)
+        answers = [false, false, nil]
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 2) { answers.removeFirst() }, .cancelled)
+        answers = [nil]
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 1) { answers.removeFirst() }, .none, "no panel: no cancel ran")
+        // first-F2: the error is the last attempt's, never one an earlier attempt left behind.
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
+        let menu = try XCTUnwrap(HandsSourceTests.block(after: "func menu(_ req: HandsRequest) -> HandsEnvelope", in: src))
+        XCTAssertTrue(menu.contains("why = nil\n                            return cancelOnePanel(w, old: [], inline: c, failed: { why = $0 })"))
+        XCTAssertTrue(menu.contains("case .cancelled: cancelledEarlier = true; item = pressable()"))
+    }
+
     /// 246 r1 second-S2: when the cancel's own engine call failed a check (the window left scope, the call ran out of
     /// time), that is the answer, not a stuck panel; a Cancel that just didn't go through is still one.
     func testACheckThatFailedUnderTheCancelIsTheAnswer() throws {

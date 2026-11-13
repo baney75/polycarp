@@ -362,15 +362,19 @@ public enum MenuPath {
     /// A panel left up by an earlier command, cancelled one at a time just before the press (`cancelOne`: nil when none
     /// is left, else whether the cancel went through). A cancel that fails stops the call (217 r1 first-F1), but only
     /// once a new read after a pause still finds a panel it can't cancel: a sheet cancelled a moment ago is still read
-    /// while it goes away, and its window counts in `count` too (246 r1 first-F3).
+    /// while it goes away, and its window counts in `count` too (246 r1 first-F3). A panel gone by the retry, after a cancel
+    /// that answered false, was cancelled: Polycarp's Cancel was pressed, and the bar is read again (258 r1 second-S1).
     public enum Earlier: Equatable, Sendable { case none, cancelled, stuck(afterCancelling: Bool) }
     public static func cancelEarlier(count: Int, tries: Int = 3, pause: () -> Void = {}, cancelOne: () -> Bool?) -> Earlier {
-        var done = false
+        // `tried`: a cancel ran. Its read of the panel replaced the evidence store's, so the bar must be read again before the
+        // press even when the panel is gone by the retry (258 r1 second-S1).
+        var done = false, tried = false
         for _ in 0..<count {
             var r = cancelOne()
+            if r != nil { tried = true }
             for _ in 1..<max(1, tries) where r == false { pause(); r = cancelOne() }
             switch r {
-            case nil: return done ? .cancelled : .none
+            case nil: return done || tried ? .cancelled : .none
             case false?: return .stuck(afterCancelling: done)
             case true?: done = true
             }
