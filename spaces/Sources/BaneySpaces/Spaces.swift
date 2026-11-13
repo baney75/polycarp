@@ -186,7 +186,11 @@ final class Spaces {
         RunningApps.invalidate()
         let pidsNow = RunningApps.regular
         Windows.keepBench(pidsNow)
+        let scanStart = ProcessInfo.processInfo.systemUptime
         let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)
+        let missed = unsure.map { NSRunningApplication(processIdentifier: $0)?.localizedName ?? "pid \($0)" }
+        if let line = ScanCheck.slowScanLine(seconds: ProcessInfo.processInfo.systemUptime - scanStart, kind: clock.scan,
+                                              switching: switching, missed: missed) { Trace.log(line) }
         notWindows = nonStandard
         asking = asks
         // A window the app closed but kept isn't one any more, though the window server says it's alive.

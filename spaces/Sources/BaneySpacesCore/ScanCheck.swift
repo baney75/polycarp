@@ -6,6 +6,18 @@ import Foundation
 /// the list stays the same, and every later refresh skipped: the dock showed the workspace you're
 /// on as empty, with its windows in plain sight, until some window opened or closed.
 public enum ScanCheck {
+    /// A main-thread Accessibility scan this slow is logged: the 11-13 bench counted 383 misses in 23.5 h, each up to a
+    /// 0.25 s timeout, but no line said which scan paid it or from where.
+    public static let slowScan: TimeInterval = 0.1
+
+    /// The trace line for a scan that held the main thread `seconds`, or nil under `slowScan`. `kind` is the switch
+    /// clock's scan kind (first, full, windows, apps, offscreen), `missed` the app names that didn't answer.
+    public static func slowScanLine(seconds: TimeInterval, kind: String, switching: Bool, missed: [String]) -> String? {
+        guard seconds >= slowScan else { return nil }
+        let who = missed.isEmpty ? "every app answered" : "missed: " + missed.sorted().joined(separator: ", ")
+        return "slow scan: \(Int((seconds * 1000).rounded())) ms on main, \(kind)\(switching ? " mid-switch" : ""); \(who)"
+    }
+
     /// The app windows on screen that no workspace holds. `onScreen` maps each window the server
     /// is drawing to its app; `notWindows` are the ones Accessibility listed and said aren't
     /// standard windows (sheets, panels), which never get a workspace; `unsure` are apps the last
