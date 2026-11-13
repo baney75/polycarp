@@ -2671,8 +2671,11 @@ test("an interactive read lists controls nearest first, leaves out covered ones,
 test("a ranked read does not keep a list the page removed alive", async () => {
 	await go("rank");
 	await tool("read_page", { filter: "interactive" });
+	// This tab by a title only it has: another test's tab left on /rank would hold its own refs to its own rows.
+	const mark = `Polycarp rank gc ${Date.now()}`;
+	await tool("run_js", { code: `(() => { document.title = ${JSON.stringify(mark)}; return "ok"; })()` });
 	const target = await until(
-		async () => (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "page" && t.url.endsWith("/rank")),
+		async () => (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "page" && t.title === mark),
 		5_000,
 		"the /rank tab",
 	);
@@ -2686,7 +2689,8 @@ test("a ranked read does not keep a list the page removed alive", async () => {
 		await cdp(target.webSocketDebuggerUrl, "HeapProfiler.collectGarbage");
 		freed = await evaluate("window.__probe.deref() === undefined");
 	}
-	assert.equal(freed, true, "the removed rows were collected");
+	const ranks = (await (await fetch(`http://${devtools}/json/list`)).json()).filter((t) => t.type === "page" && t.url.endsWith("/rank")).length;
+	assert.equal(freed, true, `the removed rows were collected (pages on /rank: ${ranks})`);
 });
 
 // A list that rebuilds every row after each tick and moves done items down, each checkbox under the same id: refs from
