@@ -1,5 +1,5 @@
 {
-	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 (evals/weak-model/signup-rule.mjs): round 1 was rescored from its transcripts. r4 reran only the signup and booking tasks after the booking clause. Each round names the model, profile, tool count per kind and task set it ran under; a run that differs (another model, another tool list, a task the round didn't have) fails the ratchet instead of raising it. r2, r3 and s-sonnet (results/) ran before main gained this schema and are kept as history only; r6 measured the small profile against main.",
+	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 (evals/weak-model/signup-rule.mjs): round 1 was rescored from its transcripts. r4 reran only the signup and booking tasks after the booking clause. Each round names the model, profile, tool count per kind and task set it ran under; a run that differs (another model, another tool list, a task the round didn't have) fails the ratchet instead of raising it. r2, r3 and s-sonnet (results/) ran before main gained this schema and are kept as history only; r6 measured the small profile against main. steps holds a mean-calls ceiling per task for the newest round run like the named one; a ceiling may only fall.",
 	"rounds": {
 		"r1-haiku": {
 			"passed": 40,
@@ -175,19 +175,79 @@
 				"stub-thermo-settings"
 			],
 			"recorded": "The same 8 stub computer tasks on the small profile: 24 tools listed, the rest (run_steps, toggle, select, menu, find, get, scroll, close and the browser extras) behind more_tools."
+		},
+		"s0-settings-haiku": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"stub": 69
+			},
+			"tasks": [
+				"stub-settings-appearance",
+				"stub-settings-two-panes"
+			],
+			"recorded": "The bench's two System Settings tasks on the stub's System Settings, 3 trials, headless, with main's click (ref only). Before: 4.3 and 7.3 calls a run."
+		},
+		"s0-settings-opus": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-opus-5-5",
+			"profile": "full",
+			"tools": {
+				"stub": 69
+			},
+			"tasks": [
+				"stub-settings-appearance",
+				"stub-settings-two-panes"
+			],
+			"recorded": "As s0-settings-haiku on Opus. Before: 3 and 5 calls a run."
+		},
+		"s2-settings-opus": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-opus-5-5",
+			"profile": "full",
+			"tools": {
+				"stub": 69
+			},
+			"tasks": [
+				"stub-settings-appearance",
+				"stub-settings-two-panes"
+			],
+			"recorded": "After click by text and the instructions that name it. 2 and 3 calls a run: open, click; open, click, click."
+		},
+		"s3-settings-haiku": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"stub": 69
+			},
+			"tasks": [
+				"stub-settings-appearance",
+				"stub-settings-two-panes"
+			],
+			"recorded": "After click by text, the instructions and find's pointer to it. 3.3 and 6.3 calls a run."
 		}
 	},
 	"latest": {
 		"haiku-full": "r6-haiku",
 		"haiku-small": "r6-small",
 		"haiku-stub-full": "r7-stub-haiku",
-		"haiku-stub-small": "r7-stub-small"
+		"haiku-stub-small": "r7-stub-small",
+		"haiku-settings-full": "s3-settings-haiku",
+		"opus-settings-full": "s2-settings-opus"
 	},
 	"floor": {
 		"haiku-full": 0.9,
 		"haiku-small": 0.85,
 		"haiku-stub-full": 0.85,
-		"haiku-stub-small": 0.8
+		"haiku-stub-small": 0.8,
+		"haiku-settings-full": 0.8,
+		"opus-settings-full": 1.0
 	},
 	"readSize": {
 		"label": "after",
@@ -199,6 +259,16 @@
 			"signup-validation": 2,
 			"select-date": 2,
 			"booking-lookup": 2
+		}
+	},
+	"steps": {
+		"s3-settings-haiku": {
+			"stub-settings-appearance": 3.4,
+			"stub-settings-two-panes": 6.4
+		},
+		"s2-settings-opus": {
+			"stub-settings-appearance": 2,
+			"stub-settings-two-panes": 3
 		}
 	}
 }

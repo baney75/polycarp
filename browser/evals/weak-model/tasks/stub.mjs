@@ -96,4 +96,26 @@ export const stubTasks = [
 			return verdict(of(world, "Roster").some((w) => w.state.selections.includes("Priya Shah")), "the number wasn't read from Priya Shah's record in Roster");
 		},
 	},
+	// The bench's System Settings tasks (spaces/bench/tasks/settings-*.json), same goals, on the stub's System Settings:
+	// the real app is once-per-user and answers needs_sandbox on the host, so these measure the model side headless.
+	{
+		id: "stub-settings-appearance",
+		kind: "stub",
+		prompt: () => "In System Settings go to the Appearance pane. Change nothing.",
+		check: (world) => {
+			const w = of(world, "System Settings");
+			if (w.some((x) => x.state.changes.length)) return verdict(false, `a setting changed (${JSON.stringify(w.flatMap((x) => x.state.changes))})`);
+			return verdict(w.some((x) => x.open && x.title === "Appearance" && x.state.pane === "Appearance"), `not on Appearance (${w.map((x) => x.title).join(", ") || "never opened"})`);
+		},
+	},
+	{
+		id: "stub-settings-two-panes",
+		kind: "stub",
+		prompt: () => "In System Settings open Accessibility, then its Display pane. Change nothing.",
+		check: (world) => {
+			const w = of(world, "System Settings");
+			if (w.some((x) => x.state.changes.length)) return verdict(false, `a setting changed (${JSON.stringify(w.flatMap((x) => x.state.changes))})`);
+			return verdict(w.some((x) => x.open && x.title === "Display" && x.state.pane === "Accessibility" && x.state.sub === "Display"), `not on Accessibility > Display (${w.map((x) => `${x.state.pane} > ${x.state.sub}`).join(", ") || "never opened"})`);
+		},
+	},
 ];

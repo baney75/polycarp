@@ -1,6 +1,6 @@
 {
 	"note": "tools/list and initialize of `polycarp-spaces mcp --connector` (spaces/Sources/BaneySpacesCore/Hands/Tools.swift, MCP.swift). Refresh with: node evals/weak-model/stub/refresh-tools.mjs. test/weak-model-stub.test.mjs checks the verbs and arguments against Tools.swift.",
-	"instructions": "Polycarp's hands: read and act on apps on the user's Mac without touching their screen. Work in a loop: `open` an app (it lands on the agent workspace), `windows` for its window id, `snapshot` that window (one row per element, `[N] role \"name\"`), act on a row (`click`, `type`, `set_value`, `press`, `scroll`, `select`, `toggle`) with ref \"N\" or the full ref, then read the evidence in the result and snapshot again with since \"latest\" to see only what changed. On an error or an unverified result, make the call in `next_call`; null means nothing to call. Refs go stale when the UI changes: on a stale_ref error take a new snapshot. Only windows on the agent workspace or of apps Donovan has lent are allowed; anything else returns outside_agent_workspace (you cannot lend). Never ask the user to switch away from what they are doing. Work in the background: `open` the app (it returns the window id), `arrange` the agent workspace, act; when an action's result says `opened`, a dialog or sheet came up: snapshot that window and answer it; then `close` what you opened.",
+	"instructions": "Polycarp's hands: read and act on apps on the user's Mac without touching their screen. `open` an app: it lands on the agent workspace and returns the window id. To click an element by the label the window shows, `click` with window and text needs no snapshot first, and `run_steps` does several actions in one call (a click by text in a step finds what the step before opened). Otherwise work in a loop: `snapshot` the window (one row per element, `[N] role \"name\"`), act on a row (`click`, `type`, `set_value`, `press`, `scroll`, `select`, `toggle`) with ref \"N\" or the full ref, then read the evidence in the result and snapshot again with since \"latest\" to see only what changed. On an error or an unverified result, make the call in `next_call`; null means nothing to call. Refs go stale when the UI changes: on a stale_ref error take a new snapshot. Only windows on the agent workspace or of apps Donovan has lent are allowed; anything else returns outside_agent_workspace (you cannot lend). Never ask the user to switch away from what they are doing. Work in the background: `open` the app (it returns the window id), `arrange` the agent workspace, act; when an action's result says `opened`, a dialog or sheet came up: snapshot that window and answer it; then `close` what you opened.",
 	"tools": [
 		{
 			"annotations": {
@@ -91,7 +91,7 @@
 				"openWorldHint": false,
 				"readOnlyHint": true
 			},
-			"description": "Search one window's accessibility tree and return the matching elements with refs.",
+			"description": "Search one window's accessibility tree and return the matching elements with refs. To click an element by its label, skip find: click with window and text does both.",
 			"inputSchema": {
 				"additionalProperties": false,
 				"properties": {
@@ -162,7 +162,7 @@
 				"openWorldHint": false,
 				"readOnlyHint": false
 			},
-			"description": "Click an element by ref, without moving the pointer or raising the window. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"}",
+			"description": "Click an element by ref, or by the text it shows in a window, without moving the pointer or raising the window. By text it reads the window when it runs and clicks the element whose label is that text (a partial match only when it is the only one), so it needs no snapshot first and works as a run-steps step on what the step before opened; two matches are refused with their refs. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"} or {\"window\":4211,\"text\":\"Appearance\"}",
 			"inputSchema": {
 				"additionalProperties": false,
 				"properties": {
@@ -175,17 +175,26 @@
 						"type": "string"
 					},
 					"ref": {
-						"description": "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5.",
+						"description": "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5. Or pass window and text instead.",
+						"type": "string"
+					},
+					"role": {
+						"description": "With text: only elements of this role (button, row, statictext, ...), when the text is on more than one.",
+						"type": "string"
+					},
+					"text": {
+						"description": "With window: the label of the element to click, as the window shows it.",
 						"type": "string"
 					},
 					"wait": {
 						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
 						"type": "integer"
+					},
+					"window": {
+						"description": "With text: the window id from `windows`.",
+						"type": "integer"
 					}
 				},
-				"required": [
-					"ref"
-				],
 				"type": "object"
 			},
 			"name": "click"
