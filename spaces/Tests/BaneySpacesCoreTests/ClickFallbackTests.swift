@@ -164,17 +164,64 @@ final class ClickFallbackTests: XCTestCase {
         let e = ClickFallback.failure(press: HandsError(.actionFailed, "no press", suggestion: ""), write: HandsError(.actionFailed, "no write", suggestion: ""))
         XCTAssertTrue(e.message.contains("selection write was tried too and failed: no write"), e.message)
         // 166 r2 first-F3: a refused write answers with the refusal, so its code decides the next call.
-        let r = ClickFallback.failure(press: HandsError(.actionFailed, "no press", suggestion: ""), write: HandsError(.outsideAgentWorkspace, "moved", suggestion: ""), refused: true)
+        // 194 r1 first-F1: a refusal is known by its code, whichever check made it.
+        let r = ClickFallback.failure(press: HandsError(.actionFailed, "no press", suggestion: ""), write: HandsError(.outsideAgentWorkspace, "moved", suggestion: ""))
         XCTAssertEqual(r.code, .outsideAgentWorkspace)
         XCTAssertTrue(r.message.contains("the press had failed first: no press"), r.message)
         // 166 r2 first-F4: a failed press is reported on a click that still answers.
         XCTAssertEqual(ClickFallback.pressError(HandsError(.actionFailed, "no press", suggestion: "")), .object(["code": "action_failed", "message": "no press"]))
         XCTAssertNil(ClickFallback.pressError(nil))
-        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+RowClick.swift")
-        XCTAssertFalse(src.contains("acting() == nil else { break }"))
-        XCTAssertTrue(src.contains("if let e = acting() { writeError = e; refused = true; break }"))
-        XCTAssertTrue(src.contains("write: writeError, refused: refused"))
-        XCTAssertTrue(src.contains("o[\"press_error\"] = e"))
+        for code in [HandsErrorCode.inUse, .permissionDenied, .staleRef, .needsLend] {
+            XCTAssertEqual(ClickFallback.failure(press: HandsError(.actionFailed, "p", suggestion: ""), write: HandsError(code, "w", suggestion: "")).code, code, "\(code)")
+        }
+        XCTAssertEqual(ClickFallback.failure(press: HandsError(.actionFailed, "p", suggestion: ""), write: HandsError(.timeout, "w", suggestion: "")).code, .actionFailed, "the engine's own failure")
+    }
+
+    /// 194 r1 first-F5 and first-F4: the click's answer, by value, from what its transaction saw.
+    func testTheClickAnswersFromWhatItsTransactionSaw() throws {
+        let plan = ClickFallback.Plan(container: "@s:e1", label: "Draft", itemRole: "row", containerKey: "k")
+        var run = ClickFallback.Run()
+        run.before = false; run.afterPress = false
+        run.pressError = HandsError(.actionFailed, "no press", suggestion: ""); run.writeError = HandsError(.inUse, "his now", suggestion: "")
+        guard case .failure(let e) = ClickFallback.answer(run, ref: "@s:e2", plan: plan, window: 9) else { return XCTFail("nothing ran") }
+        XCTAssertEqual(e.code, .inUse, "the refusal is the error when the press failed too")
+        run.pressError = nil; run.press = .object([:])
+        let ok = try ClickFallback.answer(run, ref: "@s:e2", plan: plan, window: 9).get()
+        XCTAssertEqual(ok["verified"], .bool(false))
+        XCTAssertEqual(ok["selection_write"]?["code"], "in_use", "a press that ran: the refusal is said, not the error")
+        XCTAssertEqual(ok["next_call"], HandsNextCall.after(.inUse, window: 9))
+        var wrote = ClickFallback.Run()
+        wrote.before = false; wrote.afterPress = false; wrote.afterWrite = true; wrote.landed = .selectionWrite
+        wrote.pressError = HandsError(.actionFailed, "no press", suggestion: ""); wrote.write = .object([:])
+        let w = try ClickFallback.answer(wrote, ref: "@s:e2", plan: plan, window: 9).get()
+        XCTAssertEqual(w["landed"], "selection_write")
+        XCTAssertEqual(w["press_error"]?["code"], "action_failed")
+        XCTAssertNil(w["next_call"])
+        XCTAssertEqual(w["evidence"]?["selected_after_write"], .bool(true))
+    }
+
+    /// 194 r1 second-F6: a row the read hid still holds the selection of the cells it moved up.
+    func testAHiddenRowHoldsItsCellsSelection() throws {
+        func window(selected: Bool) -> [SnapshotRows.Row] {
+            SnapshotRows.rows(of: .object(["role": "window", "children": .array([node("table", "", 1, [
+                .object(["role": "row", "states": .array(selected ? ["selected"] : []), "children": .array([node("cell", "", 2, [node("statictext", "Draft", 3)])])]),
+                .object(["role": "row", "children": .array([node("cell", "", 4, [node("statictext", "Sent", 5)])])])])])]))
+        }
+        let plan = try XCTUnwrap(ClickFallback.plan(rows: window(selected: false), snapshot: "s", number: 3))
+        XCTAssertEqual(plan.itemRole, "cell")
+        XCTAssertEqual(ClickFallback.selected(window(selected: false), plan), false)
+        XCTAssertEqual(ClickFallback.selected(window(selected: true), plan), true, "the row's state, though the read hid the row")
+        XCTAssertEqual(ClickFallback.afterPress(before: false, after: ClickFallback.selected(window(selected: true), plan), pressError: nil), .done(.press), "no write after a press that selected it")
+    }
+
+    /// 194 r1 first-F3: with no text under the row, a named group or image labels it.
+    func testANamedGroupOrImageLabelsARowWithNoText() {
+        let group = tree([node("outline", "", 1, [node("row", "", 2, [node("group", "Inbox", 3, [node("image", "", 4)])])])])
+        XCTAssertEqual(ClickFallback.plan(rows: group, snapshot: "s", number: 4)?.label, "Inbox")
+        let image = tree([node("outline", "", 1, [node("row", "", 2, [node("image", "Downloads", 3)])])])
+        XCTAssertEqual(ClickFallback.plan(rows: image, snapshot: "s", number: 3)?.label, "Downloads")
+        let both = tree([node("outline", "", 1, [node("row", "", 2, [node("image", "folder", 3), node("statictext", "Projects", 4)])])])
+        XCTAssertEqual(ClickFallback.plan(rows: both, snapshot: "s", number: 3)?.label, "Projects", "text first")
     }
 
     // Review r1 first-F2: a bare row number names its window for the next call.
@@ -205,11 +252,18 @@ final class ClickFallbackTests: XCTestCase {
         XCTAssertEqual(m.read(snapshot: "sc", session: "a")?.view, SnapshotRowsMemory.View(interactive: false, compact: true, depth: 6))
         XCTAssertEqual(m.read(snapshot: "sf", session: "a")?.view, .full)
         XCTAssertEqual(SnapshotRowsMemory.View(key: "true|false|3"), SnapshotRowsMemory.View(interactive: true, compact: false, depth: 3))
+        // 194 r1 first-F2: the view the router keys a read by is built from the request, and parses back to itself.
+        for args in [[:], ["interactive": true, "depth": 4], ["compact": true], ["interactive": true, "compact": true, "depth": 25]] as [[String: JSONValue]] {
+            let v = SnapshotRowsMemory.View.of(HandsRequest(verb: "snapshot", args: args))
+            XCTAssertEqual(SnapshotRowsMemory.View(key: v.key), v, "\(args)")
+        }
+        XCTAssertEqual(SnapshotRowsMemory.View.of(HandsRequest(verb: "snapshot", args: ["interactive": true, "depth": 4])), .init(interactive: true, compact: false, depth: 4))
+        // A find reads compact and keeps that view, though it is remembered by its own name.
+        m.remember(session: "a", window: 7, view: .find, as: "find", snapshot: "sx", rows: [], now: Date())
+        XCTAssertEqual(m.read(snapshot: "sx", session: "a")?.view, .init(interactive: false, compact: true, depth: 10))
+        XCTAssertNotNil(m.previous(session: "a", window: 7, view: "find"))
         let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
-        XCTAssertTrue(router.contains("p.view = read.view"), "the plan carries its read's view")
-        let row = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+RowClick.swift")
-        XCTAssertTrue(row.contains("interactive: plan.view.interactive, compact: plan.view.compact"), "the readbacks use it")
-        XCTAssertFalse(row.contains("compact: false, depth: 10"))
+        XCTAssertTrue(router.contains("let view = SnapshotRowsMemory.View.find"), "find reads in the view it remembers")
     }
 
     /// The tree with only the item labeled `label` selected.
