@@ -141,7 +141,7 @@ async function inject(tabId: number, cmd: VeilCommand): Promise<VeilPageResult |
 }
 
 /**
- * Carry out one effect. A show still waiting on the browser when its time ran out (second-S1 of the #189 review) no
+ * Carry out one effect. A show still waiting on the browser when its time ran out (second-S1 of the review of PR 189) no
  * longer draws what was true when it was queued: the chain has moved on, so it draws the tab's facts as they are now
  * (concealed for a capture that came after it, say), or nothing if the tab has no veil any more.
  */
@@ -298,7 +298,7 @@ export async function veilBegin(
 	const tabId = targetTab(session, params);
 	if (tabId === undefined) return undefined;
 	// Read before the veil's change is queued, so the setting's read (slow after a worker restart) is never what holds
-	// a timed show (second-S1 of the #189 review).
+	// a timed show (second-S1 of the review of PR 189).
 	await pointerOn();
 	await dispatch({
 		type: "begin",
