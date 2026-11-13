@@ -271,7 +271,8 @@ final class MenuPathTests: XCTestCase {
         let start = Date()
         let late = MenuWatch<String>(every: 0.01)
         late.start { _ in Date().timeIntervalSince(start) > 0.5 ? "panel" : nil }
-        XCTAssertEqual(late.finish(), .seen("panel"), "0.5 s after the press: still told, never ok")
+        guard case .seen(let looks) = late.finish() else { return XCTFail("0.5 s after the press: still told, never ok") }
+        XCTAssertEqual(looks.first, "panel")
         let quiet = MenuWatch<String>(every: 0.01)
         var settledSeen = false
         let lock = NSLock()
@@ -375,11 +376,84 @@ final class MenuPathTests: XCTestCase {
         let step = try XCTUnwrap(HandsSourceTests.block(after: "private func menuWatchStep", in: src))
         XCTAssertTrue(step.contains("MenuPath.escaped(") && step.contains("MenuPath.panel("), "layer 2 looks for both")
         let undo = try XCTUnwrap(HandsSourceTests.block(after: "private func undo(", in: src))
-        XCTAssertTrue(undo.contains("cancelPanels(w, within: 0.3)") && undo.contains("found.filter(\\.tied).map { x in onMain { host.close(x.window.id) } }"),
+        XCTAssertTrue(undo.contains("cancelPanels(w, within: 0.3, old: oldPanels)") && undo.contains("found.filter(\\.tied).map { x in onMain { host.close(x.window.id) } }"),
                       "192 r1 first-F2: only a tied window is closed")
         XCTAssertTrue(step.contains("onMain { ids.map {"), "first-F1: one trip to main per look")
         let ax = try XCTUnwrap(HandsSourceTests.block(after: "static func read<T: Sendable>(_ e: AXUIElement", in: src))
         XCTAssertTrue(ax.contains("AXUIElementSetMessagingTimeout(e, timeout)"), "first-F1: the timeout on the element read")
         XCTAssertFalse(src.contains("HandsAXTree.node("), "first-F1: panel reads use the short-timeout reader")
+    }
+
+    /// 197 r1 first-F2: the first sighting doesn't end the watch, so a panel after a helper's window is still seen and undone.
+    func testTheWatchCollectsEveryLook() {
+        let start = Date()
+        let w = MenuWatch<String>(every: 0.01, watch: 0.4)
+        w.start { _ in Date().timeIntervalSince(start) < 0.1 ? "tips" : Date().timeIntervalSince(start) > 0.3 ? "panel" : nil }
+        guard case .seen(let looks) = w.finish() else { return XCTFail("seen") }
+        XCTAssertTrue(looks.contains("tips") && looks.contains("panel"), "\(looks)")
+        let tips = MenuPath.Listed(id: 5, pid: 9, owner: "Tips", visible: true, workspace: nil)
+        let m = MenuPath.Seen.merged([.init(escapes: [.init(tips, tied: true)]), .init(panel: true, escapes: [.init(tips, tied: false)]), .init()])
+        XCTAssertEqual(m, MenuPath.Seen(panel: true, escapes: [.init(tips, tied: false)]), "one window once, untied if any look untied it")
+        XCTAssertEqual(MenuPath.Seen.merged([]), MenuPath.Seen())
+    }
+
+    /// 197 r1 first-F1: a helper opened by Donovan's input a moment before the press is his, not the press's.
+    func testInputJustBeforeThePressUntiesAHelper() {
+        XCTAssertTrue(MenuPath.userInput(idle: 0.4, sincePress: 0.2), "his click 0.2 s before the press")
+        XCTAssertTrue(MenuPath.userInput(idle: 0.05, sincePress: 0.2))
+        XCTAssertFalse(MenuPath.userInput(idle: 30, sincePress: 0.2))
+        XCTAssertFalse(MenuPath.userInput(idle: MenuPath.watch + 0.3, sincePress: 0.2))
+    }
+
+    /// 197 r1 second-S1: a panel already up before the press is not blamed on the command, nor cancelled for it.
+    func testAPanelUpBeforeThePressIsNotTheCommands() {
+        let save = AXNodeInfo(role: "AXWindow", subrole: "AXDialog", identifier: "save-panel")
+        let doc = AXNodeInfo(role: "AXWindow", subrole: "AXStandardWindow")
+        XCTAssertNil(MenuPath.panel([doc, save], old: [false, true]))
+        XCTAssertEqual(MenuPath.panel([doc, save], old: [false, false]), 1)
+        XCTAssertEqual(MenuPath.panel([save, doc, save], old: [true, false, false]), 2, "a new one beside the old")
+    }
+
+    /// 197 r1 second-S2: an XPC service's bundle id comes from its executable's path; LaunchServices doesn't know it.
+    func testAnXPCServicesBundleIsReadFromItsPath() throws {
+        XCTAssertEqual(MenuPath.bundlePath(executable: "/System/Library/PrivateFrameworks/X.framework/Versions/A/XPCServices/WritingToolsViewService.xpc/Contents/MacOS/WritingToolsViewService"),
+                       "/System/Library/PrivateFrameworks/X.framework/Versions/A/XPCServices/WritingToolsViewService.xpc")
+        XCTAssertEqual(MenuPath.bundlePath(executable: "/Applications/Helium.app/Contents/Frameworks/H.framework/Helpers/Helper.app/Contents/MacOS/Helper"),
+                       "/Applications/Helium.app/Contents/Frameworks/H.framework/Helpers/Helper.app", "the innermost")
+        XCTAssertNil(MenuPath.bundlePath(executable: "/usr/libexec/launchd"))
+        // A running XPC service of this Mac, read the way fillProcess reads one.
+        var pids = [Int32](repeating: 0, count: 4096)
+        let n = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<Int32>.size)))
+        var buf = [CChar](repeating: 0, count: 4096)
+        let xpc = pids.prefix(max(0, n)).first { p in p > 0 && proc_pidpath(p, &buf, UInt32(buf.count)) > 0 && String(cString: buf).contains(".xpc/Contents/MacOS/") }
+        guard let pid = xpc else { throw XCTSkip("no XPC service running") }
+        let id = try XCTUnwrap(MenuPath.processBundle(pid: pid), "pid \(pid)")
+        XCTAssertFalse(id.isEmpty)
+    }
+
+    /// 197 r1 second-S3, first-F3: the Versions browser, Move To and Rename, and Use Selection for Find are refused by identifier or key.
+    func testVersionsMoveToAndTheSharedFindTextAreRefused() {
+        let file = [I(identifier: "browseDocumentVersions:", title: "Alle Versionen durchsuchen\u{2026}"), I(identifier: "moveDocument:", title: "Bewegen\u{2026}"),
+                    I(identifier: "renameDocument:", title: "Umbenennen\u{2026}"), I(cmdChar: "S", title: "Sichern")]
+        XCTAssertTrue(MenuPath.policy(steps(2, file, 0))?.message.contains("changes what Donovan sees") == true)
+        XCTAssertTrue(MenuPath.policy(steps(2, file, 1))?.message.contains("handoff folder") == true)
+        XCTAssertTrue(MenuPath.policy(steps(2, file, 2))?.message.contains("handoff folder") == true)
+        XCTAssertNil(MenuPath.policy(steps(2, file, 3)))
+        let edit = [I(cmdChar: "Z", title: "Widerrufen"), Self.sep, I(cmdChar: "A", title: "Alles ausw\u{E4}hlen"), Self.sep, I(title: "Suchen", submenu: true)]
+        let find = [I(cmdChar: "F", title: "Suchen \u{2026}"), I(cmdChar: "E", title: "Auswahl f\u{FC}r Suche verwenden")]
+        XCTAssertTrue(MenuPath.policy(steps(3, edit, 4, sub: find, 1))?.message.contains("find text") == true)
+        XCTAssertNil(MenuPath.policy(steps(3, edit, 4, sub: find, 0)))
+    }
+
+    /// 197 r1 second-S4: a path that stops at a submenu past Select All is judged by the submenu's own items.
+    func testListingASubmenuPastSelectAllIsJudgedByItsItems() {
+        let edit = [I(cmdChar: "Z", title: "Widerrufen"), Self.sep, I(cmdChar: "A", title: "Alles ausw\u{E4}hlen"), Self.sep, I(title: "Suchen", submenu: true), I(title: "Diktat", submenu: true)]
+        var find = steps(3, edit, 4)
+        find[1].opens = [I(cmdChar: "F", title: "Suchen \u{2026}"), I(title: "Weiter")]
+        XCTAssertNil(MenuPath.policy(find), "Find lists: its items have keys")
+        var dictation = steps(3, edit, 5)
+        dictation[1].opens = [I(title: "Starten")]
+        XCTAssertNotNil(MenuPath.policy(dictation))
+        XCTAssertNotNil(MenuPath.policy(steps(3, edit, 4)), "unread items: refused")
     }
 }
