@@ -161,6 +161,9 @@ async function cdpInject<T>(tabId: number, code: string, options: InjectOptions)
 	const expression = `${SHIM}\n(async () => { const chrome = window.__tabkyraChrome; return await (${code}); })()`;
 	if (options.executionId) runningExecutions.set(options.executionId, tabId);
 	try {
+		// A Stop that came while it attached: nothing is sent (first-F3 of the review of PR 265).
+		if (options.executionId && terminated.has(options.executionId))
+			throw new PageException("The script was stopped before it ran. Nothing was done on the page.");
 		const result = await cdpSend<{
 			result: { value?: T; description?: string };
 			exceptionDetails?: { exception?: { description?: string }; text?: string };
@@ -172,7 +175,10 @@ async function cdpInject<T>(tabId: number, code: string, options: InjectOptions)
 		}
 		return result.result.value as T;
 	} finally {
-		if (options.executionId) runningExecutions.delete(options.executionId);
+		if (options.executionId) {
+			runningExecutions.delete(options.executionId);
+			terminated.delete(options.executionId);
+		}
 	}
 }
 
@@ -187,9 +193,11 @@ const runs = new Map<string, { started: boolean; kept?: string }>();
 const terminated = new Set<string>();
 let listening = false;
 
-/** Answer only this context's own runs: the worker and each panel all hear every user-script message. */
-function listenForRuns(): void {
-	if (listening || !chrome.runtime.onUserScriptMessage) return;
+/** Answer only this context's own runs: the worker and each panel all hear every user-script message. False when this
+ * context can't hear a run start (second-F6 of the review of PR 265). */
+function listenForRuns(): boolean {
+	if (!chrome.runtime.onUserScriptMessage) return false;
+	if (listening) return true;
 	listening = true;
 	chrome.runtime.onUserScriptMessage.addListener((message, _sender, sendResponse) => {
 		const m = message as { type?: string; mark?: string; step?: string; kept?: string };
@@ -199,6 +207,7 @@ function listenForRuns(): void {
 		else if (typeof m.kept === "string") run.kept = m.kept;
 		sendResponse(true);
 	});
+	return true;
 }
 
 /**
@@ -213,8 +222,8 @@ function listenForRuns(): void {
  */
 export async function injectScript<T = unknown>(tabId: number, code: string, options: InjectOptions = {}): Promise<T> {
 	const api = userScriptsApi();
-	if (!api) return cdpInject<T>(tabId, code, options);
-	listenForRuns();
+	// Nothing has run yet, so the debugger path is safe when a start could not be heard.
+	if (!api || !listenForRuns()) return cdpInject<T>(tabId, code, options);
 	const worldId = options.worldId ?? "tabkyra";
 	const mark = crypto.randomUUID();
 	const send = (fields: string) =>
@@ -227,12 +236,12 @@ export async function injectScript<T = unknown>(tabId: number, code: string, opt
 	let kept;
 	try {
 		kept = JSON.stringify([v], (_k, x) => {
-			size += typeof x === "string" ? x.length : 16;
+			size += _k.length + (typeof x === "string" ? x.length : 16);
 			if (size > ${KEPT_RESULT_CHARS}) throw 0;
 			return x;
 		});
 	} catch {}
-	if (kept !== undefined) await ${send('step: "done", kept')}.catch(() => undefined);
+	if (kept !== undefined && kept.length <= ${KEPT_RESULT_CHARS}) await ${send('step: "done", kept')}.catch(() => undefined);
 	return { v };
 })()`;
 	runs.set(mark, { started: false });
@@ -266,7 +275,11 @@ export async function injectScript<T = unknown>(tabId: number, code: string, opt
 		const envelope = first?.result as { v: T } | undefined;
 		// Any result object is the run's own envelope (a `v` of undefined may arrive with the key gone).
 		if (envelope && typeof envelope === "object") return envelope.v;
-		return await lostResult<T>(tabId, code, options, runs.get(mark));
+		// Closed before any fallback: a start that arrives from now on gets no answer, so its code never runs
+		// (first-F1 of the review of PR 265). Only then can the debugger path run it.
+		const run = runs.get(mark);
+		runs.delete(mark);
+		return await lostResult<T>(tabId, code, options, run);
 	} finally {
 		runs.delete(mark);
 		if (options.executionId) terminated.delete(options.executionId);
@@ -288,13 +301,22 @@ async function lostResult<T>(
 	}
 	if (options.executionId && terminated.has(options.executionId))
 		throw new PageException("The script was stopped before it ran. Nothing was done on the page.");
+	const words = (err: unknown) => (err instanceof Error ? err.message : String(err));
+	try {
+		await ensureBinding(tabId);
+	} catch (err) {
+		// It never ran on either path (second-F5): say so, with the debugger's own words.
+		throw new PageException(
+			`Not run: the page did not answer, and the debugger could not attach (${words(err)}). Try again.`,
+		);
+	}
 	try {
 		return await cdpInject<T>(tabId, code, options);
 	} catch (err) {
-		// It never ran on either path (second-F5): say so, with the debugger's own words.
 		if (err instanceof PageException) throw err;
+		// Sent to the page, then cut off (a detach, a navigation): it may have run (first-F2 of the review of PR 265).
 		throw new PageException(
-			`Not run: the page did not answer, and the debugger could not run it (${err instanceof Error ? err.message : String(err)}). Call read_page, then try again.`,
+			`The script was sent to the page, then cut off (${words(err)}), so it was not run again: it may have acted on the page. Call read_page to see the page before you act again.`,
 		);
 	}
 }
@@ -302,16 +324,18 @@ async function lostResult<T>(
 /** Cancel a running injection on either path. */
 export async function terminateInjection(tabId: number, executionId: string): Promise<boolean> {
 	const api = userScriptsApi();
+	terminated.add(executionId);
+	let stopped = false;
 	if (api?.terminate) {
-		terminated.add(executionId);
 		await api.terminate(tabId, executionId);
-		return true;
+		stopped = true;
 	}
+	// A run on the debugger path, a userScripts run's fallback included (first-F3 of the review of PR 265).
 	if (runningExecutions.has(executionId)) {
 		await cdpSend(tabId, "Runtime.terminateExecution").catch(() => undefined);
-		return true;
+		stopped = true;
 	}
-	return false;
+	return stopped;
 }
 
 export function supportsTermination(): boolean {
