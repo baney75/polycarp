@@ -33,6 +33,7 @@ final class HandsEngine {
     static let headlessPolicy: Int32 = 0
     // AdResult values from agent_desktop.h (the type itself is ambiguous in Swift).
     static let surfaceWindow: Int32 = 0 // AD_SNAPSHOT_SURFACE_WINDOW
+    static let surfaceMenu: Int32 = 2 // AD_SNAPSHOT_SURFACE_MENU: the app's open context menu, refs of this window
     static let surfaceMenubar: Int32 = 3 // AD_SNAPSHOT_SURFACE_MENUBAR: the window's app's menu bar, refs still of this window
     static let resultOK: Int32 = 0
     static let resultPermDenied: Int32 = -1

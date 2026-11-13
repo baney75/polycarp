@@ -97,6 +97,30 @@ function stripSchemaDialect(server: McpServer): void {
 	});
 }
 
+/**
+ * A key about a dialog that the tool doesn't take (on_dialog on navigate, onDialog or on_dialog_txt on click) fails by
+ * name instead of being dropped, which would run the call with no answer set (D48). Any other key a tool lacks is
+ * dropped, as the SDK does (second-S2, first-F3 of round 2 of the review of PR 230). Seen before the SDK strips it.
+ */
+function refuseStrayDialogKeys(server: McpServer): void {
+	const handlers = (server.server as unknown as { _requestHandlers?: Map<string, (req: unknown, extra: unknown) => Promise<unknown>> })._requestHandlers;
+	const tools = (server as unknown as { _registeredTools?: Record<string, { inputSchema?: { shape?: object } }> })._registeredTools;
+	const call = handlers?.get("tools/call");
+	if (!handlers || !tools || !call) return;
+	handlers.set("tools/call", async (req, extra) => {
+		const { name, arguments: args } = (req as { params?: { name?: string; arguments?: object } }).params ?? {};
+		const shape = tools[String(name)]?.inputSchema?.shape ?? {};
+		const stray = Object.keys(args ?? {}).find((k) => /dialog/i.test(k) && !(k in shape));
+		if (stray === undefined) return call(req, extra);
+		return {
+			content: text(
+				`bad_params: ${name} takes no ${stray}. Nothing was done. on_dialog and on_dialog_text work on a single click or press only: send the click or press that opens the box on its own, e.g. click {"tabId":41,"ref":"e5","on_dialog":"ok"}.`,
+			),
+			isError: true,
+		};
+	});
+}
+
 /** Socket-level failures all mean the same thing to the agent: no browser to talk to. */
 function isNotConnected(err: unknown): boolean {
 	if (err instanceof BridgeRpcError) return false;
@@ -322,16 +346,6 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		checked.add(wrapped);
 		return wrapped;
 	};
-	// Strict schemas (D48): on_dialog or any unknown key fails by name, not dropped (PR 230). Innermost, so it sees the
-	// hub's device; a tool with no arguments sends no input and stays loose, for the byte budget.
-	{
-		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
-		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, ...rest: unknown[]) => {
-			const shape = (config as { inputSchema?: unknown } | undefined)?.inputSchema;
-			const strict = name !== "click" && name !== "press" && isRawShape(shape) && Object.keys(shape).length > 0;
-			return register(name, strict ? { ...(config as object), inputSchema: z.object(shape as z.ZodRawShape).strict() } : config, ...rest);
-		};
-	}
 	if (allow || check) {
 		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
 		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown) =>
@@ -1334,6 +1348,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 
 	addMoreTools?.();
 	stripSchemaDialect(server);
+	refuseStrayDialogKeys(server);
 	if (local) waitForLocalComputer(server, local);
 
 	if (allowedTools) {

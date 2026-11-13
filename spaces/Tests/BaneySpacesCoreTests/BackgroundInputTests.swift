@@ -505,6 +505,30 @@ final class DeliveryProofTests: XCTestCase {
         XCTAssertTrue(ContentChange.changed(base: base, noise: noise, after: tree(["clock 10:00:03", "display 72"])))
     }
 
+    /// The live false pass (952839c): after a type, TextEdit's title bar drew "Edited" only when the drag's hover arrived,
+    /// and the drag answered content_changed. A change pending before the press is noise once the window settles.
+    func testAChangePendingBeforeThePressIsNoProof() throws {
+        func window(_ title: String, _ text: String = "probe") -> JSONValue {
+            .object(["role": "window", "children": .array([.object(["role": "menubutton", "name": .string(title)]), .object(["role": "textfield", "value": .string(text)])])])
+        }
+        let before = window("document actions")
+        var reads = [window("Edited"), window("Edited"), window("never read")][...]
+        let settled = ContentChange.settle(first: before, reads: 5) { reads.popFirst() }
+        XCTAssertEqual(settled.base, window("Edited"))
+        XCTAssertEqual(settled.noise, ["0/0"])
+        XCTAssertEqual(reads.count, 1, "two reads that agree end it")
+        let noise = ContentChange.noise(base1: before, base2: settled.base).union(settled.noise)
+        let base = ContentChange.entries(of: settled.base)
+        XCTAssertFalse(ContentChange.changed(base: base, noise: noise, after: window("Edited")), "the pending title is not the drag's")
+        XCTAssertTrue(ContentChange.changed(base: base, noise: noise, after: window("Edited", "probe selected")))
+        // The router settles after the hover and before the press, and its evidence diff starts there.
+        let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
+        let hover = try XCTUnwrap(bg.range(of: "InputScript.hover(at: path[0])")), settle = try XCTUnwrap(bg.range(of: "ContentChange.settle(first:"))
+        let press = try XCTUnwrap(bg.range(of: "InputScript.drag(path: path)")), shot = try XCTUnwrap(bg.range(of: "let shotBefore ="))
+        XCTAssertTrue(hover.lowerBound < settle.lowerBound && settle.lowerBound < shot.lowerBound && shot.lowerBound < press.lowerBound)
+        XCTAssertTrue(bg.contains("if let t = t.tree, let b = base { diff = AXDiff.between(b, t) }"))
+    }
+
     func testTextAttributesHashTheSameWhenReadTwice() throws {
         // Two separately made, equal colors: a description would carry each one's address; the components do not.
         func runs() -> [(range: NSRange, attributes: [AnyHashable: Any])] {
@@ -987,7 +1011,9 @@ final class BackgroundPosterSourceTests: XCTestCase {
         XCTAssertFalse(text.contains("HandsEngine.shared.get("), "reads inside the transaction are inline")
         XCTAssertFalse(text.contains("HandsEngine.shared.snapshot("), "reads inside the transaction are inline")
         XCTAssertTrue(text.contains("HandsEngine.shared.getInline(") && text.contains("HandsEngine.shared.snapshotInline("))
-        XCTAssertEqual(text.components(separatedBy: "BackgroundPoster.keys(").count - 1, 1, "one key post site")
+        XCTAssertEqual(text.components(separatedBy: "BackgroundPoster.keys(").count - 1, 1, "the steps; a context menu's cancel posts in contextPress")
+        let menu = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextMenu.swift")
+        XCTAssertTrue(menu.contains("BackgroundPoster.keys([KeyChord(keyCode: 53, flags: 0, label: \"escape\")], permit: keyPermit"), "the cancel posts only Escape, with its own key permit")
         XCTAssertEqual(text.components(separatedBy: "BackgroundPoster.pointer(").count - 1, 2, "the hover, then the press")
         XCTAssertTrue(text.contains("host.agentOwned()"), "ownership is read at execution")
         XCTAssertTrue(text.contains("AgentActivity.shared.begin(pid: w.pid, window: w.id)"), "the focus guard is held for the whole action")
