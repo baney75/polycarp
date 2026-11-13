@@ -306,14 +306,10 @@ public struct SnapshotRowsMemory: Sendable {
         return (!since && !query && !cut, !(since && query))
     }
 
-    /// `baseline`: whether the next since read of this view compares with this one (not after a since read with a query,
-    /// which didn't list every change).
-    public mutating func remember(session: String, window: UInt32, view: String, snapshot: String, rows: [SnapshotRows.Row], now: Date,
-                                  listed: Bool = true, baseline: Bool = true) {
-        remember(session: session, window: window, view: View(key: view), as: view, snapshot: snapshot, rows: rows, now: now, listed: listed, baseline: baseline)
-    }
-
-    /// `as`: the name the read is kept under for `previous`, when not its view's key (a find).
+    /// `as`: the name the read is kept under for `previous`, when not its view's key (a find). `baseline`: whether the
+    /// next since read of this view compares with this one (not after a since read with a query, which didn't list
+    /// every change). There is no overload by name: a name isn't a view, and parsing one would read as the full view
+    /// (203 r1 second-F4).
     public mutating func remember(session: String, window: UInt32, view: View, as name: String? = nil, snapshot: String, rows: [SnapshotRows.Row],
                                   now: Date, listed: Bool = true, baseline: Bool = true) {
         seq += 1
