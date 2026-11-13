@@ -31,20 +31,40 @@ extension HandsRouter {
         let session = req.session ?? ""
         let started = Date()
         var lines: [JSONValue] = [], stop: RunSteps.Stop?, last = windows[0], opened: JSONValue?
-        for g in RunSteps.groups(windows) {
+        run: for g in RunSteps.groups(windows) {
             let id = windows[g.lowerBound]
-            guard case .success(let (w, _, _)) = target(HandsRequest(verb: "snapshot", args: ["window": .int(id)], session: req.session)) else { stop = .gone; break }
+            let w: HandsWindow
+            switch target(HandsRequest(verb: "snapshot", args: ["window": .int(id)], session: req.session)) {
+            case .success(let (t, _, _)): w = t
+            case .failure(let e):
+                let (line, why) = RunSteps.refused(e, group: g, steps: steps)
+                lines += line.map { [$0] } ?? []
+                stop = why
+                break run
+            }
             last = id
+            // The in-use wait, before the transaction takes the app's queue: one wait per step's verb and delivery, none
+            // past the deadline. Inside, steps run with wait 0 (251 r1 second-S1).
+            let until = started.addingTimeInterval(RunSteps.deadline)
+            for i in g {
+                let wait = RunSteps.clamped(steps[i], left: until.timeIntervalSinceNow).int("wait")
+                if let e = awaitUse(w, verb: steps[i].verb, delivery: RunSteps.delivery(steps[i]), wait: wait, session: session) {
+                    let (line, why) = RunSteps.refused(e, group: g, steps: steps)
+                    lines += line.map { [$0] } ?? []
+                    stop = why
+                    break
+                }
+            }
+            if stop != nil { break }
             // Each line is published as its step finishes, so a transaction that outlives its budget still reports what ran.
             let progress = RunSteps.Progress()
-            let until = started.addingTimeInterval(RunSteps.deadline)
             let reply = HandsEngine.shared.transaction(window: w, until: until, check: check(w, session: session)) { [self] cancelled in
                 var why: RunSteps.Stop?, raised: JSONValue = .null
                 for i in g {
                     let left = until.timeIntervalSinceNow
                     if cancelled() || left <= 0 { why = .time; break }
                     progress.begin(i)
-                    let env = HandsNextCall.fill(handle(RunSteps.clamped(steps[i], left: left)), window: id)
+                    let env = HandsNextCall.fill(handle(RunSteps.inTransaction(steps[i])), window: id)
                     why = RunSteps.stop(after: env)
                     progress.finish(RunSteps.line(i + 1, steps[i], env, full: why != nil))
                     if why != nil { raised = env.data?["opened"] ?? .null; break }
@@ -74,6 +94,6 @@ extension HandsRouter {
     }
 
     private func stepError(_ i: Int, _ e: HandsError) -> HandsError {
-        HandsError(e.code, "step \(i + 1): \(e.message)", suggestion: e.suggestion + ". Nothing ran.", retry: e.retry, nextCall: e.nextCall)
+        HandsError(e.code, "step \(i + 1): \(e.message)", suggestion: RunSteps.nothingRan(e.suggestion), retry: e.retry, nextCall: e.nextCall)
     }
 }
