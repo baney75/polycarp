@@ -54,7 +54,7 @@ final class OpenFlashGuardTests: XCTestCase {
         _ = p.tick(now: 0.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
         let s = p.tick(now: 0.2, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: nil)
         XCTAssertTrue(s.end, "sol-F1: the agent's copy quit")
-        XCTAssertEqual(s.covers, [:]); XCTAssertTrue(s.changed, "its cover comes down"); XCTAssertTrue(s.release)
+        XCTAssertEqual(s.covers, [:]); XCTAssertTrue(s.changed, "its cover comes down")
     }
 
     func testACoverComesDownAfterOneAndAHalfSecondsParkedOrNot() {
@@ -78,20 +78,17 @@ final class OpenFlashGuardTests: XCTestCase {
 
     func testOverlappingLaunchesHoldAndReleaseOnlyTheirOwn() {
         var h = OpenFlashGuard.Holds()
-        let t = Date(timeIntervalSince1970: 1_000)
-        h.hold(900, now: t); h.hold(950, now: t)
+        h.hold(900); h.hold(950)
         _ = h.release(900)
-        XCTAssertFalse(h.skips(900, now: t))
-        XCTAssertTrue(h.skips(950, now: t), "sol-F2, first-F3: the first launch's release leaves the second's hold")
-        XCTAssertFalse(h.skips(951, now: t), "a process with no hold is asked as before")
-        XCTAssertFalse(h.skips(950, now: t.addingTimeInterval(OpenFlashGuard.holdFor)), "it runs out")
+        XCTAssertFalse(h.skips(900))
+        XCTAssertTrue(h.skips(950), "sol-F2, first-F3: the first launch's release leaves the second's hold")
+        XCTAssertFalse(h.skips(951), "a process with no hold is asked as before")
     }
 
     func testAnAskSkippedByTheHoldIsAskedAgainWhenItEnds() {
         var h = OpenFlashGuard.Holds()
-        let t = Date(timeIntervalSince1970: 1_000)
-        h.hold(900, now: t); h.hold(950, now: t)
-        XCTAssertTrue(h.skips(900, now: t))
+        h.hold(900); h.hold(950)
+        XCTAssertTrue(h.skips(900))
         XCTAssertTrue(h.release(900), "second-F7: a scan skipped it, so the release asks again")
         XCTAssertFalse(h.release(950), "no scan skipped this one: nothing to ask again")
         XCTAssertFalse(h.release(900), "released once")
@@ -109,26 +106,92 @@ final class OpenFlashGuardTests: XCTestCase {
     // until it is parked. These each fail on 909894c7.
     let parked = CGRect(x: 1511, y: 981, width: 500, height: 400)
 
-    func testTheHoldEndsOnlyOnceACoverIsUpOrItRunsOut() {
+    // Review of PR 225: each of these fails on cf29bd93.
+    func testTheHoldEndsOnlyOnACoverMainPainted() {
+        var h = OpenFlashGuard.Holds()
+        h.hold(900)
+        XCTAssertTrue(h.skips(900))
+        XCTAssertFalse(h.covered(900, false), "sol-F1: a window seen, then gone before the drain: nothing painted")
+        XCTAssertTrue(h.skips(900), "sol-F1: so the hold goes on")
+        XCTAssertTrue(h.covered(900, true), "painted after a skip: Spaces asks now, to park it")
+        XCTAssertFalse(h.skips(900), "while a cover is up the park may ask")
+        XCTAssertFalse(h.covered(900, false))
+        XCTAssertTrue(h.skips(900), "first-F2: parked, the watch live: no ask blocks main before a later window's cover")
+        XCTAssertTrue(h.holds(900))
+        XCTAssertTrue(h.release(900), "first-F2: the skipped ask runs when the watch ends")
+        XCTAssertFalse(h.skips(900))
+        XCTAssertFalse(h.covered(900, true), "after the watch, a late paint changes nothing")
+    }
+
+    func testTwoOpensOneSecondApartAreBothGuarded() {
+        var a = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
+        XCTAssertTrue(OpenFlashGuard.slotBusy([nil]), "first-F1: capturing or starting holds the slot")
+        XCTAssertFalse(OpenFlashGuard.slotBusy([a.tick(now: 0.1, windows: [], incarnation: 77)]), "no window yet: nothing to cover")
+        XCTAssertTrue(OpenFlashGuard.slotBusy([a.tick(now: 0.5, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)]), "a cover up")
+        let parked = a.tick(now: 0.8, windows: [S(pid: 900, id: 6, layer: 0, bounds: self.parked)], incarnation: 77)
+        XCTAssertFalse(parked.end, "the watch goes on for a later window")
+        XCTAssertEqual(OpenFlashGuard.turn(busy: OpenFlashGuard.slotBusy([parked]), waited: 0), .go, "first-F1: the open at 1 s is guarded")
+        var c = OpenFlashGuard.Plan(pid: 901, incarnation: 78, screens: screen)
+        let covering = c.tick(now: 0.9, windows: [S(pid: 901, id: 9, layer: 0, bounds: w)], incarnation: 78)
+        XCTAssertEqual(OpenFlashGuard.turn(busy: OpenFlashGuard.slotBusy([parked, covering]), waited: 0.1), .wait)
+        let done = c.tick(now: 1.4, windows: [S(pid: 901, id: 9, layer: 0, bounds: self.parked)], incarnation: 78)
+        XCTAssertEqual(OpenFlashGuard.turn(busy: OpenFlashGuard.slotBusy([parked, done]), waited: 0.5), .go, "parked: the next one goes, guarded")
+    }
+
+    func testNoCoverIsPaintedFromAShotOlderThanItsLife() throws {
+        XCTAssertTrue(OpenFlashGuard.shotFresh(age: 1.4))
+        XCTAssertTrue(OpenFlashGuard.shotFresh(age: OpenFlashGuard.shotLife))
+        XCTAssertFalse(OpenFlashGuard.shotFresh(age: 1.51), "second-S1: what it shows may have changed")
+        let wch = try CursorSourceTests.code("Sources/BaneySpaces/Session/OpenFlashWatch.swift")
+        let drain = try XCTUnwrap(HandsSourceTests.between("private func drain() {", "func finish(why: String) {", in: wch))
+        let gate = try XCTUnwrap(drain.range(of: "if !OpenFlashGuard.shotFresh(age: age)")), paint = try XCTUnwrap(drain.range(of: "if redraw()"))
+        XCTAssertLessThan(gate.lowerBound, paint.lowerBound, "second-S1: checked before any paint")
+        XCTAssertTrue(drain.contains("\"unguarded: stale shot"))
+        XCTAssertTrue(wch.contains("l.shotAt = ProcessInfo.processInfo.systemUptime\n            var fired = false"), "timed from before the capture")
+    }
+
+    func testAClearWindowGetsNoCover() {
+        XCTAssertFalse(OpenFlashGuard.needsGuard(layer: 0, alpha: 0, bounds: w, screens: screen), "sol-F2")
+        XCTAssertFalse(OpenFlashGuard.needsGuard(layer: 0, alpha: 0.09, bounds: w, screens: screen))
+        XCTAssertTrue(OpenFlashGuard.needsGuard(layer: 0, alpha: 0.1, bounds: w, screens: screen))
         var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
-        XCTAssertFalse(p.tick(now: 0.1, windows: [], incarnation: 77).release)
-        XCTAssertFalse(p.tick(now: 0.2, windows: [S(pid: 900, id: 7, layer: 0, bounds: CGRect(x: 400, y: 300, width: 30, height: 30))], incarnation: 77).release,
-                       "second-F6: a splash sliver doesn't end the hold")
-        XCTAssertFalse(p.tick(now: 0.3, windows: [S(pid: 900, id: 8, layer: 3, bounds: w)], incarnation: 77).release, "sol-F1: nor a floating helper panel")
-        XCTAssertFalse(p.tick(now: 0.4, windows: [S(pid: 900, id: 9, layer: 0, bounds: parked)], incarnation: 77).release, "nor a window already out of sight")
-        let up = p.tick(now: 0.5, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
-        XCTAssertEqual(up.covers, [6: w])
-        XCTAssertTrue(up.release, "its cover goes up in this step, so the hold may end after it has painted")
-        var q = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
-        XCTAssertFalse(q.tick(now: OpenFlashGuard.holdFor - 0.1, windows: [S(pid: 900, id: 7, layer: 3, bounds: w)], incarnation: 77).release)
-        XCTAssertTrue(q.tick(now: OpenFlashGuard.holdFor, windows: [], incarnation: 77).release, "or it runs out")
+        let clear = S(pid: 900, id: 7, layer: 0, alpha: 0, bounds: CGRect(x: 0, y: 0, width: 1512, height: 982))
+        let s = p.tick(now: 0.2, windows: [clear], incarnation: 77)
+        XCTAssertEqual(s.covers, [:], "sol-F2: a clear helper gets no cover")
+        XCTAssertTrue(s.idle, "and holds no slot")
+        XCTAssertEqual(p.tick(now: 0.5, windows: [clear, S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77).covers, [6: w], "the app's window does")
+    }
+
+    func testNothingCoveredPollsSlowly() {
+        var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
+        let first = p.tick(now: 0.004, windows: [], incarnation: 77)
+        XCTAssertTrue(first.idle, "second-S2: no window covered or pending, from the start")
+        XCTAssertTrue(first.changed, "the first step reaches main, so the slot is known")
+        XCTAssertTrue(p.tick(now: 0.5, windows: [S(pid: 900, id: 8, layer: 3, bounds: w)], incarnation: 77).idle, "second-S2: a helper panel only")
+    }
+
+    func testOnlyTheWatchOwnsAHoldAndItsSkippedAsk() throws {
+        let c = try CursorSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
+        XCTAssertFalse(c.contains("Windows.release("), "first-F3: New Window never consumes the skipped ask")
+        let wch = try CursorSourceTests.code("Sources/BaneySpaces/Session/OpenFlashWatch.swift")
+        let post = try XCTUnwrap(HandsSourceTests.between("private func post(", "private func drain()", in: wch))
+        XCTAssertFalse(post.contains("release"), "sol-F1: a newer step never carries an older one's release")
+        XCTAssertFalse(wch.contains("step.release"))
+        XCTAssertTrue(wch.contains("if up != !panels.isEmpty { up = !panels.isEmpty"), "sol-F1: the hold follows the panels main drew")
+        XCTAssertTrue(wch.contains("alpha: alpha, bounds: b)"), "sol-F2: the window server's alpha reaches the plan")
+        XCTAssertTrue(wch.contains("OpenFlashGuard.turn(busy: OpenFlashGuard.slotBusy(live.values.map(\\.step))"), "first-F1")
+        let probe = try String(contentsOf: CursorSourceTests.root.appendingPathComponent("scripts/agent-open-probe.swift"), encoding: .utf8)
+        XCTAssertTrue(probe.contains("if gapInvalid(sampler.worstGapMs) {"), "sol-F3: a gap over 16 ms makes the run invalid")
+        XCTAssertTrue(probe.contains("if failures.isEmpty && invalid.isEmpty && opens > 0 { print(\"agent-open-probe: pass\")"))
     }
 
     func testAHelperWindowNeverEndsTheWatch() {
         var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
         let splash = S(pid: 900, id: 7, layer: 0, bounds: CGRect(x: 400, y: 300, width: 30, height: 30))
         for t in stride(from: 0.1, to: OpenFlashGuard.claimFor - 0.1, by: 0.5) {
-            XCTAssertFalse(p.tick(now: t, windows: [splash, S(pid: 900, id: 8, layer: 3, bounds: w)], incarnation: 77).end, "sol-F1: at \(t) s")
+            let s = p.tick(now: t, windows: [splash, S(pid: 900, id: 8, layer: 3, bounds: w)], incarnation: 77)
+            XCTAssertFalse(s.end, "sol-F1: at \(t) s")
+            XCTAssertTrue(s.idle, "second-S2 (PR 225): the slow poll, at \(t) s")
         }
         XCTAssertTrue(p.tick(now: OpenFlashGuard.claimFor, windows: [splash], incarnation: 77).end, "the claim ran out")
     }
@@ -235,13 +298,11 @@ final class OpenFlashGuardTests: XCTestCase {
         let c = try CursorSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
         let check = try XCTUnwrap(HandsSourceTests.between("func newWindowCheck(waited: Double) {", "_ = newWindow(app)", in: c))
         XCTAssertTrue(check.contains("OpenFlashGuard.newWindowWaits(held: Windows.isHeld(pid), waited: waited)"))
-        XCTAssertTrue(check.contains("Windows.release(pid, askAgain: false)"), "first-F2: never a skipped scan right before its own ask")
-        XCTAssertFalse(check.contains("Windows.release(pid)\n"))
     }
 
     func testAgentsMdNamesOneDomainForTheAppsSettings() throws {
         let a = try String(contentsOf: CursorSourceTests.root.appendingPathComponent("AGENTS.md"), encoding: .utf8)
-        XCTAssertFalse(a.contains("defaults write com.baney.baneyspaces"), "first-F5: the app reads .standard, com.baney.polycarp")
+        XCTAssertFalse(a.contains("com.baney.baneyspaces"), "first-F5, first-F4 (PR 225): the app reads .standard and logs as com.baney.polycarp")
         XCTAssertTrue(a.contains("defaults write com.baney.polycarp crashLoopLimit"))
         XCTAssertTrue(a.contains("com.baney.polycarp agentOpenFlashGuard cover"))
         XCTAssertFalse(a.contains("is the retired app's"))
@@ -296,7 +357,7 @@ final class OpenFlashGuardTests: XCTestCase {
         let drain = try XCTUnwrap(HandsSourceTests.between("private func drain() {", "func finish(why: String) {", in: w))
         XCTAssertTrue(drain.contains("ticket.holds(live:"), "sol-F1: a queued cover is checked before it rises")
         let flush = try XCTUnwrap(drain.range(of: "if redraw() { CATransaction.flush() }"))
-        let release = try XCTUnwrap(drain.range(of: "DispatchQueue.main.async { Windows.release(pid) }"))
+        let release = try XCTUnwrap(drain.range(of: "DispatchQueue.main.async { Windows.covered(pid, up) }"))
         XCTAssertLessThan(flush.lowerBound, release.lowerBound, "first-F1: the cover is committed, then the hold ends on a later turn")
         XCTAssertEqual(w.components(separatedBy: "Windows.release(").count - 1, w.components(separatedBy: "DispatchQueue.main.async { Windows.release(pid) }").count - 1,
                        "first-F1: every release waits a turn, never in the same one as the cover")
@@ -315,7 +376,7 @@ final class OpenFlashGuardTests: XCTestCase {
         XCTAssertTrue(d.contains("Windows.onHoldEnd = { [weak self] pid in self?.spaces.askAgain(pid) }"))
         let r = try CursorSourceTests.code("Sources/BaneySpaces/Windows.swift")
         let ask = try XCTUnwrap(HandsSourceTests.between("static func isResponsive(", "static func markUnresponsive", in: r))
-        XCTAssertTrue(ask.contains("holds.skips(pid, now: now)"))
+        XCTAssertTrue(ask.contains("holds.skips(pid)"))
         XCTAssertFalse(ask.contains("NSRunningApplication"))
         XCTAssertTrue(w.contains(".nonactivatingPanel"))
         XCTAssertFalse(w.contains(".hide()") || w.contains("app.hide"), "no hide: a hidden app lists no windows (PR 172)")

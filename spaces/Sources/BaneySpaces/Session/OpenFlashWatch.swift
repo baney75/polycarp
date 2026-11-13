@@ -8,7 +8,7 @@ import ScreenCaptureKit
 enum OpenFlashWatch {
     /// The app's own domain is `UserDefaults.standard` (`OpenFlashGuard.current`).
     static var mode: OpenFlashGuard { OpenFlashGuard.current() }
-    /// The launches capturing or watching, on the main thread: one at a time (`OpenFlashGuard.turn`).
+    /// The launches capturing or watching, on the main thread. One at a time holds the slot (`OpenFlashGuard.slotBusy`).
     private static var live: [UInt64: Launch] = [:]
     private static var launches: UInt64 = 0
     /// Bumped on every workspace switch (and macOS Space change): a cover from before it is never raised.
@@ -42,6 +42,7 @@ enum OpenFlashWatch {
             let l = Launch(gen: launches, workspaces: workspaces, app: app, screens: screens, primaryHeight: primaryHeight)
             live[l.gen] = l
             // The screen as it was, taken before the launch so the new window isn't in it, within `captureLimit`.
+            l.shotAt = ProcessInfo.processInfo.systemUptime
             var fired = false
             let go: ([CGImage]?, String) -> Void = { shots, why in
                 guard !fired else { return }
@@ -62,7 +63,7 @@ enum OpenFlashWatch {
     /// One guarded open at a time: waits for the one before it to finish, up to `waitForTurn`.
     private static func waitTurn(since: Double, _ body: @escaping (Bool) -> Void) {
         dispatchPrecondition(condition: .onQueue(.main))
-        switch OpenFlashGuard.turn(busy: !live.isEmpty, waited: ProcessInfo.processInfo.systemUptime - since) {
+        switch OpenFlashGuard.turn(busy: OpenFlashGuard.slotBusy(live.values.map(\.step)), waited: ProcessInfo.processInfo.systemUptime - since) {
         case .go: body(true)
         case .unguarded: body(false)
         case .wait: DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { waitTurn(since: since, body) }
@@ -95,7 +96,10 @@ enum OpenFlashWatch {
     final class Launch {
         struct Key: Hashable { let id: UInt32, screen: Int }
         let gen: UInt64, workspaces: UInt64, app: String, screens: [CGRect], primaryHeight: CGFloat
-        var shots: [CGImage] = []
+        var shots: [CGImage] = [], shotAt = 0.0
+        /// The last step main took (nil until the first): whether this launch holds the slot.
+        private(set) var step: OpenFlashGuard.Plan.Step?
+        private var up = false
         private var pid: pid_t = 0, incarnation: UInt64 = 0
         private var want: [UInt32: CGRect] = [:]
         private var panels: [Key: (panel: NSPanel, frame: CGRect)] = [:]
@@ -140,22 +144,20 @@ enum OpenFlashWatch {
             let pid = self.pid, t0 = self.t0
             var plan = OpenFlashGuard.Plan(pid: pid, incarnation: incarnation, screens: screens)
             let t = Thread { [self] in
-                var released = false
                 while true {
                     lock.lock(); let stop = cancelled; lock.unlock()
                     if stop { break }
                     let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
                     let mine = info.compactMap { w -> OpenFlashGuard.Sighting? in
+                        let alpha = (w[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
                         guard (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
                               let id = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
                               let b = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }) else { return nil }
-                        return .init(pid: pid, id: id, layer: (w[kCGWindowLayer as String] as? Int) ?? 0, bounds: b)
+                        return .init(pid: pid, id: id, layer: (w[kCGWindowLayer as String] as? Int) ?? 0, alpha: alpha, bounds: b)
                     }
                     let step = plan.tick(now: ProcessInfo.processInfo.systemUptime - t0, windows: mine, incarnation: Self.start(pid))
                     for id in step.expired { Trace.log("flash guard cover: down for window \(id) of \(app) after \(OpenFlashGuard.coverLife) s, not parked yet") }
-                    let release = step.release && !released
-                    released = released || step.release
-                    if step.changed || release || step.end { post(step, release: release) }
+                    if step.changed || step.end { post(step) }
                     if step.end { break }
                     Thread.sleep(forTimeInterval: step.idle ? OpenFlashGuard.idleInterval : OpenFlashGuard.interval)
                 }
@@ -165,11 +167,11 @@ enum OpenFlashWatch {
             t.start()
         }
 
-        /// Keeps only the newest step (a release or end in an older one is kept too) and wakes the main thread once.
-        private func post(_ step: OpenFlashGuard.Plan.Step, release: Bool) {
+        /// Keeps only the newest step (an end in an older one is kept too) and wakes the main thread once. An older
+        /// step's covers are dropped with it: nothing in a step ends the hold, only a cover main painted (sol-F1).
+        private func post(_ step: OpenFlashGuard.Plan.Step) {
             lock.lock()
             var s = step
-            s.release = release || (mailbox?.release ?? false)
             s.end = step.end || (mailbox?.end ?? false)
             let wake = mailbox == nil
             mailbox = s
@@ -183,10 +185,19 @@ enum OpenFlashWatch {
             guard let step else { return }
             let ok = ticket.holds(live: Set(OpenFlashWatch.live.keys), workspaces: OpenFlashWatch.workspaces, incarnation: Self.start(pid))
             guard ok, !step.end else { return finish(why: ok ? "parked or done" : "its moment passed (switch, exit or a reused pid)") }
+            self.step = step
+            // A shot older than `shotLife` paints nothing: the window opens unguarded, and with no cover left to raise
+            // the watch is over (review of PR 225, second-S1).
+            let age = ProcessInfo.processInfo.systemUptime - shotAt
+            if !OpenFlashGuard.shotFresh(age: age), !step.covers.isEmpty || step.idle {
+                return finish(why: step.covers.isEmpty ? "the shot is too old for another cover"
+                              : "unguarded: stale shot (\(Int(age * 1000)) ms old) for window \(step.covers.keys.sorted())")
+            }
             want = step.covers
             if redraw() { CATransaction.flush() }
-            // On the next turn: the new cover is committed and drawn before Spaces may ask the app (a 0.25 s block).
-            if step.release { let pid = self.pid; DispatchQueue.main.async { Windows.release(pid) } }
+            // On the next turn, so a new cover is committed and drawn before Spaces may ask the app (a 0.25 s block):
+            // asks are let through only while a cover main painted is up (sol-F1, first-F2).
+            if up != !panels.isEmpty { up = !panels.isEmpty; let pid = self.pid, up = self.up; DispatchQueue.main.async { Windows.covered(pid, up) } }
         }
 
         /// Ends this launch: no more covers, the hold released (after the panels are gone), the watch stopped.

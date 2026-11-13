@@ -662,15 +662,14 @@ final class SessionController {
                 guard !before.contains(app.processIdentifier) else { return }
                 adoptAgentStartedProcess(app.processIdentifier, workspace: n, title: nil, host: h, grantAccess: !separate)
                 if files.isEmpty {
-                    /// No window yet: New Window must ask the app. While a cover's hold is on it waits, up to the hold's
-                    /// length, since asking blocks main when the cover may need to rise (review of PR 213, first-F2).
+                    /// No window yet: New Window must ask the app. While the launch's hold is on it waits, up to
+                    /// `holdFor`, since asking blocks main when a cover may need to rise (review of PR 213, first-F2).
+                    /// It leaves the hold to the watch, the one owner of a skipped ask (review of PR 225, first-F3).
                     func newWindowCheck(waited: Double) {
                         let pid = app.processIdentifier
                         if OpenFlashGuard.newWindowWaits(held: Windows.isHeld(pid), waited: waited) {
                             return DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { newWindowCheck(waited: waited + 0.1) }
                         }
-                        // The next line asks the app itself, so the release doesn't run a skipped scan as well.
-                        Windows.release(pid, askAgain: false)
                         // The mode may have narrowed since the request was let in.
                         let now = AgentAccess.shared.current
                         guard AgentAccessGate.sessionRefusal(op: "open", mode: now) == nil, separate || now == .full else { return }

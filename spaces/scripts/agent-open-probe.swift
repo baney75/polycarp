@@ -17,7 +17,8 @@
 // Agent workspace only: it types, clicks and moves nothing. Run it with the build under test installed and running.
 // It runs only when Donovan has been idle 10 minutes. 11-12: each open drew its window on his workspace for 0.7 to 1.7 s
 // before it was parked, and a 10-open run while he worked read to him as "random windows keep opening like font book".
-// Otherwise it prints "untested live" and exits 3, opening nothing. --force is for a Mac nobody is using.
+// Otherwise it prints "untested live" and exits 3, opening nothing. --force is for a Mac nobody is using. A run whose
+// samples were ever over 16 ms apart is invalid (exit 4), not passed.
 //   swift scripts/agent-open-probe.swift [rounds] [App ...] [--force]
 import AppKit
 
@@ -41,6 +42,10 @@ let polycarpPid: pid_t = NSRunningApplication.runningApplications(withBundleIden
 /// The seen check gates only with the cover on (`agentOpenFlashGuard cover`). With it off (the default), the times are
 /// printed as known and fail nothing: every open of a starting app shows for about 1 s until the cover is on by default.
 func seenFails(_ ms: Double, guardOn: Bool, bar: Double = 50) -> Bool { guardOn && ms > bar }
+/// A run whose samples were ever more than this apart is invalid, not passed: a flash could hide in the gap (review of
+/// PR 225, sol-F3).
+let gapLimitMs = 16.0
+func gapInvalid(_ worstGapMs: Double) -> Bool { worstGapMs > gapLimitMs }
 
 /// The part of `list[i]` a person can see: on a display, not under an opaque window in front of it, measured on a grid
 /// so overlaps of several windows count right. Returns the shown area in pt² and the bounding box of what shows.
@@ -95,6 +100,7 @@ if CommandLine.arguments.contains("--selftest") {
     }
     check("with the cover off, a 1 s open is known, not failed", !seenFails(1000, guardOn: false))
     check("with it on, 51 ms fails and 50 ms passes", seenFails(51, guardOn: true) && !seenFails(50, guardOn: true))
+    check("a run with a 17 ms sample gap is invalid, 16 ms is not", gapInvalid(17) && !gapInvalid(16))
     check("one under a clear overlay is", seen(1, in: [Seen(pid: 4242, layer: 25, alpha: 0, bounds: full), app], displays: screen, cover: 4242) != nil)
     let half = Seen(pid: 2, layer: 0, alpha: 1, bounds: CGRect(x: 400, y: 300, width: 250, height: 400))
     check("half covered, the other half shows", seen(1, in: [half, app], displays: screen, cover: 4242).map { $0.minX >= 646 } == true)
@@ -259,7 +265,7 @@ let guardOn = UserDefaults(suiteName: "com.baney.polycarp")?.string(forKey: "age
 print(guardOn ? "seen check: gating (agentOpenFlashGuard cover)" : "seen check: known, flag off (times printed, not failed)")
 var opens = 0, identified = 0, strays = 0, focusChanges = 0, closes = 0, closeMismatches = 0, flashes = 0
 var seenAll: [Double] = []
-var failures: [String] = []
+var failures: [String] = [], invalid: [String] = []
 setbuf(stdout, nil)
 for app in apps {
     if !pids(app).isEmpty { print("skip \(app): already running"); continue }
@@ -296,6 +302,9 @@ for app in apps {
             flashes += 1
             failures.append("\(app) #\(round): seen on Donovan's workspace for \(Int(sampler.seenMs)) ms (bar \(Int(seenBarMs)) ms) at \(sampler.frames.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" })")
         }
+        if gapInvalid(sampler.worstGapMs) {
+            invalid.append("\(app) #\(round): samples \(Int(sampler.worstGapMs)) ms apart at worst (limit \(Int(gapLimitMs)) ms), so its seen time can't be trusted")
+        }
         let fresh = pids(app).subtracting(before)
         let (home, agentN) = homes()
         let off = drawn().filter { fresh.contains($0.value) && home[$0.key] != agentN }.map(\.key).sorted()
@@ -321,7 +330,9 @@ for app in apps {
     }
 }
 print("opens \(opens), identified \(identified), stray \(strays), focus changes \(focusChanges), close answers wrong \(closeMismatches) of \(closes), seen over \(Int(seenBarMs)) ms \(guardOn ? "\(flashes)" : "known, flag off") (worst \(Int(seenAll.max() ?? 0)) ms, total \(Int(seenAll.reduce(0, +))) ms)")
-if failures.isEmpty && opens > 0 { print("agent-open-probe: pass"); exit(0) }
+if failures.isEmpty && invalid.isEmpty && opens > 0 { print("agent-open-probe: pass"); exit(0) }
 for f in failures { print("FAIL \(f)") }
+for f in invalid { print("INVALID \(f)") }
+if failures.isEmpty && opens > 0 { print("agent-open-probe: invalid (rerun on a quieter Mac)"); exit(4) }
 print(opens == 0 ? "agent-open-probe: nothing ran (every app was already running)" : "agent-open-probe: fail")
 exit(1)
