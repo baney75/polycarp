@@ -457,10 +457,10 @@ final class HandsRouter {
                 let sid = o["snapshot_id"]?.string ?? ""
                 let rows = SnapshotRows.rows(of: o["tree"] ?? .null)
                 let session = req.session ?? ""
-                let view = "\(req.bool("interactive"))|\(req.bool("compact"))|\(req.int("depth") ?? 10)"
+                let view = SnapshotRowsMemory.View.of(req)
                 let since = req.snapshotFormat == "rows" && req.string("since") == "latest"
                 let previous = withRows { m -> SnapshotRowsMemory.Read? in
-                    let p = m.previous(session: session, window: w.id, view: view)
+                    let p = m.previous(session: session, window: w.id, view: view.key)
                     let k = SnapshotRowsMemory.kind(since: since && p != nil, query: req.string("query"), rows: rows.count, max: req.int("max_elements"))
                     m.remember(session: session, window: w.id, view: view, snapshot: sid, rows: rows, now: Date(), listed: k.listed, baseline: k.baseline)
                     return p
@@ -487,7 +487,8 @@ final class HandsRouter {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, _, _)):
-            switch read(w, interactive: false, compact: true, session: req.session ?? "") {
+            let view = SnapshotRowsMemory.View.find
+            switch read(w, interactive: view.interactive, compact: view.compact, depth: UInt8(clamping: view.depth), session: req.session ?? "") {
             case .failure(let e): return .failure(e)
             case .success(let data):
                 let role = req.string("role")?.lowercased(), name = req.string("name")?.lowercased()
@@ -506,7 +507,7 @@ final class HandsRouter {
                 if let tree = data["tree"] { walk(tree) }
                 if let sid = data["snapshot_id"]?.string {
                     let rows = SnapshotRows.rows(of: data["tree"] ?? .null)
-                    withRows { $0.remember(session: req.session ?? "", window: w.id, view: "find", snapshot: sid, rows: rows, now: Date(), listed: false) }
+                    withRows { $0.remember(session: req.session ?? "", window: w.id, view: view, as: "find", snapshot: sid, rows: rows, now: Date(), listed: false) }
                 }
                 return .success(.object(["snapshot_id": data["snapshot_id"] ?? .null, "window": .int(Int(w.id)), "count": .int(found.count), "matches": .array(found)]))
             }
@@ -684,8 +685,11 @@ final class HandsRouter {
         guard ref.hasPrefix("@"), let colon = ref.firstIndex(of: ":"), let n = SnapshotRows.refNumber(ref) else { return nil }
         let sid = String(ref[ref.index(after: ref.startIndex)..<colon])
         guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
-        // The readbacks read in this read's view, so the row keys they compare match (second-F5).
-        return ClickFallback.plan(rows: read.rows, snapshot: sid, number: n).map { var p = $0; p.view = read.view; return p }
+        // The readbacks read in this read's view, so the row keys they compare match (second-F5). A container whose ref
+        // is no good now gets no write; the click is the plain press (194 r1 first-F1).
+        guard var p = ClickFallback.plan(rows: read.rows, snapshot: sid, number: n), refProblem(p.container) == nil else { return nil }
+        p.view = read.view
+        return p
     }
 
     private func shot(_ req: HandsRequest) -> HandsEnvelope {

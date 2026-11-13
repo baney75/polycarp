@@ -18,6 +18,9 @@ public enum SnapshotRows {
         public var key: String
         /// The row this one is printed under.
         public var parent: Int?
+        /// Whether a row or tree item the read hid (no ref, name or value) right above this row is selected; nil when
+        /// none is. Selection is that row's, and its cells are what the read shows of it (194 r1 second-F6).
+        public var hiddenItemSelected: Bool? = nil
 
         public var line: String {
             var s = String(repeating: "  ", count: depth)
@@ -42,7 +45,7 @@ public enum SnapshotRows {
         var out: [Row] = []
         var siblings: [String: Int] = [:]
         var title = ""
-        func walk(_ n: JSONValue, depth: Int, parent: Int?, path: String) {
+        func walk(_ n: JSONValue, depth: Int, parent: Int?, path: String, hidden: Bool? = nil) {
             guard case .object(let o) = n else { return }
             let role = o["role"]?.string ?? ""
             var name = o["name"]?.string ?? o["title"]?.string ?? ""
@@ -56,17 +59,19 @@ public enum SnapshotRows {
             // The title bar's icon and label repeat the window title, which the header already prints.
             let echo = number == nil && value.isEmpty && !title.isEmpty && name == title
             let shown = (number != nil || !name.isEmpty || !value.isEmpty) && !echo
-            var childDepth = depth, childParent = parent, childPath = path
+            var childDepth = depth, childParent = parent, childPath = path, childHidden = hidden
+            if !shown, ClickFallback.items.contains(role) { childHidden = states.contains("selected") }
             if shown, !isRoot {
                 // A name that is the element's content (Calculator's display) changes with it, so it can't name it.
                 let slot = path + "/" + role + ":" + (name == value ? "" : name)
                 let ordinal = siblings[slot, default: 0]
                 siblings[slot] = ordinal + 1
                 let key = slot + "#\(ordinal)"
-                out.append(Row(depth: depth, number: number, role: role, name: name, value: value, states: states, key: key, parent: parent))
-                childDepth = depth + 1; childParent = out.count - 1; childPath = key
+                out.append(Row(depth: depth, number: number, role: role, name: name, value: value, states: states, key: key, parent: parent,
+                               hiddenItemSelected: hidden))
+                childDepth = depth + 1; childParent = out.count - 1; childPath = key; childHidden = nil
             }
-            for c in o["children"]?.array ?? [] { walk(c, depth: childDepth, parent: childParent, path: childPath) }
+            for c in o["children"]?.array ?? [] { walk(c, depth: childDepth, parent: childParent, path: childPath, hidden: childHidden) }
         }
         walk(tree, depth: 0, parent: nil, path: "")
         return out
@@ -230,6 +235,13 @@ public struct SnapshotRowsMemory: Sendable {
         public var interactive: Bool, compact: Bool, depth: Int
         public init(interactive: Bool, compact: Bool, depth: Int) { self.interactive = interactive; self.compact = compact; self.depth = depth }
         public static let full = View(interactive: false, compact: false, depth: 10)
+        /// The view a snapshot request reads in; the router keys and replays reads by it (194 r1 first-F2).
+        public static func of(_ req: HandsRequest) -> View {
+            View(interactive: req.bool("interactive"), compact: req.bool("compact"), depth: req.int("depth") ?? 10)
+        }
+        /// What a find reads in.
+        public static let find = View(interactive: false, compact: true, depth: 10)
+        public var key: String { "\(interactive)|\(compact)|\(depth)" }
         public init(key: String) {
             let p = key.split(separator: "|").map(String.init)
             self.init(interactive: p.first == "true", compact: p.count > 1 && p[1] == "true", depth: p.count > 2 ? Int(p[2]) ?? 10 : 10)
@@ -287,13 +299,19 @@ public struct SnapshotRowsMemory: Sendable {
     /// which didn't list every change).
     public mutating func remember(session: String, window: UInt32, view: String, snapshot: String, rows: [SnapshotRows.Row], now: Date,
                                   listed: Bool = true, baseline: Bool = true) {
+        remember(session: session, window: window, view: View(key: view), as: view, snapshot: snapshot, rows: rows, now: now, listed: listed, baseline: baseline)
+    }
+
+    /// `as`: the name the read is kept under for `previous`, when not its view's key (a find).
+    public mutating func remember(session: String, window: UInt32, view: View, as name: String? = nil, snapshot: String, rows: [SnapshotRows.Row],
+                                  now: Date, listed: Bool = true, baseline: Bool = true) {
         seq += 1
         var read = Read(snapshot: snapshot, window: window, rows: rows, at: now, listed: listed)
         read.seq = seq
-        read.view = View(key: view)
+        read.view = view
         // The full read a refusal's next_call asked for: the agent has seen these numbers, so older reads don't count.
         if listed, needsRead[session] == window { floor[session] = seq; needsRead[session] = nil }
-        if baseline { last[Self.viewKey(session: session, window: window, view: view)] = read }
+        if baseline { last[Self.viewKey(session: session, window: window, view: name ?? view.key)] = read }
         var list = recent[session] ?? []
         list.append(read)
         if list.count > Self.history { list.removeFirst(list.count - Self.history) }
