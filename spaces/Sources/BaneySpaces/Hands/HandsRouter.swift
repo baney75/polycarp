@@ -405,8 +405,6 @@ final class HandsRouter {
         }
     }
 
-    static func pointsJSON(_ s: CGSize) -> JSONValue { .object(["width": .double(Double(s.width)), "height": .double(Double(s.height))]) }
-
     /// `snapshot` with screenshot: true: the read, then a capture of the same window under the same gate as `shot`. A
     /// capture that fails leaves the read as it is, with `screenshot_error`.
     private func snapshot(_ req: HandsRequest) -> HandsEnvelope {
@@ -414,18 +412,23 @@ final class HandsRouter {
             if req.string("zoom") != nil { return .failure(HandsError(.badArguments, "zoom goes with screenshot: true", suggestion: #"Example: {"window":4211,"screenshot":true,"zoom":"0,0,400,300"}"#, retry: .safe, nextCall: .null)) }
             return readSnapshot(req)
         }
-        if case .failure(let e) = ShotImage.region(req.string("zoom")) { return .failure(e) }
-        let env = readSnapshot(req)
-        guard env.ok, var o = env.data?.object, let id = o["window"]?.int ?? o["target"]?["window"]?.int else { return env }
-        guard case .success(let (w, _, _)) = target(HandsRequest(verb: "shot", args: ["window": .int(id)], session: req.session)) else { return env }
-        if let e = gate(w, session: req.session ?? "") { o["screenshot_error"] = .string(e.message); return .success(.object(o)) }
-        let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
-        defer { AgentActivity.shared.end(token) }
-        switch WindowShot.capture(window: w.id, named: nil, check: check(w, session: req.session ?? "")) {
-        case .failure(let e): o["screenshot_error"] = .string(e.message)
-        case .success(let r): o["screenshot"] = .object(["path": .string(r.path), "width": .int(r.width), "height": .int(r.height), "points": Self.pointsJSON(r.points)])
+        let zoom: ShotImage.Region?
+        switch ShotImage.region(req.string("zoom"), snapshot: true) {
+        case .failure(let e): return .failure(e)
+        case .success(let z): zoom = z
         }
-        return .success(.object(o))
+        let env = readSnapshot(req)
+        guard env.ok, let o = env.data?.object, let id = o["window"]?.int ?? o["target"]?["window"]?.int else { return env }
+        let session = req.session ?? ""
+        return .success(.object(ShotImage.attach(to: o, zoom: zoom,
+            target: { target(HandsRequest(verb: "shot", args: ["window": .int(id)], session: req.session)).map { $0.0 } },
+            gate: { gate($0, session: session) },
+            capture: { w in
+                let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
+                defer { AgentActivity.shared.end(token) }
+                return WindowShot.capture(window: w.id, named: nil, check: check(w, session: session))
+                    .map { ShotImage.Captured(path: $0.path, width: $0.width, height: $0.height, points: $0.points) }
+            })))
     }
 
     private func readSnapshot(_ req: HandsRequest) -> HandsEnvelope {
@@ -659,15 +662,20 @@ final class HandsRouter {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope, _)):
             if let e = gate(w, session: req.session ?? "") { return .failure(e) }
-            if case .failure(let e) = ShotImage.region(req.string("zoom")) { return .failure(e) }
+            let zoom: ShotImage.Region?
+            switch ShotImage.region(req.string("zoom")) {
+            case .failure(let e): return .failure(e)
+            case .success(let z): zoom = z
+            }
             let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
             defer { AgentActivity.shared.end(token) }
             switch WindowShot.capture(window: w.id, named: req.string("out"), cursor: req.bool("cursor") ? host.cursorMark(w.id) : nil, check: check(w, session: req.session ?? "")) {
             case .failure(let e): return .failure(e)
             case .success(let r):
+                if let e = ShotImage.outside(zoom, points: r.points) { return .failure(e) }
                 return .success(.object([
                     "path": .string(r.path), "width": .int(r.width), "height": .int(r.height), "cursor": .bool(r.cursorDrawn),
-                    "points": Self.pointsJSON(r.points),
+                    "points": ShotImage.pointsJSON(r.points),
                     // A capture with the cursor drawn in is an edited picture: it says so and keeps the hash of the raw capture.
                     "evidence": r.cursorDrawn
                         ? .object(["kind": "capture_hash_composited", "sha256": .string(r.sha256), "raw_sha256": r.rawSha256.map(JSONValue.string) ?? .null])

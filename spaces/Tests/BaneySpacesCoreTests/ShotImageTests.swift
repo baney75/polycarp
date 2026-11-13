@@ -80,13 +80,72 @@ final class ShotImageTests: XCTestCase {
         XCTAssertTrue(params.contains("screenshot") && params.contains("zoom"))
     }
 
-    /// The router is in the app target: its snapshot captures only on screenshot: true, and both verbs report points.
-    func testTheRouterCapturesOnRequestAndReportsPoints() throws {
+    /// r1 second-S1: the snapshot's capture path by value: found again, gated, then captured; any refusal keeps the read.
+    func testTheSnapshotCapturePathKeepsTheReadAndSaysWhy() {
+        let read: [String: JSONValue] = ["window": .int(7), "format": "rows", "text": "[1] window"]
+        let points = CGSize(width: 1600, height: 1000)
+        var calls: [String] = []
+        func run(target: Bool = true, gate: Bool = true, capture: Bool = true, zoom: ShotImage.Region? = nil) -> [String: JSONValue] {
+            calls = []
+            return ShotImage.attach(to: read, zoom: zoom,
+                target: { calls.append("target"); return target ? .success(7) : .failure(HandsError(.windowNotFound, "window 7 isn't there", suggestion: "")) },
+                gate: { (_: Int) in calls.append("gate"); return gate ? nil : HandsError(.permissionDenied, "no Screen Recording", suggestion: "") },
+                capture: { (_: Int) in calls.append("capture")
+                    return capture ? .success(.init(path: "/s.png", width: 3200, height: 2000, points: points)) : .failure(HandsError(.actionFailed, "capture failed", suggestion: "")) })
+        }
+        let ok = run()
+        XCTAssertEqual(calls, ["target", "gate", "capture"])
+        XCTAssertEqual(ok["screenshot"]?["points"]?["width"]?.double, 1600)
+        XCTAssertNil(ok["screenshot_error"])
+        let refused = run(gate: false)
+        XCTAssertEqual(calls, ["target", "gate"], "a refused gate captures nothing")
+        XCTAssertEqual(refused["screenshot_error"], "no Screen Recording")
+        XCTAssertEqual(refused["text"], "[1] window", "the read is kept")
+        XCTAssertEqual(run(capture: false)["screenshot_error"], "capture failed")
+        let lost = run(target: false)
+        XCTAssertEqual(calls, ["target"])
+        XCTAssertEqual(lost["screenshot_error"], "window 7 isn't there", "r1 first-F1: a lost window is said too")
+        let far = run(zoom: .init(x: 2000, y: 0, width: 100, height: 100))
+        XCTAssertNil(far["screenshot"])
+        XCTAssertEqual(far["screenshot_error"]?.string, "zoom 2000,0,100,100 lies outside the 1600x1000 pt window")
+    }
+
+    /// r1 first-F1: over MCP, rows are the whole text, so a failed capture gets its own part.
+    func testAFailedScreenshotReachesTheModelWithRows() throws {
+        let data: JSONValue = .object(["window": .int(7), "format": "rows", "text": "[1] window", "screenshot_error": "Polycarp doesn't have Screen Recording access"])
+        let s = HandsMCP(version: "1", session: "s", perform: { _ in .success(data) }, readImage: { _ in nil })
+        let r = s.handle(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"snapshot","arguments":{"window":7,"screenshot":true}}}"#).flatMap(JSONValue.parse)
+        let parts = try XCTUnwrap(r?["result"]?["content"]?.array)
+        XCTAssertEqual(parts.first?["text"], "[1] window")
+        XCTAssertEqual(parts.last?["text"], "screenshot failed: Polycarp doesn't have Screen Recording access")
+    }
+
+    /// r1 first-F2: a zoom outside the window is refused naming its size; the MCP never sends the raw 2x capture for one.
+    func testAZoomOutsideTheWindowIsRefused() throws {
+        let e = try XCTUnwrap(ShotImage.outside(.init(x: 2000, y: 0, width: 100, height: 100), points: CGSize(width: 1600, height: 1000)))
+        XCTAssertEqual(e.code, .badArguments)
+        XCTAssertEqual(e.message, "zoom 2000,0,100,100 lies outside the 1600x1000 pt window")
+        XCTAssertNil(ShotImage.outside(.init(x: 1500, y: 900, width: 400, height: 400), points: CGSize(width: 1600, height: 1000)), "partly inside is cropped")
+        XCTAssertNil(ShotImage.outside(nil, points: .zero))
+        let big = png(3200, 2000)
+        let s = HandsMCP(version: "1", session: "s", perform: { _ in .success(.null) }, readImage: { _ in big })
+        let parts = try XCTUnwrap(s.imageParts(verb: "shot", arguments: ["window": .int(5), "zoom": "2000,0,100,100"],
+                                               data: .object(["path": "/x.png", "points": .object(["width": .double(1600), "height": .double(1000)])])))
+        let data = try XCTUnwrap(parts[1]["data"]?.string.flatMap { Data(base64Encoded: $0) })
+        XCTAssertTrue(size(data) == (1280, 800), "fitted, never the raw capture")
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
-        let snap = try XCTUnwrap(HandsSourceTests.block(after: "private func snapshot(_ req: HandsRequest)", in: src))
-        XCTAssertTrue(snap.contains(#"guard req.bool("screenshot") else"#))
-        XCTAssertTrue(snap.contains("if let e = gate(w, session:"), "the same gate as shot")
-        XCTAssertTrue(snap.contains(#""points": Self.pointsJSON(r.points)"#))
-        XCTAssertTrue(src.components(separatedBy: #""points": Self.pointsJSON(r.points)"#).count == 3, "shot and snapshot")
+        XCTAssertTrue(src.contains("if let e = ShotImage.outside(zoom, points: r.points) { return .failure(e) }"), "shot refuses it")
+    }
+
+    /// r1 lows: non-finite zooms, the snapshot example, a fractional origin.
+    func testZoomLowsFromRoundOne() throws {
+        for bad in ["0,0,inf,inf", "inf,0,10,10", "nan,0,10,10"] {
+            guard case .failure = ShotImage.region(bad) else { return XCTFail(bad) }
+        }
+        guard case .failure(let e) = ShotImage.region("0,0,0,10", snapshot: true) else { return XCTFail() }
+        XCTAssertTrue(e.suggestion.contains(#""screenshot":true"#), e.suggestion)
+        let p = ShotImage.Picture(png: Data(), width: 100, height: 100, pointsPerPixel: 0.5, origin: CGPoint(x: 100.5, y: 3))
+        XCTAssertTrue(ShotImage.label(window: 1, p).contains("click_at x = 100.5 + image x * 0.5, y = 3 + image y * 0.5"), ShotImage.label(window: 1, p))
+        XCTAssertTrue(HandsTools.tool(verb: "shot")?.params.first { $0.name == "zoom" }?.help.contains("saved file stays whole") == true, "r1 first-F3")
     }
 }
