@@ -43,6 +43,7 @@ import {
 	STILL_LOADING,
 	tabChanges,
 } from "../browser/changes.js";
+import { DOWNLOAD_NOTE, downloadsSince } from "../browser/downloads.js";
 import { dialogSession, type FrameRule } from "../browser/frames.js";
 import { injectScript } from "../browser/inject.js";
 import {
@@ -175,6 +176,8 @@ async function settleAfter(
 			...options.wait,
 		}).catch(() => undefined);
 		const out: Record<string, unknown> = settled ? unsettledNote(settled) : {};
+		const downloads = await downloadsSince(tabId, since, DOWNLOAD_WAIT_MS);
+		if (downloads.length) Object.assign(out, { downloads, downloadNote: DOWNLOAD_NOTE });
 		if (options.changes && !openDialog(tabId))
 			out.changes = typeof options.changes === "function" ? await options.changes() : options.changes;
 		// A box froze the page: there is nothing to look at until it is answered.
@@ -197,6 +200,8 @@ async function settleAfter(
 
 /** A drag's settle: short, so a drop that lands a frame or a transition later is seen (D41). */
 const DRAG_SETTLE = { capMs: 600, quietMs: 200 };
+/** The most an action waits, after it settles, for a download it began to finish or be canceled. */
+const DOWNLOAD_WAIT_MS = 2000;
 
 /** A tab's URL, or "" once it is gone. */
 const tabUrl = async (id: number) => (await chrome.tabs.get(id).catch(() => undefined))?.url ?? "";
