@@ -425,10 +425,11 @@ fn finish_steps(f: &Facts) -> Vec<Step> {
         Platform::Linux => {
             if f.node {
                 let entry = s(&f.browser_home.join("cli/dist/index.js"));
-                steps.push(
-                    reload_step(f, RELOAD, &["node", &entry, "reload", "--if-idle"])
-                        .in_dir(&f.browser_home),
-                );
+                steps.push(reload_step(
+                    f,
+                    RELOAD,
+                    &["node", &entry, "reload", "--if-idle"],
+                ));
             }
             if f.hyprland {
                 // The repo's restart path: the daemon refuses to run twice, and a config reload starts it.
@@ -446,22 +447,25 @@ fn finish_steps(f: &Facts) -> Vec<Step> {
         }
         Platform::Windows => {}
     }
-    steps.push(Step::new(
-        Role::Verify,
-        "Check that every part this update installs is at origin/main",
-        &[
-            &installed,
-            "update",
-            "--is-current",
-            &wt,
-            "HEAD",
-            "--needs",
-            &needs(f),
-            "--after-install",
-            "--wait",
-            "30",
-        ],
-    ));
+    steps.push(
+        Step::new(
+            Role::Verify,
+            "Check that every part this update installs is at origin/main",
+            &[
+                &installed,
+                "update",
+                "--is-current",
+                &wt,
+                "HEAD",
+                "--needs",
+                &needs(f),
+                "--after-install",
+                "--wait",
+                "30",
+            ],
+        )
+        .in_dir(&f.home),
+    );
     steps
 }
 
@@ -480,7 +484,10 @@ fn reload_step(f: &Facts, title: &str, reload: &[&str]) -> Step {
         "--",
     ];
     argv.extend_from_slice(reload);
-    Step::new(Role::Soft, title, &argv)
+    // From the home folder: the step reads the parts, and from inside the helper's own folder (#218 ran it there)
+    // `polycarp-browser` links into the current folder, so it is not trusted and every look found no helper and no
+    // extension (the Parish1 deploys of 53e4c4b and 8c61d42).
+    Step::new(Role::Soft, title, &argv).in_dir(&f.home)
 }
 
 /// `npm install` in the sibling setup can rewrite a package-lock.json. In the clean copy that is the only
@@ -2220,7 +2227,14 @@ mod tests {
                 "{:?}",
                 st.argv
             );
-            assert_eq!(st.cwd.as_deref(), Some(Path::new(BROWSER_HOME)));
+            // Its own folder, outside the cache: setup's is the helper's, the reload's the home folder (see
+            // the_finish_steps_that_read_the_parts_run_where_the_helper_is_trusted).
+            let cwd = st.cwd.as_deref().expect("a folder of its own");
+            assert!(
+                !cwd.starts_with(WORKTREE) && !cwd.starts_with(Path::new(HOME).join(".cache")),
+                "{}",
+                cwd.display()
+            );
         }
         assert!(
             notes
@@ -3061,6 +3075,34 @@ mod tests {
         let (rc, reloads, secs, out) = unseen_run(u64::MAX, none(), &[]);
         assert_eq!((rc, reloads, secs), (0, 0, 4), "{out}");
         assert!(out.contains("No browser is connected"), "{out}");
+    }
+
+    #[test]
+    fn the_finish_steps_that_read_the_parts_run_where_the_helper_is_trusted() {
+        // The Parish1 deploys of 53e4c4b and 8c61d42: the reload step ran in the helper's own folder, where
+        // `polycarp-browser` (a link into it) is not trusted, so every look said no helper and no extension while
+        // Helium was connected, and the 40 s wait ran out. Run by hand from the home folder, the same step reloaded.
+        let helper = Path::new(BROWSER_HOME).join("cli/dist/index.js");
+        for platform in [Platform::Linux, Platform::Mac] {
+            let f = facts(platform, source(Some(ORIGIN), false));
+            let reads: Vec<Step> = steps_of(plan(&f, FINISH))
+                .into_iter()
+                .filter(|st| st.argv.get(1).map(String::as_str) == Some("update"))
+                .collect();
+            assert_eq!(reads.len(), 2, "the reload and the final check");
+            for st in reads {
+                let cwd = st
+                    .cwd
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("{} runs wherever update was started", st.title));
+                assert!(
+                    crate::clear_of(&helper, cwd, Some(Path::new(HOME))),
+                    "{}: from {} the helper is not trusted",
+                    st.title,
+                    cwd.display()
+                );
+            }
+        }
     }
 
     #[test]
