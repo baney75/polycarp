@@ -937,9 +937,23 @@ test("the service install does not block the event loop, and a hung service mana
 	}
 	const home = join(root, "slow-home");
 	mkdirSync(home, { recursive: true });
-	const saved = { PATH: process.env.PATH, HOME: process.env.HOME };
+	const keys = ["PATH", "HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "POLYCARP_BROWSER_CONFIG_DIR", "TABKYRA_CONFIG_DIR"];
+	const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+	// The folders a desktop session sets (Parish1 sets all four). With only HOME swapped, the install wrote the user's
+	// real agent launcher with this test file as its script, and every agent that started Polycarp ran this suite.
+	const real = join(root, "slow-real");
+	for (const k of ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"]) {
+		process.env[k] = join(real, k);
+	}
+	const outer = { ...process.env };
 	process.env.PATH = `${bin}:${saved.PATH}`;
 	process.env.HOME = home;
+	process.env.XDG_CONFIG_HOME = join(home, ".config");
+	process.env.XDG_CACHE_HOME = join(home, ".cache");
+	process.env.XDG_DATA_HOME = join(home, ".local", "share");
+	process.env.XDG_STATE_HOME = join(home, ".local", "state");
+	process.env.POLYCARP_BROWSER_CONFIG_DIR = join(home, ".config", "polycarp", "browser");
+	delete process.env.TABKYRA_CONFIG_DIR;
 	try {
 		let longest = 0;
 		let last = Date.now();
@@ -957,6 +971,9 @@ test("the service install does not block the event loop, and a hung service mana
 		const cut = await runAsync("sleep", ["30"], 150);
 		assert.equal(cut.code, 1);
 		assert.match(cut.out, /timed out/);
+		for (const k of ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"]) {
+			assert.equal(existsSync(outer[k]), false, `the install wrote into the session's ${k}`);
+		}
 	} finally {
 		for (const [k, v] of Object.entries(saved)) {
 			if (v === undefined) delete process.env[k];
