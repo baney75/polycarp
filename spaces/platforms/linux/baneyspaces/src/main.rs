@@ -1,6 +1,9 @@
 //! `baneyspaces` for Linux (Omarchy, Hyprland). The CLI sends one request to `baneyspaces daemon`
 //! and prints the envelope; `baneyspaces mcp` serves the agent tools over stdio.
 
+// Every fallible step returns the envelope it will print, so the error side is large on purpose.
+#![allow(clippy::result_large_err)]
+
 mod agentws;
 mod apps;
 mod bus;
@@ -8,9 +11,11 @@ mod daemon;
 mod hands;
 mod hypr;
 mod paths;
+mod png;
 mod proc;
 mod scheme;
 mod shot;
+mod skill;
 
 use baneyspaces_core::envelope::{Envelope, Retry};
 use baneyspaces_core::{keymap, mcp};
@@ -53,6 +58,11 @@ const HELP: &str = "baneyspaces (Linux, Hyprland)
   stop                           stop the daemon (uninstall.sh does this)
   mcp                            MCP server on stdio (agent tools only)
   doctor                         what works and what does not
+  skill install [--path P]       write the agent skill to ~/.claude/skills/baneyspaces/SKILL.md, and to
+                                 ~/.agents/skills/baneyspaces when ~/.agents/skills or ~/.codex exists
+                                 (--path: to that one file or folder instead)
+  skill path                     where the skill goes, and whether each copy is current
+  skill print                    the skill's text, as this build writes it
 
 Flags, before the command: --agent-id ID (names you in the action log), --text (short human output).
 After open, arrange, move --window and close: --session S (default $BANEYSPACES_SESSION, else your terminal).
@@ -539,6 +549,13 @@ fn main() {
             }
         }
         "doctor" => print(&doctor(&paths), text),
+        "skill" => match skill::run(&args[1..], std::env::var_os("HOME").map(std::path::PathBuf::from)) {
+            skill::Out::Envelope(env) => print(&env, text),
+            skill::Out::Text(t) => {
+                print!("{t}");
+                0
+            }
+        },
         "mcp" => {
             let stdin = std::io::stdin();
             let mut out = std::io::stdout();
@@ -655,13 +672,13 @@ mod tests {
             ran.set(true);
             Some(Envelope::ok(json!({})))
         };
-        let e = guarded_fallback(&req, true, &probe).unwrap();
+        let e = guarded_fallback(&req, true, probe).unwrap();
         assert_eq!(e.error.unwrap().code, "not_in_scope");
         assert!(!ran.get(), "the Hyprland dispatch must not run for an agent's shell");
-        let e = guarded_fallback(&json!({"op":"move","args":{"n":"5"}}), true, &probe).unwrap();
+        let e = guarded_fallback(&json!({"op":"move","args":{"n":"5"}}), true, probe).unwrap();
         assert_eq!(e.error.unwrap().code, "not_in_scope");
         // Your own shell still falls back.
-        assert!(guarded_fallback(&req, false, &probe).unwrap().ok);
+        assert!(guarded_fallback(&req, false, probe).unwrap().ok);
         assert!(ran.get());
     }
 

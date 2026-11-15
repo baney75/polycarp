@@ -21,15 +21,22 @@ final class LegacyWatcher {
         observer = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let self, let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            let id = app.bundleIdentifier
-            let action = LegacyHandover.onLaunch(bundleID: id, alreadyNotified: id.map { self.notified.contains($0) } ?? true, takesOver: self.takesOver())
             if app.bundleIdentifier == Product.Silas.bundleID { self.onSilasStarted() }
-            if action.quit {
-                Trace.log("legacy: \(app.localizedName ?? Product.Legacy.name) started while \(Product.name) runs; asking it to quit")
-                app.terminate()
-            }
-            if action.notify, let id { self.notified.insert(id); self.tell(id) }
+            self.handle(app, takesOver: self.takesOver())
         }
+        // One started after main.swift's check and before the observer above was seen by neither (PR 20 sol-F5). Silas is
+        // left to the voice, whose gate isn't wired yet here.
+        for app in NSWorkspace.shared.runningApplications where !app.isTerminated { handle(app, takesOver: false) }
+    }
+
+    private func handle(_ app: NSRunningApplication, takesOver: Bool) {
+        let id = app.bundleIdentifier
+        let action = LegacyHandover.onLaunch(bundleID: id, alreadyNotified: id.map { notified.contains($0) } ?? true, takesOver: takesOver)
+        if action.quit {
+            Trace.log("legacy: \(app.localizedName ?? Product.Legacy.name) started while \(Product.name) runs; asking it to quit")
+            app.terminate()
+        }
+        if action.notify, let id { notified.insert(id); tell(id) }
     }
 
     /// Polycarp's dictation is taking over (`VoiceEngine.takesOver`) and Silas is running: ask it to quit, tell the person once.
