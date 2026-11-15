@@ -2,13 +2,14 @@
  * Where the `tailscale` command is. A leaf module: tunnel.ts and remote-setup.ts both import it, so neither imports the other.
  */
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { posix } from "node:path";
 import { envVar } from "./env.ts";
 import { which } from "./harness.ts";
 import { type ToolLookup, windowsTool } from "./tool-paths.ts";
 
 /** Where the Tailscale Mac app keeps its command. It never puts `tailscale` on PATH. TABKYRA_APPLICATIONS_DIR replaces /Applications, for tests. */
-export const tailscaleAppPath = () => join(envVar("APPLICATIONS_DIR") || "/Applications", "Tailscale.app", "Contents", "MacOS", "Tailscale");
+// posix: a Mac path, said the same wherever it is computed.
+export const tailscaleAppPath = () => posix.join(envVar("APPLICATIONS_DIR") || "/Applications", "Tailscale.app", "Contents", "MacOS", "Tailscale");
 
 /**
  * The `tailscale` binary: on PATH, or the Tailscale Mac app's own copy at its fixed path, so a terminal and Polycarp's window
