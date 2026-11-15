@@ -1,3 +1,53 @@
+import { POLYCARP_MARK } from "../../components/polycarp-svg.js";
+
+/**
+ * The bar's look: the side panel's own tokens, the Polycarp preset's light and dark palettes (src/appearance/palettes.ts),
+ * mini-lit's type and radii, and its small danger button. The page has no panel tokens, so they are copied here.
+ */
+const BAR_CSS = `
+.bar {
+	--bg: #fffdf6;
+	--fg: #2b2e26;
+	--muted: #5c6152;
+	--border: #d5d0bf;
+	--mark: #59693f;
+	--ring: #59693f;
+	--danger: #a33a2a;
+	--on-danger: #ffffff;
+	--shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 8px 24px -4px rgb(0 0 0 / 0.18);
+}
+@media (prefers-color-scheme: dark) {
+	.bar {
+		--bg: #2b2e26;
+		--fg: #f6f3e8;
+		--muted: #cdcfbf;
+		--border: #464a3d;
+		--mark: #a9bb8a;
+		--ring: #a9bb8a;
+		--danger: #e58a76;
+		--on-danger: #000000;
+		--shadow: 0 8px 24px -4px rgb(0 0 0 / 0.45);
+	}
+}
+.bar, .bar * { box-sizing: border-box; }
+.bar { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1; pointer-events: auto;
+	display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 8px 0 16px;
+	width: max-content; max-width: min(560px, calc(100vw - 32px));
+	background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow);
+	font: 500 14px/20px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif; }
+.mark { flex: none; display: block; width: 20px; height: 20px; color: var(--mark); }
+.mark svg { display: block; width: 20px; height: 20px; }
+.text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.text b { font-weight: 600; }
+.task { font-weight: 400; color: var(--muted); }
+button { all: unset; box-sizing: border-box; flex: none; display: inline-flex; align-items: center; justify-content: center;
+	height: 32px; padding: 0 12px; border-radius: 8px; font: inherit; font-size: 12px; line-height: 16px;
+	background: var(--danger); color: var(--on-danger); cursor: pointer; }
+button:hover { background: color-mix(in srgb, var(--danger) 90%, transparent); }
+button:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent); }
+@media (prefers-reduced-motion: reduce) { .fx, .fx * { animation: none !important; } .particles { display: none; } }
+`;
+
 /**
  * This code gets stringified and injected into the page context.
  * Creates a full-viewport overlay with shimmer effect and abort button.
@@ -10,22 +60,18 @@ export function createOverlayScript(taskName: string): string {
 		return;
 	}
 
-	// Create overlay container
+	// A tag no site styles, with its style reset inline, holding everything in its own shadow root: a site's CSS (button
+	// padding, line-height, fonts) never reaches the bar.
+	const host = document.createElement('polycarp-repl-overlay');
+	host.id = 'tabkyra-repl-overlay';
+	host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;';
+	const root = host.attachShadow({ mode: 'open' });
 	const overlay = document.createElement('div');
-	overlay.id = 'tabkyra-repl-overlay';
-	overlay.style.cssText = \`
-		position: fixed;
-		top: 0;
-		left: 0;
-		width: 100vw;
-		height: 100vh;
-		z-index: 2147483647;
-		pointer-events: none;
-		font-family: system-ui, -apple-system, sans-serif;
-	\`;
+	overlay.style.cssText = 'position: absolute; inset: 0; pointer-events: none;';
 
 	// Create shimmer backdrop with multiple layers
 	const shimmerContainer = document.createElement('div');
+	shimmerContainer.className = 'fx';
 	shimmerContainer.style.cssText = \`
 		position: absolute;
 		top: 0;
@@ -130,6 +176,7 @@ export function createOverlayScript(taskName: string): string {
 
 	// Create particle system
 	const particleContainer = document.createElement('div');
+	particleContainer.className = 'particles';
 	particleContainer.style.cssText = \`
 		position: absolute;
 		top: 0;
@@ -188,76 +235,26 @@ export function createOverlayScript(taskName: string): string {
 
 	shimmerContainer.appendChild(particleContainer);
 
-	// Create toolbar
+	// The bar: Polycarp's mark and name with the task on one line, clipped (the whole task on hover), and Stop.
 	const toolbar = document.createElement('div');
-	toolbar.style.cssText = \`
-		position: absolute;
-		bottom: 24px;
-		left: 50%;
-		transform: translateX(-50%);
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 12px 16px;
-		background: rgba(0, 0, 0, 0.9);
-		backdrop-filter: blur(8px);
-		border-radius: 8px;
-		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-		pointer-events: auto;
-		z-index: 1;
-	\`;
-
-	// Task name label
-	const label = document.createElement('span');
-	label.textContent = '${taskName.replace(/'/g, "\\'")}';
-	label.style.cssText = \`
-		color: rgba(255, 255, 255, 0.9);
-		font-size: 14px;
-		font-weight: 500;
-	\`;
-
-	// Abort button
-	const abortBtn = document.createElement('button');
-	abortBtn.textContent = 'Stop';
-	abortBtn.style.cssText = \`
-		padding: 6px 12px;
-		background: rgba(239, 68, 68, 0.9);
-		color: white;
-		border: none;
-		border-radius: 4px;
-		font-size: 13px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: background 0.2s;
-	\`;
-	abortBtn.onmouseover = () => {
-		abortBtn.style.background = 'rgba(220, 38, 38, 1)';
-	};
-	abortBtn.onmouseout = () => {
-		abortBtn.style.background = 'rgba(239, 68, 68, 0.9)';
-	};
-	abortBtn.onclick = async () => {
-		console.log('[Overlay] Stop button clicked');
-		console.log('[Overlay] chrome.runtime:', chrome.runtime);
-		console.log('[Overlay] chrome.runtime.sendMessage:', chrome.runtime.sendMessage);
-		console.log('[Overlay] chrome.runtime.id:', chrome.runtime.id);
-
-		// Send message BEFORE removing overlay
+	toolbar.className = 'bar';
+	toolbar.innerHTML = '<span class="mark" aria-hidden="true">' + ${JSON.stringify(POLYCARP_MARK)} +
+		'</span><span class="text" role="status"><b>Polycarp</b><span class="task"></span></span>' +
+		'<button type="button" aria-label="Stop the script Polycarp is running">Stop</button>';
+	const task = ${JSON.stringify(taskName)};
+	toolbar.querySelector('.task').textContent = ' \u00b7 ' + task;
+	toolbar.querySelector('.text').title = task;
+	const abortBtn = toolbar.querySelector('button');
+	abortBtn.onclick = async (event) => {
+		// Only a person's click stops the script: the page can't press it for them.
+		if (!event.isTrusted) return;
 		try {
-			console.log('[Overlay] Calling sendMessage...');
-			const response = await chrome.runtime.sendMessage({ type: 'abort-repl' });
-			console.log('[Overlay] Got response:', response);
+			await chrome.runtime.sendMessage({ type: 'abort-repl' });
 		} catch (error) {
 			console.error('[Overlay] sendMessage failed:', error);
 		}
-
-		// Remove overlay after message sent
-		overlay.remove();
+		host.remove();
 	};
-
-	// Assemble toolbar
-	toolbar.appendChild(label);
-	toolbar.appendChild(abortBtn);
 
 	// Assemble overlay
 	overlay.appendChild(shimmerContainer);
@@ -265,7 +262,7 @@ export function createOverlayScript(taskName: string): string {
 
 	// Add CSS animations
 	const style = document.createElement('style');
-	style.textContent = \`
+	style.textContent = ${JSON.stringify(BAR_CSS)} + \`
 		@keyframes tabkyra-shimmer-radial-1 {
 			0%, 100% {
 				opacity: 0.8;
@@ -329,10 +326,9 @@ export function createOverlayScript(taskName: string): string {
 			}
 		}
 	\`;
-	document.head.appendChild(style);
-
-	// Inject into page
-	document.body.appendChild(overlay);
+	root.appendChild(style);
+	root.appendChild(overlay);
+	(document.body || document.documentElement).appendChild(host);
 })();
 `;
 }

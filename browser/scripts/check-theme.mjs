@@ -42,7 +42,7 @@ export const ALLOWLIST = {
 		why: "Chart series colors: categorical data colors that must stay distinct from each other.",
 	},
 	"src/tools/repl/overlay-content.ts": {
-		max: 26,
+		max: 19,
 		why: "Overlay injected into the web page being driven, outside the panel's document, where no panel token exists.",
 	},
 	"src/tools/ask-user-which-element.ts": {
