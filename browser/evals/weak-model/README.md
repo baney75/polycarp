@@ -14,9 +14,9 @@ the function that undoes it, which runs after scoring and on every way out. A co
 folder of our own inside Polycarp's agent handoff folder, and is scored by reading the agent workspace back through the
 helper in connector mode (`hands.mjs`). With no task files, the runner says so and exits.
 
-- `tasks/browser.mjs`: 16 browser tasks on local fixtures: signup validation, a contact form, a wizard, table filter,
+- `tasks/browser.mjs`: 17 browser tasks on local fixtures: signup validation, a contact form, a wizard, table filter,
   a booking lookup, modal confirm, native dialogs, select and date, a form in an iframe, a long article, PDF search, pagination, a new
-  tab, a late element, a list that re-renders, autocomplete.
+  tab, a late element, a list that re-renders, a click whose only effect is a request (silent-approve), autocomplete.
 - `tasks/computer.mjs`: 8 Mac tasks in Calculator, TextEdit and Preview, scored from the window and, for a save task,
   the saved file.
 - `tasks/stub.mjs`: 10 computer tasks on the stub helper (`stub/`): a calculator (Tally), a plain-text editor (Jotter:

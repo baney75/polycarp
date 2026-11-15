@@ -231,10 +231,41 @@
 				"stub-settings-two-panes"
 			],
 			"recorded": "After click by text, the instructions and find's pointer to it. 3.3 and 6.3 calls a run."
+		},
+		"r8-haiku": {
+			"passed": 95,
+			"total": 95,
+			"model": "haiku",
+			"profile": "full",
+			"tools": {
+				"browser": 48
+			},
+			"tasks": [
+				"autocomplete",
+				"booking-lookup",
+				"contact-form",
+				"dialog-no-repeat",
+				"dialog-preset",
+				"iframe-form",
+				"late-element",
+				"long-article",
+				"modal-confirm",
+				"native-dialog",
+				"new-tab",
+				"pagination",
+				"pdf-search",
+				"rerender-list",
+				"select-date",
+				"signup-validation",
+				"silent-approve",
+				"table-filter",
+				"wizard"
+			],
+			"recorded": "5 trials of every browser task on main 2674bd6d, --model haiku (the sign-in's alias, which ran claude-haiku-5-5), with silent-approve added."
 		}
 	},
 	"latest": {
-		"haiku-full": "r6-haiku",
+		"haiku-full": "r8-haiku",
 		"haiku-small": "r6-small",
 		"haiku-stub-full": "r7-stub-haiku",
 		"haiku-stub-small": "r7-stub-small",
@@ -269,6 +300,11 @@
 		"s2-settings-opus": {
 			"stub-settings-appearance": 2,
 			"stub-settings-two-panes": 3
+		},
+		"r8-haiku": {
+			"dialog-no-repeat": 10.2,
+			"dialog-preset": 10.4,
+			"rerender-list": 12.0
 		}
 	}
 }
