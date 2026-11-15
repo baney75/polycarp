@@ -349,6 +349,11 @@ final class ChildWindowSourceTests: XCTestCase {
     /// The hands verb `move` must not take over the older `agent move <id | words>` session op.
     func testTheCLIKeepsTheSessionMove() throws {
         let main = try HandsSourceTests.code("Sources/baneyspaces-cli/main.swift")
-        XCTAssertTrue(main.contains("&& !(rest.first == \"move\" && !rest.contains(\"--window\")):"))
+        XCTAssertTrue(main.contains("&& !(rest.first == \"move\" && !HandsTools.movesWindow(rest)):"))
+        // What that condition sends where: without a --window flag, `agent move` stays the session op.
+        for words in [["move", "4211"], ["move", "notes", "window"], ["move", "--json", "notes"]] {
+            XCTAssertFalse(HandsTools.movesWindow(words), "\(words) reaches the session op")
+        }
+        XCTAssertTrue(HandsTools.movesWindow(["move", "--window", "4211"]))
     }
 }

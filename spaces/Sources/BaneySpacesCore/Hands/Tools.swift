@@ -53,7 +53,7 @@ public enum HandsTools {
 
     static let base: [HandsTool] = [
         HandsTool(verb: "windows", summary: "List the windows an agent may use now: those on the agent workspace and those of lent apps, with their ids, plus the dialogs, alerts, sheets and palettes those apps raised (kind, parent, waiting: true when the app is blocked until it is answered). A dialog you may not use is listed with usable: false and the rule that refused it. A window of an app Donovan is using carries in_use: true and in_use_note; reads on it work now, and an action on it waits.", params: [], acts: false),
-        HandsTool(verb: "workspaces", summary: "Read only. List the workspaces (number, name, shown or not, which one is the agent workspace) and where each window you may use is. Use it before `move` or `arrange`, or to see whether Donovan is looking at the agent workspace (agent_workspace_shown). Agents never switch, create, rename or delete workspaces.", params: [], acts: false),
+        HandsTool(verb: "workspaces", summary: "Read only. List the workspaces (number, shown or not, which one is the agent workspace) and where each window you may use is. Use it before `move` or `arrange`, or to see whether Donovan is looking at the agent workspace (agent_workspace_shown). Agents never switch, create, rename or delete workspaces.", params: [], acts: false),
         HandsTool(verb: "snapshot", summary: "Read one window, one row per element: [N] role \"name\" =value (states), indented under its parent. Act on row N with ref \"N\" (this snapshot) or the full ref the header shows. After acting, read again with since: \"latest\" to see only what changed. Example: {\"window\":4211,\"query\":\"Save\"}", params: [
             HandsParam("app", .string, "App name or bundle id. With several windows on the agent workspace the newest is read; pass window to choose."),
             HandsParam("window", .integer, "Window id from `windows`, `open` or a previous snapshot."),
@@ -158,6 +158,11 @@ public enum HandsTools {
             HandsParam("window", .integer, "Window id that your `open` returned.", required: true),
         ], acts: true),
     ]
+
+    /// `agent move --window N` (or `--window=N`) is the hands verb; `agent move <id | words>` is the session's own op.
+    public static func movesWindow(_ rest: [String]) -> Bool {
+        rest.first == "move" && rest.dropFirst().contains { $0 == "--window" || $0.hasPrefix("--window=") }
+    }
 
     public static func tool(verb: String) -> HandsTool? {
         let v = verb.replacingOccurrences(of: "_", with: "-")

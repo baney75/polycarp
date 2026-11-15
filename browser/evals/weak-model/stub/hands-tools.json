@@ -20,7 +20,7 @@
 				"openWorldHint": false,
 				"readOnlyHint": true
 			},
-			"description": "Read only. List the workspaces (number, name, shown or not, which one is the agent workspace) and where each window you may use is. Use it before `move` or `arrange`, or to see whether Donovan is looking at the agent workspace (agent_workspace_shown). Agents never switch, create, rename or delete workspaces.",
+			"description": "Read only. List the workspaces (number, shown or not, which one is the agent workspace) and where each window you may use is. Use it before `move` or `arrange`, or to see whether Donovan is looking at the agent workspace (agent_workspace_shown). Agents never switch, create, rename or delete workspaces.",
 			"inputSchema": {
 				"additionalProperties": false,
 				"properties": {},
