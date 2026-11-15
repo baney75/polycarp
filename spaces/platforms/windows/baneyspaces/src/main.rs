@@ -8,6 +8,7 @@
 mod apps;
 mod cmdline;
 mod engine;
+mod focus;
 mod hidden;
 mod ipc;
 mod keys;
