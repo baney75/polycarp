@@ -209,7 +209,7 @@ case "agent" where HandsTools.userOnly.contains(rest.first ?? ""):
 // `--on HOST agent open …` is the session engine's own op (the hands run on this Mac only): it falls through to the arm below.
 // `agent move <id | words>` stays the session op; `agent move --window N` is the hands verb.
 case "agent" where HandsTools.tool(verb: rest.first ?? "") != nil && !(remoteHost != nil && rest.first == "open")
-    && !(rest.first == "move" && !rest.contains("--window")):
+    && !(rest.first == "move" && !HandsTools.movesWindow(rest)):
     HandsCLI.run(rest)
 
 case "agent":

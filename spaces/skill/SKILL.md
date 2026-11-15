@@ -92,7 +92,8 @@ Scope rules, enforced by the app, not by your good behavior:
   `outside_agent_workspace` error says so). Running `baneyspaces agent lend <app>` only shows him a sheet; nothing lends
   until he clicks Lend, and one asked for by an agent he didn't expect is a nuisance, so ask in words first. A lend names that
   process and its windows as they were then (actions on it wait while he is using it, as above), and ends after 30 minutes.
-  Prefer `agent open`, which needs nobody's permission. `agent move` only moves windows of apps started for an agent.
+  Prefer `agent open`, which needs nobody's permission. `agent move <id | words>` only moves windows of apps started for an
+  agent; `agent move --window N` is the one that brings a lent window over (below).
 - `agent open` is how you start work: the app and its windows land on the agent workspace and he stays
   where he is. Put files you want it to open in `~/Library/Application Support/BaneySpaces/hands/handoff/`; no other path is accepted,
   and URLs wait for the agent browser profiles. Only TextEdit and Preview (each needs a handoff file) and Calculator start; every other
