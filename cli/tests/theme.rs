@@ -3777,7 +3777,7 @@ fn undo_blocked_by_an_unreadable_theme_names_force() {
     b.ok(&["undo", "--force"]);
 }
 
-const OFF_TEXT: &str = "The theme files are gone from current/. Apps that read them use their own look when they next check.";
+const OFF_TEXT: &str = "The theme files are gone from current/. Apps that read them are expected to use their own look when they next check.";
 
 /// "removed" is said only for what this run removed.
 #[test]
@@ -4177,4 +4177,60 @@ fn validate_from_standard_input_names_the_theme_and_skips_the_file_name_check() 
     assert!(errors.iter().all(|e| e["path"] != "name"), "{v}");
     assert!(errors.iter().any(|e| e["path"] == "light.muted"), "{v}");
     assert!(!b.cfg().join("themes/drop.toml").exists());
+}
+
+/// #19 first-F1 and second-S1: off with files still in current/ never says they are gone, and a
+/// `current` that is a plain file holds none.
+#[test]
+fn off_says_files_are_gone_only_when_none_remain() {
+    let b = Box::new();
+    let toml = b.ok(&["export", "toml", "calm"]);
+    let file = b.cfg().join("calm.toml");
+    fs::create_dir_all(b.cfg()).unwrap();
+    fs::write(&file, toml).unwrap();
+    b.ok(&[
+        "apply",
+        file.to_str().unwrap(),
+        "--name",
+        "mine",
+        "--no-activate",
+    ]);
+    b.ok(&["off"]);
+    fs::create_dir_all(b.cfg().join("current")).unwrap();
+    fs::write(b.cfg().join("current/theme.json"), "{}").unwrap();
+    let again = [
+        "apply",
+        file.to_str().unwrap(),
+        "--name",
+        "mine",
+        "--no-activate",
+    ];
+    let (c, v) = b.jrun(&again);
+    assert_eq!(c, 0, "{v}");
+    assert_eq!(v["data"]["remaining"].as_array().unwrap().len(), 1, "{v}");
+    assert!(!v["data"]["note"].as_str().unwrap().contains("gone"), "{v}");
+
+    fs::remove_dir_all(b.cfg().join("current")).unwrap();
+    fs::write(b.cfg().join("current"), "not a folder").unwrap();
+    let (c, v) = b.jrun(&again);
+    assert_eq!(c, 0, "{v}");
+    assert_eq!(v["data"]["remaining"], serde_json::json!([]), "{v}");
+    assert_eq!(v["data"]["note"], OFF_TEXT, "{v}");
+    let (c, v) = b.jrun(&["off"]);
+    assert_eq!(
+        c, 0,
+        "nothing can be in a plain file, so off has nothing to remove: {v}"
+    );
+}
+
+/// #19 first-F5: force saves a .bak copy only of a file that is still there.
+#[test]
+fn the_changed_since_hint_says_the_copy_needs_the_file() {
+    let b = Box::new();
+    b.ok(&["create", "mine", "--extends", "calm"]);
+    fs::write(b.cfg().join("themes/mine.toml"), "# edited\n").unwrap();
+    let (_, v) = b.jrun(&["undo"]);
+    assert_eq!(v["error"]["code"], "changed_since", "{v}");
+    let hint = v["error"]["suggestion"].as_str().unwrap();
+    assert!(hint.contains("if the file is still there"), "{hint}");
 }
