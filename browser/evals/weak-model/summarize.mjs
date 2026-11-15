@@ -65,7 +65,10 @@ export function summarize(label, meta = {}, runs = loadRuns(label, meta.root), r
 		.map(([k, v]) => `\t${JSON.stringify(k)}: ${JSON.stringify(v)},`);
 	const body = tasks.map(([id, t], i) => `\t\t${JSON.stringify(id)}: ${JSON.stringify(t)}${i < tasks.length - 1 ? "," : ""}`);
 	writeFileSync(join(dir, "summary.json"), `{\n${lines.join("\n")}\n\t"tasks": {\n${body.join("\n")}\n\t}\n}\n`);
-	writeFileSync(join(dir, "runs.jsonl"), `${runs.map((r) => JSON.stringify(r)).join("\n")}\n`);
+	// A call's result text is committed only where the checks read it (errors, skill_match); the local record keeps all of
+	// it. Every result kept made one round's runs.jsonl 432 KiB, over the reviewers' 256 KiB cap.
+	const slim = (c) => (c.error || c.tool === "skill_match" ? c : { ...c, result: undefined });
+	writeFileSync(join(dir, "runs.jsonl"), `${runs.map((r) => JSON.stringify({ ...r, calls: r.calls.map(slim) })).join("\n")}\n`);
 	return { ...head, tasks: Object.fromEntries(tasks) };
 }
 
