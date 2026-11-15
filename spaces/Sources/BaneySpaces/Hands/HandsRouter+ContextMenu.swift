@@ -97,16 +97,26 @@ extension HandsRouter {
                 return .failure(cancel() ? e : ContextMenu.stillOpen(w.app))
             case .success(let at):
                 if let e = beforePress() { return .failure(cancel() ? e : ContextMenu.stillOpen(w.app)) }
-                guard pressItem(w, title: read.items[at].title, check: check, cancelled: cancelled) else {
-                    return .failure(cancel() ? ContextMenu.notPressed(w.app, item: item) : ContextMenu.stillOpen(w.app))
+                // The menu bar's watch from the press on: a panel or an outside window the item raised is undone in this
+                // transaction and fails the call (256 r1 second-S2). The open menu is in `windows`, so it is never new.
+                let title = read.items[at].title, windows = MenuAX.ids(), agent = onMain { host.agentWorkspace() }, oldPanels = MenuAX.panelElements(w.pid)
+                let watch = MenuWatch<MenuPath.Seen>()
+                watch.start(menuWatchStep(w, before: windows, agent: agent, oldPanels: oldPanels))
+                func watched(_ answer: Result<[String: JSONValue], HandsError>) -> Result<[String: JSONValue], HandsError> {
+                    ContextMenu.watched(watch.finish(), answer, item: title, window: Int(w.id)) { looks in
+                        withoutActuallyEscaping(cancelled) { c in undo(MenuPath.Seen.merged(looks), w, path: "context menu > \(title)", oldPanels: oldPanels, inline: c) }
+                    }
+                }
+                guard pressItem(w, title: title, check: check, cancelled: cancelled) else {
+                    return watched(.failure(cancel() ? ContextMenu.notPressed(w.app, item: item) : ContextMenu.stillOpen(w.app)))
                 }
                 // Pressed is pressed, whatever the menu does next, so it is never retried. Escape only while the menu is
                 // still listed after the wait (210 r1 second-S1).
-                data["pressed"] = .string(read.items[at].title)
+                data["pressed"] = .string(title)
                 guard ContextMenuAX.gone(w.pid, before: before, within: 0.5) || cancel() else {
-                    return .failure(ContextMenu.pressedOpen(w.app, item: read.items[at].title))
+                    return watched(.failure(ContextMenu.pressedOpen(w.app, item: title)))
                 }
-                return .success(data)
+                return watched(.success(data))
             }
         }
     }
