@@ -56,7 +56,11 @@ pub struct Facts {
     pub install: Install,
     /// The clean copy of origin/main that is built, under the cache folder.
     pub worktree: PathBuf,
+    /// The clean copy is there and git takes it as a working tree.
     pub worktree_exists: bool,
+    /// A folder is there whose `.git` git no longer takes (the checkout was cloned again at its path): it is removed
+    /// and made again, since a reset there fails on every run.
+    pub worktree_broken: bool,
     pub home: PathBuf,
     /// The `polycarp` that is running this update. It runs the steps up to the install.
     pub polycarp: PathBuf,
@@ -359,6 +363,13 @@ fn source_steps(
             &["git", "-C", &wt, "clean", "-fd"],
         ));
     } else {
+        if f.worktree_broken {
+            steps.push(Step::new(
+                Role::Git,
+                "Remove the clean copy git no longer takes, to make it again",
+                &["rm", "-rf", &wt],
+            ));
+        }
         steps.push(Step::new(
             Role::Git,
             "Forget clean copies that were deleted",
@@ -557,6 +568,15 @@ fn linux_steps(f: &Facts, steps: &mut Vec<Step>, notes: &mut Vec<String>) {
     let wt = &f.worktree;
     let spaces = wt.join("spaces");
     let browser = wt.join("browser");
+    // The polycarp command is compiled here, with the other builds: its install step below then only copies it.
+    steps.push(
+        Step::new(
+            Role::Build,
+            "Build the polycarp command",
+            &["cargo", "build", "--release", "--locked"],
+        )
+        .in_dir(&wt.join("cli")),
+    );
     if f.hyprland {
         steps.push(
             Step::new(
@@ -650,13 +670,15 @@ fn linux_steps(f: &Facts, steps: &mut Vec<Step>, notes: &mut Vec<String>) {
     steps.push(
         Step::new(
             Role::Install,
-            "Build the polycarp command and install it in ~/.local/bin",
+            "Install the polycarp command in ~/.local/bin",
             &[
                 "cargo",
                 "install",
                 "--locked",
                 "--path",
                 "cli",
+                "--target-dir",
+                "cli/target",
                 "--root",
                 &s(&f.home.join(".local")),
             ],
@@ -1033,6 +1055,12 @@ pub fn worktree_for(cache: &Path, checkout: &Path) -> PathBuf {
     cache.join(format!("source-{:08x}", hash & 0xffff_ffff))
 }
 
+/// The clean copy is there and git takes it as a working tree (its `.git` still points at a checkout that has it).
+fn clean_copy_works(wt: &Path) -> bool {
+    wt.join(".git").exists()
+        && git_line(wt, &["rev-parse", "--is-inside-work-tree"]).as_deref() == Some("true")
+}
+
 fn git_line(dir: &Path, args: &[&str]) -> Option<String> {
     let git = on_path("git", std::env::var_os("PATH").as_ref())?;
     let out = Command::new(git)
@@ -1204,6 +1232,8 @@ pub fn standing(parts: &[Part], needs: &[&str], target: &str) -> Standing {
     if !version::missing(parts, needs).is_empty() {
         return Standing::Behind;
     }
+    let judged = judged(parts, needs);
+    let parts = judged.as_slice();
     if version::is_current(parts, target) {
         return Standing::Current;
     }
@@ -1219,6 +1249,31 @@ pub fn standing(parts: &[Part], needs: &[&str], target: &str) -> Standing {
         return Standing::ReloadPending(waiting);
     }
     Standing::Behind
+}
+
+/// The parts an update installs on some device.
+const UPDATED: [&str; 4] = [
+    "polycarp command",
+    "app",
+    "spaces command",
+    "browser helper",
+];
+
+/// The parts `standing` compares: all but one of `UPDATED` this device's update does not install (a `baneyspaces`
+/// from an earlier build on a box without Hyprland), and the extensions only where it installs the browser helper.
+/// The update never touches those, so they could never catch up and every update would end in a failed check.
+fn judged(parts: &[Part], needs: &[&str]) -> Vec<Part> {
+    if needs.is_empty() {
+        return parts.to_vec();
+    }
+    parts
+        .iter()
+        .filter(|p| match p.name.as_str() {
+            n if n.starts_with("extension") => needs.contains(&"browser helper"),
+            n => !UPDATED.contains(&n) || needs.contains(&n),
+        })
+        .cloned()
+        .collect()
 }
 
 /// What the browser helper's `reload --if-idle` exits with when an agent is working in the browser.
@@ -1578,6 +1633,15 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
     if let Some(line) = extensions_not_compared(&parts) {
         println!("{line}");
     }
+    let kept = judged(&parts, &needs);
+    let left: Vec<&str> = parts
+        .iter()
+        .filter(|p| !kept.contains(p) && !matches!(p.found, version::Found::Absent(_)))
+        .map(|p| p.name.as_str())
+        .collect();
+    if !left.is_empty() {
+        println!("note: this update does not install {} here, so it was not compared. Remove it if you no longer use it.", left.join(", "));
+    }
     let helper = parts.iter().find(|p| p.name == "browser helper");
     if let Some(version::Found::Installed { path: Some(p), .. }) = helper.map(|p| &p.found) {
         println!("browser helper: `polycarp browser` runs {}", p.display());
@@ -1704,9 +1768,11 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
     };
     let path = std::env::var_os("PATH");
     let installed = home.join(".local/bin/polycarp");
+    let worktree_works = clean_copy_works(&worktree);
     let facts = Facts {
         platform: platform(),
-        worktree_exists: worktree.join(".git").exists(),
+        worktree_exists: worktree_works,
+        worktree_broken: worktree.exists() && !worktree_works,
         worktree,
         // This binary runs the steps up to the install: the installed one may be older and not know
         // them. After the install, the installed one takes over.
@@ -1825,6 +1891,7 @@ mod tests {
             install,
             worktree: PathBuf::from(WORKTREE),
             worktree_exists: false,
+            worktree_broken: false,
             home: PathBuf::from(HOME),
             polycarp: PathBuf::from(BOOT),
             installed: PathBuf::from(INSTALLED),
@@ -1952,7 +2019,8 @@ mod tests {
             commands(&steps)[3..],
             [
                 format!("{BOOT} update --is-current {WORKTREE} HEAD --needs {needs}"),
-                // Every build first.
+                // Every build first, the polycarp command's too.
+                "cargo build --release --locked".to_string(),
                 "cargo build --release --locked -p baneyspaces-linux".to_string(),
                 format!("{WORKTREE}/spaces/platforms/linux/scripts/build-engine.sh"),
                 format!("{WORKTREE}/browser/scripts/setup-siblings.sh"),
@@ -1963,21 +2031,21 @@ mod tests {
                 format!("{BOOT} update --place-browser {WORKTREE}/browser {BROWSER_HOME} /home/u/.local/bin/polycarp-browser"),
                 format!("node {BROWSER_HOME}/cli/dist/index.js setup --yes --no-wait"),
                 format!("{WORKTREE}/spaces/platforms/linux/omarchy/install.sh"),
-                "cargo install --locked --path cli --root /home/u/.local".to_string(),
+                "cargo install --locked --path cli --target-dir cli/target --root /home/u/.local".to_string(),
                 format!("{INSTALLED} update --finish --source {CHECKOUT}"),
             ]
         );
         // The helper build, then the extension build, which must not edit the tracked manifest.
         assert_eq!(
-            steps[8].cwd.as_deref(),
+            steps[9].cwd.as_deref(),
             Some(Path::new(WORKTREE).join("browser/cli").as_path())
         );
         assert_eq!(
-            steps[9].cwd.as_deref(),
+            steps[10].cwd.as_deref(),
             Some(Path::new(WORKTREE).join("browser").as_path())
         );
         assert_eq!(
-            steps[9].env,
+            steps[10].env,
             vec![("TABKYRA_NO_BUMP".to_string(), "1".to_string())]
         );
         let first_install = steps
@@ -2035,8 +2103,8 @@ mod tests {
         let cmds = commands(&steps);
         assert_eq!(
             cmds.len(),
-            6,
-            "fetch, two for the copy, the gate, the command, the handover: {cmds:?}"
+            7,
+            "fetch, two for the copy, the gate, the command's build and install, the handover: {cmds:?}"
         );
         assert!(cmds[3].ends_with("--needs polycarp command"), "{}", cmds[3]);
         assert!(
@@ -2193,7 +2261,7 @@ mod tests {
         f.worktree = wt.clone();
         let builds: Vec<Step> = steps_of(plan(&f, YES))
             .into_iter()
-            .filter(|st| st.role == Role::Build)
+            .filter(|st| st.role == Role::Build && st.argv[0] != "cargo")
             .collect();
         assert_eq!(builds.len(), 3, "{:?}", commands(&builds));
         let run = |steps: &[Step]| {
@@ -3567,5 +3635,95 @@ mod tests {
         assert!(parse_check(&args(&["--needs"])).is_err());
         assert!(parse_check(&args(&["--wait", "soon"])).is_err());
         assert!(parse_check(&args(&["--force"])).is_err());
+    }
+
+    #[test]
+    fn a_clean_copy_git_no_longer_takes_is_removed_and_made_again_not_reset() {
+        // The checkout was cloned again at its path: the copy's `.git` file points at a worktree record that is gone.
+        let root =
+            std::env::temp_dir().join(format!("polycarp-broken-copy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join(".git"),
+            "gitdir: /nowhere/.git/worktrees/source-1\n",
+        )
+        .unwrap();
+        assert!(!clean_copy_works(&root));
+        let _ = fs::remove_dir_all(&root);
+        let mut f = facts(Platform::Linux, source(Some(ORIGIN), false));
+        f.worktree_broken = true;
+        let cmds = commands(&steps_of(plan(&f, YES)));
+        let rm = cmds
+            .iter()
+            .position(|c| *c == format!("rm -rf {WORKTREE}"))
+            .expect("removed");
+        let add = cmds
+            .iter()
+            .position(|c| c.contains("worktree add"))
+            .expect("made again");
+        assert!(rm < add, "{cmds:?}");
+        assert!(!cmds.iter().any(|c| c.contains("reset --hard")), "{cmds:?}");
+    }
+
+    #[test]
+    fn the_polycarp_command_is_compiled_before_anything_is_installed() {
+        for (hyprland, node) in [(true, true), (false, false)] {
+            let mut f = facts(Platform::Linux, source(Some(ORIGIN), false));
+            (f.hyprland, f.node) = (hyprland, node);
+            let steps = steps_of(plan(&f, YES));
+            let first_install = steps
+                .iter()
+                .position(|st| st.role == Role::Install)
+                .unwrap();
+            let build = steps
+                .iter()
+                .position(|st| {
+                    st.role == Role::Build
+                        && st.argv.len() > 1
+                        && st.argv[..2] == ["cargo", "build"]
+                        && st.cwd.as_deref() == Some(Path::new(WORKTREE).join("cli").as_path())
+                })
+                .expect("the cli is built as a build step");
+            assert!(build < first_install);
+            let install = steps
+                .iter()
+                .find(|st| st.argv.len() > 1 && st.argv[..2] == ["cargo", "install"])
+                .unwrap();
+            assert!(
+                install
+                    .argv
+                    .windows(2)
+                    .any(|w| w == ["--target-dir", "cli/target"]),
+                "{:?}",
+                install.argv
+            );
+        }
+    }
+
+    #[test]
+    fn a_leftover_part_this_device_does_not_update_never_holds_the_update_back() {
+        // No Hyprland here, so no spaces command is installed, but one from an earlier build is still on PATH.
+        let needs = ["polycarp command", "browser helper"];
+        let parts = vec![
+            at("polycarp command", T),
+            at("browser helper", T),
+            at("extension (Helium)", T),
+            at("spaces command", OLD),
+        ];
+        assert_eq!(standing(&parts, &needs, T), Standing::Current);
+        // No Node here: an old helper and its extension are not judged either.
+        let parts = vec![
+            at("polycarp command", T),
+            at("browser helper", OLD),
+            at("extension (Helium)", OLD),
+        ];
+        assert_eq!(
+            standing(&parts, &["polycarp command"], T),
+            Standing::Current
+        );
+        // A part the update does install still counts.
+        let parts = vec![at("polycarp command", T), at("browser helper", OLD)];
+        assert_eq!(standing(&parts, &needs, T), Standing::Behind);
     }
 }
