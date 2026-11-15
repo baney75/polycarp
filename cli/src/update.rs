@@ -1653,6 +1653,13 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
         }
         Standing::ReloadPending(waiting) => {
             println!("{}", reload_pending_line(at, &waiting));
+            // Linux: a browser loading the extension from an old folder would stay "reload pending" for good.
+            if let Some(home) = device.home.as_ref().filter(|_| cfg!(target_os = "linux")) {
+                let want = home.join(".local/share/polycarp/browser/source/dist-chrome");
+                for (browser, from) in crate::browsers::loaded_elsewhere(home, &want) {
+                    println!("{browser} loads the extension from {}, so a reload runs that folder's build again. Load {} instead: `polycarp browser setup` shows how.", from.display(), want.display());
+                }
+            }
             0
         }
         Standing::Behind => {
