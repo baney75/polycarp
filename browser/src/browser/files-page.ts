@@ -209,6 +209,8 @@ export function linkOf(tabId: number, target: Target): Promise<{ url: string; do
 }
 
 const FETCHED = "__polycarpFetched";
+/** A fetched body nobody reads (the call that fetched it ran out of time) is dropped after this, not kept until unload. */
+export const FETCHED_KEEP_MS = 10 * 60 * 1000;
 
 export type FetchOutcome =
 	| { ok: true; bytes: number; mime: string; finalUrl: string; disposition: string }
@@ -254,7 +256,8 @@ export function fetchInPage(
 				}
 			} catch (e) { return { ok: false, error: "fetch", message: String(e && e.message || e) }; }
 			const store = (globalThis.${FETCHED} = globalThis.${FETCHED} || {});
-			store[${JSON.stringify(id)}] = new Blob(parts);
+			const blob = (store[${JSON.stringify(id)}] = new Blob(parts));
+			setTimeout(() => { if (store[${JSON.stringify(id)}] === blob) delete store[${JSON.stringify(id)}]; }, ${FETCHED_KEEP_MS});
 			return { ok: true, bytes, mime: res.headers.get("content-type") || "", finalUrl: res.url || ${JSON.stringify(url)}, disposition: res.headers.get("content-disposition") || "" };
 		})()`,
 		FETCH_WORLD_ID,

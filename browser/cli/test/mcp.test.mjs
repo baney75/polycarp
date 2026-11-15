@@ -1203,6 +1203,39 @@ test("files: a second agent in one project keeps its files apart from the first,
 	}
 });
 
+test("files: an agent whose first status ask fails uses no folder, so it can't see or remove another agent's files", async () => {
+	const fx = filesFixture("off");
+	// The first agent saved a file under the name every agent in this project asks for first.
+	const host = await filesHost("off");
+	const first = await filesClient(host, fx);
+	let asked;
+	try {
+		await first.connect();
+		host.serve = { body: Buffer.from("the first agent's"), name: "theirs.txt", mime: "text/plain" };
+		assert.equal(JSON.parse((await first.run({ action: "download", url: "https://files.test/theirs" })).text).name, "theirs.txt");
+		asked = host.asked;
+	} finally {
+		await first.client.close().catch(() => {});
+		host.close();
+	}
+	const folder = join(fx.config, "files", asked);
+	const [saved] = JSON.parse(readFileSync(join(folder, ".index.json"), "utf8")).files;
+	// A second agent starts while no browser is reachable: its status ask fails, so it never learns its own name.
+	const second = await filesClient(host, fx);
+	try {
+		await second.connect();
+		for (const args of [{ action: "list" }, { action: "read", id: saved.id }, { action: "remove", id: saved.id }]) {
+			const r = await second.run(args);
+			assert.equal(r.isError, true, `${args.action}: ${r.text}`);
+			assert.match(r.text, /isn't connected/, args.action);
+			assert.ok(!r.text.includes("theirs") && !r.text.includes(saved.id.slice(2)), `${args.action}: ${r.text}`);
+		}
+		assert.equal(readFileSync(join(folder, "theirs.txt"), "utf8"), "the first agent's");
+	} finally {
+		await second.client.close().catch(() => {});
+	}
+});
+
 test("files for a remote session: its own scope, never a path in, never a path out, only its own files", async () => {
 	const { build } = await import("esbuild");
 	const here = dirname(fileURLToPath(import.meta.url));
