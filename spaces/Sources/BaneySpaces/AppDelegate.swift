@@ -237,7 +237,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         keys.onArrow = { [weak self] forward in self?.switcher.arrow(forward: forward) }
         return keys
     }()
+    /// Whether the Settings window was built yet: its first open pays for that, timed apart (`showSettings`).
+    private var setupBuilt = false
     private lazy var setup: SetupWindowController = {
+        setupBuilt = true
         let c = SetupWindowController()
         c.model.onModifierChange = { [weak self] _ in self?.registerShortcuts() }
         c.model.onUninstall = { [weak self] in self?.uninstall() }
@@ -575,7 +578,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return false
     }
 
-    @objc private func showSetup() { setup.show() }
+    @objc private func showSetup() { showSettings() }
+
+    /// Shows Settings, timed in timing.log as `open settings-first=` (the window built too) or `open settings=` (#350).
+    private func showSettings() {
+        let clock = OpenClock(setupBuilt ? "settings" : "settings-first")
+        defer { clock.shown() }
+        setup.show()
+    }
     private let legacyWatcher = LegacyWatcher()
 
     // MARK: Voice (dictation, inside this process)
@@ -659,7 +669,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func showVoiceSettings() {
         setup.model.tab = PartsModel.shared.current.contains(.voice) ? .voice : .general
-        setup.show()
+        showSettings()
     }
     @objc private func showWelcome() { welcome.show() }
     private lazy var welcome: WelcomeWindowController = {
