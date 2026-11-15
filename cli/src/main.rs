@@ -814,11 +814,12 @@ fn doctor() -> i32 {
     // The same one line `polycarp version` ends with. It informs; it does not change the exit code.
     if printing {
         let parts = version::gather(&version_device(&ask_helper));
-        let _ = writeln!(
-            out,
-            "{}",
-            version::summary(&parts, &version::compare(&parts))
-        );
+        let verdict = version::compare(&parts);
+        let _ = writeln!(out, "{}", version::summary(&parts, &verdict));
+        // Under it, the one command that fixes each part that is missing or does not match.
+        for line in version::fixes(&parts, &verdict, version::Os::current()) {
+            let _ = writeln!(out, "{line}");
+        }
     }
     let _ = out.flush();
     if ok {

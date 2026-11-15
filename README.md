@@ -73,7 +73,12 @@ polycarp update     # bring every part to the newest commit, together
 `polycarp version` lists each part with its version, the commit it was built from and where it is, then says in one
 line whether every installed part comes from the same commit. A part that isn't installed is listed as such and is not
 an error. `--json` prints the same as JSON; `--check` exits 0 when they match and 1 when one differs, and names it.
-`polycarp doctor` ends with the same line.
+`polycarp doctor` ends with the same line, then one indented line for each part that is missing or does not match:
+what is wrong and the one command that fixes it on this platform (on Linux, `baneyspaces skill install` for the agent
+skill and the folder to load as an unpacked extension).
+
+The agent skill is compared with the copy the installed spaces command carries: on a Mac the one in the app, on Linux
+the one built into `baneyspaces`, read from its file without running it.
 
 Two things hold on a Mac and on Linux alike. The `polycarp` command in the list is the installed one
 (`~/.local/bin/polycarp`), whichever `polycarp` you ran, so a build in a checkout reports what is installed and not
