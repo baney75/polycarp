@@ -59,6 +59,19 @@ test("compiled-mode update says Polycarp does it and changes nothing", () => {
 	assert.doesNotMatch(out, /nothing to run/);
 });
 
+test("licenses.mjs --for extension lists the extension's packages, not the helper's", () => {
+	const root = mkdtempSync(join(tmpdir(), "ext-licences-"));
+	writeFileSync(join(root, "package-lock.json"), JSON.stringify({ packages: { "": {}, "node_modules/lit": { version: "3.2.0", license: "BSD-3-Clause" }, "node_modules/vitest": { version: "1.0.0", dev: true } } }));
+	mkdirSync(join(root, "node_modules", "lit"), { recursive: true });
+	writeFileSync(join(root, "node_modules", "lit", "LICENSE"), "lit licence text");
+	const out = join(root, "out.txt");
+	execFileSync(process.execPath, ["scripts/licenses.mjs", "--out", out, "--for", "extension", "--root", root], { cwd: cliRoot, stdio: "ignore" });
+	const text = readFileSync(out, "utf8");
+	assert.match(text, /^Polycarp's browser extension is Tabkyra/);
+	assert.match(text, /lit 3\.2\.0 \(BSD-3-Clause\)\n=+\nlit licence text/);
+	assert.doesNotMatch(text, /vitest/, "a dev package isn't shipped");
+});
+
 // ---- the real executable ----
 
 const bun = spawnSync("bun", ["--version"], { encoding: "utf8" });

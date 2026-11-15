@@ -1,24 +1,28 @@
 // Writes the licence texts of everything compiled into the helper: the production packages in package-lock.json (read from
 // node_modules, so run `npm ci` first) and the Bun runtime the executable is made from (the file passed as --bun, from Bun's
-// repository). Output is one text file for the app's licenses folder.
-//   node scripts/licenses.mjs --out <file> [--bun <Bun LICENSE.md>]
+// repository). Output is one text file for the app's licenses folder. With `--for extension --root <browser folder>`
+// it lists the extension's packages instead, from that folder's package-lock.json and node_modules.
+//   node scripts/licenses.mjs --out <file> [--bun <Bun LICENSE.md>] [--for extension --root <dir>]
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const arg = (name) => {
 	const i = process.argv.indexOf(name);
 	return i >= 0 ? process.argv[i + 1] : undefined;
 };
 const out = arg("--out");
 if (!out) {
-	console.error("usage: node scripts/licenses.mjs --out <file> [--bun <file>]");
+	console.error("usage: node scripts/licenses.mjs --out <file> [--bun <file>] [--for extension --root <dir>]");
 	process.exit(2);
 }
+const extension = arg("--for") === "extension";
+const root = arg("--root") ?? join(dirname(fileURLToPath(import.meta.url)), "..");
 const lock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8"));
 const parts = [
-	"Polycarp's browser helper (polycarp-browser) is Tabkyra (AGPL-3.0, browser/LICENSE in the source) compiled with the packages and the runtime below.",
+	extension
+		? "Polycarp's browser extension is Tabkyra (AGPL-3.0, browser/LICENSE in the source) bundled with the packages below."
+		: "Polycarp's browser helper (polycarp-browser) is Tabkyra (AGPL-3.0, browser/LICENSE in the source) compiled with the packages and the runtime below.",
 	"",
 ];
 const rows = Object.entries(lock.packages).filter(([path, info]) => path.startsWith("node_modules/") && !info.dev && !info.optional && !info.peer);

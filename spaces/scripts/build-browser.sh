@@ -38,8 +38,9 @@ for f in manifest.json background.js sidepanel.js sidepanel.html app.css; do
   [ -s "$OUT/extension/$f" ] || { echo "build-browser: the extension build has no $f" >&2; exit 1; }
 done
 
-# Licences: the packages in the bundle, Bun, and Tabkyra's own.
+# Licences: the packages in the helper and Bun, the packages in the extension, and Tabkyra's own.
 cd "$BROWSER/cli"
 node scripts/licenses.mjs --out "$OUT/licenses/polycarp-browser-packages.txt" --bun "$SPACES/LICENSES/bun-runtime.md"
+node scripts/licenses.mjs --out "$OUT/licenses/polycarp-extension-packages.txt" --for extension --root "$BROWSER"
 cp "$BROWSER/LICENSE" "$OUT/licenses/tabkyra-AGPL-3.0.txt"
 echo "built $OUT ($(lipo -archs "$OUT/polycarp-browser"), extension $(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$OUT/extension/manifest.json" | head -1))"
