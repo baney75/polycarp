@@ -26,8 +26,9 @@ Asked for by Donovan, 2026-11-04.
 - [ ] Mac: a Polycarp bar replaces the system menu bar, with the system bar auto-hidden, so app menus, status items, clock and Control Center stay reachable. Check: live on a real Mac across displays, full screen and every workspace; nothing from today's bar is lost
 - [ ] Windows: a bar that reserves space across the top of the screen. Check: on a Windows VM, maximized windows stop below it
 - [ ] Omarchy: modify the existing Waybar instead of replacing it, easy to change and to undo. Check: live on Omarchy; the user's own Waybar changes survive, and uninstall restores the original
-- [ ] Linux outside Omarchy: decide after Omarchy works
-- [ ] Phones: not possible. iOS and Android don't let an app replace the status bar
+- [ ] Linux outside Omarchy: decide after Omarchy works. Check: the decision is written here, as items with checks of their own
+
+Phones get no bar: iOS and Android don't let an app replace the status bar.
 
 ## Quality bar
 Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all hyper themable and customizable.
@@ -53,13 +54,13 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 - [ ] BaneyFleet PR for the files that name these products, plus skills, agents and `CLAUDE.md`. Field notes keep old names as history. Check: agents reach Polycarp's tools on each machine
 
 ## 5. Switch over
-- [ ] Polycarp installs and updates on each device. Settings, dictionary and skills move across
-- [ ] Old apps get a final release that points to Polycarp
-- [ ] Donovan grants Accessibility and Microphone once on his Mac, since macOS ties them to the app's identity
+- [ ] Polycarp installs and updates on each device. Settings, dictionary and skills move across. Check: on each device, `polycarp update` ends with `polycarp version` showing every part at one commit, and the old settings, dictionary and skills read back in Polycarp
+- [ ] Old apps get a final release that points to Polycarp. Check: each old repo's latest release names Polycarp and links to it
+- [ ] Donovan grants Accessibility and Microphone once on his Mac, since macOS ties them to the app's identity. Check: `polycarp-spaces doctor` shows both granted, and an update keeps them
 
 ## 6. The old apps
 Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos stay up, so people can keep using the independent apps. They are not archived.
-- [ ] Land or move open PRs that belong in Polycarp
+- [ ] Land or move open PRs that belong in Polycarp. Check: `gh pr list` in each old repo shows none that belong here
 - [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Voice and Browser. The Silas app is not trashed by the installer or by Polycarp on its own: after the first dictation that typed text, one notification says so, and Settings > Silas offers "Move the Silas app to the Trash" (Silas on, the app installed). Check: dictation and agents' browser work through Polycarp before Silas and Tabkyra go
 
 ## One app, everywhere
@@ -77,24 +78,24 @@ Asked for by Donovan, 2026-11-05: installation and permissions need to be excell
 - [x] One first-run window explains each permission in plain words, with live status. Check: `WelcomeTests`, and renders of the real view in light and dark
 - [ ] First run on a real Mac: each switch updates the window, and Polycarp starts without a restart. Check: Donovan's first install
 - [ ] A ready-made download that needs no developer tools, from a Polycarp release. Check: installs on a Mac with no command line tools
-- [ ] Voice and Browser install from the same command, and share the welcome window
+- [ ] Voice and Browser install from the same command, and share the welcome window. Check: `install.sh` against a temporary home installs both, and the welcome window lists both
 
 ## Omarchy
 Asked for by Donovan, 2026-11-05: on Omarchy, Polycarp matches the system theme.
 - [ ] Polycarp follows Omarchy's current theme, live, when you run `omarchy-theme-set`. Check: on a real Omarchy machine, read back from the theme files after a switch
-- [ ] Polycarp's bar is the existing Waybar, themed by Omarchy, with its own additions easy to remove
+- [ ] Polycarp's bar is the existing Waybar, themed by Omarchy, with its own additions easy to remove. Check: on a real Omarchy machine, the bar follows a theme switch, and removing Polycarp's additions leaves the user's Waybar as it was
 
 ## Agents' computer use
 Asked for by Donovan, 2026-11-05: it has to work better and look much better, with a better cursor.
 - [x] The olive leaf cursor, calm status colors, a glide you can follow. Check: `CursorThemeTests`, and renders of the real layers in every theme on five backgrounds
 - [x] An app an agent starts stays off your screen, and your keyboard stays yours. Check: `FocusReturnTests`
 - [ ] The same on a real Mac. Check: `agent open Calculator` while typing elsewhere: its window lands on the agent workspace, `agent windows` lists it and focus returns
-- [ ] Measure the whole loop (open, read, act, check) on real apps, and lock the gains with a ratchet test
+- [ ] Measure the whole loop (open, read, act, check) on real apps, and lock the gains with a ratchet test. Check: the measured times are in a ratchet test that fails on a slower loop
 
 ## Later, with an owner's decision
 - Paid: domains, Apple Developer and Google Play accounts, Windows code signing
 - An attorney's trademark search, including logos, before filing or a big launch
-- [ ] The free install route (Download, disk image, Open Anyway) shows Apple's own warning the first time Polycarp opens, because the app isn't notarized. An owner decision on Apple Developer enrollment would remove it.
-- [ ] Live on a real Mac, after a person installs from the download and BaneySpaces goes to the Trash: if BaneySpaces had been set to start at login, restart the Mac and check nothing starts it, or that Polycarp quits it if it does (`LegacyWatcher`). Polycarp doesn't launch the old app to clear its login item.
+- The free install route (Download, disk image, Open Anyway) shows Apple's own warning the first time Polycarp opens, because the app isn't notarized. An owner decision on Apple Developer enrollment would remove it.
+- [ ] A BaneySpaces login item starts nothing once BaneySpaces is in the Trash. Check: live on a real Mac, after a person installs from the download and BaneySpaces goes to the Trash, with BaneySpaces set to start at login: restart the Mac and check nothing starts it, or that Polycarp quits it if it does (`LegacyWatcher`). Polycarp doesn't launch the old app to clear its login item.
 - [x] Naming: the voice part in the Mac app is called Silas (tab, menu, overlay, welcome row, alerts), with its pen-nib mark instead of a microphone; the older separate app is "the Silas app". Only the Microphone permission row says Microphone, because that's macOS's word.
-- [ ] Live on a preview build: the listening pen and dot in the real menu bar, light and dark. Checked so far only in an offscreen render.
+- [ ] The listening pen and dot in the real menu bar, light and dark. Check: live on a preview build. Checked so far only in an offscreen render.

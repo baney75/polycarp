@@ -21,7 +21,7 @@ jobs:
       core: ${{ steps.f.outputs.core }}
       spaces-linux: ${{ steps.f.outputs.spaces-linux }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: f
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
@@ -101,7 +101,7 @@ jobs:
       run:
         working-directory: spaces
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Rust builds the same crates every run. The engine isn't cached: its script rebuilds that tree from a pinned tarball.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
@@ -148,7 +148,7 @@ jobs:
       run:
         working-directory: spaces
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: |
