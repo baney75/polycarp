@@ -85,6 +85,20 @@ public struct HandsError: Codable, Equatable, Error, Sendable {
         self.code = code; self.message = message; self.suggestion = suggestion; self.retry = retry ?? code.defaultRetry; self.nextCall = nextCall
     }
 
+    /// No reply to a hands request. Connected: the app took it, then timed out or quit before answering (a crash leaves
+    /// no listener, so a look at the socket afterwards can't tell), and an action may have landed. Not connected: nothing
+    /// listened, so nothing was sent and a retry is safe.
+    public static func noReply(verb: String, connected: Bool) -> HandsError {
+        guard connected else {
+            return HandsError(.notRunning, "Polycarp isn't running, or hasn't finished starting (it needs Accessibility)",
+                              suggestion: "Open Polycarp and run `polycarp-spaces doctor`.", retry: .safe)
+        }
+        let acts = HandsTools.tool(verb: verb)?.acts ?? false
+        return HandsError(.timeout, "Polycarp took the request but didn't answer: it may have quit, or still be busy", suggestion: acts
+            ? "The action may have landed: read the element back with `polycarp-spaces agent get` before trying again."
+            : "Try again in a moment.", retry: acts ? .never : .safe)
+    }
+
     /// `{"tool": "snapshot", "arguments": {...}}`: tool is the MCP name without the `computer_` prefix a connector adds.
     public static func call(_ tool: String, _ arguments: [String: JSONValue]) -> JSONValue {
         .object(["tool": .string(tool.replacingOccurrences(of: "-", with: "_")), "arguments": .object(arguments)])
