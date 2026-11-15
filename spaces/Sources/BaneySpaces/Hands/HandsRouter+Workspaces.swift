@@ -305,7 +305,12 @@ extension HandsRouter {
     func close(_ req: HandsRequest) -> HandsEnvelope {
         let session = req.session ?? ""
         switch target(req) {
-        case .failure(let e): return .failure(e)
+        case .failure(let e):
+            // A panel this session's `menu` raised that the app keeps out of sight: say why it can't close (#309).
+            guard e.code == .windowNotFound, let id = req.int("window").flatMap({ UInt32(exactly: $0) }),
+                  let h = childLocked({ hiddenPanels[id] }), h.session == session,
+                  let p = MenuAX.serverWindows(pid: h.pid).first(where: { $0.id == id }), !p.onScreen else { return .failure(e) }
+            return .failure(HiddenPanel.closeRefusal(p, app: h.app))
         case .success(let (w, scope, _)):
             resolvePendingOpens(all: listWindows().windows, agent: onMain { host.agentWorkspace() })
             if let e = childLocked({ WorkspaceVerbs.closeRefusal(window: w, session: session, opened: sessionWindows) }) { return .failure(e) }

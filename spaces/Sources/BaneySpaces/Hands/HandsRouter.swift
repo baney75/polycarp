@@ -54,6 +54,8 @@ final class HandsRouter {
     /// Which child windows appeared after which session's action (`ChildAttribution`), and what each session opened.
     var attribution = ChildAttribution()
     var sessionWindows = SessionWindows()
+    /// The panels a session's `menu` raised that the app keeps out of sight with no Accessibility element (#309), by id.
+    var hiddenPanels: [UInt32: (session: String, pid: Int32, app: String)] = [:]
     let childLock = NSLock()
     /// The pids a child-window watch runs for: one watch per pid, which every action extends (`noteAction`).
     var childWatchers = Set<Int32>()

@@ -53,6 +53,43 @@ final class HiddenPanelTests: XCTestCase {
         XCTAssertTrue(gate.contains("scope.allowed ? sheetProblem(l, agent: agent, session: session) ?? inspectProblem(l) : nil"), "a child is inspected in the pass too")
     }
 
+    /// Issue #309, live on 0e4666d: after `menu "Format > Font > Show Colors"` the window server listed TextEdit window
+    /// 67902 "Colors" at layer 3, never on screen; Accessibility had no element for it, even by remote token.
+    func testAPanelOutOfSightWithNoElementIsNamed() {
+        typealias W = HiddenPanel.ServerWindow
+        let doc = W(id: 67899, layer: 0, onScreen: true, bounds: CGRect(x: 1511, y: 950, width: 656, height: 422), title: "notes.txt")
+        let colors = W(id: 67902, layer: 3, onScreen: false, bounds: CGRect(x: 0, y: 528, width: 266, height: 454), title: "Colors")
+        let before: Set<UInt32> = [67899, 67898]
+        XCTAssertEqual(HiddenPanel.unreachable([doc, colors], before: before, reached: [67899]), [colors])
+        XCTAssertEqual(HiddenPanel.unreachable([W(id: 67902, layer: 0, onScreen: false, bounds: .zero, title: "Colors")], before: before, reached: []), [],
+                       "the first look, 0x0 at layer 0, is not a panel yet")
+        XCTAssertEqual(HiddenPanel.unreachable([colors], before: before, reached: [67902]), [], "Fonts: read through its focused element")
+        XCTAssertEqual(HiddenPanel.unreachable([colors], before: [67902], reached: []), [], "there before the press")
+        XCTAssertEqual(HiddenPanel.unreachable([W(id: 7, layer: 3, onScreen: true, bounds: colors.bounds, title: "")], before: [], reached: []), [], "in sight")
+        XCTAssertEqual(HiddenPanel.unreachable([W(id: 8, layer: 101, onScreen: false, bounds: colors.bounds, title: "")], before: [], reached: []), [], "a menu's window")
+        XCTAssertEqual(HiddenPanel.opened(colors), .object(["window": .int(67902), "kind": .string("hidden_panel"), "title": .string("Colors"),
+                                                           "shown": .bool(false), "waiting": .bool(false), "parent": .null]))
+        XCTAssertEqual(HiddenPanel.ids(HiddenPanel.opened(colors)), [67902])
+        XCTAssertTrue(HiddenPanel.why(colors, app: "TextEdit").hasPrefix("window 67902 (Colors) is a panel TextEdit shows only while it is the active app"))
+        let refusal = HiddenPanel.closeRefusal(colors, app: "TextEdit")
+        XCTAssertEqual(refusal.code, .notSupported)
+        XCTAssertEqual(refusal.retry, .never)
+    }
+
+    /// `menu` reads the window server for them after the press, and `close` answers why instead of "no window".
+    func testTheMenuNamesItAndCloseSaysWhy() throws {
+        let menu = try read("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
+        let press = try XCTUnwrap(menu.range(of: "let before = MenuAX.ids()"))
+        let look = try XCTUnwrap(menu.range(of: "let hidden = HiddenPanel.unreachable(MenuAX.serverWindows(pid: w.pid), before: before, reached: reached)"))
+        XCTAssertLessThan(press.lowerBound, look.lowerBound)
+        XCTAssertTrue(menu.contains("childLocked { for h in hidden { hiddenPanels[h.id] = (session, w.pid, w.app) } }"))
+        let close = try read("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
+        let body = try XCTUnwrap(close.range(of: "func close(_ req: HandsRequest) -> HandsEnvelope {")).upperBound
+        let gate = String(close[body...].prefix(900))
+        XCTAssertTrue(gate.contains("let h = childLocked({ hiddenPanels[id] }), h.session == session"), "only the session that raised it hears why")
+        XCTAssertTrue(gate.contains("return .failure(HiddenPanel.closeRefusal(p, app: h.app))"))
+    }
+
     /// The read, `menu` and `close` use the model; the app target can't be imported, so these read it.
     func testTheReadMenuAndCloseUseIt() throws {
         let ax = try read("Sources/BaneySpaces/Hands/ChildWindowsAX.swift")
@@ -61,7 +98,7 @@ final class HiddenPanelTests: XCTestCase {
         XCTAssertLessThan(unlisted.lowerBound, assemble.lowerBound, "the hidden panel is a child before children are built")
         let menu = try read("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
         XCTAssertTrue(menu.contains("sessionWindows.record(session: session, window: id, pid: w.pid)"))
-        XCTAssertTrue(menu.contains("o[\"note\"] = .string(HiddenPanel.note(raised, closable: !adopted.isEmpty))"))
+        XCTAssertTrue(menu.contains("let notes = (shown.isEmpty ? [] : [HiddenPanel.note(shown, closable: !adopted.isEmpty)]) + hidden.map { HiddenPanel.why($0, app: w.app) }"))
         let close = try read("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
         let spaces = try read("Sources/BaneySpaces/Spaces.swift")
         XCTAssertTrue(spaces.contains("let child = ChildWindowsAX.element(pid: owner.pid, id: id) else { return false }"), "host.close presses a child's own button")
