@@ -235,6 +235,13 @@ public struct ChildAttribution: Equatable, Sendable {
         return who.count == 1 ? who.first : nil
     }
 
+    /// Of the placed windows in `on` that hold a numberless sheet now, those whose sheet this session's latest action on
+    /// `pid` raised: not there before it, and the session's (#124 sol-F3, sol-sol-F4, round 2 second-S3).
+    public func openedSheets(_ on: Set<UInt32>, pid: Int32, session: String) -> Set<UInt32> {
+        guard let last = actions[pid]?.last(where: { $0.session == session }) else { return [] }
+        return on.filter { !last.sheetsBefore.contains($0) && sheetAttributed(on: $0, pid: pid, session: session) }
+    }
+
     /// Whether this session's action raised the sheet now on window `id`. False when unsure (never seen).
     public func sheetAttributed(on id: UInt32, pid: Int32, session: String) -> Bool {
         guard !session.isEmpty, let s = sheets[id], s.pid == pid else { return false }
@@ -294,6 +301,13 @@ public enum ChildWindowList {
             o["reason"] = .string(e.message)
         }
         return .object(o)
+    }
+
+    /// What an action's result says about a sheet with no window number of its own that appeared on window `id` while it
+    /// ran: it is answered in that window's snapshot, where its elements are marked sheet.
+    public static func openedSheet(on id: UInt32) -> JSONValue {
+        .object(["window": .int(Int(id)), "kind": .string("sheet"), "title": .string(""), "waiting": .bool(true), "parent": .int(Int(id)),
+                 "note": .string("a sheet on window \(id) with no window number of its own: snapshot window \(id), its elements are marked sheet")])
     }
 
     /// What an action's result says about a child window that appeared while it ran.
