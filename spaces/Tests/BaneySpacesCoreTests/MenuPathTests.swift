@@ -176,6 +176,23 @@ final class MenuPathTests: XCTestCase {
         XCTAssertNotNil(MenuPath.policy(steps(4, [I(identifier: "pasteAsPlainText:", title: "Als Text")], 0)))
     }
 
+    /// 11-15, live: TextEdit's Format > Font > Show Colors (shift+cmd+c) was refused as "uses the Mac's clipboard". Clipboard
+    /// commands are matched by their exact chords, identifiers and whole titles; Edit > Copy and Paste still are.
+    func testShowColorsIsNotTheClipboardButCopyAndPasteStillAre() {
+        let font = [I(cmdChar: "T", modifiers: 0, title: "Show Fonts"), I(cmdChar: "B", modifiers: 0, title: "Bold"), Self.sep,
+                    I(identifier: "orderFrontColorPanel:", cmdChar: "C", modifiers: 1, title: "Show Colors"), Self.sep,
+                    I(cmdChar: "C", modifiers: 2, title: "Copy Style"), I(cmdChar: "V", modifiers: 2, title: "Paste Style")]
+        XCTAssertNil(MenuPath.policy(steps(4, [I(title: "Font", submenu: true)], 0, sub: font, 3)), "Show Colors")
+        XCTAssertNil(MenuPath.policy(steps(4, [I(title: "Copyright Notice")], 0)), "a title that only starts with copy")
+        XCTAssertNotNil(MenuPath.policy(steps(4, [I(title: "Font", submenu: true)], 0, sub: font, 5)), "Copy Style")
+        XCTAssertNotNil(MenuPath.policy(steps(4, [I(title: "Font", submenu: true)], 0, sub: font, 6)), "Paste Style")
+        let edit = [I(cmdChar: "Z", modifiers: 0, title: "Undo"), I(cmdChar: "Z", modifiers: 1, title: "Redo"), Self.sep,
+                    I(cmdChar: "X", modifiers: 0, title: "Cut"), I(cmdChar: "C", modifiers: 0, title: "Copy"), I(cmdChar: "V", modifiers: 0, title: "Paste")]
+        for at in 3...5 { XCTAssertTrue(MenuPath.policy(steps(3, edit, at))?.message.contains("Mac's clipboard") == true, edit[at].title) }
+        XCTAssertNotNil(MenuPath.policy(steps(4, [I(cmdChar: "V", modifiers: 1, title: "Paste as Plain Text")], 0)), "shift+cmd+v elsewhere")
+        XCTAssertNotNil(MenuPath.policy(steps(4, [I(title: "Copy Link")], 0)), "no key: the whole word copy")
+    }
+
     /// r1 first-F4: with no AXCancelButton, the button whose identifier says cancel.
     func testAPanelWithNoCancelButtonAttributeIsStillCancelled() {
         let panel = AXNodeInfo(role: "AXSheet", children: [AXNodeInfo(role: "AXGroup", children: [
