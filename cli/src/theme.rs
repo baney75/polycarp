@@ -26,7 +26,18 @@ mod schema;
 
 /// What `theme off` can say: the state of the files, which it checked. Whether an app changes,
 /// and when, is up to that app, so the text says only what the apps are expected to do.
-const OFF_NOTE: &str = "The theme files are gone from current/. Apps that read them use their own look when they next check.";
+const OFF_NOTE: &str = "The theme files are gone from current/. Apps that read them are expected to use their own look when they next check.";
+
+/// Off, but some files are still there: `remaining` names them.
+const OFF_LEFT_NOTE: &str = "The theme is off in the settings, but the files in remaining are still in current/, so apps may still read them.";
+
+/// Gone: not there, or `current` isn't a folder (so nothing can be in it).
+fn gone(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
+}
 
 const NOTE: &str =
     "Products read these files once their adapters land. Until then only the files change.";
@@ -1435,8 +1446,8 @@ fn remaining_theme_files(cfg: &Cfg) -> Vec<PathBuf> {
     names
         .into_iter()
         .map(|n| dir.join(n))
-        // Only NotFound means gone. Any other error (no permission to look) counts as remaining.
-        .filter(|p| !matches!(fs::symlink_metadata(p), Err(e) if e.kind() == std::io::ErrorKind::NotFound))
+        // Only gone() means gone. Any other error (no permission to look) counts as remaining.
+        .filter(|p| !matches!(fs::symlink_metadata(p), Err(e) if gone(&e)))
         .collect()
 }
 
@@ -1463,7 +1474,7 @@ fn write_outputs(cfg: &Cfg, eff: &Eff) -> (Vec<PathBuf>, Vec<String>) {
             let p = dir.join(&n);
             match fs::remove_file(&p) {
                 Ok(()) => wrote.push(p),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) if gone(&e) => {}
                 Err(e) => failed.push(format!("{n}: {e}")),
             }
         }
@@ -2016,7 +2027,7 @@ impl ApiErr {
             "invalid_value" => "Send a value of the type in `needs`.",
             "exists" => "Pick another name, or pass force.",
             "current_theme" => "Run `theme set <other>` first.",
-            "changed_since" => "Look at the theme file named in the message. To undo anyway, run `theme undo --force` (MCP: theme_undo with force true); the text now in the file is first saved in history/ as a .bak copy. Or leave it as it is.",
+            "changed_since" => "Look at the theme file named in the message. To undo anyway, run `theme undo --force` (MCP: theme_undo with force true); if the file is still there, its text is first saved in history/ as a .bak copy. Or leave it as it is.",
             "nothing_to_undo" => "History is empty. `theme reset` goes back to the default.",
             "not_yours" => "Ask the person first. If they agree, call again with force true.",
             "busy" => "Wait a moment and run the command again. The lock is released when the other polycarp command ends, so there is nothing to delete.",
@@ -2531,7 +2542,11 @@ fn summary_with(
         "config": cfg.file().display().to_string(),
         "wrote": if off { Vec::new() } else { wrote.iter().map(|w| w.display().to_string()).collect::<Vec<_>>() },
         "removed": if off { wrote.iter().map(|w| w.display().to_string()).collect::<Vec<_>>() } else { Vec::new() },
-        "note": if off { OFF_NOTE } else { NOTE },
+        "note": match (off, left.is_empty()) {
+            (false, _) => NOTE,
+            (true, true) => OFF_NOTE,
+            (true, false) => OFF_LEFT_NOTE,
+        },
         "next": if off {
             "Run theme on, or theme undo, to bring the theme back."
         } else {

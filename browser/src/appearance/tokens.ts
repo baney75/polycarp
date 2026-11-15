@@ -12,6 +12,15 @@ export function effectiveAccent(choice: ThemeChoice, dark: boolean, polycarp?: P
 	return (polycarp?.palettes ?? resolveTheme(choice))[dark ? "dark" : "light"].accent;
 }
 
+/**
+ * The custom accent to save when the person types `hex`, or undefined when it changes nothing: the
+ * saved choice's own accent in this mode. A Polycarp theme in use doesn't count, so its accent can be
+ * kept for when the theme is gone.
+ */
+export function accentToSave(choice: ThemeChoice, dark: boolean, hex: string): string | undefined {
+	return hex === effectiveAccent(choice, dark) ? undefined : hex;
+}
+
 const ms = (n: number, reduced: boolean) => `${reduced ? 0 : n}ms`;
 
 /**
