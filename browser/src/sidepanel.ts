@@ -80,6 +80,7 @@ import { FREE_KEY_NOTE, FREE_PRIVACY_NOTE, FREE_SHORT_NOTE } from "./models/free
 import { freeComposerText, installFreeMode, setFreeMode, streamFree } from "./models/free-panel.js";
 import { isFreeModeModel } from "./models/free-runtime.js";
 import { refreshDiscoveredModels } from "./models/registry.js";
+import { watchStream } from "./models/stream-watchdog.js";
 import { installBugCapture } from "./privacy/capture.js";
 import { assertPrivateProxy, PRIVATE_MODE_KEY, privateModel, TRUSTED_HOSTS_KEY } from "./privacy/private-mode.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
@@ -925,14 +926,17 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 	// Messages from a saved chat keep what they were sent with; only new ones get references resolved.
 	const loadedMessages = new WeakSet<object>(initialState?.messages ?? []);
-	// Outermost: every request is fitted to the model's window, whichever route sends it (context-guard.ts).
-	const streamFn = guardContext(
-		uncappedStreamFn(
-			createStreamFn(async () => {
-				const enabled = await storage.settings.get<boolean>("proxy.enabled");
-				if (!enabled) return undefined;
-				return (await storage.settings.get<string>("proxy.url")) || undefined;
-			}),
+	// Every request is fitted to the model's window, whichever route sends it (context-guard.ts). Outermost, one that
+	// goes quiet ends with an error instead of leaving the chat working forever (stream-watchdog.ts).
+	const streamFn = watchStream(
+		guardContext(
+			uncappedStreamFn(
+				createStreamFn(async () => {
+					const enabled = await storage.settings.get<boolean>("proxy.enabled");
+					if (!enabled) return undefined;
+					return (await storage.settings.get<string>("proxy.url")) || undefined;
+				}),
+			),
 		),
 	);
 	const getApiKey = async (provider: string) => {
