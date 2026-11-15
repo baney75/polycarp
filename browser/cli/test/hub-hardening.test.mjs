@@ -99,6 +99,38 @@ test("a peer that resets while the hub refuses its upgrade can't take the hub do
 	await alive(hub);
 });
 
+// ---------- issue #2: a refusal sent before the body arrived reaches the client ----------
+
+test("a refusal sent before the body arrived half-closes and keeps reading, so the client gets it, not a reset", async () => {
+	const hub = await hubFor("unread-hub");
+	const port = Number(new URL(hub.url).port);
+	// Half-open, like an uploader that still has body to send when the reply comes.
+	const socket = tcpConnect({ port, host: "127.0.0.1", allowHalfOpen: true });
+	let reply = "";
+	let ended = false;
+	const errors = [];
+	socket.on("data", (d) => (reply += d));
+	socket.on("end", () => (ended = true));
+	socket.on("error", (err) => errors.push(err.code));
+	socket.write(`POST /nope HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: 3000000\r\n\r\n`);
+	socket.write(Buffer.alloc(65_536, 0x20));
+	await waitFor(() => reply.includes("\r\n\r\n"), "the refusal");
+	assert.match(reply, /^HTTP\/1\.1 404 /);
+	// Main closed the socket here with body bytes still coming: these writes failed (EPIPE), and that close is what reset
+	// the connection and wiped 429s on macOS.
+	for (let i = 0; i < 4; i++) {
+		await sleep(100);
+		socket.write(Buffer.alloc(262_144, 0x20), (err) => err && errors.push(err.code));
+	}
+	await sleep(200);
+	assert.deepEqual(errors, [], "the rest of the body is read and dropped, not reset");
+	assert.match(reply, /\r\nconnection: close\r\n/i, "the refusal says the connection closes");
+	assert.ok(ended, "the hub half-closed after the reply");
+	socket.end();
+	await waitFor(() => socket.destroyed, "the hub to close once the client hangs up");
+	assert.deepEqual(errors, []);
+});
+
 // ---------- sol-F2: body readers are reserved before the body ----------
 
 test("many slow unfinished initialize bodies hit the caps (429) and memory stays bounded", async () => {
@@ -125,13 +157,14 @@ test("many slow unfinished initialize bodies hit the caps (429) and memory stays
 	};
 	// One caller: its cap of 8 sessions-or-initializes holds before any body is read.
 	const one = createToken(hub, "one", "skills.read");
-	// On macOS the hub closing on an unread body can reset the socket and lose the 429 (issue baney75/polycarp#2). Only there does a reset count.
-	const isRefusal = (x) => x === 429 || (process.platform === "darwin" && (x === "ECONNRESET" || x === "EPIPE"));
+	// Only a 429 counts: a reset that lost it (issue baney75/polycarp#2) is a failure on every platform.
+	const isRefusal = (x) => x === 429;
 	const refused = (outcomes) => outcomes.filter(isRefusal).length;
-	// A floor keeps the hub's time to read bodies; the deadline allows for a slow machine. A crash is caught below.
+	// A floor keeps the hub's time to read bodies. The refusals come within one 50 ms look (6 of 6 runs, 2026-11-15), so
+	// the deadline is 2 s: a regression that delays them by seconds fails. A crash is caught below.
 	const refusalsReach = async (outcomes, count, floorMs) => {
 		const started = Date.now();
-		while (Date.now() - started < 15000 && refused(outcomes) < count) await sleep(50);
+		while (Date.now() - started < 2000 && refused(outcomes) < count) await sleep(50);
 		await sleep(Math.max(0, floorMs - (Date.now() - started)));
 	};
 	const first = [];
