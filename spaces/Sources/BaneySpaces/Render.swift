@@ -64,6 +64,9 @@ enum Render {
             let png = rep.representation(using: .png, properties: [:])
             return (try? png?.write(to: folder.appendingPathComponent(name))) != nil
         }
+        if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SETTINGS_TIMING"].flatMap(Int.init) {
+            return SettingsTiming.run(rounds: r)
+        }
         // BANEYSPACES_RENDER_THEME_EDITOR=<user theme> draws only the theme editor and the Appearance tab, light and dark.
         if let name = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME_EDITOR"], !name.isEmpty {
             return ThemeEditorRender.run(name) { save($0, $1, $2) }
@@ -358,7 +361,7 @@ enum Render {
 
 /// Draws its controls as they look in the window you're using. A window that's never on screen is otherwise inactive, and
 /// every switch and button comes out gray.
-private final class RenderWindow: NSWindow {
+final class RenderWindow: NSWindow {
     override var isKeyWindow: Bool { true }
     override var isMainWindow: Bool { true }
 }
