@@ -300,6 +300,27 @@ final class ContextMenuTests: XCTestCase {
 
     /// 231 r1 first-F4: "never a posted click" rests on the pinned engine; the note beside the kind quotes the lines
     /// that make it so, and names the version they were read at.
+    /// 263 first-F4: whatever the engine's code says, an action whose result lists a posted step is refused, not answered.
+    /// The result is the engine's own: `steps` with `mechanism` `physical_synthetic` (a CGClick) or `semantic_api`.
+    func testARefActionTheEnginePostedForIsRefused() throws {
+        let posted: JSONValue = .object(["action": "right_click", "steps": .array([
+            .object(["label": "CGClick", "outcome": "succeeded", "mechanism": "physical_synthetic"]),
+        ])])
+        let e = try XCTUnwrap(EngineVerdict.posted(posted))
+        XCTAssertEqual(e.code, .notSupported)
+        XCTAssertEqual(e.retry, .never)
+        XCTAssertTrue(e.message.contains("CGClick"), e.message)
+        let semantic: JSONValue = .object(["action": "right_click", "steps": .array([
+            .object(["label": "show_menu", "outcome": "succeeded", "mechanism": "semantic_api"]),
+            .object(["label": "child_show_menu", "outcome": "skipped"]),
+        ])])
+        XCTAssertNil(EngineVerdict.posted(semantic))
+        XCTAssertNil(EngineVerdict.posted(.object(["action": "click"])), "no steps listed")
+        let engine = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsEngine.swift")
+        let act = try XCTUnwrap(HandsSourceTests.block(after: "private func doAct(", in: engine))
+        XCTAssertTrue(act.contains("case .success(let d): return EngineVerdict.posted(d).map { .failed($0) } ?? .ok(d)"))
+    }
+
     func testTheRefRightClicksNoPostIsQuotedFromThePinnedEngine() throws {
         let raw = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/BaneySpaces/Hands/HandsEngine.swift"), encoding: .utf8)

@@ -352,7 +352,7 @@ final class HandsEngine {
                 giveUp: Date().addingTimeInterval(Self.actionableWait),
                 pause: { Thread.sleep(forTimeInterval: 0.1) })
             switch result {
-            case .success(let d): return .ok(d)
+            case .success(let d): return EngineVerdict.posted(d).map { .failed($0) } ?? .ok(d)
             case .failure(let e): return .failed(e)
             }
     }
