@@ -1442,6 +1442,15 @@ fn remaining_theme_files(cfg: &Cfg) -> Vec<PathBuf> {
 
 /// Writes every file in `current/`, trying each one even if another fails. Returns the files
 /// written and one message per file that could not be.
+/// Whether current/theme.json differs from what the settings build now, as after a refresh that
+/// failed.
+fn current_stale(cfg: &Cfg) -> bool {
+    let eff = effective(cfg);
+    let json =
+        serde_json::to_string_pretty(&theme_json(&eff.full, Some(&eff.state))).unwrap_or_default();
+    fs::read_to_string(cfg.current().join("theme.json")).ok() != Some(format!("{json}\n"))
+}
+
 fn write_outputs(cfg: &Cfg, eff: &Eff) -> (Vec<PathBuf>, Vec<String>) {
     let dir = cfg.current();
     let mut wrote = Vec::new();
@@ -2792,7 +2801,7 @@ pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
     }
     st.theme = name.to_string();
     omarchy::note_mode(&mut st, name, mode, &mut notes);
-    let stopped = omarchy::stop_for_switch(&mut st, name, &mut notes);
+    let stopped = omarchy::stop_for_switch(&mut st, name, mode, &mut notes);
     turn_on(&mut st, &mut notes);
     if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
         notes.push(format!(
@@ -2895,6 +2904,7 @@ fn accent_inner(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res {
         Some(c) => format!("theme accent {c}"),
         None => "theme accent --clear".to_string(),
     };
+    omarchy::accept(&mut st, modes.iter().map(|m| format!("accent.{m}")));
     let mut done = commit(c, Some(&st), &action, None)?;
     done.notes.splice(0..0, turned_on);
     if !adjusted.is_empty() {
@@ -3417,7 +3427,7 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
             ));
         }
         st.theme = name.clone();
-        stopped = omarchy::stop_for_switch(&mut st, &name, &mut notes);
+        stopped = omarchy::stop_for_switch(&mut st, &name, None, &mut notes);
         turn_on(&mut st, &mut notes);
         if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
             notes.push(format!(
@@ -3691,6 +3701,9 @@ fn change_inner(c: &Ctx, theme: Option<&str>, changes: &[(String, Json)]) -> Res
     let mut action = format!("theme change {}", pairs.join(", "));
     if let Some(t) = theme {
         action.push_str(&format!(" in {t}"));
+    }
+    if in_force && name == omarchy::TOP {
+        omarchy::accept(&mut st, changes.iter().map(|(p, _)| p.as_str()));
     }
     let mut out = commit(
         c,
