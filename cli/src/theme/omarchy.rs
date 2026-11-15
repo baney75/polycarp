@@ -657,9 +657,9 @@ if [ -x \"$exe\" ]; then\n\
     POLYCARP_CONFIG_DIR=\"$dir\" \"$exe\" theme follow omarchy --sync </dev/null >/dev/null 2>&1\n\
   fi\n\
   rc=$?\n\
-  [ \"$rc\" -eq 0 ] || echo \"$(stamp) FAILED: the hook's sync exited $rc\" >> \"$log\" 2>/dev/null\n\
+  [ \"$rc\" -eq 0 ] || echo \"$(stamp) FAILED: the hook's sync exited $rc\" 2>/dev/null >> \"$log\"\n\
 else\n\
-  echo \"$(stamp) FAILED: $exe is missing; run polycarp theme follow omarchy again\" >> \"$log\" 2>/dev/null\n\
+  echo \"$(stamp) FAILED: $exe is missing; run polycarp theme follow omarchy again\" 2>/dev/null >> \"$log\"\n\
 fi\n\
 exit 0\n",
         marker = hook_marker(cfg_dir),
@@ -750,7 +750,7 @@ fn check_top_file(cfg: &Cfg) -> Result<Option<String>, ApiErr> {
                 "name",
                 format!("{} is not valid TOML: {e}", p.display()),
             )
-            .suggest("Fix the file by hand, or run `polycarp theme follow reset`, which replaces it (`theme undo` brings the old text back).")),
+            .suggest("Fix the file by hand, or move it aside, then run the command again. While following, `polycarp theme follow reset` replaces it instead (`theme undo` brings the old text back).")),
             Ok(d) if ext_of(&d).as_deref() == Some(THEME_NAME) => Ok(Some(t)),
             Ok(_) => Err(ApiErr::at(
                 "exists",
@@ -760,7 +760,7 @@ fn check_top_file(cfg: &Cfg) -> Result<Option<String>, ApiErr> {
                     p.display()
                 ),
             )
-            .suggest("Rename or delete that theme, or run `polycarp theme follow reset` to replace it.")),
+            .suggest("Rename or delete that theme, then run the command again. While following, `polycarp theme follow reset` replaces it instead.")),
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io_err(format!("could not read {}: {e}", p.display()))),
@@ -1590,6 +1590,10 @@ fn follow_on(c: &Ctx) -> Res {
             return Err(e);
         }
     };
+    // A follow is a sync that worked, so an old failure line no longer describes the hook.
+    if last_failure(&c.cfg).is_some() {
+        log_line(&c.cfg, "followed Omarchy's theme");
+    }
     notes.extend(nudge_notes(built, &plan.nudges));
     if had_top {
         notes.push("your earlier changes on top of Omarchy's theme are kept".into());
@@ -1634,7 +1638,9 @@ fn follow_reset(c: &Ctx) -> Res {
         )
         .suggest("Run `polycarp theme follow omarchy` first."));
     }
-    // The old file's contents do not matter: reset replaces them, and history keeps a copy.
+    // The old overrides do not matter: reset replaces them, and history keeps a copy. A hand-made
+    // omarchy.toml is not ours to replace, since history keeps no copy of it.
+    check_theme_file(&c.cfg)?;
     let plan = plan(&c.cfg, &home, &st, true)?;
     write_generated(&c.cfg, &plan.built.text)?;
     let mut out = commit(
@@ -1647,6 +1653,17 @@ fn follow_reset(c: &Ctx) -> Res {
         .splice(0..0, nudge_notes(&plan.built, &plan.nudges));
     out.notes
         .push("your changes on top are cleared; the theme is Omarchy's own colors again. `polycarp theme undo` brings them back".into());
+    match install_hook(&c.cfg, &home) {
+        Ok(true) => out.notes.push(format!(
+            "the hook {} was missing or out of date, so it was written again",
+            hook_path(&home).display()
+        )),
+        Ok(false) => {}
+        Err(e) => out = out.caution(e.message),
+    }
+    if last_failure(&c.cfg).is_some() {
+        log_line(&c.cfg, "reset to Omarchy's own colors");
+    }
     out.text = format!(
         "cleared your changes on top of Omarchy's theme\n{}",
         out.text

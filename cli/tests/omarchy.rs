@@ -1654,3 +1654,83 @@ fn reset_and_set_remove_our_hook_even_when_the_settings_file_is_broken() {
         assert!(!b.hook().exists(), "{args:?}");
     }
 }
+
+// Follow-ups from PR 21 (#25).
+
+#[test]
+fn a_hook_logging_into_a_deleted_config_folder_prints_nothing() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    let exe = fs::canonicalize(env!("CARGO_BIN_EXE_polycarp")).unwrap();
+    let text = fs::read_to_string(b.hook()).unwrap();
+    fs::write(
+        b.hook(),
+        text.replace(&exe.display().to_string(), "/nonexistent/polycarp"),
+    )
+    .unwrap();
+    fs::remove_dir_all(b.cfg()).unwrap();
+    let o = Command::new("bash")
+        .arg(b.hook())
+        .arg("x")
+        .env_clear()
+        .env("HOME", b.home())
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    assert!(
+        o.stdout.is_empty() && o.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+}
+
+#[test]
+fn reset_repairs_the_hook_and_keeps_a_hand_made_omarchy_toml() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    fs::remove_file(b.hook()).unwrap();
+    let (ok, v) = b.json(&["theme", "follow", "reset"]);
+    assert!(ok, "{v}");
+    assert!(b.hook().exists(), "reset puts a deleted hook back");
+    let mine = "name = \"omarchy\"\ntitle = \"Mine\"\n";
+    fs::write(b.cfg().join("themes/omarchy.toml"), mine).unwrap();
+    let (ok, v) = b.json(&["theme", "follow", "reset"]);
+    assert!(!ok);
+    assert_eq!(v["error"]["code"], "exists", "{v}");
+    assert_eq!(b.theme_file(), mine);
+}
+
+#[test]
+fn following_again_clears_an_old_failure_from_status() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    let log = b.cfg().join("follow.log");
+    let old = fs::read_to_string(&log).unwrap_or_default();
+    fs::write(
+        &log,
+        format!("{old}2026-01-01T00:00:00Z FAILED: the hook's sync exited 1\n"),
+    )
+    .unwrap();
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert!(st["data"]["last_failure"].is_string(), "{st}");
+    b.json(&["theme", "follow", "omarchy"]);
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert!(st["data"]["last_failure"].is_null(), "{st}");
+}
+
+#[test]
+fn a_bad_overrides_file_while_not_following_does_not_point_at_reset() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    fs::create_dir_all(b.cfg().join("themes")).unwrap();
+    fs::write(b.cfg().join("themes/omarchy-overrides.toml"), "not toml [").unwrap();
+    let (ok, v) = b.json(&["theme", "follow", "omarchy"]);
+    assert!(!ok);
+    let hint = v["error"].to_string();
+    assert!(hint.contains("move it aside"), "{hint}");
+    let (ok, v) = b.json(&["theme", "follow", "reset"]);
+    assert!(!ok, "{v}");
+}
