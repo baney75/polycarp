@@ -149,6 +149,26 @@ jobs:
       - name: The one-command Linux install against a throwaway HOME
         run: bash -n ../install.sh && platforms/linux/tests/one-command-install.sh
 
+  # The Windows daemon keeps everything that touches Windows behind cfg(windows), so spaces-linux builds only its stubs.
+  # This job compiles and tests the real Windows code (issue #379, item 1).
+  spaces-windows:
+    needs: changes
+    if: needs.changes.outputs.spaces-linux == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: spaces
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: spaces, key: spaces-windows }
+      - name: Core and the Windows daemon, built for Windows
+        run: cargo test --locked -p baneyspaces-core -p baneyspaces-windows -p baneyspaces-testapp
+
   spaces-bundle:
     needs: changes
     # The bundle holds the voice core, the browser helper and the `polycarp` command, so a change to any of them can break it.
