@@ -12,7 +12,7 @@ final class SetupModel: ObservableObject {
     @Published var modifier = Modifier.current
     @Published var conflicts: [String] = SystemShortcuts.conflicts(for: Modifier.current)
     @Published var desktops = Desktops.count
-    @Published var openAtLogin = SMAppService.mainApp.status == .enabled
+    @Published var openAtLogin = SetupModel.firstLoginStatus == .enabled
     @Published var viewerKeys = MissionControlKeys.enabled
     @Published var topDrag = TopDragWatcher.enabled
     var onTopDragChange: ((Bool) -> Void)?
@@ -149,7 +149,7 @@ final class SetupModel: ObservableObject {
     @Published var bangProblem: String?
     var onLauncherChange: ((Bool) -> Void)?
     @Published var aeroSpaceRunning = SetupModel.isAeroSpaceRunning
-    @Published var loginNeedsApproval = SMAppService.mainApp.status == .requiresApproval
+    @Published var loginNeedsApproval = SetupModel.firstLoginStatus == .requiresApproval
     @Published var screenshotsFreed = SystemShortcuts.hasFreed
     /// The Mission Control key is switched on but macOS refused the key watcher.
     @Published var viewerKeysFailed = false
@@ -192,10 +192,10 @@ final class SetupModel: ObservableObject {
     private func tick() {
         ticks += 1
         let wasReady = ready
-        trusted = AXIsProcessTrusted()
-        aeroSpaceRunning = SetupModel.isAeroSpaceRunning
-        if let askedAt, !trusted, Date().timeIntervalSince(askedAt) > 8 { staleGrant = true }
-        if trusted { staleGrant = false }
+        put(\.trusted, AXIsProcessTrusted())
+        put(\.aeroSpaceRunning, SetupModel.isAeroSpaceRunning)
+        if let askedAt, !trusted, Date().timeIntervalSince(askedAt) > 8 { put(\.staleGrant, true) }
+        if trusted { put(\.staleGrant, false) }
         if !wasReady && ready { becameReady() }
         // The slower checks once a second.
         if ticks % 4 == 0 { reloadOptional() }
@@ -204,34 +204,62 @@ final class SetupModel: ObservableObject {
         if ticks % 12 == 0, tab == .automation, windowVisible() { reloadParked() }
     }
 
+    private var lastRead: TimeInterval?
+
+    /// The window opened, took the keyboard or came forward: reads what it shows, once for all three (`SettingsReads`),
+    /// and the Automation list only while that pane is up. `force` reads even if it read a moment ago.
+    func readShown(force: Bool = false) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard force || SettingsReads.due(last: lastRead, now: now) else { return }
+        lastRead = now
+        reload()
+        let windows = SettingsReads.readsWindows(pane: tab.rawValue)
+        if windows { reloadParked() }
+        let took = ProcessInfo.processInfo.systemUptime - now
+        if let line = SettingsReads.slowLine(seconds: took, pane: tab.rawValue, windows: windows) { Trace.log(line) }
+    }
+
     func reload() {
-        trusted = AXIsProcessTrusted()
-        aeroSpaceRunning = SetupModel.isAeroSpaceRunning
+        put(\.trusted, AXIsProcessTrusted())
+        put(\.aeroSpaceRunning, SetupModel.isAeroSpaceRunning)
         reloadOptional()
+        readLogin()
+    }
+
+    /// Inside the app `SMAppService.mainApp.status` takes about 0.1 s (2 ms in a bare binary), so it's read once for
+    /// the first model and then off the main thread, when the window shows or comes forward (`readShown`) or the
+    /// switch is flipped, never in `tick`. Approving the item in System Settings brings Polycarp forward, which reads it.
+    private static let firstLoginStatus = SMAppService.mainApp.status
+
+    func readLogin() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let status = SMAppService.mainApp.status
+            DispatchQueue.main.async { [weak self] in
+                self?.put(\.openAtLogin, status == .enabled)
+                self?.put(\.loginNeedsApproval, status == .requiresApproval)
+            }
+        }
+    }
+
+    /// Sets a published value only when it changed: setting one, even to the same value, redraws the whole open pane.
+    private func put<T: Equatable>(_ key: ReferenceWritableKeyPath<SetupModel, T>, _ value: T) {
+        if self[keyPath: key] != value { self[keyPath: key] = value }
     }
 
     private func reloadOptional() {
-        conflicts = SystemShortcuts.conflicts(for: modifier)
-        screenshotsFreed = SystemShortcuts.hasFreed
-        desktops = Desktops.count
-        let status = SMAppService.mainApp.status
-        openAtLogin = status == .enabled
-        loginNeedsApproval = status == .requiresApproval
-        viewerKeysFailed = trusted && viewerKeys && !viewerKeysActive()
-        let mc = trusted && viewerKeys ? missionControlProblem() : nil
-        if mc != missionControlFailed { missionControlFailed = mc }
-        hooks = hooksInstalled()
-        let info = updateInfo()
-        if info != update { update = info }
-        let rows = finishedRows()
-        if rows != finished { finished = rows }
-        let running = isStarted()
-        if running != started { started = running }
+        put(\.conflicts, SystemShortcuts.conflicts(for: modifier))
+        put(\.screenshotsFreed, SystemShortcuts.hasFreed)
+        put(\.desktops, Desktops.count)
+        put(\.viewerKeysFailed, trusted && viewerKeys && !viewerKeysActive())
+        put(\.missionControlFailed, trusted && viewerKeys ? missionControlProblem() : nil)
+        put(\.hooks, hooksInstalled())
+        put(\.update, updateInfo())
+        put(\.finished, finishedRows())
+        put(\.started, isStarted())
     }
 
     func reloadParked() {
-        let rows = parkedApps()
-        if rows != parkedRows { parkedRows = rows }
+        put(\.parkedRows, parkedApps())
     }
 
     func toggleParked(_ id: String) {
@@ -409,6 +437,7 @@ final class SetupModel: ObservableObject {
             NSLog("Polycarp: open at login failed: %@", error.localizedDescription)
         }
         reloadOptional()
+        readLogin()
     }
 
     /// Setup's last act: start with the Mac unless the person already decided.
@@ -1209,8 +1238,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         // The window taking the keyboard (opened, or clicked back to) reads the lists again.
         observers.append((NotificationCenter.default, NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
-            self?.model.reload()
-            self?.model.reloadParked()
+            self?.model.readShown()
         }))
         // An app launching or quitting changes the list on the Automation tab; a launch has no
         // windows for a moment, so it's read once soon after. Later windows are caught by the
@@ -1228,7 +1256,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         activeObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
                                                                 object: nil, queue: .main) { [weak self] _ in
             guard self?.window?.isVisible == true else { return }
-            self?.model.reload()
+            self?.model.readShown()
         }
     }
 
@@ -1243,8 +1271,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         model.justEnabled = false
         if !model.ready { model.tab = model.trusted ? .general : .permissions }
         model.dockAgentStatus = WorkspaceDock.agentStatus
-        model.reload()
-        model.reloadParked()
+        model.readShown(force: true)
         if model.tab == .updates { model.onUpdatesShown?() }
         model.reloadBangs()
         model.startWatching()
