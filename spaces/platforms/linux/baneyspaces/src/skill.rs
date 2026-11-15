@@ -84,7 +84,8 @@ fn home(home: Option<PathBuf>) -> Result<PathBuf, Envelope> {
     }
 }
 
-/// `--path P`: that one file instead of the usual places (a folder gets `SKILL.md` inside it).
+/// `--path P`: that one file instead of the usual places. A path that names an `.md` file is that file;
+/// anything else is a folder, made if it isn't there yet, with `SKILL.md` inside it.
 fn chosen(path: &str) -> Result<PathBuf, Envelope> {
     let p = PathBuf::from(path);
     if !p.is_absolute() {
@@ -95,7 +96,8 @@ fn chosen(path: &str) -> Result<PathBuf, Envelope> {
             "Example: baneyspaces skill install --path ~/.config/opencode/skills/baneyspaces",
         ));
     }
-    Ok(if p.is_dir() { p.join("SKILL.md") } else { p })
+    let is_md = p.extension().is_some_and(|e| e.eq_ignore_ascii_case("md"));
+    Ok(if is_md && !p.is_dir() { p } else { p.join("SKILL.md") })
 }
 
 fn usage() -> Envelope {
@@ -246,6 +248,9 @@ mod tests {
         assert_eq!(chosen(h.to_str().unwrap()).unwrap(), h.join("SKILL.md"));
         let f = h.join("x/SKILL.md");
         assert_eq!(chosen(f.to_str().unwrap()).unwrap(), f);
+        // A folder that doesn't exist yet, as in the error's own example, is still a folder.
+        let new = h.join("opencode/skills/baneyspaces");
+        assert_eq!(chosen(new.to_str().unwrap()).unwrap(), new.join("SKILL.md"));
         // A folder that cannot be made: an error envelope, not a panic.
         fs::write(h.join("file"), "").unwrap();
         let env = install(&[h.join("file/SKILL.md")]);
