@@ -11,7 +11,7 @@ import SwiftUI
 @MainActor
 enum SettingsTiming {
     /// The reads opening the window sets off (`SetupWindowController.show` and its two observers).
-    static let openReads: (SetupModel) -> Void = { m in m.readShown(force: true); m.readShown(); m.readShown() }
+    static let openReads: (SetupModel) -> Void = { m in m.readShown(opening: true); m.readShown(); m.readShown() }
 
     static func run(rounds: Int) -> Int32 {
         let first = ms { _ = SetupModel() }
