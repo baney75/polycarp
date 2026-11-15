@@ -1,6 +1,16 @@
 import CoreGraphics
 import Foundation
 
+/// Whether an `open` that needed a separate copy knows that none started. A launch reports only a new process, so "none"
+/// is known only once it had `settle` to report one and none runs that wasn't running before; until then the open answers
+/// that its window may still come (#124 sol-F4: `open --wait 0` read a copy still starting as no copy, and cancelled it).
+public enum SeparateCopy {
+    public static let settle: TimeInterval = 3
+    public static func noneStarted(launched: Int32?, running: Set<Int32>, before: Set<Int32>, elapsed: TimeInterval) -> Bool {
+        launched == nil && running.isSubset(of: before) && elapsed >= settle
+    }
+}
+
 /// What `open` does when its wait ends and no window of its launch is on the agent workspace.
 ///
 /// Measured 11-12: Calculator and Font Book each waited the full 7.1 s, answered `window_identified: false`, and their
