@@ -1673,6 +1673,11 @@ test("routesFrom: Tailscale whose serve status couldn't be read (a timeout) isn'
 
 test("remote test on your own front door: a pending check (530, no answer) says to point the front door at serve, not remote fix", async () => {
 	const { frontDoorNext } = await loadTs(`export { frontDoorNext } from "@src/remote-setup.ts";`);
+	// Pending dns (no address yet, resolver unreachable) and pending tls (this computer's network) come before the front door.
+	for (const early of [
+		{ name: "dns", status: "fail", pending: true, detail: "no address yet", next: "Wait a few minutes, then run remote test again." },
+		{ name: "tls", status: "fail", pending: true, detail: "ENETUNREACH", next: "Check this computer's network." },
+	]) assert.deepEqual(frontDoorNext([early], { route: "custom", port: 8790 }), [early], `a pending ${early.name} check keeps its own next`);
 	const checks = [
 		{ name: "tls", status: "ok", detail: "valid" },
 		{ name: "resource_metadata", status: "fail", pending: true, detail: "answered 530", next: "run remote test again. If it stays, run remote fix." },

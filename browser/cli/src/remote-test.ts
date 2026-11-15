@@ -439,7 +439,10 @@ export const realFault = (checks: ProofCheck[]) => checks.find((c) => c.status =
  * The name resolves and has a certificate, but what is behind it doesn't answer yet (a gateway status or no answer): a tunnel
  * that hasn't connected. Setup keeps asking while this is so, and fails if it still is at the deadline.
  */
-export const tunnelPending = (checks: ProofCheck[]) => checks.find((c) => c.status === "fail" && c.pending && c.name !== "dns" && c.name !== "tls");
+/** A check past DNS and TLS that got a gateway status or no answer: the tunnel or front door doesn't reach serve yet. A pending dns or tls check is earlier: no address yet, or this computer's network. */
+export const gatewayPending = (c: ProofCheck) => c.status === "fail" && c.pending === true && c.name !== "dns" && c.name !== "tls";
+
+export const tunnelPending = (checks: ProofCheck[]) => checks.find(gatewayPending);
 
 /** The connector answers from outside: public DNS, a valid certificate and this connector's metadata. Past that, a failure is a real fault. */
 export const answersFromOutside = (checks: ProofCheck[]) => ["dns", "tls", "resource_metadata"].every((name) => checks.some((c) => c.name === name && c.status === "ok"));

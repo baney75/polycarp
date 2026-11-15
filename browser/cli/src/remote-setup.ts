@@ -55,7 +55,7 @@ import { configDir, listClients, mintApprovalCode, passcodeSet, setPasscode } fr
 import { hubFile } from "./hub-state.ts";
 import { DohAnswerError, dohAddresses } from "./doh.ts";
 import { isIP } from "node:net";
-import { answersFromOutside, type ProofCheck, privateAddress, publicChecks, realFault, tunnelPending } from "./remote-test.ts";
+import { answersFromOutside, gatewayPending, type ProofCheck, privateAddress, publicChecks, realFault, tunnelPending } from "./remote-test.ts";
 import { DEFAULT_PORT } from "./tunnel.ts";
 import { tailscaleAppPath, tailscaleBinary } from "./tailscale.ts";
 
@@ -1258,13 +1258,13 @@ export function proofLines(checks: ProofCheck[]): string[] {
 }
 
 /**
- * On your own front door, a pending check (a gateway status or no answer) means that front door doesn't reach serve; no tunnel of
+ * On your own front door, a pending check past DNS and TLS (a gateway status or no answer) means that front door doesn't reach serve; no tunnel of
  * ours is connecting, and `remote fix` can't repair it, so its next says what setup says for the same answer.
  */
 export function frontDoorNext(checks: ProofCheck[], config: Pick<RemoteConfig, "route" | "port">): ProofCheck[] {
 	if (config.route !== "custom") return checks;
 	const port = config.port;
-	return checks.map((x) => (x.pending ? { ...x, next: `Your front door answers but doesn't reach serve. Point it at 127.0.0.1:${port}, check that serve runs, then run ${COMMAND_NAME} remote test.` } : x));
+	return checks.map((x) => (gatewayPending(x) ? { ...x, next: `Your front door answers but doesn't reach serve. Point it at 127.0.0.1:${port}, check that serve runs, then run ${COMMAND_NAME} remote test.` } : x));
 }
 
 /** Exit codes of `remote test`: 0 every check ok, 1 a check failed, 2 usage, 3 nothing is set up yet. */
