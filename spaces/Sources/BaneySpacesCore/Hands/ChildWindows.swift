@@ -102,6 +102,18 @@ public enum ChildWindowRule {
         }
     }
 
+    /// Decides each child with its process's placed windows read once, however many children the process has: each read is
+    /// a deep inspection on the main thread, once per child per window before (#124 round 1 first-F1).
+    public static func decideEach(_ children: [ChildWindowFacts], placed: (Int32) -> [(window: HandsWindow, scope: ScopeDecision)],
+                                  decide: (ChildWindowFacts, [(window: HandsWindow, scope: ScopeDecision)]) -> Decision) -> [(facts: ChildWindowFacts, decision: Decision)] {
+        var byPid: [Int32: [(window: HandsWindow, scope: ScopeDecision)]] = [:]
+        return children.map { c in
+            let p = byPid[c.pid] ?? placed(c.pid)
+            byPid[c.pid] = p
+            return (facts: c, decision: decide(c, p))
+        }
+    }
+
     /// #124 round 1 first-F2, round 2 first-F2: whether the sheet check can stop before reading the app. A window known to
     /// hold no sheet has nothing for `sheetOnWindowRefusal` to refuse, so no scopes, inspections or child read are needed;
     /// unsure (nil) reads everything, as before.
