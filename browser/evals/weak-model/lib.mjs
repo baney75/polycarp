@@ -127,6 +127,25 @@ export function checkGuard(label, floors, summary, runs) {
 }
 
 /**
+ * Why a round takes more steps than its baseline allows, or nothing. `ceilings` maps a task to the most tool calls a run
+ * of it may take on average; the mean is the transcripts' own (runs.jsonl), and a task with no runs fails. A ceiling may
+ * only fall: lower it with a committed round that reached the lower mean.
+ */
+export function checkSteps(label, ceilings, runs) {
+	const wrong = [];
+	for (const [id, most] of Object.entries(ceilings)) {
+		const of = runs.filter((r) => r.task === id);
+		if (!of.length) {
+			wrong.push(`${label} has no ${id} runs in runs.jsonl`);
+			continue;
+		}
+		const mean = of.reduce((n, r) => n + r.calls.length, 0) / of.length;
+		if (mean > most) wrong.push(`${label} ${id}: ${mean.toFixed(2)} calls a run, ceiling ${most}`);
+	}
+	return wrong;
+}
+
+/**
  * Why a committed round no longer matches its baseline entry, or nothing. Like is compared with like: the runs must be
  * the round's model, list the round's tool count for their kind, and cover exactly the round's task set; then the
  * total is fixed, and the score may only rise. A rerun with another model, another tool list or more tasks belongs

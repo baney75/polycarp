@@ -67,7 +67,7 @@ public enum HandsTools {
             HandsParam("screenshot", .boolean, "Also return a picture of the window (longest side 1280), with how its pixels map to window points."),
             HandsParam("zoom", .string, "With screenshot: only this region, x,y,width,height in window points, like \"0,0,400,300\". Crops the MCP image; the saved file stays whole. A zoom outside the window is refused before anything is captured."),
         ], acts: false),
-        HandsTool(verb: "find", summary: "Search one window's accessibility tree and return the matching elements with refs.", params: [
+        HandsTool(verb: "find", summary: "Search one window's accessibility tree and return the matching elements with refs. To click an element by its label, skip find: click with window and text does both.", params: [
             HandsParam("app", .string, "App name or bundle id."),
             HandsParam("window", .integer, "Window id."),
             HandsParam("role", .string, "Role, like button or textfield."),
@@ -81,8 +81,11 @@ public enum HandsTools {
             HandsParam("property", .string, "value (default), text, title, role, bounds or states.", positional: true),
             HandsParam("copy", .boolean, "Also hold the text on the agent clipboard, for type with paste: true. Never the Mac's clipboard."),
         ], acts: false),
-        HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"}", params: [
-            refParam,
+        HandsTool(verb: "click", summary: "Click an element by ref, or by the text it shows in a window, without moving the pointer or raising the window. By text it reads the window when it runs and clicks the element whose label is that text (a partial match only when it is the only one), so it needs no snapshot first and works as a run-steps step on what the step before opened; two matches are refused with their refs. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"} or {\"window\":4211,\"text\":\"Appearance\"}", params: [
+            HandsParam("ref", .string, "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5. Or pass window and text instead.", positional: true),
+            HandsParam("window", .integer, "With text: the window id from `windows`."),
+            HandsParam("text", .string, "With window: the label of the element to click, as the window shows it."),
+            HandsParam("role", .string, "With text: only elements of this role (button, row, statictext, ...), when the text is on more than one."),
             HandsParam("button", .string, "left (default) or right. A right click opens the element's context menu (AXShowMenu, no pointer) only while the agent workspace is on screen under the window, then presses `item` or, without one, lists the items and cancels the menu; it never leaves a menu open."),
             HandsParam("item", .string, "With button right: the context menu item to press, by its title. Items the menu bar refuses (clipboard, Services, sharing, opening documents) are refused here too."),
         ], acts: true),
@@ -317,6 +320,13 @@ public enum HandsParse {
         }
         if tool.verb == "move", let f = r.string("frame"), AgentArrange.parseFrame("0=" + f) == nil {
             return .failure(usage(tool, "frame is x,y,width,height, not \(f)"))
+        }
+        if tool.verb == "click" {
+            // A ref names its own window, so a window beside it is harmless; text or role beside it would be a second target.
+            if r.args["ref"] != nil, r.args["text"] != nil || r.args["role"] != nil { return .failure(usage(tool, "pass ref, or window and text, not both")) }
+            if r.args["ref"] == nil, r.args["text"] == nil || r.args["window"] == nil {
+                return .failure(usage(tool, r.args["text"] != nil || r.args["window"] != nil ? "text and window go together" : "ref is missing (or pass window and text)"))
+            }
         }
         if tool.verb == "run-steps", case .failure(let e) = RunSteps.parse(r.args["steps"], session: r.session, wait: r.int("wait")) { return .failure(e) }
         if tool.verb == "snapshot" || tool.verb == "find", r.args["app"] == nil, r.args["window"] == nil {

@@ -107,6 +107,21 @@ final class HandsRouter {
             }
         }
         if req.verb != "windows", req.verb != "workspaces", req.verb != "open", let problem = HandsEngine.shared.permissionProblem() { return .failure(problem) }
+        // A click by text: the element is picked from a read of the window now, then clicked by its ref like any click.
+        if req.verb == "click", req.args["ref"] == nil, let text = req.string("text") {
+            switch clickTarget(req, text: text) {
+            case .failure(let e): return .failure(e)
+            case .success(let m):
+                for k in ["text", "window", "role"] { req.args[k] = nil }
+                req.args["ref"] = .string(m.ref)
+                var env = handle(req)
+                if env.ok, case .object(var o)? = env.data {
+                    o["matched"] = .object(["ref": .string(m.ref), "role": .string(m.role), "label": .string(m.label)])
+                    env.data = .object(o)
+                }
+                return env
+            }
+        }
         switch req.verb {
         case "windows": return windows(session: req.session ?? "")
         case "workspaces": return workspaces(req)
@@ -525,6 +540,25 @@ final class HandsRouter {
                     withRows { $0.remember(session: req.session ?? "", window: w.id, view: view, as: "find", snapshot: sid, rows: rows, now: Date(), listed: false) }
                 }
                 return .success(.object(["snapshot_id": data["snapshot_id"] ?? .null, "window": .int(Int(w.id)), "count": .int(found.count), "matches": .array(found)]))
+            }
+        }
+    }
+
+    /// The element a click by text names (`TextTarget`), from a read of the window made now in find's view. The read is
+    /// remembered like a find's, so the ref it yields resolves, and a click on a row's text falls back to selecting the row.
+    private func clickTarget(_ req: HandsRequest, text: String) -> Result<TextTarget.Match, HandsError> {
+        switch target(req) {
+        case .failure(let e): return .failure(e)
+        case .success(let (w, _, _)):
+            let view = SnapshotRowsMemory.View.find
+            switch read(w, interactive: view.interactive, compact: view.compact, depth: UInt8(clamping: view.depth), session: req.session ?? "") {
+            case .failure(let e): return .failure(e)
+            case .success(let data):
+                if let sid = data["snapshot_id"]?.string {
+                    let rows = SnapshotRows.rows(of: data["tree"] ?? .null)
+                    withRows { $0.remember(session: req.session ?? "", window: w.id, view: view, as: "find", snapshot: sid, rows: rows, now: Date(), listed: false) }
+                }
+                return TextTarget.pick(tree: data["tree"] ?? .null, text: text, role: req.string("role"), window: Int(w.id))
             }
         }
     }

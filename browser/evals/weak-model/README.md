@@ -19,10 +19,12 @@ helper in connector mode (`hands.mjs`). With no task files, the runner says so a
   tab, a late element, a list that re-renders, autocomplete.
 - `tasks/computer.mjs`: 8 Mac tasks in Calculator, TextEdit and Preview, scored from the window and, for a save task,
   the saved file.
-- `tasks/stub.mjs`: 8 computer tasks on the stub helper (`stub/`): a calculator (Tally), a plain-text editor (Jotter:
+- `tasks/stub.mjs`: 10 computer tasks on the stub helper (`stub/`): a calculator (Tally), a plain-text editor (Jotter:
   append, save, close with unsaved changes), a long document (Leaflet), a settings window (Thermo: a popup, a text
-  field, a switch, Apply) and a contact list (Roster: pick a row, read its details). Scored from the stub's world file,
-  the fixture files and the answer.
+  field, a switch, Apply), a contact list (Roster: pick a row, read its details), and the bench's two System Settings
+  tasks on a stub System Settings (a sidebar of panes, Accessibility's Display pane). Scored from the stub's world
+  file, the fixture files and the answer. The System Settings pair runs alone with `--kind stub --only
+  stub-settings-appearance,stub-settings-two-panes`; the real app is once per user and needs the phase 2 sandbox on the bench.
 
 The stub (`stub/hands.mjs`) stands in for `polycarp-spaces mcp`. It serves the real helper's `tools/list` and
 instructions (`stub/hands-tools.json`, refreshed from the helper by `stub/refresh-tools.mjs`, and held to
@@ -99,7 +101,8 @@ and task set only. A browser rerun under today's list is a new round with its ow
 the tool count per kind and the task set. `test/weak-model-baseline.test.mjs` fails if a committed round scores below
 its baseline (recounted from `runs.jsonl`), if any of its runs differs from what the round ran under (another model,
 another tool list, a task the round didn't have or one it lacks), so a rerun under a committed label with another
-model can't raise it, if the latest round drops below the floor, if a guarded task loses a pass it recorded, if a
+model can't raise it, if the latest round drops below the floor, if a guarded task loses a pass it recorded, if the
+newest round of a task set takes more calls a run than its `steps` ceiling, if a
 `classes.json` count disagrees with its runs, or if the committed read-size measurement leaves its token budget.
 CI never calls a model: it checks the committed numbers, `test/weak-model-harness.test.mjs` holds the runner's own
 logic, and the cheap deterministic tests in `cli/test` hold each fix.

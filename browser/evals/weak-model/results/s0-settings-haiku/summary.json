@@ -1,0 +1,16 @@
+{
+	"label": "s0-settings-haiku",
+	"model": "claude-haiku-5-5",
+	"trials": 3,
+	"profile": "full",
+	"date": "2026-11-13T21:16:11.340Z",
+	"passed": 6,
+	"total": 6,
+	"calls": 35,
+	"toolErrors": 2,
+	"resultChars": 23839,
+	"tasks": {
+		"stub-settings-appearance": {"pass":3,"of":3,"calls":[5,4,4],"errors":[1,0,0]},
+		"stub-settings-two-panes": {"pass":3,"of":3,"calls":[7,7,8],"errors":[0,1,0]}
+	}
+}

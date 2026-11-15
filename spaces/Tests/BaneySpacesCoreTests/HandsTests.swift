@@ -482,7 +482,9 @@ final class HandsMCPTests: XCTestCase {
             XCTAssertNotNil(t["annotations"]?["readOnlyHint"]?.bool)
         }
         let click = try XCTUnwrap(tools.first { $0["name"]?.string == "click" })
-        XCTAssertEqual(click["inputSchema"]?["required"]?.array?.compactMap(\.string), ["ref"])
+        // A ref, or a window and text (TextTarget): the parse checks which, so the schema requires neither.
+        XCTAssertEqual(click["inputSchema"]?["required"]?.array?.compactMap(\.string) ?? [], [])
+        XCTAssertEqual(Set(click["inputSchema"]?["properties"]?.object?.keys.map { $0 } ?? []).isSuperset(of: ["ref", "window", "text", "role"]), true)
         XCTAssertEqual(click["annotations"]?["readOnlyHint"]?.bool, false)
         let snap = try XCTUnwrap(tools.first { $0["name"]?.string == "snapshot" })
         XCTAssertEqual(snap["annotations"]?["readOnlyHint"]?.bool, true)

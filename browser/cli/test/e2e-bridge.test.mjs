@@ -2902,6 +2902,14 @@ test("a ranked read does not keep a list the page removed alive", async () => {
 	assert.equal(await evaluate(`(() => { const b = [...document.querySelectorAll("button")].find((x) => x.textContent === "Row 300"); window.__probe = new WeakRef(b); b.parentNode.parentNode.remove(); return true; })()`), true);
 	// A full read forgets refs whose element left; only the kept ranking could still hold the rows.
 	await tool("read_page", {});
+	// Chromium holds the rows too until the page draws again: the body's last layout keeps the removed rows' boxes,
+	// which keep their elements, and a forced layout doesn't drop it, a frame does. Without waiting, a collection that came
+	// first found the rows alive whatever Polycarp held (2 runs in 20). Two frames: the first one's callback runs before
+	// that frame is laid out.
+	await cdp(target.webSocketDebuggerUrl, "Runtime.evaluate", {
+		expression: "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))",
+		awaitPromise: true,
+	});
 	let freed = false;
 	for (let i = 0; i < 5 && !freed; i++) {
 		await cdp(target.webSocketDebuggerUrl, "HeapProfiler.collectGarbage");
