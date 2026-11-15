@@ -63,7 +63,11 @@ isolation line, drawn by process:
   path the caller gives), when it is there. The native host manifests `polycarp-browser setup` registered
   (`com.polycarp.browser`, `ai.tabkyra.bridge`) are copied into the private profile's
   `NativeMessagingHosts/`, where Chromium looks under its own `--user-data-dir`, so the agent's browser
-  connects to your Polycarp helper with no setup. Anything off the list, such as nautilus or a GApplication, is `needs_sandbox` before
+  connects to your Polycarp helper with no setup. Its bridge socket lives in a folder of that launch's own
+  (`$XDG_RUNTIME_DIR/baneyspaces/polycarp/<tag>`, given to the browser and to `agent run` shells as
+  `POLYCARP_SOCKET_DIR`, and to a browser opened from such a shell as that shell's folder), never in your
+  `/tmp/polycarp-bridge-<user>`, so your Polycarp never attaches to it; `agent open` reports it as
+  `polycarp_socket_dir`, and `POLYCARP_SOCKET_DIR=<dir> polycarp-browser mcp` reaches that browser. Anything off the list, such as nautilus or a GApplication, is `needs_sandbox` before
   launch, whether or not you run a copy;
 - **every agent process (`open` and `run`) has a session bus of its own.** One `dbus-daemon
   --session` per launch, with its own runtime directory, so GApplication and D-Bus single-instance

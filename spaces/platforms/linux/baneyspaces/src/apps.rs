@@ -136,6 +136,39 @@ pub fn copy_polycarp_hosts(config_home: &Path, app: &str, profile: &Path) -> Vec
     copied
 }
 
+/// The variables Polycarp's native host and its clients take the socket folder from (`envVar("SOCKET_DIR")`
+/// in browser/cli/src/paths.ts): the current name and the one a release from before the rename reads.
+pub const POLYCARP_SOCKET_VARS: &[&str] = &["POLYCARP_SOCKET_DIR", "TABKYRA_SOCKET_DIR"];
+
+/// The Polycarp bridge folder of one agent launch, `<run>/polycarp/<tag>`. An agent's browser makes its
+/// socket here, never in your `/tmp/polycarp-bridge-<user>`, so your Polycarp never attaches to it and an
+/// agent's client never reaches your signed-in browser. Under this override the host also skips the legacy
+/// `tabkyra-bridge` folder.
+pub fn polycarp_socket_dir(run: &Path, tag: &str) -> PathBuf {
+    run.join("polycarp").join(tag)
+}
+
+/// Makes `polycarp_socket_dir` private (0700, the mode the native host insists on) and returns it.
+pub fn make_polycarp_socket_dir(run: &Path, tag: &str) -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    let dir = polycarp_socket_dir(run, tag);
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
+    for d in [run.join("polycarp"), dir.clone()] {
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(dir)
+}
+
+/// Removes the bridge folders no live launch uses (a daemon killed outright left them).
+pub fn sweep_polycarp_socket_dirs(run: &Path, live_tags: &std::collections::HashSet<String>) {
+    let Ok(dir) = std::fs::read_dir(run.join("polycarp")) else { return };
+    for e in dir.flatten() {
+        if !live_tags.contains(&*e.file_name().to_string_lossy()) {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+}
+
 /// Where a system binary may live. An allowlisted name must resolve (realpath) to the same file as
 /// one of these, so a wrapper script or a symlink earlier on PATH, or in a project, never passes for it.
 pub const SYSTEM_BIN_DIRS: &[&str] = &["/usr/bin", "/bin", "/usr/local/bin"];
