@@ -189,7 +189,8 @@ final class SetupModel: ObservableObject {
 
     func stopWatching() { timer?.invalidate() }
 
-    private func tick() {
+    /// Internal for the settings timing harness (`SettingsTiming`).
+    func tick() {
         ticks += 1
         let wasReady = ready
         put(\.trusted, AXIsProcessTrusted())
