@@ -3,10 +3,9 @@
 
     rust-licenses.py --out FILE --own DIR [--target TRIPLE ...] MANIFEST:PACKAGE ...
 
-Each MANIFEST:PACKAGE is a Cargo.toml and the package in it that the app ships (the polycarp command, the
-voice core, the hands engine). Only normal dependencies count: build and dev dependencies never reach the
-binary. Path crates under --own are Polycarp's own code or the engine's, whose licences NOTICE and
-LICENSES already carry. Run it after the builds, so cargo has every crate's source on disk.
+Each MANIFEST:PACKAGE is a Cargo.toml and the package the app ships from it (the polycarp command, the voice core,
+the hands engine). Only normal dependencies reach the binary. Path crates under --own are Polycarp's or the engine's,
+which NOTICE and LICENSES cover. Run it after the builds, so cargo has every crate's source on disk.
 """
 import argparse
 import json
@@ -49,6 +48,22 @@ for spec in args.roots:
             continue
         crates[(p["name"], p["version"])] = p
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+TEXTS = {"MIT": os.path.join(HERE, "licence-texts", "MIT.txt"), "Zlib": os.path.join(HERE, "licence-texts", "Zlib.txt"),
+         "Apache-2.0": os.path.join(HERE, "..", "LICENSES", "agent-desktop-Apache-2.0.txt")}
+
+def standard_texts(name, version, p):
+    """The first alternative of the crate's licence expression whose every licence has a text here (OR: one is enough,
+    AND: all are needed). None does: the build stops, so no crate ships uncredited."""
+    expr = (p.get("license") or "").replace("/", " OR ").replace("(", " ").replace(")", " ")
+    for alternative in expr.split(" OR "):
+        ids = [term.split(" WITH ")[0].strip() for term in alternative.split(" AND ")]
+        if ids and all(i in TEXTS for i in ids):
+            holders = ", ".join(p.get("authors") or [f"the {name} authors"])
+            return "\n\n".join(open(TEXTS[i], encoding="utf-8").read().strip().replace("{holders}", holders) for i in ids)
+    sys.exit(f"rust-licenses: {name} {version} has no licence file and no text here for {p.get('license')!r}: "
+             f"add the licence's text to scripts/licence-texts and to TEXTS")
+
 parts = ["The Rust crates compiled into Polycarp (the polycarp command, the voice core and the hands engine), with their licences.", ""]
 for (name, version), p in sorted(crates.items()):
     folder = os.path.dirname(p["manifest_path"])
@@ -57,8 +72,7 @@ for (name, version), p in sorted(crates.items()):
     parts.append(f"{name} {version} ({p.get('license') or 'see below'})")
     parts.append("=" * 72)
     texts = [open(f, encoding="utf-8", errors="replace").read().strip() for f in files if os.path.isfile(f)]
-    parts.append("\n\n".join(texts) if texts else f"The crate carries no licence file; its manifest says {p.get('license')}. "
-                 f"Copyright {', '.join(p.get('authors') or ['its authors'])}. Source: {p.get('repository') or 'crates.io'}.")
+    parts.append("\n\n".join(texts) if texts else standard_texts(name, version, p))
     parts.append("")
 with open(args.out, "w", encoding="utf-8") as out:
     out.write("\n".join(parts))

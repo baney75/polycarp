@@ -36,8 +36,9 @@ final class RustLicencesTests: XCTestCase {
         builddep = { path = "../../third/builddep" }
         """)
         try crate("own/mine", pkg("mine"), files: ["LICENSE": "our own code"])
-        try crate("third/dep", pkg("dep") + "license = \"MIT\"\n[dependencies]\nnolic = { path = \"../nolic\" }\n", files: ["LICENSE-MIT": "dep licence text"])
+        try crate("third/dep", pkg("dep") + "license = \"MIT\"\n[dependencies]\nnolic = { path = \"../nolic\" }\neither = { path = \"../either\" }\n", files: ["LICENSE-MIT": "dep licence text"])
         try crate("third/nolic", pkg("nolic") + "license = \"MIT\"\nauthors = [\"Ann Author\"]\n")
+        try crate("third/either", pkg("either") + "license = \"Foo-1.0 OR Zlib\"\n")
         try crate("third/devdep", pkg("devdep"), files: ["LICENSE": "devdep licence text"])
         try crate("third/builddep", pkg("builddep"), files: ["LICENSE": "builddep licence text"])
 
@@ -48,7 +49,15 @@ final class RustLicencesTests: XCTestCase {
         XCTAssertEqual(try run(["python3", script, "--out", out.path, "--own", tmp.appendingPathComponent("own").path, manifest + ":app"]), 0)
         let text = try String(contentsOf: out, encoding: .utf8)
         XCTAssertTrue(text.contains("dep 1.0.0 (MIT)\n" + String(repeating: "=", count: 72) + "\ndep licence text"), text)
-        XCTAssertTrue(text.contains("nolic 1.0.0 (MIT)") && text.contains("Copyright Ann Author."), "a dependency's dependency, credited without a file: \(text)")
+        // nolic sorts last, so everything after its heading is its entry.
+        let nolic = try XCTUnwrap(text.components(separatedBy: "nolic 1.0.0 (MIT)\n").dropFirst().last, text)
+        XCTAssertTrue(nolic.contains("Copyright (c) Ann Author") && nolic.contains("Permission is hereby granted"),
+                      "a dependency's dependency with no file gets MIT's own text, as MIT requires: \(nolic)")
+        XCTAssertTrue(text.contains("either 1.0.0 (Foo-1.0 OR Zlib)\n" + String(repeating: "=", count: 72) + "\nzlib License"), "OR: the alternative with a text: \(text)")
+
+        // A licence with no text here stops the build rather than ship the crate uncredited.
+        try crate("third/either", pkg("either") + "license = \"Foo-1.0\"\n")
+        XCTAssertNotEqual(try run(["python3", script, "--out", out.path, "--own", tmp.appendingPathComponent("own").path, manifest + ":app"]), 0)
         for absent in ["devdep", "builddep", "our own code", "app 1.0.0", "mine 1.0.0"] {
             XCTAssertFalse(text.contains(absent), "\(absent) isn't linked or is ours: \(text)")
         }
