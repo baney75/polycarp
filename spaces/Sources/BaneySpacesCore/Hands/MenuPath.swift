@@ -245,7 +245,7 @@ public enum MenuPath {
     static func itemRule(_ i: MenuItem, path: String) -> HandsError? {
         if i.chord("f", control: true) || i.id.contains("fullscreen") || i.name.contains("full screen") { return refuse(path, why: windows) }
         if i.chord("\\", shift: true) || i.id.contains("taboverview") || i.name.contains("all tabs") { return refuse(path, why: windows) }
-        if i.command && ["c", "x", "v"].contains(i.key) || ["cut:", "copy:"].contains(i.id) || i.id.hasPrefix("paste") { return clipboard(path) }
+        if clipboardChord(i) || ["cut:", "copy:"].contains(i.id) || i.id.hasPrefix("paste") { return clipboard(path) }
         if i.chord("o") || i.id.hasPrefix("opendocument") { return refuse(path, why: documents) }
         // 197 r1 second-S3: the Versions browser takes the screen; Move To and Rename move the document out of the handoff folder.
         if i.id == "browsedocumentversions:" || i.name.hasPrefix("browse all versions") { return refuse(path, why: windows) }
@@ -254,7 +254,7 @@ public enum MenuPath {
         // way in is closed: a search typed into a find bar writes it too (205 r1 first-F3).
         if i.chord("e") || i.id.contains("selectionforfind") || i.name.hasPrefix("use selection for find") { return refuse(path, why: findText) }
         if i.submenu && (i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
-        if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name.hasPrefix($0) }) { return clipboard(path) }
+        if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name == $0 || i.name.hasPrefix($0 + " ") }) { return clipboard(path) }
         if leavesTheApp(i) { return refuse(path, why: outside) }
         return nil
     }
@@ -314,6 +314,14 @@ public enum MenuPath {
             : why == windows ? "Lay out agent windows with `arrange` or `move`."
             : why == outside ? "Do it in the app's own window with click, type or set-value." : "Close your window with `close`."
         return HandsError(.notSupported, "\(path) is never used: \(why)", suggestion: suggestion, retry: .never, nextCall: .null)
+    }
+
+    /// The key equivalents macOS gives cut, copy and paste and their variants, each with its exact modifiers: Copy and Paste
+    /// Style (option), Paste and Match Style (shift+option, or shift in many apps). 11-15: any command with C, X or V matched,
+    /// so TextEdit's Show Colors (shift+cmd+c) was refused as the clipboard.
+    static func clipboardChord(_ i: MenuItem) -> Bool {
+        i.chord("x") || i.chord("c") || i.chord("v") || i.chord("c", option: true) || i.chord("v", option: true)
+            || i.chord("v", shift: true) || i.chord("v", shift: true, option: true)
     }
 
     /// Cut, copy and paste reach the Mac's clipboard, which is Donovan's.
