@@ -37,6 +37,33 @@ final class OpenFlashGuardTests: XCTestCase {
         XCTAssertEqual(parts.map(\.frame), [CGRect(x: 852, y: 0, width: 148, height: 448), CGRect(x: 1000, y: -48, width: 448, height: 48)])
     }
 
+    /// Issue #304, live on d2640d0: Dictionary opened at 828,360 678x616 and grew to 823,354 688x628 against the screen's
+    /// bottom right; its cover, cut at 1512x982, was listed to 1506x976, and the strip showed 78 to 137 ms until the park.
+    func testACoverCutAtAScreenEdgeReachesPastIt() {
+        let dict = CGRect(x: 828, y: 360, width: 678, height: 616)
+        let part = try! XCTUnwrap(OpenFlashGuard.coverParts(for: dict, screens: screen).first)
+        XCTAssertEqual(part.frame, CGRect(x: 780, y: 312, width: 732, height: 670), "the shot is cut to the screen")
+        XCTAssertEqual(part.panel, CGRect(x: 780, y: 312, width: 748, height: 686), "the panel goes 16 pt past the right and bottom")
+        XCTAssertEqual(OpenFlashGuard.imageFrame(part.frame, in: part.panel), CGRect(x: 0, y: 16, width: 732, height: 670),
+                       "the shot sits over the part, its bottom 16 pt up from the panel's")
+        XCTAssertEqual(OpenFlashGuard.coverParts(for: w, screens: screen).map(\.panel), [CGRect(x: 352, y: 252, width: 596, height: 496)],
+                       "a cover the screen didn't cut is the panel")
+        let topLeft = try! XCTUnwrap(OpenFlashGuard.coverParts(for: CGRect(x: 0, y: 0, width: 500, height: 400), screens: screen).first)
+        XCTAssertEqual(topLeft.panel, CGRect(x: -16, y: -16, width: 564, height: 464))
+        XCTAssertEqual(OpenFlashGuard.imageFrame(topLeft.frame, in: topLeft.panel), CGRect(x: 16, y: 0, width: 548, height: 448))
+        // Two displays side by side: never past the edge they share, where the other display's own part covers.
+        let pair = [CGRect(x: 0, y: 0, width: 1000, height: 800), CGRect(x: 1000, y: 0, width: 1000, height: 800)]
+        let parts = OpenFlashGuard.coverParts(for: CGRect(x: 900, y: 300, width: 400, height: 200), screens: pair)
+        XCTAssertEqual(parts.map(\.panel), parts.map(\.frame), "the seam has a display beyond it on both sides")
+        // Diagonal displays: each side alone is clear, but the corner both make is on the other display.
+        let diagonal = [CGRect(x: 0, y: 0, width: 1000, height: 800), CGRect(x: 1000, y: -800, width: 1000, height: 800)]
+        let d = OpenFlashGuard.coverParts(for: CGRect(x: 900, y: 0, width: 500, height: 400), screens: diagonal)
+        XCTAssertEqual(d.map(\.panel), d.map(\.frame))
+        // One cut side next to nothing, on a two-display row: it goes past that side only.
+        let low = OpenFlashGuard.coverParts(for: CGRect(x: 100, y: 500, width: 400, height: 290), screens: pair)
+        XCTAssertEqual(low.map(\.panel), [CGRect(x: 52, y: 452, width: 496, height: 364)])
+    }
+
     func testAppKitFramesCountFromTheBottom() {
         XCTAssertEqual(OpenFlashGuard.appKit(CGRect(x: 10, y: 20, width: 100, height: 50), primaryHeight: 982), CGRect(x: 10, y: 912, width: 100, height: 50))
     }
