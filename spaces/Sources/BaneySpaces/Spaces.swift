@@ -509,10 +509,10 @@ final class Spaces {
         return (e.string("AXDocument"), PanelDetector.windowIsOffLimits(HandsAXTree.node(e, depth: 1)))
     }
 
-    /// The usable area of the screen the agent workspace shows on (the main one), for `arrange`.
+    /// The usable area of the display the agent workspace shows on, for `arrange` and `move --frame` (`AgentArea`).
     func agentArea() -> CGRect {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        return NSScreen.screens.first.map { Geometry.toAX($0.visibleFrame, primaryHeight: primaryHeight) } ?? .zero
+        AgentArea.visible(displays: Windows.displays().map { ($0.key, $0.visible) },
+                          showing: Self.agentWorkspace.flatMap(model.display(showing:)), focused: model.focusedDisplay)
     }
 
     /// `arrange` and `move --frame`: gives agent workspace windows these frames without showing them. A window in sight
