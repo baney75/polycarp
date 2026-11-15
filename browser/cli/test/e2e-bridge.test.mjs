@@ -2156,7 +2156,7 @@ async function filesAgent(allowed = true) {
 	await on(agent, "navigate", { url: `${pageUrl}files` });
 	const close = async () => {
 		await sw(`chrome.storage.local.set({ bridge_allowed_hosts: ${JSON.stringify(before ?? [])} }).then(() => true)`).catch(() => undefined);
-		await on(agent, "session_end", { closeTabs: true }).catch(() => undefined);
+		await on(agent, "session_end", { close: true }).catch(() => undefined);
 		await agent.close().catch(() => undefined);
 		rmSync(project, { recursive: true, force: true });
 	};

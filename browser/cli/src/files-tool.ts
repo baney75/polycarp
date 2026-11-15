@@ -10,8 +10,8 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { FILE_ASK_TIMEOUT_MS, FILE_CHUNK_FROM_EXTENSION, FILE_CHUNK_TO_EXTENSION } from "../../src/bridge/protocol.ts";
-import { type BridgeClient, BridgeRpcError } from "./client.ts";
+import { FILE_ASK_TIMEOUT_MS, FILE_CHUNK_FROM_EXTENSION, FILE_CHUNK_TO_EXTENSION, FILE_FETCH_WAIT_MS } from "../../src/bridge/protocol.ts";
+import { type BridgeClient, BridgeRpcError, NOT_CONNECTED } from "./client.ts";
 import { OUTPUT_CAP, utf8Window } from "./output-cap.ts";
 import { checkUploadCaps, checkUploadPath, MAX_UPLOAD_FILES, type RuleEnv } from "./file-rules.ts";
 import {
@@ -94,13 +94,15 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 	/**
 	 * Point `saved` at this client's own session. Two agents in one project ask for the same default session and the
 	 * extension gives the second "<name>-2" when it connects, so the name is only known after the extension has
-	 * answered once; a client that has heard nothing yet asks for its status first.
+	 * answered once; a client that has heard nothing yet asks for its status first. False when that ask failed: the
+	 * name it asked for may be another agent's folder, so no folder is used until the extension has answered.
 	 */
-	async function ownFolder(): Promise<void> {
-		if (o.auto && !client.answered) await client.call("status", {}, 5000).catch(() => undefined);
+	async function ownFolder(): Promise<boolean> {
+		if (o.auto && !client.answered && !(await client.call("status", {}, 5000).then(() => true, () => false))) return false;
 		const name = client.session ?? o.session;
 		if (name !== saved.session) saved = new SavedFiles(name);
 		confirmed = true;
+		return true;
 	}
 
 	/** What the caller is told about a saved file. Only a local caller learns where it is on disk. */
@@ -301,13 +303,13 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 			if (args.action === "upload" && o.remote && args.paths?.length)
 				return refuse("A remote session can't upload from a path on this computer. Use ids of files this session saved (download or save_pdf).");
 			try {
-				await ownFolder();
+				if (!(await ownFolder())) return refuse(NOT_CONNECTED);
 				if (args.action === "upload") return await upload(args);
 				if (args.action === "download") {
 					if (!args.url && !args.ref && !args.selector) return refuse("download needs a url, or the ref of a link, image or media element.");
 					let info: Incoming;
 					try {
-						info = await client.call<Incoming>("files.download.begin", { tabId: args.tabId, url: args.url, ref: args.ref, selector: args.selector }, 120000);
+						info = await client.call<Incoming>("files.download.begin", { tabId: args.tabId, url: args.url, ref: args.ref, selector: args.selector }, FILE_FETCH_WAIT_MS);
 					} catch (err) {
 						return o.bridgeError(err);
 					}
@@ -316,7 +318,7 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 				if (args.action === "save_pdf") {
 					let info: Incoming;
 					try {
-						info = await client.call<Incoming>("files.pdf.begin", { tabId: args.tabId }, 120000);
+						info = await client.call<Incoming>("files.pdf.begin", { tabId: args.tabId }, FILE_FETCH_WAIT_MS);
 					} catch (err) {
 						return o.bridgeError(err);
 					}

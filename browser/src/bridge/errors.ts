@@ -7,7 +7,7 @@
 import { isDetachError, isNavigatedError, PageException } from "../browser/cdp.js";
 import { ClipboardChordError } from "../browser/key-commands.js";
 import { NoTabError } from "../browser/session.js";
-import { ERR, type RpcError } from "./protocol.js";
+import { ERR, FILE_ASK_TIMEOUT_MS, FILE_FETCH_WAIT_MS, type RpcError } from "./protocol.js";
 
 export class BridgeError extends Error {
 	constructor(
@@ -25,6 +25,16 @@ export class BridgeError extends Error {
 
 /** A handler that never settles must not wedge the client's queue (the bridge) or the panel's turn forever. */
 export const HANDLER_TIMEOUT_MS = 90000;
+
+/**
+ * How long one agent call may run in the bridge. An upload's begin may wait for the person's answer. A download's or
+ * PDF's begin fetches up to 50 MB, and the CLI waits FILE_FETCH_WAIT_MS for it, so the bridge gives up just before.
+ */
+export function handlerLimit(method: string): number {
+	if (method === "files.upload.begin") return FILE_ASK_TIMEOUT_MS + 30000;
+	if (method === "files.download.begin" || method === "files.pdf.begin") return FILE_FETCH_WAIT_MS - 5000;
+	return HANDLER_TIMEOUT_MS;
+}
 
 export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
 	return new Promise<T>((resolve, reject) => {

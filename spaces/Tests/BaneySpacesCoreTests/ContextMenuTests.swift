@@ -448,7 +448,7 @@ final class ContextMenuTests: XCTestCase {
         let press = try XCTUnwrap(menu.range(of: "guard pressItem("))
         XCTAssertLessThan(start.lowerBound, press.lowerBound)
         let after = String(menu[press.lowerBound...])
-        XCTAssertEqual(after.components(separatedBy: "return watched(").count - 1, 3, "not pressed, pressed but open, pressed")
+        XCTAssertEqual(after.components(separatedBy: "return watched(").count - 1, 4, "may have run, not pressed, pressed but open, pressed")
         XCTAssertEqual(after.components(separatedBy: "return .").count - 1, 0, "no answer skips the watch")
         XCTAssertTrue(menu.contains("undo(MenuPath.Seen.merged(looks), w, path: \"context menu > \\(title)\", oldPanels: oldPanels, inline: c)"))
         let undo = try XCTUnwrap(HandsSourceTests.block(after: "func undo(", in: try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")))
@@ -472,5 +472,55 @@ final class ContextMenuTests: XCTestCase {
         let menu = try XCTUnwrap(HandsSourceTests.block(after: "func contextMenu(", in: ctx))
         let reach = try XCTUnwrap(menu.range(of: "reached = true\n                guard pressItem("))
         XCTAssertLessThan(try XCTUnwrap(menu.range(of: "if let e = beforePress()")).lowerBound, reach.lowerBound, "a refusal before the press reaches nothing")
+    }
+
+    /// 256 first-F4: the item pressed is the first of its title, the one `choose` judged. When it went disabled between
+    /// the two reads, a later look-alike ("Rename…" for "Rename") is never pressed in its place.
+    func testTheItemPressedIsTheOneChooseJudged() {
+        let tree: JSONValue = .object(["role": "menu", "children": .array([
+            .object(["role": "menuitem", "name": "Rename", "ref_id": "@e3", "states": .array(["disabled"])]),
+            .object(["role": "menuitem", "name": "Rename\u{2026}", "ref_id": "@e4"]),
+        ])])
+        XCTAssertNil(ContextMenu.ref(tree, title: "Rename"))
+        XCTAssertEqual(ContextMenu.ref(tree, title: "Rename\u{2026}"), nil, "the same title: the first, which is disabled")
+    }
+
+    /// 256 first-F3: under Full Access, one of Donovan's processes with a window claimed onto the agent workspace is his,
+    /// as the planner treats it, so the right click's gate doesn't take it for the agent's own.
+    func testAFullAccessWindowOfDonovansIsNotTheAgentsOwn() throws {
+        XCTAssertFalse(ContextMenu.agentsOwn(onAgentWorkspace: true, fullAccess: true, agentProcess: false))
+        XCTAssertTrue(ContextMenu.agentsOwn(onAgentWorkspace: true, fullAccess: true, agentProcess: true))
+        XCTAssertTrue(ContextMenu.agentsOwn(onAgentWorkspace: true, fullAccess: false, agentProcess: false))
+        XCTAssertFalse(ContextMenu.agentsOwn(onAgentWorkspace: false, fullAccess: false, agentProcess: true))
+        let ctx = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextMenu.swift")
+        let gate = try XCTUnwrap(HandsSourceTests.block(after: "func onAgentWorkspace(", in: ctx))
+        XCTAssertTrue(gate.contains("ContextMenu.agentsOwn(onAgentWorkspace: scope == .onAgentWorkspace && placed, fullAccess: access == .full, agentProcess: owned)"))
+        XCTAssertTrue(gate.contains("host.agentOwned().contains(w.pid)"))
+    }
+
+    /// 256 r2 second-S2: WebKit's context items are the clipboard by their own identifiers, in any language.
+    func testWebKitsCopyItemsAreTheClipboard() throws {
+        let items = [I(identifier: "WKMenuItemIdentifierCopyLink", title: "Link kopieren"), I(identifier: "WKMenuItemIdentifierCopyImage", title: "Bild kopieren"),
+                     I(identifier: "WKMenuItemIdentifierPaste", title: "Einsetzen"), I(identifier: "WKMenuItemIdentifierReload", title: "Neu laden")]
+        let enabled: [Bool?] = [true, true, true, true]
+        for want in ["Link kopieren", "Bild kopieren", "Einsetzen"] {
+            guard case .failure(let e) = ContextMenu.choose(items, enabled: enabled, want: want) else { XCTFail("\(want) was chosen"); continue }
+            XCTAssertTrue(e.message.contains("clipboard"), want)
+        }
+        XCTAssertEqual(try ContextMenu.choose(items, enabled: enabled, want: "Neu laden").get(), 3)
+    }
+
+    /// 256 r2 second-S1: a press the engine answered with an error after its menu had closed may have run: the call says
+    /// so with retry never, not "didn't take" with a retry.
+    func testAPressThatErredAfterItsMenuClosedMayHaveRun() throws {
+        let e = ContextMenu.mayHaveRun("TextEdit", item: "Delete")
+        XCTAssertEqual(e.retry, .never)
+        XCTAssertTrue(e.message.contains("may have run"))
+        let ctx = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextMenu.swift")
+        let menu = try XCTUnwrap(HandsSourceTests.block(after: "func contextMenu(", in: ctx))
+        let press = try XCTUnwrap(menu.range(of: "guard pressItem("))
+        let gone = try XCTUnwrap(menu.range(of: "if ContextMenuAX.gone(w.pid, before: before, within: 0) { return watched(.failure(ContextMenu.mayHaveRun(w.app, item: title))) }"))
+        let not = try XCTUnwrap(menu.range(of: "ContextMenu.notPressed(w.app, item: item)"))
+        XCTAssertTrue(press.lowerBound < gone.lowerBound && gone.lowerBound < not.lowerBound, "looked at before the menu is cancelled")
     }
 }

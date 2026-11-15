@@ -43,6 +43,8 @@ export const FILE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 export const FILE_DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024;
 /** How long the person has to answer an upload question; no answer is a no. */
 export const FILE_ASK_TIMEOUT_MS = 120000;
+/** How long the CLI waits for a download or PDF to begin. The bridge's own limit for those is a little less (handlerLimit). */
+export const FILE_FETCH_WAIT_MS = 120000;
 
 export interface ClientHello {
 	type: "hello";
