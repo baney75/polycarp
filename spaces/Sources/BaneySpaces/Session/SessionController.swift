@@ -70,6 +70,8 @@ final class SessionController {
     let server = Server()
     let phones = PhoneWatcher()
     let remote = RemoteServer()
+    /// Starts apps for `agent open` (AgentLaunch.swift); one seam, so a test can stand in for NSWorkspace.
+    let agentLauncher: AgentAppLauncher = SystemAppLauncher()
     private var remoteRetry: Timer?
 
     static var remoteEnabled: Bool {
@@ -588,12 +590,13 @@ final class SessionController {
             // The gate every caller of this op goes through, the socket included: only apps verified to start a
             // separate instance, only files from the handoff folder, no URLs. Full Access (Donovan's) opens any app and file.
             let files: [URL]
+            let launch: AgentLaunchRequest
             switch AgentOpenGate.check(app: appName, bundle: bundle, targets: Array(args.dropFirst()), handoff: HandsRouter.handoffFolder, appURL: url,
                                      probeFolder: ProbeAppTrust.folder, probeTrusted: bundle == AgentAppPolicy.canvasProbeBundle && ProbeAppTrust.trusted(url),
                                      mode: mode) {
             case .failure(let e): return .init(ok: false, error: e.message, info: ["code": e.code.rawValue, "suggestion": e.suggestion])
             // A System Settings pane link is a URL the app opens, not a file (`SettingsPaneLink`, checked by the gate).
-            case .success(let paths): files = paths.map { SettingsPaneLink.isLink($0) ? URL(string: $0) ?? URL(fileURLWithPath: $0) : URL(fileURLWithPath: $0) }
+            case .success(let paths): files = AgentLaunch.targets(paths); launch = AgentLaunchRequest(app: url, paths: paths)
             }
             let before = Set(NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier))
             let cfg = NSWorkspace.OpenConfiguration()
@@ -643,8 +646,7 @@ final class SessionController {
                 }
                 return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "pid": "\(pid)", "note": "\(appName) is already running; its new window opens on the agent workspace in a moment"])
             }
-            cfg.createsNewApplicationInstance = true
-            cfg.arguments = ["-ApplePersistenceIgnoreState", "YES"]
+            // From here on the launch is `launch` (AgentLaunchRequest): no activation, a new copy, nothing restored.
             // Until this launch's own process is known, an activation of the bundle by a process that was not
             // already running is the launch's; Donovan's running copies are excluded.
             AgentActivity.shared.markLaunch(bundle: bundle, excluding: before, for: 10)
@@ -697,13 +699,10 @@ final class SessionController {
                     claimLaunch(app)
                 }
             }
+            let launcher = agentLauncher
             // Covers the new window on Donovan's workspace until it is parked; off unless set (`OpenFlashGuard`).
             OpenFlashWatch.around(app: appName, before: before, showing: { h.showing() }, agent: n) { started in
-                if files.isEmpty {
-                    NSWorkspace.shared.openApplication(at: url, configuration: cfg) { app, _ in started(app); finished(app) }
-                } else {
-                    NSWorkspace.shared.open(files, withApplicationAt: url, configuration: cfg) { app, _ in started(app); finished(app) }
-                }
+                launcher.launch(launch) { app in started(app); finished(app) }
             }
             return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "note": "starting a separate copy; its window opens there in a moment"])
         case "cursor":

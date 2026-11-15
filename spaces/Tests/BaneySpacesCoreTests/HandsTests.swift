@@ -1127,14 +1127,17 @@ final class AgentOpenLaunchTests: XCTestCase {
         // that launch hands back, never a launch notification: that could be Donovan opening his own copy.
         let open = try XCTUnwrap(HandsSourceTests.between("case \"open\":", "case \"lend-ask\":", in: src))
         XCTAssertFalse(open.contains("didLaunchApplicationNotification"), "no claim by bundle id")
-        XCTAssertEqual(open.components(separatedBy: "finished(app)").count - 1, 2, "openApplication and open(files) both claim their own result")
+        // Both NSWorkspace calls live behind the launch seam (AgentLaunch.swift) and each hands back its own result.
+        XCTAssertTrue(open.contains("launcher.launch(launch) { app in started(app); finished(app) }"), "the launch claims its own result")
+        let seam = try HandsSourceTests.code("Sources/BaneySpacesCore/Hands/AgentLaunch.swift")
+        XCTAssertEqual(seam.components(separatedBy: "{ app, _ in done(app) }").count - 1, 2, "openApplication and open(files) both claim their own result")
         XCTAssertTrue(open.contains("claimLaunch(app)"))
-        XCTAssertTrue(open.range(of: "AgentActivity.shared.markLaunch(bundle: bundle, excluding: before, for: 10)")!.lowerBound < open.range(of: "NSWorkspace.shared.openApplication")!.lowerBound, "marked first, without Donovan's running copies")
+        XCTAssertTrue(open.range(of: "AgentActivity.shared.markLaunch(bundle: bundle, excluding: before, for: 10)")!.lowerBound < open.range(of: "launcher.launch(launch)")!.lowerBound, "marked first, without Donovan's running copies")
         XCTAssertTrue(open.contains("AgentActivity.shared.clearLaunch(bundle: bundle)"))
         XCTAssertFalse(open.contains("folderOnly"), "no Finder branch")
         // Never Donovan's documents: a new instance told not to restore, not a window made inside his copy.
-        XCTAssertTrue(open.contains("cfg.createsNewApplicationInstance = true"))
-        XCTAssertTrue(open.contains("cfg.arguments = [\"-ApplePersistenceIgnoreState\", \"YES\"]"))
+        XCTAssertTrue(seam.contains("cfg.createsNewApplicationInstance = newInstance") && seam.contains("newInstance = true"))
+        XCTAssertTrue(seam.contains("arguments = [\"-ApplePersistenceIgnoreState\", \"YES\"]"))
         XCTAssertTrue(open.contains("AgentOpenGate.check("), "the gate is in the op itself, so the socket can't skip it")
     }
 
