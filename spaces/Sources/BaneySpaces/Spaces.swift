@@ -403,7 +403,7 @@ final class Spaces {
                 self.refresh()
                 let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
                 found = self.windows.values.first {
-                    $0.pid == pid && $0.pid != front && !before.contains($0.id)
+                    $0.pid == pid && ($0.pid != front || ClaimRule.isRunsWindow(claimTitle: title, windowTitle: $0.title)) && !before.contains($0.id)
                         && self.model.workspace(of: $0.id) != n && $0.title.localizedCaseInsensitiveContains(title)
                 }?.id
                 return found != nil
@@ -451,7 +451,8 @@ final class Spaces {
             guard let w = windows[id],
                   // A brand-new window may not have its title yet.
                   let c = claims[w.pid]?.first(where: { c in
-                      ClaimRule.applies(windowPid: w.pid, frontPid: front, agentStartedProcess: c.newProcess)
+                      ClaimRule.applies(windowPid: w.pid, frontPid: front, agentStartedProcess: c.newProcess,
+                                        windowIsTheRunsOwn: ClaimRule.isRunsWindow(claimTitle: c.title, windowTitle: w.title))
                           && (c.title.map { w.title.isEmpty || w.title.localizedCaseInsensitiveContains($0) } ?? true)
                   }) else { continue }
             // A modal window (a standard window that blocks its app) waits on you: it stays with its
