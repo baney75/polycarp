@@ -419,7 +419,7 @@ final class OpenFlashGuardTests: XCTestCase {
     func testTheWatchIsBoundToTheLaunchAndBoundedInTime() throws {
         let c = try CursorSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
         let open = try XCTUnwrap(HandsSourceTests.between("OpenFlashWatch.around(", "starting a separate copy", in: c))
-        XCTAssertTrue(open.contains("{ app, _ in started(app); finished(app) }"), "sol-F1: the watch gets the pid the launch returned, before the claim")
+        XCTAssertTrue(open.contains("launcher.launch(launch) { app in started(app); finished(app) }"), "sol-F1: the watch gets the pid the launch returned, before the claim")
         XCTAssertTrue(c.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { newWindowCheck(waited: 1.5) }"), "first-F2 (r1): New Window can ask the app")
         let w = try CursorSourceTests.code("Sources/BaneySpaces/Session/OpenFlashWatch.swift")
         XCTAssertFalse(w.contains("kCGWindowOwnerName"), "never matched by app name")
