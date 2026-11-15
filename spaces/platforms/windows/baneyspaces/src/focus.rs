@@ -49,7 +49,8 @@ mod tests {
         let hook = include_str!("hook.rs");
         assert!(hook.contains("SetWindowsHookExW(WH_MOUSE_LL"), "a low-level mouse hook");
         assert!(hook.contains("focus::is_a_press("), "it reports presses only");
-        let daemon = include_str!("daemon.rs");
+        // Windows checks the source out with CRLF line ends.
+        let daemon = &include_str!("daemon.rs").replace("\r\n", "\n");
         assert!(daemon.contains("Ok(Msg::Press { x, y }) =>"), "the worker hears them");
         let on = &daemon[daemon.find("fn on_press(").expect("on_press")..];
         let on = &on[..on.find("\n    }\n").unwrap()];
