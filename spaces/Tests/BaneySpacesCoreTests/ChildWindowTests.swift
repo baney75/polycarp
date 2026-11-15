@@ -238,14 +238,14 @@ final class WorkspaceVerbTests: XCTestCase {
     }
 
     func testMoveGoesOnlyOntoTheAgentWorkspaceAndNeverWhileHeLooksAtIt() {
-        XCTAssertNil(WorkspaceVerbs.moveRefusal(window: w(9), scope: .onAgentWorkspace, agentWorkspace: 9, agentShown: true), "reframing on the agent workspace")
-        XCTAssertNil(WorkspaceVerbs.moveRefusal(window: w(2), scope: .lent, agentWorkspace: 9, agentShown: false))
-        XCTAssertNil(WorkspaceVerbs.moveRefusal(window: w(2), scope: .fullAccess, agentWorkspace: 9, agentShown: false))
-        XCTAssertEqual(WorkspaceVerbs.moveRefusal(window: w(2), scope: .lent, agentWorkspace: 9, agentShown: true)?.code, .inUse, "never onto a workspace he is looking at")
+        XCTAssertNil(WorkspaceVerbs.moveRefusal(window: w(9), scope: .onAgentWorkspace, agentWorkspace: 9, agentShown: true, sourceShown: false), "reframing on the agent workspace")
+        XCTAssertNil(WorkspaceVerbs.moveRefusal(window: w(2), scope: .lent, agentWorkspace: 9, agentShown: false, sourceShown: false))
+        XCTAssertNil(WorkspaceVerbs.moveRefusal(window: w(2), scope: .fullAccess, agentWorkspace: 9, agentShown: false, sourceShown: false))
+        XCTAssertEqual(WorkspaceVerbs.moveRefusal(window: w(2), scope: .lent, agentWorkspace: 9, agentShown: true, sourceShown: false)?.code, .inUse, "never onto a workspace he is looking at")
         let his = ScopeGuard.check(w(2), agentWorkspace: 9, lends: LendBook(), now: now)
-        XCTAssertEqual(WorkspaceVerbs.moveRefusal(window: w(2), scope: his, agentWorkspace: 9, agentShown: false)?.code, .outsideAgentWorkspace, "his unlent window")
-        XCTAssertEqual(WorkspaceVerbs.moveRefusal(window: w(nil), scope: .onAgentWorkspace, agentWorkspace: 9, agentShown: false)?.code, .notSupported, "a dialog")
-        XCTAssertEqual(WorkspaceVerbs.moveRefusal(window: w(2), scope: .lent, agentWorkspace: nil, agentShown: false)?.code, .agentWorkspaceOff)
+        XCTAssertEqual(WorkspaceVerbs.moveRefusal(window: w(2), scope: his, agentWorkspace: 9, agentShown: false, sourceShown: false)?.code, .outsideAgentWorkspace, "his unlent window")
+        XCTAssertEqual(WorkspaceVerbs.moveRefusal(window: w(nil), scope: .onAgentWorkspace, agentWorkspace: 9, agentShown: false, sourceShown: false)?.code, .notSupported, "a dialog")
+        XCTAssertEqual(WorkspaceVerbs.moveRefusal(window: w(2), scope: .lent, agentWorkspace: nil, agentShown: false, sourceShown: false)?.code, .agentWorkspaceOff)
     }
 
     func testCloseClosesOnlyWhatThisSessionOpened() {
@@ -309,7 +309,7 @@ final class ChildWindowSourceTests: XCTestCase {
     func testUnplacedWindowsGoThroughTheChildRule() throws {
         let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
         let decide = try XCTUnwrap(HandsSourceTests.block(after: "func decide(_ w: HandsWindow, _ agent: Int?, session: String = \"\")", in: router))
-        XCTAssertTrue(decide.contains("if w.workspace == nil { return childDecision(w.id, pid: w.pid, agent: agent, session: session)?.decision.scope ?? ScopeGuard.check("))
+        XCTAssertTrue(decide.contains("if w.workspace == nil { return ScopeGuard.unplaced(w, child: childDecision(w.id, pid: w.pid, agent: agent, session: session)?.decision.scope) }"))
         XCTAssertTrue(router.contains("if remote, let e = WorkspaceVerbs.connectorRefusal(verb: req.verb) { return .failure(e) }"))
         let ws = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
         let child = try XCTUnwrap(HandsSourceTests.block(after: "func childDecision(", in: ws))

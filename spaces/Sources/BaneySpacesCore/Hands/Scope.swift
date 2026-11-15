@@ -145,6 +145,15 @@ public enum ScopeGuard {
                                   suggestion: "Open a window of it on the agent workspace with `polycarp-spaces agent open \(w.app)`, or ask Donovan to lend this one (you can't lend: he runs `polycarp-spaces agent lend \(w.app)` or uses the Polycarp menu)."))
     }
 
+    /// A window BaneySpaces doesn't place, given what a fresh look at its app's children decided (`child`). With no
+    /// decision the look missed it (a 0.25 s timeout, a busy app, the window list leaving it out for a moment), and it is
+    /// refused: `check` would call a dialog of a lent app `lent`, and the gate skips its panel checks for windows that
+    /// aren't placed, so an Open panel of Donovan's would be acted on unchecked.
+    public static func unplaced(_ w: HandsWindow, child: ScopeDecision?) -> ScopeDecision {
+        child ?? .denied(HandsError(.windowNotFound, "window \(w.id) of \(w.app) isn't a child window an agent can use right now",
+                                    suggestion: "Run `polycarp-spaces agent windows` and use the id it lists.", retry: .afterSnapshot))
+    }
+
     /// The windows an agent may use now.
     public static func visible(_ windows: [HandsWindow], agentWorkspace: Int?, lends: LendBook, now: Date,
                                mode: AgentAccessMode = .standard, selfPid: Int32? = nil) -> [(window: HandsWindow, scope: ScopeDecision)] {

@@ -90,7 +90,7 @@ final class HandsRouter {
             if let r = req.string("ref"), SnapshotRows.browserRefError(r) == nil, let n = SnapshotRows.bareNumber(r), case .success(let full) = bareRef(n, req) { resolved.args["ref"] = .string(full) }
             env = HandsNextCall.fill(handle(resolved), window: windowOf(resolved))
         } else {
-            env = .failure(HandsError(.badArguments, "the request wasn't an agent command", suggestion: "Use `polycarp-spaces agent <command>`.", retry: .never))
+            env = HandsNextCall.notACommand
         }
         return Wire.Reply(ok: true, info: ["envelope": env.line])
     }
@@ -165,7 +165,7 @@ final class HandsRouter {
 
     func decide(_ w: HandsWindow, _ agent: Int?, session: String = "") -> ScopeDecision {
         // A window BaneySpaces doesn't place: usable only as a child of a window the agent may use (`ChildWindowRule`).
-        if w.workspace == nil { return childDecision(w.id, pid: w.pid, agent: agent, session: session)?.decision.scope ?? ScopeGuard.check(w, agentWorkspace: agent, lends: lends.current(), now: Date(), mode: access, selfPid: getpid()) }
+        if w.workspace == nil { return ScopeGuard.unplaced(w, child: childDecision(w.id, pid: w.pid, agent: agent, session: session)?.decision.scope) }
         let mode = access
         Self.refusedLock.lock(); let bad = Self.refused.contains(w.id); Self.refusedLock.unlock()
         // Under Full Access Donovan's documents are open to agents, so a window refused for showing one is usable again.

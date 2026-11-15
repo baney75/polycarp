@@ -178,8 +178,8 @@ final class OpenClaimTests: XCTestCase {
 /// sol-F3: `move` decides on the state read after the wait.
 final class MoveDecisionTests: XCTestCase {
     let w = HandsWindow(id: 8, pid: 100, app: "Word", workspace: 2)
-    func state(_ agent: Int?, window: HandsWindow?, scope: ScopeDecision = .lent, shown: Bool = false) -> MoveState {
-        MoveState(agentWorkspace: agent, window: window, scope: scope, agentShown: shown)
+    func state(_ agent: Int?, window: HandsWindow?, scope: ScopeDecision = .lent, shown: Bool = false, sourceShown: Bool = false) -> MoveState {
+        MoveState(agentWorkspace: agent, window: window, scope: scope, agentShown: shown, sourceShown: sourceShown)
     }
 
     func testTheStateAfterTheWaitDecides() {
