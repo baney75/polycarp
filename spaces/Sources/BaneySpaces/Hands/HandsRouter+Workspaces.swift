@@ -160,7 +160,12 @@ extension HandsRouter {
     private func agentWindows(_ ids: [UInt32]?, session: String) -> Result<[HandsWindow], HandsError> {
         let (all, agent) = listWindows(fresh: true)
         guard let agent else { return .failure(HandsError(.agentWorkspaceOff, "there is no agent workspace", suggestion: "Ask Donovan to run `polycarp-spaces agent on`.", retry: .never)) }
-        let mine = all.filter { $0.workspace == agent && decide($0, agent, session: session) == .onAgentWorkspace }
+        // Its own windows, and the ones it moved there while their lend or Full Access holds.
+        let mine = all.filter { w in
+            guard w.workspace == agent else { return false }
+            let d = decide(w, agent, session: session)
+            return d == .onAgentWorkspace || (d.allowed && !HandsMovedIn.shared.onAgentsOwnWorkspace(w, agentWorkspace: agent))
+        }
         guard let ids else { return .success(mine.sorted { $0.id < $1.id }) }
         var out: [HandsWindow] = []
         for id in ids {
