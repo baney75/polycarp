@@ -42,16 +42,18 @@ extension HandsRouter {
         let post = BackgroundPoster.pointer(InputScript.rightClick(at: point), frame: frame, drag: false, gesture: BackgroundPoster.newGesture(), permit: permit, stop: stop)
         out.aimed = post.screenPoints; out.posted = post.report.posted.count; out.released = post.report.released; out.lastPostAt = Date()
         out.result = contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: post.report.stopped, none: nil,
-                                 escape: escape, leftOpen: &out.leftOpen, check: check, cancelled: cancelled)
+                                 escape: escape, leftOpen: &out.leftOpen, check: check, cancelled: cancelled, beforePress: { nil })
         return out
     }
 
     /// After the press (a posted right click or the engine's show-menu): find the press's menu, prove where it is, then
     /// press `item` in it or list its items and cancel it. Every path ends with no menu of this press open, or says so.
     /// `stopped`: the press was cut short. `none`: what to answer when no menu showed (the engine's refusal), else `noMenu`.
-    /// `leftOpen`: set when a cancel didn't take (210 r1 first-F3).
+    /// `leftOpen`: set when a cancel didn't take (210 r1 first-F3). `beforePress`: asked once the menu is found, right
+    /// before the item is pressed; an answer cancels the menu instead.
     func contextMenu(_ w: HandsWindow, frame: CGRect, displays: [CGRect], before: Set<UInt32>, item: String?, stopped: HandsError?, none: HandsError?,
-                     escape: () -> Bool, leftOpen: inout Bool, check: @escaping HandsEngine.Check, cancelled: () -> Bool) -> Result<[String: JSONValue], HandsError> {
+                     escape: () -> Bool, leftOpen: inout Bool, check: @escaping HandsEngine.Check, cancelled: () -> Bool,
+                     beforePress: () -> HandsError?) -> Result<[String: JSONValue], HandsError> {
         func waitShown(_ t: TimeInterval) -> [ContextMenu.Shown] {
             let deadline = Date().addingTimeInterval(t)
             repeat {
@@ -94,6 +96,7 @@ extension HandsRouter {
             case .failure(let e):
                 return .failure(cancel() ? e : ContextMenu.stillOpen(w.app))
             case .success(let at):
+                if let e = beforePress() { return .failure(cancel() ? e : ContextMenu.stillOpen(w.app)) }
                 guard pressItem(w, title: read.items[at].title, check: check, cancelled: cancelled) else {
                     return .failure(cancel() ? ContextMenu.notPressed(w.app, item: item) : ContextMenu.stillOpen(w.app))
                 }

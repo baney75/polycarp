@@ -109,6 +109,35 @@ extension HandsRouter {
         }
     }
 
+    /// What a span's front app means for `w`: nil when nothing changed. An app that came forward by itself is shut out of
+    /// the route for `kind`; one Donovan brought forward is not blamed.
+    private func frontVerdict(_ w: HandsWindow, kind: InputKind, _ span: FrontChange, hardware: Bool?) -> HandsError? {
+        switch PostGuard.verdict(span, hardware: hardware) {
+        case .same: return nil
+        case .userActivated: return BackgroundRefusal.userActivated(w.app)
+        case .selfActivated:
+            BackgroundBreaker.shared.update { $0.selfActivated(bundle: w.bundle, kind: kind) }
+            return BackgroundRefusal.blocked(w.app, .selfActivates)
+        case .unattributed:
+            BackgroundBreaker.shared.update { $0.selfActivated(pid: w.pid, kind: kind) }
+            return BackgroundRefusal.blocked(w.app, .selfActivates)
+        case .other(let p): return BackgroundRefusal.frontChanged(w.app, to: p)
+        case .unknown: return BackgroundRefusal.frontUnknown(w.app)
+        }
+    }
+
+    /// A watch on the front app from now, for an action that isn't `transact`'s (a right click on a ref): `failure()` is
+    /// what changed since, the same verdict. Nil when the front app can't be read.
+    func frontWatch(_ w: HandsWindow, kind: InputKind) -> (failure: () -> HandsError?, stop: () -> Void)? {
+        let activations = ActivationWatch(), tap = SessionTap()
+        guard let start = frontPid() else { activations.stop(); _ = tap.stop(); return nil }
+        let failure = { [self] () -> HandsError? in
+            frontVerdict(w, kind: kind, PostGuard.span(activations: activations.activated, start: start, now: frontPid(), target: w.pid),
+                         hardware: tap.snapshot.map { $0.contains { $0.sourcePid == 0 } })
+        }
+        return (failure, { activations.stop(); _ = tap.stop() })
+    }
+
     /// Runs on the process queue. Everything it reads goes through the engine's inline calls.
     private func transact(_ w: HandsWindow, _ scope: ScopeDecision, name: String, kind: InputKind, ref: String?, chords: [KeyChord], path: [CGPoint], drag: Bool, style: ClickStyle, session: String,
                           scopeCheck: @escaping HandsEngine.Check, cancelled: () -> Bool) -> HandsEngine.Reply {
@@ -128,20 +157,7 @@ extension HandsRouter {
         }
         /// What the span so far means: nil when nothing changed. An app that came forward by itself is shut out of the
         /// route; one Donovan brought forward is not blamed.
-        func frontFailure() -> HandsError? {
-            switch PostGuard.verdict(spanFront(), hardware: hardware()) {
-            case .same: return nil
-            case .userActivated: return BackgroundRefusal.userActivated(w.app)
-            case .selfActivated:
-                BackgroundBreaker.shared.update { $0.selfActivated(bundle: w.bundle, kind: kind) }
-                return BackgroundRefusal.blocked(w.app, .selfActivates)
-            case .unattributed:
-                BackgroundBreaker.shared.update { $0.selfActivated(pid: w.pid, kind: kind) }
-                return BackgroundRefusal.blocked(w.app, .selfActivates)
-            case .other(let p): return BackgroundRefusal.frontChanged(w.app, to: p)
-            case .unknown: return BackgroundRefusal.frontUnknown(w.app)
-            }
-        }
+        func frontFailure() -> HandsError? { frontVerdict(w, kind: kind, spanFront(), hardware: hardware()) }
         let stop: () -> HandsError? = {
             if cancelled() { return HandsError(.timeout, "the caller stopped waiting", suggestion: "Read the element back before trying again.", retry: .never) }
             return frontFailure()
