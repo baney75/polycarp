@@ -385,6 +385,8 @@ Polycarp won't run a tool inside your current folder, including `node_modules/.b
 
 On a Mac, Polycarp follows your theme live. On other devices the Silas and Tabkyra apps may not read theme files yet.
 
+In the browser, the side panel takes a new theme within 5 seconds while it is open. An approval or hub page that is already open keeps the colors it opened with; reload it to see the new ones. It doesn't reload on its own, so a passcode you are typing isn't lost.
+
 If you want apps to show their own look, run `polycarp theme off`. It removes the theme files; an app that reads them is expected to use its own look when it next checks. If a file can't be removed, `off` fails and names it.
 
 ### My accent is refused
