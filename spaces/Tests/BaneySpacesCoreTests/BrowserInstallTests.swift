@@ -181,4 +181,11 @@ final class UninstallBrowserLinkTests: XCTestCase {
         try run(home: home)
         XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: bin.appendingPathComponent("polycarp-browser").path), "/npm/bin/polycarp-browser")
     }
+
+    /// #24: the extension's bundled packages have their licences in the signed app, and a bundle without them fails.
+    func testTheExtensionsLicencesAreBuiltAndRequired() throws {
+        let build = try Repo.text("scripts/build-browser.sh"), bundle = try Repo.text("scripts/bundle.sh")
+        XCTAssertTrue(build.contains(#"--out "$OUT/licenses/polycarp-extension-packages.txt" --for extension --root "$BROWSER""#), build)
+        XCTAssertTrue(bundle.contains("licenses/polycarp-extension-packages.txt\" ] || {"), "bundle.sh refuses an app without them")
+    }
 }
