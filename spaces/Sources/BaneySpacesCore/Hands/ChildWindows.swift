@@ -482,8 +482,9 @@ public enum WorkspaceVerbs {
     }
 
     /// `move`: onto the agent workspace only. A window already there just stays (or takes `frame`); a lent or Full Access
-    /// window comes off Donovan's workspace; never onto a workspace he is looking at; never a child window.
-    public static func moveRefusal(window w: HandsWindow, scope: ScopeDecision, agentWorkspace: Int?, agentShown: Bool) -> HandsError? {
+    /// window comes off Donovan's workspace, never from under him (`sourceShown`: its own workspace is on a display); never
+    /// onto a workspace he is looking at; never a child window.
+    public static func moveRefusal(window w: HandsWindow, scope: ScopeDecision, agentWorkspace: Int?, agentShown: Bool, sourceShown: Bool) -> HandsError? {
         if case .denied(let e) = scope { return e }
         guard let agent = agentWorkspace else {
             return HandsError(.agentWorkspaceOff, "there is no agent workspace to move \(w.app) to", suggestion: "Ask Donovan to run `polycarp-spaces agent on`.", retry: .never)
@@ -498,7 +499,10 @@ public enum WorkspaceVerbs {
                               suggestion: "Retry once he has left it, or work on a window already there. Do not ask him to switch away.", retry: .safe)
         }
         switch scope {
-        case .lent, .fullAccess: return nil
+        case .lent, .fullAccess:
+            guard sourceShown else { return nil }
+            return HandsError(.inUse, "Donovan is looking at workspace \(w.workspace.map(String.init) ?? "?"), where window \(w.id) of \(w.app) is, so it isn't taken from under him now",
+                              suggestion: "Retry once he has left that workspace. Do not ask him to switch away.", retry: .safe)
         default:
             return HandsError(.needsLend, "window \(w.id) of \(w.app) isn't yours to move",
                               suggestion: "Only a lent window, or any window under Full Access, comes to the agent workspace.", retry: .never)
