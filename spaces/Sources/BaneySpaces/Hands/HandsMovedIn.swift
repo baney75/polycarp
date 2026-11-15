@@ -50,6 +50,11 @@ final class HandsMovedIn {
         return book.decide(w, base: base, lends: lends, now: now, mode: mode)
     }
 
+    func onAgentsOwnWorkspace(_ w: HandsWindow, agentWorkspace: Int?) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return book.onAgentsOwnWorkspace(w, agentWorkspace: agentWorkspace)
+    }
+
     /// Whether `pid` may still run: false only when the system says no such process.
     static func alive(_ pid: Int32) -> Bool { kill(pid, 0) == 0 || errno != ESRCH }
 

@@ -71,14 +71,25 @@ public struct MovedInWindows: Equatable, Sendable {
         return e.origin == .fullAccess && mode == .full
     }
 
-    /// The scope for a window, given what `ScopeGuard` said. Only `.onAgentWorkspace` for a moved-in window changes:
-    /// denied once its origin ends, and while it is on its way back.
+    /// The scope for a window, given what `ScopeGuard` said. Only `.onAgentWorkspace` for a moved-in window changes. A lent
+    /// one stays `.lent`, so the move grants nothing the lend didn't. One Full Access brought over keeps `base`, as any of
+    /// Donovan's windows on the agent workspace does under Full Access (every use already treats his process there as his,
+    /// and `onAgentsOwnWorkspace` keeps the in-use wait). Either is denied once its origin ends and while it goes back.
     public func decide(_ w: HandsWindow, base: ScopeDecision, lends: LendBook, now: Date, mode: AgentAccessMode) -> ScopeDecision {
-        guard base == .onAgentWorkspace, let e = entry(for: w), !Self.holds(e, lends: lends, now: now, mode: mode) else { return base }
+        guard base == .onAgentWorkspace, let e = entry(for: w) else { return base }
+        if Self.holds(e, lends: lends, now: now, mode: mode) {
+            return lends.isLent(HandsWindow(id: e.window, pid: e.pid, app: "", workspace: nil), now: now) ? .lent : base
+        }
         let what = e.origin == .lent ? "while \(w.app) was lent, and the lend has ended" : "under Full Access, and agent access is \(mode.title) now"
         return .denied(HandsError(.needsLend, "window \(w.id) of \(w.app) was moved to the agent workspace \(what)",
                                   suggestion: "It goes back to Donovan's workspace \(e.from). Work in a window `polycarp-spaces agent open` made, or ask Donovan to lend \(w.app) again.",
                                   retry: .never))
+    }
+
+    /// Whether `w` counts as on the agent workspace for the in-use rule: there, and not one of Donovan's windows an agent
+    /// moved there. A moved-in window waits while he uses its app, as it did before the move.
+    public func onAgentsOwnWorkspace(_ w: HandsWindow, agentWorkspace: Int?) -> Bool {
+        agentWorkspace != nil && w.workspace == agentWorkspace && entry(for: w) == nil
     }
 
     /// Marks every entry whose origin has ended as returning, and returns all returning entries (new and earlier ones not yet

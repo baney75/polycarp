@@ -207,7 +207,7 @@ final class HandsRouter {
     func inUseVerdict(_ w: HandsWindow, agent: Int?, verb: String, delivery: InUseDelivery) -> (state: InUseState, verdict: InUseRule.Verdict) {
         let state = UserActivity.shared.state(w.pid)
         guard state.busy else { return (state, .proceed) }
-        let onAgentWorkspace = agent != nil && w.workspace == agent
+        let onAgentWorkspace = HandsMovedIn.shared.onAgentsOwnWorkspace(w, agentWorkspace: agent)
         var windows: (focused: Bool?, main: Bool?) = (nil, nil)
         if onAgentWorkspace, InUseRule.semantic.contains(verb), delivery == .headlessAX { windows = BackgroundAX.isFocusedOrMain(w.id, pid: w.pid) }
         return (state, InUseRule.decide(verb: verb, state: state, onAgentWorkspace: onAgentWorkspace,
@@ -296,15 +296,15 @@ final class HandsRouter {
     func inspectProblem(_ w: HandsWindow) -> HandsError? {
         let (owned, seen) = onMain { (host.agentOwned(), host.inspect(w.id)) }
         let agentOwned = owned.contains(w.pid)
-        switch WindowInspection.decide(full: access == .full, agentOwned: agentOwned, panel: seen.panel, document: seen.document, handoff: Self.handoffFolder) {
+        let verdict = WindowInspection.decide(full: access == .full, agentOwned: agentOwned, panel: seen.panel, document: seen.document, handoff: Self.handoffFolder)
+        if verdict.remembered { remember(w.id) }
+        switch verdict {
         case .usable:
             return nil
         case .panel:
-            // Remembered only for an agent's own process: one of Donovan's windows with a sheet up is usable again once the sheet closes.
-            if agentOwned, access != .full { remember(w.id) }
+            // Not remembered: read again on every use, so the window is usable once the panel or sheet closes.
             return PanelDetector.refusal(window: w.id, app: w.app)
         case .outsideDocument:
-            remember(w.id)
             return HandsError(.needsSandbox, "window \(w.id) of \(w.app) shows a document from outside the handoff folder",
                               suggestion: "Agents work only on files from the handoff folder. Open the file with `polycarp-spaces agent open <app> <file in the handoff folder>`.", retry: .never)
         }
