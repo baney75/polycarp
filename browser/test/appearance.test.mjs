@@ -213,7 +213,19 @@ test("picking a preset when the panel's choice has no accent sends accent: null,
 const BUILT_INS = ["polycarp", "still-water", "evening", "parchment", "blocks", "calm"];
 const fixtureFile = (name) => JSON.parse(readFileSync(new URL(`./fixtures/polycarp/${name}.json`, import.meta.url), "utf8"));
 
-test("with no Polycarp theme, appearanceVariables is byte for byte what origin/main produced, for every preset, accent and mode", () => {
+test("the tutorial pills' gradient edge is each non-default preset's own accent; the default preset keeps app.css's moss (#13)", () => {
+	for (const preset of Object.keys(PRESETS)) {
+		for (const accent of [undefined, "#3b82f6"]) {
+			for (const dark of [false, true]) {
+				const vars = appearanceVariables({ preset, ...(accent ? { accent } : {}) }, dark);
+				const want = preset === "tabkyra" ? undefined : mix(vars["--primary"], vars["--foreground"], 0.25);
+				assert.equal(vars["--tk-brass-edge"], want, `${preset}|${accent ?? "none"}|${dark ? "dark" : "light"}`);
+			}
+		}
+	}
+});
+
+test("with no Polycarp theme, appearanceVariables is byte for byte the pinned snapshot, for every preset, accent and mode", () => {
 	const snapshot = JSON.parse(readFileSync(new URL("./fixtures/appearance-main.snapshot.json", import.meta.url), "utf8"));
 	let seen = 0;
 	for (const preset of Object.keys(PRESETS)) {
