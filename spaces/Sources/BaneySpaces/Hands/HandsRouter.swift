@@ -845,6 +845,7 @@ final class HandsRouter {
         // session's `open` refuses it while Donovan is using it. Wait here, off the main thread, until it is free.
         if access == .full, !AgentAppPolicy.needsSeparateInstance(bundle: bundle),
            let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundle }) {
+            if let e = RunningOpen.shared.refusal(app: display, bundle: bundle) { return .failure(e) }
             let pid = running.processIdentifier
             let bound = Thread.isMainThread ? 0 : InUseRule.bound(req.int("wait"))
             let outcome = InUseWait.run(bound: bound, now: Date.init, sleep: { Thread.sleep(forTimeInterval: $0) }) { [self] in
@@ -956,6 +957,21 @@ final class HandsRouter {
         let waited = String(format: "%.1f", Date().timeIntervalSince(requestStart))
         if let window { Trace.log("agent open \(display): window \(window.id) of pid \(window.pid) in \(waited)s") }
         else { Trace.log("agent open \(display): no window identified in \(waited)s (launched pid \(launched.map(String.init) ?? runningPid.map(String.init) ?? "unknown"))") }
+        // A running app's new window that opened on Donovan's side: named, the keyboard given back, never claimed or closed.
+        if window == nil, let pid = runningPid {
+            let (all, agent) = listWindows(fresh: true)
+            let left = RunningOpen.strays(of: pid, known: known, in: all, agent: agent)
+            if !left.isEmpty {
+                childLocked { sessionWindows.cancelOpen(token) }
+                let returned = onMain { () -> Bool in
+                    let gaveBack = RunningOpen.giveBack(front: NSWorkspace.shared.frontmostApplication?.processIdentifier, opened: pid, before: frontBefore)
+                        .map { AgentLaunchFocus.shared.giveBack(to: $0) } ?? false
+                    return gaveBack || AgentLaunchFocus.shared.returns > returnsBefore
+                }
+                Trace.log("agent open \(display): left \(left.map { "window \($0.id) on workspace \($0.workspace.map(String.init) ?? "none")" }.joined(separator: ", ")) on Donovan's side; keyboard returned: \(returned)")
+                return .failure(RunningOpen.shared.escaped(app: display, bundle: bundle, windows: left, agent: agent, keyboardReturned: returned))
+            }
+        }
         var data: [String: JSONValue] = (reply.info ?? [:]).mapValues(JSONValue.string)
         let (frontAfter, returnsAfter) = onMain { (NSWorkspace.shared.frontmostApplication?.processIdentifier, AgentLaunchFocus.shared.returns) }
         data["focus"] = .object(["changed": .bool(frontAfter != frontBefore), "returned": .bool(returnsAfter > returnsBefore)])

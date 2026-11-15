@@ -35,6 +35,14 @@ final class AgentLaunchFocus {
         state.watch(pid: pid, now: now, until: now.addingTimeInterval(seconds))
     }
 
+    /// Gives the keyboard to `target` now (`RunningOpen.giveBack` chose it). True when macOS took it.
+    func giveBack(to target: pid_t) -> Bool {
+        returns += 1
+        let result = AXUIElementSetAttributeValue(AXUIElementCreateApplication(target), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        if result != .success { Trace.log("agent open: couldn't give the keyboard back to \(target): \(result.rawValue)") }
+        return result == .success
+    }
+
     private func activated(_ app: NSRunningApplication) {
         let pid = app.processIdentifier
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier

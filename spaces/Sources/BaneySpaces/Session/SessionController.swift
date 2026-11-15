@@ -615,9 +615,15 @@ final class SessionController {
                     let e = InUseWait.refusal(app: appName, state: UserActivity.shared.state(pid), waited: nil)
                     return .init(ok: false, error: e.message, info: ["code": e.code.rawValue, "suggestion": e.suggestion])
                 }
+                // An app whose new window comes forward (Finder), or one that left a window on his side: nothing is pressed.
+                if let e = RunningOpen.shared.refusal(app: appName, bundle: bundle) {
+                    return .init(ok: false, error: e.message, info: ["code": e.code.rawValue, "suggestion": e.suggestion])
+                }
                 AgentAccess.shared.grant(pid)
-                // Only as long as the claim (3 s for a running app): an activation the New Window press causes isn't followed.
+                // Only as long as the claim (3 s for a running app): an activation the New Window press causes isn't followed,
+                // and if the press brings the app forward the keyboard goes back to the app he was in.
                 AgentActivity.shared.markLaunch(pid: pid, for: 3)
+                AgentLaunchFocus.shared.watch(pid: pid, for: 3)
                 h.claim(pid, n, false, nil)
                 let asked: Bool
                 if !files.isEmpty {
