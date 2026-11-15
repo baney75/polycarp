@@ -2076,14 +2076,19 @@ test("only the tab an agent uses is held up: when the user brings a same-site ta
 		assert.notEqual(await answerOrFrozen(userPage, "1", 3000), "frozen", "the user's tab froze on the repeat");
 		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "ok", "cancelled a second time");
 		assert.doesNotMatch(await on(agent, "tabs_context"), /was cancelled, because/, "a second Cancel was told");
-		// The repeat sent at once, before the grace Cancel lands, as a small model sends it: it waits for that Cancel and
-		// runs, instead of failing on the open box and leaving a notice that says to repeat a step already done.
+		// The repeat sent at once, while the box it repeats is still open, as a small model sends it: it fails at once with
+		// dialog_open and runs nothing, so no other client's answer to that box can be repeated (first-F1, sol-sol-F1 of
+		// round 2 of the review of PR 389). The grace Cancel still lands, and is told once.
 		assert.match(await on(agent, "click", { x: 320, y: 60 }), /Polycarp cancels this box in about/);
-		const redo = await on(agent, "click", { tabId: agentTab, x: 320, y: 60, on_dialog: "ok" });
-		assert.match(redo, /answered OK at once, as on_dialog asked/);
-		assert.match(redo, /Polycarp cancelled the confirm dialog an earlier call opened on tab \d+ .*This call then ran, with its on_dialog/);
-		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "ok");
-		assert.doesNotMatch(await on(agent, "tabs_context"), /was cancelled, because/, "the redo's Cancel was told after the redo");
+		const t2 = Date.now();
+		const redo = await agent.callTool({ name: "click", arguments: { tabId: agentTab, x: 320, y: 60, on_dialog: "ok" } });
+		assert.ok(redo.isError, `the redo ran over the open box: ${redo.content[0].text}`);
+		assert.match(redo.content[0].text, /dialog_open/);
+		assert.match(redo.content[0].text, /This call did not run: its on_dialog answers only a box this call opens/);
+		assert.ok(Date.now() - t2 < 1000, `the redo waited ${Date.now() - t2} ms instead of failing at once`);
+		await new Promise((r) => setTimeout(r, 4000));
+		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "cancelled");
+		assert.match(await on(agent, "tabs_context"), /was cancelled, because/, "the grace Cancel was never told");
 		assert.ok(await inPage(agentPage, VEIL_PROBE), "the agent's own tab lost its veil");
 
 		// A second tab in the agent's group that it stops using is not in use: its veil fades while the other's stays.

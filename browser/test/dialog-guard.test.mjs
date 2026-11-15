@@ -4,7 +4,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import {
-	cancelBeforeRedo,
 	decide,
 	deps,
 	dialogAnswerArrive,
@@ -160,72 +159,6 @@ test("their same-site tab in front: Cancel after the grace, and the agent is tol
 	assert.deepEqual(cancels, [1]);
 	assert.equal(notices.length, 1);
 	assert.match(notices[0].text, /cancelled, because the person was using a tab on example\.com.*The page saw Cancel/);
-});
-
-test("a redo with on_dialog sent before the grace Cancel waits for it, and its notice is not told after the redo", async () => {
-	openBox(1);
-	await tick(1_000);
-	let said;
-	const redo = cancelBeforeRedo(AGENT, 1).then((t) => (said = t));
-	// One 50 ms poll per step: the fake clock fires a timer the loop sets only after the step that woke it.
-	for (let i = 0; i < 20; i++) await tick(50);
-	assert.equal(said, undefined, "still waiting for the Cancel");
-	for (let i = 0; i < 30 && said === undefined; i++) await tick(50);
-	assert.deepEqual(cancels, [1]);
-	await redo;
-	assert.match(said.ran, /Polycarp cancelled the confirm dialog an earlier call opened on tab 1 .*This call then ran/);
-	assert.deepEqual(notices, [], "no later note says to do the step again");
-	// No person's tab in front, so no Cancel is coming: no wait, and the call fails on the open box as before.
-	tabs = tabs.filter((t) => t.id !== 5);
-	openBox(1);
-	await tick(100);
-	assert.equal(await cancelBeforeRedo(AGENT, 1), undefined);
-	// Another session's box is never waited on.
-	tabs.push({ id: 5, url: "https://www.example.com/cart", active: true });
-	openBox(2);
-	await tick(100);
-	assert.equal(await cancelBeforeRedo("bridge-other", 2), undefined);
-});
-
-/** A redo sent 1 s after its box opened, while the guard's Cancel is still 2 s off: its promise and its answer, once in. */
-const redoAt1s = async () => {
-	openBox(1);
-	await tick(1_000);
-	const r = { said: undefined };
-	r.done = cancelBeforeRedo(AGENT, 1).then((t) => (r.said = t));
-	await tick(50);
-	return r;
-};
-const stepUntil = async (r, n = 40) => {
-	for (let i = 0; i < n && r.said === undefined; i++) await tick(50);
-	await r.done;
-};
-
-test("first-F1 of #389: a box closed by anything but the guard's Cancel while a redo waits stops the redo", async () => {
-	const r = await redoAt1s();
-	dialogs.delete(1); // the page or a parallel call closed it, not the guard
-	await stepUntil(r);
-	assert.match(r.said.answered, /something else answered it, so what it asked may already be done\. This call was not sent/);
-	assert.deepEqual(cancels, []);
-});
-
-test("sol-F1 of #389: another client's handle_dialog accepts the box while a redo waits: the redo is not sent", async () => {
-	const r = await redoAt1s();
-	const a = arrive(1); // holds the box: the guard sends no Cancel under an answer
-	await tick(2_500);
-	assert.deepEqual(cancels, [], "the guard cancelled a box under an answer");
-	dialogs.delete(1); // the accept lands: the original action happened
-	end(a);
-	await stepUntil(r);
-	assert.ok(r.said.answered, `the redo would run and repeat the action: ${JSON.stringify(r.said)}`);
-});
-
-test("a guard Cancel whose notice another client already heard still lets the redo run", async () => {
-	const r = await redoAt1s();
-	for (let i = 0; i < 50 && !cancels.length; i++) await tick(50);
-	notices.length = 0; // tabs_context took it
-	await stepUntil(r);
-	assert.match(r.said.ran, /This call then ran/);
 });
 
 test("sol-F1: an answer for box A arrives, then ends: box B still gets its Cancel on time", async () => {

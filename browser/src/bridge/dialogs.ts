@@ -20,10 +20,20 @@ function dialogKind(dialog: PageDialog): string {
 	return `${/^[aeiou]/.test(kind) ? "An" : "A"} ${kind} dialog`;
 }
 
-export function dialogError(tabId: number, dialog: PageDialog): BridgeError {
+/**
+ * Said to a call with on_dialog that meets a box already open, as a small model's redo of the step that opened it does.
+ * The call never waits for that box to close: another client can answer it meanwhile, and a redo that then ran would
+ * repeat the step (first-F1, sol-sol-F1 of round 2 of the review of PR 389).
+ */
+const REDO_NOTE =
+	"This call did not run: its on_dialog answers only a box this call opens, never one already open. " +
+	"If this box asks about the step this call repeats, its OK is that step, so answer the box and do not send this call again. ";
+
+export function dialogError(tabId: number, dialog: PageDialog, withPreset = false): BridgeError {
 	return new BridgeError(
 		ERR.DIALOG_OPEN,
 		`${dialogKind(dialog)} is open on tab ${tabId}: ${JSON.stringify(dialog.message)}. The page is frozen until it is answered. ` +
+			(withPreset ? REDO_NOTE : "") +
 			`Call handle_dialog with tabId ${tabId} and accept true (OK) or false (Cancel). Cancel is always safe. ` +
 			"OK is fine when the user already asked for exactly this action; otherwise ask them first if OK would act under their sign-in (delete, send, buy, post).",
 	);
