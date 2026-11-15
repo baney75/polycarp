@@ -51,6 +51,19 @@ enum BackgroundAX {
         return (mapped, unmapped)
     }
 
+    /// How many sheets window `id` of `pid` holds now (AXSheet children, with a window number of their own or not); nil
+    /// when it can't be told (the app didn't list it, a listed window is a sheet or has no number, or its children didn't
+    /// answer), so a caller reads everything instead.
+    static func sheetCount(pid: pid_t, window id: UInt32) -> Int? {
+        let list = windows(pid: pid)
+        guard list.unmapped == 0, !list.mapped.contains(where: { HandsAXTree.role($0.element) == "AXSheet" }),
+              let el = list.mapped.first(where: { $0.id == id })?.element else { return nil }
+        AXUIElementSetMessagingTimeout(el, 0.25)
+        let kids = HandsAXTree.children(el)
+        guard kids.readable else { return nil }
+        return kids.list.prefix(HandsAXTree.perLevel).filter { HandsAXTree.role($0) == "AXSheet" }.count
+    }
+
     /// The window's own state, for shortcuts that change the window and not an element (Save).
     static func windowReading(_ w: AXUIElement) -> WindowReading {
         let title = copy(w, kAXTitleAttribute) as? String
