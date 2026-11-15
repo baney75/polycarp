@@ -43,12 +43,14 @@ const SPACES: Tool = Tool {
     // The command's old names, still installed as links by the app and called by agents and hooks.
     old_exes: &["baneyspaces"],
     env: "POLYCARP_SPACES_BIN",
-    bundled: &[],
-    // The Polycarp app first, then BaneySpaces' own copy as the fallback.
-    spots: &[
-        "~/.local/bin/polycarp-spaces",
+    // The Polycarp app's own copy, from the same app the other parts are read from (`app_first` orders them).
+    bundled: &[
         "~/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces",
         "/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces",
+    ],
+    // Then the link, then BaneySpaces' own copy as the fallback.
+    spots: &[
+        "~/.local/bin/polycarp-spaces",
         "~/.local/bin/baneyspaces",
         "~/Applications/BaneySpaces.app/Contents/Resources/bin/baneyspaces",
         "/Applications/BaneySpaces.app/Contents/Resources/bin/baneyspaces",
@@ -955,5 +957,30 @@ mod tests {
             app_first(vec![helper(&mine), helper(&sys)], None),
             vec![helper(&mine), helper(&sys)]
         );
+    }
+
+    #[test]
+    fn the_spaces_command_comes_from_the_picked_app_not_the_other_copy() {
+        let home = PathBuf::from("/Users/u");
+        let (sys, mine) = (
+            PathBuf::from("/Applications/Polycarp.app"),
+            home.join("Applications/Polycarp.app"),
+        );
+        let expand = |s: &&str| match s.strip_prefix("~/") {
+            Some(rest) => home.join(rest),
+            None => PathBuf::from(s),
+        };
+        let spaces = |app: &Path| app.join("Contents/Resources/bin/polycarp-spaces");
+        // The app's copies are tried before PATH and the fixed spots, so the first one is the whole answer.
+        let first = |app: &Path| {
+            app_first(SPACES.bundled.iter().map(expand).collect(), Some(app))
+                .into_iter()
+                .next()
+        };
+        assert_eq!(first(&sys), Some(spaces(&sys)));
+        assert_eq!(first(&mine), Some(spaces(&mine)));
+        // The link and BaneySpaces' copy stay the fallback after them.
+        assert!(SPACES.spots.contains(&"~/.local/bin/polycarp-spaces"));
+        assert!(!SPACES.spots.iter().any(|s| s.contains("Polycarp.app")));
     }
 }
