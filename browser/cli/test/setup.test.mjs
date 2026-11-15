@@ -113,8 +113,11 @@ test("setup --yes registers the host, wires harnesses to the launcher, then show
 	fakeHarness("claude");
 	fakeHarness("codex");
 	const { code, out } = run(["setup", "--yes", "--no-wait"]);
-	// Not connected (no browser), so setup reports "almost there" and exits 1.
-	assert.equal(code, 1, out);
+	// Not connected (no browser): setup says so and what to do next, and exits 0, since --no-wait skipped the wait.
+	// `polycarp update` runs exactly this, and an exit of 1 stopped it at step 12 of 15 with the rest not installed.
+	assert.equal(code, 0, out);
+	assert.match(out, /Not waiting \(--no-wait\)/);
+	assert.match(out, /Almost there\. Load the extension/);
 	assert.match(out, /Helium\s+registered/);
 	assert.match(out, /Load unpacked/);
 	assert.ok(out.includes(extensionDir), "prints the exact extension folder");

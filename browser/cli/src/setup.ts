@@ -306,12 +306,15 @@ async function connectedOnCurrentBuild(state: ReloadState): Promise<Probe & { re
 	return { ...p, ready: false, mismatch };
 }
 
-async function loadExtension(options: SetupOptions): Promise<boolean> {
+/** How step 4 ended: connected on this build, not waited for (--no-wait), or not connected in time. */
+type Loaded = "connected" | "skipped" | "failed";
+
+async function loadExtension(options: SetupOptions): Promise<Loaded> {
 	const reload: ReloadState = {};
 	const first = await connectedOnCurrentBuild(reload);
 	if (first.ready) {
 		console.log(`  ${sym.ok} The extension is loaded and connected ${c.dim(`(${first.version ?? "unknown version"})`)}.`);
-		return true;
+		return "connected";
 	}
 	const dir = extensionDir();
 	if (!first.connected) {
@@ -336,7 +339,7 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 	}
 	if (!options.wait) {
 		console.log(`  ${c.dim("Not waiting (--no-wait). Check later with")} ${c.bold(`${COMMAND_NAME} status`)}`);
-		return false;
+		return "skipped";
 	}
 
 	const deadline = options.timeoutS > 0 ? Date.now() + options.timeoutS * 1000 : Number.POSITIVE_INFINITY;
@@ -359,12 +362,12 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 			console.log(`  ${sym.fail} The browser still runs Polycarp ${p.version} after a reload; the build is ${builtVersion()}.`);
 			console.log(`  It is probably loaded from another folder. On chrome://extensions, remove Polycarp and load unpacked:`);
 			console.log(`  ${c.cyan(dir)}`);
-			return false;
+			return "failed";
 		}
 		if (p.ready) {
 			if (live) process.stdout.write("\r\x1b[2K");
 			console.log(`  ${sym.ok} ${c.bold("Connected.")} Polycarp can reach your browser ${c.dim(`(${p.version ?? "unknown version"})`)}.`);
-			return true;
+			return "connected";
 		}
 		if (live) process.stdout.write(`\r  ${c.brass(frames[frame++ % frames.length])} Waiting for the extension to connect ${c.dim("(Ctrl+C to stop)")}`);
 		await new Promise((r) => setTimeout(r, 1000));
@@ -377,7 +380,7 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 		console.log(`  ${c.cyan(dir)}`);
 	} else if (last.error) console.log(`  Last error: ${last.error}`);
 	console.log(`  If it is loaded, reload it once on chrome://extensions, then run ${c.bold(`${COMMAND_NAME} doctor`)}.`);
-	return false;
+	return "failed";
 }
 
 export async function runSetup(options: SetupOptions): Promise<number> {
@@ -408,7 +411,8 @@ export async function runSetup(options: SetupOptions): Promise<number> {
 	const harnessesOk = await connectHarnesses(opts);
 
 	step(4, "Load the extension");
-	const connected = await loadExtension(opts);
+	const loaded = await loadExtension(opts);
+	const connected = loaded === "connected";
 
 	console.log();
 	if (connected && harnessesOk) {
@@ -418,5 +422,7 @@ export async function runSetup(options: SetupOptions): Promise<number> {
 	}
 	const next = connected ? "fix the agent step above" : "load the extension";
 	console.log(`${sym.warn} ${c.bold("Almost there.")} ${next[0].toUpperCase()}${next.slice(1)}, then run ${c.bold(`${COMMAND_NAME} doctor`)} to check everything.`);
-	return 1;
+	// --no-wait asked not to wait for the extension, so its not being connected is the step it skipped, not a failure:
+	// `polycarp update` runs this with no browser open and goes on to install the rest (it stopped at step 12 of 15 on Parish1).
+	return loaded === "skipped" && harnessesOk ? 0 : 1;
 }

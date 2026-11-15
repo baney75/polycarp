@@ -1516,6 +1516,30 @@ fn reload_wait_command(args: &[OsString], device: &Device, runner: &mut dyn Runn
     )
 }
 
+/// The line that names each extension the check could not compare (no browser connected, or one that runs without its
+/// extension connected), so "up to date" is never read as the browser's build too. None when every extension answered.
+fn extensions_not_compared(parts: &[Part]) -> Option<String> {
+    let absent: Vec<String> = parts
+        .iter()
+        .filter(|p| p.name.starts_with("extension"))
+        .filter_map(|p| match p.found {
+            // "not installed" is not this: there is no extension to be behind.
+            version::Found::Absent(why)
+                if why == "no browser is connected" || why == version::ASLEEP =>
+            {
+                Some(format!("{} ({why})", p.name))
+            }
+            _ => None,
+        })
+        .collect();
+    (!absent.is_empty()).then(|| {
+        format!(
+            "note: not compared, so it may still run the build from before: {}. `polycarp browser reload` loads the new one once it connects.",
+            absent.join(", ")
+        )
+    })
+}
+
 /// `polycarp update --is-current <dir> <rev> [--needs <parts>] [--after-install] [--wait <seconds>]`,
 /// which the plan runs twice. As the gate: exit 0 when there is nothing to install, 100 when an update
 /// would change something. With `--after-install`, as the final check: exit 0 when every part is at
@@ -1550,6 +1574,9 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
             "note: {} gave no answer in time, so it was not compared. `polycarp version` asks again.",
             quiet.join(", ")
         );
+    }
+    if let Some(line) = extensions_not_compared(&parts) {
+        println!("{line}");
     }
     let helper = parts.iter().find(|p| p.name == "browser helper");
     if let Some(version::Found::Installed { path: Some(p), .. }) = helper.map(|p| &p.found) {
@@ -2800,6 +2827,38 @@ mod tests {
 
     fn at(name: &str, commit: &str) -> Part {
         Part::installed(name, None, version::Build::new(commit, "", false), None)
+    }
+
+    #[test]
+    fn an_extension_that_is_not_connected_is_named_as_not_compared_and_does_not_fail_the_check() {
+        // The Parish1 deploy: Helium runs, the extension is not connected. The rest is at the target, so the final check
+        // passes, and its output names the extension it could not compare instead of only "up to date".
+        let needs = ["polycarp command", "browser helper"];
+        for ext in [
+            Part::absent("extension", "no browser is connected"),
+            Part::absent("extension (Helium)", version::ASLEEP),
+        ] {
+            let name = ext.name.clone();
+            let parts = vec![at("polycarp command", T), at("browser helper", T), ext];
+            assert_eq!(standing(&parts, &needs, T), Standing::Current);
+            let line = extensions_not_compared(&parts).expect("names the extension");
+            assert!(
+                line.contains(&name) && line.contains("not compared"),
+                "{line}"
+            );
+            assert!(
+                !line.contains("polycarp command") && !line.contains("browser helper"),
+                "{line}"
+            );
+        }
+        assert_eq!(
+            extensions_not_compared(&[at("browser helper", T), at("extension (Helium)", T)]),
+            None
+        );
+        assert_eq!(
+            extensions_not_compared(&[Part::absent("extension", "not installed")]),
+            None
+        );
     }
 
     #[test]
