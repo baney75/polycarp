@@ -229,7 +229,7 @@ final class AgentOpenStabilitySourceTests: XCTestCase {
                       "a hidden copy's windows are listed too: the on-screen list leaves them out (PR 172)")
         XCTAssertTrue(r.contains("OpenMiss.visible(alpha:"), "only windows a person can see count (F3)")
         let raw = try String(contentsOf: HandsSourceTests.root.appendingPathComponent("Sources/BaneySpaces/Hands/HandsRouter.swift"), encoding: .utf8)
-        XCTAssertTrue(raw.contains("/// Whether every running copy of the app was already running before the launch.\n    private func noNewProcess"),
+        XCTAssertTrue(raw.contains("/// The running copies of the app now.\n    private func runningCopies"),
                       "the doc comment sits on its function (F6)")
         XCTAssertTrue(r.contains("let launched = runningPid == nil ? AgentLaunches.shared.pid(token) : nil"), "never a running copy of Donovan's")
         let c = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")

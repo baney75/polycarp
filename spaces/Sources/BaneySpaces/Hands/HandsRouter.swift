@@ -988,7 +988,8 @@ final class HandsRouter {
                 data["owned"] = .bool(false)
                 data["note"] = "this open had no session, so the window is reported but owned by nobody: `close` won't close it"
             }
-        } else if separate, !pidsBefore.isEmpty, noNewProcess(bundle: bundle, before: pidsBefore) {
+        } else if separate, !pidsBefore.isEmpty, SeparateCopy.noneStarted(launched: AgentLaunches.shared.pid(token), running: runningCopies(bundle: bundle),
+                                                                          before: pidsBefore, elapsed: Date().timeIntervalSince(requestStart)) {
             childLocked { sessionWindows.cancelOpen(token) }
             return .failure(HandsError(.needsSandbox, "\(display) didn't start a separate copy, so nothing of it is the agent's",
                                        suggestion: "Close nothing; ask Donovan to quit \(display), or work in the sandbox.", retry: .never))
@@ -1066,10 +1067,9 @@ final class HandsRouter {
         if !app.isTerminated { app.forceTerminate() }
     }
 
-    /// Whether every running copy of the app was already running before the launch.
-    private func noNewProcess(bundle: String, before: Set<pid_t>) -> Bool {
-        let now = NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier)
-        return now.allSatisfy { before.contains($0) }
+    /// The running copies of the app now.
+    private func runningCopies(bundle: String) -> Set<pid_t> {
+        Set(NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier))
     }
 
     // MARK: lending (Donovan's, never an agent's: see HandsTools.userOnly and SocketPolicy)
