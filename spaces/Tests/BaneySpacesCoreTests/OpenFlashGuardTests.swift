@@ -381,6 +381,15 @@ final class OpenFlashGuardTests: XCTestCase {
         XCTAssertTrue(probe.contains("let owners = polycarpPid > 0 ? [polycarpPid, 4242] : [4242]"), "sol-F4: run with and without Polycarp")
     }
 
+    func testTheProbeSamplerKeepsItsPaceAtUserInteractiveQoS() throws {
+        let probe = try String(contentsOf: CursorSourceTests.root.appendingPathComponent("scripts/agent-open-probe.swift"), encoding: .utf8)
+        XCTAssertTrue(probe.contains("thread.qualityOfService = .userInteractive"), "#304: a default-QoS sampler fell behind at load 2 to 3")
+        XCTAssertTrue(probe.contains("let wait = pace.wait(now: uptime())"), "#304: reads on a 4 ms deadline, not 4 ms after each read")
+        XCTAssertFalse(probe.contains("Thread.sleep(forTimeInterval: 0.004)"))
+        XCTAssertTrue(probe.contains("clock_gettime_nsec_np(CLOCK_UPTIME_RAW)"), "#304: a monotonic clock")
+        XCTAssertTrue(probe.contains("check(\"the sampler reads at user-interactive QoS\""), "the selftest checks it live")
+    }
+
     func testACoverRisesOnlyWhileItsMomentHolds() {
         let t = OpenFlashGuard.Ticket(launch: 3, workspaces: 10, incarnation: 77)
         XCTAssertTrue(t.holds(live: [3], workspaces: 10, incarnation: 77))
