@@ -18,6 +18,8 @@ public enum VoiceImport {
         public var copiedFiles: [String] = []
         public var copiedModels: [String] = []
         public var failed: [String] = []
+        /// Files Polycarp wrote while their import was pending: Silas's copy is kept next to them as `<name>.from-silas`.
+        public var keptAside: [String] = []
     }
 
     public enum Outcome: Equatable {
@@ -62,9 +64,19 @@ public enum VoiceImport {
         try? fm.createDirectory(at: newDir, withIntermediateDirectories: true)
         for name in names {
             let to = newDir.appendingPathComponent(name)
-            // A file Polycarp already has was written since; it is newer than anything Silas had.
-            if fm.fileExists(atPath: to.path) { continue }
-            if copyWhole(silasDir.appendingPathComponent(name), to) { report.copiedFiles.append(name) } else { report.failed.append(name) }
+            let from = silasDir.appendingPathComponent(name)
+            if fm.fileExists(atPath: to.path) {
+                // A file Polycarp already has was written since; it is newer than anything Silas had. But one still pending
+                // was written before Silas's copy came, so Silas's would be lost: a dictionary is merged, anything else kept aside.
+                guard retry != nil else { continue }
+                if name == "dictionary.json", let merged = mergedDictionary(mine: to, silas: from), copyWhole(data: merged, to) {
+                    report.copiedFiles.append(name)
+                } else if copyWhole(from, newDir.appendingPathComponent(name + ".from-silas")) {
+                    report.keptAside.append(name)
+                } else { report.failed.append(name) }
+                continue
+            }
+            if copyWhole(from, to) { report.copiedFiles.append(name) } else { report.failed.append(name) }
         }
         let newModels = newDir.appendingPathComponent(modelsFolder, isDirectory: true)
         try? fm.createDirectory(at: newModels, withIntermediateDirectories: true)
@@ -90,13 +102,35 @@ public enum VoiceImport {
             return .partial(report)
         }
         try? fm.removeItem(at: pendingFile)
-        let note = "imported from \(silasDir.path)\nfiles: \(report.copiedFiles.joined(separator: ", "))\nmodels: \(report.copiedModels.joined(separator: ", "))\n"
+        var note = "imported from \(silasDir.path)\nfiles: \(report.copiedFiles.joined(separator: ", "))\nmodels: \(report.copiedModels.joined(separator: ", "))\n"
+        if !report.keptAside.isEmpty { note += "kept aside as <name>.from-silas: \(report.keptAside.joined(separator: ", "))\n" }
         try? Data(note.utf8).write(to: marker, options: .atomic)
         return .imported(report)
     }
 
+    /// Polycarp's dictionary with Silas's terms and corrections added: an entry Polycarp has (same text, same `from`)
+    /// stays as it is. Nil when either file isn't a dictionary.
+    static func mergedDictionary(mine: URL, silas: URL) -> Data? {
+        func object(_ url: URL) -> [String: Any]? { (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } }
+        guard var out = object(mine), let theirs = object(silas) else { return nil }
+        for (list, key) in [("terms", "text"), ("corrections", "from")] {
+            var entries = out[list] as? [[String: Any]] ?? []
+            var have = Set(entries.compactMap { ($0[key] as? String)?.lowercased() })
+            for e in theirs[list] as? [[String: Any]] ?? [] {
+                guard let k = (e[key] as? String)?.lowercased(), have.insert(k).inserted else { continue }
+                entries.append(e)
+            }
+            out[list] = entries
+        }
+        return try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys])
+    }
+
     private static func copyWhole(_ from: URL, _ to: URL) -> Bool {
         guard let data = try? Data(contentsOf: from) else { return false }
+        return copyWhole(data: data, to)
+    }
+
+    private static func copyWhole(data: Data, _ to: URL) -> Bool {
         let temp = to.appendingPathExtension("copying")
         do {
             try data.write(to: temp)

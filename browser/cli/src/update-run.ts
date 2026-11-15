@@ -264,6 +264,13 @@ function checkoutRollback(root: string): void {
 
 // ---- entry --------------------------------------------------------------------------------
 
+/** A host action this helper doesn't run (Polycarp updates a compiled helper): one failed step that says why. */
+export function refuseHostAction(action: HostRunAction, message: string): number {
+	currentAction = action;
+	emit({ phase: "failed", message });
+	return 1;
+}
+
 export async function runHostAction(action: HostRunAction): Promise<number> {
 	currentAction = action;
 	// The host may exit (the extension reloaded) while this runs: keep going without its pipe.
