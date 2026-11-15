@@ -3,6 +3,7 @@ import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { live } from "lit/directives/live.js";
 import { hostCommand } from "../bridge/host-command.js";
 import {
 	allowHost,
@@ -23,7 +24,9 @@ import { listSessions } from "../browser/session.js";
 import { probeUserScripts, userScriptsHiddenHelp } from "../browser/userscripts-status.js";
 import { isPointerEnabled, isVeilEnabled, setPointerEnabled, setVeilEnabled } from "../browser/veil-shared.js";
 import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
+import { Toast } from "../components/Toast.js";
 import { runningFromStore } from "../update/store-install.js";
+import { saveSwitch } from "./switch-save.js";
 
 /**
  * Settings > Agents: who may drive the browser from outside (omp, pi, Claude
@@ -183,10 +186,16 @@ export class BridgeTab extends SettingsTab {
 				type="checkbox"
 				role="switch"
 				class="tk-switch"
-				.checked=${checked}
+				.checked=${live(checked)}
 				?disabled=${off}
 				@change=${async (e: Event) => {
-					await set((e.target as HTMLInputElement).checked);
+					const on = (e.target as HTMLInputElement).checked;
+					await saveSwitch(
+						() => set(on),
+						() => this.requestUpdate(),
+						`"${title}"`,
+						(m) => Toast.error(m),
+					);
 					await this.load();
 				}}
 			/>

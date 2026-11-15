@@ -2,7 +2,9 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { live } from "lit/directives/live.js";
 import { Toast } from "../components/Toast.js";
+import { saveSwitch } from "./switch-save.js";
 import "../dictation/DictationSettings.js";
 import { hostCommand } from "../bridge/host-command.js";
 import { BUG_LOG_KEY, BUG_REPORTS_KEY, type BugEntry, NEW_ISSUE_URL, reportText } from "../privacy/bug-reports.js";
@@ -53,21 +55,30 @@ export class PrivacyTab extends SettingsTab {
 		this.sharedSince = typeof threads[SHARED_SINCE_KEY] === "string" ? threads[SHARED_SINCE_KEY] : "";
 	}
 
+	private save(write: () => Promise<unknown>, what: string): Promise<boolean> {
+		return saveSwitch(
+			write,
+			() => this.requestUpdate(),
+			what,
+			(m) => Toast.error(m),
+		);
+	}
+
 	/** Chats from before agent access began may be private-mode chats saved without the mark. */
 	private async setShareOlder(on: boolean) {
-		await chrome.storage.local.set({ [SHARE_OLDER_KEY]: on });
-		this.shareOlder = on;
+		if (await this.save(() => chrome.storage.local.set({ [SHARE_OLDER_KEY]: on }), "older chats"))
+			this.shareOlder = on;
 	}
 
 	/** The local thread mirror; the worker writes it (on) or removes it (off) when this changes. */
 	private async setMirror(on: boolean) {
-		await chrome.storage.local.set({ [MIRROR_KEY]: on });
-		this.mirror = on;
+		if (await this.save(() => chrome.storage.local.set({ [MIRROR_KEY]: on }), "past chats for coding agents"))
+			this.mirror = on;
 	}
 
 	private async setPrivateMode(on: boolean) {
-		await getTabkyraStorage().settings.set(PRIVATE_MODE_KEY, on);
-		this.privateMode = on;
+		if (await this.save(() => getTabkyraStorage().settings.set(PRIVATE_MODE_KEY, on), "Private mode"))
+			this.privateMode = on;
 	}
 
 	private async saveTrustedHosts(text: string) {
@@ -85,7 +96,7 @@ export class PrivacyTab extends SettingsTab {
 	}
 
 	private async setBugReports(on: boolean) {
-		await setBugReports(getTabkyraStorage(), on);
+		if (!(await this.save(() => setBugReports(getTabkyraStorage(), on), "bug reports"))) return;
 		this.bugReports = on;
 		if (!on) {
 			this.log = [];
@@ -117,7 +128,7 @@ export class PrivacyTab extends SettingsTab {
 							type="checkbox"
 							role="switch"
 							class="tk-switch"
-							.checked=${this.privateMode}
+							.checked=${live(this.privateMode)}
 							@change=${(e: Event) => this.setPrivateMode((e.target as HTMLInputElement).checked)}
 						/>
 					</label>
@@ -157,7 +168,7 @@ export class PrivacyTab extends SettingsTab {
 							type="checkbox"
 							role="switch"
 							class="tk-switch"
-							.checked=${this.mirror}
+							.checked=${live(this.mirror)}
 							@change=${(e: Event) => this.setMirror((e.target as HTMLInputElement).checked)}
 						/>
 					</label>
@@ -172,7 +183,7 @@ export class PrivacyTab extends SettingsTab {
 									type="checkbox"
 									role="switch"
 									class="tk-switch"
-									.checked=${this.shareOlder}
+									.checked=${live(this.shareOlder)}
 									@change=${(e: Event) => this.setShareOlder((e.target as HTMLInputElement).checked)}
 								/>
 							</label>`
@@ -198,7 +209,7 @@ export class PrivacyTab extends SettingsTab {
 							type="checkbox"
 							role="switch"
 							class="tk-switch"
-							.checked=${this.bugReports}
+							.checked=${live(this.bugReports)}
 							@change=${(e: Event) => this.setBugReports((e.target as HTMLInputElement).checked)}
 						/>
 					</label>
