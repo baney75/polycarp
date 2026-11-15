@@ -90,7 +90,7 @@ final class HandsRouter {
             if let r = req.string("ref"), SnapshotRows.browserRefError(r) == nil, let n = SnapshotRows.bareNumber(r), case .success(let full) = bareRef(n, req) { resolved.args["ref"] = .string(full) }
             env = HandsNextCall.fill(handle(resolved), window: windowOf(resolved))
         } else {
-            env = .failure(HandsError(.badArguments, "the request wasn't an agent command", suggestion: "Use `polycarp-spaces agent <command>`.", retry: .never))
+            env = HandsNextCall.notACommand
         }
         return Wire.Reply(ok: true, info: ["envelope": env.line])
     }
