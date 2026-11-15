@@ -1056,7 +1056,7 @@ final class HandsSourceTests: XCTestCase {
         XCTAssertTrue(gate.contains("inspectProblem(now)"))
         let inspect = try XCTUnwrap(Self.block(after: "func inspectProblem(", in: router))
         XCTAssertTrue(inspect.contains("WindowInspection.decide(") && inspect.contains("panel: seen.panel") && inspect.contains("document: seen.document") && inspect.contains("handoff: Self.handoffFolder"))
-        XCTAssertTrue(inspect.contains("remember(w.id)"))
+        XCTAssertTrue(inspect.contains("if verdict.remembered { remember(w.id) }"))
         // Under Full Access the list skips reading every window (documents are open then); panels are refused at use (#167).
         XCTAssertTrue(router.contains(".filter { mode == .full || inspectProblem($0.window) == nil }"), "the windows list hides them too")
     }

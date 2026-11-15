@@ -28,6 +28,25 @@ final class HandsRouterAccessTests: XCTestCase {
         }
     }
 
+    /// #124 first-F3: an agent presses cmd+P in its own TextEdit. The Print sheet has a Copies field and a Printer menu, so
+    /// it is refused as a panel while it is up, and the window is usable again once it closes, not refused for the run.
+    func testAPanelRefusesTheWindowOnlyWhileItIsUp() {
+        let handoff = URL(fileURLWithPath: "/tmp/handoff")
+        let print = AXNodeInfo(role: "AXWindow", subrole: "AXStandardWindow", title: "Untitled", children: [
+            AXNodeInfo(role: "AXSheet", children: [
+                AXNodeInfo(role: "AXTextField", title: "Copies"), AXNodeInfo(role: "AXPopUpButton", title: "Printer"),
+                AXNodeInfo(role: "AXButton", title: "Print"), AXNodeInfo(role: "AXButton", title: "Cancel"),
+            ]),
+        ])
+        XCTAssertTrue(PanelDetector.windowIsOffLimits(print), "refused while the sheet is up")
+        let up = WindowInspection.decide(full: false, agentOwned: true, panel: true, document: nil, handoff: handoff)
+        XCTAssertEqual(up, .panel)
+        XCTAssertFalse(up.remembered, "the next look, with the sheet gone, decides again")
+        XCTAssertTrue(WindowInspection.decide(full: false, agentOwned: true, panel: false, document: "/Users/d/secret.txt", handoff: handoff).remembered,
+                      "a document of Donovan's stays refused")
+        XCTAssertFalse(WindowInspection.usable.remembered)
+    }
+
     func testADocumentIsCheckedOnlyOnAnAgentsOwnProcess() {
         let handoff = URL(fileURLWithPath: "/tmp/handoff")
         let outside = "/Users/someone/taxes.pdf"
