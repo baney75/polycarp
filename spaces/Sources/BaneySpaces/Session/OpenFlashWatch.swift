@@ -102,7 +102,7 @@ enum OpenFlashWatch {
         private var reports = OpenFlashGuard.CoverReports()
         private var pid: pid_t = 0, incarnation: UInt64 = 0
         private var want: [UInt32: CGRect] = [:]
-        private var panels: [Key: (panel: NSPanel, frame: CGRect)] = [:]
+        private var panels: [Key: (panel: NSPanel, frame: CGRect, outer: CGRect)] = [:]
         private var t0 = ProcessInfo.processInfo.systemUptime
         /// The newest step from the watch thread, taken by one main-thread drain: a stale cover never runs after a
         /// later cleanup.
@@ -233,11 +233,15 @@ enum OpenFlashWatch {
                 for part in OpenFlashGuard.coverParts(for: bounds, screens: screens) {
                     let key = Key(id: id, screen: part.screen)
                     keep.insert(key)
-                    if let p = panels[key], p.frame == part.frame { continue }
+                    if let p = panels[key], p.frame == part.frame, p.outer == part.panel { continue }
                     let p = panels[key]?.panel ?? make()
-                    paint(p, part.frame, screen: part.screen)
-                    if panels[key] == nil { p.orderFrontRegardless(); raised = true; Trace.log("flash guard cover: up for window \(id) of \(app) at +\(ms())ms") }
-                    panels[key] = (p, part.frame)
+                    paint(p, part.frame, in: part.panel, screen: part.screen)
+                    if panels[key] == nil {
+                        p.orderFrontRegardless(); raised = true
+                        let past = part.panel == part.frame ? "" : ", \(Int(OpenFlashGuard.edgeBleed)) pt past the screen's edge"
+                        Trace.log("flash guard cover: up for window \(id) of \(app) at +\(ms())ms\(past)")
+                    }
+                    panels[key] = (p, part.frame, part.panel)
                 }
             }
             for (key, p) in panels where !keep.contains(key) {
@@ -247,15 +251,21 @@ enum OpenFlashWatch {
             return raised
         }
 
-        /// Paints a panel from its own screen's shot, at the shot's backing scale.
-        private func paint(_ p: NSPanel, _ frame: CGRect, screen i: Int) {
+        /// Paints a panel from its own screen's shot, at the shot's backing scale: the shot of `frame` where `frame` is,
+        /// inside a panel at `outer` (`OpenFlashGuard.edgeBleed`), black past the screen's edge.
+        private func paint(_ p: NSPanel, _ frame: CGRect, in outer: CGRect, screen i: Int) {
             let shot = shots[i], s = screens[i]
             let scale = CGFloat(shot.width) / s.width
             let crop = frame.offsetBy(dx: -s.minX, dy: -s.minY)
             let px = CGRect(x: crop.minX * scale, y: crop.minY * scale, width: crop.width * scale, height: crop.height * scale)
-            p.contentView?.layer?.contentsScale = scale
-            p.contentView?.layer?.contents = shot.cropping(to: px.integral)
-            p.setFrame(OpenFlashGuard.appKit(frame, primaryHeight: primaryHeight), display: false)
+            guard let image = p.contentView?.layer?.sublayers?.first else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            image.contentsScale = scale
+            image.contents = shot.cropping(to: px.integral)
+            image.frame = OpenFlashGuard.imageFrame(frame, in: outer)
+            CATransaction.commit()
+            p.setFrame(OpenFlashGuard.appKit(outer, primaryHeight: primaryHeight), display: false)
         }
 
         /// Non-activating, and it takes the clicks, so a click meant for what Donovan sees neither lands in the agent's app
@@ -266,8 +276,10 @@ enum OpenFlashWatch {
             w.isOpaque = true; w.hasShadow = false; w.becomesKeyOnlyIfNeeded = true
             w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
             w.isReleasedWhenClosed = false
-            let v = NSView(), layer = CALayer()
-            layer.contentsGravity = .resize
+            let v = NSView(), layer = CALayer(), image = CALayer()
+            layer.backgroundColor = .black
+            image.contentsGravity = .resize
+            layer.addSublayer(image)
             v.layer = layer
             v.wantsLayer = true
             w.contentView = v

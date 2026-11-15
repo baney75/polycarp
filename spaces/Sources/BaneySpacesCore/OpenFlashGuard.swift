@@ -73,13 +73,40 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
     }
 
     /// The covers for a window (global, y down): its bounds and shadow, one part per screen it reaches, each painted from
-    /// that screen's own shot.
-    public static func coverParts(for bounds: CGRect, screens: [CGRect]) -> [(screen: Int, frame: CGRect)] {
+    /// that screen's own shot. `frame` is the part of the screen it hides, `panel` the panel's own frame: past an edge
+    /// the cover was cut at with no display beyond, it reaches `edgeBleed` further.
+    public static func coverParts(for bounds: CGRect, screens: [CGRect]) -> [(screen: Int, frame: CGRect, panel: CGRect)] {
         let reach = bounds.insetBy(dx: -shadow, dy: -shadow)
         return screens.enumerated().compactMap { i, s in
             let part = s.intersection(reach)
-            return part.isNull || part.isEmpty ? nil : (i, part)
+            return part.isNull || part.isEmpty ? nil : (i, part, bled(part, reach: reach, screens: screens))
         }
+    }
+
+    /// 11-15 on d2640d0: the window server lists a borderless panel 2 to 6 pt inside the frame it was given, on every
+    /// side. A cover cut at the screen's edge so left a strip of a window opening against that edge in sight until the
+    /// park (Dictionary and Font Book, 78 to 137 ms seen); the same cover past the edge left 6 to 41 ms. Off every
+    /// display, what the panel paints there is never seen.
+    public static let edgeBleed: CGFloat = 16
+
+    /// Where a part's shot sits in its panel's layer, which counts y up from the panel's bottom: over the part itself.
+    public static func imageFrame(_ frame: CGRect, in outer: CGRect) -> CGRect {
+        CGRect(x: frame.minX - outer.minX, y: outer.maxY - frame.maxY, width: frame.width, height: frame.height)
+    }
+
+    static func bled(_ part: CGRect, reach: CGRect, screens: [CGRect]) -> CGRect {
+        func onAnother(_ r: CGRect) -> Bool { screens.contains { let c = $0.intersection(r); return !c.isNull && c.width > 0 && c.height > 0 } }
+        // Clear past this side: the cover was cut there, and no display has the strip just beyond it.
+        func clear(_ strip: CGRect, cut: Bool) -> CGFloat { cut && !onAnother(strip) ? edgeBleed : 0 }
+        let left = clear(CGRect(x: part.minX - 1, y: part.minY, width: 1, height: part.height), cut: reach.minX < part.minX)
+        let right = clear(CGRect(x: part.maxX, y: part.minY, width: 1, height: part.height), cut: reach.maxX > part.maxX)
+        let top = clear(CGRect(x: part.minX, y: part.minY - 1, width: part.width, height: 1), cut: reach.minY < part.minY)
+        let bottom = clear(CGRect(x: part.minX, y: part.maxY, width: part.width, height: 1), cut: reach.maxY > part.maxY)
+        let out = CGRect(x: part.minX - left, y: part.minY - top, width: part.width + left + right, height: part.height + top + bottom)
+        // Two sides out can make a corner on another display (diagonal ones): the panel's black would show there.
+        let corners = [CGRect(x: out.minX, y: out.minY, width: left, height: top), CGRect(x: part.maxX, y: out.minY, width: right, height: top),
+                       CGRect(x: out.minX, y: part.maxY, width: left, height: bottom), CGRect(x: part.maxX, y: part.maxY, width: right, height: bottom)]
+        return corners.contains(where: onAnother) ? part : out
     }
 
     /// A rect in the window server's coordinates (y down from the primary display's top) in AppKit's (y up from its
