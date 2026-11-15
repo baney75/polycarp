@@ -233,7 +233,8 @@ final class AgentOpenStabilitySourceTests: XCTestCase {
                       "the doc comment sits on its function (F6)")
         XCTAssertTrue(r.contains("let launched = runningPid == nil ? AgentLaunches.shared.pid(token) : nil"), "never a running copy of Donovan's")
         let c = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
-        XCTAssertTrue(c.contains("CloseReadback.gone(mainThread: Thread.isMainThread, listed: { Self.serverLists(w.id) }"),
+        // A child panel reads back through its app instead: the window server keeps a closed panel, ordered out (HiddenPanel).
+        XCTAssertTrue(c.contains("let gone = CloseReadback.gone(mainThread: Thread.isMainThread,\n                                              listed: { w.workspace == nil ? !ChildWindowsAX.closed(pid: w.pid, id: w.id) : Self.serverLists(w.id) },"),
                       "read back from the window server, not a scan on main per tick (F9)")
         XCTAssertFalse(c.contains("let gone = onMain { host.live(w.id) } == nil"), "not one early look")
     }

@@ -336,7 +336,9 @@ extension HandsRouter {
             } else {
                 // Read back from the window server until the window is gone, then one fresh scan: one look 0.2 s after the
                 // press answered `closed: false` for windows already gone (`CloseReadback`).
-                let gone = CloseReadback.gone(mainThread: Thread.isMainThread, listed: { Self.serverLists(w.id) },
+                // A closed panel stays in the window server, ordered out: the app showing it no more is the read back.
+                let gone = CloseReadback.gone(mainThread: Thread.isMainThread,
+                                              listed: { w.workspace == nil ? !ChildWindowsAX.closed(pid: w.pid, id: w.id) : Self.serverLists(w.id) },
                                               inModel: { onMain { host.freshWindows().contains { $0.id == w.id } } })
                 data["closed"] = .bool(gone)
                 Trace.log("agent close: window \(w.id) of \(w.app) \(gone ? "closed" : "still open after the press")")

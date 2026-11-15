@@ -91,7 +91,18 @@ extension HandsRouter {
                                           "verified": .bool(press["disposition"]?["delivery"]?.string == "delivered_verified")]
             if o["verified"] == false { o["next_call"] = HandsNextCall.after(.unverified, window: Int(w.id)) }
             if cancelledEarlier { o["cancelled_earlier_panel"] = true }
-            if let opened = openedChildren(pid: w.pid, before: childrenBefore, session: session) { o["opened"] = opened }
+            if let opened = openedChildren(pid: w.pid, before: childrenBefore, session: session) {
+                // A window the command raised (a panel such as Fonts) is named, and the session may close it.
+                o["opened"] = opened
+                let raised = HiddenPanel.ids(opened)
+                let adopted = childLocked { () -> [UInt32] in
+                    let mine = HiddenPanel.adopt(raised: raised, target: w.id, sessionOwnsTarget: sessionWindows.opened(by: session, window: w.id, pid: w.pid))
+                    for id in mine { sessionWindows.record(session: session, window: id, pid: w.pid) }
+                    return mine
+                }
+                if !raised.isEmpty { o["note"] = .string(HiddenPanel.note(raised, closable: !adopted.isEmpty)) }
+                Trace.log("agent menu \(named): raised \(raised.map(String.init).joined(separator: ", ")) in \(w.app)")
+            }
             return .success(.object(o))
         }
     }
