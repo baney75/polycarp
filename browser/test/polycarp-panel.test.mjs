@@ -255,3 +255,24 @@ test("a refused theme keeps the saved preset and the reason is held for the Appe
 	await page.flush();
 	assert.equal(apply.currentPolycarpRefusal(), undefined, "a good theme clears it");
 });
+
+// #13 first-F1: only a helper answer cleared a theme, so with the helper gone the cached one stayed for good.
+test("with the helper gone, the cached theme is marked unconfirmed and can be dropped", async (t) => {
+	const page = setup(t);
+	page.helper.down = true;
+	page.local.set("tabkyra.polycarp", payload(fixture("blocks")));
+	const apply = await import("../src/appearance/apply.ts?gone");
+	await apply.startAppearance();
+	await page.flush();
+	assert.equal(apply.currentPolycarp()?.name, "blocks", "the first paint is still the cached theme");
+	assert.equal(apply.polycarpUnconfirmed(), false, "not yet: the question is still waiting");
+	t.mock.timers.tick(20_000);
+	await page.flush();
+	assert.equal(apply.polycarpUnconfirmed(), true);
+	await apply.forgetPolycarp();
+	assert.equal(apply.currentPolycarp(), undefined);
+	assert.equal(page.local.has("tabkyra.polycarp"), false);
+	assert.equal(page.props.get("--background"), "#f1f5f9", "the saved slate preset is back");
+	const tab = readFileSync(new URL("../src/dialogs/AppearanceTab.ts", import.meta.url), "utf8");
+	assert.match(tab, /polycarpUnconfirmed\(\)[\s\S]{0,400}forgetPolycarp\(\)/);
+});

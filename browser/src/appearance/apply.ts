@@ -111,6 +111,29 @@ async function seedFromHelper(): Promise<void> {
 }
 
 let asking = false;
+let unanswered = false;
+
+/**
+ * Whether the theme in force is only the last one the helper sent: its last status question got no
+ * answer (helper gone, quit or not reachable). Only a helper answer changes the theme, so without this
+ * a removed helper would leave its theme in force for good; the Appearance tab offers `forgetPolycarp`.
+ */
+export function polycarpUnconfirmed(): boolean {
+	return polycarp !== undefined && unanswered;
+}
+
+function setUnanswered(next: boolean): void {
+	if (next === unanswered) return;
+	unanswered = next;
+	for (const listener of polycarpListeners) listener(polycarp);
+}
+
+/** Stop using the theme now and drop the cache. A helper that answers with a theme again brings it back. */
+export async function forgetPolycarp(): Promise<void> {
+	applyPolycarp(undefined);
+	await remember(undefined);
+}
+
 /** Where the last valid Polycarp payload is kept, so the next panel opens in the theme before the helper answers. */
 export const POLYCARP_CACHE_KEY = "tabkyra.polycarp";
 let cachedJson: string | undefined;
@@ -137,10 +160,12 @@ export async function refreshPolycarp(): Promise<void> {
 	asking = true;
 	try {
 		const { polycarp: raw, polycarpRefused } = await connectStatus();
+		setUnanswered(false);
 		applyPolycarp(raw, polycarpRefused);
 		await remember(raw);
 	} catch {
-		// Not connected: keep today's behavior.
+		// Not connected: the theme stays, marked as unconfirmed.
+		setUnanswered(true);
 	} finally {
 		asking = false;
 	}

@@ -19,6 +19,7 @@ usage: \(me) <command>
   state                       the session engine's live state as JSON
   agent status|on [N]|off     the agent workspace: agents drive apps there while you work here
   agent open <app> [file…]    open an app (or files in it) there, without switching you
+                              (Full Access: "System Settings" x-apple.systempreferences:<pane> opens that pane)
   agent run [--dir D] -- CMD  run a command (claude, grok…) in a Ghostty window there
   agent \(HandsTools.verbLine)
                               read and act on apps on the agent workspace (or lent ones) without touching
