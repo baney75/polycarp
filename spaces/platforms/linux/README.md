@@ -94,7 +94,8 @@ isolation line, drawn by process:
   it (`window_unmatched` otherwise): there is no fallback to "the only window of the process";
 - a process with no application on its accessibility bus at all (foot and most terminals, an app
   built without AT-SPI) has no tree to read: `snapshot` and the other hands verbs answer
-  `no_accessibility` with retry `never`, and say to use `agent shot` to see it and `agent run` or an
+  `no_accessibility`, with retry `safe` for the first 20 s of the process (a browser's cold start can
+  register that late) and `never` after, and say to use `agent shot` to see it and `agent run` or an
   app with a tree to act. In its first 2 s a process may not have registered yet, so it is
   `window_unmatched` with retry `safe` until then. The bus is asked (`list-apps`) only when the
   process has no accessible window;

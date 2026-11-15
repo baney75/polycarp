@@ -211,6 +211,20 @@ fn run_engine(engine: &std::path::Path, args: &[String], timeout: Duration, env:
 /// A process younger than this that is not on the accessibility bus may still be registering.
 const REGISTERING: Duration = Duration::from_secs(2);
 
+/// A process younger than this may still be on its way onto the accessibility bus: a browser's cold
+/// start under load can take this long, well past `REGISTERING`.
+const COLD_START: Duration = Duration::from_secs(20);
+
+/// Nothing was sent, so a window that may yet match is safe to ask about again. `no_accessibility`
+/// is final (retry never) only for a process past its cold start; a younger one may still register.
+fn relax_retry(e: &mut Envelope, young: bool) {
+    if let Some(er) = e.error.as_mut() {
+        if er.code == "window_unmatched" || (er.code == "no_accessibility" && young) {
+            er.retry = Retry::Safe;
+        }
+    }
+}
+
 /// Whether the engine's `list-apps` answer has an application of this process.
 pub fn app_on_bus(apps: &Value, pid: u32) -> bool {
     apps["data"]["apps"].as_array().is_some_and(|a| a.iter().any(|x| x["pid"].as_u64() == Some(pid as u64)))
@@ -228,12 +242,11 @@ fn engine_window(engine: &std::path::Path, pid: u32, title: &str, start: u64, ti
     let mine: Vec<&Value> = all.iter().filter(|w| w["pid"].as_u64() == Some(pid as u64)).collect();
     let cands: Vec<(String, String)> = mine.iter().map(|w| (w["id"].as_str().unwrap_or("").to_string(), w["title"].as_str().unwrap_or("").to_string())).collect();
     let on_bus = !cands.is_empty() || run_engine(engine, &["list-apps".into()], timeout.saturating_sub(started.elapsed()), env).map(|a| app_on_bus(&a, pid)).unwrap_or(true);
-    let starting = proc::age(pid).is_some_and(|a| a < REGISTERING);
+    let age = proc::age(pid);
+    let starting = age.is_some_and(|a| a < REGISTERING);
     let id = match_accessible(title, &cands, on_bus, starting).map_err(|r| {
         let mut e = r.envelope();
-        if let Some(er) = e.error.as_mut().filter(|er| er.code == "window_unmatched") {
-            er.retry = Retry::Safe; // nothing was sent, and the window may yet match
-        }
+        relax_retry(&mut e, age.is_some_and(|a| a < COLD_START));
         e
     })?;
     // process_instance is "<boot id>:<start ticks>": a second, independent pid-reuse check.
@@ -554,6 +567,20 @@ pub fn run(shared: &Shared, agent: &str, args: &Value) -> Envelope {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn no_accessibility_is_final_only_for_a_process_past_its_cold_start() {
+        use super::{relax_retry, Envelope, Retry};
+        let retry = |code: &str, young: bool| {
+            let mut e = Envelope::err(code, "m", Retry::Never, "s");
+            relax_retry(&mut e, young);
+            e.error.unwrap().retry
+        };
+        assert_eq!(retry("no_accessibility", true), Retry::Safe);
+        assert_eq!(retry("no_accessibility", false), Retry::Never);
+        assert_eq!(retry("window_unmatched", false), Retry::Safe);
+        assert_eq!(retry("not_in_scope", true), Retry::Never);
+    }
+
     use super::*;
 
     #[test]
