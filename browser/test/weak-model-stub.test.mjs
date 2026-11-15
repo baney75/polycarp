@@ -270,6 +270,57 @@ test("a long document's read is cut at 400 rows and says how to get the rest; a 
 	}
 });
 
+// PR 272 leftovers: what the helper allows and refuses, as SnapshotRowsMemory.kind and InUse.bound decide it.
+test("wait takes 0 to 120 as the schema says, clamped like the helper's", async () => {
+	const s = startStub("wait", {});
+	try {
+		await s.call("open", { app: "Tally" });
+		const t = (await s.call("snapshot", { app: "Tally" })).text;
+		for (const wait of [90, 120, 500]) {
+			const r = await s.call("click", { ref: s.row(t, /button "7"/), wait });
+			assert.equal(r.isError, false, `wait ${wait}: ${r.text}`);
+		}
+	} finally {
+		s.stop();
+	}
+});
+
+test("a bare row after a query read or a cut read is refused, naming the read, with a read of its window next", async () => {
+	const s = startStub("bare-after", task("stub-leaflet-find").files);
+	try {
+		await s.call("open", { app: "Thermo" });
+		await s.call("snapshot", { app: "Thermo" });
+		const q = await s.call("snapshot", { app: "Thermo", query: "Apply" });
+		const id = /snapshot (\w+)/.exec(q.text)[1];
+		let r = await s.call("click", { ref: "1" });
+		assert.equal(r.json?.error?.code, "stale_bare_row", r.text);
+		assert.match(r.json.error.message, new RegExp(`window 61001 \\(${id}\\)`), "the refusal names the read");
+		assert.deepEqual(r.json.error.next_call, { tool: "snapshot", arguments: { window: 61001 } });
+		const l = (await s.call("open", { app: "Leaflet", targets: ["report.pdf"] })).json.data.window;
+		assert.match((await s.call("snapshot", { window: l })).text, /truncated: 400 of/);
+		r = await s.call("click", { ref: "3" });
+		assert.equal(r.json?.error?.code, "stale_bare_row", "a cut read didn't list every row");
+		assert.deepEqual(r.json.error.next_call, { tool: "snapshot", arguments: { window: l } });
+	} finally {
+		s.stop();
+	}
+});
+
+test("a run_steps step with a bare row after a since read points at a read of that window", async () => {
+	const s = startStub("steps-bare", {});
+	try {
+		await s.call("open", { app: "Thermo" });
+		await s.call("snapshot", { app: "Thermo" });
+		await s.call("snapshot", { app: "Thermo", since: "latest" });
+		const r = await s.call("run_steps", { steps: [{ tool: "click", args: { ref: "2" } }] });
+		assert.equal(r.json?.error?.code, "stale_bare_row", r.text);
+		assert.deepEqual(r.json.error.next_call, { tool: "snapshot", arguments: { window: 61001 } });
+		assert.doesNotMatch(r.json.error.suggestion, /\.\./, "one period before Nothing ran");
+	} finally {
+		s.stop();
+	}
+});
+
 // A scripted solution for each task, through the same tools a model calls. Each must pass its task's check, and the
 // untouched world (the app opened, nothing done) must fail it.
 const solutions = {
