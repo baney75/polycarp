@@ -272,3 +272,35 @@ test("a download is fetched only in the page it was judged for", async () => {
 	await assert.rejects(handlers["files.download.begin"](ctx, { url: "/me.json" }), /tab moved to evil\.test before the download began/);
 	assert.equal(fetched, 1, "nothing was fetched in the other page");
 });
+
+test("a download or PDF may run longer than an ordinary call, until just before the CLI gives up", async () => {
+	const { handlerLimit, HANDLER_TIMEOUT_MS } = await import("../src/bridge/errors.ts");
+	const { FILE_FETCH_WAIT_MS } = await import("../src/bridge/protocol.ts");
+	// A 50 MB download may take longer than an ordinary call, and the bridge's error must still reach the CLI first.
+	for (const method of ["files.download.begin", "files.pdf.begin"]) {
+		assert.ok(handlerLimit(method) > HANDLER_TIMEOUT_MS, `${method}: ${handlerLimit(method)}`);
+		assert.ok(handlerLimit(method) < FILE_FETCH_WAIT_MS, `${method}: ${handlerLimit(method)}`);
+	}
+	assert.equal(handlerLimit("click"), HANDLER_TIMEOUT_MS);
+});
+
+test("a fetched body nobody reads leaves the page in time", async () => {
+	// The body stays in the page until it is read; if the call that fetched it ran out of time, a timer drops it.
+	await allowHost("good.test");
+	const tab = browser("https://good.test/files");
+	const timers = [];
+	tab.doc.globals.setTimeout = (f, ms) => timers.push({ f, ms });
+	const chunk = new TextEncoder().encode("a body");
+	tab.doc.globals.fetch = async () => {
+		let done = false;
+		const read = async () => (done ? { done: true } : ((done = true), { done: false, value: chunk }));
+		return { ok: true, status: 200, url: "https://good.test/f.txt", headers: new Map([["content-type", "text/plain"]]), body: { getReader: () => ({ read }) } };
+	};
+	await handlers["files.download.begin"](caller().ctx, { url: "/f.txt" });
+	const store = tab.doc.globals.__polycarpFetched;
+	assert.equal(Object.keys(store).length, 1);
+	assert.equal(timers.length, 1, "no timer drops an unread body");
+	assert.ok(timers[0].ms <= 10 * 60 * 1000, String(timers[0].ms));
+	timers[0].f();
+	assert.deepEqual(Object.keys(store), []);
+});
