@@ -21,6 +21,11 @@ public enum HandsNextCall {
         }
     }
 
+    /// The session socket's answer to text that isn't a HandsRequest: wrong as sent, so `next_call` is null, but present,
+    /// since every error carries one (spec/envelope.md).
+    public static let notACommand: HandsEnvelope = fill(.failure(HandsError(.badArguments, "the request wasn't an agent command",
+                                                                            suggestion: "Use `polycarp-spaces agent <command>`.", retry: .never)), window: nil)
+
     /// The envelope with `error.next_call` filled in where it has none.
     public static func fill(_ env: HandsEnvelope, window: Int?) -> HandsEnvelope {
         guard var e = env.error, e.nextCall == nil else { return env }
