@@ -30,8 +30,29 @@ export async function readBody(req: IncomingMessage, limit = 4_000_000): Promise
 	return Buffer.concat(chunks).toString("utf8");
 }
 
+/** How long a reply sent before its request's body arrived keeps reading that body before the socket closes. */
+export const UNREAD_BODY_LINGER_MS = 2_000;
+
+/**
+ * Headers for a reply sent before the request's body has all arrived (a refusal over a cap, a body too large). Node
+ * closes such a socket as soon as the reply is written, and a close with body bytes still coming in is a reset, which on
+ * macOS can wipe the reply before the client reads it: the client saw EPIPE or ECONNRESET, not the 429 (issue #2). So
+ * the reply says Connection: close, the socket only half-closes once it is written, and the rest of the body is read
+ * and dropped until the client hangs up or UNREAD_BODY_LINGER_MS passes.
+ */
+export function closeAfterUnreadBody(res: ServerResponse): Record<string, string> {
+	const socket = res.req?.socket;
+	if (!socket || res.req.complete || socket.destroyed) return {};
+	socket.destroySoon = () => socket.end();
+	const timer = setTimeout(() => socket.destroy(), UNREAD_BODY_LINGER_MS);
+	timer.unref();
+	socket.once("end", () => socket.destroy());
+	socket.once("close", () => clearTimeout(timer));
+	return { connection: "close" };
+}
+
 export function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
-	res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...headers });
+	res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...closeAfterUnreadBody(res), ...headers });
 	res.end(JSON.stringify(body));
 }
 

@@ -47,7 +47,7 @@ import {
 	SILENT_MS,
 	type StatusFrame,
 } from "./link-protocol.ts";
-import { handleOAuth, readBody, requestSource, sendJson } from "./oauth-http.ts";
+import { closeAfterUnreadBody, handleOAuth, readBody, requestSource, sendJson } from "./oauth-http.ts";
 import { liveGrantIds, mintApprovalCode, normalizePublicUrl, type OAuthConfig, resourceMetadataUrl, verifyAccessToken } from "./oauth.ts";
 import { authenticate, hubHeaders, loadTokens, SCOPES, safeCallerName, tokenLive } from "./remote.ts";
 import { pageCss } from "./theme.ts";
@@ -244,7 +244,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			res.end();
 			return;
 		}
-		res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...(status === 401 ? { "www-authenticate": challenge } : {}) });
+		res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...closeAfterUnreadBody(res), ...(status === 401 ? { "www-authenticate": challenge } : {}) });
 		res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message }, id: null }));
 	};
 
