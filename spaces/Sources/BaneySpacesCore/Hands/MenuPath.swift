@@ -345,7 +345,10 @@ public enum MenuPath {
 
     /// Undo's order: the panel first, since a window holding a sheet can't close while the sheet runs, then the tied windows,
     /// tried again for a moment while a cancelled sheet is still going away (246 r1 first-F1).
-    public static func undoing(panel: Bool, cancel: () -> HandsError?, close: () -> Bool, tries: Int = 5, pause: () -> Void = {}) -> (panel: HandsError?, closed: Bool) {
+    /// How many times a panel's cancel, and undo's close under a cancelled sheet, are tried, 0.1 s apart: one budget for
+    /// the same "a cancelled sheet is still going away" wait (258 r2 first-F1).
+    public static let panelTries = 5
+    public static func undoing(panel: Bool, cancel: () -> HandsError?, close: () -> Bool, tries: Int = panelTries, pause: () -> Void = {}) -> (panel: HandsError?, closed: Bool) {
         let error = panel ? cancel() : nil
         let tries = panel ? max(1, tries) : 1
         for n in 1...tries {
@@ -371,18 +374,26 @@ public enum MenuPath {
     /// once a new read after a pause still finds a panel it can't cancel: a sheet cancelled a moment ago is still read
     /// while it goes away, and its window counts in `count` too (246 r1 first-F3). A panel gone by the retry, after a cancel
     /// that answered false, was cancelled: Polycarp's Cancel was pressed, and the bar is read again (258 r1 second-S1).
-    public enum Earlier: Equatable, Sendable { case none, cancelled, stuck(afterCancelling: Bool) }
+    /// `read`: nothing was cancelled, but a cancel's read replaced the evidence store's, so the bar is read again.
+    public enum Earlier: Equatable, Sendable { case none, read, cancelled, stuck(afterCancelling: Bool) }
     /// `retry`: whether another try can help. Not after a check failed under the cancel or the call ran out (258 r1 first-F3).
-    public static func cancelEarlier(count: Int, tries: Int = 3, pause: () -> Void = {}, retry: () -> Bool = { true }, cancelOne: () -> Bool?) -> Earlier {
+    /// `pressed`: whether the attempt that just answered false pressed a Cancel (258 r2 first-F3).
+    public static func cancelEarlier(count: Int, tries: Int = panelTries, pause: () -> Void = {}, retry: () -> Bool = { true },
+                                     pressed: () -> Bool = { true }, cancelOne: () -> Bool?) -> Earlier {
         // `tried`: a cancel ran. Its read of the panel replaced the evidence store's, so the bar must be read again before the
-        // press even when the panel is gone by the retry (258 r1 second-S1).
-        var done = false, tried = false
-        for _ in 0..<count {
-            var r = cancelOne()
+        // press even when the panel is gone by the retry (258 r1 second-S1). Only a pressed Cancel is said to have cancelled.
+        var done = false, tried = false, press = false
+        func attempt() -> Bool? {
+            let r = cancelOne()
             if r != nil { tried = true }
-            for _ in 1..<max(1, tries) where r == false && retry() { pause(); r = cancelOne() }
+            if r == true || (r == false && pressed()) { press = true }
+            return r
+        }
+        for _ in 0..<count {
+            var r = attempt()
+            for _ in 1..<max(1, tries) where r == false && retry() { pause(); r = attempt() }
             switch r {
-            case nil: return done || tried ? .cancelled : .none
+            case nil: return done || press ? .cancelled : tried ? .read : .none
             case false?: return .stuck(afterCancelling: done)
             case true?: done = true
             }
@@ -397,8 +408,14 @@ public enum MenuPath {
     /// A stuck cancel's answer. `engine`: why the cancel's own engine call failed. A check that failed under it (the window
     /// left scope, the app is in use, the call ran out of time) is that call's answer, with its own code and next call,
     /// not a panel that won't cancel (246 r1 second-S2).
-    public static func earlierError(_ app: String, afterCancelling: Bool, engine: HandsError?) -> HandsError {
-        if let engine, checkFailures.union([.windowNotFound]).contains(engine.code) { return engine }
+    /// `panelWindow`: the cancel acted on a panel that is a window of its own, so a window not found is that panel going
+    /// away, a cancel that didn't go through, not the agent's window (258 r2 second-F6). A passed-on error still says an
+    /// earlier panel was cancelled (second-F5).
+    public static func earlierError(_ app: String, afterCancelling: Bool, engine: HandsError?, panelWindow: Bool = false) -> HandsError {
+        if var engine, checkFailures.union(panelWindow ? [] : [.windowNotFound]).contains(engine.code) {
+            if afterCancelling { engine.message += earlierNote }
+            return engine
+        }
         return earlierStuck(app, afterCancelling: afterCancelling)
     }
     /// A check that failed under a cancel: trying the same cancel again fails the same way. A window not found is the
