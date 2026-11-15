@@ -864,12 +864,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func sendBackMovedIn() {
         let back = HandsMovedIn.shared.settle(lends: HandsLends.shared.current(), now: Date(), mode: AgentAccess.shared.current)
         guard !back.isEmpty else { return }
-        let existing = Set(spaces.workspaceRows().map(\.number))
+        let rows = spaces.workspaceRows()
+        let existing = Set(rows.map(\.number)), shown = Set(rows.filter(\.shown).map(\.number))
         for e in back {
             // Not in the model yet (a launch before the first scan): it stays denied and is tried again on the next tick.
             guard let w = spaces.handsLive(e.window), w.pid == e.pid else { continue }
             // Off the workspace the agent put it on (sent back, or Donovan moved it): done.
             guard w.workspace == e.to else { HandsMovedIn.shared.returned(window: e.window); continue }
+            // Not from under Donovan: while he looks at the workspace it sits on, it waits there, denied, for the next tick.
+            guard MovedInWindows.mayGoBack(e, shown: shown) else { continue }
             let to = MovedInWindows.destination(e, workspaces: existing, current: spaces.model.current, agentWorkspace: Spaces.agentWorkspace)
             run { $0.move(e.window, to: to) }
             Trace.log("hands: window \(e.window) going back to workspace \(to): the \(e.origin == .lent ? "lend" : "Full Access") that let an agent move it ended")

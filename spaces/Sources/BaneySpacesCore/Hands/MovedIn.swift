@@ -142,20 +142,26 @@ public struct MovedInWindows: Equatable, Sendable {
         workspaces.contains(e.from) && e.from != agentWorkspace ? e.from : current
     }
 
+    /// Whether a returning window may go back now: not while Donovan is looking at the workspace it sits on, so it never
+    /// vanishes from under him. It stays denied there, and the next tick tries again.
+    public static func mayGoBack(_ e: Entry, shown: Set<Int>) -> Bool { !shown.contains(e.to) }
+
     /// The saved form: every entry, as JSON.
     public func encoded() -> Data { (try? JSONEncoder().encode(entries.values.sorted { $0.window < $1.window })) ?? Data("[]".utf8) }
     public static func decode(_ data: Data) -> [Entry] { (try? JSONDecoder().decode([Entry].self, from: data)) ?? [] }
 }
 
-/// `move`, at the moment it moves: the agent workspace, the live window, its scope and whether the agent workspace is
-/// shown, read together after any wait. The destination is the agent workspace as it is now, never the one read before.
+/// `move`, at the moment it moves: the agent workspace, the live window, its scope and whether the agent workspace and
+/// the window's own workspace are shown, read together after any wait. The destination is the agent workspace as it is now, never the one read before.
 public struct MoveState: Equatable, Sendable {
     public var agentWorkspace: Int?
     public var window: HandsWindow?
     public var scope: ScopeDecision
     public var agentShown: Bool
-    public init(agentWorkspace: Int?, window: HandsWindow?, scope: ScopeDecision, agentShown: Bool) {
-        self.agentWorkspace = agentWorkspace; self.window = window; self.scope = scope; self.agentShown = agentShown
+    /// The window's own workspace is on a display.
+    public var sourceShown: Bool
+    public init(agentWorkspace: Int?, window: HandsWindow?, scope: ScopeDecision, agentShown: Bool, sourceShown: Bool) {
+        self.agentWorkspace = agentWorkspace; self.window = window; self.scope = scope; self.agentShown = agentShown; self.sourceShown = sourceShown
     }
 }
 
@@ -179,7 +185,7 @@ public enum MoveDecision {
         guard let n = after.agentWorkspace else {
             return .failure(HandsError(.agentWorkspaceOff, "the agent workspace was turned off while the move waited", suggestion: "Ask Donovan to run `polycarp-spaces agent on`.", retry: .never))
         }
-        if let e = WorkspaceVerbs.moveRefusal(window: w, scope: after.scope, agentWorkspace: n, agentShown: after.agentShown) { return .failure(e) }
+        if let e = WorkspaceVerbs.moveRefusal(window: w, scope: after.scope, agentWorkspace: n, agentShown: after.agentShown, sourceShown: after.sourceShown) { return .failure(e) }
         return .success(Go(to: n, moves: w.workspace != n, changed: before.agentWorkspace != n))
     }
 }
