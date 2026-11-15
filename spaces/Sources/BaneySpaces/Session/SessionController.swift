@@ -242,7 +242,7 @@ final class SessionController {
         guard let data = try? enc.encode(s), let text = String(data: data, encoding: .utf8), text != lastState else { return }
         lastState = text
         try? FileManager.default.createDirectory(at: Wire.supportDir, withIntermediateDirectories: true)
-        try? data.write(to: URL(fileURLWithPath: Wire.statePath), options: .atomic)
+        try? data.write(to: URL(fileURLWithPath: Wire.ownStatePath), options: .atomic)
     }
 
     func watchForTrust() {

@@ -8,12 +8,18 @@ public enum Wire {
     /// The folder of the app this one replaced. Read for fallbacks only.
     public static var legacySupportDir: URL { Product.legacySupportDir(home: FileManager.default.homeDirectoryForCurrentUser) }
     public static var socketPath: String { supportDir.appendingPathComponent(Product.socketName).path }
-    /// The live state file: the app's own, else a running BaneySpaces', which writes the same file.
-    public static var statePath: String {
-        let mine = supportDir.appendingPathComponent("session.json").path
-        let old = legacySupportDir.appendingPathComponent("session.json").path
+    /// Where the app writes its state: always its own folder.
+    public static var ownStatePath: String { supportDir.appendingPathComponent("session.json").path }
+    /// The live state file to read: the app's own, else a running BaneySpaces', which writes the same file. A file the
+    /// old app left behind when it quit is stale, so it counts only while one of the old sockets answers.
+    public static var statePath: String { statePath(dir: supportDir, legacyDir: legacySupportDir) }
+
+    public static func statePath(dir: URL, legacyDir: URL) -> String {
+        let mine = dir.appendingPathComponent("session.json").path
+        let old = legacyDir.appendingPathComponent("session.json").path
         let fm = FileManager.default
-        return !fm.fileExists(atPath: mine) && fm.fileExists(atPath: old) ? old : mine
+        guard !fm.fileExists(atPath: mine), fm.fileExists(atPath: old) else { return mine }
+        return SocketClaim.anyLive(Product.Legacy.socketNames.map { legacyDir.appendingPathComponent($0).path }) ? old : mine
     }
 
     /// Where the app listens: its own socket only. The old names live in the old folder and belong
