@@ -312,3 +312,27 @@ test("the side panel's upload question never sends the person to the agent to le
 	assert.doesNotMatch(panel, /Ask the agent which folder/);
 	assert.match(panel, /say yes only if you asked for this file/);
 });
+
+test("a body that was read and ended leaves the page at once: no timer keeps it for 10 minutes", async () => {
+	await allowHost("good.test");
+	const tab = browser("https://good.test/files");
+	// Live timers by handle, as the page has them: a cleared one is gone.
+	const live = new Map();
+	let next = 0;
+	tab.doc.globals.setTimeout = (f, ms) => (live.set(++next, { f, ms }), next);
+	tab.doc.globals.clearTimeout = (h) => live.delete(h);
+	const chunk = new TextEncoder().encode("a body");
+	tab.doc.globals.fetch = async () => {
+		let done = false;
+		const read = async () => (done ? { done: true } : ((done = true), { done: false, value: chunk }));
+		return { ok: true, status: 200, url: "https://good.test/f.txt", headers: new Map([["content-type", "text/plain"]]), body: { getReader: () => ({ read }) } };
+	};
+	const { ctx } = caller();
+	const { transferId } = await handlers["files.download.begin"](ctx, { url: "/f.txt" });
+	assert.equal(live.size, 1);
+	await handlers["files.download.chunk"](ctx, { transferId, index: 0 });
+	assert.deepEqual(await handlers["files.download.end"](ctx, { transferId }), { ended: true });
+	await new Promise((r) => setTimeout(r, 20));
+	assert.deepEqual(Object.keys(tab.doc.globals.__polycarpFetched), []);
+	assert.equal(live.size, 0, "a timer still holds the body after the download ended");
+});

@@ -120,6 +120,39 @@ fn extension_on(dir: &Path) -> bool {
         })
 }
 
+/// The browsers whose profiles load the extension unpacked from a folder other than `want`, with that folder: an old
+/// checkout's `dist-chrome`, as an old README said. A reload there runs that folder's build again, so it never
+/// catches up with an update. A store install's path is relative and is not one.
+pub fn loaded_elsewhere(home: &Path, want: &Path) -> Vec<(String, PathBuf)> {
+    elsewhere(&dirs(home), want)
+}
+
+fn elsewhere(dirs: &[(&'static str, PathBuf)], want: &Path) -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    for (name, dir) in dirs {
+        let profiles = fs::read_dir(dir).into_iter().flatten().flatten();
+        for file in
+            profiles.flat_map(|e| ["Preferences", "Secure Preferences"].map(|f| e.path().join(f)))
+        {
+            let path = fs::read_to_string(&file)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                .and_then(|v| {
+                    Some(PathBuf::from(
+                        v.pointer(&format!("/extensions/settings/{EXTENSION_ID}/path"))?
+                            .as_str()?,
+                    ))
+                });
+            if let Some(path) = path.filter(|p| p.is_absolute() && p != want) {
+                if !out.iter().any(|(n, p)| n == name && *p == path) {
+                    out.push((name.to_string(), path));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// What Node's `os.hostname()` gives, which is what Chromium writes in the lock.
 fn hostname() -> Option<String> {
     let text = if cfg!(target_os = "linux") {
@@ -228,5 +261,41 @@ mod tests {
                 .is_some();
             assert!(line, "{name} at {} is not in browserDirs()", dir.display());
         }
+    }
+
+    #[test]
+    fn a_browser_that_loads_the_extension_from_another_folder_is_named() {
+        let root = root("elsewhere");
+        let want = Path::new("/home/u/.local/share/polycarp/browser/source/dist-chrome");
+        let prefs = |path: &str| {
+            format!(r#"{{"extensions":{{"settings":{{"{EXTENSION_ID}":{{"path":"{path}"}}}}}}}}"#)
+        };
+        let dir = browser(
+            &root,
+            None,
+            Some(&prefs("/home/u/src/polycarp/browser/dist-chrome")),
+        );
+        let dirs = [("Helium", dir.clone())];
+        assert_eq!(
+            elsewhere(&dirs, want),
+            vec![(
+                "Helium".to_string(),
+                PathBuf::from("/home/u/src/polycarp/browser/dist-chrome")
+            )]
+        );
+        fs::write(
+            dir.join("Default/Preferences"),
+            prefs(&want.to_string_lossy()),
+        )
+        .unwrap();
+        assert!(elsewhere(&dirs, want).is_empty());
+        // A store install keeps a relative path.
+        fs::write(
+            dir.join("Default/Preferences"),
+            prefs("kenehmggpggpiolepbjojeenmeapgfoc/1.2.0_0"),
+        )
+        .unwrap();
+        assert!(elsewhere(&dirs, want).is_empty());
+        let _ = fs::remove_dir_all(&root);
     }
 }
