@@ -26,7 +26,7 @@ public enum TextTarget {
     }
 
     /// The element of `tree` (the engine's read of window `window`) that `text` names, narrowed to `role` when given.
-    public static func pick(tree: JSONValue, text: String, role: String?, window: Int) -> Result<Match, HandsError> {
+    public static func pick(tree: JSONValue, text: String, role: String?, window: Int, exactOnly: Bool = false) -> Result<Match, HandsError> {
         let want = norm(text)
         guard !want.isEmpty else {
             return .failure(HandsError(.badArguments, "text is empty", suggestion: #"Example: {"window":4211,"text":"Appearance"}"#, retry: .safe, nextCall: .null))
@@ -48,7 +48,7 @@ public enum TextTarget {
         walk(tree)
         let quoted = "\"\(text.trimmingCharacters(in: .whitespaces))\""
         let narrowed = role.map { " with role \($0)" } ?? ""
-        for (hits, how) in [(exact, "show"), (partial, "contain")] where !hits.isEmpty {
+        for (hits, how) in [(exact, "show"), (exactOnly ? [] : partial, "contain")] where !hits.isEmpty {
             if hits.count == 1 { return .success(hits[0]) }
             let names = hits.prefix(listed).map { "\($0.ref) \($0.role) \"\($0.label)\"" }.joined(separator: ", ")
             let more = hits.count > listed ? ", and \(hits.count - listed) more" : ""
@@ -69,8 +69,10 @@ extension TextTarget {
     public static let shownWait: TimeInterval = 2
     static let shownStep: TimeInterval = 0.15
 
-    /// `pick` on a fresh `read()` until the text is shown or `within` seconds pass. Only "not shown" reads again: a read
-    /// that fails, an empty text and two matches answer at once.
+    /// `pick` on a fresh `read()` until the text is shown or `within` seconds pass. Until then only an exact label counts:
+    /// a pane still drawing can leave a lone partial (the sidebar's "Displays" for "Display", #387 first-F1) or two of
+    /// them, and either would click the wrong thing or refuse too soon. At the deadline, or with `within` 0, it is `pick`
+    /// on the last read. A read that fails, an empty text and two exact matches answer at once.
     public static func pickWhenShown(text: String, role: String?, window: Int, within: TimeInterval = shownWait,
                                      read: () -> Result<JSONValue, HandsError>,
                                      sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
@@ -82,8 +84,9 @@ extension TextTarget {
             case .failure(let e): return .failure(e)
             case .success(let t): tree = t
             }
-            let picked = pick(tree: tree, text: text, role: role, window: window)
-            guard case .failure(let e) = picked, e.code == .actionFailed, now() < deadline else { return picked }
+            guard now() < deadline else { return pick(tree: tree, text: text, role: role, window: window) }
+            let exact = pick(tree: tree, text: text, role: role, window: window, exactOnly: true)
+            guard case .failure(let e) = exact, e.code == .actionFailed else { return exact }
             sleep(shownStep)
         }
     }

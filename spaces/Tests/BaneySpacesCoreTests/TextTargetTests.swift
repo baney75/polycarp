@@ -112,13 +112,36 @@ final class TextTargetTests: XCTestCase {
         XCTAssertEqual(none.reads(), 1, "within 0 (the main thread) reads once, as before")
     }
 
-    func testOnlyANotShownLabelReadsAgain() {
+    /// #387 first-F1: the sidebar draws first, so "Display" is only inside the "Displays" row until the pane draws. On
+    /// 5e6685ae that lone partial won on the first read and the click went to Displays.
+    func testAPartialFromTheSidebarDoesNotWinWhileThePaneDraws() throws {
+        var n = 0, t = Date(timeIntervalSince1970: 0)
+        let rows: JSONValue = .object(["role": "window", "children": .array([.object(["role": "outline", "name": "Sidebar", "ref_id": "@s1:e1", "children": .array([
+            .object(["role": "row", "ref_id": "@s1:e8", "children": .array([.object(["role": "statictext", "name": "Displays", "ref_id": "@s1:e10"])])]),
+        ])])])])
+        let m = try TextTarget.pickWhenShown(text: "Display", role: nil, window: 7, read: { n += 1; return .success(n >= 3 ? self.settings() : rows) },
+                                             sleep: { t += $0 }, now: { t }).get()
+        XCTAssertEqual(m.ref, "@s1:e21", "the pane's Display button, not the sidebar's Displays row")
+        XCTAssertEqual(n, 3)
+        // Never drawn: at the deadline the lone partial is what a single read always gave.
+        var r = 0, u = Date(timeIntervalSince1970: 0)
+        let late = try TextTarget.pickWhenShown(text: "Display", role: nil, window: 7, read: { r += 1; return .success(rows) }, sleep: { u += $0 }, now: { u }).get()
+        XCTAssertEqual(late.ref, "@s1:e10")
+        XCTAssertGreaterThan(r, 1)
+    }
+
+    func testOnlyAnExactMatchEndsTheWaitEarly() {
         let l = loading(drawnAt: 1)
         guard case .failure(let e) = TextTarget.pickWhenShown(text: "Dis", role: nil, window: 7, read: l.read, sleep: l.sleep, now: l.now) else {
             return XCTFail("two match")
         }
-        XCTAssertEqual(e.code, .ambiguousTarget)
-        XCTAssertEqual(l.reads(), 1, "two matches answer at once")
+        XCTAssertEqual(e.code, .ambiguousTarget, "two partials, refused at the deadline")
+        XCTAssertGreaterThan(l.reads(), 1, "two partials read again: the pane may still draw the exact one")
+        let once = loading(drawnAt: 1)
+        if case .failure(let e) = TextTarget.pickWhenShown(text: "Dis", role: nil, window: 7, within: 0, read: once.read, sleep: once.sleep, now: once.now) {
+            XCTAssertEqual(e.code, .ambiguousTarget)
+        } else { XCTFail("within 0") }
+        XCTAssertEqual(once.reads(), 1, "within 0 is pick on one read")
         var reads = 0
         let gone = TextTarget.pickWhenShown(text: "Display", role: nil, window: 7, read: {
             reads += 1; return .failure(HandsError(.windowNotFound, "gone", suggestion: "", retry: .safe))
