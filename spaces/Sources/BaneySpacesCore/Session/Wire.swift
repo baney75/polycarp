@@ -98,11 +98,17 @@ public enum Wire {
     /// With no `path` it tries the current socket and falls back to the old one only when nothing
     /// listens on the first (a connect failure), never after a timeout, so a request isn't sent twice.
     public static func call(_ request: Request, timeout: Double = 2, path: String? = nil) -> Reply? {
+        send(request, timeout: timeout, path: path).reply
+    }
+
+    /// `call`, and whether anything took the connection. A nil reply after a connection means the app had the request and
+    /// then went quiet or quit, so what it was asked to do may have happened. Not connected: nothing was sent.
+    public static func send(_ request: Request, timeout: Double = 2, path: String? = nil) -> (reply: Reply?, connected: Bool) {
         for p in path.map({ [$0] }) ?? socketCandidates() {
             let (reply, connected) = exchange(request, timeout: timeout, path: p)
-            if connected { return reply }
+            if connected { return (reply, true) }
         }
-        return nil
+        return (nil, false)
     }
 
     private static func exchange(_ request: Request, timeout: Double, path: String) -> (Reply?, connected: Bool) {
