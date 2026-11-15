@@ -292,7 +292,7 @@ BUSPID="$(pgrep -f "address=unix:path=$XDG_RUNTIME_DIR/baneyspaces/bus-" | head 
 check "a private dbus-daemon is running for it" test -n "$BUSPID"
 kill "$UPID" "$AGPID" 2>/dev/null; sleep 1; rebase
 # Torn down with the token: once nothing runs under it, its bus and profile go, by the upkeep thread
-# within a couple of seconds of its last process (no minute's wait: a process of it was seen).
+# within about 4 s of its last process (no minute's wait: a process of it was seen).
 buses() { ls "$XDG_RUNTIME_DIR"/baneyspaces/bus-* 2>/dev/null | wc -l; }
 ctl '{"op":"test_reap","args":{}}' >/dev/null; sleep 3
 NB_BEFORE="$(buses)"

@@ -78,6 +78,9 @@ pub struct Core {
     pub tokens: HashMap<String, TokenInfo>,
     /// token -> pids registered through it
     pub token_pids: HashMap<String, Vec<u32>>,
+    /// token -> upkeeps in a row that found no process carrying it, for a launch already seen. One
+    /// empty look is not enough: an app's environ reads back empty for a moment after an exec.
+    pub token_misses: HashMap<String, u8>,
     /// snapshot id -> the window and process it was taken of
     pub snaps: HashMap<String, hands::SnapInfo>,
     pub overview_shown: bool,
@@ -488,6 +491,10 @@ impl Core {
                 return true;
             }
             let _ = self.apply(Event::AgentExit { pid });
+            // The pid went to another process: it is no longer the old launch's.
+            for v in self.token_pids.values_mut() {
+                v.retain(|p| *p != pid);
+            }
         }
         // A window can map right after its process's exec, while its environ still reads empty.
         let tokens = &self.tokens;
@@ -673,7 +680,7 @@ impl Core {
     }
 
     /// The launch tokens we issued, kept (0600) so a restart still knows the terminal an agent is
-    /// running in. A token with no live process is dropped: at once when one was seen, else after a minute.
+    /// running in. A token with no live process is dropped: after two empty looks in a row when one was seen, else after a minute.
     pub fn save_tokens(&self) {
         let m: serde_json::Map<String, Value> = self.tokens.iter().map(|(t, i)| (t.clone(), json!({ "agent": i.agent, "app": i.app, "at": i.at, "bus_lost": i.bus_lost, "socket": i.socket, "seen": i.seen, "bus": i.bus.as_ref().map(|b| json!({ "addr": b.addr, "pid": b.pid, "start": b.start })) }))).collect();
         self.paths.write_atomic("tokens.json", &Value::Object(m).to_string());
@@ -713,6 +720,7 @@ impl Core {
         let info = self.tokens.remove(tok);
         self.claims.remove(tok);
         self.token_pids.remove(tok);
+        self.token_misses.remove(tok);
         let kids = self.bus_children.remove(tok);
         let socket = info.as_ref().and_then(|i| i.socket.clone());
         // Stopping a stack waits for processes to exit; that happens after the lock is released.
@@ -730,8 +738,8 @@ impl Core {
     }
 
     /// `reap_tokens` with the live processes of each token given. A launch whose processes were seen
-    /// and are all gone now is over: its token, bus, profile and bridge folder go at once (a browser
-    /// whose window never registered too). One no process was seen for yet gets a minute to start.
+    /// and are gone at two upkeeps in a row is over: its token, bus, profile and bridge folder go
+    /// (a browser whose window never registered too). One no process was seen for yet gets a minute to start.
     pub fn reap_tokens_with(&mut self, live: &HashMap<String, Vec<u32>>) {
         let t = now();
         self.claims.retain(|_, cl| cl.until >= t);
@@ -742,7 +750,21 @@ impl Core {
                 changed = true;
             }
         }
-        let gone: Vec<String> = self.tokens.iter().filter(|(tok, i)| (i.seen || t.saturating_sub(i.at) > 60) && !live.contains_key(*tok)).map(|(tok, _)| tok.clone()).collect();
+        let mut gone: Vec<String> = vec![];
+        for (tok, i) in &self.tokens {
+            if live.contains_key(tok) {
+                self.token_misses.remove(tok);
+            } else if i.seen {
+                // Seen and now absent: over once a second look in a row finds nothing either.
+                let m = self.token_misses.entry(tok.clone()).or_insert(0);
+                *m += 1;
+                if *m >= 2 {
+                    gone.push(tok.clone());
+                }
+            } else if t.saturating_sub(i.at) > 60 {
+                gone.push(tok.clone());
+            }
+        }
         for tok in &gone {
             self.log(&format!("launch {} is over (no process carries its token); dropping it", &tok[..8.min(tok.len())]));
             self.drop_token(tok);
@@ -1725,6 +1747,7 @@ pub fn run(trace: bool) -> i32 {
         paths: paths.clone(),
         tokens: HashMap::new(),
         token_pids: HashMap::new(),
+        token_misses: HashMap::new(),
         snaps: HashMap::new(),
         overview_shown: false,
         events_seen: 0,
@@ -1794,6 +1817,11 @@ pub fn run(trace: bool) -> i32 {
           let mut tick = 0u32;
           loop {
             std::thread::sleep(Duration::from_secs(2));
+            tick += 1;
+            // While a launch runs, every tick: its token goes within 4 s of its last process. The scan
+            // reads every process's environ, which can stall on one process: never under the lock.
+            let busy = !lock(&shared).tokens.is_empty();
+            let live = (tick.is_multiple_of(5) || busy).then(proc::pids_by_token);
             let stops = {
             let mut c = lock(&shared);
             c.reconcile_agents();
@@ -1801,10 +1829,8 @@ pub fn run(trace: bool) -> i32 {
             if !c.ensure_focus_setting() {
                 c.dirty = true; // the focus rule cannot be confirmed: commands wait until it can
             }
-            tick += 1;
-            // While a launch runs, every tick: its token goes within 2 s of its last process.
-            if tick.is_multiple_of(5) || !c.tokens.is_empty() {
-                c.reap_tokens();
+            if let Some(live) = &live {
+                c.reap_tokens_with(live);
             }
             prune_if_due(&c.paths, now(), &c.last_prune);
             std::mem::take(&mut c.pending_stops)
@@ -1910,6 +1936,7 @@ pub(crate) mod tests {
             paths,
             tokens: HashMap::new(),
             token_pids: HashMap::new(),
+            token_misses: HashMap::new(),
             snaps: HashMap::new(),
             overview_shown: false,
             events_seen: 0,
@@ -2400,7 +2427,7 @@ pub(crate) mod tests {
     /// Parish1, 11-15: a browser stopped while its `open` was pending left its bridge folder behind; the token
     /// waited out the minute meant for a launch that has not started yet.
     #[test]
-    fn a_launch_whose_processes_are_all_gone_is_dropped_at_once() {
+    fn a_launch_whose_processes_are_all_gone_is_dropped_at_the_second_look() {
         let mut c = test_core("reap-seen");
         let info = |tag: &str| TokenInfo { agent: "a".into(), app: "chromium".into(), at: now(), bus: None, bus_lost: false, socket: Some(tag.into()), seen: false };
         let ran = apps::make_polycarp_socket_dir(&c.paths.run, "d92df089").unwrap();
@@ -2411,7 +2438,14 @@ pub(crate) mod tests {
         // The browser runs: only its crash handler and the anchor carry the token, none registered.
         c.reap_tokens_with(&HashMap::from([("d92df089aaaa".to_string(), vec![835418])]));
         assert!(c.tokens["d92df089aaaa"].seen && ran.exists());
-        // Every process of it exited: gone at the next upkeep, folder and all.
+        // One upkeep finds nothing (an exec in place reads back empty for a moment): kept.
+        c.reap_tokens_with(&HashMap::new());
+        assert!(c.tokens.contains_key("d92df089aaaa") && ran.exists(), "one empty look is not the end");
+        // Found again, then gone: the count starts over.
+        c.reap_tokens_with(&HashMap::from([("d92df089aaaa".to_string(), vec![835418])]));
+        c.reap_tokens_with(&HashMap::new());
+        assert!(c.tokens.contains_key("d92df089aaaa"));
+        // Every process of it exited: gone at the second upkeep in a row, folder and all.
         c.reap_tokens_with(&HashMap::new());
         assert!(!c.tokens.contains_key("d92df089aaaa") && !c.token_pids.contains_key("d92df089aaaa"));
         assert!(!ran.exists(), "the bridge folder goes with the launch");
@@ -2448,7 +2482,12 @@ pub(crate) mod tests {
         let app = app.expect("the anchor's child");
         // A process of yours with no token anywhere above it is not registered.
         assert!(!c.adopt_agent_pid(std::process::id()));
+        // Its pid was an older launch's process, gone before the upkeep noticed (another start time).
+        c.tokens.insert("stale".into(), TokenInfo { agent: "a".into(), app: "chromium".into(), at: now(), bus: None, bus_lost: false, socket: None, seen: true });
+        c.token_pids.insert("stale".into(), vec![app]);
+        c.model.apply(Event::AgentRegister { pid: app, start: 1 }).unwrap();
         assert!(c.adopt_agent_pid(app));
+        assert!(c.token_pids["stale"].is_empty(), "a reused pid is no longer the old launch's");
         assert_eq!(c.token_pids[&tok], vec![app]);
         assert!(c.tokens[&tok].seen, "registered, so the launch is over once its processes are gone");
         assert!(c.model.is_agent_pid(app, proc::start_time(app).unwrap()));

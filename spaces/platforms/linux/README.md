@@ -87,7 +87,7 @@ by process:
   `AT_SPI_BUS_ADDRESS`, so an app on a private session bus would otherwise start a launcher that takes
   over the socket of *your* accessibility bus. The hands engine is pointed at the launch's session
   bus when it works on that launch's windows. The stack is a process group, a child of the daemon:
-  it is torn down within 2 s of the token's last process exiting (a launch none of whose processes
+  it is torn down within about 4 s (two upkeeps in a row) of the token's last process exiting (a launch none of whose processes
   was seen yet gets a minute to start), when the daemon exits (`stop`, `SIGTERM`,
   `SIGINT`, `SIGHUP`, the include being removed). If the daemon is killed outright or crashes, the
   kernel kills the three processes it started (`PR_SET_PDEATHSIG`); what those started in turn (the
