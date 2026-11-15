@@ -131,16 +131,20 @@ extension HandsRouter {
         }
     }
 
-    /// After an action: the child windows that appeared since `before`, looked for up to 200 ms. Nil when none did.
+    /// After an action: the child windows that appeared since `before`, and the numberless sheets this session's action
+    /// raised, looked for up to 200 ms. Nil when none did.
     func openedChildren(pid: Int32, before: Set<UInt32>, session: String) -> JSONValue? {
         let deadline = Date().addingTimeInterval(0.2)
         repeat {
             let all = listWindows().windows
-            let new = readChildren(pid: pid, all: all).children.filter { !before.contains($0.id) }
-            if !new.isEmpty {
+            let r = readChildren(pid: pid, all: all)
+            let new = r.children.filter { !before.contains($0.id) }
+            let sheets = childLocked { attribution.openedSheets(r.sheetsOn, pid: pid, session: session) }
+            if !new.isEmpty || !sheets.isEmpty {
                 let agent = onMain { host.agentWorkspace() }
-                let usable = new.filter { decideChild($0, all: all, agent: agent, session: session).allowed }
-                return usable.isEmpty ? nil : (usable.count == 1 ? ChildWindowList.opened(usable[0]) : .array(usable.map(ChildWindowList.opened)))
+                let usable = new.filter { decideChild($0, all: all, agent: agent, session: session).allowed }.map(ChildWindowList.opened)
+                    + sheets.sorted().map(ChildWindowList.openedSheet(on:))
+                return usable.isEmpty ? nil : (usable.count == 1 ? usable[0] : .array(usable))
             }
             Thread.sleep(forTimeInterval: 0.05)
         } while Date() < deadline
