@@ -476,7 +476,7 @@ final class Engine {
         guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: TerminalChoice.terminal) else { return false }
         let folder = Wire.supportDir.appendingPathComponent("agent-runs")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let name = "agent-\(UUID().uuidString.prefix(8).lowercased()).command"
+        let name = ClaimRule.runScriptName()
         let script = folder.appendingPathComponent(name)
         let cd = dir.map { "cd '\($0.replacingOccurrences(of: "'", with: "'\\''"))' || exit 1\n" } ?? "cd ~\n"
         // A login shell, so it gets your PATH; a shell stays open when the command is done.
