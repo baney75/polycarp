@@ -476,7 +476,7 @@ final class Engine {
         guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: TerminalChoice.terminal) else { return false }
         let folder = Wire.supportDir.appendingPathComponent("agent-runs")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let name = "agent-\(UUID().uuidString.prefix(8).lowercased()).command"
+        let name = ClaimRule.runScriptName()
         let script = folder.appendingPathComponent(name)
         let cd = dir.map { "cd '\($0.replacingOccurrences(of: "'", with: "'\\''"))' || exit 1\n" } ?? "cd ~\n"
         // A login shell, so it gets your PATH; a shell stays open when the command is done.
@@ -484,6 +484,12 @@ final class Engine {
         guard FileManager.default.createFile(atPath: script.path, contents: Data(body.utf8), attributes: [.posixPermissions: 0o700]) else { return false }
         let running = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == TerminalChoice.terminal }
         if let running { opened(running.processIdentifier, name, false) }
+        // Until the new Terminal's pid comes back (below), an activation by a Terminal that wasn't running is this run's,
+        // so it can't take your keyboard before the watch by pid starts (PR 20 sol-F4). `agent open` does the same.
+        if running == nil {
+            AgentActivity.shared.markLaunch(bundle: TerminalChoice.terminal, excluding: [], for: 10)
+            AgentLaunchFocus.shared.watch(bundle: TerminalChoice.terminal, excluding: [], for: 10)
+        }
         let cfg = NSWorkspace.OpenConfiguration()
         cfg.activates = false
         cfg.addsToRecentItems = false

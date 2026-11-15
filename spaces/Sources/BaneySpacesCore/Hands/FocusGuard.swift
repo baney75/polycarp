@@ -119,8 +119,20 @@ public final class AgentActivity: @unchecked Sendable {
 /// New Window in it. The exception is an app the agent itself just started: some apps bring themselves forward as
 /// they launch, even when asked not to, and that must not put the agent's window on your screen.
 public enum ClaimRule {
-    public static func applies(windowPid: Int32, frontPid: Int32?, agentStartedProcess: Bool) -> Bool {
-        agentStartedProcess || windowPid != frontPid
+    /// `windowIsTheRunsOwn`: the window shows the script name an `agent run` made for it (`isRunsWindow`), so it is the
+    /// agent's even in the Terminal you are in (PR 20 second-S6: with your Terminal in front, its window was never claimed).
+    public static func applies(windowPid: Int32, frontPid: Int32?, agentStartedProcess: Bool, windowIsTheRunsOwn: Bool = false) -> Bool {
+        agentStartedProcess || windowIsTheRunsOwn || windowPid != frontPid
+    }
+
+    /// The script `agent run` writes, named so its Terminal window can be told apart: `agent-<8 hex>.command`.
+    public static func runScriptName() -> String { "agent-\(UUID().uuidString.prefix(8).lowercased()).command" }
+
+    /// Whether `windowTitle` shows `claimTitle` and that is an `agent run` script name, which no window of yours carries.
+    /// A file name an `agent open` claims could be yours too, so it never counts here.
+    public static func isRunsWindow(claimTitle: String?, windowTitle: String) -> Bool {
+        guard let t = claimTitle, t.range(of: #"^agent-[0-9a-f]{8}\.command$"#, options: .regularExpression) != nil else { return false }
+        return windowTitle.contains(t)
     }
 }
 
