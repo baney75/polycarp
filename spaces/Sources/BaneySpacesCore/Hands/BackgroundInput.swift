@@ -560,6 +560,19 @@ public enum FrontChange: Equatable, Sendable {
     case unknown
 }
 
+/// The watch after an action's last input: a second more, while the agent already has its answer, so an app that comes
+/// forward late is still judged and shut out of the route (#299 first-F4). `changed`: the front app moved; `late` runs once.
+public enum FrontTail {
+    public static let seconds: TimeInterval = 1.0
+    public static func run(since: Date, now: () -> Date = Date.init, changed: () -> Bool, pause: () -> Void, late: () -> Void) {
+        while now().timeIntervalSince(since) < seconds {
+            if changed() { break }
+            pause()
+        }
+        late()
+    }
+}
+
 public enum PostGuard {
     public enum PointerVerdict: Equatable, Sendable {
         case unmoved

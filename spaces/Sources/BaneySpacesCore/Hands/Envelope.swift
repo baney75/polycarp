@@ -115,6 +115,16 @@ public struct HandsEnvelope: Codable, Equatable, Sendable {
 
 /// How an engine error's own retry verdict (`disposition.retry`: safe, unsafe, unknown, or missing) becomes ours.
 public enum EngineVerdict {
+    /// A ref action whose result lists a step the engine posted (`physical_synthetic`: a CGClick at the element's screen
+    /// point, or a keyboard clear). The Headless policy skips those steps at the pinned engine; if one ever ran, the call
+    /// is refused rather than answered, so a posted right click on Donovan's screen never passes as done (263 first-F4).
+    public static func posted(_ data: JSONValue) -> HandsError? {
+        guard let step = data["steps"]?.array?.first(where: { $0["mechanism"]?.string == "physical_synthetic" }) else { return nil }
+        let label = step["label"]?.string ?? "a physical step"
+        return HandsError(.notSupported, "the engine posted input for this action (\(label)), which Polycarp never allows from a ref, so the call is refused",
+                          suggestion: "Don't repeat it. The engine pin moved or broke its headless policy: check engine/PIN.", retry: .never, nextCall: .null)
+    }
+
     public static func retry(for code: HandsErrorCode, verdict: String?) -> HandsRetry {
         var retry = code.defaultRetry
         // An action that may have landed is never repeated blindly, whatever the code says.
