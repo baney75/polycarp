@@ -1093,13 +1093,10 @@ fn node_ok(path: Option<&OsString>) -> bool {
     let (Some(node), Some(_)) = (on_path("node", path), on_path("npm", path)) else {
         return false;
     };
-    Command::new(node)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .and_then(|o| node_major(&String::from_utf8_lossy(&o.stdout)))
+    // `on_path` takes only trusted folders (never the current folder's tree or a node_modules), and
+    // doctor's time limit holds, so a node that hangs can't stall the update or its --dry-run.
+    crate::first_version_line(&node)
+        .and_then(|line| node_major(&line))
         .is_some_and(|major| major >= NODE_MIN)
 }
 
@@ -1910,6 +1907,33 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    /// Review r1 second-F5 of PR 359: a node in the current folder's tree or a node_modules/.bin is
+    /// never run to ask its version, so it never counts.
+    #[cfg(unix)]
+    #[test]
+    fn a_node_in_node_modules_is_neither_run_nor_counted() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("polycarp-node-ok-{}", std::process::id()));
+        let bin = dir.join("node_modules/.bin");
+        fs::create_dir_all(&bin).unwrap();
+        let ran = dir.join("ran");
+        for (name, body) in [
+            (
+                "node",
+                format!("#!/bin/sh\ntouch {}\necho v22.0.0\n", ran.display()),
+            ),
+            ("npm", "#!/bin/sh\n".to_string()),
+        ] {
+            let p = bin.join(name);
+            fs::write(&p, body).unwrap();
+            fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let path = std::env::join_paths([&bin]).unwrap();
+        assert!(!node_ok(Some(&path)));
+        assert!(!ran.exists(), "the untrusted node was run");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     const HOME: &str = "/home/u";
