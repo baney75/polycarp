@@ -454,7 +454,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 5 : 10)) {
                 // Someone who left Workspaces unticked may still want BaneySpaces, so it stays.
                 guard PartsModel.shared.hasChosen, PartsModel.shared.current.contains(.workspaces) else { return }
-                if !LegacyRetirementRunner.runIfDue(welcomeFinished: welcomeFinishedAtLaunch), attempt < 12 { tryRetirement(attempt + 1) }
+                let finished = LegacyRetirement.welcomeFinished(atLaunch: welcomeFinishedAtLaunch, now: UserDefaults.standard.bool(forKey: Welcome.finishedKey))
+                if !LegacyRetirementRunner.runIfDue(welcomeFinished: finished), attempt < 12 { tryRetirement(attempt + 1) }
             }
         }
         tryRetirement(0)

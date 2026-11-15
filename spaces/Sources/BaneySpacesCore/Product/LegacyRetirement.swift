@@ -9,6 +9,13 @@ public enum LegacyRetirement {
     /// Set in the defaults for the welcome window's one line; cleared when the welcome window finishes.
     public static let noteKey = "legacyRetiredNote"
     public static let welcomeNote = "\(Product.Legacy.name) moved to the Trash. Your settings came with you."
+    /// The welcome line when BaneySpaces had no settings to bring.
+    public static let welcomeNoteNoSettings = "\(Product.Legacy.name) moved to the Trash."
+
+    /// The welcome line: it says the settings came along only when the import brought some.
+    public static func welcomeNote(supportDir: URL) -> String {
+        FileManager.default.fileExists(atPath: supportDir.appendingPathComponent(Product.importedMarker).path) ? welcomeNote : welcomeNoteNoSettings
+    }
     public static let watchdogLabel = "\(Product.Legacy.bundleID).mc-watchdog"
 
     public static func watchdogPlist(home: URL) -> URL {
@@ -23,9 +30,13 @@ public enum LegacyRetirement {
     }
 
     /// Every BaneySpaces in the two Applications folders (a person can have one in each).
-    public static func copies(home: URL) -> [URL] {
-        LegacyApp.searchFolders(home: home).compactMap { LegacyApp.installed(in: [$0]) }
+    public static func copies(home: URL, system: URL = LegacyApp.systemApplications) -> [URL] {
+        LegacyApp.searchFolders(home: home, system: system).compactMap { LegacyApp.installed(in: [$0]) }
     }
+
+    /// Whether the welcome window is finished, for a retirement try: finished at launch, or since. A click on Start before a
+    /// later try (they run for up to two minutes) means the window that would tell about the Trash is gone, so nothing goes.
+    public static func welcomeFinished(atLaunch: Bool, now: Bool) -> Bool { atLaunch || now }
 
     /// Only while the welcome window hasn't been finished: that is a new arrival, and the window tells them. A person who
     /// finished it before keeps their BaneySpaces; it never disappears silently.
