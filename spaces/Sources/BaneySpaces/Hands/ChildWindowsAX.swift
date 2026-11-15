@@ -97,6 +97,12 @@ enum ChildWindowsAX {
                 elements[id] = el
             }
         }
+        // A panel that hides with its app in the background (Fonts) is left out of AXWindows but is the focused window.
+        if let el = focusedElement(app), let id = BackgroundAX.windowID(of: el),
+           HiddenPanel.unlisted(listed: listed.map(\.id) + Array(elements.keys), focused: id) != nil {
+            listed.append(.init(id: id, placed: placed.contains(id)))
+            elements[id] = el
+        }
         let out = ChildCollect.assemble(listed).compactMap { c in elements[c.id].map { facts($0, id: c.id, parent: c.parent) } }
         // The app's main or focused window now: the parent a child without one is first seen with.
         func windowAttr(_ a: String) -> UInt32? {
@@ -110,6 +116,32 @@ enum ChildWindowsAX {
     }
 
     /// The process that owns a window number, and its name, from the window server.
+    private static func focusedElement(_ app: AXUIElement) -> AXUIElement? {
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &v) == .success, let v, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+        return (v as! AXUIElement)
+    }
+
+    /// Window `id` of `pid` as the app shows it now: in AXWindows, and whether it is the focused window.
+    private static func find(pid: pid_t, id: UInt32) -> (element: AXUIElement?, inWindows: Bool, focused: Bool) {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+        var raw: CFTypeRef?
+        let list = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &raw) == .success ? (raw as? [AXUIElement]) ?? [] : []
+        let listed = list.first { BackgroundAX.windowID(of: $0) == id }
+        let focused = focusedElement(app).flatMap { BackgroundAX.windowID(of: $0) == id ? $0 : nil }
+        return (listed ?? focused, listed != nil, focused != nil)
+    }
+
+    /// A child window Polycarp doesn't place (a panel), hidden or not, for `Spaces.pressClose`.
+    static func element(pid: pid_t, id: UInt32) -> AXUIElement? { find(pid: pid, id: id).element }
+
+    /// Whether the app still shows child window `id` (`HiddenPanel.closed`): the window server keeps a closed panel.
+    static func closed(pid: pid_t, id: UInt32) -> Bool {
+        let f = find(pid: pid, id: id)
+        return HiddenPanel.closed(inWindows: f.inWindows, focused: f.focused)
+    }
+
     static func owner(_ id: UInt32) -> (pid: pid_t, name: String)? {
         guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else { return nil }
         for w in list where (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value == id {

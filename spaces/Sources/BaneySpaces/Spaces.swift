@@ -547,9 +547,18 @@ final class Spaces {
 
     /// `close`: presses the window's close button from behind (no raise, no activation). False when it has none.
     func pressClose(_ id: WindowID) -> Bool {
-        guard let w = windows[id], Windows.isResponsive(w.pid) else { return false }
-        AXUIElementSetMessagingTimeout(w.element, 0.25)
-        guard let button: AXUIElement = w.element.value(kAXCloseButtonAttribute) else { return false }
+        // A child it doesn't place (a panel a menu raised, hidden while its app is in the background): its own close button.
+        let element: AXUIElement
+        if let w = windows[id] {
+            guard Windows.isResponsive(w.pid) else { return false }
+            element = w.element
+        } else {
+            guard let owner = ChildWindowsAX.owner(id), Windows.isResponsive(owner.pid),
+                  let child = ChildWindowsAX.element(pid: owner.pid, id: id) else { return false }
+            element = child
+        }
+        AXUIElementSetMessagingTimeout(element, 0.25)
+        guard let button: AXUIElement = element.value(kAXCloseButtonAttribute) else { return false }
         return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
     }
 
