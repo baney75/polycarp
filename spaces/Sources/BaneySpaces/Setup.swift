@@ -68,6 +68,10 @@ final class SetupModel: ObservableObject {
     @Published var tab: SettingsTab = .general {
         // The app list changes while the window is open; it's read when you look at it.
         didSet {
+            // A pane switch in the open window, timed in timing.log as `open settings-<pane>=` (#350). Not while the window
+            // is shut: `show` picks the pane before it opens, and the offscreen harness has no window.
+            let clock = windowVisible() && tab != oldValue ? OpenClock("settings-" + tab.rawValue.lowercased()) : nil
+            defer { clock?.shown() }
             if tab == .automation { reloadParked() }
             if tab == .updates { onUpdatesShown?() }
             if tab == .agents { refreshSandbox() }
