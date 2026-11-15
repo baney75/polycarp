@@ -116,7 +116,10 @@ final class ThemeLibrary: ObservableObject {
                 }
                 return tile
             }
-        }) { [weak self] tiles in self?.tiles = tiles }
+        }) { [weak self] tiles in
+            // The shelf reads on every Appearance visit; the same tiles again would redraw the pane for nothing.
+            if let self, tiles != self.tiles { self.tiles = tiles }
+        }
     }
 
     /// Customize: a copy of a built-in under a free name, opened in the editor. `then` gets the new name.
