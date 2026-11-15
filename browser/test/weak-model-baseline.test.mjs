@@ -26,11 +26,8 @@ test("every recorded round scores what its baseline says, under what it says, an
 });
 
 test("every committed results file fits under the reviewers' 256 KiB cap", () => {
-	for (const label of readdirSync(join(dir, "results")).filter((n) => statSync(join(dir, "results", n)).isDirectory()))
-		for (const f of ["runs.jsonl", "summary.json", "classes.json"].filter((f) => existsSync(join(dir, "results", label, f)))) {
-			const size = statSync(join(dir, "results", label, f)).size;
-			assert.ok(size <= 256 * 1024, `results/${label}/${f} is ${size} bytes`);
-		}
+	const committed = readdirSync(join(dir, "results"), { recursive: true }).filter((f) => /(runs\.jsonl|summary\.json|classes\.json)$/.test(f));
+	assert.deepEqual(committed.filter((f) => statSync(join(dir, "results", f)).size > 256 * 1024), []);
 });
 
 test("the latest round for each model and profile holds the floor", () => {
