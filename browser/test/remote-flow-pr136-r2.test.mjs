@@ -82,3 +82,30 @@ test("PR 136 r2 first-F2: a check_failed step whose Repair has nothing planned k
 	// The element's Check again asks what checkAgainMethod names, so this one runs remoteTest.
 	assert.match(read("src/dialogs/RemoteFlow.ts"), /case "check_again":\s*void this\.checkAgain\(checkAgainMethod\(answer\)\);/);
 });
+
+// #138: two panel leftovers from this review, read off the component (it needs a DOM to run).
+const method = (src, name) => {
+	const start = src.indexOf(`private async ${name}(`);
+	assert.ok(start >= 0, name);
+	const next = src.indexOf("\n\tprivate ", start + 1);
+	return src.slice(start, next < 0 ? undefined : next);
+};
+
+test("#138: a Cloudflare setup that saved its route and then stopped tells Connect at once, as Turn on does", () => {
+	const tunnel = method(read("src/dialogs/RemoteFlow.ts"), "setupTunnel");
+	const fin = tunnel.slice(tunnel.lastIndexOf("} finally {"));
+	assert.match(fin, /this\.dispatchEvent\(new CustomEvent\("remote-changed"/, "every way out of setupTunnel, a refusal included, reloads the saved route");
+});
+
+test("#138: a plan asked for before Repair ran can't decide afterwards whether Repair shows", () => {
+	const flow = read("src/dialogs/RemoteFlow.ts");
+	const plan = method(flow, "planFix");
+	assert.match(plan, /const asked = this\.planAsked;/);
+	assert.match(plan, /if \(asked === this\.planAsked\) this\.fix = fix;/);
+	assert.match(plan, /if \(asked === this\.planAsked\) this\.planning = false;/);
+	const repair = method(flow, "repair");
+	const bump = repair.indexOf("this.planAsked++");
+	assert.ok(bump > repair.indexOf("await connectRemoteFix()"), "the plans in flight are dropped once the run answers");
+	assert.ok(bump < repair.indexOf("void this.planFix()"), "so the fresh plan after it can start");
+	assert.match(repair.slice(bump), /^this\.planAsked\+\+;\s*this\.planning = false;/);
+});

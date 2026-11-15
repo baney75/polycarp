@@ -377,7 +377,7 @@ export const REMOTE_GUIDE = [
 	`  3. ${COMMAND_NAME} remote test     Prove an assistant can reach and stream from it, from outside`,
 	`  4. ${COMMAND_NAME} remote fix      Repair what status or test found (--dry-run lists the steps)`,
 	`  5. ${COMMAND_NAME} remote off      Stop the service, close the tunnel and remove remote.json`,
-	"Each takes --json. Exit codes: 0 ok, 1 failed, 2 usage, 3 a person has to act (or, for test and fix, nothing is set up).",
+	"Each takes --json. Exit codes: 0 ok, 1 failed, 2 usage; setup and fix also 3 when a person has to act, test and fix 3 when nothing is set up.",
 	`Every flag: ${COMMAND_NAME} --help`,
 	"",
 ].join("\n");

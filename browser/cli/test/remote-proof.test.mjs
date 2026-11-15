@@ -138,7 +138,7 @@ async function fakeDoh(address = "127.0.0.1", { status = 0, httpStatus = 200 } =
 }
 
 /** A temp HOME and config dir with remote.json on the custom route, and one existing token so tokens.json has something to keep. */
-function machine(name, publicUrl, doh) {
+function machine(name, publicUrl, doh, route = "custom") {
 	const dir = join(root, name);
 	const bin = join(dir, "bin");
 	const home = join(dir, "home");
@@ -165,7 +165,7 @@ function machine(name, publicUrl, doh) {
 		});
 	const spawnRaw = (args) => spawn(process.execPath, ["--import", HOOKS, cli, ...args], { env });
 	mkdirSync(env.TABKYRA_CONFIG_DIR, { recursive: true });
-	if (publicUrl) writeFileSync(join(env.TABKYRA_CONFIG_DIR, "remote.json"), JSON.stringify({ publicUrl, port: 8799, route: "custom" }));
+	if (publicUrl) writeFileSync(join(env.TABKYRA_CONFIG_DIR, "remote.json"), JSON.stringify({ publicUrl, port: 8799, route }));
 	const made = spawnSync(process.execPath, [cli, "token", "create", "kept", "--scope", "skills.read"], { env, encoding: "utf8" });
 	assert.equal(made.status, 0, made.stdout + made.stderr);
 	const tokensFile = join(env.TABKYRA_CONFIG_DIR, "tokens.json");
@@ -569,15 +569,21 @@ test("a gateway status or no answer past TLS is a tunnel that hasn't connected y
 		const pub = await fakePublic({ gateway: Infinity, gatewayStatus: status });
 		const doh = await fakeDoh();
 		try {
-			const m = machine(`gw-${status}`, pub.publicUrl, doh.url);
+			const m = machine(`gw-${status}`, pub.publicUrl, doh.url, "cloudflare");
 			const r = await m.run(["remote", "test", "--json"]);
 			assert.equal(r.code, 1, r.stdout + r.stderr);
 			for (const name of ["resource_metadata", "auth_metadata", "auth_challenge"]) {
 				const c = byName(r.json(), name);
 				assert.equal(c.status, "fail", `${status} ${name}`);
 				assert.equal(c.pending, true, `${status} ${name}: ${c.detail}`);
-				assert.match(c.next, /hasn't connected|remote fix/, `${status} ${name}`);
+				assert.match(c.next, /takes a minute to connect.*remote fix/, `${status} ${name}`);
 			}
+			// The same answer on your own front door: no tunnel of ours is connecting, and remote fix can't change it.
+			const own = await machine(`gw-own-${status}`, pub.publicUrl, doh.url).run(["remote", "test", "--json"]);
+			const c = byName(own.json(), "resource_metadata");
+			assert.equal(c.pending, true, `${status} custom`);
+			assert.match(c.next, /front door answers but doesn't reach serve\. Point it at 127\.0\.0\.1:8799/, `${status} custom`);
+			assert.doesNotMatch(c.next, /remote fix/, `${status} custom`);
 			if (status !== "drop") assert.match(byName(r.json(), "resource_metadata").detail, new RegExp(`answered ${status}`));
 			assert.equal(pub.seen.tokens.length, 0, "no probe token is used while the tunnel isn't through");
 		} finally {

@@ -271,8 +271,12 @@ async function main(): Promise<void> {
 		return i >= 0 ? argv[i + 1] : undefined;
 	};
 	if (command === "remote" && !argv.slice(1).some((a) => !a.startsWith("-"))) {
-		process.stdout.write(REMOTE_GUIDE);
-		if (!flag("--help") && !flag("-h")) process.exitCode = 2;
+		// Asked for, the guide is the answer (stdout, exit 0); `remote` alone is a usage error, so stdout stays empty for a --json reader.
+		if (flag("--help") || flag("-h")) process.stdout.write(REMOTE_GUIDE);
+		else {
+			process.stderr.write(REMOTE_GUIDE);
+			process.exitCode = 2;
+		}
 		return;
 	}
 	if (command && command !== "host" && (flag("--help") || flag("-h"))) {
