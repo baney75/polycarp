@@ -1,5 +1,4 @@
-// A model request that goes quiet ends with an error (issue 365, case 2): on main nothing timed one out, so a stalled stream
-// left the chat working until the person pressed Stop, and a stalled compaction summary held the turn the same way.
+// A model request that goes quiet ends with an error (issue 365, case 2); on main nothing timed one out.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -31,12 +30,8 @@ test("a stream that goes quiet ends with an error, and its request is aborted", 
 	assert.equal(result.stopReason, "error");
 	assert.equal(result.errorMessage, stalledMessage(40));
 	assert.equal(seen.signal.aborted, true);
-});
-
-test("a stream function that never returns a stream also ends", async () => {
 	const never = () => new Promise(() => {});
-	const result = await within(watchStream(never, 40)(model, context, {}).result(), 2000);
-	assert.equal(result.stopReason, "error");
+	assert.equal((await within(watchStream(never, 40)(model, context, {}).result(), 2000)).stopReason, "error", "no stream at all");
 });
 
 test("a stream that keeps sending is never cut, however long it runs", async () => {

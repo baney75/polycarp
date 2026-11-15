@@ -1,14 +1,12 @@
 /**
- * A model request that goes quiet ends. Nothing else on the panel's path times one out: not the agent loop, not the
- * providers, not the guard. So a stream that stops sending without closing left the chat "working" until the person
- * pressed Stop, and a summary call for compaction held the turn the same way (issue 365, case 2). Each event the stream
- * sends resets the clock; after `idleMs` with none, the request is aborted and the stream ends with an error the
- * person and the model can read. A Stop from the person still goes through as before.
+ * A model request that goes quiet ends (issue 365, case 2). Nothing else on the panel's path times one out, so a stream
+ * that stopped sending without closing left the chat working until Stop, and a compaction summary held the turn the
+ * same way. Each event resets the clock; after `idleMs` with none, the request is aborted and ends with an error.
  */
 import type { AssistantMessage, AssistantMessageEventStream, Context, Model } from "@mariozechner/pi-ai";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 
-/** Long enough for a slow first token or a long silent think; a stream quiet this long has stalled. */
+/** Long enough for a slow first token or a long silent think. */
 export const STREAM_IDLE_MS = 300_000;
 /** After the person's Stop, how long the inner stream has to end itself. */
 const STOP_GRACE_MS = 5_000;
