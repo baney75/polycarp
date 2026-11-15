@@ -43,12 +43,14 @@ const SPACES: Tool = Tool {
     // The command's old names, still installed as links by the app and called by agents and hooks.
     old_exes: &["baneyspaces"],
     env: "POLYCARP_SPACES_BIN",
-    bundled: &[],
-    // The Polycarp app first, then BaneySpaces' own copy as the fallback.
-    spots: &[
-        "~/.local/bin/polycarp-spaces",
+    // The Polycarp app's own copy, from the same app the other parts are read from (`app_first` orders them).
+    bundled: &[
         "~/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces",
         "/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces",
+    ],
+    // Then the link, then BaneySpaces' own copy as the fallback.
+    spots: &[
+        "~/.local/bin/polycarp-spaces",
         "~/.local/bin/baneyspaces",
         "~/Applications/BaneySpaces.app/Contents/Resources/bin/baneyspaces",
         "/Applications/BaneySpaces.app/Contents/Resources/bin/baneyspaces",
@@ -396,11 +398,13 @@ fn find(tool: &Tool) -> Result<PathBuf, Miss> {
             }
         }
     };
-    // The app's own copy first: it is the one built with the app.
-    for spot in tool.bundled {
-        let Some(cand) = spot_path(spot) else {
-            continue;
-        };
+    // The app's own copy first: it is the one built with the app, and the same app the "app" part is read from.
+    let bundled = tool
+        .bundled
+        .iter()
+        .filter_map(|spot| spot_path(spot))
+        .collect();
+    for cand in app_first(bundled, polycarp_app().as_deref()) {
         match check(&cand) {
             Ok(()) => return Ok(cand),
             r => note(r),
@@ -571,10 +575,37 @@ fn polycarp_app() -> Option<PathBuf> {
     if let Some(h) = home() {
         spots.push(h.join("Applications/Polycarp.app"));
     }
-    spots
+    let found: Vec<PathBuf> = spots
         .into_iter()
-        .filter(|a| a.is_dir())
-        .find(|a| against_cwd(a).is_ok())
+        .filter(|a| a.is_dir() && against_cwd(a).is_ok())
+        .collect();
+    let linked = home().and_then(|h| fs::canonicalize(h.join(".local/bin/polycarp")).ok());
+    let found: Vec<PathBuf> = found
+        .iter()
+        .map(|a| fs::canonicalize(a).unwrap_or(a.clone()))
+        .collect();
+    pick_app(&found, linked.as_deref())
+}
+
+/// With a Polycarp.app in /Applications and another in ~/Applications, every part is read from one of them: the one
+/// `~/.local/bin/polycarp` links into (the copy the last install placed), else the first. Parts read from two apps
+/// would never match, and every update would end in a failed check.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn pick_app(found: &[PathBuf], linked: Option<&Path>) -> Option<PathBuf> {
+    linked
+        .and_then(|l| found.iter().find(|a| l.starts_with(a)))
+        .or(found.first())
+        .cloned()
+}
+
+/// `cands` with the ones inside `app` first, the rest in their own order.
+fn app_first(mut cands: Vec<PathBuf>, app: Option<&Path>) -> Vec<PathBuf> {
+    if let Some(app) = app {
+        cands.sort_by_key(|c| {
+            !fs::canonicalize(c).unwrap_or(c.clone()).starts_with(app) && !c.starts_with(app)
+        });
+    }
+    cands
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -897,5 +928,59 @@ fn ask(p: &Path, args: &[&str], limit: Duration, vars: &[(&str, &str)]) -> versi
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
             Err(_) => return Answer::Failed(text),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_polycarp_apps_are_read_as_one_the_installed_command_links_into() {
+        let (sys, mine) = (
+            PathBuf::from("/Applications/Polycarp.app"),
+            PathBuf::from("/Users/u/Applications/Polycarp.app"),
+        );
+        let both = [sys.clone(), mine.clone()];
+        let linked = mine.join("Contents/Resources/bin/polycarp");
+        assert_eq!(pick_app(&both, Some(&linked)), Some(mine.clone()));
+        assert_eq!(pick_app(&both, None), Some(sys.clone()));
+        assert_eq!(
+            pick_app(&both, Some(Path::new("/opt/polycarp"))),
+            Some(sys.clone())
+        );
+        // The helper and the spaces command come from that same app, though ~/Applications is listed first.
+        let helper = |app: &Path| app.join("Contents/Resources/browser/polycarp-browser");
+        let order = app_first(vec![helper(&mine), helper(&sys)], Some(&sys));
+        assert_eq!(order, vec![helper(&sys), helper(&mine)]);
+        assert_eq!(
+            app_first(vec![helper(&mine), helper(&sys)], None),
+            vec![helper(&mine), helper(&sys)]
+        );
+    }
+
+    #[test]
+    fn the_spaces_command_comes_from_the_picked_app_not_the_other_copy() {
+        let home = PathBuf::from("/Users/u");
+        let (sys, mine) = (
+            PathBuf::from("/Applications/Polycarp.app"),
+            home.join("Applications/Polycarp.app"),
+        );
+        let expand = |s: &&str| match s.strip_prefix("~/") {
+            Some(rest) => home.join(rest),
+            None => PathBuf::from(s),
+        };
+        let spaces = |app: &Path| app.join("Contents/Resources/bin/polycarp-spaces");
+        // The app's copies are tried before PATH and the fixed spots, so the first one is the whole answer.
+        let first = |app: &Path| {
+            app_first(SPACES.bundled.iter().map(expand).collect(), Some(app))
+                .into_iter()
+                .next()
+        };
+        assert_eq!(first(&sys), Some(spaces(&sys)));
+        assert_eq!(first(&mine), Some(spaces(&mine)));
+        // The link and BaneySpaces' copy stay the fallback after them.
+        assert!(SPACES.spots.contains(&"~/.local/bin/polycarp-spaces"));
+        assert!(!SPACES.spots.iter().any(|s| s.contains("Polycarp.app")));
     }
 }
