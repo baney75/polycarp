@@ -84,7 +84,8 @@ export interface SetupReport {
 	 * connect a browser first), "hub", "service", "serve" (nothing answers on the local port), "funnel", "config", "cloudflare_login",
 	 * "cloudflare_tunnel", "cloudflare_dns" (that name is taken, with next choose_name; without next, cloudflared couldn't make the
 	 * record), "cloudflare_zone" (the sign-in covers another domain), "connect_code" (set up, but --connect-code's code couldn't be made); on status also
-	 * "dns" (public DNS doesn't answer for the address yet; Tailscale takes minutes to publish a new one). After remote.json is saved,
+	 * "dns" (public DNS doesn't answer for the address yet; Tailscale takes minutes to publish a new one) and "dns_lookup" (the
+	 * resolver answered that the lookup failed, SERVFAIL or REFUSED, which waiting doesn't fix). After remote.json is saved,
 	 * setup's outside proof can also fail with the name of the check that failed: "dns", "tls", "resource_metadata",
 	 * "auth_metadata", "auth_challenge", "streaming" or "probe_cleanup" (the probe's token couldn't be deleted; it expires on its
 	 * own); `checks` has that check's next action, and `connectorUrl` the saved address. port_busy:

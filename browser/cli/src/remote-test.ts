@@ -181,8 +181,9 @@ export function tlsFailure(err: NodeJS.ErrnoException, url: URL, address: string
 		};
 	}
 	// A TLS alert: the server refused the handshake for this name, so it has no certificate for it (Cloudflare's Universal SSL
-	// covers one level below the domain, not a.b.example.com).
-	if (/^ERR_SSL_(SSLV3|TLSV1(_\d)?)_ALERT_/.test(code)) {
+	// covers one level below the domain, not a.b.example.com). OpenSSL names some alerts without ALERT_ (unrecognized_name, sent
+	// for a name the server has no certificate for) and TLS 1.3 ones as TLSV13.
+	if (/^ERR_SSL_(SSLV3|TLSV1(_\d|3)?)_(ALERT_|UNRECOGNIZED_NAME$)/.test(code)) {
 		return { name: "tls", status: "fail", detail: `${address}:${port} refused the TLS handshake for ${url.hostname}, so it has no certificate for that name: ${why}`, next: `Give the front door a certificate for ${url.hostname}. On Cloudflare, use a name one level below your domain, such as polycarp.example.com.` };
 	}
 	if (/^(ERR_SSL_|ERR_TLS_|EPROTO$)/.test(code)) {
@@ -438,7 +439,10 @@ export const realFault = (checks: ProofCheck[]) => checks.find((c) => c.status =
  * The name resolves and has a certificate, but what is behind it doesn't answer yet (a gateway status or no answer): a tunnel
  * that hasn't connected. Setup keeps asking while this is so, and fails if it still is at the deadline.
  */
-export const tunnelPending = (checks: ProofCheck[]) => checks.find((c) => c.status === "fail" && c.pending && c.name !== "dns" && c.name !== "tls");
+/** A check past DNS and TLS that got a gateway status or no answer: the tunnel or front door doesn't reach serve yet. A pending dns or tls check is earlier: no address yet, or this computer's network. */
+export const gatewayPending = (c: ProofCheck) => c.status === "fail" && c.pending === true && c.name !== "dns" && c.name !== "tls";
+
+export const tunnelPending = (checks: ProofCheck[]) => checks.find(gatewayPending);
 
 /** The connector answers from outside: public DNS, a valid certificate and this connector's metadata. Past that, a failure is a real fault. */
 export const answersFromOutside = (checks: ProofCheck[]) => ["dns", "tls", "resource_metadata"].every((name) => checks.some((c) => c.name === name && c.status === "ok"));
