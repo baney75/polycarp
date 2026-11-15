@@ -592,7 +592,8 @@ final class SessionController {
                                      probeFolder: ProbeAppTrust.folder, probeTrusted: bundle == AgentAppPolicy.canvasProbeBundle && ProbeAppTrust.trusted(url),
                                      mode: mode) {
             case .failure(let e): return .init(ok: false, error: e.message, info: ["code": e.code.rawValue, "suggestion": e.suggestion])
-            case .success(let paths): files = paths.map { URL(fileURLWithPath: $0) }
+            // A System Settings pane link is a URL the app opens, not a file (`SettingsPaneLink`, checked by the gate).
+            case .success(let paths): files = paths.map { SettingsPaneLink.isLink($0) ? URL(string: $0) ?? URL(fileURLWithPath: $0) : URL(fileURLWithPath: $0) }
             }
             let before = Set(NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier))
             let cfg = NSWorkspace.OpenConfiguration()

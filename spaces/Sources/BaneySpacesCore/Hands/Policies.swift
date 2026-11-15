@@ -51,6 +51,22 @@ public enum AgentAppPolicy {
     }
 }
 
+/// A System Settings pane link, such as `x-apple.systempreferences:com.apple.Displays-Settings.extension` or
+/// `x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility`. Under Full Access it lets one `open` land
+/// on the pane an agent needs instead of a walk through the sidebar (#350); it reaches nothing a click there doesn't.
+public enum SettingsPaneLink {
+    public static let scheme = "x-apple.systempreferences:"
+    private static let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-?=&")
+
+    /// Starts with the scheme, then a pane id and at most a query, in plain ASCII. Anything else is not a pane link.
+    public static func isLink(_ s: String) -> Bool {
+        guard s.hasPrefix(scheme) else { return false }
+        let rest = s.dropFirst(scheme.count)
+        guard let first = rest.first, first.isLetter, rest.allSatisfy(allowed.contains) else { return false }
+        return rest.filter { $0 == "?" }.count <= 1
+    }
+}
+
 /// `agent open`'s one gate, used by the router and by the session engine's raw `open` (which other callers on the socket reach).
 public enum AgentOpenGate {
     /// The files to hand over (resolved), or why not. Under Full Access any app may start and any existing file
@@ -62,6 +78,15 @@ public enum AgentOpenGate {
         if !full, let e = AgentAppPolicy.refusal(app: app, bundle: bundle, appURL: appURL, probeFolder: probeFolder, probeTrusted: probeTrusted) { return .failure(e) }
         var files: [String] = []
         for t in targets {
+            if t.hasPrefix(SettingsPaneLink.scheme) {
+                guard full, bundle == PermissionHelper.settingsBundleID, SettingsPaneLink.isLink(t) else {
+                    return .failure(HandsError(.notSupported, "\(t) isn't a System Settings pane link that \(app) may open",
+                                               suggestion: "Under Full Access, open one in System Settings: `polycarp-spaces agent open \"System Settings\" x-apple.systempreferences:com.apple.Displays-Settings.extension`.",
+                                               retry: .never))
+                }
+                files.append(t)
+                continue
+            }
             if t.contains("://") {
                 return .failure(HandsError(.notSupported, "opening a URL needs an agent browser profile, which arrives in a later phase",
                                            suggestion: "Open a file instead.", retry: .never))
