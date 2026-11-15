@@ -44,7 +44,7 @@ import {
 	refuseStepPreset,
 	type WantedPreset,
 } from "./dialogs.js";
-import { BridgeError, classify, HANDLER_TIMEOUT_MS, withTimeout } from "./errors.js";
+import { BridgeError, classify, handlerLimit, withTimeout } from "./errors.js";
 import { dropAllTransfers, dropTransfersForClient } from "./files.js";
 import {
 	addPendingRequest,
@@ -644,8 +644,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			tabId: await veilBegin(session, req.method, req.params).catch(() => undefined),
 		};
 		work = handler(ctx, req.params ?? {});
-		// An upload's begin may wait for the person's answer, which has its own, longer limit.
-		const limit = (req.method === "files.upload.begin" ? FILE_ASK_TIMEOUT_MS + 30000 : HANDLER_TIMEOUT_MS) - waited;
+		const limit = handlerLimit(req.method) - waited;
 		// A call that can open a box runs out of time inside raceDialogs, which says what its on_dialog answered first
 		// (sol-F2, second-S2 of the review of PR 216); the outer limit only backs that up.
 		const result = await withTimeout(
