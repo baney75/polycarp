@@ -1654,3 +1654,109 @@ fn reset_and_set_remove_our_hook_even_when_the_settings_file_is_broken() {
         assert!(!b.hook().exists(), "{args:?}");
     }
 }
+
+// Follow-ups from PR 21 (#25).
+
+const DIM: &str =
+    "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#e0e0e0\"\naccent = \"#4488ff\"\n";
+const PALE: &str =
+    "mode = \"dark\"\nbackground = \"#f0f0f0\"\nforeground = \"#101010\"\naccent = \"#4488ff\"\n";
+
+fn mode(b: &Sandbox) -> String {
+    let (ok, v) = b.json(&["theme", "current"]);
+    assert!(ok, "{v}");
+    s(&v["data"]["mode"])
+}
+
+#[test]
+fn another_theme_without_a_mode_gets_the_mode_from_before_following() {
+    let b = Sandbox::new();
+    assert!(b.json(&["theme", "set", "calm", "--mode", "auto"]).0);
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    assert_eq!(mode(&b), "dark");
+    assert!(b.json(&["theme", "set", "calm"]).0);
+    assert_eq!(
+        mode(&b),
+        "auto",
+        "Omarchy's dark is not a choice of the person's"
+    );
+    b.json(&["theme", "follow", "omarchy"]);
+    assert!(b.json(&["theme", "set", "calm", "--mode", "light"]).0);
+    assert_eq!(mode(&b), "light", "a mode given with the theme wins");
+}
+
+#[test]
+fn a_fitted_color_accepted_with_change_stays() {
+    let b = Sandbox::new();
+    b.omarchy("dim", DIM);
+    b.json(&["theme", "follow", "omarchy"]);
+    assert!(b.json(&["theme", "change", "dark.accent", "#e8b44a"]).0);
+    b.omarchy("pale", PALE);
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    let fitted = s(&dark(&b)["accent"]);
+    assert_ne!(fitted, "#e8b44a");
+    assert!(b.json(&["theme", "change", "dark.accent", &fitted]).0);
+    b.omarchy("dim", DIM);
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    let (_, st) = b.json(&["theme", "follow"]);
+    let o = st["data"]["overrides"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["path"] == "dark.accent")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        o["yours"],
+        fitted.as_str(),
+        "the person chose it, so no sync takes it back: {o}"
+    );
+}
+
+#[test]
+fn a_sync_whose_refresh_failed_is_finished_by_the_next_one() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    let current = b.cfg().join("current/theme.json");
+    b.omarchy_fixture("white");
+    fs::remove_file(&current).unwrap();
+    fs::create_dir(&current).unwrap();
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    fs::remove_dir(&current).unwrap();
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    let json = fs::read_to_string(&current).expect("the second sync writes current/ again");
+    assert!(json.contains("light") || json.contains("white"), "{json}");
+}
+
+#[test]
+fn undo_after_a_sync_and_another_change_takes_back_only_that_change() {
+    let b = Sandbox::new();
+    b.omarchy("dim", DIM);
+    b.json(&["theme", "follow", "omarchy"]);
+    assert!(b.json(&["theme", "change", "dark.accent", "#e8b44a"]).0);
+    b.omarchy("pale", PALE);
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    let fitted = s(&dark(&b)["accent"]);
+    assert!(b.json(&["theme", "change", "shape.radius", "9"]).0);
+    let (ok, v) = b.json(&["theme", "undo"]);
+    assert!(ok, "the change saved the fitted color itself: {v}");
+    assert_eq!(b.exported()["surfaces"]["spaces"]["shape"]["radius"], 0);
+    assert_eq!(s(&dark(&b)["accent"]), fitted);
+}
