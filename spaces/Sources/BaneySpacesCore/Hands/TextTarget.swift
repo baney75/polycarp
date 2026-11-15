@@ -62,3 +62,29 @@ public enum TextTarget {
                                    retry: .safe, nextCall: HandsError.call("snapshot", ["window": .int(window)])))
     }
 }
+
+extension TextTarget {
+    /// How long a click by text reads again for a label the window doesn't show yet: a pane System Settings is still
+    /// drawing after the click before it, which a single read missed ("no element shows").
+    public static let shownWait: TimeInterval = 2
+    static let shownStep: TimeInterval = 0.15
+
+    /// `pick` on a fresh `read()` until the text is shown or `within` seconds pass. Only "not shown" reads again: a read
+    /// that fails, an empty text and two matches answer at once.
+    public static func pickWhenShown(text: String, role: String?, window: Int, within: TimeInterval = shownWait,
+                                     read: () -> Result<JSONValue, HandsError>,
+                                     sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+                                     now: () -> Date = Date.init) -> Result<Match, HandsError> {
+        let deadline = now().addingTimeInterval(within)
+        while true {
+            let tree: JSONValue
+            switch read() {
+            case .failure(let e): return .failure(e)
+            case .success(let t): tree = t
+            }
+            let picked = pick(tree: tree, text: text, role: role, window: window)
+            guard case .failure(let e) = picked, e.code == .actionFailed, now() < deadline else { return picked }
+            sleep(shownStep)
+        }
+    }
+}

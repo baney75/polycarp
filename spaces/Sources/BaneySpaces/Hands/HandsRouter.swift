@@ -556,15 +556,17 @@ final class HandsRouter {
         case .failure(let e): return .failure(e)
         case .success(let (w, _, _)):
             let view = SnapshotRowsMemory.View.find
-            switch read(w, interactive: view.interactive, compact: view.compact, depth: UInt8(clamping: view.depth), session: req.session ?? "") {
-            case .failure(let e): return .failure(e)
-            case .success(let data):
-                if let sid = data["snapshot_id"]?.string {
-                    let rows = SnapshotRows.rows(of: data["tree"] ?? .null)
-                    withRows { $0.remember(session: req.session ?? "", window: w.id, view: view, as: "find", snapshot: sid, rows: rows, now: Date(), listed: false) }
+            // A label not shown yet (a pane still drawing after the step before) is read for again, off the main thread.
+            let within = Thread.isMainThread ? 0 : TextTarget.shownWait
+            return TextTarget.pickWhenShown(text: text, role: req.string("role"), window: Int(w.id), within: within, read: {
+                read(w, interactive: view.interactive, compact: view.compact, depth: UInt8(clamping: view.depth), session: req.session ?? "").map { data in
+                    if let sid = data["snapshot_id"]?.string {
+                        let rows = SnapshotRows.rows(of: data["tree"] ?? .null)
+                        withRows { $0.remember(session: req.session ?? "", window: w.id, view: view, as: "find", snapshot: sid, rows: rows, now: Date(), listed: false) }
+                    }
+                    return data["tree"] ?? .null
                 }
-                return TextTarget.pick(tree: data["tree"] ?? .null, text: text, role: req.string("role"), window: Int(w.id))
-            }
+            })
         }
     }
 
