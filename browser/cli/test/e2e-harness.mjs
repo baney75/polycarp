@@ -159,7 +159,8 @@ export async function startHarness() {
 		// tabs through chrome.debugger, and a second automation client attached to every
 		// target gets in its way. Targets are listed over the DevTools HTTP endpoint instead.
 		browser = spawn(
-			chromium.executablePath(),
+			// TABKYRA_E2E_CHROMIUM: a Chromium already on disk, when Playwright's pinned build isn't downloaded.
+			process.env.TABKYRA_E2E_CHROMIUM || chromium.executablePath(),
 			[
 				`--user-data-dir=${profile}`,
 				"--headless=new",

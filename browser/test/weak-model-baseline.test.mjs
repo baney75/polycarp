@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { checkClasses, checkGuard, checkRound, checkSteps } from "../evals/weak-model/lib.mjs";
 
@@ -23,6 +23,11 @@ test("every recorded round scores what its baseline says, under what it says, an
 		assert.deepEqual(checkRound(label, want, summary(label), runs), []);
 		for (const r of runs) assert.ok(Array.isArray(r.calls) && r.calls.length > 0, `${label}: ${r.task} t${r.trial} has no calls`);
 	}
+});
+
+test("every committed results file fits under the reviewers' 256 KiB cap", () => {
+	const committed = readdirSync(join(dir, "results"), { recursive: true }).filter((f) => /(runs\.jsonl|summary\.json|classes\.json)$/.test(f));
+	assert.deepEqual(committed.filter((f) => statSync(join(dir, "results", f)).size > 256 * 1024), []);
 });
 
 test("the latest round for each model and profile holds the floor", () => {
