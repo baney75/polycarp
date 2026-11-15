@@ -222,7 +222,11 @@ final class SettingsFollowUpTests: XCTestCase {
         // F2: the list read empty while waiting; it reads the moment BaneySpaces is up.
         XCTAssertTrue(setup.contains("guard started, !oldValue, tab == .automation, windowVisible() else { return }\n            reloadParked()"))
         // F6: a late first window shows without any notification.
-        XCTAssertTrue(setup.contains("if ticks % 12 == 0, tab == .automation, windowVisible() { reloadParked() }"), "a closed window isn't scanned for")
+        XCTAssertTrue(setup.contains("let due = reads.tick(ticks, pane: tab.rawValue, visible: windowVisible())\n        if due.slower { reloadOptional() }\n        if due.windows { reloadParked() }"))
+        let reads = SettingsWindowReads(ask: { 0 }, land: { _ in })
+        XCTAssertTrue(reads.tick(12, pane: "Automation", visible: true).windows)
+        XCTAssertFalse(reads.tick(12, pane: "Automation", visible: false).windows, "a closed window isn't scanned for")
+        XCTAssertFalse(reads.tick(11, pane: "Automation", visible: true).windows)
         XCTAssertTrue(setup.contains("guard started, !oldValue, tab == .automation, windowVisible() else { return }"))
         XCTAssertTrue(setup.contains("self?.windowVisible() == true { self?.reloadParked() }"))
         XCTAssertTrue(setup.contains("model.windowVisible = { [weak window] in window?.isVisible == true }"))
