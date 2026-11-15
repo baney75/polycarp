@@ -39,7 +39,7 @@ import { banner, c, confirm, sym } from "./ui.ts";
 import { runUpdate, UpdateError } from "./update.ts";
 import { detectMode, recoverCheckoutQuietly } from "./checkout.ts";
 import { migrateLegacyServices, recordServicePid } from "./service.ts";
-import { type HostRunAction, runHostAction } from "./update-run.ts";
+import { type HostRunAction, refuseHostAction, runHostAction } from "./update-run.ts";
 import { BUILD } from "../../src/update/build.ts";
 import { argsProblem, COMMANDS, completionScript, EXIT_CODES, helpRows, REMOTE_GUIDE, VALUE_FLAGS, VISIBLE_COMMANDS } from "./commands.ts";
 import { VERSION } from "./version.ts";
@@ -305,7 +305,13 @@ async function main(): Promise<void> {
 	}
 	// Inside Polycarp the app updates the helper; a release folder here would repoint the host away from the bundle.
 	if (COMPILED && command === "update") {
-		console.log(`${sym.dot} This helper is part of Polycarp, which updates it with every other part. Run \`polycarp update\`.`);
+		const notice = "This helper is part of Polycarp, which updates it with every other part. Run `polycarp update`.";
+		// The side panel's request (`update --host`) reads progress steps, so the notice goes to it as one.
+		if (argv[1] === "--host") {
+			process.exitCode = refuseHostAction(HOST_UPDATE_ACTIONS[argv.slice(1).join(" ")] ?? "update", notice);
+			return;
+		}
+		console.log(`${sym.dot} ${notice}`);
 		return;
 	}
 	switch (command) {

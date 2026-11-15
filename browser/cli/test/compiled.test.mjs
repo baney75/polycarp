@@ -59,6 +59,19 @@ test("compiled-mode update says Polycarp does it and changes nothing", () => {
 	assert.doesNotMatch(out, /nothing to run/);
 });
 
+test("compiled-mode update --host answers the side panel with one failed step that names polycarp update", () => {
+	const { env } = sandbox("update-host");
+	for (const args of [["update", "--host"], ["update", "--host", "--reinstall"]]) {
+		const r = spawnSync(process.execPath, [join(bundleDir, "index.js"), ...args], { env, encoding: "utf8" });
+		const lines = r.stdout.trim().split("\n");
+		assert.equal(lines.length, 1, r.stdout);
+		const step = JSON.parse(lines[0]);
+		assert.equal(step.phase, "failed", r.stdout);
+		assert.match(step.message, /Run `polycarp update`/);
+		assert.equal(r.status, 1);
+	}
+});
+
 // ---- the real executable ----
 
 const bun = spawnSync("bun", ["--version"], { encoding: "utf8" });
