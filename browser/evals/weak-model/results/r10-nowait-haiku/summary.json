@@ -1,0 +1,16 @@
+{
+	"label": "r10-nowait-haiku",
+	"model": "haiku",
+	"trials": 5,
+	"profile": "full",
+	"date": "2026-11-15T22:34:37.357Z",
+	"passed": 10,
+	"total": 10,
+	"calls": 104,
+	"toolErrors": 17,
+	"resultChars": 31803,
+	"tasks": {
+		"dialog-no-repeat": {"pass":5,"of":5,"calls":[12,12,9,11,13],"errors":[2,2,1,2,5]},
+		"dialog-preset": {"pass":5,"of":5,"calls":[9,9,8,12,9],"errors":[1,0,1,3,0]}
+	}
+}
