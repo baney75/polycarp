@@ -363,9 +363,11 @@ jobs:
     if: needs.changes.outputs.browser == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
+    # bash, not pwsh: pwsh ends a multi-line step with its last command's exit code (test/ci-windows-shell.test.mjs).
     defaults:
       run:
         working-directory: browser/cli
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
