@@ -96,6 +96,11 @@ public enum WindowInspection: Equatable {
         guard !full, agentOwned, let document, !document.isEmpty, !HandoffPath.contains(document: document, in: handoff) else { return .usable }
         return .outsideDocument
     }
+
+    /// Whether the window stays refused for the rest of the run. Only a document from outside the handoff folder does. A
+    /// panel is read again on every use, so the window is usable once it closes: a Print sheet (a Copies field and a
+    /// Printer menu, the shape of a Save panel), or one read cut off while a sheet slides in, never refuses it for good.
+    public var remembered: Bool { self == .outsideDocument }
 }
 
 public enum HandoffPath {
