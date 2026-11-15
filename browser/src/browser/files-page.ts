@@ -209,6 +209,8 @@ export function linkOf(tabId: number, target: Target): Promise<{ url: string; do
 }
 
 const FETCHED = "__polycarpFetched";
+/** Each fetched body's expiry timer, by id, beside the store: the timer holds the id only, never the body. */
+const FETCHED_TIMERS = "__polycarpFetchedTimers";
 /** A fetched body nobody reads (the call that fetched it ran out of time) is dropped after this, not kept until unload. */
 export const FETCHED_KEEP_MS = 10 * 60 * 1000;
 
@@ -256,8 +258,9 @@ export function fetchInPage(
 				}
 			} catch (e) { return { ok: false, error: "fetch", message: String(e && e.message || e) }; }
 			const store = (globalThis.${FETCHED} = globalThis.${FETCHED} || {});
-			const blob = (store[${JSON.stringify(id)}] = new Blob(parts));
-			setTimeout(() => { if (store[${JSON.stringify(id)}] === blob) delete store[${JSON.stringify(id)}]; }, ${FETCHED_KEEP_MS});
+			store[${JSON.stringify(id)}] = new Blob(parts);
+			const timers = (globalThis.${FETCHED_TIMERS} = globalThis.${FETCHED_TIMERS} || {});
+			timers[${JSON.stringify(id)}] = setTimeout(() => { delete store[${JSON.stringify(id)}]; delete timers[${JSON.stringify(id)}]; }, ${FETCHED_KEEP_MS});
 			return { ok: true, bytes, mime: res.headers.get("content-type") || "", finalUrl: res.url || ${JSON.stringify(url)}, disposition: res.headers.get("content-disposition") || "" };
 		})()`,
 		FETCH_WORLD_ID,
@@ -285,7 +288,13 @@ export function readFetched(tabId: number, id: string, start: number, end: numbe
 export function dropFetched(tabId: number, id: string): Promise<unknown> {
 	return runInPage(
 		tabId,
-		`(() => { if (globalThis.${FETCHED}) delete globalThis.${FETCHED}[${JSON.stringify(id)}]; return true; })()`,
+		`(() => {
+			const id = ${JSON.stringify(id)};
+			if (globalThis.${FETCHED}) delete globalThis.${FETCHED}[id];
+			const timers = globalThis.${FETCHED_TIMERS};
+			if (timers && id in timers) { clearTimeout(timers[id]); delete timers[id]; }
+			return true;
+		})()`,
 		FETCH_WORLD_ID,
 		FETCH_CSP,
 	);
