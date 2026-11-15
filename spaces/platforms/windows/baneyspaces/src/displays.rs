@@ -145,7 +145,8 @@ mod tests {
     /// Every poll mirrors those moves, before it decides what is hidden.
     #[test]
     fn the_daemon_mirrors_moves_before_it_hides_anything() {
-        let src = include_str!("daemon.rs");
+        // Windows checks the source out with CRLF line ends.
+        let src = &include_str!("daemon.rs").replace("\r\n", "\n");
         let poll = &src[src.find("fn poll(&mut self)").expect("poll")..];
         let mirror = poll.find("self.mirror_moves();").expect("poll mirrors moves");
         assert!(mirror < poll.find("self.sync_visibility()").unwrap(), "before sync_visibility, so a moved window is never hidden");
