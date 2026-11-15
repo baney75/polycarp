@@ -18,7 +18,7 @@ import { HandsClient, treeText } from "./hands.mjs";
 import { childEnv, clashingIds, keepScored, keyVarsSet, loadTasks, mountId, positiveInt, safeId, sessionName, settledState, spacesBin } from "./lib.mjs";
 import { handedOff } from "./signup-rule.mjs";
 import { summarize } from "./summarize.mjs";
-import { Transcript } from "./transcript.mjs";
+import { Transcript, copyTracking } from "./transcript.mjs";
 
 /** Exit 2 with the reason, before anything is written or started. */
 const refuse = (why) => {
@@ -58,6 +58,8 @@ const trials = int("trials", "2");
 const allowComputer = process.env.WM_ALLOW_COMPUTER === "1";
 const kind = opt("kind", allowComputer ? "all" : "browser");
 if (!["browser", "computer", "stub", "all"].includes(kind)) refuse(`--kind takes browser, computer, stub or all, not ${JSON.stringify(kind)}`);
+// The stub's launcher is a sh script (POLYCARP_SPACES_BIN), so stub runs are POSIX only (PR 272 first-F2).
+if (kind === "stub" && process.platform === "win32") refuse("--kind stub runs on macOS and Linux: its launcher is a sh script");
 const only = opt("only", "")
 	.split(",")
 	.filter(Boolean);
@@ -156,7 +158,7 @@ function mcpConfig(session, kind, stub) {
 async function runClaude(prompt, session, kind, wallMs, watch = {}, stub = undefined) {
 	const args = ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose", "--mcp-config", mcpConfig(session, kind, stub), "--strict-mcp-config", "--setting-sources", "project", "--tools", "", "--allowedTools", "mcp__polycarp", "--max-turns", String(turns), "--no-session-persistence"];
 	const copies = [];
-	const transcript = new Transcript({ onStarted: (pid) => copies.push(cleanup.add(`app copy ${pid}`, () => killCopy(pid))) });
+	const transcript = new Transcript(copyTracking(kind, (pid) => copies.push(cleanup.add(`app copy ${pid}`, () => killCopy(pid)))));
 	// The caller sees the transcript while the run is still going: a stop mid-run reads its reported copies from it.
 	watch.transcript = transcript;
 	const { child, closed, killGroup } = spawnClaude(args, { cleanup, cwd: emptyCwd, env: childEnv(process.env) });

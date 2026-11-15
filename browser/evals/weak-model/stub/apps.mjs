@@ -319,7 +319,8 @@ class Jotter {
 		return "closed";
 	}
 	export() {
-		return { file: this.name, text: this.text, saved: this.saved, dirty: this.dirty, saves: this.saves, closed: this.closed, sheet: this.sheet };
+		// The selection is part of what a read shows (AXSelectedTextRange), so a caret move is read back as landed.
+		return { file: this.name, text: this.text, caret: this.caret, anchor: this.anchor, saved: this.saved, dirty: this.dirty, saves: this.saves, closed: this.closed, sheet: this.sheet };
 	}
 }
 

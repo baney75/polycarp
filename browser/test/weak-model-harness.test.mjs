@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { HandsClient } from "../evals/weak-model/hands.mjs";
 import { afterComputerRun, backupPrefs, Cleanup, ClearError, leftOpen, onExits, restorePrefsOrKeep, spawnClaude } from "../evals/weak-model/cleanup.mjs";
 import { checkClasses, checkRound, childEnv, KEY_VARS, keepScored, keyVarsSet, mountId, safeId, sessionName, settledState, spacesBin } from "../evals/weak-model/lib.mjs";
-import { Transcript } from "../evals/weak-model/transcript.mjs";
+import { copyTracking, Transcript } from "../evals/weak-model/transcript.mjs";
 import { handedOff, rescoreSignup } from "../evals/weak-model/signup-rule.mjs";
 import { loadRuns, summarize } from "../evals/weak-model/summarize.mjs";
 
@@ -260,6 +260,34 @@ test("a started copy is recorded the moment its answer arrives: long answers and
 	t.push(toolUse("e", "computer_windows", {}));
 	t.push(toolResult("e", opened({ windows: [{ pid: 505 }] })));
 	assert.deepEqual(seen, [101, 202], "never a reused copy, an error or a window read");
+});
+
+test("a stub run tracks no app copies: its fake pids never reach a kill (PR 272 first-F1)", async () => {
+	// The stub answers computer_open with pids from 70101 that no process of the run holds; killing them at the end
+	// would hit whatever real process has that pid then.
+	const killed = [];
+	const cleanup = new Cleanup({ log: () => {} });
+	const register = (pid) => cleanup.add(`app copy ${pid}`, () => killed.push(pid));
+	const stub = new Transcript(copyTracking("stub", register));
+	stub.push(toolUse("a", "computer_open", { app: "Jotter" }));
+	stub.push(toolResult("a", opened({ app: "Jotter", pid: 70101, reused: false, window: 61001 })));
+	assert.equal(stub.started.size, 0, "no copy is known");
+	assert.equal(stub.calls[0].startedPid, undefined, "and none is recorded");
+	const real = new Transcript(copyTracking("computer", register));
+	real.push(toolUse("b", "computer_open", { app: "TextEdit" }));
+	real.push(toolResult("b", opened({ app: "TextEdit", pid: 101, reused: false })));
+	await cleanup.run();
+	assert.deepEqual(killed, [101], "only the Mac run's own copy closes");
+	const run = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "evals", "weak-model", "run.mjs"), "utf8");
+	assert.match(run, /new Transcript\(copyTracking\(kind, /, "run.mjs builds every run's transcript this way");
+	assert.doesNotMatch(run, /new Transcript\(\{/, "and no other way");
+});
+
+test("a run's record keeps claude's own API time, so a slow run says where the time went (PR 272 first-F3)", () => {
+	const t = new Transcript();
+	t.push({ type: "result", subtype: "success", num_turns: 3, duration_ms: 286000, duration_api_ms: 281000, result: "ok" });
+	const r = t.done({ timedOut: false, ms: 287000, stderr: "" });
+	assert.deepEqual([r.ms, r.apiMs], [287000, 281000]);
 });
 
 test("a failed prefs restore keeps the backups in a named folder and keeps scratch", async () => {
