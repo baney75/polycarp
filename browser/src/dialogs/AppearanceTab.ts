@@ -5,8 +5,10 @@ import {
 	currentAppearance,
 	currentPolycarp,
 	currentPolycarpRefusal,
+	forgetPolycarp,
 	onAppearance,
 	onPolycarp,
+	polycarpUnconfirmed,
 	previewAppearance,
 	setAppearance,
 } from "../appearance/apply.js";
@@ -163,6 +165,14 @@ export class AppearanceTab extends SettingsTab {
 								<p class="text-xs text-muted-foreground">
 									It sets this panel's colors, corners, fonts and motion${modeOverridden ? `, and keeps it ${polycarp.mode}` : ""}, so the controls below are overridden. They still save, for when the theme is gone. To change it, run <code class="font-mono">polycarp theme set &lt;name&gt;</code>.
 								</p>
+								${
+									polycarpUnconfirmed()
+										? html`<p class="text-xs text-muted-foreground" data-polycarp-unconfirmed>
+												Polycarp's helper isn't answering, so this is the last theme it sent.
+												<button type="button" class="ml-1 rounded px-1 font-medium text-foreground underline outline-none focus-visible:ring-2 focus-visible:ring-ring" @click=${() => void forgetPolycarp()}>Stop using it</button>
+											</p>`
+										: ""
+								}
 							</div>`
 						: ""
 				}
