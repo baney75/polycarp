@@ -352,6 +352,28 @@ render();
 		state: `JSON.stringify([...window.__state.done].sort()) === '["Buy milk","Call mom","Pay rent"]'`,
 	},
 	{
+		// A click whose only effect is a request: the page looks the same after it, and like a real app it keeps
+		// no state a script can find, so a model that reads the click's report as a miss clicks again.
+		id: "silent-approve",
+		kind: "browser",
+		pages: {
+			"/": `${head("Requests")}<h1>Access requests</h1><button id="sort">Sort by name</button><table id="t"></table>
+<script>
+(() => {
+  const state = { approved: [], sorted: false };
+  const send = () => fetch("/" + location.pathname.split("/")[1] + "/__state", { method: "POST", body: JSON.stringify(state) });
+  const order = ["Linus", "Grace", "Ada", "Edsger"];
+  const draw = () => { document.getElementById("t").innerHTML = order.map((n) => "<tr><td>" + n + "</td><td><button>Approve</button></td></tr>").join("");
+    document.querySelectorAll("#t button").forEach((b, i) => { const n = order[i]; b.onclick = () => { state.approved.push(n); send(); }; }); };
+  document.getElementById("sort").onclick = () => { order.sort(); state.sorted = true; send(); setTimeout(draw, 300); };
+  draw();
+})();
+</script>`,
+		},
+		prompt: (url) => `On ${url} , click "Sort by name", then approve the request from Grace. Approve no one else.`,
+		state: `window.__state.sorted && JSON.stringify(window.__state.approved) === '["Grace"]'`,
+	},
+	{
 		id: "autocomplete",
 		kind: "browser",
 		pages: {
