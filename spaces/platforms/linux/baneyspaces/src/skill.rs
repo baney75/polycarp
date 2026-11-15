@@ -186,6 +186,20 @@ mod tests {
         assert!(text().starts_with("---\nname: baneyspaces\ndescription: "), "the front matter Claude Code reads");
     }
 
+    /// Skill loaders parse the front matter as YAML. A plain value with `: ` or ` #` in it, or one that
+    /// starts with a YAML indicator, is not the string it looks like, and the skill never loads.
+    #[test]
+    fn the_front_matter_is_plain_yaml_a_loader_reads_as_written() {
+        let body = text().strip_prefix("---\n").expect("front matter");
+        let (front, _) = body.split_once("\n---\n").expect("front matter ends");
+        for line in front.lines() {
+            let (key, value) = line.split_once(": ").unwrap_or_else(|| panic!("not `key: value`: {line}"));
+            assert!(key.chars().all(|c| c.is_ascii_lowercase() || c == '-'), "key {key}");
+            assert!(!value.contains(": ") && !value.contains(" #"), "{key} would not parse as one string");
+            assert!(!value.starts_with(['"', '\'', '[', '{', '&', '*', '!', '|', '>', '%', '@', '`', '-', '?']), "{key}");
+        }
+    }
+
     #[test]
     fn the_shared_skills_folder_is_used_only_when_this_home_has_it_or_codex() {
         let h = temp("targets");

@@ -1,6 +1,6 @@
 ---
 name: baneyspaces
-description: Drive desktop apps on Linux (Omarchy, Hyprland) through BaneySpaces' agent workspace, a hidden Hyprland workspace of your own: open an allowlisted terminal, viewer or browser there, run a command in a terminal there, read an app's controls and click or type into them, lay out its windows and take a PNG of one. Use when a task on a Linux or Omarchy desktop needs a GUI app, a second terminal or a screenshot of an app, instead of hyprctl, ydotool or screenshots of the user's screen.
+description: Drive desktop apps on Linux (Omarchy, Hyprland) through BaneySpaces' agent workspace, a hidden Hyprland workspace of your own. Open an allowlisted terminal, viewer or browser there, run a command in a terminal there, read an app's controls and click or type into them, lay out its windows and take a PNG of one. Use when a task on a Linux or Omarchy desktop needs a GUI app, a second terminal or a screenshot of an app, instead of hyprctl, ydotool or screenshots of the user's screen.
 ---
 
 # BaneySpaces on Linux
