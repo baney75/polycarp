@@ -194,85 +194,44 @@ export function validateBrowserJavaScript(code: string): {
 	return { valid: true };
 }
 
-// Wrapper function that executes user code - will be converted to string with .toString()
-async function wrapperFunction() {
-	let timeoutId: number;
-
-	// Injection marker (survives .toString())
-	("__INJECT_PROVIDERS_HERE__");
-
+/**
+ * The page-side wrapper, as text. It is a string, not a function's `toString()`: the production build minifies syntax,
+ * which dropped the providers marker and turned `const f = USER_CODE; f()` into `USER_CODE()`, so `() => x` came back
+ * as an uncalled function (browserjs() read undefined) and `() => { ... }` threw a SyntaxError (2026-11-07 and
+ * 2026-11-15 chats). __PROVIDERS__ and __USER_CODE__ are filled in by buildWrapperCode.
+ */
+const WRAPPER_SOURCE = `(async function wrapperFunction() {
+	let timeoutId;
+	__PROVIDERS__
 	const cleanup = () => {
 		if (timeoutId) clearTimeout(timeoutId);
-		// Runtime provider cleanup will be handled automatically
 	};
-
+	const completed = async (ok) => {
+		if (!window.__completionCallbacks || window.__completionCallbacks.length === 0) return;
+		try {
+			await Promise.race([
+				Promise.all(window.__completionCallbacks.map((cb) => cb(ok))),
+				new Promise((_, reject) => setTimeout(() => reject(new Error("Completion timeout")), 5000)),
+			]);
+		} catch (e) {
+			console.error("Completion callback error:", e);
+		}
+	};
 	try {
-		// Set timeout
 		const timeoutPromise = new Promise((_, reject) => {
-			timeoutId = setTimeout(() => {
-				reject(new Error("Execution timeout: Code did not complete within 120 seconds"));
-			}, 120000) as unknown as number;
+			timeoutId = setTimeout(() => reject(new Error("Execution timeout: Code did not complete within 120 seconds")), 120000);
 		});
-
-		// Execute user code and capture the last expression value
-		// USER_CODE_PLACEHOLDER will be replaced with the actual async function containing user code
-		// @ts-expect-error
-		const userCodeFunc = USER_CODE_PLACEHOLDER;
-		const codePromise = userCodeFunc();
-
-		// Race between execution and timeout
-		const lastValue = await Promise.race([codePromise, timeoutPromise]);
-
-		// Call completion callbacks before returning (success path)
-		if (
-			// @ts-expect-error
-			window.__completionCallbacks &&
-			// @ts-expect-error
-			window.__completionCallbacks.length > 0
-		) {
-			try {
-				await Promise.race([
-					// @ts-expect-error
-					Promise.all(window.__completionCallbacks.map((cb) => cb(true))),
-					new Promise((_, reject) => setTimeout(() => reject(new Error("Completion timeout")), 5000)),
-				]);
-			} catch (e) {
-				console.error("Completion callback error:", e);
-			}
-		}
-
+		const userCodeFunc = (__USER_CODE__);
+		const lastValue = await Promise.race([userCodeFunc(), timeoutPromise]);
+		await completed(true);
 		cleanup();
-		return {
-			success: true,
-			lastValue: lastValue,
-		};
-	} catch (error: any) {
-		// Call completion callbacks before returning (error path)
-		if (
-			// @ts-expect-error
-			window.__completionCallbacks &&
-			// @ts-expect-error
-			window.__completionCallbacks.length > 0
-		) {
-			try {
-				await Promise.race([
-					// @ts-expect-error
-					Promise.all(window.__completionCallbacks.map((cb) => cb(false))),
-					new Promise((_, reject) => setTimeout(() => reject(new Error("Completion timeout")), 5000)),
-				]);
-			} catch (e) {
-				console.error("Completion callback error:", e);
-			}
-		}
-
+		return { success: true, lastValue: lastValue };
+	} catch (error) {
+		await completed(false);
 		cleanup();
-		return {
-			success: false,
-			error: error.message,
-			stack: error.stack,
-		};
+		return { success: false, error: error && error.message, stack: error && error.stack };
 	}
-}
+})`;
 
 /**
  * Build the wrapper code by combining safeguards, skill library, providers, and user code
@@ -285,9 +244,6 @@ export function buildWrapperCode(
 	sandboxId: string,
 	args?: any[],
 ): string {
-	// Start with wrapper function
-	let code = `(${wrapperFunction.toString()})`;
-
 	// Inject safeguards at the beginning if enabled (not implemented yet)
 	// if (enableSafeguards) { ... }
 
@@ -323,20 +279,12 @@ export function buildWrapperCode(
 		providerInjections += `\n// Skills auto-injected for domain\n${skillLibrary}\n`;
 	}
 
-	// Inject everything at the marker (providers + skills)
-	// Replace the string literal marker with our injections
-	code = code.replace(/"__INJECT_PROVIDERS_HERE__";/, providerInjections);
-
-	// If args are provided, inject them before user code
-	if (args && args.length > 0) {
-		// Wrap user code with argument injection
-		const argsCode = `const __args__ = ${JSON.stringify(args)};\n`;
-		const wrappedUserCode = `${argsCode}const __func__ = ${userCode};\nreturn __func__(...__args__);`;
-		code = code.replace(/USER_CODE_PLACEHOLDER/, `async () => { ${wrappedUserCode} }`);
-	} else {
-		// No args - just wrap user code
-		code = code.replace(/USER_CODE_PLACEHOLDER/, userCode);
-	}
+	// Filled by split and join, never String.replace, whose $& and $' patterns would rewrite the user's code.
+	const userFunc =
+		args && args.length > 0
+			? `async () => { const __args__ = ${JSON.stringify(args)};\nconst __func__ = (${userCode});\nreturn __func__(...__args__); }`
+			: userCode;
+	const code = WRAPPER_SOURCE.split("__PROVIDERS__").join(providerInjections).split("__USER_CODE__").join(userFunc);
 
 	// Call the function immediately
 	return `${code}()`;
