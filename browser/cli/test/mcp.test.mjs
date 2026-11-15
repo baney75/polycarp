@@ -93,7 +93,9 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// on_dialog and on_dialog_text on click and press, and a line saying actions steps take none, add 503
 	// (33,438; D48): an answer set before the action is the only way to get past a box Polycarp must cancel within 3 s,
 	// sooner than a model turn can send handle_dialog. Nearly all schema; the descriptions are one line.
-	assert.ok(bytes <= 33438, `tools/list is ${bytes} bytes, over the 33,438 budget`);
+	// type's paste flag adds 114 (33,552): pasting long text or into an editor that formats a paste, as a paste event and
+	// never the user's clipboard, without a tool of its own (a separate paste tool cost 659 more); type's text was cut first.
+	assert.ok(bytes <= 33552, `tools/list is ${bytes} bytes, over the 33,552 budget`);
 	// The loop line teaching `changes` (D43) adds 47 bytes; it saves a read_page after most actions.
 	// The password rule covering one the user gave, with its tabs_show handoff, adds 92 (evals/weak-model: Haiku typed
 	// the password a signup prompt supplied, and submitted, when the rule didn't say it covered that).

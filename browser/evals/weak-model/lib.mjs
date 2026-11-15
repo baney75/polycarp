@@ -18,7 +18,7 @@ export function childEnv(env) {
 }
 
 /**
- * Every task in the task folder: each `*.mjs` file exports arrays of tasks ({ id, kind: "browser"|"computer", prompt,
+ * Every task in the task folder: each `*.mjs` file exports arrays of tasks ({ id, kind: "browser"|"computer"|"stub", prompt,
  * ... }). Returns [] when the folder is missing or holds none.
  */
 export async function loadTasks(dir) {
@@ -79,7 +79,8 @@ export const QUOTA = /usage limit|rate limit|quota|billing|upgrade your plan|out
  * The helper a run's MCP server may start for the computer tools: the connector wrapper for a computer task while
  * computer runs are on, and for everything else a path that doesn't exist, so a browser run never lists them.
  */
-export const spacesBin = (kind, { allowComputer, wrapper, none }) => (kind === "computer" && allowComputer && wrapper ? wrapper : none);
+/** The helper a run's server is given: the Mac's for a computer run the lead allowed, the stub's for a stub run, else none. */
+export const spacesBin = (kind, { allowComputer, wrapper, stub, none }) => (kind === "computer" && allowComputer && wrapper ? wrapper : kind === "stub" && stub ? stub : none);
 
 /**
  * Scores a finished run and says whether it is a result. Undefined when a stop began before or during scoring (the

@@ -30,7 +30,7 @@ public enum RunSteps {
             for (k, v) in o { args[k] = v }
             if args["wait"] == nil, let wait { args["wait"] = .int(wait) }
             switch HandsParse.call(name: name, arguments: args, session: session) {
-            case .failure(let e): return .failure(HandsError(.badArguments, "step \(n) (\(name)): \(e.message)", suggestion: e.suggestion + ". Nothing ran.", retry: .safe, nextCall: .null))
+            case .failure(let e): return .failure(HandsError(.badArguments, "step \(n) (\(name)): \(e.message)", suggestion: nothingRan(e.suggestion), retry: .safe, nextCall: .null))
             case .success(let r): out.append(r)
             }
         }
@@ -58,6 +58,36 @@ public enum RunSteps {
         let room = max(0, Int(left.rounded(.down)))
         s.args["wait"] = .int(min(Int(InUseRule.bound(step.int("wait"))), room))
         return s
+    }
+
+    /// How a step reaches its app, for the in-use wait done before its group's transaction: keys, pointer events, the
+    /// menu bar and a right click are posted; every other step is the engine's headless accessibility path.
+    public static func delivery(_ step: HandsRequest) -> InUseDelivery {
+        if ["press", "click-at", "drag", "menu"].contains(step.verb) { return .posted }
+        if step.verb == "click", step.string("button")?.lowercased() == "right" { return .posted }
+        return .headlessAX
+    }
+
+    /// The step as it runs inside its group's transaction: it never waits there, since the transaction holds its app's
+    /// queue and every read of that app would wait behind it. The group waited before it started (251 r1 second-S1).
+    public static func inTransaction(_ step: HandsRequest) -> HandsRequest {
+        var s = step
+        s.args["wait"] = .int(0)
+        return s
+    }
+
+    /// A group refused before it started (its window couldn't be targeted, or the app stayed in use): gone only when the
+    /// window or ref is, else that refusal is the group's first step's line, with its code and next call (251 r1 second-S2).
+    public static func refused(_ e: HandsError, group: Range<Int>, steps: [HandsRequest]) -> (line: JSONValue?, stop: Stop) {
+        if [.windowNotFound, .staleRef].contains(e.code) { return (nil, .gone) }
+        return (line(group.lowerBound + 1, steps[group.lowerBound], .failure(e), full: true), .failed)
+    }
+
+    /// `suggestion` and then "Nothing ran.", one period between them (251 r1 first-F4).
+    public static func nothingRan(_ suggestion: String) -> String {
+        var s = suggestion.trimmingCharacters(in: .whitespaces)
+        while s.hasSuffix(".") { s.removeLast() }
+        return s.isEmpty ? "Nothing ran." : s + ". Nothing ran."
     }
 
     /// What a group's transaction has done so far, under a lock: when the transaction outlives its budget its reply is

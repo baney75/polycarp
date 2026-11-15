@@ -172,9 +172,9 @@ final class RunStepsTests: XCTestCase {
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Steps.swift")
         let run = try XCTUnwrap(HandsSourceTests.block(after: "func runSteps(_ req: HandsRequest)", in: src))
         XCTAssertTrue(run.contains("HandsEngine.shared.transaction(window: w, until: until, check: check(w, session: session))"))
-        XCTAssertTrue(run.contains("handle(RunSteps.clamped(steps[i], left: left))"))
+        XCTAssertTrue(run.contains("handle(RunSteps.inTransaction(steps[i]))"))
         let begin = try XCTUnwrap(run.range(of: "progress.begin(i)"))
-        let call = try XCTUnwrap(run.range(of: "handle(RunSteps.clamped("))
+        let call = try XCTUnwrap(run.range(of: "handle(RunSteps.inTransaction("))
         let finish = try XCTUnwrap(run.range(of: "progress.finish("))
         XCTAssertTrue(begin.lowerBound < call.lowerBound && call.lowerBound < finish.lowerBound)
         XCTAssertTrue(run.contains("RunSteps.lines(failed: e, progress: progress, group: g, steps: steps)"))
@@ -201,7 +201,7 @@ final class RunStepsTests: XCTestCase {
         // Every nested call goes to the same router: no other router is made in the hands.
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Steps.swift")
         XCTAssertFalse(src.contains("HandsRouter("))
-        XCTAssertTrue(src.contains("handle(RunSteps.clamped(steps[i]") || src.contains("handle(steps[i])"))
+        XCTAssertTrue(src.contains("handle(RunSteps.inTransaction(steps[i]))"))
         XCTAssertTrue(src.contains("let read = handle(readReq)"))
         // What that cap means for a window off the agent workspace under Full Access.
         let off = HandsWindow(id: 40, pid: 400, app: "Notes", workspace: 2)
@@ -210,5 +210,78 @@ final class RunStepsTests: XCTestCase {
             return XCTFail("a connector under Full Access reached a window off the agent workspace")
         }
         XCTAssertEqual(e.code, .outsideAgentWorkspace)
+    }
+
+    /// 251 r1 second-S1 (r2 first-F3): no step waits for in-use inside its group's transaction, which holds the app's
+    /// queue: every read of that app would wait behind it. The group waits first, each step by its own verb and delivery,
+    /// never past the deadline; inside, each step's wait is 0, so an app that turns busy stops the run with in_use.
+    func testNoStepWaitsForInUseInsideTheTransaction() throws {
+        let s = { (verb: String, args: [String: JSONValue]) in HandsRequest(verb: verb, args: args, session: "s") }
+        XCTAssertEqual(RunSteps.inTransaction(s("type", ["ref": "w1:7", "text": "hi", "wait": 90])).int("wait"), 0)
+        XCTAssertEqual(RunSteps.inTransaction(s("click", ["ref": "w1:5"])).int("wait"), 0)
+        for v in ["press", "click-at", "drag", "menu"] { XCTAssertEqual(RunSteps.delivery(s(v, [:])), .posted, v) }
+        XCTAssertEqual(RunSteps.delivery(s("click", ["ref": "w1:5", "button": "Right"])), .posted)
+        for v in ["click", "type", "set-value", "scroll", "select", "toggle"] { XCTAssertEqual(RunSteps.delivery(s(v, ["ref": "w1:5"])), .headlessAX, v) }
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Steps.swift")
+        let run = try XCTUnwrap(HandsSourceTests.block(after: "func runSteps(_ req: HandsRequest)", in: src))
+        let wait = try XCTUnwrap(run.range(of: "awaitUse(w, verb: steps[i].verb, delivery: RunSteps.delivery(steps[i]), wait: wait, session: session)"))
+        let clamp = try XCTUnwrap(run.range(of: "RunSteps.clamped(steps[i], left: until.timeIntervalSinceNow)"))
+        let tx = try XCTUnwrap(run.range(of: "HandsEngine.shared.transaction("))
+        XCTAssertTrue(clamp.lowerBound < wait.lowerBound && wait.lowerBound < tx.lowerBound)
+        XCTAssertEqual(run.components(separatedBy: "awaitUse(").count, 2, "the one wait is before the transaction")
+    }
+
+    /// 251 r1 second-S2 (r2 second-second-F1): a group whose window can't be targeted, or whose app stayed in use, says
+    /// why in its first step's line with that code; "went away" only when the window or ref is gone.
+    func testAGroupRefusedBeforeItStartedSaysWhy() throws {
+        let steps = [HandsRequest(verb: "click", args: ["ref": "w1:5"], session: "s"), HandsRequest(verb: "type", args: ["ref": "w2:7", "text": "x"], session: "s")]
+        for code in [HandsErrorCode.needsLend, .outsideAgentWorkspace, .needsSandbox, .inUse] {
+            let (line, stop) = RunSteps.refused(HandsError(code, "no", suggestion: "do this"), group: 1..<2, steps: steps)
+            XCTAssertEqual(stop, .failed, "\(code)")
+            XCTAssertEqual(line?["step"]?.int, 2)
+            XCTAssertEqual(line?["error"]?["code"]?.string, code.rawValue)
+        }
+        for code in [HandsErrorCode.windowNotFound, .staleRef] {
+            let (line, stop) = RunSteps.refused(HandsError(code, "gone", suggestion: "snapshot"), group: 1..<2, steps: steps)
+            XCTAssertEqual(stop, .gone)
+            XCTAssertNil(line)
+        }
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Steps.swift")
+        XCTAssertFalse(src.contains("else { stop = .gone; break }"), "a refusal is never thrown away as gone")
+        XCTAssertEqual(src.components(separatedBy: "RunSteps.refused(e, group: g, steps: steps)").count, 3, "target and the in-use wait")
+    }
+
+    /// 251 r1 first-F4: one period before "Nothing ran.", however the suggestion ends.
+    func testNothingRanFollowsOnePeriod() throws {
+        XCTAssertEqual(RunSteps.nothingRan("Take a new snapshot."), "Take a new snapshot. Nothing ran.")
+        XCTAssertEqual(RunSteps.nothingRan("Take a new snapshot"), "Take a new snapshot. Nothing ran.")
+        XCTAssertEqual(RunSteps.nothingRan(""), "Nothing ran.")
+        guard case .failure(let e) = RunSteps.parse(.array([.object(["tool": "click", "args": .object([:])])]), session: "s", wait: nil) else { return XCTFail() }
+        XCTAssertFalse(e.suggestion.contains(".."), e.suggestion)
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Steps.swift")
+        XCTAssertFalse(src.contains("+ \". Nothing ran.\""))
+    }
+
+    /// 251 r1 second-S3 (r2 second-second-F3): over MCP the closing read's rows are their own text part, lines a model
+    /// reads, not a JSON string full of escapes; the step lines keep the read's other fields.
+    func testTheClosingReadsRowsAreTheirOwnPart() throws {
+        let rows = "1 button \"Save\"\n2 text \"Name\""
+        let server = HandsMCP(version: "1", session: "s") { _ in
+            .success(.object(["steps": .array([]), "done": 1, "of": 1, "read": .object(["format": "rows", "text": .string(rows), "window": 4])]))
+        }
+        let call = #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_steps","arguments":{"steps":[{"tool":"click","args":{"ref":"w4:5"}}]}}}"#
+        let content = try XCTUnwrap(server.handle(call).flatMap(JSONValue.parse)?["result"]?["content"]?.array)
+        guard content.count == 2 else { return XCTFail("one part: \(content)") }
+        XCTAssertEqual(content[1]["text"]?.string, rows)
+        let first = try XCTUnwrap(content[0]["text"]?.string)
+        XCTAssertFalse(first.contains("Save"), first)
+        XCTAssertTrue(first.contains("text_below") && first.contains(#""window":4"#), first)
+    }
+
+    /// 251 r1 second-S4: the summary says a run may span windows and only consecutive steps on one window run back to back.
+    func testTheSummarySaysARunMaySpanWindows() throws {
+        let tool = try XCTUnwrap(HandsTools.all.first { $0.verb == "run-steps" })
+        XCTAssertTrue(tool.summary.contains("on one window or more"), tool.summary)
+        XCTAssertTrue(tool.summary.contains("consecutive steps on one window run back to back"), tool.summary)
     }
 }
