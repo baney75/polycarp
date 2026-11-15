@@ -55,6 +55,10 @@ mkdir -p "$BROWSER_DIR"
 cp build/browser/polycarp-browser "$BROWSER_DIR/polycarp-browser"
 cp -R build/browser/extension "$BROWSER_DIR/extension"
 cp build/browser/licenses/* "$APP/Contents/Resources/licenses/"
+# The Rust crates the polycarp command, the voice core and the engine link, from cargo's own record of them.
+RUST_TARGETS=(--target aarch64-apple-darwin); [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ] || RUST_TARGETS+=(--target x86_64-apple-darwin)
+python3 scripts/rust-licenses.py --out "$APP/Contents/Resources/licenses/polycarp-rust-crates.txt" --own "$PWD/.." "${RUST_TARGETS[@]}" \
+  ../cli/Cargo.toml:polycarp ../core/ffi/Cargo.toml:polycarp-core engine/.src/Cargo.toml:agent-desktop-ffi
 # Settings' Uninstall runs the same script as the README.
 cp uninstall.sh "$APP/Contents/Resources/uninstall.sh"
 # install.sh runs this copy on the prebuilt release, so the installer that fetched the app and the
@@ -132,6 +136,7 @@ codesign --verify --deep --strict "$APP"
 [ -x "$BROWSER_DIR/polycarp-browser" ] && [ -s "$BROWSER_DIR/extension/manifest.json" ] && [ -s "$BROWSER_DIR/extension/background.js" ] || { echo "bundle: the browser helper or the extension is missing from the bundle" >&2; exit 1; }
 codesign --verify --strict "$BROWSER_DIR/polycarp-browser" || { echo "bundle: the browser helper is not validly signed" >&2; exit 1; }
 [ -s "$APP/Contents/Resources/licenses/polycarp-browser-packages.txt" ] || { echo "bundle: the browser helper's licences are missing from the bundle" >&2; exit 1; }
+[ -s "$APP/Contents/Resources/licenses/polycarp-rust-crates.txt" ] || { echo "bundle: the Rust crates' licences are missing from the bundle" >&2; exit 1; }
 # The app must find its library next to itself, not where it was built.
 otool -L "$APP/Contents/MacOS/$EXECUTABLE" | grep -q '@rpath/libagent_desktop_ffi.dylib' || { echo "bundle: Polycarp doesn't link the engine through @rpath" >&2; exit 1; }
 otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q '@executable_path/../Frameworks' || { echo "bundle: no @executable_path/../Frameworks rpath" >&2; exit 1; }
