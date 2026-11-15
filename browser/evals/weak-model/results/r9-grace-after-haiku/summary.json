@@ -1,0 +1,16 @@
+{
+	"label": "r9-grace-after-haiku",
+	"model": "haiku",
+	"trials": 5,
+	"profile": "full",
+	"date": "2026-11-15T22:09:37.293Z",
+	"passed": 10,
+	"total": 10,
+	"calls": 99,
+	"toolErrors": 9,
+	"resultChars": 24594,
+	"tasks": {
+		"dialog-no-repeat": {"pass":5,"of":5,"calls":[11,10,14,11,12],"errors":[0,0,2,2,2]},
+		"dialog-preset": {"pass":5,"of":5,"calls":[9,6,8,10,8],"errors":[1,0,1,1,0]}
+	}
+}
