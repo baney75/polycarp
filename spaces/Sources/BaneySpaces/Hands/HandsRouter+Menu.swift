@@ -91,7 +91,18 @@ extension HandsRouter {
                                           "verified": .bool(press["disposition"]?["delivery"]?.string == "delivered_verified")]
             if o["verified"] == false { o["next_call"] = HandsNextCall.after(.unverified, window: Int(w.id)) }
             if cancelledEarlier { o["cancelled_earlier_panel"] = true }
-            if let opened = openedChildren(pid: w.pid, before: childrenBefore, session: session) {
+            var opened = openedChildren(pid: w.pid, before: childrenBefore, session: session)
+            // A panel the app made but keeps out of sight with no Accessibility element (Colors, #309) is named too.
+            let reached = Set(HiddenPanel.ids(opened) + listWindows().windows.map(\.id))
+            let hidden = HiddenPanel.unreachable(MenuAX.serverWindows(pid: w.pid), before: before, reached: reached)
+            if !hidden.isEmpty {
+                let entries = hidden.map(HiddenPanel.opened)
+                opened = opened.map { o in .array((o.array ?? [o]) + entries) } ?? (entries.count == 1 ? entries[0] : .array(entries))
+                if childLocked({ sessionWindows.opened(by: session, window: w.id, pid: w.pid) }) {
+                    childLocked { for h in hidden { hiddenPanels[h.id] = (session, w.pid, w.app) } }
+                }
+            }
+            if let opened {
                 // A window the command raised (a panel such as Fonts) is named, and the session may close it.
                 o["opened"] = opened
                 let raised = HiddenPanel.ids(opened)
@@ -100,7 +111,9 @@ extension HandsRouter {
                     for id in mine { sessionWindows.record(session: session, window: id, pid: w.pid) }
                     return mine
                 }
-                if !raised.isEmpty { o["note"] = .string(HiddenPanel.note(raised, closable: !adopted.isEmpty)) }
+                let shown = raised.filter { id in !hidden.contains { $0.id == id } }
+                let notes = (shown.isEmpty ? [] : [HiddenPanel.note(shown, closable: !adopted.isEmpty)]) + hidden.map { HiddenPanel.why($0, app: w.app) }
+                if !notes.isEmpty { o["note"] = .string(notes.joined(separator: "; ")) }
                 Trace.log("agent menu \(named): raised \(raised.map(String.init).joined(separator: ", ")) in \(w.app)")
             }
             return .success(.object(o))
@@ -313,6 +326,16 @@ enum MenuAX {
         }
     }
     static func ids() -> Set<UInt32> { Set(listed().map(\.id)) }
+    /// The app's windows as the window server lists them, on screen or not, with level and title.
+    static func serverWindows(pid: Int32) -> [HiddenPanel.ServerWindow] {
+        let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        return info.compactMap { w in
+            guard (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid, let id = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { return nil }
+            return .init(id: id, layer: (w[kCGWindowLayer as String] as? Int) ?? 0, onScreen: (w[kCGWindowIsOnscreen as String] as? Bool) ?? false,
+                         bounds: (w[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) } ?? .zero,
+                         title: w[kCGWindowName as String] as? String ?? "")
+        }
+    }
     static func cancelTitle(_ e: AXUIElement) -> String? {
         guard let b = copy(e, kAXCancelButtonAttribute), CFGetTypeID(b) == AXUIElementGetTypeID() else { return nil }
         return copy(b as! AXUIElement, kAXTitleAttribute) as? String
