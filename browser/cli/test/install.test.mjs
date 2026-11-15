@@ -2,10 +2,10 @@
 // into every browser directory present, and the manifest's origin matches the id the
 // extension key in static/manifest.chrome.json produces.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -68,4 +68,35 @@ test("status reports each browser's host state", () => {
 	assert.equal(state.Helium, "current");
 	assert.equal(state.Chrome, "current");
 	assert.match(run("status"), /Helium\s+host registered/);
+});
+
+test("status lists a running browser only when a profile has the extension on, so update waits only for one that can connect", () => {
+	// first-F1 of the review of PR 285: Chrome runs (this process holds its lock) and install wrote its host manifest,
+	// but the extension isn't in it, so it is not listed. Helium runs with the extension in Default.
+	const id = extensionIdFromKey();
+	const prefs = (dir, settings) => {
+		mkdirSync(join(dir, "Default"), { recursive: true });
+		writeFileSync(join(dir, "Default", "Preferences"), JSON.stringify({ extensions: { settings } }));
+	};
+	const gone = spawnSync(process.execPath, ["-e", "0"]).pid;
+	for (const dir of Object.values(browsers)) symlinkSync(`${hostname()}-${process.pid}`, join(dir, "SingletonLock"));
+	const running = () => JSON.parse(run("status", "--json")).running;
+	try {
+		assert.deepEqual(running(), [], "a live lock and a host manifest, with no extension in any profile");
+		prefs(browsers.Helium, { [id]: { location: 4 } });
+		prefs(browsers.Chrome, { aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: {} });
+		assert.deepEqual(running(), ["Helium"]);
+		// Turned off in Helium: not listed. A lock from a process that is gone: not running.
+		prefs(browsers.Helium, { [id]: { location: 4, disable_reasons: [1] } });
+		assert.deepEqual(running(), []);
+		prefs(browsers.Helium, { [id]: { location: 4 } });
+		rmSync(join(browsers.Helium, "SingletonLock"));
+		symlinkSync(`${hostname()}-${gone}`, join(browsers.Helium, "SingletonLock"));
+		assert.deepEqual(running(), []);
+	} finally {
+		for (const dir of Object.values(browsers)) {
+			rmSync(join(dir, "SingletonLock"), { force: true });
+			rmSync(join(dir, "Default"), { recursive: true, force: true });
+		}
+	}
 });

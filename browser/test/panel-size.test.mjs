@@ -14,7 +14,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 // panel stood 421 bytes over 1,901,000. 1 KB more for main's growth since (PR 230 merging main): 431 bytes over.
 const OPEN_BYTES_LIMIT = 1_903_000;
 // Each of these is large and needed only by some chats. None may load with the panel.
-const ON_FIRST_USE = ["pdfjs-dist", "xlsx", "docx-preview", "jszip", "katex", "chart.js", "@lmstudio/sdk", "@mistralai", "@google/genai", "openai/", "@anthropic-ai/sdk", "library-skills", "highlight.js/lib/languages/1c", "ajv/"];
+const ON_FIRST_USE = ["pdfjs-dist", "xlsx", "docx-preview", "jszip", "katex", "chart.js", "@lmstudio/sdk", "@mistralai", "@google/genai", "openai/", "@anthropic-ai/sdk", "library-skills", "highlight.js/lib/languages/1c", "ajv/", "src/tools/default-skills"];
 
 const siblings = existsSync(join(root, "../pi-mono/packages")) && existsSync(join(root, "node_modules"));
 

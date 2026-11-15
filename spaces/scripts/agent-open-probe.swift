@@ -7,7 +7,8 @@
 //   focus: the app in front never changed while it opened (sampled every 50 ms);
 //   close: `close`'s `closed` matches whether the window server still lists the window;
 //   seen: from the open until it settles, a sampler reads the window server every 4 ms (on screen only) and adds up the
-//   time any window of the new process showed at least 8x8 pt on a display, not covered by a window in front of it.
+//   time any window of the new process (alpha 0.1 or more) showed at least 8x8 pt on a display, not covered by a window
+//   in front of it.
 //   The agent workspace is not shown while the probe runs, so all of that was on Donovan's workspace. With the cover on
 //   (`defaults write com.baney.polycarp agentOpenFlashGuard cover`), over 50 ms in one open fails it (zero is the
 //   target); with it off, the default, the times print as "known, flag off" and fail nothing. 11-12 on 639dd5f: Font Book and Dictionary showed for 0.7 to 1.5 s, and the
@@ -47,31 +48,42 @@ func seenFails(_ ms: Double, guardOn: Bool, bar: Double = 50) -> Bool { guardOn 
 let gapLimitMs = 16.0
 func gapInvalid(_ worstGapMs: Double) -> Bool { worstGapMs > gapLimitMs }
 
-/// The part of `list[i]` a person can see: on a display, not under an opaque window in front of it, measured on a grid
-/// so overlaps of several windows count right. Returns the shown area in pt² and the bounding box of what shows.
+/// The part of `list[i]` a person can see: on a display, not under an opaque window in front of it. Exact: the window is
+/// cut at every edge of a display or a window in front, and each cell is in or out whole, so overlaps of several windows
+/// count right. A 4 pt grid over the window took about 200 ms a look under 30 windows, past the sampler's 16 ms gap
+/// (issue #252, second-S2). Returns the shown area in pt² and the bounding box of what shows.
 func shown(_ i: Int, in list: [Seen], displays: [CGRect], cover: pid_t = polycarpPid) -> (area: CGFloat, box: CGRect) {
     let w = list[i].bounds
-    let front = list[..<i].filter { $0.hides(cover: cover) }.map(\.bounds)
-    let step: CGFloat = 4
-    var area: CGFloat = 0, box = CGRect.null
-    var y = w.minY + step / 2
-    while y < w.maxY {
-        var x = w.minX + step / 2
-        while x < w.maxX {
-            let p = CGPoint(x: x, y: y)
-            if displays.contains(where: { $0.contains(p) }) && !front.contains(where: { $0.contains(p) }) {
-                area += step * step; box = box.union(CGRect(x: x - step / 2, y: y - step / 2, width: step, height: step))
-            }
-            x += step
-        }
-        y += step
+    func clip(_ r: CGRect) -> CGRect? { let c = r.intersection(w); return c.isNull || c.isEmpty ? nil : c }
+    let front = list[..<i].filter { $0.hides(cover: cover) }.compactMap { clip($0.bounds) }
+    let screens = displays.compactMap(clip)
+    let xs = Array(Set([w.minX, w.maxX] + (front + screens).flatMap { [$0.minX, $0.maxX] })).sorted()
+    let ys = Array(Set([w.minY, w.maxY] + (front + screens).flatMap { [$0.minY, $0.maxY] })).sorted()
+    let nx = xs.count - 1, ny = ys.count - 1
+    guard nx > 0, ny > 0 else { return (0, .null) }
+    // 1: on a display; 0 after: under a window in front. Cells by index ranges, so each rect marks only its own cells.
+    var cell = [UInt8](repeating: 0, count: nx * ny)
+    func mark(_ r: CGRect, _ v: UInt8) {
+        guard let x0 = xs.firstIndex(of: r.minX), let x1 = xs.firstIndex(of: r.maxX),
+              let y0 = ys.firstIndex(of: r.minY), let y1 = ys.firstIndex(of: r.maxY) else { return }
+        for y in y0..<y1 { for x in x0..<x1 { cell[y * nx + x] = v } }
     }
+    for r in screens { mark(r, 1) }
+    for r in front { mark(r, 0) }
+    var area: CGFloat = 0, box = CGRect.null
+    for y in 0..<ny { for x in 0..<nx where cell[y * nx + x] == 1 {
+        let c = CGRect(x: xs[x], y: ys[y], width: xs[x + 1] - xs[x], height: ys[y + 1] - ys[y])
+        area += c.width * c.height; box = box.union(c)
+    } }
     return (area, box)
 }
 
 /// Seen by a person: at least an 8x8 pt part shows. A parked window's corner sliver (1 pt) doesn't count. `cover` is the
 /// pid that owns the covers: Polycarp's in a real run, the fixtures' in the selftest.
 func seen(_ i: Int, in list: [Seen], displays: [CGRect], cover: pid_t = polycarpPid) -> CGRect? {
+    // A window under alpha 0.1 shows nothing, the same line the guard draws (`OpenFlashGuard.needsGuard`): a clear
+    // helper of the app isn't a flash (issue #252, sol-F3).
+    guard list[i].alpha >= 0.1 else { return nil }
     let s = shown(i, in: list, displays: displays, cover: cover)
     return s.area >= 64 && s.box.width >= 8 && s.box.height >= 8 ? s.box : nil
 }
@@ -105,6 +117,18 @@ if CommandLine.arguments.contains("--selftest") {
     let half = Seen(pid: 2, layer: 0, alpha: 1, bounds: CGRect(x: 400, y: 300, width: 250, height: 400))
     check("half covered, the other half shows", seen(1, in: [half, app], displays: screen, cover: 4242).map { $0.minX >= 646 } == true)
     check("off every display is not", seen(0, in: [Seen(pid: 7, layer: 0, alpha: 1, bounds: CGRect(x: 3000, y: 0, width: 500, height: 400))], displays: screen, cover: 4242) == nil)
+    // Issue #252: a clear helper shows nothing (sol-F3), and one look at a full-screen window under 30 others leaves the
+    // 4 ms sampler room under its 16 ms gap (second-S2: a 4 pt grid over the window ran past it).
+    check("a clear (alpha 0) window of the app is not", seen(0, in: [Seen(pid: 7, layer: 0, alpha: 0, bounds: full)], displays: screen) == nil)
+    check("nor one at alpha 0.05", seen(0, in: [Seen(pid: 7, layer: 0, alpha: 0.05, bounds: full)], displays: screen) == nil)
+    let others = (0..<30).map { k in Seen(pid: 3, layer: 0, alpha: 1, bounds: CGRect(x: 40 + Double(k % 6) * 240, y: 30 + Double(k / 6) * 190, width: 150, height: 120)) }
+    let t0 = ProcessInfo.processInfo.systemUptime
+    var shownAt = 0
+    for _ in 0..<20 { if seen(30, in: others + [Seen(pid: 7, layer: 0, alpha: 1, bounds: full)], displays: screen) != nil { shownAt += 1 } }
+    let perLook = (ProcessInfo.processInfo.systemUptime - t0) * 1000 / 20
+    check(String(format: "a full-screen window under 30 others is seen, in %.2f ms a look (bar 2 ms)", perLook), shownAt == 20 && perLook < 2)
+    let exact = shown(30, in: others + [Seen(pid: 7, layer: 0, alpha: 1, bounds: full)], displays: screen).area
+    check("its shown area is exact: the screen less the 30 windows", abs(exact - (1512 * 982 - 30 * 150 * 120)) < 1)
     print(bad == 0 ? "selftest: pass" : "selftest: fail"); exit(bad == 0 ? 0 : 1)
 }
 

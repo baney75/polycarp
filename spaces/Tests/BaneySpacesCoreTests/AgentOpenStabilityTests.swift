@@ -220,7 +220,7 @@ final class AgentOpenStabilitySourceTests: XCTestCase {
         XCTAssertTrue(miss.contains("let owned = onMain { host.agentOwned() }"), "the host is read on main (F4)")
         XCTAssertTrue(miss.contains("switch OpenMiss.decide(launched: pid, agentStarted: owned, startedAt: AgentOwned.startTime(pid)"))
         XCTAssertTrue(miss.contains("held: held.count)"), "a placed app is never quit (F3)")
-        XCTAssertTrue(r.contains("switch OpenMiss.check(wait: wait, mainThread: Thread.isMainThread, elapsed: Date().timeIntervalSince(requestStart))"),
+        XCTAssertTrue(r.contains("switch OpenMiss.check(wait: wait, mainThread: Thread.isMainThread, elapsed: Date().timeIntervalSince(since))"),
                       "every miss is checked, whatever the wait or thread (163 second-F5)")
         XCTAssertTrue(r.contains("DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [self] in\n                    _ = missCheck("),
                       "a short wait's check runs later, off main")
@@ -270,5 +270,28 @@ final class AgentOpenStabilitySourceTests: XCTestCase {
         let s = try HandsSourceTests.code("Sources/BaneySpaces/Spaces.swift")
         let wake = try XCTUnwrap(HandsSourceTests.block(after: "func didWake()", in: s))
         XCTAssertTrue(wake.contains("Windows.clearBench()") && wake.contains("refresh(full: true)") && wake.contains("screensChanged()"))
+    }
+}
+
+/// Issue #252 (second-S2): the open cover can hold a launch back after its request, so the wait for its window counts
+/// from the launch, not the request.
+final class OpenWaitFromLaunchTests: XCTestCase {
+    func testTheWaitForAWindowCountsFromALateLaunch() {
+        XCTAssertEqual(OpenMiss.waitEnds(request: 100, launched: 102.5, wait: 7), 109.5, accuracy: 1e-9)
+        XCTAssertEqual(OpenMiss.waitEnds(request: 100, launched: 102.5, wait: 3), 105.5, accuracy: 1e-9)
+    }
+
+    func testWithNoLaunchOrAnEarlyOneTheWaitCountsFromTheRequest() {
+        XCTAssertEqual(OpenMiss.waitEnds(request: 100, launched: nil, wait: 7), 107, accuracy: 1e-9)
+        XCTAssertEqual(OpenMiss.waitEnds(request: 100, launched: 99, wait: 30), 107, accuracy: 1e-9)
+    }
+
+    func testOpenWaitsAndJudgesAMissFromTheLaunch() throws {
+        let s = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        XCTAssertTrue(s.contains("OpenMiss.waitEnds(") && s.contains("Date() < deadline()"))
+        XCTAssertTrue(s.contains("AgentLaunches.shared.launchedAt(token)"))
+        XCTAssertTrue(s.contains("elapsed: Date().timeIntervalSince(since)"))
+        let l = try HandsSourceTests.code("Sources/BaneySpaces/Hands/AgentLaunches.swift")
+        XCTAssertTrue(l.contains("func launchedAt("))
     }
 }
