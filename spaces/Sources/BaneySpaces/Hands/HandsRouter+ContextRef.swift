@@ -35,7 +35,7 @@ extension HandsRouter {
                 }
                 if let e = ContextMenu.gate(agentShown: agentShown(), agentWindow: onAgentWorkspace(w, scope), window: frame, element: element, displays: displays) { answer = .failure(e); return .ok(.null) }
                 // The cancel's key permit first: none, and the engine is asked for nothing (210 r1 first-F1).
-                guard let keyPermit = escapeKeys(w) else { answer = .failure(ContextMenu.noCancel(w.app)); return .ok(.null) }
+                guard let keyPermit = escapeKeys(w, session: session) else { answer = .failure(ContextMenu.noCancel(w.app)); return .ok(.null) }
                 // An app shut out of the pointer route for coming forward by itself gets no second AXShowMenu (269 r1 second-S2).
                 if let block = BackgroundBreaker.shared.block(bundle: w.bundle, pid: w.pid, kind: .pointer) { answer = .failure(BackgroundRefusal.blocked(w.app, block)); return .ok(.null) }
                 // The front app from before the press to after the cancel, as for a posted click: an app that comes forward by
