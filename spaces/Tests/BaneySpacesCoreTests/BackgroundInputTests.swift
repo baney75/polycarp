@@ -1097,7 +1097,7 @@ final class BackgroundPosterSourceTests: XCTestCase {
         XCTAssertTrue(router.contains("watchHandedOff = true"), "the watch outlives the action's own cleanup")
         XCTAssertTrue(router.contains("AgentActivity.shared.end(tailMark)"), "the window stays the agent's until the watch ends")
         // A failure before the answer still fails the action.
-        let check = try XCTUnwrap(router.range(of: "if let e = frontFailure() { return .failed(e) }\n        let events = tap.snapshot ?? idle.events"))
+        let check = try XCTUnwrap(router.range(of: "switch ContextMenu.afterPress(context, late: lateFront) { case .failure(let e): return .failed(e)"))
         XCTAssertTrue(check.lowerBound < handOff.lowerBound)
         XCTAssertGreaterThanOrEqual(router.components(separatedBy: "lastPostAt = Date()").count - 1, 3, "measured from every post")
     }

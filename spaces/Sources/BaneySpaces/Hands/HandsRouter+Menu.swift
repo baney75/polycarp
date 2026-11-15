@@ -136,7 +136,7 @@ extension HandsRouter {
 
     /// One look for layer 2: an Open or Save panel of the app, or a new window outside the agent workspace that may be
     /// the press's (`MenuPath.escaped`). Input from Donovan shortly before or since the press unties a helper's window from it.
-    private func menuWatchStep(_ w: HandsWindow, before: Set<UInt32>, agent: Int?, oldPanels: [AXUIElement]) -> @Sendable (Bool) -> MenuPath.Seen? {
+    func menuWatchStep(_ w: HandsWindow, before: Set<UInt32>, agent: Int?, oldPanels: [AXUIElement]) -> @Sendable (Bool) -> MenuPath.Seen? {
         let started = Date()
         return { [self] settled in
             let windows = MenuAX.windows(w.pid)
@@ -162,11 +162,12 @@ extension HandsRouter {
     /// window tied to the press is closed; any other is reported and left alone (192 r1 first-F2).
     /// A panel and windows seen in the same watch are both undone; the panel's error leads.
     /// A window that closed on its own since a look saw it is reported as gone, not closed or still open (205 r1 second-S2).
-    private func undo(_ seen: MenuPath.Seen, _ w: HandsWindow, path: String, oldPanels: [AXUIElement]) -> HandsError {
+    /// `inline`: already in the app's transaction (a context menu's press), so the panel's cancel runs in it.
+    func undo(_ seen: MenuPath.Seen, _ w: HandsWindow, path: String, oldPanels: [AXUIElement], inline: (() -> Bool)? = nil) -> HandsError {
         let (found, gone) = seen.split(MenuAX.listed())
         var open = found.filter(\.tied)
         let (panelError, closed) = MenuPath.undoing(panel: seen.panel,
-            cancel: { cancelPanels(w, within: 0.3, old: oldPanels) ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true) },
+            cancel: { cancelPanels(w, within: 0.3, old: oldPanels, inline: inline) ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true) },
             close: { open.removeAll { x in onMain { host.close(x.window.id) } }; return open.isEmpty },
             pause: { Thread.sleep(forTimeInterval: 0.1) })
         let escape = seen.escapes.isEmpty ? nil : MenuPath.escapeRefusal(path, found: found, gone: gone, closed: closed, window: Int(w.id))
@@ -177,10 +178,10 @@ extension HandsRouter {
 
     /// For `within` seconds: any window or sheet of the app that is an Open or Save panel is cancelled through the engine,
     /// in its own transaction (the button its AXCancelButton names, or one whose identifier says cancel).
-    private func cancelPanels(_ w: HandsWindow, within: TimeInterval, old oldPanels: [AXUIElement] = []) -> HandsError? {
+    private func cancelPanels(_ w: HandsWindow, within: TimeInterval, old oldPanels: [AXUIElement] = [], inline: (() -> Bool)? = nil) -> HandsError? {
         let deadline = Date().addingTimeInterval(within)
         repeat {
-            if let cancelled = cancelOnePanel(w, old: oldPanels) { return MenuPath.panelRefusal(w.app, cancelled: cancelled) }
+            if let cancelled = cancelOnePanel(w, old: oldPanels, inline: inline) { return MenuPath.panelRefusal(w.app, cancelled: cancelled) }
             Thread.sleep(forTimeInterval: 0.05)
         } while Date() < deadline
         return nil

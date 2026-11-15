@@ -274,7 +274,7 @@ extension HandsRouter {
                                  keys: { [self] in escapeKeys(w, verifier: verifier) }, check: scopeCheck, cancelled: cancelled)
             aimed += r.aimed; posted += r.posted; released = r.released; lastPostAt = r.lastPostAt
             switch r.result {
-            case .failure(let e): return .failed(r.posted > 0 && !r.leftOpen ? frontFailure() ?? e : e)
+            case .failure(let e): return .failed(r.posted > 0 && !r.leftOpen ? ContextMenu.failedPress(e, reached: r.reached, late: frontFailure()) : e)
             case .success(let d): context = d; verdict = DeliveryVerdict(verified: true, basis: "context_menu"); landed = 1
             }
         case .pointer:
@@ -319,10 +319,12 @@ extension HandsRouter {
             landed = verdict.verified ? 1 : 0
         }
 
-        if let e = frontFailure() { return .failed(e) }
+        // A pressed item ran: a check that fails after it is said beside the press, never in its place (256 first-F2).
+        let lateFront = frontFailure()
+        switch ContextMenu.afterPress(context, late: lateFront) { case .failure(let e): return .failed(e); case .success(let c): context = c }
         let events = tap.snapshot ?? idle.events
         let pointerVerdict = PointerAudit.verdict(before: pointerBefore, after: BackgroundPoster.pointerLocation(), posted: aimed, tap: events, ownPid: Int64(getpid()))
-        if let e = pointerVerdict.error { return .failed(e) }
+        switch ContextMenu.afterPress(context, late: pointerVerdict.error) { case .failure(let e): return .failed(e); case .success(let c): context = c }
 
         // The tail: a second after the last post (not after the proof) still counts, but the agent doesn't wait for it. An
         // app that comes forward late is shut out of the route here, so its next action is refused. The window stays marked
@@ -340,7 +342,7 @@ extension HandsRouter {
         guard verdict.verified else { return .failed(BackgroundRefusal.unverified(basis: verdict.basis)) }
         BackgroundBreaker.shared.update { $0.proved(pid: w.pid, kind: kind) }
         var evidence: [String: JSONValue] = ["kind": "delivery_proof", "basis": .string(verdict.basis), "pointer": .string(pointerVerdict.label),
-                                             "pointer_check": .string(tap.available ? "tap" : "idle_fallback"), "front": "unchanged",
+                                             "pointer_check": .string(tap.available ? "tap" : "idle_fallback"), "front": lateFront == nil ? "unchanged" : "changed",
                                              "steps": .int(stepCount), "landed": .int(landed), "released": .int(released)]
         if let diff { evidence["ax"] = diff.json(limit: 3) }
         if let p = pixels {

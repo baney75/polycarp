@@ -213,6 +213,36 @@ public enum ContextMenu {
                    suggestion: "Take a shot to see the window, then try again.", retry: .afterSnapshot, nextCall: .null)
     }
 
+    /// A check after the menu's answer that fails (the front app changed, the pointer audit). With nothing pressed it is
+    /// the answer; once an item was pressed the command ran, so the answer stays pressed and says what the check saw,
+    /// or the agent would retry it and run it twice (256 first-F2).
+    public static func afterPress(_ context: [String: JSONValue]?, late: HandsError?) -> Result<[String: JSONValue]?, HandsError> {
+        guard let late else { return .success(context) }
+        guard var c = context, c["pressed"] != nil else { return .failure(late) }
+        c["after_press"] = .string([c["after_press"]?.string, late.message].compactMap { $0 }.joined(separator: "; "))
+        return .success(c)
+    }
+
+    /// A right click's failure once its item was reached: the command may have run, so the press's own error stays and a
+    /// front-app change seen after it is added, never put in its place (315 r1 first-F1). Before the item, it is the answer.
+    public static func failedPress(_ e: HandsError, reached: Bool, late: HandsError?) -> HandsError {
+        guard let late else { return e }
+        guard reached else { return late }
+        var e = e; e.message += "; also: " + late.message; return e
+    }
+
+    /// A pressed item's answer once the watch that started with its press is over, as for the menu verb (256 r1
+    /// second-S2): an Open or Save panel or a window outside the agent workspace it raised is undone and fails the call,
+    /// and a watch that couldn't finish never answers ok.
+    public static func watched<Found>(_ outcome: MenuWatch<Found>.Outcome, _ answer: Result<[String: JSONValue], HandsError>, item: String, window: Int,
+                                      undo: ([Found]) -> HandsError) -> Result<[String: JSONValue], HandsError> {
+        switch outcome {
+        case .quiet: return answer
+        case .unknown: return .failure(MenuWatch<Found>.unknownRefusal("context menu > \(item)", window: window))
+        case .seen(let looks): return .failure(undo(looks))
+        }
+    }
+
     /// The menu's items couldn't be read (a busy app times out), so none is pressed and the menu is cancelled.
     public static func unread(_ app: String, cancelled: Bool) -> HandsError {
         HandsError(.engineError, "\(app)'s context menu couldn't be read" + (cancelled ? ", so it was cancelled" : ", and Polycarp couldn't cancel it"),

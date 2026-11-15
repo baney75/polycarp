@@ -400,10 +400,10 @@ final class MenuPathTests: XCTestCase {
         XCTAssertTrue(menu.contains("case .unknown: return failed("), "192 r1 first-F1: a watch that couldn't finish never answers ok")
         let rule = try XCTUnwrap(HandsSourceTests.block(after: "private func menuRule", in: src))
         XCTAssertTrue(rule.contains("sessionOwns: mine"), "r1 second-S2, r2 second-F7: in menuRule itself")
-        let step = try XCTUnwrap(HandsSourceTests.block(after: "private func menuWatchStep", in: src))
+        let step = try XCTUnwrap(HandsSourceTests.block(after: "func menuWatchStep(_ w", in: src))
         XCTAssertTrue(step.contains("MenuPath.escaped(") && step.contains("MenuPath.panel("), "layer 2 looks for both")
-        let undo = try XCTUnwrap(HandsSourceTests.block(after: "private func undo(", in: src))
-        XCTAssertTrue(undo.contains("cancelPanels(w, within: 0.3, old: oldPanels)") && undo.contains("var open = found.filter(\\.tied)")
+        let undo = try XCTUnwrap(HandsSourceTests.block(after: "func undo(_ seen", in: src))
+        XCTAssertTrue(undo.contains("cancelPanels(w, within: 0.3, old: oldPanels, inline: inline)") && undo.contains("var open = found.filter(\\.tied)")
                       && undo.contains("MenuPath.undoing(panel: seen.panel"), "192 r1 first-F2: only a tied window is closed; 246 r1 first-F1: after the panel")
         XCTAssertTrue(step.contains("onMain { ids.map {"), "first-F1: one trip to main per look")
         let ax = try XCTUnwrap(HandsSourceTests.block(after: "static func read<T: Sendable>(_ e: AXUIElement", in: src))
@@ -492,7 +492,7 @@ final class MenuPathTests: XCTestCase {
         XCTAssertEqual(MenuPath.fresh(all, before: [1], panels: [21]), [other])
         XCTAssertEqual(MenuPath.fresh(all, before: [1], panels: []).map(\.id), [21, 22])
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
-        let step = try XCTUnwrap(HandsSourceTests.block(after: "private func menuWatchStep", in: src))
+        let step = try XCTUnwrap(HandsSourceTests.block(after: "func menuWatchStep(_ w", in: src))
         XCTAssertTrue(step.contains("var new = MenuPath.fresh(all, before: before, panels: MenuPath.panelWindows(nodes, sheet: windows.map(\\.sheet), ids: windows.map(\\.id)))"))
     }
 
@@ -529,7 +529,7 @@ final class MenuPathTests: XCTestCase {
         let both = MenuPath.escapeRefusal("x", found: open, gone: gone, closed: false, window: 4)
         XCTAssertTrue(both.message.contains("Character Viewer") && both.message.contains("still open") && both.message.contains("Tips closed again on its own"), both.message)
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
-        let undo = try XCTUnwrap(HandsSourceTests.block(after: "private func undo(", in: src))
+        let undo = try XCTUnwrap(HandsSourceTests.block(after: "func undo(_ seen", in: src))
         let split = try XCTUnwrap(undo.range(of: "seen.split(MenuAX.listed())")), close = try XCTUnwrap(undo.range(of: "host.close("))
         XCTAssertLessThan(split.lowerBound, close.lowerBound, "listed again before anything is closed")
     }
@@ -682,7 +682,7 @@ final class MenuPathTests: XCTestCase {
         XCTAssertTrue(tx.lowerBound < found.lowerBound && found.lowerBound < cancel.lowerBound && cancel.lowerBound < old.lowerBound)
         XCTAssertTrue(menu.contains("e.message += MenuPath.earlierNote") && menu.contains(#"if cancelledEarlier { o["cancelled_earlier_panel"] = true }"#))
         let panels = try XCTUnwrap(HandsSourceTests.block(after: "private func cancelPanels(", in: src))
-        XCTAssertTrue(panels.contains("cancelOnePanel(w, old: oldPanels)"), "one cancel, shared")
+        XCTAssertTrue(panels.contains("cancelOnePanel(w, old: oldPanels, inline: inline)"), "one cancel, shared")
     }
 
     /// 205 r1 first-F2: only an Edit-menu submenu is listed for `appended`, and an unread listing refuses only through it.
