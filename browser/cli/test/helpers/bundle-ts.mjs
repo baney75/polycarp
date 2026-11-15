@@ -13,7 +13,8 @@ export async function loadTs(source) {
 	const dir = mkdtempSync(join(tmpdir(), "tabkyra-bundle-"));
 	const entry = join(dir, "entry.ts");
 	const out = join(dir, "out.mjs");
-	writeFileSync(entry, source.replaceAll("@src/", `${join(root, "src")}/`));
+	// Forward slashes: a Windows path's backslashes inside the import string would be read as escapes.
+	writeFileSync(entry, source.replaceAll("@src/", `${join(root, "src").replaceAll("\\", "/")}/`));
 	try {
 		await build({
 			absWorkingDir: root,

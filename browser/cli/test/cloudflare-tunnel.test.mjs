@@ -22,25 +22,31 @@ export { setupTunnel, TunnelError } from "@src/tunnel-setup.ts";
 `);
 const { cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION, cloudflaredBinary, extractLoginUrl, cloudflareLoginForPanel, parseConnect, setupTunnel, TunnelError } = mod;
 
+const onWindows = process.platform === "win32";
+// The macOS assets are .tgz archives; the Linux and Windows ones are raw binaries, so Windows never unpacks one.
+const noTgz = onWindows && "the .tgz assets are macOS only; Windows downloads a raw .exe";
+// A fake cloudflared is a #! script, which Windows cannot run as a program.
+const noScript = onWindows && "a #! fake cloudflared cannot run on Windows";
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
 
 /** Run `fn` with a fresh config dir, an empty PATH and no Homebrew lookup, so only the downloaded copy can be found. */
 async function inConfig(name, fn) {
 	const dir = join(root, name);
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	const keys = ["TABKYRA_CONFIG_DIR", "PATH", "TABKYRA_APPLICATIONS_DIR", "HOME"];
+	const keys = ["TABKYRA_CONFIG_DIR", "PATH", "TABKYRA_APPLICATIONS_DIR", "HOME", "USERPROFILE"];
 	const before = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
 	process.env.TABKYRA_CONFIG_DIR = join(dir, "config");
 	// A PATH with tar and nothing else, so a real cloudflared on this machine cannot be found.
 	mkdirSync(join(dir, "nopath"), { recursive: true });
-	const tar = spawnSync("sh", ["-c", "command -v tar"], { encoding: "utf8" }).stdout.trim();
-	symlinkSync(tar, join(dir, "nopath", "tar"));
+	const tar = onWindows ? "" : spawnSync("sh", ["-c", "command -v tar"], { encoding: "utf8" }).stdout.trim();
+	if (tar) symlinkSync(tar, join(dir, "nopath", "tar"));
 	// GNU tar (Linux CI) runs gzip from PATH for -z; macOS bsdtar has it built in, and the Linux assets are raw binaries, so production never needs this.
-	const gzip = spawnSync("sh", ["-c", "command -v gzip"], { encoding: "utf8" }).stdout.trim();
+	const gzip = onWindows ? "" : spawnSync("sh", ["-c", "command -v gzip"], { encoding: "utf8" }).stdout.trim();
 	if (gzip) symlinkSync(gzip, join(dir, "nopath", "gzip"));
 	process.env.PATH = join(dir, "nopath");
 	process.env.TABKYRA_APPLICATIONS_DIR = join(dir, "apps");
 	process.env.HOME = join(dir, "home");
+	process.env.USERPROFILE = process.env.HOME; // homedir() on Windows
 	mkdirSync(process.env.HOME, { recursive: true });
 	try {
 		return await fn(dir);
@@ -79,7 +85,7 @@ test("the pinned release has a digest for each supported platform", () => {
 	assert.equal(cloudflaredAsset("win32", "x64").name, "cloudflared-windows-amd64.exe");
 });
 
-test("a download with the wrong digest is refused and leaves no cloudflared behind", async () => {
+test("a download with the wrong digest is refused and leaves no cloudflared behind", { skip: noTgz }, async () => {
 	await inConfig("wrong", async (dir) => {
 		const body = fakeTgz(dir);
 		const server = await serve(body);
@@ -97,7 +103,7 @@ test("a download with the wrong digest is refused and leaves no cloudflared behi
 	});
 });
 
-test("a download with the right digest is unpacked to <config>/bin/cloudflared, mode 0755, and cloudflaredBinary finds it", async () => {
+test("a download with the right digest is unpacked to <config>/bin/cloudflared, mode 0755, and cloudflaredBinary finds it", { skip: noTgz }, async () => {
 	await inConfig("right", async (dir) => {
 		const body = fakeTgz(dir);
 		const server = await serve(body);
@@ -126,7 +132,7 @@ test("a raw-binary asset (Linux) is checked and installed the same way", async (
 			assert.equal(existsSync(downloadedCloudflared()), false);
 			const good = await downloadCloudflared({ baseUrl: server.url, asset: { name: "cloudflared-linux-amd64", sha256: sha(body), archive: false } });
 			assert.equal(good.ok, true);
-			assert.equal(statSync(good.path).mode & 0o777, 0o755);
+			if (!onWindows) assert.equal(statSync(good.path).mode & 0o777, 0o755);
 		} finally {
 			server.stop();
 		}
@@ -140,9 +146,10 @@ test("a cloudflared on PATH wins over the downloaded copy", async () => {
 		try {
 			await downloadCloudflared({ baseUrl: server.url, asset: { name: "c", sha256: sha(body), archive: false } });
 			const own = join(dir, "nopath");
-			writeFileSync(join(own, "cloudflared"), "#!/bin/sh\n");
-			chmodSync(join(own, "cloudflared"), 0o755);
-			assert.equal(cloudflaredBinary(), join(own, "cloudflared"));
+			const name = onWindows ? "cloudflared.exe" : "cloudflared";
+			writeFileSync(join(own, name), "#!/bin/sh\n");
+			chmodSync(join(own, name), 0o755);
+			assert.equal(cloudflaredBinary(), join(own, name));
 		} finally {
 			server.stop();
 		}
@@ -179,7 +186,7 @@ test("the sign-in address extractor accepts only https dash.cloudflare.com", () 
 	assert.equal(extractLoginUrl(`https://evil.example/x then ${ok}`), ok);
 });
 
-test("cloudflareLoginForPanel sends the address it reads, waits for the certificate, and never reads it", async () => {
+test("cloudflareLoginForPanel sends the address it reads, waits for the certificate, and never reads it", { skip: noScript }, async () => {
 	await inConfig("login", async (dir) => {
 		const fake = join(dir, "fake-cloudflared");
 		const cert = join(process.env.HOME, ".cloudflared", "cert.pem");
@@ -196,7 +203,7 @@ test("cloudflareLoginForPanel sends the address it reads, waits for the certific
 	});
 });
 
-test("cloudflareLoginForPanel lets cloudflared finish writing the certificate before it stops it", async () => {
+test("cloudflareLoginForPanel lets cloudflared finish writing the certificate before it stops it", { skip: noScript }, async () => {
 	await inConfig("loginsettle", async (dir) => {
 		const fake = join(dir, "fake-cloudflared");
 		const home = join(process.env.HOME, ".cloudflared");

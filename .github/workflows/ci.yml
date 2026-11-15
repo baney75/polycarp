@@ -356,6 +356,32 @@ jobs:
           node --import tsx --test test/*.test.mjs
           (cd cli && npx tsc --noEmit && npm test)
 
+  # The browser CLI's Windows code paths (#379 item 2): the native host registry keys, the Windows service, paths and
+  # the hub. These test files carry the win32 cases; they ran nowhere on Windows before.
+  browser-cli-windows:
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # bash, not pwsh: pwsh ends a multi-line step with its last command's exit code (test/ci-windows-shell.test.mjs).
+    defaults:
+      run:
+        working-directory: browser/cli
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - name: The Windows cases, on Windows
+        run: |
+          node --test test/windows-service.test.mjs test/cli.test.mjs test/legacy-socket.test.mjs test/cloudflare-tunnel.test.mjs
+          node --experimental-strip-types --test test/hub-devices.test.mjs test/file-rules.test.mjs
+
   # The suites that drive the built extension in a real Chromium: the extension, native host and MCP server end to end
   # (test:e2e), the side panel as drawn (test:e2e:panel), and the 44-page DOM benchmark held by cli/test/dom-bench/floor.json
   # (bench:dom, gated on tool calls; --time stays off because a shared runner's clock is too noisy to gate on).

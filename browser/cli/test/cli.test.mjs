@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "dist", "index.js");
@@ -21,7 +21,8 @@ after(() => rmSync(home, { recursive: true, force: true }));
 function run(...args) {
 	// Nothing from the developer's own Polycarp setup (config dir, session, extension dir) leaks in.
 	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("TABKYRA_") && k !== "XDG_CONFIG_HOME"));
-	Object.assign(env, { HOME: home, TABKYRA_SOCKET_DIR: socketDir, NO_COLOR: "1" });
+	// USERPROFILE too: on Windows the CLI's homedir() reads it, not HOME.
+	Object.assign(env, { HOME: home, USERPROFILE: home, TABKYRA_SOCKET_DIR: socketDir, NO_COLOR: "1" });
 	// A command that ignores an unknown flag could start serving; the timeout turns that into a failure.
 	const r = spawnSync(process.execPath, [cli, ...args], { env, encoding: "utf8", timeout: 20000 });
 	return { code: r.status, out: r.stdout, err: r.stderr };
@@ -43,7 +44,7 @@ test("the CLI's version is the extension manifest's", async () => {
 	// The doctor and the MCP server's initialize reply report the same number.
 	assert.equal(JSON.parse(run("doctor", "--json").out).version, manifestVersion);
 	const mcp = new Client({ name: "version-test", version: "0.0.0" });
-	await mcp.connect(new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env: { HOME: home, PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: socketDir }, stderr: "ignore" }));
+	await mcp.connect(new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env: { HOME: home, USERPROFILE: home, PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: socketDir }, stderr: "ignore" }));
 	try {
 		assert.deepEqual(mcp.getServerVersion(), { name: "polycarp", version: manifestVersion });
 	} finally {
@@ -189,6 +190,14 @@ test("read commands print JSON with --json, and exit 1 when not connected", () =
 
 test("the launcher harnesses run turns on Node's compile cache without overriding the user's", () => {
 	run("install");
+	if (process.platform === "win32") {
+		// The Windows launcher is a .cmd that runs the CLI as it is, with no compile cache.
+		const cmd = join(home, ".config", "polycarp", "browser", "polycarp.cmd");
+		assert.doesNotMatch(readFileSync(cmd, "utf8"), /NODE_COMPILE_CACHE/);
+		const r = spawnSync("cmd.exe", ["/d", "/c", cmd, "--version"], { env: { ...process.env, USERPROFILE: home }, encoding: "utf8" });
+		assert.equal(r.stdout.trim(), manifestVersion, r.stderr);
+		return;
+	}
 	const launcher = join(home, ".config", "polycarp", "browser", "polycarp");
 	const text = readFileSync(launcher, "utf8");
 	assert.match(text, /: "\$\{NODE_COMPILE_CACHE:=.*node-compile-cache\}"\nexport NODE_COMPILE_CACHE\nexec /);
@@ -221,7 +230,7 @@ test("help rows and the parsers agree on every flag, including setup's and updat
 		loader: { ".md": "text", ".pub": "text" },
 		logLevel: "silent",
 	});
-	const { COMMANDS, LIBRARY_OPTIONS, argsProblem, helpRows, parseSetupArgs, parseUpdateArgs } = await import(out);
+	const { COMMANDS, LIBRARY_OPTIONS, argsProblem, helpRows, parseSetupArgs, parseUpdateArgs } = await import(pathToFileURL(out).href);
 	// setup and update parse their own options: every flag their help row shows is one they take.
 	const sample = { "--timeout": "5", "--channel": "stable", "--auto-check": "on", "--browser": "Helium" };
 	for (const [name, parse, extra] of [["setup", parseSetupArgs, []], ["update", parseUpdateArgs, ["--check"]]]) {

@@ -36,11 +36,12 @@ const sha = (buf) => createHash("sha256").update(buf).digest("hex");
 function inConfig(name, fn, folder = "Polycarp Config & More") {
 	const dir = join(root, name, folder);
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	const keys = ["POLYCARP_BROWSER_CONFIG_DIR", "TABKYRA_CONFIG_DIR", "HOME", "SystemRoot"];
+	const keys = ["POLYCARP_BROWSER_CONFIG_DIR", "TABKYRA_CONFIG_DIR", "HOME", "USERPROFILE", "SystemRoot"];
 	const before = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
 	process.env.POLYCARP_BROWSER_CONFIG_DIR = dir;
 	delete process.env.TABKYRA_CONFIG_DIR;
 	process.env.HOME = join(root, name, "home");
+	process.env.USERPROFILE = process.env.HOME; // homedir() on Windows
 	mkdirSync(process.env.HOME, { recursive: true });
 	process.env.SystemRoot = "C:\\Windows";
 	const restore = () => {
