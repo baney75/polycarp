@@ -309,7 +309,7 @@ final class ChildWindowSourceTests: XCTestCase {
     func testUnplacedWindowsGoThroughTheChildRule() throws {
         let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
         let decide = try XCTUnwrap(HandsSourceTests.block(after: "func decide(_ w: HandsWindow, _ agent: Int?, session: String = \"\")", in: router))
-        XCTAssertTrue(decide.contains("if w.workspace == nil { return childDecision(w.id, pid: w.pid, agent: agent, session: session)?.decision.scope ?? ScopeGuard.check("))
+        XCTAssertTrue(decide.contains("if w.workspace == nil { return ScopeGuard.unplaced(w, child: childDecision(w.id, pid: w.pid, agent: agent, session: session)?.decision.scope) }"))
         XCTAssertTrue(router.contains("if remote, let e = WorkspaceVerbs.connectorRefusal(verb: req.verb) { return .failure(e) }"))
         let ws = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
         let child = try XCTUnwrap(HandsSourceTests.block(after: "func childDecision(", in: ws))
