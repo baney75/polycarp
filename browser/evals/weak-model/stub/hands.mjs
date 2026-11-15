@@ -74,6 +74,8 @@ const snapshots = new Map();
 let latestListed;
 /** Whether the session's latest read printed every row with its number (a since read or a find does not). */
 let latestWasListed = false;
+/** The session's latest read of any kind: the one a refused bare row names. */
+let latestRead;
 const lastRead = new Map();
 let clipboard;
 
@@ -179,6 +181,7 @@ function record(w, rs, { listed = true, view = "full" } = {}) {
 	snapshots.set(id, { window: w.id, refs: new Map(rs.filter((r) => r.number).map((r) => [r.number, r.key])) });
 	if (listed) latestListed = id;
 	latestWasListed = listed;
+	latestRead = { id, window: w.id };
 	lastRead.set(`${w.id}|${view}`, { id, rows: rs });
 	return id;
 }
@@ -224,8 +227,15 @@ function resolveRef(ref) {
 	if (full) [, snapId, n] = [null, full[1], Number(full[2])];
 	else if (bare) {
 		if (!latestListed) throw new HandsError("unknown_ref", `row ${s} of no snapshot: this session hasn't read a window yet`, "Read the window with snapshot first, then act on a row number it prints.");
+		// SnapshotRowsMemory.check: a since, query or cut read didn't list every row, so the number may be an older read's.
 		if (!latestWasListed)
-			throw new HandsError("stale_bare_row", `row ${s} could mean a row of an older read: your latest read listed only changes or matches`, "Nothing was sent. Read the window in full, then act on its row numbers, or pass a full ref.");
+			throw new HandsError(
+				"stale_bare_row",
+				`"${s}" is a bare row number, and your last read of window ${latestRead.window} (${latestRead.id}) listed changes or matches, not every row, so the number could mean a row from an older read. Nothing was sent`,
+				`Read the window again with next_call, then act on a row it prints or on a full ref like @${latestRead.id}:e5.`,
+				"after_snapshot",
+				{ tool: "snapshot", arguments: { window: latestRead.window } },
+			);
 		snapId = latestListed;
 		n = Number(bare[1]);
 	} else throw new HandsError("bad_arguments", `${quoted(s)} isn't a ref`, "Pass a row number like 5 from your latest snapshot, or a full ref like @s8f3k2p9:e5.");
@@ -446,13 +456,14 @@ const verbs = {
 			}
 			return { format: "rows", text: lines.join("\n"), ...shotError };
 		}
-		const id = record(w, rs, { view });
 		const q = String(args.query ?? "").trim();
 		const terms = q
 			.toLowerCase()
 			.split("|")
 			.map((x) => x.trim())
 			.filter(Boolean);
+		// SnapshotRowsMemory.kind: a query read or one cut at max_elements doesn't list every row.
+		const id = record(w, rs, { view, listed: !terms.length && rs.length <= Math.max(1, args.max_elements ?? DEFAULT_MAX) });
 		let picked = rs.map((_, i) => i);
 		if (terms.length) {
 			const keep = new Set();
@@ -699,7 +710,7 @@ const verbs = {
 				return windowOf(st.args).id;
 			} catch (e) {
 				if (!(e instanceof HandsError)) throw e;
-				throw new HandsError(e.code, `step ${i + 1}: ${e.message}`, `${e.suggestion}. Nothing ran.`, e.retry, e.nextCallOverride);
+				throw new HandsError(e.code, `step ${i + 1}: ${e.message}`, `${e.suggestion.replace(/\.$/, "")}. Nothing ran.`, e.retry, e.nextCallOverride);
 			}
 		});
 		const lines = [];
@@ -797,7 +808,11 @@ function check(name, args) {
 			throw new HandsError("bad_arguments", args.text !== undefined || args.window !== undefined ? "text and window go together" : "ref is missing (or pass window and text)", usage(name));
 	}
 	if ((name === "snapshot" || name === "find") && args.app === undefined && args.window === undefined) throw new HandsError("bad_arguments", "say which window: app or window", usage(name));
-	if (args.wait !== undefined && (args.wait < 0 || args.wait > 60)) throw new HandsError("bad_arguments", `wait is seconds from 0 to 60, not ${args.wait}`, usage(name));
+	// InUse.bound: the helper clamps wait to 0...120 seconds; it refuses only a wait that isn't a number.
+	if (args.wait !== undefined) {
+		if (typeof args.wait !== "number" || !Number.isFinite(args.wait)) throw new HandsError("bad_arguments", `wait is seconds from 0 to 120, not ${JSON.stringify(args.wait)}`, usage(name));
+		args.wait = Math.min(Math.max(Math.round(args.wait), 0), 120);
+	}
 }
 
 function call(name, args) {
