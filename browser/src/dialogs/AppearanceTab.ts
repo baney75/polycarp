@@ -12,7 +12,7 @@ import {
 } from "../appearance/apply.js";
 import { currentMode, type Mode, setMode } from "../appearance/mode.js";
 import { PRESETS, textOn } from "../appearance/palettes.js";
-import { effectiveAccent } from "../appearance/tokens.js";
+import { accentToSave, effectiveAccent } from "../appearance/tokens.js";
 import { connectSetTheme } from "../connect/client.js";
 
 const PRESET_LABELS: Record<string, string> = {
@@ -107,9 +107,9 @@ export class AppearanceTab extends SettingsTab {
 		}
 		this.accentError = undefined;
 		this.draft = undefined;
-		// Typing the accent already in use changes nothing, and must not turn the preset's into a custom one.
-		if (hex === effectiveAccent(choice, this.isDark(), currentPolycarp())) return;
-		void this.choose(choice.preset, hex);
+		// Typing the saved accent changes nothing, and must not turn the preset's into a custom one.
+		const save = accentToSave(choice, this.isDark(), hex);
+		if (save) void this.choose(choice.preset, save);
 	}
 
 	private swatch(name: string): TemplateResult {
@@ -141,7 +141,11 @@ export class AppearanceTab extends SettingsTab {
 		const hex = HEX.test(normalizeHex(shown)) ? normalizeHex(shown) : inUse;
 		// A Polycarp theme decides the colors; the controls below still save a choice for when it is gone. A theme that fixes light or dark overrides Mode too.
 		const polycarp = currentPolycarp();
-		const overridden = polycarp ? "opacity-60" : "";
+		// Overridden controls keep their text at full strength (dimming it would drop it below the checked contrast) and say so.
+		const overridden = (on: boolean) =>
+			on
+				? html`<span class="font-normal text-muted-foreground" data-overridden> (overridden by the theme)</span>`
+				: "";
 		const refused = currentPolycarpRefusal();
 		const modeOverridden = polycarp !== undefined && polycarp.mode !== "auto";
 		return html`
@@ -167,13 +171,13 @@ export class AppearanceTab extends SettingsTab {
 						: ""
 				}
 
-				<div class="space-y-2 ${overridden}" role="group" aria-label="Color preset">
-					<div class="text-sm font-medium text-foreground">Colors</div>
+				<div class="space-y-2" role="group" aria-label="Color preset">
+					<div class="text-sm font-medium text-foreground">Colors${overridden(polycarp !== undefined)}</div>
 					<div class="grid grid-cols-2 gap-2">${Object.keys(PRESETS).map((name) => this.swatch(name))}</div>
 				</div>
 
-				<div class="space-y-2 ${overridden}">
-					<label for="tk-accent-text" class="text-sm font-medium text-foreground">Custom accent</label>
+				<div class="space-y-2">
+					<label for="tk-accent-text" class="text-sm font-medium text-foreground">Custom accent${overridden(polycarp !== undefined)}</label>
 					<div class="flex items-center gap-2">
 						<input
 							type="color"
@@ -234,8 +238,8 @@ export class AppearanceTab extends SettingsTab {
 					</p>
 				</div>
 
-				<div class="space-y-2 ${modeOverridden ? "opacity-60" : ""}" role="radiogroup" aria-label="Light or dark">
-					<div class="text-sm font-medium text-foreground">Mode</div>
+				<div class="space-y-2" role="radiogroup" aria-label="Light or dark">
+					<div class="text-sm font-medium text-foreground">Mode${overridden(modeOverridden)}</div>
 					${MODES.map(
 						([
 							value,
