@@ -239,6 +239,14 @@ public enum ExtensionStore {
 }
 
 public enum BrowserBundle {
+    /// What a helper run says, for a message: the end of stdout, or on a failure the end of stderr when there is one
+    /// (errors go there, and without it a failed Connect or Add said nothing after its colon).
+    public static func resultText(out: Data, err: Data, failed: Bool) -> String {
+        let tail = { (d: Data) in String(decoding: d.suffix(300), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
+        let e = tail(err)
+        return failed && !e.isEmpty ? e : tail(out)
+    }
+
     /// `Polycarp.app/Contents/Resources/browser` for a resources folder.
     public static func folder(resources: URL?) -> URL? { resources?.appendingPathComponent("browser", isDirectory: true) }
     public static func helper(resources: URL?) -> URL? { folder(resources: resources)?.appendingPathComponent("polycarp-browser") }

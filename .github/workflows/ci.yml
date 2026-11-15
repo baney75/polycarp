@@ -2,9 +2,9 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
   pull_request:
-    paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -27,7 +27,8 @@ jobs:
         with:
           filters: |
             cli: ['cli/**', '.github/workflows/ci.yml']
-            spaces: ['spaces/**', 'core/**', '.github/workflows/ci.yml']
+            # The root install.sh is read by the spaces tests (RootInstallerTests, FeaturesTests).
+            spaces: ['spaces/**', 'core/**', 'install.sh', '.github/workflows/ci.yml']
             voice: ['voice/**', 'core/**', '.github/workflows/ci.yml']
             core: ['core/**', '.github/workflows/ci.yml']
             browser: ['browser/**', '.github/workflows/ci.yml']
