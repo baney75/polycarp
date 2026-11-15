@@ -597,6 +597,61 @@ fn spaces_prefers_the_new_command_name_and_falls_back_to_the_old() {
     assert_eq!(out(&o), "new\n", "the new name wins when both are there");
 }
 
+/// A copy of cmd.exe under a tool's name: Windows has no `sh`, and `cmd /c` runs what follows.
+#[cfg(windows)]
+fn cmd_stub(dir: &Path, name: &str) -> PathBuf {
+    let sys = std::env::var_os("SystemRoot").expect("SystemRoot is set on Windows");
+    let p = dir.join(format!("{name}.exe"));
+    fs::copy(Path::new(&sys).join("System32").join("cmd.exe"), &p).unwrap();
+    p
+}
+
+/// #379 item 3: on Windows the tool is `<name>.exe` on PATH, its arguments reach it and its exit code comes back.
+#[cfg(windows)]
+#[test]
+fn windows_finds_the_exe_on_path_passes_args_and_returns_its_exit_code() {
+    let s = Sandbox::new();
+    cmd_stub(&s.dir("bin"), "polycarp-spaces");
+    let run = |args: &[&str]| s.cmd(args).env("PATH", s.dir("bin")).output().unwrap();
+    let o = run(&["spaces", "/c", "echo", "hello"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(out(&o).trim_end(), "hello");
+    assert_eq!(code(&run(&["spaces", "/c", "exit", "7"])), 7);
+    let o = run(&["browser", "--version"]);
+    assert_ne!(code(&o), 0, "no polycarp-browser.exe on PATH: {}", out(&o));
+}
+
+/// #379 item 3: the old names still work alone on Windows, and the new name wins when both are on PATH.
+#[cfg(windows)]
+#[test]
+fn windows_prefers_the_new_exe_name_and_falls_back_to_the_old() {
+    let s = Sandbox::new();
+    let (old, new) = (s.dir("old"), s.dir("new"));
+    fs::create_dir_all(&old).unwrap();
+    fs::create_dir_all(&new).unwrap();
+    // %CMDCMDLINE% is the command line cmd was started with: it names the file that ran.
+    let ran = |path: &std::ffi::OsStr| {
+        let o = s
+            .cmd(&["browser", "/c", "echo", "%CMDCMDLINE%"])
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 0, "{}", err(&o));
+        out(&o).to_lowercase()
+    };
+    cmd_stub(&old, "tabkyra");
+    assert!(
+        ran(old.as_os_str()).contains("tabkyra.exe"),
+        "the old name alone"
+    );
+    cmd_stub(&new, "polycarp-browser");
+    let both = std::env::join_paths([&old, &new]).unwrap();
+    assert!(
+        ran(&both).contains("polycarp-browser.exe"),
+        "the new name wins"
+    );
+}
+
 // ---- Issue #5 follow-ups ----
 
 /// A tool below the current folder, such as node_modules/.bin on PATH, is never run.
