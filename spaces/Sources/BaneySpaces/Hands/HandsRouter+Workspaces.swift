@@ -24,8 +24,8 @@ extension HandsRouter {
         var firstParents: [UInt32: UInt32] = [:]
         for c in r.children { if let p = c.parent ?? hint { firstParents[c.id] = p } }
         let known = childLocked { () -> [UInt32: UInt32] in
-            attribution.observed(Set(r.children.map(\.id)), pid: pid, at: now, parents: firstParents)
-            attribution.observedSheets(on: r.sheetsOn, pid: pid, at: now)
+            attribution.observed(Set(r.children.map(\.id)), pid: pid, at: now, parents: firstParents, complete: r.complete)
+            attribution.observedSheets(on: r.sheetsOn, pid: pid, at: now, complete: r.complete)
             return r.children.reduce(into: [:]) { m, c in if let p = attribution.parent(of: c.id, pid: pid) { m[c.id] = p } }
         }
         for i in r.children.indices where r.children[i].parent == nil { r.children[i].parent = known[r.children[i].id] }
@@ -116,18 +116,19 @@ extension HandsRouter {
         return existing
     }
 
-    /// Looks every half second while an action on `pid` is under 10 s old; a later action extends this same watch.
-    private func watch(pid: Int32) {
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { [weak self] in
+    /// Looks every half second while an action on `pid` is under 10 s old, then slower while one of its children is
+    /// someone's, up to `ChildAttribution.watchFor` after the last action (`watchDelay`); a later action extends this watch.
+    private func watch(pid: Int32, after delay: TimeInterval = ChildAttribution.watchFast) {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
-            let go = self.childLocked { () -> Bool in
-                if self.attribution.watching(pid: pid, now: Date()) { return true }
+            let next = self.childLocked { () -> TimeInterval? in
+                if let d = self.attribution.watchDelay(pid: pid, now: Date()) { return d }
                 self.childWatchers.remove(pid)
-                return false
+                return nil
             }
-            guard go else { return }
+            guard let next else { return }
             _ = self.readChildren(pid: pid, all: self.listWindows().windows)
-            self.watch(pid: pid)
+            self.watch(pid: pid, after: next)
         }
     }
 
