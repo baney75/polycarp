@@ -437,3 +437,13 @@ test("type.display reaches no panel heading, and browser/AGENTS.md says so; the 
 	assert.equal(note.test(text), used.length === 0, used.length ? `${used.join(", ")} uses font-serif: delete the note` : "AGENTS.md must note that type.display is not used");
 	assert.match(text, /`shape\.density` is not applied/);
 });
+
+// #13 sol-F1: an open approval or hub page keeps the CSS it was served with, and nothing said so.
+test("the guide says an open approval or hub page takes a new theme only on reload", () => {
+	const guide = readFileSync(new URL("../../docs/guide.md", import.meta.url), "utf8");
+	assert.match(guide, /An approval or hub page that is already open keeps the colors it opened with; reload it/);
+	for (const page of ["oauth.ts", "hub-server.ts"]) {
+		const text = readFileSync(new URL(`../cli/src/${page}`, import.meta.url), "utf8");
+		assert.match(text, /<style>\$\{pageCss\(\)\}<\/style>/, `${page} still inlines the CSS when it serves the page`);
+	}
+});
