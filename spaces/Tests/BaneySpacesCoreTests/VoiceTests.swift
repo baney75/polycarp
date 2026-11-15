@@ -106,6 +106,30 @@ final class VoiceTests: XCTestCase {
         XCTAssertNil(VoiceImport.pending(in: new))
     }
 
+    /// #24: a word added while the dictionary's import was pending must not make the import read as finished without Silas's words.
+    func testAFileWrittenWhileItsImportWasPendingKeepsSilassData() throws {
+        let silas = temp(), new = temp()
+        try FileManager.default.createDirectory(at: silas.appendingPathComponent("dictionary.json"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: silas.appendingPathComponent("history.json"), withIntermediateDirectories: true)
+        guard case .partial = VoiceImport.run(silasDir: silas, newDir: new) else { return XCTFail("expected partial") }
+        // While pending: the person adds a word, and something writes history.
+        write(#"{"terms":[{"text":"Polycarp","source":"user"}],"corrections":[{"from":"bainey","to":"Baney"}]}"#, new.appendingPathComponent("dictionary.json"))
+        write("[\"mine\"]", new.appendingPathComponent("history.json"))
+        for name in ["dictionary.json", "history.json"] { try FileManager.default.removeItem(at: silas.appendingPathComponent(name)) }
+        write(#"{"terms":[{"text":"polycarp","source":"silas"},{"text":"Martyr","source":"user"}],"corrections":[{"from":"eesa","to":"Isa"}]}"#, silas.appendingPathComponent("dictionary.json"))
+        write("[\"silas\"]", silas.appendingPathComponent("history.json"))
+        guard case .imported(let r) = VoiceImport.run(silasDir: silas, newDir: new) else { return XCTFail("expected imported") }
+        XCTAssertEqual(r.copiedFiles, ["dictionary.json"])
+        XCTAssertEqual(r.keptAside, ["history.json"])
+        let dict = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: new.appendingPathComponent("dictionary.json"))) as? [String: Any])
+        let terms = (dict["terms"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }
+        XCTAssertEqual(terms, ["Polycarp", "Martyr"], "Silas's word came across; Polycarp's own entry won")
+        XCTAssertEqual((dict["corrections"] as? [[String: Any]] ?? []).compactMap { $0["from"] as? String }, ["bainey", "eesa"])
+        XCTAssertEqual(read(new.appendingPathComponent("history.json")), "[\"mine\"]")
+        XCTAssertEqual(read(new.appendingPathComponent("history.json.from-silas")), "[\"silas\"]")
+        XCTAssertTrue(read(new.appendingPathComponent(VoiceImport.markerName))?.contains("kept aside as <name>.from-silas: history.json") == true)
+    }
+
     func testPathsAreUnderThePolycarpFolder() {
         let home = URL(fileURLWithPath: "/h")
         XCTAssertEqual(Product.voiceDir(home: home).path, "/h/Library/Application Support/Polycarp/voice")
