@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { contrast, mix, PRESETS } from "../src/appearance/palettes.ts";
 import { checkPolycarpTheme, isEasing, isFontStack, parsePolycarpTheme, polycarpPayload } from "../src/appearance/polycarp.ts";
-import { appearanceVariables, effectiveAccent, parseChoice, SHAPE_PAIRS, TEXT_PAIRS } from "../src/appearance/tokens.ts";
+import { accentToSave, appearanceVariables, effectiveAccent, parseChoice, SHAPE_PAIRS, TEXT_PAIRS } from "../src/appearance/tokens.ts";
 
 const check = (choice, label) => {
 	for (const dark of [false, true]) {
@@ -345,11 +345,35 @@ test("the Appearance tab says which Polycarp theme is in use, how to change it, 
 	assert.match(tab, /data-polycarp-theme=\$\{polycarp\.name\}/);
 	assert.match(tab, /polycarp theme set &lt;name&gt;/);
 	assert.match(tab, /onPolycarp\(\(\) => this\.requestUpdate\(\)\)/, "the tab redraws when the theme changes");
-	// Dimmed, not removed: the presets, the accent box and the mode radios are all still drawn.
-	assert.match(tab, /class="space-y-2 \$\{overridden\}" role="group" aria-label="Color preset"/);
+	// Marked, not removed: the presets, the accent box and the mode radios are all still drawn.
+	assert.match(tab, /role="group" aria-label="Color preset">\s*<div[^>]*>Colors\$\{overridden\(polycarp !== undefined\)\}/);
 	assert.match(tab, /id="tk-accent-text"/);
 	assert.match(tab, /name="tk-mode"/);
 	assert.match(tab, /modeOverridden/);
+});
+
+// #13 sol-F2: dimming a whole group dropped its text below the contrast the panel checks.
+test("overridden controls are marked in words, never dimmed", () => {
+	const tab = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "dialogs", "AppearanceTab.ts"), "utf8");
+	assert.doesNotMatch(tab, /opacity-/);
+	assert.match(tab, /\(overridden by the theme\)/);
+	assert.match(tab, /Mode\$\{overridden\(modeOverridden\)\}/);
+});
+
+// #13 sol-F3: under a theme, typing its accent compared against the theme's own and saved nothing.
+test("typing the theme's accent saves it; typing the saved one changes nothing", () => {
+	const theme = parsePolycarpTheme(fixtureFile("still-water"));
+	assert.ok(theme);
+	for (const dark of [false, true]) {
+		const own = effectiveAccent({ preset: "slate" }, dark);
+		const themes = effectiveAccent({ preset: "slate" }, dark, theme);
+		assert.notEqual(own, themes, "the fixture's accent differs from slate's");
+		assert.equal(accentToSave({ preset: "slate" }, dark, themes), themes);
+		assert.equal(accentToSave({ preset: "slate" }, dark, own), undefined);
+		assert.equal(accentToSave({ preset: "slate", accent: "#d6336c" }, dark, "#d6336c"), undefined);
+	}
+	const tab = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "dialogs", "AppearanceTab.ts"), "utf8");
+	assert.match(tab, /accentToSave\(choice, this\.isDark\(\), hex\)/);
 });
 
 test("a palette that fails contrast is refused, with the pair named: white text on white backgrounds", () => {
