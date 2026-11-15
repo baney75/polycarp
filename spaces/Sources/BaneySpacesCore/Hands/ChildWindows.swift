@@ -662,6 +662,12 @@ public struct MutationTarget: Equatable, Sendable {
 }
 
 public enum MutationGate {
+    /// The window now: placed, else, for a window Polycarp doesn't place, the child read of it (a panel a menu raised).
+    /// 11-15: `close` on the Fonts panel `menu` named answered "gone", because only placed windows were read here.
+    public static func live(_ w: HandsWindow, placed: HandsWindow?, child: HandsWindow?) -> HandsWindow? {
+        placed ?? (w.workspace == nil ? child : nil)
+    }
+
     public static func refusal(mode: AgentAccessMode, targets: [MutationTarget]) -> HandsError? {
         if let e = AgentAccessGate.actingRefusal(mode: mode) { return e }
         for t in targets {

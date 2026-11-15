@@ -36,6 +36,23 @@ final class HiddenPanelTests: XCTestCase {
         XCTAssertFalse(HiddenPanel.closed(inWindows: true, focused: false))
     }
 
+    /// Live on d5f6c5c: `menu` named panel 67369, then `close --window 67369` answered "window 67369 is gone", because the
+    /// close's gate read only placed windows. A child is read there too; a placed window still wins.
+    func testCloseSeesTheChildPanelInItsGate() throws {
+        let panel = HandsWindow(id: 67369, pid: 5, app: "TextEdit", workspace: nil)
+        let placed = HandsWindow(id: 67366, pid: 5, app: "TextEdit", workspace: 9)
+        XCTAssertEqual(MutationGate.live(panel, placed: nil, child: panel), panel)
+        XCTAssertNil(MutationGate.live(panel, placed: nil, child: nil), "a child the app no longer shows is gone")
+        XCTAssertEqual(MutationGate.live(placed, placed: placed, child: nil), placed)
+        XCTAssertNil(MutationGate.live(placed, placed: nil, child: panel), "a placed window that left is gone, never read as a child")
+        let router = try read("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        let body = try XCTUnwrap(router.range(of: "func mutateOnMain<T>")).lowerBound
+        let gate = String(router[body...].prefix(2_000))
+        XCTAssertTrue(gate.contains("m[w.id] = childWindow(w.id)"))
+        XCTAssertTrue(gate.contains("let live = MutationGate.live(w, placed: placed, child: children[w.id])"))
+        XCTAssertTrue(gate.contains("scope.allowed ? sheetProblem(l, agent: agent, session: session) ?? inspectProblem(l) : nil"), "a child is inspected in the pass too")
+    }
+
     /// The read, `menu` and `close` use the model; the app target can't be imported, so these read it.
     func testTheReadMenuAndCloseUseIt() throws {
         let ax = try read("Sources/BaneySpaces/Hands/ChildWindowsAX.swift")
