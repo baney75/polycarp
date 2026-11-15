@@ -179,7 +179,7 @@ verbs, in MCP and the CLI, all on the agent workspace only:
   the scope rules; `close` just won't close it), and reports `focus: {changed, returned}` when the launch took the keyboard and
   BaneySpaces gave it back. URLs stay refused until agent browser profiles exist.
 - `arrange full | halves | thirds | grid | frames id=x,y,w,h …`: agent workspace windows only, laid out on the display
-  that shows the agent workspace (parked: the one ⌘1–⌘9 change, where it is shown next; `AgentArea`). A parked window
+  that shows the agent workspace (parked: the one ⌘1 to ⌘9 change, where it is shown next; `AgentArea`). A parked window
   keeps its new size and takes the position when the workspace is shown.
 - `move --window N [--frame x,y,w,h]`: onto the agent workspace only; a window on Donovan's workspaces only if lent or
   under Full Access; never while the agent workspace is shown. The agent workspace, the window, its scope and whether it is

@@ -14,7 +14,7 @@ final class AgentAreaTests: XCTestCase {
         XCTAssertEqual(AgentArea.visible(displays: displays, showing: "main", focused: "second"), main)
     }
 
-    /// Parked: the windows take their place when it is shown, which is on the display ⌘1–⌘9 change.
+    /// Parked: the windows take their place when it is shown, which is on the display ⌘1 to ⌘9 change.
     func testAParkedAgentWorkspaceUsesTheDisplayItIsShownOnNext() {
         XCTAssertEqual(AgentArea.visible(displays: displays, showing: nil, focused: "second"), second)
     }
