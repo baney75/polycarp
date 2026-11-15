@@ -11,7 +11,7 @@ def olive(cx,cy,rx,ry,rot): return f'<ellipse cx="{cx}" cy="{cy}" rx="{rx}" ry="
 stem='M10 56C20 48 33 35 45 19'
 leaves=[leaf(45,19,62,15,5.0),leaf(40,25.5,112,15,4.8),leaf(38,27.5,14,17,4.8),leaf(28,38,118,15,4.6)]
 full=f'<path d="{stem}" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/><g fill="currentColor"><path d="{" ".join(leaves)}"/>{olive(40,44,6.6,8.4,-14)}{olive(22,54,5.8,7.4,-14)}</g><path d="M32.5 33C35 34.5 37 35.5 38.5 36.5M16.5 51C18 50.5 19.5 49 20.5 47.5" fill="none" stroke="currentColor" stroke-width="2"/>'
-# small cut: thick stem, two leaves, one olive
+# small cut: thick stem, three leaves, one olive
 sstem='M8 58C20 49 33 36 42 23'
 sl=[leaf(42,23,58,23,8.2),leaf(35,31.5,104,23,7.4),leaf(39,27,8,21,7.0)]
 small=f'<path d="{sstem}" fill="none" stroke="currentColor" stroke-width="5.4" stroke-linecap="round"/><g fill="currentColor"><path d="{" ".join(sl)}"/>{olive(29,52,9.2,10.6,-12)}</g>'
