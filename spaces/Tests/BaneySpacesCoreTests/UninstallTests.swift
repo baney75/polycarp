@@ -382,6 +382,29 @@ final class UninstallTests: XCTestCase {
         return dir.path
     }
 
+    /// #24: the MCP entries Settings > Browser > Add wrote go with the app, and only those: an entry pointed elsewhere stays.
+    func testRemovesOnlyTheMCPEntriesThatRunPolycarpsHelper() throws {
+        let dir = home.appendingPathComponent("fakebin")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let log = home.appendingPathComponent("agents.log")
+        let helper = "\(home.path)/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser"
+        // claude has Polycarp's entry under the current name; codex has a "polycarp" of the person's own and an old one of ours.
+        for (agent, entries) in [("claude", ["polycarp": helper]), ("codex", ["polycarp": "/opt/theirs/mcp", "tabkyra": helper])] {
+            var script = "#!/bin/sh\necho \"$0 $*\" >> '\(log.path)'\n[ \"$2\" = get ] || exit 0\ncase \"$3\" in\n"
+            for (name, command) in entries { script += "  \(name)) echo '  Command: \(command)'; echo '  Args: mcp' ;;\n" }
+            script += "  *) echo 'not found' >&2; exit 1 ;;\nesac\n"
+            let file = dir.appendingPathComponent(agent)
+            try script.write(to: file, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        }
+        _ = try uninstall(extraPath: dir.path)
+        let calls = try String(contentsOf: log, encoding: .utf8).split(separator: "\n").map { $0.replacingOccurrences(of: dir.path + "/", with: "") }
+        XCTAssertTrue(calls.contains("claude mcp remove --scope user polycarp"), "\(calls)")
+        XCTAssertTrue(calls.contains("codex mcp remove tabkyra"), "\(calls)")
+        XCTAssertFalse(calls.contains("codex mcp remove polycarp"), "the person's own entry stays: \(calls)")
+        XCTAssertFalse(calls.contains { $0.hasPrefix("claude mcp remove") && $0.hasSuffix("tabkyra") }, "\(calls)")
+    }
+
     /// On the owner's Mac the local signing key signs the releases: uninstalling moves it aside.
     func testTheReleaseSigningKeyIsKeptNotDeleted() throws {
         try write("Library/Application Support/Polycarp/Signing/polycarp-signing.keychain-db", "keychain")

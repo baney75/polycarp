@@ -347,6 +347,19 @@ if [ -s "$retired" ]; then
     fi
   done < "$retired"
 fi
+# The MCP entries Settings > Browser > Add wrote with `claude mcp add` and `codex mcp add` (also under the old name).
+# Only an entry whose command is Polycarp's helper goes; one the person pointed elsewhere stays. Each call is capped at
+# 15 seconds, since an agent's CLI can stall checking its servers.
+for agent in claude codex; do
+  command -v "$agent" >/dev/null 2>&1 || continue
+  for name in polycarp tabkyra; do
+    (cd "$HOME" && perl -e 'alarm 15; exec @ARGV' "$agent" mcp get "$name" </dev/null 2>/dev/null) \
+      | grep -q "Polycarp.app/Contents/Resources/browser/polycarp-browser" || continue
+    scope=(); [ "$agent" = claude ] && scope=(--scope user)
+    (cd "$HOME" && perl -e 'alarm 15; exec @ARGV' "$agent" mcp remove ${scope[@]+"${scope[@]}"} "$name" </dev/null >/dev/null 2>&1) \
+      || problem "$agent still lists Polycarp's MCP server \"$name\": run \`$agent mcp remove $name\` to remove it."
+  done
+done
 if [ -n "$LEGACY_APP" ] && [ -x "$LEGACY_APP/Contents/Resources/bin/baneyspaces" ]; then
   # Polycarp took these two names over from BaneySpaces; give them back to it.
   for name in baneyspaces ghostdeck; do
