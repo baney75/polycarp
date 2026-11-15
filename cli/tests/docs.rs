@@ -312,3 +312,69 @@ fn the_wordmark_minimum_is_a_height() {
     let readme = repo_file("brand/README.md");
     assert!(readme.contains("the wordmark 72 px tall"), "{readme}");
 }
+
+/// #3 second-S4: the script that makes brand/export is committed, and it names every file there at the size the file
+/// has, so a rerun makes the same set.
+#[test]
+fn every_brand_export_comes_from_the_export_script() {
+    let script = repo_file("brand/tools/export.py");
+    // ("folder", "name-{}.png", "source.svg", [sizes]) lines.
+    let mut made = BTreeSet::new();
+    for line in script
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("(\"") && l.contains(".svg\""))
+    {
+        let quoted: Vec<&str> = line.split('"').collect();
+        let (folder, pattern) = (quoted[1], quoted[3]);
+        let sizes = line.rsplit_once('[').unwrap().1.split(']').next().unwrap();
+        for size in sizes.split(',').map(|s| s.trim().parse::<u32>().unwrap()) {
+            made.insert((
+                format!("{folder}/{}", pattern.replace("{}", &size.to_string())),
+                size,
+            ));
+        }
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../brand/export");
+    let mut found = BTreeSet::new();
+    for folder in std::fs::read_dir(&root).unwrap() {
+        let folder = folder.unwrap().path();
+        for file in std::fs::read_dir(&folder).unwrap() {
+            let file = file.unwrap().path();
+            if file.extension().is_some_and(|e| e == "png") {
+                let png = std::fs::read(&file).unwrap();
+                let width = u32::from_be_bytes(png[16..20].try_into().unwrap());
+                let height = u32::from_be_bytes(png[20..24].try_into().unwrap());
+                assert_eq!(width, height, "{file:?}");
+                let rel = file
+                    .strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                found.insert((rel, width));
+            }
+        }
+    }
+    assert!(found.len() >= 30, "{found:?}");
+    assert_eq!(made, found, "export.py's sets and brand/export differ");
+    let ico = std::fs::read(root.join("windows/polycarp.ico")).unwrap();
+    let ico_line = script.lines().find(|l| l.starts_with("ICO = ")).unwrap();
+    let ico_sizes = ico_line
+        .rsplit_once('[')
+        .unwrap()
+        .1
+        .split(']')
+        .next()
+        .unwrap()
+        .split(',')
+        .count();
+    assert_eq!(
+        u16::from_le_bytes([ico[4], ico[5]]) as usize,
+        ico_sizes,
+        "{ico_line}"
+    );
+    assert!(
+        repo_file("brand/README.md").contains("`export.py`"),
+        "the README names the script"
+    );
+}

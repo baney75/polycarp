@@ -25,7 +25,7 @@ Tagline: **Bear much fruit.** When a line must explain the product: **Speak it. 
 | `icon-android-foreground.svg` | Android adaptive icon foreground, on a `#59693F` background layer |
 | `browser/icon.svg`, `browser/icon-16.svg` | The browser extension: the branch and a pointer at 48 px and up, and the bolder branch alone at 16 and 32, which is what a toolbar shows |
 | `export/` | PNG sets per platform, `windows/polycarp.ico`, and `tray/` black-on-transparent template images |
-| `tools/` | The scripts that draw the marks and wordmark. `gen.py` takes an output folder |
+| `tools/` | The scripts that draw the marks and wordmark. `gen.py` takes an output folder. `export.py` renders `export/` and `brand-sheet.png` from those SVGs (needs ImageMagick 7 with Inkscape or librsvg) |
 
 ## Color
 
