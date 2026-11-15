@@ -1,7 +1,8 @@
 // Themed pages: every preset's text/background and accent/button-text pairs reach WCAG AA (4.5:1)
 // in light and dark, a custom accent gets readable button text, and the consent page follows the theme.
 import assert from "node:assert/strict";
-import { readFileSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { after, test } from "node:test";
 import { machine, tempRoot, rmSync } from "./helpers/hub-fixture.mjs";
 import { loadTs } from "./helpers/bundle-ts.mjs";
@@ -163,6 +164,32 @@ test("all six built-in Polycarp themes load and map their roles to the palette",
 				assert.deepEqual(t.palettes[mode], { bg: c.background, panel: c.surface, text: c.foreground, muted: c.muted, border: c.border, accent: c.accent, accentText: c.on_accent, danger: c.urgent });
 			}
 		});
+	}
+});
+
+test("with no POLYCARP_CONFIG_DIR, as in a browser started from the Dock, the helper reads the folder `theme folder --pin` recorded (#13)", () => {
+	const keys = ["POLYCARP_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME", "USERPROFILE", "APPDATA"];
+	const keep = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+	const root = tempRoot("pc-pin-");
+	try {
+		for (const k of keys) delete process.env[k];
+		process.env.HOME = process.env.USERPROFILE = join(root, "home");
+		process.env.APPDATA = join(root, "appdata");
+		const pinHome = process.platform === "win32" ? join(root, "appdata", "Polycarp") : join(root, "home", ".config", "polycarp");
+		mkdirSync(pinHome, { recursive: true });
+		const moved = join(root, "moved");
+		writeFileSync(join(pinHome, "config-dir"), `${moved}\n`);
+		assert.equal(poly.polycarpConfigDir(), pinHome, "a pin to a missing folder is ignored");
+		mkdirSync(moved);
+		assert.equal(poly.polycarpConfigDir(), moved);
+		process.env.POLYCARP_CONFIG_DIR = join(root, "explicit");
+		assert.equal(poly.polycarpConfigDir(), join(root, "explicit"), "the variable still wins");
+	} finally {
+		for (const k of keys) {
+			if (keep[k] === undefined) delete process.env[k];
+			else process.env[k] = keep[k];
+		}
+		rmSync(root, { recursive: true, force: true });
 	}
 });
 
