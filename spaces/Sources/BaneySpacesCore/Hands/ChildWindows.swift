@@ -102,6 +102,11 @@ public enum ChildWindowRule {
         }
     }
 
+    /// #124 round 1 first-F2, round 2 first-F2: whether the sheet check can stop before reading the app. A window known to
+    /// hold no sheet has nothing for `sheetOnWindowRefusal` to refuse, so no scopes, inspections or child read are needed;
+    /// unsure (nil) reads everything, as before.
+    public static func noSheetToCheck(sheets: Int?) -> Bool { sheets == 0 }
+
     /// A placed window that holds a sheet (with or without a window number of its own) on an app split between the agent and
     /// Donovan: its snapshot and refs reach the sheet, so the window is usable only while every sheet on it is one this
     /// session's action raised. Unsure counts as not.
