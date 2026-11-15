@@ -22,18 +22,8 @@ enum HandsCLI {
         guard let data = try? JSONEncoder().encode(request), let text = String(data: data, encoding: .utf8) else {
             return .failure(HandsError(.badArguments, "couldn't encode the request", suggestion: "Check the arguments.", retry: .never))
         }
-        guard let reply = Wire.call(Wire.Request(op: .hands, text: text, caller: caller), timeout: timeout) else {
-            // Something answered the connection but the reply didn't come in time: the action may have landed. A socket
-            // file with nobody behind it (a crash leaves one) is not running.
-            if SocketClaim.anyLive(Wire.socketCandidates()) {
-                let acts = HandsTools.tool(verb: request.verb)?.acts ?? false
-                return .failure(HandsError(.timeout, "Polycarp didn't answer in time", suggestion: acts
-                    ? "The action may have landed: read the element back with `polycarp-spaces agent get` before trying again."
-                    : "Try again in a moment.", retry: acts ? .never : .safe))
-            }
-            return .failure(HandsError(.notRunning, "Polycarp isn't running, or hasn't finished starting (it needs Accessibility)",
-                                       suggestion: "Open Polycarp and run `polycarp-spaces doctor`.", retry: .safe))
-        }
+        let (answer, connected) = Wire.send(Wire.Request(op: .hands, text: text, caller: caller), timeout: timeout)
+        guard let reply = answer else { return .failure(.noReply(verb: request.verb, connected: connected)) }
         if let line = reply.info?["envelope"], let env = HandsEnvelope.decode(line) { return env }
         return .failure(HandsError(.engineError, reply.error ?? "the app answered without a result", suggestion: "Update Polycarp and try again.", retry: .never))
     }

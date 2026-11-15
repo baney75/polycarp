@@ -134,7 +134,9 @@ final class ChildParentInspectionTests: XCTestCase {
     }
 
     func testTheRouterInspectsParentsInEveryChildDecision() throws {
-        XCTAssertTrue(try source("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift").contains("ChildWindowRule.inspected(all.filter { $0.pid == c.pid }"))
+        let ws = try source("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
+        XCTAssertTrue(ws.contains("ChildWindowRule.inspected(all.filter { $0.pid == pid }"))
+        XCTAssertTrue(ws.contains("decideChildren([c], all: all, agent: agent, session: session)[0].decision"), "one child goes the same way")
     }
 }
 
