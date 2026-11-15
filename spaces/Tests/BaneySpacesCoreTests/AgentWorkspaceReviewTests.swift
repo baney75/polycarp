@@ -24,7 +24,7 @@ final class MovedInWindowTests: XCTestCase {
         let there = word(9)
         let base = ScopeGuard.check(there, agentWorkspace: 9, lends: lends, now: now)
         XCTAssertEqual(base, .onAgentWorkspace)
-        XCTAssertEqual(book.decide(there, base: base, lends: lends, now: now, mode: .standard), .onAgentWorkspace, "usable while lent")
+        XCTAssertEqual(book.decide(there, base: base, lends: lends, now: now, mode: .standard), .lent, "usable while lent, as lent")
         let later = now.addingTimeInterval(601)
         guard case .denied(let e) = book.decide(there, base: ScopeGuard.check(there, agentWorkspace: 9, lends: lends, now: later), lends: lends, now: later, mode: .standard) else {
             return XCTFail("the agent workspace must grant nothing once the lend ended")

@@ -207,7 +207,7 @@ final class HandsRouter {
     func inUseVerdict(_ w: HandsWindow, agent: Int?, verb: String, delivery: InUseDelivery) -> (state: InUseState, verdict: InUseRule.Verdict) {
         let state = UserActivity.shared.state(w.pid)
         guard state.busy else { return (state, .proceed) }
-        let onAgentWorkspace = agent != nil && w.workspace == agent
+        let onAgentWorkspace = HandsMovedIn.shared.onAgentsOwnWorkspace(w, agentWorkspace: agent)
         var windows: (focused: Bool?, main: Bool?) = (nil, nil)
         if onAgentWorkspace, InUseRule.semantic.contains(verb), delivery == .headlessAX { windows = BackgroundAX.isFocusedOrMain(w.id, pid: w.pid) }
         return (state, InUseRule.decide(verb: verb, state: state, onAgentWorkspace: onAgentWorkspace,
