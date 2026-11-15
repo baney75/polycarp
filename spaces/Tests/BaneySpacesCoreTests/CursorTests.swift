@@ -1306,3 +1306,25 @@ final class FocusReturnTests: XCTestCase {
         XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: later.addingTimeInterval(1)), .none)
     }
 }
+
+/// PR 20 second-S6: `agent run` with your Terminal in front. Its new window carries the run's script name, so it is the
+/// agent's; any other window of the app you are in stays yours.
+final class RunClaimTests: XCTestCase {
+    func testTheRunsWindowIsClaimedEvenFromTheTerminalYouAreIn() throws {
+        let name = ClaimRule.runScriptName()
+        XCTAssertTrue(ClaimRule.isRunsWindow(claimTitle: name, windowTitle: "~ - \(name) - 80×24"))
+        XCTAssertTrue(ClaimRule.applies(windowPid: 7, frontPid: 7, agentStartedProcess: false,
+                                        windowIsTheRunsOwn: ClaimRule.isRunsWindow(claimTitle: name, windowTitle: "\(name) - zsh")))
+        XCTAssertFalse(ClaimRule.isRunsWindow(claimTitle: name, windowTitle: ""), "a window with no title yet stays yours")
+        XCTAssertFalse(ClaimRule.isRunsWindow(claimTitle: name, windowTitle: "~ - zsh"), "your own ⌘N")
+        XCTAssertFalse(ClaimRule.isRunsWindow(claimTitle: "notes.txt", windowTitle: "notes.txt"), "an open's file name could be yours")
+        XCTAssertFalse(ClaimRule.isRunsWindow(claimTitle: nil, windowTitle: name))
+
+        let root = HandsSourceTests.root.appendingPathComponent("Sources/BaneySpaces")
+        let spaces = try String(contentsOf: root.appendingPathComponent("Spaces.swift"), encoding: .utf8)
+        XCTAssertTrue(spaces.contains("windowIsTheRunsOwn: ClaimRule.isRunsWindow(claimTitle: c.title, windowTitle: w.title)"), "a new window")
+        XCTAssertTrue(spaces.contains("($0.pid != front || ClaimRule.isRunsWindow(claimTitle: title, windowTitle: $0.title))"), "the title search")
+        let engine = try String(contentsOf: root.appendingPathComponent("Session/Engine.swift"), encoding: .utf8)
+        XCTAssertTrue(engine.contains("let name = ClaimRule.runScriptName()"), "the run names its script the way the rule reads it")
+    }
+}
