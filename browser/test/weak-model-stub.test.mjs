@@ -243,7 +243,10 @@ const solutions = {
 		await s.call("open", { app: "Jotter", targets: [join(s.dir, "shopping.txt")] });
 		const t = (await s.call("snapshot", { app: "Jotter" })).text;
 		const area = s.row(t, /textarea/);
-		await s.call("press", { ref: area, key: "cmd+down" });
+		// A caret move lands and is read back as landed, as AXSelectedTextRange shows it (PR 272 second-F5).
+		const press = await s.call("press", { ref: area, key: "cmd+down" });
+		assert.equal(press.isError, false, press.text);
+		assert.equal(press.json.data.verified, true, press.text);
 		await s.call("type", { ref: area, text: "eggs" });
 	},
 	async "stub-jotter-save"(s) {

@@ -106,6 +106,7 @@ logic, and the cheap deterministic tests in `cli/test` hold each fix.
 
 ## Platforms
 
-The browser half and the stub computer tasks run wherever the e2e harness runs (Chromium on Mac, Linux, Windows). The
+The browser half runs wherever the e2e harness runs (Chromium on Mac, Linux, Windows); the stub computer tasks run on
+Mac and Linux (their launcher is a sh script, and the runner refuses `--kind stub` on Windows). The
 Mac computer tasks need the Mac helper; on Linux and Windows the runner refuses computer tasks, and `computer_status` tells the model to use the
 browser tools instead.

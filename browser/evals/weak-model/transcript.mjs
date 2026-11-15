@@ -15,10 +15,23 @@ export function startedCopy(text) {
 	return undefined;
 }
 
+/**
+ * The Transcript options for a run of `kind`. A Mac run tracks the copies its answers report and hands each to
+ * `register`; a stub run tracks none, since its pids are the stub's own numbers and a kill would hit whatever real
+ * process holds one (PR 272 first-F1).
+ */
+export function copyTracking(kind, register) {
+	return kind === "stub" ? { copies: false } : { onStarted: register };
+}
+
 export class Transcript {
-	/** `onStarted(pid)` is called as soon as a computer_open answer reports a copy this run started. */
-	constructor({ onStarted = () => {} } = {}) {
+	/**
+	 * `onStarted(pid)` is called as soon as a computer_open answer reports a copy this run started. With `copies` false
+	 * no answer is read as a copy.
+	 */
+	constructor({ onStarted = () => {}, copies = true } = {}) {
 		this.onStarted = onStarted;
+		this.copies = copies;
 		/** Pids of the copies this run's answers reported, filled as each answer arrives. */
 		this.started = new Set();
 		this.calls = [];
@@ -51,7 +64,7 @@ export class Transcript {
 				const text = typeof c.content === "string" ? c.content : (c.content ?? []).map((p) => (p.type === "text" ? p.text : `[${p.type}]`)).join("\n");
 				call.error = c.is_error === true;
 				call.chars = text.length;
-				if (!call.error && toolOf(call) === "computer_open") {
+				if (this.copies && !call.error && toolOf(call) === "computer_open") {
 					const pid = startedCopy(text);
 					if (pid) {
 						call.startedPid = pid;
@@ -81,6 +94,7 @@ export class Transcript {
 			stop: timedOut ? "timeout" : (r?.subtype ?? "no_result"),
 			turns: r?.num_turns,
 			ms,
+			apiMs: r?.duration_api_ms,
 			mcpStatus: this.mcpStatus,
 			toolCount: this.toolCount,
 			apiError: r?.is_error ? clip(String(r.result ?? ""), 400) : undefined,

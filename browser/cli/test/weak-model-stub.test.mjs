@@ -14,7 +14,10 @@ const stubBin = join(here, "..", "..", "evals", "weak-model", "stub", "hands.mjs
 const root = mkdtempSync(join(tmpdir(), "polycarp-wm-stub-cli-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 
-test("through `polycarp mcp`, a stub run's model sees the computer tools and its calls reach the stub", async () => {
+// The stub's launcher is a sh script, so stub runs are POSIX only (run.mjs refuses --kind stub on Windows).
+const posix = process.platform === "win32" && "the stub launcher is a sh script: POSIX only";
+
+test("through `polycarp mcp`, a stub run's model sees the computer tools and its calls reach the stub", { skip: posix }, async () => {
 	const cli = join(here, "..", "dist", "index.js");
 	const dir = join(root, "cli-run");
 	mkdirSync(dir, { recursive: true });
@@ -45,6 +48,11 @@ test("through `polycarp mcp`, a stub run's model sees the computer tools and its
 		const rows = await client.callTool({ name: "computer_snapshot", arguments: { window: 61001 } });
 		assert.match(rows.content[0].text, /switch "Eco mode" =0/);
 		assert.equal(JSON.parse(readFileSync(state, "utf8")).windows[0].app, "Thermo");
+		// A run_steps that stops on a failed step answers at once: no wait on the stopped run (PR 272 first-F3).
+		const start = Date.now();
+		const run = await client.callTool({ name: "computer_run_steps", arguments: { steps: [{ tool: "click", args: { ref: "@s99:e1" } }, { tool: "toggle", args: { ref: "@s99:e2" } }] } });
+		assert.ok(Date.now() - start < 5000, `run_steps answered in ${Date.now() - start} ms`);
+		assert.match(run.content.map((c) => c.text).join("\n"), /step 1|ref|stale|unknown/i, "the stop says why");
 	} finally {
 		await client.close();
 		rmSync(sock, { recursive: true, force: true });
