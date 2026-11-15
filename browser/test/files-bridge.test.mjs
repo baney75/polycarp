@@ -304,3 +304,11 @@ test("a fetched body nobody reads leaves the page in time", async () => {
 	timers[0].f();
 	assert.deepEqual(Object.keys(store), []);
 });
+
+test("the side panel's upload question never sends the person to the agent to learn where the file is", async () => {
+	const { readFileSync } = await import("node:fs");
+	const panel = readFileSync(new URL("../src/dialogs/BridgeTab.ts", import.meta.url), "utf8");
+	// The question exists because the agent may be acting on page text, so its answer about the folder can't be trusted.
+	assert.doesNotMatch(panel, /Ask the agent which folder/);
+	assert.match(panel, /say yes only if you asked for this file/);
+});
