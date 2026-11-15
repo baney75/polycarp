@@ -364,6 +364,16 @@ public enum BackgroundRefusal {
     }
 }
 
+/// The window background input goes to, read again at execution: a placed window from the model, a child window (a dialog
+/// or alert, no workspace) from its app, since the model never holds it (#124 sol-F2, sol-sol-F3). Nil when it is gone or
+/// another process holds the number now.
+public enum BackgroundTarget {
+    public static func live(_ w: HandsWindow, placed: HandsWindow?, child: () -> HandsWindow?) -> HandsWindow? {
+        guard let live = placed ?? (w.workspace == nil ? child() : nil), live.pid == w.pid else { return nil }
+        return live
+    }
+}
+
 // MARK: - The planner
 
 public enum BackgroundPlanner {
