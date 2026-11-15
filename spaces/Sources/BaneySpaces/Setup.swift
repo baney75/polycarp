@@ -198,49 +198,45 @@ final class SetupModel: ObservableObject {
         if let askedAt, !trusted, Date().timeIntervalSince(askedAt) > 8 { put(\.staleGrant, true) }
         if trusted { put(\.staleGrant, false) }
         if !wasReady && ready { becameReady() }
-        // The slower checks once a second.
-        if ticks % 4 == 0 { reloadOptional() }
-        // An app's first window can come long after it launches, and one can close with the app still
-        // running: no notification says so, so the Automation list reads every few seconds while up.
-        if ticks % 12 == 0, tab == .automation, windowVisible() { reloadParked() }
+        // The slower checks once a second. An app's first window can come long after it launches, and one can close
+        // with the app still running: no notification says so, so the Automation list reads every few seconds while up.
+        let due = reads.tick(ticks, pane: tab.rawValue, visible: windowVisible())
+        if due.slower { reloadOptional() }
+        if due.windows { reloadParked() }
     }
 
-    private var lastRead: TimeInterval?
+    private lazy var reads = SettingsWindowReads(ask: SetupModel.askLogin) { [weak self] status in
+        self?.put(\.openAtLogin, status == .enabled)
+        self?.put(\.loginNeedsApproval, status == .requiresApproval)
+    }
 
-    /// The window opened, took the keyboard or came forward: reads what it shows, once for all three (`SettingsReads`),
-    /// and the Automation list only while that pane is up. `force` reads even if it read a moment ago.
-    func readShown(force: Bool = false) {
+    /// The window opened, took the keyboard or came forward: reads what it shows, once for all three, and the
+    /// Automation list only when it opens on that pane (`SettingsWindowReads.shown`).
+    func readShown(opening: Bool = false) {
         let now = ProcessInfo.processInfo.systemUptime
-        guard force || SettingsReads.due(last: lastRead, now: now) else { return }
-        lastRead = now
-        reload()
-        let windows = SettingsReads.readsWindows(pane: tab.rawValue)
+        guard let windows = reads.shown(pane: tab.rawValue, opening: opening, now: now) else { return }
+        readNow()
         if windows { reloadParked() }
         let took = ProcessInfo.processInfo.systemUptime - now
         if let line = SettingsReads.slowLine(seconds: took, pane: tab.rawValue, windows: windows) { Trace.log(line) }
     }
 
     func reload() {
+        readNow()
+        reads.refreshLogin()
+    }
+
+    private func readNow() {
         put(\.trusted, AXIsProcessTrusted())
         put(\.aeroSpaceRunning, SetupModel.isAeroSpaceRunning)
         reloadOptional()
-        readLogin()
     }
 
-    /// Inside the app `SMAppService.mainApp.status` takes about 0.1 s (2 ms in a bare binary), so it's read once for
-    /// the first model and then off the main thread, when the window shows or comes forward (`readShown`) or the
-    /// switch is flipped, never in `tick`. Approving the item in System Settings brings Polycarp forward, which reads it.
-    private static let firstLoginStatus = SMAppService.mainApp.status
-
-    func readLogin() {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let status = SMAppService.mainApp.status
-            DispatchQueue.main.async { [weak self] in
-                self?.put(\.openAtLogin, status == .enabled)
-                self?.put(\.loginNeedsApproval, status == .requiresApproval)
-            }
-        }
-    }
+    /// Inside the app this takes about 0.1 s (2 ms in a bare binary), so it's asked on the main thread once, for the
+    /// first model, and by `finish`; otherwise through `reads`, off the main thread, never in `tick`. Approving the item
+    /// in System Settings brings Polycarp forward, which reads it.
+    private static func askLogin() -> SMAppService.Status { SMAppService.mainApp.status }
+    private static let firstLoginStatus = askLogin()
 
     /// Sets a published value only when it changed: setting one, even to the same value, redraws the whole open pane.
     private func put<T: Equatable>(_ key: ReferenceWritableKeyPath<SetupModel, T>, _ value: T) {
@@ -438,7 +434,7 @@ final class SetupModel: ObservableObject {
             NSLog("Polycarp: open at login failed: %@", error.localizedDescription)
         }
         reloadOptional()
-        readLogin()
+        reads.refreshLogin()
     }
 
     /// Setup's last act: start with the Mac unless the person already decided.
@@ -447,7 +443,7 @@ final class SetupModel: ObservableObject {
         // Someone who already decided (here, or in 0.1, which recorded "loginItemOffered") keeps
         // their choice; so does anyone whose login item macOS already knows about.
         guard !defaults.bool(forKey: "loginItemChosen"), !defaults.bool(forKey: "loginItemOffered"),
-              SMAppService.mainApp.status == .notRegistered else { return }
+              SetupModel.askLogin() == .notRegistered else { return }
         defaults.set(true, forKey: "loginItemChosen")
         try? SMAppService.mainApp.register()
     }
@@ -1272,7 +1268,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         model.justEnabled = false
         if !model.ready { model.tab = model.trusted ? .general : .permissions }
         model.dockAgentStatus = WorkspaceDock.agentStatus
-        model.readShown(force: true)
+        model.readShown(opening: true)
         if model.tab == .updates { model.onUpdatesShown?() }
         model.reloadBangs()
         model.startWatching()
