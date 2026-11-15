@@ -6,8 +6,12 @@ import BaneySpacesCore
 /// rule are `AXTreeRead` in the core: a sheet or dialog any part of which was cut off is unreadable, so it is refused.
 enum HandsAXTree {
     static let perLevel = AXTreeRead.perLevel
+    static let timeout: Float = 0.25
 
+    /// The timeout is set on every element read: it holds only for the element it is set on, so a hung app's sheet read
+    /// five levels down waited the system default at each one, on the main thread (#124 round 1 first-F4).
     private static func copy(_ e: AXUIElement, _ attribute: String) -> (CFTypeRef?, AXError) {
+        AXUIElementSetMessagingTimeout(e, timeout)
         var out: CFTypeRef?
         let r = AXUIElementCopyAttributeValue(e, attribute as CFString, &out)
         return (r == .success ? out : nil, r)
