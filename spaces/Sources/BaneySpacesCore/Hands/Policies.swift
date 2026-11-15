@@ -65,6 +65,15 @@ public enum SettingsPaneLink {
         guard let first = rest.first, first.isLetter, rest.allSatisfy(allowed.contains) else { return false }
         return rest.filter { $0 == "?" }.count <= 1
     }
+
+    /// System Settings keeps one window, so a link sent to a copy already running moves that window, which may be Donovan's.
+    /// A pane link goes only to a copy the open starts itself.
+    public static func runningRefusal(targets: [String], alreadyRunning: Bool) -> HandsError? {
+        guard alreadyRunning, targets.contains(where: isLink) else { return nil }
+        return HandsError(.inUse, "System Settings is already open, and a pane link would move its one window",
+                          suggestion: "Use the System Settings window already on the agent workspace and pick the pane in its sidebar, or open the link once it has quit.",
+                          retry: .never)
+    }
 }
 
 /// `agent open`'s one gate, used by the router and by the session engine's raw `open` (which other callers on the socket reach).

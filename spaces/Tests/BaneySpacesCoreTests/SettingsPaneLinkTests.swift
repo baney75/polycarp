@@ -33,4 +33,18 @@ final class SettingsPaneLinkTests: XCTestCase {
         }
         XCTAssertTrue(panes.allSatisfy(SettingsPaneLink.isLink))
     }
+
+    /// System Settings has one window: a link sent to a running copy would move it, and it may be Donovan's.
+    func testAPaneLinkNeverGoesToARunningCopy() throws {
+        XCTAssertEqual(SettingsPaneLink.runningRefusal(targets: [panes[0]], alreadyRunning: true)?.code, .inUse)
+        XCTAssertNil(SettingsPaneLink.runningRefusal(targets: [panes[0]], alreadyRunning: false))
+        XCTAssertNil(SettingsPaneLink.runningRefusal(targets: ["/tmp/a.txt"], alreadyRunning: true), "files to a running app are unchanged")
+        // Checked in the running-app branch, before anything is claimed or opened.
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
+        let branch = try XCTUnwrap(src.range(of: "if !separate, let running = NSWorkspace.shared.runningApplications.first"))
+        let tail = String(src[branch.upperBound...])
+        let refusal = try XCTUnwrap(tail.range(of: "SettingsPaneLink.runningRefusal(targets: Array(args.dropFirst()), alreadyRunning: true)"))
+        let grant = try XCTUnwrap(tail.range(of: "AgentAccess.shared.grant(pid)"))
+        XCTAssertLessThan(refusal.lowerBound, grant.lowerBound)
+    }
 }
