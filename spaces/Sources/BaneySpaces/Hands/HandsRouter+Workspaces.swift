@@ -88,6 +88,8 @@ extension HandsRouter {
     /// sol-F1: a placed window of an app split between the agent and Donovan, holding a sheet this session's action didn't
     /// raise (`ChildWindowRule.sheetOnWindowRefusal`). Nothing to read when the app isn't split.
     func sheetProblem(_ w: HandsWindow, agent: Int?, session: String) -> HandsError? {
+        // Most windows hold no sheet: then nothing else is read (round 1 first-F2, round 2 first-F2).
+        if ChildWindowRule.noSheetToCheck(sheets: BackgroundAX.sheetCount(pid: w.pid, window: w.id)) { return nil }
         let all = listWindows().windows
         // sol-F2: split as the child rule sees it, each window inspected too, so an outside document makes the app split.
         let placed = ChildWindowRule.inspected(all.filter { $0.pid == w.pid }.map { (window: $0, scope: decide($0, agent, session: session)) }) { inspectProblem($0) }
