@@ -135,6 +135,7 @@ public enum ContextMenu {
         }
         let i = items[at]
         if let e = MenuPath.itemRule(i, path: path) { return .failure(e) }
+        if clipboardIdentifier(i) { return .failure(MenuPath.clipboard(path)) }
         if leavesTheApp(i) { return .failure(MenuPath.refuse(path, why: MenuPath.outside)) }
         if raisesAPanel(i) { return .failure(MenuPath.refuse(path, why: panelOrWindow)) }
         if i.submenu {
@@ -150,8 +151,25 @@ public enum ContextMenu {
 
     /// The item's ref in the engine's read of the open menu (surface menu): an enabled item titled `title` of the menu
     /// itself, never one inside a submenu.
+    /// The first item of that title, as `choose` takes the first: never a later look-alike ("Rename" for "Rename…") when
+    /// the one judged went disabled between the two reads (256 first-F4).
     public static func ref(_ tree: JSONValue, title: String) -> String? {
-        MenuPath.items(under: tree).first { MenuPath.same($0["name"]?.string ?? "", title) && !($0["states"]?.array ?? []).contains("disabled") }?["ref_id"]?.string
+        guard let item = MenuPath.items(under: tree).first(where: { MenuPath.same($0["name"]?.string ?? "", title) }),
+              !(item["states"]?.array ?? []).contains("disabled") else { return nil }
+        return item["ref_id"]?.string
+    }
+
+    /// Whether a window is the agent's own for a right click: on the agent workspace, and under Full Access not one of
+    /// Donovan's processes claimed onto it, which the planner treats as his (256 first-F3).
+    public static func agentsOwn(onAgentWorkspace: Bool, fullAccess: Bool, agentProcess: Bool) -> Bool {
+        onAgentWorkspace && (!fullAccess || agentProcess)
+    }
+
+    /// The press answered an error after the menu had already closed: a closed menu is a sign the command ran, so the
+    /// call says it may have and is never retried (256 r2 second-S1).
+    public static func mayHaveRun(_ app: String, item: String) -> HandsError {
+        HandsError(.actionFailed, "context menu > \(item) may have run in \(app): the engine answered an error, but the menu had already closed",
+                   suggestion: "Take a shot to see whether the command ran before doing anything else; don't press it again unseen.", retry: .never, nextCall: .null)
     }
 
     /// An item that can raise an Open or Save panel or a new window: a title ending in an ellipsis (AppKit's sign that
@@ -168,6 +186,10 @@ public enum ContextMenu {
     /// AppKit gives these items no identifier, so past Services' they are known by English title only: in another
     /// language Look Up or Translate is not caught (210 r1 second-S6).
     static let outsideTitles = ["services", "look up", "search with", "translate", "open with", "show in finder", "reveal in finder"]
+    /// WebKit's own items (`WKMenuItemIdentifierCopyLink`, `…CopyImage`) carry no AppKit selector or key equivalent, so
+    /// in a context menu any identifier naming cut, copy or paste is the clipboard (256 r2 second-S2). An item with no
+    /// identifier is still known by English title only.
+    static func clipboardIdentifier(_ i: MenuPath.MenuItem) -> Bool { ["cut", "copy", "paste"].contains { i.id.contains($0) } }
     static func leavesTheApp(_ i: MenuPath.MenuItem) -> Bool {
         i.id.contains("services") || i.id.contains("lookup") || outsideTitles.contains { i.name.hasPrefix($0) }
     }

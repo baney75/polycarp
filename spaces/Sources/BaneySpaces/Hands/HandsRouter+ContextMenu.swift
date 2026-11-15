@@ -17,7 +17,8 @@ struct ContextPress {
 extension HandsRouter {
     /// Whether the window is the agent workspace's own: not lent, not Full Access, and placed there now (210 r1 second-S4).
     func onAgentWorkspace(_ w: HandsWindow, _ scope: ScopeDecision) -> Bool {
-        scope == .onAgentWorkspace && onMain { host.agentWorkspace().map { host.live(w.id)?.workspace == $0 } ?? false }
+        let (placed, owned) = onMain { (host.agentWorkspace().map { host.live(w.id)?.workspace == $0 } ?? false, host.agentOwned().contains(w.pid)) }
+        return ContextMenu.agentsOwn(onAgentWorkspace: scope == .onAgentWorkspace && placed, fullAccess: access == .full, agentProcess: owned)
     }
 
     /// Whether the agent workspace is on screen now.
@@ -111,6 +112,8 @@ extension HandsRouter {
                 }
                 reached = true
                 guard pressItem(w, title: title, check: check, cancelled: cancelled) else {
+                    // A menu already gone is the press's sign: it may have run, never "didn't take" (256 r2 second-S1).
+                    if ContextMenuAX.gone(w.pid, before: before, within: 0) { return watched(.failure(ContextMenu.mayHaveRun(w.app, item: title))) }
                     return watched(.failure(cancel() ? ContextMenu.notPressed(w.app, item: item) : ContextMenu.stillOpen(w.app)))
                 }
                 // Pressed is pressed, whatever the menu does next, so it is never retried. Escape only while the menu is
