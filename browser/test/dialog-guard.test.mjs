@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import {
+	cancelBeforeRedo,
 	decide,
 	deps,
 	dialogAnswerArrive,
@@ -159,6 +160,31 @@ test("their same-site tab in front: Cancel after the grace, and the agent is tol
 	assert.deepEqual(cancels, [1]);
 	assert.equal(notices.length, 1);
 	assert.match(notices[0].text, /cancelled, because the person was using a tab on example\.com.*The page saw Cancel/);
+});
+
+test("a redo with on_dialog sent before the grace Cancel waits for it, and its notice is not told after the redo", async () => {
+	openBox(1);
+	await tick(1_000);
+	let said;
+	const redo = cancelBeforeRedo(AGENT, 1).then((t) => (said = t));
+	// One 50 ms poll per step: the fake clock fires a timer the loop sets only after the step that woke it.
+	for (let i = 0; i < 20; i++) await tick(50);
+	assert.equal(said, undefined, "still waiting for the Cancel");
+	for (let i = 0; i < 30 && said === undefined; i++) await tick(50);
+	assert.deepEqual(cancels, [1]);
+	await redo;
+	assert.match(said, /Polycarp cancelled the confirm dialog an earlier call opened on tab 1 .*This call then ran/);
+	assert.deepEqual(notices, [], "no later note says to do the step again");
+	// No person's tab in front, so no Cancel is coming: no wait, and the call fails on the open box as before.
+	tabs = tabs.filter((t) => t.id !== 5);
+	openBox(1);
+	await tick(100);
+	assert.equal(await cancelBeforeRedo(AGENT, 1), undefined);
+	// Another session's box is never waited on.
+	tabs.push({ id: 5, url: "https://www.example.com/cart", active: true });
+	openBox(2);
+	await tick(100);
+	assert.equal(await cancelBeforeRedo("bridge-other", 2), undefined);
 });
 
 test("sol-F1: an answer for box A arrives, then ends: box B still gets its Cancel on time", async () => {

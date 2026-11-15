@@ -429,6 +429,36 @@ export async function dialogUnheard(
 	return {};
 }
 
+/**
+ * A click or press with on_dialog on `tabId` that arrives while the guard is about to Cancel the box an earlier call
+ * opened there (the person's same-site tab in front): the redo that box's note asked for, sent before the Cancel landed.
+ * Small models send it at once, then fail on the open box and again on a handle_dialog for a box already gone. Waits for
+ * that Cancel, at most until it is due plus SETTLE_MS; drops its notice, whose redo is this call; and says what happened.
+ * Undefined when no such Cancel is due or it did not land: the call goes on as before, and fails with dialog_open if the
+ * box is still open.
+ */
+export async function cancelBeforeRedo(sessionId: string, tabId: number): Promise<string | undefined> {
+	await chain;
+	const box = deps.dialogs().find(([t]) => t === tabId)?.[1];
+	const active = box && since.get(box.seq)?.active;
+	if (
+		!box ||
+		active === undefined ||
+		owners.get(tabId) !== sessionId ||
+		asking.has(sessionId) ||
+		answering.has(box.seq)
+	)
+		return undefined;
+	const until = active + deps.grace() + SETTLE_MS;
+	while (deps.dialogs().some(([t, d]) => t === tabId && d.seq === box.seq)) {
+		if (Date.now() > until) return undefined;
+		await new Promise((r) => setTimeout(r, 50));
+	}
+	if (!(await dialogUnheard(sessionId, { seq: box.seq })).text) return undefined;
+	const kind = box.type === "beforeunload" ? "leave-page" : box.type;
+	return `Before this call ran, Polycarp cancelled the ${kind} dialog an earlier call opened on tab ${tabId} (${JSON.stringify(box.message)}): the page saw Cancel. This call then ran, with its on_dialog.`;
+}
+
 /** An ask_user from the session is waiting for the person, or no longer is. */
 export function dialogAsk(sessionId: string, on: boolean): void {
 	bump(asking, sessionId, on ? 1 : -1);

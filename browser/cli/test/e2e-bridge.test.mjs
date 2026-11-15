@@ -2076,6 +2076,14 @@ test("only the tab an agent uses is held up: when the user brings a same-site ta
 		assert.notEqual(await answerOrFrozen(userPage, "1", 3000), "frozen", "the user's tab froze on the repeat");
 		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "ok", "cancelled a second time");
 		assert.doesNotMatch(await on(agent, "tabs_context"), /was cancelled, because/, "a second Cancel was told");
+		// The repeat sent at once, before the grace Cancel lands, as a small model sends it: it waits for that Cancel and
+		// runs, instead of failing on the open box and leaving a notice that says to repeat a step already done.
+		assert.match(await on(agent, "click", { x: 320, y: 60 }), /Polycarp cancels this box in about/);
+		const redo = await on(agent, "click", { tabId: agentTab, x: 320, y: 60, on_dialog: "ok" });
+		assert.match(redo, /answered OK at once, as on_dialog asked/);
+		assert.match(redo, /Polycarp cancelled the confirm dialog an earlier call opened on tab \d+ .*This call then ran, with its on_dialog/);
+		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "ok");
+		assert.doesNotMatch(await on(agent, "tabs_context"), /was cancelled, because/, "the redo's Cancel was told after the redo");
 		assert.ok(await inPage(agentPage, VEIL_PROBE), "the agent's own tab lost its veil");
 
 		// A second tab in the agent's group that it stops using is not in use: its veil fades while the other's stays.

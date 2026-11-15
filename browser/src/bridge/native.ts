@@ -17,6 +17,7 @@ import {
 	watchDialogs,
 } from "../browser/cdp.js";
 import {
+	cancelBeforeRedo,
 	type DialogAnswer,
 	type DialogCause,
 	dialogAnswerArrive,
@@ -40,6 +41,7 @@ import {
 	dialogError,
 	dialogPreset,
 	isDialogSafe,
+	PRESET_METHODS,
 	raceDialogs,
 	refuseStepPreset,
 	type WantedPreset,
@@ -525,6 +527,16 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			},
 		};
 		const dialogSafe = isDialogSafe(req.method, req.params);
+		// A redo with on_dialog sent while the guard is about to Cancel its box waits for that Cancel, then runs.
+		const redoTab = Number(req.params?.tabId);
+		const redo =
+			!dialogSafe && PRESET_METHODS.has(req.method) && req.params?.on_dialog != null && req.params?.tabId != null;
+		const graceStart = Date.now();
+		const earlier =
+			redo && Number.isInteger(redoTab) && openDialog(redoTab)
+				? await cancelBeforeRedo(session.id, redoTab)
+				: undefined;
+		const graceWaited = Date.now() - graceStart;
 		if (!dialogSafe) {
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
 			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
@@ -644,7 +656,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			tabId: await veilBegin(session, req.method, req.params).catch(() => undefined),
 		};
 		work = handler(ctx, req.params ?? {});
-		const limit = handlerLimit(req.method) - waited;
+		const limit = handlerLimit(req.method) - waited - graceWaited;
 		// A call that can open a box runs out of time inside raceDialogs, which says what its on_dialog answered first
 		// (sol-F2, second-S2 of the review of PR 216); the outer limit only backs that up.
 		const result = await withTimeout(
@@ -664,7 +676,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			req.method,
 		);
 		trace(`${state.name} ${req.method} session=${tSession}ms total=${Math.round(performance.now() - t0)}ms`);
-		reply(result);
+		reply(earlier && result && typeof result === "object" ? { ...result, earlier } : result);
 	} catch (err) {
 		state.lastError = `${req.method}: ${err instanceof Error ? err.message : String(err)}`;
 		console.warn("[Bridge]", state.lastError);
