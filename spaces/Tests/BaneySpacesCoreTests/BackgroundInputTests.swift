@@ -1058,10 +1058,38 @@ final class BackgroundPosterSourceTests: XCTestCase {
         XCTAssertTrue(router.contains("\"pointer_check\": .string(tap.available ? \"tap\" : \"idle_fallback\")"), "the result says which check ran")
     }
 
+    /// #299 first-F4: the tail looks for a second after the last input, stops early once the front app moved, and judges
+    /// once at the end either way.
+    func testTheTailLooksForASecondThenJudgesOnce() {
+        let start = Date(timeIntervalSince1970: 1000)
+        var clock = start, looks = 0, judged = 0
+        FrontTail.run(since: start, now: { clock }, changed: { looks += 1; return false }, pause: { clock += 0.1 }) { judged += 1 }
+        XCTAssertEqual(looks, 10, "0.1 s apart for one second")
+        XCTAssertEqual(judged, 1)
+        clock = start; looks = 0; judged = 0
+        FrontTail.run(since: start, now: { clock }, changed: { looks += 1; return looks == 3 }, pause: { clock += 0.1 }) { judged += 1 }
+        XCTAssertEqual(looks, 3, "a change ends the look")
+        XCTAssertEqual(judged, 1)
+    }
+
+    /// #299 first-F4: a right click on a ref gets the same tail. Its watch's stop hands the watch to it instead of ending
+    /// it, so an app that comes forward late on AXShowMenu or the Escape is still shut out of the route.
+    func testARefRightClicksWatchOutlivesItsAnswerByTheSameTail() throws {
+        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
+        let watch = try XCTUnwrap(HandsSourceTests.block(after: "func frontWatch(", in: router))
+        let stop = try XCTUnwrap(watch.range(of: "let stop = {")), hand = try XCTUnwrap(watch.range(of: "DispatchQueue.global(qos: .utility).async {"))
+        let tail = try XCTUnwrap(watch.range(of: "FrontTail.run(since: since, changed: { span() != .same }")), late = try XCTUnwrap(watch.range(of: "if let late = failure()"))
+        XCTAssertTrue(stop.lowerBound < hand.lowerBound && hand.lowerBound < tail.lowerBound && tail.lowerBound < late.lowerBound)
+        XCTAssertTrue(watch.contains("defer { activations.stop(); _ = tap.stop(); AgentActivity.shared.end(tailMark) }"), "stopped only after the tail")
+        XCTAssertTrue(watch.contains("return (failure, stop)"))
+        XCTAssertFalse(watch.contains("return (failure, { activations.stop(); _ = tap.stop() })"), "no stop that ends the watch at once")
+    }
+
     func testTheWatchRunsForASecondAfterTheLastPostButTheAnswerDoesntWaitForIt() throws {
         let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
-        let handOff = try XCTUnwrap(router.range(of: "DispatchQueue.global(qos: .utility).async {"))
-        let tail = try XCTUnwrap(router.range(of: "while Date().timeIntervalSince(lastPost) < 1.0"))
+        // transact's, the last in the file: frontWatch's tail comes first (#299 first-F4).
+        let handOff = try XCTUnwrap(router.range(of: "DispatchQueue.global(qos: .utility).async {", options: .backwards))
+        let tail = try XCTUnwrap(router.range(of: "FrontTail.run(since: lastPost, changed: { spanFront() != .same }"))
         let late = try XCTUnwrap(router.range(of: "if let late = frontFailure()"))
         let answer = try XCTUnwrap(router.range(of: "guard verdict.verified else { return .failed(BackgroundRefusal.unverified(basis: verdict.basis)) }\n        BackgroundBreaker.shared.update { $0.proved"))
         XCTAssertTrue(handOff.lowerBound < tail.lowerBound && tail.lowerBound < late.lowerBound, "a late activation is still judged, which shuts the app out of the route")

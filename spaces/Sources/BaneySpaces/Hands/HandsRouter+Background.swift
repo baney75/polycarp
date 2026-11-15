@@ -127,15 +127,25 @@ extension HandsRouter {
     }
 
     /// A watch on the front app from now, for an action that isn't `transact`'s (a right click on a ref): `failure()` is
-    /// what changed since, the same verdict. Nil when the front app can't be read.
+    /// what changed since, the same verdict. Nil when the front app can't be read. `stop` hands it to the same one-second
+    /// tail as `transact`'s, so an app that comes forward late on AXShowMenu or the Escape is still shut out (#299 first-F4).
     func frontWatch(_ w: HandsWindow, kind: InputKind) -> (failure: () -> HandsError?, stop: () -> Void)? {
         let activations = ActivationWatch(), tap = SessionTap()
         guard let start = frontPid() else { activations.stop(); _ = tap.stop(); return nil }
+        let span = { PostGuard.span(activations: activations.activated, start: start, now: self.frontPid(), target: w.pid) }
         let failure = { [self] () -> HandsError? in
-            frontVerdict(w, kind: kind, PostGuard.span(activations: activations.activated, start: start, now: frontPid(), target: w.pid),
-                         hardware: tap.snapshot.map { $0.contains { $0.sourcePid == 0 } })
+            frontVerdict(w, kind: kind, span(), hardware: tap.snapshot.map { $0.contains { $0.sourcePid == 0 } })
         }
-        return (failure, { activations.stop(); _ = tap.stop() })
+        let stop = {
+            let tailMark = AgentActivity.shared.begin(pid: w.pid, window: w.id), since = Date()
+            DispatchQueue.global(qos: .utility).async {
+                defer { activations.stop(); _ = tap.stop(); AgentActivity.shared.end(tailMark) }
+                FrontTail.run(since: since, changed: { span() != .same }, pause: { Thread.sleep(forTimeInterval: 0.1) }) {
+                    if let late = failure() { Trace.log("hands: \(w.app) changed the front app after its answer: \(late.message)") }
+                }
+            }
+        }
+        return (failure, stop)
     }
 
     /// Runs on the process queue. Everything it reads goes through the engine's inline calls.
@@ -322,11 +332,9 @@ extension HandsRouter {
         let lastPost = lastPostAt
         DispatchQueue.global(qos: .utility).async {
             defer { activations.stop(); _ = tap.stop(); AgentActivity.shared.end(tailMark) }
-            while Date().timeIntervalSince(lastPost) < 1.0 {
-                if spanFront() != .same { break }
-                Thread.sleep(forTimeInterval: 0.1)
+            FrontTail.run(since: lastPost, changed: { spanFront() != .same }, pause: { Thread.sleep(forTimeInterval: 0.1) }) {
+                if let late = frontFailure() { Trace.log("hands: \(w.app) changed the front app after its answer: \(late.message)") }
             }
-            if let late = frontFailure() { Trace.log("hands: \(w.app) changed the front app after its answer: \(late.message)") }
         }
 
         guard verdict.verified else { return .failed(BackgroundRefusal.unverified(basis: verdict.basis)) }
