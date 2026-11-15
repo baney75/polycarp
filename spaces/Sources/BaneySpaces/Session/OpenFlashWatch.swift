@@ -188,14 +188,18 @@ enum OpenFlashWatch {
             guard ok, !step.end else { return finish(why: ok ? "parked or done" : "its moment passed (switch, exit or a reused pid)") }
             self.step = step
             if step.settled { let pid = self.pid; DispatchQueue.main.async { Windows.release(pid) } }
-            // A shot older than `shotLife` paints nothing: the window opens unguarded, and with no cover left to raise
-            // the watch is over (review of PR 225, second-S1).
+            // A shot older than `shotLife` paints no new cover: such a window opens unguarded, and with no cover left the
+            // watch is over (review of PR 225, second-S1). A cover already painted stays at its bounds (PR 274 first-F1).
             let age = ProcessInfo.processInfo.systemUptime - shotAt
-            if !OpenFlashGuard.shotFresh(age: age), !step.covers.isEmpty || step.idle {
-                return finish(why: step.covers.isEmpty ? "the shot is too old for another cover"
-                              : "unguarded: stale shot (\(Int(age * 1000)) ms old) for window \(step.covers.keys.sorted())")
+            var covers = step.covers
+            if !OpenFlashGuard.shotFresh(age: age) {
+                covers = OpenFlashGuard.staleKeeps(step.covers, painted: want)
+                if covers.isEmpty, !step.covers.isEmpty || step.idle {
+                    return finish(why: step.covers.isEmpty ? "the shot is too old for another cover"
+                                  : "unguarded: stale shot (\(Int(age * 1000)) ms old) for window \(step.covers.keys.sorted())")
+                }
             }
-            want = step.covers
+            want = covers
             if redraw() { CATransaction.flush() }
             // Asks are let through only while a cover main painted is up (sol-F1, first-F2). "Up" is told on the next
             // turn, so the cover is committed and drawn before Spaces may ask the app (a 0.25 s block), and only while it

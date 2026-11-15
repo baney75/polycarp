@@ -55,6 +55,12 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
     /// of PR 225, second-S1), so the window gets no cover (`unguarded: stale shot`).
     public static let shotLife: Double = 1.5
     public static func shotFresh(age: Double) -> Bool { age <= shotLife }
+
+    /// The covers a stale shot keeps: those already painted, at their painted bounds. It paints no new one, and a cover
+    /// that is up stays until its window is parked, closes or reaches `coverLife` (PR 274 first-F1).
+    public static func staleKeeps(_ covers: [UInt32: CGRect], painted: [UInt32: CGRect]) -> [UInt32: CGRect] {
+        painted.filter { covers[$0.key] != nil }
+    }
     /// The longest the New Window step waits for a cover before it asks the app itself.
     public static let holdFor: Double = 3
     /// A window's shadow reaches this far past its bounds and shows too, so a cover reaches as far.
@@ -97,10 +103,11 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
     /// Every new ordinary window of the process in sight gets a cover until it is parked (out of sight), closes (off the
     /// list past `goneAfter`) or reaches `coverLife`. A window that never needed a cover (a helper, a splash or sliver of
     /// 50 pt or less, a floating panel, one already out of sight) is ignored: it neither ends the hold nor the watch. The
-    /// watch lasts while its shot can still paint a cover (`coverUntil`, `shotLife` after the shot) and the claim is on
-    /// (`claimFor`), and ends sooner once every covered window is done and no new one came for `quietFor`. A window that
-    /// comes later can't be covered from that shot, so the watch, and the hold with it, is over by then (review of PR
-    /// 232, first-F2 in both rounds: a later window always hit the stale shot and ended the watch uncovered).
+    /// watch covers new windows while its shot can still paint one (`coverUntil`, `shotLife` after the shot) and lasts
+    /// while the claim is on (`claimFor`). Past `coverUntil` a window first seen gets no cover, but a cover already up
+    /// stays until its window is parked, closes or reaches `coverLife`, and the watch ends once none is up (review of PR
+    /// 232, first-F2 in both rounds; PR 274 first-F1: a slow park took a live cover down at the shot's age). It ends
+    /// sooner once every covered window is done and no new one came for `quietFor`.
     public struct Plan: Sendable {
         public let pid: Int32
         /// The launched process's start time: a pid reused by another process isn't this launch's.
@@ -142,7 +149,7 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
 
         /// `incarnation` is the pid's start time now, nil once it has exited.
         public mutating func tick(now: Double, windows: [Sighting], incarnation now_: UInt64?) -> Step {
-            guard now_ == incarnation, now < min(OpenFlashGuard.claimFor, coverUntil) else {
+            guard now_ == incarnation, now < OpenFlashGuard.claimFor, now < coverUntil || !upAt.isEmpty else {
                 defer { last = [:] }
                 return Step(covers: [:], changed: !last.isEmpty, end: true, expired: [], idle: false)
             }
@@ -155,6 +162,8 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
                     if upAt[w.id] != nil { finish(w.id, now); settled = true }
                     continue
                 }
+                // A stale shot paints no new cover (first-F2); one already up keeps going (PR 274 first-F1).
+                guard upAt[w.id] != nil || now < coverUntil else { continue }
                 let up = upAt[w.id] ?? now
                 upAt[w.id] = up
                 if now - up >= OpenFlashGuard.coverLife { finish(w.id, now); ran.append(w.id); continue }
@@ -169,8 +178,11 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
             }
             let idle = upAt.isEmpty
             defer { last = want; lastIdle = idle }
-            return Step(covers: want, changed: want != last || idle != lastIdle,
-                        end: idle && lastDone.map { now - $0 >= OpenFlashGuard.quietFor } == true, expired: ran.sorted(), idle: idle,
+            // A settle is posted on its own: covers and idle can stay the same while one of two pending windows parks
+            // (PR 274 sol-F1).
+            return Step(covers: want, changed: want != last || idle != lastIdle || settled,
+                        end: idle && (now >= coverUntil || lastDone.map { now - $0 >= OpenFlashGuard.quietFor } == true),
+                        expired: ran.sorted(), idle: idle,
                         settled: settled)
         }
 

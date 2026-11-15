@@ -506,3 +506,57 @@ final class OpenFlashGuardLeftoverTests: XCTestCase {
         XCTAssertTrue(drain.contains("if step.settled { let pid = self.pid; DispatchQueue.main.async { Windows.release(pid) } }"), "second-S1")
     }
 }
+
+/// PR 274 round 1: a cover already up when its shot goes stale stays up (first-F1), and a settle with nothing else
+/// changed is still posted (sol-F1).
+final class OpenFlashGuardRound1Tests: XCTestCase {
+    typealias S = OpenFlashGuard.Sighting
+    let screen = [CGRect(x: 0, y: 0, width: 1512, height: 982)]
+    let w = CGRect(x: 400, y: 300, width: 500, height: 400), v = CGRect(x: 100, y: 100, width: 300, height: 300)
+    let parked = CGRect(x: 1511, y: 981, width: 500, height: 400)
+
+    func testACoverUpWhenItsShotGoesStaleStaysUntilItsWindowIsParked() {
+        // first-F1: Font Book's claim takes 0.69 to 0.84 s idle, longer under load.
+        var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen, coverUntil: 1.0)
+        XCTAssertEqual(p.tick(now: 0.2, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77).covers, [6: w])
+        let stale = p.tick(now: 1.0, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
+        XCTAssertEqual(stale.covers, [6: w], "the cover is up, so it stays")
+        XCTAssertFalse(stale.end)
+        let late = p.tick(now: 1.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w), S(pid: 900, id: 11, layer: 0, bounds: v)], incarnation: 77)
+        XCTAssertEqual(late.covers, [6: w], "a window first seen past the shot's life gets no cover")
+        let done = p.tick(now: 1.3, windows: [S(pid: 900, id: 6, layer: 0, bounds: parked), S(pid: 900, id: 11, layer: 0, bounds: v)], incarnation: 77)
+        XCTAssertTrue(done.settled)
+        XCTAssertTrue(done.end, "parked, and no cover can rise from that shot: the watch is over")
+        var q = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen, coverUntil: 1.0)
+        _ = q.tick(now: 0.2, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
+        let ran = q.tick(now: 0.2 + OpenFlashGuard.coverLife, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
+        XCTAssertEqual(ran.expired, [6], "never parked: down at its cover's life, as before")
+        XCTAssertTrue(ran.end)
+    }
+
+    func testAStaleShotKeepsOnlyThePaintedCoversAtTheirBounds() {
+        let moved = w.offsetBy(dx: 20, dy: 0)
+        XCTAssertEqual(OpenFlashGuard.staleKeeps([6: moved, 11: v], painted: [6: w]), [6: w])
+        XCTAssertEqual(OpenFlashGuard.staleKeeps([11: v], painted: [6: w]), [:])
+    }
+
+    func testASettleWhileAnotherWindowIsMissingIsPosted() {
+        // sol-F1: two covered windows go off the list on successive ticks; one comes back parked while the other is away.
+        var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
+        _ = p.tick(now: 0.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w), S(pid: 900, id: 7, layer: 0, bounds: v)], incarnation: 77)
+        _ = p.tick(now: 0.2, windows: [S(pid: 900, id: 7, layer: 0, bounds: v)], incarnation: 77)
+        let away = p.tick(now: 0.25, windows: [], incarnation: 77)
+        XCTAssertEqual(away.covers, [:]); XCTAssertFalse(away.idle)
+        let back = p.tick(now: 0.3, windows: [S(pid: 900, id: 6, layer: 0, bounds: parked)], incarnation: 77)
+        XCTAssertTrue(back.settled)
+        XCTAssertTrue(back.changed, "the watch posts only a changed step, so the settle must count")
+    }
+
+    func testTheWatchKeepsPaintedCoversOnAStaleShot() throws {
+        let c = try CursorSourceTests.code("Sources/BaneySpaces/Session/OpenFlashWatch.swift")
+        let drain = try XCTUnwrap(HandsSourceTests.between("private func drain() {", "func finish(why: String) {", in: c))
+        XCTAssertTrue(drain.contains("covers = OpenFlashGuard.staleKeeps(step.covers, painted: want)"))
+        XCTAssertTrue(drain.contains("if covers.isEmpty, !step.covers.isEmpty || step.idle {"))
+        XCTAssertTrue(drain.contains("want = covers"))
+    }
+}
