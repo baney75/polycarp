@@ -11,7 +11,7 @@ Polycarp is one app for your workspaces, your voice and the browser your agents 
 - **Mac, Apple silicon:** workspaces, dictation and browser agents are all inside `Polycarp.app`, with one Settings window and one set of permissions.
 - **Other devices:** the same Rust core is on its way to them. Until then, Silas offers nightly voice builds on Windows and Linux, and Tabkyra's installer for them is written but not yet tried live. Those repos stay up.
 - **Themes:** `polycarp theme` checks, writes, previews and undoes themes, and agents can do the same over MCP. The Mac app follows your theme live. On Omarchy, Polycarp matches your system theme, and you can still change anything; that hasn't run on a real theme switch yet.
-- `polycarp theme off` removes the theme files. Apps that read them use their own look when they next check. `polycarp theme on` brings your theme back.
+- `polycarp theme off` removes the theme files. Apps that read them are expected to use their own look when they next check. `polycarp theme on` brings your theme back.
 
 The [plan](https://github.com/baney75/polycarp/blob/main/PLAN.md) lists every step and the check that proves it.
 
@@ -243,7 +243,7 @@ polycarp theme off
 polycarp theme on
 ```
 
-`off` removes `current/theme.json` and the `current/<product>.css` files. Apps that read them use their own look when they next check. It keeps your settings and themes, records the change in `history/`, and says what it removed. `undo` brings the theme back, and so does `polycarp theme on`. `set`, `accent` and `change` also turn the theme on, and tell you so. So does `apply`, unless you add `--no-activate`. `off` and `on` also tidy `current/` if the setting was already that way, and `off` works even if a theme or settings file is broken. If one of the files is a link, `off` removes the link (not what it points to) and `on` writes a plain file. `polycarp theme current` shows whether it is on or off.
+`off` removes `current/theme.json` and the `current/<product>.css` files. Apps that read them are expected to use their own look when they next check. It keeps your settings and themes, records the change in `history/`, and says what it removed. `undo` brings the theme back, and so does `polycarp theme on`. `set`, `accent` and `change` also turn the theme on, and tell you so. So does `apply`, unless you add `--no-activate`. `off` and `on` also tidy `current/` if the setting was already that way, and `off` works even if a theme or settings file is broken. If one of the files is a link, `off` removes the link (not what it points to) and `on` writes a plain file. `polycarp theme current` shows whether it is on or off.
 
 ### Use a theme elsewhere
 
@@ -379,13 +379,13 @@ export POLYCARP_SPACES_BIN="$HOME/tools/baneyspaces"
 
 ### Not found, but the app is right here
 
-Polycarp won't run a tool inside your current folder, including `node_modules/.bin` below it, because a project could plant one there. Move to another folder. The exceptions are `/`, and, when you are in your home folder or above it, normal per-user installs: `~/.local/bin`, `~/.local/lib/node_modules`, `~/.local/share/mise`, `~/.cargo/bin`, `~/.bun/bin`, `~/.bun/install/global`, `~/.volta/bin`, `~/.nvm/versions`, `~/.asdf/shims`, `~/.asdf/installs`, `~/.npm-global`, `~/Library/pnpm`, `~/.config/tabkyra`, on Windows `~\AppData\Local\Programs` and `~\scoop`, and a real app bundle in `~/Applications` (only under its `Contents`). `/opt` and `/usr` are allowed for tools outside your home folder. A project folder, `~/node_modules/.bin` and a file directly in `~` stay refused, and a link is judged by where it sits and where it leads. If the app still isn't on your `PATH` or in a usual install folder, set its override to the full path, as above.
+Polycarp won't run a tool inside your current folder, including `node_modules/.bin` below it, because a project could plant one there. Move to another folder. The exceptions are `/`, and, when you are in your home folder or above it, normal per-user installs: `~/.local/bin`, `~/.local/lib/node_modules`, `~/.local/share/mise/shims` and `installs`, `~/.local/share/pnpm`, `~/.local/share/pipx/venvs`, `~/.local/share/uv/tools`, `~/.cargo/bin`, `~/.bun/bin`, `~/.bun/install/global`, `~/.volta/bin`, `~/.nvm/versions`, `~/.asdf/shims`, `~/.asdf/installs`, `~/.npm-global/bin` and `lib/node_modules`, `~/Library/pnpm`, `~/.config/tabkyra`, on Windows `~\AppData\Local\Programs` and `~\scoop\shims` and `apps`, and a real app bundle in `~/Applications` (only under its `Contents`). `/opt` and `/usr` are allowed for tools outside your home folder. A project folder, `~/node_modules/.bin` and a file directly in `~` stay refused, and a link is judged by where it sits and where it leads. If the app still isn't on your `PATH` or in a usual install folder, set its override to the full path, as above.
 
 ### My theme changed nothing in the apps
 
 On a Mac, Polycarp follows your theme live. On other devices the Silas and Tabkyra apps may not read theme files yet.
 
-If you want apps to show their own look, run `polycarp theme off`. It removes the theme files; an app that reads them uses its own look when it next checks. If a file can't be removed, `off` fails and names it.
+If you want apps to show their own look, run `polycarp theme off`. It removes the theme files; an app that reads them is expected to use its own look when it next checks. If a file can't be removed, `off` fails and names it.
 
 ### My accent is refused
 

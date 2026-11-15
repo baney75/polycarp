@@ -901,6 +901,46 @@ fn from_home_per_user_installs_run() {
     }
 }
 
+/// #19: pnpm, and pipx and uv tools linked from ~/.local/bin, run from `~`; a clone in mise's
+/// plugins/ folder does not.
+#[cfg(unix)]
+#[test]
+fn from_home_pnpm_pipx_and_uv_run_but_mise_plugins_do_not() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let bin = home.join(".local/bin");
+    fs::create_dir_all(&bin).unwrap();
+    for (rel, linked) in [
+        (".local/share/pnpm", false),
+        (".local/share/pipx/venvs/tabkyra/bin", true),
+        (".local/share/uv/tools/tabkyra/bin", true),
+        (".local/share/mise/plugins/evil/bin", false),
+    ] {
+        let d = home.join(rel);
+        fs::create_dir_all(&d).unwrap();
+        stub(&d, "tabkyra", &format!("echo from {rel}"));
+        let on_path = if linked {
+            std::os::unix::fs::symlink(d.join("tabkyra"), bin.join("tabkyra")).unwrap();
+            bin.clone()
+        } else {
+            d.clone()
+        };
+        let o = s
+            .cmd(&["browser"])
+            .env("PATH", &on_path)
+            .current_dir(&home)
+            .output()
+            .unwrap();
+        if rel.contains("mise") {
+            assert_eq!(code(&o), 127, "{rel}: {}", out(&o));
+        } else {
+            assert_eq!(out(&o), format!("from {rel}\n"), "{rel}: {}", err(&o));
+        }
+        let _ = fs::remove_file(bin.join("tabkyra"));
+        fs::remove_file(d.join("tabkyra")).unwrap();
+    }
+}
+
 /// An npm prefix of ~/.local: the entry in bin is a link into lib/node_modules.
 #[cfg(unix)]
 #[test]
@@ -1412,6 +1452,74 @@ fn version_check_names_the_part_from_another_commit_and_never_runs_spaces() {
     let t = out(&o);
     assert!(t.lines().any(|l| l == verdict), "{t}");
     assert!(!log.exists(), "doctor ran the spaces command");
+}
+
+/// Linux: the agent skill is compared with the one the installed spaces command carries (read from its
+/// file, never by running it), and `doctor` gives the one command that fixes each missing or odd part.
+#[cfg(target_os = "linux")]
+#[test]
+fn on_linux_version_compares_the_skill_and_doctor_names_each_fix() {
+    let s = Sandbox::new();
+    let log = s.dir("calls");
+    stub(
+        &s.dir("bin"),
+        "polycarp-spaces",
+        &format!(
+            "echo called >> '{}'\n# polycarp-build|v1|{OTHER_COMMIT}|2026-11-01T00:00:00Z|0|0.1.0|end|\n# polycarp-skill|v1|begin|\nthe linux skill\npolycarp-skill|v1|end|",
+            log.display()
+        ),
+    );
+    let skill = s.dir("home").join(".claude/skills/baneyspaces/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(&skill, "the linux skill\n").unwrap();
+    let run = |args: &[&str]| s.cmd(args).env("PATH", s.dir("bin")).output().unwrap();
+    let v = json(&run(&["version", "--json"]));
+    let p = part(&v, "agent skill");
+    assert_eq!(p["note"], "same text as the installed baneyspaces", "{v}");
+    assert_eq!(
+        p["commit"], OTHER_COMMIT,
+        "the skill is the spaces command's build"
+    );
+
+    fs::write(&skill, "an older skill\n").unwrap();
+    let v = json(&run(&["version", "--json"]));
+    assert_eq!(
+        part(&v, "agent skill")["note"],
+        "differs (`baneyspaces skill install` refreshes it)"
+    );
+    let o = run(&["doctor"]);
+    let t = out(&o);
+    let lines: Vec<&str> = t.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.starts_with("versions: "))
+        .unwrap_or_else(|| panic!("{t}"));
+    let fixes = &lines[at + 1..];
+    for want in [
+        "  spaces command: is at bbbbbbb. Run `polycarp update`.",
+        "  agent skill: differs (`baneyspaces skill install` refreshes it). Run `baneyspaces skill install`.",
+        "  voice core: not installed. Not available on Linux yet.",
+        "  browser helper: not installed. Run `polycarp update` (it needs Node and npm on PATH).",
+    ] {
+        assert!(fixes.contains(&want), "missing {want:?} in:\n{t}");
+    }
+    assert!(
+        fixes.iter().any(|l| l.starts_with("  extension: not installed. Load ~/.local/share/polycarp/browser/source/dist-chrome as an unpacked extension")),
+        "{t}"
+    );
+    assert!(
+        !t.contains("polycarp spaces skill install"),
+        "that is the Mac's fix: {t}"
+    );
+    assert!(!log.exists(), "doctor or version ran the spaces command");
+    // With the skill gone it is "not installed", and the fix is the same command.
+    fs::remove_file(&skill).unwrap();
+    let t = out(&run(&["doctor"]));
+    assert!(
+        t.lines()
+            .any(|l| l == "  agent skill: not installed. Run `baneyspaces skill install`."),
+        "{t}"
+    );
 }
 
 #[cfg(target_os = "macos")]
