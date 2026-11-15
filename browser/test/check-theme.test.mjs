@@ -46,3 +46,16 @@ test("it finds named colors in color properties, in the panel and in the consent
 	assert.deepEqual(findPageColors(page).map((f) => f.text).sort(), ["#0002", "#fff", "black", "white"]);
 	assert.deepEqual(findPageColors("const PAGE_CSS = `:root{--shadow:#0002}a{box-shadow:var(--shadow)}`;"), []);
 });
+
+// #13 first-F5: Tailwind palette classes are colors no theme reaches, and the check didn't see them.
+test("it finds Tailwind palette color classes, and not token classes", () => {
+	const found = (text) => findColors(text).map((f) => f.text);
+	assert.deepEqual(found('class="text-green-600 dark:text-green-500"'), ["text-green-600", "text-green-500"]);
+	assert.deepEqual(found('class="border border-orange-500/40 bg-orange-500/10 bg-white"'), [
+		"border-orange-500/40",
+		"bg-orange-500/10",
+		"bg-white",
+	]);
+	assert.deepEqual(found('class="bg-muted-foreground/40 text-foreground border-border bg-primary ring-ring"'), []);
+	assert.deepEqual(found('class="text-white-ish to-blacken my-text-red-500"'), []);
+});

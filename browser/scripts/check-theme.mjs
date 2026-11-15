@@ -5,8 +5,9 @@
 // It is checked in the panel and in the CSS of the consent and hub pages (cli/src: PAGE_CSS in theme.ts and the
 // <style> blocks and style="" attributes of oauth.ts and hub-server.ts), where only token definitions may hold a color.
 //
-// A color literal is a hex color (#rgb, #rrggbb, with or without alpha) or a color function (rgb(),
-// rgba(), hsl(), hsla(), hwb(), lab(), lch(), oklab(), oklch()). It is allowed:
+// A color literal is a hex color (#rgb, #rrggbb, with or without alpha), a color function (rgb(),
+// rgba(), hsl(), hsla(), hwb(), lab(), lch(), oklab(), oklch()), or a Tailwind class with a palette
+// color (`text-green-600`, `bg-white`). It is allowed:
 //   1. on a line that defines a custom property (`--tk-brass: #e3a93b;`), because that is where tokens live;
 //   2. in a file the allowlist below names, up to the count written there, with the reason.
 // The allowlist is a ceiling: a new color in an allowed file raises the count and fails until someone
@@ -38,9 +39,39 @@ export const ALLOWLIST = {
 		why: "Chart series colors: categorical data colors that must stay distinct from each other.",
 	},
 	"src/dialogs/SessionCostDialog.ts": {
-		max: 4,
-		why: "Chart series colors: categorical data colors that must stay distinct from each other.",
+		max: 16,
+		why: "Chart series colors and the per-kind cost badges: categorical data colors that must stay distinct from each other.",
 	},
+	"src/components/TabPill.ts": {
+		max: 2,
+		why: "Tailwind green for a done or online mark: a theme has no success role (themes/README.md), so none can reach it.",
+	},
+	"src/components/Toast.ts": {
+		max: 2,
+		why: "Tailwind green for a done or online mark: a theme has no success role (themes/README.md), so none can reach it.",
+	},
+	"src/dialogs/ConnectTab.ts": {
+		max: 2,
+		why: "Tailwind green for a done or online mark: a theme has no success role (themes/README.md), so none can reach it.",
+	},
+	"src/tools/skill.ts": {
+		max: 6,
+		why: "Tailwind green for a done or online mark: a theme has no success role (themes/README.md), so none can reach it.",
+	},
+	"src/transcript/render.ts": {
+		max: 2,
+		why: "Tailwind green for a done or online mark: a theme has no success role (themes/README.md), so none can reach it.",
+	},
+	"src/dialogs/BridgeTab.ts": {
+		max: 2,
+		why: "Tailwind orange for a warning box: a theme has no warning role, and urgent is for errors.",
+	},
+	"src/artifacts/MediaArtifact.ts": { max: 1, why: "Black behind a video or image, as a player draws it." },
+	"src/artifacts/NotebookArtifact.ts": {
+		max: 2,
+		why: "White behind a notebook's output image, which is drawn for a white page.",
+	},
+	"src/artifacts/preview/deck-view.ts": { max: 1, why: "A slide's own white page." },
 	"src/tools/repl/overlay-content.ts": {
 		max: 19,
 		why: "Overlay injected into the web page being driven, outside the panel's document, where no panel token exists.",
@@ -78,6 +109,12 @@ const NAMED = new RegExp(`(?:^|[\\s;{}"'\`])${COLOR_PROPERTY}\\s*:([^;}"'\`]*)`,
 const NAME = new RegExp(`\\b(?:${NAMES})\\b`, "gi");
 const DEFINITION = /^\s*(?:["'`]?)--[\w-]+\s*:/;
 
+/** A Tailwind class with a palette color (`text-green-600`, `bg-white`, `border-orange-500/40`), which no theme reaches. */
+const TAILWIND = new RegExp(
+	`(?<![\\w-])(?:text|bg|border|ring|fill|stroke|from|via|to|divide|outline|shadow|accent|caret|decoration|placeholder)-(?:white|black|(?:${"slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose"})-\\d{2,3})(?:/\\d{1,3})?(?![\\w-])`,
+	"g",
+);
+
 function* files(dir) {
 	for (const name of readdirSync(dir)) {
 		const path = join(dir, name);
@@ -92,6 +129,7 @@ export function findColors(text) {
 	text.split("\n").forEach((line, i) => {
 		if (DEFINITION.test(line)) return;
 		for (const m of line.matchAll(COLOR)) found.push({ line: i + 1, text: m[0] });
+		for (const m of line.matchAll(TAILWIND)) found.push({ line: i + 1, text: m[0] });
 		found.push(...namedColors(line.replace(/\/\*.*?\*\//g, "")).map((text) => ({ line: i + 1, text })));
 	});
 	return found;
