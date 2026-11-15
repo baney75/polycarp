@@ -81,6 +81,7 @@ and `remote status --json` give the `state` or check name in the first column.
 | `cloudflared_missing` | cloudflared is gone. | `remote fix` offers the pinned download. |
 | `port_busy` | Another program uses the local port or 8443. | Stop it, or `remote setup --port N`. |
 | `dns` | Public DNS has no public address (A or AAAA) for the name, or the lookup failed (SERVFAIL). | No address yet: wait a few minutes for a new name; else `remote fix`. A failed lookup: fix the name's DNS records or DNSSEC with your DNS provider. |
+| `dns_lookup` | On `remote status`: the lookup failed (SERVFAIL, REFUSED), which waiting doesn't fix. | Fix the name's DNS records or DNSSEC with your DNS provider. |
 | `tls` | The certificate isn't valid for the name, the port speaks plain HTTP, or nothing answers. | `remote fix`; on your own front door, a certificate for the name. |
 | `resource_metadata` | The public name reaches something that isn't this connector, or (`pending`) its tunnel or gateway answers 502, 503, 504, 521, 522, 523 or 530 or nothing: it hasn't connected yet. | A pending one: wait a minute, then `remote test`. Otherwise, or if it stays: `remote fix` (restarts `serve` and the tunnel; a renamed computer gets its new URL). |
 | `auth_metadata` | The OAuth server metadata names another address, or no authorization or token endpoint on this one. | `remote fix`. |

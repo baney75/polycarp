@@ -128,6 +128,8 @@ export class RemoteFlow extends LitElement {
 	/** Visible time the result has waited on a pending check (second-S4). */
 	private waited?: { ms: number; at: number };
 	private planning = false;
+	/** Bumped by Repair: a plan asked for before it lands too late to decide whether Repair shows. */
+	private planAsked = 0;
 	private ticker?: ReturnType<typeof setInterval>;
 	private lastPoll = 0;
 	private polling = false;
@@ -279,12 +281,14 @@ export class RemoteFlow extends LitElement {
 	private async planFix(): Promise<void> {
 		if (this.planning) return;
 		this.planning = true;
+		const asked = this.planAsked;
 		try {
-			this.fix = await connectRemoteFixPlan();
+			const fix = await connectRemoteFixPlan();
+			if (asked === this.planAsked) this.fix = fix;
 		} catch {
-			this.fix = { available: false };
+			if (asked === this.planAsked) this.fix = { available: false };
 		} finally {
-			this.planning = false;
+			if (asked === this.planAsked) this.planning = false;
 		}
 	}
 
@@ -359,11 +363,13 @@ export class RemoteFlow extends LitElement {
 			this.waitingGaveUp = false;
 			this.takeRun({ state: "on", message: "", ...result });
 		} catch (err) {
-			if (isNoHost(err)) this.dispatchEvent(new CustomEvent("remote-changed", { bubbles: true }));
 			const failed = Object.values(this.tunnelSteps ?? {}).some((x) => x?.state === "failed");
 			this.tunnelError = failed ? undefined : errorText(err);
 		} finally {
 			this.busy = undefined;
+			// Setup may have saved the Cloudflare route even when it stopped: Connect reads it now, not at its next 10-second
+			// refresh (issue 138), as turnOn does.
+			this.dispatchEvent(new CustomEvent("remote-changed", { bubbles: true }));
 		}
 	}
 
@@ -387,7 +393,10 @@ export class RemoteFlow extends LitElement {
 		try {
 			const done = await connectRemoteFix();
 			// A real run's answer is not a plan: the next real failure asks for a fresh one, so an answer that timed out
-			// ({available: false}) never hides Repair for the rest of the visit (second-N3).
+			// ({available: false}) never hides Repair for the rest of the visit (second-N3). A plan still out was made before
+			// this run, so it is dropped and a fresh one can start (issue 138).
+			this.planAsked++;
+			this.planning = false;
 			this.fix = undefined;
 			this.repaired = repairOutcome(done) ? done : undefined;
 			// The step that asked for Repair is over: the result draws what it found.

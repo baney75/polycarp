@@ -1608,7 +1608,7 @@ test("a TLS alert is a handshake refused for this name (no certificate for it); 
 	const { tlsFailure } = await loadTs(`export { tlsFailure } from "@src/remote-test.ts";`);
 	const url = new URL("https://a.b.example.com/mcp");
 	const fail = (code) => tlsFailure(Object.assign(new Error(code), { code }), url, "203.0.113.5", 443);
-	for (const code of ["ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE", "ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR"]) {
+	for (const code of ["ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE", "ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR", "ERR_SSL_TLSV1_UNRECOGNIZED_NAME", "ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED"]) {
 		const c = fail(code);
 		assert.match(c.detail, /refused the TLS handshake for a\.b\.example\.com/, code);
 		assert.doesNotMatch(c.detail + c.next, /not with HTTPS|plain HTTP/, code);
@@ -1625,15 +1625,17 @@ test("stateFromStatus: a failed DNS lookup is code dns_lookup, never dns, which 
 	assert.match(servfail.message, /SERVFAIL/);
 });
 
-test("remote --help (exit 0), or remote alone (exit 2), prints the five remote commands in order, one line each", () => {
+test("remote --help (exit 0, stdout), or remote alone (exit 2, stderr), prints the five remote commands in order, one line each", () => {
 	const s = scenario("remote-guide");
-	for (const [args, code] of [[["remote", "--help"], 0], [["remote", "-h"], 0], [["remote"], 2]]) {
+	for (const [args, code] of [[["remote", "--help"], 0], [["remote", "-h"], 0], [["remote"], 2], [["remote", "--json"], 2]]) {
 		const r = s.run(args);
 		assert.equal(r.code, code, `${args.join(" ")}: ${r.stdout}${r.stderr}`);
-		const lines = r.stdout.trim().split("\n");
+		const guide = code === 0 ? r.stdout : r.stderr;
+		if (code !== 0) assert.equal(r.stdout, "", `${args.join(" ")} is a usage error, so a --json reader gets nothing on stdout`);
+		const lines = guide.trim().split("\n");
 		assert.ok(lines.length <= 9, `a short guide, not the whole help (${lines.length} lines)`);
 		const order = lines.map((l) => / remote (setup|status|test|fix|off) /.exec(l)?.[1]).filter(Boolean);
-		assert.deepEqual(order, ["setup", "status", "test", "fix", "off"], r.stdout);
+		assert.deepEqual(order, ["setup", "status", "test", "fix", "off"], guide);
 	}
 	assert.match(s.run(["remote", "setup", "--help"]).stdout, /Library/, "a subcommand's --help is still the full help");
 });
@@ -1651,4 +1653,34 @@ test("the --help exit codes name every remote exit code the remote docs give", a
 		assert.ok(EXIT_CODES.includes(listed), `EXIT_CODES lists: ${listed}`);
 	}
 	assert.match(EXIT_CODES, /0 success, 1 failed.*2 usage error/);
+});
+
+test("the remote guide gives exit code 3 only to the commands that return it: setup and fix (a person acts), test and fix (nothing set up)", async () => {
+	const { REMOTE_GUIDE } = await loadTs(`export { REMOTE_GUIDE } from "@src/commands.ts";`);
+	const line = REMOTE_GUIDE.split("\n").find((l) => l.includes("Exit codes"));
+	assert.match(line, /setup and fix also 3 when a person has to act, test and fix 3 when nothing is set up/);
+	assert.doesNotMatch(line, /status[^.]*\b3\b|off[^.]*\b3\b/, "status and off return only 0 or 1");
+});
+
+test("routesFrom: Tailscale whose serve status couldn't be read (a timeout) isn't reported signed in", async () => {
+	const { routesFrom } = await loadTs(`export { routesFrom } from "@src/remote-setup.ts";`);
+	const silent = routesFrom({ ok: true, bin: "/bin/tailscale", state: { kind: "unreadable", code: "tailscale_silent" } });
+	assert.equal(silent.tailscale.installed, true);
+	assert.equal(silent.tailscale.signedIn, false);
+	const ok = routesFrom({ ok: true, bin: "/bin/tailscale", state: { kind: "ok", dns: "mac.tail1.ts.net", web: {}, tcp: {}, allowFunnel: {} } });
+	assert.equal(ok.tailscale.signedIn, true);
+});
+
+test("remote test on your own front door: a pending check (530, no answer) says to point the front door at serve, not remote fix", async () => {
+	const { frontDoorNext } = await loadTs(`export { frontDoorNext } from "@src/remote-setup.ts";`);
+	const checks = [
+		{ name: "tls", status: "ok", detail: "valid" },
+		{ name: "resource_metadata", status: "fail", pending: true, detail: "answered 530", next: "run remote test again. If it stays, run remote fix." },
+		{ name: "auth_metadata", status: "fail", detail: "names another address", next: "remote fix." },
+	];
+	const custom = frontDoorNext(checks, { route: "custom", port: 8790 });
+	assert.match(custom[1].next, /front door answers but doesn't reach serve\. Point it at 127\.0\.0\.1:8790/);
+	assert.doesNotMatch(custom[1].next, /remote fix/);
+	assert.equal(custom[2].next, "remote fix.", "a check that isn't pending keeps its own next");
+	assert.deepEqual(frontDoorNext(checks, { route: "funnel", port: 8790 }), checks, "a tunnel of ours keeps wait, then remote fix");
 });

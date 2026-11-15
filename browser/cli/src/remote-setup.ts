@@ -989,7 +989,6 @@ Check it with: ${COMMAND_NAME} remote status`);
 	}
 }
 
-/** In a terminal, after a Cloudflare setup: a new DNS name takes minutes, so check the public address for up to 5 minutes. */
 /**
  * What setup does when the tunnel in front of serve hasn't connected: poll it to the deadline (Tailscale or Cloudflare, with a
  * person waiting), report it at once (--json, --no-wait, no terminal), or call it a fault (your own front door, which no wait
@@ -997,6 +996,7 @@ Check it with: ${COMMAND_NAME} remote status`);
  */
 export const tunnelPlan = (route: RemoteConfig["route"], wait: boolean): "poll" | "report" | "fault" => (route === "custom" ? "fault" : wait ? "poll" : "report");
 
+/** In a terminal, after a Cloudflare setup: a new DNS name takes minutes, so check the public address for up to 5 minutes. */
 async function waitForPublic(publicUrl: string, say: (line: string) => void, deadline: number): Promise<void> {
 	const every = waitMs("PUBLIC_POLL_MS", 5000);
 	const start = Date.now();
@@ -1092,7 +1092,7 @@ export function remoteRoutes(): RemoteRoutes {
 
 export function routesFrom(tailscale: TailscaleReady): RemoteRoutes {
 	return {
-		tailscale: { installed: tailscale.ok || tailscale.state !== "tailscale_missing", signedIn: tailscale.ok },
+		tailscale: { installed: tailscale.ok || tailscale.state !== "tailscale_missing", signedIn: tailscale.ok && tailscale.state.kind === "ok" },
 		cloudflare: { installed: Boolean(cloudflaredBinary()), signedIn: cloudflareSignedIn() },
 	};
 }
@@ -1257,6 +1257,16 @@ export function proofLines(checks: ProofCheck[]): string[] {
 	});
 }
 
+/**
+ * On your own front door, a pending check (a gateway status or no answer) means that front door doesn't reach serve; no tunnel of
+ * ours is connecting, and `remote fix` can't repair it, so its next says what setup says for the same answer.
+ */
+export function frontDoorNext(checks: ProofCheck[], config: Pick<RemoteConfig, "route" | "port">): ProofCheck[] {
+	if (config.route !== "custom") return checks;
+	const port = config.port;
+	return checks.map((x) => (x.pending ? { ...x, next: `Your front door answers but doesn't reach serve. Point it at 127.0.0.1:${port}, check that serve runs, then run ${COMMAND_NAME} remote test.` } : x));
+}
+
 /** Exit codes of `remote test`: 0 every check ok, 1 a check failed, 2 usage, 3 nothing is set up yet. */
 export async function remoteTest(options: { json: boolean }): Promise<number> {
 	let config: RemoteConfig | undefined;
@@ -1274,7 +1284,7 @@ export async function remoteTest(options: { json: boolean }): Promise<number> {
 		else console.error(`${sym.fail} ${message}`);
 		return EXIT_NEEDS_PERSON;
 	}
-	const checks = await publicChecks(config.publicUrl);
+	const checks = frontDoorNext(await publicChecks(config.publicUrl), config);
 	const failed = checks.find((x) => x.status === "fail");
 	if (options.json) {
 		printReport({
