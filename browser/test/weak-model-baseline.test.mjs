@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { checkClasses, checkGuard, checkRound } from "../evals/weak-model/lib.mjs";
+import { checkClasses, checkGuard, checkRound, checkSteps } from "../evals/weak-model/lib.mjs";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "evals", "weak-model");
 const baseline = JSON.parse(readFileSync(join(dir, "baseline.json"), "utf8"));
@@ -84,6 +84,28 @@ test("guarded rounds ran this build's skill_match", { skip: !baseline.guard && "
 		for (const r of runsOf(label))
 			for (const c of r.calls.filter((c) => c.tool === "skill_match" && typeof c.result === "string" && c.result.startsWith("none")))
 				assert.ok(c.result.startsWith(`none: ${none}`), `${label} ${r.task} t${r.trial}: skill_match said ${JSON.stringify(c.result.slice(0, 90))}, this build says "none: ${none}"`);
+});
+
+// Steps are held too: the System Settings tasks took 4.3 and 7.3 calls on Haiku before click by text, 3.3 and 6.3
+// after. The newest round run like the one a ceiling was set on must stay under it (spaces/bench/ratchet.py holds the
+// live bench the same way once System Settings can run there).
+test("step ceilings hold in the newest round of those tasks", { skip: !baseline.steps && "no step ceilings yet" }, () => {
+	for (const [label, tasks] of Object.entries(baseline.steps)) {
+		const now = newest(label);
+		assert.deepEqual(checkSteps(now, tasks, runsOf(now)), []);
+	}
+});
+
+test("a step ceiling counts calls from runs.jsonl, and the rounds before click by text break it", () => {
+	const runs = (n) => n.map((k, i) => ({ task: "t", trial: i + 1, calls: Array(k).fill({ tool: "click" }) }));
+	assert.deepEqual(checkSteps("rX", { t: 3.4 }, runs([3, 3, 4])), []);
+	assert.match(checkSteps("rX", { t: 3.4 }, runs([5, 4, 4])).join(";"), /4\.33 calls a run, ceiling 3\.4/);
+	assert.match(checkSteps("rX", { t: 3 }, []).join(";"), /no t runs/);
+	if (!baseline.steps) return;
+	for (const [label, tasks] of Object.entries(baseline.steps)) {
+		const before = label.replace(/^s\d+-/, "s0-");
+		if (before !== label && baseline.rounds[before]) assert.notDeepEqual(checkSteps(before, tasks, runsOf(before)), [], `${before} ran before the gain and must break ${label}'s ceilings`);
+	}
 });
 
 test("every classification counts what its round's runs hold", () => {

@@ -8,8 +8,10 @@ public struct HandsMCP {
     public static let defaultProtocol = "2025-06-18"
     public static let instructions = """
     Polycarp's hands: read and act on apps on the user's Mac without touching their screen. \
-    Work in a loop: `open` an app (it lands on the agent workspace), `windows` for its window id, \
-    `snapshot` that window (one row per element, `[N] role "name"`), act on a row (`click`, `type`, `set_value`, `press`, \
+    `open` an app: it lands on the agent workspace and returns the window id. To click an element by the label the window \
+    shows, `click` with window and text needs no snapshot first, and `run_steps` does several actions in one call (a click \
+    by text in a step finds what the step before opened). Otherwise work in a loop: \
+    `snapshot` the window (one row per element, `[N] role "name"`), act on a row (`click`, `type`, `set_value`, `press`, \
     `scroll`, `select`, `toggle`) with ref "N" or the full ref, then read the evidence in the result and snapshot again \
     with since "latest" to see only what changed. On an error or an unverified result, make the call in `next_call`; null means nothing to call. \
     Refs go stale when the UI changes: on a stale_ref error take a new snapshot. Only windows on the agent \
