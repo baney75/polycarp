@@ -244,10 +244,13 @@ final class HandsRouter {
     /// live window, scope, inspection and in-use condition are read again, and `perform` runs in that same pass only when all of them
     /// pass (`MutationGate`). `perform` gets the agent workspace as read in that pass.
     func mutateOnMain<T>(_ ws: [HandsWindow], verb: String, session: String, perform: (_ agent: Int?) -> Result<T, HandsError>) -> Result<T, HandsError> {
-        onMain {
+        // A child Polycarp doesn't place (a panel) is read before the pass, as `gate` reads it, and inspected like any target.
+        let children = ws.filter { $0.workspace == nil }.reduce(into: [UInt32: HandsWindow]()) { m, w in m[w.id] = childWindow(w.id) }
+        return onMain {
             let agent = host.agentWorkspace()
             let targets = ws.map { w -> MutationTarget in
-                let live = host.live(w.id)
+                let placed = host.live(w.id)
+                let live = MutationGate.live(w, placed: placed, child: children[w.id])
                 let scope = live.map { decide($0, agent, session: session) } ?? .denied(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows`.", retry: .afterSnapshot))
                 let inUse = live.flatMap { l -> HandsError? in
                     let (state, verdict) = inUseVerdict(l, agent: agent, verb: verb, delivery: .posted)
