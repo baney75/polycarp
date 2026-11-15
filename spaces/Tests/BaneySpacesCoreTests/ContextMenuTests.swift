@@ -147,7 +147,7 @@ final class ContextMenuTests: XCTestCase {
         // 210 r1 first-F1: the cancel's key permit is planned before anything is posted, with the transaction's verifier.
         let keys = try XCTUnwrap(press.range(of: "guard let keyPermit = keys() else { out.result = .failure(ContextMenu.noCancel(w.app)); return out }"))
         XCTAssertLessThan(keys.lowerBound, post.lowerBound)
-        XCTAssertTrue(bg.contains("escapeKeys(w, verifier: verifier)") && !bg.contains("verifier: .none, path: []"))
+        XCTAssertTrue(bg.contains("escapeKeys(w, verifier: verifier, session: session)") && !bg.contains("verifier: .none, path: []"))
         // first-F2: a late menu is cancelled. first-F3: a menu left open is said over the front app's failure.
         XCTAssertTrue(menu.contains("let late = waitShown(ContextMenu.wait)") && menu.contains("cancel() ? ContextMenu.late(w.app) : ContextMenu.stillOpen(w.app)"))
         XCTAssertTrue(menu.contains("defer { if open { leftOpen = true } }") && bg.contains("r.posted > 0 && !r.leftOpen ? ContextMenu.failedPress(e, reached: r.reached, late: frontFailure()) : e"))
@@ -255,7 +255,7 @@ final class ContextMenuTests: XCTestCase {
         let gate = try XCTUnwrap(click.range(of: "ContextMenu.gate(")), act = try XCTUnwrap(click.range(of: "kind: .rightClick"))
         XCTAssertLessThan(gate.lowerBound, act.lowerBound)
         // 210 r1 first-F1, S4: the window's own scope, and the cancel's key permit before the engine is asked.
-        let keys = try XCTUnwrap(click.range(of: "guard let keyPermit = escapeKeys(w) else { answer = .failure(ContextMenu.noCancel(w.app)); return .ok(.null) }"))
+        let keys = try XCTUnwrap(click.range(of: "guard let keyPermit = escapeKeys(w, session: session) else { answer = .failure(ContextMenu.noCancel(w.app)); return .ok(.null) }"))
         XCTAssertLessThan(keys.lowerBound, act.lowerBound)
         XCTAssertTrue(click.contains("agentWindow: onAgentWorkspace(w, scope)") && click.contains("permit: keyPermit") && click.contains("leftOpen: &open"))
         XCTAssertFalse(src.contains("escapeMenu"))
@@ -391,7 +391,7 @@ final class ContextMenuTests: XCTestCase {
         let failed = try XCTUnwrap(click.range(of: "case .failed(let e): answer = .failure(e); return .ok(.null)"))
         XCTAssertTrue(bounds.lowerBound < failed.lowerBound && failed.lowerBound < gate.lowerBound)
         XCTAssertFalse(click.contains(#"if case .ok(let v) = HandsEngine.shared.getInline(window: w, ref: ref, property: "bounds")"#), "no failure dropped")
-        let keys = try XCTUnwrap(click.range(of: "escapeKeys(w)"))
+        let keys = try XCTUnwrap(click.range(of: "escapeKeys(w, session: session)"))
         XCTAssertLessThan(bounds.lowerBound, gate.lowerBound)
         for (name, r) in [("frame", frame), ("displays", displays), ("bounds", bounds), ("gate", gate)] {
             XCTAssertLessThan(tx.lowerBound, r.lowerBound, "\(name) is read inside the transaction")

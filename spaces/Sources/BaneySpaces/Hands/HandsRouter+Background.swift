@@ -200,7 +200,7 @@ extension HandsRouter {
         }()
 
         // Scope and facts again, at the moment of execution; one route or one refusal.
-        guard let (facts, frame) = gatherFacts(w, kind: kind, verifier: verifier, path: path) else {
+        guard let (facts, frame) = gatherFacts(w, kind: kind, verifier: verifier, path: path, session: session) else {
             return .failed(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows` and take a new snapshot.", retry: .afterSnapshot))
         }
         let permit: BackgroundPermit
@@ -271,7 +271,7 @@ extension HandsRouter {
             // The cancel: Escape posted to the process, with a key permit of its own from the planner, planned with this
             // transaction's verifier before anything is posted (210 r1 first-F1).
             let r = contextPress(w, frame: frame, point: path[0], permit: permit, stop: stop, item: style.item, agentWindow: onAgentWorkspace(w, scope),
-                                 keys: { [self] in escapeKeys(w, verifier: verifier) }, check: scopeCheck, cancelled: cancelled)
+                                 keys: { [self] in escapeKeys(w, verifier: verifier, session: session) }, check: scopeCheck, cancelled: cancelled)
             aimed += r.aimed; posted += r.posted; released = r.released; lastPostAt = r.lastPostAt
             switch r.result {
             case .failure(let e): return .failed(r.posted > 0 && !r.leftOpen ? ContextMenu.failedPress(e, reached: r.reached, late: frontFailure()) : e)
@@ -360,18 +360,21 @@ extension HandsRouter {
 
     /// A context menu's cancel: the key permit Escape is posted with, planned before anything is posted, with the
     /// transaction's verifier, or the one a read of the tree now gives (210 r1 first-F1). Nil: no right click.
-    func escapeKeys(_ w: HandsWindow, verifier: VerifierPlan? = nil) -> BackgroundPermit? {
-        guard let (keyFacts, _) = gatherFacts(w, kind: .keys, verifier: verifier ?? (inlineTree(w) != nil ? .ax : .none), path: []),
+    func escapeKeys(_ w: HandsWindow, verifier: VerifierPlan? = nil, session: String) -> BackgroundPermit? {
+        guard let (keyFacts, _) = gatherFacts(w, kind: .keys, verifier: verifier ?? (inlineTree(w) != nil ? .ax : .none), path: [], session: session),
               case .success(let keys) = BackgroundPlanner.plan(keyFacts) else { return nil }
         return keys
     }
 
+    /// A child window (a dialog, an alert) isn't placed, so `host.live` doesn't know it: it is read again from its app, and
+    /// its scope is its parent's, for this session (#124 sol-F2, sol-sol-F3).
     /// The facts the planner decides on, read now, on the process queue. nil when the window is gone.
-    private func gatherFacts(_ w: HandsWindow, kind: InputKind, verifier: VerifierPlan, path: [CGPoint]) -> (BackgroundFacts, CGRect)? {
-        let (live, agent, owned, seen) = onMain { (host.live(w.id), host.agentWorkspace(), host.agentOwned(), host.inspect(w.id)) }
-        guard let live, live.pid == w.pid, let server = BackgroundAX.serverWindow(w.id) else { return nil }
+    private func gatherFacts(_ w: HandsWindow, kind: InputKind, verifier: VerifierPlan, path: [CGPoint], session: String) -> (BackgroundFacts, CGRect)? {
+        let (placed, agent, owned, seen) = onMain { (host.live(w.id), host.agentWorkspace(), host.agentOwned(), host.inspect(w.id)) }
+        guard let live = BackgroundTarget.live(w, placed: placed, child: { childWindow(w.id) }),
+              let server = BackgroundAX.serverWindow(w.id) else { return nil }
         let scope: ScopeKind
-        switch decide(live, agent) {
+        switch decide(live, agent, session: session) {
         // Under Full Access one of Donovan's processes with a window claimed onto the agent workspace is his, like a lent one.
         case .onAgentWorkspace: scope = access == .full && !owned.contains(w.pid) ? .full : .agentWorkspace
         case .lent: scope = .lent
