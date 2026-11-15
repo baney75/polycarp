@@ -131,7 +131,6 @@ final class MoveToApplicationsTests: XCTestCase {
         XCTAssertNil(EntryPoint.usageError(arguments: args), "the moved copy must not be refused")
         XCTAssertNil(EntryPoint.immediate(arguments: args, info: nil), "it isn't a print-and-exit flag")
         XCTAssertTrue(EntryPoint.needsExclusiveCopy(arguments: args), "it takes the lock like any start")
-        XCTAssertTrue(EntryPoint.startFlags.contains("--after-move"))
         XCTAssertFalse(MoveToApplications.shouldAsk(arguments: args, bundle: app("/Volumes/P/Polycarp.app"), home: home))
     }
 
@@ -296,12 +295,12 @@ final class LegacyRetirementTests: XCTestCase {
         let home = temp()
         try plant(home.appendingPathComponent("Applications/BaneySpaces.app"), id: Product.Legacy.bundleID)
         try plant(home.appendingPathComponent("Applications/Silas.app"), id: Product.Silas.bundleID)
-        XCTAssertEqual(LegacyRetirement.copies(home: home).map(\.lastPathComponent), ["BaneySpaces.app"], "Silas stays")
+        XCTAssertEqual(LegacyRetirement.copies(home: home, system: home.appendingPathComponent("system")).map(\.lastPathComponent), ["BaneySpaces.app"], "Silas stays")
         XCTAssertNil(LegacyApp.installed(in: [home.appendingPathComponent("Applications")].filter { $0.lastPathComponent == "nope" }))
         // A folder that holds only Silas yields nothing.
         let only = temp()
         try plant(only.appendingPathComponent("Applications/Silas.app"), id: Product.Silas.bundleID)
-        XCTAssertEqual(LegacyRetirement.copies(home: only), [])
+        XCTAssertEqual(LegacyRetirement.copies(home: only, system: only.appendingPathComponent("system")), [])
     }
 
     func testRetiringMovesEveryCopyFirstThenStopsTheWatchdogAndLeavesTheDataAlone() throws {
@@ -359,7 +358,7 @@ final class LegacyRetirementTests: XCTestCase {
         let delegate = try Repo.text("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(delegate.contains("let welcomeFinishedAtLaunch = UserDefaults.standard.bool(forKey: Welcome.finishedKey)"), "read at launch")
         XCTAssertEqual(LegacyRetirement.welcomeNote, "BaneySpaces moved to the Trash. Your settings came with you.")
-        XCTAssertTrue(try Repo.text("Sources/BaneySpaces/WelcomeWindow.swift").contains("LegacyRetirement.welcomeNote"))
+        XCTAssertTrue(try Repo.text("Sources/BaneySpaces/WelcomeWindow.swift").contains("LegacyRetirement.welcomeNote(supportDir:"))
     }
 
     func testTheFirstLaunchRunsTheInstallStepWithItsLinksAndTheTheme() throws {

@@ -10,9 +10,13 @@ import Foundation
 /// aliases serve. Until the old app is replaced by a build that answers those flags without
 /// starting, running it is not safe while Polycarp runs.
 public enum LegacyApp {
-    /// Where the old app is looked for, in order.
-    public static func searchFolders(home: URL) -> [URL] {
-        [home.appendingPathComponent("Applications", isDirectory: true), URL(fileURLWithPath: "/Applications", isDirectory: true)]
+    /// The Mac's own Applications folder.
+    public static let systemApplications = URL(fileURLWithPath: "/Applications", isDirectory: true)
+
+    /// Where the old app is looked for, in order. Tests pass their own `system`, so what this Mac has installed never
+    /// changes their answer.
+    public static func searchFolders(home: URL, system: URL = systemApplications) -> [URL] {
+        [home.appendingPathComponent("Applications", isDirectory: true), system]
     }
 
     /// The installed old app, found by its name and confirmed by its bundle ID so that an unrelated

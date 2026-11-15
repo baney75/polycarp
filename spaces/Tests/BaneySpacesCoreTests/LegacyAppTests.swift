@@ -17,14 +17,14 @@ final class LegacyAppTests: XCTestCase {
     }
 
     func testNothingInstalledShowsNothing() {
-        let found = LegacyApp.installed(in: LegacyApp.searchFolders(home: root))
+        let found = LegacyApp.installed(in: LegacyApp.searchFolders(home: root, system: root.appendingPathComponent("system")))
         XCTAssertNil(found)
         XCTAssertNil(LegacyApp.line(installed: found, supportDir: root))
     }
 
     func testAnInstalledOldAppGetsOneCalmLine() throws {
         try install(bundleID: "com.baney.baneyspaces")
-        let found = LegacyApp.installed(in: LegacyApp.searchFolders(home: root))
+        let found = LegacyApp.installed(in: LegacyApp.searchFolders(home: root, system: root.appendingPathComponent("system")))
         XCTAssertNotNil(found)
         let support = root.appendingPathComponent("Polycarp")
         XCTAssertEqual(LegacyApp.line(installed: found, supportDir: support), "BaneySpaces is still installed.", "no import yet, so no claim of one")
@@ -36,7 +36,7 @@ final class LegacyAppTests: XCTestCase {
 
     func testTheLineSaysWhichPartIsStillToComeWhenTheImportIsNotFinished() throws {
         try install(bundleID: "com.baney.baneyspaces")
-        let found = LegacyApp.installed(in: LegacyApp.searchFolders(home: root))
+        let found = LegacyApp.installed(in: LegacyApp.searchFolders(home: root, system: root.appendingPathComponent("system")))
         let support = root.appendingPathComponent("Polycarp")
         try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         try Data("layout.json\nbangs.json\n".utf8).write(to: support.appendingPathComponent(SettingsImport.pendingName))
@@ -47,7 +47,7 @@ final class LegacyAppTests: XCTestCase {
 
     func testAFolderOfThatNameWithAnotherBundleIDDoesNotCount() throws {
         try install(bundleID: "com.example.other")
-        XCTAssertNil(LegacyApp.installed(in: LegacyApp.searchFolders(home: root)))
+        XCTAssertNil(LegacyApp.installed(in: LegacyApp.searchFolders(home: root, system: root.appendingPathComponent("system"))))
     }
 
     func testThereIsNoRemoveButtonUntilTheOldUninstallerIsSafe() throws {
