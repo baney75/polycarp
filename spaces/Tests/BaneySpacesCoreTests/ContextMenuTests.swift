@@ -203,6 +203,15 @@ final class ContextMenuTests: XCTestCase {
     /// the main one and the element on the other, would open the menu on a display Donovan may be looking at; an element
     /// whose bounds can't be read is refused the same way, nothing sent.
     func testARightClickOnARefIsGatedAtTheElementNotTheWindowsMiddle() throws {
+        // 269 r2 second-S1: a scrolled view (a long document, a Finder list) reads as its whole content, taller than the
+        // display; only the part inside the window is judged. Scrolled wholly out of the window, it is refused.
+        let fits = CGRect(x: 200, y: 100, width: 800, height: 600)
+        let long = CGRect(x: 210, y: -3000, width: 780, height: 9000)
+        XCTAssertFalse(main.contains(long))
+        XCTAssertNil(ContextMenu.gate(agentShown: true, agentWindow: true, window: fits, element: long, displays: [main, side]))
+        let wide = CGRect(x: 910, y: -3000, width: 980, height: 9000)
+        XCTAssertNotNil(ContextMenu.gate(agentShown: true, agentWindow: true, window: CGRect(x: 900, y: 100, width: 1000, height: 600), element: wide, displays: [main, side]), "its seen part crosses onto the side display")
+        XCTAssertNotNil(ContextMenu.gate(agentShown: true, agentWindow: true, window: fits, element: CGRect(x: 210, y: 800, width: 80, height: 24), displays: [main, side]), "scrolled out of the window")
         let across = CGRect(x: 900, y: 100, width: 1000, height: 600)
         XCTAssertTrue(main.contains(CGPoint(x: across.midX, y: across.midY)))
         let onSide = CGRect(x: 1700, y: 300, width: 80, height: 24), onMain = CGRect(x: 1000, y: 300, width: 80, height: 24)
