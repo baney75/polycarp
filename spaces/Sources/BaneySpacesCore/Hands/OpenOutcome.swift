@@ -45,6 +45,14 @@ public enum OpenMiss: Equatable, Sendable {
         wait >= claimWait && !mainThread ? .now : .after(max(0, claimWait - elapsed))
     }
 
+    /// When `open` stops waiting for its window: `wait` (at most `claimWait`) after the launch, or after the request
+    /// while no launch has been reported. With the open cover on, a launch can start up to `waitForTurn` plus
+    /// `captureLimit` (2.3 s) after its request, and its window had that much less time before the miss check quit the
+    /// copy (review of PR 232, round 2 second-S2). Seconds since 1970.
+    public static func waitEnds(request: TimeInterval, launched: TimeInterval?, wait: TimeInterval) -> TimeInterval {
+        max(request, launched ?? request) + min(wait, claimWait)
+    }
+
     /// Whether a window the window server lists is one a person can see: not clear, and over `minSide` both ways (F3).
     public static func visible(alpha: Double, bounds: CGRect) -> Bool {
         alpha > 0 && bounds.width > minSide && bounds.height > minSide

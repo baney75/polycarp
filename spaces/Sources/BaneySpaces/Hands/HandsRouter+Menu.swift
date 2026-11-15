@@ -46,7 +46,8 @@ extension HandsRouter {
                 if case .success = item {
                     var why: HandsError?
                     let earlier = withoutActuallyEscaping(cancelled) { c in
-                        MenuPath.cancelEarlier(count: MenuAX.panelElements(w.pid).count, pause: { Thread.sleep(forTimeInterval: 0.1) }) {
+                        MenuPath.cancelEarlier(count: MenuAX.panelElements(w.pid).count, pause: { Thread.sleep(forTimeInterval: 0.1) },
+                                              retry: { MenuPath.retries(after: why, cancelled: c()) }) {
                             // The error belongs to the last attempt only (258 r1 first-F2).
                             why = nil
                             return cancelOnePanel(w, old: [], inline: c, failed: { why = $0 })

@@ -17,6 +17,7 @@ import {
 	enableNetworkCapture,
 	evaluateMain,
 	hover,
+	insertText,
 	isDetachError,
 	isNavigatedError,
 	networkCapturing,
@@ -56,6 +57,7 @@ import {
 	navigateTabDetailed,
 	pageHtml,
 	pageText,
+	pasteInto,
 	runInPage,
 	scrollPage,
 	snapshot,
@@ -469,6 +471,8 @@ export function normalizeStep(step: Params, i: number): [string, Params] {
 	if ("press" in step) return ["press", typeof step.press === "string" ? { key: step.press } : obj(step.press)];
 	if ("key" in step) return ["press", { key: String(step.key), ...(step.repeat ? { repeat: step.repeat } : {}) }];
 	if ("type" in step) return ["type", typeof step.type === "string" ? { text: step.type } : obj(step.type)];
+	if ("paste" in step)
+		return ["type", { ...(typeof step.paste === "string" ? { text: step.paste } : obj(step.paste)), paste: true }];
 	if ("text" in step) return ["type", { text: String(step.text) }];
 	if ("click" in step) return ["click", obj(step.click)];
 	if ("doubleClick" in step || "dblclick" in step)
@@ -481,9 +485,59 @@ export function normalizeStep(step: Params, i: number): [string, Params] {
 	if ("screenshot" in step) return ["screenshot", {}];
 	throw new BridgeError(
 		ERR.BAD_PARAMS,
-		`step ${i}: expected one of press, click, doubleClick, drag, type, hover, scroll, wait, screenshot`,
+		`step ${i}: expected one of press, click, doubleClick, drag, type, paste, hover, scroll, wait, screenshot`,
 	);
 }
+
+/**
+ * type with paste:true: the text arrives as one paste, as the page sees a paste (pasteInto), never through the
+ * user's clipboard. Text no handler takes goes in at the focus as one insertion. Retried as type is.
+ */
+const pasteText: Handler = async (ctx, params) => {
+	const text = requireStr(params, "text");
+	const tabId = await resolveTab(ctx, params, true);
+	const t = target(params);
+	/** Set once the paste goes to the page: from then on the field may hold the text. */
+	let handed = false;
+	const before = await changesBefore(ctx, tabId, params);
+	const since = await actionStart(ctx, tabId);
+	const attempt = async (): Promise<"page" | "inserted"> => {
+		if (t.ref || t.selector) {
+			const rect = await locate(tabId, t, skipFor(ctx, tabId), "type", before?.frame.hit);
+			await click(tabId, rect.x, rect.y, { stop: () => stopIfAborted(ctx) });
+		}
+		stopIfAborted(ctx);
+		handed = true;
+		// The page's own paste handler first; text nothing took goes in at the focus, as one insertion.
+		const by = await pasteInto(tabId, t.ref, text, skipFor(ctx, tabId), before?.frame.hit);
+		if (by === "unhandled") await insertText(tabId, text);
+		stopIfAborted(ctx);
+		if (params.submit === true) await pressKey(tabId, "Enter");
+		return by === "page" ? "page" : "inserted";
+	};
+	let handledBy: "page" | "inserted";
+	try {
+		handledBy = await attempt();
+	} catch (err) {
+		if (!isDetachError(err)) throw err;
+		const what = handed ? "the text may be in the field" : "nothing was pasted";
+		if (isNavigatedError(err)) throw navigatedError("paste", what);
+		// Pasting again after the page may have taken it would double the text.
+		if (handed) throw interruptedError(err, "paste", what);
+		try {
+			await reattach(tabId);
+			if (before) before.frame.hit = undefined;
+			await settleStart(tabId);
+			handledBy = await attempt();
+		} catch (again) {
+			if (isDetachError(again))
+				throw interruptedError(again, "paste", handed ? "the text may be in the field" : "nothing was pasted");
+			throw again;
+		}
+	}
+	const done = { pasted: text.length, handledBy };
+	return { ...done, ...(await settleAfter(ctx, tabId, since, done, { before })) };
+};
 
 /** Site edits for agents. Everything an agent adds says it was an agent; a script it adds stays off for the person. */
 const editHandlers: Record<string, Handler> = {
@@ -1003,6 +1057,7 @@ export const handlers: Record<string, Handler> = {
 	},
 
 	type: async (ctx, params) => {
+		if (params.paste === true) return pasteText(ctx, params);
 		const text = requireStr(params, "text");
 		const tabId = await resolveTab(ctx, params, true);
 		const t = target(params);

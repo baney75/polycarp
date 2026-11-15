@@ -7,7 +7,7 @@ import { BridgeClient, BridgeRpcError, isConnectionError, listSockets, NOT_CONNE
 import { runDoctor } from "./doctor.ts";
 import { migrateLegacyPaths } from "./migrate.ts";
 import { runNativeHost } from "./host.ts";
-import { browserDirs, cliLauncherPath, hostStatus, install, isInstalled } from "./install.ts";
+import { browserDirs, browserRunning, cliLauncherPath, extensionInProfile, hostStatus, install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
 import { runPanelProfile } from "./panel-profile.ts";
 import { COMMAND_NAME, COMPILED } from "./self.ts";
@@ -130,6 +130,8 @@ async function withBridge<T>(name: string, fn: (client: BridgeClient) => Promise
 interface StatusReport {
 	connected: boolean;
 	hosts: Array<{ browser: string; state: string; file: string }>;
+	/** Browsers that run with the extension on in a profile and its host registered, connected or not (asleep, or not dialed yet). `polycarp update` waits for these. */
+	running: string[];
 	/** Every connected browser's extension and what it was built from (`polycarp version` reads this). */
 	extensions: Array<{ browser: string; version: string; commit: string; commitDate: string; dirty: boolean; /** False: the browser is connected but did not answer in time. */ answered: boolean }>;
 	extensionVersion?: string;
@@ -173,6 +175,9 @@ async function status(json: boolean): Promise<number> {
 	const report: StatusReport = {
 		connected: false,
 		hosts: hostStatus().map((b) => ({ browser: b.name, state: b.state, file: b.file })),
+		running: hostStatus()
+			.filter((b) => b.state === "current" && browserRunning(b.dir) && extensionInProfile(b.dir))
+			.map((b) => b.name),
 		extensions: [],
 	};
 	try {

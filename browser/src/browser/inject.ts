@@ -161,6 +161,9 @@ async function cdpInject<T>(tabId: number, code: string, options: InjectOptions)
 	const expression = `${SHIM}\n(async () => { const chrome = window.__tabkyraChrome; return await (${code}); })()`;
 	if (options.executionId) runningExecutions.set(options.executionId, tabId);
 	try {
+		// A Stop that came while it attached: nothing is sent (first-F3 of the review of PR 265).
+		if (options.executionId && terminated.has(options.executionId))
+			throw new PageException("The script was stopped before it ran. Nothing was done on the page.");
 		const result = await cdpSend<{
 			result: { value?: T; description?: string };
 			exceptionDetails?: { exception?: { description?: string }; text?: string };
@@ -172,59 +175,167 @@ async function cdpInject<T>(tabId: number, code: string, options: InjectOptions)
 		}
 		return result.result.value as T;
 	} finally {
-		if (options.executionId) runningExecutions.delete(options.executionId);
+		if (options.executionId) {
+			runningExecutions.delete(options.executionId);
+			terminated.delete(options.executionId);
+		}
 	}
+}
+
+/** A result whose JSON runs past this many characters is not kept for a lost run: the call then fails instead. */
+const KEPT_RESULT_CHARS = 256_000;
+/** The message a run sends the extension, in the userScripts world's own messaging: nothing is left in the page. */
+const RUN_MESSAGE = "polycarp-run";
+
+/** Each userScripts run of this context, by its mark: whether the extension heard it start, and its kept result. */
+const runs = new Map<string, { started: boolean; kept?: string }>();
+/** Runs a person stopped: a stopped run that gave no result never goes to the debugger path (second-F4). */
+const terminated = new Set<string>();
+let listening = false;
+
+/** Answer only this context's own runs: the worker and each panel all hear every user-script message. False when this
+ * context can't hear a run start (second-F6 of the review of PR 265). */
+function listenForRuns(): boolean {
+	if (!chrome.runtime.onUserScriptMessage) return false;
+	if (listening) return true;
+	listening = true;
+	chrome.runtime.onUserScriptMessage.addListener((message, _sender, sendResponse) => {
+		const m = message as { type?: string; mark?: string; step?: string; kept?: string };
+		const run = m?.type === RUN_MESSAGE && m.mark ? runs.get(m.mark) : undefined;
+		if (!run) return;
+		if (m.step === "start") run.started = true;
+		else if (typeof m.kept === "string") run.kept = m.kept;
+		sendResponse(true);
+	});
+	return true;
 }
 
 /**
  * Run `code` (an expression or IIFE, may return a promise) in the page and return
  * its value, matching userScripts.execute's `results[0].result`.
+ *
+ * userScripts.execute can come back with no result for a run (a browserjs() that read `undefined` a dozen times in a
+ * row, 2026-11-07). The code is then run on the debugger path only when it never started: a run tells the extension
+ * it is starting, and waits for the answer, before its code runs, and sends a small result back after. A run the
+ * extension heard start is never run again: its kept result is returned, or the call fails. Nothing is written to the
+ * page (first-F1, first-F2 of the review of PR 260).
  */
 export async function injectScript<T = unknown>(tabId: number, code: string, options: InjectOptions = {}): Promise<T> {
 	const api = userScriptsApi();
-	if (!api) return cdpInject<T>(tabId, code, options);
+	// Nothing has run yet, so the debugger path is safe when a start could not be heard.
+	if (!api || !listenForRuns()) return cdpInject<T>(tabId, code, options);
 	const worldId = options.worldId ?? "tabkyra";
-	let results: Awaited<ReturnType<typeof api.execute>>;
+	const mark = crypto.randomUUID();
+	const send = (fields: string) =>
+		`chrome.runtime.sendMessage({ type: ${JSON.stringify(RUN_MESSAGE)}, mark: ${JSON.stringify(mark)}, ${fields} })`;
+	const marked = `(async () => {
+	if ((await ${send('step: "start"')}.catch(() => false)) !== true)
+		throw new Error("Not run: Polycarp could not record that this script started. Try again.");
+	const v = await (${code});
+	let size = 0;
+	let kept;
 	try {
-		if (!configuredWorlds.has(worldId)) {
-			try {
-				await api.configureWorld({ worldId, messaging: true, csp: options.csp });
-			} catch (err) {
-				if (isUserScriptsGated(err)) throw err;
-				/* already configured */
-			}
-			configuredWorlds.add(worldId);
-		}
-		results = await api.execute({
-			js: [{ code }],
-			target: { tabId, allFrames: false },
-			world: "USER_SCRIPT",
-			worldId,
-			injectImmediately: true,
-			...(options.executionId && api.terminate ? { executionId: options.executionId } : {}),
+		kept = JSON.stringify([v], (_k, x) => {
+			size += _k.length + (typeof x === "string" ? x.length : 16);
+			if (size > ${KEPT_RESULT_CHARS}) throw 0;
+			return x;
 		});
-	} catch (err) {
-		// Present but refused (permission or toggle): the code never ran, so the debugger path runs it.
-		if (isUserScriptsGated(err)) return cdpInject<T>(tabId, code, options);
-		throw err;
+	} catch {}
+	if (kept !== undefined && kept.length <= ${KEPT_RESULT_CHARS}) await ${send('step: "done", kept')}.catch(() => undefined);
+	return { v };
+})()`;
+	runs.set(mark, { started: false });
+	try {
+		let results: Awaited<ReturnType<typeof api.execute>>;
+		try {
+			if (!configuredWorlds.has(worldId)) {
+				try {
+					await api.configureWorld({ worldId, messaging: true, csp: options.csp });
+				} catch (err) {
+					if (isUserScriptsGated(err)) throw err;
+					/* already configured */
+				}
+				configuredWorlds.add(worldId);
+			}
+			results = await api.execute({
+				js: [{ code: marked }],
+				target: { tabId, allFrames: false },
+				world: "USER_SCRIPT",
+				worldId,
+				injectImmediately: true,
+				...(options.executionId && api.terminate ? { executionId: options.executionId } : {}),
+			});
+		} catch (err) {
+			// Present but refused (permission or toggle): the code never ran, so the debugger path runs it.
+			if (isUserScriptsGated(err)) return cdpInject<T>(tabId, code, options);
+			throw err;
+		}
+		const first = results[0];
+		if (first?.error) throw new PageException(String((first.error as { message?: string }).message ?? first.error));
+		const envelope = first?.result as { v: T } | undefined;
+		// Any result object is the run's own envelope (a `v` of undefined may arrive with the key gone).
+		if (envelope && typeof envelope === "object") return envelope.v;
+		// Closed before any fallback: a start that arrives from now on gets no answer, so its code never runs
+		// (first-F1 of the review of PR 265). Only then can the debugger path run it.
+		const run = runs.get(mark);
+		runs.delete(mark);
+		return await lostResult<T>(tabId, code, options, run);
+	} finally {
+		runs.delete(mark);
+		if (options.executionId) terminated.delete(options.executionId);
 	}
-	const first = results[0];
-	if (first?.error) throw new PageException(String((first.error as { message?: string }).message ?? first.error));
-	return first?.result as T;
+}
+
+/** userScripts gave no result: run the code on the debugger path only if it never started and was not stopped. */
+async function lostResult<T>(
+	tabId: number,
+	code: string,
+	options: InjectOptions,
+	run: { started: boolean; kept?: string } | undefined,
+): Promise<T> {
+	if (run?.started) {
+		if (run.kept !== undefined) return (JSON.parse(run.kept) as [T])[0];
+		throw new PageException(
+			"The script ran, but its result was lost, so it was not run again: it may have acted on the page. Call read_page to see the page before you act again.",
+		);
+	}
+	if (options.executionId && terminated.has(options.executionId))
+		throw new PageException("The script was stopped before it ran. Nothing was done on the page.");
+	const words = (err: unknown) => (err instanceof Error ? err.message : String(err));
+	try {
+		await ensureBinding(tabId);
+	} catch (err) {
+		// It never ran on either path (second-F5): say so, with the debugger's own words.
+		throw new PageException(
+			`Not run: the page did not answer, and the debugger could not attach (${words(err)}). Try again.`,
+		);
+	}
+	try {
+		return await cdpInject<T>(tabId, code, options);
+	} catch (err) {
+		if (err instanceof PageException) throw err;
+		// Sent to the page, then cut off (a detach, a navigation): it may have run (first-F2 of the review of PR 265).
+		throw new PageException(
+			`The script was sent to the page, then cut off (${words(err)}), so it was not run again: it may have acted on the page. Call read_page to see the page before you act again.`,
+		);
+	}
 }
 
 /** Cancel a running injection on either path. */
 export async function terminateInjection(tabId: number, executionId: string): Promise<boolean> {
 	const api = userScriptsApi();
+	terminated.add(executionId);
+	let stopped = false;
 	if (api?.terminate) {
 		await api.terminate(tabId, executionId);
-		return true;
+		stopped = true;
 	}
+	// A run on the debugger path, a userScripts run's fallback included (first-F3 of the review of PR 265).
 	if (runningExecutions.has(executionId)) {
 		await cdpSend(tabId, "Runtime.terminateExecution").catch(() => undefined);
-		return true;
+		stopped = true;
 	}
-	return false;
+	return stopped;
 }
 
 export function supportsTermination(): boolean {

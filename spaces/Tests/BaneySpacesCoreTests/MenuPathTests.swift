@@ -501,11 +501,11 @@ final class MenuPathTests: XCTestCase {
         let (open, gone) = seen.split(listed: [1, 32])
         XCTAssertEqual(open.map(\.window.id), [32])
         XCTAssertEqual(gone.map(\.window.id), [31])
-        // 246 r1 second-S1: a palette ordered out, parked or minimized is still listed, so it still exists and is closed.
-        var hidden = viewer; hidden.visible = false
+        // 246 r1 second-S1: a tracked window ordered out, parked or minimized is still listed, so it still exists and is closed.
+        var hidden = viewer; hidden.visible = false; hidden.workspace = 3
         let parked = seen.split([hidden, L(id: 1, pid: 50, owner: "TextEdit", visible: false, workspace: 3)])
-        XCTAssertEqual(parked.open.map(\.window.id), [32], "listed but not visible is chosen for closing")
-        XCTAssertEqual(parked.gone.map(\.window.id), [31], "only an unlisted window is gone")
+        XCTAssertEqual(parked.open.map(\.window.id), [32], "listed, tracked, not visible is chosen for closing")
+        XCTAssertEqual(parked.gone.map(\.window.id), [31], "an unlisted window is gone")
         let e = MenuPath.escapeRefusal("Hilfe > Tipps", found: [], gone: gone, closed: true, window: 4)
         XCTAssertEqual(e.code, .outsideAgentWorkspace)
         XCTAssertTrue(e.message.contains("a window of Tips closed again on its own") && !e.message.contains("still open") && !e.message.contains("it was closed"), e.message)
@@ -530,6 +530,46 @@ final class MenuPathTests: XCTestCase {
         XCTAssertEqual(MenuPath.cancelEarlier(count: 1) { answers.removeFirst() }, .stuck(afterCancelling: false))
     }
 
+    /// 258 r1 second-S2: a source pin that matches tokens, not layout: any run of whitespace is one space.
+    static func has(_ code: String, _ tokens: String) -> Bool {
+        func flat(_ s: String) -> String { s.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        return flat(code).contains(flat(tokens))
+    }
+
+    /// 258 r1 first-F1: a helper's palette ordered out, which Polycarp doesn't track, is listed but on no screen, and
+    /// `host.close` closes only tracked windows. It is gone, never "still open"; one still on screen is still open.
+    func testAnUntrackedHelperOrderedOutIsGoneNotStillOpen() throws {
+        typealias L = MenuPath.Listed
+        let viewer = L(id: 32, pid: 77, owner: "Character Viewer", visible: true, workspace: nil)
+        let seen = MenuPath.Seen(escapes: [.init(viewer, tied: true)])
+        var hidden = viewer; hidden.visible = false
+        let out = seen.split([hidden])
+        XCTAssertEqual(out.open.map(\.window.id), [])
+        XCTAssertEqual(out.gone.map(\.window.id), [32])
+        XCTAssertEqual(seen.split([viewer]).open.map(\.window.id), [32], "on screen: still open")
+        let e = MenuPath.escapeRefusal("Edit > Emoji & Symbols", found: out.open, gone: out.gone, closed: true, window: 4)
+        XCTAssertFalse(e.message.contains("still open"), e.message)
+    }
+
+    /// 258 r1 first-F3: no retry after a check failed under the cancel (in use, out of scope, out of time) or the call
+    /// was cancelled: the same cancel would fail the same way. A Cancel that didn't take, or a panel window going away,
+    /// is tried again.
+    func testACheckThatFailedUnderTheCancelIsNotRetried() {
+        var calls = 0
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 1, retry: { false }) { calls += 1; return false }, .stuck(afterCancelling: false))
+        XCTAssertEqual(calls, 1)
+        calls = 0
+        XCTAssertEqual(MenuPath.cancelEarlier(count: 1, retry: { true }) { calls += 1; return calls < 3 ? false : nil }, .cancelled)
+        XCTAssertEqual(calls, 3)
+        for code in [HandsErrorCode.inUse, .timeout, .outsideAgentWorkspace, .needsLend] {
+            XCTAssertFalse(MenuPath.retries(after: HandsError(code, "x", suggestion: ""), cancelled: false), "\(code)")
+        }
+        XCTAssertTrue(MenuPath.retries(after: HandsError(.actionFailed, "no Cancel", suggestion: ""), cancelled: false))
+        XCTAssertTrue(MenuPath.retries(after: HandsError(.windowNotFound, "going", suggestion: ""), cancelled: false))
+        XCTAssertTrue(MenuPath.retries(after: nil, cancelled: false))
+        XCTAssertFalse(MenuPath.retries(after: nil, cancelled: true))
+    }
+
     /// 258 r1 second-S1: a cancel answered false, and the retry found the panel gone. Polycarp's Cancel was pressed and
     /// its read replaced the evidence store's, so it is `.cancelled` (the router reads the bar again), never `.none`,
     /// which would press the first read's ref in the panel's tree.
@@ -543,7 +583,8 @@ final class MenuPathTests: XCTestCase {
         // first-F2: the error is the last attempt's, never one an earlier attempt left behind.
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
         let menu = try XCTUnwrap(HandsSourceTests.block(after: "func menu(_ req: HandsRequest) -> HandsEnvelope", in: src))
-        XCTAssertTrue(menu.contains("why = nil\n                            return cancelOnePanel(w, old: [], inline: c, failed: { why = $0 })"))
+        XCTAssertTrue(Self.has(menu, "why = nil return cancelOnePanel(w, old: [], inline: c, failed: { why = $0 })"))
+        XCTAssertTrue(Self.has(menu, "retry: { MenuPath.retries(after: why, cancelled: c()) }"), "first-F3")
         XCTAssertTrue(menu.contains("case .cancelled: cancelledEarlier = true; item = pressable()"))
     }
 
@@ -561,7 +602,7 @@ final class MenuPathTests: XCTestCase {
         XCTAssertTrue(menu.contains("cancelOnePanel(w, old: [], inline: c, failed: { why = $0 })"))
         XCTAssertTrue(menu.contains("case .stuck(let after): return .failed(MenuPath.earlierError(w.app, afterCancelling: after, engine: why))"))
         // 246 r1 first-F4: the item is switched on, so no path answers ok with nothing pressed.
-        XCTAssertTrue(menu.contains("switch item {\n                case .failure(let e): return .failed(e)\n                case .success(let f): found = f"))
+        XCTAssertTrue(Self.has(menu, "switch item { case .failure(let e): return .failed(e) case .success(let f): found = f"))
         XCTAssertFalse(menu.contains("return .ok(.null) }"))
         let inline = try XCTUnwrap(HandsSourceTests.block(after: "private func cancelInline(", in: src))
         XCTAssertTrue(inline.contains("if case .failed(let e) = read { return e }") && inline.contains("check: scope, cancelled: cancelled) { return e }"))

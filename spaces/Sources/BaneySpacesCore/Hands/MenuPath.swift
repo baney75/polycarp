@@ -372,14 +372,15 @@ public enum MenuPath {
     /// while it goes away, and its window counts in `count` too (246 r1 first-F3). A panel gone by the retry, after a cancel
     /// that answered false, was cancelled: Polycarp's Cancel was pressed, and the bar is read again (258 r1 second-S1).
     public enum Earlier: Equatable, Sendable { case none, cancelled, stuck(afterCancelling: Bool) }
-    public static func cancelEarlier(count: Int, tries: Int = 3, pause: () -> Void = {}, cancelOne: () -> Bool?) -> Earlier {
+    /// `retry`: whether another try can help. Not after a check failed under the cancel or the call ran out (258 r1 first-F3).
+    public static func cancelEarlier(count: Int, tries: Int = 3, pause: () -> Void = {}, retry: () -> Bool = { true }, cancelOne: () -> Bool?) -> Earlier {
         // `tried`: a cancel ran. Its read of the panel replaced the evidence store's, so the bar must be read again before the
         // press even when the panel is gone by the retry (258 r1 second-S1).
         var done = false, tried = false
         for _ in 0..<count {
             var r = cancelOne()
             if r != nil { tried = true }
-            for _ in 1..<max(1, tries) where r == false { pause(); r = cancelOne() }
+            for _ in 1..<max(1, tries) where r == false && retry() { pause(); r = cancelOne() }
             switch r {
             case nil: return done || tried ? .cancelled : .none
             case false?: return .stuck(afterCancelling: done)
@@ -397,10 +398,13 @@ public enum MenuPath {
     /// left scope, the app is in use, the call ran out of time) is that call's answer, with its own code and next call,
     /// not a panel that won't cancel (246 r1 second-S2).
     public static func earlierError(_ app: String, afterCancelling: Bool, engine: HandsError?) -> HandsError {
-        let passOn: Set<HandsErrorCode> = [.outsideAgentWorkspace, .agentWorkspaceOff, .needsLend, .needsSandbox, .windowNotFound, .inUse, .timeout, .notRunning, .permissionDenied]
-        if let engine, passOn.contains(engine.code) { return engine }
+        if let engine, checkFailures.union([.windowNotFound]).contains(engine.code) { return engine }
         return earlierStuck(app, afterCancelling: afterCancelling)
     }
+    /// A check that failed under a cancel: trying the same cancel again fails the same way. A window not found is the
+    /// panel going away, which a retry can see through.
+    static let checkFailures: Set<HandsErrorCode> = [.outsideAgentWorkspace, .agentWorkspaceOff, .needsLend, .needsSandbox, .inUse, .timeout, .notRunning, .permissionDenied]
+    public static func retries(after e: HandsError?, cancelled: Bool) -> Bool { !cancelled && !(e.map { checkFailures.contains($0.code) } ?? false) }
     public static let earlierNote = "; an Open or Save panel left by an earlier command was cancelled first"
 
     /// `gone`: the panel was seen, but closed before Polycarp could cancel it (192 r1 first-F4).
@@ -432,9 +436,10 @@ public enum MenuPath {
         public func split(listed: Set<UInt32>) -> (open: [Escape], gone: [Escape]) {
             (escapes.filter { listed.contains($0.window.id) }, escapes.filter { !listed.contains($0.window.id) })
         }
-        /// On every window the window server still lists, seen or not: one ordered out, parked off the displays or
-        /// minimized still exists, so it is closed, and only an unlisted one is gone (246 r1 second-S1).
-        public func split(_ all: [Listed]) -> (open: [Escape], gone: [Escape]) { split(listed: Set(all.map(\.id))) }
+        /// On every window the window server still lists, seen or not: one Polycarp tracks still exists ordered out, parked
+        /// off the displays or minimized, so it is closed (246 r1 second-S1). One it doesn't track closes only by its own
+        /// close button, which `host.close` can't reach, so hidden it is gone, not "still open" (258 r1 first-F1).
+        public func split(_ all: [Listed]) -> (open: [Escape], gone: [Escape]) { split(listed: Set(all.filter { $0.visible || $0.workspace != nil }.map(\.id))) }
         public static func merged(_ looks: [Seen]) -> Seen {
             var out = Seen()
             for l in looks {

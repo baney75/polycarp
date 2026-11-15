@@ -336,6 +336,22 @@ test("a connector session's computer_run_steps takes its steps as objects and ha
 	await client.close();
 });
 
+// 251 r2 second-second-F2: a connector's run_steps reaches only the verbs this repo names and the session may call.
+test("a connector session's computer_run_steps can't reach a verb the connector's list leaves out", async () => {
+	rmSync(log, { force: true });
+	const client = await connect(withHelper, token("steps-cap", "computer.act"));
+	for (const bad of ["brand_new_verb", "computer_lend", "move", "run_steps"]) {
+		const answer = await client.callTool({ name: "computer_run_steps", arguments: { steps: [...STEPS, { tool: bad, args: {} }] } });
+		assert.equal(answer.isError, true, bad);
+		assert.match(answer.content[0].text, new RegExp(`step 3: ${bad} isn't a tool this session can use, so nothing ran`));
+	}
+	const calls = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+	assert.equal(calls.filter((c) => c.name === "run_steps").length, 0, "nothing reached the helper");
+	const ok = await client.callTool({ name: "computer_run_steps", arguments: { steps: [{ tool: "computer_click", args: { ref: "5" } }, { tool: "set-value", args: { ref: "7", value: "x" } }] } });
+	assert.equal(ok.isError, false, JSON.stringify(ok.content));
+	await client.close();
+});
+
 test("the local server's computer_run_steps takes its steps as objects and hands them to the helper unchanged", async () => {
 	rmSync(localLog, { force: true });
 	const client = await local({ POLYCARP_SPACES_BIN: localHelper });

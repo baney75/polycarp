@@ -11,6 +11,8 @@ import { refreshSubscriptionModels } from "./stream.js";
 
 /** chrome.storage.local flag: the "You're using your ChatGPT plan" note was shown once (no token in it). */
 export const CHATGPT_WELCOME_KEY = "tabkyra.chatgptPlanWelcomeShown";
+/** Fired (bubbling) once the section has drawn the helper's first answer, or the reason there is none. */
+export const SUBSCRIPTIONS_LOADED = "subscriptions-loaded";
 
 /**
  * Settings: the two subscription sign-ins Polycarp offers, and how to use a Claude or Gemini
@@ -50,6 +52,9 @@ export class SubscriptionsSection extends LitElement {
 			this.error = err instanceof Error ? err.message : String(err);
 			this.noHost = err instanceof SubscriptionRequestError && err.code === "no_host";
 		}
+		// Drawn with the answer: Settings > Providers shows once this is in, so the rows don't move after.
+		await this.updateComplete;
+		this.dispatchEvent(new Event(SUBSCRIPTIONS_LOADED, { bubbles: true }));
 	}
 
 	private async signInChatGpt(): Promise<void> {

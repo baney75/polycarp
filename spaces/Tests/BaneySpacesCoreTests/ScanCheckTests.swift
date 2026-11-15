@@ -110,3 +110,24 @@ final class UnplacedWindowsTests: XCTestCase {
         }
     }
 }
+
+/// 11-13 bench: 383 Accessibility misses in 23.5 h, none tied to a scan. A slow main-thread scan says what it was.
+final class SlowScanLineTests: XCTestCase {
+    func testAScanUnderATenthOfASecondSaysNothing() {
+        XCTAssertNil(ScanCheck.slowScanLine(seconds: 0.099, kind: "full", switching: false, missed: ["Word"]))
+    }
+
+    func testASlowScanNamesItsKindAndWhoMissed() {
+        XCTAssertEqual(ScanCheck.slowScanLine(seconds: 0.2504, kind: "full", switching: true, missed: ["Word", "Maps"]),
+                       "slow scan: 250 ms on main, full mid-switch; missed: Maps, Word")
+        XCTAssertEqual(ScanCheck.slowScanLine(seconds: 0.1, kind: "windows", switching: false, missed: []),
+                       "slow scan: 100 ms on main, windows; every app answered")
+    }
+
+    func testRefreshTimesItsScan() throws {
+        let s = try HandsSourceTests.code("Sources/BaneySpaces/Spaces.swift")
+        let r = try XCTUnwrap(HandsSourceTests.block(after: "func refresh(full: Bool = false)", in: s))
+        XCTAssertTrue(r.contains("let scanStart = ProcessInfo.processInfo.systemUptime\n        let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)"))
+        XCTAssertTrue(r.contains("ScanCheck.slowScanLine(seconds: ProcessInfo.processInfo.systemUptime - scanStart"))
+    }
+}

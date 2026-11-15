@@ -116,7 +116,7 @@ export const PAGE_TOOLS: readonly PageToolSpec[] = [
 		label: "Act",
 		description: `Act on your current tab with real mouse and key events. Its changes say what changed; read_page only if they say too little. Aim with ref (best), selector, or x/y from your latest screenshot.
 click {ref} (clickCount 2 doubles, button right)
-type {text, ref?, submit?}: clicks the field, types; submit presses Enter
+type {text, ref?, submit?, paste?}: clicks the field, types; submit presses Enter; paste:true pastes it (a paste event, not the clipboard) for long text and editors that format a paste
 fill {ref, value}: sets an input, select (value or label) or checkbox ("true"/"false")
 press {key, repeat?}: Enter, Escape, Tab, ArrowDown, Control+a
 hover {ref}
@@ -135,6 +135,7 @@ steps {steps:[{click:{ref:"e3"}},{type:"hi"},{press:"Enter"}], screenshot?}: up 
 			value: text(),
 			key: text(),
 			submit: Type.Optional(Type.Boolean()),
+			paste: Type.Optional(Type.Boolean()),
 			repeat: num(),
 			clickCount: num(),
 			button: Type.Optional(oneOf(["left", "right", "middle"])),

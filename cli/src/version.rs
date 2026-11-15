@@ -467,7 +467,12 @@ pub fn helper_identity(text: &str) -> Option<(Option<String>, Build)> {
 /// The words for a helper or a browser that was asked and did not answer inside its time.
 pub const NO_ANSWER: &str = "no answer in time";
 
-/// The extensions in the helper's `status --json`: one part per connected browser.
+/// A browser with the extension is running, but its extension is not connected: its worker is asleep, or it has not
+/// dialed the helper again since the helper was replaced. It connects within its 30 s keepalive.
+pub const ASLEEP: &str = "running, but its extension is not connected yet";
+
+/// The extensions in the helper's `status --json`: one part per connected browser, or per browser that runs with the
+/// extension but has not connected (`running`, from a helper that reports it).
 pub fn extension_parts(text: &str) -> Vec<Part> {
     let Ok(v) = serde_json::from_str::<Value>(text.trim()) else {
         return vec![Part::unanswered(
@@ -477,6 +482,17 @@ pub fn extension_parts(text: &str) -> Vec<Part> {
     };
     if let Some(list) = v.get("extensions").and_then(Value::as_array) {
         if list.is_empty() {
+            let asleep: Vec<Part> = v
+                .get("running")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|b| Part::absent(&format!("extension ({b})"), ASLEEP))
+                .collect();
+            if !asleep.is_empty() {
+                return asleep;
+            }
             return vec![Part::absent("extension", "no browser is connected")];
         }
         return list
@@ -1071,6 +1087,14 @@ mod tests {
         assert_eq!(
             extension_parts(r#"{"connected":false,"extensions":[]}"#),
             vec![Part::absent("extension", "no browser is connected")]
+        );
+        // A browser that runs with the extension but has not connected is named, not "no browser".
+        assert_eq!(
+            extension_parts(r#"{"connected":false,"extensions":[],"running":["Helium","Chrome"]}"#),
+            [
+                Part::absent("extension (Helium)", ASLEEP),
+                Part::absent("extension (Chrome)", ASLEEP)
+            ]
         );
         // An older helper: connected, a version, no commit. Listed, and odd.
         let old = extension_parts(r#"{"connected":true,"extensionVersion":"1.1.2"}"#);

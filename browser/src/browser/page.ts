@@ -1847,6 +1847,42 @@ export async function fillElement(
 	await runForRef(tabId, target.ref, code, rule, framed);
 }
 
+/**
+ * Hands the focused element a paste of `text`, as a page sees one: a cancelable `paste` event whose clipboardData
+ * holds it, so an editor that handles paste itself (rich text, sheets, code editors) gets the text it expects. The
+ * system clipboard is never read or written. "page" means a handler took it (preventDefault); "unhandled" means
+ * nothing did, and the caller inserts the text. Runs in the frame that holds `ref`, where its field has focus.
+ */
+export async function pasteInto(
+	tabId: number,
+	ref: string | undefined,
+	text: string,
+	rule: FrameRule = FRAMES_CLOSED,
+	found?: { frame: PageFrame; inner: string },
+): Promise<"page" | "unhandled"> {
+	const code = () => `(() => {
+		let el = document.activeElement;
+		// Focus inside an open shadow root or a same-origin frame is that element's; a cross-origin frame's isn't reachable here.
+		for (let depth = 0; el && depth < 12; depth++) {
+			if (el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+			else if (/^(IFRAME|FRAME)$/.test(el.tagName)) {
+				let doc = null;
+				try { doc = el.contentDocument; } catch {}
+				if (!doc) return "unhandled";
+				el = doc.activeElement;
+			} else break;
+		}
+		if (!el) return "unhandled";
+		const W = el.ownerDocument.defaultView || window;
+		const data = new W.DataTransfer();
+		data.setData("text/plain", ${JSON.stringify(text)});
+		const ev = new W.ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true, composed: true });
+		el.dispatchEvent(ev);
+		return ev.defaultPrevented ? "page" : "unhandled";
+	})()`;
+	return (await runForRef<"page" | "unhandled">(tabId, ref, code, rule, found)).value;
+}
+
 /** Characters get_page_text returns by default. */
 export const PAGE_TEXT_CHARS = 50000;
 /** Characters get_page_html returns by default. */

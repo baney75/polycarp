@@ -22,20 +22,8 @@ import { SkillPill } from "../components/SkillPill.js";
 import { SKILL_TOOL_DESCRIPTION } from "../prompts/prompts.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
-import { defaultSkills, shouldReplaceDefault } from "./default-skills.js";
 
 const getSkills = () => getTabkyraStorage().skills;
-
-// Initialize default skills on first run
-export async function initializeDefaultSkills() {
-	const skillsRepo = getSkills();
-	for (const skill of defaultSkills) {
-		const existing = await skillsRepo.getSkill(skill.name);
-		if (!existing || shouldReplaceDefault(existing, skill)) {
-			await skillsRepo.saveSkill(skill);
-		}
-	}
-}
 
 // Get sandbox URL for CSP-compliant code validation
 const getSandboxUrl = () => {

@@ -55,6 +55,7 @@ import { CombinedTab } from "./dialogs/CombinedTab.js";
 import { ConnectTab } from "./dialogs/ConnectTab.js";
 import { CostsTab } from "./dialogs/CostsTab.js";
 import { PrivacyTab } from "./dialogs/PrivacyTab.js";
+import { providersWithKeys } from "./dialogs/provider-key-status.js";
 import { RecordSkillDialog } from "./dialogs/RecordSkillDialog.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
 import { TabkyraSessionListDialog } from "./dialogs/SessionListDialog.js";
@@ -106,6 +107,7 @@ import { isToolNavigating, NavigateTool } from "./tools/navigate.js";
 import { panelPageTools, registerPageToolRenderers } from "./tools/page-tools.js";
 import { createReplTool } from "./tools/repl/repl.js";
 import { BrowserJsRuntimeProvider, NavigateRuntimeProvider } from "./tools/repl/runtime-providers.js";
+import { seedDefaultSkills, seedStamp } from "./tools/seed-skills.js";
 import { syncCustomProviderCorsRules } from "./utils/custom-provider-cors.js";
 import { chatToMarkdown } from "./utils/export-chat.js";
 import * as port from "./utils/port.js";
@@ -591,13 +593,7 @@ async function selectDefaultModelForAvailableProvider() {
 }
 
 async function getProvidersWithKeys(): Promise<string[]> {
-	const providers = await storage.providerKeys.list();
-	const result: string[] = [];
-	for (const provider of providers) {
-		const key = await storage.providerKeys.get(provider);
-		if (key) result.push(provider);
-	}
-	return result;
+	return [...(await providersWithKeys(storage.providerKeys))];
 }
 
 /** No provider key and no subscription sign-in: the model button says what to do instead of naming a model. */
@@ -909,8 +905,8 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			defaultModel = savedModel;
 		} else {
 			// Try to find a default model for a provider the user already has a key for
-			const providersWithKeys = await getProvidersWithKeys();
-			for (const provider of providersWithKeys) {
+			const keyed = await getProvidersWithKeys();
+			for (const provider of keyed) {
 				const modelId = DEFAULT_MODELS[provider];
 				if (modelId) {
 					const model = getModel(provider as any, modelId);
@@ -1604,9 +1600,8 @@ async function initApp() {
 	// to an isolated content-script world otherwise, so no permission prompt is needed.
 
 	performance.mark("panel:models");
-	// Initialize default skills
-	const { initializeDefaultSkills } = await import("./tools/skill.js");
-	await initializeDefaultSkills();
+	// The bundled skills, saved again only when the extension changed.
+	await seedDefaultSkills({ stamp: seedStamp(), storage: chrome.storage.local, skills: storage.skills });
 
 	// Proxy disabled — CORS is handled locally via declarativeNetRequest rules
 	await storage.settings.set("proxy.enabled", false);

@@ -79,6 +79,8 @@ export class ProviderKeyRow extends LitElement {
 	@property() label = "";
 	/** Opens with the key field showing, for a prompt that exists to take a key. */
 	@property({ type: Boolean }) startOpen = false;
+	/** Whether the provider has a key, when the list already read it; the row then reads nothing itself. */
+	@property({ attribute: false }) knownHasKey?: boolean;
 	@state() private hasKey = false;
 	@state() private editing = false;
 	@state() private checking = false;
@@ -105,6 +107,8 @@ export class ProviderKeyRow extends LitElement {
 	}
 
 	protected override willUpdate(changed: PropertyValues<this>) {
+		// A key saved or removed elsewhere (another panel) shows here once the list has read it again.
+		if (changed.has("knownHasKey") && this.knownHasKey !== undefined && !this.editing) this.hasKey = this.knownHasKey;
 		if (!changed.has("provider")) return;
 		// A row given another provider drops whatever it was doing for the old one.
 		if (changed.get("provider")) {
@@ -115,7 +119,12 @@ export class ProviderKeyRow extends LitElement {
 			this.note = undefined;
 			this.hasKey = false;
 		}
-		if (this.provider) void this.loadStatus(this.provider);
+		if (!this.provider) return;
+		if (this.knownHasKey === undefined) void this.loadStatus(this.provider);
+		else {
+			this.hasKey = this.knownHasKey;
+			if (this.startOpen && !this.hasKey) void this.edit();
+		}
 	}
 
 	private async loadStatus(provider: string) {
