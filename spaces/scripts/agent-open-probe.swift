@@ -48,6 +48,23 @@ func seenFails(_ ms: Double, guardOn: Bool, bar: Double = 50) -> Bool { guardOn 
 let gapLimitMs = 16.0
 func gapInvalid(_ worstGapMs: Double) -> Bool { worstGapMs > gapLimitMs }
 
+/// When the sampler reads next: every `period` from its first read, never early, and at once after a read that ran past
+/// its turn, with no burst to catch up. The old loop slept 4 ms after each read, so a 3 ms read put samples 7 ms apart
+/// (#304: at load 2 to 3 its worst gaps were 24 to 67 ms).
+struct Pace {
+    let period: Double
+    var due: Double
+    /// Seconds to wait from `now` until the next read.
+    mutating func wait(now: Double) -> Double {
+        due += period
+        if due <= now { due = now; return 0 }
+        return due - now
+    }
+}
+
+/// Seconds on the raw monotonic clock, which neither NTP nor a clock change moves.
+func uptime() -> Double { Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1e9 }
+
 /// The part of `list[i]` a person can see: on a display, not under an opaque window in front of it. Exact: the window is
 /// cut at every edge of a display or a window in front, and each cell is in or out whole, so overlaps of several windows
 /// count right. A 4 pt grid over the window took about 200 ms a look under 30 windows, past the sampler's 16 ms gap
@@ -113,6 +130,15 @@ if CommandLine.arguments.contains("--selftest") {
     check("with the cover off, a 1 s open is known, not failed", !seenFails(1000, guardOn: false))
     check("with it on, 51 ms fails and 50 ms passes", seenFails(51, guardOn: true) && !seenFails(50, guardOn: true))
     check("a run with a 17 ms sample gap is invalid, 16 ms is not", gapInvalid(17) && !gapInvalid(16))
+    // #304: reads of 3, 3, 20 and 3 ms on a 4 ms pace. Samples land 4 ms apart, the slow read counts in full (21 ms from
+    // the last sample), and the next read starts at once (3 ms later), not after another wait.
+    var pace = Pace(period: 0.004, due: 0), t = 0.0, at: [Double] = []
+    for read in [0.003, 0.003, 0.020, 0.003, 0.003] { t += read; at.append(t); t += pace.wait(now: t) }
+    let gaps = zip(at.dropFirst(), at).map { (($0 - $1) * 1000).rounded() }
+    check("samples on a 4 ms pace with 3 ms reads are 4 ms apart, a 20 ms read 21, the next 3 then 4: \(gaps)", gaps == [4, 21, 3, 4])
+    let qos = Sampler(app: "agent-open-probe selftest") { _ in false }
+    Thread.sleep(forTimeInterval: 0.05); qos.stop()
+    check("the sampler reads at user-interactive QoS", qos.qos == QOS_CLASS_USER_INTERACTIVE)
     check("one under a clear overlay is", seen(1, in: [Seen(pid: 4242, layer: 25, alpha: 0, bounds: full), app], displays: screen, cover: 4242) != nil)
     let half = Seen(pid: 2, layer: 0, alpha: 1, bounds: CGRect(x: 400, y: 300, width: 250, height: 400))
     check("half covered, the other half shows", seen(1, in: [half, app], displays: screen, cover: 4242).map { $0.minX >= 646 } == true)
@@ -212,24 +238,29 @@ func displayRects() -> [CGRect] {
     return ids.prefix(Int(n)).map { CGDisplayBounds($0) }
 }
 
-/// Samples the window server every 4 ms on its own thread until stopped, and adds up the time any window of a process
-/// that `isNew` accepts was seen. A sample's time runs until the next one, so a slow read counts in full.
+/// Samples the window server every 4 ms (`Pace`) on its own user-interactive thread until stopped, and adds up the time
+/// any window of a process that `isNew` accepts was seen. A sample's time runs until the next one, so a slow read counts
+/// in full. `worstReadMs` is how long the window server took to answer the read that ended the worst gap: when it is
+/// most of the gap, the window server was late, not this thread.
 final class Sampler {
     private let lock = NSLock()
     private var stopped = false
-    private(set) var seenMs = 0.0, firstMs: Double?, samples = 0, worstGapMs = 0.0
+    private(set) var seenMs = 0.0, firstMs: Double?, samples = 0, worstGapMs = 0.0, worstReadMs = 0.0
+    private(set) var qos = QOS_CLASS_UNSPECIFIED
     private(set) var frames: [CGRect] = []
     private let done = DispatchSemaphore(value: 0)
     init(app: String, isNew: @escaping (pid_t) -> Bool) {
         let displays = displayRects()
-        Thread { [self] in
-            let t0 = ProcessInfo.processInfo.systemUptime
-            var last = t0, wasSeen = false
+        let thread = Thread { [self] in
+            let t0 = uptime()
+            var last = t0, wasSeen = false, pace = Pace(period: 0.004, due: t0)
+            lock.lock(); qos = qos_class_self(); lock.unlock()
             while true {
                 lock.lock(); let stop = stopped; lock.unlock()
                 if stop { break }
+                let asked = uptime()
                 let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
-                let now = ProcessInfo.processInfo.systemUptime
+                let now = uptime()
                 let list = info.compactMap { w -> (Seen, String)? in
                     guard let pid = (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
                           let b = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }) else { return nil }
@@ -239,7 +270,7 @@ final class Sampler {
                 let windows = list.map(\.0)
                 lock.lock()
                 if wasSeen { seenMs += (now - last) * 1000 }
-                worstGapMs = max(worstGapMs, (now - last) * 1000)
+                if (now - last) * 1000 > worstGapMs { worstGapMs = (now - last) * 1000; worstReadMs = (now - asked) * 1000 }
                 samples += 1
                 wasSeen = false
                 for (i, (w, owner)) in list.enumerated() where w.layer == 0 && owner == app && isNew(w.pid) {
@@ -251,10 +282,13 @@ final class Sampler {
                 }
                 lock.unlock()
                 last = now
-                Thread.sleep(forTimeInterval: 0.004)
+                let wait = pace.wait(now: uptime())
+                if wait > 0 { usleep(useconds_t(wait * 1e6)) }
             }
             done.signal()
-        }.start()
+        }
+        thread.qualityOfService = .userInteractive
+        thread.start()
     }
     func stop() { lock.lock(); stopped = true; lock.unlock(); done.wait() }
 }
@@ -327,7 +361,7 @@ for app in apps {
             failures.append("\(app) #\(round): seen on Donovan's workspace for \(Int(sampler.seenMs)) ms (bar \(Int(seenBarMs)) ms) at \(sampler.frames.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" })")
         }
         if gapInvalid(sampler.worstGapMs) {
-            invalid.append("\(app) #\(round): samples \(Int(sampler.worstGapMs)) ms apart at worst (limit \(Int(gapLimitMs)) ms), so its seen time can't be trusted")
+            invalid.append("\(app) #\(round): samples \(Int(sampler.worstGapMs)) ms apart at worst (limit \(Int(gapLimitMs)) ms), \(Int(sampler.worstReadMs)) ms of it waiting on the window server's answer, so its seen time can't be trusted")
         }
         let fresh = pids(app).subtracting(before)
         let (home, agentN) = homes()
@@ -344,10 +378,10 @@ for app in apps {
             closeNote = "closed=\(closed.map(String.init) ?? "nil") present=\(present)"
             if closed == nil || closed! == present { closeMismatches += 1; failures.append("\(app) #\(round): close said \(closed.map(String.init) ?? "no answer"), window \(present ? "still" : "not") listed") }
         }
-        let seenNote = String(format: "seen_ms=%.0f first_at=%@ frames=%@ samples=%d worst_gap_ms=%.0f", sampler.seenMs,
+        let seenNote = String(format: "seen_ms=%.0f first_at=%@ frames=%@ samples=%d worst_gap_ms=%.0f (read %.0f)", sampler.seenMs,
                               sampler.firstMs.map { String(format: "%.0fms", $0) } ?? "-",
                               sampler.frames.isEmpty ? "-" : sampler.frames.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" }.joined(separator: ";"),
-                              sampler.samples, sampler.worstGapMs)
+                              sampler.samples, sampler.worstGapMs, sampler.worstReadMs)
         print("\(app) #\(round): \(secs)s window=\(wid.map(String.init) ?? "none") stray=\(off.count) front_changed=\(frontChanged) \(closeNote) \(seenNote)")
         for pid in fresh { quit(pid) }
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
