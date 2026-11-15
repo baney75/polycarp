@@ -305,6 +305,18 @@ public struct ChildAttribution: Equatable, Sendable {
     }
 }
 
+/// When `openedChildren` reads the app again in its 200 ms after an action (#124 round 1 second-S5, round 2 first-F1): its
+/// first look always does; a later one only while the app's window-server windows differ from that first look's, so an
+/// action that opened nothing costs one read, not four, and once something changed every look reads, as AX can lag.
+public enum OpenedPoll {
+    /// One window-server window of the app: its number and whether it is on screen (a panel ordered in keeps its number).
+    public struct Mark: Hashable, Sendable {
+        public let id: UInt32, onScreen: Bool
+        public init(id: UInt32, onScreen: Bool) { self.id = id; self.onScreen = onScreen }
+    }
+    public static func reads(now: Set<Mark>, first: Set<Mark>?) -> Bool { first.map { $0 != now } ?? true }
+}
+
 /// Whether one look at an app's child windows saw all of them: AXWindows answered, it listed no more than `maxWindows`, and
 /// every placed window's children could be read. A look that missed some is still used, but drops a child only once it aged
 /// out (`ChildAttribution.forgetAfter`).

@@ -136,7 +136,11 @@ extension HandsRouter {
     /// raised, looked for up to 200 ms. Nil when none did.
     func openedChildren(pid: Int32, before: Set<UInt32>, session: String) -> JSONValue? {
         let deadline = Date().addingTimeInterval(0.2)
+        var first: Set<OpenedPoll.Mark>?
         repeat {
+            let server = Set(MenuAX.serverWindows(pid: pid).map { OpenedPoll.Mark(id: $0.id, onScreen: $0.onScreen) })
+            defer { if first == nil { first = server } }
+            guard OpenedPoll.reads(now: server, first: first) else { Thread.sleep(forTimeInterval: 0.05); continue }
             let all = listWindows().windows
             let r = readChildren(pid: pid, all: all)
             let new = r.children.filter { !before.contains($0.id) }
