@@ -22,8 +22,8 @@ usage: \(me) <command>
   agent run [--dir D] -- CMD  run a command (claude, grok…) in a Ghostty window there
   agent \(HandsTools.verbLine)
                               read and act on apps on the agent workspace (or lent ones) without touching
-                              your screen; each prints one JSON envelope (agent <command> with no
-                              arguments shows its usage). `agent open` prints one too.
+                              your screen; each prints one JSON envelope (agent <command> --help, or with
+                              no arguments, shows its usage). `agent open` prints one too.
   agent cursor on|theme <name>|status   each agent's cursor on the agent workspace (default, minimal, classic, omarchy); only Settings turns it off
   agent shot --window ID --cursor   draw the agent's cursor into the capture (off by default)
   agent lend <app|pid> [--for 30m]   asks you, in a sheet in Polycarp, whether agents may use an app you have open
@@ -202,6 +202,12 @@ case "phone", "phones":
 
 case "mcp":
     MCPCommand.run(connector: rest.contains("--connector"))
+
+// `agent <verb> --help` (or -h): that verb's usage, before any arm below can read --help as search words or an app name.
+case "agent" where AgentHelp.asked(rest):
+    let verb = rest.first.flatMap { AgentHelp.words.contains($0) ? nil : $0 }
+    out(AgentHelp.text(verb: verb, usage: usage))
+    exit(0)
 
 case "agent" where HandsTools.userOnly.contains(rest.first ?? ""):
     HandsCLI.lendOrReturn(rest)
