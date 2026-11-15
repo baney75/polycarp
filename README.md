@@ -3,8 +3,9 @@
 # Polycarp
 
 Polycarp is one app for your workspaces, your voice and the browser your agents use. On a Mac they all
-live in `Polycarp.app`, with one Settings window, one set of permissions and one command. The Windows,
-Linux, iPhone, iPad and Android versions share the same Rust core and are on the way; see [the plan](PLAN.md).
+live in `Polycarp.app`, with one Settings window, one set of permissions and one command. On Linux the same install
+line builds every part from source ([Install on Linux](#install-on-linux)). The Windows, iPhone, iPad and Android
+versions share the same Rust core and are on the way; see [the plan](PLAN.md).
 
 It grew from three apps, whose full history is here: [BaneySpaces](https://github.com/baney75/baneyspaces)
 (`spaces/`), [Silas](https://github.com/baney75/silas) (`voice/`) and [Tabkyra](https://github.com/baney75/tabkyra)
@@ -36,6 +37,37 @@ The first time, your Mac says it can't check the app. That's expected: open Syst
 scroll down and press Open Anyway. If you open Polycarp from the file or your Downloads folder instead of Applications, it
 offers to move itself there. If you used BaneySpaces, Polycarp moves it to the Trash once it is running, with your settings
 copied first.
+
+## Install on Linux
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
+```
+
+The same line builds every part from source and installs it for you alone, under `~/.local`: no `sudo`. It keeps a
+checkout in `~/.local/share/polycarp/src` (`POLYCARP_SOURCE` picks another), builds the `polycarp` command from it
+and runs `polycarp update --source <checkout> --yes`, which builds everything first and installs only once every build
+passed. What you get depends on what is there:
+
+| Part | Installed when | Where |
+| --- | --- | --- |
+| The `polycarp` command | always | `~/.local/bin/polycarp` |
+| The spaces daemon, the hands engine and the Hyprland include | `~/.config/hypr/hyprland.lua` is there (Hyprland, as on Omarchy) | `~/.local/bin/baneyspaces`, `~/.local/share/baneyspaces/engine`, a marked block in `hyprland.lua` |
+| The browser helper and the extension | Node 20 or later and npm are on `PATH` | `~/.local/share/polycarp/browser/source`, `~/.local/bin/polycarp-browser` |
+
+It needs git, a C compiler and [Rust](https://rustup.rs). It installs no system packages itself; when one is missing
+it stops, or skips that part, with the line to run:
+
+| Distribution | Build tools | Node and npm |
+| --- | --- | --- |
+| Arch, Omarchy, Manjaro | `sudo pacman -S git base-devel` | `sudo pacman -S nodejs npm` |
+| Debian, Ubuntu, Pop!_OS | `sudo apt install git build-essential` | `sudo apt install nodejs npm` (Ubuntu 24.04's is Node 18, too old: get 20 or later from [nodejs.org](https://nodejs.org/en/download)) |
+| Fedora | `sudo dnf install git gcc` | `sudo dnf install nodejs npm` |
+
+At the end it prints `polycarp version` and what is left for you: load the extension in your browser from
+`~/.local/share/polycarp/browser/source/dist-chrome` (Developer mode, Load unpacked), and log in to Hyprland if you
+installed from outside it, which starts the spaces daemon. On Omarchy, Polycarp follows the system theme from the start.
+The log is `~/.local/state/polycarp/install.log`. Run the line again, or `polycarp update`, to update every part.
 
 ## The name
 
@@ -98,7 +130,7 @@ What it does depends on how Polycarp got onto the device:
 | --- | --- |
 | **Mac app from the download or the install script** | Asks the app's own updater (`polycarp-spaces update --now`): the same check, signature check and installer as **Settings > Updates > Update Now**. The app restarts itself when it is done. |
 | **Built from source, Mac** | Fetches `origin/main`, makes a clean copy of it in `~/Library/Caches/polycarp`, gets the packages the build needs (`browser/scripts/setup-siblings.sh`), and runs `make -C spaces install` there: the app with the command, the helper, the extension and the skill inside, installed and restarted. Then the newly installed command reloads the extension, unless an agent is working in the browser, and checks every part. |
-| **Built from source, Linux (Omarchy)** | The same clean copy (in `~/.cache/polycarp`). Everything is built first: on Hyprland the spaces daemon and the engine; with Node, the packages, the browser helper and the extension. Only then is anything installed: the helper and the extension are copied to `~/.local/share/polycarp/browser/source` with `~/.local/bin/polycarp-browser` pointing there, the helper is registered with your browsers, `spaces/platforms/linux/omarchy/install.sh` runs, and the `polycarp` command goes into `~/.local/bin` last. Then the newly installed command reloads the extension, stops the daemon, reloads Hyprland (which starts the new one) and checks every part. |
+| **Built from source, Linux (Omarchy)** | The same clean copy (in `~/.cache/polycarp`). Everything is built first: on Hyprland the spaces daemon and the engine; with Node 20 or later, the packages, the browser helper and the extension. Only then is anything installed: the helper and the extension are copied to `~/.local/share/polycarp/browser/source` with `~/.local/bin/polycarp-browser` pointing there, `spaces/platforms/linux/omarchy/install.sh` runs, and the `polycarp` command goes into `~/.local/bin` last. Then the newly installed command registers the helper with your browsers (a device where no browser has been opened yet skips this and says so), reloads the extension, stops the daemon, reloads Hyprland (which starts the new one) and checks every part. |
 | **Windows** | Not supported yet: it prints the build-from-source steps from [spaces/platforms/windows/README.md](spaces/platforms/windows/README.md) and exits 2. `polycarp version` works. |
 
 For a source install, tell it once where your checkout is:
@@ -134,7 +166,7 @@ each step. If the handover fails, every part is already installed and the report
 On Windows there is no update yet, so there is no first run: it exits 2 with the build steps.
 
 A source build needs what the first build needed: Rust everywhere; on a Mac Apple's command line tools, Bun and Node;
-on Linux Node for the browser part.
+on Linux git and a C compiler, and Node 20 or later for the browser part. The Linux install line above checks them.
 
 The older per-part ways still exist and say when this is the better one: the app's **Settings > Updates**
 ([spaces/README.md](spaces/README.md#updates)), and the standalone browser's updater
