@@ -132,6 +132,7 @@ codesign --verify --deep --strict "$APP"
 [ -x "$BROWSER_DIR/polycarp-browser" ] && [ -s "$BROWSER_DIR/extension/manifest.json" ] && [ -s "$BROWSER_DIR/extension/background.js" ] || { echo "bundle: the browser helper or the extension is missing from the bundle" >&2; exit 1; }
 codesign --verify --strict "$BROWSER_DIR/polycarp-browser" || { echo "bundle: the browser helper is not validly signed" >&2; exit 1; }
 [ -s "$APP/Contents/Resources/licenses/polycarp-browser-packages.txt" ] || { echo "bundle: the browser helper's licences are missing from the bundle" >&2; exit 1; }
+[ -s "$APP/Contents/Resources/licenses/polycarp-extension-packages.txt" ] || { echo "bundle: the browser extension's licences are missing from the bundle" >&2; exit 1; }
 # The app must find its library next to itself, not where it was built.
 otool -L "$APP/Contents/MacOS/$EXECUTABLE" | grep -q '@rpath/libagent_desktop_ffi.dylib' || { echo "bundle: Polycarp doesn't link the engine through @rpath" >&2; exit 1; }
 otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q '@executable_path/../Frameworks' || { echo "bundle: no @executable_path/../Frameworks rpath" >&2; exit 1; }
