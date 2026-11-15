@@ -249,9 +249,9 @@ extension HandsRouter {
         case .success(let (w, scope, _)):
             let before = onMain { () -> MoveState in
                 let agent = host.agentWorkspace()
-                return MoveState(agentWorkspace: agent, window: w, scope: scope, agentShown: agentShown(agent))
+                return MoveState(agentWorkspace: agent, window: w, scope: scope, agentShown: workspaceShown(agent), sourceShown: workspaceShown(w.workspace))
             }
-            if let e = WorkspaceVerbs.moveRefusal(window: w, scope: scope, agentWorkspace: before.agentWorkspace, agentShown: before.agentShown) { return .failure(e) }
+            if let e = WorkspaceVerbs.moveRefusal(window: w, scope: scope, agentWorkspace: before.agentWorkspace, agentShown: before.agentShown, sourceShown: before.sourceShown) { return .failure(e) }
             if let e = awaitUse(w, verb: "move", delivery: .posted, wait: req.int("wait"), session: session) { return .failure(e) }
             if let e = actingCheck(w, verb: "move", delivery: .posted, session: session)() { return .failure(e) }
             // After the wait: the agent workspace, the live window, its scope and whether it is shown, read together on the
@@ -266,7 +266,7 @@ extension HandsRouter {
                 let live = host.live(w.id)
                 let now = live.map { decide($0, agent, session: session) }
                     ?? .denied(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows`.", retry: .afterSnapshot))
-                let after = MoveState(agentWorkspace: agent, window: live, scope: now, agentShown: agentShown(agent))
+                let after = MoveState(agentWorkspace: agent, window: live, scope: now, agentShown: workspaceShown(agent), sourceShown: workspaceShown(live?.workspace))
                 let r = MoveDecision.decide(before: before, after: after)
                 if case .success(let go) = r, go.moves, let live, let from = live.workspace {
                     // What it may do there ends with the lend or Full Access that let it move, and then it goes back.
@@ -302,9 +302,9 @@ extension HandsRouter {
         }
     }
 
-    /// Whether workspace `agent` is shown on a display now. Main thread.
-    private func agentShown(_ agent: Int?) -> Bool {
-        agent.map { n in host.workspaceRows().contains { $0.number == n && $0.shown } } ?? false
+    /// Whether workspace `n` is shown on a display now. Main thread.
+    private func workspaceShown(_ n: Int?) -> Bool {
+        n.map { n in host.workspaceRows().contains { $0.number == n && $0.shown } } ?? false
     }
 
     func close(_ req: HandsRequest) -> HandsEnvelope {
