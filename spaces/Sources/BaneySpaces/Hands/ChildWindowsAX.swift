@@ -44,6 +44,11 @@ enum ChildWindowsAX {
         /// The app's main and focused windows at this look, for children whose own window is unknown (`ChildCollect.hint`).
         var main: UInt32? = nil
         var focused: UInt32? = nil
+        /// Whether this look saw all of the app's windows (`ChildLook.complete`). One that didn't drops a child only once it
+        /// aged out: a child it missed may still be there (#124 round 1 second-S1).
+        var complete = true
+        /// The placed windows whose children this look read, each the word on its own sheet; nil when all were (#330 first-F1).
+        var sheetsRead: Set<UInt32>? = nil
     }
 
     static func read(pid: pid_t, placed: Set<UInt32>) -> Reading {
@@ -52,9 +57,10 @@ enum ChildWindowsAX {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.25)
         var raw: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &raw) == .success, let list = raw as? [AXUIElement] else {
-            return Reading(children: [], sheetsOn: [])
-        }
+        let answer = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &raw)
+        guard answer == .success || answer == .noValue else { return Reading(children: [], sheetsOn: [], complete: false, sheetsRead: []) }
+        let list = (raw as? [AXUIElement]) ?? []
+        var placedReadable = true, sheetsRead = Set<UInt32>()
         let running = NSRunningApplication(processIdentifier: pid)
         let name = running?.localizedName ?? "App", bundle = running?.bundleIdentifier ?? ""
         let process = running?.executableURL?.lastPathComponent ?? ""
@@ -76,11 +82,13 @@ enum ChildWindowsAX {
         // First every listed window and its attached sheets, then the children with their parents (`ChildCollect`), so a
         // sheet listed before its window still gets that window.
         var listed: [ChildCollect.Listed] = [], elements: [UInt32: AXUIElement] = [:]
-        for el in list.prefix(64) {
+        for el in list.prefix(ChildLook.maxWindows) {
             guard let id = BackgroundAX.windowID(of: el) else { continue }
             if placed.contains(id) {
                 var sheets: [UInt32] = []
-                for c in HandsAXTree.children(el).list.prefix(HandsAXTree.perLevel) where HandsAXTree.role(c) == "AXSheet" {
+                let kids = HandsAXTree.children(el)
+                if kids.readable { sheetsRead.insert(id) } else { placedReadable = false }
+                for c in kids.list.prefix(HandsAXTree.perLevel) where HandsAXTree.role(c) == "AXSheet" {
                     if let sid = BackgroundAX.windowID(of: c), sid != id {
                         sheets.append(sid)
                         if elements[sid] == nil { elements[sid] = c }
@@ -112,7 +120,8 @@ enum ChildWindowsAX {
         }
         let unknown = out.contains { $0.parent == nil }
         return Reading(children: out, sheetsOn: sheetsOn, main: unknown ? windowAttr(kAXMainWindowAttribute) : nil,
-                       focused: unknown ? windowAttr(kAXFocusedWindowAttribute) : nil)
+                       focused: unknown ? windowAttr(kAXFocusedWindowAttribute) : nil,
+                       complete: ChildLook.complete(listed: true, count: list.count, placedReadable: placedReadable), sheetsRead: sheetsRead)
     }
 
     /// The process that owns a window number, and its name, from the window server.
