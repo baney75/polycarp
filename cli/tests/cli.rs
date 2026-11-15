@@ -1597,6 +1597,13 @@ fn update_dry_run_prints_the_plan_and_changes_nothing() {
         "git",
         &format!("touch {}", s.dir("ran").display()),
     );
+    // Nor a node beside it, not even to ask its version (second-F5 of the review of PR 359).
+    stub(
+        &planted,
+        "node",
+        &format!("touch {}; echo v22.0.0", s.dir("ran-node").display()),
+    );
+    stub(&planted, "npm", "true");
     let first = std::env::join_paths([&planted, &path]).unwrap();
     let run = |args: &[&str]| {
         s.cmd(args)
@@ -1622,6 +1629,7 @@ fn update_dry_run_prints_the_plan_and_changes_nothing() {
         "the plan names the git that runs: {t}"
     );
     assert!(!s.dir("ran").exists(), "the planted git was run");
+    assert!(!s.dir("ran-node").exists(), "the planted node was run");
     assert!(
         t.contains("worktree add --detach --force") && t.contains(&cache.display().to_string()),
         "{t}"

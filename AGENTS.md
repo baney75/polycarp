@@ -20,6 +20,10 @@ Run each from its directory.
   `(cd cli && node --test test/skill-lint.test.mjs)`. Do not run `browser/check.sh` (it writes with
   `--write`), `./dev.sh` or `npm run dev`. Build only with `TABKYRA_NO_BUMP=1 TABKYRA_OUT_DIR=<scratch dir>`.
 
+- The root `install.sh`: `bash -n install.sh`, and for its Linux path
+  `TMPDIR=/var/tmp spaces/platforms/linux/tests/one-command-install.sh`, which installs every part into a throwaway
+  HOME (a few GB of builds, so not on a RAM-backed /tmp). Never run `install.sh` itself against your real home to test it.
+
 `./check.sh` at the root runs all three in order and continues past a failure.
 
 ## Themes

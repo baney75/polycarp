@@ -73,7 +73,7 @@ pub struct Facts {
     pub arm64: bool,
     /// Linux: `~/.config/hypr/hyprland.lua` is there, so the Omarchy install script applies.
     pub hyprland: bool,
-    /// Linux: Node and npm are on PATH, so the browser helper can be built.
+    /// Linux: Node `NODE_MIN` or later and npm are on PATH, so the browser helper can be built.
     pub node: bool,
     /// The agent skill is installed, so an update refreshes it.
     pub skill_installed: bool,
@@ -436,6 +436,16 @@ fn finish_steps(f: &Facts) -> Vec<Step> {
         Platform::Linux => {
             if f.node {
                 let entry = s(&f.browser_home.join("cli/dist/index.js"));
+                // Here, after every install, and soft: setup fails on a device where no Chromium browser has been opened
+                // yet (a fresh install), and that must not keep the daemon, the include or the polycarp command out.
+                steps.push(
+                    Step::new(
+                        Role::Soft,
+                        "Register the helper with your browsers",
+                        &["node", &entry, "setup", "--yes", "--no-wait"],
+                    )
+                    .in_dir(&f.browser_home),
+                );
                 steps.push(reload_step(
                     f,
                     RELOAD,
@@ -625,7 +635,6 @@ fn linux_steps(f: &Facts, steps: &mut Vec<Step>, notes: &mut Vec<String>) {
                 .with_env(&[("TABKYRA_NO_BUMP".to_string(), "1".to_string())]),
         );
         let home = s(&f.browser_home);
-        let entry = s(&f.browser_home.join("cli/dist/index.js"));
         steps.push(
             Step::new(
                 Role::Install,
@@ -641,20 +650,15 @@ fn linux_steps(f: &Facts, steps: &mut Vec<Step>, notes: &mut Vec<String>) {
             )
             .in_dir(wt),
         );
-        steps.push(
-            Step::new(
-                Role::Install,
-                "Register the helper with your browsers",
-                &["node", &entry, "setup", "--yes", "--no-wait"],
-            )
-            .in_dir(&f.browser_home),
-        );
         notes.push(format!(
             "The browser helper and the extension are installed in {home}, and nothing installed runs from the cache folder. Browsers load the extension from {home}/dist-chrome. If yours loaded it from another folder before, `polycarp browser setup` shows how to load this one."
         ));
+        notes.push(
+            "If no Chromium browser has been opened on this device yet, registering the helper did not happen. Open your browser once, then run `polycarp browser setup`.".to_string(),
+        );
     } else {
         notes.push(
-            "Node and npm are not on PATH, so the browser helper and the extension are not built. Install Node, then run `polycarp update` again: it installs them even when nothing else has changed.".to_string(),
+            format!("Node {NODE_MIN} or later and npm are not on PATH, so the browser helper and the extension are not built. Install them, then run `polycarp update` again: it installs them even when nothing else has changed."),
         );
     }
     if f.hyprland {
@@ -1078,6 +1082,32 @@ fn git_line(dir: &Path, args: &[&str]) -> Option<String> {
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The oldest Node the browser helper builds and runs on (`engines` in browser/cli/package.json).
+pub const NODE_MIN: u32 = 20;
+
+/// Node `NODE_MIN` or later and npm are on PATH. An older Node counts as none: its build would fail and stop the
+/// update before anything is installed, and Ubuntu 24.04's `apt install nodejs` gives Node 18.
+fn node_ok(path: Option<&OsString>) -> bool {
+    let (Some(node), Some(_)) = (on_path("node", path), on_path("npm", path)) else {
+        return false;
+    };
+    // `on_path` takes only trusted folders (never the current folder's tree or a node_modules), and
+    // doctor's time limit holds, so a node that hangs can't stall the update or its --dry-run.
+    crate::first_version_line(&node)
+        .and_then(|line| node_major(&line))
+        .is_some_and(|major| major >= NODE_MIN)
+}
+
+/// The major version in what `node --version` prints (`v22.11.0`).
+fn node_major(text: &str) -> Option<u32> {
+    text.trim()
+        .strip_prefix('v')?
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
 }
 
 const SOURCE_FILE: &str = "source.toml";
@@ -1795,7 +1825,7 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         installed: installed.clone(),
         arm64: cfg!(target_arch = "aarch64"),
         hyprland: home.join(".config/hypr/hyprland.lua").is_file(),
-        node: on_path("node", path.as_ref()).is_some() && on_path("npm", path.as_ref()).is_some(),
+        node: node_ok(path.as_ref()),
         skill_installed: home.join(".claude/skills/baneyspaces/SKILL.md").is_file(),
         terminal: std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
         home: home.clone(),
@@ -1877,6 +1907,33 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    /// Review r1 second-F5 of PR 359: a node in the current folder's tree or a node_modules/.bin is
+    /// never run to ask its version, so it never counts.
+    #[cfg(unix)]
+    #[test]
+    fn a_node_in_node_modules_is_neither_run_nor_counted() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("polycarp-node-ok-{}", std::process::id()));
+        let bin = dir.join("node_modules/.bin");
+        fs::create_dir_all(&bin).unwrap();
+        let ran = dir.join("ran");
+        for (name, body) in [
+            (
+                "node",
+                format!("#!/bin/sh\ntouch {}\necho v22.0.0\n", ran.display()),
+            ),
+            ("npm", "#!/bin/sh\n".to_string()),
+        ] {
+            let p = bin.join(name);
+            fs::write(&p, body).unwrap();
+            fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let path = std::env::join_paths([&bin]).unwrap();
+        assert!(!node_ok(Some(&path)));
+        assert!(!ran.exists(), "the untrusted node was run");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     const HOME: &str = "/home/u";
@@ -2040,7 +2097,6 @@ mod tests {
                 "npm run build".to_string(),
                 // Then the installs, the polycarp command last.
                 format!("{BOOT} update --place-browser {WORKTREE}/browser {BROWSER_HOME} /home/u/.local/bin/polycarp-browser"),
-                format!("node {BROWSER_HOME}/cli/dist/index.js setup --yes --no-wait"),
                 format!("{WORKTREE}/spaces/platforms/linux/omarchy/install.sh"),
                 "cargo install --locked --path cli --target-dir cli/target --root /home/u/.local".to_string(),
                 format!("{INSTALLED} update --finish --source {CHECKOUT}"),
@@ -2072,6 +2128,7 @@ mod tests {
         assert_eq!(
             commands(&steps_of(plan(&f, FINISH))),
             vec![
+                format!("node {BROWSER_HOME}/cli/dist/index.js setup --yes --no-wait"),
                 format!("{INSTALLED} update --reload-wait {WORKTREE} HEAD --wait 30 -- node {BROWSER_HOME}/cli/dist/index.js reload --if-idle"),
                 "/home/u/.local/bin/baneyspaces stop".to_string(),
                 "hyprctl reload".to_string(),
@@ -2095,7 +2152,8 @@ mod tests {
             "{cmds:?}"
         );
         assert!(cmds.iter().any(|c| c.starts_with("cargo install")));
-        assert!(cmds.iter().any(|c| c.ends_with("setup --yes --no-wait")));
+        let last = commands(&steps_of(plan(&f, FINISH)));
+        assert!(last.iter().any(|c| c.ends_with("setup --yes --no-wait")));
         assert!(
             notes.iter().any(|n| n.contains("hyprland.lua")),
             "{notes:?}"
@@ -2119,7 +2177,9 @@ mod tests {
         );
         assert!(cmds[3].ends_with("--needs polycarp command"), "{}", cmds[3]);
         assert!(
-            notes.iter().any(|n| n.contains("Node and npm")),
+            notes
+                .iter()
+                .any(|n| n.contains("or later and npm are not on PATH")),
             "{notes:?}"
         );
         let last = commands(&steps_of(plan(&f, FINISH)));
@@ -2478,6 +2538,31 @@ mod tests {
         let (code, message) = refusal(plan(&facts(Platform::Linux, Install::Unknown), YES));
         assert_eq!(code, 2);
         assert!(message.contains("polycarp update --source"));
+    }
+
+    /// A fresh device has no browser profile, so setup fails there. It runs after every install, as a soft step of the
+    /// installed command, so the daemon, the include and the polycarp command are in place whatever it does.
+    #[test]
+    fn a_device_with_no_browser_yet_still_gets_every_other_part() {
+        let f = facts(Platform::Linux, source(Some(ORIGIN), false));
+        assert!(!commands(&steps_of(plan(&f, YES)))
+            .iter()
+            .any(|c| c.contains(" setup ")));
+        let last = steps_of(plan(&f, FINISH));
+        let register = last
+            .iter()
+            .find(|st| st.title == "Register the helper with your browsers")
+            .expect("the installed command registers the helper");
+        assert_eq!(register.role, Role::Soft);
+    }
+
+    #[test]
+    fn a_node_older_than_the_helper_needs_counts_as_none() {
+        assert_eq!(node_major("v22.11.0\n"), Some(22));
+        assert_eq!(node_major("v18.19.1"), Some(18));
+        assert_eq!(node_major("22.11.0"), None);
+        assert_eq!(node_major(""), None);
+        assert!(node_major("v18.19.1").is_some_and(|m| m < NODE_MIN));
     }
 
     #[test]

@@ -872,7 +872,7 @@ fn ask_helper(p: &Path, args: &[&str]) -> version::Answer {
 }
 
 /// The tool's version, or None if it can't start, fails, prints nothing or takes past the limit.
-fn first_version_line(p: &Path) -> Option<String> {
+pub(crate) fn first_version_line(p: &Path) -> Option<String> {
     match ask(p, &["--version"], doctor_limit(), &[]) {
         version::Answer::Said(text) => text
             .lines()
