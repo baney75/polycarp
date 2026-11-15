@@ -594,7 +594,9 @@ final class Spaces {
     /// Windows on the agent workspace, for `baneyspaces agent status`.
     func agentWindows() -> [(id: WindowID, app: String, title: String)] {
         guard let n = Self.agentWorkspace else { return [] }
-        return model.windows(on: n).compactMap { id in windows[id].map { (id, $0.appName, $0.title) } }
+        // A window of a process that has exited is gone, though the model keeps it until the next scan (#311).
+        let rows = model.windows(on: n).compactMap { id in windows[id].map { (id: id, pid: $0.pid, app: $0.appName, title: $0.title) } }
+        return AgentStatusRows.live(rows, pid: { $0.pid }).map { ($0.id, $0.app, $0.title) }
     }
 
     /// Why a full scan ran, for timing.log.
