@@ -153,6 +153,8 @@ const causes = new Map<number, DialogCause>();
 export const ONE_STEP = new Set(["click", "press"]);
 /** Boxes the guard cancelled, until the agent hears of it once. */
 const cancelled = new Map<number, { owner: string; tabId: number; text: string; at: number }>();
+/** Boxes the guard's own Cancel closed, and when: a redo runs only after one of these (first-F1, sol-F1 of #389). */
+const guardCancelled = new Map<number, number>();
 /** The ownership the last run read, for an answer that arrives before its session is open. */
 let owners = new Map<number, string>();
 let wake: ReturnType<typeof setTimeout> | undefined;
@@ -180,6 +182,7 @@ export function reconcile(): Promise<void> {
 async function run(): Promise<void> {
 	const now0 = Date.now();
 	for (const [seq, c] of cancelled) if (now0 - c.at >= TOLD_MS) cancelled.delete(seq);
+	for (const [seq, at] of guardCancelled) if (now0 - at >= TOLD_MS) guardCancelled.delete(seq);
 	const live = new Set(deps.dialogs().map(([, d]) => d.seq));
 	for (const m of [failures, causes] as Map<number, unknown>[])
 		for (const seq of m.keys()) if (!live.has(seq)) m.delete(seq);
@@ -336,6 +339,7 @@ function startCancel(
 		}
 		failures.delete(seq);
 		if (!done) return;
+		guardCancelled.set(seq, Date.now());
 		const kind = dialog.type === "beforeunload" ? "leave-page" : dialog.type;
 		const alert = dialog.type === "alert";
 		const what = `The ${kind} dialog on tab ${tabId} (${JSON.stringify(dialog.message)}) was ${alert ? "dismissed" : "cancelled"}`;
@@ -433,11 +437,15 @@ export async function dialogUnheard(
  * A click or press with on_dialog on `tabId` that arrives while the guard is about to Cancel the box an earlier call
  * opened there (the person's same-site tab in front): the redo that box's note asked for, sent before the Cancel landed.
  * Small models send it at once, then fail on the open box and again on a handle_dialog for a box already gone. Waits for
- * that Cancel, at most until it is due plus SETTLE_MS; drops its notice, whose redo is this call; and says what happened.
- * Undefined when no such Cancel is due or it did not land: the call goes on as before, and fails with dialog_open if the
- * box is still open.
+ * that Cancel, at most until it is due plus SETTLE_MS; drops its notice, whose redo is this call; and says what happened
+ * (`ran`). When anything else closed the box while it waited (a handle_dialog, another client of the session), what the
+ * box asked may be done already, so the redo must not run (`answered`; first-F1, sol-F1 of the review of #389).
+ * Undefined when no such Cancel is due or the wait ran out: the call goes on as before, and fails with dialog_open.
  */
-export async function cancelBeforeRedo(sessionId: string, tabId: number): Promise<string | undefined> {
+export async function cancelBeforeRedo(
+	sessionId: string,
+	tabId: number,
+): Promise<{ ran: string } | { answered: string } | undefined> {
 	await chain;
 	const box = deps.dialogs().find(([t]) => t === tabId)?.[1];
 	const active = box && since.get(box.seq)?.active;
@@ -454,9 +462,17 @@ export async function cancelBeforeRedo(sessionId: string, tabId: number): Promis
 		if (Date.now() > until) return undefined;
 		await new Promise((r) => setTimeout(r, 50));
 	}
-	if (!(await dialogUnheard(sessionId, { seq: box.seq })).text) return undefined;
+	await inflight.get(box.seq)?.job;
 	const kind = box.type === "beforeunload" ? "leave-page" : box.type;
-	return `Before this call ran, Polycarp cancelled the ${kind} dialog an earlier call opened on tab ${tabId} (${JSON.stringify(box.message)}): the page saw Cancel. This call then ran, with its on_dialog.`;
+	const what = `the ${kind} dialog an earlier call opened on tab ${tabId} (${JSON.stringify(box.message)})`;
+	if (!guardCancelled.has(box.seq))
+		return {
+			answered: `While this call waited for Polycarp to cancel ${what}, something else answered it, so what it asked may already be done. This call was not sent. Call read_page to see the page before you act again.`,
+		};
+	await dialogUnheard(sessionId, { seq: box.seq });
+	return {
+		ran: `Before this call ran, Polycarp cancelled ${what}: the page saw Cancel. This call then ran, with its on_dialog.`,
+	};
 }
 
 /** An ask_user from the session is waiting for the person, or no longer is. */
@@ -468,7 +484,7 @@ export function dialogAsk(sessionId: string, on: boolean): void {
 /** @internal Tests start each case from nothing. */
 export function resetDialogGuard(): void {
 	clearTimeout(wake);
-	for (const m of [answering, asking, cancelled] as Map<unknown, unknown>[]) m.clear();
+	for (const m of [answering, asking, cancelled, guardCancelled] as Map<unknown, unknown>[]) m.clear();
 	for (const m of [inflight, failures, causes] as Map<unknown, unknown>[]) m.clear();
 	since = new Map();
 	owners = new Map();

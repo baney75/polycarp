@@ -532,10 +532,12 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		const redo =
 			!dialogSafe && PRESET_METHODS.has(req.method) && req.params?.on_dialog != null && req.params?.tabId != null;
 		const graceStart = Date.now();
-		const earlier =
+		const waitedOut =
 			redo && Number.isInteger(redoTab) && openDialog(redoTab)
 				? await cancelBeforeRedo(session.id, redoTab)
 				: undefined;
+		if (waitedOut && "answered" in waitedOut) throw new BridgeError(ERR.NOT_SENT, waitedOut.answered);
+		const earlier = waitedOut?.ran;
 		const graceWaited = Date.now() - graceStart;
 		if (!dialogSafe) {
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
