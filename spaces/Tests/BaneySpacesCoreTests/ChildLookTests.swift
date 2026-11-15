@@ -25,7 +25,7 @@ final class ChildLookTests: XCTestCase {
     func testALookThatMissedWindowsRetiresNothing() {
         var a = seenUntilPastTheWindow()
         a.observed([], pid: 300, at: t0.addingTimeInterval(12), complete: false)
-        a.observedSheets(on: [], pid: 300, at: t0.addingTimeInterval(12), complete: false)
+        a.observedSheets(on: [], pid: 300, at: t0.addingTimeInterval(12), read: [])
         a.observed([50], pid: 300, at: t0.addingTimeInterval(12.5))
         a.observedSheets(on: [7], pid: 300, at: t0.addingTimeInterval(12.5))
         XCTAssertTrue(a.attributed(50, pid: 300, session: "A"), "second-S1: the dialog is still the agent's")
@@ -64,15 +64,54 @@ final class ChildLookTests: XCTestCase {
         XCTAssertEqual(b.watchDelay(pid: 300, now: t0.addingTimeInterval(ChildAttribution.watchFor + 6)), ChildAttribution.watchFast, "a new action starts it again")
     }
 
+    /// #330 first-F1: every look partial (over 64 windows, or window 7's children failing every time). What closed still
+    /// ages out, so a child number or a sheet Donovan raises later is never the agent's old one.
+    func testEveryLookPartialStillForgetsWhatClosed() {
+        var a = seenUntilPastTheWindow()
+        for i in 0...9 {
+            let at = t0.addingTimeInterval(12 + Double(i) * 0.5)
+            a.observed([], pid: 300, at: at, complete: false)
+            a.observedSheets(on: [], pid: 300, at: at, read: [])
+        }
+        let later = t0.addingTimeInterval(17)
+        a.observed([50], pid: 300, at: later, complete: false)
+        a.observedSheets(on: [7], pid: 300, at: later, read: [7])
+        XCTAssertFalse(a.attributed(50, pid: 300, session: "A"), "a reused number is judged afresh")
+        XCTAssertFalse(a.sheetAttributed(on: 7, pid: 300, session: "A"), "Donovan's sheet on window 7 is not agent A's")
+    }
+
+    /// #330 first-F1: a window whose children were read speaks for its own sheet, even in a look that missed other windows.
+    func testAWindowWhoseChildrenWereReadSpeaksForItsSheet() {
+        var a = seenUntilPastTheWindow()
+        a.observedSheets(on: [7, 8], pid: 300, at: t0.addingTimeInterval(11.75))
+        a.observedSheets(on: [8], pid: 300, at: t0.addingTimeInterval(12), read: [8])
+        XCTAssertTrue(a.sheetAttributed(on: 7, pid: 300, session: "A"), "window 7 wasn't read: its sheet stands")
+        a.observedSheets(on: [], pid: 300, at: t0.addingTimeInterval(12.5), read: [7])
+        a.observedSheets(on: [7], pid: 300, at: t0.addingTimeInterval(13), read: [7])
+        XCTAssertFalse(a.sheetAttributed(on: 7, pid: 300, session: "A"), "window 7 was read with no sheet: it closed, though 8 wasn't read")
+    }
+
+    /// #330 second-S1: at the slow pace, one partial look that missed the agent's palette between two whole ones keeps it
+    /// the agent's.
+    func testOneMissedLookAtTheSlowPaceKeepsALivePalette() {
+        var a = seenUntilPastTheWindow()
+        let last = t0.addingTimeInterval(11.5), slow = ChildAttribution.watchSlow + ChildAttribution.readAllowance
+        a.observed([], pid: 300, at: last.addingTimeInterval(slow), complete: false)
+        a.observed([50], pid: 300, at: last.addingTimeInterval(2 * slow))
+        XCTAssertTrue(a.attributed(50, pid: 300, session: "A"), "still the agent's palette")
+        XCTAssertLessThanOrEqual(2 * (ChildAttribution.watchSlow + ChildAttribution.readAllowance), ChildAttribution.forgetAfter,
+                                 "one missed look fits in the forget bound")
+    }
+
     func testTheAppReadSaysWhenALookMissedWindowsAndTheBookIsTold() throws {
         let ax = try HandsSourceTests.code("Sources/BaneySpaces/Hands/ChildWindowsAX.swift")
-        XCTAssertTrue(ax.contains("guard answer == .success || answer == .noValue else { return Reading(children: [], sheetsOn: [], complete: false) }"), "AXWindows failed")
+        XCTAssertTrue(ax.contains("guard answer == .success || answer == .noValue else { return Reading(children: [], sheetsOn: [], complete: false, sheetsRead: []) }"), "AXWindows failed")
         XCTAssertTrue(ax.contains("for el in list.prefix(ChildLook.maxWindows) {"))
-        XCTAssertTrue(ax.contains("if !kids.readable { placedReadable = false }"))
-        XCTAssertTrue(ax.contains("complete: ChildLook.complete(listed: true, count: list.count, placedReadable: placedReadable))"))
+        XCTAssertTrue(ax.contains("if kids.readable { sheetsRead.insert(id) } else { placedReadable = false }"))
+        XCTAssertTrue(ax.contains("complete: ChildLook.complete(listed: true, count: list.count, placedReadable: placedReadable), sheetsRead: sheetsRead)"))
         let ws = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
         XCTAssertTrue(ws.contains("attribution.observed(Set(r.children.map(\\.id)), pid: pid, at: now, parents: firstParents, complete: r.complete)"))
-        XCTAssertTrue(ws.contains("attribution.observedSheets(on: r.sheetsOn, pid: pid, at: now, complete: r.complete)"))
+        XCTAssertTrue(ws.contains("attribution.observedSheets(on: r.sheetsOn, pid: pid, at: now, read: r.sheetsRead)"))
         XCTAssertTrue(ws.contains("if let d = self.attribution.watchDelay(pid: pid, now: Date()) { return d }"), "the watch keeps the book's pace")
         XCTAssertTrue(ws.contains("self.watch(pid: pid, after: next)"))
     }

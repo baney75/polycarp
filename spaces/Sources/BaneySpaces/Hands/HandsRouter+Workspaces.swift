@@ -25,7 +25,7 @@ extension HandsRouter {
         for c in r.children { if let p = c.parent ?? hint { firstParents[c.id] = p } }
         let known = childLocked { () -> [UInt32: UInt32] in
             attribution.observed(Set(r.children.map(\.id)), pid: pid, at: now, parents: firstParents, complete: r.complete)
-            attribution.observedSheets(on: r.sheetsOn, pid: pid, at: now, complete: r.complete)
+            attribution.observedSheets(on: r.sheetsOn, pid: pid, at: now, read: r.sheetsRead)
             return r.children.reduce(into: [:]) { m, c in if let p = attribution.parent(of: c.id, pid: pid) { m[c.id] = p } }
         }
         for i in r.children.indices where r.children[i].parent == nil { r.children[i].parent = known[r.children[i].id] }

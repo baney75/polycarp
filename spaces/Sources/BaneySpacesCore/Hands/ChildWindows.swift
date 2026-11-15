@@ -193,9 +193,13 @@ public enum ChildWindowRule {
 public struct ChildAttribution: Equatable, Sendable {
     struct Action: Equatable, Sendable { var session: String; var at: Date; var before: Set<UInt32>; var sheetsBefore: Set<UInt32> = [] }
     struct Seen: Equatable, Sendable { var pid: Int32; var session: String?; var at: Date; var parent: UInt32? = nil; var last: Date? = nil }
-    /// A child (or sheet) not seen for longer than this, six watch intervals, is forgotten: it may have closed and its number
-    /// been reused between looks, so it is judged afresh (first-F1, sol-sol-F3).
+    /// A child (or sheet) not seen for longer than this is forgotten: it may have closed and its number been reused between
+    /// looks, so it is judged afresh (first-F1, sol-sol-F3). It holds on every look, partial ones too, so a book no whole
+    /// look ever reaches still ages out (#330 first-F1). At the slow pace it spans `watchSlow` twice and a read allowance
+    /// each time, so one look that missed a live child can't age it out (#330 second-S1).
     public static let forgetAfter: TimeInterval = 3
+    /// The longest a look's reads are allowed for in that bound: the 0.25 s timeout on the app and on a window.
+    public static let readAllowance: TimeInterval = 0.5
 
     /// The watch's pace: every half second while an action is under 10 s old, then every `watchSlow` (under `forgetAfter`,
     /// so a palette's sightings stay continuous) while a child of the app is someone's, for at most `watchFor` after the
@@ -203,14 +207,14 @@ public struct ChildAttribution: Equatable, Sendable {
     /// the next look judges it afresh, as a window first seen with no action before it. Acting on it, or on its app,
     /// starts the watch again.
     public static let watchFast: TimeInterval = 0.5
-    public static let watchSlow: TimeInterval = 2
+    public static let watchSlow: TimeInterval = 1
     public static let watchFor: TimeInterval = 600
 
-    /// Keeps of `book` only what this full look of `pid` still shows and saw within `forgetAfter`; marks those seen now. A
-    /// look that didn't see all of the app's windows (`complete` false) drops nothing: what it missed may still be there.
-    private static func retire(_ book: inout [UInt32: Seen], _ ids: Set<UInt32>, pid: Int32, at: Date, complete: Bool = true) {
-        if complete {
-            book = book.filter { $0.value.pid != pid || (ids.contains($0.key) && at.timeIntervalSince($0.value.last ?? $0.value.at) <= forgetAfter) }
+    /// Keeps of `book`, for `pid`, what was seen within `forgetAfter` and that this look either shows or can't speak for
+    /// (`authoritative` false: a part of the app it didn't read); marks those seen now.
+    private static func retire(_ book: inout [UInt32: Seen], _ ids: Set<UInt32>, pid: Int32, at: Date, authoritative: (UInt32) -> Bool) {
+        book = book.filter { k, v in
+            v.pid != pid || (at.timeIntervalSince(v.last ?? v.at) <= forgetAfter && (ids.contains(k) || !authoritative(k)))
         }
         for id in ids { book[id]?.last = at }
     }
@@ -232,9 +236,10 @@ public struct ChildAttribution: Equatable, Sendable {
     }
 
     /// The placed windows of `pid` that hold a sheet with no number of their own at `at`. A sheet first seen within 10 s after
-    /// an action, and not there before it, is that action's session's; one that closed is forgotten.
-    public mutating func observedSheets(on: Set<UInt32>, pid: Int32, at: Date, complete: Bool = true) {
-        Self.retire(&sheets, on, pid: pid, at: at, complete: complete)
+    /// an action, and not there before it, is that action's session's; one that closed is forgotten. `read` is the placed
+    /// windows whose children this look read (nil: all of them); each speaks for its own sheet, and only for it.
+    public mutating func observedSheets(on: Set<UInt32>, pid: Int32, at: Date, read: Set<UInt32>? = nil) {
+        Self.retire(&sheets, on, pid: pid, at: at, authoritative: { read?.contains($0) ?? true })
         for id in on where sheets[id] == nil {
             sheets[id] = Seen(pid: pid, session: owner(pid: pid, at: at) { $0.sheetsBefore.contains(id) }, at: at)
         }
@@ -259,7 +264,8 @@ public struct ChildAttribution: Equatable, Sendable {
     /// main or focused window at that moment. Kept, so a later look still knows which window raised it.
     public mutating func observed(_ ids: Set<UInt32>, pid: Int32, at: Date, parents: [UInt32: UInt32] = [:], complete: Bool = true) {
         // sol-F3: one gone from this look, or unseen too long, is forgotten, so a reused window number is judged afresh.
-        Self.retire(&seen, ids, pid: pid, at: at, complete: complete)
+        // A look that didn't see all of the app's windows (`complete` false) drops only what aged out.
+        Self.retire(&seen, ids, pid: pid, at: at, authoritative: { _ in complete })
         for id in ids where seen[id] == nil {
             seen[id] = Seen(pid: pid, session: owner(pid: pid, at: at) { $0.before.contains(id) }, at: at, parent: parents[id])
         }
@@ -293,7 +299,8 @@ public struct ChildAttribution: Equatable, Sendable {
 }
 
 /// Whether one look at an app's child windows saw all of them: AXWindows answered, it listed no more than `maxWindows`, and
-/// every placed window's children could be read (for its sheets). A look that missed some is still used, but retires nothing.
+/// every placed window's children could be read. A look that missed some is still used, but drops a child only once it aged
+/// out (`ChildAttribution.forgetAfter`).
 public enum ChildLook {
     public static let maxWindows = 64
     public static func complete(listed: Bool, count: Int, placedReadable: Bool) -> Bool {
