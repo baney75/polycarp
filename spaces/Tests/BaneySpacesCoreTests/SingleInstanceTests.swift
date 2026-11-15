@@ -181,8 +181,39 @@ final class SingleInstanceTests: XCTestCase {
         let fd = listen(live); defer { close(fd) }
         XCTAssertTrue(SocketClaim.anyLive([stale, live]))
         let cli = try Repo.code("Sources/baneyspaces-cli/Agent.swift")
-        XCTAssertTrue(cli.contains("SocketClaim.anyLive(Wire.socketCandidates())"))
+        XCTAssertTrue(cli.contains(".noReply(verb: request.verb, connected: connected)"), "whether the request got through decides it")
         XCTAssertFalse(cli.contains("fileExists(atPath: $0)"), "a file that is there decides nothing")
+    }
+
+    /// PR 20 sol-F6: the app took a click, then crashed before it answered. Its socket file stays with nobody behind it, so
+    /// a look at the socket afterwards said "not running, retry is safe" and the click could land twice.
+    func testAnAppThatQuitsAfterTakingTheRequestIsNotSafeToRetry() throws {
+        let path = dir.appendingPathComponent("c.sock").path
+        let fd = listen(path)
+        let served = expectation(description: "the request was read")
+        DispatchQueue.global().async {
+            let conn = accept(fd, nil, nil)
+            var buf = [UInt8](repeating: 0, count: 4096)
+            _ = read(conn, &buf, buf.count)
+            close(conn); close(fd)   // it quits: no reply, no listener, the file stays
+            served.fulfill()
+        }
+        let (reply, connected) = Wire.send(Wire.Request(op: .hands, text: "{}"), timeout: 5, path: path)
+        wait(for: [served], timeout: 5)
+        XCTAssertNil(reply)
+        XCTAssertTrue(connected)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path) && !SocketClaim.isLive(path: path), "the crash looks like a leftover file")
+        let crashed = HandsError.noReply(verb: "click", connected: connected)
+        XCTAssertEqual(crashed.code, .timeout)
+        XCTAssertEqual(crashed.retry, .never, "the click may have landed")
+        XCTAssertTrue(crashed.suggestion.contains("agent get"), crashed.suggestion)
+        XCTAssertEqual(HandsError.noReply(verb: "snapshot", connected: true).retry, .safe, "a read is safe to repeat")
+
+        let (_, reached) = Wire.send(Wire.Request(op: .hands, text: "{}"), timeout: 1, path: path)
+        XCTAssertFalse(reached, "nothing listens now")
+        let refused = HandsError.noReply(verb: "click", connected: reached)
+        XCTAssertEqual(refused.code, .notRunning)
+        XCTAssertEqual(refused.retry, .safe, "nothing was sent")
     }
 
     func testALeftoverSocketFileIsRemoved() {
