@@ -1068,17 +1068,39 @@ pub(super) fn release_for_reset(st: &mut State) -> Option<Stopped> {
 pub(super) fn stop_for_switch(
     st: &mut State,
     chosen: &str,
+    mode: Option<&str>,
     notes: &mut Vec<String>,
 ) -> Option<Stopped> {
-    if st.follow.is_none() || chosen == TOP {
+    if chosen == TOP {
         return None;
     }
+    // While following, the mode is Omarchy's, not a choice: without a new one, the person's own
+    // (a mode chosen while following, or the one from before) comes back.
+    let back = st
+        .follow
+        .as_ref()?
+        .mode_override
+        .clone()
+        .or_else(|| st.follow.as_ref().map(|f| f.previous_mode.clone()));
     let stopped = release(st)?;
+    if let (None, Some(m)) = (mode, back) {
+        st.mode = m;
+    }
     notes.push(
         "Polycarp was following Omarchy's theme; it no longer does, because you chose another theme. Your changes on top stay in omarchy-overrides.toml, and `polycarp theme follow omarchy` picks them up again"
             .into(),
     );
     Some(stopped)
+}
+
+/// A value the person writes while following is theirs, even the color a sync fitted, so no later
+/// sync takes it back.
+pub(super) fn accept<S: AsRef<str>>(st: &mut State, paths: impl IntoIterator<Item = S>) {
+    if let Some(f) = st.follow.as_mut() {
+        for p in paths {
+            f.fits.remove(p.as_ref());
+        }
+    }
 }
 
 /// `theme set omarchy` while following means `omarchy-overrides`, the theme that is current.
@@ -1168,6 +1190,11 @@ pub(super) fn before_undo(c: &Ctx) {
     let Ok(text) = fs::read_to_string(&path) else {
         return;
     };
+    // A file that is what the newest change wrote, fitted colors and all, is what undo expects.
+    let newest = read_history(&c.cfg).into_iter().next();
+    if newest.and_then(|h| h.theme_after) == Some(text_hash(text.as_bytes())) {
+        return;
+    }
     let (mut l, mut d) = (st.accent_light.clone(), st.accent_dark.clone());
     let Ok(t) = revert_fits(&text, &fits, &mut l, &mut d) else {
         return;
@@ -1769,7 +1796,7 @@ fn sync_locked(c: &Ctx, home: &Path, st: &State) -> Res {
         fs::read_to_string(c.cfg.theme_path(TOP)).ok().as_deref() == Some(plan.overrides.as_str());
     let cfg_same =
         fs::read(c.cfg.file()).ok().as_deref() == Some(state_table(&c.cfg, &plan.st).as_bytes());
-    if gen_same && top_same && cfg_same {
+    if gen_same && top_same && cfg_same && !(plan.st.enabled && current_stale(&c.cfg)) {
         return Ok(Out::new(
             json!({"following": true, "changed": false, "omarchy_theme": built.name}),
             "the Omarchy colors have not changed\n",

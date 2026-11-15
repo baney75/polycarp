@@ -176,7 +176,7 @@ struct WelcomeView: View {
             .padding(.horizontal, 20)
 
             if model.legacyNote {
-                Text(LegacyRetirement.welcomeNote).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
+                Text(LegacyRetirement.welcomeNote(supportDir: Product.supportDir(home: FileManager.default.homeDirectoryForCurrentUser))).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                     .padding(.horizontal, 28).padding(.top, 12)
             }
 
