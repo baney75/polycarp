@@ -8,7 +8,8 @@ import BaneySpacesCore
 final class AgentLaunchFocus {
     static let shared = AgentLaunchFocus()
     private var state = FocusReturn()
-    /// How many times the keyboard was given back, for `open`'s focus report. Main thread only.
+    /// How many times the keyboard was given back, for `open`'s focus report: counted only when macOS took it, so a failed
+    /// restore never reads as `focus.returned` (#124 sol-sol-F5). Main thread only.
     private(set) var returns = 0
 
     private init() {
@@ -37,9 +38,8 @@ final class AgentLaunchFocus {
 
     /// Gives the keyboard to `target` now (`RunningOpen.giveBack` chose it). True when macOS took it.
     func giveBack(to target: pid_t) -> Bool {
-        returns += 1
         let result = AXUIElementSetAttributeValue(AXUIElementCreateApplication(target), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
-        if result != .success { Trace.log("agent open: couldn't give the keyboard back to \(target): \(result.rawValue)") }
+        if result == .success { returns += 1 } else { Trace.log("agent open: couldn't give the keyboard back to \(target): \(result.rawValue)") }
         return result == .success
     }
 
@@ -49,9 +49,8 @@ final class AgentLaunchFocus {
         switch state.activated(pid: pid, bundle: app.bundleIdentifier, agentOwned: pid == getpid() || AgentOwned.shared.pids.contains(pid), frontNow: front, now: Date()) {
         case .none: break
         case .returnTo(let target):
-            returns += 1
             let result = AXUIElementSetAttributeValue(AXUIElementCreateApplication(target), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
-            if result != .success { Trace.log("agent launch focus: couldn't return the keyboard to \(target): \(result.rawValue)") }
+            if result == .success { returns += 1 } else { Trace.log("agent launch focus: couldn't return the keyboard to \(target): \(result.rawValue)") }
         }
     }
 }
