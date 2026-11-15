@@ -389,9 +389,11 @@ final class UninstallTests: XCTestCase {
         let log = home.appendingPathComponent("agents.log")
         let helper = "\(home.path)/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser"
         // claude has Polycarp's entry under the current name; codex has a "polycarp" of the person's own and an old one of ours.
+        // Like the real CLIs, each keeps writing after the Command line (here 1 MB, more than a pipe holds), so a reader that
+        // stops at the match makes that write fail.
         for (agent, entries) in [("claude", ["polycarp": helper]), ("codex", ["polycarp": "/opt/theirs/mcp", "tabkyra": helper])] {
-            var script = "#!/bin/sh\necho \"$0 $*\" >> '\(log.path)'\n[ \"$2\" = get ] || exit 0\ncase \"$3\" in\n"
-            for (name, command) in entries { script += "  \(name)) echo '  Command: \(command)'; echo '  Args: mcp' ;;\n" }
+            var script = "#!/bin/bash\nset -o pipefail\necho \"$0 $*\" >> '\(log.path)'\n[ \"$2\" = get ] || exit 0\ncase \"$3\" in\n"
+            for (name, command) in entries { script += "  \(name)) echo '  Command: \(command)'; yes '  Args: mcp' | head -c 1000000 ;;\n" }
             script += "  *) echo 'not found' >&2; exit 1 ;;\nesac\n"
             let file = dir.appendingPathComponent(agent)
             try script.write(to: file, atomically: true, encoding: .utf8)

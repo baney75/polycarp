@@ -353,8 +353,10 @@ fi
 for agent in claude codex; do
   command -v "$agent" >/dev/null 2>&1 || continue
   for name in polycarp tabkyra; do
-    (cd "$HOME" && perl -e 'alarm 15; exec @ARGV' "$agent" mcp get "$name" </dev/null 2>/dev/null) \
-      | grep -q "Polycarp.app/Contents/Resources/browser/polycarp-browser" || continue
+    # The whole answer is read before it is matched: `| grep -q` stops reading at the match, and under pipefail the CLI's
+    # next write (SIGPIPE, EPIPE) would fail the pipeline and skip Polycarp's own entry.
+    out=$( (cd "$HOME" && perl -e 'alarm 15; exec @ARGV' "$agent" mcp get "$name" </dev/null 2>/dev/null) || true)
+    case "$out" in *Polycarp.app/Contents/Resources/browser/polycarp-browser*) ;; *) continue ;; esac
     scope=(); [ "$agent" = claude ] && scope=(--scope user)
     (cd "$HOME" && perl -e 'alarm 15; exec @ARGV' "$agent" mcp remove ${scope[@]+"${scope[@]}"} "$name" </dev/null >/dev/null 2>&1) \
       || problem "$agent still lists Polycarp's MCP server \"$name\": run \`$agent mcp remove $name\` to remove it."
