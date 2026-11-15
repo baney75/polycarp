@@ -273,7 +273,7 @@ fn release_steps(spaces: &Path, o: Options) -> (String, Vec<Step>, Vec<String>) 
         &[&spaces, "update", "--now"],
     );
     let notes = vec![
-        "Polycarp downloads the release in the background, checks that it is signed with the release key, installs it and restarts itself. Run `polycarp version --check` once it is back.".to_string(),
+        "If Polycarp said it is up to date, nothing was installed. Otherwise it downloads the release in the background, checks that it is signed with the release key, installs it and restarts itself. Run `polycarp version --check` once it is back.".to_string(),
     ];
     (summary, vec![step], notes)
 }
@@ -708,6 +708,10 @@ pub fn place_browser(from: &Path, to: &Path, link: &Path) -> Result<(), String> 
         to.with_file_name(format!("{name}.new")),
         to.with_file_name(format!("{name}.old")),
     );
+    // A swap cut off between its two renames left the working helper only in `old`: put it back first.
+    if !to.exists() && old.join("cli/dist/index.js").is_file() {
+        fs::rename(&old, to).map_err(|e| at(e, &old))?;
+    }
     for stale in [&next, &old] {
         if stale.exists() {
             fs::remove_dir_all(stale).map_err(|e| at(e, stale))?;
@@ -793,7 +797,7 @@ pub fn state_after_failure(steps: &[Step], failed: usize) -> &'static str {
     let installed_before = steps[..failed].iter().any(|st| st.role == Role::Install);
     match steps[failed].role {
         Role::Verify => "Every step before this one ran, but the parts do not all match yet. `polycarp version` shows which.",
-        Role::Handoff => "Every part was installed. The last steps (reloading the extension, restarting what runs, the final check) did not finish. `polycarp version` shows what is installed.",
+        Role::Handoff => "The install steps ran. The installed polycarp command did not finish the last steps (reloading the extension, restarting what runs, the final check), or it is not there, or the final check found a part that is not at origin/main. `polycarp version` shows what is installed.",
         Role::Install if !installed_before => "This step installs. It did not finish, so some parts may be new and others old. `polycarp version` shows what is installed.",
         _ if installed_before => "Earlier steps already installed some parts, so some may be new and others old. `polycarp version` shows what is installed.",
         _ => "Nothing that is installed on this device was changed.",
@@ -2644,8 +2648,7 @@ mod tests {
             }
         );
         assert!(
-            text.contains("Every part was installed. The last steps")
-                && text.contains("did not finish"),
+            text.contains("The install steps ran.") && text.contains("did not finish"),
             "{text}"
         );
 
@@ -3567,5 +3570,60 @@ mod tests {
         assert!(parse_check(&args(&["--needs"])).is_err());
         assert!(parse_check(&args(&["--wait", "soon"])).is_err());
         assert!(parse_check(&args(&["--force"])).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_swap_cut_off_between_its_renames_keeps_the_old_helper_when_the_next_copy_fails() {
+        let root = std::env::temp_dir().join(format!("polycarp-swap-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let from = root.join("cache/source-1/browser");
+        let to = root.join("home/.local/share/polycarp/browser/source");
+        let old = to.with_file_name("source.old");
+        let link = root.join("home/.local/bin/polycarp-browser");
+        let write = |p: PathBuf, text: &str| {
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, text).unwrap();
+        };
+        // Only source.old holds a working helper.
+        write(old.join("cli/dist/index.js"), "old");
+        // The next build is incomplete: its copy fails after the build check.
+        write(from.join("cli/dist/index.js"), "new");
+        write(from.join("dist-chrome/manifest.json"), "{}");
+        assert!(place_browser(&from, &to, &link).is_err());
+        assert_eq!(
+            fs::read_to_string(to.join("cli/dist/index.js")).unwrap(),
+            "old"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failed_handoff_does_not_say_every_part_was_installed() {
+        let steps = vec![
+            Step::new(Role::Install, "i", &["x"]),
+            Step::new(Role::Handoff, "h", &["y"]),
+        ];
+        let text = state_after_failure(&steps, 1);
+        assert!(!text.contains("Every part was installed"), "{text}");
+        assert!(
+            text.contains("not there") && text.contains("final check found"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_current_release_install_is_not_told_a_download_is_coming() {
+        let (_, _, notes) = release_steps(Path::new("/x/polycarp-spaces"), YES);
+        assert!(
+            notes.iter().all(|n| !n.starts_with("Polycarp downloads")),
+            "{notes:?}"
+        );
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("up to date, nothing was installed")),
+            "{notes:?}"
+        );
     }
 }
