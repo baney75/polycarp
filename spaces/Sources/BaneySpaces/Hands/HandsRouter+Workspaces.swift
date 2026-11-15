@@ -62,10 +62,18 @@ extension HandsRouter {
     }
 
     func decideChild(_ c: ChildWindowFacts, all: [HandsWindow], agent: Int?, session: String) -> ChildWindowRule.Decision {
-        // sol-F1: a window that fails inspection now (an outside document, a file panel) authorizes no child of it.
-        let placed = ChildWindowRule.inspected(all.filter { $0.pid == c.pid }.map { (window: $0, scope: decide($0, agent, session: session)) }) { inspectProblem($0) }
-        let attributed = childLocked { attribution.attributed(c.id, pid: c.pid, session: session) }
-        return ChildWindowRule.decide(c, placed: placed, attributed: attributed, selfPid: getpid())
+        decideChildren([c], all: all, agent: agent, session: session)[0].decision
+    }
+
+    /// sol-F1: a window that fails inspection now (an outside document, a file panel) authorizes no child of it. Each
+    /// process's windows are inspected once for all its children.
+    func decideChildren(_ cs: [ChildWindowFacts], all: [HandsWindow], agent: Int?, session: String) -> [(facts: ChildWindowFacts, decision: ChildWindowRule.Decision)] {
+        ChildWindowRule.decideEach(cs, placed: { pid in
+            ChildWindowRule.inspected(all.filter { $0.pid == pid }.map { (window: $0, scope: decide($0, agent, session: session)) }) { inspectProblem($0) }
+        }, decide: { c, placed in
+            let attributed = childLocked { attribution.attributed(c.id, pid: c.pid, session: session) }
+            return ChildWindowRule.decide(c, placed: placed, attributed: attributed, selfPid: getpid())
+        })
     }
 
     /// `windows`: the child windows of these processes, decided, and which placed windows hold a sheet with no number.
@@ -82,7 +90,7 @@ extension HandsRouter {
             }
         }
         let facts = readings.flatMap(\.children).sorted { $0.id < $1.id }
-        return (facts.map { ($0, decideChild($0, all: all, agent: agent, session: session)) }, readings.reduce(into: Set<UInt32>()) { $0.formUnion($1.sheetsOn) })
+        return (decideChildren(facts, all: all, agent: agent, session: session), readings.reduce(into: Set<UInt32>()) { $0.formUnion($1.sheetsOn) })
     }
 
     /// sol-F1: a placed window of an app split between the agent and Donovan, holding a sheet this session's action didn't
@@ -147,7 +155,7 @@ extension HandsRouter {
             let sheets = childLocked { attribution.openedSheets(r.sheetsOn, pid: pid, session: session) }
             if !new.isEmpty || !sheets.isEmpty {
                 let agent = onMain { host.agentWorkspace() }
-                let usable = new.filter { decideChild($0, all: all, agent: agent, session: session).allowed }.map(ChildWindowList.opened)
+                let usable = decideChildren(new, all: all, agent: agent, session: session).filter(\.decision.allowed).map { ChildWindowList.opened($0.facts) }
                     + sheets.sorted().map(ChildWindowList.openedSheet(on:))
                 return usable.isEmpty ? nil : (usable.count == 1 ? usable[0] : .array(usable))
             }

@@ -102,6 +102,18 @@ public enum ChildWindowRule {
         }
     }
 
+    /// Decides each child with its process's placed windows read once, however many children the process has: each read is
+    /// a deep inspection on the main thread, once per child per window before (#124 round 1 first-F1).
+    public static func decideEach(_ children: [ChildWindowFacts], placed: (Int32) -> [(window: HandsWindow, scope: ScopeDecision)],
+                                  decide: (ChildWindowFacts, [(window: HandsWindow, scope: ScopeDecision)]) -> Decision) -> [(facts: ChildWindowFacts, decision: Decision)] {
+        var byPid: [Int32: [(window: HandsWindow, scope: ScopeDecision)]] = [:]
+        return children.map { c in
+            let p = byPid[c.pid] ?? placed(c.pid)
+            byPid[c.pid] = p
+            return (facts: c, decision: decide(c, p))
+        }
+    }
+
     /// A placed window that holds a sheet (with or without a window number of its own) on an app split between the agent and
     /// Donovan: its snapshot and refs reach the sheet, so the window is usable only while every sheet on it is one this
     /// session's action raised. Unsure counts as not.
