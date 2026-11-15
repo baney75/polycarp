@@ -1252,6 +1252,12 @@ fn prepare(c: &Core, plan: &Plan, token: &str) -> Result<Prepared, Envelope> {
             Some(apps::Launch::Flags(f)) => {
                 let _ = std::fs::create_dir_all(&profile);
                 argv.extend(f);
+                // A Chromium-family browser comes up with Polycarp connected: the installed extension, and
+                // the native host manifests copied into its private profile, where it looks for them.
+                if apps::is_chromium(name) {
+                    apps::copy_polycarp_hosts(&c.paths.config, name, &profile);
+                    argv.extend(apps::polycarp_flags(name, apps::polycarp_extension(&c.paths.data).as_deref()));
+                }
             }
             None => return Err(needs_sandbox(name, "is not on the list of apps BaneySpaces can start as a separate process for an agent")),
         }
@@ -1752,7 +1758,7 @@ pub(crate) mod tests {
     fn temp_paths(tag: &str) -> Paths {
         let base = std::env::temp_dir().join(format!("bs-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        let p = Paths { state: base.join("state"), run: base.join("run") };
+        let p = Paths { state: base.join("state"), run: base.join("run"), data: base.join("data"), config: base.join("config") };
         p.ensure().unwrap();
         p
     }
@@ -2296,6 +2302,29 @@ pub(crate) mod tests {
         c.drop_token(tok);
         assert!(!prof.exists(), "the profile goes with the token");
         assert!(!c.tokens.contains_key(tok));
+    }
+
+    #[test]
+    fn an_agent_chromium_gets_the_installed_extension_and_its_native_host() {
+        let c = test_core("polycarp-ext");
+        let tok = "feedface00000000";
+        let open = |app: &str| prepare(&c, &Plan::Open { app: app.into(), files: vec![] }, tok).ok().map(|p| p.argv);
+        // Only where Chromium is the system binary (a runner without it has nothing to launch).
+        let Some(before) = open("chromium") else { return };
+        assert!(!before.iter().any(|a| a.starts_with("--load-extension")), "nothing installed, nothing loaded");
+        let ext = c.paths.data.join("polycarp/browser/source/dist-chrome");
+        std::fs::create_dir_all(&ext).unwrap();
+        std::fs::write(ext.join("manifest.json"), "{}").unwrap();
+        let hosts = c.paths.config.join("chromium/NativeMessagingHosts");
+        std::fs::create_dir_all(&hosts).unwrap();
+        let manifest = "{\"name\":\"com.polycarp.browser\",\"type\":\"stdio\",\"path\":\"/x/polycarp-host\",\"allowed_origins\":[\"chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/\"]}";
+        std::fs::write(hosts.join("com.polycarp.browser.json"), manifest).unwrap();
+        let argv = open("chromium").unwrap();
+        let profile = apps::profile_dir(&c.paths.state, tok);
+        assert_eq!(argv[1..], [format!("--user-data-dir={}", profile.display()), "--no-first-run".into(), "--no-default-browser-check".into(), format!("--load-extension={}", ext.canonicalize().unwrap().display())]);
+        assert_eq!(std::fs::read_to_string(profile.join("NativeMessagingHosts/com.polycarp.browser.json")).unwrap(), manifest);
+        // A flag from the caller still never gets in.
+        assert!(prepare(&c, &Plan::Open { app: "chromium".into(), files: vec!["--load-extension=/tmp/evil".into()] }, tok).is_err());
     }
 
     #[test]

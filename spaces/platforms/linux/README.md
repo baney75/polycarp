@@ -58,7 +58,12 @@ isolation line, drawn by process:
   way to run one. Only viewers (mpv, imv, swayimg) and browsers take files, and every one must resolve
   (realpath) inside the handoff folder (`$XDG_STATE_HOME/baneyspaces/handoff`); a flag, a URL, `..` or a symlink
   out of the folder is `bad_arguments`. The isolation flags are the only flags, and BaneySpaces
-  adds them. Anything off the list, such as nautilus or a GApplication, is `needs_sandbox` before
+  adds them, plus one for Polycarp: a Chromium-family browser gets `--load-extension=` with the folder
+  `polycarp update` installs (`$XDG_DATA_HOME/polycarp/browser/source/dist-chrome`, realpath, never a
+  path the caller gives), when it is there. The native host manifests `polycarp-browser setup` registered
+  (`com.polycarp.browser`, `ai.tabkyra.bridge`) are copied into the private profile's
+  `NativeMessagingHosts/`, where Chromium looks under its own `--user-data-dir`, so the agent's browser
+  connects to your Polycarp helper with no setup. Anything off the list, such as nautilus or a GApplication, is `needs_sandbox` before
   launch, whether or not you run a copy;
 - **every agent process (`open` and `run`) has a session bus of its own.** One `dbus-daemon
   --session` per launch, with its own runtime directory, so GApplication and D-Bus single-instance
