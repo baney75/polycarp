@@ -218,13 +218,19 @@ fn is_script(p: &Path) -> bool {
 /// of it: where per-user installers put tools and the folders their links lead to. Relative to
 /// the home folder. Whole trees such as `~/.local` are not listed, since a cloned repo can sit
 /// in them.
-const HOME_ALLOWED: [&str; 18] = [
+const HOME_ALLOWED: [&str; 22] = [
     ".local/bin",
     ".local/lib/node_modules",
     // Polycarp's own browser folder: where `polycarp update` puts the helper on Linux, and where
     // the standalone browser's releases live.
     ".local/share/polycarp/browser",
-    ".local/share/mise",
+    // mise's shims and tools, not its plugins/ folder of git clones.
+    ".local/share/mise/shims",
+    ".local/share/mise/installs",
+    // pnpm's home on Linux; pipx and uv tools, which ~/.local/bin links point into.
+    ".local/share/pnpm",
+    ".local/share/pipx/venvs",
+    ".local/share/uv/tools",
     ".cargo/bin",
     ".bun/bin",
     ".bun/install/global",

@@ -901,6 +901,46 @@ fn from_home_per_user_installs_run() {
     }
 }
 
+/// #19: pnpm, and pipx and uv tools linked from ~/.local/bin, run from `~`; a clone in mise's
+/// plugins/ folder does not.
+#[cfg(unix)]
+#[test]
+fn from_home_pnpm_pipx_and_uv_run_but_mise_plugins_do_not() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let bin = home.join(".local/bin");
+    fs::create_dir_all(&bin).unwrap();
+    for (rel, linked) in [
+        (".local/share/pnpm", false),
+        (".local/share/pipx/venvs/tabkyra/bin", true),
+        (".local/share/uv/tools/tabkyra/bin", true),
+        (".local/share/mise/plugins/evil/bin", false),
+    ] {
+        let d = home.join(rel);
+        fs::create_dir_all(&d).unwrap();
+        stub(&d, "tabkyra", &format!("echo from {rel}"));
+        let on_path = if linked {
+            std::os::unix::fs::symlink(d.join("tabkyra"), bin.join("tabkyra")).unwrap();
+            bin.clone()
+        } else {
+            d.clone()
+        };
+        let o = s
+            .cmd(&["browser"])
+            .env("PATH", &on_path)
+            .current_dir(&home)
+            .output()
+            .unwrap();
+        if rel.contains("mise") {
+            assert_eq!(code(&o), 127, "{rel}: {}", out(&o));
+        } else {
+            assert_eq!(out(&o), format!("from {rel}\n"), "{rel}: {}", err(&o));
+        }
+        let _ = fs::remove_file(bin.join("tabkyra"));
+        fs::remove_file(d.join("tabkyra")).unwrap();
+    }
+}
+
 /// An npm prefix of ~/.local: the entry in bin is a link into lib/node_modules.
 #[cfg(unix)]
 #[test]
