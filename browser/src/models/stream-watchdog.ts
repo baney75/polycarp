@@ -17,6 +17,10 @@ type Inner = (
 	options?: any,
 ) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
 
+/** An inner stream that closed without a done or error event: its result() would never resolve. */
+export const CLOSED_MESSAGE =
+	"The model's connection closed before it answered, so Polycarp stopped waiting. Send your message again to retry.";
+
 export function stalledMessage(idleMs: number): string {
 	return `The model sent nothing for ${Math.round(idleMs / 1000)} seconds, so Polycarp stopped waiting. Send your message again to retry, or pick another model.`;
 }
@@ -52,6 +56,7 @@ export function watchStream<F extends Inner>(inner: F, idleMs = STREAM_IDLE_MS):
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let ended = false;
 		let last: AssistantMessage | undefined;
+		let answered = false;
 		const forward = () => {
 			controller.abort(outer?.reason);
 			// The inner stream ends itself as aborted; one that doesn't is ended for it, soon.
@@ -85,11 +90,16 @@ export function watchStream<F extends Inner>(inner: F, idleMs = STREAM_IDLE_MS):
 					if (ended) return;
 					if (!outer?.aborted) arm();
 					if ("partial" in event) last = event.partial;
+					if (event.type === "done" || event.type === "error") answered = true;
 					out.push(event);
 				}
 				if (ended) return;
 				finish();
-				out.end(await stream.result());
+				if (answered) return out.end(await stream.result());
+				const error = { ...stalled(model, idleMs, last), errorMessage: CLOSED_MESSAGE };
+				if (outer?.aborted) Object.assign(error, { stopReason: "aborted", errorMessage: "Request was aborted." });
+				out.push({ type: "error", reason: error.stopReason as "error" | "aborted", error });
+				out.end(error);
 			} catch (err) {
 				if (ended) return;
 				finish();

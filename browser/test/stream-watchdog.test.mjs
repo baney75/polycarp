@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 
-const { watchStream, stalledMessage } = await import("../src/models/stream-watchdog.ts");
+const { watchStream, stalledMessage, CLOSED_MESSAGE } = await import("../src/models/stream-watchdog.ts");
 const model = { api: "openai-completions", provider: "cerebras", id: "qwen", contextWindow: 32000, maxTokens: 4096 };
 const context = { systemPrompt: "", messages: [], tools: [] };
 const partial = { role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id, stopReason: "stop" };
@@ -63,6 +63,27 @@ test("the person's Stop reaches the request, and a stream that ignores it still 
 	assert.equal(seen.signal.aborted, true);
 	const result = await within(out.result(), 7000);
 	assert.equal(result.stopReason, "aborted");
+});
+
+test("a stream that closes without a done or error event ends with an error, not a chat left working", async () => {
+	const closes = () => {
+		const s = createAssistantMessageEventStream();
+		s.push({ type: "start", partial });
+		s.end();
+		return s;
+	};
+	const out = watchStream(closes, 60_000)(model, context, {});
+	const result = await within(out.result(), 2000);
+	assert.notEqual(result, "still waiting", "second-F3: result() resolves");
+	const types = [];
+	for await (const e of out) types.push(e.type);
+	assert.deepEqual(types, ["start", "error"]);
+	assert.equal(result.stopReason, "error");
+	assert.equal(result.errorMessage, CLOSED_MESSAGE);
+	const stop = new AbortController();
+	stop.abort();
+	const stopped = await within(watchStream(closes, 60_000)(model, context, { signal: stop.signal }).result(), 2000);
+	assert.equal(stopped.stopReason, "aborted", "closed after the person's Stop");
 });
 
 test("the panel's stream function, which the compaction summary uses too, is watched", () => {
