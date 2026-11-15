@@ -218,17 +218,23 @@ final class BrowserModel: ObservableObject {
         p.executableURL = exe
         p.arguments = args
         p.environment = BrowserBundle.environment(base: ProcessInfo.processInfo.environment, loginPath: Self.loginPath)
-        let pipe = Pipe()
+        let pipe = Pipe(), errPipe = Pipe()
         p.standardOutput = pipe
-        p.standardError = Pipe()
+        p.standardError = errPipe
         p.standardInput = FileHandle.nullDevice
         do { try p.run() } catch { return Result(code: 127, out: Data(), text: "\(error.localizedDescription)") }
         let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
+        // stderr is read alongside stdout, so a helper that writes a lot to it can't block on a full pipe.
+        var err = Data()
+        let errRead = DispatchGroup()
+        errRead.enter()
+        DispatchQueue.global().async { err = errPipe.fileHandleForReading.readDataToEndOfFile(); errRead.leave() }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
+        errRead.wait()
         killer.cancel()
-        let text = String(decoding: data.suffix(300), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = BrowserBundle.resultText(out: data, err: err, failed: p.terminationStatus != 0)
         return Result(code: p.terminationStatus, out: data, text: text)
     }
 }
