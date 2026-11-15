@@ -71,13 +71,14 @@ public struct MovedInWindows: Equatable, Sendable {
         return e.origin == .fullAccess && mode == .full
     }
 
-    /// The scope for a window, given what `ScopeGuard` said. Only `.onAgentWorkspace` for a moved-in window changes: it
-    /// keeps the scope that let it move (lent, or Full Access), so the move grants nothing the lend didn't, and it is
-    /// denied once that origin ends and while it is on its way back.
+    /// The scope for a window, given what `ScopeGuard` said. Only `.onAgentWorkspace` for a moved-in window changes. A lent
+    /// one stays `.lent`, so the move grants nothing the lend didn't. One Full Access brought over keeps `base`, as any of
+    /// Donovan's windows on the agent workspace does under Full Access (every use already treats his process there as his,
+    /// and `onAgentsOwnWorkspace` keeps the in-use wait). Either is denied once its origin ends and while it goes back.
     public func decide(_ w: HandsWindow, base: ScopeDecision, lends: LendBook, now: Date, mode: AgentAccessMode) -> ScopeDecision {
         guard base == .onAgentWorkspace, let e = entry(for: w) else { return base }
         if Self.holds(e, lends: lends, now: now, mode: mode) {
-            return lends.isLent(HandsWindow(id: e.window, pid: e.pid, app: "", workspace: nil), now: now) ? .lent : .fullAccess
+            return lends.isLent(HandsWindow(id: e.window, pid: e.pid, app: "", workspace: nil), now: now) ? .lent : base
         }
         let what = e.origin == .lent ? "while \(w.app) was lent, and the lend has ended" : "under Full Access, and agent access is \(mode.title) now"
         return .denied(HandsError(.needsLend, "window \(w.id) of \(w.app) was moved to the agent workspace \(what)",

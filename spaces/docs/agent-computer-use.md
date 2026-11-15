@@ -183,9 +183,9 @@ verbs, in MCP and the CLI, all on the agent workspace only:
 - `move --window N [--frame x,y,w,h]`: onto the agent workspace only; a window on Donovan's workspaces only if lent or
   under Full Access; never while the agent workspace is shown. The agent workspace, the window, its scope and whether it is
   shown are read again together right before it moves, so a workspace turned off or changed during the wait is honored.
-  A moved window grants nothing by being on the agent workspace (`MovedInWindows`): it keeps the scope that let it move
-  (`lent` or `full_access`, never `agent_workspace`), so an action on it waits while Donovan uses its app as before the
-  move, and arrange still lays it out. It is usable only while its lend lasts
+  A moved window grants nothing by being on the agent workspace (`MovedInWindows`): a lent one keeps the scope `lent`, one
+  Full Access brought over reads as any of his windows there does under Full Access, and either way an action on it waits
+  while Donovan uses its app as before the move (`onAgentsOwnWorkspace`); arrange still lays it out. It is usable only while its lend lasts
   (or, for one Full Access brought over, while the mode is Full Access, and its process is granted so the narrowing rule
   applies), and when that ends it is refused and goes back to the workspace it came from (his current one if that is
   gone). The entry is dropped only once the window is read back off the agent workspace, and the book is saved

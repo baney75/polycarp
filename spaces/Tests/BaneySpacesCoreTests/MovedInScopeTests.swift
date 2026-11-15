@@ -20,8 +20,13 @@ final class MovedInScopeTests: XCTestCase {
         XCTAssertEqual(moved(origin: .lent).decide(word(9), base: .onAgentWorkspace, lends: lends, now: now, mode: .standard), .lent)
     }
 
-    func testAFullAccessWindowMovedInIsStillFullAccess() {
-        XCTAssertEqual(moved(origin: .fullAccess).decide(word(9), base: .onAgentWorkspace, lends: LendBook(), now: now, mode: .full), .fullAccess)
+    /// Under Full Access it reads as any of his windows there does (`MovedInWindowTests.testAFullAccessMoveIsDeniedOnceNarrowed`),
+    /// and still waits while he uses its app.
+    func testAFullAccessWindowMovedInWaitsWhileDonovanUsesItsApp() {
+        let book = moved(origin: .fullAccess)
+        XCTAssertEqual(book.decide(word(9), base: .onAgentWorkspace, lends: LendBook(), now: now, mode: .full), .onAgentWorkspace)
+        XCTAssertEqual(InUseRule.decide(verb: "type", state: .front, onAgentWorkspace: book.onAgentsOwnWorkspace(word(9), agentWorkspace: 9),
+                                        isFocusedWindow: false, isMainWindow: false, delivery: .headlessAX), .wait)
     }
 
     func testAnAgentsOwnWindowThereIsUnchanged() {
