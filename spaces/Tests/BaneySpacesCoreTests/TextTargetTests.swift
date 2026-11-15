@@ -92,7 +92,6 @@ final class TextTargetTests: XCTestCase {
     }
 
     func testAClickByTextWaitsForAPaneStillDrawing() throws {
-        // On main the one read missed it: "no element in window 7 shows "Display"", and run-steps stopped there.
         let l = loading(drawnAt: 3)
         let m = try TextTarget.pickWhenShown(text: "Display", role: nil, window: 7, read: l.read, sleep: l.sleep, now: l.now).get()
         XCTAssertEqual(m.ref, "@s1:e21")

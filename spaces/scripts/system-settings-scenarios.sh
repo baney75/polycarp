@@ -2,8 +2,7 @@
 # Agents driving System Settings, live, on the agent workspace only. Each scenario prints ok, FAIL or skip with the
 # envelope it judged by. It navigates and reads; it never turns a switch, so no macOS setting changes.
 #   S1 a pane link while System Settings isn't running opens that pane, in one call, on the agent workspace (#361).
-#   S2 run-steps clicks a sidebar row by text and then an element of the pane that row loads (the pane draws after
-#      the click; a click by text read too soon answered "no element shows").
+#   S2 run-steps clicks a sidebar row by text, then an element of the pane it loads (#387: the pane draws after it).
 #   S3 the search field: set-value "Keyboard" and the results list shows Keyboard.
 #   S4 a pane link to the copy this run started is refused (in_use), with a suggestion, and nothing moves.
 # It runs only when the Mac has been idle 10 minutes and System Settings isn't running (a running copy is Donovan's).
