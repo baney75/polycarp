@@ -223,6 +223,14 @@ public enum ContextMenu {
         return .success(c)
     }
 
+    /// A right click's failure once its item was reached: the command may have run, so the press's own error stays and a
+    /// front-app change seen after it is added, never put in its place (315 r1 first-F1). Before the item, it is the answer.
+    public static func failedPress(_ e: HandsError, reached: Bool, late: HandsError?) -> HandsError {
+        guard let late else { return e }
+        guard reached else { return late }
+        var e = e; e.message += "; also: " + late.message; return e
+    }
+
     /// A pressed item's answer once the watch that started with its press is over, as for the menu verb (256 r1
     /// second-S2): an Open or Save panel or a window outside the agent workspace it raised is undone and fails the call,
     /// and a watch that couldn't finish never answers ok.

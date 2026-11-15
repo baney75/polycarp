@@ -9,6 +9,8 @@ struct ContextPress {
     var lastPostAt = Date()
     /// A cancel didn't take: the menu may still be open, which is said over anything else (210 r1 first-F3).
     var leftOpen = false
+    /// The item's press was reached: the command may have run, so its answer is never swapped for the front app's (315 r1 first-F1).
+    var reached = false
     var result: Result<[String: JSONValue], HandsError> = .failure(HandsError(.engineError, "the right click didn't run", suggestion: "Try again.", retry: .safe))
 }
 
@@ -42,7 +44,7 @@ extension HandsRouter {
         let post = BackgroundPoster.pointer(InputScript.rightClick(at: point), frame: frame, drag: false, gesture: BackgroundPoster.newGesture(), permit: permit, stop: stop)
         out.aimed = post.screenPoints; out.posted = post.report.posted.count; out.released = post.report.released; out.lastPostAt = Date()
         out.result = contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: post.report.stopped, none: nil,
-                                 escape: escape, leftOpen: &out.leftOpen, check: check, cancelled: cancelled, beforePress: { nil })
+                                 escape: escape, leftOpen: &out.leftOpen, reached: &out.reached, check: check, cancelled: cancelled, beforePress: { nil })
         return out
     }
 
@@ -52,7 +54,7 @@ extension HandsRouter {
     /// `leftOpen`: set when a cancel didn't take (210 r1 first-F3). `beforePress`: asked once the menu is found, right
     /// before the item is pressed; an answer cancels the menu instead.
     func contextMenu(_ w: HandsWindow, frame: CGRect, displays: [CGRect], before: Set<UInt32>, item: String?, stopped: HandsError?, none: HandsError?,
-                     escape: () -> Bool, leftOpen: inout Bool, check: @escaping HandsEngine.Check, cancelled: () -> Bool,
+                     escape: () -> Bool, leftOpen: inout Bool, reached: inout Bool, check: @escaping HandsEngine.Check, cancelled: () -> Bool,
                      beforePress: () -> HandsError?) -> Result<[String: JSONValue], HandsError> {
         func waitShown(_ t: TimeInterval) -> [ContextMenu.Shown] {
             let deadline = Date().addingTimeInterval(t)
@@ -107,6 +109,7 @@ extension HandsRouter {
                         withoutActuallyEscaping(cancelled) { c in undo(MenuPath.Seen.merged(looks), w, path: "context menu > \(title)", oldPanels: oldPanels, inline: c) }
                     }
                 }
+                reached = true
                 guard pressItem(w, title: title, check: check, cancelled: cancelled) else {
                     return watched(.failure(cancel() ? ContextMenu.notPressed(w.app, item: item) : ContextMenu.stillOpen(w.app)))
                 }

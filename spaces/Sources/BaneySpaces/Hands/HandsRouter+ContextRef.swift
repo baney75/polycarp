@@ -43,7 +43,7 @@ extension HandsRouter {
                 guard let front = frontWatch(w, kind: .pointer) else { answer = .failure(BackgroundRefusal.frontUnknown(w.app)); return .ok(.null) }
                 defer { front.stop() }
                 let before = Set(ContextMenuAX.menus(w.pid, before: []).map(\.id))
-                var refused: HandsError?, open = false
+                var refused: HandsError?, open = false, reached = false
                 if case .failed(let e) = HandsEngine.shared.actInline(window: w, ref: ref, kind: .rightClick, check: acting, cancelled: cancelled) { refused = e }
                 // Refused before anything was sent: no menu can come, so no watch for one (231 r1 first-F5). An earlier attempt
                 // of the engine's retry may have opened one, so a quick look first (269 r1 first-F3).
@@ -53,7 +53,7 @@ extension HandsRouter {
                 // gets its menu cancelled, nothing pressed (269 r1 first-F1).
                 answer = contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: nil, none: refused,
                                      escape: { BackgroundPoster.keys([KeyChord(keyCode: 53, flags: 0, label: "escape")], permit: keyPermit, stop: { nil }).stopped == nil },
-                                     leftOpen: &open, check: acting, cancelled: cancelled, beforePress: front.failure)
+                                     leftOpen: &open, reached: &reached, check: acting, cancelled: cancelled, beforePress: front.failure)
                 // Seen later: it replaces only an answer that pressed nothing and left nothing open (269 r1 first-F2).
                 if let late = front.failure(), case .success(let d) = answer, d["pressed"] == nil { answer = .failure(late) }
                 return .ok(.null)

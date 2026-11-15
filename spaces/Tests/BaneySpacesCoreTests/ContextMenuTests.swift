@@ -150,7 +150,7 @@ final class ContextMenuTests: XCTestCase {
         XCTAssertTrue(bg.contains("escapeKeys(w, verifier: verifier)") && !bg.contains("verifier: .none, path: []"))
         // first-F2: a late menu is cancelled. first-F3: a menu left open is said over the front app's failure.
         XCTAssertTrue(menu.contains("let late = waitShown(ContextMenu.wait)") && menu.contains("cancel() ? ContextMenu.late(w.app) : ContextMenu.stillOpen(w.app)"))
-        XCTAssertTrue(menu.contains("defer { if open { leftOpen = true } }") && bg.contains("r.posted > 0 && !r.leftOpen ? frontFailure() ?? e : e"))
+        XCTAssertTrue(menu.contains("defer { if open { leftOpen = true } }") && bg.contains("r.posted > 0 && !r.leftOpen ? ContextMenu.failedPress(e, reached: r.reached, late: frontFailure()) : e"))
         // second-S1: a pressed item is never notPressed. second-S3, S4: on-screen menus only, the window's own scope.
         let pressed = try XCTUnwrap(menu.range(of: "data[\"pressed\"] = .string(title)"))
         XCTAssertNil(menu[pressed.upperBound...].range(of: "notPressed"))
@@ -281,7 +281,7 @@ final class ContextMenuTests: XCTestCase {
         let after = try XCTUnwrap(click.range(of: #"if let late = front.failure(), case .success(let d) = answer, d["pressed"] == nil { answer = .failure(late) }"#))
         XCTAssertLessThan(front.lowerBound, try XCTUnwrap(click.range(of: "kind: .rightClick")).lowerBound)
         XCTAssertLessThan(try XCTUnwrap(click.range(of: "answer = contextMenu(")).lowerBound, after.lowerBound)
-        XCTAssertTrue(click.contains("leftOpen: &open, check: acting, cancelled: cancelled, beforePress: front.failure)") && click.contains("defer { front.stop() }"))
+        XCTAssertTrue(click.contains("leftOpen: &open, reached: &reached, check: acting, cancelled: cancelled, beforePress: front.failure)") && click.contains("defer { front.stop() }"))
         XCTAssertFalse(click.contains("let pressed = front.failure()"), "no sample before the menu wait")
         let ctx = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextMenu.swift")
         let menu = try XCTUnwrap(HandsSourceTests.block(after: "func contextMenu(", in: ctx))
@@ -453,5 +453,24 @@ final class ContextMenuTests: XCTestCase {
         XCTAssertTrue(menu.contains("undo(MenuPath.Seen.merged(looks), w, path: \"context menu > \\(title)\", oldPanels: oldPanels, inline: c)"))
         let undo = try XCTUnwrap(HandsSourceTests.block(after: "func undo(", in: try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")))
         XCTAssertTrue(undo.contains("cancelPanels(w, within: 0.3, old: oldPanels, inline: inline)"))
+    }
+
+    /// 315 r1 first-F1: a press that fails once its item was reached (an undone window, a menu that won't cancel) keeps
+    /// its own error, with the front app's change added; only a failure before the item is swapped for the front verdict.
+    func testAFailedPressKeepsItsErrorOverTheFrontApp() throws {
+        let undone = HandsError(.outsideAgentWorkspace, "context menu > Open in New Window opened a window of TextEdit outside the agent workspace", suggestion: "", retry: .never)
+        let front = HandsError(.notSupported, "TextEdit came forward by itself", suggestion: "", retry: .never)
+        let kept = ContextMenu.failedPress(undone, reached: true, late: front)
+        XCTAssertEqual(kept.code, .outsideAgentWorkspace)
+        XCTAssertEqual(kept.retry, .never)
+        XCTAssertEqual(kept.message, undone.message + "; also: " + front.message)
+        XCTAssertEqual(ContextMenu.failedPress(undone, reached: false, late: front), front, "before the item: the front verdict")
+        XCTAssertEqual(ContextMenu.failedPress(undone, reached: true, late: nil), undone)
+        let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
+        XCTAssertFalse(bg.contains("frontFailure() ?? e"), "no failure is swapped whole")
+        let ctx = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextMenu.swift")
+        let menu = try XCTUnwrap(HandsSourceTests.block(after: "func contextMenu(", in: ctx))
+        let reach = try XCTUnwrap(menu.range(of: "reached = true\n                guard pressItem("))
+        XCTAssertLessThan(try XCTUnwrap(menu.range(of: "if let e = beforePress()")).lowerBound, reach.lowerBound, "a refusal before the press reaches nothing")
     }
 }

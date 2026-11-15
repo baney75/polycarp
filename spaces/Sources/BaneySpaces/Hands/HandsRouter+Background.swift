@@ -274,7 +274,7 @@ extension HandsRouter {
                                  keys: { [self] in escapeKeys(w, verifier: verifier) }, check: scopeCheck, cancelled: cancelled)
             aimed += r.aimed; posted += r.posted; released = r.released; lastPostAt = r.lastPostAt
             switch r.result {
-            case .failure(let e): return .failed(r.posted > 0 && !r.leftOpen ? frontFailure() ?? e : e)
+            case .failure(let e): return .failed(r.posted > 0 && !r.leftOpen ? ContextMenu.failedPress(e, reached: r.reached, late: frontFailure()) : e)
             case .success(let d): context = d; verdict = DeliveryVerdict(verified: true, basis: "context_menu"); landed = 1
             }
         case .pointer:
