@@ -21,7 +21,7 @@ Tagline: **Bear much fruit.** When a line must explain the product: **Speak it. 
 | `mark-small.svg` | Simpler branch for 16 to 24 px. Always use it in a menu bar or tray |
 | `wordmark.svg`, `wordmark-on-dark.svg` | Branch plus the name, outlined from Newsreader |
 | `icon-macos.svg` | Mac app icon, with the standard margin and corners |
-| `icon-full-bleed.svg` | iOS, Windows, Linux and web. The system adds its own corners |
+| `icon-full-bleed.svg` | iOS, Windows, Linux and web, as a square tile. iOS and other masked targets round its corners; Windows, Linux and favicons show the square as drawn, which is intended |
 | `icon-android-foreground.svg` | Android adaptive icon foreground, on a `#59693F` background layer |
 | `browser/icon.svg`, `browser/icon-16.svg` | The browser extension: the branch and a pointer at 48 px and up, and the bolder branch alone at 16 and 32, which is what a toolbar shows |
 | `export/` | PNG sets per platform, `windows/polycarp.ico`, and `tray/` black-on-transparent template images |
@@ -46,7 +46,7 @@ Newsreader (SIL OFL) for headings, the wordmark and web text. Native apps use ea
 
 ## Rules
 
-- Clear space: one olive's height on every side. Minimum: 16 px small mark, 72 px wordmark.
+- Clear space: one olive's height on every side. Minimum: 16 px small mark; the wordmark 72 px tall, which keeps its branch above 32 px (72 px wide would shrink it to 18).
 - Don't stretch, recolor outside this palette, add effects, or set the name in all caps.
 - Scripture and the saint's story belong on the about page and in the README, not in errors or buttons.
 - Say what happens ("Polycarp typed it"), in short, plain sentences.

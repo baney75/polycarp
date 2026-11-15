@@ -258,3 +258,57 @@ fn every_flag_in_a_guide_example_is_in_that_commands_usage() {
     }
     assert!(checked >= 4, "only {checked} flags were checked");
 }
+
+fn repo_file(rel: &str) -> String {
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(rel)).unwrap()
+}
+
+/// #3 second-S3, second-S5: an open item in PLAN.md says how it will be checked.
+#[test]
+fn every_open_plan_item_names_its_check() {
+    let plan = repo_file("PLAN.md");
+    let open: Vec<&str> = plan.lines().filter(|l| l.starts_with("- [ ]")).collect();
+    assert!(open.len() >= 10, "{open:?}");
+    for line in open {
+        assert!(
+            line.contains("Check:"),
+            "PLAN.md item with no check: {line}"
+        );
+    }
+}
+
+/// #3 sonnet-F2: every action in CI is pinned to a full commit, not a tag that can move.
+#[test]
+fn every_ci_action_is_pinned_to_a_commit() {
+    let mut checked = 0;
+    for file in
+        std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows"))
+            .unwrap()
+    {
+        let path = file.unwrap().path();
+        for line in std::fs::read_to_string(&path).unwrap().lines() {
+            let Some(at) = line.split("uses:").nth(1) else {
+                continue;
+            };
+            let spec = at.split_whitespace().next().unwrap_or("");
+            if spec.starts_with("./") {
+                continue;
+            }
+            let sha = spec.rsplit('@').next().unwrap_or("");
+            checked += 1;
+            assert!(
+                spec.contains('@') && sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit()),
+                "{}: {spec} is not pinned to a commit",
+                path.display()
+            );
+        }
+    }
+    assert!(checked >= 10, "only {checked} actions were checked");
+}
+
+/// #3 second-S2: the wordmark's minimum keeps its branch at the 32 px the full mark needs.
+#[test]
+fn the_wordmark_minimum_is_a_height() {
+    let readme = repo_file("brand/README.md");
+    assert!(readme.contains("the wordmark 72 px tall"), "{readme}");
+}
