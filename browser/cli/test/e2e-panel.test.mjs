@@ -27,6 +27,7 @@ const PANEL = `chrome-extension://${EXTENSION_ID}/sidepanel.html`;
 
 const { isSidePanelPort } = await loadTs(`export { isSidePanelPort } from "@src/../../src/connect/gate.ts";`);
 const { PRESETS, contrast } = await loadTs(`export { PRESETS, contrast } from "@src/../../src/appearance/palettes.ts";`);
+const { createOverlayScript } = await loadTs(`export { createOverlayScript } from "@src/../../src/tools/repl/overlay-content.ts";`);
 
 let profile;
 let context;
@@ -226,6 +227,41 @@ for (const theme of ["light", "dark"]) {
 		}
 	});
 }
+
+// The bar an agent's script shows sat in the page's own DOM, so a site's `!important` rule beat its inline styles and
+// Stop sat low in its button. A task name with a backslash or a newline broke the script that draws it.
+test("the script bar keeps its own look on a hostile page, and shows the task as typed", async () => {
+	const page = await context.newPage();
+	try {
+		await page.setContent(
+			"<!doctype html><style>body{background:#111;color:#eee} button{padding-top:20px !important;line-height:3;font:20px serif} div,span{font:30px serif}</style><p>A page</p>",
+		);
+		const task = "C:\\temp 'quoted' \nnext line ${x} `tick`";
+		await page.evaluate(createOverlayScript(task));
+		const got = await page.evaluate(() => {
+			const host = document.getElementById("tabkyra-repl-overlay");
+			const root = host.shadowRoot ?? host;
+			const button = root.querySelector("button");
+			const range = document.createRange();
+			range.selectNodeContents(button);
+			const label = range.getBoundingClientRect();
+			const box = button.getBoundingClientRect();
+			button.click();
+			return {
+				offset: label.top + label.height / 2 - (box.top + box.height / 2),
+				task: root.querySelector(".task")?.textContent,
+				name: button.getAttribute("aria-label"),
+				still: Boolean(document.getElementById("tabkyra-repl-overlay")),
+			};
+		});
+		assert.ok(Math.abs(got.offset) <= 1, `the Stop label is ${got.offset} px off its button's center`);
+		assert.equal(got.task, ` \u00b7 ${task}`);
+		assert.ok(got.name, "Stop has an accessible name");
+		assert.ok(got.still, "a click from the page's own script does not stop the agent's script");
+	} finally {
+		await page.close();
+	}
+});
 
 test("the Appearance color box and hex box show the accent in use, never black, and the hint is a hint", async () => {
 	const page = await settings("Appearance", "light");
