@@ -142,7 +142,8 @@
 		"--tk-brass-deep": "#334155",
 		"--tk-control-on": "#334155",
 		"accent-color": "#334155",
-		"--tk-brass-text": "#334155"
+		"--tk-brass-text": "#334155",
+		"--tk-brass-edge": "#2a374a"
 	},
 	"slate|none|dark": {
 		"--background": "#0f172a",
@@ -171,7 +172,8 @@
 		"--tk-brass-deep": "#cbd5e1",
 		"--tk-control-on": "#cbd5e1",
 		"accent-color": "#cbd5e1",
-		"--tk-brass-text": "#cbd5e1"
+		"--tk-brass-text": "#cbd5e1",
+		"--tk-brass-edge": "#d1dae5"
 	},
 	"slate|#3b82f6|light": {
 		"--background": "#f1f5f9",
@@ -200,7 +202,8 @@
 		"--tk-brass-deep": "#3b82f6",
 		"--tk-control-on": "#3b82f6",
 		"accent-color": "#3b82f6",
-		"--tk-brass-text": "#326dcd"
+		"--tk-brass-text": "#326dcd",
+		"--tk-brass-edge": "#3067c3"
 	},
 	"slate|#3b82f6|dark": {
 		"--background": "#0f172a",
@@ -229,7 +232,8 @@
 		"--tk-brass-deep": "#3b82f6",
 		"--tk-control-on": "#3b82f6",
 		"accent-color": "#3b82f6",
-		"--tk-brass-text": "#659cf5"
+		"--tk-brass-text": "#659cf5",
+		"--tk-brass-edge": "#659cf5"
 	},
 	"forest|none|light": {
 		"--background": "#f1f6f1",
@@ -258,7 +262,8 @@
 		"--tk-brass-deep": "#1f6a3a",
 		"--tk-control-on": "#1f6a3a",
 		"accent-color": "#1f6a3a",
-		"--tk-brass-text": "#1f6a3a"
+		"--tk-brass-text": "#1f6a3a",
+		"--tk-brass-edge": "#1c5932"
 	},
 	"forest|none|dark": {
 		"--background": "#0f1a13",
@@ -287,7 +292,8 @@
 		"--tk-brass-deep": "#7fd39a",
 		"--tk-control-on": "#7fd39a",
 		"accent-color": "#7fd39a",
-		"--tk-brass-text": "#7fd39a"
+		"--tk-brass-text": "#7fd39a",
+		"--tk-brass-edge": "#98daad"
 	},
 	"forest|#3b82f6|light": {
 		"--background": "#f1f6f1",
@@ -316,7 +322,8 @@
 		"--tk-brass-deep": "#3b82f6",
 		"--tk-control-on": "#3b82f6",
 		"accent-color": "#3b82f6",
-		"--tk-brass-text": "#316bbf"
+		"--tk-brass-text": "#316bbf",
+		"--tk-brass-edge": "#316bbf"
 	},
 	"forest|#3b82f6|dark": {
 		"--background": "#0f1a13",
@@ -345,7 +352,8 @@
 		"--tk-brass-deep": "#3b82f6",
 		"--tk-control-on": "#3b82f6",
 		"accent-color": "#3b82f6",
-		"--tk-brass-text": "#5d98f3"
+		"--tk-brass-text": "#5d98f3",
+		"--tk-brass-edge": "#659ef2"
 	},
 	"rose|none|light": {
 		"--background": "#fbf3f4",
@@ -374,7 +382,8 @@
 		"--tk-brass-deep": "#b4234a",
 		"--tk-control-on": "#b4234a",
 		"accent-color": "#b4234a",
-		"--tk-brass-text": "#b4234a"
+		"--tk-brass-text": "#b4234a",
+		"--tk-brass-edge": "#92203e"
 	},
 	"rose|none|dark": {
 		"--background": "#1d1013",
@@ -403,7 +412,8 @@
 		"--tk-brass-deep": "#f08ea9",
 		"--tk-control-on": "#f08ea9",
 		"accent-color": "#f08ea9",
-		"--tk-brass-text": "#f08ea9"
+		"--tk-brass-text": "#f08ea9",
+		"--tk-brass-edge": "#f2a4b9"
 	},
 	"rose|#3b82f6|light": {
 		"--background": "#fbf3f4",
@@ -432,7 +442,8 @@
 		"--tk-brass-deep": "#3b82f6",
 		"--tk-control-on": "#3b82f6",
 		"accent-color": "#3b82f6",
-		"--tk-brass-text": "#386cca"
+		"--tk-brass-text": "#386cca",
+		"--tk-brass-edge": "#3767bf"
 	},
 	"rose|#3b82f6|dark": {
 		"--background": "#1d1013",
@@ -461,7 +472,8 @@
 		"--tk-brass-deep": "#3b82f6",
 		"--tk-control-on": "#3b82f6",
 		"accent-color": "#3b82f6",
-		"--tk-brass-text": "#5791f4"
+		"--tk-brass-text": "#5791f4",
+		"--tk-brass-edge": "#6a9bf3"
 	},
 	"midnight|none|light": {
 		"--background": "#eef0fb",
@@ -490,7 +502,8 @@
 		"--tk-brass-deep": "#3b3fb5",
 		"--tk-control-on": "#3b3fb5",
 		"accent-color": "#3b3fb5",
-		"--tk-brass-text": "#3b3fb5"
+		"--tk-brass-text": "#3b3fb5",
+		"--tk-brass-edge": "#313596"
 	},
 	"midnight|none|dark": {
 		"--background": "#0b0d24",
@@ -519,7 +532,8 @@
 		"--tk-brass-deep": "#9aa2ff",
 		"--tk-control-on": "#9aa2ff",
 		"accent-color": "#9aa2ff",
-		"--tk-brass-text": "#9aa2ff"
+		"--tk-brass-text": "#9aa2ff",
+		"--tk-brass-edge": "#adb4ff"
 	},
 	"midnight|#3b82f6|light": {
 		"--background": "#eef0fb",
@@ -548,7 +562,8 @@
 		"--tk-brass-deep": "#3b82f6",
 		"--tk-control-on": "#3b82f6",
 		"accent-color": "#3b82f6",
-		"--tk-brass-text": "#3167c7"
+		"--tk-brass-text": "#3167c7",
+		"--tk-brass-edge": "#3167c7"
 	},
 	"midnight|#3b82f6|dark": {
 		"--background": "#0b0d24",
@@ -577,6 +592,7 @@
 		"--tk-brass-deep": "#3b82f6",
 		"--tk-control-on": "#3b82f6",
 		"accent-color": "#3b82f6",
-		"--tk-brass-text": "#4c8cf7"
+		"--tk-brass-text": "#4c8cf7",
+		"--tk-brass-edge": "#669cf8"
 	}
 }

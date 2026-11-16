@@ -4,7 +4,17 @@
  * match. Pure: test/appearance.test.mjs checks every pair the panel draws as text for WCAG AA.
  */
 
-import { accentInk, controlEdge, mix, type Palette, resolveTheme, type ThemeChoice, textOn } from "./palettes.js";
+import {
+	accentInk,
+	controlEdge,
+	DEFAULT_PRESET,
+	isPreset,
+	mix,
+	type Palette,
+	resolveTheme,
+	type ThemeChoice,
+	textOn,
+} from "./palettes.js";
 import type { PolycarpTheme } from "./polycarp.js";
 
 /** The accent the panel draws in this mode: the custom one, or the preset's own. What the color box and swatches show. */
@@ -47,7 +57,8 @@ function polycarpShapeVariables(t: PolycarpTheme): Record<string, string> {
 /**
  * CSS custom properties for one mode, keyed by name (with the leading dashes). A Polycarp theme, when
  * given, replaces the choice's palette and adds shape, type and motion; without one the result is
- * exactly what it was before Polycarp (test/fixtures/appearance-main.snapshot.json).
+ * test/fixtures/appearance-main.snapshot.json, which is what it was before Polycarp plus each non-default
+ * preset's --tk-brass-edge.
  */
 export function appearanceVariables(
 	choice: ThemeChoice,
@@ -91,7 +102,12 @@ export function appearanceVariables(
 		"--tk-control-on": controlOn,
 		"accent-color": controlOn,
 		"--tk-brass-text": accentInk(p.accent, [p.panel, p.bg, secondary], p.text),
-		...(polycarp ? { ...polycarpShapeVariables(polycarp), "--tk-brass-edge": mix(p.accent, p.text, 0.25) } : {}),
+		...(polycarp ? polycarpShapeVariables(polycarp) : {}),
+		// The far end of the tutorial pills' gradient: the accent's own color, so rose ends in rose. The default preset
+		// with no theme keeps app.css's moss (Donovan's answer on #13).
+		...(polycarp || (isPreset(choice.preset) && choice.preset !== DEFAULT_PRESET)
+			? { "--tk-brass-edge": mix(p.accent, p.text, 0.25) }
+			: {}),
 	};
 }
 
