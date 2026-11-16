@@ -5,7 +5,20 @@
 //! The rule is the Mac's (`Geometry.carry`): the window's middle keeps its place as a fraction of the display's work
 //! area, its size is kept when it fits, and it is kept inside the new display. A maximized window fills the new one.
 
+use baneyspaces_core::model::Event;
+
 pub type Rect = [i32; 4];
+
+/// What a change in the display list means for the model, in the order it is applied: the displays that went
+/// first, then the ones that came, in Windows' order (primary first). Removing first matters when a display is
+/// swapped for another in one poll, as when a laptop lid closes on a dock: the new display is then the first one
+/// and shows what you were on (R-M1, R-M3), instead of an empty workspace while yours goes out of sight. A
+/// reorder with the same names is no change: a workspace belongs to its display, not to its place in the list.
+pub fn monitor_events(known: &[String], now: &[String]) -> Vec<Event> {
+    let gone = known.iter().filter(|m| !now.contains(m)).map(|m| Event::MonitorRemoved { monitor: m.clone() });
+    let came = now.iter().filter(|m| !known.contains(m)).map(|m| Event::MonitorAdded { monitor: m.clone() });
+    gone.chain(came).collect()
+}
 
 fn overlap(a: Rect, b: Rect) -> i64 {
     let w = (a[2].min(b[2]) - a[0].max(b[0])).max(0) as i64;
@@ -36,15 +49,20 @@ pub fn carry(r: Rect, from: Rect, to: Rect) -> Rect {
     [x, y, x + w, y + h]
 }
 
-/// Where a window at `r` goes so that it is on display `to`, or None when it is there already or either display is
-/// unknown (then it is left where it is). `filled`: the window is maximized, so it takes the whole work area.
+/// Where a window at `r` goes so that it is on display `to`, or None when it is there already or `to` is unknown
+/// (then it is left where it is). `filled`: the window is maximized, so it takes the whole work area. A window on no
+/// display, because the one it was hidden on is unplugged (R-M3), comes up in the middle of `to`, its size kept if
+/// it fits: left where it was, it would come back where nothing shows it.
 pub fn carried(r: Rect, displays: &[(String, Rect)], to: &str, filled: bool) -> Option<Rect> {
-    let from = display_of(r, displays)?;
+    let area = |n: &str| displays.iter().find(|(d, _)| d == n).map(|(_, a)| *a);
+    let b = area(to)?;
+    let Some(from) = display_of(r, displays) else {
+        return Some(if filled { b } else { carry(r, r, b) });
+    };
     if from == to {
         return None;
     }
-    let area = |n: &str| displays.iter().find(|(d, _)| d == n).map(|(_, a)| *a);
-    let (a, b) = (area(from)?, area(to)?);
+    let a = area(from)?;
     Some(if filled { b } else { carry(r, a, b) })
 }
 
@@ -70,6 +88,73 @@ pub fn moved_across(windows: &[(String, u8, Rect)], displays: &[(String, Rect)],
 #[cfg(test)]
 mod tests {
     use super::*;
+    use baneyspaces_core::model::Model;
+
+    /// The daemon's `sync_monitors`, on a model: the display list Windows reports now.
+    fn sync(m: &mut Model, now: &[&str]) {
+        let now: Vec<String> = now.iter().map(|s| s.to_string()).collect();
+        let known: Vec<String> = m.monitors().map(String::from).collect();
+        for ev in monitor_events(&known, &now) {
+            m.apply(ev).unwrap();
+        }
+    }
+
+    fn open(m: &mut Model, w: &str, on: &str) {
+        m.apply(Event::Open { window: w.into(), pid: 1, start: 0, app: "notepad".into(), monitor: Some(on.into()), workspace: None }).unwrap();
+    }
+
+    #[test]
+    fn a_display_plugged_in_shows_an_empty_workspace_and_the_others_keep_theirs() {
+        let mut m = Model::new();
+        sync(&mut m, &["A"]);
+        open(&mut m, "w1", "A");
+        sync(&mut m, &["A", "B"]);
+        assert_eq!((m.current("A"), m.current("B"), m.focused_monitor()), (Some(1), Some(2), Some("A")));
+        sync(&mut m, &["A"]);
+        sync(&mut m, &["A", "B"]);
+        assert_eq!(m.current("B"), Some(2), "R-M2: it shows what it showed when it was last here");
+    }
+
+    #[test]
+    fn a_display_unplugged_lets_go_of_its_workspace_and_you_go_to_the_first() {
+        let mut m = Model::new();
+        sync(&mut m, &["A", "B"]);
+        m.apply(Event::ObserveFocusMonitor { monitor: "B".into() }).unwrap();
+        open(&mut m, "w2", "B");
+        sync(&mut m, &["A"]);
+        assert_eq!((m.focused_monitor(), m.current("A")), (Some("A"), Some(1)));
+        assert_eq!(m.shown_on(2), None, "R-M3: workspace 2 is out of sight");
+        assert!(m.home("w2").is_some(), "and its window is still in it");
+    }
+
+    #[test]
+    fn a_reorder_changes_nothing() {
+        let mut m = Model::new();
+        sync(&mut m, &["A", "B"]);
+        assert!(monitor_events(&["A".into(), "B".into()], &["B".into(), "A".into()]).is_empty());
+        sync(&mut m, &["B", "A"]);
+        assert_eq!((m.current("A"), m.current("B")), (Some(1), Some(2)));
+    }
+
+    #[test]
+    fn a_display_swapped_in_one_poll_shows_what_you_were_on() {
+        // The lid closes on a dock: the laptop's display goes and the external one comes in the same poll.
+        let mut m = Model::new();
+        sync(&mut m, &["LAPTOP"]);
+        open(&mut m, "w1", "LAPTOP");
+        sync(&mut m, &["DOCK"]);
+        assert_eq!((m.current("DOCK"), m.focused_monitor()), (Some(1), Some("DOCK")), "not an empty workspace with yours out of sight");
+        assert_eq!(m.active(), Some("w1"));
+    }
+
+    #[test]
+    fn the_daemon_syncs_displays_through_monitor_events() {
+        let src = include_str!("daemon.rs").replace("\r\n", "\n");
+        let start = src.find("pub fn sync_monitors(").expect("sync_monitors");
+        let body = &src[start..start + src[start..].find("\n    }\n").expect("end of sync_monitors")];
+        assert!(body.contains("displays::monitor_events("), "sync_monitors must apply displays::monitor_events in its order");
+        assert!(!body.contains("Event::MonitorAdded"), "no second, add-first path");
+    }
 
     fn two() -> Vec<(String, Rect)> {
         // A is 1920x1040 of work area at the origin; B, to its right, is 2560x1400.
@@ -82,6 +167,15 @@ mod tests {
         let r = carried([560, 220, 1360, 820], &two(), "B", false).expect("it is on A, so it moves");
         assert_eq!(r, [2800, 400, 3600, 1000]);
         assert_eq!(display_of(r, &two()), Some("B"));
+    }
+
+    #[test]
+    fn a_window_hidden_on_a_display_since_unplugged_comes_up_on_the_one_showing_its_workspace() {
+        // It was parked from a third display, right of B, that is gone now: 800x600 at x 5000.
+        let r = carried([5000, 100, 5800, 700], &two(), "A", false).expect("on no display, so it moves");
+        assert_eq!(r, [560, 220, 1360, 820], "in the middle of A, the same size");
+        assert_eq!(carried([5000, 100, 5800, 700], &two(), "B", true), Some([1920, 0, 4480, 1400]), "maximized, it fills B");
+        assert_eq!(carried([5000, 100, 9000, 3000], &two(), "A", false), Some([0, 0, 1920, 1040]), "too big, it shrinks to A");
     }
 
     #[test]

@@ -35,16 +35,36 @@ export const themeFile = () => join(configDir(), "theme.json");
 // ---------- the Polycarp theme ----------
 
 /**
- * Polycarp's config folder: POLYCARP_CONFIG_DIR if set and absolute, else $XDG_CONFIG_HOME/polycarp if
- * absolute, else ~/.config/polycarp; on Windows %APPDATA%\\Polycarp. A relative value is skipped.
+ * The folder `polycarp theme folder --pin` recorded in `<pinHome>/config-dir`, when it is an absolute path to a
+ * folder that exists. A browser started from the Dock sees no POLYCARP_CONFIG_DIR, so its helper reads this
+ * (first-F2 of the review of #11).
+ */
+function pinnedDir(pinHome: string): string | undefined {
+	try {
+		const dir = readFileSync(join(pinHome, "config-dir"), "utf8").trim();
+		return isAbsolute(dir) && statSync(dir).isDirectory() ? dir : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Polycarp's config folder: POLYCARP_CONFIG_DIR if set and absolute, else the pinned folder, else
+ * $XDG_CONFIG_HOME/polycarp if absolute, else ~/.config/polycarp; on Windows %APPDATA%\\Polycarp. A relative value is skipped.
  */
 export function polycarpConfigDir(): string {
 	const explicit = process.env.POLYCARP_CONFIG_DIR;
 	if (explicit && isAbsolute(explicit)) return explicit;
-	if (process.platform === "win32") {
-		const appData = process.env.APPDATA;
-		return appData && isAbsolute(appData) ? join(appData, "Polycarp") : join(homedir(), "AppData", "Roaming", "Polycarp");
-	}
+	const appData = process.env.APPDATA;
+	const pinHome =
+		process.platform !== "win32"
+			? join(homedir(), ".config", "polycarp")
+			: appData && isAbsolute(appData)
+				? join(appData, "Polycarp")
+				: join(homedir(), "AppData", "Roaming", "Polycarp");
+	const pinned = pinnedDir(pinHome);
+	if (pinned) return pinned;
+	if (process.platform === "win32") return pinHome;
 	const xdg = process.env.XDG_CONFIG_HOME;
 	return xdg && isAbsolute(xdg) ? join(xdg, "polycarp") : join(homedir(), ".config", "polycarp");
 }
