@@ -1,7 +1,8 @@
-// The compaction eval's checkers (evals/compaction/checks.mjs) and the transcript fields they read, without a model.
+// The compaction eval's checkers (evals/compaction/checks.mjs) and its tasks' finish expressions, without a model.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { compactionCheck } from "../evals/compaction/checks.mjs";
+import { compactionTasks } from "../evals/compaction/tasks/long.mjs";
 
 const ok = { stop: "success", final: "Done: 9 items flagged.", compactions: [{ atCall: 4, pre: 31000, post: 6000 }], calls: [] };
 const call = (tool, result, error = true, from) => ({ tool, result, error, from });
@@ -26,6 +27,22 @@ test("each failure the eval scores is named", () => {
 	assert.match(why({ final: "Autocompact is thrashing: the context refilled" }), /dead chat/);
 	assert.match(why({ stop: "error_max_turns" }), /dead chat/);
 	assert.match(why({ final: "  " }), /dead chat/);
+});
+
+test("each task finishes only on the exact result", () => {
+	const finished = (id, state) => new Function("window", `return (${compactionTasks.find((t) => t.id === id).state});`)({ __state: state });
+	const inv = compactionTasks.find((t) => t.id === "inventory-audit").state.match(/=== (".*")$/)[1];
+	const low = JSON.parse(JSON.parse(inv));
+	assert.ok(low.length >= 6, "enough low items that the audit spans every aisle");
+	assert.equal(new Set(low.map((n) => n.split(" ")[1][0])).size, 4);
+	assert.equal(finished("inventory-audit", { sent: [...low] }), true);
+	assert.equal(finished("inventory-audit", { sent: low.slice(1) }), false);
+	assert.equal(finished("supplier-quote", { quote: { supplier: "Harbor Industrial", price: "$389.50" } }), true);
+	assert.equal(finished("supplier-quote", { quote: { supplier: "Cedar Flow Supply", price: "$405.75" } }), false);
+	const sent = { 1: "Rosa Delgado", 2: "E-55210", 3: "Field Service", 4: "2027-02-01", 5: "14-inch" };
+	assert.equal(finished("onboarding", { sent }), true);
+	assert.equal(finished("onboarding", { sent: { ...sent, 3: "Sales" } }), false);
+	for (const t of compactionTasks) assert.equal(typeof t.check, "function", t.id);
 });
 
 test("the transcript records which answer handed out the ref or tab a call names", async () => {
