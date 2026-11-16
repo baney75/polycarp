@@ -4254,6 +4254,8 @@ fn a_pinned_folder_is_used_by_a_run_that_has_no_config_variable() {
         c.env_remove("POLYCARP_CONFIG_DIR").env("APPDATA", &appdata);
         c.output().unwrap()
     };
+    // The shell's own runs keep POLYCARP_CONFIG_DIR; on Windows they need APPDATA to find the pin, as every real one has.
+    let with_var = |args: &[&str]| b.cmd(args).env("APPDATA", &appdata).output().unwrap();
     let mut pin = b.cmd(&["theme", "folder", "--pin", "--json"]);
     let o = pin.env("APPDATA", &appdata).output().unwrap();
     assert_eq!(code(&o), 0, "{}", out(&o));
@@ -4281,7 +4283,7 @@ fn a_pinned_folder_is_used_by_a_run_that_has_no_config_variable() {
         "a run without the variable wrote to the default folder"
     );
     // The shell's own run, with the variable, says nothing more once the folder is pinned.
-    assert_eq!(out(&b.run(&["theme", "folder"])).lines().count(), 1);
+    assert_eq!(out(&with_var(&["theme", "folder"])).lines().count(), 1);
 
     assert_eq!(code(&bare(&["folder", "--unpin"])), 0);
     assert!(!pin_home.join("config-dir").exists());
@@ -4289,7 +4291,7 @@ fn a_pinned_folder_is_used_by_a_run_that_has_no_config_variable() {
         out(&bare(&["folder"])).trim(),
         pin_home.display().to_string()
     );
-    let shell = out(&b.run(&["theme", "folder"]));
+    let shell = out(&with_var(&["theme", "folder"]));
     assert!(
         shell.contains("theme folder --pin"),
         "no hint to pin: {shell}"
