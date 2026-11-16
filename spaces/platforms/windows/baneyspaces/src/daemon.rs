@@ -32,7 +32,7 @@ use crate::settings;
 use crate::winapi::{self, hwnd as to_hwnd, id_of, window_name};
 use baneyspaces_core::agent::{check_scope, ActionRecord, WindowFacts};
 use baneyspaces_core::envelope::{Envelope, Retry};
-use baneyspaces_core::model::{Effect, Event, Home, Model, ModelError};
+use baneyspaces_core::model::{Cause, Effect, Event, Home, Model, ModelError};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -149,15 +149,8 @@ impl Core {
             return;
         }
         let known: Vec<String> = self.model.monitors().map(String::from).collect();
-        for m in &now {
-            if !known.contains(m) {
-                let _ = self.apply(Event::MonitorAdded { monitor: m.clone() });
-            }
-        }
-        for m in &known {
-            if !now.contains(m) {
-                let _ = self.apply(Event::MonitorRemoved { monitor: m.clone() });
-            }
+        for ev in displays::monitor_events(&known, &now) {
+            let _ = self.apply(ev);
         }
         if self.model.focused_monitor().is_none() {
             if let Some(m) = now.first() {

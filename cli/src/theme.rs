@@ -58,6 +58,7 @@ Usage:
   polycarp theme preview [name] [--mode light|dark|both] [--surface <s>] [--format html|png] [--out <file|folder>] [--json]
   polycarp theme create <name> --extends <base> [--force]
   polycarp theme edit-path <name>
+  polycarp theme folder [--pin | --unpin] [--json]
   polycarp theme delete <name> [--force]
   polycarp theme validate <file|->
   polycarp theme export <css|json|toml> [name] [--surface spaces|voice|browser|site]
@@ -74,8 +75,8 @@ commands as MCP tools, and `polycarp theme schema` lists every field.
 
 Built-in themes: polycarp (default), still-water, evening, parchment, blocks, calm.
 Your own themes live in <config>/themes/<name>.toml. The config folder is
-$POLYCARP_CONFIG_DIR if set (an absolute path), else $XDG_CONFIG_HOME/polycarp (default
-~/.config/polycarp), or %APPDATA%\\Polycarp on Windows.
+$POLYCARP_CONFIG_DIR if set (an absolute path), else the folder `theme folder --pin` recorded,
+else $XDG_CONFIG_HOME/polycarp (default ~/.config/polycarp), or %APPDATA%\\Polycarp on Windows.
 Set POLYCARP_CALLER to record who made a change (default: user).
 
 Products read the files in <config>/current/ once their adapters land.
@@ -680,6 +681,60 @@ struct Cfg {
     overlay: Vec<(String, String)>,
 }
 
+/// The folder that holds the pin: %APPDATA%\Polycarp on Windows, else ~/.config/polycarp. It reads no
+/// override, so an app started from the Dock, which sees neither POLYCARP_CONFIG_DIR nor
+/// XDG_CONFIG_HOME, finds the same file the shell's CLI wrote (first-F2 of the review of #11).
+fn pin_home() -> Option<PathBuf> {
+    let var = |k: &str| env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if cfg!(windows) {
+        var("APPDATA").map(|d| d.join("Polycarp"))
+    } else {
+        var("HOME").map(|h| h.join(".config").join("polycarp"))
+    }
+}
+
+/// The pin file: one line, the absolute path of the config folder every product uses.
+const PIN_FILE: &str = "config-dir";
+
+/// The pinned folder, when the pin names an absolute path to a folder that exists.
+fn pinned_dir() -> Option<PathBuf> {
+    let text = fs::read_to_string(pin_home()?.join(PIN_FILE)).ok()?;
+    Some(PathBuf::from(text.trim())).filter(|d| d.is_absolute() && d.is_dir())
+}
+
+/// `theme folder`: the config folder in use and where it came from; `--pin` records it for apps
+/// that start without the shell's environment, `--unpin` removes that record.
+fn op_folder(pin: bool, unpin: bool) -> Res {
+    let dir = config_dir().map_err(|e| ApiErr::new("config_error", e))?;
+    let home = pin_home().ok_or_else(|| {
+        ApiErr::new(
+            "config_error",
+            "HOME (APPDATA on Windows) is not set".to_string(),
+        )
+    })?;
+    let file = home.join(PIN_FILE);
+    if unpin || (pin && dir == home) {
+        match fs::remove_file(&file) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io_err(format!("could not remove {}: {e}", file.display()))),
+        }
+    } else if pin {
+        fs::create_dir_all(&dir)
+            .map_err(|e| io_err(format!("could not create {}: {e}", dir.display())))?;
+        write_atomic(&file, format!("{}\n", dir.display()).as_bytes()).map_err(io_err)?;
+    }
+    let pinned = pinned_dir();
+    let mut text = format!("{}\n", dir.display());
+    if pinned.as_ref() != Some(&dir) && dir != home {
+        text.push_str("Apps started from the Dock or a menu don't see this folder's variable. Run `polycarp theme folder --pin` so they use it too.\n");
+    }
+    Ok(Out::new(
+        json!({"folder": dir.display().to_string(), "pinned": pinned.map(|p| p.display().to_string()), "pin_file": file.display().to_string()}),
+        text,
+    ))
+}
+
 /// The config folder, by the same rules as the theme files.
 pub fn config_dir() -> Result<PathBuf, String> {
     Ok(Cfg::from_env()?.dir)
@@ -695,6 +750,8 @@ impl Cfg {
                     d.display()
                 ));
             }
+            d
+        } else if let Some(d) = pinned_dir() {
             d
         } else if cfg!(windows) {
             nonempty("APPDATA")
@@ -4539,6 +4596,13 @@ pub fn run(args: &[OsString]) -> i32 {
                 return Err(ApiErr::usage("create needs --extends <base>"));
             };
             op_create(c, &p.pos[0], base, p.flag("force"))
+        }),
+        "folder" => cmd(rest, &[], &["pin", "unpin"], |_, p| {
+            exactly(p, 0, "no arguments")?;
+            if p.flag("pin") && p.flag("unpin") {
+                return Err(ApiErr::usage("expected --pin or --unpin, not both"));
+            }
+            op_folder(p.flag("pin"), p.flag("unpin"))
         }),
         "edit-path" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 1, "one theme name")?;

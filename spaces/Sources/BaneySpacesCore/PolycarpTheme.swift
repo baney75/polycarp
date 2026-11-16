@@ -314,12 +314,27 @@ public struct PolycarpThemeError: Error, Equatable, Sendable, CustomStringConver
 // MARK: Where the file is, and reading it
 
 public enum PolycarpThemeFile {
+    /// The folder `polycarp theme folder --pin` recorded in `<pinHome>/config-dir`, when it is an absolute
+    /// path to a folder that exists. An app started from the Dock sees no POLYCARP_CONFIG_DIR, so it reads
+    /// this (first-F2 of the review of #11).
+    static func pinned(_ pinHome: String, windows: Bool) -> String? {
+        let sep = windows ? "\\" : "/"
+        guard let text = try? String(contentsOfFile: pinHome + sep + "config-dir", encoding: .utf8) else { return nil }
+        let d = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // One stat, as the watcher's own looks are; read once when the path is made, never in the poll.
+        var st = stat()
+        guard d.hasPrefix("/") || (windows && d.contains(":")), stat(d, &st) == 0, (st.st_mode & S_IFMT) == S_IFDIR else { return nil }
+        return d
+    }
+
     /// The config folder, by the rules `polycarp theme` uses. An empty value counts as unset; a relative
     /// `POLYCARP_CONFIG_DIR` is refused (nil), as the command does.
     public static func configDir(env: (String) -> String?, home: String?, windows: Bool = false) -> String? {
         func get(_ k: String) -> String? { env(k).flatMap { $0.isEmpty ? nil : $0 } }
         if let d = get("POLYCARP_CONFIG_DIR") { return d.hasPrefix("/") || (windows && d.contains(":")) ? d : nil }
-        if windows { return get("APPDATA").map { $0 + "\\Polycarp" } }
+        let pinHome = windows ? get("APPDATA").map { $0 + "\\Polycarp" } : home.flatMap { $0.isEmpty ? nil : $0 + "/.config/polycarp" }
+        if let p = pinHome, let d = pinned(p, windows: windows) { return d }
+        if windows { return pinHome }
         if let x = get("XDG_CONFIG_HOME"), x.hasPrefix("/") { return x + "/polycarp" }
         return home.flatMap { $0.isEmpty ? nil : $0 + "/.config/polycarp" }
     }
