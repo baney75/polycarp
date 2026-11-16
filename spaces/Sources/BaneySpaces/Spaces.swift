@@ -507,7 +507,9 @@ final class Spaces {
         AXUIElementSetMessagingTimeout(e, 0.25)
         // A sheet is a child of its window: one level down, and a sheet's own elements deeper, so a Save or Open panel
         // shown as a sheet still puts the window off limits while a "Save changes?" sheet does not (`PanelDetector`).
-        return (e.string("AXDocument"), PanelDetector.windowIsOffLimits(HandsAXTree.node(e, depth: 1)))
+        let pid = windows[id]?.pid ?? 0
+        let bundle = handsBundles[pid] ?? NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        return (e.string("AXDocument"), HandsAXTree.offLimits(e, bundle: bundle))
     }
 
     /// The usable area of the display the agent workspace shows on, for `arrange` and `move --frame` (`AgentArea`).

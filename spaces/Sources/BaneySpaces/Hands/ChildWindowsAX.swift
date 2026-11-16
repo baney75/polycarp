@@ -35,6 +35,11 @@ enum HandsAXTree {
     static func node(_ e: AXUIElement, depth: Int, deep: Bool? = nil) -> AXNodeInfo {
         AXTreeRead.node(e, depth: depth, deep: deep, string: { string($0, $1) }, children: { children($0) })
     }
+
+    /// Whether a placed window is or holds an Open or Save panel (`PanelDetector.inspect`).
+    static func offLimits(_ e: AXUIElement, bundle: String) -> Bool {
+        PanelDetector.inspect(e, bundle: bundle, string: { string($0, $1) }, children: { children($0) })
+    }
 }
 
 /// The windows of one process that BaneySpaces does not place, as `ChildWindowRule` needs them: dialogs, alerts, palettes
