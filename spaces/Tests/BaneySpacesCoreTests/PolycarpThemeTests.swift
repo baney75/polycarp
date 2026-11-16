@@ -398,6 +398,22 @@ final class PolycarpThemeTests: XCTestCase {
 
     // MARK: Where the file is
 
+    /// first-F2 of the review of #11: Spaces started from the Dock sees no POLYCARP_CONFIG_DIR, so it reads
+    /// the folder `polycarp theme folder --pin` recorded.
+    func testAPinnedFolderIsUsedWithoutTheVariable() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("spaces-pin-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let pinHome = root + "/home/.config/polycarp"
+        try FileManager.default.createDirectory(atPath: pinHome, withIntermediateDirectories: true)
+        try "\(root)/moved\n".write(toFile: pinHome + "/config-dir", atomically: true, encoding: .utf8)
+        let dir = { (env: [String: String]) in PolycarpThemeFile.configDir(env: { env[$0] }, home: root + "/home") }
+        XCTAssertEqual(dir([:]), pinHome, "a pin to a missing folder is ignored")
+        try FileManager.default.createDirectory(atPath: root + "/moved", withIntermediateDirectories: true)
+        XCTAssertEqual(dir([:]), root + "/moved")
+        XCTAssertEqual(dir(["XDG_CONFIG_HOME": "/x"]), root + "/moved", "the pin comes before XDG_CONFIG_HOME")
+        XCTAssertEqual(dir(["POLYCARP_CONFIG_DIR": "/c"]), "/c", "the variable still wins")
+    }
+
     func testConfigDirFollowsThePolycarpCommand() {
         func dir(_ env: [String: String], home: String? = "/Users/x", windows: Bool = false) -> String? {
             PolycarpThemeFile.configDir(env: { env[$0] }, home: home, windows: windows)

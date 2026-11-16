@@ -18,9 +18,12 @@
 
 use crate::agent;
 use crate::apps;
+use crate::cause;
 use crate::cloak::{self, Cloaker};
 use crate::cmdline;
+use crate::displays;
 use crate::engine::{self, snapshot_of};
+use crate::focus;
 use crate::hidden::{self, Hidden, HiddenSet, How, Recovery};
 use crate::hook::{self, EndSession, Msg};
 use crate::keys;
@@ -29,7 +32,7 @@ use crate::settings;
 use crate::winapi::{self, hwnd as to_hwnd, id_of, window_name};
 use baneyspaces_core::agent::{check_scope, ActionRecord, WindowFacts};
 use baneyspaces_core::envelope::{Envelope, Retry};
-use baneyspaces_core::model::{Cause, Effect, Event, Home, Model, ModelError};
+use baneyspaces_core::model::{Effect, Event, Home, Model, ModelError};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -71,12 +74,16 @@ pub struct Core {
     pub snaps: HashMap<String, SnapInfo>,
     pub overview_shown: bool,
     pub events_seen: u64,
+    /// When a tracked window last closed (GetTickCount): the next activation may be Windows handing on the front.
+    closed_at: Option<u32>,
     pub started: u64,
     pub trace: bool,
     pub our_pid: u32,
     pub problems: Vec<String>,
     pub settings: serde_json::Map<String, Value>,
     pub tx: Sender<Msg>,
+    /// When the action log was last pruned (`Paths::append_action`).
+    pub last_prune: std::cell::Cell<u64>,
 }
 
 pub type Shared = Arc<Mutex<Core>>;
@@ -142,15 +149,8 @@ impl Core {
             return;
         }
         let known: Vec<String> = self.model.monitors().map(String::from).collect();
-        for m in &now {
-            if !known.contains(m) {
-                let _ = self.apply(Event::MonitorAdded { monitor: m.clone() });
-            }
-        }
-        for m in &known {
-            if !now.contains(m) {
-                let _ = self.apply(Event::MonitorRemoved { monitor: m.clone() });
-            }
+        for ev in displays::monitor_events(&known, &now) {
+            let _ = self.apply(ev);
         }
         if self.model.focused_monitor().is_none() {
             if let Some(m) = now.first() {
@@ -386,10 +386,11 @@ impl Core {
             if *w != Want::Visible {
                 continue;
             }
-            if let Some(e) = self.hidden.get(*hwnd).cloned() {
+            if let Some(mut e) = self.hidden.get(*hwnd).cloned() {
                 if cloak::on_current_desktop(to_hwnd(*hwnd)) == Some(false) {
                     continue;
                 }
+                self.carry_before_show(&mut e);
                 let c = get(&mut cloaker);
                 if cloak::show(&e, c.map(|p| unsafe { &*p })) {
                     self.hidden.remove(*hwnd);
@@ -513,6 +514,30 @@ impl Core {
         true
     }
 
+    /// R-M1: a hidden window whose workspace now shows on another display goes to that display before it is shown,
+    /// so it never appears over the other display's workspace. A cloaked window is moved while still cloaked; a parked
+    /// one gets a new place to come back to, recorded first. A minimized window, a ghost and one on no display stay put.
+    fn carry_before_show(&mut self, e: &mut Hidden) {
+        if e.how == How::Ghost {
+            return;
+        }
+        let Some(Home::Workspace { n }) = self.model.home(&window_name(e.hwnd)).cloned() else { return };
+        let Some(to) = self.model.shown_on(n).map(String::from) else { return };
+        let h = to_hwnd(e.hwnd);
+        let at = if e.how == How::Park { e.rect } else { winapi::rect(h) };
+        let Some(at) = at.filter(|_| !winapi::is_iconic(h)) else { return };
+        let all: Vec<(String, displays::Rect)> = winapi::monitors().into_iter().map(|m| (m.name, m.rect)).collect();
+        let Some(r) = displays::carried(at, &all, &to, winapi::is_zoomed(h)) else { return };
+        self.log(&format!("{} carried to {to}, where workspace {n} shows: {r:?}", window_name(e.hwnd)));
+        if e.how == How::Park {
+            e.rect = Some(r);
+            self.hidden.insert(e.clone());
+            let _ = self.persist();
+        } else {
+            winapi::set_frame(h, r);
+        }
+    }
+
     /// One window appeared. `existing` windows (found at start) are mirrored where they are; a
     /// new one follows the placement rules.
     fn open_window(&mut self, hwnd: i64, existing: bool) {
@@ -544,6 +569,7 @@ impl Core {
     /// first and its entry kept until that reads back: dropping the entry of a window that still exists
     /// would leave it cloaked with no record.
     fn close_window(&mut self, id: &str) {
+        self.closed_at = Some(winapi::tick_ms());
         if let Some(i) = self.info.remove(id) {
             if let Some(e) = self.hidden.get(i.hwnd).cloned() {
                 if winapi::exists(to_hwnd(i.hwnd)) {
@@ -644,15 +670,30 @@ impl Core {
     }
 
     /// The foreground changed. Only an activation you caused may take you to another workspace (R-F1,
-    /// R-F2): Windows gives no cause, so input in the last 300 ms is yours, anything else is the app's.
+    /// R-F2). `cause::foreground_by` decides whose it was, and a close is never yours (R-E1).
     fn on_foreground(&mut self, hwnd: i64) {
         let id = window_name(hwnd);
         if !self.model.is_tracked(&id) || self.model.active() == Some(id.as_str()) {
             return;
         }
-        let cause = if winapi::idle_ms() < 300 { Cause::User } else { Cause::App };
+        let active_gone = self.model.active().and_then(|w| self.info.get(w)).is_some_and(|i| {
+            let h = to_hwnd(i.hwnd);
+            !winapi::exists(h) || !winapi::is_visible(h)
+        });
+        let since_close = self.closed_at.map(|t| winapi::tick_ms().wrapping_sub(t));
+        let cause = cause::foreground_by(winapi::idle_ms(), since_close, active_gone);
         self.log(&format!("foreground {id} cause {cause:?}"));
         let _ = self.apply(Event::Activate { window: Some(id), cause });
+    }
+
+    /// R-S2: a press on another display puts you on it, even on its bare desktop or taskbar, where no window of yours
+    /// takes the front. A press on a window there also activates it, and that follows as before (R-F1).
+    fn on_press(&mut self, x: i32, y: i32) {
+        let at = winapi::monitor_name_at(x, y);
+        let known: Vec<&str> = self.model.monitors().collect();
+        let Some(m) = focus::after_press(self.model.focused_monitor(), at.as_deref(), &known).map(String::from) else { return };
+        self.log(&format!("a press on {m}: you are on it now"));
+        let _ = self.apply(Event::ObserveFocusMonitor { monitor: m });
     }
 
     fn on_win_event(&mut self, event: u32, hwnd: i64) {
@@ -808,7 +849,7 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
                     // Who asked: the agent id and the pipe peer's pid, never the value.
                     let peer = req["_peer_pid"].as_u64().map(|p| p as u32).filter(|p| *p != 0);
                     let env = Envelope::ok(json!({}));
-                    c.paths.append("actions.jsonl", &ActionRecord::from_result(now(), &agent, "set", peer, None, None, &format!("settings:{k}"), &env).to_line());
+                    c.paths.append_action(&ActionRecord::from_result(now(), &agent, "set", peer, None, None, &format!("settings:{k}"), &env).to_line(), now(), &c.last_prune);
                     Envelope::ok(json!({ k: val, "note": "stored; the themed UI and the dock arrive in Windows part 2" }))
                 }
             }
@@ -919,7 +960,7 @@ fn agent_status(c: &Core) -> Value {
 }
 
 fn record(c: &Core, agent: &str, verb: &str, pid: Option<u32>, window: Option<&str>, reference: Option<&str>, route: &str, env: &Envelope) {
-    c.paths.append("actions.jsonl", &ActionRecord::from_result(now(), agent, verb, pid, window, reference, route, env).to_line());
+    c.paths.append_action(&ActionRecord::from_result(now(), agent, verb, pid, window, reference, route, env).to_line(), now(), &c.last_prune);
 }
 
 fn agent_log(c: &Core, args: &Value) -> Envelope {
@@ -1177,7 +1218,7 @@ fn hands(shared: &Shared, agent: &str, args: &Value) -> Envelope {
     if changed {
         rec.result = "screen_changed".into();
     }
-    c.paths.append("actions.jsonl", &rec.to_line());
+    c.paths.append_action(&rec.to_line(), now(), &c.last_prune);
     env
 }
 
@@ -1417,6 +1458,31 @@ impl Core {
         }
     }
 
+    /// R-V4: a window you moved to another display (a drag, Win+Shift+Arrow) joins the workspace that display shows,
+    /// so the next switch on the display it left does not hide it. Only windows on screen count: a hidden one stays
+    /// where it was hidden, and is carried when it is shown. The front window takes you with it, as a click would.
+    fn mirror_moves(&mut self) {
+        let all: Vec<(String, displays::Rect)> = winapi::monitors().into_iter().map(|m| (m.name, m.rect)).collect();
+        let on_screen: Vec<(String, u8, displays::Rect)> = self
+            .info
+            .iter()
+            .filter(|(_, i)| !self.hidden.contains(i.hwnd) && !winapi::is_iconic(to_hwnd(i.hwnd)))
+            .filter_map(|(id, i)| match self.model.home(id) {
+                Some(Home::Workspace { n }) => winapi::rect(to_hwnd(i.hwnd)).map(|r| (id.clone(), *n, r)),
+                _ => None,
+            })
+            .collect();
+        let moved = displays::moved_across(&on_screen, &all, |d| self.model.current(d));
+        for (id, display, m) in moved {
+            self.log(&format!("{id} was moved to {display}: now on workspace {m}"));
+            let front = self.model.active() == Some(id.as_str());
+            let _ = self.apply(Event::ObserveMove { window: id.clone(), n: Some(m) });
+            if front {
+                let _ = self.apply(Event::Activate { window: Some(id), cause: Cause::User });
+            }
+        }
+    }
+
     /// One poll: monitors, windows, what is hidden checked against Windows, focus.
     fn poll(&mut self) {
         // An agent process that exited, or whose pid Windows gave to another program, is forgotten.
@@ -1427,6 +1493,7 @@ impl Core {
         }
         self.sync_monitors();
         self.resync_windows(false);
+        self.mirror_moves();
         if let Err(e) = self.sync_visibility() {
             self.problem(format!("could not save the hidden-window record; nothing new was hidden: {e}"));
         }
@@ -1480,12 +1547,14 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         snaps: HashMap::new(),
         overview_shown: false,
         events_seen: 0,
+        closed_at: None,
         started: now(),
         trace,
         our_pid: std::process::id(),
         problems: vec![],
         settings: settings::parse(&paths.read("settings.json").unwrap_or_default()),
         tx: tx.clone(),
+        last_prune: std::cell::Cell::new(0),
     };
     let shared: Shared = Arc::new(Mutex::new(core));
     let _ = SHARED.set(shared.clone());
@@ -1584,6 +1653,9 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
             }
             Ok(Msg::Win { event, hwnd }) => {
                 lock(&shared).on_win_event(event, hwnd);
+            }
+            Ok(Msg::Press { x, y }) => {
+                lock(&shared).on_press(x, y);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(_) => break,

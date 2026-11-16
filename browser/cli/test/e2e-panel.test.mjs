@@ -70,7 +70,8 @@ before(async () => {
 						}
 						if (req.method === "setTheme") return reply({ result: { preset: req.params.preset } });
 						reply({ error: { code: "bad_params", message: "not stubbed" } });
-					}, 30);
+						// The status after a join is slow, as a helper starting its service is: the outcome must not show before the route does.
+					}, req.method === "status" && joined ? 300 : 30);
 				},
 			};
 		};
@@ -153,6 +154,35 @@ for (const [width, height] of [[400, 860], [760, 850], [400, 1200], [320, 620]])
 			assert.ok(m.above >= 0, `the block is cut off at the top: ${JSON.stringify(m)}`);
 			if (m.natural + 32 > m.view) return; // Too short a window to center: it scrolls from the top.
 			assert.ok(Math.abs(m.above - m.below) <= 32, `off center: ${JSON.stringify(m)}`);
+		} finally {
+			await page.close();
+		}
+	});
+}
+
+// A theme's type.size scales every rem; at 24 the two-column starter pills cut their titles off (#13).
+for (const width of [400, 320]) {
+	test(`the starter pills keep their whole titles at theme sizes 14 to 24, ${width} px wide`, async () => {
+		const page = await context.newPage();
+		try {
+			await page.setViewportSize({ width, height: 860 });
+			await page.goto(PANEL);
+			await page.evaluate(() => chrome.storage.local.set({ "tk-welcome-seen": true }));
+			await page.reload();
+			await page.waitForSelector(".welcome-container .tutorial-pill");
+			for (const size of [14, 18, 24]) {
+				await page.evaluate((s) => document.documentElement.style.setProperty("--tk-font-size", `${s}px`), size);
+				await page.waitForTimeout(1000); // The entrance animation moves the pills.
+				const cut = await page.evaluate(() =>
+					[...document.querySelectorAll(".welcome-container .tutorial-pill")].flatMap((pill) => {
+						const edge = pill.getBoundingClientRect();
+						return [...pill.querySelectorAll("span")]
+							.filter((s) => s.scrollWidth > s.clientWidth + 1 || s.getBoundingClientRect().right > edge.right + 1)
+							.map((s) => `${s.textContent.trim()} (${s.scrollWidth} in ${s.clientWidth})`);
+					}),
+				);
+				assert.deepEqual(cut, [], `at ${size} px`);
+			}
 		} finally {
 			await page.close();
 		}
