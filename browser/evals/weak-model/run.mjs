@@ -113,7 +113,9 @@ mkdirSync(emptyCwd);
 const wrapper = join(scratch, "spaces-connector.sh");
 if (helper) writeFileSync(wrapper, `#!/bin/sh\nHOME='${homedir()}' exec '${helper}' mcp --connector\n`, { mode: 0o755 });
 const handoff = join(homedir(), "Library", "Application Support", "Polycarp", "hands", "handoff");
-const outDir = join(here, "results", label);
+// The compaction eval (../compaction/run.mjs) runs this runner with its own tasks and results folder.
+const resultsRoot = process.env.WM_RESULTS_DIR || join(here, "results");
+const outDir = join(resultsRoot, label);
 
 let h;
 let serverEnv;
@@ -220,6 +222,12 @@ async function scoreBrowser(task, mount, run) {
 	if (task.answer && !(task.answer.test(run.final) && (!task.answerAlso || task.answerAlso.test(run.final)))) {
 		pass = false;
 		why.push("answer missing or wrong");
+	}
+	// A task's own checker, given the run and the page's last state: the compaction eval's checks (../compaction/checks.mjs).
+	if (task.check) {
+		const extra = task.check(run, await settledState(() => h.posted(mount)));
+		if (!extra.pass) pass = false;
+		why.push(...extra.why);
 	}
 	return { pass, why };
 }
@@ -413,7 +421,7 @@ async function main() {
 	// every job clears only the browser stop mark, never one the computer half left.
 	const complete = !stopAll && !only.length && records.length === jobs.length;
 	const kinds = [...new Set(chosen.map((t) => t.kind))];
-	const summary = summarize(label, { profile: profile || "full", date: new Date().toISOString(), stopped: stopAll, complete, kinds });
+	const summary = summarize(label, { root: resultsRoot, profile: profile || "full", date: new Date().toISOString(), stopped: stopAll, complete, kinds });
 	console.log(`${label}: this run ${records.filter((r) => r.pass).length}/${records.length}, folder ${summary.passed}/${summary.total}${stopAll ? " (stopped early)" : ""}`);
 	return 0;
 }

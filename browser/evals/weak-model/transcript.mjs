@@ -40,6 +40,12 @@ export class Transcript {
 		this.result = undefined;
 		this.mcpStatus = undefined;
 		this.toolCount = undefined;
+		/** Each compaction claude ran: how many calls came before it, and the context before and after. */
+		this.compactions = [];
+		/** Tokens of context on the first and the largest model turn. */
+		this.context = { first: undefined, peak: 0 };
+		/** Each ref and tab id an answer handed out, and the last call whose answer did. */
+		this.handed = new Map();
 	}
 
 	push(e) {
@@ -47,10 +53,21 @@ export class Transcript {
 			this.mcpStatus = e.mcp_servers?.find((s) => s.name === "polycarp")?.status;
 			this.toolCount = e.tools?.filter((t) => t.startsWith("mcp__polycarp__")).length;
 		}
+		if (e.type === "system" && e.subtype === "compact_boundary")
+			this.compactions.push({ atCall: this.calls.length, pre: e.compact_metadata?.pre_tokens, post: e.compact_metadata?.post_tokens });
+		const u = e.type === "assistant" ? e.message?.usage : undefined;
+		if (u) {
+			const n = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+			this.context.first ??= n;
+			this.context.peak = Math.max(this.context.peak, n);
+		}
 		if (e.type === "assistant")
 			for (const c of e.message?.content ?? []) {
 				if (c.type === "tool_use") {
 					const call = { tool: c.name.replace(/^mcp__polycarp__/, ""), args: c.input };
+					// Where the ref or tab a call names came from: the call that handed it out, or -1 when none did.
+					const named = c.input?.ref ?? c.input?.tabId;
+					if (named != null) call.from = this.handed.get(String(named)) ?? -1;
 					this.byId.set(c.id, call);
 					this.calls.push(call);
 				}
@@ -63,6 +80,7 @@ export class Transcript {
 				if (!call) continue;
 				const text = typeof c.content === "string" ? c.content : (c.content ?? []).map((p) => (p.type === "text" ? p.text : `[${p.type}]`)).join("\n");
 				call.error = c.is_error === true;
+				for (const [t] of text.matchAll(/\b(?:e\d+|\d{6,})\b/g)) this.handed.set(t, this.calls.indexOf(call));
 				call.chars = text.length;
 				if (this.copies && !call.error && toolOf(call) === "computer_open") {
 					const pid = startedCopy(text);
@@ -98,6 +116,8 @@ export class Transcript {
 			mcpStatus: this.mcpStatus,
 			toolCount: this.toolCount,
 			apiError: r?.is_error ? clip(String(r.result ?? ""), 400) : undefined,
+			compactions: this.compactions.length ? this.compactions : undefined,
+			context: this.context.peak ? this.context : undefined,
 			stderr: timedOut || !r ? stderr : undefined,
 		};
 	}
