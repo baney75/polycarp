@@ -190,20 +190,21 @@ export class ConnectTab extends SettingsTab {
 		this.joining = "Checking the address and code...";
 		// Once the service step began, link.json is written: a silent helper after that may well have linked this device.
 		let linkWritten = false;
+		let outcome: { ok: boolean; text: string };
 		try {
 			const result = await connectJoinHub(confirmed.hubUrl, confirmed.code, confirmed.name, (step) => {
 				if (step === "service") linkWritten = true;
 				this.joining = step === "service" ? "Starting the background service..." : "Contacting the hub...";
 			});
 			const allowed = (result.scopes?.length ? result.scopes : scopes.map((x) => x.id)).join(", ");
-			this.joinMessage = {
+			outcome = {
 				ok: true,
 				text: `Joined as ${result.name}. This computer now shows in your hub's device list.${allowed ? ` The hub may use this browser for: ${allowed}.` : ""}`,
 			};
 			this.joinCode = "";
 		} catch (err) {
 			if (isNoHost(err)) this.noHost = true;
-			this.joinMessage = {
+			outcome = {
 				ok: false,
 				text:
 					linkWritten && err instanceof ConnectRequestError && err.code === "no_reply"
@@ -212,10 +213,14 @@ export class ConnectTab extends SettingsTab {
 							? err.message
 							: String(err),
 			};
+		}
+		try {
+			// The route the join made is read before the outcome shows, so the form goes in the same render the message comes in.
+			await this.load();
+			this.joinMessage = outcome;
 		} finally {
 			this.joining = undefined;
 		}
-		await this.load();
 	}
 
 	private command(label: string, text: string): TemplateResult {

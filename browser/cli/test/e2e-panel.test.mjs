@@ -70,7 +70,8 @@ before(async () => {
 						}
 						if (req.method === "setTheme") return reply({ result: { preset: req.params.preset } });
 						reply({ error: { code: "bad_params", message: "not stubbed" } });
-					}, 30);
+						// The status after a join is slow, as a helper starting its service is: the outcome must not show before the route does.
+					}, req.method === "status" && joined ? 300 : 30);
 				},
 			};
 		};

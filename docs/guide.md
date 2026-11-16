@@ -287,6 +287,14 @@ What is verified: the mapping and the readability rule hold for all 22 themes th
 
 `POLYCARP_CONFIG_DIR` moves the folder on any system, and must be an absolute path. `XDG_CONFIG_HOME` also moves it on Mac and Linux.
 
+Apps started from the Dock or a menu don't see those variables. After you move the folder, run this once from a shell that has them:
+
+```sh
+polycarp theme folder --pin
+```
+
+It records the folder in `~/.config/polycarp/config-dir` (`%APPDATA%\Polycarp\config-dir` on Windows), and the products read that record when the variable isn't set. `polycarp theme folder` prints the folder in use, and `--unpin` removes the record.
+
 ## For agents
 
 Over `polycarp mcp`, agents can change any part of a theme a person can. History records the agent's name. Keys and behavior stay in each app for now.
