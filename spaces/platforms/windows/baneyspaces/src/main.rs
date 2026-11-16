@@ -10,6 +10,7 @@ mod cause;
 mod cmdline;
 mod displays;
 mod engine;
+mod focus;
 mod hidden;
 mod ipc;
 mod keys;

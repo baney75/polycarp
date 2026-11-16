@@ -23,6 +23,7 @@ use crate::cloak::{self, Cloaker};
 use crate::cmdline;
 use crate::displays;
 use crate::engine::{self, snapshot_of};
+use crate::focus;
 use crate::hidden::{self, Hidden, HiddenSet, How, Recovery};
 use crate::hook::{self, EndSession, Msg};
 use crate::keys;
@@ -81,6 +82,8 @@ pub struct Core {
     pub problems: Vec<String>,
     pub settings: serde_json::Map<String, Value>,
     pub tx: Sender<Msg>,
+    /// When the action log was last pruned (`Paths::append_action`).
+    pub last_prune: std::cell::Cell<u64>,
 }
 
 pub type Shared = Arc<Mutex<Core>>;
@@ -690,6 +693,16 @@ impl Core {
         let _ = self.apply(Event::Activate { window: Some(id), cause });
     }
 
+    /// R-S2: a press on another display puts you on it, even on its bare desktop or taskbar, where no window of yours
+    /// takes the front. A press on a window there also activates it, and that follows as before (R-F1).
+    fn on_press(&mut self, x: i32, y: i32) {
+        let at = winapi::monitor_name_at(x, y);
+        let known: Vec<&str> = self.model.monitors().collect();
+        let Some(m) = focus::after_press(self.model.focused_monitor(), at.as_deref(), &known).map(String::from) else { return };
+        self.log(&format!("a press on {m}: you are on it now"));
+        let _ = self.apply(Event::ObserveFocusMonitor { monitor: m });
+    }
+
     fn on_win_event(&mut self, event: u32, hwnd: i64) {
         let h = to_hwnd(hwnd);
         // A window of an agent's process is ghosted the moment it is created or shown, before it paints
@@ -843,7 +856,7 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
                     // Who asked: the agent id and the pipe peer's pid, never the value.
                     let peer = req["_peer_pid"].as_u64().map(|p| p as u32).filter(|p| *p != 0);
                     let env = Envelope::ok(json!({}));
-                    c.paths.append("actions.jsonl", &ActionRecord::from_result(now(), &agent, "set", peer, None, None, &format!("settings:{k}"), &env).to_line());
+                    c.paths.append_action(&ActionRecord::from_result(now(), &agent, "set", peer, None, None, &format!("settings:{k}"), &env).to_line(), now(), &c.last_prune);
                     Envelope::ok(json!({ k: val, "note": "stored; the themed UI and the dock arrive in Windows part 2" }))
                 }
             }
@@ -954,7 +967,7 @@ fn agent_status(c: &Core) -> Value {
 }
 
 fn record(c: &Core, agent: &str, verb: &str, pid: Option<u32>, window: Option<&str>, reference: Option<&str>, route: &str, env: &Envelope) {
-    c.paths.append("actions.jsonl", &ActionRecord::from_result(now(), agent, verb, pid, window, reference, route, env).to_line());
+    c.paths.append_action(&ActionRecord::from_result(now(), agent, verb, pid, window, reference, route, env).to_line(), now(), &c.last_prune);
 }
 
 fn agent_log(c: &Core, args: &Value) -> Envelope {
@@ -1212,7 +1225,7 @@ fn hands(shared: &Shared, agent: &str, args: &Value) -> Envelope {
     if changed {
         rec.result = "screen_changed".into();
     }
-    c.paths.append("actions.jsonl", &rec.to_line());
+    c.paths.append_action(&rec.to_line(), now(), &c.last_prune);
     env
 }
 
@@ -1522,6 +1535,7 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         problems: vec![],
         settings: settings::parse(&paths.read("settings.json").unwrap_or_default()),
         tx: tx.clone(),
+        last_prune: std::cell::Cell::new(0),
     };
     let shared: Shared = Arc::new(Mutex::new(core));
     let _ = SHARED.set(shared.clone());
@@ -1620,6 +1634,9 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
             }
             Ok(Msg::Win { event, hwnd }) => {
                 lock(&shared).on_win_event(event, hwnd);
+            }
+            Ok(Msg::Press { x, y }) => {
+                lock(&shared).on_press(x, y);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(_) => break,
