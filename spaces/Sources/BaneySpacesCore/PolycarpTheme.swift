@@ -321,9 +321,9 @@ public enum PolycarpThemeFile {
         let sep = windows ? "\\" : "/"
         guard let text = try? String(contentsOfFile: pinHome + sep + "config-dir", encoding: .utf8) else { return nil }
         let d = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        var isDir: ObjCBool = false
-        guard d.hasPrefix("/") || (windows && d.contains(":")),
-              FileManager.default.fileExists(atPath: d, isDirectory: &isDir), isDir.boolValue else { return nil }
+        // One stat, as the watcher's own looks are; read once when the path is made, never in the poll.
+        var st = stat()
+        guard d.hasPrefix("/") || (windows && d.contains(":")), stat(d, &st) == 0, (st.st_mode & S_IFMT) == S_IFDIR else { return nil }
         return d
     }
 
