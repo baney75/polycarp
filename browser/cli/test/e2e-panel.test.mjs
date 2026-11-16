@@ -159,6 +159,35 @@ for (const [width, height] of [[400, 860], [760, 850], [400, 1200], [320, 620]])
 	});
 }
 
+// A theme's type.size scales every rem; at 24 the two-column starter pills cut their titles off (#13).
+for (const width of [400, 320]) {
+	test(`the starter pills keep their whole titles at theme sizes 14 to 24, ${width} px wide`, async () => {
+		const page = await context.newPage();
+		try {
+			await page.setViewportSize({ width, height: 860 });
+			await page.goto(PANEL);
+			await page.evaluate(() => chrome.storage.local.set({ "tk-welcome-seen": true }));
+			await page.reload();
+			await page.waitForSelector(".welcome-container .tutorial-pill");
+			for (const size of [14, 18, 24]) {
+				await page.evaluate((s) => document.documentElement.style.setProperty("--tk-font-size", `${s}px`), size);
+				await page.waitForTimeout(1000); // The entrance animation moves the pills.
+				const cut = await page.evaluate(() =>
+					[...document.querySelectorAll(".welcome-container .tutorial-pill")].flatMap((pill) => {
+						const edge = pill.getBoundingClientRect();
+						return [...pill.querySelectorAll("span")]
+							.filter((s) => s.scrollWidth > s.clientWidth + 1 || s.getBoundingClientRect().right > edge.right + 1)
+							.map((s) => `${s.textContent.trim()} (${s.scrollWidth} in ${s.clientWidth})`);
+					}),
+				);
+				assert.deepEqual(cut, [], `at ${size} px`);
+			}
+		} finally {
+			await page.close();
+		}
+	});
+}
+
 for (const width of [400, 320]) {
 	test(`Connect's command boxes show the whole command at ${width} px, and nothing runs past the panel`, async () => {
 		const page = await settings("Agents", "light", width);
