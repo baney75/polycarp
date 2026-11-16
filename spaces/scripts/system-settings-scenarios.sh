@@ -34,7 +34,7 @@ AGENT=$("$PS" agent status --json | field info.workspace)
 if [ -z "$WIN" ]; then bad "S1 open answered no window: $OPEN"
 else
   ON=$("$PS" agent windows | python3 -c 'import json,sys
-w=[x for x in json.load(sys.stdin).get("data",{}).get("windows",[]) if str(x.get("window"))==sys.argv[1]]
+w=[x for x in json.load(sys.stdin).get("data",{}).get("windows",[]) if str(x.get("id"))==sys.argv[1]]
 print(w[0].get("workspace","") if w else "")' "$WIN")
   [ "$ON" = "$AGENT" ] && ok "S1 window $WIN on the agent workspace $AGENT ($(python3 -c "print(round($t1-$t0,2))") s)" || bad "S1 window $WIN on workspace '$ON', agent workspace $AGENT"
   sleep 1
@@ -46,16 +46,17 @@ fi
 if [ -n "$WIN" ]; then
   STEPS="{\"steps\":[{\"tool\":\"click\",\"args\":{\"window\":$WIN,\"text\":\"General\"}},{\"tool\":\"click\",\"args\":{\"window\":$WIN,\"text\":\"About\"}}]}"
   RUN=$("$PS" agent run-steps --steps "$(echo "$STEPS" | field steps)")
-  [ "$(echo "$RUN" | field ok)" = True ] || [ "$(echo "$RUN" | field ok)" = true ] && ok "S2 General, then About in its pane, in one run" || bad "S2 $RUN"
+  # run-steps answers ok with complete false when a step fails: only a run that did every step passes.
+  [ "$(echo "$RUN" | field data.complete)" = True ] && ok "S2 General, then About in its pane, in one run" || bad "S2 $RUN"
 fi
 
 # S3
 if [ -n "$WIN" ]; then
-  SEARCH=$("$PS" agent find --window "$WIN" --role searchfield --limit 1)
+  SEARCH=$("$PS" agent find --window "$WIN" --role textfield --name Search --limit 1)
   REF=$(echo "$SEARCH" | python3 -c 'import json,sys; m=json.load(sys.stdin).get("data",{}).get("matches",[]); print(m[0].get("ref_id") or m[0].get("ref") if m else "")')
   if [ -z "$REF" ]; then bad "S3 no search field: $SEARCH"
   else
-    "$PS" agent set-value --ref "$REF" --value "Keyboard" >/dev/null
+    "$PS" agent set-value "$REF" "Keyboard" >/dev/null
     sleep 1
     HITS=$("$PS" agent find --window "$WIN" --text "Keyboard" --limit 10)
     [ "$(echo "$HITS" | field data.count)" -ge 2 ] 2>/dev/null && ok "S3 search shows Keyboard results" || bad "S3 search showed nothing: $HITS"
