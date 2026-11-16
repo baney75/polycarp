@@ -147,8 +147,10 @@ export async function startHarness() {
 		if (browser) await new Promise((r) => browser.once("exit", r));
 		serverA.close();
 		serverB.close();
-		rmSync(home, { recursive: true, force: true });
-		rmSync(socketDir, { recursive: true, force: true });
+		// Chromium's helper processes can still be writing the profile after the browser exits (ENOTEMPTY on CI), so the
+		// removal retries, as the panel tests' does.
+		rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+		rmSync(socketDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 	};
 
 	try {
