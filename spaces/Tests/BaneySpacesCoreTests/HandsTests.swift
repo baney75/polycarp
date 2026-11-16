@@ -700,7 +700,47 @@ final class AttachedSheetTests: XCTestCase {
         let spaces = try HandsSourceTests.code("Sources/BaneySpaces/Spaces.swift")
         let inspect = try XCTUnwrap(HandsSourceTests.block(after: "func handsInspect(", in: spaces))
         XCTAssertTrue(inspect.contains("AXUIElementSetMessagingTimeout(e, 0.25)"))
-        XCTAssertTrue(inspect.contains("PanelDetector.windowIsOffLimits(HandsAXTree.node(e, depth: 1))"))
+        XCTAssertTrue(inspect.contains("HandsAXTree.offLimits(e, bundle: bundle)"))
+        let tree = try HandsSourceTests.code("Sources/BaneySpaces/Hands/ChildWindowsAX.swift")
+        XCTAssertTrue(tree.contains("PanelDetector.inspect(e, bundle: bundle,"))
+    }
+}
+
+/// System Settings' main window answers AXDialog (live, #387): every agent call on it was refused as an Open panel.
+final class SettingsWindowIsNotAPanelTests: XCTestCase {
+    final class El {
+        let a: [String: String]; let kids: [El]
+        init(_ a: [String: String], _ kids: [El] = []) { self.a = a; self.kids = kids }
+    }
+    func inspect(_ root: El, bundle: String) -> Bool {
+        PanelDetector.inspect(root, bundle: bundle, string: { $0.a[$1] }, children: { ($0.kids, true) })
+    }
+    /// The live shape: a sidebar outline in a split group, and a pane nested deeper than a dialog read goes.
+    func settings(_ extra: [El] = []) -> El {
+        var pane = El(["AXRole": "AXStaticText"])
+        for _ in 0..<8 { pane = El(["AXRole": "AXGroup"], [pane]) }
+        let sidebar = El(["AXRole": "AXScrollArea"], [El(["AXRole": "AXOutline", "AXIdentifier": "com.apple.settings.sidebar.collectionView"])])
+        let split = El(["AXRole": "AXSplitGroup", "AXTitle": "Main, SidebarNavigationSplitView"], [sidebar, pane])
+        return El(["AXRole": "AXWindow", "AXSubrole": "AXDialog", "AXIdentifier": "Main", "AXTitle": "Keyboard"], [split] + extra)
+    }
+
+    func testTheSettingsWindowIsNotOffLimits() {
+        XCTAssertFalse(inspect(settings(), bundle: "com.apple.systempreferences"))
+    }
+
+    func testTheSameShapeInAnotherAppIsStillAPanel() {
+        XCTAssertTrue(inspect(settings(), bundle: "com.example.other"), "a dialog read of the same tree fails closed")
+    }
+
+    func testASaveSheetOnTheSettingsWindowIsStillOffLimits() {
+        let sheet = El(["AXRole": "AXSheet", "AXTitle": "Save"])
+        XCTAssertTrue(inspect(settings([sheet]), bundle: "com.apple.systempreferences"))
+    }
+
+    func testOnlyTheMainWindowOfSystemSettingsReadsAsAWindow() {
+        XCTAssertTrue(PanelDetector.readsAsWindow(bundle: "com.apple.systempreferences", identifier: "Main"))
+        XCTAssertFalse(PanelDetector.readsAsWindow(bundle: "com.apple.systempreferences", identifier: nil))
+        XCTAssertFalse(PanelDetector.readsAsWindow(bundle: "com.apple.systempreferences", identifier: "open-panel"))
     }
 }
 
