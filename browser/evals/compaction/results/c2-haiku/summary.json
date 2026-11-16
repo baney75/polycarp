@@ -1,0 +1,17 @@
+{
+	"label": "c2-haiku",
+	"model": "haiku",
+	"trials": 3,
+	"profile": "full",
+	"date": "2026-11-16T00:28:43.677Z",
+	"passed": 7,
+	"total": 9,
+	"calls": 256,
+	"toolErrors": 6,
+	"resultChars": 378468,
+	"tasks": {
+		"inventory-audit": {"pass":2,"of":3,"calls":[16,39,42],"errors":[0,1,1]},
+		"onboarding": {"pass":3,"of":3,"calls":[33,35,36],"errors":[0,0,0]},
+		"supplier-quote": {"pass":2,"of":3,"calls":[18,19,18],"errors":[0,2,2]}
+	}
+}

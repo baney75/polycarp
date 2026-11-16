@@ -15,6 +15,14 @@ Each round writes `results/<label>/runs.jsonl` and `summary.json`, which are com
 30). The first turn is about 19k tokens (instructions and Polycarp's tools); with these values compaction fires near
 24k, every four to ten calls. Run on Donovan's sign-in only: `env -u ANTHROPIC_API_KEY`, never an API key.
 
+## Tasks
+
+`tasks/long.mjs`, each spread over several long fixture pages whose state adds up in `localStorage`:
+
+- `inventory-audit`: four aisles of 36 rows; flag the items below their minimum, then send the recount once.
+- `supplier-quote`: three supplier catalogs open in their own tabs, then a quote for the cheapest on the first tab.
+- `onboarding`: five steps of long policy text, one field each, one submit.
+
 ## Checks (`checks.mjs`)
 
 A run passes when the task's page reached its finished state and:
@@ -24,4 +32,12 @@ A run passes when the task's page reached its finished state and:
 - no call after the first compaction failed with `stale_ref` or `no_tab`: what the model needed from before survived;
 - the chat ended with a reply: a `success` stop, text, and no "Autocompact is thrashing" or context-limit message.
 
-`test/compaction-eval.test.mjs` holds the checkers and the transcript fields they read, without a model.
+`test/compaction-eval.test.mjs` holds the checkers and each task's finish expression without a model.
+
+## First numbers (Haiku, 3 trials, 2026-11-15)
+
+- `c2-haiku`, pct 30: 7/9; every run compacted, 2 to 7 times. Inventory t1 died thrashing (a 9.5k-character aisle
+  read refilled the 2.5k left after a compaction within 3 turns). Supplier t2 lost the go-ahead: after the second
+  compaction it said the latest instruction was text only and stopped before the quote.
+- `c3-haiku`, pct 40: 7/9, and all 7 runs that compacted passed. Inventory and onboarding compacted once, near the
+  end, and 2 inventory runs not at all, so pct 40 barely tests them: 30 stays the default.
