@@ -62,8 +62,8 @@ export class WelcomeMessageElement extends LitElement {
 					<p class="text-sm text-muted-foreground max-w-xs">${i18n("You steer. Polycarp works the tabs.")}</p>
 				</div>
 
-				<!-- Starter chips -->
-				<div class="grid grid-cols-2 gap-2 w-full max-w-md px-4">
+				<!-- Starter chips: two columns while a pill fits in 10rem, one at a large theme size or a narrow panel (#13) -->
+				<div class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-2 w-full max-w-md px-4">
 					${this.tutorials.map(
 						(starter, index) => html`
 							<button
