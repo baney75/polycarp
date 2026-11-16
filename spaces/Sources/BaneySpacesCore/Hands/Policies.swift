@@ -340,15 +340,32 @@ public enum PanelDetector {
 
     /// Whether the window is an Open or Save panel, or holds one (a sheet that is or may be one, or a panel element
     /// within three levels). A sheet that is plainly something else (a "Save changes?" alert) leaves the window usable.
-    public static func windowIsOffLimits(_ w: AXNodeInfo) -> Bool {
+    /// `asWindow`: judge it as a window even though it answers AXDialog (`readsAsWindow`).
+    public static func windowIsOffLimits(_ w: AXNodeInfo, asWindow: Bool = false) -> Bool {
         if isOpenOrSavePanel(identifier: w.identifier, subrole: w.subrole, title: w.title) { return true }
-        if isSheet(w) || w.subrole == "AXDialog" || w.subrole == "AXSystemDialog" { if looksLikeFilePanel(w) { return true } }
+        if !asWindow && (isSheet(w) || w.subrole == "AXDialog" || w.subrole == "AXSystemDialog") { if looksLikeFilePanel(w) { return true } }
         func holds(_ n: AXNodeInfo, depth: Int) -> Bool {
             if isSheet(n) { return looksLikeFilePanel(n) }
             if isOpenOrSavePanel(identifier: n.identifier, subrole: n.subrole, title: n.title) { return true }
             return depth < 3 && n.children.contains { holds($0, depth: depth + 1) }
         }
         return w.children.contains { holds($0, depth: 1) }
+    }
+
+    /// System Settings' own window answers AXDialog for its subrole. Read as a dialog, its pane is deeper than a dialog
+    /// read goes (so the read is cut off) and its sidebar is an outline in a split group (a file browser's shape), so
+    /// every agent call on it was refused as an Open panel (live, #387). It is read and judged as a window: a
+    /// sheet on it, a panel identifier or a panel title still puts it off limits.
+    public static func readsAsWindow(bundle: String, identifier: String?) -> Bool {
+        bundle == "com.apple.systempreferences" && identifier == "Main"
+    }
+
+    /// The panel check of a placed window, from its element: a one-level read (a dialog's, or a sheet's, deep and whole).
+    public static func inspect<E>(_ root: E, bundle: String, string: (E, String) -> String?,
+                                  children: (E) -> (list: [E], readable: Bool)) -> Bool {
+        let asWindow = readsAsWindow(bundle: bundle, identifier: string(root, "AXIdentifier"))
+        let node = AXTreeRead.node(root, depth: 1, deep: asWindow ? false : nil, string: string, children: children)
+        return windowIsOffLimits(node, asWindow: asWindow)
     }
 
     /// A child window recognized as a sheet, dialog or alert (by role, subrole or AXModal): off limits when any part of its
