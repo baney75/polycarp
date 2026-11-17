@@ -234,11 +234,16 @@ public struct BackgroundFacts: Equatable, Sendable {
     public var focusedElementUnplaced: Bool
     /// Pointer only: a point lies in the title bar (close, minimize, zoom, and the drag that moves the window).
     public var pointInTitleBar: Bool
+    /// The window is on the agent workspace now. Keys go only there (`AgentKeys`): a lent window or one Full Access
+    /// reaches is refused on a workspace of Donovan's.
+    public var onAgentWorkspace: Bool
 
     public init(kind: InputKind, app: String, pid: Int32, window: UInt32, scope: ScopeKind, pidIsAgentOwned: Bool,
                 windowOwnerPid: Int32?, axWindowResolved: Bool, siblingWindows: Int, condition: WindowCondition,
                 hasSheetOrPanel: Bool, focusedWindow: UInt32?, focusedElementWindow: UInt32?, targetIsFront: Bool,
-                transports: TransportSupport, block: RouteBlock?, verifier: VerifierPlan, pointInsideWindow: Bool = true, pointInTitleBar: Bool = false, focusedElementUnplaced: Bool = false) {
+                transports: TransportSupport, block: RouteBlock?, verifier: VerifierPlan, pointInsideWindow: Bool = true, pointInTitleBar: Bool = false, focusedElementUnplaced: Bool = false,
+                onAgentWorkspace: Bool = false) {
+        self.onAgentWorkspace = onAgentWorkspace
         self.kind = kind; self.app = app; self.pid = pid; self.window = window; self.scope = scope
         self.pidIsAgentOwned = pidIsAgentOwned; self.windowOwnerPid = windowOwnerPid; self.axWindowResolved = axWindowResolved
         self.siblingWindows = siblingWindows; self.condition = condition; self.hasSheetOrPanel = hasSheetOrPanel
@@ -262,6 +267,24 @@ public struct BackgroundPermit: Equatable, Sendable {
 }
 
 /// Every refusal says what to do instead.
+/// Keys and typed text reach only windows on the agent workspace (council gap A2): never a window on one of Donovan's
+/// workspaces, lent or not, in any access mode. A lent window can be brought over first with `move --window`.
+public enum AgentKeys {
+    /// nil when `verb` may send keys or text to the window: it is the agent workspace's own, or sits there now.
+    public static func refusal(verb: String, app: String, window: UInt32, agentScope: Bool, onAgentWorkspace: Bool) -> HandsError? {
+        if agentScope || onAgentWorkspace { return nil }
+        return HandsError(.outsideAgentWorkspace,
+                          "\(verb) sends keys and text only to windows on the agent workspace; window \(window) of \(app) is on one of Donovan's workspaces",
+                          suggestion: "Start your own copy with `polycarp-spaces agent open \(app)`, or, if Donovan lent it, bring the window over first with `polycarp-spaces agent move --window \(window)`.",
+                          retry: .never)
+    }
+
+    /// The same rule from a window's workspace number, for `type` (Accessibility, not the key planner).
+    public static func refusal(verb: String, app: String, window: UInt32, workspace: Int?, agentWorkspace: Int?) -> HandsError? {
+        refusal(verb: verb, app: app, window: window, agentScope: false, onAgentWorkspace: agentWorkspace != nil && workspace == agentWorkspace)
+    }
+}
+
 public enum BackgroundRefusal {
     static let sandboxLine = "Do this in the sandbox (phase 2), or use `type`, `set-value`, `click`, `toggle` or `select` on the element."
 
@@ -392,6 +415,9 @@ public enum BackgroundPlanner {
         if !f.axWindowResolved { return .failure(BackgroundRefusal.axUnresolved(f.app, window: f.window)) }
         switch f.kind {
         case .keys:
+            if let e = AgentKeys.refusal(verb: "press", app: f.app, window: f.window, agentScope: f.scope == .agentWorkspace, onAgentWorkspace: f.onAgentWorkspace) {
+                return .failure(e)
+            }
             if f.siblingWindows > 0 { return .failure(BackgroundRefusal.siblings(f.app, count: f.siblingWindows)) }
             if f.focusedElementUnplaced { return .failure(BackgroundRefusal.elementNotPlaced(f.app)) }
             // The app's focused window must be this one. Its focused element, if it has one, must be in it too (an app

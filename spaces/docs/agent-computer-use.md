@@ -454,7 +454,7 @@ call answers `outside_agent_workspace` (`ContextMenu`, `HandsRouter+ContextMenu.
 | 1 | Semantic accessibility (`click`, `type`, `set-value`, `toggle`, `select`) | everything with an element | the tree; phase 1 |
 | 2 | Exact browser target | page content | phase 3 |
 | 3 | Window-local pointer (`click-at`, `drag`): mouse events to the pid, the window number in fields 51, 91 and 92, the pid in field 40, one gesture id, the point in window-local screen terms | surfaces with no tree (a canvas) | the pid is the agent's; the window is not minimized or hidden; the point is inside it; a verifier (the tree or the window's pixels) |
-| 4 | Per-process keys (`press`): key down and up with exactly the chord's flags, to the pid | shortcuts and keys no element exposes | the pid is the agent's; no other window of that process could take the key; the app's focused window and focused element are this window; the tree is readable |
+| 4 | Per-process keys (`press`): key down and up with exactly the chord's flags, to the pid | shortcuts and keys no element exposes | the window is on the agent workspace (a lent or Full Access window on one of Donovan's workspaces gets no keys, and no `type` either); the pid is the agent's; no other window of that process could take the key; the app's focused window and focused element are this window; the tree is readable |
 | 5 | SkyLight per-process posting | the transport under 3 and 4 | `SLEventPostToPid` found by name at run time; if the name does not resolve the public `CGEventPostToPid` carries the event, and with neither the route is unavailable (a refusal, never a crash) |
 | 6 | Per-process AX enablement for Electron | Electron apps | phase 3 |
 
