@@ -1,12 +1,14 @@
 //! `theme import`: a base16 or base24 scheme in the tinted-theming format, as a Polycarp theme.
 //!
-//! A scheme has one set of colors, light or dark, so both of the theme's modes use it. Colors
-//! that would not read under Polycarp's contrast rules are moved until they do, and each move is
-//! reported.
+//! An Omarchy theme folder is read into the same slots first. A scheme has one set of colors,
+//! light or dark, so both of the theme's modes use it. Colors that would not read under
+//! Polycarp's contrast rules are moved until they do, and each move is reported.
 
-use polycarp_theme::{code_pairs, contrast, fit, is_hex, mix, pairs, Colors};
+use polycarp_theme::{code_pairs, contrast, fit, is_hex, mix, pairs, Colors, Full};
 use std::collections::BTreeMap;
-use toml::Value;
+use std::fs;
+use std::path::{Path, PathBuf};
+use toml::{Table, Value};
 
 /// A scheme as read: its name, author, system (base16 or base24) and the slots `base00` and up,
 /// each a lowercase `#rrggbb`.
@@ -16,6 +18,8 @@ pub(super) struct Scheme {
     pub system: String,
     pub slug: Option<String>,
     pub slots: BTreeMap<String, String>,
+    /// An accent the source names, used instead of `base0D`.
+    pub accent: Option<String>,
 }
 
 const BASE16: [&str; 16] = [
@@ -85,6 +89,7 @@ pub(super) fn parse(text: &str) -> Result<Scheme, String> {
         system: if base24 { "base24" } else { "base16" }.into(),
         slug: get("slug"),
         slots,
+        accent: None,
     })
 }
 
@@ -100,6 +105,10 @@ pub(super) fn slug(s: &Scheme) -> String {
         }
     }
     out.trim_end_matches('-').to_string()
+}
+
+fn lighter(a: &str, than: &str) -> bool {
+    contrast(a, "#000000") > contrast(than, "#000000")
 }
 
 /// The pure color farthest from `bg`, which every fit moves toward.
@@ -132,20 +141,27 @@ pub(super) fn colors(s: &Scheme) -> (Colors, Colors, Colors, Vec<String>) {
     };
     let mut c = set(&[
         ("background", bg.clone()),
-        // Schemes disagree on which side of the background base01 falls, so these are mixed.
+        // Schemes disagree on which side of the background base01 falls, so a slot on the wrong
+        // side is mixed instead.
         (
             "surface",
-            mix(&bg, "#ffffff", if dark { 0.06 } else { 0.6 }),
+            Some(b("base01"))
+                .filter(|v| lighter(v, &bg))
+                .unwrap_or_else(|| mix(&bg, "#ffffff", if dark { 0.06 } else { 0.6 })),
         ),
         (
             "sunken",
-            mix(&bg, "#000000", if dark { 0.25 } else { 0.05 }),
+            s.slots
+                .get("base10")
+                .filter(|v| lighter(&bg, v))
+                .cloned()
+                .unwrap_or_else(|| mix(&bg, "#000000", if dark { 0.25 } else { 0.05 })),
         ),
         ("foreground", b("base05")),
         ("strong", strongest),
         ("muted", b("base04")),
         ("border", b("base02")),
-        ("accent", b("base0D")),
+        ("accent", s.accent.clone().unwrap_or_else(|| b("base0D"))),
         ("on_accent", bg.clone()),
         ("selection", b("base02")),
         ("urgent", b("base08")),
@@ -164,7 +180,7 @@ pub(super) fn colors(s: &Scheme) -> (Colors, Colors, Colors, Vec<String>) {
         ("blue", b("base0D")),
         ("magenta", b("base0E")),
         ("cyan", b("base0C")),
-        ("white", b("base05")),
+        ("white", b("base06")),
         ("bright_black", b("base03")),
         ("bright_red", br("base12", "base08")),
         ("bright_green", br("base14", "base0B")),
@@ -264,4 +280,240 @@ pub(super) fn theme_toml(s: &Scheme, name: &str, source: &str) -> (String, Vec<S
         }
     }
     (out, moved)
+}
+
+/// An Omarchy theme folder as a base24 scheme, with the background images it has. Omarchy 4
+/// keeps the colors in `colors.toml`; older versions had only `alacritty.toml` or
+/// `ghostty.conf`.
+pub(super) fn omarchy(dir: &Path) -> Result<(Scheme, Vec<PathBuf>), String> {
+    let read = |f: &str| fs::read_to_string(dir.join(f)).ok();
+    let (mut m, accent) = if let Some(text) = read("colors.toml") {
+        let t: Table = text.parse().map_err(|e| format!("colors.toml: {e}"))?;
+        let m: Colors = t
+            .iter()
+            .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_lowercase())))
+            .collect();
+        let accent = m.get("accent").cloned();
+        (m, accent)
+    } else if let Some(text) = read("alacritty.toml") {
+        let t: Table = text.parse().map_err(|e| format!("alacritty.toml: {e}"))?;
+        let at = |p: &[&str]| {
+            let mut v = t.get(p[0])?;
+            for k in &p[1..] {
+                v = v.get(k)?;
+            }
+            Some(v.as_str()?.to_lowercase())
+        };
+        let mut m = Colors::new();
+        for (k, path) in [
+            ("background", ["colors", "primary", "background"]),
+            ("foreground", ["colors", "primary", "foreground"]),
+            ("selection", ["colors", "selection", "background"]),
+        ] {
+            m.extend(at(&path).map(|v| (k.to_string(), v)));
+        }
+        for (i, k) in ANSI.iter().enumerate() {
+            let group = if i < 8 { "normal" } else { "bright" };
+            let name = k.strip_prefix("bright_").unwrap_or(k);
+            m.extend(at(&["colors", group, name]).map(|v| (k.to_string(), v)));
+        }
+        (m, None)
+    } else if let Some(text) = read("ghostty.conf") {
+        let mut m = Colors::new();
+        for line in text.lines() {
+            let Some((k, v)) = line.split_once('=') else {
+                continue;
+            };
+            let (k, v) = (k.trim(), v.trim());
+            match k {
+                "background" | "foreground" => {
+                    m.insert(k.into(), format!("#{}", v.trim_start_matches('#')));
+                }
+                "selection-background" => {
+                    m.insert(
+                        "selection".into(),
+                        format!("#{}", v.trim_start_matches('#')),
+                    );
+                }
+                "palette" => {
+                    if let Some((i, c)) = v.split_once('=') {
+                        if let Some(name) = i.trim().parse::<usize>().ok().and_then(|i| ANSI.get(i))
+                        {
+                            m.insert(name.to_string(), c.trim().to_lowercase());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        (m, None)
+    } else {
+        return Err(format!(
+            "{} has no colors.toml, alacritty.toml or ghostty.conf, so it is not an Omarchy theme",
+            dir.display()
+        ));
+    };
+    // Terminal files name the colors as the terminal does; these are the colors.toml names.
+    for (from, to) in [
+        ("white", "light_foreground"),
+        ("bright_black", "muted"),
+        ("bright_white", "bright_foreground"),
+    ] {
+        if let Some(v) = m.get(from).cloned() {
+            m.entry(to.into()).or_insert(v);
+        }
+    }
+    let need = |k: &str, m: &Colors| -> Result<String, String> {
+        m.get(k)
+            .filter(|v| is_hex(v))
+            .cloned()
+            .ok_or_else(|| format!("{}: no color {k}", dir.display()))
+    };
+    let bg = need("background", &m)?;
+    let fg = need("foreground", &m)?;
+    let or = |k: &str, m: &Colors, v: String| m.get(k).filter(|v| is_hex(v)).cloned().unwrap_or(v);
+    let red = need("red", &m)?;
+    let yellow = need("yellow", &m)?;
+    m.insert("selection".into(), or("selection", &m, mix(&bg, &fg, 0.2)));
+    let mut slots = BTreeMap::new();
+    for (slot, v) in [
+        ("base00", bg.clone()),
+        ("base01", or("lighter_background", &m, mix(&bg, &fg, 0.08))),
+        ("base02", m["selection"].clone()),
+        ("base03", or("muted", &m, mix(&bg, &fg, 0.4))),
+        ("base04", or("dark_foreground", &m, mix(&bg, &fg, 0.6))),
+        ("base05", fg.clone()),
+        ("base06", or("light_foreground", &m, fg.clone())),
+        ("base07", or("bright_foreground", &m, fg.clone())),
+        ("base08", red.clone()),
+        ("base09", or("orange", &m, mix(&red, &yellow, 0.5))),
+        ("base0A", yellow),
+        ("base0B", need("green", &m)?),
+        ("base0C", need("cyan", &m)?),
+        ("base0D", need("blue", &m)?),
+        ("base0E", need("magenta", &m)?),
+        ("base0F", or("brown", &m, mix(&red, &bg, 0.4))),
+        (
+            "base10",
+            or("dark_background", &m, mix(&bg, "#000000", 0.25)),
+        ),
+        (
+            "base11",
+            or("darker_background", &m, mix(&bg, "#000000", 0.4)),
+        ),
+    ] {
+        slots.insert(slot.to_string(), v);
+    }
+    for (i, k) in ["red", "yellow", "green", "cyan", "blue", "magenta"]
+        .iter()
+        .enumerate()
+    {
+        let v = or(
+            &format!("bright_{k}"),
+            &m,
+            slots[["base08", "base0A", "base0B", "base0C", "base0D", "base0E"][i]].clone(),
+        );
+        slots.insert(format!("base1{}", i + 2), v);
+    }
+    let mut images: Vec<PathBuf> = fs::read_dir(dir.join("backgrounds"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                ["png", "jpg", "jpeg", "webp"].contains(&e.to_lowercase().as_str())
+            })
+        })
+        .collect();
+    images.sort();
+    let folder = dir
+        .canonicalize()
+        .unwrap_or_else(|_| dir.to_path_buf())
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let title = folder
+        .split(['-', '_'])
+        .map(|w| {
+            let mut c = w.chars();
+            c.next()
+                .map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    Ok((
+        Scheme {
+            name: title,
+            author: String::new(),
+            system: "omarchy".into(),
+            slug: Some(folder),
+            slots,
+            accent,
+        },
+        images,
+    ))
+}
+
+const ANSI: [&str; 16] = [
+    "black",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "white",
+    "bright_black",
+    "bright_red",
+    "bright_green",
+    "bright_yellow",
+    "bright_blue",
+    "bright_magenta",
+    "bright_cyan",
+    "bright_white",
+];
+
+/// One mode of a theme as a base24 scheme, read back by `parse` and `colors` to the same slots:
+/// every slot comes from a color the import sets from that slot alone, or is mixed from slots.
+pub(super) fn base24(full: &Full, mode: &str) -> String {
+    let c = full.base.colors(mode);
+    let code = full.base.code(mode);
+    let t = &code["terminal"];
+    let slots = [
+        ("base00", c["background"].clone()),
+        ("base01", c["surface"].clone()),
+        ("base02", c["selection"].clone()),
+        ("base03", t["bright_black"].clone()),
+        ("base04", c["muted"].clone()),
+        ("base05", c["foreground"].clone()),
+        ("base06", t["white"].clone()),
+        ("base07", c["strong"].clone()),
+        ("base08", t["red"].clone()),
+        ("base09", code["syntax"]["number"].clone()),
+        ("base0A", t["yellow"].clone()),
+        ("base0B", t["green"].clone()),
+        ("base0C", t["cyan"].clone()),
+        ("base0D", t["blue"].clone()),
+        ("base0E", t["magenta"].clone()),
+        ("base0F", mix(&t["red"], &c["background"], 0.4)),
+        ("base10", c["sunken"].clone()),
+        ("base11", mix(&c["sunken"], "#000000", 0.3)),
+        ("base12", t["bright_red"].clone()),
+        ("base13", t["bright_yellow"].clone()),
+        ("base14", t["bright_green"].clone()),
+        ("base15", t["bright_cyan"].clone()),
+        ("base16", t["bright_blue"].clone()),
+        ("base17", t["bright_magenta"].clone()),
+    ];
+    let q = |v: &str| serde_json::Value::String(v.to_string()).to_string();
+    let mut out = format!(
+        "system: \"base24\"\nname: {}\nauthor: \"Polycarp\"\nslug: {}\nvariant: \"{mode}\"\npalette:\n",
+        q(&full.title),
+        q(&format!("{}-{mode}", full.name)),
+    );
+    for (k, v) in slots {
+        out.push_str(&format!("  {k}: \"{v}\"\n"));
+    }
+    out
 }

@@ -18,4 +18,6 @@ Mario Zechner's Sitegeist (https://github.com/badlogic/sitegeist) and pi. See `b
 
 `cli/tests/fixtures/schemes/` holds color schemes copied from tinted-theming/schemes, MIT licensed by Tinted Theming; its `LICENSE` and `README.md` give the text and the source commit.
 
+`cli/tests/fixtures/omarchy/` holds two `colors.toml` files copied from basecamp/omarchy v4.0.4, MIT licensed by David Heinemeier Hansson; its `LICENSE` and `README.md` give the text and the source.
+
 `brand/` holds the Polycarp name and logo. The licenses above do not cover them. Newsreader, used for the wordmark, is under the SIL Open Font License.

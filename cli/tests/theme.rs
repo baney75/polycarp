@@ -5111,3 +5111,133 @@ fn import_fetches_an_address() {
     assert_eq!(code(&o), 2);
     assert!(err(&o).contains("only https"), "{}", err(&o));
 }
+
+// ---------------------------------------------------------------------------------------------
+// Import: Omarchy theme folders, and the base24 round trip
+// ---------------------------------------------------------------------------------------------
+
+fn omarchy_fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/omarchy/{name}"))
+}
+
+/// An Omarchy 4 folder imports from its colors.toml: its own accent, its terminal colors, and its
+/// background images reported as unused.
+#[test]
+fn an_omarchy_folder_imports_with_its_accent_and_terminal_colors() {
+    let b = Box::new();
+    let dir = b.root.join("catppuccin");
+    fs::create_dir_all(dir.join("backgrounds")).unwrap();
+    fs::copy(
+        omarchy_fixture("catppuccin/colors.toml"),
+        dir.join("colors.toml"),
+    )
+    .unwrap();
+    fs::write(dir.join("backgrounds/1-totoro.png"), b"not really").unwrap();
+    fs::write(dir.join("backgrounds/notes.txt"), b"").unwrap();
+    let (code, v) = b.jrun(&["import", dir.to_str().unwrap()]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["name"], "catppuccin");
+    assert_eq!(v["data"]["system"], "omarchy");
+    assert_eq!(v["data"]["backgrounds"].as_array().unwrap().len(), 1);
+    assert!(v.to_string().contains("no wallpaper setting"), "{v}");
+    assert_eq!(b.get_in("dark.accent", "catppuccin"), "#89b4fa");
+    assert_eq!(b.get_in("dark.background", "catppuccin"), "#1e1e2e");
+    assert_eq!(b.get_in("dark.terminal.magenta", "catppuccin"), "#f5c2e7");
+    assert_eq!(
+        b.get_in("dark.terminal.bright_black", "catppuccin"),
+        "#585b70"
+    );
+
+    let v = b.json(&[
+        "import",
+        omarchy_fixture("flexoki-light").to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(v["title"], "Flexoki Light");
+    assert_eq!(b.get_in("light.background", "flexoki-light"), "#fffcf0");
+    assert_eq!(
+        b.get_in("light.terminal.bright_blue", "flexoki-light"),
+        "#4385be"
+    );
+    b.ok(&[
+        "validate",
+        b.cfg().join("themes/flexoki-light.toml").to_str().unwrap(),
+    ]);
+}
+
+/// Omarchy themes before version 4 kept their colors in alacritty.toml or ghostty.conf.
+#[test]
+fn an_older_omarchy_folder_imports_from_alacritty_or_ghostty() {
+    let b = Box::new();
+    let hues = [
+        "#cc6666", "#99bb66", "#ddbb55", "#6699cc", "#bb88cc", "#66bbbb",
+    ];
+    let names = ["red", "green", "yellow", "blue", "magenta", "cyan"];
+    let alacritty = b.root.join("old-alacritty");
+    fs::create_dir_all(&alacritty).unwrap();
+    let mut text = String::from(
+        "[colors.primary]\nbackground = \"#1a1b1c\"\nforeground = \"#d8d8d0\"\n\n[colors.normal]\n",
+    );
+    for (n, h) in names.iter().zip(hues) {
+        text.push_str(&format!("{n} = \"{h}\"\n"));
+    }
+    text.push_str("\n[colors.bright]\nblack = \"#666666\"\nred = \"#ee8888\"\n");
+    fs::write(alacritty.join("alacritty.toml"), text).unwrap();
+    b.ok(&["import", alacritty.to_str().unwrap()]);
+    assert_eq!(b.get_in("dark.terminal.blue", "old-alacritty"), "#6699cc");
+    assert_eq!(
+        b.get_in("dark.terminal.bright_red", "old-alacritty"),
+        "#ee8888"
+    );
+    assert_eq!(
+        b.get_in("dark.terminal.bright_black", "old-alacritty"),
+        "#666666"
+    );
+
+    let ghostty = b.root.join("old-ghostty");
+    fs::create_dir_all(&ghostty).unwrap();
+    let mut text = String::from("background = 1a1b1c\nforeground = d8d8d0\n");
+    for (i, h) in hues.iter().enumerate() {
+        text.push_str(&format!("palette = {}={h}\n", i + 1));
+    }
+    fs::write(ghostty.join("ghostty.conf"), text).unwrap();
+    b.ok(&["import", ghostty.to_str().unwrap()]);
+    assert_eq!(b.get_in("dark.terminal.cyan", "old-ghostty"), "#66bbbb");
+
+    let empty = b.root.join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    assert!(b
+        .refused(&["import", empty.to_str().unwrap()])
+        .contains("not an Omarchy theme"));
+}
+
+/// Every built-in, exported as a base24 scheme in either mode and imported, exports again to the
+/// same 24 colors: nothing the scheme holds is lost. The terminal colors it holds come back exactly.
+#[test]
+fn a_builtin_exported_as_base24_and_imported_comes_back_the_same() {
+    let b = Box::new();
+    let dir = b.root.join("cwd");
+    for t in BUILTINS {
+        for m in ["light", "dark"] {
+            let first = b.ok(&["export", "base24", t, "--mode", m]);
+            let file = dir.join(format!("{t}-{m}.yaml"));
+            fs::write(&file, &first).unwrap();
+            let name = format!("again-{t}-{m}");
+            b.ok(&["import", file.to_str().unwrap(), "--name", &name]);
+            let palette = |text: &str| text.split("palette:").nth(1).unwrap().to_string();
+            let again = b.ok(&["export", "base24", &name, "--mode", m]);
+            assert_eq!(palette(&again), palette(&first), "{t} {m}");
+            // Black and bright white have no base24 slot; import takes them from base00 and base07.
+            for k in ANSI
+                .iter()
+                .filter(|k| !matches!(**k, "black" | "bright_white"))
+                .chain(&["background", "foreground"])
+            {
+                let path = format!("{m}.terminal.{k}");
+                assert_eq!(b.get_in(&path, &name), b.get_in(&path, t), "{t} {path}");
+            }
+        }
+    }
+    let o = b.run(&["theme", "export", "base24", "calm", "--mode", "auto"]);
+    assert_eq!(code(&o), 2);
+}

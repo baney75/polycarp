@@ -59,7 +59,7 @@ Usage:
   polycarp theme accent <#rrggbb> [--mode light|dark] | --clear [--mode light|dark]
   polycarp theme change <path> <value> [<path> <value> ...] [--theme <name>] [--json]
   polycarp theme apply <file|-> [--name <name>] [--no-activate] [--json]
-  polycarp theme import <file|url|-> [--name <name>] [--json]
+  polycarp theme import <file|folder|url|-> [--name <name>] [--json]
   polycarp theme preview [name] [--mode light|dark|both] [--surface <s>] [--format html|png] [--out <file|folder>] [--json]
   polycarp theme create <name> --extends <base> [--force]
   polycarp theme edit-path <name>
@@ -67,6 +67,7 @@ Usage:
   polycarp theme delete <name> [--force]
   polycarp theme validate <file|->
   polycarp theme export <css|json|toml> [name] [--surface spaces|voice|browser|site|studio]
+  polycarp theme export base24 [name] [--mode light|dark]
   polycarp theme undo [--force]
   polycarp theme history [--json]
   polycarp theme off
@@ -2616,8 +2617,8 @@ pub(crate) fn op_validate(c: &Ctx, doc: &Doc, expect: Option<&str>, label: &str)
     }
 }
 
-/// `theme import`: a base16 or base24 scheme from a file, an https address or standard input,
-/// saved as a theme without making it current. Colors that would not read are moved, with a
+/// `theme import`: a base16 or base24 scheme from a file, an https address or standard input, or
+/// an Omarchy theme folder, saved as a theme without making it current. Colors that would not read are moved, with a
 /// warning for each.
 pub(crate) fn op_import(c: &Ctx, source: &str, name: Option<&str>) -> Res {
     if source.starts_with("http://") {
@@ -2625,13 +2626,17 @@ pub(crate) fn op_import(c: &Ctx, source: &str, name: Option<&str>) -> Res {
             "{source}: only https addresses are fetched"
         )));
     }
-    let text = if source.starts_with("https://") || source.starts_with("file://") {
-        fetch(source)?
+    let bad = |e: String| ApiErr::at("invalid_theme", "$", format!("{source}: {e}"));
+    let (scheme, images) = if Path::new(source).is_dir() {
+        import::omarchy(Path::new(source)).map_err(bad)?
+    } else if source.starts_with("https://") || source.starts_with("file://") {
+        (import::parse(&fetch(source)?).map_err(bad)?, Vec::new())
     } else {
-        read_input(source)?
+        (
+            import::parse(&read_input(source)?).map_err(bad)?,
+            Vec::new(),
+        )
     };
-    let scheme = import::parse(&text)
-        .map_err(|e| ApiErr::at("invalid_theme", "$", format!("{source}: {e}")))?;
     let name = name.map_or_else(|| import::slug(&scheme), str::to_string);
     let from = if source == "-" {
         "standard input"
@@ -2653,7 +2658,18 @@ pub(crate) fn op_import(c: &Ctx, source: &str, name: Option<&str>) -> Res {
     for m in &moved {
         out = out.caution(m.clone());
     }
-    Ok(out.with(json!({"scheme": scheme.name, "system": scheme.system, "moved": moved})))
+    if !images.is_empty() {
+        out = out.caution(format!(
+            "Polycarp has no wallpaper setting yet, so the {} background images were not used",
+            images.len()
+        ));
+    }
+    Ok(out.with(json!({
+        "scheme": scheme.name,
+        "system": scheme.system,
+        "moved": moved,
+        "backgrounds": images.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+    })))
 }
 
 /// The text at `url`, fetched with the system's `curl` (https, or file for a local copy).
@@ -3113,6 +3129,28 @@ fn export_toml(c: &Ctx, name: Option<&str>) -> Res {
         json!({"format": "toml", "theme": name, "source": source, "file": file, "toml": text}),
         text.clone(),
     ))
+}
+
+/// `theme export base24`: one mode of a theme as a base24 scheme, which `import` reads back to
+/// the same scheme. With no mode, the mode in force, or dark while it follows the system.
+pub(crate) fn op_export_base24(c: &Ctx, name: Option<&str>, mode: Option<&str>) -> Res {
+    if let Some(m) = mode.filter(|m| !matches!(*m, "light" | "dark")) {
+        return Err(ApiErr::usage(format!(
+            "--mode must be light or dark, not {m:?}"
+        )));
+    }
+    let (full, problems) = resolve_for_view(&c.cfg, name)?;
+    let mode = match mode {
+        Some(m) => m.to_string(),
+        None if load_state(&c.cfg).0.mode == "light" => "light".into(),
+        None => "dark".into(),
+    };
+    let text = import::base24(&full, &mode);
+    Ok(Out::new(
+        json!({"format": "base24", "theme": full.name, "mode": mode, "scheme": text}),
+        text,
+    )
+    .warn(problems))
 }
 
 pub(crate) fn op_export(c: &Ctx, format: &str, name: Option<&str>, surface: Option<&str>) -> Res {
@@ -3861,7 +3899,7 @@ pub fn run(args: &[OsString]) -> i32 {
             exactly(
                 p,
                 1,
-                "a scheme file, an https address, or - for standard input",
+                "a scheme file, an Omarchy theme folder, an https address, or - for standard input",
             )?;
             op_import(c, &p.pos[0], p.val("name"))
         }),
@@ -3916,9 +3954,17 @@ pub fn run(args: &[OsString]) -> i32 {
             })?;
             op_validate(c, &doc, Some(&stem), &label)
         }),
-        "export" => cmd(rest, &["surface"], &[], |c, p| {
+        "export" => cmd(rest, &["surface", "mode"], &[], |c, p| {
             if p.pos.is_empty() || p.pos.len() > 2 {
-                return Err(ApiErr::usage("expected `export <css|json|toml> [name]`"));
+                return Err(ApiErr::usage(
+                    "expected `export <css|json|toml|base24> [name]`",
+                ));
+            }
+            if p.pos[0] == "base24" {
+                return op_export_base24(c, p.pos.get(1).map(String::as_str), p.val("mode"));
+            }
+            if p.val("mode").is_some() {
+                return Err(ApiErr::usage("--mode is for `export base24`"));
             }
             op_export(
                 c,
