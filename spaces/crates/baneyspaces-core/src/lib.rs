@@ -7,7 +7,6 @@ pub mod agent_help;
 pub mod conformance;
 pub mod envelope;
 pub mod keymap;
-pub mod matcher;
 pub mod mcp;
 pub mod model;
 pub mod shell;
