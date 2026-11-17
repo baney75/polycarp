@@ -73,9 +73,8 @@ if [ "$IN_PLACE" = 0 ] && [ -z "$TEST" ]; then
   # anyway, and the app takes it as a menu quit (`NSApp.terminate`): every window and the Dock come back first. Only the
   # app's own process, never a `--restart-when-safe` helper.
   if app_is_running; then
-    { pgrep -f "$DEST/Contents/MacOS/$EXECUTABLE" 2>/dev/null || true; } | while read -r pid; do
-      ps -o args= -p "$pid" 2>/dev/null | grep -q -- --restart-when-safe || kill -TERM "$pid" 2>/dev/null || true
-    done
+    { pgrep -fl "$DEST/Contents/MacOS/$EXECUTABLE" 2>/dev/null || true; } | { grep -v -- --restart-when-safe || true; } \
+      | while read -r pid _; do kill -TERM "$pid" 2>/dev/null || true; done
     for _ in $(seq 1 50); do app_is_running || break; sleep 0.2; done
   fi
   # A helper from a build that ran it as the app makes `open` fail with -600 while it waits. Builds since run it as the

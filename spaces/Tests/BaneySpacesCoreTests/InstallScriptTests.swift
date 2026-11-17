@@ -326,7 +326,7 @@ final class InstallScriptTests: XCTestCase {
         let term = try index(of: #"kill -TERM "$pid""#, in: script)
         XCTAssertLessThan(quit, term, "the gentle quit goes first")
         XCTAssertLessThan(term, try index(of: "is still running; quit it from the menu bar", in: script), "SIGTERM before giving up")
-        XCTAssertTrue(script.contains(#"grep -q -- --restart-when-safe || kill -TERM"#), "the restart helper is never sent SIGTERM")
+        XCTAssertTrue(script.contains(#"{ grep -v -- --restart-when-safe || true; }"#), "the restart helper is never sent SIGTERM")
         let delegate = try read("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(delegate.contains("for sig in [SIGTERM, SIGINT, SIGHUP]"), "the app must take SIGTERM")
         XCTAssertTrue(delegate.contains("source.setEventHandler { NSApp.terminate(nil) }"), "as a clean terminate")
