@@ -245,6 +245,16 @@ polycarp theme on
 
 `off` removes `current/theme.json` and the `current/<product>.css` files. Apps that read them are expected to use their own look when they next check. It keeps your settings and themes, records the change in `history/`, and says what it removed. `undo` brings the theme back, and so does `polycarp theme on`. `set`, `accent` and `change` also turn the theme on, and tell you so. So does `apply`, unless you add `--no-activate`. `off` and `on` also tidy `current/` if the setting was already that way, and `off` works even if a theme or settings file is broken. If one of the files is a link, `off` removes the link (not what it points to) and `on` writes a plain file. `polycarp theme current` shows whether it is on or off.
 
+### Import a color scheme
+
+```sh
+polycarp theme import ~/Downloads/gruvbox-dark-hard.yaml
+polycarp theme import https://raw.githubusercontent.com/tinted-theming/schemes/spec-0.11/base24/dracula.yaml
+polycarp theme set gruvbox-dark-hard
+```
+
+`import` reads a base16 or base24 scheme in the tinted-theming format, from a file, an https address or standard input (`-`), and saves it as a theme named after the scheme (`--name` picks another). It does not make it current. A scheme has one set of colors, so the theme's light and dark modes both use them. Any color that would not pass the rules under Readable by rule is moved until it does, and `import` says which ones moved and to what. Addresses are fetched with `curl`.
+
 ### Theme other apps
 
 ```sh

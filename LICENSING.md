@@ -16,4 +16,6 @@ Mario Zechner's Sitegeist (https://github.com/badlogic/sitegeist) and pi. See `b
 
 `spaces/` also carries third-party license texts in `spaces/LICENSES/`.
 
+`cli/tests/fixtures/schemes/` holds color schemes copied from tinted-theming/schemes, MIT licensed by Tinted Theming; its `LICENSE` and `README.md` give the text and the source commit.
+
 `brand/` holds the Polycarp name and logo. The licenses above do not cover them. Newsreader, used for the wordmark, is under the SIL Open Font License.
