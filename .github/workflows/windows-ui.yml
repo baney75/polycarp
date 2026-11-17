@@ -52,6 +52,12 @@ jobs:
       - name: Measure WebView2 (wry)
         shell: powershell
         run: ./measure.ps1 -Exe target/release/spike-webview.exe -Name webview -Out results
+      - name: Control, no screen probe (native, then WebView2)
+        # The same opens timed only by each candidate's own painted line, to show what reading the screen back costs.
+        shell: powershell
+        run: |
+          ./measure.ps1 -Exe target/release/spike-native.exe -Name native-noprobe -Out results -NoProbe -Launches 1 -IdleSeconds 5
+          ./measure.ps1 -Exe target/release/spike-webview.exe -Name webview-noprobe -Out results -NoProbe -Launches 1 -IdleSeconds 5
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:

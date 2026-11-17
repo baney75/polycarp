@@ -5,6 +5,8 @@
 #   key to screen: SendInput of the hotkey to the moment this open's panel color is read back from the screen at a
 #     point inside the panel. Each open draws the panel in the other of two colors, so a stale frame never counts;
 #   idle CPU and private memory of the whole process tree, and how many processes it has.
+# Reading the screen back costs DWM work, so -NoProbe runs the same opens timed only by the candidate's own `painted`
+# line (after its frame is composed), as a control for what the probe itself adds.
 # Any `error` line, any line it can't parse and any open that never reaches the screen fail the run.
 # Writes <Out>\<Name>.json, .log and .png.
 #   measure.ps1 -Exe target\release\spike-native.exe -Name native -Out results
@@ -14,7 +16,8 @@ param(
     [Parameter(Mandatory)] [string]$Out,
     [int]$Opens = 40,
     [int]$IdleSeconds = 30,
-    [int]$Launches = 5
+    [int]$Launches = 5,
+    [switch]$NoProbe
 )
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
@@ -53,7 +56,7 @@ public static class Keys {
     public static int Read(int x, int y) {
         IntPtr screen = GetDC(IntPtr.Zero), mem = CreateCompatibleDC(screen), bmp = CreateCompatibleBitmap(screen, 1, 1);
         IntPtr old = SelectObject(mem, bmp);
-        BitBlt(mem, 0, 0, 1, 1, screen, x, y, 0x00CC0020 | 0x40000000); // SRCCOPY | CAPTUREBLT
+        BitBlt(mem, 0, 0, 1, 1, screen, x, y, 0x00CC0020); // SRCCOPY: DWM hands back the composed screen
         uint c = GetPixel(mem, 0, 0); // 0x00BBGGRR
         SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); ReleaseDC(IntPtr.Zero, screen);
         return (int)(((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF));
@@ -183,7 +186,7 @@ for ($n = 1; $n -le $Opens; $n++) {
     $t0 = [System.Diagnostics.Stopwatch]::GetTimestamp()
     [void][Keys]::Chord($mods, $key)
     # The candidate numbers its opens itself; a chord it never got must not shift every later color.
-    $seen = [Keys]::WaitColor($px, $py, (PanelColor ($before + 1)), 3, 2000)
+    $seen = if ($NoProbe) { 0 } else { [Keys]::WaitColor($px, $py, (PanelColor ($before + 1)), 3, 2000) }
     # The candidate's own line for this open: painted, or an error.
     $line = $null
     for ($w = 0; $w -lt 400 -and -not $line; $w++) {
@@ -194,7 +197,7 @@ for ($n = 1; $n -le $Opens; $n++) {
         $missed++
         Write-Host "  open ${n}: $(if ($seen -lt 0) { 'never on screen' } else { 'on screen' }), log: $(if ($line) { $line } else { 'nothing' })"
     } else {
-        $screen += Ms $t0 $seen
+        if (-not $NoProbe) { $screen += Ms $t0 $seen }
         $logged += Ms $t0 ([int64]$Matches[1])
         $inproc += Ms ([int64]$Matches[2]) ([int64]$Matches[1])
         if ($n -eq 1) { [Keys]::Shot((Join-Path $Out "$Name.png")) }
@@ -216,7 +219,7 @@ $errors = @($all | Where-Object { $_ -like 'error*' })
 $bad = Unparsed $all
 $r = [ordered]@{
     name = $Name; hotkey = $hotkey; driver = $driver; adapter = $adapter; dpi = $dpi; rect = $rect
-    opens = $Opens; samples = $screen.Count; missed = $missed; errors = $errors.Count; unparsed_lines = $bad.Count
+    probe = -not $NoProbe; opens = $Opens; samples = $Opens - $missed; missed = $missed; errors = $errors.Count; unparsed_lines = $bad.Count
     cold_start_ms = [ordered]@{ launches = $cold.Count; first = $cold[0]; median_of_rest = (Pct $rest 0.5); max_of_rest = (Pct $rest 1.0); all = $cold }
     key_to_screen_ms = [ordered]@{ median = (Pct $screen 0.5); p95 = (Pct $screen 0.95); max = (Pct $screen 1.0); first = $screen[0] }
     screen_read_ms = $readMs
@@ -224,7 +227,7 @@ $r = [ordered]@{
     hotkey_msg_to_painted_line_ms = [ordered]@{ median = (Pct $inproc 0.5); p95 = (Pct $inproc 0.95); max = (Pct $inproc 1.0) }
     idle_cpu_percent_of_one_core = $idleCpu; idle_seconds = $IdleSeconds
     memory_idle = $memIdle; memory_after_opens = $memAfter
-    samples_ms = $screen
+    samples_ms = if ($NoProbe) { $logged } else { $screen }
 }
 $r | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $Out "$Name.json")
 $r | ConvertTo-Json -Depth 4 | Write-Host
