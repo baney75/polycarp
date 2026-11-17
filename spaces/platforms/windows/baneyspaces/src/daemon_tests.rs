@@ -39,7 +39,7 @@ fn rig() -> Rig {
         events_seen: 0,
         closed_at: None,
         started: now(),
-        trace: false,
+        trace: true,
         our_pid: 0,
         problems: vec![],
         settings: settings::parse(""),
@@ -94,6 +94,40 @@ impl Rig {
     }
 }
 
+impl Rig {
+    /// Waits for the window to be out of sight; on a miss, prints what the daemon and Windows say about it.
+    fn hidden_soon(&self, w: &TestWin) -> bool {
+        self.settles(w, true)
+    }
+
+    fn shown_soon(&self, w: &TestWin) -> bool {
+        self.settles(w, false)
+    }
+
+    fn settles(&self, w: &TestWin, hidden: bool) -> bool {
+        if eventually(|| out_of_sight(w) == hidden) {
+            return true;
+        }
+        let c = lock(&self.shared);
+        let id = window_name(w.id());
+        eprintln!(
+            "{id} wanted {}: home {:?}, shown workspaces {:?}, monitors {:?}, entry {:?}, DWM cloaked {}, parked {}, \
+             on this virtual desktop {:?}, problems {:?}, foreground {}",
+            if hidden { "hidden" } else { "shown" },
+            c.model.home(&id),
+            c.visible_workspaces(),
+            c.model.monitors().map(|m| (m.to_string(), c.model.current(m))).collect::<Vec<_>>(),
+            c.hidden.get(w.id()),
+            winapi::cloaked(w.hwnd),
+            winapi::is_parked(w.hwnd),
+            cloak::on_current_desktop(w.hwnd),
+            c.problems,
+            window_name(id_of(winapi::foreground())),
+        );
+        false
+    }
+}
+
 impl Drop for Rig {
     /// Whatever a test left hidden is shown, so a failed test never leaves a window cloaked for the next one.
     fn drop(&mut self) {
@@ -134,7 +168,7 @@ fn move_stay_hides_the_window_and_records_it_first() {
     assert_eq!(r.home(&id).as_deref(), Some("2"));
     assert_eq!(r.current(), Some(1), "--stay keeps you on workspace 1");
     assert!(
-        eventually(|| out_of_sight(&w)),
+        r.hidden_soon(&w),
         "the window left workspace 1"
     );
     assert!(r.hidden_how(&w).is_some());
@@ -159,16 +193,16 @@ fn a_switch_there_and_back_shows_and_hides_each_workspace() {
         r.req("move", json!({ "n": 2, "stay": true, "window": ib }))
             .ok
     );
-    assert!(eventually(|| out_of_sight(&b)));
+    assert!(r.hidden_soon(&b));
 
     let e = r.req("switch", json!({ "n": 2 }));
     assert!(e.ok, "{}", e.to_json());
     assert_eq!(r.current(), Some(2));
     assert!(
-        eventually(|| out_of_sight(&a)),
+        r.hidden_soon(&a),
         "workspace 1 is hidden on 2"
     );
-    assert!(eventually(|| !out_of_sight(&b)), "workspace 2 shows");
+    assert!(r.shown_soon(&b), "workspace 2 shows");
     assert_eq!(r.hidden_how(&b), None);
 
     assert!(
@@ -176,8 +210,8 @@ fn a_switch_there_and_back_shows_and_hides_each_workspace() {
         "a number as text is a number"
     );
     assert_eq!(r.current(), Some(1));
-    assert!(eventually(|| !out_of_sight(&a)));
-    assert!(eventually(|| out_of_sight(&b)));
+    assert!(r.shown_soon(&a));
+    assert!(r.hidden_soon(&b));
     assert_eq!(r.state_json()["current"], 1);
     assert_eq!(r.home(&ia).as_deref(), Some("1"));
 }
@@ -193,7 +227,7 @@ fn move_without_stay_follows_the_window() {
     assert_eq!(r.current(), Some(3));
     assert_eq!(r.home(&id).as_deref(), Some("3"));
     assert!(
-        eventually(|| !out_of_sight(&w)),
+        r.shown_soon(&w),
         "the window shows where you followed it"
     );
 }
@@ -240,7 +274,7 @@ fn a_record_that_cannot_be_saved_hides_nothing() {
         r.req("switch", json!({ "n": 2 })).ok,
         "once it can be saved the same switch works"
     );
-    assert!(eventually(|| out_of_sight(&w)));
+    assert!(r.hidden_soon(&w));
 }
 
 #[test]
@@ -322,7 +356,7 @@ fn the_agent_workspace_takes_your_window_and_gives_it_back() {
     let e = r.req("agent_move", json!({ "window": id }));
     assert!(e.ok, "{}", e.to_json());
     assert_eq!(r.home(&id).as_deref(), Some("agent"));
-    assert!(eventually(|| out_of_sight(&w)));
+    assert!(r.hidden_soon(&w));
     let rec = lock(&r.shared)
         .hidden
         .get(w.id())
@@ -339,11 +373,11 @@ fn the_agent_workspace_takes_your_window_and_gives_it_back() {
     let e = r.req("agent_show", json!({}));
     assert_eq!(e.data.unwrap()["shown"], true);
     assert!(
-        eventually(|| !out_of_sight(&w)),
+        r.shown_soon(&w),
         "the shown agent workspace shows it"
     );
     assert_eq!(r.req("agent_hide", json!({})).data.unwrap()["shown"], false);
-    assert!(eventually(|| out_of_sight(&w)));
+    assert!(r.hidden_soon(&w));
     assert_eq!(
         r.req("agent_toggle", json!({})).data.unwrap()["shown"],
         true
@@ -352,13 +386,13 @@ fn the_agent_workspace_takes_your_window_and_gives_it_back() {
         r.req("agent_toggle", json!({})).data.unwrap()["shown"],
         false
     );
-    assert!(eventually(|| out_of_sight(&w)));
+    assert!(r.hidden_soon(&w));
 
     let e = r.req("agent_bring", json!({ "window": id }));
     assert!(e.ok, "{}", e.to_json());
     assert_eq!(r.home(&id).as_deref(), Some("1"));
     assert!(
-        eventually(|| !out_of_sight(&w)),
+        r.shown_soon(&w),
         "brought back to the workspace you are on"
     );
     assert_eq!(r.hidden_how(&w), None);
@@ -469,10 +503,10 @@ fn closing_a_hidden_window_shows_it_before_its_record_goes() {
         r.req("move", json!({ "n": 2, "stay": true, "window": id }))
             .ok
     );
-    assert!(eventually(|| out_of_sight(&w)));
+    assert!(r.hidden_soon(&w));
     lock(&r.shared).close_window(&id);
     assert!(
-        eventually(|| !out_of_sight(&w)),
+        r.shown_soon(&w),
         "a window still there is shown first"
     );
     assert_eq!(r.hidden_how(&w), None);
@@ -488,12 +522,12 @@ fn a_restart_puts_back_what_the_last_run_hid() {
         r.req("move", json!({ "n": 2, "stay": true, "window": id }))
             .ok
     );
-    assert!(eventually(|| out_of_sight(&w)));
+    assert!(r.hidden_soon(&w));
     // The run ends without showing anything (a crash): only state.json knows.
     let paths = lock(&r.shared).paths.clone();
     let (shown, kept, failed) = restore_from_file(&paths, true);
     assert_eq!((shown, kept, failed), (1, 0, 0));
-    assert!(eventually(|| !out_of_sight(&w)));
+    assert!(r.shown_soon(&w));
     let left = hidden::parse_state(&paths.read("state.json").unwrap_or_default());
     assert!(
         left.hidden.is_empty(),
