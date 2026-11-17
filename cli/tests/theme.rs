@@ -2233,10 +2233,25 @@ fn described(node: &Value) -> bool {
         .is_some_and(|d| d.trim().len() > 12)
 }
 
-/// Every key in a built-in theme file is a schema field with a description.
+/// Every key in a built-in theme file is a schema field with a description. The code groups
+/// inside light and dark are `patternProperties`, so the theme editor does not list them.
 fn check_fields(schema: &Value, node: &Value, doc: &toml::Table, at: &str) {
     let ps = props(schema, node);
+    let def = match node.get("$ref").and_then(Value::as_str) {
+        Some(r) => &schema["$defs"][r.trim_start_matches("#/$defs/")],
+        None => node,
+    };
     for (k, v) in doc {
+        if let (Some(group), toml::Value::Table(t)) =
+            (def["patternProperties"].get(format!("^{k}$")), v)
+        {
+            // A code group is described once, listing its keys.
+            assert!(described(group), "{at}{k} has no description");
+            for key in t.keys() {
+                assert!(group["properties"].get(key).is_some(), "{at}{k}.{key}");
+            }
+            continue;
+        }
         let field = ps
             .get(k)
             .unwrap_or_else(|| panic!("{at}{k} is in a theme but not in the schema"));
@@ -4601,6 +4616,27 @@ fn a_theme_without_code_sections_derives_them() {
     );
     let e = b.refused(&["change", "dark.terminal.purple", "#ff00ff"]);
     assert!(e.contains("\"purple\" is not a field of terminal"), "{e}");
+}
+
+/// Code colors a theme takes from its parent were chosen against the parent's colors. Where they
+/// still read on the child's they are kept as they are; where they don't, they are fitted until
+/// they do, so changing a background never makes a theme refuse colors it did not set.
+#[test]
+fn inherited_code_colors_are_fitted_to_the_childs_colors() {
+    let b = Box::new();
+    let get = |path: &str, name: &str| b.json(&["get", path, name, "--json"])["value"].clone();
+    let keyword = get("dark.syntax.keyword", "polycarp");
+    let near = user_theme("near", "polycarp", "[dark]\nbackground = \"#2a2d25\"\n");
+    assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], &near)), 0);
+    assert_eq!(get("dark.syntax.keyword", "near"), keyword);
+    // Dark mode on a light background: every one of polycarp's dark code colors is fitted.
+    let o = b.run_stdin(&["theme", "apply", "-"], PARENT_V2);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_ne!(get("dark.syntax.keyword", "parent"), keyword);
+    assert_ne!(
+        get("dark.terminal.red", "parent"),
+        get("dark.terminal.red", "polycarp")
+    );
 }
 
 /// A syntax color that does not read on the background is refused with its path and the ratio

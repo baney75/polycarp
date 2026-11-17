@@ -1,8 +1,10 @@
 //! Resolving a theme: `extends`, per-product overrides and accent overrides.
 
+use super::code::fit;
 use super::{
-    check_doc, code_keys, code_problems, combine, contrast, contrast_on, derive, fields, is_hex,
-    valid_name, Code, Colors, BUILTINS, CODE, MAX_DEPTH, MODES, SECTIONS, SURFACES, TEXT_MIN,
+    check_doc, code_keys, code_pairs, code_problems, combine, contrast, contrast_on, derive,
+    fields, is_hex, valid_name, Code, Colors, BUILTINS, CODE, MAX_DEPTH, MODES, ROLES, SECTIONS,
+    SURFACES, TEXT_MIN,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -190,6 +192,92 @@ pub fn code_of(t: &Table, mode: &str) -> Code {
     out
 }
 
+/// The code colors `t` sets itself, as (mode, group, key), with those of `[surface.<s>]` when
+/// `surface` names one.
+fn own_code(t: &Table, surface: Option<&str>) -> BTreeSet<(String, String, String)> {
+    let mut out = BTreeSet::new();
+    let over = surface.and_then(|s| t.get("surface")?.get(s)?.as_table());
+    for tt in std::iter::once(t).chain(over) {
+        for m in MODES {
+            for (g, c) in code_of(tt, m) {
+                out.extend(c.into_keys().map(|k| (m.to_string(), g.clone(), k)));
+            }
+        }
+    }
+    out
+}
+
+/// Code colors a theme takes from the theme it extends were chosen against that theme's colors.
+/// Each is fitted toward the text color until it reads on these colors, as a derived one is, so
+/// a child that changes its background keeps its parent's palette as far as it reads. One that
+/// other colors sit on (a terminal background or a diff surface) is dropped and derived again.
+/// Only what the theme sets itself is held to the rules as written.
+fn fit_inherited(t: &mut Table, own: &BTreeSet<(String, String, String)>) {
+    let pairs = code_pairs();
+    let inherited =
+        |m: &str, g: &str, k: &str| !own.contains(&(m.to_string(), g.to_string(), k.to_string()));
+    for m in MODES {
+        let colors = colors_of(t, m);
+        if !ROLES.iter().all(|r| colors.contains_key(*r)) {
+            continue;
+        }
+        let Some(Value::Table(mt)) = t.get_mut(m) else {
+            continue;
+        };
+        for g in CODE {
+            if let Some(Value::Table(gt)) = mt.get_mut(g) {
+                gt.retain(|k, _| {
+                    let path = format!("{g}.{k}");
+                    !inherited(m, g, k) || !pairs.iter().any(|(_, b, _)| *b == path)
+                });
+            }
+        }
+        let code: Code = CODE
+            .iter()
+            .map(|g| {
+                let c = mt.get(*g).and_then(Value::as_table).map(|gt| {
+                    gt.iter()
+                        .filter_map(|(k, v)| {
+                            Some((k.clone(), v.as_str().filter(|s| is_hex(s))?.to_lowercase()))
+                        })
+                        .collect()
+                });
+                (g.to_string(), c.unwrap_or_default())
+            })
+            .collect();
+        let all = derive(&colors, &code);
+        let get = |path: &str| match path.split_once('.') {
+            Some((g, k)) => all.get(g).and_then(|c| c.get(k)).cloned(),
+            None => colors.get(path).cloned(),
+        };
+        for g in CODE {
+            let Some(Value::Table(gt)) = mt.get_mut(g) else {
+                continue;
+            };
+            let toward = if g == "terminal" {
+                get("terminal.foreground")
+            } else {
+                get("foreground")
+            };
+            for (k, v) in gt.iter_mut() {
+                let Some(mut c) = v.as_str().filter(|s| is_hex(s)).map(str::to_lowercase) else {
+                    continue;
+                };
+                if !inherited(m, g, k) {
+                    continue;
+                }
+                let path = format!("{g}.{k}");
+                for (_, b, min) in pairs.iter().filter(|(f, _, _)| *f == path) {
+                    if let (Some(bg), Some(to)) = (get(b), toward.as_deref()) {
+                        c = fit(&c, &bg, to, *min);
+                    }
+                }
+                *v = Value::String(c);
+            }
+        }
+    }
+}
+
 /// Contrast problems of a theme table, before it is resolved.
 fn table_contrast(t: &Table) -> Vec<String> {
     let mut out = contrast_on(&colors_of(t, "light"), &colors_of(t, "dark"));
@@ -313,21 +401,30 @@ pub fn resolve_doc(
     }
 
     // Contrast runs on whatever colors are valid, so it can be reported with the other problems.
-    let base_t = without_meta(&merged);
+    let mut base_t = without_meta(&merged);
     let surface_t = merged
         .get("surface")
         .and_then(Value::as_table)
         .cloned()
         .unwrap_or_default();
-    let base_probs = table_contrast(&base_t);
-    let mut per = Vec::new();
-    for s in SURFACES {
-        if let Some(Value::Table(over)) = surface_t.get(s) {
+    let surface_tables: BTreeMap<&str, Table> = SURFACES
+        .iter()
+        .filter_map(|s| {
+            let Some(Value::Table(over)) = surface_t.get(*s) else {
+                return None;
+            };
             let mut st = base_t.clone();
             merge(&mut st, over);
-            per.push((s.to_string(), table_contrast(&st)));
-        }
-    }
+            fit_inherited(&mut st, &own_code(&start, Some(s)));
+            Some((*s, st))
+        })
+        .collect();
+    fit_inherited(&mut base_t, &own_code(&start, None));
+    let base_probs = table_contrast(&base_t);
+    let per = surface_tables
+        .iter()
+        .map(|(s, st)| (s.to_string(), table_contrast(st)))
+        .collect();
     problems.extend(combine(base_probs, per));
 
     if !problems.is_empty() {
@@ -358,13 +455,9 @@ pub fn resolve_doc(
     let base = build(&base_t)?;
     let mut surfaces = BTreeMap::new();
     for s in SURFACES {
-        let r = match surface_t.get(s) {
-            Some(Value::Table(over)) => {
-                let mut st = base_t.clone();
-                merge(&mut st, over);
-                build(&st)?
-            }
-            _ => base.clone(),
+        let r = match surface_tables.get(s) {
+            Some(st) => build(st)?,
+            None => base.clone(),
         };
         surfaces.insert(s.to_string(), r);
     }

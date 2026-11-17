@@ -33,6 +33,75 @@ urgent = "#E58A76"
 working = "#C7B07A"
 done = "#8EBDB9"
 
+# Code colors. The terminal's background, foreground, cursor and selection, and every diff
+# color, are left to derive from the colors above.
+
+[light.terminal]
+black = "#2B2E26"
+red = "#9C5041"
+green = "#57742C"
+yellow = "#876207"
+blue = "#386BA3"
+magenta = "#914F7A"
+cyan = "#007B78"
+white = "#CECCC3"
+bright_black = "#5C6152"
+bright_red = "#B67264"
+bright_green = "#769155"
+bright_yellow = "#A18143"
+bright_blue = "#5D89BB"
+bright_magenta = "#AB7095"
+bright_cyan = "#369794"
+bright_white = "#FBFAF5"
+
+[light.syntax]
+keyword = "#8B4974"
+string = "#526E26"
+number = "#815C00"
+comment = "#696E61"
+function = "#32669D"
+type = "#007573"
+variable = "#2B2E26"
+constant = "#915016"
+operator = "#4F5249"
+punctuation = "#5C6152"
+tag = "#964A3C"
+attribute = "#825A28"
+property = "#2A6D81"
+
+[dark.terminal]
+black = "#3A3D36"
+red = "#DB9789"
+green = "#9BB57B"
+yellow = "#C6A66B"
+blue = "#83AFDF"
+magenta = "#D196BA"
+cyan = "#64BCB9"
+white = "#D4D2C9"
+bright_black = "#7D7A73"
+bright_red = "#F1BCB1"
+bright_green = "#BED3A7"
+bright_yellow = "#E0C79C"
+bright_blue = "#ADCEF4"
+bright_magenta = "#E9BBD6"
+bright_cyan = "#9AD8D5"
+bright_white = "#F6F3E8"
+
+[dark.syntax]
+keyword = "#DEA2C7"
+string = "#A8C287"
+number = "#D3B378"
+comment = "#9A9789"
+function = "#90BBED"
+type = "#71C9C5"
+variable = "#F6F3E8"
+constant = "#E4A97F"
+operator = "#BCB9AF"
+punctuation = "#BDBFAF"
+tag = "#E9A495"
+attribute = "#D4B088"
+property = "#8DC1D3"
+
 [shape]
 radius_small = 6
 radius = 10
