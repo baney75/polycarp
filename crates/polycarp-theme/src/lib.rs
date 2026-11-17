@@ -41,6 +41,9 @@ pub const BUILTINS: &[(&str, &str)] = &[
         "everforest",
         include_str!("../../../themes/everforest.toml"),
     ),
+    ("flexoki", include_str!("../../../themes/flexoki.toml")),
+    ("atom-one", include_str!("../../../themes/atom-one.toml")),
+    ("ayu", include_str!("../../../themes/ayu.toml")),
 ];
 
 pub const DEFAULT_THEME: &str = "polycarp";

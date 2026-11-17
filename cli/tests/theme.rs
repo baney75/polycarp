@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-const BUILTINS: [&str; 9] = [
+const BUILTINS: [&str; 12] = [
     "polycarp",
     "still-water",
     "evening",
@@ -19,6 +19,9 @@ const BUILTINS: [&str; 9] = [
     "gruvbox",
     "catppuccin",
     "everforest",
+    "flexoki",
+    "atom-one",
+    "ayu",
 ];
 const SURFACES: [&str; 5] = ["spaces", "voice", "browser", "site", "studio"];
 const ROLES: [&str; 13] = [
@@ -4482,6 +4485,9 @@ const OUTPUT_CASES: &[(&str, &[&[&str]])] = &[
     ("gruvbox", &[&["set", "gruvbox"]]),
     ("catppuccin", &[&["set", "catppuccin"]]),
     ("everforest", &[&["set", "everforest"]]),
+    ("flexoki", &[&["set", "flexoki"]]),
+    ("atom-one", &[&["set", "atom-one"]]),
+    ("ayu", &[&["set", "ayu"]]),
     (
         "evening-dark-accent",
         &[

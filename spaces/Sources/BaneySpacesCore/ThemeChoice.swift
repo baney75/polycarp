@@ -14,6 +14,9 @@ public enum ThemeChoice {
         Theme(name: "gruvbox", title: "Gruvbox"),
         Theme(name: "catppuccin", title: "Catppuccin"),
         Theme(name: "everforest", title: "Everforest"),
+        Theme(name: "flexoki", title: "Flexoki"),
+        Theme(name: "atom-one", title: "Atom One"),
+        Theme(name: "ayu", title: "Ayu"),
     ]
     /// The picker's value for no Polycarp theme: the person's own colors, below it in Settings.
     public static let ownColors = ""
