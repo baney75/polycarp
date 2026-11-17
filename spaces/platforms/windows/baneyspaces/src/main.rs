@@ -63,6 +63,7 @@ const HELP: &str = "baneyspaces (Windows)
   daemon [--trace] [--log FILE]  run the daemon in this console
   daemon --background            run it with no console window (the sign-in entry runs this)
   stop                           ask the running daemon to put every window back and exit (also: daemon stop)
+  restore                        with no daemon running, show every window state.json lists as hidden (exit 3 if one stays hidden)
   mcp                            MCP server on stdio (agent tools only)
   doctor                         what works and what does not
 
@@ -297,6 +298,7 @@ fn print(env: &Envelope, text: bool) -> i32 {
     match &env.error {
         None => 0,
         Some(e) if e.code == "invalid_args" => 2,
+        Some(e) if e.code == "restore_failed" => 3,
         Some(_) => 1,
     }
 }
@@ -345,25 +347,37 @@ fn doctor(paths: &paths::Paths) -> Envelope {
     Envelope::ok(json!({ "healthy": ok, "checks": checks }))
 }
 
-/// Polls `running` every 100 ms, `tries` times at most, until it says the daemon is gone. True when it went.
-fn wait_until_gone(mut running: impl FnMut() -> bool, tries: u32) -> bool {
-    for _ in 0..tries {
-        if !running() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+/// `stop`: asks the daemon to put every window back and exit, then waits up to 10 s for its process to end, so an
+/// uninstall or upgrade that runs it next finds no running copy holding the files. The wait is on the process, not
+/// the pipe: the pipe can close while the process is still putting windows back.
+fn stop(paths: &paths::Paths) -> Envelope {
+    let ping = ipc::call(paths, &json!({ "op": "ping" }));
+    if !ping.ok {
+        return ping;
     }
-    !running()
+    let pid = ping.data.as_ref().and_then(|d| d["pid"].as_u64()).unwrap_or(0) as u32;
+    stop_then_wait(|| ipc::call(paths, &json!({ "op": "quit" })), process_waiter(pid))
 }
 
-/// `stop`: asks the daemon to put every window back and exit, then waits up to 10 s until it has (its pipe is gone),
-/// so an uninstall or upgrade that runs it next finds no running copy holding the files.
-fn stop(paths: &paths::Paths) -> Envelope {
-    let env = ipc::call(paths, &json!({ "op": "quit" }));
+/// Opens the daemon's process before it is asked to quit, so the handle still names it if its pid is reused. The
+/// function returned waits up to `ms` for it to end and says whether it did.
+#[cfg(windows)]
+fn process_waiter(pid: u32) -> impl FnOnce(u32) -> bool {
+    let p = winapi::Process::open(pid);
+    move |ms| p.is_none_or(|p| p.wait(ms))
+}
+
+#[cfg(not(windows))]
+fn process_waiter(_pid: u32) -> impl FnOnce(u32) -> bool {
+    |_| true
+}
+
+fn stop_then_wait(quit: impl FnOnce() -> Envelope, wait: impl FnOnce(u32) -> bool) -> Envelope {
+    let env = quit();
     if !env.ok {
         return env;
     }
-    let exited = wait_until_gone(|| ipc::call(paths, &json!({ "op": "ping" })).ok, 100);
+    let exited = wait(10_000);
     let mut data = env.data.unwrap_or_else(|| json!({}));
     data["exited"] = json!(exited);
     if exited {
@@ -371,6 +385,27 @@ fn stop(paths: &paths::Paths) -> Envelope {
     } else {
         Envelope::err("timeout", "the daemon was asked to stop and was still running 10 s later", Retry::Safe, "Run `baneyspaces stop` again; read daemon.log in %LOCALAPPDATA%\\BaneySpaces.")
     }
+}
+
+/// `restore`: shows every window `state.json` still lists as hidden, agent windows too, and exits. The uninstall runs
+/// it after `stop`: a daemon that crashed or was ended with `taskkill /F` put nothing back, and after an uninstall no
+/// next start will. No record, or an empty one, is success. A listed window that still exists and could not be shown
+/// is `restore_failed`, exit 3, and keeps its entry, so a later run can try again.
+#[cfg(windows)]
+fn restore(paths: &paths::Paths) -> Envelope {
+    // Holding the daemon's own instance lock keeps a daemon from starting, and changing the record, meanwhile.
+    let Some(_one) = daemon::single_instance(paths) else {
+        return fail("daemon_running", "a daemon is running and owns state.json", "Run `baneyspaces stop`: it puts the windows back itself.");
+    };
+    match daemon::restore_from_file(paths, false) {
+        (shown, _, 0) => Envelope::ok(json!({ "shown": shown })),
+        (_, _, failed) => Envelope::err("restore_failed", format!("{failed} window(s) listed in state.json could not be shown"), Retry::Safe, "Run `baneyspaces restore` again; closing that app also ends its hidden window."),
+    }
+}
+
+#[cfg(not(windows))]
+fn restore(_paths: &paths::Paths) -> Envelope {
+    fail("unsupported", "restore is for Windows", "")
 }
 
 fn run_daemon(args: &[String]) -> i32 {
@@ -450,6 +485,7 @@ fn main() {
         }
         "doctor" => print(&doctor(&paths), text),
         "stop" => print(&stop(&paths), text),
+        "restore" => print(&restore(&paths), text),
         "mcp" => {
             let stdin = std::io::stdin();
             let mut out = std::io::stdout();
@@ -520,10 +556,25 @@ mod tests {
     }
 
     #[test]
-    fn stop_waits_for_the_daemon_to_go_and_says_when_it_did_not() {
-        let mut left = 3;
-        assert!(wait_until_gone(|| { left -= 1; left > 0 }, 10));
-        assert!(!wait_until_gone(|| true, 2));
+    fn stop_reports_a_daemon_that_did_not_exit() {
+        let env = stop_then_wait(|| Envelope::ok(json!({ "stopping": true })), |_| false);
+        assert_eq!(env.error.map(|e| e.code), Some("timeout".to_string()));
+        let down = stop_then_wait(|| fail("daemon_down", "no daemon", ""), |_| panic!("no wait without a daemon"));
+        assert_eq!(down.error.map(|e| e.code), Some("daemon_down".to_string()));
+    }
+
+    /// The daemon's pipe can be gone while its process still runs (putting windows back). `stop` must wait for the
+    /// process: a stand-in that outlives any ping by 2 s holds `stop` for those 2 s.
+    #[cfg(windows)]
+    #[test]
+    fn stop_waits_for_the_process_not_the_pipe() {
+        let mut child = std::process::Command::new("powershell").args(["-NoProfile", "-Command", "Start-Sleep 2"]).spawn().unwrap();
+        let t = std::time::Instant::now();
+        let env = stop_then_wait(|| Envelope::ok(json!({ "stopping": true })), process_waiter(child.id()));
+        let took = t.elapsed();
+        let _ = child.wait();
+        assert!(env.ok && env.data.unwrap()["exited"] == true, "stop must report the exit");
+        assert!(took >= std::time::Duration::from_millis(1500), "stop returned after {took:?}, before the process ended");
     }
 
     #[test]
