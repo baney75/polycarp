@@ -1018,7 +1018,99 @@ impl State {
 
 /// Reads `config.toml`. Anything wrong is reported and the defaults are used.
 fn load_state(cfg: &Cfg) -> (State, Vec<String>) {
-    load_appearance(cfg)
+    let (mut st, problems) = load_appearance(cfg);
+    if problems.is_empty() {
+        if let Some(f) = old_follow(cfg) {
+            end_old_follow(cfg, &mut st, f);
+        }
+    }
+    (st, problems)
+}
+
+/// The theme an older Polycarp made current while it followed Omarchy's theme.
+const OLD_FOLLOW_THEME: &str = "omarchy-overrides";
+/// The second line of the Omarchy hook an older Polycarp wrote. A file without it is not ours.
+const OLD_FOLLOW_HOOK_MARK: &str = "# polycarp-managed-hook";
+
+/// What `theme follow omarchy` kept in the `[omarchy]` table to go back to: the theme, mode and
+/// accents from before. Only a complete record counts, as it did then.
+struct OldFollow {
+    theme: String,
+    mode: String,
+    accent_light: Option<String>,
+    accent_dark: Option<String>,
+}
+
+fn old_follow(cfg: &Cfg) -> Option<OldFollow> {
+    let table = parse_toml(&fs::read_to_string(cfg.file()).ok()?).ok()?;
+    let t = table.get("omarchy")?.as_table()?;
+    if !t.get("following")?.as_bool()? {
+        return None;
+    }
+    let theme = t
+        .get("previous_theme")?
+        .as_str()
+        .filter(|s| valid_name(s))?;
+    let mode = t.get("previous_mode")?.as_str().filter(|m| mode_ok(m))?;
+    let hex = |k: &str| {
+        t.get(k)
+            .and_then(Value::as_str)
+            .filter(|s| is_hex(s))
+            .map(str::to_lowercase)
+    };
+    Some(OldFollow {
+        theme: theme.to_string(),
+        mode: mode.to_string(),
+        accent_light: hex("prev_accent_light"),
+        accent_dark: hex("prev_accent_dark"),
+    })
+}
+
+/// Following Omarchy's theme is retired with the Linux desktop. A follow record an older Polycarp
+/// left ends the way `theme follow off` ended it: the accents from before come back and, if the
+/// following theme is current, so do the theme and mode from before (the default if that theme is
+/// gone). An accent that no longer reads on the theme is cleared. The next write saves this and
+/// drops the table (`state_table`).
+fn end_old_follow(cfg: &Cfg, st: &mut State, f: OldFollow) {
+    st.accent_light = f.accent_light;
+    st.accent_dark = f.accent_dark;
+    if st.theme == OLD_FOLLOW_THEME {
+        if resolve_name(cfg, &f.theme).is_ok() {
+            st.theme = f.theme;
+            st.mode = f.mode;
+        } else {
+            st.theme = DEFAULT_THEME.into();
+            st.mode = "auto".into();
+        }
+    }
+    if let Ok(full) = resolve_name(cfg, &st.theme) {
+        if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
+            st.accent_light = None;
+            st.accent_dark = None;
+        }
+    }
+}
+
+/// Removes the Omarchy hook an older Polycarp wrote for this config folder: only a plain file whose
+/// second line is Polycarp's mark for this folder. Says what it removed, or why it could not.
+fn remove_old_follow_hook(cfg: &Cfg) -> Option<String> {
+    let home = env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .filter(|h| h.is_absolute())?;
+    let hook = home.join(".config/omarchy/hooks/theme-set.d/polycarp");
+    if !fs::symlink_metadata(&hook).ok()?.is_file() {
+        return None;
+    }
+    let text = fs::read_to_string(&hook).ok()?;
+    let mark = format!("{OLD_FOLLOW_HOOK_MARK}: config={}", cfg.dir.display());
+    if text.lines().nth(1) != Some(mark.as_str()) {
+        return None;
+    }
+    Some(match fs::remove_file(&hook) {
+        Ok(()) => format!("removed the Omarchy hook {}", hook.display()),
+        Err(e) => format!("could not remove the Omarchy hook {}: {e}", hook.display()),
+    })
 }
 
 fn load_appearance(cfg: &Cfg) -> (State, Vec<String>) {
@@ -1158,7 +1250,8 @@ fn state_table(cfg: &Cfg, st: &State) -> String {
         app.insert("accent_dark".into(), Value::String(a.clone()));
     }
     table.insert("appearance".into(), Value::Table(app));
-    // Following Omarchy's theme is retired with the Linux desktop; an old `[omarchy]` table is dropped.
+    // Following Omarchy's theme is retired with the Linux desktop. `load_state` has already read an
+    // old `[omarchy]` table into `st`, so it is dropped here.
     table.remove("omarchy");
     toml::to_string(&table).unwrap_or_default()
 }
@@ -2602,7 +2695,10 @@ fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, Option<
     if let Some(new) = &new_config {
         write_atomic(&c.cfg.file(), new).map_err(undo_all)?;
     }
-    finish_with(&c.cfg, true)
+    let hook = remove_old_follow_hook(&c.cfg);
+    let mut out = finish_with(&c.cfg, true)?;
+    out.notes.extend(hook);
+    Ok(out)
 }
 
 /// A change that picks a theme also turns a theme that was off back on, and says so.
@@ -4054,16 +4150,39 @@ pub(crate) fn op_reset(c: &Ctx) -> Res {
             }
         }
     }
+    let hook = remove_old_follow_hook(&c.cfg);
     let mut out = finish_with(&c.cfg, true)?;
     if was_off {
         out.notes
             .push("the theme was off; reset turned it on, with the default theme".to_string());
     }
+    out.notes.extend(hook);
     drop(_lock);
     for w in warnings {
         out = out.caution(w);
     }
     Ok(out)
+}
+
+/// `theme follow`, in any form, says that following Omarchy's theme is retired. A follow record an
+/// older Polycarp left is ended here, the way `follow off` ended it: the settings are saved with the
+/// theme, mode and accents from before (`load_state` reads them back) and its hook is removed.
+pub(crate) fn op_follow_retired(c: &Ctx) -> Res {
+    let text = format!("{FOLLOW_MOVED}\n{}\n", crate::update::LINUX_MOVED);
+    let retired = || Out::new(json!({"retired": true, "restored": false}), text.clone());
+    let Some(_old) = old_follow(&c.cfg) else {
+        let mut out = retired();
+        out.notes.extend(remove_old_follow_hook(&c.cfg));
+        return Ok(out);
+    };
+    let _lock = Lock::acquire(&c.cfg)?;
+    let (st, problems) = load_state(&c.cfg);
+    if !problems.is_empty() {
+        return Ok(retired().warn(problems));
+    }
+    let mut out = commit(c, Some(&st), "theme follow off", None)?;
+    out.text = format!("{text}{}", out.text);
+    Ok(out.with(json!({"retired": true, "restored": true})))
 }
 
 pub(crate) fn op_schema() -> Res {
@@ -4509,11 +4628,9 @@ pub fn run(args: &[OsString]) -> i32 {
             exactly(p, 0, "no arguments")?;
             op_on(c)
         }),
-        // Following the Omarchy theme left with the Linux desktop.
-        "follow" => {
-            println!("{FOLLOW_MOVED}");
-            return 0;
-        }
+        // Following the Omarchy theme left with the Linux desktop. Any arguments are taken, so the
+        // hook an older Polycarp left (`follow omarchy --sync`) gets the same answer.
+        "follow" => ctx().and_then(|c| op_follow_retired(&c)),
         "reset" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;
             op_reset(c)
