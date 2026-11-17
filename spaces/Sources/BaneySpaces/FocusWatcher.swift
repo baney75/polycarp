@@ -58,7 +58,7 @@ final class FocusWatcher {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.25)
         let me = Unmanaged.passUnretained(self).toOpaque()
-        guard app.checked(AXObserverAddNotification(observer, app, kAXFocusedWindowChangedNotification as CFString, me)) else { return false }
+        guard app.checked(AXObserverAddNotification(observer, app, kAXFocusedWindowChangedNotification as CFString, me), call: "focus observer") else { return false }
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
         observers[pid] = observer
         return true
