@@ -23,7 +23,7 @@ final class AXMissLineWiringTests: XCTestCase {
     func testEveryBenchingPathNamesItsCall() throws {
         let windows = try Repo.code("Sources/BaneySpaces/Windows.swift")
         XCTAssertTrue(windows.contains("AXBench.missLine("), "the trace line comes from the Core helper")
-        XCTAssertTrue(windows.contains("markUnresponsive(pid, call: kAXWindowsAttribute, error: error)"), "the scan names the window list and its error")
+        XCTAssertTrue(windows.contains("markUnresponsive(pid, call: kAXWindowsAttribute, error: read.error)"), "the scan names the window list and its error")
         XCTAssertFalse(windows.contains("markUnresponsive(pid)"), "no miss without its call and error")
         let focus = try Repo.code("Sources/BaneySpaces/FocusWatcher.swift")
         XCTAssertTrue(focus.contains(#"call: "focus observer""#), "an observer refusal says so")

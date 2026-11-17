@@ -109,7 +109,7 @@ final class WaitingWindowTests: XCTestCase {
         let spaces = try source("Spaces.swift"), dock = try source("WorkspaceDock.swift"), windows = try source("Windows.swift")
         XCTAssertTrue(windows.contains("WaitingWindow.asks("), "the scan reports windows that wait on you")
         XCTAssertTrue(spaces.contains("WaitingWindow.claimKeeps(agentStartedProcess: c.newProcess"), "an agent's claim leaves a lent app's modal with its app")
-        XCTAssertTrue(windows.contains("if modal == true { asks.append("), "a standard window that is modal is reported too")
+        XCTAssertTrue(windows.contains("if el.modal == true {"), "a standard window that is modal is reported too")
         XCTAssertTrue(spaces.contains("DockAttention.marks("), "the marks follow each scan and switch")
         XCTAssertTrue(spaces.contains("DockAttention.traceLines("), "trace.log says when a mark sets and clears")
         XCTAssertTrue(dock.contains("model.onFocusWaiting(waiting)"), "a marked tile's click goes to the waiting window")
