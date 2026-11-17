@@ -273,6 +273,8 @@ struct LauncherItem: Identifiable {
     var run: () -> Void
     /// ⌘↩: show in Finder, or a cask's web page.
     var reveal: URL?
+    /// How well it answers what was typed (spec/launcher.md); nil for rows that can't be the Top Hit.
+    var score: Int?
 }
 
 final class LauncherModel: ObservableObject {
@@ -331,7 +333,17 @@ final class LauncherModel: ObservableObject {
 
     enum Job: Equatable { case installing, removing, failed(String) }
 
-    @Published var query = "" { didSet { if query != oldValue { selected = 0; rebuild(); searchStore(); searchFiles() } } }
+    @Published var query = "" {
+        didSet {
+            guard query != oldValue else { return }
+            PaintClock.shared.keyTyped()
+            selected = 0
+            rebuild()
+            PaintClock.shared.willPaint(results: items.count)
+            searchStore()
+            searchFiles()
+        }
+    }
     @Published private(set) var scope = Scope.root
     @Published private(set) var items: [LauncherItem] = []
     @Published var selected = 0
@@ -343,7 +355,15 @@ final class LauncherModel: ObservableObject {
     var alertOpen = false
 
     private let actions: LauncherActions
-    private var apps: [AppEntry] = []
+    private var apps: [AppEntry] = [] { didSet { appsChanged() } }
+    private var appsByID: [String: AppEntry] = [:]
+    private var appEntries: [LauncherIndex.Entry] = []
+    /// Apps, commands, workspaces and menus with their names prepared (spec/launcher.md R-L12):
+    /// rebuilt when one of them changes, never per keystroke.
+    private var index = LauncherIndex()
+    /// The apps on each workspace, read when the launcher opens.
+    private var workspaceApps: [Int: [String]] = [:]
+    private var commandList: [(title: String, symbol: String, subtitle: String, run: () -> Void)] = []
     private var running: [String: [Int]] = [:]
     private var recents = Recents(UserDefaults.standard.stringArray(forKey: "launcherRecents") ?? [])
     private var iconCache: [String: NSImage] = [:]
@@ -363,6 +383,33 @@ final class LauncherModel: ObservableObject {
     init(actions: LauncherActions) {
         self.actions = actions
         apps = AppEntry.scan()
+        appsChanged()
+    }
+
+    private func appsChanged() {
+        appsByID = Dictionary(apps.map { ("app:" + $0.path, $0) }, uniquingKeysWith: { a, _ in a })
+        appEntries = apps.map { .app(id: "app:" + $0.path, name: $0.name) }
+        reindex()
+    }
+
+    /// The index from the lists as they are now. Apps keep their prepared names; the rest are few.
+    private func reindex() {
+        commandList = commands()
+        index = LauncherIndex(appEntries
+            + Workspaces.range.map { .workspace(id: "ws:\($0)", number: $0, apps: workspaceApps[$0] ?? []) }
+            + commandList.map { .command(id: "cmd:" + $0.title, title: $0.title) }
+            + Scope.allCases.filter { $0 != .root }.map { .menu(id: "scope:" + $0.rawValue, title: $0.title) })
+    }
+
+    /// What you used lately lifts an app a little (spec/launcher.md R-L10), as does one already running.
+    private func boost(_ id: String) -> Int {
+        guard id.hasPrefix("app:") else { return 0 }
+        let path = String(id.dropFirst(4))
+        return recents.boost(path) / 4 + (running[path] != nil ? 4 : 0)
+    }
+
+    private func search(_ q: String, kinds: Set<LauncherIndex.Kind>? = nil) -> [LauncherIndex.Hit] {
+        index.search(q, kinds: kinds, boost: boost)
     }
 
     func prepare(scope: Scope) {
@@ -372,6 +419,8 @@ final class LauncherModel: ObservableObject {
         field?.stringValue = ""
         selected = 0
         running = actions.workspacesByApp()
+        workspaceApps = Dictionary(uniqueKeysWithValues: Workspaces.range.map { ($0, actions.appsOn($0)) })
+        reindex()
         storeResults = []
         fileResults = []
         bangs = Launcher.loadBangs()
@@ -379,7 +428,7 @@ final class LauncherModel: ObservableObject {
         // Apps installed since the last look show up without a restart.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let fresh = AppEntry.scan()
-            DispatchQueue.main.async { self?.apps = fresh; self?.rebuild() }
+            DispatchQueue.main.async { if self?.apps != fresh { self?.apps = fresh; self?.rebuild() } }
         }
         Terminals.installedAgents { [weak self] found in
             guard let self, found != self.agents else { return }
@@ -468,12 +517,14 @@ final class LauncherModel: ObservableObject {
                 out += recentApps().prefix(5)
                 out += menuItems()
             } else {
-                out += appItems(q, limit: 8)
+                let hits = search(q)
+                out += appItems(hits, q: q, limit: 8)
                 out += actions.sessionItems(q).prefix(8)
                 out += agentItems(q)
-                out += workspaceItems(q)
-                out += commandItems(q)
-                out += menuItems().filter { Fuzzy.score(q, $0.title) != nil }
+                out += workspaceItems(hits)
+                out += commandItems(hits)
+                out += menuItems(hits)
+                out = Self.topHitFirst(out)
                 // Files come in a moment after the rest, below them, so the row you're on stays put.
                 out += fileItems().prefix(5)
                 out += searchEverywhere(q).prefix(3)
@@ -481,13 +532,13 @@ final class LauncherModel: ObservableObject {
                                         subtitle: "Search Homebrew and the App Store", icon: .symbol("arrow.down.circle"),
                                         badge: "⇥", run: { [weak self] in self?.enter(.install); self?.setQuery(q) }))
             }
-        case .apps: out = appItems(q, limit: 500)
+        case .apps: out = appItems(search(q, kinds: [.app]), q: q, limit: 500)
         case .files: out = fileItems()
         case .install: out = installItems(q)
         case .remove: out = removeItems(q)
-        case .update: out = updateItems().filter { q.isEmpty || Fuzzy.score(q, $0.title) != nil }
-        case .system: out = commandItems(q)
-        case .workspaces: out = workspaceItems(q, all: true)
+        case .update: out = updateItems().filter { Match.score(q, $0.title) != nil }
+        case .system: out = commandItems(search(q, kinds: [.command]))
+        case .workspaces: out = workspaceItems(search(q, kinds: [.workspace]))
         }
         items = out
         if selected >= items.count { selected = max(0, items.count - 1) }
@@ -604,35 +655,42 @@ final class LauncherModel: ObservableObject {
         query = q
     }
 
-    private func menuItems() -> [LauncherItem] {
-        Scope.allCases.filter { $0 != .root }.map { s in
+    private func menuItems(_ hits: [LauncherIndex.Hit]? = nil) -> [LauncherItem] {
+        let scopes = hits.map { $0.filter { $0.kind == .menu }.compactMap { h in Scope(rawValue: String(h.id.dropFirst(6))).map { ($0, h.score) } } }
+            ?? Scope.allCases.filter { $0 != .root }.map { ($0, nil) }
+        return scopes.map { s, score in
             LauncherItem(id: "scope:\(s.rawValue)", section: "Menu", title: s.title, subtitle: s.blurb, icon: .symbol(s.symbol),
-                         badge: "⇥", run: { [weak self] in self?.enter(s) })
+                         badge: "⇥", run: { [weak self] in self?.enter(s) }, score: score)
         }
+    }
+
+    /// The best row of every kind goes first, as the Top Hit (spec/launcher.md R-L11); a tie keeps
+    /// the earlier section's row.
+    static func topHitFirst(_ rows: [LauncherItem]) -> [LauncherItem] {
+        var best: Int?
+        for (i, r) in rows.enumerated() {
+            if let s = r.score, s > (best.flatMap { rows[$0].score } ?? .min) { best = i }
+        }
+        guard let best else { return rows }
+        var out = rows
+        var top = out.remove(at: best)
+        top.section = "Top Hit"
+        return [top] + out
     }
 
     private func recentApps() -> [LauncherItem] {
         recents.paths.compactMap { path in apps.first { $0.path == path } }.map { appItem($0, section: "Recent") }
     }
 
-    private func appItems(_ q: String, limit: Int) -> [LauncherItem] {
-        let matches: [AppEntry]
-        if q.isEmpty {
-            matches = apps
-        } else {
-            matches = apps.compactMap { a -> (AppEntry, Int)? in
-                guard let s = Fuzzy.score(q, a.name) else { return nil }
-                return (a, s + recents.boost(a.path) + (running[a.path] != nil ? 15 : 0))
-            }
-            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.name < $1.0.name }
-            .map(\.0)
-        }
+    private func appItems(_ hits: [LauncherIndex.Hit], q: String, limit: Int) -> [LauncherItem] {
+        let matches = hits.lazy.filter { $0.kind == .app }.compactMap { h in self.appsByID[h.id].map { ($0, h.score) } }.prefix(limit)
         // An app open on more than one workspace also gets a row for each, to pick which, and so
         // does one that opens a new window here instead of going to its workspace.
-        return matches.prefix(limit).flatMap { a -> [LauncherItem] in
+        return matches.flatMap { a, score -> [LauncherItem] in
             let on = running[a.path] ?? []
             let look = !q.isEmpty && limit <= 8
-            let main = appItem(a, section: "Apps", look: look)
+            var main = appItem(a, section: "Apps", look: look)
+            if !q.isEmpty { main.score = score }
             guard on.count > 1 || opensHere(a, look: look), !q.isEmpty else { return [main] }
             return [main] + on.map { n in
                 LauncherItem(id: "app:\(a.path):\(n)", section: "Apps", title: "\(a.name) on Workspace \(n)",
@@ -709,26 +767,20 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    private func workspaceItems(_ q: String, all: Bool = false) -> [LauncherItem] {
-        Workspaces.range.compactMap { n in
-            let apps = actions.appsOn(n)
-            let title = "Workspace \(n)"
-            let text = "\(title) \(apps.joined(separator: " "))"
-            if !q.isEmpty {
-                // "3" or "ws 3" goes straight there; names find the workspace an app is on.
-                let digitMatch = q.trimmingCharacters(in: .whitespaces) == String(n)
-                if !digitMatch && Fuzzy.score(q, title) == nil && !apps.contains(where: { Fuzzy.score(q, $0).map { $0 >= 500 } ?? false }) { return nil }
-            } else if !all { return nil }
-            _ = text
-            return LauncherItem(id: "ws:\(n)", section: "Workspaces", title: title,
+    /// Workspaces that answer the query: "3", "ws 3", or the name of an app on one.
+    private func workspaceItems(_ hits: [LauncherIndex.Hit]) -> [LauncherItem] {
+        hits.filter { $0.kind == .workspace }.compactMap { h in
+            guard let n = Int(h.id.dropFirst(3)) else { return nil }
+            let apps = workspaceApps[n] ?? []
+            return LauncherItem(id: "ws:\(n)", section: "Workspaces", title: "Workspace \(n)",
                                 subtitle: apps.isEmpty ? "Empty" : apps.joined(separator: ", "), icon: .symbol("\(n).square"),
-                                run: { [weak self] in self?.close(); self?.actions.switchTo(n) })
+                                run: { [weak self] in self?.close(); self?.actions.switchTo(n) }, score: query.isEmpty ? nil : h.score)
         }
     }
 
-    private func commandItems(_ q: String) -> [LauncherItem] {
+    private func commands() -> [(title: String, symbol: String, subtitle: String, run: () -> Void)] {
         let dockOn = actions.dockOn()
-        let all: [(String, String, String, () -> Void)] = [
+        return [
             ("Lock Screen", "lock", "", { System.lock() }),
             ("Sleep", "moon.zzz", "", { System.run("/usr/bin/pmset", ["sleepnow"]) }),
             ("Restart…", "restart", "macOS asks before restarting", { System.loginWindow("rrst") }),
@@ -743,9 +795,14 @@ final class LauncherModel: ObservableObject {
             (dockOn ? "Turn Off Workspace Dock" : "Turn On Workspace Dock", "dock.rectangle", "", { [weak self] in self?.actions.toggleDock() }),
             ("Polycarp Settings", "slider.horizontal.3", "", { [weak self] in self?.actions.showSetup() }),
         ]
-        return all.filter { q.isEmpty || Fuzzy.score(q, $0.0) != nil }.map { c in
-            LauncherItem(id: "cmd:\(c.0)", section: "System", title: c.0, subtitle: c.2, icon: .symbol(c.1),
-                         run: { [weak self] in self?.close(); DispatchQueue.main.async(execute: c.3) })
+    }
+
+    private func commandItems(_ hits: [LauncherIndex.Hit]) -> [LauncherItem] {
+        hits.filter { $0.kind == .command }.compactMap { h in
+            guard let c = commandList.first(where: { "cmd:" + $0.title == h.id }) else { return nil }
+            return LauncherItem(id: h.id, section: "System", title: c.title, subtitle: c.subtitle, icon: .symbol(c.symbol),
+                                run: { [weak self] in self?.close(); DispatchQueue.main.async(execute: c.run) },
+                                score: query.isEmpty ? nil : h.score)
         }
     }
 

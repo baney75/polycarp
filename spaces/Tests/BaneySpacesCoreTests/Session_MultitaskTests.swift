@@ -3,9 +3,9 @@ import XCTest
 
 final class SessionRankTests: XCTestCase {
     func testUsesTheLauncherMatcher() {
-        XCTAssertEqual(SessionRank.rank("hel", ["shell", "Helium"]) { [$0] }.first, "Helium")
-        XCTAssertEqual(SessionRank.rank("", ["b", "a"]) { [$0] }, ["b", "a"])
-        XCTAssertEqual(SessionRank.rank("zzz", ["b", "a"]) { [$0] }, [])
+        XCTAssertEqual(SessionRank.rank("hel", ["shell", "Helium"]) { ($0, "", "") }.first, "Helium")
+        XCTAssertEqual(SessionRank.rank("", ["b", "a"]) { ($0, "", "") }, ["b", "a"])
+        XCTAssertEqual(SessionRank.rank("zzz", ["b", "a"]) { ($0, "", "") }, [])
     }
 }
 

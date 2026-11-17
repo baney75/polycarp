@@ -3,13 +3,20 @@ import Foundation
 
 /// Ranks session rows for the launcher with the launcher's own matcher, so both search alike.
 public enum SessionRank {
-    /// `items` best first, dropping the ones that don't match. Ties keep their order.
-    public static func rank<T>(_ query: String, _ items: [T], text: (T) -> [String]) -> [T] {
-        guard !Fuzzy.fold(query).isEmpty else { return items }
-        return items.enumerated()
-            .compactMap { i, x in text(x).compactMap { Fuzzy.score(query, $0) }.max().map { (i, x, $0) } }
-            .sorted { $0.2 != $1.2 ? $0.2 > $1.2 : $0.0 < $1.0 }
-            .map(\.1)
+    /// `items` best first with their scores on the launcher's scale (spec/launcher.md R-L8: a
+    /// window answers to its title, its app and title, and its detail at a cost), dropping the
+    /// ones that don't match. Ties keep their order; an empty query keeps them all with 0.
+    public static func scored<T>(_ query: String, _ items: [T],
+                                 window: (T) -> (title: String, app: String, detail: String)) -> [(item: T, score: Int)] {
+        let index = LauncherIndex(items.enumerated().map { i, x in
+            let w = window(x)
+            return .window(id: String(i), title: w.title, app: w.app, detail: w.detail)
+        })
+        return index.search(query).map { (items[Int($0.id)!], $0.score) }
+    }
+
+    public static func rank<T>(_ query: String, _ items: [T], window: (T) -> (title: String, app: String, detail: String)) -> [T] {
+        scored(query, items, window: window).map(\.item)
     }
 }
 

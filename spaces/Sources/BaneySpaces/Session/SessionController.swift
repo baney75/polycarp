@@ -369,10 +369,10 @@ final class SessionController {
     func launcherItems(_ q: String) -> [LauncherItem] {
         guard started else { return [] }
         let unseen = engine.attention.unseen
-        let rows = q.isEmpty
-            ? unseen.compactMap { engine.item($0) }
-            : SessionRank.rank(q, engine.items) { [$0.label, "\($0.appName) \($0.label)", $0.detail] }
-        return rows.map { item in
+        let rows: [(item: Item, score: Int?)] = q.isEmpty
+            ? unseen.compactMap { engine.item($0) }.map { ($0, nil) }
+            : SessionRank.scored(q, engine.items) { ($0.label, $0.appName, $0.detail) }.map { ($0.item, $0.score) }
+        return rows.map { item, score in
             let done = unseen.contains(item.id)
             var sub = [item.appName]
             if !item.notice.isEmpty { sub.append(item.notice) } else if !item.detail.isEmpty { sub.append(item.detail) }
@@ -380,7 +380,7 @@ final class SessionController {
                                 title: item.label, subtitle: sub.joined(separator: " · "), icon: .file(Self.appPath(item.bundleID)),
                                 badge: done ? "Done" : item.activity == .working ? "Working" : "",
                                 workspaces: item.workspace > 0 ? [item.workspace] : [],
-                                run: { [weak self] in self?.focus(item) })
+                                run: { [weak self] in self?.focus(item) }, score: score)
         }
     }
 

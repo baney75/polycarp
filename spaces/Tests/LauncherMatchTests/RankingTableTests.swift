@@ -3,8 +3,8 @@ import XCTest
 
 /// What comes up first for what was typed, over a launcher index shaped like a real Mac's: the
 /// apps, Polycarp's commands and menus, nine workspaces and a few windows. Each row is one query
-/// and the entry that must be the top hit. Typos of one letter, acronyms and words typed apart
-/// are all here.
+/// and the entry that must be the top hit, or nil when nothing may match. Typos of one letter,
+/// acronyms and words typed apart are all here.
 enum RankingTable {
     static let apps = [
         "1Password", "Activity Monitor", "App Store", "Calculator", "Calendar", "ChatGPT", "Chess", "Claude",
@@ -26,6 +26,8 @@ enum RankingTable {
         ("w:inbox", "Inbox - Proton Mail", "Helium", ""),
         ("w:polycarp", "polycarp", "Ghostty", "~/Projects/polycarp"),
         ("w:invoice", "Invoice 2026-11.pdf", "Preview", ""),
+        ("w:typescript", "TypeScript Handbook", "Helium", ""),
+        ("w:javascript", "JavaScript Guide", "Helium", ""),
     ]
 
     static func index() -> LauncherIndex {
@@ -36,8 +38,8 @@ enum RankingTable {
             + windows.map { .window(id: $0.id, title: $0.title, app: $0.app, detail: $0.detail) })
     }
 
-    /// Query, then the id that must come first.
-    static let cases: [(String, String)] = [
+    /// Query, then the id that must come first (nil: nothing matches).
+    static let cases: [(String, String?)] = [
         ("saf", "app:Safari"),
         ("safari", "app:Safari"),
         ("vsc", "app:Visual Studio Code"),
@@ -88,6 +90,11 @@ enum RankingTable {
         ("discrod", "app:Discord"),
         ("spotiffy", "app:Spotify"),
         ("calendr", "app:Calendar"),
+        // A run keeps the camelCase bonus it reaches (R-L5): the literal "eScript" beats "Helium
+        // JavaScript Guide", matched "e" then "Script" with a gap.
+        ("escript", "w:typescript"),
+        // A typo stays inside one word (R-L3): "a" then "screen" are two.
+        ("abscreen", nil),
     ]
 }
 
@@ -98,7 +105,7 @@ final class RankingTableTests: XCTestCase {
         for (query, expected) in RankingTable.cases {
             let top = index.search(query, limit: 3)
             if top.first?.id != expected {
-                wrong.append("\"\(query)\": wanted \(expected), got \(top.map { "\($0.id) \($0.score)" })")
+                wrong.append("\"\(query)\": wanted \(expected ?? "nothing"), got \(top.map { "\($0.id) \($0.score)" })")
             }
         }
         XCTAssertGreaterThanOrEqual(RankingTable.cases.count, 30)
@@ -113,6 +120,9 @@ final class RankingTableTests: XCTestCase {
         XCTAssertNotNil(Match.score("safxri", "Safari"))
         // Two typos are too many.
         XCTAssertNil(Match.score("sxfxri", "Safari"))
+        // A typo never reaches into the next word.
+        XCTAssertNil(Match.score("abxd", "Ab Dog"))
+        XCTAssertNotNil(Match.score("abxd", "Abed Dog"))
         XCTAssertEqual(Match.score("", "Anything"), 0)
     }
 
@@ -133,6 +143,8 @@ final class RankingTableTests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(Match.score("vsc", "Visual Studio Code")), try XCTUnwrap(Match.score("vsc", "Ovscan")))
         // A typo scores under a clean match of the same word.
         XCTAssertGreaterThan(try XCTUnwrap(Match.score("safar", "Safari")), try XCTUnwrap(Match.score("safaru", "Safari")))
+        // The example in R-L5: b 16, then C and d 16 + 7 each, less half the length.
+        XCTAssertEqual(Match.score("bcd", "abCd"), 16 + 23 + 23 - 2)
         // camelCase and digits start words too.
         XCTAssertGreaterThan(try XCTUnwrap(Match.score("hd", "GitHubDesktop")), try XCTUnwrap(Match.score("hd", "Shadow")))
     }

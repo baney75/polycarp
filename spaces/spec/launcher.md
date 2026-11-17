@@ -27,7 +27,9 @@ Folding happens per character; ASCII needs no library call.
 A query word of 4 letters or more that does not match by R-L1 still matches when it is at most one
 edit from the start of some word of the name, counting a letter changed, added, dropped, or two
 neighbors swapped (optimal string alignment distance 1 against a prefix of that word, the prefix
-1 shorter to 1 longer than the query word). "safaru", "chorme", "slakc", "termimal" match.
+1 shorter to 1 longer than the query word). "safaru", "chorme", "slakc", "termimal" match. The
+prefix stays inside the word: it ends at the next character that is not a letter or digit, so
+"abxd" does not match "Ab Dog" and "abscreen" does not match "Take a Screenshot".
 Words of 3 letters or fewer are never forgiven.
 
 ## Scoring
@@ -55,8 +57,11 @@ placement (not the first one found):
 - Each matched letter scores 16 plus a bonus.
 - The first matched letter's bonus counts twice, minus `min(position, 16) / 4` (integer division),
   so a match that starts later scores a little less.
-- A letter right after the previous matched letter is in a run. Its bonus is the larger of its own
-  bonus and the bonus of the letter that started the run, and at least 4.
+- A letter right after the previous matched letter is in a run. Its bonus is the largest bonus of
+  any letter in the run so far, its own included, and at least 4. So "bcd" in "abCd" scores
+  b 16, C 16 + 7, d 16 + 7: the run picks up C's camelCase bonus and keeps it. (fzf keeps only the
+  first letter's bonus; that put "Helium JavaScript Guide", matched "e" then "Script" with a gap,
+  over the literal "eScript" of "TypeScript Handbook" for "escript".)
 - A letter after a gap gets its own bonus, and the gap costs 3 for its first skipped character
   plus 1 for each more.
 - A word matched only by a typo (R-L3) scores `16 × (letters − 1) − 8`.

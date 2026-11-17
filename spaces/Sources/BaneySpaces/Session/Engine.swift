@@ -390,7 +390,7 @@ final class Engine {
     /// An item by exact ID, else the best fuzzy match on its label, app and folder or host.
     func find(_ query: String) -> Item? {
         if let exact = item(query) { return exact }
-        return SessionRank.rank(query, items) { [$0.label, "\($0.appName) \($0.label)", $0.detail] }.first
+        return SessionRank.rank(query, items) { ($0.label, $0.appName, $0.detail) }.first
     }
 
     /// The copy of the app the row came from: two Ghostty processes share a bundle ID.
