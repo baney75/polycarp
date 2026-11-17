@@ -226,7 +226,10 @@ final class AgentAccessSurfaceTests: XCTestCase {
         let sheet = try XCTUnwrap(HandsSourceTests.block(after: "private static func confirm(", in: consent))
         XCTAssertTrue(sheet.contains("button.isEnabled = false"))
         XCTAssertTrue(sheet.contains("LendConsent.notByHand(alert: alert, button: button, enabledAt: enabledAt)"), "a hardware click on the button only")
-        XCTAssertTrue(sheet.range(of: "alert.addButton(withTitle: \"Keep")!.lowerBound < sheet.range(of: "alert.addButton(withTitle: confirmTitle)")!.lowerBound, "the default button keeps")
+        // The keep button is first, so Return keeps; view control's sheet names its own ("Keep Off").
+        let keep = try XCTUnwrap(sheet.range(of: "alert.addButton(withTitle: keep ?? \"Keep"))
+        let confirm = try XCTUnwrap(sheet.range(of: "alert.addButton(withTitle: confirmTitle)"))
+        XCTAssertTrue(keep.lowerBound < confirm.lowerBound, "the default button keeps")
     }
 
     func testEveryEntryPointReadsTheMode() throws {
