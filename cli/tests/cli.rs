@@ -1601,6 +1601,39 @@ fn on_linux_update_says_the_desktop_is_retired_and_runs_nothing() {
     }
 }
 
+/// On Linux the line comes first: a --source that is not a folder, an unknown flag or no home
+/// folder gets it too, exit 0, and nothing is run or written.
+#[cfg(target_os = "linux")]
+#[test]
+fn on_linux_update_says_the_desktop_is_retired_before_it_reads_anything() {
+    let s = Sandbox::new();
+    let missing = s.dir("no-such-checkout");
+    let cases: [(&[&str], bool); 4] = [
+        (&["update", "--source", missing.to_str().unwrap()], true),
+        (
+            &["update", "--check", "--source", missing.to_str().unwrap()],
+            true,
+        ),
+        (&["update", "--no-such-flag"], true),
+        (&["update", "--yes"], false),
+    ];
+    for (args, with_home) in cases {
+        let mut c = s.cmd(args);
+        if !with_home {
+            c.env_remove("HOME").env_remove("USERPROFILE");
+        }
+        let o = c.stdin(Stdio::null()).output().unwrap();
+        assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
+        assert_eq!(
+            out(&o),
+            "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n",
+            "{args:?}"
+        );
+        assert_eq!(err(&o), "", "{args:?}");
+    }
+    assert_eq!(fs::read_dir(s.dir("home")).unwrap().count(), 0);
+}
+
 /// A `polycarp` from before the retirement, run as `polycarp update` on an Omarchy machine, builds
 /// its own plan (`linux_steps` at 4fa0e4df) and runs it in a clean copy of this tree: it builds the
 /// `baneyspaces-linux` package, runs the engine and Omarchy install scripts, installs the new
@@ -1800,11 +1833,18 @@ fn update_without_a_known_install_says_how_to_point_it_at_a_checkout() {
             assert!(e.contains("polycarp update --source"), "{e}");
         }
     }
-    assert_eq!(code(&s.run(&["update", "--bogus"])), 2);
-    assert_eq!(code(&s.run(&["update", "--source"])), 2);
+    // On Linux every form gets the line first (on_linux_update_says_the_desktop_is_retired_before_it_reads_anything).
+    let wrong = if cfg!(target_os = "linux") { 0 } else { 2 };
+    assert_eq!(code(&s.run(&["update", "--bogus"])), wrong);
+    assert_eq!(code(&s.run(&["update", "--source"])), wrong);
     let o = s.run(&["update", "--help"]);
     assert_eq!(code(&o), 0);
-    assert!(out(&o).contains("--dry-run"));
+    let help = if cfg!(target_os = "linux") {
+        "The Linux desktop is retired"
+    } else {
+        "--dry-run"
+    };
+    assert!(out(&o).contains(help), "{}", out(&o));
 }
 
 /// A repo with one empty commit, and that commit.

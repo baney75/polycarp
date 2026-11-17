@@ -1457,6 +1457,12 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         }
         _ => {}
     }
+    // The Linux desktop is retired: say so before anything else is read, checked or run, so a bad
+    // --source or a missing home folder gets the same answer and git never runs.
+    if platform() == Platform::Linux {
+        println!("{LINUX_MOVED}");
+        return 0;
+    }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print!("{USAGE}");
         return 0;
