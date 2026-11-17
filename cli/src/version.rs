@@ -2,9 +2,7 @@
 //! line saying whether they all match. `compare` is the pure part; `gather` reads the device.
 //!
 //! Nothing here starts an app. The app, the spaces command and the installed `polycarp` are read from
-//! files (the app's Info.plist, a stamp inside the binary); only the browser helper is run, as `doctor`
-//! already does, and it answers for itself and for each connected browser's extension. A helper or a
-//! browser that does not answer in time is listed as exactly that: never as a mismatch, never as missing.
+//! files (the app's Info.plist, a stamp inside the binary); none of them is run.
 
 use std::ffi::OsString;
 use std::fs;
@@ -65,25 +63,8 @@ pub enum Found {
         build: Build,
         path: Option<PathBuf>,
     },
-    /// Not on this device, with the words to show: "not installed", "no browser is connected".
+    /// Not on this device, with the words to show: "not installed".
     Absent(&'static str),
-    /// It may well be there, but the question got no answer ("no answer in time"). Nothing is known
-    /// about its build, so it is neither compared nor counted as missing.
-    Unanswered(&'static str),
-}
-
-/// What the browser helper said when it was run with some arguments.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Answer {
-    /// It exited 0 and printed this.
-    Said(String),
-    /// It exited with another code. What it printed is kept: `status --json` exits 1 with a full
-    /// report when no browser is connected.
-    Failed(String),
-    /// It did not finish inside the time it was given, and was stopped.
-    Late,
-    /// It could not be started.
-    NotRun,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -118,14 +99,6 @@ impl Part {
         Part {
             name: name.to_string(),
             found: Found::Absent(why),
-            note: None,
-            compared: true,
-        }
-    }
-    pub fn unanswered(name: &str, why: &'static str) -> Part {
-        Part {
-            name: name.to_string(),
-            found: Found::Unanswered(why),
             note: None,
             compared: true,
         }
@@ -213,7 +186,7 @@ pub fn compare(parts: &[Part]) -> Verdict {
         .filter(|p| p.compared)
         .filter_map(|p| match &p.found {
             Found::Installed { build, .. } => Some((p, build)),
-            Found::Absent(_) | Found::Unanswered(_) => None,
+            Found::Absent(_) => None,
         })
         .collect();
     // Group the known commits; keep the order they first appear in.
@@ -284,17 +257,7 @@ pub fn is_current(parts: &[Part], target: &str) -> bool {
     }
 }
 
-/// The parts that gave no answer, by name. They are left out of the comparison and always named.
-pub fn unanswered(parts: &[Part]) -> Vec<&str> {
-    parts
-        .iter()
-        .filter(|p| matches!(p.found, Found::Unanswered(_)))
-        .map(|p| p.name.as_str())
-        .collect()
-}
-
-/// Of `needs` (part names an update on this device installs), the ones that are not installed. A part
-/// that gave no answer is not called missing: nothing is known about it.
+/// Of `needs` (part names an update on this device installs), the ones that are not installed.
 pub fn missing<'a>(parts: &[Part], needs: &[&'a str]) -> Vec<&'a str> {
     needs
         .iter()
@@ -305,29 +268,6 @@ pub fn missing<'a>(parts: &[Part], needs: &[&'a str]) -> Vec<&'a str> {
         })
         .copied()
         .collect()
-}
-
-/// The parts without each browser's extension. An extension keeps running its old build until it
-/// reloads, so after an install it can be the one thing that still differs.
-pub fn without_extensions(parts: &[Part]) -> Vec<Part> {
-    parts
-        .iter()
-        .filter(|p| !p.name.starts_with("extension"))
-        .cloned()
-        .collect()
-}
-
-/// The verdict line, plus the parts that could not be asked, so a quiet browser is never read as a match.
-pub fn summary(parts: &[Part], verdict: &Verdict) -> String {
-    let quiet = unanswered(parts);
-    if quiet.is_empty() {
-        return verdict.line();
-    }
-    format!(
-        "{} Not compared, because there was no answer in time: {}.",
-        verdict.line(),
-        quiet.join(", ")
-    )
 }
 
 // ---- Reading the device ---------------------------------------------------------------------------
@@ -401,7 +341,7 @@ pub fn stamp_identity(bytes: &[u8]) -> Option<(Option<String>, Build)> {
     without_commit
 }
 
-/// The app bundle a file sits in (`X.app/Contents/Resources/bin/<file>` or `…/browser/<file>`).
+/// The app bundle a file sits in (`X.app/Contents/Resources/bin/<file>`).
 fn enclosing_app(file: &Path) -> Option<PathBuf> {
     let real = fs::canonicalize(file).ok()?;
     real.ancestors()
@@ -431,101 +371,15 @@ fn file_identity(file: &Path) -> Option<(Option<String>, Build)> {
 }
 
 /// What the device has. The callbacks keep this free of `main.rs`'s search rules:
-/// `app` is the installed Polycarp.app (Mac only), `spaces` and `browser` the commands as `polycarp`
-/// would run them, `ask` runs the browser helper with arguments and returns what it printed.
+/// `app` is the installed Polycarp.app (Mac only), `spaces` the command as `polycarp` would run it.
 /// `installed` is the `polycarp` an install or an update puts in place (`~/.local/bin/polycarp`), when
 /// there is one: it is the command that is compared, whichever `polycarp` is running.
-pub struct Device<'a> {
+pub struct Device {
     pub exe: Option<PathBuf>,
     pub installed: Option<PathBuf>,
     pub home: Option<PathBuf>,
     pub app: Option<PathBuf>,
     pub spaces: Option<PathBuf>,
-    pub browser: Option<PathBuf>,
-    pub ask: &'a dyn Fn(&Path, &[&str]) -> Answer,
-}
-
-fn str_field(v: &Value, key: &str) -> Option<String> {
-    v.get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .filter(|s| !s.is_empty())
-}
-
-/// The helper's own answer to `version --json`.
-pub fn helper_identity(text: &str) -> Option<(Option<String>, Build)> {
-    let v: Value = serde_json::from_str(text.trim()).ok()?;
-    let version = str_field(&v, "version")?;
-    let build = Build::new(
-        &str_field(&v, "commit").unwrap_or_default(),
-        &str_field(&v, "commitDate").unwrap_or_default(),
-        v.get("dirty").and_then(Value::as_bool).unwrap_or(false),
-    );
-    Some((Some(version), build))
-}
-
-/// The words for a helper or a browser that was asked and did not answer inside its time.
-pub const NO_ANSWER: &str = "no answer in time";
-
-/// A browser with the extension is running, but its extension is not connected: its worker is asleep, or it has not
-/// dialed the helper again since the helper was replaced. It connects within its 30 s keepalive.
-pub const ASLEEP: &str = "running, but its extension is not connected yet";
-
-/// The extensions in the helper's `status --json`: one part per connected browser, or per browser that runs with the
-/// extension but has not connected (`running`, from a helper that reports it).
-pub fn extension_parts(text: &str) -> Vec<Part> {
-    let Ok(v) = serde_json::from_str::<Value>(text.trim()) else {
-        return vec![Part::unanswered(
-            "extension",
-            "not checked: the browser helper gave no answer",
-        )];
-    };
-    if let Some(list) = v.get("extensions").and_then(Value::as_array) {
-        if list.is_empty() {
-            let asleep: Vec<Part> = v
-                .get("running")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(|b| Part::absent(&format!("extension ({b})"), ASLEEP))
-                .collect();
-            if !asleep.is_empty() {
-                return asleep;
-            }
-            return vec![Part::absent("extension", "no browser is connected")];
-        }
-        return list
-            .iter()
-            .map(|e| {
-                let name = match str_field(e, "browser") {
-                    Some(b) => format!("extension ({b})"),
-                    None => "extension".to_string(),
-                };
-                // Connected, but it did not answer inside the time it was given.
-                if e.get("answered").and_then(Value::as_bool) == Some(false) {
-                    return Part::unanswered(&name, NO_ANSWER);
-                }
-                let build = Build::new(
-                    &str_field(e, "commit").unwrap_or_default(),
-                    &str_field(e, "commitDate").unwrap_or_default(),
-                    e.get("dirty").and_then(Value::as_bool).unwrap_or(false),
-                );
-                Part::installed(&name, str_field(e, "version"), build, None)
-            })
-            .collect();
-    }
-    // A helper from before this command: it names the extension's version but not its commit.
-    if v.get("connected").and_then(Value::as_bool) == Some(true) {
-        return vec![Part::installed(
-            "extension",
-            str_field(&v, "extensionVersion"),
-            Build::default(),
-            None,
-        )
-        .note("is behind a browser helper too old to report its commit")];
-    }
-    vec![Part::absent("extension", "no browser is connected")]
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
@@ -604,52 +458,6 @@ pub fn gather(d: &Device) -> Vec<Part> {
         },
         None => Part::absent("spaces command", "not installed"),
     });
-    match &d.browser {
-        Some(path) => {
-            let answer = (d.ask)(path, &["version", "--json"]);
-            let identity = match &answer {
-                Answer::Said(text) | Answer::Failed(text) => helper_identity(text),
-                Answer::Late | Answer::NotRun => None,
-            };
-            match identity {
-                Some((version, build)) => {
-                    parts.push(Part::installed(
-                        "browser helper",
-                        version,
-                        build,
-                        Some(path.clone()),
-                    ));
-                    // `status --json` exits 1 with a full report when no browser is connected, so
-                    // what it printed is read whatever its exit code.
-                    parts.extend(match (d.ask)(path, &["status", "--json"]) {
-                        Answer::Said(text) | Answer::Failed(text) => extension_parts(&text),
-                        Answer::Late => vec![Part::unanswered("extension", NO_ANSWER)],
-                        Answer::NotRun => extension_parts(""),
-                    });
-                }
-                None if answer == Answer::Late => {
-                    parts.push(Part::unanswered("browser helper", NO_ANSWER));
-                    parts.push(Part::unanswered("extension", NO_ANSWER));
-                }
-                None => {
-                    parts.push(
-                        Part::installed(
-                            "browser helper",
-                            None,
-                            Build::default(),
-                            Some(path.clone()),
-                        )
-                        .note("did not answer `version --json`"),
-                    );
-                    parts.extend(extension_parts(""));
-                }
-            }
-        }
-        None => {
-            parts.push(Part::absent("browser helper", "not installed"));
-            parts.push(Part::absent("extension", "not installed"));
-        }
-    }
     // The voice core is a static library inside the app's own binary, so it is the app's build.
     parts.push(match &app {
         Some((path, (_, build))) => {
@@ -703,17 +511,12 @@ const MAC_INSTALL: &str =
     "curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash";
 
 /// What fixes a part that is not installed, on this platform. None when there is nothing to run.
-fn fix_absent(name: &str, why: &str, os: Os) -> Option<String> {
-    let extension = name.starts_with("extension");
+fn fix_absent(name: &str, os: Os) -> Option<String> {
     Some(match (os, name) {
-        _ if extension && why == ASLEEP => {
-            "It connects within 30 seconds; run `polycarp doctor` again".to_string()
-        }
         (Os::Mac, "app") => format!("Install it: `{MAC_INSTALL}`"),
-        (Os::Mac, "spaces command" | "browser helper" | "voice core") => {
+        (Os::Mac, "spaces command" | "voice core") => {
             format!("It comes with the app: `{MAC_INSTALL}`")
         }
-        (Os::Mac, _) if extension => "Run `polycarp browser setup`".to_string(),
         (Os::Mac, "agent skill") => SKILL_FIX_MAC.to_string(),
         _ => return None,
     })
@@ -722,8 +525,7 @@ fn fix_absent(name: &str, why: &str, os: Os) -> Option<String> {
 const SKILL_FIX_MAC: &str = "Run `polycarp spaces skill install`";
 
 /// One indented line per part that is not installed or does not match: what is wrong, then the one
-/// command that fixes it here. `doctor` prints them under the verdict. A part that gave no answer has
-/// none, since nothing is known about it.
+/// command that fixes it here. `doctor` prints them under the verdict.
 pub fn fixes(parts: &[Part], verdict: &Verdict, os: Os) -> Vec<String> {
     let odd: &[Odd] = match verdict {
         Verdict::Differ { odd, .. } => odd,
@@ -733,7 +535,7 @@ pub fn fixes(parts: &[Part], verdict: &Verdict, os: Os) -> Vec<String> {
         .iter()
         .filter_map(|p| {
             let (state, fix) = match &p.found {
-                Found::Absent(why) => (why.to_string(), fix_absent(&p.name, why, os)?),
+                Found::Absent(why) => (why.to_string(), fix_absent(&p.name, os)?),
                 Found::Installed { .. } => {
                     let why = &odd.iter().find(|o| o.name == p.name)?.why;
                     let fix = match (os, p.name.as_str()) {
@@ -743,7 +545,6 @@ pub fn fixes(parts: &[Part], verdict: &Verdict, os: Os) -> Vec<String> {
                     };
                     (why.clone(), fix.to_string())
                 }
-                Found::Unanswered(_) => return None,
             };
             Some(format!("  {}: {state}. {fix}.", p.name))
         })
@@ -757,7 +558,7 @@ pub fn table(parts: &[Part]) -> String {
     let mut out = String::new();
     for p in parts {
         let line = match &p.found {
-            Found::Absent(why) | Found::Unanswered(why) => format!("{:width$}  {why}", p.name),
+            Found::Absent(why) => format!("{:width$}  {why}", p.name),
             Found::Installed {
                 version,
                 build,
@@ -789,10 +590,6 @@ pub fn to_json(parts: &[Part], verdict: &Verdict) -> Value {
         .iter()
         .map(|p| match &p.found {
             Found::Absent(why) => json!({ "name": p.name, "installed": false, "state": why }),
-            // Not known either way: `installed` is null, and `answered` says why.
-            Found::Unanswered(why) => {
-                json!({ "name": p.name, "installed": null, "answered": false, "state": why })
-            }
             Found::Installed {
                 version,
                 build,
@@ -824,8 +621,7 @@ pub fn to_json(parts: &[Part], verdict: &Verdict) -> Value {
         "match": verdict.matches(),
         "commit": reference,
         "odd": odd,
-        "unanswered": unanswered(parts),
-        "verdict": summary(parts, verdict),
+        "verdict": verdict.line(),
     })
 }
 
@@ -836,16 +632,12 @@ Lists every Polycarp part on this device with its version, the commit it was bui
 is, then says in one line whether they all come from the same commit.
 
   --json    the same as JSON
-  --check   exit 0 when every installed part matches, 1 when one differs, 75 when they match but a
-            part gave no answer in time (a slow browser), so it could not be compared
+  --check   exit 0 when every installed part matches, 1 when one differs
   --wait    with --check: keep looking for up to this many seconds (an app that is restarting)
 
 The polycarp command that is compared is the installed one (~/.local/bin/polycarp) when there is one,
 whichever polycarp is running. On Windows it is the polycarp that is running.
 ";
-
-/// `version --check` when every answering part matches but one gave no answer (EX_TEMPFAIL: try again).
-pub const UNANSWERED: i32 = 75;
 
 /// `polycarp version`. Exit 0 unless `--check` finds a difference (1) or the arguments are wrong (2).
 pub fn run(args: &[OsString], device: &Device) -> i32 {
@@ -882,8 +674,7 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
     let (parts, verdict) = loop {
         let parts = gather(device);
         let verdict = compare(&parts);
-        let settled = verdict.matches() && unanswered(&parts).is_empty();
-        if !check || settled || started.elapsed().as_secs() >= wait {
+        if !check || verdict.matches() || started.elapsed().as_secs() >= wait {
             break (parts, verdict);
         }
         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -895,12 +686,10 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         );
     } else {
         print!("{}", table(&parts));
-        println!("\n{}", summary(&parts, &verdict));
+        println!("\n{}", verdict.line());
     }
     if check && !verdict.matches() {
         1
-    } else if check && !unanswered(&parts).is_empty() {
-        UNANSWERED
     } else {
         0
     }
@@ -936,7 +725,7 @@ mod tests {
         let cases = vec![
             Case {
                 name: "all match",
-                parts: vec![at("command", A), at("app", A), at("helper", A)],
+                parts: vec![at("command", A), at("app", A), at("spaces", A)],
                 want: Verdict::Match {
                     commit: Some(A.into()),
                     parts: 3,
@@ -952,10 +741,10 @@ mod tests {
             },
             Case {
                 name: "one behind",
-                parts: vec![at("command", A), at("app", A), at("extension (Helium)", B)],
+                parts: vec![at("command", A), at("app", A), at("spaces", B)],
                 want: Verdict::Differ {
                     reference: Some(A.into()),
-                    odd: vec![odd("extension (Helium)", "is at bbbbbbb")],
+                    odd: vec![odd("spaces", "is at bbbbbbb")],
                 },
             },
             Case {
@@ -963,8 +752,8 @@ mod tests {
                 parts: vec![
                     at("command", A),
                     Part::absent("app", "not installed"),
-                    Part::absent("extension", "no browser is connected"),
-                    at("helper", A),
+                    Part::absent("skill", "not installed"),
+                    at("spaces", A),
                 ],
                 want: Verdict::Match {
                     commit: Some(A.into()),
@@ -983,14 +772,14 @@ mod tests {
                 name: "a part with no commit is odd, in its own words when it has them",
                 parts: vec![
                     at("command", A),
-                    Part::installed("helper", None, Build::default(), None),
+                    Part::installed("spaces", None, Build::default(), None),
                     Part::installed("skill", None, Build::default(), None)
                         .note("differs from the app"),
                 ],
                 want: Verdict::Differ {
                     reference: Some(A.into()),
                     odd: vec![
-                        odd("helper", "does not report the commit it was built from"),
+                        odd("spaces", "does not report the commit it was built from"),
                         odd("skill", "differs from the app"),
                     ],
                 },
@@ -1008,7 +797,7 @@ mod tests {
             },
             Case {
                 name: "the commit most parts are at is the reference",
-                parts: vec![at("command", B), at("app", A), at("helper", A)],
+                parts: vec![at("command", B), at("app", A), at("spaces", A)],
                 want: Verdict::Differ {
                     reference: Some(A.into()),
                     odd: vec![odd("command", "is at bbbbbbb")],
@@ -1055,10 +844,10 @@ mod tests {
 
     #[test]
     fn verdict_lines_name_the_odd_parts() {
-        let v = compare(&[at("command", A), at("app", A), at("extension (Helium)", B)]);
+        let v = compare(&[at("command", A), at("app", A), at("spaces", B)]);
         assert_eq!(
             v.line(),
-            "versions: the parts do not all match commit aaaaaaa: extension (Helium) is at bbbbbbb. Run `polycarp update`."
+            "versions: the parts do not all match commit aaaaaaa: spaces is at bbbbbbb. Run `polycarp update`."
         );
         let v = compare(&[at("command", A), at("app", A)]);
         assert_eq!(
@@ -1125,113 +914,6 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_helper_and_each_browsers_extension() {
-        let (version, build) = helper_identity(&format!(
-            r#"{{"version":"1.1.10","commit":"{A}","builtAt":"x","dirty":true}}"#
-        ))
-        .unwrap();
-        assert_eq!(version.as_deref(), Some("1.1.10"));
-        assert_eq!(build, Build::new(A, "", true));
-        assert_eq!(helper_identity("tabkyra 9.9.9"), None);
-
-        let status = format!(
-            r#"{{"connected":true,"extensions":[{{"browser":"Helium","version":"1.1.10","commit":"{A}"}},{{"version":"1.1.9","commit":""}}]}}"#
-        );
-        let parts = extension_parts(&status);
-        assert_eq!(parts.len(), 2);
-        assert_eq!(
-            parts[0],
-            Part::installed(
-                "extension (Helium)",
-                Some("1.1.10".into()),
-                Build::new(A, "", false),
-                None
-            )
-        );
-        assert_eq!(
-            parts[1],
-            Part::installed("extension", Some("1.1.9".into()), Build::default(), None)
-        );
-        assert_eq!(
-            extension_parts(r#"{"connected":false,"extensions":[]}"#),
-            vec![Part::absent("extension", "no browser is connected")]
-        );
-        // A browser that runs with the extension but has not connected is named, not "no browser".
-        assert_eq!(
-            extension_parts(r#"{"connected":false,"extensions":[],"running":["Helium","Chrome"]}"#),
-            [
-                Part::absent("extension (Helium)", ASLEEP),
-                Part::absent("extension (Chrome)", ASLEEP)
-            ]
-        );
-        // An older helper: connected, a version, no commit. Listed, and odd.
-        let old = extension_parts(r#"{"connected":true,"extensionVersion":"1.1.2"}"#);
-        assert!(matches!(&old[0].found, Found::Installed { build, .. } if build.commit.is_none()));
-        assert!(!compare(&old).matches());
-    }
-
-    /// A browser that is connected but slow is its own state: never a mismatch, never "not installed".
-    #[test]
-    fn a_part_with_no_answer_is_neither_a_mismatch_nor_missing() {
-        let parts = vec![
-            at("polycarp command", A),
-            at("browser helper", A),
-            Part::unanswered("extension (Helium)", NO_ANSWER),
-        ];
-        let verdict = compare(&parts);
-        assert!(verdict.matches(), "{}", verdict.line());
-        assert!(is_current(&parts, A));
-        assert_eq!(unanswered(&parts), ["extension (Helium)"]);
-        assert!(missing(&parts, &["browser helper", "extension (Helium)"]).is_empty());
-        assert_eq!(missing(&parts, &["spaces command"]), ["spaces command"]);
-        let line = summary(&parts, &verdict);
-        assert!(
-            line.contains("Not compared, because there was no answer in time: extension (Helium)."),
-            "{line}"
-        );
-        assert!(
-            table(&parts).contains("no answer in time"),
-            "{}",
-            table(&parts)
-        );
-        let v = to_json(&parts, &verdict);
-        assert_eq!(v["match"], true);
-        assert_eq!(v["unanswered"], json!(["extension (Helium)"]));
-        assert_eq!(v["parts"][2]["installed"], Value::Null);
-        assert_eq!(v["parts"][2]["answered"], false);
-        assert_eq!(v["parts"][2]["state"], NO_ANSWER);
-        // With every part answering, the summary is the verdict alone.
-        assert_eq!(
-            summary(&parts[..2], &compare(&parts[..2])),
-            compare(&parts[..2]).line()
-        );
-        // A real difference stays a difference, whatever else was quiet.
-        let mut differ = parts.clone();
-        differ[1] = at("browser helper", B);
-        assert!(!compare(&differ).matches());
-    }
-
-    #[test]
-    fn a_browser_that_did_not_answer_in_time_is_marked_per_browser() {
-        let status = format!(
-            r#"{{"connected":true,"extensions":[{{"browser":"Helium","answered":true,"version":"1.1.10","commit":"{A}"}},{{"browser":"Chrome","answered":false}}]}}"#
-        );
-        let parts = extension_parts(&status);
-        assert_eq!(parts[0], at_version("extension (Helium)", "1.1.10", A));
-        assert_eq!(parts[1], Part::unanswered("extension (Chrome)", NO_ANSWER));
-        assert!(matches!(extension_parts("")[0].found, Found::Unanswered(_)));
-    }
-
-    fn at_version(name: &str, version: &str, commit: &str) -> Part {
-        Part::installed(
-            name,
-            Some(version.into()),
-            Build::new(commit, "", false),
-            None,
-        )
-    }
-
-    #[test]
     fn this_command_carries_a_stamp_another_polycarp_can_read() {
         let (version, build) = stamp_identity(BUILD_STAMP.as_bytes()).expect("a readable stamp");
         assert_eq!(version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
@@ -1241,20 +923,13 @@ mod tests {
         assert_eq!(file_identity(&exe), Some((version, build)));
     }
 
-    fn device<'a>(
-        dir: &Path,
-        installed: Option<PathBuf>,
-        browser: Option<PathBuf>,
-        ask: &'a dyn Fn(&Path, &[&str]) -> Answer,
-    ) -> Device<'a> {
+    fn device(dir: &Path, installed: Option<PathBuf>) -> Device {
         Device {
             exe: Some(dir.join("build/polycarp")),
             installed,
             home: None,
             app: None,
             spaces: None,
-            browser,
-            ask,
         }
     }
 
@@ -1270,9 +945,8 @@ mod tests {
         bytes.extend_from_slice(STAMP_START);
         bytes.extend_from_slice(format!("{B}|2026-11-01T00:00:00Z|0|0.0.9|end|\n").as_bytes());
         fs::write(&installed, bytes).unwrap();
-        let never = |_: &Path, _: &[&str]| Answer::NotRun;
 
-        let part = command_part(&device(&dir, Some(installed.clone()), None, &never));
+        let part = command_part(&device(&dir, Some(installed.clone())));
         assert_eq!(
             part.found,
             Found::Installed {
@@ -1285,14 +959,14 @@ mod tests {
 
         // An installed command from before the stamp: listed, with no commit, so it is odd.
         fs::write(&installed, "#!/bin/sh\n").unwrap();
-        let part = command_part(&device(&dir, Some(installed.clone()), None, &never));
+        let part = command_part(&device(&dir, Some(installed.clone())));
         assert!(matches!(&part.found, Found::Installed { build, .. } if build.commit.is_none()));
         assert!(part.note.unwrap().contains("carries no build stamp"));
 
         // Nothing installed, or the installed command is the one running: its own build.
-        let part = command_part(&device(&dir, None, None, &never));
+        let part = command_part(&device(&dir, None));
         assert!(matches!(&part.found, Found::Installed { build, .. } if *build == own_build()));
-        let mut d = device(&dir, Some(installed.clone()), None, &never);
+        let mut d = device(&dir, Some(installed.clone()));
         d.exe = Some(installed.clone());
         let part = command_part(&d);
         assert!(matches!(&part.found, Found::Installed { build, .. } if *build == own_build()));
@@ -1301,51 +975,10 @@ mod tests {
     }
 
     #[test]
-    fn a_helper_that_is_late_gives_no_answer_not_a_mismatch() {
-        let dir = PathBuf::from("/nowhere");
-        let helper = PathBuf::from("/nowhere/polycarp-browser");
-        // `status` is late: the helper is known, the extension is not.
-        let version = format!(r#"{{"version":"1.1.10","commit":"{A}"}}"#);
-        let late_status = |_: &Path, args: &[&str]| match args[0] {
-            "version" => Answer::Said(version.clone()),
-            _ => Answer::Late,
-        };
-        let parts = gather(&device(&dir, None, Some(helper.clone()), &late_status));
-        let find = |parts: &[Part], name: &str| {
-            parts.iter().find(|p| p.name == name).unwrap().found.clone()
-        };
-        assert!(matches!(
-            find(&parts, "browser helper"),
-            Found::Installed { .. }
-        ));
-        assert_eq!(find(&parts, "extension"), Found::Unanswered(NO_ANSWER));
-        // The helper itself is late: both are unknown, and neither is "not installed".
-        let late = |_: &Path, _: &[&str]| Answer::Late;
-        let parts = gather(&device(&dir, None, Some(helper.clone()), &late));
-        assert_eq!(find(&parts, "browser helper"), Found::Unanswered(NO_ANSWER));
-        assert_eq!(find(&parts, "extension"), Found::Unanswered(NO_ANSWER));
-        assert!(missing(&parts, &["browser helper"]).is_empty());
-        // `status` exits 1 with a full report when no browser is connected: that is an answer.
-        let none = |_: &Path, args: &[&str]| match args[0] {
-            "version" => Answer::Said(version.clone()),
-            _ => Answer::Failed(r#"{"connected":false,"extensions":[]}"#.to_string()),
-        };
-        let parts = gather(&device(&dir, None, Some(helper), &none));
-        assert_eq!(
-            find(&parts, "extension"),
-            Found::Absent("no browser is connected")
-        );
-    }
-
-    #[test]
     fn doctor_names_the_fix_for_each_missing_or_odd_part_on_each_platform() {
         let parts = vec![
             at("polycarp command", A),
             at("spaces command", B),
-            Part::absent("browser helper", "not installed"),
-            Part::absent("extension", "no browser is connected"),
-            Part::absent("extension (Helium)", ASLEEP),
-            Part::unanswered("extension (Chrome)", NO_ANSWER),
             Part::absent("voice core", "not installed"),
             Part::absent("agent skill", "not installed"),
         ];
@@ -1353,7 +986,7 @@ mod tests {
         let mut mac_parts = parts.clone();
         mac_parts.insert(1, Part::absent("app", "not installed"));
         let mac = fixes(&mac_parts, &compare(&mac_parts), Os::Mac);
-        assert_eq!(mac.len(), 7, "{mac:#?}");
+        assert_eq!(mac.len(), 4, "{mac:#?}");
         assert!(
             mac[0].starts_with("  app: not installed. Install it: `curl -fsSL "),
             "{}",
@@ -1364,7 +997,7 @@ mod tests {
             .any(|l| l == "  agent skill: not installed. Run `polycarp spaces skill install`."));
         assert!(mac
             .iter()
-            .any(|l| l == "  extension: no browser is connected. Run `polycarp browser setup`."));
+            .any(|l| l == "  spaces command: is at bbbbbbb. Run `polycarp update`."));
         assert!(mac
             .iter()
             .any(|l| l.starts_with("  voice core: not installed. It comes with the app")));
@@ -1374,10 +1007,7 @@ mod tests {
             "{mac:#?}"
         );
         // Nothing is known on another platform, and everything in order needs no line.
-        assert_eq!(
-            fixes(&parts, &verdict, Os::Other),
-            ["  extension (Helium): running, but its extension is not connected yet. It connects within 30 seconds; run `polycarp doctor` again."]
-        );
+        assert!(fixes(&parts, &verdict, Os::Other).is_empty());
         let fine = vec![at("polycarp command", A), at("spaces command", A)];
         assert!(fixes(&fine, &compare(&fine), Os::Mac).is_empty());
     }

@@ -450,7 +450,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             exit((try? app.unregister()) != nil ? 0 : 1)
         }
         linkCommandIfNeeded()
-        // A new app brings a new extension: refresh the copy the browser loads now, off the main thread, before anyone is told to reload.
         // A person who came by the disk image never ran install.sh: BaneySpaces, if there, goes to the Trash once Polycarp runs.
         let welcomeFinishedAtLaunch = UserDefaults.standard.bool(forKey: Welcome.finishedKey)
         // Tried at 5 s, and again every 10 s (for up to two minutes) while only the settings import is unfinished.
@@ -630,7 +629,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             SystemShortcuts.spotlightQueue.async { SystemShortcuts.restoreSpotlight() }
         }
         if parts.contains(.voice) { startVoice() } else { VoiceEngine.shared.partIsOn = false }
-        BrowserModel.shared.applyPart(on: parts.contains(.browser))
         updateIcon()
     }
 
@@ -642,16 +640,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// A part changed, from Settings or `polycarp features`. Workspaces restart the app, because a clean quit is the tested
-    /// way to put every window, the Dock and Mission Control back, and a clean start the way to take them. The others
-    /// apply at once.
+    /// way to put every window, the Dock and Mission Control back, and a clean start the way to take them. Silas applies
+    /// at once.
     private func partsChanged(from old: FeatureSet, to new: FeatureSet) {
         if old.contains(.workspaces) != new.contains(.workspaces) { return relaunch() }
         if old.contains(.voice) != new.contains(.voice) {
             VoiceEngine.shared.partIsOn = new.contains(.voice)
             if new.contains(.voice), !voiceStarted { startVoice() }
-        }
-        if old.contains(.browser) != new.contains(.browser) {
-            BrowserModel.shared.applyPart(on: new.contains(.browser))
         }
         if !new.showsSettingsTab(setup.model.tab.rawValue) { setup.model.tab = .general }
         updateIcon()
@@ -1297,7 +1292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "move": run { $0.moveFocused(to: n) }
         case "restore": run { _ in bringBack() }
         case "viewer": run { _ in viewer.toggle() }
-        // `polycarp voice` opens the Voice settings. Showing a window changes nothing, so a web page may.
+        // `polycarp://voice` opens the Voice settings (dictation). Showing a window changes nothing, so a web page may.
         case "voice": showVoiceSettings()
         // Opening it changes nothing on its own, so a web page may: every action inside needs a key press.
         case "launcher": launcher.show(scope: LauncherModel.Scope(rawValue: url.lastPathComponent) ?? .root, takeKeys: false)

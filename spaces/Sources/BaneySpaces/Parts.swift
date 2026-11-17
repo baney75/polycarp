@@ -94,12 +94,10 @@ final class PartsModel: ObservableObject {
 
     /// What a part left on this Mac that Remove can clear. Workspaces downloads nothing, so it has no Remove.
     static func files(of feature: Feature, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [URL] {
-        let support = Product.supportDir(home: home)
         let candidates: [URL]
         switch feature {
         case .workspaces: candidates = []
         case .voice: candidates = [Product.voiceDir(home: home).appendingPathComponent("models", isDirectory: true)]
-        case .browser: candidates = [ExtensionCopy.destination(supportDir: support)]
         }
         return candidates.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
@@ -111,9 +109,6 @@ final class PartsModel: ObservableObject {
         case .voice:
             alert.messageText = "Remove Silas's speech models?"
             alert.informativeText = "They go to the Trash. Your dictionary and history stay. Turning Silas on again downloads a model."
-        case .browser:
-            alert.messageText = "Remove the browser extension's copy?"
-            alert.informativeText = "It goes to the Trash, and browsers lose their link to Polycarp. To take the extension out of a browser, remove it from that browser's Extensions page."
         case .workspaces:
             return
         }
@@ -125,7 +120,6 @@ final class PartsModel: ObservableObject {
         for url in Self.files(of: feature, home: home) {
             do { try FileManager.default.trashItem(at: url, resultingItemURL: nil) } catch { failed.append(url.lastPathComponent) }
         }
-        if feature == .browser { BrowserHosts.removeParked(home: home) }
         if !failed.isEmpty { Self.tell("Some files stayed.", "Polycarp couldn't move \(failed.joined(separator: ", ")) to the Trash.") }
         objectWillChange.send()
     }

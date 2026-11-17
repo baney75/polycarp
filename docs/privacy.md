@@ -9,7 +9,7 @@ updated: November 6, 2026
 
 Polycarp is free software made by Donovan Baney. It has no accounts and no analytics, and it runs no servers of its own. We don't receive your data, so we can't sell it, share it or read it.
 
-This policy covers the Polycarp browser extension and the Polycarp app for Mac. On Windows and Linux, Polycarp today is the extension and a command that works on local files, so the extension's section applies. What's below describes the software as it's built today. The source is public at [github.com/baney75/polycarp](https://github.com/baney75/polycarp), so you can check it.
+This policy covers the Polycarp app for Mac and, for builds made before it moved, the Polycarp browser extension. The extension moved to Tychicus (https://github.com/baney75/tychicus), whose own policy covers it from now on; its section below stays for anyone still running an older copy. On Windows, Polycarp today is a command that works on local files. What's below describes the software as it's built today. The source is public at [github.com/baney75/polycarp](https://github.com/baney75/polycarp), so you can check it.
 
 ## The browser extension
 

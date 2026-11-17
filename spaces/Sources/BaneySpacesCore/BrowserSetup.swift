@@ -1,7 +1,11 @@
 import AppKit
 import Foundation
 
-/// What Settings > Browser shows, read from the bundled helper's `doctor --json`. The helper owns every check (which browsers
+// The browser extension and its helper moved to Tychicus (https://github.com/baney75/tychicus), and Polycarp.app no longer
+// carries them. This file stays because Tychicus's tests read `BrowserBundle.bundleIDs` from it; `BrowserBundle.helper`
+// points at Tychicus's own install.
+
+/// What Settings > Browser showed, read from the helper's `doctor --json`. The helper owns every check (which browsers
 /// are registered, whether the extension is connected, which agents have the MCP entry); this only reads its answer.
 public struct BrowserStatus: Equatable {
     public struct Browser: Equatable, Identifiable {
@@ -247,10 +251,14 @@ public enum BrowserBundle {
         return failed && !e.isEmpty ? e : tail(out)
     }
 
-    /// `Polycarp.app/Contents/Resources/browser` for a resources folder.
-    public static func folder(resources: URL?) -> URL? { resources?.appendingPathComponent("browser", isDirectory: true) }
-    public static func helper(resources: URL?) -> URL? { folder(resources: resources)?.appendingPathComponent("polycarp-browser") }
-    public static func extensionFolder(resources: URL?) -> URL? { folder(resources: resources)?.appendingPathComponent("extension", isDirectory: true) }
+    /// Where the browser helper lives now: Tychicus.
+    public static let home = URL(string: "https://github.com/baney75/tychicus")!
+
+    /// The helper a Tychicus release install puts in place (`tychicus install --release`): the `release` link under
+    /// `~/.local/share/tychicus`. Polycarp.app no longer carries a helper.
+    public static func helper(home: String = NSHomeDirectory()) -> URL {
+        URL(fileURLWithPath: home).appendingPathComponent(".local/share/tychicus/release/tychicus")
+    }
 
     /// The app name for each browser the helper reports, as installed in /Applications.
     public static func appName(for browser: String) -> String {
@@ -265,7 +273,7 @@ public enum BrowserBundle {
     }
 
     /// Each browser's bundle identifier, for finding its app wherever it lives. The same ids the helper uses to tell whether a
-    /// browser is installed (`MAC_BUNDLE_IDS` in browser/cli/src/install.ts); a helper test keeps the two lists equal.
+    /// browser is installed (`MAC_BUNDLE_IDS` in Tychicus's cli/src/install.ts); a Tychicus test keeps the two lists equal.
     public static let bundleIDs: [String: String] = [
         "Helium": "net.imput.helium",
         "Chrome": "com.google.Chrome",

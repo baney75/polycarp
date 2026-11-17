@@ -279,13 +279,11 @@ final class AgentAccessSurfaceTests: XCTestCase {
 }
 
 final class AgentEverythingTests: XCTestCase {
-    func testEverythingIsOnOnlyWhenEveryPartIs() {
-        XCTAssertTrue(AgentEverything.isOn(access: .full, anySite: true, claudeAllowed: true, claudeReady: true))
-        XCTAssertFalse(AgentEverything.isOn(access: .standard, anySite: true, claudeAllowed: true, claudeReady: true))
-        XCTAssertFalse(AgentEverything.isOn(access: .full, anySite: false, claudeAllowed: true, claudeReady: true))
-        XCTAssertFalse(AgentEverything.isOn(access: .full, anySite: nil, claudeAllowed: true, claudeReady: true), "no browser answered: not on")
-        XCTAssertFalse(AgentEverything.isOn(access: .full, anySite: true, claudeAllowed: false, claudeReady: true))
-        XCTAssertTrue(AgentEverything.isOn(access: .full, anySite: true, claudeAllowed: false, claudeReady: false), "no Claude Code here: nothing to ask of it")
+    /// The browser's any-site and Claude Code switches moved to Tychicus, so everything here is Full Access.
+    func testEverythingIsFullAccess() {
+        XCTAssertTrue(AgentEverything.isOn(access: .full))
+        for mode in AgentAccessMode.allCases where mode != .full { XCTAssertFalse(AgentEverything.isOn(access: mode), mode.rawValue) }
+        XCTAssertFalse(AgentEverything.why.contains("browser") || AgentEverything.consentBody.contains("browser"), "it promises nothing Polycarp no longer does")
     }
 
     func testTheSheetIsTheOnlyWayInAndItNeverCoversTheConnector() throws {
@@ -296,15 +294,11 @@ final class AgentEverythingTests: XCTestCase {
         let confirm = try XCTUnwrap(HandsSourceTests.block(after: "private static func confirm(", in: consent))
         XCTAssertTrue(confirm.contains("LendConsent.notByHand(alert: alert, button: button, enabledAt: enabledAt)"), "the same real-click check as every widening")
         XCTAssertTrue(AgentEverything.consentBody.contains("assistants on the web stay limited"))
-        let browser = try HandsSourceTests.code("Sources/BaneySpaces/BrowserSetup.swift")
-        let on = try XCTUnwrap(HandsSourceTests.block(after: "func turnOnEverything()", in: browser))
-        XCTAssertFalse(on.contains("requestEverything") || on.contains("set(.full)"), "the browser part never widens access by itself")
-        XCTAssertTrue(on.contains("everythingPending = true"), "a yes before the first read isn't dropped")
         // Each place that starts it asks first.
         let welcome = try HandsSourceTests.code("Sources/BaneySpaces/WelcomeWindow.swift")
-        XCTAssertLessThan(try XCTUnwrap(welcome.range(of: "guard AgentAccess.shared.requestEverything() else { return }")).lowerBound, try XCTUnwrap(welcome.range(of: "browser.turnOnEverything()")).lowerBound)
+        XCTAssertTrue(welcome.contains("guard AgentAccess.shared.requestEverything() else { return }"))
         let setup = try HandsSourceTests.code("Sources/BaneySpaces/Setup.swift")
-        XCTAssertLessThan(try XCTUnwrap(setup.range(of: "guard let self, AgentAccess.shared.requestEverything() else { return }")).lowerBound, try XCTUnwrap(setup.range(of: "BrowserModel.shared.turnOnEverything()")).lowerBound)
+        XCTAssertTrue(setup.contains("guard let self, AgentAccess.shared.requestEverything() else { return }"))
     }
 }
 

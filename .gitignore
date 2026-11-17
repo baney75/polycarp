@@ -1,7 +1,3 @@
-# Siblings that browser/scripts/setup-siblings.sh clones here
-/mini-lit/
-/pi-mono/
-
 # Build output (subdirectories ignore their own)
 node_modules/
 .build/

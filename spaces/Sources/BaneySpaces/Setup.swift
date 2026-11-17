@@ -388,7 +388,6 @@ final class SetupModel: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self, AgentAccess.shared.requestEverything() else { return }
             self.agentAccess = AgentAccess.shared.current
-            BrowserModel.shared.turnOnEverything()
         }
     }
 
@@ -456,7 +455,7 @@ final class SetupModel: ObservableObject {
 /// The settings window's tabs. General comes first: it's where a new Mac starts.
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "General", keys = "Keys", dock = "Dock", appearance = "Appearance", launcher = "Launcher",
-         automation = "Automation", permissions = "Permissions", updates = "Updates", agents = "Agents", voice = "Silas", browser = "Browser"
+         automation = "Automation", permissions = "Permissions", updates = "Updates", agents = "Agents", voice = "Silas"
     var id: Self { self }
 
     var symbol: String? {
@@ -471,7 +470,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .updates: "arrow.down.circle"
         case .agents: "cpu"
         case .voice: nil   // Silas draws its own pen (`SilasMark`); every consumer must handle the missing symbol
-        case .browser: "globe"
         }
     }
 }
@@ -504,7 +502,6 @@ struct SetupView: View {
                     case .updates: updates
                     case .agents: agents
                     case .voice: VoiceSettingsView()
-                    case .browser: BrowserSettingsView()
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -828,8 +825,6 @@ struct SetupView: View {
 
     // MARK: Agents
 
-    @ObservedObject private var browserModel = BrowserModel.shared
-
     @ViewBuilder private var agents: some View {
         SettingsGroup("Agent access") {
             SettingsBlock {
@@ -841,27 +836,12 @@ struct SetupView: View {
             SettingsNote(model.agentAccess.detail, tone: model.agentAccess == .full ? .urgent : .quiet)
             SettingsNote("Only you change this, here or in the Polycarp menu. More access asks you first.")
             SettingsRow(AgentEverything.title, help: AgentEverything.why) {
-                if AgentEverything.isOn(access: model.agentAccess, anySite: browserModel.status?.anySite, claudeAllowed: browserModel.status?.claudeAllowed ?? false, claudeReady: browserModel.status?.claudeReady ?? false) {
+                if AgentEverything.isOn(access: model.agentAccess) {
                     Text(AgentEverything.on).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                 } else {
                     Button(AgentEverything.button) { model.turnOnEverything() }
                 }
             }
-        }
-
-        SettingsGroup("Always allow") {
-            SettingsRow("Agents open any site without asking", help: browserModel.status?.anySite == nil ? "Open your browser to change this." : "Otherwise they ask you before each new site.") {
-                Toggle("Any site", isOn: binding({ browserModel.status?.anySite ?? false }, { browserModel.setAnySite($0) }))
-                    .labelsHidden().toggleStyle(.switch)
-                    .disabled(browserModel.busy || browserModel.status?.anySite == nil)
-            }
-            SettingsRow("Claude Code uses Polycarp without asking", help: browserModel.status?.claudeReady == true ? "Stops its prompt for Polycarp's tools. Its other tools still ask." : "Add Polycarp to Claude Code first, in Settings > Browser.") {
-                Toggle("Claude Code", isOn: binding({ browserModel.status?.claudeAllowed ?? false }, { browserModel.setClaudeAllowed($0) }))
-                    .labelsHidden().toggleStyle(.switch)
-                    .disabled(browserModel.busy || browserModel.status?.claudeReady != true)
-            }
-            SettingsNote("Page scripts run without asking. For the fastest ones, turn on Allow user scripts at chrome://extensions > Polycarp > Details.")
-            if let message = browserModel.message { SettingsNote(message, tone: .urgent) }
         }
 
         SettingsGroup("Sandbox") {
@@ -1282,8 +1262,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ n: Notification) {
         model.stopWatching()
-        // The remote section's passcode and connect code are shown once: closing Settings forgets them, a tab switch doesn't.
-        BrowserRemoteModel.shared.clearSecrets()
         model.finish()
     }
 }

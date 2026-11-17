@@ -55,8 +55,8 @@ public enum Welcome {
             after: "Turn on Polycarp in the list. This window updates by itself."),
     ]
 
-    /// The walk for the parts that are on. Workspaces asks for all it uses, Silas needs Accessibility to read its key and
-    /// type, and Browser needs nothing from macOS at all.
+    /// The walk for the parts that are on. Workspaces asks for all it uses, and Silas needs Accessibility to read its key and
+    /// type.
     public static func steps(for features: FeatureSet) -> [PermissionStep] {
         steps.compactMap { step in
             switch step.kind {

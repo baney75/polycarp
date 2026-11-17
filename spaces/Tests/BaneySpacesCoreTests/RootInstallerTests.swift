@@ -90,6 +90,43 @@ final class RootInstallerTests: XCTestCase {
         XCTAssertFalse(try installer().contains("theme follow omarchy"), "the Omarchy theme follow left with Linux")
     }
 
+    /// The browser helper left Polycarp for Tychicus and the voice app for Silas: asked for either by name, the installer
+    /// prints one line saying where to get it, exits 0 and writes nothing, not even its log or the parts file. A `uname`
+    /// that answers Darwin stands in for a Mac.
+    func testAskingForTheBrowserOrVoiceNamesWhereItWentAndInstallsNothing() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("root-installer-\(UUID().uuidString)")
+        let home = dir.appendingPathComponent("home"), bin = dir.appendingPathComponent("bin")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let uname = bin.appendingPathComponent("uname")
+        try "#!/bin/sh\necho Darwin\n".write(to: uname, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uname.path)
+        let tychicus = "The browser helper is now Tychicus: download tychicus-<version>-<platform> from https://github.com/baney75/tychicus/releases/latest, then `tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .`\n"
+        let silas = "The voice app is now Silas: see https://github.com/baney75/silas\n"
+        for (features, line) in [("browser", tychicus), ("workspaces, browser", tychicus), ("voice", silas), ("workspaces,voice", silas), ("browser,voice", tychicus + silas)] {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/bash")
+            p.arguments = [Repo.root.deletingLastPathComponent().appendingPathComponent("install.sh").path]
+            p.environment = ["HOME": home.path, "PATH": "\(bin.path):/usr/bin:/bin", "POLYCARP_FEATURES": features]
+            let out = Pipe(), err = Pipe()
+            p.standardOutput = out
+            p.standardError = err
+            p.standardInput = FileHandle.nullDevice
+            try p.run()
+            let said = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let errors = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            p.waitUntilExit()
+            XCTAssertEqual(p.terminationStatus, 0, errors)
+            XCTAssertEqual(said, line, features)
+            XCTAssertEqual(errors, "")
+            XCTAssertEqual(try fm.contentsOfDirectory(atPath: home.path), [], "asking for \(features) wrote into HOME")
+        }
+        let t = try installer()
+        XCTAssertFalse(t.contains("setup-siblings") || t.contains("command -v bun"), "a source build needs no browser siblings or Bun")
+    }
+
     func testTestModeNeverQuitsOrOpensAnything() throws {
         let t = try installer()
         XCTAssertTrue(t.contains(#"if [ -z "$test_mode" ]; then"#))

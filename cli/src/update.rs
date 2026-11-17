@@ -10,7 +10,7 @@
 //!
 //! The `polycarp` that starts an update may be older than the one it installs (the first run is a
 //! build in a checkout). So the plan ends by handing over: the newly installed command runs
-//! `polycarp update --finish`, which reloads, restarts and does the final check by its own rules.
+//! `polycarp update --finish`, which does the final check by its own rules.
 
 use std::ffi::OsString;
 use std::fs;
@@ -21,7 +21,7 @@ use std::process::{Command, Stdio};
 use crate::channel::{self, Channel};
 use crate::version::{self, Part};
 
-/// The exit code for "an update is available", the same one `polycarp browser update --check` uses.
+/// The exit code for "an update is available".
 pub const AVAILABLE: i32 = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -93,12 +93,8 @@ pub enum Role {
     Git,
     /// Asks whether there is anything to do. Exit 0: up to date, stop here. Exit 100: carry on.
     Gate,
-    /// Builds inside the clean copy.
-    Build,
     /// Changes what is installed.
     Install,
-    /// Worth doing, but a failure does not stop the update (reloading the extension while an agent works).
-    Soft,
     /// The check at the end: every part the update installs is at origin/main.
     Verify,
     /// The last step of an install: the newly installed `polycarp` runs `update --finish`.
@@ -309,7 +305,7 @@ fn with_channel<'a>(argv: &[&'a str], channel: Option<Channel>) -> Vec<&'a str> 
 fn needs(f: &Facts) -> String {
     let mut names = vec!["polycarp command"];
     match f.platform {
-        Platform::Mac => names.extend(["app", "spaces command", "browser helper"]),
+        Platform::Mac => names.extend(["app", "spaces command"]),
         Platform::Linux | Platform::Windows => {}
     }
     names.join(",")
@@ -426,85 +422,27 @@ fn source_steps(
 }
 
 /// What comes after the install, built and run by the newly installed command (`update --finish`):
-/// reload the extension, restart what runs, and check every part against the clean copy's commit.
+/// check every part against the clean copy's commit.
 fn finish_steps(f: &Facts) -> Vec<Step> {
     let installed = s(&f.installed);
     let wt = s(&f.worktree);
-    let mut steps = Vec::new();
-    const RELOAD: &str =
-        "Reload the extension, unless an agent is working in the browser, and wait for it to run the new build";
-    match f.platform {
-        Platform::Mac => steps.push(reload_step(
-            f,
-            RELOAD,
-            &[&installed, "browser", "reload", "--if-idle"],
-        )),
-        Platform::Linux | Platform::Windows => {}
-    }
-    steps.push(
-        Step::new(
-            Role::Verify,
-            "Check that every part this update installs is at origin/main",
-            &[
-                &installed,
-                "update",
-                "--is-current",
-                &wt,
-                "HEAD",
-                "--needs",
-                &needs(f),
-                "--after-install",
-                "--wait",
-                "30",
-            ],
-        )
-        .in_dir(&f.home),
-    );
-    steps
-}
-
-/// The reload, run by `update --reload-wait`: it reloads, waits for every connected extension to report
-/// the clean copy's commit, and reloads once more if one still runs the old build (#207).
-fn reload_step(f: &Facts, title: &str, reload: &[&str]) -> Step {
-    let (installed, wt) = (s(&f.installed), s(&f.worktree));
-    let mut argv = vec![
-        installed.as_str(),
-        "update",
-        "--reload-wait",
-        wt.as_str(),
-        "HEAD",
-        "--wait",
-        "30",
-        "--",
-    ];
-    argv.extend_from_slice(reload);
-    // From the home folder: the step reads the parts, and from inside the helper's own folder (#218 ran it there)
-    // `polycarp-browser` links into the current folder, so it is not trusted and every look found no helper and no
-    // extension (the Parish1 deploys of 53e4c4b and 8c61d42).
-    Step::new(Role::Soft, title, &argv).in_dir(&f.home)
-}
-
-/// `npm install` in the sibling setup can rewrite a package-lock.json. In the clean copy that is the only
-/// kind of change there can be, and it would stamp every part built after it as "dirty", so it is undone.
-fn restore_step(worktree: &Path) -> Step {
-    Step::new(
-        Role::Git,
-        "Put back any tracked file the setup rewrote",
-        &["git", "-C", &s(worktree), "checkout", "--", "."],
+    vec![Step::new(
+        Role::Verify,
+        "Check that every part this update installs is at origin/main",
+        &[
+            &installed,
+            "update",
+            "--is-current",
+            &wt,
+            "HEAD",
+            "--needs",
+            &needs(f),
+            "--after-install",
+            "--wait",
+            "30",
+        ],
     )
-}
-
-/// `browser/scripts/setup-siblings.sh`: it clones the pinned pi-mono and mini-lit next to `browser/`
-/// and runs `npm install` in `browser/` and in `browser/cli`, so a clean copy made a moment ago has
-/// every package the two builds after it need (`a_fresh_clean_copy_gets_its_packages_before_any_build`).
-fn siblings_step(worktree: &Path) -> Step {
-    let browser = worktree.join("browser");
-    Step::new(
-        Role::Build,
-        "Get what the extension builds against, and the packages for the helper and the extension",
-        &[&s(&browser.join("scripts/setup-siblings.sh"))],
-    )
-    .in_dir(&browser)
+    .in_dir(&f.home)]
 }
 
 fn mac_steps(f: &Facts, steps: &mut Vec<Step>) {
@@ -514,15 +452,13 @@ fn mac_steps(f: &Facts, steps: &mut Vec<Step>) {
     } else {
         Vec::new()
     };
-    steps.push(siblings_step(wt));
-    steps.push(restore_step(wt));
-    // What `make -C spaces install` does: bundle.sh builds the app with the command, the helper, the
-    // extension and the skill inside, and install-app.sh quits the running app, swaps it, links the
-    // commands in ~/.local/bin (polycarp among them) and opens it again.
+    // What `make -C spaces install` does: bundle.sh builds the app with the command and the skill inside,
+    // and install-app.sh quits the running app, swaps it, links the commands in ~/.local/bin (polycarp
+    // among them), retires the old browser helper's launchd jobs and opens it again.
     steps.push(
         Step::new(
             Role::Install,
-            "Build Polycarp.app (command, helper, extension and skill inside), install it and restart it",
+            "Build Polycarp.app (command and skill inside), install it and restart it",
             &["make", "-C", "spaces", "install"],
         )
         .in_dir(wt)
@@ -555,19 +491,6 @@ pub struct Ran {
 
 pub trait Runner {
     fn run(&mut self, step: &Step) -> Ran;
-    /// A program and its arguments as the system gave them: a path need not be text (second-F6 of the
-    /// review of PR 236). A fake sees them as text.
-    fn run_os(&mut self, argv: &[OsString]) -> Ran {
-        let words: Vec<String> = argv
-            .iter()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        self.run(&Step::new(
-            Role::Soft,
-            "",
-            &words.iter().map(String::as_str).collect::<Vec<_>>(),
-        ))
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -587,7 +510,7 @@ pub fn state_after_failure(steps: &[Step], failed: usize) -> &'static str {
     let installed_before = steps[..failed].iter().any(|st| st.role == Role::Install);
     match steps[failed].role {
         Role::Verify => "Every step before this one ran, but the parts do not all match yet. `polycarp version` shows which.",
-        Role::Handoff => "The install steps ran. The installed polycarp command did not finish the last steps (reloading the extension, restarting what runs, the final check), or it is not there, or the final check found a part that is not at origin/main. `polycarp version` shows what is installed.",
+        Role::Handoff => "The install steps ran. The installed polycarp command did not finish the last step (the final check), or it is not there, or the final check found a part that is not at origin/main. `polycarp version` shows what is installed.",
         Role::Install if !installed_before => "This step installs. It did not finish, so some parts may be new and others old. `polycarp version` shows what is installed.",
         _ if installed_before => "Earlier steps already installed some parts, so some may be new and others old. `polycarp version` shows what is installed.",
         _ => "Nothing that is installed on this device was changed.",
@@ -610,13 +533,6 @@ pub fn execute(steps: &[Step], runner: &mut dyn Runner, out: &mut dyn Write) -> 
             (Role::Gate, Some(AVAILABLE)) if i + 1 == total => return Outcome::Available,
             (Role::Gate, Some(AVAILABLE)) => {}
             (_, Some(0)) => {}
-            (Role::Soft, code) => {
-                let _ = writeln!(
-                    out,
-                    "note: this step did not happen ({}). The update carries on.",
-                    exit_text(code)
-                );
-            }
             (_, code) => {
                 let _ = writeln!(
                     out,
@@ -672,12 +588,6 @@ pub fn resolve(steps: &mut [Step], path: Option<&OsString>) {
     }
 }
 
-/// The first `name` on PATH when it is not `new`: an older copy that keeps answering in a shell.
-pub fn shadowed(name: &str, new: &Path, path: Option<&OsString>) -> Option<PathBuf> {
-    let first = on_path(name, path)?;
-    (new.exists() && fs::canonicalize(&first).ok() != fs::canonicalize(new).ok()).then_some(first)
-}
-
 /// Runs steps for real: no shell, input closed, output straight to the terminal as it comes.
 struct RealRunner {
     path: Option<OsString>,
@@ -710,9 +620,6 @@ impl Runner for RealRunner {
     fn run(&mut self, step: &Step) -> Ran {
         let argv: Vec<OsString> = step.argv.iter().map(OsString::from).collect();
         self.start(&argv, step.cwd.as_deref(), &step.env)
-    }
-    fn run_os(&mut self, argv: &[OsString]) -> Ran {
-        self.start(argv, None, &[])
     }
 }
 
@@ -887,8 +794,6 @@ pub struct Device<'a> {
     pub config: Result<PathBuf, String>,
     /// Every part on this device, for the up-to-date check.
     pub parts: &'a dyn Fn() -> Vec<Part>,
-    /// The browsers that run with the extension on, read from their own folders (`browsers::with_extension`).
-    pub running: &'a dyn Fn() -> Vec<String>,
 }
 
 pub const USAGE: &str = "\
@@ -972,10 +877,12 @@ fn parse_check(args: &[OsString]) -> Result<Check, String> {
         match a.to_str() {
             Some("--needs") => {
                 let list = it.next().ok_or("--needs needs a list of parts")?;
+                // A list from a polycarp older than the browser's move to Tychicus may name the browser helper, which
+                // nothing here installs now: it is skipped, or no update could ever pass.
                 check.needs = list
                     .to_string_lossy()
                     .split(',')
-                    .filter(|n| !n.is_empty())
+                    .filter(|n| !n.is_empty() && *n != "browser helper")
                     .map(str::to_string)
                     .collect();
             }
@@ -999,379 +906,36 @@ fn parse_check(args: &[OsString]) -> Result<Check, String> {
 pub enum Standing {
     /// Every part the update installs is installed and at the target, built from a clean tree.
     Current,
-    /// The same, except that a browser still runs an older extension: it only has to reload.
-    ReloadPending(Vec<String>),
     /// Something is missing, older or odd: an update would change it.
     Behind,
 }
 
-/// Pure: how `parts` stand against `target`. A part that gave no answer in time is left out, so a slow
-/// browser alone never makes an update fail or run again.
+/// Pure: how `parts` stand against `target`.
 pub fn standing(parts: &[Part], needs: &[&str], target: &str) -> Standing {
     if !version::missing(parts, needs).is_empty() {
         return Standing::Behind;
     }
-    let judged = judged(parts, needs);
-    let parts = judged.as_slice();
-    if version::is_current(parts, target) {
+    if version::is_current(&judged(parts, needs), target) {
         return Standing::Current;
-    }
-    let rest = version::without_extensions(parts);
-    if rest.len() < parts.len() && version::is_current(&rest, target) {
-        let waiting = parts
-            .iter()
-            .filter(|p| p.name.starts_with("extension"))
-            .filter(|p| !version::is_current(std::slice::from_ref(p), target))
-            .filter(|p| matches!(p.found, version::Found::Installed { .. }))
-            .map(|p| p.name.clone())
-            .collect();
-        return Standing::ReloadPending(waiting);
     }
     Standing::Behind
 }
 
 /// The parts an update installs on some device.
-const UPDATED: [&str; 4] = [
-    "polycarp command",
-    "app",
-    "spaces command",
-    "browser helper",
-];
+const UPDATED: [&str; 3] = ["polycarp command", "app", "spaces command"];
 
 /// The parts `standing` compares: all but one of `UPDATED` this device's update does not install (a `baneyspaces`
-/// from an earlier build on a box without Hyprland), and the extensions only where it installs the browser helper.
-/// The update never touches those, so they could never catch up and every update would end in a failed check.
+/// from an earlier build on a box without Hyprland). The update never touches those, so they could never catch up and
+/// every update would end in a failed check.
 fn judged(parts: &[Part], needs: &[&str]) -> Vec<Part> {
     if needs.is_empty() {
         return parts.to_vec();
     }
     parts
         .iter()
-        .filter(|p| match p.name.as_str() {
-            n if n.starts_with("extension") => needs.contains(&"browser helper"),
-            n => !UPDATED.contains(&n) || needs.contains(&n),
-        })
+        .filter(|p| !UPDATED.contains(&p.name.as_str()) || needs.contains(&p.name.as_str()))
         .cloned()
         .collect()
-}
-
-/// What the browser helper's `reload --if-idle` exits with when an agent is working in the browser.
-const RELOAD_BUSY: i32 = 75;
-
-/// An extension drops off for a few seconds as it reloads, so each reload gets at least this long
-/// before the wait can end.
-const RELOAD_SETTLE: std::time::Duration = std::time::Duration::from_secs(4);
-
-/// The extensions that do not run `target` yet: an older build, no answer, or none connected (one
-/// that is reloading drops off for a few seconds).
-fn not_reloaded(parts: &[Part], target: &str) -> Vec<String> {
-    parts
-        .iter()
-        .filter(|p| p.name.starts_with("extension"))
-        .filter(|p| {
-            !matches!(p.found, version::Found::Installed { .. })
-                || !version::is_current(std::slice::from_ref(p), target)
-        })
-        .map(|p| p.name.clone())
-        .collect()
-}
-
-/// The extensions that report a build other than `target`: the only ones a second reload can help.
-fn old_builds(parts: &[Part], target: &str) -> Vec<String> {
-    parts
-        .iter()
-        .filter(|p| p.name.starts_with("extension"))
-        .filter(|p| matches!(p.found, version::Found::Installed { .. }))
-        .filter(|p| !version::is_current(std::slice::from_ref(p), target))
-        .map(|p| p.name.clone())
-        .collect()
-}
-
-/// The longest a browser that runs with the extension gets to connect before the reload: the extension dials the
-/// helper again on a 30 s alarm and a backoff of at most 30 s.
-const WAKE_WAIT: std::time::Duration = std::time::Duration::from_secs(40);
-
-/// The browsers that run with the extension but have not connected yet (`version::ASLEEP`).
-fn asleep(parts: &[Part]) -> Vec<String> {
-    parts
-        .iter()
-        .filter(|p| p.found == version::Found::Absent(version::ASLEEP))
-        .map(|p| p.name.clone())
-        .collect()
-}
-
-/// `parts`, plus each browser that runs with the extension on (`running`, read from its own folder) as `version::ASLEEP`
-/// when no extension is connected. The helper's word alone is not enough: the reload step's reads of the helper just
-/// replaced named no browser while Helium ran with the extension (the Parish1 deploy of 53e4c4b).
-fn with_running(mut parts: Vec<Part>, running: &dyn Fn() -> Vec<String>) -> Vec<Part> {
-    if extension_connected(&parts) {
-        return parts;
-    }
-    for b in running() {
-        let name = format!("extension ({b})");
-        if !parts.iter().any(|p| p.name == name) {
-            parts.push(Part::absent(&name, version::ASLEEP));
-        }
-    }
-    parts
-}
-
-/// Whether any browser's extension is there to reload: it reports a build, or it is there but slow
-/// to answer. "No browser is connected" and "not installed" are not.
-fn extension_connected(parts: &[Part]) -> bool {
-    parts
-        .iter()
-        .any(|p| p.name.starts_with("extension") && !matches!(p.found, version::Found::Absent(_)))
-}
-
-/// Reload the extension and wait, until `wait` has passed on `clock`, for every connected one to
-/// report `target`. With no browser connected for `RELOAD_SETTLE` there is nothing to reload or wait
-/// for: the browser loads the new build when it starts. Once half the time has passed, an extension
-/// that still reports the old build gets one more reload: Helium can keep the old one after the
-/// first (#207). 0 when every extension runs `target` or none reports a build, the reload's own code
-/// when it could not run (75: an agent is working in the browser), 1 when one whose last report was an
-/// old build, before the reload or since, does not report `target` by the end. The time is bounded by up to 4 s for a browser
-/// to connect, then `wait` (at least 4 s after each reload), plus one pause and one look, however
-/// slowly the parts answer.
-pub fn reload_wait(
-    target: &str,
-    wait: std::time::Duration,
-    reload: &mut dyn FnMut() -> Ran,
-    parts: &dyn Fn() -> Vec<Part>,
-    clock: &dyn Fn() -> std::time::Duration,
-    pause: &mut dyn FnMut(),
-    out: &mut dyn Write,
-) -> i32 {
-    let at = version::short(target);
-    // One look is not enough: an extension that is reloading or reconnecting drops off for a moment (first-F1 of the
-    // review of PR 236).
-    let first = clock();
-    let mut before = parts();
-    let mut told = false;
-    while !extension_connected(&before) {
-        let spent = clock().saturating_sub(first);
-        let sleeping = asleep(&before);
-        // A browser that runs with the extension is not "no browser": it connects soon, and then it is reloaded.
-        if sleeping.is_empty() && spent >= RELOAD_SETTLE {
-            let _ = writeln!(
-                out,
-                "No browser is connected, so there is no extension to reload: the browser loads {at} when it starts."
-            );
-            return 0;
-        }
-        if !sleeping.is_empty() && spent >= WAKE_WAIT {
-            let _ = writeln!(
-                out,
-                "{} did not connect in {} s, though its browser is running, so it was not reloaded. Run `polycarp browser reload` once it connects.",
-                sleeping.join(", "),
-                WAKE_WAIT.as_secs()
-            );
-            return 0;
-        }
-        if !sleeping.is_empty() && !told {
-            told = true;
-            let _ = writeln!(
-                out,
-                "{} is not connected yet, though its browser is running: waiting up to {} s for it.",
-                sleeping.join(", "),
-                WAKE_WAIT.as_secs()
-            );
-        }
-        pause();
-        before = parts();
-    }
-    // Each extension whose last report was an old build, the look before the reload included, and whether it said so
-    // since the reload: it passes only once it reports `target`, whether it then goes quiet or drops out of the list
-    // (first-F2 of the review of PR 236; first-F1, second-F5, second-F6 of the review of PR 244).
-    let mut last_old: std::collections::BTreeMap<String, bool> = old_builds(&before, target)
-        .into_iter()
-        .map(|n| (n, false))
-        .collect();
-    // A reload's own words go out as the helper said them (second-F7 of the review of PR 236).
-    let mut reload = |out: &mut dyn Write| {
-        let ran = reload();
-        if ran.code == Some(0) && !ran.output.is_empty() {
-            let _ = writeln!(out, "{}", ran.output.trim_end());
-        }
-        ran.code
-    };
-    match reload(out) {
-        Some(0) => {}
-        code => return code.unwrap_or(1),
-    }
-    let started = clock();
-    let mut deadline = wait.max(RELOAD_SETTLE);
-    let mut retried = false;
-    loop {
-        pause();
-        let now = parts();
-        for p in now.iter().filter(|p| p.name.starts_with("extension")) {
-            if matches!(p.found, version::Found::Installed { .. }) {
-                match version::is_current(std::slice::from_ref(p), target) {
-                    true => last_old.remove(&p.name),
-                    false => last_old.insert(p.name.clone(), true),
-                };
-            }
-        }
-        let waiting = not_reloaded(&now, target);
-        if waiting.is_empty() && last_old.is_empty() {
-            let _ = writeln!(out, "The extension runs {at}.");
-            return 0;
-        }
-        // Only one that said so since the reload gets another: one that hasn't answered may yet (first-F2 of PR 244).
-        let old: Vec<String> = last_old
-            .iter()
-            .filter(|(_, since)| **since)
-            .map(|(n, _)| n.clone())
-            .collect();
-        let spent = clock().saturating_sub(started);
-        if !retried && !old.is_empty() && spent >= wait / 2 {
-            retried = true;
-            // The helper's reload has no browser selector: every connected extension reloads.
-            let _ = writeln!(
-                out,
-                "{} still runs the build from before, so every browser's extension is reloaded once more.",
-                old.join(", ")
-            );
-            match reload(out) {
-                Some(0) => {}
-                Some(RELOAD_BUSY) => return RELOAD_BUSY,
-                // second-F8 of the review of PR 236: a reload that failed is not "after two reloads".
-                code => {
-                    let _ = writeln!(
-                        out,
-                        "The second reload failed ({}), so {} may still run the build from before.",
-                        exit_text(code),
-                        old.join(", ")
-                    );
-                    return code.unwrap_or(1);
-                }
-            }
-            deadline = deadline.max(spent + RELOAD_SETTLE);
-            continue;
-        }
-        if spent >= deadline {
-            if last_old.is_empty() {
-                // The time it really waited: a reload gets at least `RELOAD_SETTLE`, even with `--wait 0` (first-F4).
-                let _ = writeln!(
-                    out,
-                    "note: {} reported no build in {} s, so it was not compared. `polycarp version` asks again.",
-                    waiting.join(", "),
-                    spent.as_secs()
-                );
-                return 0;
-            }
-            let stale: Vec<&str> = last_old.keys().map(String::as_str).collect();
-            let _ = writeln!(
-                out,
-                "{} still does not run {at}, after {}.",
-                stale.join(", "),
-                if retried { "two reloads" } else { "the reload" }
-            );
-            return 1;
-        }
-    }
-}
-
-/// The final check's words for a browser that still runs the build from before. Never "up to date":
-/// what the user works with is still the old build (#207).
-fn reload_pending_line(at: &str, waiting: &[String]) -> String {
-    format!(
-        "reload pending: every other part is at origin/main ({at}), but {} still runs the build from before. Run `polycarp browser reload` when no agent is working in the browser.",
-        waiting.join(", ")
-    )
-}
-
-/// `--wait <seconds> -- <reload command...>`, after `update --reload-wait <dir> <rev>`.
-fn parse_reload_wait(args: &[OsString]) -> Result<(u64, Vec<OsString>), String> {
-    let mut wait = 30;
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        match a.to_str() {
-            Some("--wait") => {
-                wait = it
-                    .next()
-                    .and_then(|v| v.to_str())
-                    .and_then(|v| v.parse().ok())
-                    .map(|secs: u64| secs.min(600))
-                    .ok_or("--wait needs a number of seconds")?;
-            }
-            Some("--") => {
-                let argv: Vec<OsString> = it.cloned().collect();
-                if argv.is_empty() {
-                    return Err("--reload-wait needs the reload command after --".to_string());
-                }
-                return Ok((wait, argv));
-            }
-            _ => return Err(format!("unknown option {}", a.to_string_lossy())),
-        }
-    }
-    Err("--reload-wait needs the reload command after --".to_string())
-}
-
-/// `polycarp update --reload-wait <dir> <rev> [--wait <seconds>] -- <reload command...>`, the plan's
-/// reload step (`args` starts at `--reload-wait`): see `reload_wait`. The reload command runs through
-/// `runner`, which finds its program the way it finds every step's: absolute, or from the trusted
-/// folders on PATH only (`RealRunner`, cli/AGENTS.md).
-fn reload_wait_command(args: &[OsString], device: &Device, runner: &mut dyn Runner) -> i32 {
-    let (wait, argv) = match parse_reload_wait(&args[3..]) {
-        Ok(parsed) => parsed,
-        Err(e) => {
-            eprintln!("polycarp update: {e}");
-            return 2;
-        }
-    };
-    let (dir, rev) = (Path::new(&args[1]), args[2].to_string_lossy());
-    let Some(target) = git_line(
-        dir,
-        &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
-    ) else {
-        eprintln!("polycarp update: could not read {rev} in {}", dir.display());
-        return 1;
-    };
-    let mut reload = || {
-        let _ = std::io::stdout().flush();
-        let ran = runner.run_os(&argv);
-        if ran.code != Some(0) && !ran.output.is_empty() {
-            eprintln!("polycarp update: {}", ran.output);
-        }
-        ran
-    };
-    let started = std::time::Instant::now();
-    let mut pause = || std::thread::sleep(std::time::Duration::from_secs(2));
-    reload_wait(
-        &target,
-        std::time::Duration::from_secs(wait),
-        &mut reload,
-        &|| with_running((device.parts)(), device.running),
-        &|| started.elapsed(),
-        &mut pause,
-        &mut std::io::stdout(),
-    )
-}
-
-/// The line that names each extension the check could not compare (no browser connected, or one that runs without its
-/// extension connected), so "up to date" is never read as the browser's build too. None when every extension answered.
-fn extensions_not_compared(parts: &[Part]) -> Option<String> {
-    let absent: Vec<String> = parts
-        .iter()
-        .filter(|p| p.name.starts_with("extension"))
-        .filter_map(|p| match p.found {
-            // "not installed" is not this: there is no extension to be behind.
-            version::Found::Absent(why)
-                if why == "no browser is connected" || why == version::ASLEEP =>
-            {
-                Some(format!("{} ({why})", p.name))
-            }
-            _ => None,
-        })
-        .collect();
-    (!absent.is_empty()).then(|| {
-        format!(
-            "note: not compared, so it may still run the build from before: {}. `polycarp browser reload` loads the new one once it connects.",
-            absent.join(", ")
-        )
-    })
 }
 
 /// `polycarp update --is-current <dir> <rev> [--needs <parts>] [--after-install] [--wait <seconds>]`,
@@ -1402,16 +966,6 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
         }
         std::thread::sleep(std::time::Duration::from_secs(2));
     };
-    let quiet = version::unanswered(&parts);
-    if !quiet.is_empty() {
-        println!(
-            "note: {} gave no answer in time, so it was not compared. `polycarp version` asks again.",
-            quiet.join(", ")
-        );
-    }
-    if let Some(line) = extensions_not_compared(&parts) {
-        println!("{line}");
-    }
     let kept = judged(&parts, &needs);
     let left: Vec<&str> = parts
         .iter()
@@ -1421,17 +975,9 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
     if !left.is_empty() {
         println!("note: this update does not install {} here, so it was not compared. Remove it if you no longer use it.", left.join(", "));
     }
-    let helper = parts.iter().find(|p| p.name == "browser helper");
-    if let Some(version::Found::Installed { path: Some(p), .. }) = helper.map(|p| &p.found) {
-        println!("browser helper: `polycarp browser` runs {}", p.display());
-    }
     match standing {
         Standing::Current => {
             println!("up to date: every installed part is at origin/main ({at})");
-            0
-        }
-        Standing::ReloadPending(waiting) => {
-            println!("{}", reload_pending_line(at, &waiting));
             0
         }
         Standing::Behind => {
@@ -1445,7 +991,7 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
             if !missing.is_empty() {
                 println!("not installed yet: {}", missing.join(", "));
             }
-            println!("{}", version::summary(&parts, &version::compare(&parts)));
+            println!("{}", version::compare(&parts).line());
             if check.after_install {
                 1
             } else {
@@ -1464,7 +1010,7 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         println!("{LINUX_MOVED}");
         return 0;
     }
-    // The two commands a plan runs for itself. Neither is in the usage text.
+    // The commands a plan or an installer runs for itself. None is in the usage text.
     match args.first().and_then(|a| a.to_str()) {
         Some("--is-current") if args.len() >= 3 => {
             return match parse_check(&args[3..]) {
@@ -1480,9 +1026,15 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
                 }
             };
         }
-        Some("--reload-wait") if args.len() >= 3 => {
-            let mut runner = RealRunner::new(device.home.as_deref().unwrap_or(Path::new("/")));
-            return reload_wait_command(args, device, &mut runner);
+        // Run by install-app.sh on every install: the old browser helper's launchd jobs go (src/retire.rs).
+        Some("--retire-old-browser") => {
+            return match device.home.as_deref() {
+                Some(home) => crate::retire::command(home),
+                None => {
+                    eprintln!("polycarp update: the home folder is not set, so no old browser job was touched.");
+                    1
+                }
+            };
         }
         _ => {}
     }
@@ -1625,11 +1177,6 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
                     );
                 }
             }
-            let link = installed.with_file_name("polycarp-browser");
-            if let Some(old) = shadowed("polycarp-browser", &link, path.as_ref()) {
-                let (old, link) = (old.display(), link.display());
-                println!("note: `polycarp-browser` in your shell is {old}, an older copy. `polycarp browser` runs the updated one at {link}. Remove the old one with `rm {old}`.");
-            }
             println!("polycarp update: done.");
             0
         }
@@ -1723,7 +1270,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn mac_source_plan() {
-        const MAC_NEEDS: &str = "polycarp command,app,spaces command,browser helper";
+        const MAC_NEEDS: &str = "polycarp command,app,spaces command";
         let f = facts(Platform::Mac, source(Some(ORIGIN), false));
         let steps = steps_of(plan(&f, YES));
         assert_eq!(
@@ -1733,13 +1280,11 @@ mod tests {
                 format!("git -C {CHECKOUT} worktree prune"),
                 format!("git -C {CHECKOUT} worktree add --detach --force {WORKTREE} refs/remotes/origin/main"),
                 format!("{BOOT} update --is-current {WORKTREE} HEAD --needs {MAC_NEEDS}"),
-                format!("{WORKTREE}/browser/scripts/setup-siblings.sh"),
-                format!("git -C {WORKTREE} checkout -- ."),
                 "make -C spaces install".to_string(),
                 format!("{INSTALLED} update --finish --source {CHECKOUT}"),
             ]
         );
-        let make = &steps[6];
+        let make = &steps[4];
         assert_eq!(make.cwd.as_deref(), Some(Path::new(WORKTREE)));
         assert_eq!(
             make.env,
@@ -1751,21 +1296,19 @@ mod tests {
         assert_eq!(
             commands(&last),
             vec![
-                format!("{INSTALLED} update --reload-wait {WORKTREE} HEAD --wait 30 -- {INSTALLED} browser reload --if-idle"),
                 format!("{INSTALLED} update --is-current {WORKTREE} HEAD --needs {MAC_NEEDS} --after-install --wait 30"),
             ]
         );
-        assert_eq!(last[0].role, Role::Soft);
-        assert_eq!(last[1].role, Role::Verify);
+        assert_eq!(last[0].role, Role::Verify);
 
         // An Intel Mac builds the universal app, and an installed skill is refreshed after the app.
         let mut f = f;
         f.arm64 = false;
         f.skill_installed = true;
         let steps = steps_of(plan(&f, YES));
-        assert!(steps[6].env.is_empty());
+        assert!(steps[4].env.is_empty());
         assert_eq!(
-            steps[7].argv,
+            steps[5].argv,
             ["/home/u/.local/bin/polycarp-spaces", "skill", "install"]
         );
     }
@@ -1820,10 +1363,8 @@ mod tests {
                 assert_eq!(last.role, Role::Handoff);
                 assert_eq!(last.argv[..3], [INSTALLED, "update", "--finish"]);
                 assert!(
-                    !steps
-                        .iter()
-                        .any(|st| matches!(st.role, Role::Soft | Role::Verify)),
-                    "the reload, the restart and the final check belong to the installed command"
+                    !steps.iter().any(|st| st.role == Role::Verify),
+                    "the final check belongs to the installed command"
                 );
                 // The plan says so, and says more when the starter is not the installed command.
                 assert!(
@@ -1859,44 +1400,21 @@ mod tests {
         assert!(matches!(plan(&f, FINISH), Plan::Run { ask: false, .. }));
     }
 
-    /// A clean copy made a moment ago has no node_modules. The sibling setup installs them (in
-    /// `browser/` and in `browser/cli`), so it has to come before every build that needs them.
+    /// The browser moved to Tychicus: no step of an update builds, installs or reloads any of it, so an
+    /// update never waits on Node, bun or a browser.
     #[test]
-    fn a_fresh_clean_copy_gets_its_packages_before_any_build() {
-        // What the plan relies on, read from the real script: if it stops installing the helper's
-        // packages, this fails and the plan needs a step of its own.
-        let script = fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../browser/scripts/setup-siblings.sh"),
-        )
-        .unwrap();
-        let tail = script.rsplit_once("cd \"$here\"").unwrap().1;
-        assert!(
-            tail.contains("\nnpm install") && tail.contains("(cd cli && npm install"),
-            "setup-siblings.sh no longer installs the packages for browser/ and browser/cli: {tail}"
-        );
-        for platform in [Platform::Mac] {
-            let f = facts(platform, source(Some(ORIGIN), false));
-            assert!(!f.worktree_exists);
-            let steps = steps_of(plan(&f, YES));
-            let setup = steps
-                .iter()
-                .position(|st| {
-                    Path::new(&st.argv[0]).ends_with("browser/scripts/setup-siblings.sh")
-                })
-                .unwrap_or_else(|| panic!("{platform:?}: no sibling setup"));
-            assert_eq!(
-                steps[setup].cwd.as_deref(),
-                Some(Path::new(WORKTREE).join("browser").as_path())
+    fn no_step_touches_the_browser_that_moved() {
+        let f = facts(Platform::Mac, source(Some(ORIGIN), false));
+        for st in steps_of(plan(&f, YES))
+            .iter()
+            .chain(&steps_of(plan(&f, FINISH)))
+        {
+            let c = st.argv.join(" ");
+            assert!(
+                !c.contains("browser") && !c.contains("siblings") && !c.contains("npm"),
+                "{}: {c}",
+                st.title
             );
-            for (i, st) in steps.iter().enumerate() {
-                let c = st.argv.join(" ");
-                if c == "npm run build" || c == "make -C spaces install" {
-                    assert!(
-                        i > setup,
-                        "{platform:?}: `{c}` runs before the packages are there"
-                    );
-                }
-            }
         }
     }
 
@@ -2102,7 +1620,7 @@ mod tests {
             commands(&steps),
             vec![
                 format!("git -C {CHECKOUT} fetch origin +refs/heads/main:refs/remotes/origin/main"),
-                format!("{BOOT} update --is-current {CHECKOUT} refs/remotes/origin/main --needs polycarp command,app,spaces command,browser helper"),
+                format!("{BOOT} update --is-current {CHECKOUT} refs/remotes/origin/main --needs polycarp command,app,spaces command"),
             ]
         );
         assert_eq!(steps[1].role, Role::Gate);
@@ -2124,7 +1642,7 @@ mod tests {
                             .into_iter()
                             .chain(steps_of(plan(&f, FINISH)));
                         for step in all {
-                            if matches!(step.role, Role::Build | Role::Install) {
+                            if step.role == Role::Install {
                                 let cwd = step.cwd.as_deref().unwrap_or_else(|| {
                                     panic!("{} has no working directory", step.title)
                                 });
@@ -2164,7 +1682,7 @@ mod tests {
             }
         }
         // Every Build and Install step of the eight Mac source plans, counted: a plan that lost one fails here.
-        assert_eq!(seen, 20, "the Mac table's build and install steps");
+        assert_eq!(seen, 12, "the Mac table's build and install steps");
     }
 
     /// A runner that runs nothing: it answers each step from a script and remembers what it was asked.
@@ -2202,74 +1720,55 @@ mod tests {
             &facts(Platform::Mac, source(Some(ORIGIN), false)),
             YES,
         ));
-        // The fifth step (the siblings) fails; the gate before it said "an update is waiting".
-        let codes = [Some(0), Some(0), Some(0), Some(AVAILABLE), Some(7)];
+        // The third step (making the clean copy) fails, before anything is installed.
+        let codes = [Some(0), Some(0), Some(7)];
         let (outcome, ran, text) = run_fake(&steps, &codes);
         assert_eq!(
             outcome,
             Outcome::Failed {
-                step: 4,
+                step: 2,
                 code: Some(7)
             }
         );
-        assert_eq!(ran.len(), 5, "nothing after the failed step ran: {ran:?}");
+        assert_eq!(ran.len(), 3, "nothing after the failed step ran: {ran:?}");
+        let title = &steps[2].title;
+        assert!(text.contains(&format!("step 3 of 6: {title}")), "{text}");
         assert!(
-            text.contains("step 5 of 8: Get what the extension builds against"),
-            "{text}"
-        );
-        assert!(
-            text.contains("the packages for the helper and the extension said no"),
+            text.contains(&format!("{title} said no")),
             "the step's own output: {text}"
         );
-        assert!(text.contains("step 5 of 8 failed (exit 7)"), "{text}");
+        assert!(text.contains("step 3 of 6 failed (exit 7)"), "{text}");
         assert!(
             text.contains("Nothing that is installed on this device was changed."),
             "{text}"
         );
         assert!(text.contains("run `polycarp update` again"), "{text}");
-        assert!(!text.contains("step 6 of 8"), "{text}");
+        assert!(!text.contains("step 4 of 6"), "{text}");
 
         // The install step itself fails: say that parts may be mixed.
-        let codes = [
-            Some(0),
-            Some(0),
-            Some(0),
-            Some(AVAILABLE),
-            Some(0),
-            Some(0),
-            Some(1),
-        ];
+        let codes = [Some(0), Some(0), Some(0), Some(AVAILABLE), Some(1)];
         let (outcome, ran, text) = run_fake(&steps, &codes);
-        assert_eq!(steps[6].role, Role::Install);
+        assert_eq!(steps[4].role, Role::Install);
         assert_eq!(
             outcome,
             Outcome::Failed {
-                step: 6,
+                step: 4,
                 code: Some(1)
             }
         );
-        assert_eq!(ran.len(), 7);
+        assert_eq!(ran.len(), 5);
         assert!(
             text.contains("some parts may be new and others old"),
             "{text}"
         );
 
         // The handover fails: every part is installed, and the report says what did not finish.
-        let codes = [
-            Some(0),
-            Some(0),
-            Some(0),
-            Some(AVAILABLE),
-            Some(0),
-            Some(0),
-            Some(0),
-            Some(1),
-        ];
+        let codes = [Some(0), Some(0), Some(0), Some(AVAILABLE), Some(0), Some(1)];
         let (outcome, _, text) = run_fake(&steps, &codes);
         assert_eq!(
             outcome,
             Outcome::Failed {
-                step: 7,
+                step: 5,
                 code: Some(1)
             }
         );
@@ -2317,25 +1816,20 @@ mod tests {
     }
 
     #[test]
-    fn a_soft_step_that_fails_does_not_stop_the_update_but_the_check_does() {
-        // The last steps, as the installed command runs them.
+    fn the_check_at_the_end_fails_the_update() {
+        // The last step, as the installed command runs it.
         let steps = steps_of(plan(
             &facts(Platform::Mac, source(Some(ORIGIN), false)),
             FINISH,
         ));
-        // The reload says an agent is working (exit 75); the check at the end then fails.
-        let (outcome, ran, text) = run_fake(&steps, &[Some(75), Some(1)]);
-        assert_eq!(ran.len(), 2, "every step ran: {ran:?}");
+        let (outcome, ran, text) = run_fake(&steps, &[Some(1)]);
+        assert_eq!(ran.len(), 1, "{ran:?}");
         assert_eq!(
             outcome,
             Outcome::Failed {
-                step: 1,
+                step: 0,
                 code: Some(1)
             }
-        );
-        assert!(
-            text.contains("note: this step did not happen (exit 75). The update carries on."),
-            "{text}"
         );
         assert!(text.contains("the parts do not all match yet"), "{text}");
         // All green, here and in the plan that hands over.
@@ -2387,7 +1881,7 @@ mod tests {
             )),
             "{text}"
         );
-        assert!(text.contains("  7. Build Polycarp.app"), "{text}");
+        assert!(text.contains("  5. Build Polycarp.app"), "{text}");
         assert!(
             text.contains(&format!(
                 "     make -C spaces install\n     (in {WORKTREE}, with BANEYSPACES_ARM64_ONLY=1)"
@@ -2428,27 +1922,23 @@ mod tests {
     const OLD: &str = "bbbbbbb2222222222222222222222222222222bb";
     #[cfg(unix)]
     #[test]
-    fn an_older_helper_earlier_on_path_is_named_and_one_in_a_node_modules_is_never_a_tool() {
+    fn an_older_command_earlier_on_path_is_named_and_one_in_a_node_modules_is_never_a_tool() {
         let root = std::env::temp_dir().join(format!("polycarp-shadow-{}", std::process::id()));
         let dirs = ["p/node_modules/.bin", "npm/bin", "home/.local/bin"].map(|d| root.join(d));
         for d in &dirs {
             fs::create_dir_all(d).unwrap();
-            fs::copy("/bin/sh", d.join("polycarp-browser")).unwrap();
+            fs::copy("/bin/sh", d.join("polycarp-spaces")).unwrap();
         }
-        let [modules, old, new] = dirs.map(|d| d.join("polycarp-browser"));
+        let [modules, old, new] = dirs.map(|d| d.join("polycarp-spaces"));
         let path =
             |list: &[&PathBuf]| std::env::join_paths(list.iter().map(|p| p.parent().unwrap())).ok();
         let all = path(&[&modules, &old, &new]);
-        assert_eq!(on_path("polycarp-browser", all.as_ref()), Some(old.clone()));
+        assert_eq!(on_path("polycarp-spaces", all.as_ref()), Some(old.clone()));
         assert_eq!(
-            shadowed("polycarp-browser", &new, all.as_ref()),
-            Some(old.clone())
+            on_path("polycarp-spaces", path(&[&new, &old]).as_ref()),
+            Some(new.clone())
         );
-        assert_eq!(
-            shadowed("polycarp-browser", &new, path(&[&new, &old]).as_ref()),
-            None
-        );
-        let mut steps = vec![Step::new(Role::Build, "t", &["polycarp-browser", "x"])];
+        let mut steps = vec![Step::new(Role::Install, "t", &["polycarp-spaces", "x"])];
         resolve(&mut steps, all.as_ref());
         assert_eq!(steps[0].argv[0], s(&old));
         let _ = fs::remove_dir_all(&root);
@@ -2459,75 +1949,18 @@ mod tests {
     }
 
     #[test]
-    fn an_extension_that_is_not_connected_is_named_as_not_compared_and_does_not_fail_the_check() {
-        // The Parish1 deploy: Helium runs, the extension is not connected. The rest is at the target, so the final check
-        // passes, and its output names the extension it could not compare instead of only "up to date".
-        let needs = ["polycarp command", "browser helper"];
-        for ext in [
-            Part::absent("extension", "no browser is connected"),
-            Part::absent("extension (Helium)", version::ASLEEP),
-        ] {
-            let name = ext.name.clone();
-            let parts = vec![at("polycarp command", T), at("browser helper", T), ext];
-            assert_eq!(standing(&parts, &needs, T), Standing::Current);
-            let line = extensions_not_compared(&parts).expect("names the extension");
-            assert!(
-                line.contains(&name) && line.contains("not compared"),
-                "{line}"
-            );
-            assert!(
-                !line.contains("polycarp command") && !line.contains("browser helper"),
-                "{line}"
-            );
-        }
-        assert_eq!(
-            extensions_not_compared(&[at("browser helper", T), at("extension (Helium)", T)]),
-            None
-        );
-        assert_eq!(
-            extensions_not_compared(&[Part::absent("extension", "not installed")]),
-            None
-        );
-    }
-
-    #[test]
-    fn a_slow_browser_alone_never_fails_the_update_or_starts_one() {
-        let needs = ["polycarp command", "browser helper"];
-        let parts = vec![
-            at("polycarp command", T),
-            at("browser helper", T),
-            Part::unanswered("extension (Helium)", version::NO_ANSWER),
-        ];
-        assert_eq!(standing(&parts, &needs, T), Standing::Current);
-        // The helper itself gave no answer: still not missing, still not a reason to fail.
-        let parts = vec![
-            at("polycarp command", T),
-            Part::unanswered("browser helper", version::NO_ANSWER),
-            Part::unanswered("extension", version::NO_ANSWER),
-        ];
-        assert_eq!(standing(&parts, &needs, T), Standing::Current);
-        // A part that did answer and is older is still behind.
-        let parts = vec![
-            at("polycarp command", OLD),
-            Part::unanswered("browser helper", version::NO_ANSWER),
-        ];
-        assert_eq!(standing(&parts, &needs, T), Standing::Behind);
-    }
-
-    #[test]
     fn a_part_the_update_would_install_makes_it_run() {
-        // Everything that is installed matches, but the helper is not there yet (Node was added).
+        // Everything that is installed matches, but the app is not there yet.
         let parts = vec![
             at("polycarp command", T),
-            Part::absent("browser helper", "not installed"),
-            Part::absent("extension", "not installed"),
+            Part::absent("app", "not installed"),
         ];
         assert_eq!(
             standing(&parts, &["polycarp command"], T),
             Standing::Current
         );
         assert_eq!(
-            standing(&parts, &["polycarp command", "browser helper"], T),
+            standing(&parts, &["polycarp command", "app"], T),
             Standing::Behind
         );
         // A part nobody listed at all is missing too.
@@ -2537,443 +1970,10 @@ mod tests {
         );
     }
 
-    /// A browser for `reload_wait` to wait on, on a fake clock: each pause is 2 s and each look at
-    /// the parts takes `look_secs`. `ready_after` reloads make Helium run `T` (0: never); Chrome runs
-    /// `T` after the first. Before any reload both run `OLD`, and right after each reload the
-    /// extension is gone for one look. `helium_late`: Helium gives no answer until the clock reaches
-    /// that many seconds after the start. `absent_looks`: the first looks see no browser connected.
-    /// `helium_quiet_from`: Helium gives no answer from then on; `helium_gone_from`: it is not listed
-    /// from then on. `chrome_quiet`: Chrome never answers, before the reload too. `second_code` is the
-    /// second reload's code, and `said` what each reload prints.
-    struct Browser {
-        ready_after: u32,
-        code: i32,
-        look_secs: u64,
-        helium_late: u64,
-        none_connected: bool,
-        absent_looks: u32,
-        helium_quiet_from: u64,
-        helium_gone_from: u64,
-        chrome_quiet: bool,
-        second_code: i32,
-        said: &'static str,
-    }
-    impl Browser {
-        fn new(ready_after: u32) -> Browser {
-            Browser {
-                ready_after,
-                code: 0,
-                look_secs: 0,
-                helium_late: 0,
-                none_connected: false,
-                absent_looks: 0,
-                helium_quiet_from: u64::MAX,
-                helium_gone_from: u64::MAX,
-                chrome_quiet: false,
-                second_code: 0,
-                said: "",
-            }
-        }
-    }
-
-    /// Runs `reload_wait` for `wait_secs`. Returns the exit code, the reloads run, the looks taken,
-    /// the seconds the fake clock reached and the output.
-    fn reload_run(b: Browser, wait_secs: u64) -> (i32, u32, u32, u64, String) {
-        use std::cell::Cell;
-        let (reloads, looks, now) = (Cell::new(0u32), Cell::new(0u32), Cell::new(0u64));
-        let since_reload = Cell::new(0u32);
-        let mut reload = || {
-            reloads.set(reloads.get() + 1);
-            since_reload.set(0);
-            Ran {
-                code: Some(if reloads.get() == 1 {
-                    b.code
-                } else {
-                    b.second_code
-                }),
-                output: b.said.to_string(),
-            }
-        };
-        let parts = || {
-            looks.set(looks.get() + 1);
-            now.set(now.get() + b.look_secs);
-            since_reload.set(since_reload.get() + 1);
-            if b.none_connected || (reloads.get() == 0 && looks.get() <= b.absent_looks) {
-                return vec![Part::absent("extension", "no browser is connected")];
-            }
-            let chrome = |commit| match b.chrome_quiet {
-                true => Part::unanswered("extension (Chrome)", "no answer in time"),
-                false => at("extension (Chrome)", commit),
-            };
-            if reloads.get() == 0 {
-                return vec![chrome(OLD), at("extension (Helium)", OLD)];
-            }
-            if since_reload.get() == 1 {
-                return vec![Part::absent("extension", "no browser is connected")];
-            }
-            let ready = b.ready_after > 0 && reloads.get() >= b.ready_after;
-            let helium = if now.get() < b.helium_late || now.get() >= b.helium_quiet_from {
-                Part::unanswered("extension (Helium)", "no answer in time")
-            } else {
-                at("extension (Helium)", if ready { T } else { OLD })
-            };
-            match now.get() >= b.helium_gone_from {
-                true => vec![chrome(T)],
-                false => vec![chrome(T), helium],
-            }
-        };
-        let clock = || std::time::Duration::from_secs(now.get());
-        let mut pause = || now.set(now.get() + 2);
-        let mut out = Vec::new();
-        let rc = reload_wait(
-            T,
-            std::time::Duration::from_secs(wait_secs),
-            &mut reload,
-            &parts,
-            &clock,
-            &mut pause,
-            &mut out,
-        );
-        let out = String::from_utf8(out).unwrap();
-        (rc, reloads.get(), looks.get(), now.get(), out)
-    }
-
-    #[test]
-    fn the_reload_step_waits_for_every_extension_to_run_the_new_build() {
-        // #207: the first reload took, after a moment with no browser connected.
-        let (rc, reloads, _, _, out) = reload_run(Browser::new(1), 30);
-        assert_eq!((rc, reloads), (0, 1), "{out}");
-        assert!(
-            out.contains(&format!("runs {}", version::short(T))),
-            "{out}"
-        );
-        // Helium kept the old build after the first reload: one more, then it runs the new one.
-        let (rc, reloads, _, _, out) = reload_run(Browser::new(2), 30);
-        assert_eq!((rc, reloads), (0, 2), "{out}");
-        assert!(
-            out.contains("extension (Helium) still runs the build from before"),
-            "{out}"
-        );
-        assert!(!out.contains("extension (Chrome) still runs"), "{out}");
-    }
-
-    #[test]
-    fn the_reload_step_retries_once_and_stops_at_its_bound() {
-        let (rc, reloads, _, _, out) = reload_run(Browser::new(0), 30);
-        assert_eq!((rc, reloads), (1, 2), "never a third reload: {out}");
-        assert!(
-            out.contains("extension (Helium) still does not run") && out.contains("two reloads"),
-            "{out}"
-        );
-        // An agent working in the browser: no reload, no wait, and the helper's code goes through.
-        let busy = Browser {
-            code: RELOAD_BUSY,
-            ..Browser::new(1)
-        };
-        let (rc, reloads, _, _, out) = reload_run(busy, 30);
-        assert_eq!((rc, reloads), (RELOAD_BUSY, 1), "{out}");
-        // A wait shorter than two looks still gets its one retry.
-        let (rc, reloads, _, _, _) = reload_run(Browser::new(2), 0);
-        assert_eq!((rc, reloads), (0, 2));
-    }
-
-    /// `reload_wait` on a browser that runs with the extension but is not connected until `connects_at` s (never:
-    /// u64::MAX), as the helper reports it. Returns the code, the reloads, the seconds spent and the output.
-    fn asleep_run(connects_at: u64) -> (i32, u32, u64, String) {
-        let sleeping =
-            version::extension_parts(r#"{"connected":false,"extensions":[],"running":["Helium"]}"#);
-        unseen_run(connects_at, sleeping, &[])
-    }
-
-    /// `asleep_run`, but until it connects the helper says `early` and the browsers' folders say `running`.
-    fn unseen_run(connects_at: u64, early: Vec<Part>, running: &[&str]) -> (i32, u32, u64, String) {
-        use std::cell::Cell;
-        let (reloads, now) = (Cell::new(0u32), Cell::new(0u64));
-        let running = || running.iter().map(|b| b.to_string()).collect::<Vec<_>>();
-        let mut reload = || {
-            reloads.set(reloads.get() + 1);
-            Ran {
-                code: Some(0),
-                output: String::new(),
-            }
-        };
-        let parts = || match reloads.get() {
-            0 if now.get() < connects_at => early.clone(),
-            0 => vec![at("extension (Helium)", OLD)],
-            _ => vec![at("extension (Helium)", T)],
-        };
-        let clock = || std::time::Duration::from_secs(now.get());
-        let mut pause = || now.set(now.get() + 2);
-        let mut out = Vec::new();
-        let rc = reload_wait(
-            T,
-            std::time::Duration::from_secs(30),
-            &mut reload,
-            &|| with_running(parts(), &running),
-            &clock,
-            &mut pause,
-            &mut out,
-        );
-        (
-            rc,
-            reloads.get(),
-            now.get(),
-            String::from_utf8(out).unwrap(),
-        )
-    }
-
-    #[test]
-    fn a_running_browser_whose_extension_has_not_connected_is_waited_for_and_reloaded() {
-        // Parish1 at 0da29cc: Helium ran with the extension, which had not dialed the replaced helper yet. The step
-        // said "No browser is connected" and skipped the reload; the final check then said "reload pending".
-        let (rc, reloads, _, out) = asleep_run(20);
-        assert_eq!((rc, reloads), (0, 1), "{out}");
-        assert!(!out.contains("No browser is connected"), "{out}");
-        assert!(
-            out.contains("extension (Helium) is not connected yet")
-                && out.contains(&format!("runs {}", version::short(T))),
-            "{out}"
-        );
-        // One that never connects is not waited on past WAKE_WAIT, and says what to run.
-        let (rc, reloads, secs, out) = asleep_run(u64::MAX);
-        assert_eq!((rc, reloads), (0, 0), "{out}");
-        assert!(secs <= 40 + 2, "waited {secs} s: {out}");
-        assert!(out.contains("did not connect in 40 s"), "{out}");
-    }
-
-    #[test]
-    fn a_browser_running_with_the_extension_is_waited_for_when_the_helper_names_none() {
-        // The Parish1 deploy of 53e4c4b: Helium (702688) ran with the extension the whole time, but the step's reads
-        // of the just-replaced helper named no browser, and it said "No browser is connected". The browsers' own
-        // folders say it runs: whether the helper says no browser, gives no parts, or gives no answer, it is reloaded.
-        let none = || version::extension_parts(r#"{"connected":false,"extensions":[]}"#);
-        for (what, early) in [("no browser", none()), ("nothing", Vec::new())] {
-            let (rc, reloads, _, out) = unseen_run(20, early, &["Helium"]);
-            assert_eq!((rc, reloads), (0, 1), "{what}: {out}");
-            assert!(!out.contains("No browser is connected"), "{what}: {out}");
-            assert!(
-                out.contains("extension (Helium) is not connected yet")
-                    && out.contains(&format!("runs {}", version::short(T))),
-                "{what}: {out}"
-            );
-        }
-        let (rc, reloads, _, out) = unseen_run(20, version::extension_parts(""), &["Helium"]);
-        assert_eq!((rc, reloads), (0, 1), "no answer: {out}");
-        // With no browser running, it still ends after the settle time.
-        let (rc, reloads, secs, out) = unseen_run(u64::MAX, none(), &[]);
-        assert_eq!((rc, reloads, secs), (0, 0, 4), "{out}");
-        assert!(out.contains("No browser is connected"), "{out}");
-    }
-
-    #[test]
-    fn the_finish_steps_that_read_the_parts_run_where_the_helper_is_trusted() {
-        // The Parish1 deploys of 53e4c4b and 8c61d42: the reload step ran in the helper's own folder, where
-        // `polycarp-browser` (a link into it) is not trusted, so every look said no helper and no extension while
-        // Helium was connected, and the 40 s wait ran out. Run by hand from the home folder, the same step reloaded.
-        let helper = Path::new(HOME).join(".local/share/polycarp/browser/source/cli/dist/index.js");
-        for platform in [Platform::Mac] {
-            let f = facts(platform, source(Some(ORIGIN), false));
-            let reads: Vec<Step> = steps_of(plan(&f, FINISH))
-                .into_iter()
-                .filter(|st| st.argv.get(1).map(String::as_str) == Some("update"))
-                .collect();
-            assert_eq!(reads.len(), 2, "the reload and the final check");
-            for st in reads {
-                let cwd = st
-                    .cwd
-                    .as_deref()
-                    .unwrap_or_else(|| panic!("{} runs wherever update was started", st.title));
-                assert!(
-                    crate::clear_of(&helper, cwd, Some(Path::new(HOME))),
-                    "{}: from {} the helper is not trusted",
-                    st.title,
-                    cwd.display()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn first_f1_review_of_pr_218_no_browser_connected_ends_the_wait_at_once() {
-        let none = Browser {
-            none_connected: true,
-            ..Browser::new(1)
-        };
-        // It looks until a reload would have settled (first-F1 of the review of PR 236), then ends.
-        let (rc, reloads, looks, secs, out) = reload_run(none, 30);
-        assert_eq!((rc, reloads, looks, secs), (0, 0, 3, 4), "{out}");
-        assert!(out.contains("No browser is connected"), "{out}");
-        assert!(!out.contains("two reloads"), "{out}");
-    }
-
-    #[test]
-    fn first_f2_review_of_pr_218_the_wait_is_bounded_by_time_not_looks() {
-        // A helper that takes 5 s per look, on a browser that never takes the new build: with a
-        // count of 15 looks this ran 15 x 7 s. Now it ends one pause and one look past 30 s.
-        let slow = Browser {
-            look_secs: 5,
-            ..Browser::new(0)
-        };
-        let (rc, reloads, _, secs, out) = reload_run(slow, 30);
-        assert_eq!((rc, reloads), (1, 2), "{out}");
-        assert!(secs <= 30 + 4 + 2 + 5 + 5, "the wait ran {secs} s: {out}");
-        // The retry comes once half the time has passed, not at half the looks.
-        let (_, _, looks, _, out) = reload_run(Browser::new(2), 30);
-        assert!(
-            looks >= 8,
-            "retried after {looks} looks, before 15 s: {out}"
-        );
-    }
-
-    #[test]
-    fn first_f3_review_of_pr_218_no_second_reload_for_an_extension_that_only_has_not_answered() {
-        // Helium answers late, then runs the new build: at the halfway look it reports no build,
-        // so nothing is reloaded a second time.
-        let late = Browser {
-            helium_late: 20,
-            ..Browser::new(1)
-        };
-        let (rc, reloads, _, _, out) = reload_run(late, 30);
-        assert_eq!((rc, reloads), (0, 1), "{out}");
-        assert!(!out.contains("reloaded once more"), "{out}");
-        // One that never answers after the reload last reported the old build (second-F5 of the review
-        // of PR 244): it fails, after the one reload that ran, with no second one.
-        let silent = Browser {
-            helium_late: 1000,
-            ..Browser::new(1)
-        };
-        let (rc, reloads, _, _, out) = reload_run(silent, 30);
-        assert_eq!((rc, reloads), (1, 1), "{out}");
-        assert!(
-            out.contains("extension (Helium) still does not run")
-                && out.contains("after the reload."),
-            "{out}"
-        );
-    }
-
-    #[test]
-    fn second_f6_review_of_pr_218_the_second_reload_says_every_browser_reloads() {
-        let (_, _, _, _, out) = reload_run(Browser::new(2), 30);
-        assert!(
-            out.contains("so every browser's extension is reloaded once more"),
-            "{out}"
-        );
-        assert!(!out.contains("so it is reloaded once more"), "{out}");
-    }
-
-    #[test]
-    fn first_f1_review_of_pr_236_a_browser_that_connects_a_moment_late_is_reloaded() {
-        let late = Browser {
-            absent_looks: 1,
-            ..Browser::new(1)
-        };
-        let (rc, reloads, _, _, out) = reload_run(late, 30);
-        assert_eq!((rc, reloads), (0, 1), "{out}");
-        assert!(!out.contains("No browser is connected"), "{out}");
-    }
-
-    #[test]
-    fn first_f2_review_of_pr_236_one_seen_on_the_old_build_that_goes_quiet_fails() {
-        let quiet = Browser {
-            helium_quiet_from: 20,
-            ..Browser::new(0)
-        };
-        let (rc, reloads, _, _, out) = reload_run(quiet, 30);
-        assert_eq!((rc, reloads), (1, 2), "{out}");
-        assert!(
-            out.contains("extension (Helium) still does not run"),
-            "{out}"
-        );
-    }
-
-    #[test]
-    fn first_f1_second_f5_review_of_pr_244_one_on_the_old_build_that_drops_out_fails() {
-        // first-F1: seen on the old build after the reload, then gone from the list while Chrome runs T.
-        let gone = Browser {
-            helium_gone_from: 6,
-            ..Browser::new(0)
-        };
-        let (rc, reloads, _, _, out) = reload_run(gone, 30);
-        assert_eq!((rc, reloads), (1, 2), "{out}");
-        assert!(
-            out.contains("extension (Helium) still does not run"),
-            "{out}"
-        );
-        // second-F5: on the old build before the reload, and in no look after it.
-        let never = Browser {
-            helium_gone_from: 0,
-            ..Browser::new(0)
-        };
-        let (rc, reloads, _, _, out) = reload_run(never, 30);
-        assert_eq!((rc, reloads), (1, 1), "{out}");
-        assert!(
-            out.contains("extension (Helium) still does not run")
-                && out.contains("after the reload."),
-            "{out}"
-        );
-    }
-
-    #[test]
-    fn first_f4_review_of_pr_236_the_note_gives_the_time_really_waited() {
-        // Chrome never answers, so it was never seen on the old build: a note, not a failure (PR 244).
-        let silent = Browser {
-            chrome_quiet: true,
-            ..Browser::new(1)
-        };
-        let (rc, _, _, secs, out) = reload_run(silent, 0);
-        assert_eq!(rc, 0, "{out}");
-        assert!(
-            secs >= 4 && out.contains(&format!("reported no build in {secs} s")),
-            "{out}"
-        );
-    }
-
-    #[test]
-    fn first_f2_review_of_pr_244_one_that_went_quiet_before_halfway_gets_its_second_reload() {
-        let quiet = Browser {
-            helium_quiet_from: 10,
-            ..Browser::new(0)
-        };
-        let (rc, reloads, _, _, out) = reload_run(quiet, 30);
-        assert_eq!((rc, reloads), (1, 2), "{out}");
-        assert!(out.contains("after two reloads."), "{out}");
-    }
-
-    #[test]
-    fn second_f6_review_of_pr_244_a_late_answer_after_the_new_build_is_no_failure() {
-        // Chrome never answers; Helium runs the old build, then T after the second reload, then is quiet.
-        let late = Browser {
-            chrome_quiet: true,
-            helium_quiet_from: 26,
-            ..Browser::new(2)
-        };
-        let (rc, reloads, _, _, out) = reload_run(late, 30);
-        assert_eq!((rc, reloads), (0, 2), "{out}");
-        assert!(out.contains("reported no build"), "{out}");
-    }
-
-    #[test]
-    fn second_f7_f8_review_of_pr_236_the_helpers_words_and_a_failed_second_reload() {
-        let said = Browser {
-            said: "Reloaded 2 extensions.",
-            ..Browser::new(1)
-        };
-        let (_, _, _, _, out) = reload_run(said, 30);
-        assert_eq!(out.lines().next(), Some("Reloaded 2 extensions."), "{out}");
-        let failed = Browser {
-            second_code: 3,
-            ..Browser::new(0)
-        };
-        let (rc, reloads, _, _, out) = reload_run(failed, 30);
-        assert_eq!((rc, reloads), (3, 2), "{out}");
-        assert!(out.contains("The second reload failed (exit 3)"), "{out}");
-        assert!(!out.contains("two reloads"), "{out}");
-    }
-
-    /// A git repository of one empty commit in a temp folder, and that commit: no test reads the
-    /// developer's checkout (first-F3 of the review of PR 236).
     /// Removes its folders when dropped, a failed assert included (first-F4 of the review of PR 244).
+    #[cfg(unix)]
     struct Gone(Vec<PathBuf>);
+    #[cfg(unix)]
     impl Drop for Gone {
         fn drop(&mut self) {
             for dir in &self.0 {
@@ -2982,56 +1982,24 @@ mod tests {
         }
     }
 
-    fn temp_repo(name: &str) -> (PathBuf, String) {
-        let dir = std::env::temp_dir().join(format!("polycarp-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let git = |a: &[&str]| {
-            let who = [
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "commit.gpgsign=false",
-            ];
-            // Git's own variables would point it at the checkout a hook runs in (first-F3 of PR 244).
-            let ran = Command::new("git")
-                .arg("-C")
-                .arg(&dir)
-                .args(who)
-                .args(a)
-                .env_remove("GIT_DIR")
-                .env_remove("GIT_WORK_TREE")
-                .env_remove("GIT_INDEX_FILE")
-                .output()
-                .unwrap();
-            assert!(ran.status.success(), "git {a:?}: {ran:?}");
-            ran
-        };
-        git(&["init", "-q"]);
-        git(&["commit", "-q", "--allow-empty", "-m", "t"]);
-        let head = String::from_utf8(git(&["rev-parse", "HEAD"]).stdout).unwrap();
-        (dir, head.trim().to_string())
-    }
-
-    /// second-F5, second-F6 (review of PR 236): the reload runs through a real runner, made the one
-    /// way every runner is. A stub in a trusted PATH folder runs, with only the trusted folders on its
-    /// PATH and an argument that is not text intact; one in a folder under the current one never starts.
+    /// second-F5, second-F6 (review of PR 236): a step runs through a real runner, made the one way
+    /// every runner is. A stub in a trusted PATH folder runs, with only the trusted folders on its PATH;
+    /// one in a folder under the current one never starts.
     #[cfg(unix)]
     #[test]
-    fn second_f5_f6_review_of_pr_236_the_real_runner_starts_only_a_trusted_reload() {
-        use std::os::unix::{ffi::OsStringExt, fs::PermissionsExt};
-        let (repo, head) = temp_repo("real-runner");
-        let trusted = repo.join("bin");
+    fn the_real_runner_starts_only_a_trusted_tool() {
+        use std::os::unix::fs::PermissionsExt;
+        let root =
+            std::env::temp_dir().join(format!("polycarp-real-runner-{}", std::process::id()));
+        let trusted = root.join("bin");
         // cargo runs tests in the crate's folder, so a folder under it is not trusted.
         let here = std::env::current_dir().unwrap();
         let untrusted = here.join(format!("target/polycarp-untrusted-{}", std::process::id()));
-        let _gone = Gone(vec![repo.clone(), untrusted.clone()]);
-        let said = repo.join("said");
+        let _gone = Gone(vec![root.clone(), untrusted.clone()]);
+        let said = root.join("said");
         for dir in [&trusted, &untrusted] {
             fs::create_dir_all(dir).unwrap();
-            let stub = dir.join("polycarp-reload-stub");
+            let stub = dir.join("polycarp-runner-stub");
             fs::write(
                 &stub,
                 format!(
@@ -3042,136 +2010,20 @@ mod tests {
             .unwrap();
             fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        let word = OsString::from_vec(b"/tmp/caf\xe9".to_vec());
-        let mut args: Vec<OsString> = [
-            "--reload-wait",
-            "",
-            "HEAD",
-            "--wait",
-            "0",
-            "--",
-            "polycarp-reload-stub",
-        ]
-        .map(OsString::from)
-        .to_vec();
-        args[1] = repo.clone().into_os_string();
-        args.push(word.clone());
-        let parts = || vec![at("extension (Chrome)", &head)];
-        let device = Device {
-            home: None,
-            app: None,
-            spaces: None,
-            config: Err("none".to_string()),
-            parts: &parts,
-            running: &Vec::new,
-        };
+        let step = Step::new(
+            Role::Install,
+            "stub",
+            &["polycarp-runner-stub", "/tmp/word"],
+        );
         let both = std::env::join_paths([&trusted, &untrusted]).unwrap();
-        let mut runner = RealRunner::with_path(&repo, Some(both));
-        assert_eq!(reload_wait_command(&args, &device, &mut runner), 0);
-        let path = trusted.into_os_string();
-        let seen = [word.as_encoded_bytes(), b"\n", path.as_encoded_bytes()].concat();
-        assert_eq!(fs::read(&said).unwrap(), seen);
+        let mut runner = RealRunner::with_path(&root, Some(both));
+        assert_eq!(runner.run(&step).code, Some(0));
+        let seen = format!("/tmp/word\n{}", trusted.display());
+        assert_eq!(fs::read_to_string(&said).unwrap(), seen);
         fs::remove_file(&said).unwrap();
-        let mut runner = RealRunner::with_path(&repo, Some(untrusted.clone().into_os_string()));
-        assert_eq!(reload_wait_command(&args, &device, &mut runner), 1);
+        let mut runner = RealRunner::with_path(&root, Some(untrusted.clone().into_os_string()));
+        assert_eq!(runner.run(&step).code, None);
         assert!(!said.exists());
-    }
-
-    /// `second-F5` (review of PR 218): the plan's own reload argv, as `polycarp update` hands it to
-    /// `run`, gets past parsing and runs its reload through the steps' runner (`first-F4`).
-    #[test]
-    fn second_f5_first_f4_review_of_pr_218_the_plans_reload_argv_reaches_the_runner() {
-        let f = facts(Platform::Mac, source(Some(ORIGIN), false));
-        let step = steps_of(plan(&f, FINISH))
-            .into_iter()
-            .find(|st| st.argv.iter().any(|a| a == "--reload-wait"))
-            .expect("the plan has a reload step");
-        assert_eq!(&step.argv[1..3], ["update", "--reload-wait"]);
-        let dashes = step.argv.iter().position(|a| a == "--").unwrap();
-        let reload = step.argv[dashes + 1..].to_vec();
-        // `polycarp update` drops the program and "update" before `run`. The clean copy is a temp
-        // repository, so its HEAD resolves.
-        let mut args: Vec<OsString> = step.argv[2..].iter().map(OsString::from).collect();
-        let repo = temp_repo("plan-argv").0;
-        let _gone = Gone(vec![repo.clone()]);
-        args[1] = repo.into_os_string();
-        let parts = || vec![at("extension (Chrome)", OLD)];
-        let device = Device {
-            home: None,
-            app: None,
-            spaces: None,
-            config: Err("none".to_string()),
-            parts: &parts,
-            running: &Vec::new,
-        };
-        let mut fake = Recorder::default();
-        let rc = reload_wait_command(&args, &device, &mut fake);
-        assert_ne!(rc, 2, "the plan's argv did not parse");
-        assert_eq!(fake.argv.first(), Some(&reload));
-        // A reload the runner cannot start ends the step without a wait.
-        assert_eq!(rc, 1);
-        assert_eq!(fake.argv.len(), 1);
-    }
-
-    /// A runner that starts nothing and remembers each argv: every reload "could not be started".
-    #[derive(Default)]
-    struct Recorder {
-        argv: Vec<Vec<String>>,
-    }
-    impl Runner for Recorder {
-        fn run(&mut self, step: &Step) -> Ran {
-            self.argv.push(step.argv.clone());
-            Ran {
-                code: None,
-                output: "not started".to_string(),
-            }
-        }
-    }
-
-    #[test]
-    fn the_final_check_says_reload_pending_never_up_to_date() {
-        let line = reload_pending_line("abc1234", &["extension (Helium)".to_string()]);
-        assert!(line.starts_with("reload pending:"), "{line}");
-        assert!(
-            line.contains("extension (Helium) still runs the build from before"),
-            "{line}"
-        );
-        assert!(!line.to_lowercase().contains("up to date"), "{line}");
-    }
-
-    #[test]
-    fn reload_wait_arguments() {
-        let os = |v: &[&str]| v.iter().map(OsString::from).collect::<Vec<_>>();
-        assert_eq!(
-            parse_reload_wait(&os(&["--wait", "30", "--", "node", "x.js", "reload"])),
-            Ok((30, os(&["node", "x.js", "reload"])))
-        );
-        assert_eq!(parse_reload_wait(&os(&["--", "p"])), Ok((30, os(&["p"]))));
-        assert!(parse_reload_wait(&os(&["--wait", "30"])).is_err());
-        assert!(parse_reload_wait(&os(&["--wait", "30", "--"])).is_err());
-        assert!(parse_reload_wait(&os(&["--bogus"])).is_err());
-    }
-
-    #[test]
-    fn an_extension_that_only_has_to_reload_is_not_a_reason_to_rebuild() {
-        let needs = ["polycarp command", "browser helper"];
-        let parts = vec![
-            at("polycarp command", T),
-            at("browser helper", T),
-            at("extension (Helium)", OLD),
-            at("extension (Chrome)", T),
-        ];
-        assert_eq!(
-            standing(&parts, &needs, T),
-            Standing::ReloadPending(vec!["extension (Helium)".to_string()])
-        );
-        // Anything else behind is a real update.
-        let parts = vec![
-            at("polycarp command", T),
-            at("browser helper", OLD),
-            at("extension (Helium)", OLD),
-        ];
-        assert_eq!(standing(&parts, &needs, T), Standing::Behind);
     }
 
     #[test]
@@ -3186,8 +2038,9 @@ mod tests {
                 "--wait",
                 "30"
             ])),
+            // An older polycarp's plan still names the browser helper, which nothing installs now.
             Ok(Check {
-                needs: vec!["polycarp command".into(), "browser helper".into()],
+                needs: vec!["polycarp command".into()],
                 after_install: true,
                 wait: 30,
             })
@@ -3258,27 +2111,16 @@ mod tests {
 
     #[test]
     fn a_leftover_part_this_device_does_not_update_never_holds_the_update_back() {
-        // No Hyprland here, so no spaces command is installed, but one from an earlier build is still on PATH.
-        let needs = ["polycarp command", "browser helper"];
+        // A device whose update does not install the spaces command, with an old one still on PATH.
+        let needs = ["polycarp command", "app"];
         let parts = vec![
             at("polycarp command", T),
-            at("browser helper", T),
-            at("extension (Helium)", T),
+            at("app", T),
             at("spaces command", OLD),
         ];
         assert_eq!(standing(&parts, &needs, T), Standing::Current);
-        // No Node here: an old helper and its extension are not judged either.
-        let parts = vec![
-            at("polycarp command", T),
-            at("browser helper", OLD),
-            at("extension (Helium)", OLD),
-        ];
-        assert_eq!(
-            standing(&parts, &["polycarp command"], T),
-            Standing::Current
-        );
         // A part the update does install still counts.
-        let parts = vec![at("polycarp command", T), at("browser helper", OLD)];
+        let parts = vec![at("polycarp command", T), at("app", OLD)];
         assert_eq!(standing(&parts, &needs, T), Standing::Behind);
     }
 }

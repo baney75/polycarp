@@ -43,7 +43,7 @@ final class SettingsSidebarTests: XCTestCase {
     func testSectionsAreGroupedAsDesigned() throws {
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
         XCTAssertTrue(kit.contains(#"tabs: [.general, .keys, .dock, .appearance, .launcher]"#))
-        XCTAssertTrue(kit.contains(#"header: "Your tools", tabs: [.voice, .browser, .agents]"#))
+        XCTAssertTrue(kit.contains(#"header: "Your tools", tabs: [.voice, .agents]"#))
         XCTAssertTrue(kit.contains(#"header: "System", tabs: [.permissions, .automation, .updates]"#))
     }
 
@@ -65,10 +65,7 @@ final class SettingsSidebarTests: XCTestCase {
         for literal in ["Color.green", ".foregroundStyle(.green)", "Color.orange", ".foregroundStyle(.orange)"] {
             XCTAssertFalse(setup.contains(literal), "Setup.swift still draws \(literal)")
         }
-        let browser = try read("Sources/BaneySpaces/BrowserSetup.swift")
-        let browserView = String(browser[try XCTUnwrap(browser.range(of: "struct BrowserSettingsView")).lowerBound...])
-        for (name, text) in [("VoiceSettingsView", try read("Sources/BaneySpaces/Voice/VoiceSettingsView.swift")), ("BrowserSettingsView", browserView),
-                                  ("BrowserRemoteView", try read("Sources/BaneySpaces/BrowserRemoteView.swift"))] {
+        for (name, text) in [("VoiceSettingsView", try read("Sources/BaneySpaces/Voice/VoiceSettingsView.swift"))] {
             for literal in ["Color.green", ".foregroundStyle(.green)", "Color.orange", ".foregroundStyle(.orange)", ".foregroundStyle(.red)", ".foregroundStyle(.secondary)"] {
                 XCTAssertFalse(text.contains(literal), "\(name) still draws \(literal)")
             }

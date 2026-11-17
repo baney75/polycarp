@@ -71,8 +71,7 @@ final class AgentAccess {
         return true
     }
 
-    /// "Turn on everything": asks once, and true when the person said yes. Main thread only. What it covers beyond this mode, the
-    /// caller turns on (`BrowserModel.turnOnEverything`).
+    /// "Turn on everything": asks once, and true when the person said yes. Main thread only.
     @discardableResult
     func requestEverything() -> Bool {
         guard AccessConsent.askEverything() else { return false }

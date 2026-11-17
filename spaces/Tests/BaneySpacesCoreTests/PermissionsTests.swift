@@ -119,10 +119,6 @@ final class PermissionsTests: XCTestCase {
         XCTAssertEqual(voice.optional.map(\.id), [.screenRecording, .inputMonitoring, .automation, .notifications])
         XCTAssertTrue(voice.optional.allSatisfy(\.optional))
         XCTAssertEqual(voice.needed.first?.stops, ["Silas's key and typing"])
-
-        let browser = Permissions.plan(states: s, features: FeatureSet([.browser]))
-        XCTAssertEqual(browser.needed, [], "the browser part needs nothing from macOS")
-        XCTAssertTrue(browser.canStart)
     }
 
     func testTheSummaryAndNextFollowTheAnswers() {

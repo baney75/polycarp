@@ -17,11 +17,10 @@
 # BANEYSPACES_DEST_DIR: test mode. Install into this folder and change nothing else: the running
 # copy, AeroSpace, Ghostdeck, Launch Services and ~/.local/bin are left alone and the app isn't
 # opened. (With --in-place, test mode leaves AeroSpace and Ghostdeck alone but makes the links.)
-# The browser command: the app carries the browser helper (Contents/Resources/browser/polycarp-browser), which `polycarp browser`
-# runs. ~/.local/bin/polycarp-browser links to it: made when the name is free, moved along when it already links into a
-# Polycarp.app, and left alone (with a note) when it is a file or someone else's link. The old name `tabkyra` is no longer
-# made: a ~/.local/bin/tabkyra that links into a Polycarp.app is removed (or, where an earlier install took the name over,
-# put back to the link it replaced), and any other tabkyra (an npm link, Homebrew, a file) is never touched.
+# The browser helper moved to Tychicus (https://github.com/baney75/tychicus) and this app no longer carries it. A
+# ~/.local/bin/polycarp-browser or ~/.local/bin/tabkyra that links into a Polycarp.app (one an older install made) is removed
+# (a tabkyra an earlier install took the name from is put back), and its launchd jobs are retired. Anything else under
+# those names (an npm link, Homebrew, a file, Tychicus) is never touched.
 # BANEYSPACES_NO_LAUNCH=1: install as usual but don't open the app.
 # The app's name, identifier and command names come from product.env, which sits beside this script
 # (scripts/ in the repo, Contents/Resources in the app).
@@ -154,30 +153,23 @@ for name in $CLI_NAME $CLI_ALIASES; do
 done
 # The `polycarp` command comes with the app.
 ln -sf "$DEST/Contents/Resources/bin/polycarp" "$HOME/.local/bin/polycarp"
+# The browser moved to Tychicus. An older Polycarp left launchd jobs (remote access, hub, link, tunnel) running its
+# helper, which this app no longer carries: they are booted out and their plists removed. A job whose program isn't
+# Polycarp's is left alone. Never in test mode.
+if [ -z "$TEST" ] && [ -x "$DEST/Contents/Resources/bin/polycarp" ]; then
+  "$DEST/Contents/Resources/bin/polycarp" update --retire-old-browser </dev/null || true
+fi
 
-HELPER="$DEST/Contents/Resources/browser/polycarp-browser"
-BROWSER_LINK="$HOME/.local/bin/polycarp-browser"
-OLD_LINK="$HOME/.local/bin/tabkyra"
-# True when $1 is a link to the helper inside some Polycarp.app: one this installer made.
-links_to_ours() {
+# True when $1 is a link to the old browser helper inside some Polycarp.app: one an older install made.
+links_to_old_helper() {
   [ -L "$1" ] && case "$(readlink "$1")" in *Polycarp.app/Contents/Resources/browser/polycarp-browser) true ;; *) false ;; esac
 }
-if [ -x "$HELPER" ]; then
-  if links_to_ours "$BROWSER_LINK"; then
-    ln -sf "$HELPER" "$BROWSER_LINK"   # ours already: follow the app to where it is now
-  elif [ ! -e "$BROWSER_LINK" ] && [ ! -L "$BROWSER_LINK" ]; then
-    ln -s "$HELPER" "$BROWSER_LINK"
-  elif [ ! -L "$BROWSER_LINK" ]; then
-    echo "note: $BROWSER_LINK is a file, not a link, so it was left alone; \`polycarp browser\` runs the helper in this app." >&2
-  else
-    echo "note: $BROWSER_LINK links to $(readlink "$BROWSER_LINK"), not to this app, so it was left alone; \`polycarp browser\` runs the helper in this app." >&2
-  fi
-  # The old name: only Polycarp's own link goes. Where an earlier install took the name over, the link it replaced comes back.
-  if links_to_ours "$OLD_LINK"; then
-    previous="$HOME/Library/Application Support/$SUPPORT_FOLDER/tabkyra-previous-link"
-    rm -f "$OLD_LINK"
-    if [ -s "$previous" ]; then ln -s "$(cat "$previous")" "$OLD_LINK" && rm -f "$previous"; fi
-  fi
+if links_to_old_helper "$HOME/.local/bin/polycarp-browser"; then rm -f "$HOME/.local/bin/polycarp-browser"; fi
+OLD_LINK="$HOME/.local/bin/tabkyra"
+if links_to_old_helper "$OLD_LINK"; then
+  previous="$HOME/Library/Application Support/$SUPPORT_FOLDER/tabkyra-previous-link"
+  rm -f "$OLD_LINK"
+  if [ -s "$previous" ]; then ln -s "$(cat "$previous")" "$OLD_LINK" && rm -f "$previous"; fi
 fi
 # The Polycarp theme, unless a look was already chosen (install.sh does the same; a person who came by the disk image
 # never ran it, and the app runs this script on its first launch).

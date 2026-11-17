@@ -1,15 +1,14 @@
 import Foundation
 
-/// The three parts of Polycarp. All three ship in the one app; a part that's off doesn't run, asks macOS for nothing and
+/// The parts of Polycarp. Both ship in the one app; a part that's off doesn't run, asks macOS for nothing and
 /// downloads nothing. `<config>/features.toml` holds the choice, and `polycarp features` and Settings > General change it.
 public enum Feature: String, CaseIterable, Sendable {
-    case workspaces, voice, browser
+    case workspaces, voice
 
     public var title: String {
         switch self {
         case .workspaces: "Workspaces"
         case .voice: "Silas"
-        case .browser: "Browser"
         }
     }
 
@@ -17,7 +16,6 @@ public enum Feature: String, CaseIterable, Sendable {
         switch self {
         case .workspaces: "Nine workspaces, the dock, the overview and the launcher."
         case .voice: "Hold a key, speak and it types. Speech stays on this Mac."
-        case .browser: "Lets AI agents work in your browser, in their own tab group."
         }
     }
 
@@ -26,7 +24,6 @@ public enum Feature: String, CaseIterable, Sendable {
         switch self {
         case .workspaces: ["Keys", "Dock", "Launcher", "Agents", "Automation"]
         case .voice: ["Silas"]
-        case .browser: ["Browser"]
         }
     }
 }
@@ -39,7 +36,8 @@ public struct FeatureSet: Equatable, Sendable {
 
     public func contains(_ feature: Feature) -> Bool { on.contains(feature) }
 
-    /// Reads the file's text. Anything missing counts as on, so a damaged line can't take away something that worked.
+    /// Reads the file's text. Anything missing counts as on, so a damaged line can't take away something that worked. A
+    /// `browser` line from before the browser moved to Tychicus names no part here and is skipped.
     public static func parse(_ text: String) -> FeatureSet {
         var on = Set(Feature.allCases)
         for raw in text.split(whereSeparator: \.isNewline) {
@@ -86,61 +84,5 @@ public enum FeatureFile {
         let url = URL(fileURLWithPath: path)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         return (try? Data(set.text.utf8).write(to: url, options: .atomic)) != nil
-    }
-}
-
-/// What turning Browser off does to a browser: its native host manifest gets a `.off` name, which the browser ignores, so
-/// the extension can't reach the helper. Turning it on restores the name. Only manifests that point into Polycarp.app are
-/// touched, so a separately installed Tabkyra keeps working.
-public enum BrowserHosts {
-    public static let offSuffix = ".off"
-
-    public static func manifests(home: URL) -> [URL] {
-        BrowserPrevious.paths(home: home).filter { $0.pathExtension == "json" }
-    }
-
-    @discardableResult
-    public static func setEnabled(_ on: Bool, home: URL) -> Int {
-        let fm = FileManager.default
-        var changed = 0
-        for manifest in manifests(home: home) {
-            let parked = URL(fileURLWithPath: manifest.path + offSuffix)
-            let (from, to) = on ? (parked, manifest) : (manifest, parked)
-            // A manifest written while Browser was off is the newer one, so a parked copy beside it just goes.
-            if on, fm.fileExists(atPath: manifest.path), fm.fileExists(atPath: parked.path) {
-                try? fm.removeItem(at: parked)
-                continue
-            }
-            guard let data = fm.contents(atPath: from.path), !fm.fileExists(atPath: to.path),
-                  String(decoding: data, as: UTF8.self).contains("Polycarp.app") else { continue }
-            if (try? fm.moveItem(at: from, to: to)) != nil { changed += 1 }
-        }
-        return changed
-    }
-
-    /// The helper processes that give agents the browser, from a `ps -axo pid=,command=` listing: what a browser started
-    /// (`<helper> chrome-extension://<id>/` or `<helper> host ...`) and remote access (`<helper> serve ...`). Any other use of
-    /// the helper, and any other program, is left alone.
-    public static func hostPids(ps: String, helper: String) -> [Int32] {
-        ps.split(whereSeparator: \.isNewline).compactMap { line in
-            let trimmed = line.drop(while: \.isWhitespace)
-            guard let space = trimmed.firstIndex(of: " "), let pid = Int32(trimmed[..<space]) else { return nil }
-            let command = trimmed[trimmed.index(after: space)...].drop(while: \.isWhitespace)
-            guard command.hasPrefix(helper + " ") else { return nil }
-            let args = command.dropFirst(helper.count + 1)
-            return args.hasPrefix("chrome-extension://") || args.hasPrefix("host ") || args.hasPrefix("serve") ? pid : nil
-        }
-    }
-
-    /// Removing Browser: parked manifests go too. A live one, if turning it off failed, stays for the person to see.
-    @discardableResult
-    public static func removeParked(home: URL) -> Int {
-        let fm = FileManager.default
-        var removed = 0
-        for manifest in manifests(home: home) {
-            let parked = URL(fileURLWithPath: manifest.path + offSuffix)
-            if fm.fileExists(atPath: parked.path), (try? fm.removeItem(at: parked)) != nil { removed += 1 }
-        }
-        return removed
     }
 }

@@ -78,7 +78,7 @@ enum MCPCommand {
         return HandsCLI.send(request, caller: HandsCaller.connector)
     }
 
-    /// `connector`: this server belongs to one connector session (`polycarp browser serve`), so the app treats its calls as remote.
+    /// `connector`: this server belongs to one connector session (the browser helper's `serve`, now in Tychicus), so the app treats its calls as remote.
     static func run(connector: Bool = false) -> Never {
         let session = "\(connector ? "connector" : "mcp"):\(getpid())"
         let version = Wire.call(Wire.Request(op: .ping), timeout: 1)?.info?["version"] ?? "dev"
