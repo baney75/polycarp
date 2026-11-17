@@ -192,3 +192,134 @@ public enum WindowPairing {
         return out
     }
 }
+
+/// Where windows were, kept so they go back after their app relaunches or the Mac restarts. Saved as
+/// `placements.json` (mode 0600) in Polycarp's support folder, apart from the parking record (`frames.json`)
+/// and the workspace layout (`layout.json`), which go by window number.
+public struct PlacementBook: Codable, Equatable, Sendable {
+    /// Every window at the last look, for the next launch of Polycarp.
+    public var live: [WindowRecord] = []
+    /// Windows of apps that quit (or did not come back yet after a restart), waiting for them.
+    public var gone: [WindowRecord] = []
+    /// Windows each young process got back by title so far, by process start: evidence it is restoring windows. Not saved.
+    private var byTitle: [Double: Int] = [:]
+
+    /// How long a quit app's windows wait for it.
+    public static let keepFor: Double = 7 * 24 * 3600
+    /// How young a process must be for its new windows to count as ones it restored. Later windows
+    /// are new ones and join the workspace you are on.
+    public static let restoreWithin: Double = 60
+    /// How many of a relaunched app's windows must come back by title before any is taken off the workspace you are on.
+    public static let evidence = 2
+
+    private enum CodingKeys: String, CodingKey { case live, gone }
+
+    public init(live: [WindowRecord] = [], gone: [WindowRecord] = []) {
+        self.live = live; self.gone = gone
+    }
+
+    /// How things stand as windows are claimed.
+    public struct Scene: Sendable {
+        /// Each workspace in sight and the display showing it.
+        public var inSight: [Int: DisplayKey]
+        public var displays: [DisplayArea]
+        public var agentWorkspace: Int?
+        /// Processes an agent started or a launch claimed: their windows are theirs.
+        public var skip: Set<Int32>
+        /// The focused window of the app in front, when it is one of these.
+        public var focused: WindowID?
+        public init(inSight: [Int: DisplayKey], displays: [DisplayArea], agentWorkspace: Int? = nil,
+                    skip: Set<Int32> = [], focused: WindowID? = nil) {
+            self.inSight = inSight; self.displays = displays; self.agentWorkspace = agentWorkspace
+            self.skip = skip; self.focused = focused
+        }
+    }
+
+    /// A window going back: to `workspace`, at `frame`. `now`: its workspace is in sight, so it moves now; otherwise
+    /// `frame` is its parked record, where it comes back when you go there.
+    public struct Placement: Equatable, Sendable {
+        public var window: WindowID
+        public var workspace: Int
+        public var frame: CGRect?
+        public var now: Bool
+        public var rule: WindowPairing.Rule
+    }
+
+    /// An app quit: its windows' last records wait for it, in place of older ones for the same app.
+    public mutating func quit(bundle: String, records: [WindowRecord]) {
+        guard !records.isEmpty else { return }
+        gone.removeAll { $0.bundle == bundle }
+        gone += records
+    }
+
+    /// Polycarp started. The last run's records join the waiting ones (the newer wins for each app),
+    /// except those whose window is still here in the same process (`alive`, window to pid): those
+    /// windows kept their number, so they need no matching. Old records are dropped.
+    public mutating func started(alive: [WindowID: Int32], now: Double) {
+        let fresh = live.filter { alive[$0.window] != $0.pid }
+        let bundles = Set(live.map(\.bundle))
+        gone = gone.filter { !bundles.contains($0.bundle) } + fresh
+        live = []
+        expire(now: now)
+    }
+
+    public mutating func expire(now: Double) {
+        gone.removeAll { now - $0.at > Self.keepFor }
+        byTitle = byTitle.filter { now - $0.key < 2 * Self.restoreWithin }
+    }
+
+    /// A new look by process. A process still running that shows no window now keeps its last records (⌘Q closes an
+    /// app's windows before it quits), so its quit still hands them over.
+    public static func carry(_ now: [Int32: [WindowRecord]], previous: [Int32: [WindowRecord]],
+                             alive: (Int32) -> Bool) -> [Int32: [WindowRecord]] {
+        var out = now
+        for (pid, records) in previous where now[pid] == nil && alive(pid) { out[pid] = records }
+        return out
+    }
+
+    /// Where these windows go, their records taken out of `gone`. Only a process started after a record was written
+    /// can have restored its window (`started`, process start in seconds since 1970). The agent workspace and the
+    /// processes in `scene.skip` are never touched.
+    ///
+    /// `relaunch` (an app started again while Polycarp runs, so you may have just opened it where you are): creation
+    /// order counts only for a process that got a window back by title, in this look or an earlier one, and a window
+    /// leaves the workspaces in sight only once its process got back `evidence` windows by title, and never the app in
+    /// front's focused window. A fresh open of an app makes one window, often with the same fixed title as before
+    /// (Messages, Calculator, a New Tab), and it stays where you opened it; an app restoring its windows brings back
+    /// several. A record matched to a window that stays is used up all the same.
+    public mutating func claim(_ windows: [LiveWindow], started: [WindowID: Double], relaunch: Bool,
+                               scene: Scene) -> [Placement] {
+        var out: [Placement] = [], used = Set<Int>()
+        // Each process in start order, against the records written before it started and not taken yet.
+        let mine = windows.filter { started[$0.id] != nil && !scene.skip.contains($0.pid) }
+        let byStart = Dictionary(grouping: mine, by: { started[$0.id]! })
+        for start in byStart.keys.sorted() {
+            let open = gone.indices.filter { !used.contains($0) && gone[$0].at < start }
+            let pairs = WindowPairing.pair(byStart[start]!, with: open.map { gone[$0] })
+            let titled = byTitle[start, default: 0] + pairs.filter { $0.rule != .order }.count
+            if relaunch { byTitle[start] = titled }
+            for p in pairs where !relaunch || p.rule != .order || titled > 0 {
+                let i = open[p.record], r = gone[i]
+                used.insert(i)
+                guard Workspaces.range.contains(r.workspace), r.workspace != scene.agentWorkspace else { continue }
+                let inSight = scene.inSight[r.workspace] != nil
+                if relaunch, !inSight, titled < Self.evidence || p.window == scene.focused { continue }
+                out.append(Placement(window: p.window, workspace: r.workspace, frame: r.place(on: scene.displays, showing: scene.inSight[r.workspace]),
+                                     now: inSight, rule: p.rule))
+            }
+        }
+        gone = gone.enumerated().filter { !used.contains($0.offset) }.map(\.element)
+        return out
+    }
+
+    public static func load(from url: URL) -> PlacementBook {
+        guard let data = try? Data(contentsOf: url),
+              let book = try? JSONDecoder().decode(PlacementBook.self, from: data) else { return PlacementBook() }
+        return book
+    }
+
+    public func save(to url: URL) {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        PrivateFile.write(data, to: url)
+    }
+}
