@@ -9,6 +9,7 @@ pub mod envelope;
 pub mod keymap;
 pub mod mcp;
 pub mod model;
+pub mod shell;
 
 pub use agent::{check_scope, ActionLog, ActionRecord, Refusal, WindowFacts};
 pub use envelope::{Envelope, ErrorBody, Retry};
