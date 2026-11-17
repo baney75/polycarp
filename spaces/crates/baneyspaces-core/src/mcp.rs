@@ -46,7 +46,30 @@ pub fn tools() -> Value {
 }
 
 pub fn tool_names() -> Vec<String> {
-    tools().as_array().map(|a| a.iter().filter_map(|t| t["name"].as_str().map(String::from)).collect()).unwrap_or_default()
+    names(&tools())
+}
+
+fn names(catalog: &Value) -> Vec<String> {
+    catalog.as_array().map(|a| a.iter().filter_map(|t| t["name"].as_str().map(String::from)).collect()).unwrap_or_default()
+}
+
+/// The tools Windows serves on top of the shared catalog (`windows_adds` in `spec/mcp-tools.json`): `agent_press`,
+/// keys posted as window messages to a control of an agent's window, which Linux has no way to do yet.
+pub fn windows_adds() -> Value {
+    let reference = json!({ "type": "string", "pattern": "^@s[a-z0-9]+:e[0-9]+$", "description": "A ref from a snapshot, such as @s8f3k2p9:e8." });
+    json!([
+        { "name": "agent_press", "description": "Press keys in the control under a ref of an agent window, posted to that window only (never the window in front). Names as on the Mac: \"h i Return\", Tab, delete (Backspace), F5, asterisk. Modifier chords such as ctrl+c are not_supported. verified says the keys changed the ref's value.",
+          "inputSchema": { "type": "object", "properties": { "ref": reference, "key": { "type": "string", "description": "Keys separated by spaces, such as \"h i Return\"." } }, "required": ["ref", "key"], "additionalProperties": false, "description": "" } }
+    ])
+}
+
+/// The shared catalog plus `windows_adds`: what the Windows daemon serves.
+pub fn windows_tools() -> Value {
+    let mut all = tools();
+    if let (Some(a), Some(b)) = (all.as_array_mut(), windows_adds().as_array()) {
+        a.extend(b.iter().cloned());
+    }
+    all
 }
 
 /// The snapshot arguments for rows (`format`, `query`, `since`, `max_elements`). macOS only for now.
@@ -122,6 +145,11 @@ fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
 
 /// Handles one JSON-RPC message. Returns the reply, or `None` for a notification.
 pub fn handle(msg: &Value, call: &mut dyn FnMut(&str, &Value) -> Envelope) -> Option<Value> {
+    handle_with(msg, &tools(), call)
+}
+
+/// `handle` with a platform's own catalog (`windows_tools`).
+pub fn handle_with(msg: &Value, catalog: &Value, call: &mut dyn FnMut(&str, &Value) -> Envelope) -> Option<Value> {
     let id = msg.get("id").cloned();
     let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
     let Some(id) = id else { return None }; // notifications get no reply
@@ -136,10 +164,10 @@ pub fn handle(msg: &Value, call: &mut dyn FnMut(&str, &Value) -> Envelope) -> Op
             }})
         }
         "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
-        "tools/list" => json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools() } }),
+        "tools/list" => json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": catalog } }),
         "tools/call" => {
             let name = msg["params"]["name"].as_str().unwrap_or("");
-            if !tool_names().iter().any(|n| n == name) {
+            if !names(catalog).iter().any(|n| n == name) {
                 return Some(rpc_error(&id, -32602, &format!("unknown tool {name}")));
             }
             let args = msg["params"].get("arguments").cloned().unwrap_or_else(|| json!({}));
@@ -156,7 +184,12 @@ pub fn handle(msg: &Value, call: &mut dyn FnMut(&str, &Value) -> Envelope) -> Op
 }
 
 /// Newline-delimited JSON-RPC over stdio, until the input ends.
-pub fn serve<R: BufRead, W: Write>(input: R, mut output: W, call: &mut dyn FnMut(&str, &Value) -> Envelope) -> std::io::Result<()> {
+pub fn serve<R: BufRead, W: Write>(input: R, output: W, call: &mut dyn FnMut(&str, &Value) -> Envelope) -> std::io::Result<()> {
+    serve_with(input, output, &tools(), call)
+}
+
+/// `serve` with a platform's own catalog (`windows_tools`).
+pub fn serve_with<R: BufRead, W: Write>(input: R, mut output: W, catalog: &Value, call: &mut dyn FnMut(&str, &Value) -> Envelope) -> std::io::Result<()> {
     for line in input.lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -164,7 +197,7 @@ pub fn serve<R: BufRead, W: Write>(input: R, mut output: W, call: &mut dyn FnMut
         }
         let reply = match serde_json::from_str::<Value>(&line) {
             Ok(v) if v.is_array() => Some(rpc_error(&Value::Null, -32600, "batches are not supported")),
-            Ok(v) => handle(&v, call),
+            Ok(v) => handle_with(&v, catalog, call),
             Err(_) => Some(rpc_error(&Value::Null, -32700, "parse error")),
         };
         if let Some(r) = reply {
@@ -210,16 +243,33 @@ mod tests {
     #[test]
     fn the_spec_file_is_the_catalog() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/mcp-tools.json");
-        let want = serde_json::to_string_pretty(&json!({ "version": 1, "tools": tools() })).unwrap() + "\n";
+        let want = serde_json::to_string_pretty(&json!({ "version": 1, "tools": tools(), "windows_adds": windows_adds() })).unwrap() + "\n";
         if std::env::var("UPDATE_SPEC").is_ok() {
             std::fs::write(path, &want).unwrap();
         }
         assert_eq!(std::fs::read_to_string(path).expect("spec/mcp-tools.json"), want, "regenerate with: UPDATE_SPEC=1 cargo test -p baneyspaces-core");
     }
 
+    /// Windows serves `agent_press` and Linux doesn't: a press on Linux is an unknown tool, on Windows a call.
+    #[test]
+    fn windows_serves_press_and_the_shared_catalog_does_not() {
+        assert!(!tool_names().contains(&"agent_press".to_string()));
+        let call = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"agent_press","arguments":{"ref":"@s1:e2","key":"h i Return"}}});
+        let mut seen = vec![];
+        let mut echo = |n: &str, a: &Value| {
+            seen.push((n.to_string(), a.clone()));
+            Envelope::ok(json!({}))
+        };
+        assert_eq!(handle(&call, &mut echo).unwrap()["error"]["code"], -32602);
+        assert_eq!(handle_with(&call, &windows_tools(), &mut echo).unwrap()["result"]["isError"], false);
+        let list = handle_with(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}), &windows_tools(), &mut echo).unwrap();
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), tool_names().len() + 1);
+        assert_eq!(seen, vec![("agent_press".to_string(), json!({"ref":"@s1:e2","key":"h i Return"}))]);
+    }
+
     #[test]
     fn no_tool_reaches_the_users_workspaces() {
-        for n in tool_names() {
+        for n in names(&windows_tools()) {
             assert!(n.starts_with("agent_"), "{n}");
             assert!(!n.contains("switch") && !n.contains("move"), "{n}");
         }

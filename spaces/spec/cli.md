@@ -61,7 +61,7 @@ holds snapshot text, values, typed text or captures. Records older than 30 days 
 
 ## MCP
 
-`baneyspaces mcp` serves [mcp-tools.json](mcp-tools.json) over stdio: the Rust core's catalog, as Linux serves it. The Mac's
+`baneyspaces mcp` serves [mcp-tools.json](mcp-tools.json) over stdio: the Rust core's catalog, as Linux serves it; Windows adds the tools under `windows_adds` (`agent_press`). The Mac's
 `computer_*` tools come from its own catalog (`HandsTools` in Tools.swift) and add macOS-only arguments, such as `copy` on
 `get` and `paste` on `type`. There is no tool that switches,
 moves or lists your workspaces.

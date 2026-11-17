@@ -432,7 +432,7 @@ fn main() {
             let mut out = std::io::stdout();
             let mut call =
                 |name: &str, a: &Value| ipc::call(&paths, &mcp_tool_to_request(name, a, &agent));
-            let r = mcp::serve(stdin.lock(), &mut out, &mut call);
+            let r = mcp::serve_with(stdin.lock(), &mut out, &mcp::windows_tools(), &mut call);
             let _ = out.flush();
             if r.is_ok() {
                 0
@@ -534,6 +534,15 @@ mod tests {
         }
         assert_eq!(request(v(&["agent", "move", "w-1"])).unwrap()["op"], "agent_move", "the park command still works");
         assert_eq!(request(v(&["agent", "open", "notepad", "a.txt"])).unwrap()["op"], "agent_open");
+    }
+
+    /// The MCP `agent_press` reaches the daemon as the same hands request as the CLI's `agent press`.
+    #[test]
+    fn the_press_tool_is_the_press_verb() {
+        let r = mcp_tool_to_request("agent_press", &json!({"ref":"@s8f3k2p9:e8","key":"h i Return"}), "a1");
+        assert_eq!(r, json!({"op":"hands","agent":"a1","args":{"verb":"press","ref":"@s8f3k2p9:e8","key":"h i Return"}}));
+        let cli = request(v(&["agent", "press", "@s8f3k2p9:e8", "h i Return"])).unwrap();
+        assert_eq!(cli["args"], r["args"]);
     }
 
     #[test]
