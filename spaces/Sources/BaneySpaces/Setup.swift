@@ -847,6 +847,10 @@ struct SetupView: View {
                     Button(AgentEverything.button) { model.turnOnEverything() }
                 }
             }
+            SettingsRow(ViewControl.settingTitle, help: "With Full Access, agents on this Mac may switch workspaces, focus a window, and move or size windows on your workspaces. Off, they never change what you see.") {
+                Toggle(ViewControl.settingTitle, isOn: binding({ ViewControlSetting.shared.enabled }, { model.objectWillChange.send(); ViewControlSetting.shared.set($0) }))
+                    .labelsHidden().toggleStyle(.switch)
+            }
         }
 
         SettingsGroup("Always allow") {

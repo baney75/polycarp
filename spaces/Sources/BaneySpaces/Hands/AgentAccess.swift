@@ -80,3 +80,27 @@ final class AgentAccess {
         return true
     }
 }
+
+/// Donovan's "Agents may change what you see" (`ViewControl`). Like the access mode it is read once at launch and changed
+/// only from Settings, so a `defaults write` by another process takes effect at the next launch at the earliest, and is
+/// logged then. Polycarp's own windows are never an agent's, so no agent can click the switch.
+final class ViewControlSetting {
+    static let shared = ViewControlSetting()
+    private let lock = NSLock()
+    private var on = UserDefaults.standard.bool(forKey: ViewControl.defaultsKey)
+
+    private init() { if on { Trace.log("agent view control at launch: on (saved in Settings)") } }
+
+    var enabled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return on
+    }
+
+    /// Settings > Agents only, on the main thread.
+    func set(_ new: Bool) {
+        lock.lock(); let old = on; on = new; lock.unlock()
+        guard old != new else { return }
+        UserDefaults.standard.set(new, forKey: ViewControl.defaultsKey)
+        Trace.log("agent view control: \(new ? "on" : "off")")
+    }
+}
