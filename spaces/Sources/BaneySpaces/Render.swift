@@ -108,7 +108,7 @@ enum Render {
         setup.parkedApps = { [.init(id: "com.apple.Safari", name: "Safari", on: false, animates: false),
                             .init(id: "com.example.automation", name: "Automation Helper", on: true, animates: false),
                             .init(id: "com.mitchellh.ghostty", name: "Ghostty", on: true, animates: true)] }
-        setup.update = .init(have: "0.3.0 (abc1234)", channel: .stable, daily: true, nightlyNeedsTools: false, notice: UpdateNotice(name: "Polycarp 0.3.1", isNightly: false, installing: false))
+        setup.update = .init(have: "0.3.0 (abc1234)", channel: .stable, daily: true, notice: UpdateNotice(name: "Polycarp 0.3.1", isNightly: false, installing: false))
         setup.finished = [.init(id: "a", label: "Claude Code · polycarp")]
         guard save(SetupView(model: setup, close: {}).background(Color(nsColor: .windowBackgroundColor)),
                    "setup.png", SettingsSidebar.windowSize) else { return 1 }

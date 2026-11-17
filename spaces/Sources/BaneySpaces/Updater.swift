@@ -1,16 +1,15 @@
 import AppKit
 import BaneySpacesCore
 
-/// Finds new builds on the channel the person chose (Stable or Nightly) and installs one only
-/// when they press Update Now. Checking asks GitHub once a day, and can be turned off; it
-/// sends nothing about this Mac. Installing runs the same installer as the first install: it
+/// Finds new builds on the channel the person chose (Stable, Nightly or Dev) and installs one only
+/// when they press Update Now. Checking reads the channel's latest.json once a day, and can be turned
+/// off; it sends nothing about this Mac. Installing runs the same installer as the first install: it
 /// downloads the release's signed app (checked against the pinned release key) and puts it where
-/// this copy is. It builds on this Mac instead when the release has no ready-made app, or when
-/// this copy was built here and the command line tools are installed: that keeps its signature,
-/// so the Accessibility permission carries over. A copy built here, updated on a Mac without the
-/// tools, gets the ready-made app and macOS asks for the permission once more.
+/// this copy is. It builds on this Mac instead when this copy was built here and the command line
+/// tools are installed: that keeps its signature, so the Accessibility permission carries over.
+/// A copy built here, updated on a Mac without the tools, gets the ready-made app and macOS asks
+/// for the permission once more.
 final class Updater: NSObject {
-    static let releasesURL = URL(string: "https://api.github.com/repos/baney75/polycarp/releases?per_page=30")!
 
     /// The build on offer, if one is newer than this one.
     private(set) var available: Release?
@@ -38,31 +37,22 @@ final class Updater: NSObject {
         let info = Bundle.main.infoDictionary ?? [:]
         let commit = (info["PolycarpCommit"] as? String).flatMap { $0.allSatisfy(\.isHexDigit) && $0.count >= 7 ? $0 : nil }
         let date = (info["PolycarpCommitDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
-        return BuildInfo(version: info["CFBundleShortVersionString"] as? String ?? "0", commit: commit, commitDate: date)
+        let short = info["CFBundleShortVersionString"] as? String ?? "0"
+        return BuildInfo(version: info["PolycarpVersion"] as? String ?? short, commit: commit, commitDate: date,
+                         channel: (info["PolycarpChannel"] as? String).flatMap(UpdateChannel.init(rawValue:)))
     }()
 
-    /// "0.2.1" for a stable build, "0.2.1 (abc1234)" when the commit is known.
+    /// "0.4.0 (abc1234)" for a stable build, "0.4.0 Nightly (abc1234)" for a nightly, "0.4.0" without a commit.
     static var buildDescription: String {
-        build.commit.map { "\(build.version) (\($0.prefix(7)))" } ?? build.version
+        let base = SemVer(build.version)?.base ?? build.version
+        let named = build.channel.map { $0 == .stable ? base : "\(base) \($0.title)" } ?? base
+        return build.commit.map { "\(named) (\($0.prefix(7)))" } ?? named
     }
 
-    /// Whether Apple's command line tools are installed. A Nightly build is built on this Mac, so it
-    /// needs them; a Stable release installs ready-made.
-    static var hasCommandLineTools: Bool {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
-        p.arguments = ["-p"]
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
-        guard (try? p.run()) != nil else { return false }
-        p.waitUntilExit()
-        return p.terminationStatus == 0
-    }
-
-    static let nightlyNeedsToolsMessage = "Nightly builds need Apple's command line tools, which this Mac doesn't have. Stable installs ready-made. To follow Nightly, run xcode-select --install in Terminal."
-
+    /// The channel chosen in Settings, else the one this build came from (a copy installed from Nightly, or
+    /// from the old Preview, follows Nightly), else Stable. A saved "preview" reads as Nightly.
     var channel: UpdateChannel {
-        get { UserDefaults.standard.string(forKey: "updateChannel").flatMap(UpdateChannel.init) ?? .stable }
+        get { UserDefaults.standard.string(forKey: "updateChannel").flatMap(UpdateChannel.init(rawValue:)) ?? Self.build.channel ?? .stable }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "updateChannel")
             available = nil
@@ -94,30 +84,30 @@ final class Updater: NSObject {
         check(manual: false)
     }
 
-    /// Asks GitHub for releases. A manual check always answers, even "you're up to date".
+    /// Reads the channel's latest.json. A manual check always answers, even "you're up to date".
     func check(manual: Bool) {
         guard !checking else { return }
         checking = true
-        var request = URLRequest(url: Self.releasesURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let channel = self.channel
+        var request = URLRequest(url: channel.feedURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.setValue("Polycarp/\(Self.build.version)", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.checking = false
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                guard let data, status == 200 else {
-                    self.checkProblem = error?.localizedDescription ?? "GitHub answered with status \(status)"
+                // Nothing published on this channel yet is an answer, not a failure.
+                let feed = status == 200 ? data.flatMap(Feed.init(json:)) : nil
+                guard status == 404 || feed != nil else {
+                    let problem = error?.localizedDescription ?? (status == 200 ? "the \(channel.rawValue) feed isn't one Polycarp can read" : "GitHub answered with status \(status)")
+                    self.checkProblem = problem
                     self.checks += 1
-                    if manual { self.tell("Couldn't check for updates", error?.localizedDescription ?? "GitHub answered with status \(status). Try again later.") }
+                    if manual { self.tell("Couldn't check for updates", error?.localizedDescription ?? "\(status == 200 ? "The \(channel.title) feed isn't one Polycarp can read" : "GitHub answered with status \(status)"). Try again later.") }
                     return
                 }
                 self.lastCheck = Date()
-                // A nightly is built on this Mac, so it isn't offered without the command line tools.
-                let toolsMissing = !Self.hasCommandLineTools
-                let releases = Release.list(fromGitHubJSON: data).filter { !(toolsMissing && $0.isNightly) }
-                let candidates = Updates.candidates(from: releases, channel: self.channel, build: Self.build)
-                self.firstContainingBuild(candidates) { release in
+                let offer = feed.flatMap { Updates.offer($0, channel: channel, build: Self.build) }
+                self.confirm(offer, feed: feed) { release in
                     self.available = release
                     self.checkProblem = nil
                     self.checks += 1
@@ -125,10 +115,12 @@ final class Updater: NSObject {
                     guard manual else { return }
                     if let release {
                         self.offer(release)
-                    } else if toolsMissing && self.channel == .nightly {
-                        self.tell("Nightly needs Apple's command line tools", Self.nightlyNeedsToolsMessage)
+                    } else if feed == nil {
+                        self.tell("Nothing on \(channel.title) yet", "No build has been published on the \(channel.title) channel yet. You have \(Self.buildDescription).")
+                    } else if feed?.platforms.contains(Feed.thisMac) == false {
+                        self.tell("No \(channel.title) build for this Mac", "\(channel.title) builds are for Apple silicon Macs. Stable runs on this one. You have \(Self.buildDescription).")
                     } else {
-                        self.tell("Polycarp is up to date", "You have \(Self.buildDescription), the newest \(self.channel == .stable ? "stable release" : "build on the Nightly channel").")
+                        self.tell("Polycarp is up to date", "You have \(Self.buildDescription), the newest \(channel == .stable ? "stable release" : "build on the \(channel.title) channel").")
                     }
                 }
             }
@@ -152,8 +144,16 @@ final class Updater: NSObject {
 
     /// Answers `polycarp-spaces update`: "status" reports, "check" also asks GitHub again (the answer
     /// arrives in a later status, when `checks` has gone up), "now" installs the release on offer the
-    /// way Update Now does: the same installer, the same signature check, nothing new.
+    /// way Update Now does: the same installer, the same signature check, nothing new. "channel <name>"
+    /// chooses the channel, as Settings > Updates does, and checks it.
     func answer(_ what: String) -> Wire.Reply {
+        if what.hasPrefix("channel ") {
+            guard let chosen = UpdateChannel(rawValue: String(what.dropFirst("channel ".count))) else {
+                return Wire.Reply(ok: false, error: "the channel is stable, nightly or dev")
+            }
+            channel = chosen
+            return Wire.Reply(ok: true, info: report.info)
+        }
         switch what {
         case "status": break
         case "check": check(manual: false)
@@ -165,11 +165,11 @@ final class Updater: NSObject {
         return Wire.Reply(ok: true, info: report.info)
     }
 
-    /// The first candidate GitHub confirms is ahead of this build: it contains every change this
-    /// build has, plus more. Dates alone can't tell a hotfix branch from main. Without an answer
-    /// (offline, rate limited), the date comparison stands.
-    private func firstContainingBuild(_ candidates: [Release], then: @escaping (Release?) -> Void) {
-        guard let release = candidates.first else { return then(nil) }
+    /// Offers `release` only when GitHub confirms it is ahead of this build: it contains every change this build
+    /// has, plus more. Dates and versions alone can't tell a hotfix on stable from main. Without an answer
+    /// (offline, rate limited), the version decides (`Updates.isNewerVersion`).
+    private func confirm(_ release: Release?, feed: Feed?, then: @escaping (Release?) -> Void) {
+        guard let release, let feed else { return then(nil) }
         guard let mine = Self.build.commit, let theirs = release.commit,
               let url = URL(string: "https://api.github.com/repos/baney75/polycarp/compare/\(mine)...\(theirs)") else { return then(release) }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
@@ -178,9 +178,10 @@ final class Updater: NSObject {
         URLSession.shared.dataTask(with: request) { data, response, _ in
             let status = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["status"] as? String
             DispatchQueue.main.async {
-                guard (response as? HTTPURLResponse)?.statusCode == 200, let status else { return then(release) }
-                if status == "ahead" { return then(release) }
-                self.firstContainingBuild(Array(candidates.dropFirst()), then: then)
+                guard (response as? HTTPURLResponse)?.statusCode == 200, let status else {
+                    return then(Updates.isNewerVersion(feed, than: Self.build) ? release : nil)
+                }
+                then(status == "ahead" ? release : nil)
             }
         }.resume()
     }
@@ -262,16 +263,13 @@ final class Updater: NSObject {
     /// exact commit whose notes were shown is installed, or nothing is.
     func install(_ release: Release) {
         guard installing == nil, release.isInstallable else { return }
-        guard !release.isNightly || Self.hasCommandLineTools else {
-            return tell("Nightly needs Apple's command line tools", Self.nightlyNeedsToolsMessage)
-        }
         guard !Self.installerRunning else {
             return tell("An update is already installing", "It installs in the background and restarts Polycarp when it's done.")
         }
         let folder = Self.supportFolder
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // The tag and commit only ever reach the shell as environment variables, and only a tag
-        // BaneySpaces publishes (vX.Y.Z or nightly) and a hex commit get this far. The script
+        // Polycarp publishes (vX.Y.Z, nightly or dev) and a hex commit get this far. The script
         // writes its exit status last, whatever stopped it.
         let script = """
         set -uo pipefail

@@ -157,7 +157,7 @@ fi
 if ! have_tools; then
   # An update runs in the background with nobody to click Install, so it only says what to do.
   if [ -n "${BANEYSPACES_COMMIT:-}" ]; then
-    fail "this update is built on your Mac and needs Apple's command line tools (Nightly builds always do; Stable releases install ready-made). Run xcode-select --install in Terminal, then update again."
+    fail "this update is built on your Mac and needs Apple's command line tools. Run xcode-select --install in Terminal, then update again."
   fi
   step "Polycarp needs Apple's free command line tools first"
   xcode-select --install >/dev/null 2>&1 || true
