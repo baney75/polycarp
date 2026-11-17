@@ -14,7 +14,7 @@ Put a file at `themes/<name>.toml` inside your config folder:
 
 - Anywhere: `$POLYCARP_CONFIG_DIR/`, if you set it. It must be an absolute path, or the command refuses it.
   Use it to try things in a temporary folder.
-- macOS: `$XDG_CONFIG_HOME/polycarp/` (default `~/.config/polycarp/`)
+- macOS and Linux: `$XDG_CONFIG_HOME/polycarp/` (default `~/.config/polycarp/`)
 - Windows: `%APPDATA%\Polycarp\`
 
 The quickest start is `polycarp theme create mine --extends evening`. It writes the file with a comment

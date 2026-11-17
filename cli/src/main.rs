@@ -70,7 +70,7 @@ const BROWSER: Tool = Tool {
     bundled: &[
         "~/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
         "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
-        // Where `polycarp update` links the helper on Linux: before PATH, so an older `npm link` never answers for it.
+        // Where an earlier `polycarp update` linked the helper on Linux: before PATH, so an older `npm link` never answers for it.
         "~/.local/bin/polycarp-browser",
     ],
     spots: &[

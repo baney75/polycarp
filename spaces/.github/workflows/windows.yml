@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # The Linux daemon is unix-only, so on Windows the workspace is tested by package:
+      # On Windows the workspace is tested by package:
       # the core (model, scope guard, envelope, MCP and the conformance cases) and this platform.
       - name: Core, the conformance cases and the Windows crate
         run: cargo test -p baneyspaces-core -p baneyspaces-windows --locked

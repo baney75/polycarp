@@ -111,7 +111,7 @@ polycarp theme preview still-water --mode both
 
 It prints the path of a page you can open in any browser. Previews go in `previews/` in your settings folder unless you choose a file with `--out`. `--surface` previews one product's overrides.
 
-With no browser at hand (a Linux box, Omarchy, SSH, or an agent that reads images), ask for pictures instead:
+With no browser at hand (over SSH, or for an agent that reads images), ask for pictures instead:
 
 ```sh
 polycarp theme preview still-water --format png
@@ -345,7 +345,7 @@ One file for all of them, with undo and a recovery key, is on the plan. Its cont
 | Part | Mac | Windows | Linux | iPhone and iPad | Android |
 | --- | --- | --- | --- | --- | --- |
 | Voice | In the app | Nightly, as Silas | Nightly | In progress, iPad first | Planned |
-| Workspaces | In the app | In progress | In progress | Planned: control your computer's | Planned: control your computer's |
+| Workspaces | In the app | In progress | Retired | Planned: control your computer's | Planned: control your computer's |
 | Browser agents | In the app | Not yet tried | Not yet tried | Planned: watch and steer your computer's | Planned: watch and steer your computer's |
 | Themes | In the app | Command works | Retired | Planned | Planned |
 
