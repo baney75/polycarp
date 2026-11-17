@@ -3,7 +3,7 @@
 Polycarp is for macOS and Windows. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 Browser and voice work goes to Tychicus and Silas; Linux desktop work is retired. A PR here that adds any of it is refused.
-Until `voice/` and `browser/` leave this repo, a fix for something that broke in them still lands here.
+Until `browser/` leaves this repo, a fix for something that broke in it still lands here.
 
 This repo holds two apps and one small command (`cli/`) with their full history. Each directory keeps its own `AGENTS.md`
 rules; read the one for the directory you touch before you change it. No renaming of the products
