@@ -1,4 +1,7 @@
 #![cfg_attr(not(windows), allow(dead_code, unused_imports))]
+// The error side of most functions here is an `Envelope`, the reply itself: built once on a cold path and sent.
+// Boxing it would change every caller and save nothing that matters.
+#![allow(clippy::result_large_err)]
 //! `baneyspaces` for Windows. The CLI sends one request to `baneyspaces daemon` over a named pipe
 //! and prints the envelope; `baneyspaces mcp` serves the agent tools over stdio.
 //!
