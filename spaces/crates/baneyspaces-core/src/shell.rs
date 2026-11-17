@@ -143,7 +143,7 @@ mod tests {
             start: 1,
             app: "notepad.exe".into(),
             monitor: None,
-            workspace: Some(1),
+            workspace: None,
         })
         .unwrap();
         m.apply(Event::Open {
@@ -152,7 +152,14 @@ mod tests {
             start: 1,
             app: "code.exe".into(),
             monitor: None,
-            workspace: Some(3),
+            workspace: None,
+        })
+        .unwrap();
+        // A window opens on the workspace its display shows (R-P1); send this one to 3 and stay.
+        m.apply(Event::Move {
+            n: 3,
+            window: Some("w-2".into()),
+            follow: false,
         })
         .unwrap();
         m.apply(Event::AgentRegister { pid: 20, start: 5 }).unwrap();
@@ -209,11 +216,17 @@ mod tests {
     #[test]
     fn an_agents_window_in_front_is_not_shown_as_active() {
         let mut m = model();
+        // R-G1: an agent window comes to the front only after you show the agent workspace and pick it yourself.
+        m.apply(Event::AgentShow).unwrap();
         m.apply(Event::Activate {
             window: Some("w-9".into()),
-            cause: Cause::Agent,
+            cause: Cause::User,
         })
         .unwrap();
-        assert_eq!(ShellState::from_model(&m, facts).active, None);
+        assert_eq!(m.active(), Some("w-9"), "the model has the agent's window in front");
+        let s = ShellState::from_model(&m, facts);
+        assert_eq!(s.active, None);
+        assert!(s.agent_shown);
+        assert!(!s.line().contains("w-9"));
     }
 }

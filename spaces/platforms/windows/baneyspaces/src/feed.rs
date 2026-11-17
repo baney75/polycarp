@@ -47,6 +47,7 @@ impl<W: Write> Feed<W> {
         true
     }
 
+    #[cfg(test)]
     pub fn subscribers(&self) -> usize {
         self.subs.len()
     }
