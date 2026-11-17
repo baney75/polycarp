@@ -338,6 +338,7 @@ final class LauncherModel: ObservableObject {
             guard query != oldValue else { return }
             PaintClock.shared.keyTyped()
             selected = 0
+            moved = false
             rebuild()
             PaintClock.shared.willPaint(results: items.count)
             searchStore()
@@ -347,6 +348,8 @@ final class LauncherModel: ObservableObject {
     @Published private(set) var scope = Scope.root
     @Published private(set) var items: [LauncherItem] = []
     @Published var selected = 0
+    /// The selection was moved by hand since the last keystroke: rows at or above it hold still.
+    private var moved = false
     @Published private(set) var jobs: [String: Job] = [:]
     @Published private(set) var storeResults: [StoreApp] = []
     @Published private(set) var catalogState = CaskCatalog.State.idle
@@ -376,6 +379,11 @@ final class LauncherModel: ObservableObject {
     private var fileResultsQuery = ""
     private var fileWork: DispatchWorkItem?
     private var fileSearches = 0
+    /// The file rows on screen and the row the first of them is on.
+    private var filesShown: [FileSearch.Hit] = []
+    private var filesAt = 0
+    /// The last search whose first files were timed.
+    private var filesTimed = 0
     private var bangs = Launcher.loadBangs()
     /// Terminal agents found on this Mac: command to path.
     var agents: [String: String] = [:]
@@ -418,6 +426,7 @@ final class LauncherModel: ObservableObject {
         query = ""
         field?.stringValue = ""
         selected = 0
+        moved = false
         running = actions.workspacesByApp()
         workspaceApps = Dictionary(uniqueKeysWithValues: Workspaces.range.map { ($0, actions.appsOn($0)) })
         reindex()
@@ -443,6 +452,7 @@ final class LauncherModel: ObservableObject {
         query = ""
         field?.stringValue = ""
         selected = 0
+        moved = false
         storeResults = []
         fileResults = []
         if s == .install || s == .remove { loadCatalog() }
@@ -472,6 +482,7 @@ final class LauncherModel: ObservableObject {
     func move(_ by: Int) {
         guard !items.isEmpty else { return }
         selected = (selected + by + items.count) % items.count
+        moved = true
     }
 
     func runSelected(reveal: Bool = false) {
@@ -503,6 +514,7 @@ final class LauncherModel: ObservableObject {
     private func rebuild() {
         let q = query
         var out: [LauncherItem] = []
+        filesShown = []
         // A bang or a question takes over the list, wherever you are: it's clearly for the web.
         if scope == .root || scope == .web, let web = webItems(q) {
             items = web
@@ -526,14 +538,19 @@ final class LauncherModel: ObservableObject {
                 out += menuItems(hits)
                 out = Self.topHitFirst(out)
                 // Files come in a moment after the rest, below them, so the row you're on stays put.
-                out += fileItems().prefix(5)
+                filesAt = out.count
+                filesShown = Array(fileHits().prefix(5))
+                out += filesShown.map(fileRow)
                 out += searchEverywhere(q).prefix(3)
                 out.append(LauncherItem(id: "find-install", section: "Install", title: "Install “\(q)”…",
                                         subtitle: "Search Homebrew and the App Store", icon: .symbol("arrow.down.circle"),
                                         badge: "⇥", run: { [weak self] in self?.enter(.install); self?.setQuery(q) }))
             }
         case .apps: out = appItems(search(q, kinds: [.app]), q: q, limit: 500)
-        case .files: out = fileItems()
+        case .files:
+            filesAt = 0
+            filesShown = fileHits()
+            out = filesShown.map(fileRow)
         case .install: out = installItems(q)
         case .remove: out = removeItems(q)
         case .update: out = updateItems().filter { Match.score(q, $0.title) != nil }
@@ -1007,85 +1024,183 @@ final class LauncherModel: ObservableObject {
 
     // MARK: Files
 
-    /// Spotlight, a moment after typing stops: the top five in the main search, more in Files.
+    /// Spotlight, as soon as typing pauses: the top five in the main search, more in Files. Each
+    /// batch it finds shows as it comes (R-L14), and every keystroke stops the search in flight.
     /// A bang or a question is for the web, not a file name.
     private func searchFiles() {
         fileWork?.cancel()
         fileSearches += 1
+        FileFinder.stop()
         let q = query.trimmingCharacters(in: .whitespaces)
         let forFiles = scope == .files || scope == .root && !q.hasPrefix("!") && !q.hasPrefix("?") && Bangs.parse(q) == nil
         guard forFiles, FileSearch.spotlightQuery(q) != nil else {
             if !fileResults.isEmpty { fileResults = []; rebuild() }
             return
         }
-        let search = fileSearches, inScope = scope
+        let search = fileSearches, inScope = scope, typedAt = PaintClock.shared.typedAt
+        let limit = inScope == .files ? 60 : 5
         let work = DispatchWorkItem {
-            FileFinder.find(q, limit: inScope == .files ? 60 : 5, search: search) { [weak self] hits in
+            FileFinder.find(q, limit: limit, search: search) { [weak self] hits in
                 guard let self, self.fileSearches == search, self.scope == inScope else { return }
-                self.fileResults = hits
+                let on = self.moved && self.items.indices.contains(self.selected) ? self.selected : nil
+                self.fileResults = LateRows.merge(shown: self.filesShown, at: self.filesAt, selected: on,
+                                                  fresh: hits, limit: limit, id: \.path)
                 self.fileResultsQuery = q
                 self.rebuildKeepingSelection()
+                if !self.filesShown.isEmpty, self.filesTimed != search {
+                    self.filesTimed = search
+                    PaintClock.shared.filesShown(since: typedAt)
+                }
             }
         }
         fileWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + FileFinder.pause, execute: work)
     }
 
-    private func fileItems() -> [LauncherItem] {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        // An older search's files stay up while the newer one runs, only those that still match.
+    /// The files to list for what's typed. An older search's files stay up while the newer one
+    /// runs, only those that still match.
+    private func fileHits() -> [FileSearch.Hit] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        let shown = q == fileResultsQuery ? fileResults : fileResults.filter { FileSearch.matches(q, $0.name) }
-        return shown.map { f in
-            let url = URL(fileURLWithPath: f.path)
-            return LauncherItem(id: "file:\(f.path)", section: "Files", title: f.name,
-                                subtitle: FileSearch.folder(of: f.path, home: home) + " · ⌘↩ shows it in Finder",
-                                icon: .file(f.path), run: { [weak self] in
-                                    self?.close()
-                                    if !NSWorkspace.shared.open(url) { NSSound.beep() }
-                                }, reveal: url)
-        }
+        return q == fileResultsQuery ? fileResults : fileResults.filter { FileSearch.matches(q, $0.name) }
+    }
+
+    private func fileRow(_ f: FileSearch.Hit) -> LauncherItem {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let url = URL(fileURLWithPath: f.path)
+        return LauncherItem(id: "file:\(f.path)", section: "Files", title: f.name,
+                            subtitle: FileSearch.folder(of: f.path, home: home) + " · ⌘↩ shows it in Finder",
+                            icon: .file(f.path), run: { [weak self] in
+                                self?.close()
+                                if !NSWorkspace.shared.open(url) { NSSound.beep() }
+                            }, reveal: url)
     }
 }
 
 /// Runs `FileSearch`'s query through Spotlight over your own folders (iCloud Drive and cloud
-/// drives included, the rest of Library left out), off the main thread, and ranks what it finds.
+/// drives included, the rest of Library left out), off the main thread, and ranks what it finds
+/// batch by batch as Spotlight gathers it. One search runs at a time; a newer one, or `stop()`,
+/// ends the one before at once.
 enum FileFinder {
+    /// Everything here runs on this queue, Spotlight's callbacks included.
     private static let queue = DispatchQueue(label: "Polycarp file search", qos: .userInitiated)
+    /// How long typing must pause before a search starts. Short: a newer key stops it anyway.
+    static let pause: TimeInterval = 0.04
     /// Files kept per search for ranking. A two-letter search can match thousands; the ranking
     /// only needs enough to find the few worth showing.
     static let cap = 1000
-    /// Matches Spotlight gathers per search, most recently used first. Noise is skipped as it's
-    /// read, since Spotlight can't leave it out (it ignores kMDItemPath) and it can be most of
-    /// the matches: 4,887 of 5,159 for "ind" in ~/Projects on Donovan's Mac were in node_modules.
-    /// Measured there: 6,000 takes 80–580 ms a search; 20,000 took up to 1.9 s.
+    /// Matches Spotlight gathers per search. Noise is skipped as it's read, since Spotlight can't
+    /// leave it out (it ignores kMDItemPath) and it can be most of the matches: 4,887 of 5,159
+    /// for "ind" in ~/Projects on Donovan's Mac were in node_modules.
     static let scanLimit = 6_000
-    /// Reading each match's path costs about 0.3 ms, so reading stops after this long with what
-    /// it has kept.
+    /// Reading each match's path costs about 0.3 ms, so reading stops after this long in all
+    /// and the search ends with what it kept.
     static let readBudget: TimeInterval = 0.3
-    /// The newest search asked for. One queued behind it is stale and doesn't run.
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var newest = 0
-    private static func isNewest(_ n: Int) -> Bool { lock.lock(); defer { lock.unlock() }; return newest == n }
 
+    /// One search in flight. Touched only on `queue`.
+    private final class Run {
+        let typed: String
+        let limit: Int
+        let home: String
+        let places: Int
+        let query: MDQuery
+        let top: [FileSearch.Hit]
+        let done: ([FileSearch.Hit]) -> Void
+        let start = Date()
+        var read = 0
+        var kept: [FileSearch.Hit] = []
+        var spent: TimeInterval = 0
+        var sent: [String]?
+        var observers: [NSObjectProtocol] = []
+        init(typed: String, limit: Int, home: String, places: Int, query: MDQuery, top: [FileSearch.Hit],
+             done: @escaping ([FileSearch.Hit]) -> Void) {
+            (self.typed, self.limit, self.home, self.places, self.query, self.top, self.done) = (typed, limit, home, places, query, top, done)
+        }
+    }
+    nonisolated(unsafe) private static var running: Run?
+
+    /// Stops the search in flight. Its batches already on their way to the main thread are
+    /// dropped there by search number.
+    static func stop() { queue.async { end("stopped") } }
+
+    /// Calls `done` on the main thread with the best `limit` files so far, each time a batch
+    /// changes them, starting with the home folder's own files.
     static func find(_ typed: String, limit: Int, search n: Int, done: @escaping ([FileSearch.Hit]) -> Void) {
         guard let text = FileSearch.spotlightQuery(typed) else { return done([]) }
-        lock.lock(); newest = n; lock.unlock()
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         queue.async {
-            guard isNewest(n) else { return }
-            let start = Date()
+            end("stopped")
             let places = scopes(home)
-            let hits = search(text, in: places, stale: { !isNewest(n) }) + topLevel(typed, home)
-            guard isNewest(n) else { return }
-            let ranked = FileSearch.rank(typed, hits, home: home, limit: limit)
-            let ms = Int(Date().timeIntervalSince(start) * 1000)
-            DispatchQueue.main.async {
-                // One line a search, so an empty list can be told apart from a slow or blocked one.
-                Trace.log("files q=\(typed.count)ch places=\(places.count) kept=\(hits.count) shown=\(ranked.count) ms=\(ms)")
-                done(ranked)
+            guard !places.isEmpty,
+                  let q = MDQueryCreate(kCFAllocatorDefault, text as CFString, attributes as CFArray, nil)
+            else { return }
+            MDQuerySetSearchScope(q, places as CFArray, 0)
+            MDQuerySetMaxCount(q, scanLimit)
+            // The first batch after 50 matches or 20 ms, the rest in bigger steps; no live updates.
+            MDQuerySetBatchingParameters(q, MDQueryBatchingParams(first_max_num: 50, first_max_ms: 20, progress_max_num: 1000,
+                                                                  progress_max_ms: 100, update_max_num: 0, update_max_ms: 0))
+            MDQuerySetDispatchQueue(q, queue)
+            let run = Run(typed: typed, limit: limit, home: home, places: places.count, query: q, top: topLevel(typed, home), done: done)
+            let notes = [((kMDQueryProgressNotification as CFString) as String, false),
+                         ((kMDQueryDidFinishNotification as CFString) as String, true)]
+            for (name, finished) in notes {
+                run.observers.append(NotificationCenter.default.addObserver(forName: Notification.Name(name), object: q, queue: nil) { _ in
+                    guard running === run else { return }
+                    take(run, finished: finished)
+                })
             }
+            running = run
+            send(run, last: false)
+            if !MDQueryExecute(q, 0) { end("failed") }
         }
+    }
+
+    /// Reads what Spotlight added since the last batch and sends the new best files.
+    private static func take(_ run: Run, finished: Bool) {
+        let q = run.query
+        MDQueryDisableUpdates(q)
+        let count = MDQueryGetResultCount(q)
+        let begin = Date()
+        while run.read < count, run.kept.count < cap {
+            let i = run.read
+            run.read += 1
+            if i % 50 == 49, run.spent + Date().timeIntervalSince(begin) > readBudget { break }
+            guard let raw = MDQueryGetResultAtIndex(q, i),
+                  let path = MDItemCopyAttribute(Unmanaged<MDItem>.fromOpaque(raw).takeUnretainedValue(), kMDItemPath) as? String,
+                  !FileSearch.isNoise(path, home: run.home)
+            else { continue }
+            run.kept.append(FileSearch.Hit(name: value(q, kMDItemFSName, i) ?? (path as NSString).lastPathComponent, path: path,
+                                           lastUsed: value(q, kMDItemLastUsedDate, i), modified: value(q, kMDItemFSContentChangeDate, i)))
+        }
+        run.spent += Date().timeIntervalSince(begin)
+        MDQueryEnableUpdates(q)
+        let last = finished || run.kept.count >= cap || run.spent > readBudget
+        send(run, last: last)
+        if last { end("done") }
+    }
+
+    /// Nothing found yet isn't sent until the search ends: an older search's files that still
+    /// match stay up meanwhile.
+    private static func send(_ run: Run, last: Bool) {
+        let ranked = FileSearch.rank(run.typed, run.kept + run.top, home: run.home, limit: run.limit)
+        let paths = ranked.map(\.path)
+        guard paths != run.sent, !ranked.isEmpty || last else { return }
+        run.sent = paths
+        DispatchQueue.main.async { run.done(ranked) }
+    }
+
+    /// Ends the search in flight, if any, with one trace line: counts and times, never the query.
+    private static func end(_ how: String) {
+        guard let run = running else { return }
+        running = nil
+        MDQueryStop(run.query)
+        run.observers.forEach(NotificationCenter.default.removeObserver)
+        let line = "files \(how) q=\(run.typed.count)ch places=\(run.places) read=\(run.read) kept=\(run.kept.count) "
+            + "shown=\(run.sent?.count ?? 0) ms=\(Int(Date().timeIntervalSince(run.start) * 1000))"
+        DispatchQueue.main.async { Trace.log(line) }
+    }
+
+    private static func value<T>(_ q: MDQuery, _ attr: CFString, _ i: Int) -> T? {
+        MDQueryGetAttributeValueOfResultAtIndex(q, attr, i).map { Unmanaged<AnyObject>.fromOpaque($0).takeUnretainedValue() } as? T
     }
 
     /// The home folder's own folders, without Library or hidden ones, plus iCloud Drive and the
@@ -1114,34 +1229,6 @@ enum FileFinder {
     /// Spotlight hands these back with the results; asking item by item took seconds. The path
     /// isn't one it can (it isn't stored), so that one is asked of each item.
     private static let attributes = [kMDItemFSName, kMDItemLastUsedDate, kMDItemFSContentChangeDate] as [CFString]
-
-    private static func search(_ text: String, in scopes: [String], stale: () -> Bool) -> [FileSearch.Hit] {
-        guard !scopes.isEmpty,
-              let q = MDQueryCreate(kCFAllocatorDefault, text as CFString, attributes as CFArray, [kMDItemLastUsedDate] as CFArray)
-        else { return [] }
-        MDQuerySetSearchScope(q, scopes as CFArray, 0)
-        MDQuerySetMaxCount(q, scanLimit)
-        guard MDQueryExecute(q, CFOptionFlags(kMDQuerySynchronous.rawValue)), !stale() else { return [] }
-        func value<T>(_ attr: CFString, _ i: Int) -> T? {
-            MDQueryGetAttributeValueOfResultAtIndex(q, attr, i).map { Unmanaged<AnyObject>.fromOpaque($0).takeUnretainedValue() } as? T
-        }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        var out: [FileSearch.Hit] = []
-        let until = Date().addingTimeInterval(readBudget)
-        for i in 0..<MDQueryGetResultCount(q) where out.count < cap {
-            if i % 200 == 199 {
-                if stale() { return [] }
-                if Date() > until { break }
-            }
-            guard let raw = MDQueryGetResultAtIndex(q, i),
-                  let path = MDItemCopyAttribute(Unmanaged<MDItem>.fromOpaque(raw).takeUnretainedValue(), kMDItemPath) as? String,
-                  !FileSearch.isNoise(path, home: home)
-            else { continue }
-            out.append(FileSearch.Hit(name: value(kMDItemFSName, i) ?? (path as NSString).lastPathComponent, path: path,
-                                      lastUsed: value(kMDItemLastUsedDate, i), modified: value(kMDItemFSContentChangeDate, i)))
-        }
-        return out
-    }
 }
 
 // MARK: Sources
