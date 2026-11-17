@@ -18,7 +18,7 @@ let package = Package(
         // can build it as is. The rules it follows are written in spec/launcher.md.
         .target(name: "LauncherMatch"),
         // Which window lives where, and where hidden windows go: no AppKit, fully unit-tested.
-        .target(name: "BaneySpacesCore"),
+        .target(name: "BaneySpacesCore", dependencies: ["LauncherMatch"]),
         // agent-desktop's C header, for the hands engine in the app.
         .systemLibrary(name: "CAgentDesktop", path: "Sources/CAgentDesktop"),
         // The voice core's C header (core/ffi). The library, scripts/build-core.sh's core-lib/libpolycarp_core.a,

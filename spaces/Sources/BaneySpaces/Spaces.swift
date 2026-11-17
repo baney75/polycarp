@@ -2293,15 +2293,18 @@ struct SwitchClock {
     }
 }
 
-/// The last 500 lines of timing.log.
+/// The last `limit` lines of timing.log.
 enum TimingLog {
     private static let lock = NSLock()
+    /// Lines kept. The launcher logs every keystroke, so this holds a day of typing and still the
+    /// switches `scripts/bench.sh` reads.
+    static let limit = 2_000
 
     static func append(_ line: String, to url: URL) {
         lock.lock(); defer { lock.unlock() }
         var lines = ((try? String(contentsOf: url, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
         lines.append(line)
-        try? (lines.suffix(500).joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+        try? (lines.suffix(limit).joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 }
 

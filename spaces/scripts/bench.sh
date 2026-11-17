@@ -27,7 +27,7 @@ sleep 0.5
 python3 -c '
 import re, statistics, sys
 budget, start = int(sys.argv[1]), int(sys.argv[2])
-# timing.log keeps its last 500 lines, so pick the lines from this run by timestamp, not position.
+# timing.log keeps its last 2,000 lines, so pick the lines from this run by timestamp, not position.
 lines = [l for l in open(sys.argv[3]) if l.split()[:1] and l.split()[0].isdigit() and int(l.split()[0]) >= start]
 done = [int(m.group(1)) for line in lines if (m := re.search(r"done=(\d+)", line))]
 parked = [int(m.group(1)) for line in lines if (m := re.search(r"parked=(\d+)", line))]
