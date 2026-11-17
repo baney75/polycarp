@@ -489,6 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         spaces.onChange = { [weak self] in
             self?.updateIcon()
             self?.dock.reload()
+            WindowBorders.shared.refresh()
             // The agent cursor hides the moment you leave the agent workspace.
             CursorController.shared.environmentChanged()
             // Any workspace switch ends every launch's covers: they show the screen from before it.
@@ -497,7 +498,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A new theme redraws the menu bar indicator as well as the panels.
         NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.updateIcon()
+            // Window borders follow the switch in Settings > Appearance and the theme's colors.
+            WindowBorders.shared.sync()
         }
+        WindowBorders.shared.sync()
         for name in [NSWorkspace.didTerminateApplicationNotification, NSWorkspace.didHideApplicationNotification] {
             NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
