@@ -36,6 +36,7 @@ use baneyspaces_core::model::{Cause, Effect, Event, Home, Model, ModelError};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -88,8 +89,38 @@ pub struct Core {
 
 pub type Shared = Arc<Mutex<Core>>;
 
-pub fn lock(s: &Shared) -> MutexGuard<'_, Core> {
-    s.lock().unwrap_or_else(|p| p.into_inner())
+/// The core, locked. When a lock that could change it is let go, the state goes to the shell's feed: every change
+/// reaches the shell (a title re-read by the poll as much as a switch), and only state that held, since a refused
+/// request has put the model back by then.
+pub struct Locked<'a> {
+    core: MutexGuard<'a, Core>,
+    changed: bool,
+}
+
+impl Deref for Locked<'_> {
+    type Target = Core;
+    fn deref(&self) -> &Core {
+        &self.core
+    }
+}
+
+impl DerefMut for Locked<'_> {
+    fn deref_mut(&mut self) -> &mut Core {
+        self.changed = true;
+        &mut self.core
+    }
+}
+
+impl Drop for Locked<'_> {
+    fn drop(&mut self) {
+        if self.changed {
+            self.core.publish();
+        }
+    }
+}
+
+pub fn lock(s: &Shared) -> Locked<'_> {
+    Locked { core: s.lock().unwrap_or_else(|p| p.into_inner()), changed: false }
 }
 
 static LOG: OnceLock<Mutex<std::fs::File>> = OnceLock::new();
@@ -112,6 +143,8 @@ static FINISHED: AtomicBool = AtomicBool::new(false);
 static CTRL_TX: OnceLock<Sender<Msg>> = OnceLock::new();
 static SHARED: OnceLock<Shared> = OnceLock::new();
 static PATHS: OnceLock<Paths> = OnceLock::new();
+/// The shell's live feed (`feed.rs`): started with the daemon, fed after every change.
+static FEED: OnceLock<std::sync::mpsc::Sender<crate::feed::FeedMsg<std::fs::File>>> = OnceLock::new();
 
 /// What a request that wanted to hide windows says when it could not save where they were.
 fn save_error(why: &str) -> Envelope {
@@ -487,6 +520,18 @@ impl Core {
         v["overview"] = json!({ "shown": self.overview_shown });
         v["daemon"] = json!({ "pid": self.our_pid, "started": self.started, "events": self.events_seen, "problems": self.problems });
         self.paths.write_atomic("state.json", &serde_json::to_string_pretty(&v).unwrap_or_default())
+    }
+
+    /// What the shell shows, as the feed's line: your windows with their app and title, never an agent's.
+    pub fn shell_line(&self) -> String {
+        baneyspaces_core::shell::ShellState::from_model(&self.model, |w| self.info.get(w).map(|i| (i.app.clone(), i.title.clone())).unwrap_or_default()).line()
+    }
+
+    /// Sends the state to the shell's feed; the feed drops it when nothing it shows changed. `Locked` calls it.
+    fn publish(&self) {
+        if let Some(tx) = FEED.get() {
+            let _ = tx.send(crate::feed::FeedMsg::Publish(self.shell_line()));
+        }
     }
 
     // ---- windows -------------------------------------------------------------------------
@@ -1367,6 +1412,24 @@ fn serve_conn(shared: Shared, f: std::fs::File) {
         unsafe { windows_sys::Win32::System::Pipes::GetNamedPipeClientProcessId(std::os::windows::io::AsRawHandle::as_raw_handle(&f) as _, &mut pid) };
         pid
     };
+    // `subscribe`: the shell's feed. This connection stays open and the feed thread writes to it from now on.
+    if serde_json::from_str::<Value>(&line).is_ok_and(|v| v["op"] == "subscribe") {
+        let c = lock(&shared);
+        let state = (!peer_is_agent(&c, peer)).then(|| c.shell_line());
+        // Nothing is written to the pipe with the core held: a client that subscribes and never reads must not
+        // stall the daemon. The answer and the state go out on the subscriber's own thread (`feed.rs`).
+        drop(c);
+        let mut f = f;
+        let Some(state) = state else {
+            let env = Envelope::err("not_in_scope", "subscribe is for your shell, not an agent: it was refused", Retry::Never, "Agents read `state` instead.");
+            let _ = writeln!(f, "{}", env.to_json());
+            return;
+        };
+        if let Some(tx) = FEED.get() {
+            let _ = tx.send(crate::feed::FeedMsg::Greet(f, Envelope::ok(json!({ "subscribed": true })).to_json(), state));
+        }
+        return;
+    }
     let env = match serde_json::from_str::<Value>(&line) {
         Ok(Value::Object(mut req)) => {
             req.insert("_peer_pid".into(), json!(peer));
@@ -1605,6 +1668,7 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         }));
     }
     let _ = CTRL_TX.set(tx.clone());
+    let _ = FEED.set(crate::feed::spawn());
     unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(ctrl_handler), 1) };
     {
         let mut c = lock(&shared);
@@ -1697,4 +1761,93 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
     say(&format!("baneyspaces daemon: stopped; {shown} window(s) put back, {kept} agent window(s) still on the agent workspace, {failed} not restored (kept in state.json)"));
     FINISHED.store(true, Ordering::SeqCst);
     0
+}
+
+#[cfg(test)]
+mod feed_tests {
+    use super::*;
+    use crate::feed::FeedMsg;
+    use baneyspaces_core::shell::ShellState;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow};
+
+    type Feed = Receiver<FeedMsg<std::fs::File>>;
+
+    /// The next state the feed is sent, within 2 s.
+    fn next(rx: &Feed) -> Option<ShellState> {
+        match rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(FeedMsg::Publish(l)) => ShellState::parse_line(&l),
+            _ => None,
+        }
+    }
+
+    /// The last state the feed was sent so far.
+    fn last(rx: &Feed) -> Option<ShellState> {
+        let mut state = None;
+        while let Ok(m) = rx.try_recv() {
+            if let FeedMsg::Publish(l) = m {
+                state = ShellState::parse_line(&l);
+            }
+        }
+        state
+    }
+
+    /// first-F1: a change made without a publish (the poll re-reading a title) never reached the feed. second-S1: a
+    /// switch refused because `state.json` could not be saved still sent the feed the workspace it never reached.
+    #[test]
+    fn every_change_reaches_the_feed_and_a_refused_switch_shows_where_you_are() {
+        let (feed_tx, rx) = channel();
+        assert!(FEED.set(feed_tx).is_ok(), "the feed is this test's alone");
+        let dir = std::env::temp_dir().join(format!("baneyspaces-feed-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A real window, never shown, so the switch has a window of yours to record before hiding it.
+        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+        let h = unsafe { CreateWindowExW(0, class.as_ptr(), class.as_ptr(), 0, 0, 0, 100, 100, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()) };
+        assert!(!h.is_null(), "a test window");
+        let (tx, _keep) = channel();
+        let core = Core {
+            model: Model::new(),
+            paths: Paths { state: dir.clone() },
+            hidden: HiddenSet::default(),
+            info: HashMap::new(),
+            job: None,
+            snaps: HashMap::new(),
+            overview_shown: false,
+            events_seen: 0,
+            closed_at: None,
+            started: now(),
+            trace: false,
+            our_pid: 0,
+            problems: vec![],
+            settings: serde_json::Map::new(),
+            tx,
+            last_prune: std::cell::Cell::new(0),
+        };
+        let shared: Shared = Arc::new(Mutex::new(core));
+        {
+            let mut c = lock(&shared);
+            c.model.apply(Event::MonitorAdded { monitor: "m".into() }).unwrap();
+            c.model.apply(Event::Open { window: "w-1".into(), pid: 4242, start: 0, app: "Test".into(), monitor: Some("m".into()), workspace: Some(1) }).unwrap();
+            c.info.insert("w-1".into(), WinInfo { hwnd: id_of(h), pid: 4242, start: 0, title: "one".into(), app: "Test".into() });
+        }
+        let s = next(&rx).expect("the feed heard the window open");
+        assert_eq!(s.windows.first().map(|w| w.title.as_str()), Some("one"));
+        lock(&shared).info.get_mut("w-1").unwrap().title = "two".into();
+        let s = next(&rx).expect("the feed heard the new title");
+        assert_eq!(s.windows.first().map(|w| w.title.as_str()), Some("two"));
+
+        // A file where the state folder should be: nothing can be saved under it.
+        let blocker = dir.join("not-a-folder");
+        std::fs::write(&blocker, "").unwrap();
+        let refused = {
+            let mut c = lock(&shared);
+            c.paths.state = blocker.join("BaneySpaces");
+            c.apply_checked(Event::Switch { n: 2 }).is_err()
+        };
+        assert!(refused, "a switch that cannot save the record is refused");
+        let s = last(&rx).expect("the feed was sent the state after the refusal");
+        assert_eq!(s.monitors.first().map(|m| m.current), Some(1), "the feed shows the workspace you are still on");
+
+        unsafe { DestroyWindow(h) };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
