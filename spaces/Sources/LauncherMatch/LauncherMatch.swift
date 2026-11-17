@@ -385,6 +385,8 @@ public struct LauncherIndex: Sendable {
         append(contentsOf: entries)
     }
 
+    public func contains(id: String) -> Bool { entries.contains { $0.id == id } }
+
     public mutating func append(contentsOf more: [Entry]) {
         for e in more {
             let i = entries.count
