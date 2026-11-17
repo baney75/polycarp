@@ -1050,14 +1050,16 @@ fn agent_open(shared: &Shared, agent: &str, args: &Value) -> Envelope {
     let Some(app) = arg_str(args, "app") else {
         return Envelope::err("invalid_args", "an app is required", Retry::Never, "Example: baneyspaces agent open notepad");
     };
+    let list = apps::load();
     if !apps::may_start(app) {
-        let env = Envelope::err(
-            "needs_sandbox",
-            format!("{app} was not started: on Windows an agent may not start any app until there is a sandbox"),
-            Retry::Never,
-            "No Windows app is safe to hand an agent yet: Notepad would show it your unsaved tabs, and most apps forward a launch into the copy you already run. A Windows sandbox (Windows Sandbox or a Hyper-V VM) is a later part. Use files or the command line instead.",
-        )
-        .with_data(json!({ "allowed": apps::allowed() }));
+        let (why, next) = match apps::never_listed(app) {
+            Some(why) => (format!("{app} is never started for an agent: {why}"), "Use files or the command line instead. A Windows sandbox is a later part.".to_string()),
+            None => (
+                format!("{app} was not started: the user hasn't listed it in {}", apps::LIST_FILE),
+                format!("Ask the user to add \"{app}\" to the apps list in %APPDATA%\\Polycarp\\{} if they want agents to use it. It still starts as its own process; an app that hands the launch to a copy already running is refused.", apps::LIST_FILE),
+            ),
+        };
+        let env = Envelope::err("needs_sandbox", why, Retry::Never, &next).with_data(json!({ "allowed": list.apps, "skipped": list.problems }));
         record(&lock(shared), agent, "open", None, None, None, "preflight", &env);
         return env;
     }
@@ -1065,6 +1067,10 @@ fn agent_open(shared: &Shared, agent: &str, args: &Value) -> Envelope {
         return Envelope::err("not_found", format!("no program {app:?} on PATH"), Retry::Never, "Give an executable name or a full path.");
     };
     let extra: Vec<String> = args.get("args").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(String::from).collect();
+    // A listed app gets no arguments: a flag or a path could make it open anything of the user's.
+    if !extra.is_empty() && !apps::may_start_with(app, apps::test_ops_enabled()) {
+        return Envelope::err("invalid_args", format!("{app} takes no arguments when an agent opens it"), Retry::Never, "Open the app alone; files arrive with a handoff folder in a later part.");
+    }
     launch_on_agent(shared, agent, app, exe, extra, None, false)
 }
 

@@ -127,14 +127,24 @@ no `SendInput`, never moves the cursor and never draws the cursor overlay. The e
 sets it to value + text, and the engine reads that back (`verified` is true only then). `shot` passes
 through to the engine. `press`, `key` and `pointer` are `not_supported` (phase 3-4).
 
-- **In production, `agent open` on Windows refuses every app with `needs_sandbox`, before launch.** No
-  Windows app is safe to hand an agent yet. Notepad restores your unsaved tabs into a new process, so an
-  agent's Notepad could show text you never saved, and it also forwards a second launch into a copy you
-  already run (seen live). Explorer, the Store apps and browsers forward too. Until there is a
-  Windows sandbox, an agent can drive nothing on Windows except through a test daemon (below).
-  **Follow-up: a Windows sandbox phase**, where the agent's apps run apart from your session
-  (Windows Sandbox or a Hyper-V VM). Single-instance forwarding is handled there as well; the
-  `single_instance` error, with `windows_that_appeared`, stays as the backstop if an app forwards anyway.
+- **In production, `agent open` on Windows starts only the apps you list, and refuses the rest with `needs_sandbox`,
+  before launch.** The list is empty by default: no Windows app is known safe to hand an agent. Notepad restores your
+  unsaved tabs into a new process, so an agent's Notepad could show text you never saved, and it also forwards a
+  second launch into a copy you already run (seen live). Explorer, the Store apps and browsers forward too. To let
+  agents use an app, put it in `%APPDATA%\Polycarp\agent-apps.toml` (`POLYCARP_CONFIG_DIR` overrides the folder):
+
+  ```toml
+  apps = ["charmap", 'C:\Tools\viewer.exe']
+  ```
+
+  A bare name matches only that name on `PATH`, a full path only that path (case and `.exe` don't matter). A listed
+  app gets no arguments. Some kinds are never started even when listed, because an agent with them could run code
+  or reach your accounts: shells and script hosts, Explorer, browsers, password managers, and apps that reopen your
+  own data (Notepad). A bad line is skipped and named in `error.data.skipped`. An agent with a shell could edit the
+  file itself, so the list is a convenience for you, not a boundary; the never-started kinds are refused whatever it
+  says. **Follow-up: a Windows sandbox phase**, where the agent's apps run apart from your session (Windows Sandbox
+  or a Hyper-V VM). The `single_instance` error, with `windows_that_appeared`, stays as the backstop if a listed app
+  forwards to a copy you run.
 - **A window that refuses the ghost** (Windows would not take a constant alpha, as for a window that draws with per-pixel alpha) is
   parked, recorded as parked, and left alone: it is not tried again each poll. If it later takes the ghost it is
   recorded as a ghost with the styles to put back. `agent move` of one of *your* windows hides it the way yours
