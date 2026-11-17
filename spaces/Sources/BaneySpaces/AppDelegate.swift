@@ -165,6 +165,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.spaces.moveCarried(id, to: n, from: grab.frame) { [weak self] in self?.dropGeneration[id, default: 0] == gen }
         }
     }
+    /// Clipboard history: watches from launch once it's on (opening the launcher's Clipboard menu turns it on).
+    private let clipboard = ClipboardStore(file: Spaces.folder.appendingPathComponent("clipboard.json"))
     /// Building the launcher scans every app, so the session engine's updates don't build it early.
     private var launcherBuilt = false
     /// The focused terminal's folder when the launcher opened, for New Terminal.
@@ -211,7 +213,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.dockOn = { WorkspaceDock.enabled }
         a.checkForUpdates = { [weak self] in self?.checkForUpdates() }
         a.showSetup = { [weak self] in self?.showSetup() }
-        return LauncherController(actions: a)
+        let c = LauncherController(actions: a)
+        c.model.providers.append(ClipboardProvider(store: clipboard))
+        return c
     }()
     private var missionControlTicks = 0
     private lazy var hotCorners: HotCornerWatcher = {
@@ -767,6 +771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if TopDragWatcher.enabled { SystemTopDrag.takeOver() } else { SystemTopDrag.restore() }
         syncWindowDrags()
         startSession()
+        clipboard.start()
         updateIcon()
         watchdog?.invalidate()
         watchdog = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in

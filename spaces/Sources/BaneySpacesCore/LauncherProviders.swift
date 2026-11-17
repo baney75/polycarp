@@ -11,6 +11,10 @@ public enum LauncherAction: Equatable, Sendable {
     case open(URL)
     /// Nothing to do (a heading or a note).
     case none
+    /// One of the provider's own commands (`LauncherMenuProvider.perform`), such as Clear History.
+    case command(provider: String, id: String)
+    /// Close the launcher.
+    case close
 }
 
 /// One row a provider offers.
@@ -28,10 +32,12 @@ public struct LauncherResult: Equatable, Sendable {
     /// Shown at the right of the row, such as "⇥" or "Copy".
     public var badge: String
     public var placement: Placement
+    /// A yes-or-no question asked before the action runs, for a row that deletes something.
+    public var confirm: String?
     public var action: LauncherAction
 
     public init(id: String, section: String, title: String, subtitle: String = "", symbol: String,
-                badge: String = "", placement: Placement = .normal, action: LauncherAction) {
+                badge: String = "", placement: Placement = .normal, confirm: String? = nil, action: LauncherAction) {
         self.id = id
         self.section = section
         self.title = title
@@ -39,6 +45,7 @@ public struct LauncherResult: Equatable, Sendable {
         self.symbol = symbol
         self.badge = badge
         self.placement = placement
+        self.confirm = confirm
         self.action = action
     }
 }
@@ -52,7 +59,24 @@ public protocol LauncherProvider: AnyObject {
     func results(for query: String) -> [LauncherResult]
 }
 
+/// A provider with a menu of its own in the launcher, listed in the root menu like Apps or Files.
+public protocol LauncherMenuProvider: LauncherProvider {
+    /// The menu's id: the launcher scope it fills, and the `launcher/<menu>` link that opens it.
+    var menu: String { get }
+    /// The menu was opened.
+    func opened()
+    /// The menu's rows for what's typed in it.
+    func listing(_ query: String) -> [LauncherResult]
+    /// Runs one of its `.command` rows. Nil keeps the menu open and lists it again; an action is done next.
+    func perform(_ command: String) -> LauncherAction?
+}
+
 public enum LauncherProviders {
+    /// The provider that fills a menu.
+    public static func menu(_ providers: [LauncherProvider], _ menu: String) -> LauncherMenuProvider? {
+        providers.lazy.compactMap { $0 as? LauncherMenuProvider }.first { $0.menu == menu }
+    }
+
     /// Every provider's rows for a query, `top` ones first, each group in provider order.
     public static func results(_ providers: [LauncherProvider], for query: String) -> (top: [LauncherResult], normal: [LauncherResult]) {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return ([], []) }
