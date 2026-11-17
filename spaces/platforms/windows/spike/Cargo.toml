@@ -1,4 +1,4 @@
-# The UI stack spike: two candidates for the Windows shell, measured by measure.ps1 in CI (job windows-ui-spike).
+# The UI stack spike: two candidates for the Windows shell, measured by measure.ps1 in CI (job stack-spike in windows-ui.yml).
 # Its own workspace, so its dependencies stay out of spaces/Cargo.lock.
 [workspace]
 resolver = "2"

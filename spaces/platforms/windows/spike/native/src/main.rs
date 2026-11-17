@@ -1,6 +1,8 @@
 //! UI stack spike, candidate A: a native window drawn with Direct2D and DirectWrite into a DXGI swap chain that
-//! DirectComposition puts on screen. It stays hidden and warm; the hotkey draws a launcher-sized frame, shows it and
-//! logs the performance counter once DWM has composed it (`DwmFlush`), so `measure.ps1` can time key to paint.
+//! DirectComposition puts on screen. It stays hidden and warm; the hotkey draws a launcher-sized frame, shows it and,
+//! once the draw, the present and DWM's composition (`DwmFlush`) all succeeded, logs `painted` with the performance
+//! counter. Any failure logs `error` instead, and `measure.ps1` fails the run. The panel's color alternates by open
+//! (`panel_color`), so `measure.ps1` can see on screen which open's frame is showing.
 #![cfg_attr(not(windows), allow(dead_code))]
 
 #[cfg(not(windows))]
@@ -33,10 +35,24 @@ mod win {
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
     use windows::Win32::UI::WindowsAndMessaging::*;
 
+    /// The frame's size in device-independent pixels; the window and swap chain are this times the display scale.
     const W: u32 = 680;
     const H: u32 = 440;
 
+    /// The panel's color for open `n`: odd and even opens differ, so a stale frame is never taken for a new one.
+    /// `measure.ps1` and the WebView2 candidate use the same two colors.
+    fn panel_color(n: u32) -> u32 {
+        if n % 2 == 1 {
+            0x34382e
+        } else {
+            0x2e3a46
+        }
+    }
+
     struct Gfx {
+        /// `hardware` or `warp`, and the adapter's own name, for the `ready` line (software on GitHub's runners).
+        driver: &'static str,
+        adapter: String,
         swap: IDXGISwapChain1,
         ctx: ID2D1DeviceContext,
         _dcomp: IDCompositionDevice,
@@ -58,6 +74,7 @@ mod win {
         t
     }
 
+    /// Writes the line and its newline in one `write_all`, so a reader polling the file never sees half a line.
     pub fn log(line: &str) {
         println!("{line}");
         if let Ok(p) = std::env::var("SPIKE_LOG") {
@@ -66,7 +83,7 @@ mod win {
                 .append(true)
                 .open(p)
             {
-                let _ = writeln!(f, "{line}");
+                let _ = f.write_all(format!("{line}\n").as_bytes());
             }
         }
     }
@@ -80,7 +97,7 @@ mod win {
         }
     }
 
-    unsafe fn gfx(hwnd: HWND) -> Result<Gfx> {
+    unsafe fn gfx(hwnd: HWND, dpi: u32) -> Result<Gfx> {
         let mut d3d: Option<ID3D11Device> = None;
         let flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
         let hw = D3D11CreateDevice(
@@ -94,6 +111,7 @@ mod win {
             None,
             None,
         );
+        let driver = if hw.is_ok() { "hardware" } else { "warp" };
         if hw.is_err() {
             D3D11CreateDevice(
                 None,
@@ -109,10 +127,13 @@ mod win {
         }
         let d3d = d3d.unwrap();
         let dxgi: IDXGIDevice = d3d.cast()?;
+        let name = dxgi.GetAdapter()?.GetDesc()?.Description;
+        let end = name.iter().position(|c| *c == 0).unwrap_or(name.len());
+        let adapter = String::from_utf16_lossy(&name[..end]);
         let factory: IDXGIFactory2 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))?;
         let desc = DXGI_SWAP_CHAIN_DESC1 {
-            Width: W,
-            Height: H,
+            Width: W * dpi / 96,
+            Height: H * dpi / 96,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 1,
@@ -134,8 +155,8 @@ mod win {
                 format: DXGI_FORMAT_B8G8R8A8_UNORM,
                 alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
             },
-            dpiX: 96.0,
-            dpiY: 96.0,
+            dpiX: dpi as f32,
+            dpiY: dpi as f32,
             bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
             ..Default::default()
         };
@@ -167,6 +188,8 @@ mod win {
             w!("en-us"),
         )?;
         Ok(Gfx {
+            driver,
+            adapter,
             swap,
             ctx,
             _dcomp: dcomp,
@@ -191,7 +214,7 @@ mod win {
             radiusX: 16.0,
             radiusY: 16.0,
         };
-        let surface = c.CreateSolidColorBrush(&color(0x34382e, 1.0), None)?;
+        let surface = c.CreateSolidColorBrush(&color(panel_color(n), 1.0), None)?;
         let border = c.CreateSolidColorBrush(&color(0x4a4e41, 1.0), None)?;
         let fg = c.CreateSolidColorBrush(&color(0xf6f3e8, 1.0), None)?;
         let muted = c.CreateSolidColorBrush(&color(0xbdbfaf, 1.0), None)?;
@@ -245,7 +268,21 @@ mod win {
             );
         }
         c.EndDraw(None, None)?;
+        // SPIKE_FAIL_DRAW: a test hook that makes every present fail, as a lost device would.
+        if std::env::var_os("SPIKE_FAIL_DRAW").is_some() {
+            return Err(windows::core::Error::from(windows::Win32::Foundation::E_FAIL));
+        }
         g.swap.Present(1, DXGI_PRESENT(0)).ok()
+    }
+
+    /// Draws open `n`, shows it and waits for DWM to compose it. Any step that fails is the error.
+    unsafe fn open(hwnd: HWND, n: u32) -> Result<()> {
+        #[allow(static_mut_refs)]
+        let g = GFX.as_ref().ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_POINTER))?;
+        draw(g, n)?;
+        let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = SetForegroundWindow(hwnd);
+        DwmFlush()
     }
 
     unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -258,15 +295,14 @@ mod win {
                     log(&format!("hidden qpc={}", qpc()));
                 } else {
                     OPENS += 1;
-                    #[allow(static_mut_refs)]
-                    if let Some(g) = GFX.as_ref() {
-                        let _ = draw(g, OPENS);
-                    }
-                    let _ = ShowWindow(hwnd, SW_SHOW);
-                    let _ = SetForegroundWindow(hwnd);
-                    let _ = DwmFlush();
                     SHOWN = true;
-                    log(&format!("painted qpc={} hotkey_qpc={t0}", qpc()));
+                    // `painted` only for a frame that reached the screen; a failure is an `error` line, which fails
+                    // the measurement.
+                    let n = OPENS;
+                    match open(hwnd, n) {
+                        Ok(()) => log(&format!("painted qpc={} hotkey_qpc={t0}", qpc())),
+                        Err(e) => log(&format!("error open {n}: {e}")),
+                    }
                 }
                 LRESULT(0)
             }
@@ -291,15 +327,13 @@ mod win {
                 ..Default::default()
             };
             RegisterClassW(&wc);
-            let sw = GetSystemMetrics(SM_CXSCREEN);
-            let sh = GetSystemMetrics(SM_CYSCREEN);
             let hwnd = CreateWindowExW(
                 WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
                 class,
                 w!("Polycarp spike (native)"),
                 WS_POPUP,
-                (sw - W as i32) / 2,
-                sh / 5,
+                0,
+                0,
                 W as i32,
                 H as i32,
                 None,
@@ -308,7 +342,14 @@ mod win {
                 None,
             )
             .unwrap();
-            match gfx(hwnd) {
+            // The frame is W x H device-independent pixels at the display's scale, centered, a fifth of the way down:
+            // the same place and size as the WebView2 candidate's.
+            let dpi = GetDpiForWindow(hwnd).max(96);
+            let (pw, ph) = ((W * dpi / 96) as i32, (H * dpi / 96) as i32);
+            let (sw, sh) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+            let (x, y) = ((sw - pw) / 2, sh / 5);
+            let _ = SetWindowPos(hwnd, None, x, y, pw, ph, SWP_NOACTIVATE | SWP_NOZORDER);
+            match gfx(hwnd, dpi) {
                 Ok(g) => GFX = Some(g),
                 Err(e) => {
                     log(&format!("error gfx {e}"));
@@ -331,7 +372,12 @@ mod win {
             } else {
                 "none"
             };
-            log(&format!("ready pid={} hotkey={key}", std::process::id()));
+            #[allow(static_mut_refs)]
+            let (driver, adapter) = GFX.as_ref().map(|g| (g.driver, g.adapter.clone())).unwrap_or_default();
+            log(&format!(
+                "ready pid={} hotkey={key} rect={x},{y},{pw},{ph} dpi={dpi} driver={driver} adapter={adapter}",
+                std::process::id()
+            ));
             let mut m = MSG::default();
             while GetMessageW(&mut m, None, 0, 0).as_bool() {
                 let _ = TranslateMessage(&m);

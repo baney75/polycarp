@@ -7,4 +7,4 @@ publish = false
 [target.'cfg(windows)'.dependencies]
 wry = "0.57"
 tao = "0.37"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Performance", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi", "Win32_System_Performance", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
