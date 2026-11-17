@@ -1,8 +1,8 @@
 //! Resolving a theme: `extends`, per-product overrides and accent overrides.
 
 use super::{
-    check_doc, combine, contrast, contrast_on, fields, is_hex, valid_name, Colors, BUILTINS,
-    MAX_DEPTH, MODES, SECTIONS, SURFACES, TEXT_MIN,
+    check_doc, code_keys, code_problems, combine, contrast, contrast_on, derive, fields, is_hex,
+    valid_name, Code, Colors, BUILTINS, CODE, MAX_DEPTH, MODES, SECTIONS, SURFACES, TEXT_MIN,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,6 +50,9 @@ pub struct Resolved {
     #[serde(rename = "type")]
     pub typ: Typo,
     pub motion: Motion,
+    /// The code colors the theme sets, by mode. The rest are derived; see `code`.
+    #[serde(skip)]
+    pub given: BTreeMap<String, Code>,
 }
 
 impl Resolved {
@@ -77,8 +80,24 @@ impl Resolved {
         }
         r
     }
+    /// Every code color of `mode`, set or derived.
+    pub fn code(&self, mode: &str) -> Code {
+        derive(
+            self.colors(mode),
+            self.given.get(mode).unwrap_or(&Code::new()),
+        )
+    }
     pub fn contrast_problems(&self) -> Vec<String> {
-        contrast_on(&self.light, &self.dark)
+        let mut out = contrast_on(&self.light, &self.dark);
+        for m in MODES {
+            let none = Code::new();
+            out.extend(code_problems(
+                m,
+                self.colors(m),
+                self.given.get(m).unwrap_or(&none),
+            ));
+        }
+        out
     }
 }
 
@@ -150,6 +169,34 @@ pub fn colors_of(t: &Table, mode: &str) -> Colors {
         }
     }
     c
+}
+
+/// The code colors a theme table sets in `mode`, by group. Only valid known keys.
+pub fn code_of(t: &Table, mode: &str) -> Code {
+    let mut out = Code::new();
+    for g in CODE {
+        if let Some(Value::Table(gt)) = t.get(mode).and_then(|m| m.get(g)) {
+            let c: Colors = gt
+                .iter()
+                .filter(|(k, _)| code_keys(g).contains(&k.as_str()))
+                .filter_map(|(k, v)| {
+                    let s = v.as_str().filter(|s| is_hex(s))?;
+                    Some((k.clone(), s.to_lowercase()))
+                })
+                .collect();
+            out.insert(g.to_string(), c);
+        }
+    }
+    out
+}
+
+/// Contrast problems of a theme table, before it is resolved.
+fn table_contrast(t: &Table) -> Vec<String> {
+    let mut out = contrast_on(&colors_of(t, "light"), &colors_of(t, "dark"));
+    for m in MODES {
+        out.extend(code_problems(m, &colors_of(t, m), &code_of(t, m)));
+    }
+    out
 }
 
 pub fn without_meta(t: &Table) -> Table {
@@ -272,16 +319,13 @@ pub fn resolve_doc(
         .and_then(Value::as_table)
         .cloned()
         .unwrap_or_default();
-    let base_probs = contrast_on(&colors_of(&base_t, "light"), &colors_of(&base_t, "dark"));
+    let base_probs = table_contrast(&base_t);
     let mut per = Vec::new();
     for s in SURFACES {
         if let Some(Value::Table(over)) = surface_t.get(s) {
             let mut st = base_t.clone();
             merge(&mut st, over);
-            per.push((
-                s.to_string(),
-                contrast_on(&colors_of(&st, "light"), &colors_of(&st, "dark")),
-            ));
+            per.push((s.to_string(), table_contrast(&st)));
         }
     }
     problems.extend(combine(base_probs, per));
@@ -291,9 +335,19 @@ pub fn resolve_doc(
     }
 
     let build = |t: &Table| -> Result<Resolved, Vec<String>> {
-        let mut r: Resolved = Value::Table(t.clone())
+        let mut plain = t.clone();
+        for m in MODES {
+            if let Some(Value::Table(mt)) = plain.get_mut(m) {
+                mt.retain(|k, _| !CODE.contains(&k));
+            }
+        }
+        let mut r: Resolved = Value::Table(plain)
             .try_into()
             .map_err(|e| vec![format!("internal: {e}")])?;
+        r.given = MODES
+            .iter()
+            .map(|m| (m.to_string(), code_of(t, m)))
+            .collect();
         for c in [&mut r.light, &mut r.dark] {
             for v in c.values_mut() {
                 *v = v.to_lowercase();

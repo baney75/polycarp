@@ -2295,6 +2295,12 @@ fn schema_describes_every_field_of_every_builtin() {
     let root = schema["description"].as_str().unwrap();
     assert!(root.contains("4.5") && root.contains("3.0"), "{root}");
     assert_eq!(schema["x-contrast"].as_array().unwrap().len(), 24);
+    assert_eq!(schema["x-code-contrast"].as_array().unwrap().len(), 35);
+    let groups = &schema["$defs"]["colors"]["patternProperties"];
+    assert_eq!(
+        groups["^syntax$"]["properties"].as_object().unwrap().len(),
+        13
+    );
 }
 
 #[test]
@@ -4501,5 +4507,45 @@ fn every_builtin_writes_the_same_bytes_as_before_the_move() {
     }
     for t in BUILTINS {
         assert!(covered.iter().any(|c| c == t), "{t} has no fixture");
+    }
+}
+
+/// A syntax color that does not read on the background is refused with its path and the ratio
+/// it needs, and nothing changes. So is one that is not a color, or a key that is not a role.
+#[test]
+fn an_unreadable_syntax_color_is_refused() {
+    let b = Box::new();
+    let bg = b.json(&["export", "json", "polycarp"])["surfaces"]["spaces"]["light"]["background"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let doc = user_theme(
+        "faint",
+        "polycarp",
+        &format!("[light.syntax]\ncomment = \"{bg}\"\n"),
+    );
+    let before = b.snapshot();
+    let o = b.run_stdin(&["theme", "apply", "-", "--json"], &doc);
+    assert_eq!(code(&o), 1, "{}", out(&o));
+    let v: Value = serde_json::from_str(&out(&o)).unwrap();
+    let item = &v["error"]["data"]["errors"][0];
+    assert_eq!(item["path"], "light.syntax.comment", "{v}");
+    assert_eq!(item["on"], "light.background", "{v}");
+    assert_eq!(item["needs"], 4.5, "{v}");
+    assert_eq!(b.snapshot(), before, "a refused apply changed something");
+    for (body, want) in [
+        (
+            "[dark.syntax]\ncomment = \"grey\"\n",
+            "dark.syntax.comment: \"grey\" is not a color",
+        ),
+        (
+            "[dark.syntax]\nregex = \"#888888\"\n",
+            "dark.syntax.regex: unknown key",
+        ),
+        ("[dark]\ndiff = \"#888888\"\n", "dark.diff: must be a table"),
+    ] {
+        let p = b.write_theme("bad", &user_theme("bad", "polycarp", body));
+        let e = b.refused(&["validate", p.to_str().unwrap()]);
+        assert!(e.contains(want), "{body}: {e}");
     }
 }

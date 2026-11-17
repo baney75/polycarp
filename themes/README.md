@@ -110,6 +110,30 @@ Each color is `"#rrggbb"`.
 | `scale_from` | 0.5 to 1.0. Use 1.0 for fades with no scaling |
 | `reduced` | `true` makes every exported duration 0 |
 
+### Code colors: `[light.terminal]`, `[light.syntax]`, `[light.diff]`
+
+Optional, and the same under `[dark.*]`. What a theme leaves out is derived from its 13 colors and moved
+toward `foreground` until it reads, so every theme has all of them. Each value is `"#rrggbb"`.
+
+| Table | Keys |
+| --- | --- |
+| `terminal` | `background`, `foreground`, `cursor`, `selection`, `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, and `bright_black` to `bright_white` |
+| `syntax` | `keyword`, `string`, `number`, `comment`, `function`, `type`, `variable`, `constant`, `operator`, `punctuation`, `tag`, `attribute`, `property` |
+| `diff` | `added`, `removed`, `modified`, `added_surface`, `removed_surface`, `gutter_added`, `gutter_removed` |
+
+Derived, `terminal` takes `background`, `foreground` and `selection` from the theme, `cursor` from
+`accent`, red, green and yellow from `urgent`, `done` and `working`, and blue, magenta and cyan from
+`urgent`'s lightness at other hues, with its saturation capped so they sit beside quiet themes. Bright
+colors are lighter, black and white sit just inside the ends. `syntax` starts from `accent`, `done`, `working`,
+`muted` and the terminal's blue, cyan and magenta. `diff` uses `done`, `urgent` and `working`, with
+surfaces tinted from `background`.
+
+```toml
+[dark.syntax]
+comment = "#8b949e"
+keyword = "#ff7b72"
+```
+
 ### One product only: `[surface.<name>]`
 
 The names are `spaces`, `voice`, `browser` and `site`. Each holds any of the sections above. They are
@@ -132,6 +156,17 @@ modes and for every product, after all merging.
 - `on_accent` on `accent`: at least 4.5
 - `urgent`, `working`, `done` and `accent` on `sunken`: at least 3.0, because there they are indicators (dots, bars, edges), never text; the preview's code sample uses only `foreground`, `strong` and `muted` on `sunken`
 - `border` is not checked
+
+Code colors are checked after the missing ones are derived:
+
+- `terminal.foreground` on `terminal.background` and on `terminal.selection`: at least 4.5
+- `terminal.cursor` and the 12 colored entries (`red` to `cyan`, plain and bright) on
+  `terminal.background`: at least 3.0. `black`, `white`, `bright_black` and `bright_white` are not
+  checked, since terminals draw them as backgrounds as often as text
+- every `syntax` color on `background`: at least 4.5
+- `diff.added` and `foreground` on `diff.added_surface`, and `diff.removed` and `foreground` on
+  `diff.removed_surface`: at least 4.5
+- `diff.modified`, `diff.gutter_added` and `diff.gutter_removed` on `background`: at least 3.0
 
 Contrast reads the same both ways round, so the danger button (`background` text on an `urgent` fill) is
 covered by `urgent` on `background`.
