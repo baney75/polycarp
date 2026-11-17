@@ -1735,3 +1735,92 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
     FINISHED.store(true, Ordering::SeqCst);
     0
 }
+
+#[cfg(test)]
+mod feed_tests {
+    use super::*;
+    use crate::feed::FeedMsg;
+    use baneyspaces_core::shell::ShellState;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow};
+
+    type Feed = Receiver<FeedMsg<std::fs::File>>;
+
+    /// The next state the feed is sent, within 2 s.
+    fn next(rx: &Feed) -> Option<ShellState> {
+        match rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(FeedMsg::Publish(l)) => ShellState::parse_line(&l),
+            _ => None,
+        }
+    }
+
+    /// The last state the feed was sent so far.
+    fn last(rx: &Feed) -> Option<ShellState> {
+        let mut state = None;
+        while let Ok(m) = rx.try_recv() {
+            if let FeedMsg::Publish(l) = m {
+                state = ShellState::parse_line(&l);
+            }
+        }
+        state
+    }
+
+    /// first-F1: a change made without a publish (the poll re-reading a title) never reached the feed. second-S1: a
+    /// switch refused because `state.json` could not be saved still sent the feed the workspace it never reached.
+    #[test]
+    fn every_change_reaches_the_feed_and_a_refused_switch_shows_where_you_are() {
+        let (feed_tx, rx) = channel();
+        assert!(FEED.set(feed_tx).is_ok(), "the feed is this test's alone");
+        let dir = std::env::temp_dir().join(format!("baneyspaces-feed-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A real window, never shown, so the switch has a window of yours to record before hiding it.
+        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+        let h = unsafe { CreateWindowExW(0, class.as_ptr(), class.as_ptr(), 0, 0, 0, 100, 100, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()) };
+        assert!(!h.is_null(), "a test window");
+        let (tx, _keep) = channel();
+        let core = Core {
+            model: Model::new(),
+            paths: Paths { state: dir.clone() },
+            hidden: HiddenSet::default(),
+            info: HashMap::new(),
+            job: None,
+            snaps: HashMap::new(),
+            overview_shown: false,
+            events_seen: 0,
+            closed_at: None,
+            started: now(),
+            trace: false,
+            our_pid: 0,
+            problems: vec![],
+            settings: serde_json::Map::new(),
+            tx,
+            last_prune: std::cell::Cell::new(0),
+        };
+        let shared: Shared = Arc::new(Mutex::new(core));
+        {
+            let mut c = lock(&shared);
+            c.model.apply(Event::MonitorAdded { monitor: "m".into() }).unwrap();
+            c.model.apply(Event::Open { window: "w-1".into(), pid: 4242, start: 0, app: "Test".into(), monitor: Some("m".into()), workspace: Some(1) }).unwrap();
+            c.info.insert("w-1".into(), WinInfo { hwnd: id_of(h), pid: 4242, start: 0, title: "one".into(), app: "Test".into() });
+        }
+        let s = next(&rx).expect("the feed heard the window open");
+        assert_eq!(s.windows.first().map(|w| w.title.as_str()), Some("one"));
+        lock(&shared).info.get_mut("w-1").unwrap().title = "two".into();
+        let s = next(&rx).expect("the feed heard the new title");
+        assert_eq!(s.windows.first().map(|w| w.title.as_str()), Some("two"));
+
+        // A file where the state folder should be: nothing can be saved under it.
+        let blocker = dir.join("not-a-folder");
+        std::fs::write(&blocker, "").unwrap();
+        let refused = {
+            let mut c = lock(&shared);
+            c.paths.state = blocker.join("BaneySpaces");
+            c.apply_checked(Event::Switch { n: 2 }).is_err()
+        };
+        assert!(refused, "a switch that cannot save the record is refused");
+        let s = last(&rx).expect("the feed was sent the state after the refusal");
+        assert_eq!(s.monitors.first().map(|m| m.current), Some(1), "the feed shows the workspace you are still on");
+
+        unsafe { DestroyWindow(h) };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -131,3 +131,89 @@ mod tests {
         assert_eq!(text(&live), "a\nb\n");
     }
 }
+
+/// The leftovers PR's regression tests, run on the code before it (`FeedMsg::Add` stands in for `Greet`).
+#[cfg(test)]
+mod regress {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    #[derive(Clone, Default)]
+    struct Sink(Arc<Mutex<Vec<String>>>, bool);
+    impl Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.1 {
+                loop {
+                    std::thread::sleep(Duration::from_secs(3600));
+                }
+            }
+            self.0
+                .lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(buf).into_owned());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn text(s: &Sink) -> String {
+        s.0.lock().unwrap().concat()
+    }
+
+    fn heard(s: &Sink, ok: impl Fn(&str) -> bool) -> bool {
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(2) {
+            if ok(&text(s)) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    /// first-F2.
+    #[test]
+    fn a_shell_that_stopped_reading_never_holds_up_the_others() {
+        let tx = spawn::<Sink>();
+        let live = Sink::default();
+        tx.send(FeedMsg::Add(live.clone(), "a".into())).unwrap();
+        tx.send(FeedMsg::Add(Sink(Arc::default(), true), "a".into()))
+            .unwrap();
+        for i in 0..24 {
+            tx.send(FeedMsg::Publish(format!("s{i}"))).unwrap();
+        }
+        assert!(
+            heard(&live, |t| t.ends_with("s23\n")),
+            "the live shell stopped hearing at {:?}",
+            text(&live)
+        );
+    }
+
+    /// first-F3: the daemon wrote the `subscribed` answer to the pipe while it held the core, so a client that
+    /// subscribed and never read stalled the whole daemon. Nothing in the subscribe branch writes before the core is
+    /// let go.
+    #[test]
+    fn the_daemon_lets_go_of_the_core_before_a_subscriber_hears_anything() {
+        let src = include_str!("daemon.rs");
+        let start = src
+            .find("v[\"op\"] == \"subscribe\"")
+            .expect("the subscribe branch");
+        let end = start + src[start..].find("\n    }\n").expect("its end");
+        let branch = &src[start..end];
+        let held = branch
+            .split("drop(c)")
+            .next()
+            .expect("the part with the core held");
+        assert!(
+            branch.contains("drop(c)"),
+            "the subscribe branch never lets go of the core before it writes:\n{branch}"
+        );
+        assert!(
+            !held.contains("writeln!") && !held.contains(".write"),
+            "the subscribe branch writes to the pipe with the core held:\n{held}"
+        );
+    }
+}
