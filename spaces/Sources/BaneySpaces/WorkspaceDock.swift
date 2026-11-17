@@ -1169,6 +1169,8 @@ final class DockModel: ObservableObject {
     var onSetAgentStatus: (Bool) -> Void = { _ in }
     /// Tiles whose icon order was held still under the pointer while a newer one waited.
     private var replayOwedOn: Set<Int> = []
+    /// The order apps joined each workspace: each tile's icon order (`DockJoinOrder`).
+    private var joinOrder = DockJoinOrder()
     /// The pointer left a tile that held an order: the controller reloads to show the new one.
     var onReplayOrder: () -> Void = {}
     @Published var hover: Hover? {
@@ -1331,8 +1333,10 @@ final class DockModel: ObservableObject {
         // Each agent sits on the tile that holds its window, so its badge marks the app it runs in.
         let placed = !agentStatus ? [:] : DockTiles.place(agents(), windows: entries.mapValues { $0.map(\.id) }, current: current)
         let last = spaces.model.lastFocused
-        tiles = DockTiles.make(current: current, windows: entries.mapValues { $0.map { "\($0.pid)" } },
-                               activatedAt: spaces.activations.all).map { t in
+        let appsOn = entries.mapValues { $0.map { "\($0.pid)" } }
+        // Join order, not focus: a tile that re-sorted after each switch moved the app you meant to click next.
+        joinOrder.update(appsOn)
+        tiles = DockTiles.make(current: current, windows: appsOn, joined: joinOrder).map { t in
             let here = entries[t.workspace] ?? []
             let agents = placed[t.workspace] ?? []
             // The one that needs you most wins: asking, then an error, then finished, then working.
