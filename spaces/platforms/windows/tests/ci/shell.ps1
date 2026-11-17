@@ -75,7 +75,13 @@ $workBefore = [Desk]::WorkTop()
 
 say '== 1. the daemon, then the bar with the built-in theme'
 [void](theme set polycarp)
-say "daemon: $(bsx daemon --background --log $dlog)"
+# Started the way a script starts it, reading its output through a pipe: it must come back. It hung forever
+# while the daemon it starts inherited that pipe.
+$job = Start-Job -ScriptBlock { param($b, $l) (& $b daemon --background --log $l 2>&1 | Out-String).Trim() } -ArgumentList $bs, $dlog
+$started = Wait-Job $job -Timeout 20
+check ($null -ne $started) 'daemon --background returns while its output is read through a pipe'
+if ($started) { say "daemon: $(Receive-Job $job)" } else { say 'daemon: no answer in 20 s'; Stop-Job $job }
+Remove-Job $job -Force
 $p = Start-Process -FilePath $bs -ArgumentList @('shell', '--log', $slog) -PassThru -WindowStyle Hidden
 $script:shellPid = $p.Id
 $ready = wait_line 'ready pid=' 0 15000
