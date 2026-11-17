@@ -8,6 +8,7 @@ window id, or a pid.
 | --- | --- | --- | --- |
 | `switch <n>` | yes | yes | yes |
 | `move <n> [--stay]` | yes | yes | yes |
+| `window focus\|swap <dir>`, `window resize <dx> <dy>`, `window display next\|prev` | not supported yet | not supported yet | yes (`keymap.md`) |
 | `ls` | yes (session rows) | yes (windows by workspace) | yes |
 | `state` | yes (`state.json`) | yes (`state.json`) | yes |
 | `overview` | yes | records the request; the shell plugin shows it (part 2) | yes |
