@@ -20,7 +20,10 @@ final class WorkspaceSwitcher {
     private var watchdog: Timer?
     /// Apps in the order they were last brought forward, most recent first.
     private var appOrder: [pid_t] = []
-    private var hold = TabHold()
+    /// Every step of the highlight after the first comes from here: a held Tab never moves it (#6).
+    private var gesture = SwitcherGesture()
+    /// Counts gestures; a check that the commit landed stands down for a newer one.
+    private var gestures = 0
     /// Checks a press once it has lasted long enough to be a hold. Key repeats alone aren't
     /// enough: they don't always reach the event tap, and then holding Tab did nothing.
     private var holdCheck: DispatchWorkItem?
@@ -50,15 +53,12 @@ final class WorkspaceSwitcher {
             // Workspaces have no window bar, so a press there steps at once and leaves nothing
             // pending: the first press of the gesture used deferStep false, so Tab's release
             // returns nil and can't step a second time (SwitcherSelectionTests pins it).
-            if model.mode == .apps {
-                hold.press(at: time, forward: forward, deferStep: true)
-                checkHold(pressedAt: time)
-            } else {
-                advance(forward)
-            }
+            if model.mode == .apps { checkHold(pressedAt: time) }
+            if case .step(let forward) = gesture.press(forward: forward, at: time, mode: gestureMode) { advance(forward) }
             return
         }
-        hold.press(at: time)
+        gestures += 1
+        gesture.begin(at: time)
         checkHold(pressedAt: time)
         model.windowBar = nil
         model.mode = MissionControlKeys.cmdTabMode == .workspaces ? .workspaces : .apps
@@ -82,7 +82,7 @@ final class WorkspaceSwitcher {
     /// Tab held past the threshold, by a key repeat or the hold check, whichever comes first:
     /// opens or closes the window bar once, on the app that's highlighted.
     private func held(at time: Double, via source: String) {
-        guard isShowing, model.mode == .apps, hold.repeated(at: time) else { return }
+        guard isShowing, gesture.held(at: time, mode: gestureMode) == .hold else { return }
         holdCheck?.cancel()
         if model.windowBar != nil { return toggleWindowBar() }
         guard WindowBarGate.shouldOpen(windowCount: windowCount(of: model.selected)) else {
@@ -109,9 +109,11 @@ final class WorkspaceSwitcher {
     /// Tab let go: a tap takes its step now.
     func tabReleased() {
         holdCheck?.cancel()
-        guard isShowing, let forward = hold.release() else { return }
+        guard isShowing, case .step(let forward) = gesture.release() else { return }
         advance(forward)
     }
+
+    private var gestureMode: SwitcherGesture.Mode { model.mode == .apps ? .apps : .workspaces }
 
     /// An arrow key during the gesture: one step, the same as a Tab tap.
     func arrow(forward: Bool) {
@@ -131,7 +133,7 @@ final class WorkspaceSwitcher {
     func commit() {
         guard isShowing else { return }
         // ⌘ came up before Tab: the tap still counts.
-        if let forward = hold.release() { advance(forward) }
+        if case .step(let forward) = gesture.release() { advance(forward) }
         hide()
         switch model.mode {
         case .workspaces:
@@ -157,13 +159,28 @@ final class WorkspaceSwitcher {
             Trace.log("cmdTab commit app on=\(app.workspace) current=\(spaces.model.current)")
             noteActivated(app.pid)
             spaces.focusApp(app.pid, on: app.workspace)
+            checkLanded(app)
         }
     }
 
     func cancel() {
         Trace.log("cmdTab cancel")
-        _ = hold.release()
+        _ = gesture.release()
         hide()
+    }
+
+    /// One second after a commit, the app in front must be the one that was highlighted, unless another
+    /// gesture started. A miss says `cmdTab landed wrong:` in trace.log, which scripts/speed-report.sh
+    /// counts each day (it must stay 0). App names and pids only, never window titles.
+    private func checkLanded(_ app: SwitcherModel.AppTile) {
+        let gesture = gestures
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, self.gestures == gesture, !self.isShowing,
+                  let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != app.pid,
+                  NSRunningApplication(processIdentifier: app.pid)?.isTerminated == false else { return }
+            Trace.log("cmdTab landed wrong: highlighted \(app.name) pid \(app.pid) on \(app.workspace), "
+                      + "front \(front.localizedName ?? "?") pid \(front.processIdentifier), current=\(self.spaces.model.current)")
+        }
     }
 
     /// Opens the selected app's window bar, or closes it back to the apps. An app with one
