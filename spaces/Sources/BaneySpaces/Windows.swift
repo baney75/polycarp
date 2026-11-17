@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import BaneySpacesAX
 import BaneySpacesCore
 import BaneySpacesCursor
 
@@ -237,57 +238,66 @@ enum Windows {
     /// `UnplacedWindows` looks at it again.
     /// `asking` are the listed elements that wait on you (`WaitingWindow.asks`: a dialog, an alert,
     /// anything modal), which stay with their app's windows and may mark a tile in the dock.
-    static func all(owners: Set<pid_t>? = nil) -> (windows: [Window], unsure: Set<pid_t>, listed: Set<WindowID>, partial: Set<pid_t>, notWindows: Set<WindowID>, asking: [WaitingWindow.Seen]) {
+    struct Scan {
+        var windows: [Window] = []
+        var unsure = Set<pid_t>()
+        var listed = Set<WindowID>()
+        var partial = Set<pid_t>()
+        var notWindows = Set<WindowID>()
+        var asking: [WaitingWindow.Seen] = []
+        /// Seconds the calling thread waited for the apps' answers, and the slowest app's read.
+        var waited: Double = 0
+        var slowest: Double = 0
+        /// Apps asked, and how many of them ran out their deadline.
+        var asked = 0
+        var timedOut = 0
+    }
+
+    static func all(owners: Set<pid_t>? = nil) -> Scan {
         // Only apps that own a window are asked. A running app with no windows is often frozen by
         // macOS and never answers, which would cost a full timeout on every scan.
         let candidates = owners.map { RunningApps.regular.intersection($0) } ?? RunningApps.regular
-        var unsure = Set(candidates.filter { !isResponsive($0) })
+        var scan = Scan()
+        scan.unsure = Set(candidates.filter { !isResponsive($0) })
         let apps = candidates.compactMap { pid -> (pid_t, String)? in
             guard isResponsive(pid), let app = NSRunningApplication(processIdentifier: pid) else { return nil }
             return (pid, app.localizedName ?? "App")
         }
-        var results = [[Window]](repeating: [], count: apps.count)
-        var listedIDs = Set<WindowID>(), partial = Set<pid_t>(), notWindows = Set<WindowID>(), asking: [WaitingWindow.Seen] = []
-        let lock = NSLock()
-        DispatchQueue.concurrentPerform(iterations: apps.count) { i in
-            let (pid, name) = apps[i]
-            let ax = AXUIElementCreateApplication(pid)
-            // A hung app must not hang every workspace switch.
-            AXUIElementSetMessagingTimeout(ax, 0.25)
-            var raw: CFTypeRef?
-            let error = AXUIElementCopyAttributeValue(ax, kAXWindowsAttribute as CFString, &raw)
-            let listed = error == .success ? raw as? [AXUIElement] : nil
-            // Any failure, not just a timeout, counts: otherwise an app that answers with an error
-            // would be retried at full speed forever instead of backing off.
-            if listed == nil {
-                lock.lock(); unsure.insert(pid); lock.unlock()
-                markUnresponsive(pid, call: kAXWindowsAttribute, error: error)
-            } else { markResponsive(pid) }
-            let elements = listed ?? []
-            let ids = elements.map(\.windowID)
-            var found: [Window] = [], other: [WindowID] = [], asks: [WaitingWindow.Seen] = []
-            for (el, id) in zip(elements, ids) {
-                guard let id, let subrole = el.string(kAXSubroleAttribute) else { continue }
-                let modal = (el.value(kAXModalAttribute) as NSNumber?)?.boolValue
-                if subrole == kAXStandardWindowSubrole as String {
-                    found.append(Window(id: id, element: el, pid: pid, appName: name))
-                    // A standard window that blocks its app (a lent app's modal) waits on you too:
-                    // placed like any window, and marked when it is out of sight.
-                    if modal == true { asks.append(.init(id: id, pid: pid, subrole: subrole, modal: true)) }
-                    continue
-                }
-                other.append(id)
-                if WaitingWindow.asks(subrole: subrole, modal: modal) { asks.append(.init(id: id, pid: pid, subrole: subrole, modal: modal)) }
+        let start = ProcessInfo.processInfo.systemUptime
+        let reads = AXScan.all(apps.map(\.0))
+        scan.waited = ProcessInfo.processInfo.systemUptime - start
+        scan.asked = apps.count
+        let names = Dictionary(apps, uniquingKeysWith: { a, _ in a })
+        for read in reads { take(read, name: names[read.pid] ?? "App", into: &scan) }
+        return scan
+    }
+
+    /// One app's answer, folded into the scan: the bench hears of it, and its windows join the lists.
+    private static func take(_ read: AXAppRead, name: String, into scan: inout Scan) {
+        let pid = read.pid
+        scan.slowest = max(scan.slowest, read.seconds)
+        if read.timedOut { scan.timedOut += 1 }
+        // Any failure, not just a timeout, counts: otherwise an app that answers with an error
+        // would be retried at full speed forever instead of backing off.
+        if !read.answered {
+            scan.unsure.insert(pid)
+            markUnresponsive(pid, call: kAXWindowsAttribute, error: read.error)
+        } else { markResponsive(pid) }
+        if read.elementTimedOut { markUnresponsive(pid, call: kAXSubroleAttribute, error: .cannotComplete) }
+        for el in read.elements {
+            guard let id = el.id, let subrole = el.subrole else { continue }
+            if subrole == kAXStandardWindowSubrole as String {
+                scan.windows.append(Window(id: id, element: el.element, pid: pid, appName: name))
+                // A standard window that blocks its app (a lent app's modal) waits on you too:
+                // placed like any window, and marked when it is out of sight.
+                if el.modal == true { scan.asking.append(.init(id: id, pid: pid, subrole: subrole, modal: true)) }
+                continue
             }
-            lock.lock()
-            results[i] = found
-            listedIDs.formUnion(ids.compactMap { $0 })
-            notWindows.formUnion(other)
-            asking.append(contentsOf: asks)
-            if ids.contains(nil) { partial.insert(pid) }
-            lock.unlock()
+            scan.notWindows.insert(id)
+            if WaitingWindow.asks(subrole: subrole, modal: el.modal) { scan.asking.append(.init(id: id, pid: pid, subrole: subrole, modal: el.modal)) }
         }
-        return (results.flatMap { $0 }, unsure, listedIDs, partial, notWindows, asking)
+        scan.listed.formUnion(read.elements.compactMap(\.id))
+        if read.elements.contains(where: { $0.id == nil }) { scan.partial.insert(pid) }
     }
 
     static func alive() -> Set<WindowID> { snapshot(apps: RunningApps.regular).alive }

@@ -16,6 +16,8 @@ let package = Package(
     targets: [
         // Which window lives where, and where hidden windows go: no AppKit, fully unit-tested.
         .target(name: "BaneySpacesCore"),
+        // Reading each app's windows through Accessibility, apart from the app so `scan-bench` runs the same reads.
+        .target(name: "BaneySpacesAX", dependencies: ["BaneySpacesCore"]),
         // agent-desktop's C header, for the hands engine in the app.
         .systemLibrary(name: "CAgentDesktop", path: "Sources/CAgentDesktop"),
         // The voice core's C header (core/ffi). The library, scripts/build-core.sh's core-lib/libpolycarp_core.a,
@@ -28,7 +30,7 @@ let package = Package(
         // `swift build` finds it.
         .executableTarget(
             name: "BaneySpaces",
-            dependencies: ["BaneySpacesCore", "BaneySpacesCursor", "CAgentDesktop", "CPolycarpCore"],
+            dependencies: ["BaneySpacesCore", "BaneySpacesAX", "BaneySpacesCursor", "CAgentDesktop", "CPolycarpCore"],
             linkerSettings: [
                 .unsafeFlags([
                     "-L\(root)/engine/lib", "-lagent_desktop_ffi",
@@ -50,6 +52,8 @@ let package = Package(
                           // manifest runs goes stale when a script is added, and the new script is then compiled into
                           // this target (PR 146 broke `make install` that way).
                           path: "scripts", sources: ["cursor-probe.swift"]),
+        // `swift run -c release scan-bench`: what a window scan costs the main thread on this Mac's apps. Reads only.
+        .executableTarget(name: "scan-bench", dependencies: ["BaneySpacesCore", "BaneySpacesAX"]),
         .testTarget(name: "BaneySpacesCoreTests", dependencies: ["BaneySpacesCore"]),
         // The overlay's real layers: marks attached, cursors surviving a display change, the panel never key or main.
         .testTarget(name: "BaneySpacesCursorTests", dependencies: ["BaneySpacesCore", "BaneySpacesCursor"]),

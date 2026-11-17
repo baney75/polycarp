@@ -18,6 +18,36 @@ public enum ScanCheck {
         return "slow scan: \(Int((seconds * 1000).rounded())) ms on main, \(kind)\(switching ? " mid-switch" : ""); \(who)"
     }
 
+    /// One frame at 60 Hz: a scan that holds the main thread longer drops a frame you can see.
+    public static let frame: TimeInterval = 0.016
+
+    /// What one scan cost: seconds the main thread waited on it, the slowest app's read on its own thread, the apps asked
+    /// and how many ran out their deadline. Its line holds counts and milliseconds, never a window title or an app name.
+    public struct Cost: Equatable, Sendable {
+        public var main: TimeInterval
+        public var background: TimeInterval
+        public var apps: Int
+        public var timedOut: Int
+
+        public init(main: TimeInterval, background: TimeInterval, apps: Int, timedOut: Int) {
+            self.main = main
+            self.background = background
+            self.apps = apps
+            self.timedOut = timedOut
+        }
+
+        /// `scan main=<ms> bg=<ms> apps=<n> timedout=<n> kind=<kind>`, plus ` mid-switch` for a switch's own scan.
+        public func line(kind: String, switching: Bool) -> String {
+            "scan main=\(Self.ms(main)) bg=\(Self.ms(background)) apps=\(apps) timedout=\(timedOut) kind=\(kind)\(switching ? " mid-switch" : "")"
+        }
+
+        /// Whether timing.log gets it too: the main thread lost a frame, or an app timed out. timing.log keeps 500 lines
+        /// and `bench.sh` reads its switches from them, so the scans that cost nothing stay out.
+        public var worthTiming: Bool { main >= ScanCheck.frame || timedOut > 0 }
+
+        static func ms(_ s: TimeInterval) -> Int { Int((s * 1000).rounded()) }
+    }
+
     /// The app windows on screen that no workspace holds. `onScreen` maps each window the server
     /// is drawing to its app; `notWindows` are the ones Accessibility listed and said aren't
     /// standard windows (sheets, panels), which never get a workspace; `unsure` are apps the last

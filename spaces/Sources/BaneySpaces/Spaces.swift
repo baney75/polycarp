@@ -187,10 +187,12 @@ final class Spaces {
         let pidsNow = RunningApps.regular
         Windows.keepBench(pidsNow)
         let scanStart = ProcessInfo.processInfo.systemUptime
-        let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)
+        let scan = Windows.all(owners: snap.owners)
+        let (list, unsure, listed, partial, nonStandard, asks) = (scan.windows, scan.unsure, scan.listed, scan.partial, scan.notWindows, scan.asking)
         let missed = unsure.map { NSRunningApplication(processIdentifier: $0)?.localizedName ?? "pid \($0)" }
-        if let line = ScanCheck.slowScanLine(seconds: ProcessInfo.processInfo.systemUptime - scanStart, kind: clock.scan,
-                                              switching: switching, missed: missed) { Trace.log(line) }
+        let held = ProcessInfo.processInfo.systemUptime - scanStart
+        if let line = ScanCheck.slowScanLine(seconds: held, kind: clock.scan, switching: switching, missed: missed) { Trace.log(line) }
+        logScan(ScanCheck.Cost(main: held, background: scan.slowest, apps: scan.asked, timedOut: scan.timedOut), kind: clock.scan)
         notWindows = nonStandard
         asking = asks
         // A window the app closed but kept isn't one any more, though the window server says it's alive.
@@ -283,6 +285,15 @@ final class Spaces {
         placedBefore.formUnion(model.home.keys)
         scheduleHeal()
         updateAttention()
+    }
+
+    /// Every scan's cost in trace.log; one that cost the main thread a frame, or had an app time out, in timing.log too.
+    private func logScan(_ cost: ScanCheck.Cost, kind: String) {
+        let line = cost.line(kind: kind, switching: switching)
+        Trace.log(line)
+        guard cost.worthTiming else { return }
+        let url = Spaces.folder.appendingPathComponent("timing.log")
+        DispatchQueue.global(qos: .utility).async { TimingLog.append("\(Int(Date().timeIntervalSince1970)) \(line)", to: url) }
     }
 
     /// Works out which workspaces have a window waiting on you out of sight, and says in

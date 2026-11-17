@@ -127,7 +127,26 @@ final class SlowScanLineTests: XCTestCase {
     func testRefreshTimesItsScan() throws {
         let s = try HandsSourceTests.code("Sources/BaneySpaces/Spaces.swift")
         let r = try XCTUnwrap(HandsSourceTests.block(after: "func refresh(full: Bool = false)", in: s))
-        XCTAssertTrue(r.contains("let scanStart = ProcessInfo.processInfo.systemUptime\n        let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)"))
-        XCTAssertTrue(r.contains("ScanCheck.slowScanLine(seconds: ProcessInfo.processInfo.systemUptime - scanStart"))
+        XCTAssertTrue(r.contains("let scanStart = ProcessInfo.processInfo.systemUptime\n        let scan = Windows.all(owners: snap.owners)"))
+        XCTAssertTrue(r.contains("let held = ProcessInfo.processInfo.systemUptime - scanStart"))
+        XCTAssertTrue(r.contains("ScanCheck.slowScanLine(seconds: held"))
+        XCTAssertTrue(r.contains("logScan(ScanCheck.Cost(main: held, background: scan.slowest, apps: scan.asked, timedOut: scan.timedOut)"))
+    }
+}
+
+/// 11-17: 257 slow scans in 8.8 days, but no number for the scans under 100 ms or for the reads off the main thread.
+/// Every scan now says what it cost the main thread.
+final class ScanCostTests: XCTestCase {
+    func testTheLineIsMillisecondsAndCountsOnly() {
+        let c = ScanCheck.Cost(main: 0.0124, background: 0.2516, apps: 23, timedOut: 1)
+        XCTAssertEqual(c.line(kind: "windows+1-0", switching: false), "scan main=12 bg=252 apps=23 timedout=1 kind=windows+1-0")
+        XCTAssertEqual(c.line(kind: "full", switching: true), "scan main=12 bg=252 apps=23 timedout=1 kind=full mid-switch")
+    }
+
+    /// timing.log keeps 500 lines and bench.sh reads switches from them: a scan that cost no frame stays out.
+    func testOnlyAScanThatCostAFrameOrTimedOutGoesToTimingLog() {
+        XCTAssertFalse(ScanCheck.Cost(main: 0.015, background: 0.2, apps: 9, timedOut: 0).worthTiming)
+        XCTAssertTrue(ScanCheck.Cost(main: 0.016, background: 0.016, apps: 9, timedOut: 0).worthTiming)
+        XCTAssertTrue(ScanCheck.Cost(main: 0.001, background: 2, apps: 9, timedOut: 1).worthTiming)
     }
 }
