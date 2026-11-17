@@ -11,7 +11,7 @@ platform: workspace n is the same workspace whichever display shows it.
 Terms. **Display** (monitor): named by the platform (`eDP-2`). **Slot**: a display's place in the
 order, 0 for the main one, the lowest free number for a new one. **Shown**: the workspace a display
 is showing. **Front**: the active window. **Agent window**: a window on the agent workspace or
-owned by a process BaneySpaces started for an agent.
+owned by a process Polycarp started for an agent.
 
 ## Displays
 
@@ -102,7 +102,7 @@ the display you are on. If it already moved the compositor's focus, the front wi
 The result is `refuse_follow` with reason `not_user_caused`.
 
 ### R-F3 Windows outside the scheme are ignored
-The model tracks only windows on BaneySpaces workspaces. Others (a platform's own scratchpad, a
+The model tracks only windows on Polycarp workspaces. Others (a platform's own scratchpad, a
 workspace the user keeps outside the nine) are left alone.
 
 ## The agent workspace
@@ -157,24 +157,24 @@ Not workspace rules but part of the same contract; `crates/baneyspaces-core/src/
 them and its tests are the cases. An agent action proceeds only when all hold:
 
 1. The window is on the agent workspace (`not_in_scope` otherwise).
-2. The window's process is one BaneySpaces started for an agent, identified by pid and process
+2. The window's process is one Polycarp started for an agent, identified by pid and process
    start time (`needs_lend` if not, `stale_ref` if the pid was reused or the window changed hands).
 3. The snapshot the ref came from is of that same window and process (`stale_ref` otherwise).
 
-An agent only drives a process BaneySpaces started for it as a new instance, verified by pid and
+An agent only drives a process Polycarp started for it as a new instance, verified by pid and
 start time. Every pid check is start-time aware, and a registered process that dies or whose pid is
 reused is forgotten (a window of a reused pid is never an agent window; conformance cases in
 `agent.json`). An app is started for an agent only if it is on the allowlist of apps with a verified
 separate-process launch; any other is refused before launch with `needs_sandbox`, whether or not you
 run a copy. The app is named (never a path) and resolves to the system binary of that name; the only
-arguments are files inside the handoff folder, and the flags that isolate it are added by BaneySpaces
+arguments are files inside the handoff folder, and the flags that isolate it are added by Polycarp
 (`bad_arguments` for anything else). Every agent process has a session bus of its own, so D-Bus
 single-instance forwarding cannot cross in either direction; `agent run` is a shell with your uid,
 so this is accident-proofing, not a boundary. If an allowed app forwards anyway, its window opens in your process on your workspace;
 it is left where it is and the `single_instance` error reports it in `error.data`. Every action leaves a record without content (agent id, verb, pid,
 window id, ref, route, result, refusal, screen_changed), kept 30 days.
 
-Callers: a caller of the control socket that carries a launch token BaneySpaces issued, or is a
+Callers: a caller of the control socket that carries a launch token Polycarp issued, or is a
 registered agent process, is refused the operations that belong to the user (switch, move, focus
 monitor, show or hide the agent workspace, park or bring a window, overview, stop) with
 `not_in_scope`. This is accident-proofing, not a boundary against a hostile process of your own

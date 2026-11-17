@@ -171,7 +171,7 @@ final class BackgroundRecipeTests: XCTestCase {
         let block = try XCTUnwrap(part.components(separatedBy: "```").dropFirst().first)
         let lines = block.split(separator: "\n").map { String($0.split(separator: "#", maxSplits: 1)[0]).trimmingCharacters(in: .whitespaces) }
         XCTAssertTrue(lines.contains("export BANEYSPACES_SESSION=my-task-name"))
-        let commands = lines.filter { $0.hasPrefix("baneyspaces agent ") }
+        let commands = lines.filter { $0.hasPrefix("polycarp-spaces agent ") }
         XCTAssertEqual(commands.count, 5)
         let session = HandsParse.cliSession(environment: ["BANEYSPACES_SESSION": "my-task-name"], tty: "")
         for c in commands {
