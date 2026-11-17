@@ -39,6 +39,9 @@ usage: \(me) <command>
   get [setting]               read one setting, or all three
   update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it
   --version                   this command's version and the commit it was built from
+  layout save <name> [--workspace N] [--json]   remember where every window is (or one workspace's)
+  layout restore <name> [--json]   put them back: workspace, display and frame, then each display's workspace
+  layout list [--json] | delete <name>   the layouts you saved (named-layouts.json)
   remote on|off|status|token  let your other machines (tailnet only) send agent work here
   --on HOST <command>         run ls or agent status|open|run on another machine
   hook claude|grok            for agent hooks: reads the hook JSON on stdin
@@ -194,6 +197,34 @@ case "remote":
     let info = r.info ?? [:]
     if sub == "token" { out(info["token"] ?? ""); break }
     out("remote: \(info["remote"] ?? "?")" + (info["listening"].map { " (\($0))" } ?? ""))
+
+case "layout":
+    // Local only: a restore moves your windows on this Mac.
+    guard remoteHost == nil else { fail("layouts are saved and restored on each machine itself", code: 2) }
+    let sub = rest.first ?? "list"
+    let layoutUsage = "usage: \(me) layout save <name> [--workspace N] | restore <name> | list | delete <name> [--json]"
+    let json = hasSwitch("--json", in: rest, valued: ["--workspace"])
+    var extra = Array(rest.dropFirst(2))
+    extra.removeAll { $0 == "--json" }
+    let named = ["save", "restore", "delete"].contains(sub)
+    guard sub == "list" || named else { fail(layoutUsage, code: 2) }
+    if named, rest.count < 2 || rest[1].hasPrefix("--") { fail(layoutUsage, code: 2) }
+    let name = named ? rest[1] : nil
+    // Saving or restoring dozens of windows through Accessibility takes longer than a quick request.
+    let reply = call(Wire.Request(op: .layout, target: name, text: sub, args: extra, caller: "cli"), timeout: 15)
+    let info = reply.info ?? [:]
+    if json {
+        let data = try? JSONSerialization.data(withJSONObject: info, options: [.sortedKeys])
+        out(data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}")
+        break
+    }
+    switch sub {
+    case "save": out("saved \(name ?? ""): \(info["windows"] ?? "?") windows on \(info["displays"] ?? "?") displays")
+    case "restore":
+        out("restored \(name ?? ""): \(info["windows"] ?? "?") windows, \(info["missing"] ?? "?") missing, \(info["ms"] ?? "?") ms, worst \(info["worst_px"] ?? "?") px")
+    case "delete": out("deleted \(name ?? "")")
+    default: out((info["layouts"] ?? "").isEmpty ? "no layouts saved" : info["layouts"]!)
+    }
 
 case "sandbox":
     SandboxCommand.run(rest)

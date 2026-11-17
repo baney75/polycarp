@@ -124,22 +124,29 @@ public enum WindowPairing {
     public static func pair(_ live: [LiveWindow], with records: [WindowRecord]) -> [Pair] {
         var used = Set<Int>(), done = Set<WindowID>(), out: [Pair] = []
         let windows = live.sorted { ($0.bundle, $0.order, $0.id) < ($1.bundle, $1.order, $1.id) }
-        func pass(_ rule: Rule, _ fits: (LiveWindow, WindowRecord) -> Bool) {
+        // Each window looks only at its own app's records, and each title key is worked out once: a layout of hundreds
+        // of windows plans in milliseconds.
+        let byBundle = Dictionary(grouping: records.indices, by: { records[$0].bundle })
+        let recordKeys = records.map { TitleRules.key($0.title) }
+        func pass(_ rule: Rule, _ fits: (LiveWindow, Int) -> Bool) {
             for w in windows where !done.contains(w.id) {
-                let best = records.indices
-                    .filter { !used.contains($0) && records[$0].bundle == w.bundle && fits(w, records[$0]) }
-                    .min { (abs(records[$0].order - w.order), $0) < (abs(records[$1].order - w.order), $1) }
+                var best: Int?
+                for i in byBundle[w.bundle] ?? [] where !used.contains(i) && fits(w, i) {
+                    if let b = best, abs(records[b].order - w.order) <= abs(records[i].order - w.order) { continue }
+                    best = i
+                }
                 guard let i = best else { continue }
                 used.insert(i); done.insert(w.id)
                 out.append(Pair(window: w.id, record: i, rule: rule))
             }
         }
-        pass(.title) { !$0.title.isEmpty && $0.title == $1.title }
-        pass(.titleRule) { w, r in
-            let k = TitleRules.key(w.title)
-            return !k.isEmpty && k == TitleRules.key(r.title)
+        pass(.title) { w, i in !w.title.isEmpty && w.title == records[i].title }
+        let windowKeys = Dictionary(windows.map { ($0.id, TitleRules.key($0.title)) }, uniquingKeysWith: { a, _ in a })
+        pass(.titleRule) { w, i in
+            let k = windowKeys[w.id] ?? ""
+            return !k.isEmpty && k == recordKeys[i]
         }
-        pass(.order) { $0.order == $1.order }
+        pass(.order) { w, i in w.order == records[i].order }
         return out
     }
 }
