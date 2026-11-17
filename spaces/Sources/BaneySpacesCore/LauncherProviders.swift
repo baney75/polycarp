@@ -18,6 +18,11 @@ public enum LauncherAction: Equatable, Sendable {
     /// Put the text on the pasteboard (marked transient, so clipboard history skips it) and paste it into
     /// the app you were in.
     case paste(String)
+    case switchWorkspace(Int)
+    /// Move the window you were in to a workspace and go with it, as ⌘⇧N does.
+    case moveWindow(Int)
+    /// A window action by name (`WindowCommandProvider.commands`).
+    case windowCommand(String)
 }
 
 /// One row a provider offers.
@@ -97,6 +102,7 @@ public enum LauncherProviders {
     public static func standard(env: [String: String] = ProcessInfo.processInfo.environment) -> [LauncherProvider] {
         var out: [LauncherProvider] = [CalculatorProvider()]
         if let file = SnippetStore.defaultFile(env: env) { out.append(SnippetProvider(store: SnippetStore(file: file))) }
+        out.append(WindowCommandProvider())
         return out
     }
 }

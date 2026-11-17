@@ -179,6 +179,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.canOpenWindow = { pid in Windows.newWindowItem(pid) != nil }
         a.current = { [weak self] in self?.spaces.model.current ?? 1 }
         a.switchTo = { [weak self] n in self?.run { $0.switchTo(n) } }
+        a.moveWindow = { [weak self] n in self?.run { $0.moveFocused(to: n) } }
+        a.windowCommand = { [weak self] id in
+            switch id {
+            case "fill": self?.run { $0.toggleFill(nil) }
+            default: NSSound.beep()
+            }
+        }
         a.appsOn = { [weak self] n in self?.spaces.apps(on: n) ?? [] }
         a.workspacesByApp = { [weak self] in
             guard let self, self.started else { return [:] }
