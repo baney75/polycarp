@@ -39,12 +39,25 @@ window id, or a pid.
 | `stop` | quit the app | yes (the uninstall script uses it) | quit the app |
 | `mcp` | yes | yes | yes |
 | `doctor` | yes | yes | yes |
+| `layout save <name> [--workspace N]`, `layout restore <name>`, `layout list`, `layout delete <name>` (each with `--json`; local only, never `--host`; see Layouts) | yes | not supported yet | not supported yet |
 
 ## Doctor
 
 `doctor` prints the app's status lines. On macOS one is `polycarp_theme`: `none (...)`, or
 `in force: <title> (<name>, mode <m>)` when a Polycarp theme draws instead of `appearance.theme` and
 `appearance.palette` ([themes.md](themes.md), "Polycarp themes"). It needs the app running and past launch.
+
+## Layouts
+
+`layout save` keeps every window's workspace, display and frame under a name, with each display's workspace;
+`layout restore` puts them back. They live in `named-layouts.json` (mode 0600) in Polycarp's support folder,
+window titles only as keyed hashes (`title.key`, 0600, made once per Mac).
+
+An agent may not restore a layout: when the caller sets `BANEYSPACES_SESSION` (agent sessions do), `layout restore`
+is refused with `permission_denied` and "Agents may change what you see is off: layout restore is Donovan's" (the
+CLI prints `permission_denied: ...` and exits 77). Such a caller may `list`, `save` under a new name, and `delete` or
+replace by `save` only the layouts its own session saved; anything else is refused the same way. This is a
+cooperative boundary: a process that unsets the variable counts as Donovan, as with the switch URL.
 
 ## State file
 

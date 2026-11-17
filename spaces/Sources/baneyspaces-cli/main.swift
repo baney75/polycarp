@@ -210,9 +210,14 @@ case "layout":
     guard sub == "list" || named else { fail(layoutUsage, code: 2) }
     if named, rest.count < 2 || rest[1].hasPrefix("--") { fail(layoutUsage, code: 2) }
     let name = named ? rest[1] : nil
+    // An agent session says so: it may not restore, and deletes or replaces only its own layouts (`LayoutAccess`).
+    if let s = ProcessInfo.processInfo.environment["BANEYSPACES_SESSION"], !s.isEmpty { extra += ["--session", s] }
     // Saving or restoring dozens of windows through Accessibility takes longer than a quick request.
-    let reply = call(Wire.Request(op: .layout, target: name, text: sub, args: extra, caller: "cli"), timeout: 15)
+    guard let reply = Wire.call(Wire.Request(op: .layout, target: name, text: sub, args: extra, caller: "cli"), timeout: 15) else {
+        fail("Polycarp isn't running, or hasn't finished starting (it needs Accessibility).")
+    }
     let info = reply.info ?? [:]
+    if !reply.ok { fail((info["code"].map { "\($0): " } ?? "") + (reply.error ?? "failed"), code: info["code"] == nil ? 1 : 77) }
     if json {
         let data = try? JSONSerialization.data(withJSONObject: info, options: [.sortedKeys])
         out(data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}")

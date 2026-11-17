@@ -2473,7 +2473,12 @@ final class Spaces {
     func layout(_ r: Wire.Request) -> Wire.Reply {
         let name = r.target ?? ""
         var all = Spaces.writer.sync { NamedLayouts.load(from: Self.namedLayoutsURL) }
-        switch r.text ?? "list" {
+        let verb = r.text ?? "list", session = LayoutAccess.session(in: r.args)
+        if let why = LayoutAccess.refusal(verb: verb, session: session, existing: all.layouts[name]) {
+            Trace.log("layout \(verb) refused: an agent session")
+            return .init(ok: false, error: why, info: ["code": HandsErrorCode.permissionDenied.rawValue])
+        }
+        switch verb {
         case "list":
             let rows = all.layouts.sorted { $0.key < $1.key }.map { name, l in
                 "\(name)\t\(l.windows.count) windows\t\(Set(l.windows.compactMap(\.display)).count) displays"
@@ -2503,7 +2508,8 @@ final class Spaces {
             let now = Date().timeIntervalSince1970
             let records = Self.records(snap.1, displays: snap.4, screens: snap.5, now: now)
             guard !records.isEmpty else { return .init(ok: false, error: only.map { "workspace \($0) has no windows" } ?? "there are no windows to save") }
-            all.layouts[name] = NamedLayout(savedAt: now, current: snap.2, displays: snap.3, windows: records, only: only)
+            all.layouts[name] = NamedLayout(savedAt: now, current: snap.2, displays: snap.3, windows: records, only: only,
+                                            savedBy: session)
             Spaces.writer.sync { all.save(to: Self.namedLayoutsURL) }
             let displays = Set(records.compactMap(\.display)).count
             Trace.log("layout saved: \(records.count) windows on \(displays) displays")

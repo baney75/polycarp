@@ -75,6 +75,50 @@ final class NamedLayoutsTests: XCTestCase {
         XCTAssertEqual(NamedLayouts.load(from: url.appendingPathExtension("missing")), NamedLayouts())
     }
 
+    /// An agent session (`BANEYSPACES_SESSION`) may list, save and delete its own layouts, never restore one, and never
+    /// delete or replace one it didn't save. A request with no session is Donovan's and may do all of it.
+    func testAnAgentSessionNeverRestoresAndTouchesOnlyItsOwnLayouts() {
+        var mine = twoDisplays
+        mine.savedBy = "agent-7"
+        let donovans = twoDisplays
+        XCTAssertEqual(LayoutAccess.session(in: ["--workspace", "3", "--session", "agent-7"]), "agent-7")
+        XCTAssertNil(LayoutAccess.session(in: ["--workspace", "3"]))
+        XCTAssertNil(LayoutAccess.session(in: ["--session", ""]))
+        for verb in ["list", "save", "restore", "delete"] {
+            XCTAssertNil(LayoutAccess.refusal(verb: verb, session: nil, existing: donovans), "Donovan may \(verb)")
+        }
+        for existing in [mine, donovans, nil] as [NamedLayout?] {
+            XCTAssertEqual(LayoutAccess.refusal(verb: "restore", session: "agent-7", existing: existing),
+                           "Agents may change what you see is off: layout restore is Donovan's")
+        }
+        XCTAssertNil(LayoutAccess.refusal(verb: "list", session: "agent-7", existing: nil))
+        XCTAssertNil(LayoutAccess.refusal(verb: "save", session: "agent-7", existing: nil), "a new name")
+        XCTAssertNil(LayoutAccess.refusal(verb: "save", session: "agent-7", existing: mine), "its own, replaced")
+        XCTAssertNil(LayoutAccess.refusal(verb: "delete", session: "agent-7", existing: mine))
+        XCTAssertNotNil(LayoutAccess.refusal(verb: "save", session: "agent-7", existing: donovans))
+        XCTAssertNotNil(LayoutAccess.refusal(verb: "delete", session: "agent-7", existing: donovans))
+        XCTAssertNotNil(LayoutAccess.refusal(verb: "delete", session: "agent-8", existing: mine), "another session's")
+    }
+
+    /// second-F5 for layouts: after a save, `named-layouts.json` holds no window title, only keyed hashes, and is 0600.
+    func testTheLayoutsFileHoldsNoTitleTextAndOnlyYouCanReadIt() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("layouts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let key = TitleHash.key(at: folder.appendingPathComponent("title.key"))
+        let secret = "Private Browsing - Statement for Account 4471"
+        let r = WindowRecord(bundle: "com.example.browser", title: secret, order: 0, workspace: 2,
+                             frame: CGRect(x: 40, y: 60, width: 700, height: 500), displays: [laptop], window: 1, pid: 1, at: 1, key: key)
+        let url = folder.appendingPathComponent("named-layouts.json")
+        NamedLayouts(layouts: ["desk": NamedLayout(savedAt: 1, current: 2, displays: ["laptop": 2], windows: [r])]).save(to: url)
+        let text = try String(contentsOf: url, encoding: .utf8).lowercased()
+        for word in ["private", "browsing", "statement", "account", "4471"] { XCTAssertFalse(text.contains(word), word) }
+        let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(mode?.intValue, 0o600)
+        let back = try XCTUnwrap(NamedLayouts.load(from: url).layouts["desk"])
+        let live = [LiveWindow(id: 5, bundle: "com.example.browser", title: secret, order: 3, key: key)]
+        XCTAssertEqual(back.plan(live, displays: [laptop]).placements.map(\.rule), [.title], "still restored by its title")
+    }
+
     /// Planning is a small part of the 300 ms a restore may take: 200 windows over two displays under 30 ms.
     func testPlanningTwoHundredWindowsIsFast() {
         var records: [WindowRecord] = [], live: [LiveWindow] = []
