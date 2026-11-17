@@ -47,7 +47,7 @@
         "display": { "oneOf": [{ "$ref": "#/$defs/display_id" }, { "type": "null" }] },
         "current": { "type": "boolean" },
         "agent": { "type": "boolean" },
-        "windows": { "type": "integer", "minimum": 0, "description": "Every window on it, in scope or not." },
+        "windows": { "type": "integer", "minimum": 0, "description": "The windows in scope on it: the length of window_ids." },
         "window_ids": { "type": "array", "items": { "$ref": "#/$defs/window_id" }, "description": "Only windows in scope." }
       }
     },
@@ -224,11 +224,31 @@
         "workspace": { "$ref": "#/$defs/workspace_number" },
         "windows": { "type": "integer", "minimum": 0 },
         "saved": { "type": "array", "items": { "type": "string" } },
-        "moved": { "type": "array", "items": { "$ref": "#/$defs/window_id" } },
+        "moved": { "type": "array", "items": { "$ref": "#/$defs/window_id" }, "description": "Windows in scope on the workspace that were given their saved frame." },
         "missing": {
           "type": "array",
-          "items": { "type": "object", "required": ["app", "title"], "properties": { "app": { "type": "string" }, "title": { "type": "string" } } }
+          "items": { "$ref": "#/$defs/window_identity" }
         }
+      }
+    },
+    "window_identity": {
+      "type": "object",
+      "description": "A window known again once its id is gone: same bundle, then title, then title rules, then creation order. No window id.",
+      "required": ["bundle", "title", "order"],
+      "properties": {
+        "bundle": { "type": "string", "minLength": 1, "description": "macOS: the bundle id. Windows: the executable's full path." },
+        "title": { "type": "string" },
+        "order": { "type": "integer", "minimum": 0, "description": "Creation order among its process's windows, oldest first." },
+        "app": { "type": "string" }
+      }
+    },
+    "events_result": {
+      "type": "object",
+      "required": ["version", "events", "next"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/event" } },
+        "next": { "type": "integer", "minimum": 0, "description": "The since to pass next: the seq of the last event here, or since when there is none." }
       }
     },
     "theme_set_result": {
@@ -255,7 +275,7 @@
       "required": ["version", "seq", "at", "type", "data"],
       "properties": {
         "version": { "$ref": "#/$defs/version" },
-        "seq": { "type": "integer", "minimum": 0 },
+        "seq": { "type": "integer", "minimum": 1, "description": "Per subscriber: 1 for hello, then one more per event sent to it, with no gaps." },
         "at": { "type": "integer", "minimum": 0 },
         "type": { "type": "string" },
         "data": { "type": "object" }

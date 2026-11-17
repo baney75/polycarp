@@ -21,6 +21,10 @@ struct AgentAPISchema {
         return check(value, s, "$")
     }
 
+    static func ecma(_ pattern: String) -> String {
+        pattern.hasSuffix("$") && !pattern.hasSuffix("\\$") ? String(pattern.dropLast()) + "\\z" : pattern
+    }
+
     func problems(json: String, against name: String) -> [String] {
         guard let v = try? JSONSerialization.jsonObject(with: Data(json.utf8), options: [.fragmentsAllowed]) else { return ["not JSON"] }
         return problems(v, against: name)
@@ -72,7 +76,8 @@ struct AgentAPISchema {
         }
         if let str = v as? String {
             if let m = s["minLength"] as? Int, str.count < m { out.append("\(path): shorter than \(m)") }
-            if let p = s["pattern"] as? String, str.range(of: p, options: .regularExpression) == nil { out.append("\(path): doesn't match \(p)") }
+            // ECMA-262's `$` matches only at the very end; ICU's also before a final line break, so it is `\z` here.
+            if let p = s["pattern"] as? String, str.range(of: Self.ecma(p), options: .regularExpression) == nil { out.append("\(path): doesn't match \(p)") }
         }
         if let o = v as? [String: Any] {
             for k in (s["required"] as? [String]) ?? [] where o[k] == nil { out.append("\(path).\(k): missing") }

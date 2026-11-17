@@ -17,7 +17,17 @@ own workspace otherwise, and Donovan's screen never changes unless he turned tha
   or `{ "ok": false, "error": {...} }`. `data` is the result the schema describes. Events are not wrapped.
 - **Ids.** A window id is an integer that stays the same for the window's life (macOS: the window server number;
   Windows: the HWND). A display id is a string that stays the same across sleep and reconnects (macOS: the display UUID;
-  Windows: the monitor's device path). Workspaces are numbers 1 to 9.
+  Windows: the monitor's device path). Workspaces are numbers 1 to 9. A window id is never kept past the window's life:
+  macOS reuses window server numbers after a restart and Windows reuses HWNDs, so anything saved names windows by
+  identity instead.
+- **Window identity.** A window that must be known again once its id is gone (a saved layout, an app relaunched, a
+  restart) is known by `{ bundle, title, order }` (`$defs/window_identity`): its app's bundle id (Windows: the full path
+  of its executable), its title, and its creation order among its process's windows, oldest first. A saved window
+  matches a live window of the same bundle by the same title, then by the same title under the title rules (lowercase;
+  an unsaved-changes mark, an unread count in front and an "Edited" note left out), then by the same creation order.
+  Each saved window matches at most one live window. One that matches none is skipped and never moved. Only ordinary
+  windows are saved, never a dialog, sheet or panel. Polycarp's own restore after a restart keeps windows by the same
+  identity and the same rules.
 - **Frames.** `{ "x", "y", "width", "height" }` in the units the platform places windows in (macOS points, Windows
   physical pixels), with the origin at the top left of the main display and y growing down. Displays carry `scale`.
   A window out of sight reports the frame it comes back to.
@@ -35,27 +45,41 @@ Each result says what the caller could see: `"scope": "agent"` or `"scope": "all
 | Full Access | `all` | Every window the window manager places |
 | A caller from another machine (connector, `--on HOST`) | `agent` | As Default, whatever the Mac's setting |
 
-A window outside the caller's scope is left out of every list and every event: no id, app or title. Workspace numbers,
-which workspace each display shows, and the displays themselves are not private and are always listed. The focused
-window outside scope is reported as `"window": null`.
+A window outside the caller's scope is left out of every list, every count and every event: no id, app or title, and
+no number that changes when it opens or closes. Workspace numbers, which workspace each display shows, and the displays
+themselves are not private and are always listed. The focused window outside scope is reported as `"window": null`, and
+focus moving between two windows outside scope sends no event.
 
-A caller from another machine may query and subscribe. Every command below is refused for it with `permission_denied`,
-`retry: never`, as `arrange` and `move` are today.
+A command acts only on windows in the caller's scope, and reads, records and reports only those. A window outside it is
+refused as every hands verb refuses it.
+
+A connector may query and read events with the `events` tool. `subscribe` holds a socket on this machine and is refused
+for another one; `--on HOST` carries neither yet. Every command below is refused for a caller from another machine with
+`permission_denied`, `retry: never`, as `arrange` and `move` are today.
+
+**Read Only refuses every command** (`switch`, `focus`, `move`, `frame`, `layout save`, `layout restore`, `theme-set`)
+with `permission_denied`, `retry: never`. It keeps every query, `layout list`, `subscribe` and `events`.
 
 ## View control
 
-Commands that change what Donovan sees: `switch`, `focus`, and `move`, `frame` or `layout restore` on a window or
-workspace other than the agent workspace (or onto a workspace a display is showing). They run only when all three hold:
+**One rule:** a command needs view control unless every workspace it touches is out of sight and the workspace it acts
+on is the agent workspace. A command touches the workspace a window leaves, the workspace it lands on, and the workspace
+of a window it changes. So `switch` and `focus` always need it. `move` needs it unless the window goes from a workspace
+no display shows onto the agent workspace while no display shows it. `frame` and `layout restore` need it unless they act
+on the agent workspace while no display shows it. A command that needs view control runs only when all three hold:
 
 1. The caller is on this machine (never a connector or `--on HOST`).
 2. Access is Full Access.
-3. Donovan turned on **Agents may change what you see** (macOS: Settings > Agents, stored as `agentViewControl` in the
-   app's defaults, off by default; Windows: `agent_view_control = true` in its settings file). No command, tool or
-   setting an agent can reach turns it on.
+3. Donovan turned on **Agents may change what you see** in the app's own Settings (macOS: Settings > Agents; off by
+   default). The app seals the stored value (`agentViewControl`) with a MAC under a key only it holds (macOS: a Keychain
+   item the app made; Windows: a key protected with DPAPI for the app), treats a missing or wrong MAC as off, deletes
+   the key when the switch is turned off and makes a new one when it is turned on, so a value saved earlier can't be
+   written back. A `defaults write`, an edit of the settings file or a copied value leaves view control off. Hands
+   refuse Polycarp's own windows in every mode, so no agent clicks the switch either.
 
 Otherwise the command fails with `permission_denied`, `retry: never`, before anything moves, and the suggestion says
-which of the three is missing. Work on windows that stay on the agent workspace while it is out of sight needs none of
-this and runs in Default, as `arrange` and `move` do today.
+which of the three is missing. Taking a window onto the agent workspace from a workspace a display shows is never done,
+even with view control: it answers `in_use`, `retry: safe`, and goes once Donovan has left that workspace.
 
 ## Queries
 
@@ -64,7 +88,7 @@ Read only, never wait on Donovan, never change anything. One name each, the same
 | Query | `$defs` | What it holds |
 | --- | --- | --- |
 | `windows` | `windows_result` | Every window in scope: id, pid, app, bundle, title, workspace, display, frame, focused, agent, minimized |
-| `workspaces` | `workspaces_result` | All nine: number, name, shown (and on which display), current, agent, window count, window ids in scope |
+| `workspaces` | `workspaces_result` | All nine: number, name, shown (and on which display), current, agent, the count and ids of the windows in scope |
 | `displays` | `displays_result` | Every display: id, name, main, frame, visible frame (no menu bar or taskbar), scale, workspace shown, focused |
 | `focused` | `focused_result` | The focused display, the workspace it shows, and the focused window (null outside scope) |
 | `layout` | `layout_result` | For each workspace with windows in scope: each window's frame; plus the names of saved layouts |
@@ -83,18 +107,22 @@ Each answers with the state it read back after acting, never with what it asked 
 | --- | --- | --- | --- |
 | `switch` | `workspace` (1 to 9), `display` (optional) | `{ version, workspace, display, shown: true }` | always |
 | `focus` | `window` | `{ version, window, workspace, focused: true }` | always |
-| `move` | `window`; then `workspace` or `display` | `{ version, window, workspace, display, frame }` | unless the target is the agent workspace while it is out of sight |
-| `frame` | `window`, `frame` (`x,y,width,height`, absolute, as `windows` reports it) | `{ version, window, frame }` | unless the window is on the agent workspace |
-| `layout` | `action` (`save`, `restore`, `list`), `name`, `workspace` (default: the agent workspace) | `layout_command_result` | `restore` on any workspace but the agent workspace |
+| `move` | `window`; then `workspace` or `display` | `{ version, window, workspace, display, frame }` | unless it goes from a workspace out of sight onto the agent workspace while it is out of sight |
+| `frame` | `window`, `frame` (`x,y,width,height`, absolute, as `windows` reports it) | `{ version, window, frame }` | unless the window is on the agent workspace while it is out of sight |
+| `layout` | `action` (`save`, `restore`, `list`), `name`, `workspace` (default: the agent workspace) | `layout_command_result` | `restore`, unless on the agent workspace while it is out of sight |
 | `theme-set` | `theme`, `palette` (optional) | `{ version, theme, palette, drawn }` | never (agents may change how the Mac looks; Donovan, 2026-11-01) |
 
 - `move` with `display` sends the window to the workspace that display shows.
 - `move` without `workspace` or `display` keeps today's meaning: onto the agent workspace, where its `--frame`
   (`left|right|full` or a fraction of the agent area) still places it.
 - `frame` sets one window's position and size in display coordinates; the result is the frame read back.
-- `layout save` records each window's id, app, title and frame on one workspace under `name` (letters, digits, `-` and
-  `_`, at most 64). `restore` puts each window back by id, then by app and title for a window that was reopened, and
-  lists the rest in `missing`. Saved layouts live in the platform's support folder, `layouts/<name>.json`.
+- `layout save` records the ordinary windows in scope on one workspace under `name` (letters, digits, `-` and `_`, at
+  most 64), each by its identity and frame, with no window id. Under scope `agent` only the agent workspace can be saved
+  or restored; any other answers `permission_denied`, `retry: never`. Saved layouts live in the platform's support
+  folder, `layouts/<name>.json`.
+- `layout restore` gives each window that matches a saved one by identity, and is in scope on that workspace now, its
+  saved frame, and lists it in `moved`. It never moves a window to another workspace and never touches a window outside
+  scope or on another workspace. Saved windows that matched nothing are listed in `missing` by identity.
 - `drawn` is false when a Polycarp theme draws instead of the appearance theme: the value is saved and not shown.
 - `focus` brings the window's app forward and switches to its workspace. It is the one command that takes keyboard
   focus, which is why it always needs view control.
@@ -107,11 +135,17 @@ table with `-` spelled `_`.
 ## Events
 
 `polycarp-spaces subscribe [--events workspace_switched,window_focused]` prints one JSON object per line until it is
-stopped or the app quits. Over MCP, the `events` tool returns what happened after a `since` sequence number, waiting up
-to `wait_ms` (at most 5000) for the first one.
+stopped or the app quits. Over MCP, the `events` tool returns what happened after `since`, waiting up to `wait_ms` (at
+most 5000) for the first event: `{ version, events, next }` (`$defs/events_result`).
 
 Every event is `{ "version": 1, "seq": N, "at": <unix milliseconds>, "type": "...", "data": {...} }` (`$defs/event`).
-`seq` rises by one per event sent to that subscriber; a gap never happens without a `lagged` event.
+
+**`seq` is per subscriber.** A subscriber is one `subscribe` connection, or one MCP session's events. Its `seq` starts at
+1 with `hello` and rises by one per event sent to it. Events its filter or its scope leaves out are never numbered, so
+`seq` has no gaps; when events are dropped because the reader fell behind, the next event is `lagged` with their count.
+Over MCP, a call without `since` starts the session's events again and answers `hello` with `next: 1`. After that,
+`since` is the `next` of the last call: the answer holds the events after it. An event stays until a later `since`
+passes it, so a retried call gets the same answer. A `since` past the last event fails `bad_arguments`.
 
 | Type | `data` |
 | --- | --- |
@@ -125,13 +159,16 @@ Every event is `{ "version": 1, "seq": N, "at": <unix milliseconds>, "type": "..
 | `lagged` | `missed`: the count of events dropped because the reader fell behind; query `state` again |
 
 Events come from the same model the queries read: a change is reported once the window manager has applied it, never
-when it was only asked for. A window that leaves the caller's scope (a lend ends) is reported as `window_closed`, and one
-that enters it as `window_created`. Frame changes the window manager did not make (a person dragging a window) are
+when it was only asked for. Every event is filtered by the scope in force when it is sent. A window that leaves the
+caller's scope while it listens (a lend ends) is reported as `window_closed`, and one that enters it as
+`window_created`. When Donovan changes Access, the server ends every subscriber: `subscribe` closes, and the next
+`events` call with `since` fails `bad_arguments` and says to start again. The client starts again and gets a `hello`
+with the new scope and state. Frame changes the window manager did not make (a person dragging a window) are
 reported on its next scan, not at once.
 
 ## Timing
 
-Measured by the contract test against the running app on an otherwise idle machine:
+Measured by `scripts/agent-api-probe.swift` against the running app on an otherwise idle machine:
 
 - Every query, and every `move` and `frame` of a window on the agent workspace while it is out of sight, answers in
   under 50 ms at the 95th percentile over 100 calls, with the app the window belongs to responsive.
@@ -141,11 +178,15 @@ Measured by the contract test against the running app on an otherwise idle machi
 
 ## Checks
 
-- `Tests/BaneySpacesCoreTests/AgentAPIContractTests.swift`: the schema, the examples, real query results and the event
-  stream from the model, validated against the schema with no display.
-- `scripts/agent-api-probe.swift`: the same against the running app, plus the timing above and an MCP client that
-  calls `tools/list` and moves a test window on the agent workspace and reads it back. It acts on the agent workspace
-  only and runs only when the Mac has been idle 10 minutes; otherwise it prints "untested live" and exits 3.
+- `Tests/BaneySpacesCoreTests/AgentAPIContractTests.swift`: the schema is well formed, every `$ref` resolves, every
+  query, command and event in this document has its `$defs` entry and its table row, the rules above are stated, and
+  the examples validate, with no display.
+- Later in the same stack, without a display: query results built from the model (`AgentAPIQueryTests`), commands
+  (`AgentCommandsTests`), the event diff and stream (`AgentEventsTests`) and an MCP client (`AgentAPIMCPTests`), each
+  validated against the schema.
+- `scripts/agent-api-probe.swift` (not written yet): the same against the running app, plus the timing above and an MCP
+  client that calls `tools/list`, moves a test window on the agent workspace and reads it back. It acts on the agent
+  workspace only and runs only when the Mac has been idle 10 minutes; otherwise it prints "untested live" and exits 3.
 
 ## Example
 
