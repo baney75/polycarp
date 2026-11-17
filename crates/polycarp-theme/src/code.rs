@@ -114,7 +114,7 @@ fn from_hsl(h: f64, s: f64, l: f64) -> String {
 }
 
 /// `color`, moved toward `toward` in steps of 5% until it reads on `bg` at `min`.
-fn fit(color: &str, bg: &str, toward: &str, min: f64) -> String {
+pub(crate) fn fit(color: &str, bg: &str, toward: &str, min: f64) -> String {
     (0..=20)
         .map(|i| mix(color, toward, f64::from(i) * 0.05))
         .find(|c| contrast(c, bg) >= min)

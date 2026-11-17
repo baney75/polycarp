@@ -128,6 +128,11 @@ colors are lighter, black and white sit just inside the ends. `syntax` starts fr
 `muted` and the terminal's blue, cyan and magenta. `diff` uses `done`, `urgent` and `working`, with
 surfaces tinted from `background`.
 
+The built-ins set their own terminal and syntax colors (blocks and calm take polycarp's) and derive
+the rest. Code colors a theme takes from the theme it extends were chosen against that theme's colors:
+where they still read on yours they are kept, and where they don't they are fitted toward the text
+until they do. Only the code colors your own file sets are refused when they don't read.
+
 ```toml
 [dark.syntax]
 comment = "#8b949e"
