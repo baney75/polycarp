@@ -9,10 +9,16 @@
 //   seen: from the open until it settles, a sampler reads the window server every 4 ms (on screen only) and adds up the
 //   time any window of the new process (alpha 0.1 or more) showed at least 8x8 pt on a display, not covered by a window
 //   in front of it.
-//   The agent workspace is not shown while the probe runs, so all of that was on Donovan's workspace. With the cover on
-//   (the default since 2026-11-17), over 50 ms in one open fails it (zero is the target); with it turned off
-//   (`defaults write com.baney.polycarp agentOpenFlashGuard off`) the times print as "known, flag off" and fail nothing. 11-12 on 639dd5f: Font Book and Dictionary showed for 0.7 to 1.5 s, and the
-//   check above passed, because it looked only at where the window ended up.
+//   frames: every display is captured (ScreenCaptureKit, half size, up to 60 frames a second) from just before the
+//   open until it settles, and a frame in which the place where a window of the new process is listed differs from the
+//   first frame (8x8 pt or more, luma off by over 24) shows that window. A cover is painted from the screen as it
+//   was, so a covered window shows nothing. Council gap G9 ("an occasional 1 s screen flash"): zero frames is the bar.
+//   The agent workspace is not shown while the probe runs, so all of that was on Donovan's workspace. With the cover on,
+//   the default, over 50 ms seen or any frame showing a window fails the open; with
+//   `defaults write com.baney.polycarp agentOpenFlashGuard off` both print as "known, flag off" and fail nothing.
+//   The frame check needs Screen Recording for the process running the probe; the probe never asks for it, and without
+//   it says "untested live" and exits 3 (`--no-frames` runs the rest). 11-12 on 639dd5f: Font Book and Dictionary
+//   showed for 0.7 to 1.5 s, and the check above passed, because it looked only at where the window ended up.
 // Apps already running are skipped (an open of a running app asks that copy, which isn't this probe's). It quits only
 // the copies it started: new pids, started after the probe, run with -ApplePersistenceIgnoreState.
 // Agent workspace only: it types, clicks and moves nothing. Run it with the build under test installed and running.
@@ -20,8 +26,11 @@
 // before it was parked, and a 10-open run while he worked read to him as "random windows keep opening like font book".
 // Otherwise it prints "untested live" and exits 3, opening nothing. --force is for a Mac nobody is using. A run whose
 // samples were ever over 16 ms apart is invalid (exit 4), not passed.
-//   swift scripts/agent-open-probe.swift [rounds] [App ...] [--force]
+//   swift scripts/agent-open-probe.swift [rounds] [App ...] [--force] [--no-frames]
+// Default: 5 rounds of 10 apps, 50 opens.
 import AppKit
+import CoreMedia
+import ScreenCaptureKit
 
 /// One window from the window server's on-screen list, front to back.
 struct Seen {
@@ -105,6 +114,33 @@ func seen(_ i: Int, in list: [Seen], displays: [CGRect], cover: pid_t = polycarp
     return s.area >= 64 && s.box.width >= 8 && s.box.height >= 8 ? s.box : nil
 }
 
+/// A frame's brightness, one byte a pixel, as captured: `w` by `h`.
+struct Luma {
+    let w: Int, h: Int, px: [UInt8]
+}
+
+/// How many pixels inside `boxes` (pixel rects of the frame) differ from `base` by more than `level`.
+func changed(_ base: Luma, _ frame: Luma, in boxes: [CGRect], level: Int = 24) -> Int {
+    guard base.w == frame.w, base.h == frame.h else { return Int.max }
+    var seen = [Bool](repeating: false, count: base.w * base.h), n = 0
+    for b in boxes {
+        let x0 = max(0, Int(b.minX.rounded(.down))), x1 = min(base.w, Int(b.maxX.rounded(.up)))
+        let y0 = max(0, Int(b.minY.rounded(.down))), y1 = min(base.h, Int(b.maxY.rounded(.up)))
+        guard x0 < x1, y0 < y1 else { continue }
+        for y in y0..<y1 { for x in x0..<x1 {
+            let i = y * base.w + x
+            if seen[i] { continue }
+            seen[i] = true
+            if abs(Int(base.px[i]) - Int(frame.px[i])) > level { n += 1 }
+        } }
+    }
+    return n
+}
+
+/// A frame shows a window when at least 8x8 pt of it changed. Frames are half size, so that is 4x4 pixels.
+let framePixelBar = 16
+func frameShows(_ base: Luma, _ frame: Luma, in boxes: [CGRect]) -> Bool { changed(base, frame, in: boxes) >= framePixelBar }
+
 if CommandLine.arguments.contains("--selftest") {
     let screen = [CGRect(x: 0, y: 0, width: 1512, height: 982)]
     let app = Seen(pid: 7, layer: 0, alpha: 1, bounds: CGRect(x: 400, y: 300, width: 500, height: 400))
@@ -155,6 +191,21 @@ if CommandLine.arguments.contains("--selftest") {
     check(String(format: "a full-screen window under 30 others is seen, in %.2f ms a look (bar 2 ms)", perLook), shownAt == 20 && perLook < 2)
     let exact = shown(30, in: others + [Seen(pid: 7, layer: 0, alpha: 1, bounds: full)], displays: screen).area
     check("its shown area is exact: the screen less the 30 windows", abs(exact - (1512 * 982 - 30 * 150 * 120)) < 1)
+    // Frames: a window drawn where it is listed shows; the same change elsewhere, or a cover's near-copy, doesn't.
+    let blank = Luma(w: 40, h: 30, px: [UInt8](repeating: 100, count: 1200))
+    func painted(_ r: CGRect, _ v: UInt8) -> Luma {
+        var px = blank.px
+        for y in Int(r.minY)..<Int(r.maxY) { for x in Int(r.minX)..<Int(r.maxX) { px[y * 40 + x] = v } }
+        return Luma(w: 40, h: 30, px: px)
+    }
+    let box = CGRect(x: 10, y: 10, width: 10, height: 8)
+    check("an unchanged frame shows nothing", !frameShows(blank, blank, in: [box]))
+    check("a window drawn in its listed place shows", frameShows(blank, painted(box, 230), in: [box]))
+    check("the same change outside every listed place doesn't", !frameShows(blank, painted(CGRect(x: 25, y: 2, width: 10, height: 8), 230), in: [box]))
+    check("a cover's copy, off by 20 levels, doesn't", !frameShows(blank, painted(box, 120), in: [box]))
+    check("a 3x3 pixel change (6x6 pt) doesn't, 4x4 does", !frameShows(blank, painted(CGRect(x: 10, y: 10, width: 3, height: 3), 230), in: [box])
+          && frameShows(blank, painted(CGRect(x: 10, y: 10, width: 4, height: 4), 230), in: [box]))
+    check("overlapping places count a pixel once", changed(blank, painted(box, 230), in: [box, box]) == 80)
     print(bad == 0 ? "selftest: pass" : "selftest: fail"); exit(bad == 0 ? 0 : 1)
 }
 
@@ -168,7 +219,9 @@ if !force && idleSeconds < 600 {
 let defaults = ["Calculator", "Font Book", "Chess", "Dictionary", "Grapher", "Activity Monitor", "Console",
                 "Digital Color Meter", "System Information", "TextEdit"]
 var args = Array(CommandLine.arguments.dropFirst()).filter { $0 != "--force" }
-let rounds = args.first.flatMap(Int.init) ?? 3
+let noFrames = args.contains("--no-frames")
+args.removeAll { $0 == "--no-frames" }
+let rounds = args.first.flatMap(Int.init) ?? 5
 if Int(args.first ?? "") != nil { args.removeFirst() }
 let apps = args.isEmpty ? defaults : args
 let cli = (ProcessInfo.processInfo.environment["POLYCARP_SPACES"] ?? "\(NSHomeDirectory())/.local/bin/polycarp-spaces")
@@ -248,6 +301,9 @@ final class Sampler {
     private(set) var seenMs = 0.0, firstMs: Double?, samples = 0, worstGapMs = 0.0, worstReadMs = 0.0
     private(set) var qos = QOS_CLASS_UNSPECIFIED
     private(set) var frames: [CGRect] = []
+    /// Where windows of the new process have been listed on screen so far, covered or not (the frame check's places).
+    private var placesSoFar: [CGRect] = []
+    var places: [CGRect] { lock.lock(); defer { lock.unlock() }; return placesSoFar }
     private let done = DispatchSemaphore(value: 0)
     init(app: String, isNew: @escaping (pid_t) -> Bool) {
         let displays = displayRects()
@@ -274,6 +330,7 @@ final class Sampler {
                 samples += 1
                 wasSeen = false
                 for (i, (w, owner)) in list.enumerated() where w.layer == 0 && owner == app && isNew(w.pid) {
+                    if w.alpha >= 0.1, !placesSoFar.contains(w.bounds) { placesSoFar.append(w.bounds) }
                     if let box = seen(i, in: windows, displays: displays) {
                         wasSeen = true
                         if firstMs == nil { firstMs = (now - t0) * 1000 }
@@ -291,6 +348,80 @@ final class Sampler {
         thread.start()
     }
     func stop() { lock.lock(); stopped = true; lock.unlock(); done.wait() }
+}
+
+/// Records one display from just before an open until it settles, judging each frame as it comes against the first:
+/// `showing` counts frames in which a place the sampler lists differs from it. Frames are never kept.
+final class FrameWatch: NSObject, SCStreamOutput {
+    private let lock = NSLock()
+    private let bounds: CGRect
+    private let places: () -> [CGRect]
+    private var stream: SCStream?
+    private var base: Luma?
+    private(set) var frames = 0, showing = 0, worst = 0
+    private let queue = DispatchQueue(label: "agent-open-probe.frames", qos: .userInteractive)
+    private let first = DispatchSemaphore(value: 0)
+
+    init(display: SCDisplay, places: @escaping () -> [CGRect]) {
+        bounds = CGDisplayBounds(display.displayID)
+        self.places = places
+        super.init()
+        let config = SCStreamConfiguration()
+        config.width = max(2, Int(bounds.width / 2)); config.height = max(2, Int(bounds.height / 2))
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        config.showsCursor = false
+        config.queueDepth = 6
+        let s = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: config, delegate: nil)
+        try? s.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+        stream = s
+    }
+
+    /// Starts and waits for the first frame (the "before"); false when none came in a second.
+    func start() -> Bool {
+        let started = DispatchSemaphore(value: 0)
+        var ok = false
+        stream?.startCapture { ok = $0 == nil; started.signal() }
+        started.wait()
+        return ok && first.wait(timeout: .now() + 1) == .success
+    }
+
+    func stop() {
+        let stopped = DispatchSemaphore(value: 0)
+        stream?.stopCapture { _ in stopped.signal() }
+        _ = stopped.wait(timeout: .now() + 2)
+        queue.sync {}
+    }
+
+    func stream(_ s: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .screen,
+              let info = (CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]])?.first,
+              (info[.status] as? Int).flatMap(SCFrameStatus.init(rawValue:)) == .complete,
+              let pb = CMSampleBufferGetImageBuffer(sb) else { return }
+        CVPixelBufferLockBaseAddress(pb, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+        guard let raw = CVPixelBufferGetBaseAddress(pb) else { return }
+        let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb), row = CVPixelBufferGetBytesPerRow(pb)
+        let bytes = raw.assumingMemoryBound(to: UInt8.self)
+        var px = [UInt8](repeating: 0, count: w * h)
+        for y in 0..<h { for x in 0..<w {
+            let p = bytes + y * row + x * 4   // B, G, R, A
+            px[y * w + x] = UInt8((Int(p[2]) * 77 + Int(p[1]) * 150 + Int(p[0]) * 29) >> 8)
+        } }
+        let frame = Luma(w: w, h: h, px: px)
+        lock.lock(); defer { lock.unlock() }
+        guard let base else { base = frame; first.signal(); return }
+        let sx = CGFloat(w) / bounds.width, sy = CGFloat(h) / bounds.height
+        let boxes = places().compactMap { r -> CGRect? in
+            let c = r.intersection(bounds)
+            return c.isNull || c.isEmpty ? nil : CGRect(x: (c.minX - bounds.minX) * sx, y: (c.minY - bounds.minY) * sy, width: c.width * sx, height: c.height * sy)
+        }
+        frames += 1
+        let n = changed(base, frame, in: boxes)
+        worst = max(worst, n == Int.max ? 0 : n)
+        if n >= framePixelBar { showing += 1 }
+    }
+    var result: (frames: Int, showing: Int, worst: Int) { lock.lock(); defer { lock.unlock() }; return (frames, showing, worst) }
 }
 
 func started(_ pid: pid_t) -> Bool {
@@ -319,10 +450,26 @@ defer { try? FileManager.default.removeItem(at: note) }
 if agentShown() { print("untested live: the agent workspace is shown, so a window there can't be told from a flash"); exit(3) }
 let seenBarMs = 50.0
 // The app's own domain, the one it reads the flag from (`OpenFlashGuard.defaultsDomain`).
-// Only `off` turns it off (`OpenFlashGuard.from`).
+// The cover is on unless the flag says exactly `off` (`OpenFlashGuard.from`).
 let guardOn = UserDefaults(suiteName: "com.baney.polycarp")?.string(forKey: "agentOpenFlashGuard") != "off"
-print(guardOn ? "seen check: gating (cover on, the default)" : "seen check: known, flag off (times printed, not failed)")
+print(guardOn ? "seen and frame checks: gating (the cover is on)" : "seen and frame checks: known, flag off (printed, not failed)")
+/// The displays to record, or nil with --no-frames. No Screen Recording permission: untested live (never asked for here).
+let displays: [SCDisplay]? = {
+    if noFrames { return nil }
+    let got = DispatchSemaphore(value: 0)
+    var list: [SCDisplay] = [], problem: Error?
+    SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { content, error in
+        list = content?.displays ?? []; problem = error; got.signal()
+    }
+    got.wait()
+    if problem != nil || list.isEmpty {
+        print("untested live: the frame check can't capture the displays (\(problem?.localizedDescription ?? "no display")); this process needs Screen Recording, which the probe never asks for. --no-frames runs the rest.")
+        exit(3)
+    }
+    return list
+}()
 var opens = 0, identified = 0, strays = 0, focusChanges = 0, closes = 0, closeMismatches = 0, flashes = 0
+var framesAll = 0, framesShowing = 0, frameOpens = 0
 var seenAll: [Double] = []
 var failures: [String] = [], invalid: [String] = []
 setbuf(stdout, nil)
@@ -336,6 +483,8 @@ for app in apps {
         let done = DispatchSemaphore(value: 0)
         // Running copies of other names are never this app's; a pid that was running before the open is not new.
         let sampler = Sampler(app: app) { !before.contains($0) }
+        let watches = (displays ?? []).map { FrameWatch(display: $0, places: { sampler.places }) }
+        let recording = watches.allSatisfy { $0.start() }
         let t0 = Date()
         DispatchQueue.global().async {
             reply = agent(["open", app] + (app == "TextEdit" ? [note.path] : []))
@@ -356,6 +505,17 @@ for app in apps {
             if NSWorkspace.shared.frontmostApplication?.processIdentifier != front0 { frontChanged = true }
         }
         sampler.stop()
+        watches.forEach { $0.stop() }
+        // A loop, not a reduce over a tuple: the reduce took the type checker past its limit (a compile error).
+        var shot: (frames: Int, showing: Int, worst: Int) = (0, 0, 0)
+        for r in watches.map(\.result) { shot.frames += r.frames; shot.showing += r.showing; shot.worst = max(shot.worst, r.worst) }
+        if displays != nil {
+            if !recording { invalid.append("\(app) #\(round): a display gave no first frame, so its frames can't be judged") }
+            else { frameOpens += 1; framesAll += shot.frames; framesShowing += shot.showing }
+            if guardOn, shot.showing > 0 {
+                failures.append("\(app) #\(round): \(shot.showing) of \(shot.frames) captured frames show a window of it on Donovan's workspace (up to \(shot.worst) px changed)")
+            }
+        }
         seenAll.append(sampler.seenMs)
         if seenFails(sampler.seenMs, guardOn: guardOn, bar: seenBarMs) {
             flashes += 1
@@ -379,16 +539,20 @@ for app in apps {
             closeNote = "closed=\(closed.map(String.init) ?? "nil") present=\(present)"
             if closed == nil || closed! == present { closeMismatches += 1; failures.append("\(app) #\(round): close said \(closed.map(String.init) ?? "no answer"), window \(present ? "still" : "not") listed") }
         }
+        let frameNote = displays == nil ? "" : " captured=\(shot.frames) showing=\(shot.showing) worst_px=\(shot.worst)"
         let seenNote = String(format: "seen_ms=%.0f first_at=%@ frames=%@ samples=%d worst_gap_ms=%.0f (read %.0f)", sampler.seenMs,
                               sampler.firstMs.map { String(format: "%.0fms", $0) } ?? "-",
                               sampler.frames.isEmpty ? "-" : sampler.frames.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" }.joined(separator: ";"),
-                              sampler.samples, sampler.worstGapMs, sampler.worstReadMs)
+                              sampler.samples, sampler.worstGapMs, sampler.worstReadMs) + frameNote
         print("\(app) #\(round): \(secs)s window=\(wid.map(String.init) ?? "none") stray=\(off.count) front_changed=\(frontChanged) \(closeNote) \(seenNote)")
         for pid in fresh { quit(pid) }
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
     }
 }
 print("opens \(opens), identified \(identified), stray \(strays), focus changes \(focusChanges), close answers wrong \(closeMismatches) of \(closes), seen over \(Int(seenBarMs)) ms \(guardOn ? "\(flashes)" : "known, flag off") (worst \(Int(seenAll.max() ?? 0)) ms, total \(Int(seenAll.reduce(0, +))) ms)")
+if displays != nil {
+    print("frames: \(framesShowing) of \(framesAll) captured over \(frameOpens) opens show an agent window\(guardOn ? "" : " (known, flag off)")")
+}
 if failures.isEmpty && invalid.isEmpty && opens > 0 { print("agent-open-probe: pass"); exit(0) }
 for f in failures { print("FAIL \(f)") }
 for f in invalid { print("INVALID \(f)") }

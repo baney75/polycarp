@@ -57,8 +57,10 @@ A change is done when steps 1 to 3 pass on its branch and step 4 passes on `main
    on every run. The seen check (time a new window shows on Donovan's workspace) gates with the cover on, the
    default since 2026-11-17 (`agentOpenFlashGuard` unset, or `defaults write com.baney.polycarp agentOpenFlashGuard cover`
    in the app's own domain, where it keeps all its settings); with it turned off (`agentOpenFlashGuard off`) it prints
-   the times as "known, flag off" and fails nothing. A change to `OpenFlashGuard` or `OpenFlashWatch` runs it twice:
-   flag off, then on. The probe knows a cover by Polycarp's pid and window level 4.
+   the times as "known, flag off" and fails nothing. The frame check (frames of his displays, captured during each
+   open, in which a new window shows where it is listed) gates and prints the same way. It needs Screen Recording for
+   the process that runs the probe; without it the probe says "untested live" and exits 3 (`--no-frames` skips it).
+   A change to `OpenFlashGuard` or `OpenFlashWatch` runs it twice: flag off, then on. The probe knows a cover by Polycarp's pid and window level 4.
    For anything that decides what each display shows (`Workspaces.shown`, `displays`, `carry`,
    `noteMovedAcrossDisplays`): `swift scripts/displays-probe.swift` with two displays (Sidecar counts).
    For anything under `Sources/BaneySpacesCore/Sandbox/`: `swift scripts/sandbox-probe.swift` (headless, no window; needs
