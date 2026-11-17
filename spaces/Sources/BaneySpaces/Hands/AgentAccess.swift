@@ -87,10 +87,12 @@ final class AgentAccess {
 final class ViewControlSetting {
     static let shared = ViewControlSetting()
     private let lock = NSLock()
-    private var state = ViewControlSwitch()
+    private var state: ViewControlSwitch
 
     private init() {
-        if ViewControlSwitch.forgetSaved(in: .standard) {
+        let launch = ViewControlSwitch.atLaunch(.standard)
+        state = launch.state
+        if launch.forgot {
             Trace.log("agent view control at launch: off (a saved value was removed; the switch is never stored)")
         }
     }

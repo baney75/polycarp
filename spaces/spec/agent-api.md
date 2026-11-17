@@ -74,8 +74,9 @@ on the agent workspace while no display shows it. A command that needs view cont
    default). The switch is never stored: it lives in the running app, is off at every launch, and turns on only when
    Donovan confirms it on Polycarp's own sheet with a real click or key, checked as a lend's is (a click posted by a
    program or an accessibility press is refused). So a `defaults write`, an edit of the settings file or a copied
-   value leaves view control off: nothing on disk is read for it. Hands refuse Polycarp's own windows in every mode, so
-   no agent clicks the switch either.
+   value leaves view control off: nothing on disk is read for it, and a value found under the old key is removed at
+   launch. A Keychain item planted with a matching seal, which an earlier draft of this rule trusted, is never read
+   either. Hands refuse Polycarp's own windows in every mode, so no agent clicks the switch either.
 
 Otherwise the command fails with `permission_denied`, `retry: never`, before anything moves, and the suggestion says
 which of the three is missing. Taking a window onto the agent workspace from a workspace a display shows is never done,
@@ -187,6 +188,9 @@ Measured by `scripts/agent-api-probe.swift` against the running app on an otherw
 - `scripts/agent-api-probe.swift` (not written yet): the same against the running app, plus the timing above and an MCP
   client that calls `tools/list`, moves a test window on the agent workspace and reads it back. It acts on the agent
   workspace only and runs only when the Mac has been idle 10 minutes; otherwise it prints "untested live" and exits 3.
+- View control, by hand on macOS: `defaults write com.baney.polycarp agentViewControl -bool true` and a planted
+  Keychain item with its seal both leave the switch off after a relaunch, and `switch` still answers
+  `permission_denied`; only a click on Turn On in Polycarp's sheet turns it on, until Polycarp quits.
 
 ## Example
 

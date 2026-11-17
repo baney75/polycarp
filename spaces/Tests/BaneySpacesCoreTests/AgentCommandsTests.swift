@@ -1,5 +1,6 @@
 import BaneySpacesCore
 import CoreGraphics
+import CryptoKit
 import XCTest
 
 /// The agent API's commands (spec/agent-api.md): who may change what Donovan sees, the arguments, and the results'
@@ -150,6 +151,82 @@ final class AgentCommandsTests: XCTestCase {
             XCTAssertFalse(ViewControlSwitch().on, "\(value)")
         }
         XCTAssertFalse(ViewControlSwitch.forgetSaved(in: d), "nothing saved, nothing to remove")
+    }
+
+    /// Review F2, round 2: what the sealed design (3a4b0e34) trusted no longer turns view control on. Plant a key, as an
+    /// agent could in the Keychain item that design read, and the seal that key makes under the old defaults key: the
+    /// plant verifies by the old rule, yet the switch reads off at launch and the value is removed unread.
+    func testAPlantedKeyAndMatchingSealLeaveViewControlOffAtLaunch() throws {
+        let suite = "polycarp-view-control-seal-\(UUID().uuidString)"
+        let d = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+        let planted = SymmetricKey(size: .bits256)
+        let sealed = Data("com.baney.polycarp agentViewControl on".utf8)
+        let seal = Data(HMAC<SHA256>.authenticationCode(for: sealed, using: planted)).base64EncodedString()
+        XCTAssertTrue(HMAC<SHA256>.isValidAuthenticationCode(try XCTUnwrap(Data(base64Encoded: seal)), authenticating: sealed, using: planted),
+                      "the plant is a seal the sealed design accepted")
+        d.set(seal, forKey: ViewControl.legacyDefaultsKey)
+
+        let launch = ViewControlSwitch.atLaunch(d)
+        XCTAssertFalse(launch.state.on, "a valid seal under a planted key reads off")
+        XCTAssertTrue(launch.forgot)
+        XCTAssertNil(d.object(forKey: ViewControl.legacyDefaultsKey), "removed unread")
+        XCTAssertFalse(ViewControlSwitch.atLaunch(d).state.on, "and off on every launch after")
+
+        // Nothing reads a Keychain item for the switch, so a planted one is never consulted.
+        let sources = try FileManager.default.subpathsOfDirectory(atPath: Repo.root.appendingPathComponent("Sources").path).filter { $0.hasSuffix(".swift") }
+        for path in sources {
+            let code = try Repo.code("Sources/" + path)
+            XCTAssertFalse(code.contains("com.baney.polycarp.agentViewControl"), path)
+            XCTAssertFalse(code.contains("ViewControlKey"), path)
+        }
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Hands/AgentAccess.swift").contains("ViewControlSwitch.atLaunch(.standard)"), "the app starts from atLaunch")
+    }
+
+    /// Review F2, round 2: an event that isn't a hardware click can't confirm the view control sheet. The sheet counts an
+    /// answer only when `LendConsent.notByHand` passes it, which asks the lend check's two questions
+    /// (`UserEventSource.isGenuine`, `ConsentClick.valid`); every synthetic answer fails one, so the switch stays off.
+    func testASyntheticEventCannotConfirmTheViewControlSheet() throws {
+        struct Answer {
+            var pid: Int64 = 0
+            var state: Int64 = UserEventSource.hidSystemState
+            var age: TimeInterval = 0.1
+            var kind: ConsentClick.Kind = .mouseUp
+            var time: Double = 12
+            var inside = true
+            var activation = false
+        }
+        func byHand(_ a: Answer) -> Bool {   // what notByHand decides, for a button enabled at 11
+            UserEventSource.isGenuine(sourcePID: a.pid, sourceState: a.state, age: a.age)
+                && ConsentClick.valid(kind: a.kind, eventTime: a.time, buttonEnabledAt: 11, insideButton: a.inside, keyIsActivation: a.activation)
+        }
+        let synthetic: [(String, Answer)] = [
+            ("posted with CGEventPost by an agent's process", Answer(pid: 4242)),
+            ("from a private event source", Answer(state: -1)),
+            ("from the combined session source", Answer(state: 0)),
+            ("an old click replayed", Answer(age: 5)),
+            ("stamped in the future", Answer(age: -1)),
+            ("an Accessibility press, which carries no click", Answer(kind: .other)),
+            ("before the button was enabled", Answer(time: 10.5)),
+            ("somewhere else on the sheet", Answer(inside: false)),
+            ("a key that doesn't press the button", Answer(kind: .keyDown)),
+        ]
+        for (why, answer) in synthetic {
+            var s = ViewControlSwitch()
+            XCTAssertFalse(s.set(true) { byHand(answer) }, why)
+            XCTAssertFalse(s.on, why)
+        }
+        var s = ViewControlSwitch()
+        XCTAssertTrue(s.set(true) { byHand(Answer()) }, "a hardware click on Turn On")
+        XCTAssertTrue(s.on)
+
+        // The view control sheet goes through that check, the same one a lend's answer does.
+        let sheet = try Repo.code("Sources/BaneySpaces/LendConsent.swift")
+        XCTAssertTrue(sheet.contains("static func askViewControl() -> Bool {\n        confirm("))
+        XCTAssertTrue(sheet.contains("if let why = LendConsent.notByHand(alert: alert, button: button, enabledAt: enabledAt) {"))
+        XCTAssertTrue(sheet.contains("UserEventSource.isGenuine(sourcePID: cg.getIntegerValueField(.eventSourceUnixProcessID),"))
+        XCTAssertTrue(sheet.contains("ConsentClick.valid(kind: kind, eventTime: event.timestamp, buttonEnabledAt: enabledAt, insideButton: inside, keyIsActivation: activation)"))
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Hands/AgentAccess.swift").contains("next.set(new, confirm: AccessConsent.askViewControl)"))
     }
 
     /// Review F2: on only after the sheet is confirmed; a declined sheet leaves it off; off never asks.
