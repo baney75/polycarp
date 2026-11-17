@@ -107,7 +107,16 @@ final class KeymapTests: XCTestCase {
         let names = try XCTUnwrap(json["key_names"] as? [String])
         XCTAssertEqual(Set(names), Set(KeyNames.code.keys))
         let spellings = try XCTUnwrap((json["macos_actions"] as? [String: Any])?.keys)
-        for s in spellings { XCTAssertNotNil(KeyAction.parse(s.replacingOccurrences(of: "{n}", with: "1")), s) }
+        let placements = try XCTUnwrap(json["window_placements"] as? [String])
+        XCTAssertEqual(placements, Placement.allCases.map(\.rawValue))
+        var named = Set<String>()
+        for s in spellings {
+            let each = s.contains("{placement}") ? placements.map { s.replacingOccurrences(of: "{placement}", with: $0) }
+                : s.contains("{direction}") ? Direction.allCases.map { s.replacingOccurrences(of: "{direction}", with: $0.rawValue) }
+                : [s.replacingOccurrences(of: "{n}", with: "1")]
+            for e in each { XCTAssertNotNil(KeyAction.parse(e), e); named.insert(e) }
+        }
+        for a in WindowAction.all { XCTAssertTrue(named.contains(a.spelling), "\(a.spelling) is not in spec/keys.json") }
         let recovery = try XCTUnwrap((json["platforms"] as? [String: Any]).flatMap { $0["macos"] as? [String: Any] }?["recovery"] as? String)
         XCTAssertEqual(try Chord.parse(recovery, mod: cmd), .recovery)
     }

@@ -695,6 +695,20 @@ final class WorkspaceDock {
         if on { show(on: NSScreen.main ?? NSScreen.screens[0]) } else { hide() }
     }
 
+    /// The edge this dock keeps on its screen while a script keeps it up (`dock/show`), for window actions. Nil while it
+    /// comes and goes: then it covers windows only while the pointer is on it, so it keeps nothing.
+    var keptEdge: (screen: NSScreen, edge: DockEdge, thickness: CGFloat)? {
+        guard pinned, isShown, let s = shownOn, let f = panel?.frame else { return nil }
+        let v = s.visibleFrame, edge = WorkspaceDock.edge
+        let t: CGFloat = switch edge {
+        case .bottom: f.maxY - v.minY
+        case .top: v.maxY - f.minY
+        case .left: f.maxX - v.minX
+        case .right: v.maxX - f.minX
+        }
+        return (s, edge, max(0, t.rounded(.up)))
+    }
+
     private func show(on screen: NSScreen, retried: Bool = false) {
         let clock = OpenClock("dock")
         defer { clock.shown() }

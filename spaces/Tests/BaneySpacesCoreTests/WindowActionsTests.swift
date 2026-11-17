@@ -107,11 +107,24 @@ final class WindowActionsTests: XCTestCase {
         XCTAssertNil(WindowLayout.display(after: "main", in: [d[0]]))
     }
 
-    func testEveryWindowActionSpellingReadsBack() {
+    func testEveryWindowActionHasASpellingAKeyAndATitle() {
         for a in WindowAction.all {
             XCTAssertEqual(WindowAction.parse(a.spelling), a)
+            XCTAssertEqual(KeyAction.parse(a.spelling), .window(a))
             XCTAssertFalse(a.title.isEmpty)
+            XCTAssertFalse(Keymap.defaults(mod: [.cmd]).chords(for: .window(a)).isEmpty, "\(a.spelling) has a default chord")
         }
-        XCTAssertEqual(Set(WindowAction.all.map(\.spelling)).count, WindowAction.all.count)
+    }
+
+    /// The defaults stay off macOS's own keys, the workspace keys under every modifier Settings offers, and each other.
+    func testTheDefaultWindowChordsCollideWithNothing() {
+        let system: Set<Chord> = [Chord([.ctrl, .alt], "space"), Chord([.ctrl], "left"), Chord([.ctrl], "right"), Chord([.ctrl], "up"),
+                                  Chord([.ctrl], "down"), Chord([.ctrl, .cmd], "f"), Chord([.ctrl, .cmd], "q"), Chord([.cmd, .alt], "escape")]
+        for mod: Set<KeyModifier> in [[.cmd], [.ctrl], [.alt], [.ctrl, .alt]] {
+            let k = Keymap.defaults(mod: mod)
+            XCTAssertEqual(Set(k.bindings.map(\.chord)).count, k.bindings.count, "\(mod): a chord bound twice")
+            for b in k.bindings { XCTAssertFalse(system.contains(b.chord), "\(b.chord) is macOS's") }
+            XCTAssertFalse(k.bindings.contains { $0.chord == .recovery })
+        }
     }
 }
