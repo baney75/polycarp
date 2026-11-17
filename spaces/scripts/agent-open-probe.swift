@@ -506,7 +506,9 @@ for app in apps {
         }
         sampler.stop()
         watches.forEach { $0.stop() }
-        let shot = watches.map(\.result).reduce((frames: 0, showing: 0, worst: 0)) { ($0.frames + $1.frames, $0.showing + $1.showing, max($0.worst, $1.worst)) }
+        // A loop, not a reduce over a tuple: the reduce took the type checker past its limit (a compile error).
+        var shot: (frames: Int, showing: Int, worst: Int) = (0, 0, 0)
+        for r in watches.map(\.result) { shot.frames += r.frames; shot.showing += r.showing; shot.worst = max(shot.worst, r.worst) }
         if displays != nil {
             if !recording { invalid.append("\(app) #\(round): a display gave no first frame, so its frames can't be judged") }
             else { frameOpens += 1; framesAll += shot.frames; framesShowing += shot.showing }
