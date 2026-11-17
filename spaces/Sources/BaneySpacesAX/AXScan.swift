@@ -39,8 +39,9 @@ public enum AXScan {
     /// costs a background thread, never a frame. Measured on 11-17 at a load of 44 to 56 (1,380 reads, every app with a
     /// window, 1 to 20 s apart): 82% of reads were done within 0.25 s, 96% within 2 s, 97.7% within 3 s. Under 0.25 s, the
     /// old main-thread deadline, about one read in five ran out and benched an app that was only slow for 5 s with its
-    /// windows unplaced (120 misses a day). Past 2 s an app is as good as hung, and the bench takes over.
-    public static let appTimeout: Float = 2.0
+    /// windows unplaced (120 misses a day). 3 s keeps an app that answers 2 s late (the organizers study's slow app,
+    /// `slow-app-probe.swift`) answered with room to spare; past that an app is as good as hung, and the bench takes over.
+    public static let appTimeout: Float = 3.0
     /// The old deadline, while the scan still waited for every app on the main thread (`scan-bench --wait-for-all`).
     public static let mainThreadTimeout: Float = 0.25
 

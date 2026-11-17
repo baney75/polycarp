@@ -22,6 +22,31 @@ import BaneySpacesCore
 
 let args = CommandLine.arguments
 
+// A test app for `slow-app-probe.swift`: a regular app with one small window that answers Accessibility late
+// (`--be-app slow`: its main thread is busy 2 s, then free 50 ms, over and over) or never (`--be-app hung`). It prints
+// "window <number>" once the window is up, takes no focus, and quits when the process that started it is gone.
+if let i = args.firstIndex(of: "--be-app"), i + 1 < args.count {
+    let hung = args[i + 1] == "hung"
+    let app = NSApplication.shared
+    app.setActivationPolicy(.regular)
+    let parent = getppid()
+    Thread.detachNewThread {
+        while getppid() == parent { Thread.sleep(forTimeInterval: 0.5) }
+        exit(0)
+    }
+    let frame = NSRect(x: hung ? 60 : 400, y: 60, width: 300, height: 160)
+    let window = NSWindow(contentRect: frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+    window.title = hung ? "scan probe: never answers" : "scan probe: answers 2 s late"
+    window.isReleasedWhenClosed = false
+    DispatchQueue.main.async {
+        window.orderFrontRegardless()
+        print("window \(window.windowNumber)"); fflush(stdout)
+        if hung { while true { Thread.sleep(forTimeInterval: 60) } }
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in Thread.sleep(forTimeInterval: 2) }
+    }
+    app.run()
+}
+
 if args.contains("--be-hung") {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
