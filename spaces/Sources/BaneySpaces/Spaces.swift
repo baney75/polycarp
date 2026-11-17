@@ -2325,3 +2325,29 @@ struct OpenClock {
     }
 }
 
+
+// MARK: Window actions (K2): kept at the end of the file and apart, so other work on Spaces doesn't meet it.
+
+extension Spaces {
+    /// For a window action: the window in front and every window in sight (its workspace shown, not parked, minimized
+    /// or hidden), from a fresh look. Waits for a switch under way to finish.
+    func windowsInSight(_ then: @escaping (_ front: Window?, _ inSight: [Window]) -> Void) {
+        guard active else { return }
+        if switching { return enqueue { [weak self] in self?.windowsInSight(then) } }
+        refresh()
+        let inSight = model.visibleWindows.compactMap { windows[$0] }.filter {
+            saved.frames[$0.id] == nil && !$0.isMinimized && NSRunningApplication(processIdentifier: $0.pid)?.isHidden != true
+        }
+        then(Windows.focused(in: Array(windows.values)), inSight)
+    }
+
+    /// A window action put window `id` on display `d`. It joins the workspace that display shows, as a drag there
+    /// would, and a fill record for it goes: the record must not outlive the fill (regression ledger, 11-12).
+    func windowActionMoved(_ id: WindowID, to d: DisplayKey) {
+        if filled.removeValue(forKey: id) != nil { saveFilled() }
+        seenOn[id] = d
+        guard model.moved(id, to: d) else { return }
+        Trace.log("window \(id) moved by a window action to the display showing \(model.shown[d] ?? 0)")
+        persist()
+    }
+}

@@ -104,6 +104,11 @@ mod = "cmd"                        # cmd | ctrl | alt (macOS), super (Linux), wi
   names does what the file says, and every default keeps its chord unless the file reuses it or sets it to `none`. A
   file with any problem changes nothing: the keys in force stay (the defaults at launch), and a short notice and the
   trace log name the line, the path and the reason. A file that changes is applied within about a second.
+- **Window actions on macOS.** Default chords, all on ⌃⌥ so none is macOS's or a workspace key under any `mod`:
+  ⌃⌥ ←→↑↓ halves (again: 2/3, then 1/3); ⌃⌥ U I J K quarters; ⌃⌥ D F G first, center and last third; ⌃⌥ E T
+  first and last two thirds; ⌃⌥C center; ⌃⌥↩ maximize; ⌃⌥⌫ restore; ⌃⌥= and ⌃⌥- grow and shrink; ⌃⌥⇧ arrows
+  focus that way; ⌃⌥⇧⌘ arrows swap that way; ⌃⌥⌘ → and ← next and previous display. A window moves at once, never
+  animated, and lands inside the visible frame less Polycarp's dock while a script keeps it up.
 - **Modes.** A mode is a named set of bindings, like a Hyprland submap. `escape` leaves it unless
   it's rebound.
 - **Conflicts with the system.** A chord the OS or the compositor already owns is reported with

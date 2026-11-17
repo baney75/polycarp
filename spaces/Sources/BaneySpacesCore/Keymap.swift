@@ -95,8 +95,10 @@ public enum KeyNames {
 /// What a chord does. Spelled in the file as a short command (`switch 3`, `launcher`).
 public enum KeyAction: Hashable, Sendable {
     case switchTo(Int), move(Int), launcher, search, agentFinished, overview, none
+    case window(WindowAction)
 
     public static func parse(_ text: String) -> KeyAction? {
+        if let a = WindowAction.parse(text) { return .window(a) }
         let w = text.split(separator: " ").map(String.init)
         switch (w.first, w.count) {
         case ("switch", 2): return Int(w[1]).flatMap { (1...9).contains($0) ? .switchTo($0) : nil }
@@ -119,6 +121,7 @@ public enum KeyAction: Hashable, Sendable {
         case .agentFinished: "agent finished"
         case .overview: "overview"
         case .none: "none"
+        case let .window(a): a.spelling
         }
     }
 
@@ -132,6 +135,7 @@ public enum KeyAction: Hashable, Sendable {
         case .agentFinished: "Go to the agent that finished"
         case .overview: "Show the overview"
         case .none: "Nothing"
+        case let .window(a): a.title
         }
     }
 
@@ -176,6 +180,19 @@ public struct Keymap: Equatable, Sendable {
         b.append(.init(chord: Chord([.cmd], "space"), action: .launcher))
         b.append(.init(chord: Chord([.ctrl, .cmd], "k"), action: .search))
         b.append(.init(chord: Chord([.ctrl, .cmd], "u"), action: .agentFinished))
+        // Window actions (K2): Rectangle's ⌃⌥ keys. None is macOS's or another Polycarp key under any modifier Settings offers.
+        let ca: Set<KeyModifier> = [.ctrl, .alt]
+        let window: [(Set<KeyModifier>, String, WindowAction)] = [
+            (ca, "left", .place(.leftHalf)), (ca, "right", .place(.rightHalf)), (ca, "up", .place(.topHalf)),
+            (ca, "down", .place(.bottomHalf)), (ca, "u", .place(.topLeft)), (ca, "i", .place(.topRight)),
+            (ca, "j", .place(.bottomLeft)), (ca, "k", .place(.bottomRight)), (ca, "d", .place(.firstThird)),
+            (ca, "f", .place(.centerThird)), (ca, "g", .place(.lastThird)), (ca, "e", .place(.firstTwoThirds)),
+            (ca, "t", .place(.lastTwoThirds)), (ca, "c", .center), (ca, "return", .maximize), (ca, "delete", .restore),
+            (ca, "equal", .grow), (ca, "minus", .shrink),
+            (ca.union([.cmd]), "right", .nextDisplay), (ca.union([.cmd]), "left", .previousDisplay),
+        ] + Direction.allCases.map { (ca.union([.shift]), $0.rawValue, .focus($0)) }
+            + Direction.allCases.map { (ca.union([.shift, .cmd]), $0.rawValue, .swap($0)) }
+        for (mods, key, a) in window { b.append(.init(chord: Chord(mods, key), action: .window(a))) }
         return Keymap(b)
     }
 

@@ -42,8 +42,19 @@
     "search": "Open the launcher to search, from any app.",
     "agent finished": "Go to the agent that finished.",
     "overview": "Show the overview.",
-    "none": "Unbind the chord."
+    "none": "Unbind the chord.",
+    "window {placement}": "Put the front window at a placement from window_placements, inside the visible frame less Polycarp's dock while it stays up. Pressed again, a half or quarter goes 2/3 then 1/3 wide, and a first or last third steps along.",
+    "window center": "Center the front window, its size kept.",
+    "window maximize": "Fill the visible frame, less Polycarp's dock while it stays up. Not macOS full screen.",
+    "window restore": "Put the window back where it was before the first window action.",
+    "window grow": "Move every edge out 30 points, inside the visible frame.",
+    "window shrink": "Move every edge in 30 points, to no less than 320 by 200.",
+    "window next-display": "Send the window to the display to the right (wrapping), keeping its placement.",
+    "window previous-display": "Send the window to the display to the left (wrapping), keeping its placement.",
+    "focus {direction}": "Focus the nearest window that way: left, right, up or down.",
+    "swap {direction}": "Swap places with the nearest window that way."
   },
+  "window_placements": ["left-half", "right-half", "top-half", "bottom-half", "top-left", "top-right", "bottom-left", "bottom-right", "first-third", "center-third", "last-third", "first-two-thirds", "last-two-thirds"],
   "platforms": {
     "macos": {
       "switch": "cmd+{n}",

@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let session = SessionController()
     private lazy var sandbox = AppSandbox(spaces: { [weak self] in self?.spaces })
     private let hotkeys = Hotkeys()
+    /// Halves, thirds, focus and swap by direction and the rest (K2), kept clear of the dock while a script holds it up.
+    private lazy var windowActions = WindowActionsController(spaces: spaces) { [weak self] in self?.dock.keptEdge }
     /// Every chord and its action, from `spaces.toml` over the defaults.
     private lazy var keys: KeymapController = {
         let k = KeymapController()
@@ -884,6 +886,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .search: session.onSearch()
         case .agentFinished: if session.started { session.jumpToFinished() }
         case .overview: viewer.open()
+        case let .window(w): windowActions.perform(w)
         case .none: break
         }
     }
@@ -1332,6 +1335,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case "lessmore" where checks: run { _ in dock.closeMoreForCheck() }
             default: NSLog("Polycarp: dock command refused or unknown %@", text)
             }
+        // `polycarp://window/left-half`, `polycarp://focus/left`, `polycarp://swap/up`, and `?window=ID` for a check.
+        // They move windows, so only for checks (`dockURLCommands`), like `dock/show`: a web page can't.
+        case "window", "focus", "swap":
+            let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first { $0.name == "window" }?.value.flatMap { WindowID($0) }
+            guard UserDefaults.standard.bool(forKey: "dockURLCommands"),
+                  let a = WindowAction.parse("\(url.host ?? "") \(url.lastPathComponent)") else {
+                NSLog("Polycarp: window command refused or unknown %@", text)
+                return
+            }
+            run { _ in windowActions.perform(a, window: id) }
         default: NSLog("Polycarp: unknown command %@", text)
         }
     }
