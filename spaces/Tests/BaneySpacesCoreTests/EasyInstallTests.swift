@@ -223,7 +223,7 @@ final class MoveToApplicationsTests: XCTestCase {
         // Link addresses aren't read by a person; only the words are.
         let words = section.replacingOccurrences(of: "\\]\\([^)]*\\)", with: "]", options: .regularExpression)
         XCTAssertTrue(words.contains("[Download Polycarp]"), words)
-        XCTAssertTrue(section.contains("(https://github.com/baney75/polycarp/releases/download/preview/Polycarp.dmg)"), "the link is the file itself, so nobody chooses one")
+        XCTAssertTrue(section.contains("(https://github.com/baney75/polycarp/releases/download/nightly/Polycarp.dmg)"), "the link is the file itself, so nobody chooses one")
         XCTAssertTrue(words.contains("look for a chip whose name starts with Apple"), "a way to check, in plain words")
         XCTAssertTrue(words.contains("open the file, and drag"), words)
         XCTAssertTrue(words.contains("drag\nPolycarp onto Applications") || words.contains("drag Polycarp onto Applications"), words)

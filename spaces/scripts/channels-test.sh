@@ -221,6 +221,25 @@ done
 if grep -nE -- '--soak|draft=false|--draft=false|make_latest=true|--latest( |$)' ../.github/workflows/*.yml \
   | grep -vE '^[^:]+:[0-9]+: *(#|echo )'; then bad "a workflow publishes a release by itself"; fi
 
+# The root install.sh downloads from stable, else nightly, else preview (the old channel, which keeps serving the
+# bridge build), or from POLYCARP_CHANNEL only; the checksum comes from the same release.
+rel="$tmp/releases"
+pick() {
+  env -u POLYCARP_CHANNEL "$@" POLYCARP_INSTALL_FUNCTIONS_ONLY=1 RELEASES="file://$rel/download" LOG=/dev/null \
+    bash -c 'source ../install.sh && fetch_app "$1" && cat "$1"' _ "$tmp/got.zip" 2>/dev/null | tr '\n' ' '
+}
+put() { mkdir -p "$rel/$1"; printf '%s' "$2" > "$rel/$1/Polycarp.zip"; }
+expect "install: nothing published" "$(pick)" ""
+put download/preview preview-zip
+expect "install: preview only" "$(pick)" "preview file://$rel/download/preview preview-zip"
+put download/nightly nightly-zip
+expect "install: nightly over preview" "$(pick)" "nightly file://$rel/download/nightly nightly-zip"
+put latest/download stable-zip
+expect "install: stable first" "$(pick)" "stable file://$rel/latest/download stable-zip"
+expect "install: POLYCARP_CHANNEL=nightly" "$(pick POLYCARP_CHANNEL=nightly)" "nightly file://$rel/download/nightly nightly-zip"
+expect "install: POLYCARP_CHANNEL=dev, none published" "$(pick POLYCARP_CHANNEL=dev)" ""
+grep -qF 'want=$(curl -fsSL "$FROM/Polycarp.zip.sha256"' ../install.sh || bad "install.sh takes the checksum from another release than the zip"
+grep -qF 'env -u POLYCARP_CHANNEL scripts/bundle.sh' ../install.sh || bad "a source build in install.sh takes POLYCARP_CHANNEL as its build channel"
 
 [ $status = 0 ] && echo "channels-test: pass"
 exit $status

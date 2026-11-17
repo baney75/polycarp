@@ -4,7 +4,8 @@
 # Mac: downloads the signed app, which holds workspaces and the `polycarp` command, and opens it. No developer
 # tools needed. POLYCARP_FROM_SOURCE=1 builds it on this Mac instead.
 # It asks macOS for nothing itself: Polycarp's welcome window walks you through each permission.
-# Run it again any time to update. POLYCARP_REF picks a branch or tag.
+# Run it again any time to update. POLYCARP_REF picks a branch or tag. The download is the stable release, or the
+# newest Nightly build until there is one; POLYCARP_CHANNEL=stable|nightly|dev asks for one channel only.
 # POLYCARP_SOURCE=/path/to/checkout builds that checkout instead of downloading.
 # Linux: the Linux and Omarchy desktop is retired. Run there, this prints one line saying so and installs nothing.
 # Polycarp has no parts to choose: workspaces always run. POLYCARP_FEATURES is read only for the parts that left. One that
@@ -25,9 +26,8 @@ main() {
   moved_notes "${POLYCARP_FEATURES:-}" || return 0
   local REPO="https://github.com/baney75/polycarp.git"
   local REF="${POLYCARP_REF:-main}"
-  # Where the ready-made app comes from, and the signature every release has to carry.
+  # Where the ready-made app comes from (fetch_app), and the signature every release has to carry.
   local RELEASES="${POLYCARP_RELEASES:-https://github.com/baney75/polycarp/releases/download}"
-  local CHANNEL="${POLYCARP_CHANNEL:-preview}"
   local REQUIREMENT='identifier "com.baney.polycarp" and certificate leaf = H"d1cfbd7446f84f6c625b9db83c5bf96da33b157e"'
   local bold dim reset green
   if [ -t 1 ]; then
@@ -65,14 +65,22 @@ main() {
   # 1. Get the app. Nothing on this Mac changes until it is here and checked.
   local NEW_APP="" from_source="${POLYCARP_FROM_SOURCE:-}" ZIP="${POLYCARP_ZIP:-}"
   [ -z "${POLYCARP_SOURCE:-}" ] || from_source=1
-  # A branch or tag asked for by name is built from source: the ready-made download is the preview channel, not that ref.
+  # A branch or tag asked for by name is built from source: the ready-made download is a channel's build, not that ref.
   [ -z "${POLYCARP_REF:-}" ] || from_source=1
   # The ready-made app is for Apple silicon for now.
   [ "$(uname -m)" = arm64 ] || from_source=1
+  case "${POLYCARP_CHANNEL:-}" in ""|stable|nightly|dev|preview) ;; *) fail "POLYCARP_CHANNEL is stable, nightly or dev." ;; esac
+  local FROM="" got
   if [ "$from_source" != 1 ]; then
     if [ -z "$ZIP" ]; then
       ZIP="$WORK/Polycarp.zip"
-      if ! curl -fsSL -o "$ZIP" "$RELEASES/$CHANNEL/Polycarp.zip" </dev/null 2>>"$LOG"; then
+      if got=$(fetch_app "$ZIP"); then
+        FROM=${got#* }
+        case ${got%% *} in
+          nightly) say "  ${dim}There's no stable release yet, so this installs the newest Nightly build.${reset}" ;;
+          preview) say "  ${dim}There's no stable or Nightly build yet, so this installs the Preview build.${reset}" ;;
+        esac
+      else
         say "  ${dim}No ready-made app to download right now, so this builds it here.${reset}"
         ZIP=""; from_source=1
       fi
@@ -81,7 +89,8 @@ main() {
   if [ "$from_source" != 1 ]; then
     if [ -z "${POLYCARP_ZIP:-}" ]; then
       local want
-      want=$(curl -fsSL "$RELEASES/$CHANNEL/Polycarp.zip.sha256" </dev/null 2>>"$LOG" | awk '{print $1}') \
+      # The checksum comes from the release the zip came from.
+      want=$(curl -fsSL "$FROM/Polycarp.zip.sha256" </dev/null 2>>"$LOG" | awk '{print $1}') \
         || fail "Couldn't fetch the download's checksum. Nothing was changed; try again."
       [ "$want" = "$(shasum -a 256 "$ZIP" | awk '{print $1}')" ] \
         || fail "The download doesn't match its checksum. Nothing was changed; try again."
@@ -114,7 +123,8 @@ main() {
     if [ "$(uname -m)" = arm64 ]; then export BANEYSPACES_ARM64_ONLY=1; fi
     cd "$SRC/spaces"
     step "Building the hands engine" scripts/build-engine.sh
-    step "Building Polycarp (a few minutes the first time)" scripts/bundle.sh
+    # POLYCARP_CHANNEL above picks a download; a build here is a local build (bundle.sh), whatever it says.
+    step "Building Polycarp (a few minutes the first time)" env -u POLYCARP_CHANNEL scripts/bundle.sh
     NEW_APP="$PWD/build/Polycarp.app"
   fi
 
@@ -211,6 +221,25 @@ moved_notes() {
 connector_notice() {
   { grep -E '^Your remote connector ' "$1" 2>/dev/null || true; } | while IFS= read -r line; do printf '  %s\n' "$line"; done
   return 0
+}
+
+# fetch_app <zip>: downloads the ready-made app to <zip> from the first channel that has one, and prints
+# "<channel> <release folder>" so the checksum comes from the same release. POLYCARP_CHANNEL asks for one channel;
+# otherwise stable, then nightly, then preview (docs/releases.md). Preview is the old channel: it keeps serving the
+# bridge build until every install has moved to nightly. Fails when no channel has the app.
+fetch_app() {
+  local zip=$1 c url
+  for c in ${POLYCARP_CHANNEL:-stable nightly preview}; do
+    case $c in
+      stable) url="${RELEASES%/download}/latest/download" ;;
+      *) url="$RELEASES/$c" ;;
+    esac
+    if curl -fsSL -o "$zip" "$url/Polycarp.zip" </dev/null 2>>"$LOG"; then
+      printf '%s %s\n' "$c" "$url"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # True when a comma- or space-separated list of parts ($2) names the part $1.
