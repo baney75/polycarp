@@ -17,6 +17,8 @@ usage: \(me) <command>
   send <id | words> <text>    type text into a Ghostty terminal, as if pasted
   notify [message]            flag the terminal this runs in as needing you
   state                       the session engine's live state as JSON
+  query [windows|workspaces|displays|focused|layout|theme|state] [--json]
+                              the window manager's state, as agents see it (spec/agent-api.md)
   agent status|on [N]|off     the agent workspace: agents drive apps there while you work here
   agent open <app> [file…]    open an app (or files in it) there, without switching you
                               (Full Access: "System Settings" x-apple.systempreferences:<pane> opens that pane)
@@ -168,6 +170,18 @@ case "notify":
                         cwd: FileManager.default.currentDirectoryPath, tty: tty, app: launchingApp, state: .waiting,
                         message: rest.joined(separator: " "), at: Date().timeIntervalSince1970)
     _ = call(Wire.Request(op: .notify, text: rest.joined(separator: " "), event: ev))
+
+case "query":
+    // The agent API's read surface (spec/agent-api.md): a short table, or with --json the envelope.
+    let what = rest.first { !$0.hasPrefix("-") } ?? AgentAPI.Query.state.rawValue
+    guard let q = AgentAPI.Query(rawValue: what) else {
+        fail("usage: \(me) query [\(AgentAPI.Query.allCases.map(\.rawValue).joined(separator: "|"))] [--json]", code: 2)
+    }
+    let env = HandsCLI.send(HandsRequest(verb: "query", args: ["what": .string(q.rawValue)], session: HandsCLI.defaultSession()), timeout: 10)
+    if rest.contains("--json") { out(env.line) }
+    else if env.ok, let data = env.data { out(AgentAPI.text(q, data)) }
+    else { fail(env.error.map { "\($0.message) (\($0.suggestion))" } ?? "failed") }
+    exit(env.ok ? 0 : 1)
 
 case "state":
     guard let d = FileManager.default.contents(atPath: Wire.statePath) else { fail("no state yet: is Polycarp running?") }
