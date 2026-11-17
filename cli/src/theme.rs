@@ -79,7 +79,8 @@ Every command takes --json and then prints the envelope {ok, data} or {ok:false,
 Exit codes: 0 ok, 1 refused or invalid, 2 usage. Agents: `polycarp mcp` serves the same
 commands as MCP tools, and `polycarp theme schema` lists every field.
 
-Built-in themes: polycarp (default), still-water, evening, parchment, blocks, calm.
+Built-in themes: polycarp (default), still-water, evening, parchment, blocks, calm, gruvbox,
+catppuccin, everforest.
 Your own themes live in <config>/themes/<name>.toml. The config folder is
 $POLYCARP_CONFIG_DIR if set (an absolute path), else the folder `theme folder --pin` recorded,
 else $XDG_CONFIG_HOME/polycarp (default ~/.config/polycarp), or %APPDATA%\\Polycarp on Windows.
@@ -2637,7 +2638,17 @@ pub(crate) fn op_import(c: &Ctx, source: &str, name: Option<&str>) -> Res {
             Vec::new(),
         )
     };
-    let name = name.map_or_else(|| import::slug(&scheme), str::to_string);
+    // Omarchy ships folders named after schemes Polycarp has built in, such as catppuccin.
+    let (name, renamed) = match name {
+        Some(n) => (n.to_string(), None),
+        None => {
+            let n = import::slug(&scheme);
+            match BUILTINS.iter().any(|(b, _)| *b == n) {
+                true => (format!("{n}-imported"), Some(n)),
+                false => (n, None),
+            }
+        }
+    };
     let from = if source == "-" {
         "standard input"
     } else {
@@ -2655,6 +2666,11 @@ pub(crate) fn op_import(c: &Ctx, source: &str, name: Option<&str>) -> Res {
         },
         out.text
     );
+    if let Some(n) = renamed {
+        out = out.caution(format!(
+            "{n} is a built-in theme, so this one is saved as {name} (--name picks another)"
+        ));
+    }
     for m in &moved {
         out = out.caution(m.clone());
     }

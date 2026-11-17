@@ -102,6 +102,9 @@ tile to Finder to save its file, or drop a picture to take its colors. See
 | `parchment` | Warm paper with small corners and serif text everywhere |
 | `blocks` | Square and flat, with monospace interface text. Workspaces show as numbered blocks |
 | `calm` | Nothing moves. Extra room and no shadows |
+| `gruvbox` | Gruvbox's retro warm browns with faded reds, yellows and greens |
+| `catppuccin` | Catppuccin's soft pastels: Latte in light mode, Mocha in dark |
+| `everforest` | Everforest's soft greens on warm paper and deep forest |
 
 Look at any of them on realistic screens before you choose:
 
@@ -255,7 +258,7 @@ polycarp theme set gruvbox-dark-hard
 polycarp theme export base24 still-water --mode dark
 ```
 
-`import` reads a base16 or base24 scheme in the tinted-theming format, from a file, an https address or standard input (`-`), or an Omarchy theme folder (its `colors.toml`, or the `alacritty.toml` or `ghostty.conf` older Omarchy themes had), and saves it as a theme named after the scheme or folder (`--name` picks another). An Omarchy theme keeps its own accent. Polycarp has no wallpaper setting yet, so a folder's background images are listed but not used. It does not make it current. A scheme has one set of colors, so the theme's light and dark modes both use them. Any color that would not pass the rules under Readable by rule is moved until it does, and `import` says which ones moved and to what. Addresses are fetched with `curl`.
+`import` reads a base16 or base24 scheme in the tinted-theming format, from a file, an https address or standard input (`-`), or an Omarchy theme folder (its `colors.toml`, or the `alacritty.toml` or `ghostty.conf` older Omarchy themes had), and saves it as a theme named after the scheme or folder (`--name` picks another). A name that belongs to a built-in theme, such as Omarchy's `catppuccin`, gets `-imported` on the end. An Omarchy theme keeps its own accent. Polycarp has no wallpaper setting yet, so a folder's background images are listed but not used. It does not make it current. A scheme has one set of colors, so the theme's light and dark modes both use them. Any color that would not pass the rules under Readable by rule is moved until it does, and `import` says which ones moved and to what. Addresses are fetched with `curl`.
 
 `export base24` writes one mode of a theme as a base24 scheme, for tools that read them. Importing it gives back the same 24 colors.
 

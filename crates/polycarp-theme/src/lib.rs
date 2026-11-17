@@ -32,6 +32,15 @@ pub const BUILTINS: &[(&str, &str)] = &[
     ("parchment", include_str!("../../../themes/parchment.toml")),
     ("blocks", include_str!("../../../themes/blocks.toml")),
     ("calm", include_str!("../../../themes/calm.toml")),
+    ("gruvbox", include_str!("../../../themes/gruvbox.toml")),
+    (
+        "catppuccin",
+        include_str!("../../../themes/catppuccin.toml"),
+    ),
+    (
+        "everforest",
+        include_str!("../../../themes/everforest.toml"),
+    ),
 ];
 
 pub const DEFAULT_THEME: &str = "polycarp";

@@ -1,0 +1,86 @@
+/* Polycarp theme "everforest", surface "browser". Written by `polycarp theme`; do not edit. */
+:root {
+  color-scheme: light dark;
+  --pc-radius-small: 6px;
+  --pc-radius: 10px;
+  --pc-radius-large: 16px;
+  --pc-border-width: 1px;
+  --pc-blur: 0px;
+  --pc-shadow: 0.12;
+  --pc-density: regular;
+  --pc-indicator: dot;
+  --pc-font-display: Newsreader, "Iowan Old Style", Georgia, serif;
+  --pc-font-ui: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif;
+  --pc-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --pc-font-size: 16px;
+  --pc-font-weight: 400;
+  --pc-line-height: 1.5;
+  --pc-motion-fast: 120ms;
+  --pc-motion-normal: 200ms;
+  --pc-motion-slow: 320ms;
+  --pc-motion-easing: cubic-bezier(0.2, 0, 0, 1);
+  --pc-motion-scale-from: 0.98;
+  --pc-background: #fdf6e3;
+  --pc-surface: #fefbf4;
+  --pc-sunken: #f0ead8;
+  --pc-foreground: #57656c;
+  --pc-strong: #2d353b;
+  --pc-muted: #5e685d;
+  --pc-border: #e6e2cc;
+  --pc-accent: #2e769e;
+  --pc-on-accent: #fdf6e3;
+  --pc-selection: #e6e2cc;
+  --pc-urgent: #c64442;
+  --pc-working: #916800;
+  --pc-done: #637101;
+}
+:root[data-theme-mode="light"] {
+  color-scheme: light;
+  --pc-background: #fdf6e3;
+  --pc-surface: #fefbf4;
+  --pc-sunken: #f0ead8;
+  --pc-foreground: #57656c;
+  --pc-strong: #2d353b;
+  --pc-muted: #5e685d;
+  --pc-border: #e6e2cc;
+  --pc-accent: #2e769e;
+  --pc-on-accent: #fdf6e3;
+  --pc-selection: #e6e2cc;
+  --pc-urgent: #c64442;
+  --pc-working: #916800;
+  --pc-done: #637101;
+}
+:root[data-theme-mode="dark"] {
+  color-scheme: dark;
+  --pc-background: #2d353b;
+  --pc-surface: #343f44;
+  --pc-sunken: #22282c;
+  --pc-foreground: #afb8b3;
+  --pc-strong: #d3c6aa;
+  --pc-muted: #a5aca4;
+  --pc-border: #3d484d;
+  --pc-accent: #7fbbb3;
+  --pc-on-accent: #2d353b;
+  --pc-selection: #3d484d;
+  --pc-urgent: #ea9193;
+  --pc-working: #dbbc7f;
+  --pc-done: #a7c080;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme-mode="light"]) {
+    color-scheme: dark;
+    --pc-background: #2d353b;
+    --pc-surface: #343f44;
+    --pc-sunken: #22282c;
+    --pc-foreground: #afb8b3;
+    --pc-strong: #d3c6aa;
+    --pc-muted: #a5aca4;
+    --pc-border: #3d484d;
+    --pc-accent: #7fbbb3;
+    --pc-on-accent: #2d353b;
+    --pc-selection: #3d484d;
+    --pc-urgent: #ea9193;
+    --pc-working: #dbbc7f;
+    --pc-done: #a7c080;
+  }
+}
