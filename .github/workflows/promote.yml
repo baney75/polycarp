@@ -1,0 +1,100 @@
+name: Promote
+# The only way a stable release starts (docs/releases.md). Run by hand:
+#   nightly=nightly-YYYYMMDDHHMMSS  fast-forwards `stable` to that nightly's commit, once it has been out 72 hours
+#   hotfix=true                     releases the hotfix PR already merged into `stable` (VERSION = last tag's patch + 1)
+# Either way it needs no open `regression` issue, tags vX.Y.Z (X.Y.Z from spaces/VERSION at that commit) on stable's
+# head, makes the draft release, then stable-build.yml builds into it. It never publishes: the owner's Mac does that
+# after the soak (spaces/scripts/release.sh --soak). No workflow starts on the tag it pushes.
+on:
+  workflow_dispatch:
+    inputs:
+      nightly:
+        description: 'nightly-YYYYMMDDHHMMSS to promote (leave empty for a hotfix)'
+        type: string
+        required: false
+      hotfix:
+        description: 'Release the hotfix already merged into stable'
+        type: boolean
+        default: false
+concurrency:
+  group: promote
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: stable
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          # Pushing to `stable` passes its ruleset only with a token the ruleset lets through (docs/releases.md).
+          token: ${{ secrets.POLYCARP_RELEASE_TOKEN || github.token }}
+      - name: Check, move stable and tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NIGHTLY: ${{ inputs.nightly }}
+          HOTFIX: ${{ inputs.hotfix }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=Not promoted::$1"; exit 1; }
+          git fetch --quiet --tags --force origin
+          git rev-parse --verify --quiet refs/remotes/origin/stable >/dev/null || fail "there is no stable branch yet; the owner makes it once (docs/releases.md)."
+          OPEN=$(gh issue list -R "$REPO" --state open --label regression --json number --jq 'map("#\(.number)") | join(" ")')
+          [ -z "$OPEN" ] || fail "open regressions: $OPEN"
+          LAST=$(git tag --list 'v[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+          if [ "$HOTFIX" = true ]; then
+            [ -z "$NIGHTLY" ] || fail "give a nightly or hotfix, not both."
+            COMMIT=$(git rev-parse origin/stable)
+          else
+            [[ "$NIGHTLY" =~ ^nightly-[0-9]{14}$ ]] || fail "nightly must be nightly-YYYYMMDDHHMMSS, not \"$NIGHTLY\"."
+            PUBLISHED=$(gh release view "$NIGHTLY" -R "$REPO" --json publishedAt --jq .publishedAt) || fail "no release $NIGHTLY."
+            AGE=$(( $(date -u +%s) - $(date -u -d "$PUBLISHED" +%s) ))
+            [ "$AGE" -ge 259200 ] || fail "$NIGHTLY was published $((AGE / 3600)) hours ago; it needs 72."
+            COMMIT=$(git rev-parse --verify --quiet "refs/tags/$NIGHTLY^{commit}") || fail "no tag $NIGHTLY."
+            git merge-base --is-ancestor "$COMMIT" origin/main || fail "$NIGHTLY isn't on main."
+            git merge-base --is-ancestor origin/stable "$COMMIT" || fail "stable has commits $NIGHTLY lacks (a hotfix?); merge stable into main first."
+          fi
+          VERSION=$(git show "$COMMIT:spaces/VERSION" | tr -d '[:space:]')
+          [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || fail "spaces/VERSION at $COMMIT is \"$VERSION\", not X.Y.Z."
+          TAG="v$VERSION"
+          [ -z "$(git ls-remote origin "refs/tags/$TAG")" ] || fail "$TAG already exists. Stable tags are never moved."
+          if [ -n "$LAST" ]; then
+            python3 -I spaces/scripts/semver-newer.py "$VERSION" "${LAST#v}" || fail "$VERSION isn't newer than $LAST."
+            if [ "$HOTFIX" = true ]; then
+              IFS=. read -r MA MI PA <<< "${LAST#v}"
+              [ "$VERSION" = "$MA.$MI.$((PA + 1))" ] || fail "a hotfix after $LAST is $MA.$MI.$((PA + 1)), not $VERSION."
+            fi
+          fi
+          # A plain push only fast-forwards; stable is never forced.
+          git push origin "$COMMIT:refs/heads/stable"
+          git tag "$TAG" "$COMMIT"
+          git push origin "refs/tags/$TAG"
+          git fetch --quiet origin stable
+          [ "$(git rev-parse origin/stable)" = "$COMMIT" ] || fail "stable isn't on $COMMIT after the push."
+          [ "$(git ls-remote origin "refs/tags/$TAG" | cut -f1)" = "$COMMIT" ] || fail "$TAG isn't on $COMMIT after the push."
+          DATE=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ "$COMMIT")
+          # The marker lets a build from before the channels (it reads GitHub's release list) find this release.
+          gh api "repos/$REPO/releases" -f tag_name="$TAG" -f target_commitish="$COMMIT" -f name="Polycarp $VERSION" \
+            -f body="Polycarp $VERSION, built from $COMMIT.
+          <!-- baneyspaces commit=$COMMIT date=$DATE -->" -F draft=true -F prerelease=false -f make_latest=false >/dev/null
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Promoted::$TAG on $COMMIT, as a draft. Next: stable-build.yml, then the soak and release.sh --soak on the owner's Mac."
+  build:
+    needs: promote
+    permissions:
+      contents: write
+    uses: ./.github/workflows/stable-build.yml
+    with:
+      tag: ${{ needs.promote.outputs.tag }}
+    secrets:
+      POLYCARP_SIGNING_P12: ${{ secrets.POLYCARP_SIGNING_P12 }}
+      POLYCARP_SIGNING_P12_PASSWORD: ${{ secrets.POLYCARP_SIGNING_P12_PASSWORD }}

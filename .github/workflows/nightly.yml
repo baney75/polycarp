@@ -1,0 +1,78 @@
+name: Nightly
+# One nightly a day from main (docs/releases.md): only when main moved since the last nightly, CI is green on it,
+# and no open issue is labeled both `regression` and `blocks-nightly`. channel-build.yml builds and publishes it.
+# Then nightly-YYYYMMDDHHMMSS prereleases older than 14 days are deleted; the newest one is always kept.
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.decide.outputs.go }}
+      commit: ${{ steps.decide.outputs.commit }}
+      time: ${{ steps.decide.outputs.time }}
+    steps:
+      - name: Decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          stop() { echo "::notice title=No nightly::$1"; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          SHA=$(gh api "repos/$REPO/commits/main" --jq .sha)
+          LAST=$(gh api "repos/$REPO/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
+          [ "$LAST" != "$SHA" ] || [ "$EVENT" = workflow_dispatch ] || stop "main is still $SHA, the commit of the last nightly."
+          # CI on this commit, or, when its paths didn't start CI, the newest finished CI run on main.
+          STATE=$(gh run list -R "$REPO" --workflow ci.yml --branch main --event push --limit 50 --json headSha,status,conclusion \
+            --jq "[.[] | select(.headSha == \"$SHA\")][0] // empty | .status + \"/\" + (.conclusion // \"\")")
+          [ -n "$STATE" ] || STATE=$(gh run list -R "$REPO" --workflow ci.yml --branch main --event push --status completed \
+            --limit 1 --json status,conclusion --jq '.[0] | .status + "/" + .conclusion')
+          [ "$STATE" = completed/success ] || stop "CI on main is ${STATE:-missing}, not green."
+          OPEN=$(gh issue list -R "$REPO" --state open --label regression --label blocks-nightly --json number --jq 'map("#\(.number)") | join(" ")')
+          [ -z "$OPEN" ] || stop "open regressions block it: $OPEN"
+          { echo "go=true"; echo "commit=$SHA"; echo "time=$(date -u +%Y%m%d%H%M%S)"; } >> "$GITHUB_OUTPUT"
+  build:
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/channel-build.yml
+    with:
+      channel: nightly
+      commit: ${{ needs.gate.outputs.commit }}
+      build_time: ${{ needs.gate.outputs.time }}
+    secrets:
+      POLYCARP_SIGNING_P12: ${{ secrets.POLYCARP_SIGNING_P12 }}
+      POLYCARP_SIGNING_P12_PASSWORD: ${{ secrets.POLYCARP_SIGNING_P12_PASSWORD }}
+  prune:
+    needs: [gate, build]
+    if: always() && needs.gate.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Delete nightly-<time> prereleases older than 14 days, keeping the newest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          CUT=$(date -u -d '14 days ago' +%Y%m%d%H%M%S)
+          gh api --paginate "repos/$REPO/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name' \
+            | { grep -E '^nightly-[0-9]{14}$' || true; } | sort -r | tail -n +2 \
+            | while read -r t; do
+                [ "${t#nightly-}" \< "$CUT" ] || continue
+                echo "deleting $t"
+                gh release delete "$t" -R "$REPO" --cleanup-tag --yes
+              done
