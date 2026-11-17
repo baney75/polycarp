@@ -10,7 +10,7 @@ One theme file drives every Polycarp product. Change it with the `polycarp theme
 
 ## Steps
 
-1. **Ask or infer.** What should change, and where: everywhere, or one product (spaces, voice, browser, site)?
+1. **Ask or infer.** What should change, and where: everywhere, or one product (spaces, voice, browser, site, studio)?
    "Warmer" or "rounder" is enough. Do not ask about hex values.
 2. **Read.** `polycarp theme schema` lists every field with what it controls, its range and the contrast
    rules. `polycarp theme current` says what is in force. `polycarp theme get dark.accent` reads one value.

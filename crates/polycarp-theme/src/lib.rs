@@ -13,7 +13,7 @@ pub use code::{
     code_keys, code_pairs, code_problems, derive, mix, Code, CODE, DIFF, SYNTAX, TERMINAL,
 };
 pub use contrast::{combine, contrast, contrast_on, pairs, Colors, MARK_MIN, TEXT_MIN};
-pub use export::{color_lines, css, resolved_json, shared_vars, theme_json};
+pub use export::{color_lines, css, json_of, resolved_json, shared_vars, theme_json, SCHEMA};
 pub use resolve::{
     apply_accents, code_of, colors_of, ext_of, is_builtin, load_raw, merge, parse_toml,
     read_theme_file, resolve_doc, resolve_name, without_meta, Full, Motion, Resolved, Shape,
@@ -35,7 +35,7 @@ pub const BUILTINS: &[(&str, &str)] = &[
 ];
 
 pub const DEFAULT_THEME: &str = "polycarp";
-pub const SURFACES: [&str; 4] = ["spaces", "voice", "browser", "site"];
+pub const SURFACES: [&str; 5] = ["spaces", "voice", "browser", "site", "studio"];
 pub const SECTIONS: [&str; 5] = ["light", "dark", "shape", "type", "motion"];
 pub const MODES: [&str; 2] = ["light", "dark"];
 pub const MAX_DEPTH: usize = 8;
