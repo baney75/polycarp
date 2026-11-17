@@ -14,6 +14,9 @@ let package = Package(
         .executable(name: "baneyspaces-cli", targets: ["baneyspaces-cli"]),
     ],
     targets: [
+        // The launcher's matcher and ranking: Foundation only, no Apple frameworks, so other platforms
+        // can build it as is. The rules it follows are written in spec/launcher.md.
+        .target(name: "LauncherMatch"),
         // Which window lives where, and where hidden windows go: no AppKit, fully unit-tested.
         .target(name: "BaneySpacesCore"),
         // agent-desktop's C header, for the hands engine in the app.
@@ -51,6 +54,8 @@ let package = Package(
                           // this target (PR 146 broke `make install` that way).
                           path: "scripts", sources: ["cursor-probe.swift"]),
         .testTarget(name: "BaneySpacesCoreTests", dependencies: ["BaneySpacesCore"]),
+        // The ranking table and the 2,000-entry latency check for the launcher's matcher.
+        .testTarget(name: "LauncherMatchTests", dependencies: ["LauncherMatch"]),
         // The overlay's real layers: marks attached, cursors surviving a display change, the panel never key or main.
         .testTarget(name: "BaneySpacesCursorTests", dependencies: ["BaneySpacesCore", "BaneySpacesCursor"]),
     ]
