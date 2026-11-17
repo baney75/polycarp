@@ -104,12 +104,12 @@ struct Window {
         AXUIElementSetMessagingTimeout(element, 0.1)
         defer { AXUIElementSetMessagingTimeout(element, 0) }
         let main = AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
-        guard main != .cannotComplete else { element.checked(main); return false }
+        guard main != .cannotComplete else { element.checked(main, call: "set AXMain"); return false }
         let raise = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
-        guard raise != .cannotComplete else { element.checked(raise); return false }
+        guard raise != .cannotComplete else { element.checked(raise, call: "raise"); return false }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.1)
-        app.checked(AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue))
+        app.checked(AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue), call: "set AXFrontmost")
         return raise == .success
     }
 }
@@ -186,7 +186,7 @@ enum Windows {
         return !holds.skips(pid, now: ProcessInfo.processInfo.systemUptime) && !bench.isBenched(pid, now: now)
     }
 
-    static func markUnresponsive(_ pid: pid_t) {
+    static func markUnresponsive(_ pid: pid_t, call: String, error: AXError) {
         let app = NSRunningApplication(processIdentifier: pid)
         let age = app?.launchDate.map { -$0.timeIntervalSinceNow }
         // Only an app an agent's launch started is asked again within a second while it starts; any other app keeps the
@@ -198,7 +198,7 @@ enum Windows {
         let delay = bench.missed(pid, age: age, waitedOn: waitedOn, now: now)
         unresponsiveLock.unlock()
         // Which app went unseen and for how long: a window it opens meanwhile isn't placed until it answers.
-        if !already { Trace.log(String(format: "accessibility: %@ (pid %d) didn't answer; asked again in %.1fs", app?.localizedName ?? "app", pid, delay)) }
+        if !already { Trace.log(AXBench.missLine(app: app?.localizedName ?? "app", pid: pid, call: call, error: error.rawValue, delay: delay)) }
     }
 
     /// The app answered, or the person brought it forward: give it a clean slate.
@@ -254,10 +254,15 @@ enum Windows {
             let ax = AXUIElementCreateApplication(pid)
             // A hung app must not hang every workspace switch.
             AXUIElementSetMessagingTimeout(ax, 0.25)
-            let listed: [AXUIElement]? = ax.value(kAXWindowsAttribute)
+            var raw: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(ax, kAXWindowsAttribute as CFString, &raw)
+            let listed = error == .success ? raw as? [AXUIElement] : nil
             // Any failure, not just a timeout, counts: otherwise an app that answers with an error
             // would be retried at full speed forever instead of backing off.
-            if listed == nil { lock.lock(); unsure.insert(pid); lock.unlock(); markUnresponsive(pid) } else { markResponsive(pid) }
+            if listed == nil {
+                lock.lock(); unsure.insert(pid); lock.unlock()
+                markUnresponsive(pid, call: kAXWindowsAttribute, error: error)
+            } else { markResponsive(pid) }
             let elements = listed ?? []
             let ids = elements.map(\.windowID)
             var found: [Window] = [], other: [WindowID] = [], asks: [WaitingWindow.Seen] = []
@@ -554,24 +559,24 @@ extension AXUIElement {
 
     func value<T>(_ attribute: String) -> T? {
         var raw: CFTypeRef?
-        guard checked(AXUIElementCopyAttributeValue(self, attribute as CFString, &raw)) else { return nil }
+        guard checked(AXUIElementCopyAttributeValue(self, attribute as CFString, &raw), call: attribute) else { return nil }
         return raw as? T
     }
 
     /// Whether a call succeeded. A timeout means the app is busy or hung: stop asking it for a
     /// few seconds, so one stuck app costs one timeout instead of one per call.
     @discardableResult
-    func checked(_ result: AXError) -> Bool {
+    func checked(_ result: AXError, call: String = "a call") -> Bool {
         if result == .cannotComplete {
             var pid: pid_t = 0
-            if AXUIElementGetPid(self, &pid) == .success, pid > 0 { Windows.markUnresponsive(pid) }
+            if AXUIElementGetPid(self, &pid) == .success, pid > 0 { Windows.markUnresponsive(pid, call: call, error: result) }
         }
         return result == .success
     }
 
     func value<T>(_ attribute: String, _ type: AXValueType) -> T? {
         var raw: CFTypeRef?
-        guard checked(AXUIElementCopyAttributeValue(self, attribute as CFString, &raw)),
+        guard checked(AXUIElementCopyAttributeValue(self, attribute as CFString, &raw), call: attribute),
               let raw, CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
         let pointer = UnsafeMutablePointer<T>.allocate(capacity: 1)
         defer { pointer.deallocate() }
@@ -584,13 +589,13 @@ extension AXUIElement {
     func set(_ attribute: String, _ value: CGPoint, _ type: AXValueType) {
         var v = value
         guard let ax = AXValueCreate(type, &v) else { return }
-        checked(AXUIElementSetAttributeValue(self, attribute as CFString, ax))
+        checked(AXUIElementSetAttributeValue(self, attribute as CFString, ax), call: "set \(attribute)")
     }
 
     func set(_ attribute: String, _ value: CGSize, _ type: AXValueType) {
         var v = value
         guard let ax = AXValueCreate(type, &v) else { return }
-        checked(AXUIElementSetAttributeValue(self, attribute as CFString, ax))
+        checked(AXUIElementSetAttributeValue(self, attribute as CFString, ax), call: "set \(attribute)")
     }
 }
 

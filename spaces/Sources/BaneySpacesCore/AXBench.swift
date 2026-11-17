@@ -82,4 +82,24 @@ public struct AXBench: Equatable, Sendable {
         youngMisses = youngMisses.filter { alive.contains($0.key) }
         until = until.filter { alive.contains($0.key) }
     }
+
+    /// The trace line for an app newly benched. It names the call and the error, so a miss can be told apart: a timeout
+    /// (-25204) is an app too slow or hung, anything else is not a hang (2026-11-17: Ghostty and Terminal answered in
+    /// under 65 ms when asked from outside, yet one Polycarp process benched both for 3 hours, and the line said only
+    /// "didn't answer").
+    public static func missLine(app: String, pid: Int32, call: String, error: Int32, delay: TimeInterval) -> String {
+        String(format: "accessibility: %@ (pid %d) didn't answer (%@: %@); asked again in %.1fs", app, pid, call, errorName(error), delay)
+    }
+
+    /// An AXError's number with its name, for the trace. 0 is a call that succeeded with an answer of the wrong kind.
+    public static func errorName(_ code: Int32) -> String {
+        let names: [Int32: String] = [
+            0: "answer of the wrong kind", -25200: "failure", -25201: "illegal argument", -25202: "invalid element",
+            -25203: "invalid observer", -25204: "cannot complete (timeout)", -25205: "attribute unsupported",
+            -25206: "action unsupported", -25207: "notification unsupported", -25208: "not implemented",
+            -25209: "notification already registered", -25210: "notification not registered", -25211: "API disabled",
+            -25212: "no value", -25213: "parameterized attribute unsupported", -25214: "not enough precision",
+        ]
+        return "\(code) \(names[code] ?? "unknown")"
+    }
 }
