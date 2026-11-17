@@ -1601,6 +1601,81 @@ fn on_linux_update_says_the_desktop_is_retired_and_runs_nothing() {
     }
 }
 
+/// On a machine an earlier install set up, the Omarchy install stub only reads hyprland.lua and says how to
+/// take the block out; the uninstaller kept beside it takes out the block and its folder and leaves the rest.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_linux_install_stub_points_to_the_uninstaller_that_takes_the_old_block_out() {
+    let s = Sandbox::new();
+    let omarchy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spaces/platforms/linux/omarchy");
+    let hypr = s.dir("home").join(".config/hypr");
+    fs::create_dir_all(hypr.join("baneyspaces")).unwrap();
+    let main = hypr.join("hyprland.lua");
+    let before = "-- mine\n\n-- >>> baneyspaces (managed by baneyspaces install.sh) >>>\nrequire(\"baneyspaces\")\n-- <<< baneyspaces <<<\n-- also mine\n";
+    fs::write(&main, before).unwrap();
+    // Only system tools: no `baneyspaces` on PATH, so nothing real is stopped.
+    let run = |script: &str| {
+        Command::new(omarchy.join(script))
+            .env_clear()
+            .env("HOME", s.dir("home"))
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap()
+    };
+    let o = run("install.sh");
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(
+        out(&o).contains("The Linux desktop is retired"),
+        "{}",
+        out(&o)
+    );
+    assert!(out(&o).contains("omarchy/uninstall.sh"), "{}", out(&o));
+    assert_eq!(fs::read_to_string(&main).unwrap(), before);
+    let o = run("uninstall.sh");
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert_eq!(
+        fs::read_to_string(&main).unwrap(),
+        "-- mine\n-- also mine\n"
+    );
+    assert!(!hypr.join("baneyspaces").exists());
+    // With the block gone, the stub has nothing to point to.
+    let o = run("install.sh");
+    assert!(!out(&o).contains("uninstall.sh"), "{}", out(&o));
+}
+
+/// No two binaries in the spaces workspace share a name: `cargo build --workspace` would write both to one
+/// file, and whichever built last would win (the Linux update stub once took the Windows daemon's name).
+#[test]
+fn the_spaces_workspace_has_no_two_binaries_with_one_name() {
+    let spaces = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spaces");
+    let o = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--offline",
+        ])
+        .current_dir(&spaces)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let meta: serde_json::Value = serde_json::from_str(&out(&o)).unwrap();
+    let mut seen = std::collections::BTreeMap::new();
+    for pkg in meta["packages"].as_array().unwrap() {
+        for t in pkg["targets"].as_array().unwrap() {
+            if t["kind"].as_array().unwrap().iter().any(|k| k == "bin") {
+                let name = t["name"].as_str().unwrap().to_string();
+                let package = pkg["name"].as_str().unwrap().to_string();
+                if let Some(first) = seen.insert(name.clone(), package.clone()) {
+                    panic!("binary {name} is in both {first} and {package}");
+                }
+            }
+        }
+    }
+    assert!(seen.contains_key("baneyspaces"), "{seen:?}");
+}
+
 /// On Linux the line comes first: a --source that is not a folder, an unknown flag or no home
 /// folder gets it too, exit 0, and nothing is run or written.
 #[cfg(target_os = "linux")]

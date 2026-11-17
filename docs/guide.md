@@ -33,6 +33,8 @@ On an Intel Mac, or with `POLYCARP_FROM_SOURCE=1`, it builds on your Mac instead
 
 Polycarp no longer installs on Linux. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces. Run on Linux, the install script says so, points to Tychicus for browser and computer use, and exits.
 
+An earlier install that is still in place keeps its block in `~/.config/hypr/hyprland.lua`, which binds your workspace keys to the retired daemon. `spaces/platforms/linux/omarchy/uninstall.sh` takes it out and gives Omarchy its own keys back; run it with `--dry-run` first to see what it does. Nothing runs it for you.
+
 ### On Windows
 
 The command needs [Rust](https://rustup.rs).

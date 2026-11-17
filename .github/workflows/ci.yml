@@ -26,14 +26,16 @@ jobs:
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
           filters: |
-            cli: ['cli/**', '.github/workflows/ci.yml']
+            # The cli tests also replay an older Linux update against the stubs in spaces/platforms/linux,
+            # and check the spaces workspace's binary names.
+            cli: ['cli/**', 'spaces/platforms/linux/**', 'spaces/Cargo.toml', 'spaces/Cargo.lock', '.github/workflows/ci.yml']
             # The root install.sh is read by the spaces tests (RootInstallerTests, FeaturesTests).
             spaces: ['spaces/**', 'core/**', 'install.sh', '.github/workflows/ci.yml']
             voice: ['voice/**', 'core/**', '.github/workflows/ci.yml']
             core: ['core/**', '.github/workflows/ci.yml']
             browser: ['browser/**', '.github/workflows/ci.yml']
-            # The spaces Rust workspace: the shared core, the conformance cases and the Windows crates.
-            spaces-rust: ['spaces/Cargo.toml', 'spaces/Cargo.lock', 'spaces/crates/**', 'spaces/spec/**', 'spaces/platforms/windows/**', '.github/workflows/ci.yml']
+            # The spaces Rust workspace: the shared core, the conformance cases, the Windows crates and the Linux update stub.
+            spaces-rust: ['spaces/Cargo.toml', 'spaces/Cargo.lock', 'spaces/crates/**', 'spaces/spec/**', 'spaces/platforms/windows/**', 'spaces/platforms/linux/**', '.github/workflows/ci.yml']
 
   cli:
     needs: changes
@@ -135,7 +137,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: spaces, key: spaces-windows }
       - name: Core and the Windows daemon, built for Windows
-        run: cargo test --locked -p baneyspaces-core -p baneyspaces-windows -p baneyspaces-testapp
+        run: cargo test --locked -p baneyspaces-core -p baneyspaces-windows -p baneyspaces-testapp -p baneyspaces-linux
 
   spaces-bundle:
     needs: changes

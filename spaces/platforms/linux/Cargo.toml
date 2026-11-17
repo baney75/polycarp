@@ -6,6 +6,8 @@ license.workspace = true
 description = "Kept only so an older `polycarp update` on Linux, which builds this package, finishes and installs the command that says the Linux desktop is retired."
 publish = false
 
+# Its own name: `baneyspaces` is the Windows daemon's, and a workspace build would put both in one file.
+# The old plan builds this package by name (-p baneyspaces-linux) and never runs its binary.
 [[bin]]
-name = "baneyspaces"
+name = "baneyspaces-linux-stub"
 path = "src/main.rs"

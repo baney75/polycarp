@@ -45,6 +45,10 @@ The Linux and Omarchy desktop is retired; its last snapshot is in the archived b
 line above says so, points to Tychicus for browser and computer use, and installs nothing, and so does
 `polycarp update`.
 
+An earlier install that is still in place keeps its block in `~/.config/hypr/hyprland.lua`, which binds your
+workspace keys to the retired daemon. `spaces/platforms/linux/omarchy/uninstall.sh` takes it out and gives Omarchy its
+own keys back; run it with `--dry-run` first to see what it does. Nothing runs it for you.
+
 ## The name
 
 Polycarp means "much fruit". John 15:5 (ESV): "Whoever abides in me and I in him, he it is that
@@ -116,8 +120,8 @@ It remembers the path in `source.toml` in Polycarp's config folder (`~/.config/p
 then on `polycarp update` is enough. Only `origin/main` is ever installed, and only from the clean copy: never a
 branch, never files you have changed, never the checkout you work in, which is used for `git fetch` and
 `git worktree` and nothing else. It refuses a checkout whose `origin` is not this repo. When every part this update
-installs is already there and at that commit it says so and stops before building anything. A part that is missing (the
-browser helper on a device that has gained Node since) counts as an update, and an extension that only has to reload
+installs is already there and at that commit it says so and stops before building anything. A part that is missing
+counts as an update, and an extension that only has to reload
 does not: the update says "reload pending" and exits 0.
 
 Nothing that is installed runs from the clean copy, so the cache folder can be deleted at any time; the next update
