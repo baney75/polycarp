@@ -9,6 +9,12 @@ same scope as the hands (`computer_*`), so an agent can watch and drive the whol
 own workspace otherwise, and no window or workspace Donovan can see changes unless he turned that on. `theme-set` is
 the one stated exception: agents may change how the Mac looks.
 
+**Who reaches what.** That promise covers the agent API and the URL scheme. Any program, and a web page after one
+browser prompt, can open `polycarp://switch/N`, `move/N` or `restore`, so those URLs follow the view control rule
+below. The control socket (`polycarp-spaces focus`, `send`, `switch`, `move`, `restore`) trusts every process running
+as Donovan. It is a convenience channel, not an agent boundary: nothing a process of his holds tells his shell from an
+agent in that shell, so the socket does not try. Polycarp's own scripts and probes use it.
+
 ## Rules every platform keeps
 
 - **Version.** Every query result, command result and event carries `"version": 1`. A change that removes or renames a

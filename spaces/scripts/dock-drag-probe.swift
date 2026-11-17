@@ -66,7 +66,9 @@ func run(_ path: String, _ args: [String]) {
     try? p.run()
     p.waitUntilExit()
 }
-func go(_ n: Int) { run("/usr/bin/open", ["-g", "baneyspaces://switch/\(n)"]); usleep(700_000) }
+// The socket, not the switch URL: the URL needs view control (spec/agent-api.md, "Who reaches what").
+let cli = ProcessInfo.processInfo.environment["POLYCARP_SPACES"] ?? "\(NSHomeDirectory())/.local/bin/polycarp-spaces"
+func go(_ n: Int) { run(cli, ["switch", "\(n)"]); usleep(700_000) }
 
 // Posted at the session tap with a click count: macOS 27 starts a title-bar drag only for those.
 func post(_ type: CGEventType, _ p: CGPoint) {

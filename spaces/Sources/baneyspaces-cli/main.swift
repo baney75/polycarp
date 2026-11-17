@@ -16,6 +16,7 @@ usage: \(me) <command>
   open <url>                  open in your default browser
   send <id | words> <text>    type text into a Ghostty terminal, as if pasted
   notify [message]            flag the terminal this runs in as needing you
+  switch N | move N | restore the shortcuts' workspace actions, for scripts on this Mac (the URLs need view control)
   state                       the session engine's live state as JSON
   query [windows|workspaces|displays|focused|layout|theme|state] [--json]
                               the window manager's state, as agents see it (spec/agent-api.md)
@@ -163,6 +164,12 @@ case "open":
 case "send":
     guard rest.count >= 2 else { fail("usage: \(me) send <id | words> <text>", code: 2) }
     _ = call(Wire.Request(op: .send, target: rest[0], text: rest.dropFirst().joined(separator: " ")))
+
+case "switch", "move", "restore":
+    guard remoteHost == nil else { fail("workspace actions are local only", code: 2) }
+    let n = rest.first.flatMap { Int($0) }
+    guard cmd == "restore" || n != nil else { fail("usage: \(me) \(cmd) <workspace 1-9>", code: 2) }
+    _ = call(Wire.Request(op: .workspace, target: n.map(String.init), text: cmd))
 
 case "notify":
     let tty = controllingTTY()

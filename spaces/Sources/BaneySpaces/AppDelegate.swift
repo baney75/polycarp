@@ -1010,6 +1010,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.spaces.saveState()
             self.updateIcon()
         }
+        session.workspaceHandler = { [weak self] verb, n in self?.workspaceAction(verb, n) ?? "not ready" }
         session.updateHandler = { [weak self] what in self?.updater.answer(what) ?? Wire.Reply(ok: false, error: "the updater isn't ready") }
         session.sandboxHandler = { [weak self] r in self?.sandbox.service.handle(r) ?? Wire.Reply(ok: false, error: "not ready") }
         sandbox.start()
@@ -1292,18 +1293,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func quit() { NSApp.terminate(nil) }
 
+    /// The shortcuts' workspace actions, for the socket and for a URL that passed `ViewPath`. nil when it ran.
+    private func workspaceAction(_ verb: String, _ n: Int) -> String? {
+        guard stillTrusted() else { NSSound.beep(); return "Polycarp needs Accessibility" }
+        switch verb {
+        case "switch": spaces.switchTo(n)
+        case "move": spaces.moveFocused(to: n)
+        case "restore": bringBack()
+        default: return "switch, move or restore"
+        }
+        return nil
+    }
+
     // MARK: URL commands
 
-    /// `open baneyspaces://switch/2`, `baneyspaces://move/3`, `baneyspaces://restore`.
-    /// The same actions as the shortcuts, for scripts and checks.
+    /// `open polycarp://switch/2`, `move/3`, `restore`: the shortcuts' actions, only with view control on (`ViewPath`).
+    /// Scripts and checks use `polycarp-spaces switch|move|restore` on the socket.
     @objc private func handleURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
         guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
               let url = URL(string: text), url.scheme == "polycarp" || url.scheme == "baneyspaces" else { return }
         let n = Int(url.lastPathComponent) ?? 0
+        // Any process opens a URL, and a web page can after one prompt: these follow the agent API's view control rule.
+        // Scripts use the socket (`polycarp-spaces switch|move|restore`) instead (spec/agent-api.md, "Who reaches what").
+        if let host = url.host, ViewPath.gatedURLCommands.contains(host) {
+            let view = ViewPath.View(current: spaces.model.current, shown: Set(spaces.model.shown.values).union([spaces.model.current]), agentWorkspace: Spaces.agentWorkspace)
+            if let e = ViewPath.urlRefusal(host, n, view: view, access: AgentAccess.shared.current, viewControl: ViewControlSetting.shared.enabled) {
+                Trace.log("refused URL: \(host) \(n): \(e.code.rawValue)")
+                return
+            }
+            _ = workspaceAction(host, n)
+            return
+        }
         switch url.host {
-        case "switch": run { $0.switchTo(n) }
-        case "move": run { $0.moveFocused(to: n) }
-        case "restore": run { _ in bringBack() }
         case "viewer": run { _ in viewer.toggle() }
         // `polycarp voice` opens the Voice settings. Showing a window changes nothing, so a web page may.
         case "voice": showVoiceSettings()

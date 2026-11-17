@@ -39,7 +39,9 @@ func run(_ path: String, _ args: [String]) {
     let p = Process(); p.executableURL = URL(fileURLWithPath: path); p.arguments = args
     try? p.run(); p.waitUntilExit()
 }
-func go(_ n: Int) { run("/usr/bin/open", ["-g", "baneyspaces://switch/\(n)"]); usleep(900_000) }
+// The socket, not the switch URL: the URL needs view control (spec/agent-api.md, "Who reaches what").
+let cli = ProcessInfo.processInfo.environment["POLYCARP_SPACES"] ?? "\(NSHomeDirectory())/.local/bin/polycarp-spaces"
+func go(_ n: Int) { run(cli, ["switch", "\(n)"]); usleep(900_000) }
 
 var failures: [String] = []
 func expect(_ ok: Bool, _ what: String) {

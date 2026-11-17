@@ -410,14 +410,18 @@ hands the shortcuts back to your other apps and reopens setup.
 
 ## Scripting
 
-The same actions are open to scripts and other tools:
+The same actions are open to scripts on this Mac:
 
 ```sh
-open baneyspaces://switch/2     # go to workspace 2
-open baneyspaces://move/5       # send the front window to workspace 5
-open baneyspaces://restore      # bring every window back onto workspace 1
-open baneyspaces://viewer       # show or hide the overview
+polycarp-spaces switch 2        # go to workspace 2
+polycarp-spaces move 5          # send the front window to workspace 5
+polycarp-spaces restore         # bring every window back onto workspace 1
+open polycarp://viewer          # show or hide the overview
 ```
+
+The command talks to Polycarp's socket, which trusts every program running as you. The URLs
+`polycarp://switch/N`, `move/N` and `restore` still exist, but any program or web page can open a
+URL, so they run only with agent view control on (Settings > Agents, Full Access).
 
 `~/Library/Application Support/BaneySpaces/state.json` always holds the current workspace and
 the apps on each one.

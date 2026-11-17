@@ -30,8 +30,9 @@ func snapshot() -> [Int: (app: String, origin: CGPoint)] {
 func switchAndWatch(to space: Int) -> [String] {
     var seen: [Int: (app: String, points: [CGPoint])] = [:]
     let task = Process()
-    task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    task.arguments = ["-g", "baneyspaces://switch/\(space)"]
+    // The socket, not the switch URL: the URL needs view control (spec/agent-api.md, "Who reaches what").
+    task.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["POLYCARP_SPACES"] ?? "\(NSHomeDirectory())/.local/bin/polycarp-spaces")
+    task.arguments = ["switch", "\(space)"]
     try? task.run()
     let end = Date().addingTimeInterval(0.9)
     while Date() < end {

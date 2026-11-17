@@ -57,7 +57,9 @@ def screen_on():
 
 
 def go(n):
-    subprocess.run(["open", "-g", f"baneyspaces://switch/{n}"], check=False)
+    # The socket, not the switch URL: the URL needs view control (spec/agent-api.md, "Who reaches what").
+    cli = os.environ.get("POLYCARP_SPACES", os.path.expanduser("~/.local/bin/polycarp-spaces"))
+    subprocess.run([cli, "switch", str(n)], check=False)
 
 
 def shotate(*args):

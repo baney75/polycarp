@@ -37,10 +37,11 @@ func workspaces() -> [String: [UInt32]] {
           let ws = json["workspaces"] as? [String: [[String: Any]]] else { return [:] }
     return ws.mapValues { $0.compactMap { ($0["id"] as? NSNumber)?.uint32Value } }
 }
-func open(_ url: String) {
+// The socket, not the switch URL: the URL needs view control (spec/agent-api.md, "Who reaches what").
+func go(_ n: Int) {
     let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    p.arguments = ["-g", url]
+    p.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["POLYCARP_SPACES"] ?? "\(NSHomeDirectory())/.local/bin/polycarp-spaces")
+    p.arguments = ["switch", "\(n)"]
     try? p.run()
     p.waitUntilExit()
 }
@@ -73,7 +74,7 @@ guard let ghostty = NSWorkspace.shared.runningApplications.first(where: { $0.bun
     fail("Ghostty isn't running")
 }
 let app = AXUIElementCreateApplication(ghostty.processIdentifier)
-open("baneyspaces://switch/\(n)")
+go(n)
 Thread.sleep(forTimeInterval: 1)
 
 // Presses a File menu item without bringing Ghostty forward, and returns the window it opened.
@@ -100,7 +101,7 @@ func close(_ w: AXUIElement) {
 /// Any switch looks again; the workspace you're on is the cheapest one.
 func rescan() {
     Thread.sleep(forTimeInterval: 1)
-    open("baneyspaces://switch/\(n)")
+    go(n)
     Thread.sleep(forTimeInterval: 0.8)
 }
 

@@ -70,6 +70,11 @@ public enum Wire {
             /// check (ask GitHub again) or now (install the release on offer). The reply's `info` is an
             /// `UpdateReport`. Local callers only (`Remote.allows` never lets it through).
             case update
+            /// The workspace actions of the shortcuts, for scripts and probes: `text` is switch, move or restore,
+            /// `target` the workspace. Like `focus` and `send`, the socket trusts every process running as Donovan
+            /// (spec/agent-api.md, "Who reaches what"); the URL scheme is the path that needs view control.
+            /// Local callers only (`Remote.allows` never lets it through).
+            case workspace
         }
         public var op: Op
         public var target: String?

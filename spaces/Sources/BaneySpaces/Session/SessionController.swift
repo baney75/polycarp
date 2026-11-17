@@ -102,6 +102,8 @@ final class SessionController {
     var sandboxHandler: ((Wire.Request) -> Wire.Reply)?
     /// Answers `polycarp-spaces update status|check|now` with the app's updater (the app delegate sets it).
     var updateHandler: ((String) -> Wire.Reply)?
+    /// `polycarp-spaces switch|move|restore`: the verb and the workspace; an error to report, or nil when done.
+    var workspaceHandler: ((String, Int) -> String?)?
 
     /// Set by the app delegate: the menu bar badge shows how many agents finished unseen.
     var onUnseenChange: (Int) -> Void = { _ in }
@@ -477,6 +479,14 @@ final class SessionController {
             return .init(ok: true, info: ["id": item.id, "label": item.label])
         // The remote server names every caller "remote …" (Server.swift), and a local caller claiming it only loses access.
         case .agent: return agent(r.text ?? "status", r.args ?? [], remote: r.caller?.hasPrefix("remote ") == true)
+        case .workspace:
+            guard r.caller?.hasPrefix("remote ") != true else { return .init(ok: false, error: "workspace actions are local only") }
+            let verb = r.text ?? ""
+            guard ["switch", "move", "restore"].contains(verb) else { return .init(ok: false, error: "switch, move or restore") }
+            let n = Int(r.target ?? "") ?? 0
+            guard verb == "restore" || Workspaces.range.contains(n) else { return .init(ok: false, error: "workspace must be a number from 1 to 9") }
+            if let e = workspaceHandler?(verb, n) ?? (workspaceHandler == nil ? "not ready" : nil) { return .init(ok: false, error: e) }
+            return .init(ok: true)
         case .update:
             // Answered above, before the Accessibility check.
             return .init(ok: false, error: "the updater isn't ready")

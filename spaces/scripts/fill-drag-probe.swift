@@ -369,8 +369,9 @@ func currentWorkspace() -> (current: Int, agent: Int?, used: Set<Int>) {
 }
 func go(_ n: Int) {
     let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    p.arguments = ["-g", "polycarp://switch/\(n)"]
+    // The socket, not the switch URL: the URL needs view control (spec/agent-api.md, "Who reaches what").
+    p.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["POLYCARP_SPACES"] ?? "\(NSHomeDirectory())/.local/bin/polycarp-spaces")
+    p.arguments = ["switch", "\(n)"]
     try? p.run(); p.waitUntilExit()
     usleep(900_000)
 }

@@ -22,7 +22,9 @@ real=0
 # When the running build started: only its switches count toward the real-use budget.
 lstart=$(LC_ALL=C ps -o lstart= -p "$(pgrep -f "Polycarp.app/Contents/MacOS/Polycarp" | head -1)" | tr -s ' ' | sed 's/^ //; s/ $//')
 launched=$(LC_ALL=C date -j -f "%a %b %d %T %Y" "$lstart" +%s)
-for _ in $(seq 1 10); do open -g "polycarp://switch/$current"; sleep 0.8; done
+# The socket, not the switch URL: the URL needs view control (spec/agent-api.md, "Who reaches what").
+cli="${POLYCARP_SPACES:-$HOME/.local/bin/polycarp-spaces}"
+for _ in $(seq 1 10); do "$cli" switch "$current"; sleep 0.8; done
 sleep 0.5
 python3 -c '
 import re, statistics, sys
