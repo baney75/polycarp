@@ -19,6 +19,7 @@ mod ipc;
 mod keys;
 mod paths;
 mod settings;
+mod snap;
 
 #[cfg(windows)]
 mod agent;
@@ -26,6 +27,8 @@ mod agent;
 mod cloak;
 #[cfg(windows)]
 mod daemon;
+#[cfg(windows)]
+mod drag;
 #[cfg(windows)]
 mod hook;
 #[cfg(windows)]
