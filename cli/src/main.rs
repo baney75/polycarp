@@ -11,6 +11,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 mod browsers;
+mod channel;
 mod features;
 mod mcp;
 mod theme;

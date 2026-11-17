@@ -20,6 +20,7 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::channel::{self, Channel};
 use crate::version::{self, Part};
 
 /// The exit code for "an update is available", the same one `polycarp browser update --check` uses.
@@ -88,6 +89,9 @@ pub struct Options {
     pub yes: bool,
     /// `--finish`: the last steps only, run by the newly installed command.
     pub finish: bool,
+    /// `--channel`: what to follow. A source install builds dev (origin/main) without it; a Mac app follows
+    /// the channel chosen in its Settings.
+    pub channel: Option<Channel>,
 }
 
 /// What a step is for. It decides what a failure means and what the failure message says.
@@ -262,19 +266,26 @@ pub fn plan(f: &Facts, o: Options) -> Plan {
 
 fn release_steps(spaces: &Path, o: Options) -> (String, Vec<Step>, Vec<String>) {
     let spaces = s(spaces);
-    let summary = "release install: Polycarp.app updates itself".to_string();
+    let summary = match o.channel {
+        Some(c) => format!(
+            "release install: Polycarp.app updates itself from {} ({})",
+            c.name(),
+            c.feed_url()
+        ),
+        None => "release install: Polycarp.app updates itself".to_string(),
+    };
     if o.check {
         let step = Step::new(
             Role::Gate,
             "Ask Polycarp whether a newer release is out",
-            &[&spaces, "update", "--check"],
+            &with_channel(&[&spaces, "update", "--check"], o.channel),
         );
         return (summary, vec![step], Vec::new());
     }
     let step = Step::new(
         Role::Install,
         "Ask Polycarp to install the newest release",
-        &[&spaces, "update", "--now"],
+        &with_channel(&[&spaces, "update", "--now"], o.channel),
     );
     let notes = vec![
         "If Polycarp said it is up to date, nothing was installed. Otherwise it downloads the release in the background, checks that it is signed with the release key, installs it and restarts itself. Run `polycarp version --check` once it is back.".to_string(),
@@ -282,13 +293,14 @@ fn release_steps(spaces: &Path, o: Options) -> (String, Vec<Step>, Vec<String>) 
     (summary, vec![step], notes)
 }
 
-/// `git fetch` with the refspec spelled out, so origin/main moves even in a checkout that tracks one branch.
-const FETCH: [&str; 3] = [
-    "fetch",
-    "origin",
-    "+refs/heads/main:refs/remotes/origin/main",
-];
-const TARGET: &str = "refs/remotes/origin/main";
+/// `polycarp-spaces update` with `--channel <c>` when one was given: the app chooses it first.
+fn with_channel<'a>(argv: &[&'a str], channel: Option<Channel>) -> Vec<&'a str> {
+    let mut argv = argv.to_vec();
+    if let Some(c) = channel {
+        argv.extend(["--channel", c.name()]);
+    }
+    argv
+}
 
 /// The parts an update on this device installs, as `polycarp version` names them. The gate and the
 /// final check need each of them to be installed, so a part that is missing is installed by the
@@ -319,7 +331,9 @@ fn source_steps(
     let (co, wt, me) = (s(checkout), s(&f.worktree), s(&f.polycarp));
     let installed = s(&f.installed);
     let needs = needs(f);
-    let summary = format!("source install: origin/main of {co}, built in {wt}");
+    let channel = o.channel.unwrap_or(Channel::Dev);
+    let (target, name) = (channel.target(), channel.target_name());
+    let summary = format!("source install: {name} of {co}, built in {wt}");
     let mut notes = Vec::new();
     if o.finish {
         // Run by the command this update just installed: only what comes after the install.
@@ -327,19 +341,19 @@ fn source_steps(
     }
     let mut steps = vec![Step::new(
         Role::Git,
-        "Fetch origin/main",
-        &["git", "-C", &co, FETCH[0], FETCH[1], FETCH[2]],
+        &format!("Fetch {name}"),
+        &["git", "-C", &co, "fetch", "origin", channel.refspec()],
     )];
     if o.check {
         steps.push(Step::new(
             Role::Gate,
-            "Compare what is installed with origin/main",
+            &format!("Compare what is installed with {name}"),
             &[
                 &me,
                 "update",
                 "--is-current",
                 &co,
-                TARGET,
+                target,
                 "--needs",
                 &needs,
             ],
@@ -348,14 +362,14 @@ fn source_steps(
     }
     if dirty {
         notes.push(format!(
-            "{co} has uncommitted changes. They are left alone and are not installed: only origin/main is."
+            "{co} has uncommitted changes. They are left alone and are not installed: only {name} is."
         ));
     }
     if f.worktree_exists {
         steps.push(Step::new(
             Role::Git,
-            "Reset the clean copy to origin/main",
-            &["git", "-C", &wt, "reset", "--hard", TARGET],
+            &format!("Reset the clean copy to {name}"),
+            &["git", "-C", &wt, "reset", "--hard", target],
         ));
         steps.push(Step::new(
             Role::Git,
@@ -377,9 +391,9 @@ fn source_steps(
         ));
         steps.push(Step::new(
             Role::Git,
-            "Make a clean copy of origin/main",
+            &format!("Make a clean copy of {name}"),
             &[
-                "git", "-C", &co, "worktree", "add", "--detach", "--force", &wt, TARGET,
+                "git", "-C", &co, "worktree", "add", "--detach", "--force", &wt, target,
             ],
         ));
     }
@@ -1154,13 +1168,15 @@ pub struct Device<'a> {
 }
 
 pub const USAGE: &str = "\
-usage: polycarp update [--check] [--dry-run] [--yes] [--source <checkout>]
+usage: polycarp update [--check] [--dry-run] [--yes] [--channel <c>] [--source <checkout>]
 
 Brings every Polycarp part on this device to origin/main, together.
 
   --check             say whether an update is waiting: exit 0 when up to date, 100 when there is one
   --dry-run           print the steps and run nothing
   --yes               run the steps without asking (needed when there is no terminal)
+  --channel <c>       stable, nightly or dev (docs/releases.md). A Mac app chooses it as in Settings > Updates;
+                      a source install builds origin/stable, the nightly tag or origin/main (dev, the default)
   --source <checkout> a checkout of https://github.com/baney75/polycarp to build from; remembered
 
 A source install fetches origin/main, builds it in a clean copy under the cache folder (never your
@@ -1188,6 +1204,11 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
             Some("--finish") => {
                 out.options.finish = true;
                 out.options.yes = true;
+            }
+            Some("--channel") => {
+                let name = it.next().and_then(|n| n.to_str()).unwrap_or("");
+                out.options.channel =
+                    Some(Channel::parse(name).ok_or("--channel takes stable, nightly or dev")?);
             }
             Some("--source") => {
                 let path = it.next().ok_or("--source needs the path of a checkout")?;
@@ -1702,7 +1723,7 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
                 print!("{}", version::table(&parts));
                 println!("\nnot every part is at origin/main ({at}) yet.");
             } else {
-                println!("update available: origin/main is at {at}");
+                println!("update available: {} is at {at}", channel::name_of(rev));
             }
             if !missing.is_empty() {
                 println!("not installed yet: {}", missing.join(", "));
@@ -1977,6 +1998,7 @@ mod tests {
         dry_run: false,
         yes: true,
         finish: false,
+        channel: None,
     };
     /// What the newly installed command runs: `--finish` carries its own yes.
     const FINISH: Options = Options {
@@ -1984,18 +2006,21 @@ mod tests {
         dry_run: false,
         yes: true,
         finish: true,
+        channel: None,
     };
     const DRY: Options = Options {
         check: false,
         dry_run: true,
         yes: false,
         finish: false,
+        channel: None,
     };
     const CHECK: Options = Options {
         check: true,
         dry_run: false,
         yes: false,
         finish: false,
+        channel: None,
     };
 
     fn steps_of(plan: Plan) -> Vec<Step> {
@@ -2519,6 +2544,80 @@ mod tests {
         ));
         assert_eq!(code, 1);
         assert!(message.contains("polycarp-spaces command was not found"));
+    }
+
+    #[test]
+    fn a_channel_picks_what_an_update_follows() {
+        let parsed = |a: &[&str]| parse(&a.iter().map(OsString::from).collect::<Vec<_>>());
+        assert_eq!(parsed(&[]).unwrap().options.channel, None);
+        assert_eq!(
+            parsed(&["--channel", "preview"]).unwrap().options.channel,
+            Some(Channel::Nightly)
+        );
+        for bad in [&["--channel", "main"][..], &["--channel"]] {
+            assert!(parsed(bad).is_err(), "{bad:?}");
+        }
+        // A Mac app is asked to follow it.
+        let spaces =
+            PathBuf::from("/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces");
+        let f = facts(
+            Platform::Mac,
+            Install::MacRelease {
+                spaces: Some(spaces.clone()),
+            },
+        );
+        let dev = Options {
+            channel: Some(Channel::Dev),
+            ..YES
+        };
+        assert_eq!(
+            commands(&steps_of(plan(&f, dev))),
+            vec![format!("{} update --now --channel dev", spaces.display())]
+        );
+        let (summary, _, _) = release_steps(&spaces, dev);
+        assert!(
+            summary.ends_with(
+                "from dev (https://github.com/baney75/polycarp/releases/download/dev/latest.json)"
+            ),
+            "{summary}"
+        );
+        // A source install fetches and builds the channel's ref: stable is origin/stable, nightly the tag.
+        let mut f = facts(Platform::Mac, source(Some(ORIGIN), false));
+        for (c, fetch, target) in [
+            (
+                Channel::Stable,
+                "+refs/heads/stable:refs/remotes/origin/stable",
+                "refs/remotes/origin/stable",
+            ),
+            (
+                Channel::Nightly,
+                "+refs/tags/nightly:refs/tags/nightly",
+                "refs/tags/nightly",
+            ),
+        ] {
+            let o = Options {
+                channel: Some(c),
+                ..YES
+            };
+            f.worktree_exists = false;
+            let cmds = commands(&steps_of(plan(&f, o)));
+            assert_eq!(cmds[0], format!("git -C {CHECKOUT} fetch origin {fetch}"));
+            assert_eq!(
+                cmds[2],
+                format!("git -C {CHECKOUT} worktree add --detach --force {WORKTREE} {target}")
+            );
+            f.worktree_exists = true;
+            let cmds = commands(&steps_of(plan(&f, o)));
+            assert_eq!(cmds[1], format!("git -C {WORKTREE} reset --hard {target}"));
+            let check = Options { check: true, ..o };
+            let cmds = commands(&steps_of(plan(&f, check)));
+            assert!(
+                cmds[1].contains(&format!(
+                    " update --is-current {CHECKOUT} {target} --needs "
+                )),
+                "{cmds:?}"
+            );
+        }
     }
 
     #[test]
