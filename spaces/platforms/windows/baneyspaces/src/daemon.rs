@@ -1518,7 +1518,7 @@ fn on_end_session(e: EndSession) {
 }
 
 /// One daemon per user: a named mutex, taken before anything is touched. None means another is running.
-fn single_instance(paths: &Paths) -> Option<windows_sys::Win32::Foundation::HANDLE> {
+pub fn single_instance(paths: &Paths) -> Option<windows_sys::Win32::Foundation::HANDLE> {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::CreateMutexW;
     let name: Vec<u16> = paths.mutex_name().encode_utf16().chain(std::iter::once(0)).collect();
