@@ -140,7 +140,7 @@ struct BrowserDropView: View {
             VStack(spacing: 12) {
                 switch model.state {
                 case .connected:
-                    Image(systemName: "checkmark.circle.fill").font(Chrome.font(40)).foregroundStyle(Color.green)
+                    Image(systemName: "checkmark.circle.fill").font(Chrome.font(40)).foregroundStyle(Appearance.color(Chrome.look.color("done")))
                     Text("Connected").font(Chrome.font(15, .bold))
                 case .reload(let loaded, let current):
                     // Older than this app's copy. Reload only helps when the browser loads Polycarp's own copy, so the drag
