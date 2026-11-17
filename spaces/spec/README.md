@@ -6,10 +6,12 @@ not written here does not ship on one platform alone.
 | File | What it fixes |
 | --- | --- |
 | [workspaces.md](workspaces.md) | The workspace rules, each with an id (`R-S1`, ...) |
+| [launcher.md](launcher.md) | What the launcher finds and in what order (`R-L1`, ...), with its ranking table |
 | [keys.json](keys.json) | The key map per platform, and what Linux replaces in Omarchy |
 | [envelope.md](envelope.md) | The JSON envelope every CLI and MCP result uses, and the error codes |
 | [cli.md](cli.md) | The command family and which commands exist on which platform |
 | [mcp-tools.json](mcp-tools.json) | The MCP tools, as `tools/list` returns them (generated from the Rust core) |
+| [shell.md](shell.md) | The shell's feed: what a bar or launcher hears from the daemon, and who may subscribe |
 | [conformance/](conformance/) | Cases as JSON: inputs, the effects they must produce, the state they must leave |
 
 ## Conformance cases
