@@ -338,7 +338,7 @@ pub fn resolve_doc(
         let mut plain = t.clone();
         for m in MODES {
             if let Some(Value::Table(mt)) = plain.get_mut(m) {
-                mt.retain(|k, _| !CODE.contains(&k.as_str()));
+                mt.retain(|k, _| !CODE.contains(&k));
             }
         }
         let mut r: Resolved = Value::Table(plain)
