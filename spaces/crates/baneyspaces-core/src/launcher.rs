@@ -9,6 +9,9 @@
 //! small integer slices. Preparing is the costly part; do it when the list changes, never per keystroke.
 
 mod fold;
+mod index;
+
+pub use index::{Entry, EntryKind, Hit, LauncherIndex};
 
 use std::cmp::{max, min};
 
