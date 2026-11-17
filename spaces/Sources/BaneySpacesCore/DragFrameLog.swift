@@ -42,3 +42,26 @@ public enum DragFrameLog {
         v == v.rounded() ? String(Int(v)) : String(format: "%.1f", Double(v))
     }
 }
+
+/// Which window a let-go ends a drag of, for the frame watch. The top-drag watcher stops following a drag early (the overview
+/// declined it, a tab tore off) and forgets its grab, so at mouse-up it had no window, and the drop was never watched: the
+/// only drag after the 2026-11-17 deploy logged "overview declined" and no "drag watch" line. This keeps the window the
+/// watcher was dragging until the let-go.
+public struct DragLetGo: Equatable, Sendable {
+    private var early: WindowID?
+
+    public init() {}
+
+    /// The watcher stopped following, with `dragging` the window it was moving, if any.
+    public mutating func ticksEnded(dragging: WindowID?) {
+        if let dragging { early = dragging }
+    }
+
+    /// The button came up (`at` nil: a press that followed a missed release, or the watcher stopping, so no drop).
+    /// `tracked` is the drag the watcher still follows. Returns the window to watch.
+    public mutating func letGo(tracked: WindowID?, at: Bool) -> WindowID? {
+        defer { early = nil }
+        guard at else { return nil }
+        return tracked ?? early
+    }
+}

@@ -124,10 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return true
         }
         // A drag the overview covered and that dropped nowhere goes back where it was; any other is the person's own.
-        t.onDragEnd = { [weak self] id, end in
-            DragFrameTrace.released(id)
-            self?.correctOnceStill(id, after: end)
-        }
+        t.onDragEnd = { [weak self] id, end in self?.correctOnceStill(id, after: end) }
+        t.onLetGo = { id in DragFrameTrace.released(id) }
         return t
     }()
 
