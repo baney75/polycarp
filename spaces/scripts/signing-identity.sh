@@ -11,6 +11,13 @@
 # never makes a second key while the old one is there.
 # Passwords go through files and stdin, never command-line arguments, so `ps` can't show them.
 set -euo pipefail
+# In CI, ci-signing.sh has imported the release identity into a throwaway keychain: use it as it is, never make one.
+if [ -n "${POLYCARP_SIGNING_IDENTITY:-}" ] || [ -n "${POLYCARP_SIGNING_KEYCHAIN:-}" ]; then
+  security find-identity -p codesigning "${POLYCARP_SIGNING_KEYCHAIN:?}" 2>/dev/null | grep -qF "\"${POLYCARP_SIGNING_IDENTITY:?}\"" \
+    || { echo "signing-identity.sh: \"$POLYCARP_SIGNING_IDENTITY\" is not in $POLYCARP_SIGNING_KEYCHAIN" >&2; exit 1; }
+  printf '%s\t%s\n' "$POLYCARP_SIGNING_IDENTITY" "$POLYCARP_SIGNING_KEYCHAIN"
+  exit 0
+fi
 NAME="Polycarp Local Signing"
 DIR="$HOME/Library/Application Support/Polycarp/Signing"
 KC="$DIR/polycarp-signing.keychain-db"

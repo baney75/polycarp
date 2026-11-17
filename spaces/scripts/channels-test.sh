@@ -65,5 +65,31 @@ feed arm64 dev "$base-nightly.20261118070000+1a2b3c4" && bad "a dev feed took a 
 feed arm64 preview "$base" && bad "write-feed took the preview channel"
 POLYCARP_FEED_ARCHS=ppc scripts/write-feed.sh nightly "$(scripts/channel-version.sh nightly)" "$c" "$tmp/Polycarp.zip" "$tmp/x.json" >/dev/null 2>&1 \
   && bad "a feed with no Mac architecture was written"
+# CI signing fails closed: no secrets is "publish nothing" (exit 3), a bad secret or a named identity that isn't
+# there stops the build, and neither falls back to ad-hoc or makes a key.
+env -u POLYCARP_SIGNING_P12 -u POLYCARP_SIGNING_P12_PASSWORD scripts/ci-signing.sh >/dev/null 2>&1; code=$?
+expect "ci-signing without secrets" "$code" 3
+POLYCARP_SIGNING_P12=eA== POLYCARP_SIGNING_P12_PASSWORD='a b' RUNNER_TEMP="$tmp" GITHUB_ENV="$tmp/env" scripts/ci-signing.sh >/dev/null 2>&1 \
+  && bad "ci-signing took a password security -i would split"
+[ ! -e "$tmp/env" ] && [ -z "$(ls -d "$tmp"/signing.* 2>/dev/null)" ] || bad "ci-signing changed something before refusing"
+POLYCARP_SIGNING_IDENTITY=nobody POLYCARP_SIGNING_KEYCHAIN="$tmp/none.keychain-db" scripts/signing-identity.sh >/dev/null 2>&1 \
+  && bad "signing-identity.sh accepted a CI identity that isn't in its keychain"
+grep -q 'POLYCARP_SIGNING_IDENTITY:-}" ] || { echo "bundle: the signing identity' scripts/bundle.sh || bad "bundle.sh can fall back to ad-hoc with a CI identity named"
+# Workflows: a build step runs only once signed, and no workflow ever publishes a stable release (the Mac does,
+# after the soak).
+for wf in channel-build stable-build; do
+  f=../.github/workflows/$wf.yml
+  # Each step (a "      - " line and what follows it) that runs release.sh carries the signed condition.
+  awk -v want="        if: steps.sign.outputs.signed == 'true'" '
+    function step() { if (on && s ~ /release\.sh/ && s !~ /ci-signing\.sh/) { n++; if (index(s, "\n" want "\n") == 0) miss = 1 } s = "" }
+    /^      - / { step(); on = 1 }
+    { s = s "\n" $0 }
+    END { s = s "\n"; step(); exit !(n && !miss) }
+  ' "$f" || bad "$wf.yml runs release.sh without the signing identity"
+done
+# Comments and echoed advice may name the Mac's publish step; a command may not.
+if grep -nE -- '--soak|draft=false|--draft=false|make_latest=true|--latest( |$)' ../.github/workflows/*.yml \
+  | grep -vE '^[^:]+:[0-9]+: *(#|echo )'; then bad "a workflow publishes a release by itself"; fi
+
 [ $status = 0 ] && echo "channels-test: pass"
 exit $status

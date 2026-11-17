@@ -1,0 +1,50 @@
+name: Dev
+# A dev build of every main commit CI passed (docs/releases.md); channel-build.yml builds and publishes it. A run
+# that is publishing is never cancelled (the rolling release would be left half moved): a newer commit waits, and
+# GitHub keeps only the newest waiting one.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: dev
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  gate:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.decide.outputs.commit }}
+      time: ${{ steps.decide.outputs.time }}
+    steps:
+      - name: Decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "$RUN_SHA" ]; then SHA=$RUN_SHA; else
+            [ "$REF" = refs/heads/main ] || { echo "dev is built from main only, not $REF" >&2; exit 1; }
+            SHA=$(gh api "repos/$REPO/commits/main" --jq .sha)
+          fi
+          { echo "commit=$SHA"; echo "time=$(date -u +%Y%m%d%H%M%S)"; } >> "$GITHUB_OUTPUT"
+  build:
+    needs: gate
+    permissions:
+      contents: write
+    uses: ./.github/workflows/channel-build.yml
+    with:
+      channel: dev
+      commit: ${{ needs.gate.outputs.commit }}
+      build_time: ${{ needs.gate.outputs.time }}
+    secrets:
+      POLYCARP_SIGNING_P12: ${{ secrets.POLYCARP_SIGNING_P12 }}
+      POLYCARP_SIGNING_P12_PASSWORD: ${{ secrets.POLYCARP_SIGNING_P12_PASSWORD }}

@@ -123,6 +123,8 @@ if [ "${BANEYSPACES_ADHOC:-}" != 1 ] && IDENT=$(scripts/signing-identity.sh 2>/d
   codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p' > "$APP/Contents/Resources/probe/CanvasProbe.cdhash"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
 else
+  # A channel build in CI never falls back to ad-hoc: its identity was named, so failing to use it is the error.
+  [ -z "${POLYCARP_SIGNING_IDENTITY:-}" ] || { echo "bundle: the signing identity \"$POLYCARP_SIGNING_IDENTITY\" can't be used" >&2; exit 1; }
   ADHOC_NOTE="note: signed ad-hoc, so macOS will ask for Accessibility again after each update"
   echo "$ADHOC_NOTE" >&2
   codesign --force --sign - --identifier "$BUNDLE_ID.engine" "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
