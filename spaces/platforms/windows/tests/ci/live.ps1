@@ -197,6 +197,9 @@ check ((cloaked $ut) -eq 2) 'a recorded window whose class no longer matches was
 check ((Get-Content $dlog | Select-String 'left alone' | Measure-Object).Count -gt 0) 'and it was logged'
 say "    $([Desk]::Uncloak($ut))"
 $ids = { $d = (j (bsc state)).data.windows; ($d.PSObject.Properties | % { "$($_.Name)=$($_.Value.home)" } | Sort-Object) -join ' ' }
+# The window just uncloaked by hand is new to the daemon until its next poll adopts it; wait for that, or the
+# snapshot below misses a window the later ones have.
+$until = (Get-Date).AddSeconds(5); while ((& $ids) -notmatch "w-$ut=" -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 250 }
 $s0 = & $ids
 keys $WIN, $CTRL, $D; Start-Sleep 2; $s1 = & $ids; shot '07-virtual-desktop'
 check ($s0 -eq $s1) 'on a second virtual desktop every window is still tracked, on the same workspace' "$s0 / $s1"
@@ -238,7 +241,9 @@ Start-Sleep 5; $wr = [Desk]::WatchStop(); $wr | % { Add-Content $log "    $_" }
 check ($c -match '"ok":true') 'agent click on Open dialog' $c
 $dl = @($wr | ? { $_ -match 'Test dialog' })[0]
 $vp = if ($dl -match 'visible_polls=(\d+)') { [int]$Matches[1] } else { -1 }; $exms = if ($dl -match 'exposed_ms=(\d+)') { [int]$Matches[1] } else { 99 }
-check ($vp -ge 0 -and $vp -le 5 -and $exms -le 33) "the dialog the app opened was ghosted at once: visible in $vp of $($wr[0]) polls, exposed $exms ms" ($wr -join ' | ')
+# The watch polls tens of thousands of times a second, so the poll count says little; the time between the first
+# and last poll that saw it does. Under 33 ms is at most two frames at 60 Hz (the first run measured 6 ms).
+check ($vp -ge 0 -and $exms -le 33) "the dialog the app opened was ghosted at once: exposed $exms ms (visible in $vp of $($wr[0]) polls)" ($wr -join ' | ')
 $as = j (bsc agent status)
 check (@($as.data.windows).Count -eq 2) 'the dialog is an agent window (agent status lists both)'
 $dw = @($as.data.windows | ? { $_.window -ne $aw })[0].window

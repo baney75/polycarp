@@ -9,12 +9,13 @@ using System.Text;
 
 public class Win {
     public long Hwnd; public uint Pid; public string Class; public string Title;
-    public int Cloaked; public int Alpha; public bool Parked; public int L, T, R, B;
-    // What a person would see: drawn, not cloaked, not transparent, on screen.
-    public bool Seen { get { return Cloaked == 0 && Alpha > 0 && !Parked; } }
+    public int Cloaked; public int Alpha; public bool Parked; public bool Iconic; public int L, T, R, B;
+    // What a person would see: drawn, not cloaked, not transparent, not minimized, on screen. A minimized window
+    // draws nothing on the desktop (an agent's window starts minimized and a parked one may stay that way).
+    public bool Seen { get { return Cloaked == 0 && Alpha > 0 && !Parked && !Iconic; } }
     public override string ToString() {
-        return String.Format("w-{0} pid={1} class={2} title='{3}' cloaked={4} alpha={5} parked={6} rect={7},{8},{9},{10} SEEN={11}",
-            Hwnd, Pid, Class, Title, Cloaked, Alpha, Parked, L, T, R, B, Seen);
+        return String.Format("w-{0} pid={1} class={2} title='{3}' cloaked={4} alpha={5} parked={6} iconic={7} rect={8},{9},{10},{11} SEEN={12}",
+            Hwnd, Pid, Class, Title, Cloaked, Alpha, Parked, Iconic, L, T, R, B, Seen);
     }
 }
 
@@ -75,7 +76,7 @@ public static class Desk {
         if ((ex & 0x80000) != 0) { uint k, f; byte a; if (GetLayeredWindowAttributes(h, out k, out a, out f) && (f & 2) != 0) alpha = a; }
         uint pid; GetWindowThreadProcessId(h, out pid);
         return new Win { Hwnd = id, Pid = pid, Class = ClassOf(h), Title = Text(h), Cloaked = cloaked, Alpha = alpha,
-            Parked = r.L <= -30000 && !IsIconic(h), L = r.L, T = r.T, R = r.R, B = r.B };
+            Parked = r.L <= -30000 && !IsIconic(h), Iconic = IsIconic(h), L = r.L, T = r.T, R = r.R, B = r.B };
     }
 
     // The app windows (all: every visible top-level window, owned, untitled and tool windows too).
@@ -136,7 +137,7 @@ public static class Desk {
 
     // Watches, as fast as it can poll, for windows that were not there at the start, and counts the polls in which
     // each was seen. Start, do the thing, then Stop for one line per new window.
-    class Track { public long First = -1, FirstSeen = -1, LastSeen = -1; public int Visible; public string Last; }
+    class Track { public long First = -1, FirstSeen = -1, LastSeen = -1; public int Visible; public string Last, AtFirstSeen; }
     static System.Threading.Thread watcher;
     static volatile bool watching;
     static Dictionary<long, Track> fresh;
@@ -152,7 +153,7 @@ public static class Desk {
                 foreach (var w in Windows(all)) {
                     if (baseline.Contains(w.Hwnd)) continue;
                     Track t; if (!fresh.TryGetValue(w.Hwnd, out t)) { t = new Track { First = sw.ElapsedMilliseconds }; fresh[w.Hwnd] = t; }
-                    if (w.Seen) { if (t.FirstSeen < 0) t.FirstSeen = sw.ElapsedMilliseconds; t.LastSeen = sw.ElapsedMilliseconds; t.Visible++; }
+                    if (w.Seen) { if (t.FirstSeen < 0) { t.FirstSeen = sw.ElapsedMilliseconds; t.AtFirstSeen = w.ToString(); } t.LastSeen = sw.ElapsedMilliseconds; t.Visible++; }
                     t.Last = w.ToString();
                 }
             }
@@ -164,7 +165,8 @@ public static class Desk {
         var o = new List<string> { "polls=" + polls };
         foreach (var kv in fresh) {
             var t = kv.Value;
-            o.Add(String.Format("NEW w-{0} first_seen_at={1}ms visible_polls={2} exposed_ms={3} :: {4}", kv.Key, t.First, t.Visible, t.Visible > 0 ? t.LastSeen - t.FirstSeen : 0, t.Last));
+            o.Add(String.Format("NEW w-{0} first_seen_at={1}ms visible_polls={2} exposed_ms={3} :: {4}{5}", kv.Key, t.First, t.Visible, t.Visible > 0 ? t.LastSeen - t.FirstSeen : 0, t.Last,
+                t.AtFirstSeen != null ? " :: when first seen: " + t.AtFirstSeen : ""));
         }
         if (fresh.Count == 0) o.Add("NEW none");
         return o;
