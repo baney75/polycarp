@@ -111,6 +111,8 @@ jobs:
           key: spaces
       - name: Check the install scripts
         run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh && bash -n scripts/build-core.sh && bash -n scripts/build-browser.sh
+      - name: The real-drag harness judges the frames from Donovan's reports (no pointer)
+        run: swift scripts/real-drag.swift --self-test && bash -n scripts/guest-drag.sh && bash -n scripts/guest-drag-setup.sh
       - name: Build the hands engine
         run: BANEYSPACES_ARM64_ONLY=1 scripts/build-engine.sh
       - name: Build the voice core

@@ -31,6 +31,13 @@ A change is done when steps 1 to 3 pass on its branch and step 4 passes on `main
    both. Either flag runs case 5 alone (`--no-polycarp` also case 6). The rest at the top opens the overview, so case 5
    reads the trace to fail a move Polycarp made as Polycarp's, never as the jump. Case 6 lets a window go blind at the
    left edge and prints macOS's pause before it half-tiles; set `DragRelease.sideTileStillLooks` from that number.
+   Any one real drag, described on the command line: `swiftc -O scripts/real-drag.swift -o /tmp/real-drag`, then
+   `/tmp/real-drag --launch /Applications/Helium.app --start 200,120,1100,780 --grab strip --to top --rest 1 --expect fill`
+   (grab point, path, rest and release are flags; `--self-test` needs no pointer). On this Mac it runs only after 10
+   idle minutes, or right after its own previous run, and drags only a copy it launched on a temp profile; it puts the
+   pointer back and quits that copy. It prints the frames from mouse-up, the final shape and the trace lines since the
+   press, and exits 1 when `--expect` fails. `scripts/guest-drag.sh -- <same flags>` runs it in a throwaway Tart guest
+   instead, with its own pointer (needs SIP off in the image to grant Accessibility there).
    For the dock's own motion or the "+N" list/strip panel (`DockSide`, `DockMotion`, `WorkspaceDock.show/hide/syncSide`):
    `swift scripts/dock-motion-probe.swift` (no pointer; it shows the dock for about four seconds, so run it
    when Donovan has been idle 10 minutes; it needs `dockURLCommands` on and a tile with more than four apps).
