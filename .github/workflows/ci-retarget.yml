@@ -1,0 +1,25 @@
+name: CI retarget
+# ci.yml runs its macOS jobs only for pushes, PRs based on main and PRs labeled mac-ci. A stacked PR that GitHub
+# retargets to main after its parent merges (or one labeled mac-ci later) gets no new pull_request run, because
+# `edited` and `labeled` are not ci.yml triggers: its last run would show the macOS jobs skipped. This starts ci.yml on
+# the PR's branch in those two cases only. Every other edit (body, title, the gate's review block) skips the one job
+# below, which has its own check name, so it never adds a skipped `spaces` check over a real one.
+on:
+  pull_request:
+    types: [edited, labeled]
+permissions:
+  actions: write
+  contents: read
+jobs:
+  retarget-ci:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.event.action == 'edited' && github.event.changes.base && github.event.pull_request.base.ref == 'main') ||
+       (github.event.action == 'labeled' && github.event.label.name == 'mac-ci'))
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH" -f pr="$PR"
