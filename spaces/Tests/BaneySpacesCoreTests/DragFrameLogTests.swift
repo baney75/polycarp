@@ -33,3 +33,41 @@ final class DragFrameLogTests: XCTestCase {
         XCTAssertEqual(DragFrameLog.changeLine(window: 7, t: 1, frame: nil, previous: half), "drag watch window=7 +1000 ms frame=gone")
     }
 }
+
+final class DragLetGoTests: XCTestCase {
+    /// The probe's Chrome drag at 2026-11-17 00:01:42 rested at the top, the overview declined it, and the drop was never
+    /// watched: no "drag watch" line.
+    func testADeclinedDragIsStillWatchedAtTheLetGo() {
+        var g = DragLetGo()
+        g.ticksEnded(dragging: 79871)
+        XCTAssertEqual(g.letGo(tracked: nil, at: true), 79871)
+        XCTAssertNil(g.letGo(tracked: nil, at: true), "one let-go per drag")
+    }
+
+    func testTheTrackedDragWins() {
+        var g = DragLetGo()
+        g.ticksEnded(dragging: 1)
+        XCTAssertEqual(g.letGo(tracked: 2, at: true), 2)
+    }
+
+    func testAPlainClickOrAMissedReleaseWatchesNothing() {
+        var g = DragLetGo()
+        g.ticksEnded(dragging: nil)
+        XCTAssertNil(g.letGo(tracked: nil, at: true), "a click that never moved a window")
+        g.ticksEnded(dragging: 5)
+        XCTAssertNil(g.letGo(tracked: nil, at: false), "a press after a missed release, or the watcher stopping")
+        XCTAssertNil(g.letGo(tracked: nil, at: true), "and that drag is forgotten")
+    }
+}
+
+/// The watch is armed from every let-go the top-drag watcher sees, not only drops it still followed.
+final class DragLetGoWiringTests: XCTestCase {
+    func testEveryLetGoArmsTheWatch() throws {
+        let watcher = try Repo.code("Sources/BaneySpaces/TopDragWatcher.swift")
+        XCTAssertTrue(watcher.contains("letGo.ticksEnded(dragging:"), "ending the ticks must remember the dragged window")
+        XCTAssertTrue(watcher.contains("letGo.letGo(tracked:"), "the release must ask which window to watch")
+        XCTAssertTrue(watcher.contains("onLetGo(watched)"))
+        let delegate = try Repo.code("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertTrue(delegate.contains("t.onLetGo = { id in DragFrameTrace.released(id) }"), "the let-go starts the frame watch")
+    }
+}

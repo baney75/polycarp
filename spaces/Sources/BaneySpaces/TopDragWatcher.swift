@@ -142,6 +142,9 @@ final class TopDragWatcher {
     /// A drag of a window's title bar ended with the button let go, however it ended (overview, dock, or neither): where,
     /// whether the overview covered the window and from what frame, and whether a drop took it. Called last.
     var onDragEnd: (WindowID, DragEnd) -> Void = { _, _ in }
+    /// Any let-go of a drag the watcher saw move, even one it stopped following (the overview declined it): the frame watch.
+    var onLetGo: (WindowID) -> Void = { _ in }
+    private var letGo = DragLetGo()
     /// The drag to the top opens the overview. Off, the watcher still follows drags for the dock.
     var topEnabled = true
     /// The window follows the pointer, on every tick until the overview opens for it: the dock
@@ -203,6 +206,7 @@ final class TopDragWatcher {
             },
             release: g.map { g in { [self] in onRelease(g, p) } })
         if let dragged, p != nil { onDragEnd(dragged.window, end) }
+        if let watched = letGo.letGo(tracked: dragged?.window, at: p != nil) { onLetGo(watched) }
     }
 
     private func pressed(at p: CGPoint) {
@@ -273,6 +277,7 @@ final class TopDragWatcher {
     }
 
     private func endTicks() {
+        letGo.ticksEnded(dragging: (state.moving || state.pinned) ? state.grab?.window : nil)
         endCarry(at: nil)
         timer?.invalidate()
         timer = nil
