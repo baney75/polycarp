@@ -48,6 +48,9 @@ final class Spaces {
     private var asking: [WaitingWindow.Seen] = []
     private(set) var attention: [DockAttention.Mark] = []
     private var unplaced = UnplacedWindows()
+    /// `[[rules]]` from `spaces.toml` (W2), read as each new window shows up; and which windows they already decided.
+    var rules: () -> [AppRule] = { [] }
+    private var ruleBook = RuleBook()
     private var heal: DispatchWorkItem?
     /// Windows that ignored every request to leave macOS full screen. Asking again only stalls.
     private var refusedFullScreen = Set<WindowID>()
@@ -255,6 +258,7 @@ final class Spaces {
         if !firstScan {
             let fresh = added.filter { !fromLayout.contains($0) && unplaced.isNew($0, known: knownWindows, now: now) }
             returned = placeClaimed(fresh) || returned
+            scheduleRules(fresh)
             adoptBackgroundWindows(fresh)
         }
         if returned, !switching {
@@ -2349,5 +2353,59 @@ extension Spaces {
         guard model.moved(id, to: d) else { return }
         Trace.log("window \(id) moved by a window action to the display showing \(model.shown[d] ?? 0)")
         persist()
+    }
+}
+
+// MARK: App rules (W2): kept at the end of the file and apart, like the window actions above.
+
+extension Spaces {
+    /// `[[rules]]` on brand-new windows only: `refresh` passes none that came back from the saved layout or a relaunch,
+    /// and none that had a workspace before (R-P2; the ledger's "never treated as new"). They run a turn later, once the
+    /// window has landed where you are (R-P1) and focus following has looked at it, so neither undoes the rule.
+    fileprivate func scheduleRules(_ fresh: [WindowID]) {
+        guard !fresh.isEmpty, !rules().isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in self?.applyRules(fresh) }
+    }
+
+    /// One an agent claimed, an agent's process started, and a dialog stay where they are. A window the rules decided
+    /// once is never decided again, so one you then move stays where you put it. A window from the app you just brought
+    /// forward takes you with it, as a move does (R-V2); one an app opened behind you goes, and you stay (R-V3).
+    private func applyRules(_ fresh: [WindowID]) {
+        guard active else { return }
+        if switching { return enqueue { [weak self] in self?.applyRules(fresh) } }
+        ruleBook.rules = rules()
+        ruleBook.keep(only: Set(windows.keys))
+        let agent = Self.agentWorkspace, front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        var away = false, changed = false, follow: (id: WindowID, to: Int)?
+        for id in fresh {
+            guard let w = windows[id], let now = model.workspace(of: id), now != agent, !AgentOwned.shared.pids.contains(w.pid),
+                  (w.element.value(kAXModalAttribute) as NSNumber?)?.boolValue != true,
+                  let d = ruleBook.decide(NewWindow(id: id, name: w.appName, bundle: NSRunningApplication(processIdentifier: w.pid)?.bundleIdentifier,
+                                                    title: w.title, workspace: now))
+            else { continue }
+            // The agent workspace may have moved onto the rule's since the file was read.
+            let to = d.workspace.flatMap { $0 == agent ? nil : $0 } ?? now
+            let displays = Windows.displays()
+            let frames = Dictionary(displays.map { ($0.key, $0.frame) }, uniquingKeysWith: { a, _ in a })
+            if let frame = w.frame, let here = Geometry.display(of: frame, in: frames).flatMap({ k in displays.first { $0.key == k } }) {
+                // Onto the display that shows the rule's workspace; one not on screen comes back where you go to it (R-S2).
+                let there = model.display(showing: to).flatMap { k in displays.first { $0.key == k } } ?? here
+                if let p = d.layout {
+                    w.setFrame(WindowLayout.rect(p, in: there.visible))
+                } else if there.key != here.key {
+                    w.setFrame(WindowLayout.fit(Geometry.carry(frame, from: here.visible, to: there.visible), in: there.visible))
+                }
+                if there.key != here.key { seenOn[id] = there.key }
+            }
+            if to != now {
+                model.assign(id, to: to, focus: false)
+                if !model.isShown(to) { if w.pid == front { follow = (id, to) } else { away = true } }
+            }
+            changed = true
+            Trace.log("rule on line \(d.rule) took window \(id) (\(w.appName)): workspace \(to)\(d.layout.map { ", \($0.rawValue)" } ?? "")"
+                + (follow?.id == id ? ", you follow it" : ""))
+        }
+        if changed { persist() }
+        if let follow { focus(follow.id, on: follow.to) } else if away { switchTo(model.current, takeFocus: false, announce: false) }
     }
 }

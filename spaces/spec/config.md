@@ -17,7 +17,7 @@ fails its conformance test.
 | Windows | `%APPDATA%\BaneySpaces\config.toml` |
 
 On macOS the folder is the `polycarp` command's (`~/.config/polycarp`, or `$POLYCARP_CONFIG_DIR`), and Spaces' own
-sections live in `spaces.toml` beside `config.toml` (`[keys]` today; `[[rules]]` is not read on macOS yet).
+sections live in `spaces.toml` beside `config.toml` (`[keys]` and `[[rules]]`).
 `config.toml` belongs to the `polycarp` command, which rewrites it for themes; a file of its own means a key typo never
 costs the theme and a theme command never drops the keys. Same syntax, same rules.
 
@@ -213,6 +213,15 @@ float = false
 on_switch = "~/.config/baneyspaces/hooks/switch.sh"
 on_window_open = ""
 ```
+
+App rules on macOS (`[[rules]]` in `spaces.toml`): each rule names an `app` (its name or bundle id, any case) and
+may add `title` (a regular expression the title must match), `workspace` (1 to 9, not the agent workspace) and
+`layout` (a placement from `window_placements` in `keys.json`, such as `right-half`). `float = true` means no layout:
+macOS never tiles, so every window floats. The first rule that matches a brand-new window decides it, once. A window
+that comes back after a relaunch or from the saved layout, one an agent opened or claimed, a dialog, and one you move
+afterward are never taken. You stay where you are when a rule sends a window elsewhere. A bad rule is a bad file:
+the keys and rules in force stay, and the recovery chord turns rules off along with restoring the default keys. A
+title rule sees the title a window has when it first appears; an app that names its window later won't match.
 
 Hooks run with your user's rights. An agent that sets a hook is shown in Settings › Hooks, and
 the change is recorded in `history/`, so nothing runs that you can't see.

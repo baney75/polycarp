@@ -50,7 +50,7 @@ usage: \(me) <command>
   hooks install|uninstall|status   Claude Code and Grok hooks
   skill install               the agent skill into ~/.claude/skills/baneyspaces
   keys check [file]           check spaces.toml (or another file) before saving it; exit 1 with each problem
-  keys list                   every chord in force and what it does
+  keys list                   every chord in force and what it does, then the app rules
   doctor                      what's working and what isn't
 """
 
@@ -325,19 +325,25 @@ case "doctor":
 
 case "keys":
     // Checks the file as the app would read it, with the workspace modifier Settings has now.
-    let mod = Keymap.settingsMod(stored: UserDefaults(suiteName: "com.baney.polycarp")?.string(forKey: "modifier"))
+    let settings = UserDefaults(suiteName: "com.baney.polycarp")
+    let mod = Keymap.settingsMod(stored: settings?.string(forKey: "modifier"))
+    let agent = AgentWorkspace.number(setting: settings?.integer(forKey: "agentWorkspace") ?? 0)
     let path: String? = rest.count > 1 ? rest[1] : SpacesFile.path()
     let text = path.flatMap { FileManager.default.contents(atPath: $0) }.map { String(decoding: $0, as: UTF8.self) }
-    let (keymap, problems) = Keymap.load(text ?? "", settingsMod: mod)
+    let (keymap, rules, problems) = SpacesFile.load(text ?? "", settingsMod: mod, reserved: agent.map { [$0] } ?? [])
     switch rest.first {
     case "check":
         guard text != nil || rest.count == 1 else { fail("\(path ?? "the file") can't be read") }
         problems.forEach { out("\(path ?? SpacesFile.name) \($0)") }
-        if problems.isEmpty { out("ok: \(keymap?.bindings.count ?? 0) chords\(text == nil ? " (no file: the defaults)" : "")") }
+        if problems.isEmpty { out("ok: \(keymap?.bindings.count ?? 0) chords, \(rules.count) app rules\(text == nil ? " (no file: the defaults)" : "")") }
         exit(problems.isEmpty ? 0 : 1)
     case "list":
         guard let keymap else { problems.forEach { out("\(path ?? SpacesFile.name) \($0)") }; exit(1) }
         keymap.bindings.forEach { out("\($0.chord.description.padding(toLength: 22, withPad: " ", startingAt: 0)) \($0.action.spelling)") }
+        for r in rules {
+            let does = [r.workspace.map { "workspace \($0)" }, r.layout?.rawValue, r.float ? "float" : nil].compactMap { $0 }
+            out("rule on line \(r.line): \(r.app)\(r.title.map { " /\($0)/" } ?? ""): \(does.joined(separator: ", "))")
+        }
     default: fail("usage: \(me) keys check [file] | keys list", code: 2)
     }
 
