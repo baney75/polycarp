@@ -1,3 +1,4 @@
+# Windows PowerShell 5.1 (`shell: powershell`): its .NET Framework has System.Drawing and Windows Forms for the shot.
 # Measures one UI stack candidate: cold start to ready, idle CPU and memory of its whole process tree, and hotkey to
 # first composed frame over many opens of a warm hidden window. Writes <Out>\<Name>.json, .log and .png.
 #   measure.ps1 -Exe target\release\spike-native.exe -Name native -Out results
@@ -53,7 +54,7 @@ function Mem([int]$root) {
     $t = Tree $root
     [ordered]@{ processes = $t.Count; private_mb = [math]::Round(($t | Measure-Object PrivateMemorySize64 -Sum).Sum / 1MB, 1); working_set_mb = [math]::Round(($t | Measure-Object WorkingSet64 -Sum).Sum / 1MB, 1) }
 }
-function Cpu([int]$root) { (Tree $root | Measure-Object -Property { $_.TotalProcessorTime.TotalMilliseconds } -Sum).Sum }
+function Cpu([int]$root) { $sum = 0.0; foreach ($p in (Tree $root)) { $sum += $p.TotalProcessorTime.TotalMilliseconds }; $sum }
 function Pct($xs, [double]$p) { $s = @($xs | Sort-Object); if ($s.Count -eq 0) { return $null }; $s[[math]::Min($s.Count - 1, [math]::Floor($p * $s.Count))] }
 
 $freq = [System.Diagnostics.Stopwatch]::Frequency

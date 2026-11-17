@@ -35,10 +35,10 @@ jobs:
         shell: pwsh
         run: Get-Item target/release/spike-*.exe | ForEach-Object { "{0} {1:N0} KB" -f $_.Name, ($_.Length / 1KB) }
       - name: Measure native (Direct2D and DirectComposition)
-        shell: pwsh
+        shell: powershell
         run: ./measure.ps1 -Exe target/release/spike-native.exe -Name native -Out results
       - name: Measure WebView2 (wry)
-        shell: pwsh
+        shell: powershell
         run: ./measure.ps1 -Exe target/release/spike-webview.exe -Name webview -Out results
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
