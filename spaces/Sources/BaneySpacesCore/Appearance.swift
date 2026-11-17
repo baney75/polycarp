@@ -175,6 +175,10 @@ public struct AppearanceSettings: Codable, Equatable {
     /// The color palette (`appearance.palette`): "auto", or a name in palettes.json. Not the
     /// workspace colors above, which are `palette`.
     public var colorPalette: String = AppearanceSettings.autoPalette
+    /// A border in the theme's accent around the focused window (`WindowBorders`). Off until turned on.
+    public var windowBorders = false
+    /// With `windowBorders`, one in the theme's border color around every other window too.
+    public var otherWindowBorders = false
 
     public static let autoPalette = "auto"
     public static let defaultPanelOpacity = 0.88
@@ -185,7 +189,7 @@ public struct AppearanceSettings: Codable, Equatable {
 
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case accent, palette, overrides, panelStyle, panelOpacity, dockSize, theme, colorPalette }
+    private enum CodingKeys: String, CodingKey { case accent, palette, overrides, panelStyle, panelOpacity, dockSize, theme, colorPalette, windowBorders, otherWindowBorders }
 
     /// Each field on its own: one missing or unreadable (a newer build's value, an older build's
     /// blob) takes its default and leaves the rest as saved.
@@ -200,6 +204,8 @@ public struct AppearanceSettings: Codable, Equatable {
         dockSize = (try? c.decodeIfPresent(DockSize.self, forKey: .dockSize)) ?? dockSize
         theme = (try? c.decodeIfPresent(ThemeID.self, forKey: .theme)) ?? theme
         colorPalette = (try? c.decodeIfPresent(String.self, forKey: .colorPalette)) ?? colorPalette
+        windowBorders = (try? c.decodeIfPresent(Bool.self, forKey: .windowBorders)) ?? windowBorders
+        otherWindowBorders = (try? c.decodeIfPresent(Bool.self, forKey: .otherWindowBorders)) ?? otherWindowBorders
     }
 
     // MARK: Saving
