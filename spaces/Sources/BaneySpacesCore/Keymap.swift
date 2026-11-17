@@ -94,7 +94,7 @@ public enum KeyNames {
 
 /// What a chord does. Spelled in the file as a short command (`switch 3`, `launcher`).
 public enum KeyAction: Hashable, Sendable {
-    case switchTo(Int), move(Int), launcher, search, agentFinished, overview, none
+    case switchTo(Int), move(Int), launcher, search, agentFinished, overview, cheatSheet, none
     case window(WindowAction)
 
     public static func parse(_ text: String) -> KeyAction? {
@@ -107,6 +107,7 @@ public enum KeyAction: Hashable, Sendable {
         case ("search", 1): return .search
         case ("agent", 2) where w[1] == "finished": return .agentFinished
         case ("overview", 1): return .overview
+        case ("cheat-sheet", 1): return .cheatSheet
         case ("none", 1): return KeyAction.none
         default: return nil
         }
@@ -120,6 +121,7 @@ public enum KeyAction: Hashable, Sendable {
         case .search: "search"
         case .agentFinished: "agent finished"
         case .overview: "overview"
+        case .cheatSheet: "cheat-sheet"
         case .none: "none"
         case let .window(a): a.spelling
         }
@@ -134,6 +136,7 @@ public enum KeyAction: Hashable, Sendable {
         case .search: "Search from any app"
         case .agentFinished: "Go to the agent that finished"
         case .overview: "Show the overview"
+        case .cheatSheet: "Show every key (this sheet)"
         case .none: "Nothing"
         case let .window(a): a.title
         }
@@ -142,7 +145,7 @@ public enum KeyAction: Hashable, Sendable {
     /// Moves windows, so it waits until Polycarp has Accessibility and has started.
     public var needsStart: Bool {
         switch self {
-        case .launcher, .search, .agentFinished, .none: false
+        case .launcher, .search, .agentFinished, .cheatSheet, .none: false
         default: true
         }
     }
@@ -193,6 +196,7 @@ public struct Keymap: Equatable, Sendable {
         ] + Direction.allCases.map { (ca.union([.shift]), $0.rawValue, .focus($0)) }
             + Direction.allCases.map { (ca.union([.shift, .cmd]), $0.rawValue, .swap($0)) }
         for (mods, key, a) in window { b.append(.init(chord: Chord(mods, key), action: .window(a))) }
+        b.append(.init(chord: Chord(ca, "slash"), action: .cheatSheet))
         return Keymap(b)
     }
 

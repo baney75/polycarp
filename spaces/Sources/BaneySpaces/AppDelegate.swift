@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let session = SessionController()
     private lazy var sandbox = AppSandbox(spaces: { [weak self] in self?.spaces })
     private let hotkeys = Hotkeys()
+    /// Every live binding (K3), on its chord.
+    private let cheatSheet = CheatSheetPanel()
     /// Halves, thirds, focus and swap by direction and the rest (K2), kept clear of the dock while a script holds it up.
     private lazy var windowActions = WindowActionsController(spaces: spaces) { [weak self] in self?.dock.keptEdge }
     /// Every chord and its action, from `spaces.toml` over the defaults.
@@ -889,8 +891,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .agentFinished: if session.started { session.jumpToFinished() }
         case .overview: viewer.open()
         case let .window(w): windowActions.perform(w)
+        case .cheatSheet: toggleCheatSheet()
         case .none: break
         }
+    }
+
+    /// The sheet is made now, from the keys registered and the event taps' keys as Settings has them.
+    private func toggleCheatSheet() {
+        let cmdTab: String? = switch MissionControlKeys.cmdTabMode {
+        case .off: nil
+        case .apps: "apps"
+        case .workspaces: "workspaces"
+        }
+        let fixed = CheatSheet.fixed(overview: MissionControlKeys.enabled, cmdTab: cmdTab, fill: FullScreenGestures.isEnabled)
+        cheatSheet.toggle(CheatSheet.sections(keys.keymap, taken: Set(keys.taken), fixed: fixed))
     }
 
     /// A window an agent moved onto the agent workspace goes back where it came from once the lend or Full Access that let
