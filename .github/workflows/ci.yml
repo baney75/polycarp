@@ -5,6 +5,8 @@ on:
     paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
   pull_request:
     paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
+  # ci-retarget.yml starts this on a PR's branch when the PR is retargeted to main or labeled mac-ci.
+  workflow_dispatch:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -20,7 +22,12 @@ jobs:
       browser: ${{ steps.f.outputs.browser }}
       core: ${{ steps.f.outputs.core }}
       spaces-linux: ${{ steps.f.outputs.spaces-linux }}
+      # macOS runners are the scarce ones. A PR stacked on another PR's branch skips every macOS job until it is based on
+      # main (the gate reviews only those); ci-retarget.yml runs them in full on the retarget, or on the mac-ci label.
+      mac: ${{ steps.m.outputs.mac }}
     steps:
+      - id: m
+        run: echo "mac=${{ (github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'mac-ci')) }}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: f
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
@@ -42,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.mac == 'true' && '["macos-15", "ubuntu-24.04", "windows-latest"]' || '["ubuntu-24.04", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -64,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.mac == 'true' && '["macos-15", "ubuntu-24.04", "windows-latest"]' || '["ubuntu-24.04", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -96,9 +103,7 @@ jobs:
 
   spaces:
     needs: changes
-    # macOS runners are the scarce ones. A PR stacked on another PR's branch skips the two macOS jobs until it is based
-    # on main (the gate reviews only those); label it mac-ci to run them anyway.
-    if: needs.changes.outputs.spaces == 'true' && (github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'mac-ci'))
+    if: needs.changes.outputs.spaces == 'true' && needs.changes.outputs.mac == 'true'
     runs-on: macos-15
     defaults:
       run:
@@ -174,7 +179,7 @@ jobs:
   spaces-bundle:
     needs: changes
     # The bundle holds the voice core, the browser helper and the `polycarp` command, so a change to any of them can break it.
-    if: (needs.changes.outputs.spaces == 'true' || needs.changes.outputs.browser == 'true' || needs.changes.outputs.cli == 'true' || needs.changes.outputs.core == 'true') && (github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'mac-ci'))
+    if: (needs.changes.outputs.spaces == 'true' || needs.changes.outputs.browser == 'true' || needs.changes.outputs.cli == 'true' || needs.changes.outputs.core == 'true') && needs.changes.outputs.mac == 'true'
     runs-on: macos-15
     defaults:
       run:
@@ -226,7 +231,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.mac == 'true' && '["macos-15", "ubuntu-24.04", "windows-latest"]' || '["ubuntu-24.04", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
