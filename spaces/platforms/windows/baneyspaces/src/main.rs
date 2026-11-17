@@ -16,6 +16,7 @@ mod hidden;
 mod ipc;
 mod keys;
 mod paths;
+mod shell;
 mod settings;
 
 #[cfg(windows)]
