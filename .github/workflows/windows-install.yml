@@ -1,0 +1,66 @@
+name: Windows install
+# The one-step install on a clean windows-latest runner: build the MSI and its winget manifest, install with winget
+# (msiexec when the runner has no winget; the log says which), check the daemon, the sign-in entry and
+# `polycarp --version`, then uninstall and check nothing is left. Also the Windows crate's lint gate.
+on:
+  push:
+    branches: [main]
+    paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/Cargo.lock', 'cli/**', '.github/workflows/windows-install.yml']
+  pull_request:
+    paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/Cargo.lock', 'cli/**', '.github/workflows/windows-install.yml']
+  workflow_dispatch:
+concurrency:
+  group: windows-install-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: |
+            spaces
+            cli
+          key: windows-install
+      - name: Lint the Windows crates (clippy -D warnings, rustfmt)
+        working-directory: spaces
+        run: |
+          cargo clippy --locked -p baneyspaces-windows -p baneyspaces-testapp --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          cargo fmt --check -p baneyspaces-windows -p baneyspaces-testapp
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: WiX 5.0.2
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Build the MSI and the winget manifest
+        run: |
+          spaces/platforms/windows/installer/build-msi.ps1 -Out "$env:GITHUB_WORKSPACE\dist\windows" -UrlBase http://127.0.0.1:8765
+      # winget downloads InstallerUrl; a local server stands in for the release download.
+      - name: Serve the MSI on 127.0.0.1
+        run: |
+          Start-Process python -ArgumentList '-m', 'http.server', '8765', '--bind', '127.0.0.1', '--directory', "$env:GITHUB_WORKSPACE\dist\windows" -WindowStyle Hidden
+          Start-Sleep 2
+      - name: Install, check, uninstall, check
+        run: |
+          $msi = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\windows\Polycarp-*-x64.msi" | Select-Object -First 1
+          spaces/platforms/windows/tests/ci/install-check.ps1 -Msi $msi.FullName -Manifest "$env:GITHUB_WORKSPACE\dist\windows\winget"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: polycarp-windows-msi-unsigned
+          path: |
+            dist/windows/*.msi
+            dist/windows/winget
+            ${{ runner.temp }}/*.log
+          if-no-files-found: ignore

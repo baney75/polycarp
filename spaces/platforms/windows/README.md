@@ -7,6 +7,7 @@ envelope are `crates/baneyspaces-core`, the same code the Linux daemon runs.
 ```
 platforms/windows/baneyspaces/   the `baneyspaces` binary: CLI, `daemon`, `mcp`
 platforms/windows/scripts/       build-engine.ps1: the pinned agent-desktop, built with --locked
+platforms/windows/installer/     Polycarp.wxs, build-msi.ps1 and the winget manifest: the one-step install
 platforms/windows/tests/         live.sh (the live test in the VM), readback.ps1, watch.ps1, evidence/
 platforms/windows/vm/            provision-toolchain.ps1: Rust + the MSVC build tools inside the test VM
 ```
@@ -167,6 +168,32 @@ through to the engine. `press`, `key` and `pointer` are `not_supported` (phase 3
 three too (Donovan, 2026-11-01); every `set` is logged with the agent id and the caller's pid (never the
 value). Workspace and window operations stay user-only.
 
+## Install
+
+One step: `winget install --manifest <dir>` with the manifest `installer/build-msi.ps1` writes, or run the MSI. It is
+a per-user package (no administrator prompt) that puts `baneyspaces.exe`, `baneyspacesw.exe` and `polycarp.exe` in
+`%LOCALAPPDATA%\Programs\Polycarp`, adds that folder to your PATH, starts the daemon at once and at every sign-in
+(`HKCU\...\Run\Polycarp`: `baneyspacesw.exe daemon --background`). `baneyspacesw` is a windowed program that runs
+`baneyspaces` with no console, so nothing flashes. Uninstall (and an upgrade) first runs `baneyspacesw stop`, which
+puts every hidden window back and waits up to 10 s for the daemon to exit. `%LOCALAPPDATA%\BaneySpaces` (state and
+logs) stays.
+
+```powershell
+dotnet tool install --global wix --version 5.0.2    # WiX 6 and later tie their license to a paid maintenance fee
+platforms/windows/installer/build-msi.ps1 [-UrlBase https://...]   # dist\windows\Polycarp-<v>-x64.msi and dist\windows\winget\
+```
+
+**Unsigned.** Code signing costs money, so the MSI and the exes are not signed and SmartScreen warns on a download.
+The hook is there: set `POLYCARP_SIGN` to a script that signs one file in place, and `build-msi.ps1` calls it for each
+exe and then the MSI. `installer/winget/` is the manifest template (version 0.1.0, a placeholder hash); the copy
+`build-msi.ps1` writes carries the MSI's real SHA-256.
+
+CI (`.github/workflows/windows-install.yml`, on `windows-latest`) builds the MSI, installs it through winget from a
+local manifest (or `msiexec /qn` if the runner has no winget; the log names which), and checks within 10 s that the
+daemon runs, the sign-in entry names an installed exe and `polycarp --version` exits 0 from the new PATH; then it
+uninstalls and checks no process, sign-in entry, PATH entry or file is left, and that a window cloaked on workspace 2
+was shown again.
+
 ## Build and test
 
 ```powershell
@@ -186,4 +213,4 @@ and switches with the CLI and with real Win+n keys (`virsh send-key`), kills the
 visibility, DWM cloak state, layered alpha) after every step. `tests/evidence/` has its log and screenshots.
 
 Not done in part 1: multi-monitor placement (windows are not moved between displays; the model is, and
-this is untested without a second display), the Startup shortcut, the overview, the dock and themed UI.
+this is untested without a second display), the overview, the dock and themed UI.

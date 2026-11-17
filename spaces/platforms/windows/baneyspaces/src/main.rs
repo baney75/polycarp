@@ -57,7 +57,7 @@ const HELP: &str = "baneyspaces (Windows)
   agent press|key|pointer ...    not supported yet (phase 3-4)
   keys                           the key map for this platform
   daemon [--trace] [--log FILE]  run the daemon in this console
-  daemon --background            run it with no console window (the Startup shortcut runs this)
+  daemon --background            run it with no console window (the sign-in entry runs this)
   stop                           ask the running daemon to put every window back and exit (also: daemon stop)
   mcp                            MCP server on stdio (agent tools only)
   doctor                         what works and what does not
@@ -126,7 +126,6 @@ fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
             req("focus_monitor", json!({ "monitor": a[0] }))
         }
         "ls" | "state" | "overview" => req(&cmd, json!({})),
-        "stop" => req("quit", json!({})),
         "get" => req("get", json!({ "key": a.first() })),
         "set" => {
             need(&a, 2, "set <key> <value>   (appearance.theme, appearance.palette, dock.enabled)")?;
@@ -342,19 +341,47 @@ fn doctor(paths: &paths::Paths) -> Envelope {
     Envelope::ok(json!({ "healthy": ok, "checks": checks }))
 }
 
+/// Polls `running` every 100 ms, `tries` times at most, until it says the daemon is gone. True when it went.
+fn wait_until_gone(mut running: impl FnMut() -> bool, tries: u32) -> bool {
+    for _ in 0..tries {
+        if !running() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    !running()
+}
+
+/// `stop`: asks the daemon to put every window back and exit, then waits up to 10 s until it has (its pipe is gone),
+/// so an uninstall or upgrade that runs it next finds no running copy holding the files.
+fn stop(paths: &paths::Paths) -> Envelope {
+    let env = ipc::call(paths, &json!({ "op": "quit" }));
+    if !env.ok {
+        return env;
+    }
+    let exited = wait_until_gone(|| ipc::call(paths, &json!({ "op": "ping" })).ok, 100);
+    let mut data = env.data.unwrap_or_else(|| json!({}));
+    data["exited"] = json!(exited);
+    if exited {
+        Envelope::ok(data)
+    } else {
+        Envelope::err("timeout", "the daemon was asked to stop and was still running 10 s later", Retry::Safe, "Run `baneyspaces stop` again; read daemon.log in %LOCALAPPDATA%\\BaneySpaces.")
+    }
+}
+
 fn run_daemon(args: &[String]) -> i32 {
     #[cfg(windows)]
     {
         let paths = paths::Paths::from_env();
         if args.get(1).map(String::as_str) == Some("stop") {
-            return print(&ipc::call(&paths, &json!({ "op": "quit" })), false);
+            return print(&stop(&paths), false);
         }
         let mut rest = args[1..].to_vec();
         let log = take(&mut rest, "--log").map(std::path::PathBuf::from);
         let trace = rest.iter().any(|a| a == "--trace");
         if rest.iter().any(|a| a == "--background") {
             // Start the daemon again with no console window and wait until it answers. This is what
-            // the Startup shortcut runs.
+            // the sign-in entry runs (through baneyspacesw).
             use std::os::windows::process::CommandExt;
             let _ = paths.ensure();
             let log = log.unwrap_or_else(|| paths.state.join("daemon.log"));
@@ -418,6 +445,7 @@ fn main() {
             }
         }
         "doctor" => print(&doctor(&paths), text),
+        "stop" => print(&stop(&paths), text),
         "mcp" => {
             let stdin = std::io::stdin();
             let mut out = std::io::stdout();
@@ -485,6 +513,13 @@ mod tests {
         let row = md.lines().find(|l| l.starts_with("| `agent on|off` |")).expect("the agent on|off row");
         let windows = row.trim_end_matches('|').rsplit('|').next().unwrap().trim();
         assert_eq!(windows, "not needed (the agent workspace always exists)", "cli.md row: {row}");
+    }
+
+    #[test]
+    fn stop_waits_for_the_daemon_to_go_and_says_when_it_did_not() {
+        let mut left = 3;
+        assert!(wait_until_gone(|| { left -= 1; left > 0 }, 10));
+        assert!(!wait_until_gone(|| true, 2));
     }
 
     #[test]
