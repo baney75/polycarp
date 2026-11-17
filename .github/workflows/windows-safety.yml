@@ -4,7 +4,7 @@ name: Windows crash safety
 # `cargo test` for these crates runs in ci.yml (spaces-windows); clippy in windows-install.yml (lint).
 on:
   push:
-    branches: [main]
+    branches: [main, windows-crash-safety-control]
     paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/Cargo.lock', '.github/workflows/windows-safety.yml']
   pull_request:
     paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/Cargo.lock', '.github/workflows/windows-safety.yml']
