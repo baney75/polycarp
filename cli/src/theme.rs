@@ -2713,11 +2713,11 @@ fn target_place(target: &Target) -> (Vec<&str>, &str) {
             key,
             ..
         } => {
-            let mut at = match surface {
+            let mut at: Vec<&str> = match surface {
                 Some(s) => vec!["surface", s.as_str(), section],
                 None => vec![section],
             };
-            at.extend(group);
+            at.extend(*group);
             (at, key)
         }
     }
