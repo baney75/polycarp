@@ -287,5 +287,31 @@
       "name": "agent_shot"
     }
   ],
-  "version": 1
+  "version": 1,
+  "windows_adds": [
+    {
+      "description": "Press keys in the control under a ref of an agent window, posted to that window only (never the window in front). Names as on the Mac: \"h i Return\", Tab, delete (Backspace), F5, asterisk. Modifier chords such as ctrl+c are not_supported. verified says the keys changed the ref's value.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "description": "",
+        "properties": {
+          "key": {
+            "description": "Keys separated by spaces, such as \"h i Return\".",
+            "type": "string"
+          },
+          "ref": {
+            "description": "A ref from a snapshot, such as @s8f3k2p9:e8.",
+            "pattern": "^@s[a-z0-9]+:e[0-9]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "key"
+        ],
+        "type": "object"
+      },
+      "name": "agent_press"
+    }
+  ]
 }
