@@ -42,9 +42,8 @@ final class ScanSurvivalTests: XCTestCase {
                 return Read(pid: pid, windows: Self.fast[pid] ?? [], ok: true)
             }
         }
-        var model = Workspaces()
         var expected: [WindowID: Int] = [10: 1, 11: 1, 20: 2, 21: 2, 70: 2, 80: 3]
-        for (id, n) in expected { model.assign(id, to: n, focus: false) }
+        var model = ScanFanOutTests.model(expected)
         let alive = Set(expected.keys).union([71])
         let offscreen: [WindowID: Int32] = [70: Self.slow, 80: Self.hung]
         let apps: Set<Int32> = [1, 2, Self.slow, Self.hung]
