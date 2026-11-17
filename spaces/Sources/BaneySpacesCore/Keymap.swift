@@ -283,7 +283,7 @@ public struct Keymap: Equatable, Sendable {
 /// A file of its own, so a key typo never costs the theme and a theme command never rewrites the keys.
 public enum SpacesFile {
     public static let name = "spaces.toml"
-    public static let topLevel = ["keys"]
+    public static let topLevel = ["keys", "rules"]
 
     public static func path(env: [String: String] = ProcessInfo.processInfo.environment,
                             home: String? = FileManager.default.homeDirectoryForCurrentUser.path) -> String? {
@@ -294,12 +294,26 @@ public enum SpacesFile {
 
 /// The keys in force, as the file changes and the recovery chord is held. A bad file never takes keys away: the last
 /// keys that loaded stay (the defaults, at launch).
+extension SpacesFile {
+    /// The whole file as the app reads it, for the app and `baneyspaces-cli keys check` alike: the keymap and the rules,
+    /// or neither and every problem.
+    public static func load(_ text: String, settingsMod: Set<KeyModifier>, reserved: Set<Int> = [])
+        -> (keymap: Keymap?, rules: [AppRule], problems: [KeymapProblem]) {
+        let (keymap, problems) = Keymap.load(text, settingsMod: settingsMod)
+        guard let keymap, let root = try? MiniTOML.parse(text) else { return (nil, [], problems) }
+        let read = AppRules.load(root, reserved: reserved)
+        return read.problems.isEmpty ? (keymap, read.rules, []) : (nil, [], read.problems)
+    }
+}
+
 public struct KeymapState: Equatable, Sendable {
     public enum Source: Equatable, Sendable { case defaults, file, recovered }
 
     public private(set) var keymap: Keymap
     public private(set) var source: Source = .defaults
     public private(set) var problems: [KeymapProblem] = []
+    /// `[[rules]]` in force (W2): from the same file, so a bad rule keeps the last good keys and rules alike.
+    public private(set) var rules: [AppRule] = []
     private var goodText: String?
     private var settingsMod: Set<KeyModifier>
 
@@ -308,35 +322,41 @@ public struct KeymapState: Equatable, Sendable {
         keymap = .defaults(mod: settingsMod)
     }
 
-    /// The file now reads `text` (nil: there is none). Returns what to tell the person, or nil for nothing.
+    /// The file now reads `text` (nil: there is none). Returns what to tell the person, or nil for nothing. A rule may not
+    /// send windows to a workspace in `reserved` (the agent workspace).
     @discardableResult
-    public mutating func fileChanged(_ text: String?, quiet: Bool = false) -> String? {
+    public mutating func fileChanged(_ text: String?, quiet: Bool = false, reserved: Set<Int> = []) -> String? {
         guard let text else {
             let had = source == .file
             keymap = .defaults(mod: settingsMod)
             source = .defaults
             problems = []
+            rules = []
             goodText = nil
             return had && !quiet ? "\(SpacesFile.name) is gone: default keys" : nil
         }
-        let (loaded, found) = Keymap.load(text, settingsMod: settingsMod)
+        let (loaded, read, found) = SpacesFile.load(text, settingsMod: settingsMod, reserved: reserved)
         problems = found
         guard let loaded else {
             let kept = source == .file ? "your last good keys stay" : "default keys stay"
             return "\(SpacesFile.name) \(found[0])" + (found.count > 1 ? " (and \(found.count - 1) more)" : "") + ". \(kept)."
         }
         keymap = loaded
+        rules = read
         source = .file
         goodText = text
-        return quiet ? nil : "Keys reloaded from \(SpacesFile.name)"
+        let what = rules.isEmpty ? "Keys" : "Keys and \(rules.count) app rule\(rules.count == 1 ? "" : "s")"
+        return quiet ? nil : "\(what) reloaded from \(SpacesFile.name)"
     }
 
-    /// The recovery chord: default keys until the file changes again. The file is left as it is.
+    /// The recovery chord: default keys and no app rules until the file changes again. The file is left as it is.
     public mutating func recover() -> String {
+        let hadRules = !rules.isEmpty
         keymap = .defaults(mod: settingsMod)
         source = .recovered
+        rules = []
         goodText = nil
-        return "Default keys restored. \(SpacesFile.name) is unchanged; save it again to use it."
+        return "Default keys restored\(hadRules ? " and app rules off" : ""). \(SpacesFile.name) is unchanged; save it again to use it."
     }
 
     /// Settings > Keys picked another workspace modifier.

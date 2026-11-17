@@ -768,6 +768,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         registerShortcuts()
         missionControlKeys.start()
         syncMissionControl()
+        // `[[rules]]` in spaces.toml, read as each new window shows up (W2).
+        spaces.rules = { [weak self] in self?.keys.state.rules ?? [] }
         spaces.start()
         fullScreenGestures.onGesture = { [weak self] window in self?.spaces.toggleFill(window) }
         fullScreenGestures.start()

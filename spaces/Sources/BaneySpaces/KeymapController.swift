@@ -22,10 +22,12 @@ final class KeymapController {
     var onChange: (() -> Void)?
 
     var keymap: Keymap { state.keymap }
+    /// A rule may not send windows to the agent workspace.
+    private static var reserved: Set<Int> { Spaces.agentWorkspace.map { [$0] } ?? [] }
 
     init() {
         stamp = path.flatMap { PolycarpThemeFile.stamp($0) }
-        if let message = state.fileChanged(read(), quiet: true) { tell(message) }
+        if let message = state.fileChanged(read(), quiet: true, reserved: Self.reserved) { tell(message) }
     }
 
     func watch() {
@@ -44,7 +46,7 @@ final class KeymapController {
         guard now != stamp else { return }
         stamp = now
         let before = state.keymap
-        let message = state.fileChanged(read())
+        let message = state.fileChanged(read(), reserved: Self.reserved)
         if let message { tell(message) }
         if state.keymap != before { onChange?() }
     }
