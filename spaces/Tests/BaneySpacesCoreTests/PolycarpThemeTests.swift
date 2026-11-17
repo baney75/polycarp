@@ -304,15 +304,32 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertTrue(why.hasPrefix("dark: tooltip text is"), why)
     }
 
-    func testSchemaMustBeTheOneKnown() throws {
+    func testSchemaMustBeOneKnown() throws {
         func with(_ schema: Any?) -> Data {
             var root = json(PolycarpFixtures.still_water)
             if let schema { root["schema"] = schema } else { root.removeValue(forKey: "schema") }
             return data(root)
         }
         XCTAssertNoThrow(try parse(with(1)).get())
-        let newer = failure(with(2))
-        XCTAssertTrue(newer.contains("schema 2") && newer.contains("update Polycarp"), newer)
+        // Schema 2 as the CLI writes it: a studio surface, and code colors inside light and dark.
+        var two = json(PolycarpFixtures.still_water)
+        two["schema"] = 2
+        var surfaces = two["surfaces"] as! [String: Any]
+        var spaces = surfaces["spaces"] as! [String: Any]
+        for mode in ["light", "dark"] {
+            var m = spaces[mode] as! [String: Any]
+            m["terminal"] = ["red": "#c0392b", "bright_white": "#ffffff"]
+            m["syntax"] = ["keyword": "#2f6b55"]
+            m["diff"] = ["added": "#2f6b55", "added_surface": "#e6f0ea"]
+            spaces[mode] = m
+        }
+        surfaces["spaces"] = spaces
+        surfaces["studio"] = spaces
+        two["surfaces"] = surfaces
+        let read = try parse(data(two)).get()
+        XCTAssertEqual(read, try parse(with(1)).get(), "schema 2 only adds")
+        let newer = failure(with(3))
+        XCTAssertTrue(newer.contains("schema 3") && newer.contains("update Polycarp"), newer)
         XCTAssertTrue(failure(with(nil)).contains("schema is missing"))
         XCTAssertTrue(failure(with("1")).contains("schema is missing or not a whole number"))
         XCTAssertTrue(failure(with(1.5)).contains("not a whole number"))
