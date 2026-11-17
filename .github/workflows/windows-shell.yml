@@ -1,0 +1,42 @@
+name: Windows shell coexistence
+# Polycarp next to the Windows shell on a windows-latest runner's own desktop: 50 workspace switches never move a
+# window to another virtual desktop, the cloak matches the workspace shown, and explorer.exe loads no Polycarp module
+# (spaces/platforms/windows/tests/ci/shell-check.ps1 says what each checks, and the control for each).
+on:
+  push:
+    branches: [main]
+    paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/Cargo.lock', '.github/workflows/windows-shell.yml']
+  pull_request:
+    paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/Cargo.lock', '.github/workflows/windows-shell.yml']
+  workflow_dispatch:
+concurrency:
+  group: windows-shell-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  shell:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: spaces, key: windows-shell }
+      - name: Build
+        working-directory: spaces
+        run: cargo build --release --locked -p baneyspaces-windows -p baneyspaces-testapp
+      - name: Switch 50 times; read virtual desktops, cloaks and explorer's modules
+        run: |
+          $env:BANEYSPACES_STATE_DIR = "$env:RUNNER_TEMP\bs-state"
+          spaces/platforms/windows/tests/ci/shell-check.ps1 -Bin "$env:GITHUB_WORKSPACE\spaces\target\release" -Out "$env:RUNNER_TEMP\shell"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: windows-shell-evidence
+          path: |
+            ${{ runner.temp }}/shell
+            ${{ runner.temp }}/bs-state
+          if-no-files-found: ignore
