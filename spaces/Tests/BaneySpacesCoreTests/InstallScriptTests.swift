@@ -198,6 +198,13 @@ final class InstallScriptTests: XCTestCase {
         let cli = try read("Sources/baneyspaces-cli/main.swift")
         XCTAssertLessThan(try index(of: #"_ = ask("channel \(channel.rawValue)")"#, in: cli), try index(of: #"let before = ask("check")"#, in: cli))
         XCTAssertTrue(updater.contains(#"if what.hasPrefix("channel ")"#))
+        // A check still running for the old channel never answers for the new one, so `update --now --channel dev`
+        // can't install the old channel's build.
+        let stale = "guard channel == self.channel else"
+        XCTAssertLessThan(try index(of: "self.checking = false", in: updater), try index(of: stale + " { return self.check(manual: manual) }", in: updater))
+        XCTAssertLessThan(try index(of: stale + " { return self.check(manual: manual) }", in: updater), try index(of: "self.checkProblem = problem", in: updater))
+        XCTAssertLessThan(try index(of: stale + " { return }", in: updater), try index(of: "self.available = release", in: updater))
+        XCTAssertLessThan(try index(of: "self.confirm(offer, feed: feed)", in: updater), try index(of: stale + " { return }", in: updater))
     }
 
     func testReleaseRefusesAPublishedReleaseAndAnUnpushedTag() throws {

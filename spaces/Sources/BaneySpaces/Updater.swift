@@ -95,6 +95,9 @@ final class Updater: NSObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.checking = false
+                // The channel changed while this asked the old one's feed, and the change's own check was
+                // skipped: ask again for the new one.
+                guard channel == self.channel else { return self.check(manual: manual) }
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 // Nothing published on this channel yet is an answer, not a failure.
                 let feed = status == 200 ? data.flatMap(Feed.init(json:)) : nil
@@ -108,6 +111,8 @@ final class Updater: NSObject {
                 self.lastCheck = Date()
                 let offer = feed.flatMap { Updates.offer($0, channel: channel, build: Self.build) }
                 self.confirm(offer, feed: feed) { release in
+                    // Changed while GitHub compared: the new channel's check is already running.
+                    guard channel == self.channel else { return }
                     self.available = release
                     self.checkProblem = nil
                     self.checks += 1
