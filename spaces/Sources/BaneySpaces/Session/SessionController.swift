@@ -102,6 +102,8 @@ final class SessionController {
     var sandboxHandler: ((Wire.Request) -> Wire.Reply)?
     /// Answers `polycarp-spaces update status|check|now` with the app's updater (the app delegate sets it).
     var updateHandler: ((String) -> Wire.Reply)?
+    /// Answers `polycarp-spaces layout …` with the window manager (the app delegate sets it); called off the main thread.
+    var layoutHandler: ((Wire.Request) -> Wire.Reply)?
 
     /// Set by the app delegate: the menu bar badge shows how many agents finished unseen.
     var onUnseenChange: (Int) -> Void = { _ in }
@@ -167,6 +169,7 @@ final class SessionController {
         server.handle = { [weak self] in self?.handle($0) ?? Wire.Reply(ok: false) }
         server.handleHands = { [weak self] in self?.handleHands($0) ?? Wire.Reply(ok: false) }
         server.handleSandbox = { [weak self] in self?.sandboxHandler?($0) ?? Wire.Reply(ok: false, error: "the sandbox isn't ready") }
+        server.handleLayout = { [weak self] in self?.layoutHandler?($0) ?? Wire.Reply(ok: false, error: "layouts aren't ready") }
         server.start()
         remote.handle = { [weak self] in self?.handle($0) ?? Wire.Reply(ok: false) }
         if Self.remoteEnabled { startRemote() }
@@ -480,6 +483,9 @@ final class SessionController {
         case .update:
             // Answered above, before the Accessibility check.
             return .init(ok: false, error: "the updater isn't ready")
+        case .layout:
+            // Answered by the local socket off the main thread (`handleLayout`); never from another machine.
+            return .init(ok: false, error: "layouts are saved and restored on this Mac only")
         case .sandbox:
             // Answered by the server off the main thread (`handleSandbox`); a sandbox request that
             // reaches here came through a path that doesn't know how.

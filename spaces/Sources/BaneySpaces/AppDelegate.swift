@@ -1003,6 +1003,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.updateIcon()
         }
         session.updateHandler = { [weak self] what in self?.updater.answer(what) ?? Wire.Reply(ok: false, error: "the updater isn't ready") }
+        session.layoutHandler = { [weak self] r in self?.spaces.layout(r) ?? Wire.Reply(ok: false, error: "not ready") }
         session.sandboxHandler = { [weak self] r in self?.sandbox.service.handle(r) ?? Wire.Reply(ok: false, error: "not ready") }
         sandbox.start()
         sandbox.cleanupAtLaunch()

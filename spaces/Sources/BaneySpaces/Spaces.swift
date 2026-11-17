@@ -2421,23 +2421,9 @@ final class Spaces {
         let agent = Self.agentWorkspace
         let displays = Self.areas()
         let screens = Windows.screens()
-        let byPid = Dictionary(grouping: windows.values, by: \.pid).mapValues { $0.sorted { $0.id < $1.id } }
-        var todo: [(w: Window, order: Int, workspace: Int, bundle: String, parked: CGRect?)] = []
-        for (pid, list) in byPid {
-            guard let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { continue }
-            for (i, w) in list.enumerated() {
-                guard let n = model.workspace(of: w.id), n != agent else { continue }
-                todo.append((w, i, n, bundle, saved.frames[w.id]))
-            }
-        }
+        let todo = noteItems { $0 != agent }
         Self.bookQueue.async { [weak self] in
-            let now = Date().timeIntervalSince1970
-            let records = todo.map { t -> WindowRecord in
-                var frame = t.parked ?? t.w.frame
-                if let f = frame, t.parked == nil, Geometry.isStranded(f, screens: screens) { frame = nil }
-                return WindowRecord(bundle: t.bundle, title: t.w.title, order: t.order, workspace: t.workspace, frame: frame,
-                                    displays: displays, window: t.w.id, pid: t.w.pid, at: now, key: Self.titleKey)
-            }
+            let records = Self.records(todo, displays: displays, screens: screens, now: Date().timeIntervalSince1970)
             DispatchQueue.main.async {
                 guard let self, self.active else { return }
                 // An app closing its windows before it quits keeps their records for the quit.
@@ -2448,6 +2434,151 @@ final class Spaces {
                 self.saveBook()
             }
         }
+    }
+
+    private typealias NoteItem = (w: Window, order: Int, workspace: Int, bundle: String, parked: CGRect?)
+
+    /// The windows on the workspaces `include` takes, each with its creation order among its process's windows (by
+    /// number, which only grows) and its parked record. On main; reading their titles and frames is for after.
+    private func noteItems(_ include: (Int) -> Bool) -> [NoteItem] {
+        let byPid = Dictionary(grouping: windows.values, by: \.pid).mapValues { $0.sorted { $0.id < $1.id } }
+        var todo: [NoteItem] = []
+        for (pid, list) in byPid {
+            guard let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { continue }
+            for (i, w) in list.enumerated() {
+                guard let n = model.workspace(of: w.id), include(n) else { continue }
+                todo.append((w, i, n, bundle, saved.frames[w.id]))
+            }
+        }
+        return todo
+    }
+
+    /// Reads each window's title and frame through Accessibility (any thread). A parked window counts at its record; one
+    /// stranded off every display has no frame.
+    private static func records(_ todo: [NoteItem], displays: [DisplayArea], screens: [CGRect], now: Double) -> [WindowRecord] {
+        todo.map { t in
+            var frame = t.parked ?? t.w.frame
+            if let f = frame, t.parked == nil, Geometry.isStranded(f, screens: screens) { frame = nil }
+            return WindowRecord(bundle: t.bundle, title: t.w.title, order: t.order, workspace: t.workspace, frame: frame,
+                                displays: displays, window: t.w.id, pid: t.w.pid, at: now, key: titleKey)
+        }
+    }
+
+    // MARK: Named layouts
+
+    static let namedLayoutsURL = folder.appendingPathComponent("named-layouts.json")
+
+    /// `polycarp-spaces layout save|restore|list|delete [name]`. Runs on the socket's thread, never on main: titles and
+    /// frames are read and written through Accessibility here, and only the model's part hops to main.
+    func layout(_ r: Wire.Request) -> Wire.Reply {
+        let name = r.target ?? ""
+        var all = Spaces.writer.sync { NamedLayouts.load(from: Self.namedLayoutsURL) }
+        let verb = r.text ?? "list", session = LayoutAccess.session(in: r.args)
+        if let why = LayoutAccess.refusal(verb: verb, session: session, existing: all.layouts[name]) {
+            Trace.log("layout \(verb) refused: an agent session")
+            return .init(ok: false, error: why, info: ["code": HandsErrorCode.permissionDenied.rawValue])
+        }
+        switch verb {
+        case "list":
+            let rows = all.layouts.sorted { $0.key < $1.key }.map { name, l in
+                "\(name)\t\(l.windows.count) windows\t\(Set(l.windows.compactMap(\.display)).count) displays"
+                    + (l.only.map { "\tworkspace \($0) only" } ?? "")
+            }
+            return .init(ok: true, info: ["count": "\(rows.count)", "layouts": rows.joined(separator: "\n")])
+        case "delete":
+            guard all.layouts.removeValue(forKey: name) != nil else { return .init(ok: false, error: "no layout named \(name)") }
+            Spaces.writer.sync { all.save(to: Self.namedLayoutsURL) }
+            return .init(ok: true, info: ["deleted": name])
+        case "save":
+            guard NamedLayouts.isValid(name) else {
+                return .init(ok: false, error: "a layout name is 1 to 64 letters, digits, spaces, dots, dashes or underscores")
+            }
+            var only: Int?
+            if let i = r.args?.firstIndex(of: "--workspace") {
+                guard i + 1 < r.args!.count, let n = Int(r.args![i + 1]), Workspaces.range.contains(n) else {
+                    return .init(ok: false, error: "--workspace takes a workspace from 1 to 9")
+                }
+                only = n
+            }
+            let agent = Self.agentWorkspace
+            let snap = DispatchQueue.main.sync {
+                (active, noteItems { n in only.map { $0 == n } ?? (n != agent) }, model.current, model.shown, Self.areas(), Windows.screens())
+            }
+            guard snap.0 else { return .init(ok: false, error: "Polycarp isn't managing windows right now") }
+            let now = Date().timeIntervalSince1970
+            let records = Self.records(snap.1, displays: snap.4, screens: snap.5, now: now)
+            guard !records.isEmpty else { return .init(ok: false, error: only.map { "workspace \($0) has no windows" } ?? "there are no windows to save") }
+            all.layouts[name] = NamedLayout(savedAt: now, current: snap.2, displays: snap.3, windows: records, only: only,
+                                            savedBy: session)
+            Spaces.writer.sync { all.save(to: Self.namedLayoutsURL) }
+            let displays = Set(records.compactMap(\.display)).count
+            Trace.log("layout saved: \(records.count) windows on \(displays) displays")
+            return .init(ok: true, info: ["saved": name, "windows": "\(records.count)", "displays": "\(displays)"])
+        case "restore":
+            guard let l = all.layouts[name] else { return .init(ok: false, error: "no layout named \(name): polycarp-spaces layout list") }
+            return restore(l, name: name)
+        default:
+            return .init(ok: false, error: "usage: polycarp-spaces layout save <name> [--workspace N] | restore <name> | list | delete <name>")
+        }
+    }
+
+    /// Puts every window the layout knows back on its workspace and display, at its frame, and (for a whole layout) shows
+    /// on each display the workspace it showed. Windows it doesn't know stay where they are. Times itself up to the frames
+    /// being in place and read back; the switches after that are timed in `timing.log` like any other.
+    private func restore(_ layout: NamedLayout, name: String) -> Wire.Reply {
+        let start = ProcessInfo.processInfo.systemUptime
+        let agent = Self.agentWorkspace
+        // A layout of the agent workspace takes only windows there; any other never takes them.
+        let include: (Int) -> Bool = { n in layout.only == agent ? n == agent : n != agent }
+        let snap = DispatchQueue.main.sync { (active, noteItems(include), Self.areas()) }
+        guard snap.0 else { return .init(ok: false, error: "Polycarp isn't managing windows right now") }
+        let live = snap.1.map { LiveWindow(id: $0.w.id, bundle: $0.bundle, title: $0.w.title, order: $0.order, key: Self.titleKey) }
+        let (placements, missing) = layout.plan(live, displays: snap.2)
+        let connected = Set(snap.2.map(\.key))
+        let showing = layout.only == nil ? layout.displays.filter { connected.contains($0.key) } : [:]
+        let moves: [(Window, CGRect)] = DispatchQueue.main.sync {
+            let after = model.shown.merging(showing) { $1 }
+            let willShow: (Int) -> Bool = { n in
+                after.isEmpty ? n == (layout.only == nil ? layout.current : self.model.current) : after.values.contains(n)
+            }
+            var moves: [(Window, CGRect)] = []
+            for p in placements {
+                guard let w = windows[p.window] else { continue }
+                if model.workspace(of: p.window) != p.workspace { model.assign(p.window, to: p.workspace, focus: false) }
+                guard let f = p.frame else { continue }
+                // In sight once the layout is up: moved now. Anywhere else: its parked record, so it comes back there.
+                if saved.frames[p.window] == nil && willShow(p.workspace) { moves.append((w, f)) } else { saved.frames[p.window] = f }
+            }
+            persist()
+            return moves
+        }
+        for (w, f) in moves { w.setFrame(f) }
+        let off = moves.map { w, f in w.frame.map { Self.distance($0, f) } ?? .infinity }
+        let ms = Int(((ProcessInfo.processInfo.systemUptime - start) * 1000).rounded())
+        let worst = off.max() ?? 0
+        let rules = Dictionary(grouping: placements, by: \.rule.rawValue).mapValues(\.count)
+        Trace.log("layout restored: \(placements.count) windows, \(missing) missing, \(ms) ms, worst \(worst.isFinite ? "\(Int(worst.rounded())) px" : "unread")")
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.active else { return }
+            if showing.isEmpty || self.model.shown.count <= 1 {
+                self.switchTo(layout.only == nil && self.model.shown.count <= 1 ? layout.current : self.model.current,
+                              takeFocus: false, announce: false)
+                return
+            }
+            for (d, n) in showing.sorted(by: { $0.key < $1.key }) {
+                self.use(display: d)
+                self.switchTo(n, takeFocus: false, announce: false)
+            }
+        }
+        var info = ["restored": name, "windows": "\(placements.count)", "missing": "\(missing)", "ms": "\(ms)",
+                    "worst_px": worst.isFinite ? "\(Int(worst.rounded()))" : "unread"]
+        for (rule, n) in rules { info["by \(rule)"] = "\(n)" }
+        return .init(ok: true, info: info)
+    }
+
+    /// How far apart two frames are: the largest gap between their edges.
+    private static func distance(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        max(abs(a.minX - b.minX), abs(a.minY - b.minY), abs(a.maxX - b.maxX), abs(a.maxY - b.maxY))
     }
 
     private func scheduleBook() {

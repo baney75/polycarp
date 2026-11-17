@@ -70,6 +70,10 @@ public enum Wire {
             /// check (ask GitHub again) or now (install the release on offer). The reply's `info` is an
             /// `UpdateReport`. Local callers only (`Remote.allows` never lets it through).
             case update
+            /// Named window layouts (`polycarp-spaces layout`): `text` is save, restore, list or delete, `target` the name,
+            /// `args` `--workspace N` for a save of one workspace. Answered off the main thread; local callers only
+            /// (`Remote.allows` never lets it through), since a restore moves Donovan's windows.
+            case layout
         }
         public var op: Op
         public var target: String?

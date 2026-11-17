@@ -12,6 +12,8 @@ final class Server {
     /// Sandbox requests take seconds to a minute (a VM boots), so they never run on the main thread:
     /// the session engine, the dock and the hotkeys stay responsive while one waits.
     var handleSandbox: (Wire.Request) -> Wire.Reply = { _ in Wire.Reply(ok: false, error: "not ready") }
+    /// Layout saves and restores read and move every window through Accessibility, so they run here too, off main.
+    var handleLayout: (Wire.Request) -> Wire.Reply = { _ in Wire.Reply(ok: false, error: "not ready") }
     private var listeners: [(fd: Int32, path: String, source: DispatchSourceRead)] = []
     private let io = DispatchQueue(label: "baneyspaces.socket", attributes: .concurrent)
 
@@ -73,6 +75,8 @@ final class Server {
             } else {
                 if req.op == .sandbox {
                     reply = handleSandbox(req)
+                } else if req.op == .layout {
+                    reply = handleLayout(req)
                 } else {
                     reply = req.op == .hands ? handleHands(req) : DispatchQueue.main.sync { handle(req) }
                 }
