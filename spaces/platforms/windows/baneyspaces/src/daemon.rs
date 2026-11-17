@@ -112,6 +112,8 @@ static FINISHED: AtomicBool = AtomicBool::new(false);
 static CTRL_TX: OnceLock<Sender<Msg>> = OnceLock::new();
 static SHARED: OnceLock<Shared> = OnceLock::new();
 static PATHS: OnceLock<Paths> = OnceLock::new();
+/// The shell's live feed (`feed.rs`): started with the daemon, fed after every change.
+static FEED: OnceLock<std::sync::mpsc::Sender<crate::feed::FeedMsg<std::fs::File>>> = OnceLock::new();
 
 /// What a request that wanted to hide windows says when it could not save where they were.
 fn save_error(why: &str) -> Envelope {
@@ -169,6 +171,7 @@ impl Core {
         if let Err(e) = self.exec(&effects) {
             self.problem(format!("could not save the hidden-window record, so no window was hidden: {e}"));
         }
+        self.publish();
         Ok(effects)
     }
 
@@ -182,7 +185,10 @@ impl Core {
         let backup = self.model.clone();
         let effects = self.model.apply(ev).map_err(model_err)?;
         match self.exec(&effects) {
-            Ok(()) => Ok(effects),
+            Ok(()) => {
+                self.publish();
+                Ok(effects)
+            }
             Err(e) => {
                 self.model = backup;
                 self.problem(format!("refused: could not save the hidden-window record: {e}"));
@@ -486,7 +492,20 @@ impl Core {
         v["settings"] = Value::Object(self.settings.clone());
         v["overview"] = json!({ "shown": self.overview_shown });
         v["daemon"] = json!({ "pid": self.our_pid, "started": self.started, "events": self.events_seen, "problems": self.problems });
+        self.publish();
         self.paths.write_atomic("state.json", &serde_json::to_string_pretty(&v).unwrap_or_default())
+    }
+
+    /// What the shell shows, as the feed's line: your windows with their app and title, never an agent's.
+    pub fn shell_line(&self) -> String {
+        baneyspaces_core::shell::ShellState::from_model(&self.model, |w| self.info.get(w).map(|i| (i.app.clone(), i.title.clone())).unwrap_or_default()).line()
+    }
+
+    /// Sends the state to the shell's feed; the feed drops it when nothing it shows changed.
+    fn publish(&self) {
+        if let Some(tx) = FEED.get() {
+            let _ = tx.send(crate::feed::FeedMsg::Publish(self.shell_line()));
+        }
     }
 
     // ---- windows -------------------------------------------------------------------------
@@ -1367,6 +1386,23 @@ fn serve_conn(shared: Shared, f: std::fs::File) {
         unsafe { windows_sys::Win32::System::Pipes::GetNamedPipeClientProcessId(std::os::windows::io::AsRawHandle::as_raw_handle(&f) as _, &mut pid) };
         pid
     };
+    // `subscribe`: the shell's feed. This connection stays open and the feed thread writes to it from now on.
+    if serde_json::from_str::<Value>(&line).is_ok_and(|v| v["op"] == "subscribe") {
+        let c = lock(&shared);
+        let mut f = f;
+        if peer_is_agent(&c, peer) {
+            let env = Envelope::err("not_in_scope", "subscribe is for your shell, not an agent: it was refused", Retry::Never, "Agents read `state` instead.");
+            let _ = writeln!(f, "{}", env.to_json());
+            return;
+        }
+        if writeln!(f, "{}", Envelope::ok(json!({ "subscribed": true })).to_json()).is_err() {
+            return;
+        }
+        if let Some(tx) = FEED.get() {
+            let _ = tx.send(crate::feed::FeedMsg::Add(f, c.shell_line()));
+        }
+        return;
+    }
     let env = match serde_json::from_str::<Value>(&line) {
         Ok(Value::Object(mut req)) => {
             req.insert("_peer_pid".into(), json!(peer));
@@ -1605,6 +1641,7 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         }));
     }
     let _ = CTRL_TX.set(tx.clone());
+    let _ = FEED.set(crate::feed::spawn());
     unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(ctrl_handler), 1) };
     {
         let mut c = lock(&shared);
