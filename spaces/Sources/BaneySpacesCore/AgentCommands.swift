@@ -5,8 +5,9 @@ import Foundation
 /// `move` or `frame` off the agent workspace. They run only for a caller on this Mac, under Full Access, with Donovan's
 /// own setting on. Everything else the agent does stays on the agent workspace, where his screen never changes.
 public enum ViewControl {
-    /// The app's own defaults key (com.baney.polycarp), off unless Donovan turns it on. No agent command writes it.
-    public static let defaultsKey = "agentViewControl"
+    /// Where an older build saved the switch (com.baney.polycarp). It is never read: the switch lives in the running app
+    /// only, so nothing written to disk turns it on (review F2). The app removes a value found here at launch.
+    public static let legacyDefaultsKey = "agentViewControl"
     public static let settingTitle = "Agents may change what you see"
 
     /// Why `what` can't change the view, or nil when all three hold. The message names the first one missing.
@@ -24,6 +25,31 @@ public enum ViewControl {
         return HandsError(.permissionDenied, "\(what) would change what Donovan sees, and \(missing)",
                           suggestion: "Work on the agent workspace instead: `move` a window there and `frame` it there. Only Donovan turns view control on.",
                           retry: .never)
+    }
+}
+
+/// The "Agents may change what you see" switch itself (review F2). It is never stored: it starts off, nothing on disk is
+/// read for it, and it turns on only when `confirm` says Donovan confirmed Polycarp's sheet. Turning it off never asks.
+public struct ViewControlSwitch {
+    public private(set) var on = false
+    public init() {}
+
+    /// Sets the switch; true when it now reads `new`.
+    @discardableResult
+    public mutating func set(_ new: Bool, confirm: () -> Bool) -> Bool {
+        if new == on { return true }
+        if new, !confirm() { return false }
+        on = new
+        return true
+    }
+
+    /// Removes a value saved under the legacy key, by an older build or by anyone with a shell; true when one was there.
+    /// It is only ever removed, never read.
+    @discardableResult
+    public static func forgetSaved(in defaults: UserDefaults) -> Bool {
+        guard defaults.object(forKey: ViewControl.legacyDefaultsKey) != nil else { return false }
+        defaults.removeObject(forKey: ViewControl.legacyDefaultsKey)
+        return true
     }
 }
 

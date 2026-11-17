@@ -36,7 +36,7 @@ struct HandsHost {
     var rescan: () -> Void = {}
     /// The agent API's facts (`Spaces.agentFacts`): the model, one window-server read, displays and the look.
     var facts: () -> AgentAPI.Facts? = { nil }
-    /// Donovan's "Agents may change what you see" (`ViewControl.defaultsKey`), off by default.
+    /// Donovan's "Agents may change what you see" (`ViewControlSetting`): never stored, off at every launch.
     var viewControl: () -> Bool = { false }
     /// Shows workspace n on a display (the focused one when nil): `Spaces.use(display:)`, then `switchTo`.
     var switchTo: (Int, String?) -> Void = { _, _ in }

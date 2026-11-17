@@ -81,26 +81,33 @@ final class AgentAccess {
     }
 }
 
-/// Donovan's "Agents may change what you see" (`ViewControl`). Like the access mode it is read once at launch and changed
-/// only from Settings, so a `defaults write` by another process takes effect at the next launch at the earliest, and is
-/// logged then. Polycarp's own windows are never an agent's, so no agent can click the switch.
+/// Donovan's "Agents may change what you see" (`ViewControl`). Never stored: off at every launch, and on only after Donovan
+/// confirms Polycarp's sheet with a real click or key (`AccessConsent.askViewControl`, checked as a lend's is). Nothing an
+/// agent writes to disk turns it on (review F2). Polycarp's own windows are never an agent's, so no agent clicks it.
 final class ViewControlSetting {
     static let shared = ViewControlSetting()
     private let lock = NSLock()
-    private var on = UserDefaults.standard.bool(forKey: ViewControl.defaultsKey)
+    private var state = ViewControlSwitch()
 
-    private init() { if on { Trace.log("agent view control at launch: on (saved in Settings)") } }
+    private init() {
+        if ViewControlSwitch.forgetSaved(in: .standard) {
+            Trace.log("agent view control at launch: off (a saved value was removed; the switch is never stored)")
+        }
+    }
 
     var enabled: Bool {
         lock.lock(); defer { lock.unlock() }
-        return on
+        return state.on
     }
 
-    /// Settings > Agents only, on the main thread.
+    /// Settings > Agents only, on the main thread. Turning it on asks first; turning it off never does.
     func set(_ new: Bool) {
-        lock.lock(); let old = on; on = new; lock.unlock()
-        guard old != new else { return }
-        UserDefaults.standard.set(new, forKey: ViewControl.defaultsKey)
-        Trace.log("agent view control: \(new ? "on" : "off")")
+        lock.lock(); var next = state; lock.unlock()
+        guard next.set(new, confirm: AccessConsent.askViewControl) else {
+            Trace.log("agent view control: stays off, not confirmed on the sheet")
+            return
+        }
+        lock.lock(); let changed = state.on != next.on; state = next; lock.unlock()
+        if changed { Trace.log("agent view control: \(new ? "on until Polycarp quits" : "off")") }
     }
 }
