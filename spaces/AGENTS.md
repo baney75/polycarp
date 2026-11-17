@@ -19,7 +19,8 @@ A change is done when steps 1 to 3 pass on its branch and step 4 passes on `main
    no budget.
 3. For anything that hides, parks, moves or restores windows: `swift scripts/motion-probe.swift <a> <b>`
    with Helium or Ghostty on one of the two workspaces. It must print "no window slid".
-   For how fast a switch shows and parks (`Parking`, `Spaces.bringHome`, `park`, `parkAlongside`, `settle`):
+   For how fast a switch shows and parks (`Parking`, `Spaces.bringHome`, `park`, `parkAlongside`, `settle`, `SwitchSteps`,
+   `FrontProcess`; `SwitchStepsTests` runs its second half under build load):
    `swift scripts/switch-probe.swift speed` (about 40 windows of its own, 200 switches, key-down to the last frame the
    window server confirms). It needs 10 idle minutes (exit 3 and "untested live" otherwise) and must print
    "switch-probe speed: pass" against `spacesSwitch` in `spec/speed.json`.

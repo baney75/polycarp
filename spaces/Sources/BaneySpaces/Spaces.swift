@@ -1712,38 +1712,51 @@ final class Spaces {
         clock.mark(.concealed)
         // 3. Focus moves to this workspace. Only then does the old front app hide: hiding the app
         //    in front makes macOS activate another app on its own, which would look like the
-        //    person picking it.
+        //    person picking it. The window comes forward through the window server (`FrontProcess`), which needs
+        //    nothing from the app; the Accessibility raise runs off the main thread (`SwitchSteps`), since a busy
+        //    app answered it only after up to three 100 ms timeouts, and parking doesn't wait for either.
         let target = ([plan.focus].compactMap { $0 } + plan.show)
             .compactMap { windows[$0] }.first { !$0.isMinimized && saved.frames[$0.id] == nil }
         let frontPid = target?.pid ?? getpid()
         if moveFocus { expectedFront = frontPid }
-        var raised = false
         if moveFocus {
             if let target {
                 emptyHolder.orderOut(nil)
-                raised = target.focus()
-                if raised { lastKey[target.pid] = target.id; intended[target.pid] = nil } else {
-                    // The app may come forward on its own a moment later, focusing whatever window
-                    // it used last. Until the raise lands, that isn't the person choosing it.
-                    intended[target.pid] = (target.id, Date().addingTimeInterval(2))
-                }
+                _ = FrontProcess.bringForward(pid: target.pid, window: target.id)
             } else {
                 takeFocus()
             }
         }
         clock.mark(.shown)
-        let done = { [self] in
-            guard gen == generation, active else { return ScreenHold.end() }
-            clock.mark(.focused)
+        let waitForFocus = !deferred.isEmpty || (moveFocus && target == nil) || leavingParked != nil
+        // A hide that waits for focus waits until LaunchServices agrees: hiding the app it still has in front is what makes
+        // macOS pick the next one. With nothing waiting, the window server having it in front is enough.
+        let landed: () -> Bool = waitForFocus ? { Windows.focusedPid() == frontPid }
+            : { (FrontProcess.pid() ?? Windows.focusedPid()) == frontPid }
+        let steps = SwitchSteps(waitForFocus: waitForFocus, landed: landed)
+        let raise: (() -> Bool)? = moveFocus ? target.map { target in { target.focus() } } : nil
+        steps.run(raise: raise, raised: { [self] took in
+            guard gen == generation, active, let target else { return }
+            if took { lastKey[target.pid] = target.id; intended[target.pid] = nil; return }
+            // The app may come forward on its own a moment later, focusing whatever window
+            // it used last. Until the raise lands, that isn't the person choosing it.
+            intended[target.pid] = (target.id, Date().addingTimeInterval(2))
             // An app busy coming back from hiding can miss the raise. Try again once it has had
             // a moment, unless another switch came first.
-            if moveFocus, !raised, let target {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [self] in
-                    guard gen == generation, active, target.focus() else { return }
-                    lastKey[target.pid] = target.id
-                    intended[target.pid] = nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [self] in
+                guard gen == generation, active else { return }
+                SwitchSteps.raiser.async {
+                    guard target.focus() else { return }
+                    DispatchQueue.main.async { [self] in
+                        guard gen == generation else { return }
+                        lastKey[target.pid] = target.id
+                        intended[target.pid] = nil
+                    }
                 }
             }
+        }, focused: { [self] in
+            guard gen == generation, active else { return ScreenHold.end() }
+            clock.mark(.focused)
             conceal(how, apps: deferred, screens: screens)
             // Hiding the app in front makes macOS activate the next one in line, often a parked
             // app whose window sits in the corner. That's this switch, not you picking it.
@@ -1764,20 +1777,21 @@ final class Spaces {
             // Only a switch that really brought an app forward vouches for the next one's idea of
             // which app is in front.
             if moveFocus, Windows.focusedPid() == frontPid { settleUntil = Date().addingTimeInterval(0.3) }
-            // Windows from other workspaces leave last, behind the ones now in front.
-            park(how, parkedApps: parkedApps, screens: screens, gen: gen) { [self] in
+        }, park: { [self] parked in
+            guard gen == generation, active else { return }
+            // Windows from other workspaces leave now, behind the ones in front. Only a hide of the app that was
+            // in front waits for focus to move.
+            park(how, parkedApps: parkedApps, screens: screens, gen: gen,
+                 holdHides: moveFocus ? Set([oldFront].compactMap { $0 }) : [], afterFocus: steps.afterFocus) { [self] in
                 clock.mark(.parked)
-                clock.log(to: Spaces.folder.appendingPathComponent("timing.log"))
-                persist()
-                finish()
+                parked()
             }
-        }
-        // Nothing left that depends on focus: finish now, without waiting a timer tick.
-        // Nothing left that depends on focus: finish now. An empty workspace still waits for
-        // BaneySpaces to be in front, or the Finder fallback would fire on stale information.
-        let waitForFocus = !deferred.isEmpty || (moveFocus && target == nil) || leavingParked != nil
-        if !waitForFocus || Windows.focusedPid() == frontPid { return done() }
-        waitUntil(timeout: 0.5, interval: 0.01, { Windows.focusedPid() == frontPid }, then: done)
+        }, finished: { [self] in
+            guard gen == generation, active else { return }
+            clock.log(to: Spaces.folder.appendingPathComponent("timing.log"))
+            persist()
+            finish()
+        })
         }
     }
 
@@ -1824,7 +1838,9 @@ final class Spaces {
     /// move, so a window slides away only behind windows that hide its whole path. An app with
     /// nothing here hides for the moment its windows move instead; one with a window here moves
     /// in place.
-    private func park(_ how: Concealment, parkedApps: Set<pid_t>, screens: [CGRect], gen: Int, then: @escaping () -> Void) {
+    /// `holdHides`: apps whose hide must wait for focus to move (the app that was in front), through `afterFocus`.
+    private func park(_ how: Concealment, parkedApps: Set<pid_t>, screens: [CGRect], gen: Int, holdHides: Set<pid_t> = [],
+                      afterFocus: @escaping (@escaping () -> Void) -> Void = { $0() }, then: @escaping () -> Void) {
         // Apps with a window here parked theirs already (`parkAlongside`).
         // On a native full-screen Space the window server lists only that Space, so "not listed" says nothing about a window.
         let inSight: Set<WindowID>? = DockSpaces.current().unsafe ? nil : Windows.onScreenIDs()
@@ -1863,7 +1879,7 @@ final class Spaces {
         }
         let exposedIDs = Set(exposed.map(\.id))
         for w in todo where !exposedIDs.contains(w.id) { w.setOrigin(spots[w.id] ?? .zero) }
-        whileHidden(exposed, move: { exposed.forEach { $0.setOrigin(spots[$0.id] ?? .zero) } }) { [self] justHid in
+        func afterHide(_ justHid: Set<pid_t>) {
             guard gen == generation, active else { return }
             let hid = justHid.union(hiddenByUs)
             settle(moving, targets: spots, away: true, screens: screens) { [self] in
@@ -1881,8 +1897,9 @@ final class Spaces {
                     if let f = saved.frames[w.id], abs(f.minX - b.minX) < 2, abs(f.minY - b.minY) < 2 { saved.frames[w.id] = nil }
                 }
                 for pid in unparked {
-                    NSRunningApplication(processIdentifier: pid)?.hide()
                     saved.hiddenApps.insert(pid)
+                    let hide = { _ = NSRunningApplication(processIdentifier: pid)?.hide() }
+                    if holdHides.contains(pid) { afterFocus(hide) } else { hide() }
                 }
                 let reshown = hid.subtracting(unparked)
                 for pid in reshown {
@@ -1892,6 +1909,11 @@ final class Spaces {
                 then()
                 recheckParked(todo.filter { reshown.contains($0.pid) }, spots: spots, screens: screens, gen: gen)
             }
+        }
+        let hideWhen: (@escaping () -> Void) -> Void = exposed.contains { holdHides.contains($0.pid) } ? afterFocus : { $0() }
+        hideWhen { [self] in
+            guard gen == generation, active else { return }
+            whileHidden(exposed, move: { exposed.forEach { $0.setOrigin(spots[$0.id] ?? .zero) } }, then: afterHide)
         }
     }
 
