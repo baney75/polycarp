@@ -4573,6 +4573,11 @@ fn a_theme_without_code_sections_derives_them() {
             }
         }
     }
+    let shown = b.json(&["show", "calm", "--json"]);
+    assert_eq!(
+        shown["surfaces"]["studio"]["dark"]["syntax"], v["surfaces"]["studio"]["dark"]["syntax"],
+        "show has the code colors theme.json has"
+    );
     let doc = user_theme("coder", "calm", "[dark.terminal]\nred = \"#ff7b72\"\n");
     assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], &doc)), 0);
     assert_eq!(
