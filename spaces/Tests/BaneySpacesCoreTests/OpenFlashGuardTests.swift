@@ -11,11 +11,13 @@ final class OpenFlashGuardTests: XCTestCase {
     let screen = [CGRect(x: 0, y: 0, width: 1512, height: 982)]
     let w = CGRect(x: 400, y: 300, width: 500, height: 400)
 
-    func testItIsOffUnlessTheCoverIsNamed() {
-        XCTAssertEqual(OpenFlashGuard.from(nil), .off)
-        XCTAssertEqual(OpenFlashGuard.from("hidden"), .off, "an unknown value never turns anything on")
-        XCTAssertEqual(OpenFlashGuard.from("fast"), .off, "the dropped prototype")
+    func testItIsOnUnlessTurnedOff() {
+        // G9: off by default left every agent open drawn on Donovan's workspace for 76 to 825 ms (#304).
+        XCTAssertEqual(OpenFlashGuard.from(nil), .cover)
+        XCTAssertEqual(OpenFlashGuard.from("hidden"), .cover, "an unknown value is the default")
+        XCTAssertEqual(OpenFlashGuard.from("fast"), .cover, "the dropped prototype")
         XCTAssertEqual(OpenFlashGuard.from("cover"), .cover)
+        XCTAssertEqual(OpenFlashGuard.from("off"), .off, "the one way to turn it off")
     }
 
     func testOnlyAnOrdinaryWindowInSightIsGuarded() {
@@ -318,6 +320,8 @@ final class OpenFlashGuardTests: XCTestCase {
         d.set("cover", forKey: key)
         XCTAssertEqual(OpenFlashGuard.current(), .cover, "first-F3: the app's own domain is .standard")
         d.removeObject(forKey: key)
+        XCTAssertEqual(OpenFlashGuard.current(), .cover, "G9: on by default")
+        d.set("off", forKey: key)
         XCTAssertEqual(OpenFlashGuard.current(), .off)
         let plist = try String(contentsOf: CursorSourceTests.root.appendingPathComponent("Resources/Info.plist"), encoding: .utf8)
         XCTAssertTrue(plist.contains("<key>CFBundleIdentifier</key><string>\(OpenFlashGuard.defaultsDomain)</string>"),
