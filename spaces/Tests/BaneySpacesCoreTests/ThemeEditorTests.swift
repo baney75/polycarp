@@ -162,6 +162,25 @@ final class ThemeEditorTests: XCTestCase {
         XCTAssertEqual(d.original["shape.radius"], .number(3))
     }
 
+    /// The draft says schema 2 only to the app's own reader. Save runs `theme change` with each edited value and the CLI
+    /// writes theme.json, so no argument carries a schema and `save()` sends nothing else: the editor never stamps one on disk.
+    func testSaveSendsOnlyTheEditsSoTheEditorNeverStampsASchemaOnDisk() throws {
+        var d = try Self.draft()
+        d.set("light.background", .text("#ffffff"), at: 1)
+        d.set("shape.radius", .number(3), at: 5)
+        XCTAssertTrue(String(decoding: d.themeJSON(), as: UTF8.self).contains("\"schema\""), "the draft itself has one")
+        let args = ThemeEditorCommands.save(d.name, d.changes())
+        XCTAssertEqual(Array(args.prefix(2)), ["theme", "change"])
+        XCTAssertFalse(args.contains { $0.lowercased().contains("schema") }, "\(args)")
+
+        let model = try Repo.code("Sources/BaneySpaces/Appearance/ThemeEditorModel.swift")
+        let after = try XCTUnwrap(model.components(separatedBy: "func save() {").dropFirst().first, "ThemeEditorModel.save()")
+        let body = after.components(separatedBy: "\n    }\n")[0]
+        XCTAssertTrue(body.contains("ThemeEditorCommands.save(d.name, d.changes())"), body)
+        XCTAssertFalse(body.contains("themeJSON"), body)
+        XCTAssertFalse(body.lowercased().contains("schema"), body)
+    }
+
     func testAnUnknownPathOrTheSameValueIsNotAStep() throws {
         var d = try Self.draft()
         d.set("light.nope", .text("#000000"), at: 1)
