@@ -109,10 +109,15 @@ or an unreadable file or folder, means no Polycarp theme and one log line in `tr
 (`polycarp theme: ignored ...`, once until the reason changes); the app never fails on it. A missing
 file is not a problem and logs nothing (unless a theme was in force: `file removed`).
 
-**Following.** About once a second a background queue stats the file; a change is read there and applied
-on the main queue. A file that changed while it was read is read again on the next tick, and so is one whose read failed
-for now (out of file handles, an I/O error): the theme in force stays and one line says so. A change of
-mode (`chmod`) counts as a change.
+**Following.** A kqueue watch on the file, `current/` and the config folder (or the nearest folder that exists)
+wakes a background queue the moment any of them changes; the queue stats the file, reads a change and applies it on
+the main queue. The command renames a temp file into place, so every event re-arms the watch; a watch goes live a moment after it is armed, so when it does it arms again if a folder appeared or went meanwhile (the first set makes `current/`), and otherwise looks once. A burst of events (the
+command writes five files) is one or two looks, queued behind the events already in, with no timer. A file that reads bad on an event is looked at again 150 ms later and drops the theme only if it is unchanged and still bad, so an edit in place never flashes your own look mid-write. A stat every 30 s is only a safety net. A file that
+changed while it was read is read again on the next event or look, and one whose read failed for now (out of file
+handles, an I/O error) is read again after 1 s: the theme in force stays and one line says so. A change of mode
+(`chmod`) counts as a change. Budget: `polycarp theme set` to the first dock frame in the new theme under 200 ms
+(`BANEYSPACES_RENDER_THEME_RELOAD=20 Polycarp --render <folder>` measures it; `PolycarpThemeReloadTests` holds the
+watcher to it).
 
 **Mapping.** The look is the `minimal` look (palette colors everywhere, the theme's own widths)
 with these values:

@@ -67,6 +67,9 @@ enum Render {
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SETTINGS_TIMING"].flatMap(Int.init) {
             return SettingsTiming.run(rounds: r)
         }
+        if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME_RELOAD"].flatMap(Int.init) {
+            return ThemeReloadTiming.run(rounds: r)
+        }
         // BANEYSPACES_RENDER_THEME_EDITOR=<user theme> draws only the theme editor and the Appearance tab, light and dark.
         if let name = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME_EDITOR"], !name.isEmpty {
             return ThemeEditorRender.run(name) { save($0, $1, $2) }
