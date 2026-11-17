@@ -49,6 +49,8 @@ usage: \(me) <command>
                               how long a prompt counts is timed from when the app gets it)
   hooks install|uninstall|status   Claude Code and Grok hooks
   skill install               the agent skill into ~/.claude/skills/baneyspaces
+  keys check [file]           check spaces.toml (or another file) before saving it; exit 1 with each problem
+  keys list                   every chord in force and what it does
   doctor                      what's working and what isn't
 """
 
@@ -320,6 +322,24 @@ case "doctor":
     for (k, v) in (reply?.info ?? [:]).sorted(by: { $0.key < $1.key }) where k != "version" { out("  \(k): \(v)") }
     out("hooks:  " + Hooks.status())
     out("skill:  " + (FileManager.default.fileExists(atPath: Skill.dest.path) ? "installed at \(Skill.dest.path)" : "not installed (\(me) skill install)"))
+
+case "keys":
+    // Checks the file as the app would read it, with the workspace modifier Settings has now.
+    let mod = Keymap.settingsMod(stored: UserDefaults(suiteName: "com.baney.polycarp")?.string(forKey: "modifier"))
+    let path: String? = rest.count > 1 ? rest[1] : SpacesFile.path()
+    let text = path.flatMap { FileManager.default.contents(atPath: $0) }.map { String(decoding: $0, as: UTF8.self) }
+    let (keymap, problems) = Keymap.load(text ?? "", settingsMod: mod)
+    switch rest.first {
+    case "check":
+        guard text != nil || rest.count == 1 else { fail("\(path ?? "the file") can't be read") }
+        problems.forEach { out("\(path ?? SpacesFile.name) \($0)") }
+        if problems.isEmpty { out("ok: \(keymap?.bindings.count ?? 0) chords\(text == nil ? " (no file: the defaults)" : "")") }
+        exit(problems.isEmpty ? 0 : 1)
+    case "list":
+        guard let keymap else { problems.forEach { out("\(path ?? SpacesFile.name) \($0)") }; exit(1) }
+        keymap.bindings.forEach { out("\($0.chord.description.padding(toLength: 22, withPad: " ", startingAt: 0)) \($0.action.spelling)") }
+    default: fail("usage: \(me) keys check [file] | keys list", code: 2)
+    }
 
 case "-h", "--help", "help": out(usage)
 default: fail(usage, code: 2)

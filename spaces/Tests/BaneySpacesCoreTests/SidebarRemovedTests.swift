@@ -1,3 +1,4 @@
+@testable import BaneySpacesCore
 import XCTest
 
 /// Donovan removed the sidebar (2026-10-30): the launcher is the one search, and ⌃⌘K opens it.
@@ -33,14 +34,17 @@ final class SidebarRemovedTests: XCTestCase {
         let text = try code(root.appendingPathComponent("Sources/BaneySpaces/AppDelegate.swift"))
         XCTAssertTrue(text.contains("session.onSearch = { [weak self] in self?.launcher.toggle() }"),
                       "the session engine's onSearch must open the launcher")
-        // Global means registered before registerShortcuts stops for a missing Accessibility permission.
+        // Global means registered before registerShortcuts stops for a missing Accessibility permission: the keymap
+        // binds ⌃⌘K and ⌃⌘U by default to actions that need no start, and the loop takes those before `started`.
+        let keys = Keymap.defaults(mod: [.cmd])
+        XCTAssertEqual(keys.action(for: Chord([.ctrl, .cmd], "k")), .search)
+        XCTAssertEqual(keys.action(for: Chord([.ctrl, .cmd], "u")), .agentFinished)
+        XCTAssertFalse(KeyAction.search.needsStart, "⌃⌘K must work without Accessibility")
+        XCTAssertFalse(KeyAction.agentFinished.needsStart, "⌃⌘U must work without Accessibility")
         let body = try XCTUnwrap(text.components(separatedBy: "private func registerShortcuts() {").dropFirst().first)
-        let gate = try XCTUnwrap(body.range(of: "guard started else { return }"))
-        for key in ["kVK_ANSI_K", "kVK_ANSI_U"] {
-            let at = try XCTUnwrap(body.range(of: "keyCode: \(key), modifiers: controlKey | cmdKey"), "\(key) isn't registered")
-            XCTAssertLessThan(at.lowerBound, gate.lowerBound, "⌃⌘\(key.suffix(1)) must be registered before the Accessibility gate")
-        }
-        XCTAssertTrue(body.contains("self?.session.onSearch()"), "⌃⌘K must call the session engine's onSearch")
+        XCTAssertTrue(body.contains("for b in keys.keymap.bindings where started || !b.action.needsStart {"),
+                      "keys that need no Accessibility must be registered before it is given")
+        XCTAssertTrue(text.contains("case .search: session.onSearch()"), "⌃⌘K must call the session engine's onSearch")
     }
 
     func testNewClaudeAndNewTerminalAreLauncherCommands() throws {
