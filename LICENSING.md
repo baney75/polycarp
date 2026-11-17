@@ -20,4 +20,6 @@ Mario Zechner's Sitegeist (https://github.com/badlogic/sitegeist) and pi. See `b
 
 `cli/tests/fixtures/omarchy/` holds two `colors.toml` files copied from basecamp/omarchy v4.0.4, MIT licensed by David Heinemeier Hansson; its `LICENSE` and `README.md` give the text and the source.
 
+`themes/gruvbox.toml`, `themes/catppuccin.toml` and `themes/everforest.toml` take their colors from MIT licensed color schemes; `themes/README.md` names each source and its license.
+
 `brand/` holds the Polycarp name and logo. The licenses above do not cover them. Newsreader, used for the wordmark, is under the SIL Open Font License.

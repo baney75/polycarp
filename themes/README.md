@@ -4,9 +4,25 @@ One theme file drives every Polycarp product and the website. This folder holds 
 Each one is a TOML file named after its theme. They are built into the `polycarp` command, so they
 work with no files on disk.
 
-Built-in themes: `polycarp` (the default), `still-water`, `evening`, `parchment`, `blocks`, `calm`.
+Built-in themes: `polycarp` (the default), `still-water`, `evening`, `parchment`, `blocks`, `calm`,
+`gruvbox`, `catppuccin`, `everforest`. The last three come from other projects; see
+[Themes from other projects](#themes-from-other-projects).
 
 Every theme in this folder must validate. Run `polycarp theme validate themes/<name>.toml` after any edit.
+
+## Themes from other projects
+
+These were made with `polycarp theme import` from schemes in
+[tinted-theming/schemes](https://github.com/tinted-theming/schemes) at commit
+`1bd5ad4c2c554c9c8e288b56deab2364ac8dada0` (MIT, Copyright (c) 2022 Tinted Theming): the light
+scheme gives `[light]` and the dark one `[dark]`. The importer moved some colors so text reads at
+4.5:1; everything else is the scheme's own. Each original is MIT licensed.
+
+| Theme | Schemes | Original | License |
+| --- | --- | --- | --- |
+| `gruvbox` | `base24/gruvbox-light`, `base24/gruvbox-dark` | [morhetz/gruvbox](https://github.com/morhetz/gruvbox) | MIT/X11 (stated in its README) |
+| `catppuccin` | `base16/catppuccin-latte`, `base16/catppuccin-mocha` | [catppuccin/catppuccin](https://github.com/catppuccin/catppuccin) | MIT, Copyright (c) 2021 Catppuccin |
+| `everforest` | `base16/everforest-light-medium`, `base16/everforest-dark-medium` | [sainnhe/everforest](https://github.com/sainnhe/everforest) | MIT, Copyright (c) 2019 sainnhe |
 
 ## Your own themes
 

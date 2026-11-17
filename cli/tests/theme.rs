@@ -9,13 +9,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-const BUILTINS: [&str; 6] = [
+const BUILTINS: [&str; 9] = [
     "polycarp",
     "still-water",
     "evening",
     "parchment",
     "blocks",
     "calm",
+    "gruvbox",
+    "catppuccin",
+    "everforest",
 ];
 const SURFACES: [&str; 5] = ["spaces", "voice", "browser", "site", "studio"];
 const ROLES: [&str; 13] = [
@@ -4467,8 +4470,8 @@ fn json_str(s: &str) -> Value {
 }
 
 /// What `theme set` writes in `current/`, captured with the command built from the commit before
-/// the theme code moved into `crates/polycarp-theme` (schema 1, four surfaces). Each case is
-/// (fixture folder, commands).
+/// the theme code moved into `crates/polycarp-theme` (schema 1, four surfaces). Themes added later
+/// were captured when they were added, in the same shape. Each case is (fixture folder, commands).
 const OUTPUT_CASES: &[(&str, &[&[&str]])] = &[
     ("polycarp", &[&["set", "polycarp"]]),
     ("still-water", &[&["set", "still-water"]]),
@@ -4476,6 +4479,9 @@ const OUTPUT_CASES: &[(&str, &[&[&str]])] = &[
     ("parchment", &[&["set", "parchment"]]),
     ("blocks", &[&["set", "blocks"]]),
     ("calm", &[&["set", "calm"]]),
+    ("gruvbox", &[&["set", "gruvbox"]]),
+    ("catppuccin", &[&["set", "catppuccin"]]),
+    ("everforest", &[&["set", "everforest"]]),
     (
         "evening-dark-accent",
         &[
@@ -5121,7 +5127,7 @@ fn omarchy_fixture(name: &str) -> PathBuf {
 }
 
 /// An Omarchy 4 folder imports from its colors.toml: its own accent, its terminal colors, and its
-/// background images reported as unused.
+/// background images reported as unused. Its name is a built-in's, so it is saved under another.
 #[test]
 fn an_omarchy_folder_imports_with_its_accent_and_terminal_colors() {
     let b = Box::new();
@@ -5136,17 +5142,26 @@ fn an_omarchy_folder_imports_with_its_accent_and_terminal_colors() {
     fs::write(dir.join("backgrounds/notes.txt"), b"").unwrap();
     let (code, v) = b.jrun(&["import", dir.to_str().unwrap()]);
     assert_eq!(code, 0, "{v}");
-    assert_eq!(v["data"]["name"], "catppuccin");
+    let name = "catppuccin-imported";
+    assert_eq!(v["data"]["name"], name);
+    assert!(
+        v.to_string().contains(
+            "catppuccin is a built-in theme, so this one is saved as catppuccin-imported"
+        ),
+        "{v}"
+    );
     assert_eq!(v["data"]["system"], "omarchy");
     assert_eq!(v["data"]["backgrounds"].as_array().unwrap().len(), 1);
     assert!(v.to_string().contains("no wallpaper setting"), "{v}");
-    assert_eq!(b.get_in("dark.accent", "catppuccin"), "#89b4fa");
-    assert_eq!(b.get_in("dark.background", "catppuccin"), "#1e1e2e");
-    assert_eq!(b.get_in("dark.terminal.magenta", "catppuccin"), "#f5c2e7");
-    assert_eq!(
-        b.get_in("dark.terminal.bright_black", "catppuccin"),
-        "#585b70"
-    );
+    assert_eq!(b.get_in("dark.accent", name), "#89b4fa");
+    assert_eq!(b.get_in("dark.background", name), "#1e1e2e");
+    assert_eq!(b.get_in("dark.terminal.magenta", name), "#f5c2e7");
+    assert_eq!(b.get_in("dark.terminal.bright_black", name), "#585b70");
+    // The built-in is untouched, and --name still may not take a built-in's name.
+    assert_eq!(b.get_in("light.background", "catppuccin"), "#eff1f5");
+    let (code, v) = b.jrun(&["import", dir.to_str().unwrap(), "--name", "catppuccin"]);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(v["error"]["code"], "builtin_read_only");
 
     let v = b.json(&[
         "import",
@@ -5227,11 +5242,12 @@ fn a_builtin_exported_as_base24_and_imported_comes_back_the_same() {
             let palette = |text: &str| text.split("palette:").nth(1).unwrap().to_string();
             let again = b.ok(&["export", "base24", &name, "--mode", m]);
             assert_eq!(palette(&again), palette(&first), "{t} {m}");
-            // Black and bright white have no base24 slot; import takes them from base00 and base07.
+            // Black, bright white and the terminal's own foreground have no base24 slot; import takes
+            // them from base00, base07 and base05 (the interface foreground).
             for k in ANSI
                 .iter()
                 .filter(|k| !matches!(**k, "black" | "bright_white"))
-                .chain(&["background", "foreground"])
+                .chain(&["background"])
             {
                 let path = format!("{m}.terminal.{k}");
                 assert_eq!(b.get_in(&path, &name), b.get_in(&path, t), "{t} {path}");
