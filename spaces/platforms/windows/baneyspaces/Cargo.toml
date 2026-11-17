@@ -37,8 +37,23 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_IO",
   "Win32_System_SystemInformation",
   "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Registry",
   "Win32_UI_Accessibility",
+  "Win32_UI_HiDpi",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
+] }
+# The shell's drawing (Direct3D 11, Direct2D, DirectWrite, DirectComposition): COM, which windows-sys does not cover.
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Direct2D",
+  "Win32_Graphics_Direct2D_Common",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_DirectComposition",
+  "Win32_Graphics_DirectWrite",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
 ] }

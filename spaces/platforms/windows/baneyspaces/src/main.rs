@@ -60,6 +60,8 @@ const HELP: &str = "baneyspaces (Windows)
   keys                           the key map for this platform
   daemon [--trace] [--log FILE]  run the daemon in this console
   daemon --background            run it with no console window (the Startup shortcut runs this)
+  shell [--log FILE]             the bar: one themed top bar per display, fed by the daemon
+  shell stop                     close the bar and give the top of each display back
   stop                           ask the running daemon to put every window back and exit (also: daemon stop)
   mcp                            MCP server on stdio (agent tools only)
   doctor                         what works and what does not
@@ -366,6 +368,7 @@ fn run_daemon(args: &[String]) -> i32 {
                 cmd.arg("--trace");
             }
             cmd.creation_flags(0x0800_0000 | 0x0000_0008).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+            keep_std_handles_from_children();
             if let Err(e) = cmd.spawn() {
                 return print(&fail("internal", &format!("cannot start the daemon: {e}"), ""), false);
             }
@@ -385,6 +388,24 @@ fn run_daemon(args: &[String]) -> i32 {
         let _ = args;
         eprintln!("baneyspaces daemon: this build is not for Windows");
         1
+    }
+}
+
+/// Rust starts every child with handle inheritance on, so the daemon started by `daemon --background` also got
+/// our standard handles even with its own set to null. A caller that reads our output through a pipe (a script,
+/// an installer) then never saw the pipe close, since the daemon held it for its whole life, and waited forever.
+#[cfg(windows)]
+fn keep_std_handles_from_children() {
+    use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: a handle this process owns; clearing its inherit flag changes nothing else about it.
+        unsafe {
+            let h = GetStdHandle(which);
+            if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
     }
 }
 
@@ -411,6 +432,7 @@ fn main() {
             0
         }
         "daemon" => run_daemon(&args),
+        "shell" => shell::run(&args),
         "keys" => {
             let platform = take(&mut args, "--platform").unwrap_or_else(|| "windows".into());
             let all = keymap::keys();
