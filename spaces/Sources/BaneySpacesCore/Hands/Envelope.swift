@@ -46,6 +46,8 @@ public enum HandsErrorCode: String, Codable, CaseIterable, Sendable {
     case permissionDenied = "permission_denied"
     /// Arguments are missing or wrong.
     case badArguments = "bad_arguments"
+    /// The agent API's code for a bad argument (spec/envelope.md, spec/agent-api.md): a `since` past the last event.
+    case invalidArgs = "invalid_args"
     /// BaneySpaces isn't running.
     case notRunning = "not_running"
     /// The engine failed in a way none of the above covers.
@@ -56,7 +58,7 @@ public enum HandsErrorCode: String, Codable, CaseIterable, Sendable {
         switch self {
         case .staleRef, .unknownRef, .ambiguousTarget, .ambiguousWindow, .staleBareRow: return .afterSnapshot
         case .timeout, .notRunning, .appNotFound, .windowNotFound, .badArguments, .permissionDenied, .ambiguous, .inUse: return .safe
-        case .outsideAgentWorkspace, .agentWorkspaceOff, .notSupported, .actionFailed, .unverified, .engineError, .needsLend, .needsSandbox: return .never
+        case .outsideAgentWorkspace, .agentWorkspaceOff, .notSupported, .actionFailed, .unverified, .engineError, .needsLend, .needsSandbox, .invalidArgs: return .never
         }
     }
 }

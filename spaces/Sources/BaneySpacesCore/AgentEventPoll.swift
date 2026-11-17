@@ -39,7 +39,7 @@ public final class AgentEventPoll: @unchecked Sendable {
         cond.lock(); defer { cond.unlock() }
         readAt = now
         guard since >= 0, since <= seq else {
-            return .failure(HandsError(.badArguments, "since \(since) is not an event of this session (the last is \(seq))",
+            return .failure(HandsError(.invalidArgs, "since \(since) is not an event of this session (the last is \(seq))",
                                        suggestion: "Call events without since to start again: it answers hello with the whole state.", retry: .never))
         }
         kept.removeAll { $0.seq <= since }

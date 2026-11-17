@@ -122,7 +122,8 @@ final class AgentAPIMCPTests: XCTestCase {
         XCTAssertEqual(try p.read(since: 2, wait: 0).get().events.count, 0)
         XCTAssertEqual(try p.read(since: 2, wait: 0).get().next, 2)
         guard case .failure(let e) = p.read(since: 3, wait: 0) else { return XCTFail("since past the last event") }
-        XCTAssertEqual(e.code, .badArguments)
+        XCTAssertEqual(e.code.rawValue, "invalid_args", "434 r2 first-F2: the spec's one code for a bad argument")
+        XCTAssertEqual(e.retry, .never)
     }
 
     func testAWaitEndsWhenAnEventArrives() throws {

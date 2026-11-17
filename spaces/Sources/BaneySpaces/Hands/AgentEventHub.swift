@@ -89,7 +89,7 @@ final class AgentEventHub {
     }
 
     /// Main thread: Donovan changed Access. Every listener ends: `subscribe` closes, and the next `events` call with
-    /// `since` fails `bad_arguments`. Each starts again with a `hello` in the new scope (review F10).
+    /// `since` fails `invalid_args`. Each starts again with a `hello` in the new scope (review F10).
     func end(_ why: String) {
         guard !listeners.isEmpty else { return }
         for l in listeners { l.finish() }
