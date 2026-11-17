@@ -20,10 +20,10 @@ mod png;
 mod preview;
 
 use polycarp_theme::{
-    apply_accents, check_value, color_lines, css, ext_of, fields, is_builtin, is_hex, json_of,
-    load_raw, parse_toml, read_theme_file, resolve_doc, resolve_name, resolved_json, schema,
-    shared_vars, theme_json, valid_name, Full, Kind, Resolved, State, Themes, BUILTINS,
-    DEFAULT_THEME, MAX_DEPTH, MODES, SECTIONS, SURFACES,
+    apply_accents, check_value, code_keys, color_lines, css, ext_of, fields, is_builtin, is_hex,
+    json_of, load_raw, parse_toml, read_theme_file, resolve_doc, resolve_name, resolved_json,
+    schema, shared_vars, theme_json, valid_name, Full, Kind, Resolved, State, Themes, BUILTINS,
+    CODE, DEFAULT_THEME, MAX_DEPTH, MODES, SECTIONS, SURFACES,
 };
 
 /// What `theme off` can say: the state of the files, which it checked. Whether an app changes,
@@ -1345,6 +1345,8 @@ enum Target {
     Field {
         surface: Option<String>,
         section: &'static str,
+        /// `terminal`, `syntax` or `diff` inside light or dark.
+        group: Option<&'static str>,
         key: &'static str,
         kind: Kind,
     },
@@ -1361,9 +1363,10 @@ fn path_hint(section: Option<&str>) -> String {
                 .join(", ")
         ),
         None => format!(
-            "valid paths look like {}, {}, surface.<{}>.<section>.<key>, or title, description; sections: {}",
+            "valid paths look like {}, {}, {}, surface.<{}>.<section>.<key>, or title, description; sections: {}",
             "dark.accent",
             "shape.radius",
+            "dark.syntax.comment",
             SURFACES.join("|"),
             SECTIONS.join(", ")
         ),
@@ -1403,12 +1406,30 @@ fn parse_target(path: &str) -> Result<Target, ApiErr> {
                 Some((k, kind)) => Ok(Target::Field {
                     surface,
                     section,
+                    group: None,
                     key: k,
                     kind,
                 }),
                 None => Err(unknown(
                     format!("{path}: {key:?} is not a field of {section}"),
                     path_hint(Some(section)),
+                )),
+            }
+        }
+        [sec, grp, key] if MODES.contains(sec) && CODE.contains(grp) => {
+            let section = MODES.iter().find(|s| *s == sec).copied().unwrap_or("light");
+            let group = CODE.iter().find(|g| *g == grp).copied();
+            match code_keys(grp).iter().find(|k| *k == key) {
+                Some(k) => Ok(Target::Field {
+                    surface,
+                    section,
+                    group,
+                    key: k,
+                    kind: Kind::Hex,
+                }),
+                None => Err(unknown(
+                    format!("{path}: {key:?} is not a field of {grp}"),
+                    path_hint(Some(grp)),
                 )),
             }
         }
@@ -2685,12 +2706,17 @@ fn target_place(target: &Target) -> (Vec<&str>, &str) {
         Target::Field {
             surface,
             section,
+            group,
             key,
             ..
-        } => match surface {
-            Some(s) => (vec!["surface", s.as_str(), section], key),
-            None => (vec![section], key),
-        },
+        } => {
+            let mut at: Vec<&str> = match surface {
+                Some(s) => vec!["surface", s.as_str(), section],
+                None => vec![section],
+            };
+            at.extend(*group);
+            (at, key)
+        }
     }
 }
 
@@ -2789,6 +2815,7 @@ fn change_inner(c: &Ctx, theme: Option<&str>, changes: &[(String, Json)]) -> Res
             if let Target::Field {
                 surface: None,
                 section: sec,
+                group: None,
                 key: k,
                 ..
             } = target

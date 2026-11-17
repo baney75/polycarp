@@ -134,6 +134,9 @@ comment = "#8b949e"
 keyword = "#ff7b72"
 ```
 
+`theme get` and `theme change` take the same paths: `dark.syntax.comment`, or
+`surface.studio.dark.terminal.blue` for one product.
+
 ### One product only: `[surface.<name>]`
 
 The names are `spaces`, `voice`, `browser`, `site` and `studio` (Local Studio, its iPhone app and its
