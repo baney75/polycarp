@@ -52,5 +52,103 @@
     "runs": 20,
     "regressionLimit": 1.25,
     "measuredOn": "2026-11-15, Parish1, Hyprland 0.56.2 nested"
+  },
+  "spacesTiming": {
+    "about": "Budgets in ms for every event kind Spaces writes to timing.log: switch (a switch between two workspaces, its done= mark), parked (the same switch's parked= mark), and each `open <kind>=` line (settings-pane is any `open settings-<pane>=`). scripts/speed-report.sh checks the last day of the real timing.log against them and exits 1 on a miss; SpeedBudgetTests fails when the app logs a kind with no budget here. A percentile is judged only with minSamples lines or more. measured is the owner's Mac, 2026-11-16 to 11-17 (council brief polycarp-mac.md); budgets are tightened from it toward the targets in the 2026-11-17 gap list (P1 to P5, X2), so today's log is expected to miss some.",
+    "minSamples": 10,
+    "kinds": {
+      "switch": {
+        "p50": 50,
+        "p90": 100,
+        "p99": 200,
+        "measured": {
+          "n": 126,
+          "p50": 72,
+          "p90": 115,
+          "max": 393
+        },
+        "target": "P1: p50 under 50, p90 under 100"
+      },
+      "parked": {
+        "p50": 100,
+        "p90": 150,
+        "p99": 300,
+        "measured": {
+          "n": 126,
+          "p50": 188,
+          "p90": 339,
+          "max": 627
+        },
+        "target": "P2: p90 under 150"
+      },
+      "dock": {
+        "p50": 60,
+        "p90": 100,
+        "p99": 150,
+        "measured": {
+          "n": 301,
+          "p50": 68,
+          "p90": 122,
+          "max": 1621
+        },
+        "target": "P3: p99 under 150"
+      },
+      "launcher": {
+        "p50": 60,
+        "p90": 100,
+        "p99": 150,
+        "measured": {
+          "n": 44,
+          "p50": 70,
+          "p90": 103,
+          "max": 563
+        },
+        "target": "same as the dock: a panel already built"
+      },
+      "launcher-first": {
+        "p50": 150,
+        "p90": 250,
+        "p99": 400,
+        "measured": null,
+        "target": "first open builds the panel"
+      },
+      "overview": {
+        "p50": 60,
+        "p90": 100,
+        "p99": 150,
+        "measured": null,
+        "target": "same as the dock: a panel already built"
+      },
+      "overview-first": {
+        "p50": 150,
+        "p90": 250,
+        "p99": 400,
+        "measured": null,
+        "target": "first open builds the panel"
+      },
+      "settings": {
+        "p50": 60,
+        "p90": 100,
+        "p99": 150,
+        "measured": null,
+        "target": "same as the dock: a window already built"
+      },
+      "settings-first": {
+        "p50": 150,
+        "p90": 250,
+        "p99": 400,
+        "measured": null,
+        "target": "first open builds the window"
+      },
+      "settings-pane": {
+        "p50": 16,
+        "p90": 33,
+        "p99": 76,
+        "measured": {
+          "max": 76
+        },
+        "target": "X2 (#350): every pane under 16"
+      }
+    }
   }
 }
