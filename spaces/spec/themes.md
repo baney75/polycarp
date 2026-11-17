@@ -20,7 +20,7 @@ the change already shows them (budget: 200 ms). The CLI sets them too:
 
 A theme is shape, type and motion. A palette is color. Any theme takes any palette.
 
-- **BaneySpaces**: rounded, translucent and blurred, the system font, a soft shadow, dots for
+- **Polycarp**: rounded, translucent and blurred, the system font, a soft shadow, dots for
   workspaces. It is the current macOS look.
 - **Omarchy**: blocky. Square corners everywhere, a solid 2 px border (the accent color when
   focused), an opaque fill, no blur and no shadow, a monospace font, workspaces as numbered
@@ -53,19 +53,19 @@ Token meanings (`themes.json`):
   `scale_from` is 1.0 does not slide the dock in either (a fade only). Under Reduce Motion (or its
   platform equivalent), every duration is 0.
 
-The BaneySpaces theme is exactly what macOS draws today. Its tokens are the shipped values, and
+The Polycarp theme is exactly what macOS draws today. Its tokens are the shipped values, and
 macOS's conformance test holds them, so picking it changes nothing on screen. Where a surface
 draws text at several sizes (macOS does: 10.5 to 13 pt), `font.size` is the base size, 12: other
 sizes scale by `font.size / 12`, and a theme whose `font.weight` is `regular` draws medium and
 semibold text regular (bold stays bold).
 
-On macOS `auto` is a built-in palette over the BaneySpaces defaults: `background` is near-black
+On macOS `auto` is a built-in palette over the Polycarp defaults: `background` is near-black
 (white 0.07), `foreground` and `light` white, `sunken` black, and `accent` is the accent chosen in
 Settings (or the system's). Its panels are dark in light mode too, as they have always been.
 
 ## Palettes
 
-`palettes.json` holds Omarchy's bundled themes (MIT), mapped to BaneySpaces' roles:
+`palettes.json` holds Omarchy's bundled themes (MIT), mapped to Polycarp's roles:
 background, surface, sunken, foreground, strong, muted, border, accent, selection, urgent,
 working and done. Regenerate it with `scripts/gen-palettes.py`; never edit it by hand.
 
@@ -87,10 +87,10 @@ macOS reads `surfaces.spaces` and the top-level `mode` (`auto` follows Dark Mode
 
 A Mac app opened from Finder or at login does not see variables exported in a shell profile. So
 `POLYCARP_CONFIG_DIR` or `XDG_CONFIG_HOME` may be set for `polycarp` in a terminal and missing for
-BaneySpaces, and then BaneySpaces reads the default `~/.config/polycarp` while the command wrote somewhere
-else. BaneySpaces reads the default path unless the variable reaches it (set it for the app with
+Polycarp, and then Polycarp reads the default `~/.config/polycarp` while the command wrote somewhere
+else. Polycarp reads the default path unless the variable reaches it (set it for the app with
 `launchctl setenv`, or leave it unset for both). `polycarp theme current` prints `folder:`, the folder the
-command writes; BaneySpaces reads `<folder>/current/theme.json`.
+command writes; Polycarp reads `<folder>/current/theme.json`.
 
 **Precedence.** While the file holds a valid theme it is the theme in force. It draws every surface
 instead of `appearance.theme`, `appearance.palette` and the accent, and it takes the next frame like
@@ -123,7 +123,7 @@ with these values:
 | `radius_large`, `radius`, `radius_small` | bar and panels, tiles and list, rows |
 | `border_width` | rest; the focused width is 1.5 times it (0 stays 0); border `border`, focused `accent` |
 | `blur` | on or off: above 0 is the platform blur at 0.92 opacity, else an opaque fill |
-| `shadow` | opacity of BaneySpaces' own shadow (24 radius, 10 down); 0 is none |
+| `shadow` | opacity of Polycarp's own shadow (24 radius, 10 down); 0 is none |
 | `density` | gap, padding, tile: compact 6/8/56, regular 8/10/64, spacious 10/12/72 |
 | `indicator` | `dot`, `bar`, `number-block` |
 | `type.ui`, `size`, `weight` | family (the system font when the stack starts with a system or sans name, the monospace font when it starts with a monospace one, else the first installed name, matched without regard to case as in CSS; when none is installed, the system serif or the monospaced system font if the first generic name in the stack asks for one, so a stack of only `serif` draws the system serif and `Missing Font, monospace` draws monospace); base size is `size` x 0.75 (16 draws 12); `weight` 500 and up draws medium and semibold as asked, below that regular |

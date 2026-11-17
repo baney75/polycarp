@@ -37,7 +37,7 @@ and macOS's Mission Control has no workspaces, so this one has to be the best of
 ## The current workspace and selection
 
 - The workspace you're on is marked with the theme's focused border in `accent`: a soft accent glow
-  in BaneySpaces, a 2 px accent border in Omarchy, a 1 px border in Minimal. Never red: red means
+  in Polycarp, a 2 px accent border in Omarchy, a 1 px border in Minimal. Never red: red means
   something is wrong.
 - The selected workspace or card (from keys or hover) has the theme's selection fill. Its number
   turns `accent`.

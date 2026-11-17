@@ -41,7 +41,7 @@ Every `baneyspaces` command and every MCP tool result is one JSON object.
 | `not_found` | No such window, monitor or ref target. |
 | `ambiguous` | More than one match. `error.message` lists the candidates. |
 | `not_in_scope` | The window is not on the agent workspace. |
-| `needs_lend` | The process was not started by BaneySpaces for an agent; only the user can lend it. |
+| `needs_lend` | The process was not started by Polycarp for an agent; only the user can lend it. |
 | `in_use` | A lent app the user is using right now. |
 | `not_supported` | Not on this platform or phase (keys and pointer on Linux part 1). |
 | `unverified` | macOS phase 4 only: keys or pointer events were posted to the one process and nothing read back from the window shows they landed. `retry` is `never`. Other platforms answer `not_supported` for keys and pointer. |

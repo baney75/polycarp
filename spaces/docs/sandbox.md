@@ -4,16 +4,16 @@ A throwaway macOS VM for agent work (agent computer use, phase 2; see `agent-com
 Virtualization through Tart, pinned in `sandbox/PIN`. Code: `Sources/BaneySpacesCore/Sandbox/`.
 
 ```sh
-baneyspaces sandbox up [--task NAME]   # clean guest, headless, network checked from inside, handoff folder mounted
-baneyspaces sandbox reset              # a clean guest in place of this one (about 6 s)
-baneyspaces sandbox down               # stop and delete the VM
-baneyspaces sandbox status             # JSON
-baneyspaces sandbox view [--off]       # show the VM's display on the agent workspace (needs the app)
-baneyspaces sandbox guest status       # ask the guest hands daemon (today: the stub)
-baneyspaces sandbox --local probe      # up, reset x3, down, timed; no app needed (scripts/sandbox-probe.swift)
+polycarp-spaces sandbox up [--task NAME]   # clean guest, headless, network checked from inside, handoff folder mounted
+polycarp-spaces sandbox reset              # a clean guest in place of this one (about 6 s)
+polycarp-spaces sandbox down               # stop and delete the VM
+polycarp-spaces sandbox status             # JSON
+polycarp-spaces sandbox view [--off]       # show the VM's display on the agent workspace (needs the app)
+polycarp-spaces sandbox guest status       # ask the guest hands daemon (today: the stub)
+polycarp-spaces sandbox --local probe      # up, reset x3, down, timed; no app needed (scripts/sandbox-probe.swift)
 ```
 
-The commands go to the running app over the BaneySpaces socket and are answered off the main thread, so a VM
+The commands go to the running app over the Polycarp socket and are answered off the main thread, so a VM
 booting never stalls the dock or the hotkeys. They are local only: `Remote.allows` refuses the sandbox
 from another machine. The sandbox is off until Settings > Agents turns it on.
 
@@ -79,7 +79,7 @@ budget): the rules are the ones a full check already passed with, and a failure 
 
 ## Handoff folder
 
-One per task, `~/Library/Application Support/BaneySpaces/sandbox/handoff/<task>` (mode 700; task names are plain
+One per task, `~/Library/Application Support/Polycarp/sandbox/handoff/<task>` (mode 700; task names are plain
 file names, anchored at both ends; a symlink is refused). In the guest it is `/Volumes/My Shared Files/handoff`,
 read-write through Tart's directory sharing, and it is the only host path in the `tart run` command line. No home
 folder, iCloud, keychain, clipboard (`--no-clipboard`), audio or USB. The sandbox never deletes a task's folder.
@@ -118,7 +118,7 @@ which is a follow-up.
 ## Guest hands: the interface (stub today)
 
 `GuestHands.swift`. The real daemon is the phase 1 engine (#105) running headless in the guest; until it
-lands, `baneyspaces sandbox guest status` runs a stub that answers `status` and refuses every other verb
+lands, `polycarp-spaces sandbox guest status` runs a stub that answers `status` and refuses every other verb
 with `not_implemented`, `retry: never` and a suggestion.
 
 Transport: `tart exec -i <vm> /bin/bash -c <stub>`; the daemon will be `tart exec -i <vm>
@@ -167,7 +167,7 @@ up again straight after, so the probe can run; turning the sandbox off removes i
 
 **Probe and app.** `swift scripts/sandbox-probe.swift` uses the real sandbox lock. If the app holds it (the sandbox is on
 in Settings) the probe prints `sandbox-probe SKIPPED` and exits 2 instead of reporting a failure: turn the sandbox off
-or quit BaneySpaces first.
+or quit Polycarp first.
 
 **The Mac's network changes.** Softnet's block list names this Mac's addresses, fixed when a VM starts. `tick` compares
 today's addresses with the ones each running guest started with; if they differ the guest is stopped (files back) and
