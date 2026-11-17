@@ -125,7 +125,15 @@ the same pid and start time), and the engine is run as a child process with no `
 no `SendInput`, never moves the cursor and never draws the cursor overlay. The engine's own `type` is
 `SendInput`, so **`agent type` is a UI Automation insert instead**: it reads the field's value and
 sets it to value + text, and the engine reads that back (`verified` is true only then). `shot` passes
-through to the engine. `press`, `key` and `pointer` are `not_supported` (phase 3-4).
+through to the engine. **`agent press <ref> <keys>` posts the keys as window messages** (`press.rs`) to the control
+under the ref (its bounds from the engine), else the control the window's own thread has focused, else the window:
+never `SendInput`, so no key reaches the window in front. It goes through the same scope guard, checked again right
+before the keys are posted, so keys reach only an agent's window on the agent workspace; anything else is refused
+like every other verb. Keys use the Mac's names (`"h i Return"`, `Tab`, `delete` for Backspace, `F5`, `asterisk`).
+A chord with a modifier (`ctrl+c`, `alt+f4`) is `not_supported`, since an app reads modifiers from the keyboard state,
+which a posted message doesn't change. The value is read before and after, so `verified` says the keys changed it.
+An app that reads keys only from raw input (most games, some WinUI apps) won't see them. `key` and `pointer` are
+`not_supported` (phase 4).
 
 - **In production, `agent open` on Windows refuses every app with `needs_sandbox`, before launch.** No
   Windows app is safe to hand an agent yet. Notepad restores your unsaved tabs into a new process, so an
