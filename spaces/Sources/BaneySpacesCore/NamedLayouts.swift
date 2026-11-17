@@ -31,7 +31,7 @@ public struct NamedLayout: Codable, Equatable, Sendable {
             let r = windows[p.record]
             guard Workspaces.range.contains(r.workspace) else { return nil }
             let fallback = displays.first { d in d.value == r.workspace && areas.contains { $0.key == d.key } }?.key
-            return Placement(window: p.window, workspace: r.workspace, frame: r.place(on: areas, fallback: fallback), rule: p.rule)
+            return Placement(window: p.window, workspace: r.workspace, frame: r.place(on: areas, showing: fallback), rule: p.rule)
         }
         return (placements, windows.count - placements.count)
     }
