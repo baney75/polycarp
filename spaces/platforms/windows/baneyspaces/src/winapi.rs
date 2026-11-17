@@ -408,6 +408,23 @@ pub fn restore_minimized_no_activate(h: HWND) {
 }
 
 
+/// Makes this process's stdin, stdout and stderr non-inheritable. Rust's `Command` starts every child with handle
+/// inheritance on, so without this a daemon started in the background (and the watchdog it starts) held the
+/// caller's pipes open, and a script reading `daemon --background`'s output (PowerShell's `| Out-String`) waited
+/// forever. A child meant to share them still gets them: `Stdio::inherit` hands over its own inheritable copy.
+pub fn keep_std_handles() {
+    use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
+    for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        unsafe {
+            let h = GetStdHandle(id);
+            if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
