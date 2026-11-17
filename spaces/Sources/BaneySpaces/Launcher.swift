@@ -277,7 +277,7 @@ struct LauncherItem: Identifiable {
 
 final class LauncherModel: ObservableObject {
     enum Scope: String, CaseIterable {
-        case root, web, apps, files, install, remove, update, system, workspaces
+        case root, web, apps, files, install, remove, update, system, workspaces, clipboard
 
         var title: String {
             switch self {
@@ -290,6 +290,7 @@ final class LauncherModel: ObservableObject {
             case .update: "Update"
             case .system: "System"
             case .workspaces: "Workspaces"
+            case .clipboard: "Clipboard History"
             }
         }
         var symbol: String {
@@ -303,6 +304,7 @@ final class LauncherModel: ObservableObject {
             case .update: "arrow.triangle.2.circlepath"
             case .system: "gearshape"
             case .workspaces: "rectangle.split.3x3"
+            case .clipboard: "doc.on.clipboard"
             }
         }
         var blurb: String {
@@ -316,6 +318,7 @@ final class LauncherModel: ObservableObject {
             case .update: "Homebrew apps, macOS and Polycarp"
             case .system: "Lock, sleep, restart, dark mode and more"
             case .workspaces: "Go to any of the nine"
+            case .clipboard: "Text you copied lately; never passwords"
             }
         }
         var placeholder: String {
@@ -377,6 +380,7 @@ final class LauncherModel: ObservableObject {
         storeResults = []
         fileResults = []
         bangs = Launcher.loadBangs()
+        LauncherProviders.menu(providers, scope.rawValue)?.opened()
         rebuild()
         // Apps installed since the last look show up without a restart.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -399,6 +403,7 @@ final class LauncherModel: ObservableObject {
         storeResults = []
         fileResults = []
         if s == .install || s == .remove { loadCatalog() }
+        LauncherProviders.menu(providers, s.rawValue)?.opened()
         rebuild()
     }
 
@@ -493,6 +498,7 @@ final class LauncherModel: ObservableObject {
         case .update: out = updateItems().filter { q.isEmpty || Fuzzy.score(q, $0.title) != nil }
         case .system: out = commandItems(q)
         case .workspaces: out = workspaceItems(q, all: true)
+        case .clipboard: out = menuListing(q)
         }
         items = out
         if selected >= items.count { selected = max(0, items.count - 1) }
@@ -506,7 +512,17 @@ final class LauncherModel: ObservableObject {
     /// A provider's row as the launcher draws it; choosing it does what its action says.
     private func providedItem(_ r: LauncherResult) -> LauncherItem {
         LauncherItem(id: "provider:\(r.id)", section: r.section, title: r.title, subtitle: r.subtitle, icon: .symbol(r.symbol),
-                     badge: r.badge, run: { [weak self] in self?.perform(r.action) })
+                     badge: r.badge, run: { [weak self] in self?.choose(r) })
+    }
+
+    /// The rows of a provider's own menu, the one `scope` names.
+    private func menuListing(_ q: String) -> [LauncherItem] {
+        (LauncherProviders.menu(providers, scope.rawValue)?.listing(q) ?? []).map(providedItem)
+    }
+
+    private func choose(_ r: LauncherResult) {
+        if let question = r.confirm, !ask(question, r.subtitle, button: r.title, destructive: true) { return }
+        perform(r.action)
     }
 
     private func perform(_ action: LauncherAction) {
@@ -517,6 +533,10 @@ final class LauncherModel: ObservableObject {
             Toast.show("Copied \(text.count > 40 ? String(text.prefix(40)) + "…" : text)", symbol: "doc.on.doc")
         case .open(let url): openWeb(url)
         case .none: break
+        case .command(let provider, let id):
+            guard let p = providers.first(where: { $0.name == provider }) as? LauncherMenuProvider else { return }
+            if let next = p.perform(id) { perform(next) } else { rebuildKeepingSelection() }
+        case .close: close()
         }
     }
 
