@@ -10,7 +10,7 @@ app:
 	scripts/bundle.sh
 install:
 	scripts/bundle.sh --install
-# On the owner's Mac, after pushing the tag: signs the app, packages it and uploads it to the release.
+# On the owner's Mac, on the stable checkout at the tag promote.yml made: signs, packages and uploads the draft (docs/releases.md).
 release:
 	scripts/release.sh
 clean:
