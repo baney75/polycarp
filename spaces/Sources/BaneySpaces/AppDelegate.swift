@@ -124,7 +124,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return true
         }
         // A drag the overview covered and that dropped nowhere goes back where it was; any other is the person's own.
-        t.onDragEnd = { [weak self] id, end in self?.correctOnceStill(id, after: end) }
+        t.onDragEnd = { [weak self] id, end in
+            DragFrameTrace.released(id)
+            self?.correctOnceStill(id, after: end)
+        }
         return t
     }()
 
@@ -689,6 +692,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sandbox.shutdown()
         dock.stop(restoreSystemDock: !forInstall)
         topDrag.stop()
+        DragFrameTrace.stopAll()
         // Mission Control comes back with the Dock, so there's always a way to see the desktops.
         // Quitting for an update is the exception: the new build takes over, and if it never
         // starts the launch agent puts Mission Control back after 30 seconds.
@@ -803,6 +807,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         watchdog?.invalidate()
         missionControlKeys.stop()
         topDrag.stop()
+        DragFrameTrace.stopAll()
         cancelSettling()
         // Not watching any more, so macOS answers the drag and the corners again until BaneySpaces is back.
         SystemTopDrag.restore()
@@ -831,6 +836,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             topDrag.start()
         } else {
             topDrag.stop()
+            DragFrameTrace.stopAll()
             cancelSettling()
         }
     }
