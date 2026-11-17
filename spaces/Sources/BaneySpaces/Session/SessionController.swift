@@ -167,7 +167,9 @@ final class SessionController {
         server.handle = { [weak self] in self?.handle($0) ?? Wire.Reply(ok: false) }
         server.handleHands = { [weak self] in self?.handleHands($0) ?? Wire.Reply(ok: false) }
         server.handleSandbox = { [weak self] in self?.sandboxHandler?($0) ?? Wire.Reply(ok: false, error: "the sandbox isn't ready") }
-        _ = hands.events  // made here, on the main thread, before any connection can reach it (it is lazy)
+        // Made here, on the main thread, before any connection can reach them (they are lazy).
+        _ = hands.events
+        _ = connectorHands.events
         server.handleSubscribe = { [weak self] fd, req in
             guard let self else { close(fd); return }
             self.hands.events.add(fd, req)
@@ -408,6 +410,18 @@ final class SessionController {
     }
 
     // MARK: socket
+
+    /// Main thread: the model or the look changed. Both routers' event hubs diff it for their own callers.
+    func eventsChanged() {
+        hands.events.changed()
+        connectorHands.events.changed()
+    }
+
+    /// Main thread: Access changed, so every listener on both routers ends and starts again in the new scope.
+    func eventsEnd(_ why: String) {
+        hands.events.end(why)
+        connectorHands.events.end(why)
+    }
 
     /// `baneyspaces agent snapshot|click|…`: off the main thread (see `Server.handleHands`).
     func handleHands(_ r: Wire.Request) -> Wire.Reply {
