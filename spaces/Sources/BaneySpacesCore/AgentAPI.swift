@@ -59,9 +59,9 @@ public enum AgentAPI {
         public var names: [Int: String]
         public var displays: [DisplayFacts]
         public var theme: ThemeFacts
-        public var savedLayouts: [String]
+        public var savedLayouts: [SavedLayout]
         public init(windows: [WindowFacts], current: Int, shown: [DisplayKey: Int], focusedDisplay: DisplayKey?, focusedWindow: WindowID?,
-                    agentWorkspace: Int?, names: [Int: String] = [:], displays: [DisplayFacts], theme: ThemeFacts, savedLayouts: [String] = []) {
+                    agentWorkspace: Int?, names: [Int: String] = [:], displays: [DisplayFacts], theme: ThemeFacts, savedLayouts: [SavedLayout] = []) {
             self.windows = windows; self.current = current; self.shown = shown; self.focusedDisplay = focusedDisplay
             self.focusedWindow = focusedWindow; self.agentWorkspace = agentWorkspace; self.names = names; self.displays = displays
             self.theme = theme; self.savedLayouts = savedLayouts
@@ -72,6 +72,14 @@ public enum AgentAPI {
             guard let n else { return nil }
             return displays.map(\.id).first { shown[$0] == n } ?? shown.first { $0.value == n }?.key
         }
+    }
+
+    /// A saved layout (`layouts/<workspace>/<name>.json`). Names are unique per workspace only, so a layout is named by
+    /// both (`$defs/saved_layout`, review 434 r2 second-S1).
+    public struct SavedLayout: Equatable, Sendable {
+        public var workspace: Int
+        public var name: String
+        public init(workspace: Int, name: String) { self.workspace = workspace; self.name = name }
     }
 
     /// What the caller may see: `all` under Full Access on this Mac, else the agent workspace and lent apps.
@@ -148,7 +156,10 @@ public enum AgentAPI {
                         .object(["id": .int(Int(w.window.id)), "app": .string(w.window.app), "title": .string(w.window.title), "frame": opt(w.frame, frame)])
                     })])
                 }),
-                "saved": .array(f.savedLayouts.sorted().map(JSONValue.string)),
+                // Only layouts of workspaces in the caller's scope: under scope `agent`, the agent workspace's.
+                "saved": .array(f.savedLayouts.filter { v.scope == "all" || $0.workspace == f.agentWorkspace }
+                    .sorted { ($0.workspace, $0.name) < ($1.workspace, $1.name) }
+                    .map { .object(["workspace": .int($0.workspace), "name": .string($0.name)]) }),
             ])]
         case .theme:
             return ["theme": theme(f.theme)]
@@ -197,7 +208,8 @@ public enum AgentAPI {
                     lines.append("workspace \(g["number"]?.int ?? 0)\twindow \(w["id"]?.int ?? 0)\t\(r?["x"]?.text ?? "?"),\(r?["y"]?.text ?? "?") \(r?["width"]?.text ?? "?")x\(r?["height"]?.text ?? "?")\t\(w["app"]?.string ?? "")")
                 }
             }
-            lines.append("saved layouts: " + ((data["layout"]?["saved"]?.array ?? []).compactMap(\.string).joined(separator: ", ")))
+            let saved = (data["layout"]?["saved"]?.array ?? []).map { "\($0["name"]?.string ?? "?") (workspace \($0["workspace"]?.int ?? 0))" }
+            lines.append("saved layouts: " + saved.joined(separator: ", "))
         }
         if [.theme, .state].contains(q), let t = data["theme"] {
             let p = t["polycarp_theme"]?["title"]?.string.map { ", Polycarp theme \($0) draws instead" } ?? ""
