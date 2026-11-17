@@ -1349,10 +1349,7 @@ pub(crate) fn op_show(c: &Ctx, name: Option<&str>) -> Res {
     if let Some(o) = v.as_object_mut() {
         let mut s = serde_json::Map::new();
         for n in SURFACES {
-            s.insert(
-                n.to_string(),
-                serde_json::to_value(full.surface(n)).unwrap_or(Json::Null),
-            );
+            s.insert(n.to_string(), json_of(full.surface(n)));
         }
         o.insert("surfaces".into(), Json::Object(s));
     }
