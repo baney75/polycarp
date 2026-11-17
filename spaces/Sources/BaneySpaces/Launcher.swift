@@ -277,7 +277,7 @@ struct LauncherItem: Identifiable {
 
 final class LauncherModel: ObservableObject {
     enum Scope: String, CaseIterable {
-        case root, web, apps, files, install, remove, update, system, workspaces, clipboard
+        case root, web, apps, files, install, remove, update, system, workspaces, clipboard, snippets
 
         var title: String {
             switch self {
@@ -291,6 +291,7 @@ final class LauncherModel: ObservableObject {
             case .system: "System"
             case .workspaces: "Workspaces"
             case .clipboard: "Clipboard History"
+            case .snippets: "Snippets"
             }
         }
         var symbol: String {
@@ -305,6 +306,7 @@ final class LauncherModel: ObservableObject {
             case .system: "gearshape"
             case .workspaces: "rectangle.split.3x3"
             case .clipboard: "doc.on.clipboard"
+            case .snippets: "text.quote"
             }
         }
         var blurb: String {
@@ -319,6 +321,7 @@ final class LauncherModel: ObservableObject {
             case .system: "Lock, sleep, restart, dark mode and more"
             case .workspaces: "Go to any of the nine"
             case .clipboard: "Text you copied lately; never passwords"
+            case .snippets: "Text you paste often, by keyword, from snippets.toml"
             }
         }
         var placeholder: String {
@@ -498,7 +501,7 @@ final class LauncherModel: ObservableObject {
         case .update: out = updateItems().filter { q.isEmpty || Fuzzy.score(q, $0.title) != nil }
         case .system: out = commandItems(q)
         case .workspaces: out = workspaceItems(q, all: true)
-        case .clipboard: out = menuListing(q)
+        case .clipboard, .snippets: out = menuListing(q)
         }
         items = out
         if selected >= items.count { selected = max(0, items.count - 1) }
@@ -537,6 +540,11 @@ final class LauncherModel: ObservableObject {
             guard let p = providers.first(where: { $0.name == provider }) as? LauncherMenuProvider else { return }
             if let next = p.perform(id) { perform(next) } else { rebuildKeepingSelection() }
         case .close: close()
+        case .paste(let text):
+            close()
+            LauncherPasteboard.copy(text, transient: true)
+            // The launcher never took the app you were in out of front, so ⌘V lands where you were typing.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { System.paste() }
         }
     }
 
@@ -1458,6 +1466,17 @@ enum System {
         for down in [true, false] {
             let e = CGEvent(keyboardEventSource: src, virtualKey: q, keyDown: down)
             e?.flags = [.maskCommand, .maskControl]
+            e?.post(tap: .cghidEventTap)
+        }
+    }
+
+    /// ⌘V into the app in front.
+    static func paste() {
+        let src = CGEventSource(stateID: .hidSystemState)
+        let v = CGKeyCode(kVK_ANSI_V)
+        for down in [true, false] {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: v, keyDown: down)
+            e?.flags = .maskCommand
             e?.post(tap: .cghidEventTap)
         }
     }
