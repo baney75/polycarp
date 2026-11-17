@@ -22,8 +22,8 @@ the one stated exception: agents may change how the Mac looks.
   macOS reuses window server numbers after a restart and Windows reuses HWNDs, so anything saved names windows by
   identity instead.
 - **Window identity.** A window that must be known again once its id is gone (a saved layout, an app relaunched, a
-  restart) is known by `{ bundle, title, order }` (`$defs/window_identity`): its app's bundle id (Windows: the full path
-  of its executable), its title, and its creation order among its process's windows, oldest first. A saved window
+  restart) is known by `{ bundle, title, order }` (`$defs/window_identity`): its app's bundle id (Windows, and a macOS
+  process with no bundle id: the full path of its executable; `bundle` is never empty), its title, and its creation order among its process's windows, oldest first. A saved window
   matches a live window of the same bundle by the same title, then by the same title under the title rules (lowercase;
   an unsaved-changes mark, an unread count in front and an "Edited" note left out). Creation order decides only when
   no saved window of that bundle matches a live one by title and the saved and live counts of that bundle agree; a
@@ -66,10 +66,11 @@ with `permission_denied`, `retry: never`. It keeps every query, `layout list`, `
 
 ## View control
 
-**One rule:** a command that acts on any workspace other than the agent workspace needs view control. A command acts on
-the workspace a window lands on and the workspace of a window it changes. So `switch` and `focus` always need it, and
-`move`, `frame` and `layout restore` need it unless they act on the agent workspace. A command that needs view control
-runs only when all three hold:
+**One rule:** a command needs view control when it lands a window on, or changes a window on, a workspace other than
+the agent workspace. Exception: `move` onto the agent workspace needs no view control, and answers `in_use` while the
+workspace it leaves or the agent workspace is shown. So `switch` and `focus` always need it, `move` needs it unless it
+goes onto the agent workspace, and `frame` and `layout restore` need it unless their windows are on the agent
+workspace. A command that needs view control runs only when all three hold:
 
 1. The caller is on this machine (never a connector or `--on HOST`).
 2. Access is Full Access.
@@ -101,7 +102,7 @@ Read only, never wait on Donovan, never change anything. One name each, the same
 | `workspaces` | `workspaces_result` | All nine: number, name, shown (and on which display), current, agent, the count and ids of the windows in scope |
 | `displays` | `displays_result` | Every display: id, name, main, frame, visible frame (no menu bar or taskbar), scale, workspace shown, focused |
 | `focused` | `focused_result` | The focused display, the workspace it shows, and the focused window (null outside scope) |
-| `layout` | `layout_result` | For each workspace with windows in scope: each window's frame; plus the names of saved layouts |
+| `layout` | `layout_result` | For each workspace with windows in scope: each window's frame; plus each saved layout as `{ workspace, name }` |
 | `theme` | `theme_result` | The appearance theme and palette in force, and the Polycarp theme when one draws instead |
 | `state` | `state_result` | All six above in one answer, read at one moment |
 
@@ -117,7 +118,7 @@ Each answers with the state it read back after acting, never with what it asked 
 | --- | --- | --- | --- |
 | `switch` | `workspace` (1 to 9), `display` (optional) | `{ version, workspace, display, shown: true }` | always |
 | `focus` | `window` | `{ version, window, workspace, focused: true }` | always |
-| `move` | `window`; then `workspace` or `display` | `{ version, window, workspace, display, frame }` | unless it goes onto the agent workspace (then `in_use` while a workspace it touches is shown) |
+| `move` | `window`; then `workspace` or `display` | `{ version, window, workspace, display, frame }` | unless it goes onto the agent workspace (then `in_use` while the workspace it leaves or the agent workspace is shown) |
 | `frame` | `window`, `frame` (`x,y,width,height`, absolute, as `windows` reports it) | `{ version, window, frame }` | unless the window is on the agent workspace (then `in_use` while it is shown) |
 | `layout` | `action` (`save`, `restore`, `list`), `name`, `workspace` (default: the agent workspace), `replace` | `layout_command_result` | `restore`, unless on the agent workspace (then `in_use` while it is shown) |
 | `theme-set` | `theme`, `palette` (optional) | `{ version, theme, palette, drawn }` | never (agents may change how the Mac looks; Donovan, 2026-11-01) |
@@ -132,7 +133,8 @@ Each answers with the state it read back after acting, never with what it asked 
   folder, one folder per workspace, `layouts/<workspace>/<name>.json`, so a save on one workspace never replaces a
   layout of another. Names are compared without case (`Work` and `work` are one layout, stored lowercase). A save
   over a name already saved on that workspace answers `invalid_args`, `retry: never`, unless it passes `replace: true`.
-  `layout list` and the `layout` query name only layouts of workspaces in the caller's scope.
+  `layout list` and the `layout` query name only layouts of workspaces in the caller's scope, each as
+  `{ workspace, name }` (`$defs/saved_layout`): a name alone is not unique, and a restore needs both.
 - `layout restore` gives each window that matches a saved one by identity, and is in scope on that workspace now, its
   saved frame, and lists it in `moved`. It never moves a window to another workspace and never touches a window outside
   scope or on another workspace. Saved windows that matched nothing are listed in `missing` by identity.
@@ -158,7 +160,7 @@ Every event is `{ "version": 1, "seq": N, "at": <unix milliseconds>, "type": "..
 `seq` has no gaps; when events are dropped because the reader fell behind, the next event is `lagged` with their count.
 Over MCP, a call without `since` starts the session's events again and answers `hello` with `next: 1`. After that,
 `since` is the `next` of the last call: the answer holds the events after it. An event stays until a later `since`
-passes it, so a retried call gets the same answer. A `since` past the last event fails `bad_arguments`.
+passes it, so a retried call gets the same answer. A `since` past the last event fails `invalid_args`.
 
 | Type | `data` |
 | --- | --- |
@@ -175,7 +177,7 @@ Events come from the same model the queries read: a change is reported once the 
 when it was only asked for. Every event is filtered by the scope in force when it is sent. A window that leaves the
 caller's scope while it listens (a lend ends) is reported as `window_closed`, and one that enters it as
 `window_created`. When Donovan changes Access, the server ends every subscriber: `subscribe` closes, and the next
-`events` call with `since` fails `bad_arguments` and says to start again. The client starts again and gets a `hello`
+`events` call with `since` fails `invalid_args` and says to start again. The client starts again and gets a `hello`
 with the new scope and state. Frame changes the window manager did not make (a person dragging a window) are
 reported on its next scan, not at once.
 
