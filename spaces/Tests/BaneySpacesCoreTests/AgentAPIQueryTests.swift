@@ -20,7 +20,7 @@ final class AgentAPIQueryTests: XCTestCase {
                                                visible: CGRect(x: 0, y: 33, width: 1512, height: 949), scale: 2),
                                          .init(id: side, name: "Sidecar", frame: CGRect(x: 1512, y: 0, width: 1366, height: 1024),
                                                visible: CGRect(x: 1512, y: 0, width: 1366, height: 1024), scale: 2)],
-                              theme: .init(theme: "baneyspaces", palette: "auto"), savedLayouts: ["review", "dev"])
+                              theme: .init(theme: "baneyspaces", palette: "auto"), savedLayouts: [.init(workspace: 9, name: "review"), .init(workspace: 1, name: "dev"), .init(workspace: 3, name: "dev")])
     }
 
     static let agentView = AgentAPI.View(access: .standard, inScope: [4211])
@@ -92,7 +92,12 @@ final class AgentAPIQueryTests: XCTestCase {
     func testLayoutAndThemeQueries() {
         let layout = AgentAPI.result(.layout, Self.facts(), Self.fullView)
         XCTAssertEqual(layout["layout"]?["workspaces"]?.array?.compactMap { $0["number"]?.int }, [1, 2, 9])
-        XCTAssertEqual(layout["layout"]?["saved"]?.array, [.string("dev"), .string("review")])
+        // 434 r2 second-S1: each saved layout names its workspace, and only workspaces in scope are listed.
+        func saved(_ n: Int, _ name: String) -> JSONValue { .object(["workspace": .int(n), "name": .string(name)]) }
+        XCTAssertEqual(layout["layout"]?["saved"]?.array, [saved(1, "dev"), saved(3, "dev"), saved(9, "review")])
+        XCTAssertEqual(AgentAPI.result(.layout, Self.facts(), Self.agentView)["layout"]?["saved"]?.array, [saved(9, "review")],
+                       "scope agent lists the agent workspace's layouts only")
+        XCTAssertTrue(AgentAPI.text(.layout, layout).contains("saved layouts: dev (workspace 1), dev (workspace 3), review (workspace 9)"))
         var f = Self.facts()
         f.theme.polycarp = (name: "dawn", title: "Dawn", mode: "light")
         let theme = AgentAPI.result(.theme, f, Self.agentView)
