@@ -1015,6 +1015,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             if self.setup.model.agentAccess != mode { self.setup.model.agentAccess = mode }
             self.sendBackMovedIn()
+            self.session.hands.events.end("agent access is now \(mode.rawValue)")
             self.spaces.saveState()
             self.updateIcon()
         }

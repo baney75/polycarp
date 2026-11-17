@@ -52,6 +52,10 @@ public enum AgentEvents {
         return abs(r.minX - s.minX) >= 1 || abs(r.minY - s.minY) >= 1 || abs(r.width - s.width) >= 1 || abs(r.height - s.height) >= 1
     }
 
+    /// Whether a listener ends instead of hearing a diff: Donovan changed Access, so its scope and what it may ask changed
+    /// under it. It starts again and gets a `hello` with the new scope (spec/agent-api.md, "Events").
+    public static func ends(_ oldView: AgentAPI.View, _ newView: AgentAPI.View) -> Bool { oldView.access != newView.access }
+
     /// What changed from `old` (as `oldView` saw it) to `new` (as `newView` sees it). A window leaving the caller's scope is
     /// `window_closed` and one entering it `window_created`, so a caller never learns of a window it may not see.
     public static func diff(_ old: AgentAPI.Facts, _ oldView: AgentAPI.View, _ new: AgentAPI.Facts, _ newView: AgentAPI.View) -> [Event] {

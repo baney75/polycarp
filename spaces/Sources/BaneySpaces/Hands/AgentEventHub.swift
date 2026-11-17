@@ -53,6 +53,14 @@ final class AgentEventHub {
         }
     }
 
+    /// Main thread: Donovan changed Access. Every subscriber ends; each starts again with a `hello` in the new scope.
+    func end(_ why: String) {
+        guard !subscribers.isEmpty else { return }
+        for s in subscribers { s.finish() }
+        Trace.log("events: \(subscribers.count) subscribers ended, \(why)")
+        subscribers.removeAll()
+    }
+
     private func publish() {
         subscribers.removeAll(where: \.isClosed)
         guard !subscribers.isEmpty, let now = router.host.facts() else { return }
@@ -61,6 +69,8 @@ final class AgentEventHub {
         var untitled = Set<UInt32>()
         for s in subscribers {
             let view = router.apiView(now, session: s.session)
+            // Access changed before its hook ran: the listener ends rather than hear a diff across two scopes (review F10).
+            if AgentEvents.ends(s.view, view) { s.finish(); continue }
             let events = AgentEvents.diff(s.old, s.view, now, view)
             s.old = now
             s.view = view
@@ -72,6 +82,7 @@ final class AgentEventHub {
         // A new window in scope that the window server left untitled gets its title from Accessibility, once.
         let titles = untitled.isEmpty ? [:] : router.host.titles(Array(untitled))
         for (s, events) in batches { s.send(events.map { Self.titled($0, titles) }, at: at) }
+        subscribers.removeAll(where: \.isClosed)
     }
 
     static func titled(_ e: AgentEvents.Event, _ titles: [UInt32: String]) -> AgentEvents.Event {
@@ -92,6 +103,7 @@ final class AgentEventHub {
         private let queue = DispatchQueue(label: "polycarp.events.subscriber")
         private let lock = NSLock()
         private var pending = 0, missed = 0, seq = 0, closed = false
+        private var open = true  // its queue only: the fd is closed once, after every line queued before
 
         init(fd: Int32, session: String, types: Set<String>?, old: AgentAPI.Facts, view: AgentAPI.View) {
             self.fd = fd; self.session = session; self.types = types; self.old = old; self.view = view
@@ -100,6 +112,18 @@ final class AgentEventHub {
         var isClosed: Bool {
             lock.lock(); defer { lock.unlock() }
             return closed
+        }
+
+        /// Sends nothing more, and closes the connection after the lines already queued.
+        func finish() {
+            lock.lock(); closed = true; lock.unlock()
+            queue.async { self.closeOnce() }
+        }
+
+        private func closeOnce() {
+            guard open else { return }
+            open = false
+            close(fd)
         }
 
         func send(_ events: [AgentEvents.Event], at: Date) {
@@ -126,7 +150,7 @@ final class AgentEventHub {
             var lagged = 0
             if !ok { closed = true } else if pending == 0, missed > 0 { lagged = missed; missed = 0; pending += 1 }
             lock.unlock()
-            if !ok { close(fd); return }
+            if !ok { closeOnce(); return }
             if lagged > 0 { write(AgentEvents.Event("lagged", .object(["missed": .int(lagged)])), at: Date()) }
         }
     }
