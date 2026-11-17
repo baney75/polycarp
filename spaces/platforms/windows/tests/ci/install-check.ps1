@@ -28,7 +28,7 @@ if ($winget) {
     & winget settings --enable LocalManifestFiles | Out-Host
     & winget validate --manifest $Manifest | Out-Host
     Check 'winget validate' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
-    & winget install --manifest $Manifest --silent --accept-package-agreements --disable-interactivity | Out-Host
+    & winget install --manifest $Manifest --silent --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Host
     $code = $LASTEXITCODE
 } else {
     "installer: msiexec /i /qn (winget is not on this runner)"
@@ -59,7 +59,7 @@ $ms = Wait-Until { ([PcWin]::Cloaked($h) -band 2) -ne 0 } 3000
 Check 'a window sent to workspace 2 is cloaked' ($ms -ge 0) "cloaked=$([PcWin]::Cloaked($h))"
 
 if ($winget) {
-    & winget uninstall --manifest $Manifest --silent --disable-interactivity | Out-Host
+    & winget uninstall --manifest $Manifest --silent --accept-source-agreements --disable-interactivity | Out-Host
     $code = $LASTEXITCODE
 } else {
     $p = Start-Process msiexec -ArgumentList @('/x', "`"$Msi`"", '/qn', '/l*v', "`"$env:RUNNER_TEMP\uninstall.log`"") -Wait -PassThru

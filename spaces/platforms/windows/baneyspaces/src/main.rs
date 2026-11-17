@@ -1,4 +1,7 @@
 #![cfg_attr(not(windows), allow(dead_code, unused_imports))]
+// Every fallible call answers with baneyspaces-core's `Envelope`, the reply the CLI prints, as its error. Boxing it
+// would change that shared type for Linux too.
+#![allow(clippy::result_large_err)]
 //! `baneyspaces` for Windows. The CLI sends one request to `baneyspaces daemon` over a named pipe
 //! and prints the envelope; `baneyspaces mcp` serves the agent tools over stdio.
 //!
