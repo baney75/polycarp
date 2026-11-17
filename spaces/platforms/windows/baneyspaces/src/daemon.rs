@@ -1700,3 +1700,7 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
     FINISHED.store(true, Ordering::SeqCst);
     0
 }
+
+#[cfg(test)]
+#[path = "daemon_tests.rs"]
+mod tests;
