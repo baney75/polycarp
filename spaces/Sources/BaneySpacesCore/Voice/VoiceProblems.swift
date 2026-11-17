@@ -4,7 +4,7 @@ import Foundation
 /// "notice" event, the key help, and the hotkey pick's outcome. Plain data, so every word and decision is tested
 /// without the library or AppKit.
 
-/// One permission as the voice core reads it (core/voice permissions.rs `Grant`). Anything new reads as unknown.
+/// One permission as the voice core reads it (polycarp-voice permissions.rs `Grant`, in baney75/silas). Anything new reads as unknown.
 public enum VoiceGrant: String, Codable, Equatable, Sendable {
     case granted, denied, unknown
 
