@@ -33,22 +33,25 @@ struct Window {
     var title: String { Windows.isResponsive(pid) ? element.string(kAXTitleAttribute) ?? "" : "" }
     var isFullScreen: Bool { Windows.isResponsive(pid) && element.bool("AXFullScreen") }
 
-    func setOrigin(_ p: CGPoint) {
+    func setOrigin(_ p: CGPoint, file: String = #fileID, line: Int = #line) {
         guard Windows.isResponsive(pid) else { return }
+        DragFrameTrace.write(id, .origin, origin: p, size: nil, file: file, line: line)
         withoutAnimation { element.set(kAXPositionAttribute, p, .cgPoint) }
     }
-    func setSize(_ s: CGSize) {
+    func setSize(_ s: CGSize, file: String = #fileID, line: Int = #line) {
         guard Windows.isResponsive(pid) else { return }
+        DragFrameTrace.write(id, .size, origin: nil, size: s, file: file, line: line)
         withoutAnimation { element.set(kAXSizeAttribute, s, .cgSize) }
     }
     /// Moves a window back to `r`. A parked window kept its size, so usually one move is all it
     /// takes; resizing makes apps lay out again, which is slow and can flicker.
-    func place(_ r: CGRect, currentSize: CGSize) {
-        if currentSize == r.size { setOrigin(r.origin) } else { setFrame(r) }
+    func place(_ r: CGRect, currentSize: CGSize, file: String = #fileID, line: Int = #line) {
+        if currentSize == r.size { setOrigin(r.origin, file: file, line: line) } else { setFrame(r, file: file, line: line) }
     }
 
-    func setFrame(_ r: CGRect) {
+    func setFrame(_ r: CGRect, file: String = #fileID, line: Int = #line) {
         guard Windows.isResponsive(pid) else { return }
+        DragFrameTrace.write(id, .frame, origin: r.origin, size: r.size, file: file, line: line)
         // Size, move, size again: a window that would cross a screen edge gets clamped otherwise.
         withoutAnimation {
             element.set(kAXSizeAttribute, r.size, .cgSize)
@@ -588,5 +591,48 @@ extension AXUIElement {
         var v = value
         guard let ax = AXValueCreate(type, &v) else { return }
         checked(AXUIElementSetAttributeValue(self, attribute as CFString, ax))
+    }
+}
+
+/// trace.log lines for frames around a drag (`DragFrameLog`): Polycarp's own writes, with the line that made them, and
+/// what the released window did for two seconds, whoever moved it.
+enum DragFrameTrace {
+    private static let lock = NSLock()
+    private static var lastRelease: Double?
+    private static var watches: [WindowID: Timer] = [:]
+
+    static func write(_ id: WindowID, _ kind: DragFrameLog.Write, origin: CGPoint?, size: CGSize?, file: String, line: Int) {
+        lock.lock(); let last = lastRelease; lock.unlock()
+        guard DragFrameLog.logsWrite(now: ProcessInfo.processInfo.systemUptime, buttonDown: NSEvent.pressedMouseButtons & 1 != 0,
+                                     lastRelease: last) else { return }
+        Trace.log(DragFrameLog.writeLine(window: UInt32(id), kind: kind, origin: origin, size: size, file: file, line: line))
+    }
+
+    /// A drag of window `id` was let go: watch its frame for `DragFrameLog.after` seconds. Main thread.
+    static func released(_ id: WindowID) {
+        let start = ProcessInfo.processInfo.systemUptime
+        lock.lock(); lastRelease = start; lock.unlock()
+        watches.removeValue(forKey: id)?.invalidate()
+        var previous = TopDragWatcher.bounds(of: id)
+        if let line = DragFrameLog.changeLine(window: UInt32(id), t: 0, frame: previous, previous: nil) { Trace.log(line) }
+        let timer = Timer(timeInterval: DragFrameLog.interval, repeats: true) { timer in
+            let now = ProcessInfo.processInfo.systemUptime
+            guard DragFrameLog.watching(start: start, now: now) else {
+                timer.invalidate()
+                if watches[id] === timer { watches[id] = nil }
+                return
+            }
+            let frame = TopDragWatcher.bounds(of: id)
+            if let line = DragFrameLog.changeLine(window: UInt32(id), t: now - start, frame: frame, previous: previous) { Trace.log(line) }
+            previous = frame
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        watches[id] = timer
+    }
+
+    /// Stops every watch, when Polycarp stops watching drags.
+    static func stopAll() {
+        watches.values.forEach { $0.invalidate() }
+        watches = [:]
     }
 }
