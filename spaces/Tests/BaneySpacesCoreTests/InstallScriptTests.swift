@@ -316,4 +316,19 @@ final class InstallScriptTests: XCTestCase {
         XCTAssertLessThan(try index(of: "security find-certificate", in: uninstall), try index(of: "security delete-keychain", in: uninstall))
         XCTAssertTrue(uninstall.contains("Polycarp Release Signing"))
     }
+
+    /// Over SSH osascript can't send the quit (no Automation permission) and failed silently, so an install from SSH stopped
+    /// at "still running" (Parish1 lead, 2026-11-17). SIGTERM follows the quit, before the install gives up, and the app
+    /// takes SIGTERM as a clean terminate.
+    func testInstallFallsBackToSigtermWhenTheQuitIsNotHeard() throws {
+        let script = try read("scripts/install-app.sh")
+        let quit = try index(of: #"osascript -e "tell application id \"$BUNDLE_ID\" to quit""#, in: script)
+        let term = try index(of: #"kill -TERM "$pid""#, in: script)
+        XCTAssertLessThan(quit, term, "the gentle quit goes first")
+        XCTAssertLessThan(term, try index(of: "is still running; quit it from the menu bar", in: script), "SIGTERM before giving up")
+        XCTAssertTrue(script.contains(#"{ grep -v -- --restart-when-safe || true; }"#), "the restart helper is never sent SIGTERM")
+        let delegate = try read("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertTrue(delegate.contains("for sig in [SIGTERM, SIGINT, SIGHUP]"), "the app must take SIGTERM")
+        XCTAssertTrue(delegate.contains("source.setEventHandler { NSApp.terminate(nil) }"), "as a clean terminate")
+    }
 }
