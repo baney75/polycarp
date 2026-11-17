@@ -151,17 +151,6 @@ final class AgentEventHub {
         private var ended = false  // main thread
         override var isGone: Bool { ended || Date().timeIntervalSince(buffer.lastRead) > AgentEventHub.pollIdle }
         override func finish() { ended = true }
-        override func finish() {
-            lock.lock(); closed = true; lock.unlock()
-            queue.async { self.closeOnce() }
-        }
-
-        private func closeOnce() {
-            guard open else { return }
-            open = false
-            close(fd)
-        }
-
         override func send(_ events: [AgentEvents.Event], at: Date) { buffer.push(events, at: at) }
     }
 
@@ -182,6 +171,18 @@ final class AgentEventHub {
         override var isGone: Bool {
             lock.lock(); defer { lock.unlock() }
             return closed
+        }
+
+        /// Sends nothing more, and closes the connection after the lines already queued.
+        override func finish() {
+            lock.lock(); closed = true; lock.unlock()
+            queue.async { self.closeOnce() }
+        }
+
+        private func closeOnce() {
+            guard open else { return }
+            open = false
+            close(fd)
         }
 
         override func send(_ events: [AgentEvents.Event], at: Date) {
