@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use toml::{Table, Value};
 
+mod apps;
 mod edit;
 mod picture;
 mod png;
@@ -68,6 +69,7 @@ Usage:
   polycarp theme history [--json]
   polycarp theme off
   polycarp theme on
+  polycarp theme apps [<app> on|off] [--json]
   polycarp theme reset
 
 Every command takes --json and then prints the envelope {ok, data} or {ok:false, error}.
@@ -79,6 +81,9 @@ Your own themes live in <config>/themes/<name>.toml. The config folder is
 $POLYCARP_CONFIG_DIR if set (an absolute path), else the folder `theme folder --pin` recorded,
 else $XDG_CONFIG_HOME/polycarp (default ~/.config/polycarp), or %APPDATA%\\Polycarp on Windows.
 Set POLYCARP_CALLER to record who made a change (default: user).
+
+`theme apps ghostty on` makes `set` theme that app too, writing only
+Polycarp's own files there. POLYCARP_APPS_HOME stands in for the home folder when apps are written.
 
 Products read the files in <config>/current/ once their adapters land.
 Until then only the files change.
@@ -603,6 +608,7 @@ fn write_outputs(cfg: &Cfg, eff: &Eff) -> (Vec<PathBuf>, Vec<String>) {
                 Err(e) => failed.push(format!("{n}: {e}")),
             }
         }
+        sync_apps(cfg, None, &mut wrote, &mut failed);
         return (wrote, failed);
     }
     // A Value always serializes, so the fallback is never used.
@@ -625,7 +631,35 @@ fn write_outputs(cfg: &Cfg, eff: &Eff) -> (Vec<PathBuf>, Vec<String>) {
             )),
         }
     }
+    sync_apps(cfg, Some(eff), &mut wrote, &mut failed);
     (wrote, failed)
+}
+
+/// The `[apps]` table of `config.toml`. None when the file can't be read, so a broken file
+/// leaves every app as it is.
+fn apps_on(cfg: &Cfg) -> Option<(BTreeSet<String>, Vec<String>)> {
+    match fs::read_to_string(cfg.file()) {
+        Ok(text) => parse_toml(&text).ok().map(|t| apps::wanted(&t)),
+        Err(e) if gone(&e) => Some((BTreeSet::new(), Vec::new())),
+        Err(_) => None,
+    }
+}
+
+/// Writes the apps turned on under `[apps]` with the theme in force (None while it is off), and
+/// puts back the others.
+fn sync_apps(cfg: &Cfg, eff: Option<&Eff>, wrote: &mut Vec<PathBuf>, failed: &mut Vec<String>) {
+    let Some((on, problems)) = apps_on(cfg) else {
+        return;
+    };
+    failed.extend(problems);
+    let theme = eff.map(|e| (&e.full, e.state.mode.as_str()));
+    let (w, r, f) = apps::sync(&cfg.dir.join("apps"), &on, theme);
+    // While the theme is off every listed file reads as removed, so a config put back is left out.
+    if eff.is_some() {
+        wrote.extend(w);
+    }
+    wrote.extend(r);
+    failed.extend(f);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1758,6 +1792,17 @@ fn require_healthy(eff: &Eff) -> Result<(), ApiErr> {
 /// history entry is dropped and the error is returned. Once the settings are saved, a failure in
 /// `current/` is only a warning that says which files were not written.
 fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, Option<&str>)>) -> Res {
+    let new_config = st.map(|st| state_table(&c.cfg, st).into_bytes());
+    commit_config(c, new_config, action, file)
+}
+
+/// `commit` with the new text of `config.toml` already made.
+fn commit_config(
+    c: &Ctx,
+    new_config: Option<Vec<u8>>,
+    action: &str,
+    file: Option<(&str, Option<&str>)>,
+) -> Res {
     let theme_was = match file {
         Some((name, _)) => {
             let p = c.cfg.theme_path(name);
@@ -1768,7 +1813,6 @@ fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, Option<
     };
     let config_was = read_or_absent(&c.cfg.file()).map_err(io_err)?;
     // Nothing would change: do not record, do not write, so history stays accurate.
-    let new_config = st.map(|st| state_table(&c.cfg, st).into_bytes());
     let theme_same = match (&theme_was, file) {
         (Some((_, was)), Some((_, Some(text)))) => was.as_deref() == Some(text.as_bytes()),
         (Some((_, was)), Some((_, None))) => was.is_none(),
@@ -1933,6 +1977,71 @@ fn move_config_dir_aside(cfg: &Cfg) -> Result<Option<PathBuf>, ApiErr> {
         ))
     })?;
     Ok(Some(aside))
+}
+
+/// `theme apps`: which other apps `theme set` colors. With an app and on or off, turns it on or
+/// off under `[apps]` in `config.toml`, recorded in history like any change.
+pub(crate) fn op_apps(c: &Ctx, change: Option<(&str, bool)>) -> Res {
+    let Some((app, want)) = change else {
+        let (on, problems) = apps_on(&c.cfg).unwrap_or_default();
+        let list = apps::describe(&c.cfg.dir.join("apps"), &on);
+        let mut text = String::new();
+        for a in &list {
+            text.push_str(&format!(
+                "{}: {}\n",
+                a["app"].as_str().unwrap_or_default(),
+                if a["on"] == true { "on" } else { "off" }
+            ));
+        }
+        text.push_str("turn one on with `polycarp theme apps <app> on`\n");
+        return Ok(Out::new(json!({"apps": list}), text).warn(problems));
+    };
+    if !apps::APPS.contains(&app) {
+        return Err(ApiErr::usage(format!(
+            "{app:?} is not an app Polycarp themes ({})",
+            apps::APPS.join(", ")
+        )));
+    }
+    let _lock = Lock::acquire(&c.cfg)?;
+    let mut table = match fs::read_to_string(c.cfg.file()) {
+        Ok(text) => parse_toml(&text).map_err(|e| {
+            io_err(format!(
+                "{}: {e}. Fix it or run `polycarp theme reset`",
+                c.cfg.file().display()
+            ))
+        })?,
+        Err(e) if gone(&e) => Table::new(),
+        Err(e) => {
+            return Err(io_err(format!(
+                "could not read {}: {e}",
+                c.cfg.file().display()
+            )))
+        }
+    };
+    let apps = table
+        .entry("apps")
+        .or_insert_with(|| Value::Table(Table::new()));
+    let Value::Table(apps) = apps else {
+        return Err(io_err("apps in config.toml must be a table".into()));
+    };
+    if want {
+        apps.insert(app.to_string(), Value::Boolean(true));
+    } else {
+        apps.remove(app);
+    }
+    if apps.is_empty() {
+        table.remove("apps");
+    }
+    let text = toml::to_string(&table).unwrap_or_default();
+    let mut out = commit_config(
+        c,
+        Some(text.into_bytes()),
+        &format!("theme apps {app} {}", if want { "on" } else { "off" }),
+        None,
+    )?;
+    let (on, _) = apps_on(&c.cfg).unwrap_or_default();
+    out = out.with(json!({"apps": apps::describe(&c.cfg.dir.join("apps"), &on)}));
+    Ok(out)
 }
 
 pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
@@ -2994,8 +3103,11 @@ pub(crate) fn op_export(c: &Ctx, format: &str, name: Option<&str>, surface: Opti
     Ok(out.warn(problems))
 }
 
-/// The bytes `config.toml` should hold after undoing `last`: the live file with only its
-/// `[appearance]` table put back as it was. None means the file should not exist.
+/// The bytes `config.toml` should hold after undoing `last`: the live file with only the tables
+/// Polycarp owns (`[appearance]` and `[apps]`) put back as they were. None means the file should
+/// not exist.
+const OWN_TABLES: [&str; 2] = ["appearance", "apps"];
+
 fn undone_config(live: Option<&[u8]>, last: &Hist) -> Option<Vec<u8>> {
     let parse = |b: &[u8]| {
         std::str::from_utf8(b)
@@ -3011,7 +3123,9 @@ fn undone_config(live: Option<&[u8]>, last: &Hist) -> Option<Vec<u8>> {
         },
     };
     let mut others = live_table;
-    others.remove("appearance");
+    for k in OWN_TABLES {
+        others.remove(k);
+    }
     let snapshot = if last.absent {
         Some(Table::new())
     } else {
@@ -3022,11 +3136,13 @@ fn undone_config(live: Option<&[u8]>, last: &Hist) -> Option<Vec<u8>> {
         return Some(last.body.clone());
     };
     if others.is_empty() {
-        // Only [appearance] was there, so the old file comes back byte for byte.
+        // Only Polycarp's tables were there, so the old file comes back byte for byte.
         return (!last.absent).then(|| last.body.clone());
     }
-    if let Some(app) = snap.get("appearance") {
-        others.insert("appearance".into(), app.clone());
+    for k in OWN_TABLES {
+        if let Some(t) = snap.get(k) {
+            others.insert(k.into(), t.clone());
+        }
     }
     Some(toml::to_string(&others).unwrap_or_default().into_bytes())
 }
@@ -3738,6 +3854,11 @@ pub fn run(args: &[OsString]) -> i32 {
         "history" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;
             op_history(c)
+        }),
+        "apps" => cmd(rest, &[], &[], |c, p| match p.pos.as_slice() {
+            [] => op_apps(c, None),
+            [app, on] if on == "on" || on == "off" => op_apps(c, Some((app, on == "on"))),
+            _ => Err(ApiErr::usage("expected `apps` or `apps <app> on|off`")),
         }),
         "off" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;

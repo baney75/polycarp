@@ -245,6 +245,22 @@ polycarp theme on
 
 `off` removes `current/theme.json` and the `current/<product>.css` files. Apps that read them are expected to use their own look when they next check. It keeps your settings and themes, records the change in `history/`, and says what it removed. `undo` brings the theme back, and so does `polycarp theme on`. `set`, `accent` and `change` also turn the theme on, and tell you so. So does `apply`, unless you add `--no-activate`. `off` and `on` also tidy `current/` if the setting was already that way, and `off` works even if a theme or settings file is broken. If one of the files is a link, `off` removes the link (not what it points to) and `on` writes a plain file. `polycarp theme current` shows whether it is on or off.
 
+### Theme other apps
+
+```sh
+polycarp theme apps
+polycarp theme apps ghostty on
+polycarp theme apps ghostty off
+```
+
+Polycarp can color Ghostty too. It is off until you turn it on, and the setting lives under `[apps]` in `config.toml`. While an app is on, every theme change rewrites its Polycarp files, from the theme's light and dark terminal and code colors:
+
+| App | Polycarp writes | You pick it with |
+| --- | --- | --- |
+| Ghostty | `themes/polycarp-light` and `themes/polycarp-dark` in Ghostty's folder | Nothing: Polycarp adds the line `theme = light:polycarp-light,dark:polycarp-dark` to the end of Ghostty's `config.ghostty` (or `config`) |
+
+Polycarp writes only its own files there, plus Ghostty's one line. Turning an app off, `polycarp theme off` and `undo` remove those files and put Ghostty's config back byte for byte. If you edited that config since, only Polycarp's line comes out. What Polycarp wrote is kept in `apps/` in the settings folder. `POLYCARP_APPS_HOME` stands in for your home folder when the apps are written, so you can try it on a copy.
+
 ### Use a theme elsewhere
 
 ```sh
