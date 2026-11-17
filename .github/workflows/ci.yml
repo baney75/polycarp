@@ -96,7 +96,9 @@ jobs:
 
   spaces:
     needs: changes
-    if: needs.changes.outputs.spaces == 'true'
+    # macOS runners are the scarce ones. A PR stacked on another PR's branch skips the two macOS jobs until it is based
+    # on main (the gate reviews only those); label it mac-ci to run them anyway.
+    if: needs.changes.outputs.spaces == 'true' && (github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'mac-ci'))
     runs-on: macos-15
     defaults:
       run:
@@ -172,7 +174,7 @@ jobs:
   spaces-bundle:
     needs: changes
     # The bundle holds the voice core, the browser helper and the `polycarp` command, so a change to any of them can break it.
-    if: needs.changes.outputs.spaces == 'true' || needs.changes.outputs.browser == 'true' || needs.changes.outputs.cli == 'true' || needs.changes.outputs.core == 'true'
+    if: (needs.changes.outputs.spaces == 'true' || needs.changes.outputs.browser == 'true' || needs.changes.outputs.cli == 'true' || needs.changes.outputs.core == 'true') && (github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'mac-ci'))
     runs-on: macos-15
     defaults:
       run:
