@@ -197,7 +197,8 @@ mod regress {
     /// let go.
     #[test]
     fn the_daemon_lets_go_of_the_core_before_a_subscriber_hears_anything() {
-        let src = include_str!("daemon.rs");
+        // A Windows checkout has CRLF line ends.
+        let src = include_str!("daemon.rs").replace("\r\n", "\n");
         let start = src
             .find("v[\"op\"] == \"subscribe\"")
             .expect("the subscribe branch");
