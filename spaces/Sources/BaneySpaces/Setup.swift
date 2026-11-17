@@ -485,6 +485,8 @@ struct SetupView: View {
     @ObservedObject private var parts = PartsModel.shared
     @StateObject private var themes = ThemePicker()
     var close: () -> Void
+    /// The window's height. Offscreen checks pass more, so the lazy pane builds every group at once.
+    var height = SettingsSidebar.windowSize.height
 
     var body: some View {
         HStack(spacing: 0) {
@@ -512,7 +514,7 @@ struct SetupView: View {
             }
             .id(model.tab)   // each section opens at its top
         }
-        .frame(width: SettingsSidebar.windowSize.width, height: SettingsSidebar.windowSize.height)
+        .frame(width: SettingsSidebar.windowSize.width, height: height)
         .foregroundStyle(Chrome.wash())
         .tint(Chrome.accent)
         .toggleStyle(.switch)   // every on-or-off setting is the same control
@@ -933,17 +935,8 @@ struct SetupView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Follow the accent color in System Settings")
-                    ColorPicker("Custom accent", selection: Binding(
-                        get: { Appearance.color(appearance.settings.accentRGB(system: Appearance.systemAccent)) },
-                        set: { picked in
-                            // The picker also answers with the color it was shown; that isn't a pick.
-                            guard let rgb = Appearance.rgb(picked) else { return }
-                            let shown = appearance.accentRGB
-                            guard abs(rgb.r - shown.r) + abs(rgb.g - shown.g) + abs(rgb.b - shown.b) > 0.01 else { return }
-                            appearance.settings.accent = .custom(rgb)
-                        }), supportsOpacity: false)
-                        .labelsHidden()
-                        .help("Pick any color")
+                    ColorSwatch(key: "accent", color: appearance.settings.accentRGB(system: Appearance.systemAccent),
+                                label: "Custom accent color", size: CGSize(width: 20, height: 20)) { appearance.settings.accent = .custom($0) }
                 }
             }
         }
@@ -998,19 +991,13 @@ struct SetupView: View {
                 }
             }
             SettingsBlock {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     ForEach(1...9, id: \.self) { n in
-                        VStack(spacing: 1) {
-                            ColorPicker("Workspace \(n)", selection: Binding(
-                                get: { Chrome.workspace(n) },
-                                set: { picked in
-                                    guard let rgb = Appearance.rgb(picked) else { return }
-                                    let shown = appearance.settings.workspaceColor(n, accent: appearance.accentRGB).rgb
-                                    guard abs(rgb.r - shown.r) + abs(rgb.g - shown.g) + abs(rgb.b - shown.b) > 0.01 else { return }
-                                    appearance.settings.overrides[n] = rgb
-                                }), supportsOpacity: false)
-                                .labelsHidden()
+                        VStack(spacing: 2) {
+                            ColorSwatch(key: "workspace-\(n)", color: appearance.settings.workspaceColor(n, accent: appearance.accentRGB).rgb,
+                                        label: "Workspace \(n) color", size: CGSize(width: 36, height: 22)) { appearance.settings.overrides[n] = $0 }
                             Text("\(n)").font(Chrome.font(10, .semibold)).foregroundStyle(appearance.settings.overrides[n] == nil ? Chrome.muted : Chrome.wash())
+                                .accessibilityHidden(true)
                         }
                     }
                 }

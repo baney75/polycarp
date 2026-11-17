@@ -201,14 +201,11 @@ struct ThemeFieldControl: View {
                     .accessibilityLabel("Contrast warning: " + warned.map(\.message).joined(separator: " "))
             }
             ThemeTextField(path: field.path, model: model, width: 76, mono: true)
-            ColorPicker(field.label, selection: Binding(
-                get: { Appearance.color(model.value(field.path)?.color ?? RGB(r: 0, g: 0, b: 0)) },
-                set: { picked in
-                    // The well also answers with the color it was shown; that isn't an edit.
-                    guard let rgb = Appearance.rgb(picked), let was = model.value(field.path)?.color, rgb.hex != was.hex else { return }
-                    model.set(field.path, .color(rgb))
-                }), supportsOpacity: false)
-                .labelsHidden()
+            ColorSwatch(key: "\(model.name) \(field.path)", color: model.value(field.path)?.color ?? RGB(r: 0, g: 0, b: 0),
+                        label: field.label, size: CGSize(width: 34, height: 20)) { rgb in
+                guard rgb.hex != model.value(field.path)?.color?.hex else { return }
+                model.set(field.path, .color(rgb))
+            }
         }
     }
 
