@@ -261,8 +261,8 @@ mod win {
         use super::*;
         use windows_sys::Win32::Foundation::RECT;
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            EnumWindows, GetDlgItem, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-            IsWindowVisible, SendMessageW, WM_CLOSE,
+            EnumWindows, GetDlgItem, GetWindowRect, IsWindowVisible, SendMessageW, WM_CLOSE,
+            WM_GETTEXT, WM_GETTEXTLENGTH,
         };
 
         fn testapp() -> std::path::PathBuf {
@@ -288,11 +288,14 @@ mod win {
             (!f.1.is_null()).then_some(f.1)
         }
 
+        /// The edit control's contents. GetWindowTextW won't do: for a window of another process it returns the
+        /// caption Windows keeps, not what the control holds, so this asks the control itself.
         fn text(h: HWND) -> String {
             unsafe {
-                let mut buf = vec![0u16; GetWindowTextLengthW(h) as usize + 1];
-                let n = GetWindowTextW(h, buf.as_mut_ptr(), buf.len() as i32);
-                String::from_utf16_lossy(&buf[..n.max(0) as usize])
+                let len = SendMessageW(h, WM_GETTEXTLENGTH, 0, 0).max(0) as usize;
+                let mut buf = vec![0u16; len + 1];
+                let n = SendMessageW(h, WM_GETTEXT, buf.len(), buf.as_mut_ptr() as isize);
+                String::from_utf16_lossy(&buf[..(n.max(0) as usize).min(len)])
             }
         }
 
