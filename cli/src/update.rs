@@ -1,11 +1,12 @@
-//! `polycarp update`: one command that brings every Polycarp part on this device to origin/main.
+//! `polycarp update`: one command that brings every Polycarp part on this device to its channel's commit
+//! (origin/main by default).
 //!
 //! It works in two halves. `plan` is a pure function: from the platform, how Polycarp is installed
 //! here and the options, it returns the steps as data (a title and an argv each) or a refusal.
 //! `execute` then runs the steps in order through a `Runner`, stops at the first failure and says what
 //! state things are in. `--dry-run` prints the plan and runs nothing.
 //!
-//! Only origin/main is ever built and installed, and only from a clean copy of it under the cache
+//! Only the channel's ref (origin/main by default) is ever built and installed, and only from a clean copy of it under the cache
 //! folder: never from a branch, a changed tree or the checkout a person works in. Nothing that is
 //! installed runs from that cache folder: on Linux the browser helper and the extension are copied to
 //! `~/.local/share/polycarp/browser/source`.
@@ -57,7 +58,7 @@ pub enum Install {
 pub struct Facts {
     pub platform: Platform,
     pub install: Install,
-    /// The clean copy of origin/main that is built, under the cache folder.
+    /// The clean copy of the channel's ref (origin/main by default) that is built, under the cache folder.
     pub worktree: PathBuf,
     /// The clean copy is there and git takes it as a working tree.
     pub worktree_exists: bool,
@@ -68,7 +69,7 @@ pub struct Facts {
     /// The `polycarp` that is running this update. It runs the steps up to the install.
     pub polycarp: PathBuf,
     /// The `polycarp` the update installs (`~/.local/bin/polycarp`). It is the one compared with
-    /// origin/main, and the one that finishes the update.
+    /// the channel's commit, and the one that finishes the update.
     pub installed: PathBuf,
     /// Linux: where the browser helper and the extension are installed, outside the cache.
     pub browser_home: PathBuf,
@@ -112,7 +113,7 @@ pub enum Role {
     Install,
     /// Worth doing, but a failure does not stop the update (reloading the extension while an agent works).
     Soft,
-    /// The check at the end: every part the update installs is at origin/main.
+    /// The check at the end: every part the update installs is at the commit that was built.
     Verify,
     /// The last step of an install: the newly installed `polycarp` runs `update --finish`.
     Handoff,
@@ -225,6 +226,13 @@ pub fn plan(f: &Facts, o: Options) -> Plan {
         Install::MacRelease {
             spaces: Some(spaces),
         } => {
+            // The app saves the channel it is given, so a check that names one would switch it.
+            if let (true, Some(c)) = (o.check, o.channel) {
+                return Plan::Refuse {
+                    code: 2,
+                    message: format!("polycarp update: --check --channel {0} isn't run on a Mac app install, because Polycarp.app saves the channel it is given and would switch to {0}. Nothing was run. `polycarp update --check` checks the app's own channel; `polycarp update --channel {0}` switches to it and updates.", c.name()),
+                };
+            }
             // An app from before the channels refuses `--channel` with its usage and exit 2, and merging
             // the new app changes nothing here: the installed one answers.
             if o.channel.is_some() && f.spaces_takes_channel != Some(true) {
@@ -292,10 +300,11 @@ fn release_steps(spaces: &Path, o: Options) -> (String, Vec<Step>, Vec<String>) 
         None => "release install: Polycarp.app updates itself".to_string(),
     };
     if o.check {
+        // Never --channel here: the app saves the channel it is given, and a check changes nothing.
         let step = Step::new(
             Role::Gate,
             "Ask Polycarp whether a newer release is out",
-            &with_channel(&[&spaces, "update", "--check"], o.channel),
+            &[&spaces, "update", "--check"],
         );
         return (summary, vec![step], Vec::new());
     }
@@ -415,7 +424,7 @@ fn source_steps(
     let mut notes = Vec::new();
     if o.finish {
         // Run by the command this update just installed: only what comes after the install.
-        return (summary, finish_steps(f), notes);
+        return (summary, finish_steps(f, name), notes);
     }
     let mut steps = vec![Step::new(
         Role::Git,
@@ -434,6 +443,8 @@ fn source_steps(
                 target,
                 "--needs",
                 &needs,
+                "--name",
+                name,
             ],
         ));
         return (summary, steps, notes);
@@ -486,6 +497,8 @@ fn source_steps(
             "HEAD",
             "--needs",
             &needs,
+            "--name",
+            name,
         ],
     ));
     match f.platform {
@@ -493,7 +506,10 @@ fn source_steps(
         Platform::Linux => linux_steps(f, &mut steps, &mut notes),
         Platform::Windows => {}
     }
-    let last: Vec<String> = finish_steps(f).into_iter().map(|st| st.title).collect();
+    let last: Vec<String> = finish_steps(f, name)
+        .into_iter()
+        .map(|st| st.title)
+        .collect();
     steps.push(Step::new(
         Role::Handoff,
         "Hand over to the polycarp that was just installed, for the last steps",
@@ -505,7 +521,7 @@ fn source_steps(
     ));
     if f.polycarp != f.installed {
         notes.push(format!(
-            "This polycarp ({me}) is not the installed command. It fetches, builds and installs. The installed one ({installed}) is the one compared with origin/main, and the one that finishes the update, so an updater older than what it installs changes nothing about the result."
+            "This polycarp ({me}) is not the installed command. It fetches, builds and installs. The installed one ({installed}) is the one compared with {name}, and the one that finishes the update, so an updater older than what it installs changes nothing about the result."
         ));
     }
     (summary, steps, notes)
@@ -513,7 +529,7 @@ fn source_steps(
 
 /// What comes after the install, built and run by the newly installed command (`update --finish`):
 /// reload the extension, restart what runs, and check every part against the clean copy's commit.
-fn finish_steps(f: &Facts) -> Vec<Step> {
+fn finish_steps(f: &Facts, name: &str) -> Vec<Step> {
     let installed = s(&f.installed);
     let wt = s(&f.worktree);
     let mut steps = Vec::new();
@@ -563,7 +579,7 @@ fn finish_steps(f: &Facts) -> Vec<Step> {
     steps.push(
         Step::new(
             Role::Verify,
-            "Check that every part this update installs is at origin/main",
+            &format!("Check that every part this update installs is at {name}"),
             &[
                 &installed,
                 "update",
@@ -572,6 +588,8 @@ fn finish_steps(f: &Facts) -> Vec<Step> {
                 "HEAD",
                 "--needs",
                 &needs(f),
+                "--name",
+                name,
                 "--after-install",
                 "--wait",
                 "30",
@@ -915,7 +933,7 @@ pub fn state_after_failure(steps: &[Step], failed: usize) -> &'static str {
     let installed_before = steps[..failed].iter().any(|st| st.role == Role::Install);
     match steps[failed].role {
         Role::Verify => "Every step before this one ran, but the parts do not all match yet. `polycarp version` shows which.",
-        Role::Handoff => "The install steps ran. The installed polycarp command did not finish the last steps (reloading the extension, restarting what runs, the final check), or it is not there, or the final check found a part that is not at origin/main. `polycarp version` shows what is installed.",
+        Role::Handoff => "The install steps ran. The installed polycarp command did not finish the last steps (reloading the extension, restarting what runs, the final check), or it is not there, or the final check found a part that is not at the commit it built. `polycarp version` shows what is installed.",
         Role::Install if !installed_before => "This step installs. It did not finish, so some parts may be new and others old. `polycarp version` shows what is installed.",
         _ if installed_before => "Earlier steps already installed some parts, so some may be new and others old. `polycarp version` shows what is installed.",
         _ => "Nothing that is installed on this device was changed.",
@@ -957,7 +975,7 @@ pub fn execute(steps: &[Step], runner: &mut dyn Runner, out: &mut dyn Write) -> 
                 let _ = writeln!(out, "  state:   {}", state_after_failure(steps, i));
                 let _ = writeln!(
                     out,
-                    "  retry:   fix what the step reported above, then run `polycarp update` again. It starts over from a clean copy of origin/main."
+                    "  retry:   fix what the step reported above, then run `polycarp update` again. It starts over from a clean copy of what it builds."
                 );
                 return Outcome::Failed { step: i, code };
             }
@@ -1204,25 +1222,54 @@ fn node_major(text: &str) -> Option<u32> {
 
 const SOURCE_FILE: &str = "source.toml";
 
+fn source_table(config: &Path) -> Option<toml::Table> {
+    toml::from_str(&fs::read_to_string(config.join(SOURCE_FILE)).ok()?).ok()
+}
+
 /// The checkout recorded by an earlier `polycarp update --source`.
 fn recorded_source(config: &Path) -> Option<PathBuf> {
-    let text = fs::read_to_string(config.join(SOURCE_FILE)).ok()?;
-    let table: toml::Table = toml::from_str(&text).ok()?;
-    table
+    source_table(config)?
         .get("checkout")
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
 }
 
-fn record_source(config: &Path, checkout: &Path) -> Result<(), String> {
+/// The channel recorded by an earlier `polycarp update --channel` on a source install. A file from before
+/// channels has none, which is dev.
+fn recorded_channel(config: &Path) -> Option<Channel> {
+    source_table(config)?
+        .get("channel")
+        .and_then(|v| v.as_str())
+        .and_then(Channel::parse)
+}
+
+/// What a source install follows: `--channel`, else the one it was last told, else nothing (dev).
+fn source_channel(
+    install: &Install,
+    flag: Option<Channel>,
+    saved: Option<Channel>,
+) -> Option<Channel> {
+    match install {
+        Install::Source { .. } => flag.or(saved),
+        _ => flag,
+    }
+}
+
+fn record_source(config: &Path, checkout: &Path, channel: Option<Channel>) -> Result<(), String> {
     let mut table = toml::Table::new();
     table.insert(
         "checkout".to_string(),
         toml::Value::String(checkout.to_string_lossy().into_owned()),
     );
+    if let Some(c) = channel {
+        table.insert(
+            "channel".to_string(),
+            toml::Value::String(c.name().to_string()),
+        );
+    }
     let text = format!(
-        "# Written by `polycarp update --source`. `polycarp update` fetches origin/main of this checkout\n# and builds it in a clean copy; the checkout's own files are never built or changed.\n{}",
+        "# Written by `polycarp update --source` or `--channel`. `polycarp update` fetches the channel's ref\n# (origin/main for dev, the default) of this checkout and builds it in a clean copy; the checkout's own\n# files are never built or changed.\n{}",
         toml::to_string(&table).map_err(|e| e.to_string())?
     );
     fs::create_dir_all(config).map_err(|e| format!("{}: {e}", config.display()))?;
@@ -1248,16 +1295,18 @@ pub struct Device<'a> {
 pub const USAGE: &str = "\
 usage: polycarp update [--check] [--dry-run] [--yes] [--channel <c>] [--source <checkout>]
 
-Brings every Polycarp part on this device to origin/main, together.
+Brings every Polycarp part on this device to its channel's commit (origin/main by default), together.
 
   --check             say whether an update is waiting: exit 0 when up to date, 100 when there is one
   --dry-run           print the steps and run nothing
   --yes               run the steps without asking (needed when there is no terminal)
   --channel <c>       stable, nightly or dev (docs/releases.md). A Mac app chooses it as in Settings > Updates;
-                      a source install builds origin/stable, the nightly tag or origin/main (dev, the default)
+                      a source install builds origin/stable, the nightly tag or origin/main (dev, the default),
+                      and remembers it: later runs without --channel follow it. A Mac app takes it only to
+                      update (--check --channel is refused there: the app would switch to it)
   --source <checkout> a checkout of https://github.com/baney75/polycarp to build from; remembered
 
-A source install fetches origin/main, builds it in a clean copy under the cache folder (never your
+A source install fetches its channel's ref (origin/main by default), builds it in a clean copy under the cache folder (never your
 checkout, a branch or changed files) and installs it. A Mac app from the disk image or the installer
 is asked to update itself. On Windows this is not supported yet.
 ";
@@ -1317,6 +1366,8 @@ struct Check {
     after_install: bool,
     /// `--wait <seconds>`: keep looking that long (an app that is restarting).
     wait: u64,
+    /// `--name <n>`: how messages name the target (origin/stable, nightly, origin/main).
+    name: Option<String>,
 }
 
 fn parse_check(args: &[OsString]) -> Result<Check, String> {
@@ -1334,6 +1385,10 @@ fn parse_check(args: &[OsString]) -> Result<Check, String> {
                     .collect();
             }
             Some("--after-install") => check.after_install = true,
+            Some("--name") => {
+                let name = it.next().ok_or("--name needs the target's name")?;
+                check.name = Some(name.to_string_lossy().into_owned());
+            }
             Some("--wait") => {
                 check.wait = it
                     .next()
@@ -1629,9 +1684,9 @@ pub fn reload_wait(
 
 /// The final check's words for a browser that still runs the build from before. Never "up to date":
 /// what the user works with is still the old build (#207).
-fn reload_pending_line(at: &str, waiting: &[String]) -> String {
+fn reload_pending_line(at: &str, name: &str, waiting: &[String]) -> String {
     format!(
-        "reload pending: every other part is at origin/main ({at}), but {} still runs the build from before. Run `polycarp browser reload` when no agent is working in the browser.",
+        "reload pending: every other part is at {name} ({at}), but {} still runs the build from before. Run `polycarp browser reload` when no agent is working in the browser.",
         waiting.join(", ")
     )
 }
@@ -1742,6 +1797,11 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
     };
     let needs: Vec<&str> = check.needs.iter().map(String::as_str).collect();
     let at = version::short(&target);
+    // Every step this command plans names it; a bare rev is named the old way.
+    let name = check
+        .name
+        .as_deref()
+        .unwrap_or_else(|| channel::name_of(rev));
     let started = std::time::Instant::now();
     // The gate judges the command an update installs. With none there, the one that is running (a
     // build in a checkout, on the first run) does not stand in for it: it counts as not installed.
@@ -1781,11 +1841,11 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
     }
     match standing {
         Standing::Current => {
-            println!("up to date: every installed part is at origin/main ({at})");
+            println!("up to date: every installed part is at {name} ({at})");
             0
         }
         Standing::ReloadPending(waiting) => {
-            println!("{}", reload_pending_line(at, &waiting));
+            println!("{}", reload_pending_line(at, name, &waiting));
             // Linux: a browser loading the extension from an old folder would stay "reload pending" for good.
             if let Some(home) = device.home.as_ref().filter(|_| cfg!(target_os = "linux")) {
                 let want = home.join(".local/share/polycarp/browser/source/dist-chrome");
@@ -1799,9 +1859,9 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
             let missing = version::missing(&parts, &needs);
             if check.after_install {
                 print!("{}", version::table(&parts));
-                println!("\nnot every part is at origin/main ({at}) yet.");
+                println!("\nnot every part is at {name} ({at}) yet.");
             } else {
-                println!("update available: {} is at {at}", channel::name_of(rev));
+                println!("update available: {name} is at {at}");
             }
             if !missing.is_empty() {
                 println!("not installed yet: {}", missing.join(", "));
@@ -1867,7 +1927,7 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
             return 2;
         }
     };
-    let o = parsed.options;
+    let flag = parsed.options.channel;
     let Some(home) = device.home.clone() else {
         eprintln!(
             "polycarp update: the home folder is not set, so there is nowhere to install to."
@@ -1902,6 +1962,16 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         },
         None => Install::Unknown,
     };
+    // A plain run follows the channel a source install was last told (first-F1 of the review of #437).
+    let saved = device
+        .config
+        .as_ref()
+        .ok()
+        .and_then(|c| recorded_channel(c));
+    let o = Options {
+        channel: source_channel(&install, flag, saved),
+        ..parsed.options
+    };
     let worktree = match &install {
         Install::Source { checkout, .. } => worktree_for(&cache_dir(&home), checkout),
         _ => cache_dir(&home).join("source"),
@@ -1928,7 +1998,12 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         skill_installed: home.join(".claude/skills/baneyspaces/SKILL.md").is_file(),
         terminal: std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
         home: home.clone(),
-        spaces_takes_channel: channel_support(&install, o.channel, &spaces_takes_channel),
+        // A check with a channel is refused on a Mac app, so nothing is asked for it.
+        spaces_takes_channel: channel_support(
+            &install,
+            o.channel.filter(|_| !o.check),
+            &spaces_takes_channel,
+        ),
         install,
     };
     let (summary, mut steps, notes, ask) = match plan(&facts, o) {
@@ -1963,10 +2038,21 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
     }
     // Remember the checkout only once a plan for it was accepted: a refused origin is never recorded.
     // `--finish` is the same update still going: the run that started it did the remembering.
-    if let (Some(checkout), Ok(config), false) = (&given, &device.config, o.finish) {
-        if recorded_source(config).as_deref() != Some(checkout.as_path()) {
-            match record_source(config, checkout) {
-                Ok(()) => println!("Remembered {} as the source (in {}).", checkout.display(), config.join(SOURCE_FILE).display()),
+    // A channel is remembered only by a run that changes things: a check follows it once and moves nothing.
+    if let (Install::Source { checkout, .. }, Ok(config), false) =
+        (&facts.install, &device.config, o.finish)
+    {
+        let keep = if o.check { saved } else { o.channel };
+        let moved =
+            given.is_some() && recorded_source(config).as_deref() != Some(checkout.as_path());
+        if moved || keep != saved {
+            match record_source(config, checkout, keep) {
+                Ok(()) => println!(
+                    "Remembered {} as the source{} (in {}).",
+                    checkout.display(),
+                    keep.map_or(String::new(), |c| format!(", following {}", c.name())),
+                    config.join(SOURCE_FILE).display()
+                ),
                 Err(e) => eprintln!("polycarp update: could not remember the source: {e}. Pass --source again next time."),
             }
         }
@@ -2131,7 +2217,7 @@ mod tests {
                 format!("git -C {CHECKOUT} fetch origin +refs/heads/main:refs/remotes/origin/main"),
                 format!("git -C {CHECKOUT} worktree prune"),
                 format!("git -C {CHECKOUT} worktree add --detach --force {WORKTREE} refs/remotes/origin/main"),
-                format!("{BOOT} update --is-current {WORKTREE} HEAD --needs {MAC_NEEDS}"),
+                format!("{BOOT} update --is-current {WORKTREE} HEAD --needs {MAC_NEEDS} --name origin/main"),
                 format!("{WORKTREE}/browser/scripts/setup-siblings.sh"),
                 format!("git -C {WORKTREE} checkout -- ."),
                 "make -C spaces install".to_string(),
@@ -2151,7 +2237,7 @@ mod tests {
             commands(&last),
             vec![
                 format!("{INSTALLED} update --reload-wait {WORKTREE} HEAD --wait 30 -- {INSTALLED} browser reload --if-idle"),
-                format!("{INSTALLED} update --is-current {WORKTREE} HEAD --needs {MAC_NEEDS} --after-install --wait 30"),
+                format!("{INSTALLED} update --is-current {WORKTREE} HEAD --needs {MAC_NEEDS} --name origin/main --after-install --wait 30"),
             ]
         );
         assert_eq!(last[0].role, Role::Soft);
@@ -2191,7 +2277,7 @@ mod tests {
         assert_eq!(
             commands(&steps)[3..],
             [
-                format!("{BOOT} update --is-current {WORKTREE} HEAD --needs {needs}"),
+                format!("{BOOT} update --is-current {WORKTREE} HEAD --needs {needs} --name origin/main"),
                 // Every build first, the polycarp command's too.
                 "cargo build --release --locked".to_string(),
                 "cargo build --release --locked -p baneyspaces-linux".to_string(),
@@ -2237,7 +2323,7 @@ mod tests {
                 format!("{INSTALLED} update --reload-wait {WORKTREE} HEAD --wait 30 -- node {BROWSER_HOME}/cli/dist/index.js reload --if-idle"),
                 "/home/u/.local/bin/baneyspaces stop".to_string(),
                 "hyprctl reload".to_string(),
-                format!("{INSTALLED} update --is-current {WORKTREE} HEAD --needs {needs} --after-install --wait 30"),
+                format!("{INSTALLED} update --is-current {WORKTREE} HEAD --needs {needs} --name origin/main --after-install --wait 30"),
             ]
         );
     }
@@ -2265,7 +2351,7 @@ mod tests {
         );
         // The gate needs the helper, so a device that gained Node since the last update is not "up to date".
         assert!(
-            cmds[3].ends_with("--needs polycarp command,browser helper"),
+            cmds[3].ends_with("--needs polycarp command,browser helper --name origin/main"),
             "{}",
             cmds[3]
         );
@@ -2280,7 +2366,11 @@ mod tests {
             7,
             "fetch, two for the copy, the gate, the command's build and install, the handover: {cmds:?}"
         );
-        assert!(cmds[3].ends_with("--needs polycarp command"), "{}", cmds[3]);
+        assert!(
+            cmds[3].ends_with("--needs polycarp command --name origin/main"),
+            "{}",
+            cmds[3]
+        );
         assert!(
             notes
                 .iter()
@@ -2665,7 +2755,13 @@ mod tests {
             ..facts(Platform::Mac, install)
         };
         assert_eq!(f.spaces_takes_channel, Some(false));
-        for o in [YES, CHECK] {
+        for o in [
+            YES,
+            Options {
+                dry_run: true,
+                ..YES
+            },
+        ] {
             let (code, message) = refusal(plan(
                 &f,
                 Options {
@@ -2748,6 +2844,116 @@ mod tests {
         );
     }
 
+    /// first-F1 of the review of #437: a source install told `--channel stable` once keeps following stable, so
+    /// a plain `polycarp update --yes` (a scheduled job, or habit) never moves it to dev.
+    #[test]
+    fn a_saved_channel_is_followed_without_the_flag() {
+        let dir =
+            std::env::temp_dir().join(format!("polycarp-saved-channel-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let checkout = dir.join("src");
+        record_source(&dir, &checkout, Some(Channel::Stable)).unwrap();
+        assert_eq!(recorded_source(&dir).as_deref(), Some(checkout.as_path()));
+        let saved = recorded_channel(&dir);
+        assert_eq!(saved, Some(Channel::Stable));
+        let install = source(Some(ORIGIN), false);
+        let fetch = |channel| {
+            let f = facts(Platform::Linux, install.clone());
+            commands(&steps_of(plan(&f, Options { channel, ..YES })))[0].clone()
+        };
+        assert_eq!(
+            fetch(source_channel(&install, None, saved)),
+            format!("git -C {CHECKOUT} fetch origin +refs/heads/stable:refs/remotes/origin/stable")
+        );
+        // The flag wins; nothing saved is dev.
+        assert_eq!(
+            source_channel(&install, Some(Channel::Nightly), saved),
+            Some(Channel::Nightly)
+        );
+        assert_eq!(
+            fetch(source_channel(&install, None, None)),
+            format!("git -C {CHECKOUT} fetch origin +refs/heads/main:refs/remotes/origin/main")
+        );
+        // A Mac app keeps its channel in its own Settings: source.toml is never read for it.
+        let app = Install::MacRelease {
+            spaces: Some(PathBuf::from(
+                "/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces",
+            )),
+        };
+        assert_eq!(source_channel(&app, None, saved), None);
+        // A source.toml from before channels has only the checkout.
+        fs::write(
+            dir.join(SOURCE_FILE),
+            format!("checkout = {:?}\n", checkout.to_string_lossy()),
+        )
+        .unwrap();
+        assert_eq!(recorded_channel(&dir), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// second-F6 of the review of #437: `polycarp-spaces update --channel` saves the channel, so a check (which
+    /// needs no yes) never passes one. A check that names a channel is refused on a Mac app, before any step.
+    #[test]
+    fn a_check_with_a_channel_never_switches_the_mac_app() {
+        let spaces =
+            PathBuf::from("/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces");
+        // Even an app that takes --channel.
+        let f = Facts {
+            spaces_takes_channel: Some(true),
+            ..facts(
+                Platform::Mac,
+                Install::MacRelease {
+                    spaces: Some(spaces.clone()),
+                },
+            )
+        };
+        let (code, message) = refusal(plan(
+            &f,
+            Options {
+                channel: Some(Channel::Dev),
+                ..CHECK
+            },
+        ));
+        assert_eq!(code, 2);
+        assert!(
+            message.contains("--check --channel dev isn't run on a Mac app install"),
+            "{message}"
+        );
+        assert!(message.contains("Nothing was run."), "{message}");
+        // A plain check asks the app's own channel, with no --channel anywhere in the plan.
+        let steps = steps_of(plan(&f, CHECK));
+        assert_eq!(
+            commands(&steps),
+            vec![format!("{} update --check", spaces.display())]
+        );
+        assert!(steps
+            .iter()
+            .all(|st| !st.argv.iter().any(|a| a == "--channel")));
+        // The check step never carries one, even past the refusal.
+        let (_, steps, _) = release_steps(
+            &spaces,
+            Options {
+                channel: Some(Channel::Dev),
+                ..CHECK
+            },
+        );
+        assert_eq!(
+            commands(&steps),
+            vec![format!("{} update --check", spaces.display())]
+        );
+        // Only the update itself passes it.
+        assert_eq!(
+            commands(&steps_of(plan(
+                &f,
+                Options {
+                    channel: Some(Channel::Dev),
+                    ..YES
+                }
+            ))),
+            vec![format!("{} update --now --channel dev", spaces.display())]
+        );
+    }
+
     #[test]
     fn a_channel_picks_what_an_update_follows() {
         let parsed = |a: &[&str]| parse(&a.iter().map(OsString::from).collect::<Vec<_>>());
@@ -2796,8 +3002,8 @@ mod tests {
             ),
             (
                 Channel::Nightly,
-                "+refs/tags/nightly:refs/tags/nightly",
-                "refs/tags/nightly",
+                "+refs/tags/nightly:refs/polycarp/nightly",
+                "refs/polycarp/nightly",
             ),
         ] {
             let o = Options {
@@ -2820,6 +3026,11 @@ mod tests {
                 cmds[1].contains(&format!(
                     " update --is-current {CHECKOUT} {target} --needs "
                 )),
+                "{cmds:?}"
+            );
+            // first-F3: its words name the channel's target, never origin/main.
+            assert!(
+                cmds[1].ends_with(&format!(" --name {}", c.target_name())),
                 "{cmds:?}"
             );
         }
@@ -2931,7 +3142,7 @@ mod tests {
             commands(&steps),
             vec![
                 format!("git -C {CHECKOUT} fetch origin +refs/heads/main:refs/remotes/origin/main"),
-                format!("{BOOT} update --is-current {CHECKOUT} refs/remotes/origin/main --needs polycarp command,spaces command,browser helper"),
+                format!("{BOOT} update --is-current {CHECKOUT} refs/remotes/origin/main --needs polycarp command,spaces command,browser helper --name origin/main"),
             ]
         );
         assert_eq!(steps[1].role, Role::Gate);
@@ -3251,8 +3462,9 @@ mod tests {
         assert_eq!(recorded_source(&dir), None);
         // Absolute on every system (`/src/...` is not, on Windows), with characters that need escaping.
         let checkout = dir.join("src").join("with \"quotes\" and spaces");
-        record_source(&dir, &checkout).unwrap();
+        record_source(&dir, &checkout, None).unwrap();
         assert_eq!(recorded_source(&dir).as_deref(), Some(checkout.as_path()));
+        assert_eq!(recorded_channel(&dir), None, "no channel saved is dev");
         fs::write(dir.join(SOURCE_FILE), "checkout = \"relative/path\"\n").unwrap();
         assert_eq!(
             recorded_source(&dir),
@@ -3968,7 +4180,11 @@ mod tests {
 
     #[test]
     fn the_final_check_says_reload_pending_never_up_to_date() {
-        let line = reload_pending_line("abc1234", &["extension (Helium)".to_string()]);
+        let line = reload_pending_line(
+            "abc1234",
+            "origin/main",
+            &["extension (Helium)".to_string()],
+        );
         assert!(line.starts_with("reload pending:"), "{line}");
         assert!(
             line.contains("extension (Helium) still runs the build from before"),
@@ -4022,14 +4238,18 @@ mod tests {
                 "polycarp command,browser helper",
                 "--after-install",
                 "--wait",
-                "30"
+                "30",
+                "--name",
+                "origin/stable"
             ])),
             Ok(Check {
                 needs: vec!["polycarp command".into(), "browser helper".into()],
                 after_install: true,
                 wait: 30,
+                name: Some("origin/stable".into()),
             })
         );
+        assert!(parse_check(&args(&["--name"])).is_err());
         assert_eq!(parse_check(&args(&["--wait", "9999"])).unwrap().wait, 600);
         assert!(parse_check(&args(&["--needs"])).is_err());
         assert!(parse_check(&args(&["--wait", "soon"])).is_err());

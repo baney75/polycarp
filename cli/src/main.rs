@@ -106,7 +106,7 @@ Usage:
   polycarp doctor              show which tools were found
   polycarp --version
   polycarp version [--json] [--check]   every part, its commit, and whether they match
-  polycarp update [--check] [--dry-run] [--yes] [--source <checkout>]
+  polycarp update [--check] [--dry-run] [--yes] [--channel <c>] [--source <checkout>]
   polycarp --help
 
 The apps must already be installed. Each tool can be set with
