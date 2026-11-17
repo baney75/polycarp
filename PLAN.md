@@ -34,16 +34,16 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 - [ ] Agents can customize everything for their user. Check: from a schema read alone, an agent applies a change over MCP, previews it and undoes it, with its name in the history
 - [x] A person can get the apps' own look back from the command. Check: `polycarp theme off` removes the theme files, and `theme on` or `undo` brings them back
 - [ ] Spaces falls back to its own look when the theme files are gone. Check: a Spaces test that removes `current/theme.json` and reads back its own look
-- [ ] Voice falls back to its own look when the theme files are gone. Check: a Voice test that removes `current/theme.json` and reads back its own look
-- [ ] Browser falls back to its own look when the theme files are gone. Check: a Browser test that removes `current/theme.json` and reads back its own look
+- Moved to Silas (baney75/silas): Voice falls back to its own look when the theme files are gone. Check: a Voice test that removes `current/theme.json` and reads back its own look
+- Moved to Tychicus (baney75/tychicus): Browser falls back to its own look when the theme files are gone. Check: a Browser test that removes `current/theme.json` and reads back its own look
 - [x] The default themes look good, not just pass contrast. Check: `theme preview` of each, both modes, judged on a contact sheet
 - [ ] Every color, radius, font and duration in every surface comes from the theme. Check: a test fails on a hard-coded value in product UI, with a written allowlist
-- [ ] Browser reads the theme. Check: `polycarp theme set still-water` changes the installed panel within 5 seconds, read back in a real browser
+- Moved to Tychicus (baney75/tychicus): Browser reads the theme. Check: `polycarp theme set still-water` changes the installed panel within 5 seconds, read back in a real browser
 - [ ] Spaces reads the theme. Check: `polycarp theme set still-water` changes the installed app within 2 seconds on every surface, read back on a real Mac with the probes in `spaces/AGENTS.md`
 - [ ] Any value can be overridden per product. Check: a `[surface.*]` override changes only that product
 - [x] Unreadable themes are refused. Check: contrast tests on every built-in and surface
 - [ ] Keys, motion and behavior are configurable from one file, by people and by agents, with undo and a recovery key. Check: `spaces/spec/config.md` conformance across products
-- [ ] Voice reads the theme. Check: `polycarp theme set still-water` changes the installed app within 2 seconds, read back on a real Mac
+- Moved to Silas (baney75/silas): Voice reads the theme. Check: `polycarp theme set still-water` changes the installed app within 2 seconds, read back on a real Mac
 - [ ] Site passes on phone and desktop, in every built-in theme and both modes. Check: `design_check.js` plus screenshots at 390 and 1280
 - [ ] Docs cover install, every command, every setting and theming, for each device. Check: every command in `--help` appears in the docs, tested
 - [ ] Accessibility: keyboard, screen reader, reduced motion and text size on each surface. Check: per-surface checklist with evidence
@@ -76,7 +76,7 @@ Asked for by Donovan, 2026-11-05: installation and permissions need to be excell
 - [x] One first-run window explains each permission in plain words, with live status. Check: `WelcomeTests`, and renders of the real view in light and dark
 - [ ] First run on a real Mac: each switch updates the window, and Polycarp starts without a restart. Check: Donovan's first install
 - [ ] A ready-made download that needs no developer tools, from a Polycarp release. Check: installs on a Mac with no command line tools
-- [ ] Voice and Browser install from the same command, and share the welcome window. Check: `install.sh` against a temporary home installs both, and the welcome window lists both
+- Moved to Silas and Tychicus: Voice and Browser install from the same command, and share the welcome window. Check: `install.sh` against a temporary home installs both, and the welcome window lists both
 
 ## Omarchy
 Retired with the Linux desktop, 2026-11-17. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.

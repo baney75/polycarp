@@ -2062,7 +2062,8 @@ mod tests {
                 }
             }
         }
-        assert!(seen >= 20, "the table built nothing ({seen} steps)");
+        // Every Build and Install step of the eight Mac source plans, counted: a plan that lost one fails here.
+        assert_eq!(seen, 20, "the Mac table's build and install steps");
     }
 
     /// A runner that runs nothing: it answers each step from a script and remembers what it was asked.
