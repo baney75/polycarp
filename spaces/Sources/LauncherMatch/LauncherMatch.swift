@@ -199,7 +199,7 @@ public enum Match {
                         let b = bonus[j]
                         let diag = h[prev + j - 1]
                         if diag > none {
-                            // Right after the last letter: the run keeps the bonus it started with.
+                            // Right after the last letter: the run keeps the best bonus it has met.
                             carried = max(run[prev + j - 1], b)
                             best = diag + letter + Int32(max(carried, consecutive))
                         }
@@ -228,11 +228,14 @@ public enum Match {
         return withUnsafeTemporaryAllocation(of: Int32.self, capacity: wide * 3) { rows in
             for start in n.starts {
                 let s = Int(start)
+                // The word runs to the next space or symbol: a typo never reaches into the next one.
+                var end = s + 1
+                while end < chars.count, isWordLetter(chars[end]) { end += 1 }
                 // One edit leaves one of the first two typed letters at the word's first or second letter.
-                let w0 = chars[s], w1 = s + 1 < chars.count ? chars[s + 1] : 0
+                let w0 = chars[s], w1 = s + 1 < end ? chars[s + 1] : 0
                 guard q[0] == w0 || q[1] == w1 || q[1] == w0 || q[0] == w1 else { continue }
                 // The word's letters from `start`, up to one more than was typed.
-                let k = min(chars.count - s, m + 1)
+                let k = min(end - s, m + 1)
                 guard k >= m - 1 else { continue }
                 // rows: two back, one back, this one; each m + 1 wide over the typed letters.
                 var r2 = 0, r1 = wide, r0 = wide * 2
@@ -257,6 +260,13 @@ public enum Match {
     }
 
     // MARK: Letters
+
+    /// A folded letter or digit, as `Kind.isWord` reads it.
+    static func isWordLetter(_ v: UInt32) -> Bool {
+        if v < 128 { return (48...57).contains(v) || (97...122).contains(v) || (65...90).contains(v) }
+        guard let u = Unicode.Scalar(v) else { return false }
+        return u.properties.isAlphabetic || u.properties.numericType != nil
+    }
 
     enum Kind {
         case space, delimiter, other, lower, upper, digit
