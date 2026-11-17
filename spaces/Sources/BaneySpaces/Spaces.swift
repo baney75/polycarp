@@ -101,7 +101,19 @@ final class Spaces {
     static let framesURL = folder.appendingPathComponent("frames.json")
     static let stateURL = folder.appendingPathComponent("state.json")
     static let layoutURL = folder.appendingPathComponent("layout.json")
+    /// Where windows were by app, title and creation order (`PlacementBook`), for after an app relaunches or the Mac
+    /// restarts. Its own file: the parking record and `layout.json` go by window number.
+    static let placementsURL = folder.appendingPathComponent("placements.json")
+    /// The key window titles are hashed under before they reach `placementsURL` (`TitleHash`).
+    static let titleKey = TitleHash.key(at: folder.appendingPathComponent("title.key"))
     private static let writer = DispatchQueue(label: "com.baney.polycarp.persist", qos: .utility)
+
+    /// What `placementsURL` holds, and each process's windows at the last look, for when it quits.
+    private var book = PlacementBook.load(from: Spaces.placementsURL)
+    private var bookByPid: [pid_t: [WindowRecord]] = [:]
+    private var bookWork: DispatchWorkItem?
+    private var bookTimer: Timer?
+    private static let bookQueue = DispatchQueue(label: "com.baney.polycarp.placements", qos: .utility)
 
     init() {
         saved = SavedFrames.load(from: Spaces.framesURL)
@@ -134,7 +146,9 @@ final class Spaces {
         noteDisplays()
         // Put every window back on the workspace it had before this launch (an update, a crash,
         // a restart), and return to the workspace you were on, on each display.
+        var byNumber = Set<WindowID>()
         if let layout = SavedLayout.load(from: Spaces.layoutURL) {
+            byNumber = Set(layout.homes(livePids: windows.mapValues(\.pid)).keys)
             model.restore(current: layout.current, home: layout.homes(livePids: windows.mapValues(\.pid)),
                           lastFocused: layout.lastFocused, displays: layout.displays ?? [:])
             // Window numbers are reused after a restart, so a waiting window must still belong
@@ -143,6 +157,11 @@ final class Spaces {
             pendingLayout = Dictionary(uniqueKeysWithValues: layout.entries
                 .filter { model.workspace(of: $0.window) == nil && server[$0.window]?.pid == $0.pid }.map { ($0.window, $0) })
         }
+        // After a restart of the Mac every window is new by number: the book knows them by app, title and order.
+        book.started(alive: windows.mapValues(\.pid), now: Date().timeIntervalSince1970)
+        placeFromBook(windows.keys.filter { !byNumber.contains($0) && pendingLayout[$0] == nil }, relaunch: false)
+        bookTimer?.invalidate()
+        bookTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.noteBook() }
         persist()
         switchTo(model.current, takeFocus: false, announce: false)
         flattenFullScreen()
@@ -160,6 +179,8 @@ final class Spaces {
         generation += 1
         watcher.removeAll()
         emptyHolder.orderOut(nil)
+        bookTimer?.invalidate()
+        bookWork?.cancel()
     }
 
     /// Brings the window list up to date. Unless `full`, the Accessibility scan (one round trip
@@ -253,6 +274,14 @@ final class Spaces {
         // unplaced in plain sight while Accessibility was out isn't new either.
         let now = Date()
         if !firstScan {
+            // A window an app restored as it started again goes back where it was (`PlacementBook`).
+            let young = added.filter { id in
+                !fromLayout.contains(id) && windows[id].flatMap { AgentOwned.startTime($0.pid) }
+                    .map { now.timeIntervalSince1970 - $0 < PlacementBook.restoreWithin } == true
+            }
+            let restored = placeFromBook(young, relaunch: true)
+            fromLayout.formUnion(restored)
+            returned = returned || restored.contains { model.workspace(of: $0).map(model.isShown) == false }
             let fresh = added.filter { !fromLayout.contains($0) && unplaced.isNew($0, known: knownWindows, now: now) }
             returned = placeClaimed(fresh) || returned
             adoptBackgroundWindows(fresh)
@@ -854,6 +883,7 @@ final class Spaces {
     /// frame from before the overview, and one whose title bar is out of reach comes back far enough to grab. Anything
     /// else stays where the person put it. Only a window on the workspace you're on.
     func correctAfterDrag(_ id: WindowID, end: DragEnd) {
+        defer { notePlaces() }
         guard active, !switching, let w = windows[id], model.workspace(of: id).map(model.isShown) == true,
               !w.isMinimized, let f = w.frame else { return }
         guard let fix = DragRelease.correction(for: f, after: end, displays: Self.dragDisplays()) else { return }
@@ -997,7 +1027,13 @@ final class Spaces {
     }
 
     /// An app that quit loses its place in the order: its process id may come back as another app.
-    func appQuit(_ pid: pid_t) { activations.forget("\(pid)") }
+    /// Its windows' last records wait in the book for it to start again.
+    func appQuit(_ pid: pid_t) {
+        activations.forget("\(pid)")
+        guard let records = bookByPid.removeValue(forKey: pid), let bundle = records.first?.bundle else { return }
+        book.quit(bundle: bundle, records: records)
+        saveBook()
+    }
 
     /// Focuses a window on this workspace, marking the activation as BaneySpaces' own.
     private func stay(on w: Window) {
@@ -2246,6 +2282,8 @@ final class Spaces {
         let layout = SavedLayout(current: model.current,
                                  entries: known + pendingLayout.values.filter { model.workspace(of: $0.window) == nil },
                                  lastFocused: model.lastFocused, displays: model.shown)
+        notePlaces()
+        scheduleBook()
         Spaces.writer.async {
             frames.save(to: Spaces.framesURL)
             layout.save(to: Spaces.layoutURL)
@@ -2253,6 +2291,100 @@ final class Spaces {
                 try? data.write(to: Spaces.stateURL, options: .atomic)
             }
         }
+    }
+
+    /// Windows the book knows (`PlacementBook`) go back to their workspace and display, at their frame: one on a
+    /// workspace in sight moves now, one elsewhere gets that frame as its parked record. `relaunch`: an app started
+    /// again while Polycarp runs; `PlacementBook.claim` keeps such a window where you are without evidence it was
+    /// restored. Windows an agent asked for keep their claim.
+    @discardableResult
+    private func placeFromBook(_ ids: [WindowID], relaunch: Bool) -> Set<WindowID> {
+        guard !book.gone.isEmpty else { return [] }
+        var live: [LiveWindow] = [], started: [WindowID: Double] = [:]
+        for id in ids {
+            guard let w = windows[id], let bundle = NSRunningApplication(processIdentifier: w.pid)?.bundleIdentifier,
+                  let start = AgentOwned.startTime(w.pid) else { continue }
+            let order = windows.values.filter { $0.pid == w.pid }.map(\.id).sorted().firstIndex(of: id) ?? 0
+            live.append(LiveWindow(id: id, bundle: bundle, title: w.title, order: order, pid: w.pid, key: Self.titleKey))
+            started[id] = start
+        }
+        let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let focused = live.contains { $0.pid == front } ? front.flatMap { Windows.focused(of: $0, in: Array(windows.values))?.id } : nil
+        let scene = PlacementBook.Scene(inSight: Dictionary(model.shown.map { ($0.value, $0.key) }, uniquingKeysWith: { a, _ in a }),
+                                        displays: Windows.displays().map { DisplayArea(key: $0.key, frame: $0.frame, visible: $0.visible) },
+                                        agentWorkspace: Self.agentWorkspace, skip: Set(claims.keys).union(AgentOwned.shared.pids), focused: focused)
+        let got = book.claim(live, started: started, relaunch: relaunch, scene: scene)
+        for p in got {
+            guard let w = windows[p.window] else { continue }
+            model.assign(p.window, to: p.workspace, focus: false)
+            if let frame = p.frame { if p.now { w.setFrame(frame) } else { saved.frames[p.window] = frame } }
+            Trace.log("window \(p.window) of \(w.appName) back on workspace \(p.workspace) by \(p.rule.rawValue)")
+        }
+        saveBook()
+        return Set(got.map(\.window))
+    }
+
+    /// The book's records follow a move to another workspace or a drag at once, from the model and the window server
+    /// (no Accessibility read), so an app quit right after still hands over where its windows are.
+    private func notePlaces() {
+        guard !bookByPid.isEmpty else { return }
+        let server = Windows.serverWindows()
+        let displays = Windows.displays().map { DisplayArea(key: $0.key, frame: $0.frame, visible: $0.visible) }
+        let now = Date().timeIntervalSince1970
+        bookByPid = bookByPid.mapValues { list in
+            list.map { r in
+                guard windows[r.window] != nil, let n = model.workspace(of: r.window), n != Self.agentWorkspace else { return r }
+                return r.moved(workspace: n, frame: saved.frames[r.window] ?? server[r.window]?.bounds, displays: displays, at: now)
+            }
+        }
+    }
+
+    /// Reads each window's title and frame off the main thread into the book, a moment after a change and every 20 s,
+    /// so a quit app or a restart finds them again. A parked window counts at its parked record, never the hiding spot.
+    private func noteBook() {
+        guard active else { return }
+        let agent = Self.agentWorkspace
+        let displays = Windows.displays().map { DisplayArea(key: $0.key, frame: $0.frame, visible: $0.visible) }
+        let screens = Windows.screens()
+        let byPid = Dictionary(grouping: windows.values, by: \.pid).mapValues { $0.sorted { $0.id < $1.id } }
+        var todo: [(w: Window, order: Int, workspace: Int, bundle: String, parked: CGRect?)] = []
+        for (pid, list) in byPid {
+            guard let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { continue }
+            for (i, w) in list.enumerated() {
+                guard let n = model.workspace(of: w.id), n != agent else { continue }
+                todo.append((w, i, n, bundle, saved.frames[w.id]))
+            }
+        }
+        Self.bookQueue.async { [weak self] in
+            let now = Date().timeIntervalSince1970
+            let records = todo.map { t -> WindowRecord in
+                var frame = t.parked ?? t.w.frame
+                if let f = frame, t.parked == nil, Geometry.isStranded(f, screens: screens) { frame = nil }
+                return WindowRecord(bundle: t.bundle, title: t.w.title, order: t.order, workspace: t.workspace, frame: frame,
+                                    displays: displays, window: t.w.id, pid: t.w.pid, at: now, key: Self.titleKey)
+            }
+            DispatchQueue.main.async {
+                guard let self, self.active else { return }
+                // An app closing its windows before it quits keeps their records for the quit.
+                self.bookByPid = PlacementBook.carry(Dictionary(grouping: records, by: \.pid), previous: self.bookByPid) {
+                    NSRunningApplication(processIdentifier: $0).map { !$0.isTerminated } ?? false
+                }
+                self.book.live = self.bookByPid.values.flatMap { $0 }
+                self.saveBook()
+            }
+        }
+    }
+
+    private func scheduleBook() {
+        bookWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.noteBook() }
+        bookWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
+    }
+
+    private func saveBook() {
+        let book = book
+        Spaces.writer.async { book.save(to: Spaces.placementsURL) }
     }
 
     /// Blocks until queued disk writes are done, for quitting.
