@@ -485,6 +485,9 @@ final class SessionController {
         case .update:
             // Answered above, before the Accessibility check.
             return .init(ok: false, error: "the updater isn't ready")
+        case .subscribe:
+            // The server hands a subscribe its own held connection (`handleSubscribe`) before it gets here.
+            return .init(ok: false, error: "subscribe is answered on its own connection, not here")
         case .sandbox:
             // Answered by the server off the main thread (`handleSandbox`); a sandbox request that
             // reaches here came through a path that doesn't know how.
