@@ -12,6 +12,8 @@ public static class PcWin {
   // DWMWA_CLOAKED: 0 shown; 1 by the app, 2 by the shell, 4 inherited.
   public static int Cloaked(long h) { int v = 0; DwmGetWindowAttribute((IntPtr)h, 14, out v, 4); return v; }
   public static int[] Rect(long h) { RECT r; GetWindowRect((IntPtr)h, out r); return new int[] { r.L, r.T, r.R, r.B }; }
+  public static bool Shown(long h) { return Exists(h) && Cloaked(h) == 0 && OnAMonitor(h); }
+  public static bool Exists(long h) { return IsWindow((IntPtr)h); }
   public static List<int[]> Monitors() {
     var all = new List<int[]>();
     EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr m, IntPtr dc, ref RECT r, IntPtr l) => { all.Add(new int[] { r.L, r.T, r.R, r.B }); return true; }, IntPtr.Zero);
@@ -40,6 +42,8 @@ $script:failures = 0
 function Check([string]$name, [bool]$ok, [string]$detail) {
     if ($ok) { "ok   $name ($detail)" } else { "FAIL $name ($detail)"; $script:failures++ }
 }
+
+function Describe([long]$h) { if ([PcWin]::Exists($h)) { "cloaked=$([PcWin]::Cloaked($h)) rect=$([PcWin]::Rect($h) -join ',')" } else { 'gone' } }
 
 # The window handle as the daemon names it: w-<decimal hwnd>.
 function WinId([long]$h) { "w-$h" }

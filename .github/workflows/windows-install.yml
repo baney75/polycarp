@@ -1,7 +1,8 @@
 name: Windows install
 # The one-step install on a clean windows-latest runner: build the MSI and its winget manifest, install with winget
-# (msiexec when the runner has no winget; the log says which), check the daemon, the sign-in entry and
-# `polycarp --version`, then uninstall and check nothing is left. Also the Windows crates' lint gate (job lint).
+# (it must be on the runner), check the daemon, the sign-in entry and `polycarp --version`, install a second build of
+# the same version over it, end the daemon with taskkill /F, then uninstall and check nothing is left and no window
+# stays hidden. Also the Windows crates' lint gate (job lint).
 on:
   push:
     branches: [main]
@@ -58,6 +59,10 @@ jobs:
       - name: Build the MSI and the winget manifest
         run: |
           spaces/platforms/windows/installer/build-msi.ps1 -Out "$env:GITHUB_WORKSPACE\dist\windows" -UrlBase http://127.0.0.1:8765
+      # A second build of the same version (its own ProductCode) to install over the first.
+      - name: Build a second MSI of the same version
+        run: |
+          spaces/platforms/windows/installer/build-msi.ps1 -Out "$env:GITHUB_WORKSPACE\dist\windows-2" -NoBuild
       # winget downloads InstallerUrl; a local server stands in for the release download.
       - name: Serve the MSI on 127.0.0.1
         run: |
@@ -66,7 +71,8 @@ jobs:
       - name: Install, check, uninstall, check
         run: |
           $msi = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\windows\Polycarp-*-x64.msi" | Select-Object -First 1
-          spaces/platforms/windows/tests/ci/install-check.ps1 -Msi $msi.FullName -Manifest "$env:GITHUB_WORKSPACE\dist\windows\winget"
+          $msi2 = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\windows-2\Polycarp-*-x64.msi" | Select-Object -First 1
+          spaces/platforms/windows/tests/ci/install-check.ps1 -Msi $msi.FullName -Manifest "$env:GITHUB_WORKSPACE\dist\windows\winget" -Msi2 $msi2.FullName -Manifest2 "$env:GITHUB_WORKSPACE\dist\windows-2\winget" -RequireWinget
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -74,5 +80,6 @@ jobs:
           path: |
             dist/windows/*.msi
             dist/windows/winget
+            dist/windows-2/*.msi
             ${{ runner.temp }}/*.log
           if-no-files-found: ignore
