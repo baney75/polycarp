@@ -5,7 +5,7 @@ Each one is a TOML file named after its theme. They are built into the `polycarp
 work with no files on disk.
 
 Built-in themes: `polycarp` (the default), `still-water`, `evening`, `parchment`, `blocks`, `calm`,
-`gruvbox`, `catppuccin`, `everforest`. The last three come from other projects; see
+`gruvbox`, `catppuccin`, `everforest`, `flexoki`, `atom-one`, `ayu`. The last six come from other projects; see
 [Themes from other projects](#themes-from-other-projects).
 
 Every theme in this folder must validate. Run `polycarp theme validate themes/<name>.toml` after any edit.
@@ -23,6 +23,9 @@ scheme gives `[light]` and the dark one `[dark]`. The importer moved some colors
 | `gruvbox` | `base24/gruvbox-light`, `base24/gruvbox-dark` | [morhetz/gruvbox](https://github.com/morhetz/gruvbox) | MIT/X11 (stated in its README) |
 | `catppuccin` | `base16/catppuccin-latte`, `base16/catppuccin-mocha` | [catppuccin/catppuccin](https://github.com/catppuccin/catppuccin) | MIT, Copyright (c) 2021 Catppuccin |
 | `everforest` | `base16/everforest-light-medium`, `base16/everforest-dark-medium` | [sainnhe/everforest](https://github.com/sainnhe/everforest) | MIT, Copyright (c) 2019 sainnhe |
+| `flexoki` | `base16/flexoki-light`, `base16/flexoki-dark` | [kepano/flexoki](https://github.com/kepano/flexoki) | MIT, Copyright (c) 2023 Steph Ango |
+| `atom-one` | `base24/one-light`, `base24/one-dark` | [atom/atom](https://github.com/atom/atom) (`packages/one-light-syntax`, `packages/one-dark-syntax`) | MIT, Copyright (c) 2011-2022 GitHub Inc. |
+| `ayu` | `base24/ayu-light`, `base24/ayu-dark` | [ayu-theme/ayu-colors](https://github.com/ayu-theme/ayu-colors) | MIT, Copyright (c) Konstantin Pschera |
 
 ## Your own themes
 

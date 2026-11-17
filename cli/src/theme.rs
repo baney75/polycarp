@@ -80,7 +80,7 @@ Exit codes: 0 ok, 1 refused or invalid, 2 usage. Agents: `polycarp mcp` serves t
 commands as MCP tools, and `polycarp theme schema` lists every field.
 
 Built-in themes: polycarp (default), still-water, evening, parchment, blocks, calm, gruvbox,
-catppuccin, everforest.
+catppuccin, everforest, flexoki, atom-one, ayu.
 Your own themes live in <config>/themes/<name>.toml. The config folder is
 $POLYCARP_CONFIG_DIR if set (an absolute path), else the folder `theme folder --pin` recorded,
 else $XDG_CONFIG_HOME/polycarp (default ~/.config/polycarp), or %APPDATA%\\Polycarp on Windows.

@@ -105,6 +105,9 @@ tile to Finder to save its file, or drop a picture to take its colors. See
 | `gruvbox` | Gruvbox's retro warm browns with faded reds, yellows and greens |
 | `catppuccin` | Catppuccin's soft pastels: Latte in light mode, Mocha in dark |
 | `everforest` | Everforest's soft greens on warm paper and deep forest |
+| `flexoki` | Flexoki's inky colors on warm paper, made for reading |
+| `atom-one` | Atom's One Light and One Dark: clean greys with clear, bright code colors |
+| `ayu` | Ayu Light and Ayu Dark: bright and simple |
 
 Look at any of them on realistic screens before you choose:
 
