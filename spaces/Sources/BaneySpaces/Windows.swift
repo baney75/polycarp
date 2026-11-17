@@ -441,6 +441,8 @@ enum Windows {
                   let n = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value, !moving.contains(n),
                   // The agent cursor's overlay sits right over its window and is clear: it hides nothing.
                   !CursorOverlayWindows.contains(n),
+                  // A window border is clear inside: it hides nothing either.
+                  !BorderOverlayWindows.contains(n),
                   !leaving.contains((w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? -1) else { return nil }
             return (w[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }
         }

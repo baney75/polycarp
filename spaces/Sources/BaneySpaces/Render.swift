@@ -67,6 +67,18 @@ enum Render {
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SETTINGS_TIMING"].flatMap(Int.init) {
             return SettingsTiming.run(rounds: r)
         }
+        // BANEYSPACES_BORDER_TARGET=<seconds> is the window the border lag probe below moves (its own child process).
+        if let s = ProcessInfo.processInfo.environment["BANEYSPACES_BORDER_TARGET"].flatMap(Double.init) {
+            return BorderLagProbe.target(seconds: s)
+        }
+        // BANEYSPACES_RENDER_BORDER_LAG=<seconds> measures how far a window border trails its moving window.
+        if let s = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_BORDER_LAG"].flatMap(Double.init) {
+            return BorderLagProbe.run(seconds: s, folder: folder)
+        }
+        // BANEYSPACES_RENDER_BORDERS=1 draws only window-borders.png, in the theme BANEYSPACES_RENDER_POLYCARP names.
+        if ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_BORDERS"] == "1" {
+            return save(BorderSample(look: Appearance.shared.look), "window-borders.png", BorderSample.size) ? 0 : 1
+        }
         // BANEYSPACES_RENDER_THEME_EDITOR=<user theme> draws only the theme editor and the Appearance tab, light and dark.
         if let name = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME_EDITOR"], !name.isEmpty {
             return ThemeEditorRender.run(name) { save($0, $1, $2) }

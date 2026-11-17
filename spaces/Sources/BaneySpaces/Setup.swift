@@ -1048,6 +1048,20 @@ struct SetupView: View {
                 .pickerStyle(.segmented).labelsHidden().frame(width: 200)
             }
         }
+
+        SettingsGroup("Window borders") {
+            SettingsRow("Focused window") {
+                Toggle("Border around the focused window", isOn: binding({ appearance.settings.windowBorders }, { appearance.settings.windowBorders = $0 }))
+                    .toggleStyle(.switch).labelsHidden()
+            }
+            SettingsRow("Other windows") {
+                Toggle("Border around every other window", isOn: binding({ appearance.settings.otherWindowBorders }, { appearance.settings.otherWindowBorders = $0 }))
+                    .toggleStyle(.switch).labelsHidden()
+                    .disabled(!appearance.settings.windowBorders)
+            }
+            SettingsNote("Drawn in the theme's accent around the window you're using, and its border color around the rest. "
+                         + "The width and corners come from the theme. Polycarp draws them itself; no app is changed.")
+        }
     }
 
     /// Auto and the 22 palettes, each with its swatch.
