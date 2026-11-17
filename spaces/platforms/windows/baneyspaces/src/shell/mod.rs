@@ -4,6 +4,7 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
 pub mod bar;
+pub mod launcher;
 pub mod theme;
 #[cfg(windows)]
 mod win;
