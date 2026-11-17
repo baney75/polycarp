@@ -119,7 +119,7 @@ public struct SemVer: Comparable, Sendable, CustomStringConvertible {
 
     private static func isNumber<S: StringProtocol>(_ s: S) -> Bool { !s.isEmpty && s.allSatisfy { $0.isASCII && $0.isNumber } }
 
-    private static func identifiers<S: StringProtocol>(_ s: S) -> [String]? {
+    private static func identifiers(_ s: Substring) -> [String]? {
         let ids = s.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
         return ids.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") } }) ? ids : nil
     }
