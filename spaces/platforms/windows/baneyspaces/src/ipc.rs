@@ -13,7 +13,7 @@ pub fn down() -> Envelope {
 /// wait for one instead of calling that "not running". Opened for identification only, so a server
 /// that is not ours cannot act as this user.
 #[cfg(windows)]
-fn open(paths: &Paths) -> Result<std::fs::File, Envelope> {
+pub(crate) fn open(paths: &Paths) -> Result<std::fs::File, Envelope> {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY};
