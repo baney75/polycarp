@@ -168,6 +168,7 @@ jobs:
         with: { workspaces: spaces, key: spaces-windows }
       # The press test posts keys into bs-testapp's text box and reads them back, so the app is built first.
       - name: Core and the Windows daemon, built for Windows
+        shell: bash
         run: |
           cargo build --locked -p baneyspaces-testapp
           cargo test --locked -p baneyspaces-core -p baneyspaces-windows -p baneyspaces-testapp
