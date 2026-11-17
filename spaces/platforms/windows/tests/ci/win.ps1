@@ -1,17 +1,29 @@
 # What the CI checks read from Windows itself, never from Polycarp: a window's DWM cloak, its frame, the monitors.
+# A read that fails throws, so a destroyed window can never read as shown (cloak 0, a rect at 0,0).
 # Dot-source it: `. $PSScriptRoot\win.ps1`. Kept small so other CI scripts can share it.
 Add-Type -TypeDefinition @'
 using System; using System.Runtime.InteropServices; using System.Collections.Generic;
 public static class PcWin {
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int sz);
-  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll", SetLastError = true)] static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonProc p, IntPtr l);
   delegate bool MonProc(IntPtr m, IntPtr dc, ref RECT r, IntPtr l);
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
   // DWMWA_CLOAKED: 0 shown; 1 by the app, 2 by the shell, 4 inherited.
-  public static int Cloaked(long h) { int v = 0; DwmGetWindowAttribute((IntPtr)h, 14, out v, 4); return v; }
-  public static int[] Rect(long h) { RECT r; GetWindowRect((IntPtr)h, out r); return new int[] { r.L, r.T, r.R, r.B }; }
+  public static int Cloaked(long h) {
+    int v, hr = DwmGetWindowAttribute((IntPtr)h, 14, out v, 4);
+    if (hr != 0) throw new InvalidOperationException("DwmGetWindowAttribute(" + h + ") failed: 0x" + hr.ToString("X8"));
+    return v;
+  }
+  public static int[] Rect(long h) {
+    RECT r;
+    if (!GetWindowRect((IntPtr)h, out r)) throw new InvalidOperationException("GetWindowRect(" + h + ") failed: " + Marshal.GetLastWin32Error());
+    return new int[] { r.L, r.T, r.R, r.B };
+  }
+  // Shown: the window still exists, is not cloaked and its center is on a monitor.
+  public static bool Shown(long h) { return Exists(h) && Cloaked(h) == 0 && OnAMonitor(h); }
+  public static bool Exists(long h) { return IsWindow((IntPtr)h); }
   public static List<int[]> Monitors() {
     var all = new List<int[]>();
     EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr m, IntPtr dc, ref RECT r, IntPtr l) => { all.Add(new int[] { r.L, r.T, r.R, r.B }); return true; }, IntPtr.Zero);
@@ -40,6 +52,9 @@ $script:failures = 0
 function Check([string]$name, [bool]$ok, [string]$detail) {
     if ($ok) { "ok   $name ($detail)" } else { "FAIL $name ($detail)"; $script:failures++ }
 }
+
+# What a window reads as, for a check's detail line; "gone" once it is destroyed.
+function Describe([long]$h) { if ([PcWin]::Exists($h)) { "cloaked=$([PcWin]::Cloaked($h)) rect=$([PcWin]::Rect($h) -join ',')" } else { 'gone' } }
 
 # The window handle as the daemon names it: w-<decimal hwnd>.
 function WinId([long]$h) { "w-$h" }

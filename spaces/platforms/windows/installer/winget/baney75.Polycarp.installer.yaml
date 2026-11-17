@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
 # build-msi.ps1 writes a copy with the real InstallerSha256 (and InstallerUrl, when given one) next to the MSI it built.
-# The all-zero hash and ProductCode below are placeholders (build-msi.ps1 reads the real ProductCode from the MSI; winget
-# needs it to find the installed package again for upgrade and uninstall): this file is the template, not a manifest to submit as is.
+# The all-zero hash and ProductCode below are placeholders: this file is the template, not a manifest to submit as is.
+# build-msi.ps1 picks a new ProductCode for each build and passes it to WiX with -d ProductCode; winget needs it to find the installed package again for upgrade and uninstall.
 PackageIdentifier: baney75.Polycarp
 PackageVersion: 0.1.0
 InstallerType: wix

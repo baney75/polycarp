@@ -175,8 +175,12 @@ a per-user package (no administrator prompt) that puts `baneyspaces.exe`, `baney
 `%LOCALAPPDATA%\Programs\Polycarp`, adds that folder to your PATH, starts the daemon at once and at every sign-in
 (`HKCU\...\Run\Polycarp`: `baneyspacesw.exe daemon --background`). `baneyspacesw` is a windowed program that runs
 `baneyspaces` with no console, so nothing flashes. Uninstall (and an upgrade) first runs `baneyspacesw stop`, which
-puts every hidden window back and waits up to 10 s for the daemon to exit. `%LOCALAPPDATA%\BaneySpaces` (state and
-logs) stays.
+puts every hidden window back and waits up to 10 s for the daemon's process to exit. An uninstall then runs
+`baneyspacesw restore`, which shows every window `state.json` still lists, agent windows too: a daemon that crashed or
+was ended with `taskkill /F` put nothing back, and after an uninstall no next start will. If a listed window that still
+exists cannot be shown, `restore` exits 3 and the uninstall fails with Polycarp still installed; run
+`baneyspaces restore` to see which, close that app, and uninstall again. A rebuilt MSI of the same version replaces the
+installed one. `%LOCALAPPDATA%\BaneySpaces` (state and logs) stays.
 
 ```powershell
 dotnet tool install --global wix --version 5.0.2    # WiX 6 and later tie their license to a paid maintenance fee
@@ -190,9 +194,10 @@ exe and then the MSI. `installer/winget/` is the manifest template (version 0.1.
 
 CI (`.github/workflows/windows-install.yml`, on `windows-latest`) builds the MSI, installs it through winget from a
 local manifest (or `msiexec /qn` if the runner has no winget; the log names which), and checks within 10 s that the
-daemon runs, the sign-in entry names an installed exe and `polycarp --version` exits 0 from the new PATH; then it
-uninstalls and checks no process, sign-in entry, PATH entry or file is left, and that a window cloaked on workspace 2
-was shown again.
+daemon runs, the sign-in entry names an installed exe and `polycarp --version` exits 0 from the new PATH. It installs a
+second build of the same version over it and checks for exit 0, one registered product, one daemon and a cloaked window
+shown again. Then it cloaks a window, ends the daemon with `taskkill /F`, uninstalls, and checks no process, sign-in
+entry, PATH entry or file is left and that the window still exists, is not cloaked and is on a monitor.
 
 ## Build and test
 

@@ -4,15 +4,18 @@
   %LOCALAPPDATA%\Programs\Polycarp, added to your PATH, started at once and at every sign-in (HKCU Run).
 
   Uninstall (and an upgrade) first runs `baneyspacesw stop`, which puts every hidden window back and waits for the
-  daemon to exit, so no window is left cloaked and no file is held open. state.json and the logs in
-  %LOCALAPPDATA%\BaneySpaces are yours and stay.
+  daemon to exit, so no file is held open. An uninstall then runs `baneyspacesw restore`, which shows what state.json
+  still lists (a daemon that crashed or was killed put nothing back), so no window is left cloaked. state.json and the
+  logs in %LOCALAPPDATA%\BaneySpaces are yours and stay.
 
   Built by build-msi.ps1 with WiX 5.0.2 (the v4 schema). Unsigned: see README.md, "Install", for the signing hook.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Polycarp" Manufacturer="Donovan Baney" Version="$(Version)" Language="1033"
            UpgradeCode="EF27631F-61D9-4BC6-BAC2-896014A8ED96" ProductCode="$(ProductCode)" Scope="perUser" Compressed="yes">
-    <MajorUpgrade DowngradeErrorMessage="A newer Polycarp is already installed." />
+    <!-- Every build has a new ProductCode and the crate's version, so a rebuilt same-version MSI must count as an
+         upgrade too: otherwise it installs beside the first one and StopDaemon never runs. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer Polycarp is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/baney75/polycarp" />
     <Property Id="ARPNOMODIFY" Value="1" />
@@ -48,10 +51,16 @@
     <!-- Synchronous and its code ignored: no daemon running is fine. Before InstallValidate, so the files are free when
          Windows checks them. On an upgrade the old copy at the same path is the one asked. -->
     <CustomAction Id="StopDaemon" FileRef="BaneyspacesWExe" ExeCommand="stop" Execute="immediate" Return="ignore" />
+    <!-- Its code is checked: when a listed window that still exists cannot be shown (exit 3), or a daemon outlived stop
+         (exit 1), the uninstall fails and Polycarp stays installed: removing it would leave a window hidden with nothing
+         to bring it back.
+         Not on an upgrade: the new daemon's start restores the list. -->
+    <CustomAction Id="RestoreWindows" FileRef="BaneyspacesWExe" ExeCommand="restore" Execute="immediate" Return="check" />
     <!-- After the files are in place; the launcher waits until the daemon answers, and the installer does not wait for it. -->
     <CustomAction Id="StartDaemon" FileRef="BaneyspacesWExe" ExeCommand="daemon --background" Execute="immediate" Return="asyncNoWait" />
     <InstallExecuteSequence>
       <Custom Action="StopDaemon" Before="InstallValidate" Condition="Installed OR WIX_UPGRADE_DETECTED" />
+      <Custom Action="RestoreWindows" After="StopDaemon" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="StartDaemon" After="InstallFinalize" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
     </InstallExecuteSequence>
   </Package>
