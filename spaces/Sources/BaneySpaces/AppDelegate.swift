@@ -481,6 +481,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Wait a moment for the first look (a stat and a small read) so a theme file that is already there
         // draws from the first panel on; a slow disk costs 0.15 s at most and the theme then arrives as any change does.
         if case .theme(let t) = watcher.start(firstLookWithin: 0.15) { Appearance.shared.usePolycarp(t) }
+        // Settings › Appearance › "Theme sets the desktop picture" (off by default): looks once now, then on each change.
+        ThemeWallpaperApplier.shared.start()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self
