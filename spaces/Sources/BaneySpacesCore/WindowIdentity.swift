@@ -152,6 +152,8 @@ public struct PlacementBook: Codable, Equatable, Sendable {
     public var live: [WindowRecord] = []
     /// Windows of apps that quit (or did not come back yet after a restart), waiting for them.
     public var gone: [WindowRecord] = []
+    /// Windows from displays that went away, waiting for the same display to come back.
+    public var stash = DisplayStash()
 
     /// How long a quit app's windows wait for it.
     public static let keepFor: Double = 7 * 24 * 3600
@@ -159,8 +161,18 @@ public struct PlacementBook: Codable, Equatable, Sendable {
     /// are new ones and join the workspace you are on.
     public static let restoreWithin: Double = 60
 
-    public init(live: [WindowRecord] = [], gone: [WindowRecord] = []) {
-        self.live = live; self.gone = gone
+    public init(live: [WindowRecord] = [], gone: [WindowRecord] = [], stash: DisplayStash = DisplayStash()) {
+        self.live = live; self.gone = gone; self.stash = stash
+    }
+
+    private enum CodingKeys: String, CodingKey { case live, gone, stash }
+
+    /// A file written before a part was added still loads, with that part empty.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        live = try c.decodeIfPresent([WindowRecord].self, forKey: .live) ?? []
+        gone = try c.decodeIfPresent([WindowRecord].self, forKey: .gone) ?? []
+        stash = try c.decodeIfPresent(DisplayStash.self, forKey: .stash) ?? DisplayStash()
     }
 
     /// An app quit: its windows' last records wait for it, in place of older ones for the same app.
