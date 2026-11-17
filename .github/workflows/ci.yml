@@ -246,6 +246,8 @@ jobs:
         run: cargo build --release --locked -p baneyspaces-windows --features baneyspaces-windows/test-ops
       - name: Switch bench
         shell: powershell
+        # The bench takes a few minutes; a hang ends the step here, so the artifact below still uploads.
+        timeout-minutes: 15
         run: platforms/windows/tests/ci/switch-bench.ps1 -Bin target/release -Out ${{ runner.temp }}/speed -Speed spec/speed.json
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
