@@ -46,3 +46,23 @@ The pipe itself is the control pipe (`spec/cli.md`), open only to your account.
 
 The shell sends ordinary one-line requests on new connections (`switch`, `move`), the same ones the CLI sends. It never
 changes the model any other way.
+
+## The launcher
+
+The Windows shell carries the launcher. It ranks what you type by `spec/launcher.md`; this section is only where its
+entries come from and what the window does.
+
+- Key: Ctrl+Win+K opens and closes it. If another program holds that key, Alt+Space does; the shell log says which
+  (`launcher key ...`). `baneyspaces shell launcher` opens it too.
+- Where: centered on the work area of the display with the window in front, a fifth of the way down.
+- Entries: the apps in the Start menu's Apps folder (read when the shell starts and again on an open at most once a
+  minute), the feed's `windows` (found by title and by app), workspaces 1 to 9 (found by number and by the apps on
+  them) and two commands: show or hide the agent workspace, and quit the bar and launcher.
+- With nothing typed it lists your windows in the feed's order.
+- Keys: typing edits the query, Backspace takes one character, Ctrl+Backspace clears, Up and Down move the selection
+  and wrap, Enter or a click picks, Esc closes. Clicking anywhere else closes it.
+- A pick: an app starts through `shell:AppsFolder\<its parsing name>`; a window sends `switch` to its workspace and
+  then comes to the front; a workspace sends `switch`; the agent command sends `agent_toggle`.
+- Timing (R-L13): each keystroke writes `launcher key->paint=<ms> results=<n>` to the shell log, from the key's arrival
+  to the end of the frame that draws its rows. Opening writes `launcher shown by key|command ... first frame <ms>
+  results=<n>`. Neither line holds the query, a title or a name.
