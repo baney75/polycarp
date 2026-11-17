@@ -49,6 +49,18 @@ static KB_THREAD: AtomicU32 = AtomicU32::new(0);
 static EV_THREAD: AtomicU32 = AtomicU32::new(0);
 static SESSION_THREAD: AtomicU32 = AtomicU32::new(0);
 
+/// Test builds only (the `test-ops` feature and `BANEYSPACES_TEST_OPS`): an injected key or click carrying this
+/// mark in `dwExtraInfo` counts as typed by a person. A CI runner has no hardware keyboard, so the live suite
+/// types with `SendInput` and this mark; every other injected input is still ignored. A release build never sets
+/// `TEST_INPUT`, whatever the environment holds.
+pub const TEST_INPUT_MARK: usize = 0xB5_7E57;
+static TEST_INPUT: AtomicBool = AtomicBool::new(false);
+
+/// Was this event injected by software (not a person), as far as the hooks are concerned?
+fn injected_by_software(injected: bool, extra: usize) -> bool {
+    injected && !(TEST_INPUT.load(Ordering::Relaxed) && extra == TEST_INPUT_MARK)
+}
+
 /// Sign-out and shutdown, as the hidden window hears them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EndSession {
@@ -83,7 +95,7 @@ pub fn reset_keys() {
 unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let k = &*(lp as *const KBDLLHOOKSTRUCT);
-        let injected = k.flags & LLKHF_INJECTED != 0;
+        let injected = injected_by_software(k.flags & LLKHF_INJECTED != 0, k.dwExtraInfo);
         let vk = k.vkCode;
         let down = wp as u32 == WM_KEYDOWN || wp as u32 == WM_SYSKEYDOWN;
         let up = wp as u32 == WM_KEYUP || wp as u32 == WM_SYSKEYUP;
@@ -121,7 +133,7 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
 unsafe extern "system" fn mouse(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let m = &*(lp as *const MSLLHOOKSTRUCT);
-        if crate::focus::is_a_press(wp as u32, m.flags & LLMHF_INJECTED != 0) {
+        if crate::focus::is_a_press(wp as u32, injected_by_software(m.flags & LLMHF_INJECTED != 0, m.dwExtraInfo)) {
             if let Some(tx) = TX.get() {
                 let _ = tx.send(Msg::Press { x: m.pt.x, y: m.pt.y });
             }
@@ -203,6 +215,7 @@ pub fn start(tx: Sender<Msg>, table: Vec<Binding>, on_end: fn(EndSession)) -> Ve
     let _ = TX.set(tx);
     let _ = TABLE.set(table);
     let _ = ON_END.set(on_end);
+    TEST_INPUT.store(crate::apps::test_ops_enabled(), Ordering::Relaxed);
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
     let r1 = ready_tx.clone();
     let r3 = ready_tx.clone();
