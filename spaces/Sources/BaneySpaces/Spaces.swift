@@ -1070,10 +1070,11 @@ final class Spaces {
         // put away, parked or hidden. That isn't you picking it: stay here, and an app the
         // activation unhid goes back into hiding. Following it pulled you off the workspace you
         // had just gone to, Finder or Ghostty a moment after you arrived.
-        let putAway = (saved.frames[w.id] != nil && parkedPids().contains(pid)) || saved.hiddenApps.contains(pid)
         // Timed from when the activation arrived: one that came mid-switch is only looked at once
         // the switch, parking included, is over.
-        if putAway, activatedAt.timeIntervalSince(max(leftAt, handedOffAt)) < 0.5 {
+        if HandOff.cameForwardOnItsOwn(parked: saved.frames[w.id] != nil && parkedPids().contains(pid),
+                                       hiddenByUs: saved.hiddenApps.contains(pid),
+                                       sinceHandOff: activatedAt.timeIntervalSince(max(leftAt, handedOffAt))) {
             Trace.log("followFocus stayed: \(w.appName) came forward after the front app left")
             if let id = model.lastFocused[model.current], let t = windows[id], saved.frames[id] == nil, t.pid != pid {
                 stay(on: t)
@@ -1096,7 +1097,7 @@ final class Spaces {
         let gen = generation
         following += 1
         let ticket = following
-        waitUntil(timeout: Self.newWindowGrace, interval: 0.02, {
+        waitUntil(timeout: NewWindowGrace.seconds, interval: 0.02, {
             !Windows.standardIDs(of: pid).subtracting(known).isEmpty
         }) { [self] in
             guard following == ticket, gen == generation, active, !switching,
@@ -1142,11 +1143,7 @@ final class Spaces {
         }
     }
 
-    /// How long an app that came forward gets to open a window here before BaneySpaces follows
-    /// it to its workspace. Long enough for an app to make a window after activating, short
-    /// enough that a Dock click on an app elsewhere still feels immediate.
-    private static let newWindowGrace: TimeInterval = 0.2
-    /// Counts followFocus calls; one waiting out `newWindowGrace` stands down for a newer one.
+    /// Counts followFocus calls; one waiting out `NewWindowGrace` stands down for a newer one.
     private var following = 0
 
     /// The app has windows on other workspaces that aren't out of view: it was unhidden.
@@ -1758,7 +1755,8 @@ final class Spaces {
                 // brings back its windows from other workspaces.
                 takeFocus(finderFallback: !how.hideApps.contains(Self.finderPid ?? -1))
             }
-            if moveFocus, !deferred.isEmpty || leavingParked != nil || target == nil { handedOffAt = Date() }
+            if HandOff.handsOff(movesFocus: moveFocus, hidesFrontApp: !deferred.isEmpty,
+                                leavesParkedFront: leavingParked != nil, hasWindowToFocus: target != nil) { handedOffAt = Date() }
             clock.mark(.done)
             ScreenHold.end()
             // Only a switch that really brought an app forward vouches for the next one's idea of
