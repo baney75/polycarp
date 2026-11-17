@@ -3408,7 +3408,7 @@ fn on_brings_the_last_theme_back_and_set_accent_change_turn_it_on_and_say_so() {
     b.ok(&["set", "evening"]);
     b.ok(&["off"]);
     assert!(b.ok(&["on"]).contains("theme: evening"));
-    assert_eq!(current_files(&b).len(), 5);
+    assert_eq!(current_files(&b).len(), 6);
     assert!(b.ok(&["on"]).contains("already on"));
     assert!(!fs::read_to_string(b.state_file())
         .unwrap()
@@ -3438,7 +3438,7 @@ fn reset_says_it_turns_the_theme_on_with_the_default() {
     assert!(said.contains("turned it on"), "{said}");
     assert_eq!(b.json(&["current", "--json"])["enabled"], true);
     assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp");
-    assert_eq!(current_files(&b).len(), 5);
+    assert_eq!(current_files(&b).len(), 6);
 }
 
 #[test]
@@ -3509,7 +3509,7 @@ fn off_and_on_bring_current_into_line_even_when_the_state_is_unchanged() {
     let n = b.history_count();
     let said = b.ok(&["on"]);
     assert!(said.contains("already on"), "{said}");
-    assert_eq!(current_files(&b).len(), 5);
+    assert_eq!(current_files(&b).len(), 6);
     assert!(!said.contains("config.toml"), "{said}");
     assert_eq!(b.history_count(), n);
 }
@@ -3609,7 +3609,7 @@ fn only_an_activating_apply_and_a_change_on_a_user_theme_turn_the_theme_on() {
     let v: Value = serde_json::from_str(&out(&o)).unwrap();
     assert!(v["data"]["notes"].to_string().contains("was off"), "{v}");
     assert_eq!(b.json(&["current", "--json"])["enabled"], true);
-    assert_eq!(current_files(&b).len(), 5);
+    assert_eq!(current_files(&b).len(), 6);
 }
 
 #[test]
@@ -4067,7 +4067,7 @@ fn png_preview_writes_one_image_per_product_and_mode() {
     let (c, v) = b.jrun(&["preview", "calm", "--format", "png"]);
     assert_eq!(c, 0, "{v}");
     let images = v["data"]["images"].as_array().unwrap();
-    assert_eq!(images.len(), 8);
+    assert_eq!(images.len(), 10);
     let mut seen = std::collections::BTreeSet::new();
     for i in images {
         let p = PathBuf::from(i["path"].as_str().unwrap());
@@ -4083,7 +4083,7 @@ fn png_preview_writes_one_image_per_product_and_mode() {
             )
         );
     }
-    assert_eq!(seen.len(), 8, "every image is different");
+    assert_eq!(seen.len(), 10, "every image is different");
 
     let (c, v) = b.jrun(&[
         "preview",
