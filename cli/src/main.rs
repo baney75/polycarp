@@ -13,10 +13,6 @@ use std::time::{Duration, Instant};
 mod browsers;
 mod features;
 mod mcp;
-// The theme library, kept as a module until it moves into its own crate.
-#[allow(dead_code, unused_imports)]
-#[path = "polycarp_theme/lib.rs"]
-mod polycarp_theme;
 mod theme;
 mod update;
 mod version;

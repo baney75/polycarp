@@ -10,3 +10,4 @@ dist/
 dist-chrome/
 .DS_Store
 core/*/target/
+crates/*/target/

@@ -1,0 +1,13 @@
+[package]
+name = "polycarp-theme"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT"
+description = "The Polycarp theme format: schema, checks, contrast, resolving, and the theme.json and CSS text"
+publish = false
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.2.0"

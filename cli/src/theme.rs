@@ -22,16 +22,14 @@ mod picture;
 mod png;
 mod preview;
 
-use crate::polycarp_theme::{
+use polycarp_theme::{
     apply_accents, check_value, color_lines, css, ext_of, fields, is_builtin, is_hex, load_raw,
     parse_toml, read_theme_file, resolve_doc, resolve_name, resolved_json, schema, shared_vars,
     theme_json, valid_name, Full, Kind, Resolved, State as Choice, Themes, BUILTINS, DEFAULT_THEME,
     MAX_DEPTH, MODES, SECTIONS, SURFACES,
 };
 // What the Omarchy code in `omarchy` uses from the theme library; it reads through `super::*`.
-use crate::polycarp_theme::{
-    colors_of, contrast, merge, pairs, without_meta, Colors, ROLES, TEXT_MIN,
-};
+use polycarp_theme::{colors_of, contrast, merge, pairs, without_meta, Colors, ROLES, TEXT_MIN};
 
 /// What `theme off` can say: the state of the files, which it checked. Whether an app changes,
 /// and when, is up to that app, so the text says only what the apps are expected to do.

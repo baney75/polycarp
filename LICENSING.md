@@ -3,6 +3,7 @@
 | Directory | License |
 | --- | --- |
 | `cli/` | MIT |
+| `crates/polycarp-theme/` | MIT |
 | `spaces/` | MIT |
 | `voice/` | MIT |
 | `browser/` | AGPL-3.0 |
