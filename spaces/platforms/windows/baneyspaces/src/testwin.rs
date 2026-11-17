@@ -13,7 +13,7 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+unsafe extern "system" fn window_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     if m == WM_DESTROY {
         PostQuitMessage(0);
         return 0;
@@ -27,7 +27,7 @@ fn register() {
         let name = wide(CLASS);
         let wc = WNDCLASSW {
             style: 0,
-            lpfnWndProc: Some(proc),
+            lpfnWndProc: Some(window_proc),
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: GetModuleHandleW(std::ptr::null()),
@@ -38,7 +38,6 @@ fn register() {
             lpszClassName: name.as_ptr(),
         };
         RegisterClassW(&wc);
-        std::mem::forget(name);
     });
 }
 
