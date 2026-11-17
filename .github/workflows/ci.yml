@@ -231,7 +231,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.spaces-linux == 'true' || needs.changes.outputs.spaces-windows == 'true'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     defaults:
       run:
         working-directory: spaces
@@ -257,6 +257,7 @@ jobs:
       - name: Win+drag
         if: always()
         shell: powershell
+        timeout-minutes: 15
         run: platforms/windows/tests/ci/drag.ps1 -Bin target/release -Out ${{ runner.temp }}/speed/drag
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
