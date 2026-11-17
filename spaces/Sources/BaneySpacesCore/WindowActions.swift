@@ -163,18 +163,20 @@ public enum WindowLayout {
         return fit(CGRect(x: (r.midX - w / 2).rounded(), y: (r.midY - h / 2).rounded(), width: w, height: h), in: area)
     }
 
-    /// The window to `d` of `from`, among `others` (front to back): the nearest whose middle lies that way, where a
-    /// window beside it on the other axis counts nearer than one off to the side. Nil when there's none.
+    /// The window to `d` of `from`, among `others` (front to back): the nearest whose middle lies that way at least as
+    /// far as it lies off to the side, where a window beside it on the other axis counts nearer than one off to the side.
+    /// Nil when there's none.
     public static func neighbor(of from: CGRect, toward d: Direction, among others: [(id: WindowID, frame: CGRect)]) -> WindowID? {
         func score(_ r: CGRect) -> CGFloat? {
-            let ahead: CGFloat, off: CGFloat
+            let ahead: CGFloat, side: CGFloat, off: CGFloat
             switch d {
-            case .left: ahead = from.midX - r.midX; off = gap(from.minY, from.maxY, r.minY, r.maxY)
-            case .right: ahead = r.midX - from.midX; off = gap(from.minY, from.maxY, r.minY, r.maxY)
-            case .up: ahead = from.midY - r.midY; off = gap(from.minX, from.maxX, r.minX, r.maxX)
-            case .down: ahead = r.midY - from.midY; off = gap(from.minX, from.maxX, r.minX, r.maxX)
+            case .left: ahead = from.midX - r.midX; side = r.midY - from.midY; off = gap(from.minY, from.maxY, r.minY, r.maxY)
+            case .right: ahead = r.midX - from.midX; side = r.midY - from.midY; off = gap(from.minY, from.maxY, r.minY, r.maxY)
+            case .up: ahead = from.midY - r.midY; side = r.midX - from.midX; off = gap(from.minX, from.maxX, r.minX, r.maxX)
+            case .down: ahead = r.midY - from.midY; side = r.midX - from.midX; off = gap(from.minX, from.maxX, r.minX, r.maxX)
             }
-            return ahead > 1 ? ahead + 3 * off : nil
+            // A window mostly below is not "left" because its middle sits a little left.
+            return ahead > 1 && ahead >= abs(side) ? ahead + 3 * off : nil
         }
         var best: (WindowID, CGFloat)?
         for o in others {
