@@ -740,7 +740,7 @@ fn an_agent_iterates_on_a_new_theme_without_touching_the_one_in_use() {
     );
     assert_eq!(r["isError"], false, "{r}");
     let images = data(&r)["images"].as_array().unwrap();
-    assert_eq!(images.len(), 4, "one per product in dark mode");
+    assert_eq!(images.len(), 5, "one per product in dark mode");
     for i in images {
         let p = PathBuf::from(i["path"].as_str().unwrap());
         assert!(p.starts_with(sb.cfg().join("previews")));
