@@ -287,6 +287,7 @@ for its own `on_accent`: setting either one keeps the product's accent pair as t
 - `config.toml`: your choices. `[appearance]` holds `theme`, `mode`, `accent_light` and `accent_dark`, and `enabled = false` while the theme is off (the key is left out when it is on).
 - `current/theme.json`: the resolved theme for every product. Whether motion is reduced is in `surfaces.<surface>.motion.reduced`; there is no top-level `reduced_motion`. Each product's `light` and `dark` hold the 13 colors and the `terminal`, `syntax` and `diff` objects, every key filled in.
 - `current/spaces.css`, `voice.css`, `browser.css`, `site.css`, `studio.css`: the same, as CSS variables. Code colors are only in `theme.json`.
+- Other apps' theme files, for each app turned on under `[apps]` in `config.toml` with `polycarp theme apps <app> on`: Ghostty, Neovim, btop, Zed and Windows Terminal. Each gets only files named `polycarp*` in its own folder, built from the code colors, and Ghostty also gets one line at the end of its config. `apps/` in the config folder records them, and `off`, `undo` and turning the app off remove them and put Ghostty's config back exactly. The table and folders are in `docs/guide.md`, under Theme other apps.
 
 `theme.json` has a top-level `schema` number, now 2. It goes up by one whenever the shape changes, and
 readers ignore fields they don't know. Schema 2 added the `studio` product and the code colors.
