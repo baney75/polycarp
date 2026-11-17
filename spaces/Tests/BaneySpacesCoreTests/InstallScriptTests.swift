@@ -197,8 +197,8 @@ final class InstallScriptTests: XCTestCase {
         XCTAssertLessThan(try index(of: ".draft", in: release), upload)
         XCTAssertLessThan(try index(of: "git ls-remote origin", in: release), upload)
         XCTAssertTrue(release.contains("is already published"))
-        let workflow = try read(".github/workflows/release.yml")
-        XCTAssertFalse(workflow.contains("--prerelease=false --latest"), "only make release publishes")
+        // No workflow starts on a pushed tag (docs/releases.md); the old tag-started one is gone.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".github/workflows/release.yml").path))
     }
 
     private func runSigningRestore(home: URL) throws -> String {
@@ -289,17 +289,28 @@ final class InstallScriptTests: XCTestCase {
     }
 
     func testReleaseIsADraftUntilTheUploadIsCheckedAndPublished() throws {
-        let workflow = try read(".github/workflows/release.yml")
-        XCTAssertTrue(workflow.contains("gh release create") && workflow.contains("--draft --verify-tag"))
         let release = try read("scripts/release.sh")
+        let build = try index(of: #"step "Building $TAG""#, in: release)
         let before = try index(of: "scripts/verify-release.sh build", in: release)
         let upload = try index(of: "gh release upload", in: release)
-        let after = try index(of: #"scripts/verify-release.sh "$BACK""#, in: release)
-        let publish = try index(of: "gh release edit", in: release)
+        let after = try index(of: #"cmp -s "build/$f" "$BACK/$f""#, in: release)
+        XCTAssertLessThan(build, before)
         XCTAssertLessThan(before, upload)
         XCTAssertLessThan(upload, after)
-        XCTAssertLessThan(after, publish)
-        XCTAssertTrue(release.contains("--draft=false --latest"))
+        // Latest is published once, only by --soak, only after a real soak receipt for this commit, and only
+        // after the uploaded files are checked again (spaces/AGENTS.md "Stable releases").
+        XCTAssertEqual(release.components(separatedBy: "--draft=false --latest").count, 2)
+        let soak = try index(of: #"if [ -n "$SOAK" ]; then"#, in: release)
+        let passed = try index(of: #"= "SOAK PASSED" ]"#, in: release)
+        let commit = try index(of: #"commit=$TAG_COMMIT" "$SOAK""#, in: release)
+        let recheck = try index(of: #"scripts/verify-release.sh "$BACK""#, in: release)
+        let publish = try index(of: "--draft=false --latest", in: release)
+        XCTAssertLessThan(soak, passed)
+        XCTAssertLessThan(passed, commit)
+        XCTAssertLessThan(commit, recheck)
+        XCTAssertLessThan(recheck, publish)
+        XCTAssertLessThan(publish, build, "--soak publishes what was uploaded and builds nothing")
+        XCTAssertTrue(release.contains("a --ci receipt never counts"))
     }
 
     func testDiskImageToolIsPinnedByHashAndLivesOutsideBuild() throws {
