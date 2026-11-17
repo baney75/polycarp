@@ -28,6 +28,15 @@ public enum ViewControl {
     }
 }
 
+extension ViewControl {
+    /// The answer for work on the agent workspace while Donovan can see a workspace it touches, with view control or
+    /// without: it goes once no display shows it.
+    public static func notWhileShown(_ what: String) -> HandsError {
+        HandsError(.inUse, "\(what) would change a workspace a display shows, so it waits until none does",
+                   suggestion: "Retry once Donovan has left it, or work on a window out of sight. Do not ask him to switch away.", retry: .safe)
+    }
+}
+
 /// The "Agents may change what you see" switch itself (review F2). It is never stored: it starts off, nothing on disk is
 /// read for it, and it turns on only when `confirm` says Donovan confirmed Polycarp's sheet. Turning it off never asks.
 public struct ViewControlSwitch {
@@ -116,11 +125,14 @@ public enum AgentCommands {
         }
     }
 
-    /// Whether moving or framing a window changes what Donovan sees. Moving onto the agent workspace, or framing a window
-    /// on it, while it is out of sight doesn't; anything touching a workspace a display shows does.
-    public static func changesView(from source: Int?, to target: Int, agentWorkspace: Int?, shown: Set<Int>) -> Bool {
-        guard let agent = agentWorkspace, target == agent, !shown.contains(agent) else { return true }
-        return source.map(shown.contains) ?? true
+    /// What moving or framing a window needs (spec/agent-api.md, "View control"). Acting on any workspace but the agent
+    /// workspace needs view control. Acting on the agent workspace needs nothing, but waits while a display shows it or
+    /// the workspace the window leaves: a passing condition, so `in_use`, never `permission_denied` (review r2 first-F1).
+    public enum ViewNeed: Equatable, Sendable { case nothing, notWhileShown, viewControl }
+
+    public static func need(from source: Int?, to target: Int, agentWorkspace: Int?, shown: Set<Int>) -> ViewNeed {
+        guard let agent = agentWorkspace, target == agent, let source else { return .viewControl }
+        return shown.contains(agent) || shown.contains(source) ? .notWhileShown : .nothing
     }
 
     /// The window's place as the result reports it: its workspace, the display showing that workspace, and its frame.

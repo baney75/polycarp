@@ -171,7 +171,7 @@ public enum HandsTools {
         HandsTool(verb: "focus", summary: "Go to a window's workspace and bring the window forward with keyboard focus. Needs view control, always (spec/agent-api.md). Answers once the window is focused.", params: [
             HandsParam("window", .integer, "Window id from `query windows`.", required: true),
         ], acts: true),
-        HandsTool(verb: "frame", summary: "Set one window's position and size, in points with the origin at the top left of the main display, as `query windows` reports frames. On the agent workspace while it is out of sight this needs nothing more; anywhere else it needs view control. Answers with the frame read back.", params: [
+        HandsTool(verb: "frame", summary: "Set one window's position and size, in points with the origin at the top left of the main display, as `query windows` reports frames. On the agent workspace this needs nothing more, but answers in_use (retry safe) while a display shows it; anywhere else it needs view control. Answers with the frame read back.", params: [
             HandsParam("window", .integer, "Window id from `query windows`.", required: true),
             HandsParam("frame", .string, "x,y,width,height, like 0,40,800,600.", required: true, positional: true),
         ], acts: true),

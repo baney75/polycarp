@@ -6,7 +6,8 @@ and the Windows daemon both follow it; Linux follows it when its daemon catches 
 
 What it adds to yabai's `query` and AeroSpace's `list-*` and callbacks: every query and every event goes through the
 same scope as the hands (`computer_*`), so an agent can watch and drive the whole desktop under Full Access and only its
-own workspace otherwise, and Donovan's screen never changes unless he turned that on.
+own workspace otherwise, and no window or workspace Donovan can see changes unless he turned that on. `theme-set` is
+the one stated exception: agents may change how the Mac looks.
 
 ## Rules every platform keeps
 
@@ -24,8 +25,9 @@ own workspace otherwise, and Donovan's screen never changes unless he turned tha
   restart) is known by `{ bundle, title, order }` (`$defs/window_identity`): its app's bundle id (Windows: the full path
   of its executable), its title, and its creation order among its process's windows, oldest first. A saved window
   matches a live window of the same bundle by the same title, then by the same title under the title rules (lowercase;
-  an unsaved-changes mark, an unread count in front and an "Edited" note left out), then by the same creation order.
-  Each saved window matches at most one live window. One that matches none is skipped and never moved. Only ordinary
+  an unsaved-changes mark, an unread count in front and an "Edited" note left out). Creation order decides only when
+  no saved window of that bundle matches a live one by title and the saved and live counts of that bundle agree; a
+  window that only shares an order with a renamed one is missing, never moved. Each saved window matches at most one live window. One that matches none is skipped and never moved. Only ordinary
   windows are saved, never a dialog, sheet or panel. Polycarp's own restore after a restart keeps windows by the same
   identity and the same rules.
 - **Frames.** `{ "x", "y", "width", "height" }` in the units the platform places windows in (macOS points, Windows
@@ -46,7 +48,9 @@ Each result says what the caller could see: `"scope": "agent"` or `"scope": "all
 | A caller from another machine (connector, `--on HOST`) | `agent` | As Default, whatever the Mac's setting |
 
 A window outside the caller's scope is left out of every list, every count and every event: no id, app or title, and
-no number that changes when it opens or closes. Workspace numbers, which workspace each display shows, and the displays
+no list, count or event changes when it opens or closes. Window ids and pids are the platform's own numbers, which
+rise as any window or process starts, so the gap between two of the caller's own ids can show that something else
+opened in between; that side channel is known and not closed. Workspace numbers, which workspace each display shows, and the displays
 themselves are not private and are always listed. The focused window outside scope is reported as `"window": null`, and
 focus moving between two windows outside scope sends no event.
 
@@ -62,11 +66,10 @@ with `permission_denied`, `retry: never`. It keeps every query, `layout list`, `
 
 ## View control
 
-**One rule:** a command needs view control unless every workspace it touches is out of sight and the workspace it acts
-on is the agent workspace. A command touches the workspace a window leaves, the workspace it lands on, and the workspace
-of a window it changes. So `switch` and `focus` always need it. `move` needs it unless the window goes from a workspace
-no display shows onto the agent workspace while no display shows it. `frame` and `layout restore` need it unless they act
-on the agent workspace while no display shows it. A command that needs view control runs only when all three hold:
+**One rule:** a command that acts on any workspace other than the agent workspace needs view control. A command acts on
+the workspace a window lands on and the workspace of a window it changes. So `switch` and `focus` always need it, and
+`move`, `frame` and `layout restore` need it unless they act on the agent workspace. A command that needs view control
+runs only when all three hold:
 
 1. The caller is on this machine (never a connector or `--on HOST`).
 2. Access is Full Access.
@@ -76,11 +79,17 @@ on the agent workspace while no display shows it. A command that needs view cont
    program or an accessibility press is refused). So a `defaults write`, an edit of the settings file or a copied
    value leaves view control off: nothing on disk is read for it, and a value found under the old key is removed at
    launch. A Keychain item planted with a matching seal, which an earlier draft of this rule trusted, is never read
-   either. Hands refuse Polycarp's own windows in every mode, so no agent clicks the switch either.
+   either. Hands refuse Polycarp's own windows in every mode, so no agent clicks the switch either. On Windows,
+   until the daemon has a confirmation that synthetic input can't answer, the switch stays off.
 
 Otherwise the command fails with `permission_denied`, `retry: never`, before anything moves, and the suggestion says
-which of the three is missing. Taking a window onto the agent workspace from a workspace a display shows is never done,
-even with view control: it answers `in_use`, `retry: safe`, and goes once Donovan has left that workspace.
+which of the three is missing.
+
+**Not while he looks:** a command that acts on the agent workspace never changes a workspace a display shows: not the
+agent workspace while it is shown, and not the workspace a window leaves while that one is shown. With view control or
+without, it answers `in_use`, `retry: safe`, and goes once no display shows them. A shown workspace is a passing
+condition, so it is never `permission_denied`. This is about timing, not permission: with view control an agent may move
+a window off his workspace to another one, and from there onto the agent workspace once that is out of sight.
 
 ## Queries
 
@@ -108,9 +117,9 @@ Each answers with the state it read back after acting, never with what it asked 
 | --- | --- | --- | --- |
 | `switch` | `workspace` (1 to 9), `display` (optional) | `{ version, workspace, display, shown: true }` | always |
 | `focus` | `window` | `{ version, window, workspace, focused: true }` | always |
-| `move` | `window`; then `workspace` or `display` | `{ version, window, workspace, display, frame }` | unless it goes from a workspace out of sight onto the agent workspace while it is out of sight |
-| `frame` | `window`, `frame` (`x,y,width,height`, absolute, as `windows` reports it) | `{ version, window, frame }` | unless the window is on the agent workspace while it is out of sight |
-| `layout` | `action` (`save`, `restore`, `list`), `name`, `workspace` (default: the agent workspace) | `layout_command_result` | `restore`, unless on the agent workspace while it is out of sight |
+| `move` | `window`; then `workspace` or `display` | `{ version, window, workspace, display, frame }` | unless it goes onto the agent workspace (then `in_use` while a workspace it touches is shown) |
+| `frame` | `window`, `frame` (`x,y,width,height`, absolute, as `windows` reports it) | `{ version, window, frame }` | unless the window is on the agent workspace (then `in_use` while it is shown) |
+| `layout` | `action` (`save`, `restore`, `list`), `name`, `workspace` (default: the agent workspace), `replace` | `layout_command_result` | `restore`, unless on the agent workspace (then `in_use` while it is shown) |
 | `theme-set` | `theme`, `palette` (optional) | `{ version, theme, palette, drawn }` | never (agents may change how the Mac looks; Donovan, 2026-11-01) |
 
 - `move` with `display` sends the window to the workspace that display shows.
@@ -120,7 +129,10 @@ Each answers with the state it read back after acting, never with what it asked 
 - `layout save` records the ordinary windows in scope on one workspace under `name` (letters, digits, `-` and `_`, at
   most 64), each by its identity and frame, with no window id. Under scope `agent` only the agent workspace can be saved
   or restored; any other answers `permission_denied`, `retry: never`. Saved layouts live in the platform's support
-  folder, `layouts/<name>.json`.
+  folder, one folder per workspace, `layouts/<workspace>/<name>.json`, so a save on one workspace never replaces a
+  layout of another. Names are compared without case (`Work` and `work` are one layout, stored lowercase). A save
+  over a name already saved on that workspace answers `invalid_args`, `retry: never`, unless it passes `replace: true`.
+  `layout list` and the `layout` query name only layouts of workspaces in the caller's scope.
 - `layout restore` gives each window that matches a saved one by identity, and is in scope on that workspace now, its
   saved frame, and lists it in `moved`. It never moves a window to another workspace and never touches a window outside
   scope or on another workspace. Saved windows that matched nothing are listed in `missing` by identity.
