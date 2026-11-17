@@ -93,7 +93,7 @@ struct ThemeShelf: View {
         VStack(alignment: .leading, spacing: 10) {
             ScrollViewReader { scroller in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                LazyHStack(spacing: 8) {
                     ForEach(library.tiles) { tile in
                         ThemeShelfTile(tile: tile, selected: tile.theme.name == current) { pick(tile.theme.name) }
                             .onDrag {
@@ -227,23 +227,28 @@ struct ThemeShelfTile: View {
     }
 }
 
-/// The Appearance tab as a drop target for theme files and pictures.
-struct ThemeDropTarget<Content: View>: View {
+/// The Appearance tab as a drop target for theme files and pictures: a modifier on the pane's stack, so its groups stay rows of
+/// the lazy stack (a wrapping view would make the whole tab one row and build all of it).
+struct ThemeDropTarget: ViewModifier {
     let current: String?
-    @ViewBuilder var content: () -> Content
+    let on: Bool
     @State private var over = false
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) { content() }
+    func body(content: Content) -> some View {
+        content
             .overlay {
                 if over {
                     Chrome.shape(.settingsCallout).strokeBorder(Chrome.accent, lineWidth: Chrome.width(.settingsTile, focused: true))
                         .padding(-6).allowsHitTesting(false)
                 }
             }
-            .onDrop(of: [UTType.fileURL], isTargeted: $over) { providers in
+            .onDrop(of: on ? [UTType.fileURL] : [], isTargeted: $over) { providers in
                 ThemeDrop.urls(providers) { ThemeLibrary.shared.dropped($0, current: current) }
                 return true
             }
     }
+}
+
+extension View {
+    func themeDrop(current: String?, on: Bool) -> some View { modifier(ThemeDropTarget(current: current, on: on)) }
 }

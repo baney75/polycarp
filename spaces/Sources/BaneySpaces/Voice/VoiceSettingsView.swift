@@ -22,7 +22,8 @@ struct VoiceSettingsView: View {
     @State private var importNote: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        // Lazy, like the pane around it: only the groups in view are built (#350).
+        LazyVStack(alignment: .leading, spacing: 18) {
             statusSection
             if let p = voice.state?.permissions { permissionsSection(p) }
             if voice.offersSilasTrash { silasSection }

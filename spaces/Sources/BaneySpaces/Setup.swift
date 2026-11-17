@@ -492,13 +492,15 @@ struct SetupView: View {
         HStack(spacing: 0) {
             SettingsSidebarView(selection: $model.tab)
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                // Lazy: a pane builds the groups in view, not all of them, so opening or switching to a long one (Appearance,
+                // Silas) costs about what a short one does (#350). Each group is its own row; nothing here wraps them.
+                LazyVStack(alignment: .leading, spacing: 18) {
                     Text(model.tab.rawValue).font(Chrome.font(20, .bold)).accessibilityAddTraits(.isHeader)
                     switch model.tab {
                     case .general: general
                     case .keys: keys
                     case .dock: dock
-                    case .appearance: appearanceTab
+                    case .appearance: appearanceSections
                     case .launcher: launcher
                     case .automation: automation
                     case .permissions: PermissionsPane(fix: .init(shown: model.staleGrant, busy: model.fixing, run: model.fixPermission),
@@ -509,6 +511,8 @@ struct SetupView: View {
                     case .browser: BrowserSettingsView()
                     }
                 }
+                // Theme files and pictures can be dropped anywhere on Appearance.
+                .themeDrop(current: appearance.polycarp?.name, on: model.tab == .appearance)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .padding(.horizontal, 28).padding(.top, 40).padding(.bottom, 28)
             }
@@ -940,11 +944,6 @@ struct SetupView: View {
                 }
             }
         }
-    }
-
-    /// Theme files and pictures can be dropped anywhere on the tab.
-    private var appearanceTab: some View {
-        ThemeDropTarget(current: appearance.polycarp?.name) { appearanceSections }
     }
 
     @ViewBuilder private var appearanceSections: some View {
