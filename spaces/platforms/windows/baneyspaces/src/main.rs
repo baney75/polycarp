@@ -19,6 +19,7 @@ mod ipc;
 mod keys;
 mod paths;
 mod settings;
+mod watchdog;
 
 #[cfg(windows)]
 mod agent;
@@ -64,6 +65,7 @@ const HELP: &str = "baneyspaces (Windows)
   stop                           ask the running daemon to put every window back and exit (also: daemon stop)
   mcp                            MCP server on stdio (agent tools only)
   doctor                         what works and what does not
+  watchdog --pid P --start T     started by the daemon: if it dies, put every window back and start it again
 
 Flags: --agent-id ID (names you in the action log), --text (short human output).
 Every command prints one JSON envelope: {ok, data} or {ok:false, error:{code, message, retry, suggestion}}.
@@ -382,6 +384,8 @@ fn run_daemon(args: &[String]) -> i32 {
         let mut rest = args[1..].to_vec();
         let log = take(&mut rest, "--log").map(std::path::PathBuf::from);
         let trace = rest.iter().any(|a| a == "--trace");
+        // Started by the watchdog after a crash: put windows back on the workspaces the dead daemon saved.
+        let recover = rest.iter().any(|a| a == "--recover");
         if rest.iter().any(|a| a == "--background") {
             // Start the daemon again with no console window and wait until it answers. This is what
             // the sign-in entry runs (through baneyspacesw).
@@ -406,7 +410,7 @@ fn run_daemon(args: &[String]) -> i32 {
             }
             return print(&fail("timeout", "the daemon did not answer within 6 s", &format!("Read {}", log.display())), false);
         }
-        daemon::run(trace, log)
+        daemon::run(trace, log, recover)
     }
     #[cfg(not(windows))]
     {
@@ -416,7 +420,31 @@ fn run_daemon(args: &[String]) -> i32 {
     }
 }
 
+fn run_watchdog(args: &[String]) -> i32 {
+    let mut rest = args[1..].to_vec();
+    let pid = take(&mut rest, "--pid").and_then(|s| s.parse::<u32>().ok());
+    let start = take(&mut rest, "--start").and_then(|s| s.parse::<u64>().ok());
+    let log = take(&mut rest, "--log").map(std::path::PathBuf::from);
+    let trace = rest.iter().any(|a| a == "--trace");
+    let (Some(pid), Some(start)) = (pid, start) else {
+        eprintln!("usage: baneyspaces watchdog --pid <daemon pid> --start <its start time> [--log FILE] [--trace]");
+        return 2;
+    };
+    #[cfg(windows)]
+    {
+        watchdog::run(pid, start, log, trace)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (pid, start, log, trace);
+        eprintln!("baneyspaces watchdog: this build is not for Windows");
+        1
+    }
+}
+
 fn main() {
+    #[cfg(windows)]
+    winapi::keep_std_handles();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let text = take_switch(&mut args, "--text");
     let agent = take(&mut args, "--agent-id")
@@ -439,6 +467,7 @@ fn main() {
             0
         }
         "daemon" => run_daemon(&args),
+        "watchdog" => run_watchdog(&args),
         "keys" => {
             let platform = take(&mut args, "--platform").unwrap_or_else(|| "windows".into());
             let all = keymap::keys();

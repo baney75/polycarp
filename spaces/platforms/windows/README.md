@@ -75,6 +75,18 @@ is hidden again within a poll, keeping the position it will be restored to.
 - After a crash or `taskkill /F`, the next start reads the list and shows every window on it, before doing
   anything else. Only windows in BaneySpaces' own record are ever uncloaked: one that Windows or another tool
   (komorebi, GlazeWM) cloaked is left alone.
+- **The watchdog.** The daemon starts a small second process (`baneyspaces watchdog`, outside any job, so it
+  outlives a killed daemon) that waits on the daemon's process handle. When the daemon dies without a clean
+  stop, the watchdog shows every window in the record at once (agent windows stay ghosted), then starts the
+  daemon again with `--recover`, which puts each window back on the workspace it had (matched by window
+  handle, pid, process start time and class) and the shown workspace back on each monitor. A daemon that dies
+  within 5 s of starting three times in a row is not started again (the log says "not starting the daemon
+  again"); every window stays shown. The crash history is `watchdog.json`. `BANEYSPACES_WATCHDOG=0` turns it
+  off. Like GlazeWM's `wm-watcher` it is a separate process that shows every window when the manager dies;
+  unlike it, it also starts the daemon again with each window on its workspace. komorebi's reaper (drops destroyed
+  windows) and monitor reconciliator (display changes) run inside its one process; after a hard kill its hidden
+  windows stay hidden until you run `komorebic restore-windows`.
+  Checked on a runner (`windows-safety.yml`): 20 kills mid-switch, a crash loop, 5 explorer.exe restarts.
 - **Agent windows are the exception.** They belong off your screen, so after a restart they stay ghosted while
   their process (pid and start time) still runs. If it is gone they are shown, never lost. The daemon does
   not close an agent's app when it exits: use `agent-workspace show` after a restart.
