@@ -4,10 +4,8 @@
 //!   Win+`). Explorer owns Win+number, so `RegisterHotKey` would fail. The callback only matches a
 //!   table and posts to the worker; it takes no lock, allocates nothing, and never waits, because
 //!   Windows drops a low-level hook whose callback is slow.
-//! * `SetWinEventHook` reports foreground changes, windows appearing, hiding, closing, being minimized,
-//!   ending a move or resize, being renamed, and being cloaked or uncloaked by anyone. The worker acts on each one as it
-//!   comes; a full look at every window runs only as a slow safety net (`daemon::RECONCILE`), or every
-//!   400 ms when these hooks could not be installed (`events_live`).
+//! * `SetWinEventHook` reports foreground changes and windows appearing, hiding and closing, so
+//!   the worker reacts within milliseconds instead of waiting for its next poll.
 //! * A hidden top-level window (not a message-only one: only top-level windows are told about sign-out
 //!   and about the taskbar being rebuilt) hears `WM_QUERYENDSESSION` and `WM_ENDSESSION` (the daemon has no
 //!   console when it runs in the background, so no console event reaches it), session lock and unlock,
@@ -29,8 +27,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 /// What the hooks tell the worker.
 #[derive(Debug)]
 pub enum Msg {
-    /// A swallowed chord: the CLI arguments it runs, and the key-down's tick (`GetTickCount`), for timing.
-    Chord { args: Vec<String>, at: u32 },
+    /// A swallowed chord: the CLI arguments it runs.
+    Chord(Vec<String>),
     /// A window event: the WinEvent id and the window.
     Win { event: u32, hwnd: i64 },
     /// A mouse button pressed at this screen point (R-S2: the display you are on is the one you clicked into).
@@ -76,23 +74,11 @@ pub enum EndSession {
 
 pub const EVENT_SYSTEM_FOREGROUND: u32 = 0x0003;
 pub const EVENT_SYSTEM_DESKTOPSWITCH: u32 = 0x0020;
-pub const EVENT_SYSTEM_MOVESIZEEND: u32 = 0x000B;
-pub const EVENT_SYSTEM_MINIMIZESTART: u32 = 0x0016;
 pub const EVENT_SYSTEM_MINIMIZEEND: u32 = 0x0017;
 pub const EVENT_OBJECT_CREATE: u32 = 0x8000;
 pub const EVENT_OBJECT_DESTROY: u32 = 0x8001;
 pub const EVENT_OBJECT_SHOW: u32 = 0x8002;
 pub const EVENT_OBJECT_HIDE: u32 = 0x8003;
-pub const EVENT_OBJECT_NAMECHANGE: u32 = 0x800C;
-pub const EVENT_OBJECT_CLOAKED: u32 = 0x8017;
-pub const EVENT_OBJECT_UNCLOAKED: u32 = 0x8018;
-
-/// Every WinEvent hook went in: the daemon can wait for events instead of polling.
-static EVENTS_LIVE: AtomicBool = AtomicBool::new(false);
-
-pub fn events_live() -> bool {
-    EVENTS_LIVE.load(Ordering::Relaxed)
-}
 
 fn held(vk: u32) -> bool {
     unsafe { GetAsyncKeyState(vk as i32) as u16 & 0x8000 != 0 }
@@ -129,7 +115,7 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
                         if let (Some(table), Some(tx)) = (TABLE.get(), TX.get()) {
                             if let Some(b) = lookup(table, vk, mods) {
                                 SWALLOWED[vk as usize].store(true, Ordering::Relaxed);
-                                let _ = tx.send(Msg::Chord { args: b.args.clone(), at: k.time });
+                                let _ = tx.send(Msg::Chord(b.args.clone()));
                                 return 1;
                             }
                         }
@@ -261,21 +247,15 @@ pub fn start(tx: Sender<Msg>, table: Vec<Binding>, on_end: fn(EndSession)) -> Ve
         let flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
         let a = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, std::ptr::null_mut(), Some(win_event), 0, 0, flags);
         let b = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE, std::ptr::null_mut(), Some(win_event), 0, 0, flags);
-        let c = SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, std::ptr::null_mut(), Some(win_event), 0, 0, flags);
+        let c = SetWinEventHook(EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZEEND, std::ptr::null_mut(), Some(win_event), 0, 0, flags);
         let d = SetWinEventHook(EVENT_SYSTEM_DESKTOPSWITCH, EVENT_SYSTEM_DESKTOPSWITCH, std::ptr::null_mut(), Some(win_event), 0, 0, flags);
-        let e = SetWinEventHook(EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND, std::ptr::null_mut(), Some(win_event), 0, 0, flags);
-        let f = SetWinEventHook(EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED, std::ptr::null_mut(), Some(win_event), 0, 0, flags);
-        let g = SetWinEventHook(EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE, std::ptr::null_mut(), Some(win_event), 0, 0, flags);
-        let all = [a, b, c, d, e, f, g];
-        if all.iter().any(|h| h.is_null()) {
-            let _ = ready_tx.send(Err("SetWinEventHook failed: the daemon will poll every 400 ms instead".into()));
+        if a.is_null() || b.is_null() || c.is_null() || d.is_null() {
+            let _ = ready_tx.send(Err("SetWinEventHook failed: the daemon will rely on polling".into()));
         } else {
-            EVENTS_LIVE.store(true, Ordering::Relaxed);
             let _ = ready_tx.send(Ok(()));
         }
         message_loop();
-        EVENTS_LIVE.store(false, Ordering::Relaxed);
-        for h in all {
+        for h in [a, b, c, d] {
             if !h.is_null() {
                 UnhookWinEvent(h);
             }
