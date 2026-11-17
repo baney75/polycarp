@@ -114,6 +114,11 @@ final class Spaces {
     private var bookWork: DispatchWorkItem?
     private var bookTimer: Timer?
     private static let bookQueue = DispatchQueue(label: "com.baney.polycarp.placements", qos: .utility)
+    /// The displays and each window's frame at the last look, from before macOS moves anything for a display change
+    /// (`displaysWillChange`), so windows of a display that went away can be stashed where they stood.
+    private var areasSeen: [DisplayArea] = []
+    private var framesSeen: [WindowID: CGRect] = [:]
+    private var watchingReconfiguration = false
 
     init() {
         saved = SavedFrames.load(from: Spaces.framesURL)
@@ -125,6 +130,9 @@ final class Spaces {
     func start() {
         active = true
         for pid in saved.hiddenApps { NSRunningApplication(processIdentifier: pid)?.unhide() }
+        // Displays at launch are where things stand: a change is one seen while running.
+        areasSeen = Self.areas()
+        watchReconfiguration()
         refresh(full: true)
         let screens = Windows.screens()
         var unreached: [WindowID: CGRect] = [:]
@@ -162,6 +170,7 @@ final class Spaces {
         placeFromBook(windows.keys.filter { !byNumber.contains($0) && pendingLayout[$0] == nil }, relaunch: false)
         bookTimer?.invalidate()
         bookTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.noteBook() }
+        noteFramesSeen()
         persist()
         switchTo(model.current, takeFocus: false, announce: false)
         flattenFullScreen()
@@ -2122,13 +2131,77 @@ final class Spaces {
     /// Tells the model which displays are connected now. After a change, windows macOS moves
     /// for it aren't taken for ones you dragged, for `displaysSettle`.
     private func noteDisplays() {
-        let keys = Windows.displays().map(\.key)
+        let areas = Self.areas()
+        let keys = areas.map(\.key)
         let before = (model.order, model.shown)
         model.reserved = Self.agentWorkspace.map { [$0] } ?? []
         model.displays(keys)
+        remapWindows(to: areas)
         guard model.order != before.0 || model.shown != before.1 else { return }
         displaysSettleUntil = Date().addingTimeInterval(Self.displaysSettle)
         Trace.log("displays \(model.shown.sorted { $0.value < $1.value }.map { "\($0.key.prefix(8))=\($0.value)" })")
+    }
+
+    static func areas() -> [DisplayArea] {
+        Windows.displays().map { DisplayArea(key: $0.key, frame: $0.frame, visible: $0.visible) }
+    }
+
+    /// Windows of a display that went away move to one still here and keep their workspace: to the display showing
+    /// their workspace, else the main one, in proportion and inside its usable area. When that display comes back (by
+    /// UUID) each goes back to its frame on it, unless you moved it to another workspace meanwhile (`DisplayRemap`).
+    /// A window on a workspace in sight moves now; any other gets the frame as its parked record. Frames are from
+    /// before macOS moved anything (`framesSeen`).
+    private func remapWindows(to areas: [DisplayArea]) {
+        let before = areasSeen
+        areasSeen = areas
+        let lost = before.filter { b in !areas.contains { $0.key == b.key } }
+        let gained = areas.filter { a in !before.contains { $0.key == a.key } }
+        guard !before.isEmpty, !lost.isEmpty || !gained.isEmpty else { return }
+        let homes = model.home
+        var moves: [DisplayRemap.Move] = []
+        if !lost.isEmpty {
+            let frames = framesSeen.filter { windows[$0.key] != nil && homes[$0.key] != Self.agentWorkspace }
+            moves += DisplayRemap.unplug(lost: lost, remaining: areas, frames: frames, workspace: homes, showing: model.shown,
+                                         stash: &book.stash, now: Date().timeIntervalSince1970)
+        }
+        for d in gained { moves += DisplayRemap.replug(d, workspace: homes, stash: &book.stash) }
+        var moved = 0
+        for m in moves {
+            guard let w = windows[m.window], let n = homes[m.window], !w.isMinimized else { continue }
+            if saved.frames[m.window] == nil, model.isShown(n) { w.setFrame(m.frame) } else { saved.frames[m.window] = m.frame }
+            framesSeen[m.window] = m.frame
+            moved += 1
+        }
+        Trace.log("displays: \(lost.count) gone, \(gained.count) back, \(moved) windows moved, \(book.stash.entries.count) waiting")
+        saveBook()
+    }
+
+    /// Each window's frame now (a parked one's record, never the hiding spot), with the displays they're measured
+    /// against. Skipped once displays changed and the change isn't handled yet: those frames are macOS's.
+    private func noteFramesSeen() {
+        let areas = Self.areas()
+        guard areas.map(\.key) == areasSeen.map(\.key) else { return }
+        let server = Windows.serverWindows()
+        areasSeen = areas
+        framesSeen = windows.keys.reduce(into: [:]) { out, id in
+            if let f = saved.frames[id] ?? server[id]?.bounds { out[id] = f }
+        }
+    }
+
+    /// macOS calls this before it changes displays, while every window still stands where it was.
+    private func watchReconfiguration() {
+        guard !watchingReconfiguration else { return }
+        watchingReconfiguration = true
+        CGDisplayRegisterReconfigurationCallback({ _, flags, context in
+            guard flags.contains(.beginConfigurationFlag), let context else { return }
+            let spaces = Unmanaged<Spaces>.fromOpaque(context).takeUnretainedValue()
+            if Thread.isMainThread { spaces.displaysWillChange() } else { DispatchQueue.main.async { spaces.displaysWillChange() } }
+        }, Unmanaged.passUnretained(self).toOpaque())
+    }
+
+    private func displaysWillChange() {
+        guard active else { return }
+        noteFramesSeen()
     }
 
     /// The display under the pointer is the one you're on: a click there (on a window, the
@@ -2311,7 +2384,7 @@ final class Spaces {
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let focused = live.contains { $0.pid == front } ? front.flatMap { Windows.focused(of: $0, in: Array(windows.values))?.id } : nil
         let scene = PlacementBook.Scene(inSight: Dictionary(model.shown.map { ($0.value, $0.key) }, uniquingKeysWith: { a, _ in a }),
-                                        displays: Windows.displays().map { DisplayArea(key: $0.key, frame: $0.frame, visible: $0.visible) },
+                                        displays: Self.areas(),
                                         agentWorkspace: Self.agentWorkspace, skip: Set(claims.keys).union(AgentOwned.shared.pids), focused: focused)
         let got = book.claim(live, started: started, relaunch: relaunch, scene: scene)
         for p in got {
@@ -2329,7 +2402,7 @@ final class Spaces {
     private func notePlaces() {
         guard !bookByPid.isEmpty else { return }
         let server = Windows.serverWindows()
-        let displays = Windows.displays().map { DisplayArea(key: $0.key, frame: $0.frame, visible: $0.visible) }
+        let displays = Self.areas()
         let now = Date().timeIntervalSince1970
         bookByPid = bookByPid.mapValues { list in
             list.map { r in
@@ -2343,8 +2416,10 @@ final class Spaces {
     /// so a quit app or a restart finds them again. A parked window counts at its parked record, never the hiding spot.
     private func noteBook() {
         guard active else { return }
+        noteFramesSeen()
+        book.stash.prune(alive: Set(windows.keys), now: Date().timeIntervalSince1970)
         let agent = Self.agentWorkspace
-        let displays = Windows.displays().map { DisplayArea(key: $0.key, frame: $0.frame, visible: $0.visible) }
+        let displays = Self.areas()
         let screens = Windows.screens()
         let byPid = Dictionary(grouping: windows.values, by: \.pid).mapValues { $0.sorted { $0.id < $1.id } }
         var todo: [(w: Window, order: Int, workspace: Int, bundle: String, parked: CGRect?)] = []

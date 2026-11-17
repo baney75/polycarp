@@ -201,6 +201,8 @@ public struct PlacementBook: Codable, Equatable, Sendable {
     public var live: [WindowRecord] = []
     /// Windows of apps that quit (or did not come back yet after a restart), waiting for them.
     public var gone: [WindowRecord] = []
+    /// Windows from displays that went away, waiting for the same display to come back.
+    public var stash = DisplayStash()
     /// Windows each young process got back by title so far, by process start: evidence it is restoring windows. Not saved.
     private var byTitle: [Double: Int] = [:]
 
@@ -212,10 +214,18 @@ public struct PlacementBook: Codable, Equatable, Sendable {
     /// How many of a relaunched app's windows must come back by title before any is taken off the workspace you are on.
     public static let evidence = 2
 
-    private enum CodingKeys: String, CodingKey { case live, gone }
+    public init(live: [WindowRecord] = [], gone: [WindowRecord] = [], stash: DisplayStash = DisplayStash()) {
+        self.live = live; self.gone = gone; self.stash = stash
+    }
 
-    public init(live: [WindowRecord] = [], gone: [WindowRecord] = []) {
-        self.live = live; self.gone = gone
+    private enum CodingKeys: String, CodingKey { case live, gone, stash }
+
+    /// A file written before a part was added still loads, with that part empty.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        live = try c.decodeIfPresent([WindowRecord].self, forKey: .live) ?? []
+        gone = try c.decodeIfPresent([WindowRecord].self, forKey: .gone) ?? []
+        stash = try c.decodeIfPresent(DisplayStash.self, forKey: .stash) ?? DisplayStash()
     }
 
     /// How things stand as windows are claimed.
