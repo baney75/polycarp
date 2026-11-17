@@ -1,7 +1,7 @@
 //! The JSON Schema for a theme file, built from the same tables the checker uses, so the two
 //! cannot drift. Every field has a plain description of what it controls and where it shows.
 
-use super::{fields, Kind, MODES, SECTIONS, SURFACES};
+use super::{code_keys, code_pairs, fields, Kind, CODE, MODES, SECTIONS, SURFACES};
 use serde_json::{json, Map, Value as Json};
 
 /// What a field controls and where it shows. Empty means "missing"; a test fails on that.
@@ -23,6 +23,9 @@ pub fn describe(path: &str) -> &'static str {
         "surface.voice" => "Overrides for Silas: the dictation overlay and its settings window.",
         "surface.browser" => "Overrides for Tabkyra: the browser side panel, chat and permission prompts.",
         "surface.site" => "Overrides for the Polycarp website.",
+        "code.terminal" => "Optional. The terminal palette: background, foreground, cursor, selection and the 16 ANSI colors (black to white, bright_black to bright_white). Anything left out is derived from the 13 colors. Foreground needs 4.5 on background and on selection; cursor and the 12 colored entries need 3.0 on background; black, white, bright_black and bright_white are not checked.",
+        "code.syntax" => "Optional. Syntax highlighting colors for code: keyword, string, number, comment, function, type, variable, constant, operator, punctuation, tag, attribute and property. Anything left out is derived from the 13 colors. Each needs 4.5 on background.",
+        "code.diff" => "Optional. Diff colors: added, removed and modified lines, the tinted added_surface and removed_surface behind them, and the gutter marks. Anything left out is derived from the 13 colors. added and foreground need 4.5 on added_surface, removed and foreground on removed_surface; modified and the gutters need 3.0 on background.",
         "color.background" => "The page itself: the window behind everything, the bar, the side panel body and the website page.",
         "color.surface" => "Cards and panels that sit on the background: settings groups, chat replies, the permission prompt, menus and dialogs.",
         "color.sunken" => "Recessed areas inside a surface: text inputs, code blocks, switch tracks and idle workspace tiles.",
@@ -85,6 +88,9 @@ pub fn described_paths() -> Vec<String> {
     for r in ROLES {
         v.push(format!("color.{r}"));
     }
+    for g in CODE {
+        v.push(format!("code.{g}"));
+    }
     for sec in ["shape", "type", "motion"] {
         for (k, _) in fields(sec) {
             v.push(format!("{sec}.{k}"));
@@ -145,7 +151,26 @@ fn section_schema(section: &str) -> Json {
         };
         props.insert(key.to_string(), with_description(s, &desc_path));
     }
-    json!({"type":"object","properties":props,"additionalProperties":false})
+    let mut schema = json!({"type":"object","properties":props,"additionalProperties":false});
+    if MODES.contains(&section) {
+        // Under patternProperties, not properties: editors that list the color fields skip them.
+        let groups: Map<String, Json> = CODE
+            .iter()
+            .map(|g| {
+                let keys: Map<String, Json> = code_keys(g)
+                    .iter()
+                    .map(|k| (k.to_string(), kind_schema(Kind::Hex)))
+                    .collect();
+                let body = json!({"type":"object","properties":keys,"additionalProperties":false});
+                (
+                    format!("^{g}$"),
+                    with_description(body, &format!("code.{g}")),
+                )
+            })
+            .collect();
+        schema["patternProperties"] = Json::Object(groups);
+    }
+    schema
 }
 
 /// A section as it appears inside a theme: `$ref` to the shared definition plus its own text.
@@ -228,6 +253,16 @@ pub fn schema() -> Json {
             })
         })
         .collect();
+    let code_rules: Vec<Json> = code_pairs()
+        .into_iter()
+        .map(|(fg, bg, min)| {
+            json!({
+                "text": format!("{fg} on {bg}: contrast at least {min:?}"),
+                "foreground": fg, "background": bg, "minimum": min,
+                "applies_to": "light and dark, after deriving what the theme leaves out, for the theme and for every product"
+            })
+        })
+        .collect();
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "Polycarp theme",
@@ -238,6 +273,8 @@ pub fn schema() -> Json {
             selection need 4.5; urgent, working, done and accent on background and surface need 4.5, because they are \
             used as text; on_accent on accent needs 4.5; urgent, working, done and accent on sunken need 3.0, for \
             indicators; border is not checked. \
+            Light and dark may also hold optional `terminal`, `syntax` and `diff` tables of code colors; what a theme \
+            leaves out is derived from its 13 colors. Their rules are in x-code-contrast. \
             A theme that breaks a rule is refused whole and nothing changes; read the errors (each has a path, the actual \
             ratio and the needed one) and pick better colors. Change one value with `change <path> <value>` \
             (paths like dark.accent, shape.radius, surface.site.light.accent), or send a whole theme with `apply`.",
@@ -247,6 +284,7 @@ pub fn schema() -> Json {
         "additionalProperties": false,
         "$defs": defs,
         "x-contrast": rules,
+        "x-code-contrast": code_rules,
         "x-paths": {
             "form": "<section>.<key> or surface.<product>.<section>.<key>",
             "sections": SECTIONS,
