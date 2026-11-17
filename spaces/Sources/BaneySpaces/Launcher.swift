@@ -148,6 +148,10 @@ struct LauncherActions {
     var canOpenWindow: (pid_t) -> Bool = { _ in false }
     var current: () -> Int = { 1 }
     var switchTo: (Int) -> Void = { _ in }
+    /// The window you were in to workspace N, and you with it.
+    var moveWindow: (Int) -> Void = { _ in }
+    /// A window action by its `WindowCommandProvider.commands` id, on the window you were in.
+    var windowCommand: (String) -> Void = { _ in }
     var appsOn: (Int) -> [String] = { _ in [] }
     /// Workspaces each running app (by bundle path) has windows on.
     var workspacesByApp: () -> [String: [Int]] = { [:] }
@@ -545,6 +549,15 @@ final class LauncherModel: ObservableObject {
             LauncherPasteboard.copy(text, transient: true)
             // The launcher never took the app you were in out of front, so ⌘V lands where you were typing.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { System.paste() }
+        case .switchWorkspace(let n):
+            close()
+            actions.switchTo(n)
+        case .moveWindow(let n):
+            close()
+            actions.moveWindow(n)
+        case .windowCommand(let id):
+            close()
+            actions.windowCommand(id)
         }
     }
 
