@@ -24,11 +24,12 @@ public static class Keys {
     static INPUT K(ushort vk, bool up) { var i = new INPUT(); i.type = 1; i.ki.vk = vk; i.ki.flags = up ? 2u : 0u; return i; }
     // Presses the chord: modifiers down in order, the key, then everything up in reverse.
     public static uint Chord(ushort[] mods, ushort key) {
-        var list = new System.Collections.Generic.List<INPUT>();
-        foreach (var m in mods) list.Add(K(m, false));
-        list.Add(K(key, false)); list.Add(K(key, true));
-        for (int i = mods.Length - 1; i >= 0; i--) list.Add(K(mods[i], true));
-        return SendInput((uint)list.Count, list.ToArray(), Marshal.SizeOf(typeof(INPUT)));
+        var list = new INPUT[mods.Length * 2 + 2];
+        int n = 0;
+        foreach (var m in mods) list[n++] = K(m, false);
+        list[n++] = K(key, false); list[n++] = K(key, true);
+        for (int i = mods.Length - 1; i >= 0; i--) list[n++] = K(mods[i], true);
+        return SendInput((uint)n, list, Marshal.SizeOf(typeof(INPUT)));
     }
     public static void Shot(string path) {
         var b = System.Windows.Forms.Screen.PrimaryScreen.Bounds;
