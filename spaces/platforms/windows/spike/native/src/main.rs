@@ -245,6 +245,10 @@ mod win {
             );
         }
         c.EndDraw(None, None)?;
+        // SPIKE_FAIL_DRAW: a test hook that makes every present fail, as a lost device would.
+        if std::env::var_os("SPIKE_FAIL_DRAW").is_some() {
+            return Err(windows::core::Error::from(windows::Win32::Foundation::E_FAIL));
+        }
         g.swap.Present(1, DXGI_PRESENT(0)).ok()
     }
 
