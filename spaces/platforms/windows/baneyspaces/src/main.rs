@@ -26,6 +26,7 @@ mod cloak;
 mod daemon;
 #[cfg(windows)]
 mod hook;
+mod press;
 #[cfg(windows)]
 mod winapi;
 
@@ -55,7 +56,8 @@ const HELP: &str = "baneyspaces (Windows)
   agent set-value <ref> <value>  agent type <ref> <text>
   agent select <ref> <value>     agent scroll <ref> <up|down|left|right> [amount]
   agent shot --window W          agent log [--since SECS]
-  agent press|key|pointer ...    not supported yet (phase 3-4)
+  agent press <ref> <keys>       post keys to that control ('h i Return'; no modifiers)
+  agent key|pointer ...          not supported yet (phase 4)
   keys                           the key map for this platform
   daemon [--trace] [--log FILE]  run the daemon in this console
   daemon --background            run it with no console window (the Startup shortcut runs this)
@@ -160,6 +162,7 @@ const HANDS: &[&str] = &[
     "click",
     "set-value",
     "type",
+    "press",
     "toggle",
     "select",
     "scroll",
@@ -204,11 +207,11 @@ fn agent_request(mut a: Vec<String>) -> Result<Value, Envelope> {
             let since = take(&mut a, "--since").and_then(|s| s.parse::<u64>().ok());
             req("agent_log", json!({ "since": since }))
         }
-        "press" | "key" | "pointer" | "click-at" | "mouse" | "focus" | "lend" | "return" => Err(Envelope::err(
+        "key" | "pointer" | "click-at" | "mouse" | "focus" | "lend" | "return" => Err(Envelope::err(
             "not_supported",
             format!("agent {sub} is not available on Windows in part 1"),
             Retry::Never,
-            "Keys and pointer arrive in phase 3-4, and only for the agent workspace. Use set-value or type on a ref instead.",
+            "The pointer arrives in phase 4, and only for the agent workspace. Use press, type, set-value or click on a ref instead.",
         )),
         v if HANDS.contains(&v) => hands_request(v, a),
         _ => Err(fail("invalid_args", &format!("unknown agent command {sub:?}"), "Run `baneyspaces help`.")),
@@ -265,6 +268,11 @@ fn hands_request(verb: &str, mut a: Vec<String>) -> Result<Value, Envelope> {
             need(&a, 2, "agent type <ref> <text>")?;
             args["ref"] = json!(a[0]);
             args["text"] = json!(a[1..].join(" "));
+        }
+        "press" => {
+            need(&a, 2, "agent press <ref> <keys>")?;
+            args["ref"] = json!(a[0]);
+            args["key"] = json!(a[1..].join(" "));
         }
         "scroll" => {
             need(&a, 2, "agent scroll <ref> <direction> [amount]")?;
@@ -496,10 +504,18 @@ mod tests {
     }
 
     #[test]
-    fn keys_and_pointer_are_not_supported_in_part_one() {
-        for sub in ["press", "key", "pointer", "lend", "return"] {
+    fn the_pointer_is_not_supported_yet() {
+        for sub in ["key", "pointer", "lend", "return"] {
             assert_eq!(request(v(&["agent", sub])).unwrap_err().error.unwrap().code, "not_supported");
         }
+    }
+
+    /// Part 4: `press` is a hands verb on a ref, with the keys as one string, like the Mac's `{ref, key}`.
+    #[test]
+    fn press_carries_its_ref_and_keys() {
+        let r = request(v(&["agent", "press", "@s8f3k2p9:e8", "h", "i", "Return"])).unwrap();
+        assert_eq!(r, json!({"op":"hands","args":{"verb":"press","ref":"@s8f3k2p9:e8","key":"h i Return"}}));
+        assert_eq!(request(v(&["agent", "press", "@s8f3k2p9:e8"])).unwrap_err().error.unwrap().code, "invalid_args");
     }
 
     /// cli.md: "not supported yet" on Windows is `not_supported`, and `agent move --window` is never the park command.

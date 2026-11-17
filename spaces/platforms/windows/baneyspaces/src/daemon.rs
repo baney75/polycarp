@@ -28,6 +28,7 @@ use crate::hidden::{self, Hidden, HiddenSet, How, Recovery};
 use crate::hook::{self, EndSession, Msg};
 use crate::keys;
 use crate::paths::Paths;
+use crate::press;
 use crate::settings;
 use crate::winapi::{self, hwnd as to_hwnd, id_of, window_name};
 use baneyspaces_core::agent::{check_scope, ActionRecord, WindowFacts};
@@ -1142,10 +1143,19 @@ fn hands(shared: &Shared, agent: &str, args: &Value) -> Envelope {
         return Envelope::err("engine_missing", "the hands engine (agent-desktop, pinned) is not built", Retry::Never, "Run platforms/windows/scripts/build-engine.ps1, or set BANEYSPACES_ENGINE.");
     };
     let window_verb = matches!(verb.as_str(), "snapshot" | "find" | "shot");
-    let ref_verb = matches!(verb.as_str(), "get" | "click" | "set-value" | "type" | "toggle" | "select" | "scroll");
+    let ref_verb = matches!(verb.as_str(), "get" | "click" | "set-value" | "type" | "toggle" | "select" | "scroll" | "press");
     if !window_verb && !ref_verb {
-        return Envelope::err("not_supported", format!("agent {verb} is not available on Windows in part 1"), Retry::Never, "Use snapshot, find, get, click, set-value, type, toggle, select, scroll or shot.");
+        return Envelope::err("not_supported", format!("agent {verb} is not available on Windows in part 1"), Retry::Never, "Use snapshot, find, get, click, set-value, type, press, toggle, select, scroll or shot.");
     }
+    // Keys are checked before anything is read or sent: a modifier chord or a bad key never reaches a window.
+    let strokes = if verb == "press" {
+        match press::parse(args["key"].as_str().unwrap_or("")) {
+            Ok(k) => k,
+            Err(env) => return env,
+        }
+    } else {
+        vec![]
+    };
     let s = |k: &str| args[k].as_str().map(String::from);
     let reference = s("ref");
     if let Some(r) = &reference {
@@ -1205,6 +1215,8 @@ fn hands(shared: &Shared, agent: &str, args: &Value) -> Envelope {
                 None => Err(Envelope::err("not_supported", "this element does not expose a text value to insert into", Retry::Never, "Take a snapshot and pick a text field; or use set-value on a ref that has a value.")),
             },
         }
+    } else if verb == "press" {
+        press_keys(shared, &eng, &plan, reference.as_deref().unwrap_or(""), &strokes, t)
     } else {
         engine::run_engine(&eng, &engine::ref_argv(&verb, args), t)
     };
@@ -1212,6 +1224,7 @@ fn hands(shared: &Shared, agent: &str, args: &Value) -> Envelope {
     let mut c = lock(shared);
     let mapped_verb = if verb == "type" { "set-value" } else { verb.as_str() };
     let mut env = match raw {
+        Ok(v) if verb == "press" => Envelope::ok(v),
         Ok(v) => engine::map_engine(mapped_verb, &v),
         Err(e) => e,
     };
@@ -1239,6 +1252,37 @@ fn hands(shared: &Shared, agent: &str, args: &Value) -> Envelope {
     }
     c.paths.append_action(&rec.to_line(), now(), &c.last_prune);
     env
+}
+
+/// `agent press`: posts the keys to the control under the ref, inside the guarded window only (`press.rs`). The value
+/// is read before and after, so `verified` says whether the keys changed it.
+fn press_keys(shared: &Shared, eng: &std::path::Path, plan: &Plan, reference: &str, strokes: &[press::Stroke], t: Duration) -> Result<Value, Envelope> {
+    let get = |property: &str| {
+        engine::run_engine(eng, &engine::ref_argv("get", &json!({ "ref": reference, "property": property })), t).ok().filter(|v| v["ok"] == json!(true)).map(|v| v["data"].clone())
+    };
+    let value = |d: &Option<Value>| d.as_ref().and_then(|d| ["value", "text"].iter().find_map(|k| d[k].as_str().map(String::from)).or_else(|| d.as_str().map(String::from)));
+    let before = value(&get("value"));
+    let at = get("bounds").as_ref().and_then(press::center);
+    let top = to_hwnd(winapi::parse_window_name(&plan.window).unwrap_or(0));
+    // Scope again, right before the keys go: the window must still be the agent's, on the agent workspace.
+    {
+        let c = lock(shared);
+        let info = c.snaps.get(snapshot_of(reference).unwrap_or("")).cloned();
+        guard(&c, &plan.window, info.as_ref())?;
+    }
+    let (to, how) = press::target(top, at);
+    let sent = press::post(to, strokes).map_err(|n| {
+        Envelope::err("engine_error", format!("posting keys to {} stopped after {n} messages", plan.window), Retry::AfterSnapshot, "Take a new snapshot; the window may have closed.")
+    })?;
+    std::thread::sleep(Duration::from_millis(150));
+    let after = value(&get("value"));
+    let changed = before.is_some() && after.is_some() && before != after;
+    Ok(json!({
+        "pressed": sent,
+        "sent_to": how.name(),
+        "verified": changed,
+        "evidence": if before.is_some() && after.is_some() { json!({ "kind": "value_readback", "before": before, "after": after }) } else { json!({ "kind": "none", "note": "the ref has no value to read back; snapshot to check" }) },
+    }))
 }
 
 // ---- putting windows back ------------------------------------------------------------------
