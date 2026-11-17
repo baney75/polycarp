@@ -57,16 +57,16 @@ $testapp = Join-Path $Bin 'bs-testapp.exe'
 $state = if ($env:BANEYSPACES_STATE_DIR) { $env:BANEYSPACES_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'BaneySpaces' }
 $dlog = Join-Path $Out 'daemon.log'
 
-function Cli { $o = (& $bs @args 2>&1 | Out-String).Trim(); try { $o | ConvertFrom-Json } catch { $null } }
+function Spaces { $o = (& $bs @args 2>&1 | Out-String).Trim(); try { $o | ConvertFrom-Json } catch { $null } }
 function Procs([string]$match) { @(Get-CimInstance Win32_Process -Filter "Name = 'baneyspaces.exe'" | Where-Object { $_.CommandLine -match $match }) }
 function Daemon { @(Procs ' daemon' | Where-Object { $_.CommandLine -notmatch '--background' })[0] }
 function WatchdogFor([int]$daemonPid) { @(Procs " watchdog --pid $daemonPid ")[0] }
-function Up { $d = Cli doctor; ($d.data.checks | Where-Object check -eq 'daemon').ok -eq $true }
+function Up { $d = Spaces doctor; ($d.data.checks | Where-Object check -eq 'daemon').ok -eq $true }
 function HomeOf($st, [long]$h) { "$($st.data.windows.(WinId $h).home)" }
 function ShownWorkspaces($st) { @($st.data.monitors.PSObject.Properties | ForEach-Object { "$($_.Value.current)" }) }
 # Every test window on its own workspace in `state`, and shown by Windows exactly when that workspace is shown.
 function Settled {
-    $st = Cli state
+    $st = Spaces state
     if (-not $st.ok) { return "state: $($st.error.message)" }
     $shown = ShownWorkspaces $st
     $bad = @()
@@ -84,15 +84,15 @@ function WaitSettled([int]$ms) {
     @(-1, $why)
 }
 function Place {
-    for ($i = 0; $i -lt $hs.Count; $i++) { if ($ws[$i] -ne 1) { $null = Cli move $ws[$i] --stay --window (WinId $hs[$i]) } }
-    $null = Cli switch 1
+    for ($i = 0; $i -lt $hs.Count; $i++) { if ($ws[$i] -ne 1) { $null = Spaces move $ws[$i] --stay --window (WinId $hs[$i]) } }
+    $null = Spaces switch 1
 }
 
 try {
     "== clean start"
     Get-Process baneyspaces, bs-testapp -ErrorAction SilentlyContinue | Stop-Process -Force
     Remove-Item (Join-Path $state 'state.json'), (Join-Path $state 'watchdog.json') -ErrorAction SilentlyContinue
-    $null = Cli daemon --background --log $dlog
+    $null = Spaces daemon --background --log $dlog
     Check 'the daemon starts' (Up) ''
 
     $ws = @(1, 1, 2, 2, 3, 3); $hs = @()
@@ -101,7 +101,7 @@ try {
         $null = Wait-Until { $p.Refresh(); $p.MainWindowHandle -ne 0 } 5000
         $hs += [long]$p.MainWindowHandle
     }
-    $null = Wait-Until { $st = Cli state; @($hs | Where-Object { $st.data.windows.(WinId $_) }).Count -eq $hs.Count } 5000
+    $null = Wait-Until { $st = Spaces state; @($hs | Where-Object { $st.data.windows.(WinId $_) }).Count -eq $hs.Count } 5000
     Place
     $r = WaitSettled 3000
     Check 'six test windows, two on each of workspaces 1, 2 and 3' ($r[0] -ge 0) "$($hs -join ' ') $($r[1])"
@@ -150,20 +150,20 @@ try {
 
     if (-not $script:failures) {
         "== $ExplorerRestarts explorer.exe restarts"
-        $null = Cli daemon --background --log $dlog
+        $null = Spaces daemon --background --log $dlog
         Place
         $null = WaitSettled 3000
         for ($e = 1; $e -le $ExplorerRestarts; $e++) {
-            $null = Cli switch (@(2, 3, 1)[$e % 3])
+            $null = Spaces switch (@(2, 3, 1)[$e % 3])
             $r = WaitSettled 3000
-            $d = Daemon; $before = Cli state
+            $d = Daemon; $before = Spaces state
             Stop-Process -Name explorer -Force
             $null = Wait-Until { [ShownWatch]::Tray() -eq 0 } 5000
             # Windows starts the shell again by itself (AutoRestartShell); a runner that does not gets it started.
             if ((Wait-Until { [ShownWatch]::Tray() -ne 0 } 6000) -lt 0) { Start-Process explorer.exe }
             $null = Wait-Until { [ShownWatch]::Tray() -ne 0 } 20000
             $r = WaitSettled 2000
-            $after = Cli state
+            $after = Spaces state
             Check "explorer restart ${e}: the same daemon, the same shown workspace" ((Daemon).ProcessId -eq $d.ProcessId -and ((ShownWorkspaces $before) -join ',') -eq ((ShownWorkspaces $after) -join ',')) "pid $($d.ProcessId) -> $((Daemon).ProcessId); $((ShownWorkspaces $before) -join ',') -> $((ShownWorkspaces $after) -join ',')"
             Check "explorer restart ${e}: within 2 s of the taskbar, every window on its workspace and shown or hidden to match" ($r[0] -ge 0) "$($r[0]) ms $($r[1])"
         }
