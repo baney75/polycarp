@@ -8,9 +8,9 @@ On a Mac it lives in `Polycarp.app` with your workspaces, your voice and the bro
 window, one set of permissions and one command. The Windows version is on the way; see [the plan](PLAN.md).
 The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
-It grew from three apps, whose full history is here: [BaneySpaces](https://github.com/baney75/baneyspaces)
-(`spaces/`), [Silas](https://github.com/baney75/silas) (`voice/`) and [Tabkyra](https://github.com/baney75/tabkyra)
-(`browser/`). Those repos stay up, so you can keep using the independent apps. The shared engine is in `core/`.
+It grew from three apps: [BaneySpaces](https://github.com/baney75/baneyspaces)
+(`spaces/`), [Silas](https://github.com/baney75/silas) and [Tabkyra](https://github.com/baney75/tabkyra)
+(`browser/`). The Silas app's source lives in its own repo. Those repos stay up, so you can keep using the independent apps. The shared engine is in `core/`.
 
 ## Install on a Mac
 

@@ -1,7 +1,7 @@
 import CoreGraphics
 
 /// Silas's mark: a fountain pen nib (the cap bar, the nib, its centre slit and the two side slots), drawn as vectors on a 44 by
-/// 44 grid with y pointing down. It follows the silhouette of `voice/src-tauri/icons/tray@2x.png`, redrawn so it stays crisp at
+/// 44 grid with y pointing down. It follows the silhouette of `src-tauri/icons/tray@2x.png` in baney75/silas, redrawn so it stays crisp at
 /// any size. Fill it with the even-odd rule: the slit and the slots are cut out of the nib. No colors here; the caller chooses.
 public enum SilasMarkGeometry {
     public static let grid: CGFloat = 44
