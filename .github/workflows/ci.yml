@@ -222,6 +222,33 @@ jobs:
           name: windows-live
           path: ${{ runner.temp }}/live
 
+  # Line coverage of the Windows daemon's unit tests (the same tests spaces-windows runs, instrumented). Fails when
+  # cloak.rs, hook.rs, daemon.rs or winapi.rs is under 50%; the per-file table is in the job summary.
+  spaces-windows-coverage:
+    needs: changes
+    if: needs.changes.outputs.spaces-linux == 'true' || needs.changes.outputs.spaces-windows == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: spaces
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: spaces, key: spaces-windows-coverage }
+      - name: Unit test coverage of the Windows daemon
+        shell: bash
+        run: |
+          command -v cargo-llvm-cov >/dev/null || cargo install cargo-llvm-cov --locked --version 0.9.1
+          cargo llvm-cov --locked -p baneyspaces-windows --json --summary-only --output-path "$RUNNER_TEMP/cov.json"
+          python platforms/windows/tests/ci/coverage.py "$RUNNER_TEMP/cov.json" 50 | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "${PIPESTATUS[0]}"
+
   spaces-bundle:
     needs: changes
     # The bundle holds the voice core, the browser helper and the `polycarp` command, so a change to any of them can break it.
@@ -482,7 +509,7 @@ jobs:
   # instead of naming jobs that a path filter can skip.
   ci-ok:
     if: always()
-    needs: [changes, cli, core, spaces, spaces-linux, spaces-windows, spaces-windows-live, spaces-bundle, voice, browser-skills, browser-skill-regression, browser-check, browser-cli-windows, browser-e2e]
+    needs: [changes, cli, core, spaces, spaces-linux, spaces-windows, spaces-windows-live, spaces-windows-coverage, spaces-bundle, voice, browser-skills, browser-skill-regression, browser-check, browser-cli-windows, browser-e2e]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job passed or was skipped
