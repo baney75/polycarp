@@ -98,6 +98,31 @@ final class AgentEventsTests: XCTestCase {
         XCTAssertEqual(events[0].data, .object(["window": 77, "workspace": 1]))
     }
 
+    /// Review F10: a lend ending mid-subscribe sends each window it took away as a close, and the focus moving to a window
+    /// now out of scope is reported with no window.
+    func testNarrowingScopeClosesEveryWindowItTookAway() {
+        let wide = AgentAPI.View(access: .standard, inScope: [4211, 77, 78])
+        let after = facts { $0.focusedWindow = 78 }
+        let events = AgentEvents.diff(facts(), wide, after, agentView)
+        XCTAssertEqual(events.map(\.type), ["window_closed", "window_closed", "window_focused"])
+        XCTAssertEqual(events.prefix(2).compactMap { $0.data["window"]?.int }, [77, 78])
+        XCTAssertEqual(events[2].data["window"], .null, "the focused window is out of scope now")
+        XCTAssertFalse(events.contains { $0.data.text.contains("zsh") || $0.data.text.contains("Bank statement") })
+    }
+
+    /// Review F10: when Donovan changes Access, every listener ends instead of hearing a diff across two scopes.
+    func testAnAccessChangeEndsTheListener() throws {
+        XCTAssertTrue(AgentEvents.ends(agentView, fullView))
+        XCTAssertTrue(AgentEvents.ends(agentView, AgentAPI.View(access: .readOnly, inScope: agentView.inScope)))
+        XCTAssertFalse(AgentEvents.ends(agentView, AgentAPI.View(access: .standard, inScope: [])), "a lend ending is a diff")
+        let hub = try Repo.code("Sources/BaneySpaces/Hands/AgentEventHub.swift")
+        XCTAssertTrue(hub.contains("if AgentEvents.ends(s.view, view) { s.finish(); continue }"))
+        XCTAssertTrue(hub.contains("for s in subscribers { s.finish() }"))
+        let app = try Repo.code("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertTrue(app.contains("AgentAccess.shared.onChange = { [weak self] mode in"))
+        XCTAssertTrue(app.contains("self.session.hands.events.end(\"agent access is now \\(mode.rawValue)\")"))
+    }
+
     func testTheLookChanging() {
         let after = facts { $0.theme.polycarp = (name: "dawn", title: "Dawn", mode: "light") }
         XCTAssertEqual(types(facts(), after, agentView), ["theme_changed"])
