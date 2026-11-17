@@ -1,7 +1,7 @@
 name: Windows install
 # The one-step install on a clean windows-latest runner: build the MSI and its winget manifest, install with winget
 # (msiexec when the runner has no winget; the log says which), check the daemon, the sign-in entry and
-# `polycarp --version`, then uninstall and check nothing is left. Also the Windows crate's lint gate.
+# `polycarp --version`, then uninstall and check nothing is left. Also the Windows crates' lint gate (job lint).
 on:
   push:
     branches: [main]
@@ -15,9 +15,14 @@ concurrency:
 permissions:
   contents: read
 jobs:
-  install:
+  # The Windows crates' own lints. --no-deps: baneyspaces-core is shared with Linux and has its own owners.
+  # `cargo test` for these crates runs in ci.yml (spaces-windows).
+  lint:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: spaces
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -26,18 +31,23 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: spaces, key: windows-lint }
+      - run: cargo clippy --locked --no-deps -p baneyspaces-windows -p baneyspaces-testapp --all-targets -- -D warnings
+      - run: cargo fmt --check -p baneyspaces-windows -p baneyspaces-testapp
+  install:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: |
             spaces
             cli
           key: windows-install
-      - name: Lint the Windows crates (clippy -D warnings, rustfmt)
-        working-directory: spaces
-        run: |
-          cargo clippy --locked -p baneyspaces-windows -p baneyspaces-testapp --all-targets -- -D warnings
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          cargo fmt --check -p baneyspaces-windows -p baneyspaces-testapp
-          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: WiX 5.0.2
         run: |
           dotnet tool install --global wix --version 5.0.2
