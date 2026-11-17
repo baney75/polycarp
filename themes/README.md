@@ -136,8 +136,8 @@ keyword = "#ff7b72"
 
 ### One product only: `[surface.<name>]`
 
-The names are `spaces`, `voice`, `browser` and `site`. Each holds any of the sections above. They are
-merged over the theme for that product only.
+The names are `spaces`, `voice`, `browser`, `site` and `studio` (Local Studio, its iPhone app and its
+plugins). Each holds any of the sections above. They are merged over the theme for that product only.
 
 ```toml
 [surface.site.light]
@@ -239,7 +239,7 @@ density = "compact"
 | `polycarp theme show [name] [--json]` | The full resolved theme. With no name, the current one with your accent |
 | `polycarp theme current [--json]` | The theme, mode and accent in force, and any problem found |
 | `polycarp theme schema` | The JSON Schema for a theme file, every field described |
-| `polycarp theme get <path> [name]` | One resolved value, such as `dark.accent` or `surface.site.light.accent` |
+| `polycarp theme get <path> [name]` | One resolved value, such as `dark.accent`, `surface.site.light.accent` or `dark.syntax.comment` (derived if the theme doesn't set it) |
 | `polycarp theme change <path> <value> [<path> <value> ...] [--theme <name>]` | Change one value, or several at once (all checked first, one entry in history). On a built-in, makes `<name>-custom` first. `--theme` edits that user theme instead of the current one and does not switch to it |
 | `polycarp theme apply <file\|-> [--name <n>] [--no-activate]` | Save a whole theme (TOML or JSON) and use it |
 | `polycarp theme preview [name] [--mode light\|dark\|both] [--surface <s>] [--format html\|png] [--out <file\|folder>]` | Write an HTML page showing the theme on product UI, by default into `<config>/previews/` (private to you). `--format png` writes one image per product and mode instead, `<name>-<product>-<mode>.png`, with no browser needed; `--out` is then a folder that exists. `--out` will not replace a file that is not itself a preview |
@@ -277,12 +277,15 @@ for its own `on_accent`: setting either one keeps the product's accent pair as t
 `set`, `accent`, `on`, `undo` and `reset` write these files in the config folder:
 
 - `config.toml`: your choices. `[appearance]` holds `theme`, `mode`, `accent_light` and `accent_dark`, and `enabled = false` while the theme is off (the key is left out when it is on).
-- `current/theme.json`: the resolved theme for every product. Whether motion is reduced is in `surfaces.<surface>.motion.reduced`; there is no top-level `reduced_motion`.
-- `current/spaces.css`, `voice.css`, `browser.css`, `site.css`: the same, as CSS variables.
+- `current/theme.json`: the resolved theme for every product. Whether motion is reduced is in `surfaces.<surface>.motion.reduced`; there is no top-level `reduced_motion`. Each product's `light` and `dark` hold the 13 colors and the `terminal`, `syntax` and `diff` objects, every key filled in.
+- `current/spaces.css`, `voice.css`, `browser.css`, `site.css`, `studio.css`: the same, as CSS variables. Code colors are only in `theme.json`.
+
+`theme.json` has a top-level `schema` number, now 2. It goes up by one whenever the shape changes, and
+readers ignore fields they don't know. Schema 2 added the `studio` product and the code colors.
 
 Voice and Browser can read these files; that support is merged but not released yet. Spaces' is coming. Until an app is updated, only the files change.
 
-While the theme is off (`polycarp theme off`), `theme.json` and the four CSS files are removed and nothing is written there. Apps that read them use their own look when they next check; this command checks only that the files are gone. `theme current` shows `state: off` and `"enabled": false`. `off` removes a symbolic link at one of those paths (the file it points to is left alone), and `on` writes plain files, so a link is not remembered. `off` does not need a working theme: if `config.toml` is broken, it is kept in `history/` and replaced.
+While the theme is off (`polycarp theme off`), `theme.json` and the five CSS files are removed and nothing is written there. Apps that read them use their own look when they next check; this command checks only that the files are gone. `theme current` shows `state: off` and `"enabled": false`. `off` removes a symbolic link at one of those paths (the file it points to is left alone), and `on` writes plain files, so a link is not remembered. `off` does not need a working theme: if `config.toml` is broken, it is kept in `history/` and replaced.
 
 Files are written to a temporary name and then renamed, so a reader never sees half a file. If one of the
 files is a symbolic link, the file it points to is written and the link stays. An existing file keeps its

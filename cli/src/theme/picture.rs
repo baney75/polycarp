@@ -884,6 +884,140 @@ fn site(cv: &mut Canvas, l: &Look) {
     status_row(cv, l, 360.0);
 }
 
+/// Local Studio: highlighted code, a diff and a terminal, in the theme's code colors.
+fn studio(cv: &mut Canvas, l: &Look) {
+    let code = l.r.code(l.mode);
+    let k = |g: &str, key: &str| Rgb::hex(&code[g][key]);
+    let x0 = 24.0;
+    let bx = l.button(cv, x0, 54.0, "Run", "accent", "on_accent");
+    cv.text(
+        bx + 14.0,
+        54.0 + l.pad(8.0),
+        "main.rs",
+        l.s,
+        l.c("foreground"),
+    );
+    let lines: [&[(&str, &str)]; 5] = [
+        &[
+            ("fn ", "keyword"),
+            ("greet", "function"),
+            ("(", "punctuation"),
+            ("name", "variable"),
+            (": ", "punctuation"),
+            ("Str", "type"),
+            (")", "punctuation"),
+            (" -> ", "operator"),
+            ("Out", "type"),
+        ],
+        &[("// say hi to them", "comment")],
+        &[
+            ("let ", "keyword"),
+            ("n", "variable"),
+            (" = ", "operator"),
+            ("42", "number"),
+            (" + ", "operator"),
+            ("MAX", "constant"),
+        ],
+        &[
+            ("print", "function"),
+            ("(", "punctuation"),
+            ("\"hi\"", "string"),
+            (", ", "punctuation"),
+            ("user", "variable"),
+            (".", "punctuation"),
+            ("name", "property"),
+            (")", "punctuation"),
+        ],
+        &[
+            ("<a ", "tag"),
+            ("href", "attribute"),
+            ("=", "operator"),
+            ("\"/x\"", "string"),
+            (">", "tag"),
+        ],
+    ];
+    let mut y = 96.0;
+    for line in lines {
+        let mut x = x0;
+        for (t, role) in line {
+            x += cv.text(x, y, t, l.s, k("syntax", role));
+        }
+        y += l.line_h();
+    }
+    // A diff: a removed, an added and a changed line, each with its gutter mark.
+    y += l.pad(6.0);
+    let row = l.line_h() + 6.0;
+    for (sign, t, surface, ink, gutter) in [
+        (
+            "-",
+            "let n = 41",
+            Some("removed_surface"),
+            "removed",
+            "gutter_removed",
+        ),
+        (
+            "+",
+            "let n = 42",
+            Some("added_surface"),
+            "added",
+            "gutter_added",
+        ),
+        ("*", "print(n)", None, "modified", "modified"),
+    ] {
+        let fill = surface.map_or(l.c("background"), |s| k("diff", s));
+        cv.rect([x0, y, 696.0, y + row], 0.0, fill, 1.0);
+        cv.rect([x0, y, x0 + 4.0, y + row], 0.0, k("diff", gutter), 1.0);
+        let w = cv.text(x0 + 12.0, y + 3.0, sign, l.s, k("diff", ink));
+        let body = if surface.is_some() {
+            l.c("foreground")
+        } else {
+            k("diff", ink)
+        };
+        cv.text(x0 + 24.0 + w, y + 3.0, t, l.s, body);
+        y += row;
+    }
+    // The terminal, with its 16 colors under the prompt.
+    let t0 = y + l.pad(10.0);
+    let t1 = (t0 + 50.0).max(396.0).min(HEIGHT as f32 - 8.0);
+    cv.rect(
+        [x0, t0, 696.0, t1],
+        l.radius(),
+        k("terminal", "background"),
+        1.0,
+    );
+    cv.stroke([x0, t0, 696.0, t1], l.radius(), l.line(), l.c("border"));
+    let ty = t0 + 12.0;
+    let w = cv.text(
+        x0 + 14.0,
+        ty,
+        "> polycarp theme set calm",
+        l.s,
+        k("terminal", "foreground"),
+    );
+    let ch = (GLYPH_H * l.s) as f32;
+    cv.rect(
+        [x0 + 18.0 + w, ty, x0 + 18.0 + w + ch * 0.6, ty + ch],
+        0.0,
+        k("terminal", "cursor"),
+        1.0,
+    );
+    let names = [
+        "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+    ];
+    let sw = (696.0 - x0 - 28.0) / 16.0;
+    for (i, n) in names.iter().enumerate() {
+        for (j, key) in [n.to_string(), format!("bright_{n}")].iter().enumerate() {
+            let x = x0 + 14.0 + (i + j * 8) as f32 * sw;
+            cv.rect(
+                [x, ty + ch + 10.0, x + sw - 3.0, t1 - 10.0],
+                0.0,
+                k("terminal", key),
+                1.0,
+            );
+        }
+    }
+}
+
 /// The three status colors as text on the page, the way every product writes them.
 fn status_row(cv: &mut Canvas, l: &Look, y: f32) {
     let mut x = 24.0;
@@ -912,6 +1046,7 @@ pub(super) fn render(r: &Resolved, title: &str, surface: &str, mode: &str) -> Ca
         "voice" => voice(&mut cv, &l),
         "browser" => browser(&mut cv, &l),
         "site" => site(&mut cv, &l),
+        "studio" => studio(&mut cv, &l),
         _ => spaces(&mut cv, &l),
     }
     cv
@@ -959,7 +1094,7 @@ mod tests {
     fn each_image_is_drawn_in_that_theme_and_mode() {
         for name in ["polycarp", "blocks", "calm"] {
             let full = builtin(name);
-            for s in ["spaces", "voice", "browser", "site"] {
+            for s in ["spaces", "voice", "browser", "site", "studio"] {
                 let r = full.surface(s).exported();
                 for m in ["light", "dark"] {
                     let cv = render(&r, &full.title, s, m);
