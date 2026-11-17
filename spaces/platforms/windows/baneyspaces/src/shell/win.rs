@@ -1060,6 +1060,7 @@ pub fn run(args: &[String]) -> i32 {
     shell.load_fonts();
     shell.rebuild();
     SHELL.with(|c| *c.borrow_mut() = Some(shell));
+    with_shell(panel::warm);
 
     std::thread::Builder::new().name("shell-feed".into()).spawn(move || feed(paths)).ok();
     if let Some(dir) = config {

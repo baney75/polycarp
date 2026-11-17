@@ -3,6 +3,7 @@
 //! and what each key does is `shell::launcher`; this file only places, paints and acts. A child of `win`, so it
 //! draws with the bar's device and palette.
 
+use super::super::bar::{Align, Face, Rect};
 use super::super::launcher::{self as model, Action, App, Command, Key, Launcher, Outcome};
 use super::*;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -207,6 +208,55 @@ pub fn show(s: &mut Shell, by: &str) {
     let t0 = Instant::now();
     prepare(s);
     s.panel.model.reset();
+    let (x, y, w, h, dpi) = place(s);
+    let drawn = paint(s);
+    s.panel.shown = true;
+    let front = unsafe {
+        ShowWindow(s.panel.hwnd, SW_SHOW);
+        crate::winapi::set_foreground(s.panel.hwnd)
+    };
+    log(&format!(
+        "launcher shown by {by} at {x},{y} {w}x{h} px, dpi {dpi}, first frame {} results={}, {}",
+        if drawn {
+            format!("{:.1} ms", t0.elapsed().as_secs_f64() * 1000.0)
+        } else {
+            "not drawn".into()
+        },
+        s.panel.model.rows.len(),
+        if front { "in front" } else { "not in front (Windows kept the front elsewhere)" }
+    ));
+    if s.panel.scanned.is_none_or(|t| t.elapsed() > RESCAN) {
+        s.panel.scanned = Some(Instant::now());
+        scan();
+    }
+}
+
+/// Draws every printable ASCII character in both faces once, into the hidden panel, as the shell starts: the first
+/// keystroke after an open then finds its glyphs ready instead of rasterizing them.
+pub fn warm(s: &mut Shell) {
+    let t0 = Instant::now();
+    place(s);
+    if !fonts_ready(s) {
+        return;
+    }
+    let all: Vec<char> = (0x20u8..0x7f).map(char::from).collect();
+    let mut ops = vec![];
+    for (f, face) in [Face::Ui, Face::UiStrong].into_iter().enumerate() {
+        for (i, chunk) in all.chunks(24).enumerate() {
+            let r = Rect { x: 8.0, y: 8.0 + (f * 5 + i) as f32 * 30.0, w: model::WIDTH - 16.0, h: 30.0 };
+            ops.push(Op::Text { r, text: chunk.iter().collect(), face, ink: Ink::Foreground, align: Align::Start });
+        }
+    }
+    let p = s.palette().clone();
+    if let (Some((surf, ..)), Some((fonts, ..))) = (s.panel.surface.as_ref(), s.panel.fonts.as_ref()) {
+        if unsafe { surf.draw(fonts, color(p.surface), &draws(&p, &ops)) }.is_ok() {
+            log(&format!("launcher warmed in {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0));
+        }
+    }
+}
+
+/// Sizes and places the hidden panel for the display you are working on and makes its surface. Returns where.
+fn place(s: &mut Shell) -> (i32, i32, i32, i32, u32) {
     // Over the display you are working on: the one with the window in front, else the pointer's.
     let (work, dpi) = unsafe {
         let fg = GetForegroundWindow();
@@ -237,26 +287,7 @@ pub fn show(s: &mut Shell, by: &str) {
             Err(e) => log(&format!("error: launcher surface: {e}")),
         }
     }
-    let drawn = paint(s);
-    s.panel.shown = true;
-    let front = unsafe {
-        ShowWindow(s.panel.hwnd, SW_SHOW);
-        crate::winapi::set_foreground(s.panel.hwnd)
-    };
-    log(&format!(
-        "launcher shown by {by} at {x},{y} {w}x{h} px, dpi {dpi}, first frame {} results={}, {}",
-        if drawn {
-            format!("{:.1} ms", t0.elapsed().as_secs_f64() * 1000.0)
-        } else {
-            "not drawn".into()
-        },
-        s.panel.model.rows.len(),
-        if front { "in front" } else { "not in front (Windows kept the front elsewhere)" }
-    ));
-    if s.panel.scanned.is_none_or(|t| t.elapsed() > RESCAN) {
-        s.panel.scanned = Some(Instant::now());
-        scan();
-    }
+    (x, y, w, h, dpi)
 }
 
 pub fn hide(s: &mut Shell, why: &str) {
@@ -268,7 +299,8 @@ pub fn hide(s: &mut Shell, why: &str) {
     log(&format!("launcher hidden: {why}"));
 }
 
-fn paint(s: &mut Shell) -> bool {
+/// The panel's fonts for the theme, made when the theme's family, size or weight changed.
+fn fonts_ready(s: &mut Shell) -> bool {
     let family = unsafe { s.dev.family(&s.theme.font_ui) };
     let size = (s.theme.size * 0.875).round().max(11.0);
     if !matches!(&s.panel.fonts, Some((_, f, z, w)) if *f == family && *z == size && *w == s.theme.weight)
@@ -280,6 +312,13 @@ fn paint(s: &mut Shell) -> bool {
                 None
             }
         };
+    }
+    s.panel.fonts.is_some()
+}
+
+fn paint(s: &mut Shell) -> bool {
+    if !fonts_ready(s) {
+        return false;
     }
     let lay = model::layout(&s.panel.model, &s.theme);
     let p = s.palette().clone();
@@ -298,16 +337,26 @@ fn paint(s: &mut Shell) -> bool {
 
 fn key(s: &mut Shell, k: Key) {
     let pressed = s.panel.pressed.take().unwrap_or_else(Instant::now);
-    match s.panel.model.key(k) {
+    let start = Instant::now();
+    let outcome = s.panel.model.key(k);
+    let ranked = Instant::now();
+    match outcome {
         Outcome::Same => {}
         Outcome::Redraw => {
             if paint(s) {
+                let ms = |a: Instant, b: Instant| b.duration_since(a).as_secs_f64() * 1000.0;
+                let end = Instant::now();
                 // R-L13: the time and the count, never what was typed.
-                log(&format!(
-                    "launcher key->paint={:.1} results={}",
-                    pressed.elapsed().as_secs_f64() * 1000.0,
-                    s.panel.model.rows.len()
-                ));
+                log(&format!("launcher key->paint={:.1} results={}", ms(pressed, end), s.panel.model.rows.len()));
+                // Where a slow key's time went: Windows handing over its character, ranking, or drawing.
+                if ms(pressed, end) > 8.0 {
+                    log(&format!(
+                        "launcher slow key: {:.1} ms to the character, {:.1} ms ranking, {:.1} ms drawing",
+                        ms(pressed, start),
+                        ms(start, ranked),
+                        ms(ranked, end)
+                    ));
+                }
             }
         }
         Outcome::Close => hide(s, "Esc"),
