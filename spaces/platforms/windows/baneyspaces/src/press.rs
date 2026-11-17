@@ -266,12 +266,9 @@ mod win {
         };
 
         fn testapp() -> std::path::PathBuf {
-            // target/<profile>/deps/<this test>.exe -> target/<profile>/bs-testapp.exe
+            // bs-testapp.exe sits in target/<profile>, an ancestor of this test's exe (deps/ or build/<pkg>/<hash>/).
             let exe = std::env::current_exe().unwrap();
-            exe.parent()
-                .and_then(|d| d.parent())
-                .unwrap()
-                .join("bs-testapp.exe")
+            exe.ancestors().map(|a| a.join("bs-testapp.exe")).find(|p| p.is_file()).unwrap_or_else(|| exe.with_file_name("bs-testapp.exe"))
         }
 
         fn window_of(pid: u32) -> Option<HWND> {
