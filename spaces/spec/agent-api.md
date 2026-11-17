@@ -71,11 +71,11 @@ on the agent workspace while no display shows it. A command that needs view cont
 1. The caller is on this machine (never a connector or `--on HOST`).
 2. Access is Full Access.
 3. Donovan turned on **Agents may change what you see** in the app's own Settings (macOS: Settings > Agents; off by
-   default). The app seals the stored value (`agentViewControl`) with a MAC under a key only it holds (macOS: a Keychain
-   item the app made; Windows: a key protected with DPAPI for the app), treats a missing or wrong MAC as off, deletes
-   the key when the switch is turned off and makes a new one when it is turned on, so a value saved earlier can't be
-   written back. A `defaults write`, an edit of the settings file or a copied value leaves view control off. Hands
-   refuse Polycarp's own windows in every mode, so no agent clicks the switch either.
+   default). The switch is never stored: it lives in the running app, is off at every launch, and turns on only when
+   Donovan confirms it on Polycarp's own sheet with a real click or key, checked as a lend's is (a click posted by a
+   program or an accessibility press is refused). So a `defaults write`, an edit of the settings file or a copied
+   value leaves view control off: nothing on disk is read for it. Hands refuse Polycarp's own windows in every mode, so
+   no agent clicks the switch either.
 
 Otherwise the command fails with `permission_denied`, `retry: never`, before anything moves, and the suggestion says
 which of the three is missing. Taking a window onto the agent workspace from a workspace a display shows is never done,

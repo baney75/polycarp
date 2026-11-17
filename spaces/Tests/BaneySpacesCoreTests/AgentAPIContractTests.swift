@@ -107,15 +107,18 @@ final class AgentAPIContractTests: XCTestCase {
         XCTAssertTrue(section("View control").contains("Taking a window onto the agent workspace from a workspace a display shows is never done"))
     }
 
-    /// F2: the switch is sealed, so a value an agent writes leaves view control off.
-    func testTheViewControlSwitchIsSealed() {
+    /// F2: the switch is never stored, so nothing an agent writes to disk turns view control on. A sealed stored value
+    /// fails: another process can make the Keychain item first, with a key it knows.
+    func testTheViewControlSwitchIsNeverStored() {
         let rule = section("View control")
-        for phrase in ["treats a missing or wrong MAC as off", "deletes\n   the key when the switch is turned off and makes a new one when it is turned on",
-                       "A `defaults write`, an edit of the settings file or a copied value leaves view control off",
-                       "Hands\n   refuse Polycarp's own windows in every mode"] {
+        for phrase in ["The switch is never stored: it lives in the running app, is off at every launch",
+                       "confirms it on Polycarp's own sheet with a real click or key",
+                       "value leaves view control off: nothing on disk is read for it",
+                       "Hands refuse Polycarp's own windows in every mode"] {
             XCTAssertTrue(rule.contains(phrase), phrase)
         }
         XCTAssertFalse(doc.contains("No command, tool or\n   setting an agent can reach turns it on"), "a claim the stored flag couldn't keep")
+        XCTAssertFalse(rule.contains("MAC"), "a seal under a Keychain key another process can make first")
     }
 
     /// F3: no count or event says anything about a window out of scope.
