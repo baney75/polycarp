@@ -244,4 +244,185 @@ final class WindowIdentityTests: XCTestCase {
         let (live, records) = twoHundred()
         XCTAssertEqual(WindowPairing.pair(live, with: records), plainPair(live, records))
     }
+
+    // MARK: The book
+
+    /// You are on workspace 2 on the laptop; nothing else is in sight.
+    private var onTwo: PlacementBook.Scene { .init(inSight: [2: "laptop"], displays: [laptop, studio], agentWorkspace: 9) }
+
+    /// The app quit: when it starts again, its restored windows go home.
+    func testARelaunchedAppGetsItsWindowsBack() {
+        var book = PlacementBook()
+        book.quit(bundle: "com.apple.TextEdit", records: [record("com.apple.TextEdit", "notes.txt", order: 0, workspace: 4, at: 1000)])
+        let got = book.claim([LiveWindow(id: 77, bundle: "com.apple.TextEdit", title: "notes.txt", order: 0)], started: [77: 1010],
+                             relaunch: false, scene: onTwo)
+        XCTAssertEqual(got.map(\.workspace), [4])
+        XCTAssertTrue(book.gone.isEmpty, "a record is used once")
+    }
+
+    /// A process that was running when the record was written didn't restore anything: its new window
+    /// is new, and joins the workspace you are on (ledger: "an app opened again here takes you to its old workspace").
+    func testAProcessOlderThanTheRecordIsNeverMatched() {
+        var book = PlacementBook(gone: [record("com.mitchellh.ghostty", "zsh", order: 0, workspace: 6, at: 1000)])
+        XCTAssertTrue(book.claim([LiveWindow(id: 5, bundle: "com.mitchellh.ghostty", title: "zsh", order: 0)], started: [5: 900],
+                                 relaunch: false, scene: onTwo).isEmpty)
+        XCTAssertEqual(book.gone.count, 1)
+    }
+
+    /// Ghostty quit with one window on workspace 6 and opens a fresh one where you start it again: no title in
+    /// common, so it stays with you. Order fills in only for an app that is restoring by title.
+    func testARelaunchedAppsNewWindowIsNotTakenForItsOldOne() {
+        var book = PlacementBook(gone: [record("com.mitchellh.ghostty", "~/Projects", order: 0, workspace: 6, at: 1000)])
+        let fresh = [LiveWindow(id: 5, bundle: "com.mitchellh.ghostty", title: "~", order: 0)]
+        XCTAssertTrue(book.claim(fresh, started: [5: 1100], relaunch: true, scene: onTwo).isEmpty)
+        // A browser that brought back one window by title fills in its other by order.
+        book = PlacementBook(gone: [record("com.example.browser", "GitHub", order: 0, workspace: 2, at: 1000),
+                                    record("com.example.browser", "Docs", order: 1, workspace: 4, at: 1000)])
+        let both = [LiveWindow(id: 8, bundle: "com.example.browser", title: "GitHub", order: 0),
+                    LiveWindow(id: 9, bundle: "com.example.browser", title: "New Tab", order: 1)]
+        XCTAssertEqual(book.claim(both, started: [8: 1100, 9: 1100], relaunch: false, scene: onTwo).map(\.workspace).sorted(), [2, 4])
+    }
+
+    /// first-F1: Messages (or Calculator, System Settings, a New Tab) quit on workspace 6, and you open it from the
+    /// Dock on workspace 2. Its one window has the same fixed title as before, which says nothing about whether it was
+    /// restored: it stays on 2. On 85b22797 the title pass claimed it and sent it, and you after it, to 6.
+    func testARelaunchedAppsOneWindowWithAFixedTitleStaysWhereYouAre() {
+        var book = PlacementBook(gone: [record("com.apple.MobileSMS", "Messages", order: 0, workspace: 6, at: 1000)])
+        let opened = [LiveWindow(id: 5, bundle: "com.apple.MobileSMS", title: "Messages", order: 0, pid: 50)]
+        XCTAssertTrue(book.claim(opened, started: [5: 1100], relaunch: true, scene: onTwo).isEmpty)
+        XCTAssertTrue(book.gone.isEmpty, "its record is used up, so a later window of it isn't taken for it")
+    }
+
+    /// An app restoring its windows brings back several by title: they go home, except the focused window of the app
+    /// in front, which stays where you opened it so focus never follows it away. A window going to a workspace in
+    /// sight moves even on one title: that takes you nowhere.
+    func testARelaunchedAppRestoringSeveralWindowsGetsThemBackButNeverTakesYouAlong() {
+        let records = [record("com.apple.TextEdit", "notes.txt", order: 0, workspace: 6, at: 1000),
+                       record("com.apple.TextEdit", "plan.txt", order: 1, workspace: 7, at: 1000)]
+        let live = [LiveWindow(id: 5, bundle: "com.apple.TextEdit", title: "notes.txt", order: 0, pid: 50),
+                    LiveWindow(id: 6, bundle: "com.apple.TextEdit", title: "plan.txt", order: 1, pid: 50)]
+        var book = PlacementBook(gone: records)
+        XCTAssertEqual(book.claim(live, started: [5: 1100, 6: 1100], relaunch: true, scene: onTwo).map(\.workspace), [6, 7])
+        book = PlacementBook(gone: records)
+        var front = onTwo
+        front.focused = 6
+        XCTAssertEqual(book.claim(live, started: [5: 1100, 6: 1100], relaunch: true, scene: front).map(\.window), [5])
+        book = PlacementBook(gone: [record("com.apple.TextEdit", "notes.txt", order: 0, workspace: 2, at: 1000)])
+        XCTAssertEqual(book.claim([live[0]], started: [5: 1100], relaunch: true, scene: onTwo).map(\.now), [true])
+    }
+
+    /// first-F3: a browser's window scanned before its title is set pairs with nothing (it would take the wrong
+    /// record by order), and a process's windows arriving in two looks still pair: one by title, then one by order.
+    func testAnUntitledWindowNeverPairsAndAProcessRestoringByTitleKeepsThatAcrossLooks() {
+        var book = PlacementBook(gone: [record("com.example.browser", "GitHub", order: 0, workspace: 2, at: 1000),
+                                        record("com.example.browser", "Docs", order: 1, workspace: 4, at: 1000)])
+        let untitled = LiveWindow(id: 8, bundle: "com.example.browser", title: "", order: 0, pid: 50)
+        XCTAssertTrue(book.claim([untitled], started: [8: 1100], relaunch: false, scene: onTwo).isEmpty)
+        XCTAssertEqual(book.gone.count, 2)
+        var both = onTwo
+        both.inSight[4] = "studio"
+        let first = LiveWindow(id: 8, bundle: "com.example.browser", title: "GitHub", order: 0, pid: 50)
+        XCTAssertEqual(book.claim([first], started: [8: 1100], relaunch: true, scene: both).map(\.workspace), [2])
+        let later = LiveWindow(id: 9, bundle: "com.example.browser", title: "New Tab", order: 1, pid: 50)
+        let got = book.claim([later], started: [9: 1100], relaunch: true, scene: both)
+        XCTAssertEqual(got.map { "\($0.workspace) \($0.rule.rawValue)" }, ["4 creation order"], "it got a window back by title in the look before")
+    }
+
+    /// second-F6: what `placeFromBook` applies. A window going to a hidden workspace gets its frame as its parked
+    /// record (`now` false); one going to a workspace in sight moves now. The agent workspace and windows of processes
+    /// an agent started or a launch claimed are never placed, and their records are not used.
+    func testHiddenWorkspacesGetAParkedFrameAndAgentWindowsAreLeftAlone() {
+        var book = PlacementBook(gone: [record("a", "one", order: 0, workspace: 5, at: 1000),
+                                        record("a", "two", order: 1, workspace: 2, at: 1000),
+                                        record("b", "agent", order: 0, workspace: 9, at: 1000),
+                                        record("c", "claimed", order: 0, workspace: 3, at: 1000)])
+        var scene = onTwo
+        scene.skip = [70]
+        let live = [LiveWindow(id: 1, bundle: "a", title: "one", order: 0, pid: 50), LiveWindow(id: 2, bundle: "a", title: "two", order: 1, pid: 50),
+                    LiveWindow(id: 3, bundle: "b", title: "agent", order: 0, pid: 60), LiveWindow(id: 4, bundle: "c", title: "claimed", order: 0, pid: 70)]
+        let got = book.claim(live, started: [1: 1100, 2: 1100, 3: 1100, 4: 1100], relaunch: false, scene: scene)
+        XCTAssertEqual(got.map { "\($0.window) \($0.workspace) \($0.now)" }, ["1 5 false", "2 2 true"])
+        XCTAssertEqual(got.map(\.frame), [CGRect(x: 100, y: 100, width: 800, height: 600), CGRect(x: 100, y: 100, width: 800, height: 600)])
+        XCTAssertEqual(book.gone.map(\.titleHash), [h("claimed")], "the skipped process's record waits; the agent workspace's is used up")
+    }
+
+    /// first-F2: ⌘Q closes an app's windows before it quits, and a look in between sees none. A process still
+    /// running keeps its last records for the quit; one that is gone does not.
+    func testAnAppClosingItsWindowsBeforeItQuitsKeepsItsRecords() {
+        let before: [Int32: [WindowRecord]] = [50: [record("a", "x", order: 0, workspace: 3, pid: 50)],
+                                               60: [record("b", "y", order: 0, workspace: 4, pid: 60)]]
+        let now: [Int32: [WindowRecord]] = [70: [record("c", "z", order: 0, workspace: 5, pid: 70)]]
+        let kept = PlacementBook.carry(now, previous: before) { $0 == 50 }
+        XCTAssertEqual(kept.keys.sorted(), [50, 70])
+        XCTAssertEqual(kept[50], before[50])
+    }
+
+    /// second-F5: no window title reaches disk, only keyed hashes, and only you can read the file.
+    func testTheBookHoldsNoTitleTextAndOnlyYouCanReadIt() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("book-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let key = TitleHash.key(at: folder.appendingPathComponent("title.key"))
+        XCTAssertEqual(TitleHash.key(at: folder.appendingPathComponent("title.key")), key, "made once")
+        let secret = "Private Browsing - Statement for Account 4471"
+        let r = WindowRecord(bundle: "com.example.browser", title: secret, order: 0, workspace: 1, frame: nil, displays: [laptop],
+                             window: 1, pid: 1, at: 1, key: key)
+        let url = folder.appendingPathComponent("placements.json")
+        PlacementBook(live: [r], gone: [r]).save(to: url)
+        let text = try String(contentsOf: url, encoding: .utf8).lowercased()
+        for word in ["private", "browsing", "statement", "account", "4471"] { XCTAssertFalse(text.contains(word), word) }
+        for file in [url, folder.appendingPathComponent("title.key")] {
+            let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+            XCTAssertEqual(mode?.intValue, 0o600, file.lastPathComponent)
+        }
+        XCTAssertEqual(WindowPairing.pair([LiveWindow(id: 9, bundle: "com.example.browser", title: secret, order: 4, key: key)], with: [r]).map(\.rule), [.title])
+        XCTAssertNotEqual(TitleHash.of(secret, key: key), TitleHash.of(secret, key: Data()), "the hash depends on this Mac's key")
+    }
+
+    /// first-F4 through the book: a claimed window goes to the display showing its workspace now.
+    func testAClaimedWindowLandsOnTheDisplayShowingItsWorkspace() {
+        let r = record("a", "x", order: 0, workspace: 3, frame: CGRect(x: 1612, y: -200, width: 900, height: 700))
+        var book = PlacementBook(gone: [r])
+        var scene = onTwo
+        scene.inSight = [3: "laptop", 5: "studio"]
+        let got = book.claim([LiveWindow(id: 4, bundle: "a", title: "x", order: 0)], started: [4: 5000], relaunch: false, scene: scene)
+        XCTAssertEqual(got.map(\.workspace), [3])
+        XCTAssertTrue(got.first.flatMap(\.frame).map(laptop.visible.contains) == true)
+    }
+
+    func testAQuitReplacesTheAppsOlderRecordsButNoRecordsKeepThem() {
+        var book = PlacementBook(gone: [record("a", "x", order: 0, workspace: 1, at: 1), record("b", "y", order: 0, workspace: 2, at: 1)])
+        book.quit(bundle: "a", records: [record("a", "z", order: 0, workspace: 3, at: 5)])
+        XCTAssertEqual(Set(book.gone.map(\.titleHash)), [h("y"), h("z")])
+        book.quit(bundle: "b", records: [])
+        XCTAssertEqual(Set(book.gone.map(\.titleHash)), [h("y"), h("z")], "no snapshot of it: keep what we had")
+    }
+
+    /// Polycarp restarted (an update): windows still in the same process kept their numbers and need no
+    /// matching; the rest (a restart of the Mac) wait for their apps.
+    func testOnStartTheLastRunsRecordsWaitUnlessTheirWindowIsStillHere() {
+        var book = PlacementBook(live: [record("a", "kept", order: 0, workspace: 2, window: 40, pid: 400, at: 5000),
+                                        record("a", "closed", order: 1, workspace: 3, window: 41, pid: 400, at: 5000),
+                                        record("b", "rebooted", order: 0, workspace: 4, window: 50, pid: 500, at: 5000)],
+                                 gone: [record("a", "old", order: 0, workspace: 9, at: 10), record("c", "waits", order: 0, workspace: 8, at: 4000)])
+        book.started(alive: [40: 400, 50: 999], now: 6000)
+        XCTAssertTrue(book.live.isEmpty)
+        XCTAssertEqual(Set(book.gone.map(\.titleHash)), [h("closed"), h("rebooted"), h("waits")], "a's newer records replace its old one")
+    }
+
+    func testRecordsOlderThanAWeekAreDropped() {
+        var book = PlacementBook(gone: [record("a", "x", order: 0, workspace: 1, at: 0)])
+        book.expire(now: PlacementBook.keepFor - 1)
+        XCTAssertEqual(book.gone.count, 1)
+        book.expire(now: PlacementBook.keepFor + 1)
+        XCTAssertTrue(book.gone.isEmpty)
+    }
+
+    func testTheBookRoundTripsThroughItsFile() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("placements-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let book = PlacementBook(live: [record("a", "x", order: 0, workspace: 1)], gone: [record("b", "y", order: 2, workspace: 7)])
+        book.save(to: url)
+        XCTAssertEqual(PlacementBook.load(from: url), book)
+        XCTAssertEqual(PlacementBook.load(from: url.appendingPathExtension("missing")), PlacementBook())
+    }
 }
