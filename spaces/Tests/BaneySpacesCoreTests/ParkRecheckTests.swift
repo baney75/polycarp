@@ -23,6 +23,9 @@ final class ParkRecheckTests: XCTestCase {
         let unhide = try XCTUnwrap(code.range(of: "let reshown = hid.subtracting(unparked)"))
         let recheck = try XCTUnwrap(code.range(of: "recheckParked(todo.filter { reshown.contains($0.pid) }"))
         XCTAssertLessThan(unhide.lowerBound, recheck.lowerBound)
-        XCTAssertTrue(code.contains("guard !UnhideUndoesMoves.contains(w.pid) else { return false }"), "not hidden first, since the unhide is what undoes it")
+        // Not hidden first, since the unhide is what undoes it: `Parking.route` sends such an app's moves direct
+        // (ParkingTests.testOnlyAnAnimatingAppInSightHidesAroundItsMove), in `park` and in `bringHome`.
+        XCTAssertEqual(code.components(separatedBy: "undoesMovesOnUnhide: UnhideUndoesMoves.contains(").count - 1, 2,
+                       "not hidden first, since the unhide is what undoes it")
     }
 }
