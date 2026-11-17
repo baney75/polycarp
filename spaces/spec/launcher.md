@@ -98,7 +98,7 @@ ranked by R-L9 and without the Top Hit row.
 ### R-L12 From memory, every keystroke
 Apps, windows, commands, workspaces and menus are found from names prepared ahead (folded, bonuses
 worked out) whenever the list changes, never per keystroke. The budget for scoring is 8 ms at p90 for
-200 queries against 2,000 entries in a debug build (`LatencyTests`).
+200 queries against 2,000 entries, built optimized as it ships (`LatencyTests`).
 
 ### R-L13 Timing, without the query
 Each keystroke logs `launcher key->paint=<ms> results=<n>` to `timing.log`: from the key event to the
