@@ -482,10 +482,14 @@ that process and its windows as they are then, can be asked for while you use th
 read it at any time while actions on it wait until you have been out of it for 5 seconds (`in_use` if their `wait` runs out), ends after 30 minutes (up to 8 hours) or, if you gave `--session`, when that session ends, and is listed in
 `state.json` and `baneyspaces doctor`. Agents can't lend: the MCP server has no such tool and an agent's `lend` answers
 `needs_lend`. `agent move` moves only windows of apps BaneySpaces started for an agent; send your own window with its
-workspace key. `agent open` starts only apps verified to run a separate copy that restores nothing of yours (TextEdit and
-Preview on a file from the handoff folder, and Calculator); every other app, Finder, browsers and password managers
-included, answers `needs_sandbox`, and a window of the agent's copy that shows a document from outside the handoff
-folder, or an Open or Save panel, is off limits. The agent workspace protects you from accidents; it is not a security
+workspace key. `agent open` starts TextEdit and Preview on a file from the handoff folder, Calculator, and any app you
+list by bundle id in `~/.config/polycarp/agent-apps.toml` (`apps = ["com.apple.grapher"]`, read on every open). Each
+starts as a separate copy that restores nothing it saved, and only its windows on the agent workspace are the agent's.
+Browsers, password managers, settings, shells, Finder, apps that run code (Script Editor, Xcode, code editors), apps
+signed in to your accounts (Mail, Messages, Slack) and Polycarp itself are refused even when listed. Every other app
+answers `needs_sandbox`, and a window of the agent's copy that shows a document from outside the handoff folder, or an
+Open or Save panel, is off limits. The list is a file you own; an agent with a shell could edit it too, which is why
+the refused kinds can't be listed. The agent workspace protects you from accidents; it is not a security
 boundary (see [docs/agent-computer-use.md](docs/agent-computer-use.md)).
 
 Every command prints one JSON envelope: `{"ok":true,"data":{…}}`, or `{"ok":false,"error":{"code","message",

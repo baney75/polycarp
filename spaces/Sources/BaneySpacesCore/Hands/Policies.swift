@@ -18,8 +18,13 @@ public enum AgentAppPolicy {
     /// copy that claims the bundle id, is refused like any unlisted app.
     public static let canvasProbeBundle = "com.baney.polycarp.canvasprobe"
 
-    public static func allowed(bundle: String) -> Bool { separateInstance.contains(bundle) }
-    public static func needsSeparateInstance(bundle: String) -> Bool { separateInstance.contains(bundle) || bundle == canvasProbeBundle }
+    /// Built in, or listed by Donovan in `agent-apps.toml` (`added`) and of no kind that is never opened for an agent.
+    public static func allowed(bundle: String, added: Set<String> = AgentAppList.load().apps) -> Bool {
+        separateInstance.contains(bundle) || (added.contains(bundle) && neverListed(bundle: bundle) == nil)
+    }
+    public static func needsSeparateInstance(bundle: String, added: Set<String> = AgentAppList.load().apps) -> Bool {
+        allowed(bundle: bundle, added: added) || bundle == canvasProbeBundle
+    }
 
     /// The probe app is allowed when the bundle id is its own, the app sits inside the app bundle's probe folder, and
     /// its signature was checked (`trusted`).
@@ -38,15 +43,37 @@ public enum AgentAppPolicy {
          "it controls this Mac (settings, a shell)"),
         (["com.apple.Notes", "com.apple.mail", "com.apple.MobileSMS", "com.apple.iCal", "com.apple.Photos", "com.apple.reminders", "com.apple.AddressBook", "com.apple.Music", "com.apple.FaceTime", "com.microsoft."],
          "it holds Donovan's own data and exists once per user"),
+        (["com.apple.ScriptEditor2", "com.apple.Automator", "com.apple.shortcuts", "com.apple.dt.", "com.apple.ActivityMonitor", "com.apple.Console",
+          "com.apple.DiskUtility", "com.apple.finder", "com.apple.AppStore", "com.apple.systemevents", "com.todesktop.", "dev.zed.", "com.sublimetext.",
+          "com.panic.", "com.jetbrains.", "com.docker.", "com.utmapp.", "com.parallels.", "org.vim.", "com.baney.polycarp", "com.anthropic.", "com.openai."],
+         "it runs code, controls other apps or shows Donovan's files"),
+        (["com.tinyspeck.slackmacgap", "com.hnc.Discord", "ru.keepcoder.Telegram", "net.whatsapp.", "org.whispersystems.", "us.zoom.", "com.readdle.", "com.superhuman."],
+         "it is signed in to Donovan's accounts"),
     ]
 
+    /// Why `bundle` is never opened for an agent, even when Donovan lists it in `agent-apps.toml`; nil when it may be listed.
+    public static func neverListed(bundle: String) -> String? {
+        let id = bundle.lowercased()
+        return kinds.first { k in
+            k.prefixes.contains { p in
+                let p = p.lowercased()
+                return id == p || id.hasPrefix(p.hasSuffix(".") ? p : p + ".") || (p.hasSuffix(".") && id + "." == p)
+            }
+        }?.why
+    }
+
     /// nil when the app may start; else `needs_sandbox`, saying why.
-    public static func refusal(app: String, bundle: String, appURL: URL? = nil, probeFolder: URL? = nil, probeTrusted: Bool = false) -> HandsError? {
-        if allowed(bundle: bundle) || isProbeApp(bundle: bundle, at: appURL, in: probeFolder, trusted: probeTrusted) { return nil }
-        let why = kinds.first { k in k.prefixes.contains { bundle == $0 || bundle.hasPrefix($0.hasSuffix(".") ? $0 : $0 + ".") } }?.why
-            ?? "no one has checked that it starts a separate instance that restores nothing of Donovan's"
+    public static func refusal(app: String, bundle: String, appURL: URL? = nil, probeFolder: URL? = nil, probeTrusted: Bool = false,
+                               added: Set<String> = AgentAppList.load().apps) -> HandsError? {
+        if allowed(bundle: bundle, added: added) || isProbeApp(bundle: bundle, at: appURL, in: probeFolder, trusted: probeTrusted) { return nil }
+        let kind = neverListed(bundle: bundle)
+        let why = kind ?? "Donovan hasn't listed it in \(AgentAppList.name)"
+        let ask = kind == nil
+            ? "ask Donovan to add \"\(bundle)\" to the apps list in ~/.config/polycarp/\(AgentAppList.name) if he wants agents to use it"
+            : "ask Donovan to lend \(app) and be away from it while you work"
+        let listed = added.filter { neverListed(bundle: $0) == nil }.sorted()
         return HandsError(.needsSandbox, "\(app): \(why)",
-                          suggestion: "Do this work in the sandbox (arrives in a later phase), or ask Donovan to lend \(app) and be away from it while you work. Apps an agent may start today: TextEdit and Preview on a file from the handoff folder, and Calculator. Work with files directly rather than through Finder.",
+                          suggestion: "Do this work in the sandbox (arrives in a later phase), or \(ask). Apps an agent may start now: TextEdit and Preview on a file from the handoff folder, Calculator\(listed.isEmpty ? "" : ", and " + listed.joined(separator: ", ")). Work with files directly rather than through Finder.",
                           retry: .never)
     }
 }

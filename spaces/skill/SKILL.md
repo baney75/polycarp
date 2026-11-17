@@ -96,8 +96,10 @@ Scope rules, enforced by the app, not by your good behavior:
   agent; `agent move --window N` is the one that brings a lent window over (below).
 - `agent open` is how you start work: the app and its windows land on the agent workspace and he stays
   where he is. Put files you want it to open in `~/Library/Application Support/BaneySpaces/hands/handoff/`; no other path is accepted,
-  and URLs wait for the agent browser profiles. Only TextEdit and Preview (each needs a handoff file) and Calculator start; every other
-  app, Finder, every browser and password manager included, answers `needs_sandbox`; work with files directly, not through Finder. Each starts as a separate copy that restores nothing.
+  and URLs wait for the agent browser profiles. TextEdit and Preview (each needs a handoff file), Calculator and any app he lists in
+  `~/.config/polycarp/agent-apps.toml` start; every other app answers `needs_sandbox`, and browsers, password managers, shells, settings, Finder,
+  code runners and apps signed in to his accounts are refused even when listed. Don't edit that file yourself; ask him. Work with files directly,
+  not through Finder. Each starts as a separate copy that restores nothing.
   Never ask him to switch workspaces or look at the screen.
 - `press` always answers `not_supported` for now: keys reach only the app in front, and BaneySpaces never raises one for you.
   Use `type`, `set-value` or `click`.

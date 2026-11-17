@@ -841,6 +841,12 @@ final class HandsRouter {
             }
         }
         try? FileManager.default.createDirectory(at: Self.handoffFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // Donovan's agent-apps.toml: what it adds and anything in it that was skipped, so the log shows why an app opened.
+        let listed = AgentAppList.load()
+        for p in listed.problems { Trace.log("\(AgentAppList.name): skipped \(p)") }
+        if access != .full, listed.apps.contains(bundle), !AgentAppPolicy.separateInstance.contains(bundle) {
+            Trace.log("agent open: \(display) (\(bundle)) is listed in \(AgentAppList.name)")
+        }
         let files: [String]
         switch AgentOpenGate.check(app: display, bundle: bundle, targets: targets, handoff: Self.handoffFolder, appURL: url,
                                      probeFolder: ProbeAppTrust.folder, probeTrusted: bundle == AgentAppPolicy.canvasProbeBundle && ProbeAppTrust.trusted(url),
