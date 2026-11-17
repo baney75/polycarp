@@ -7,7 +7,7 @@ use serde_json::{json, Map, Value as Json};
 /// What a field controls and where it shows. Empty means "missing"; a test fails on that.
 /// `path` is `name`, `title`, `description`, `extends`, a section (`light`), a surface
 /// (`surface.site`), a color role (`color.accent`), or `section.key` (`shape.radius`).
-pub(super) fn describe(path: &str) -> &'static str {
+pub fn describe(path: &str) -> &'static str {
     match path {
         "name" => "The theme's id. Lowercase letters, digits and hyphens, up to 48, not starting with a hyphen. Used in commands like `theme set <name>` and as the file name. A built-in theme's name is refused.",
         "title" => "The theme's display name, shown in lists and settings. Required unless a theme in `extends` has one.",
@@ -62,7 +62,7 @@ pub(super) fn describe(path: &str) -> &'static str {
 
 /// Every path `describe` must answer for. Used by the tests.
 #[cfg(test)]
-pub(super) fn described_paths() -> Vec<String> {
+pub fn described_paths() -> Vec<String> {
     use super::ROLES;
     let mut v: Vec<String> = [
         "name",
@@ -94,7 +94,7 @@ pub(super) fn described_paths() -> Vec<String> {
 }
 
 /// One-line statement of what a value must be. Used in schema text and in error `needs`.
-pub(super) fn needs(kind: Kind) -> String {
+pub fn needs(kind: Kind) -> String {
     match kind {
         Kind::Hex => "a color like \"#rrggbb\"".into(),
         Kind::Int(lo, hi) => format!("a whole number from {lo} to {hi}"),
@@ -106,7 +106,7 @@ pub(super) fn needs(kind: Kind) -> String {
     }
 }
 
-pub(super) fn kind_schema(kind: Kind) -> Json {
+pub fn kind_schema(kind: Kind) -> Json {
     match kind {
         Kind::Hex => json!({"type":"string","pattern":"^#[0-9a-fA-F]{6}$","examples":["#59693f"]}),
         Kind::Int(lo, hi) => json!({"type":"integer","minimum":lo,"maximum":hi}),
@@ -114,13 +114,13 @@ pub(super) fn kind_schema(kind: Kind) -> Json {
         Kind::Enum(o) => json!({"type":"string","enum":o}),
         Kind::Font => json!({
             "type":"string","minLength":1,
-            // Kept in step with `check_font` in theme.rs; a test runs samples through both.
+            // Kept in step with `check_font` in validate.rs; a test runs samples through both.
             "pattern": r#"^(?!.*/\*)\s*(?:[\p{L}\p{N}_-][\p{L}\p{N} _-]*|"[^"'\\<\p{Cc}]*[^"'\\<\p{Cc}\s][^"'\\<\p{Cc}]*"|'[^"'\\<\p{Cc}]*[^"'\\<\p{Cc}\s][^"'\\<\p{Cc}]*')(?:\s*,\s*(?:[\p{L}\p{N}_-][\p{L}\p{N} _-]*|"[^"'\\<\p{Cc}]*[^"'\\<\p{Cc}\s][^"'\\<\p{Cc}]*"|'[^"'\\<\p{Cc}]*[^"'\\<\p{Cc}\s][^"'\\<\p{Cc}]*'))*\s*$"#,
             "examples":["Georgia, serif"]
         }),
         Kind::Easing => json!({
             "type":"string",
-            // Kept in step with `check_easing` in theme.rs (which also limits the x values to 0..1).
+            // Kept in step with `check_easing` in validate.rs (which also limits the x values to 0..1).
             "pattern": r"^(?:ease|ease-in|ease-out|ease-in-out|linear|cubic-bezier\(\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*,\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*,\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*,\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*\))$",
             "examples":["ease-out","cubic-bezier(0.3, 0, 0.2, 1)"]
         }),
@@ -159,11 +159,11 @@ fn section_ref(section: &str) -> Json {
 }
 
 /// The contrast rules, as (text color, background, minimum).
-pub(super) fn contrast_rules() -> Vec<(&'static str, &'static str, f64)> {
+pub fn contrast_rules() -> Vec<(&'static str, &'static str, f64)> {
     super::pairs()
 }
 
-pub(super) fn schema() -> Json {
+pub fn schema() -> Json {
     let mut defs = Map::new();
     defs.insert("colors".into(), section_schema("light"));
     for sec in ["shape", "type", "motion"] {
