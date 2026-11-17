@@ -511,12 +511,12 @@ struct SetupView: View {
                     case .browser: BrowserSettingsView()
                     }
                 }
-                // Theme files and pictures can be dropped anywhere on Appearance.
-                .themeDrop(current: appearance.polycarp?.name, on: model.tab == .appearance)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .padding(.horizontal, 28).padding(.top, 40).padding(.bottom, 28)
             }
             .id(model.tab)   // each section opens at its top
+            // Theme files and pictures can be dropped anywhere on Appearance.
+            .themeDrop(current: appearance.polycarp?.name, on: model.tab == .appearance)
         }
         .frame(width: SettingsSidebar.windowSize.width, height: height)
         .foregroundStyle(Chrome.wash())

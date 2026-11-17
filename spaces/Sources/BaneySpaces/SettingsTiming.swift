@@ -10,7 +10,8 @@ import SwiftUI
 /// build, and `show`, the window taking the keyboard and the app coming forward.
 ///
 /// `cpu` is the same open and switch as the main thread's own CPU time. On a busy Mac the wall clock also counts the time
-/// the thread waited for a core; `scripts/settings-speed.sh` holds `cpu` to the 16 ms budget (a 60 Hz frame) and prints both.
+/// the thread waited for a core; `scripts/settings-speed.sh` holds `cpu` to its recorded times, with one 60 Hz frame (16 ms)
+/// as the goal, and prints both.
 @MainActor
 enum SettingsTiming {
     /// The reads opening the window sets off (`SetupWindowController.show` and its two observers).

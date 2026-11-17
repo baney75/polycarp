@@ -227,25 +227,33 @@ struct ThemeShelfTile: View {
     }
 }
 
-/// The Appearance tab as a drop target for theme files and pictures: a modifier on the pane's stack, so its groups stay rows of
-/// the lazy stack (a wrapping view would make the whole tab one row and build all of it).
+/// The Appearance tab as a drop target for theme files and pictures. The target is a clear view behind the pane, never a
+/// modifier above it: a drop target reads a preference from every row the lazy stack under it places, which cost Settings
+/// about a third of each pane's time, even with no types to take (#350). Other panes get no target at all.
 struct ThemeDropTarget: ViewModifier {
     let current: String?
     let on: Bool
     @State private var over = false
 
-    func body(content: Content) -> some View {
-        content
-            .overlay {
-                if over {
-                    Chrome.shape(.settingsCallout).strokeBorder(Chrome.accent, lineWidth: Chrome.width(.settingsTile, focused: true))
-                        .padding(-6).allowsHitTesting(false)
+    @ViewBuilder func body(content: Content) -> some View {
+        if on {
+            content
+                .background {
+                    Color.clear.contentShape(Rectangle())
+                        .onDrop(of: [UTType.fileURL], isTargeted: $over) { providers in
+                            ThemeDrop.urls(providers) { ThemeLibrary.shared.dropped($0, current: current) }
+                            return true
+                        }
                 }
-            }
-            .onDrop(of: on ? [UTType.fileURL] : [], isTargeted: $over) { providers in
-                ThemeDrop.urls(providers) { ThemeLibrary.shared.dropped($0, current: current) }
-                return true
-            }
+                .overlay {
+                    if over {
+                        Chrome.shape(.settingsCallout).strokeBorder(Chrome.accent, lineWidth: Chrome.width(.settingsTile, focused: true))
+                            .padding(6).allowsHitTesting(false)
+                    }
+                }
+        } else {
+            content
+        }
     }
 }
 
