@@ -1558,7 +1558,7 @@ impl Core {
 
 pub fn run(trace: bool, log: Option<PathBuf>, recover: bool) -> i32 {
     if let Some(p) = &log {
-        if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+        if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
             let _ = LOG.set(Mutex::new(f));
         }
     }
@@ -1688,7 +1688,7 @@ pub fn run(trace: bool, log: Option<PathBuf>, recover: bool) -> i32 {
             say(&format!("baneyspaces daemon: {p}"));
         }
         c.problems.extend(problems);
-        c.watchdog = watchdog::spawn(log.as_deref(), trace);
+        c.watchdog = watchdog::spawn(c.log_path.as_deref(), trace);
         if let Some(w) = &c.watchdog {
             say(&format!("baneyspaces daemon: watchdog running (pid {})", w.id()));
         }
