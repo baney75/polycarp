@@ -63,6 +63,9 @@ final class HandsRouter {
 
     init(cap: @escaping (AgentAccessMode) -> AgentAccessMode = { $0 }, remote: Bool = false) { self.cap = cap; self.remote = remote }
 
+    /// `subscribe`: the event stream, through this router's scope (spec/agent-api.md).
+    lazy var events = AgentEventHub(self)
+
     /// Which child windows appeared after which session's action (`ChildAttribution`), and what each session opened.
     var attribution = ChildAttribution()
     var sessionWindows = SessionWindows()

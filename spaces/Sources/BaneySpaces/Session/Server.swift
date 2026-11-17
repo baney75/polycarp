@@ -12,6 +12,8 @@ final class Server {
     /// Sandbox requests take seconds to a minute (a VM boots), so they never run on the main thread:
     /// the session engine, the dock and the hotkeys stay responsive while one waits.
     var handleSandbox: (Wire.Request) -> Wire.Reply = { _ in Wire.Reply(ok: false, error: "not ready") }
+    /// `subscribe`: takes the connection and keeps it, writing events until either side closes it (`AgentEventHub`).
+    var handleSubscribe: (Int32, Wire.Request) -> Void = { fd, _ in close(fd) }
     private var listeners: [(fd: Int32, path: String, source: DispatchSourceRead)] = []
     private let io = DispatchQueue(label: "baneyspaces.socket", attributes: .concurrent)
 
@@ -56,7 +58,8 @@ final class Server {
     }
 
     private func serve(_ client: Int32) {
-        defer { close(client) }
+        var kept = false
+        defer { if !kept { close(client) } }
         // BSD sockets inherit O_NONBLOCK from the listener; this one should block until its line arrives.
         _ = fcntl(client, F_SETFL, fcntl(client, F_GETFL) & ~O_NONBLOCK)
         var noSigPipe: Int32 = 1
@@ -70,6 +73,9 @@ final class Server {
             if let why = SocketPolicy.refusal(for: req) {
                 Trace.log("refused on the socket: \(req.op.rawValue) \(req.text ?? "") \((req.args ?? []).joined(separator: " "))")
                 reply = Wire.Reply(ok: false, error: why)
+            } else if req.op == .subscribe {
+                kept = true
+                return handleSubscribe(client, req)
             } else {
                 if req.op == .sandbox {
                     reply = handleSandbox(req)
