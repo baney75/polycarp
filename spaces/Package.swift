@@ -59,5 +59,7 @@ let package = Package(
         .testTarget(name: "LauncherMatchTests", dependencies: ["LauncherMatch"]),
         // The overlay's real layers: marks attached, cursors surviving a display change, the panel never key or main.
         .testTarget(name: "BaneySpacesCursorTests", dependencies: ["BaneySpacesCore", "BaneySpacesCursor"]),
+        // The app's own code, where a check needs the real thing (the launcher's row model): `@testable import BaneySpaces`.
+        .testTarget(name: "BaneySpacesAppTests", dependencies: ["BaneySpaces", "BaneySpacesCore"]),
     ]
 )

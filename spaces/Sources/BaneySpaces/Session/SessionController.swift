@@ -102,6 +102,8 @@ final class SessionController {
     var sandboxHandler: ((Wire.Request) -> Wire.Reply)?
     /// Answers `polycarp-spaces update status|check|now` with the app's updater (the app delegate sets it).
     var updateHandler: ((String) -> Wire.Reply)?
+    /// `polycarp-spaces launcher query`: the launcher's rows for what's typed, at most this many (`LauncherQueryAnswer`).
+    var launcherQuery: ((String, Int) -> [LauncherQueryRow])?
 
     /// Set by the app delegate: the menu bar badge shows how many agents finished unseen.
     var onUnseenChange: (Int) -> Void = { _ in }
@@ -477,6 +479,12 @@ final class SessionController {
             return .init(ok: true, info: ["id": item.id, "label": item.label])
         // The remote server names every caller "remote …" (Server.swift), and a local caller claiming it only loses access.
         case .agent: return agent(r.text ?? "status", r.args ?? [], remote: r.caller?.hasPrefix("remote ") == true)
+        case .launcher:
+            // Read only and shown nowhere: no view control needed. What's typed stays out of every log (`LauncherQuery`).
+            let q = (r.target ?? "").trimmingCharacters(in: .whitespaces)
+            guard r.text == "query", !q.isEmpty else { return .init(ok: false, error: LauncherQuery.usage) }
+            guard let answer = launcherQuery else { return .init(ok: false, error: "the launcher isn't ready") }
+            return .init(ok: true, rows: answer(q, LauncherQuery.limit(r.args)))
         case .update:
             // Answered above, before the Accessibility check.
             return .init(ok: false, error: "the updater isn't ready")

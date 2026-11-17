@@ -1003,6 +1003,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.updateIcon()
         }
         session.updateHandler = { [weak self] what in self?.updater.answer(what) ?? Wire.Reply(ok: false, error: "the updater isn't ready") }
+        session.launcherQuery = { [weak self] q, limit in
+            guard let self else { return [] }
+            return LauncherQueryAnswer.rows(q, limit: limit, model: self.launcher.model, log: LauncherQueryAnswer.timing)
+        }
         session.sandboxHandler = { [weak self] r in self?.sandbox.service.handle(r) ?? Wire.Reply(ok: false, error: "not ready") }
         sandbox.start()
         sandbox.cleanupAtLaunch()

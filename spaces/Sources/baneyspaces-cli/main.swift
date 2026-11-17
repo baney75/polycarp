@@ -14,6 +14,9 @@ usage: \(me) <command>
   ls [--json]                 everything the session engine wraps: terminals, agents, browser tabs
   focus <id | words>          bring it forward (an ID from ls, or a fuzzy search)
   open <url>                  open in your default browser
+  launcher query <text> [--json] [--limit N]
+                              the launcher's rows for a search (title, kind, id), ranked as the panel ranks them;
+                              shows no panel and records nothing
   send <id | words> <text>    type text into a Ghostty terminal, as if pasted
   notify [message]            flag the terminal this runs in as needing you
   state                       the session engine's live state as JSON
@@ -153,6 +156,11 @@ case "focus", "go":
     guard !rest.isEmpty else { fail("usage: \(me) focus <id | words>", code: 2) }
     let r = call(Wire.Request(op: .focus, target: rest.joined(separator: " ")))
     if let label = r.info?["label"] { out("→ \(label)") }
+
+case "launcher":
+    guard rest.first == "query", let q = LauncherQuery.parse(Array(rest.dropFirst())) else { fail(LauncherQuery.usage, code: 2) }
+    let rows = call(Wire.Request(op: .launcher, target: q.query, text: "query", args: [String(q.limit)]), timeout: 5).rows ?? []
+    if q.json { out(LauncherQuery.json(rows)) } else if !rows.isEmpty { out(LauncherQuery.text(rows)) }
 
 case "open":
     guard let url = rest.first else { fail("usage: \(me) open <url>", code: 2) }

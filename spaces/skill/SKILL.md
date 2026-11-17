@@ -27,6 +27,7 @@ BaneySpaces workspace.
 | Want | Command |
 | --- | --- |
 | Bring something forward | `baneyspaces focus <id or words>` (fuzzy: `baneyspaces focus helium github`) |
+| See what the launcher lists for a search | `baneyspaces launcher query vsc --json` (title, kind, id per row, ranked as the panel ranks them; shows no panel, records nothing) |
 | Open a page | `baneyspaces open https://…` (default browser, stays in the session engine) |
 | Type into another Ghostty terminal | `baneyspaces send <id or words> "text"` (pasted, no Return unless you include a newline) |
 | Tell Donovan this terminal needs him | `baneyspaces notify "Tests failed, need a decision"` |

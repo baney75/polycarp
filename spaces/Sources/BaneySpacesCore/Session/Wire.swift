@@ -70,6 +70,9 @@ public enum Wire {
             /// check (ask GitHub again) or now (install the release on offer). The reply's `info` is an
             /// `UpdateReport`. Local callers only (`Remote.allows` never lets it through).
             case update
+            /// The launcher: `text` is query, `target` what's typed, `args` [the row limit]. The reply's `rows` are the main
+            /// search's rows, with no panel shown (`LauncherQuery`). Local callers only (`Remote.allows` never lets it through).
+            case launcher
         }
         public var op: Op
         public var target: String?
@@ -94,9 +97,11 @@ public enum Wire {
         public var error: String?
         public var items: [Item]?
         public var info: [String: String]?
+        /// The launcher's rows (`op: .launcher`).
+        public var rows: [LauncherQueryRow]?
 
-        public init(ok: Bool, error: String? = nil, items: [Item]? = nil, info: [String: String]? = nil) {
-            self.ok = ok; self.error = error; self.items = items; self.info = info
+        public init(ok: Bool, error: String? = nil, items: [Item]? = nil, info: [String: String]? = nil, rows: [LauncherQueryRow]? = nil) {
+            self.ok = ok; self.error = error; self.items = items; self.info = info; self.rows = rows
         }
     }
 

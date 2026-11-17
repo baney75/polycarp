@@ -360,9 +360,9 @@ final class LauncherModel: ObservableObject {
     /// Terminal agents found on this Mac: command to path.
     var agents: [String: String] = [:]
 
-    init(actions: LauncherActions) {
+    init(actions: LauncherActions, apps: [AppEntry]? = nil) {
         self.actions = actions
-        apps = AppEntry.scan()
+        self.apps = apps ?? AppEntry.scan()
     }
 
     func prepare(scope: Scope) {
@@ -468,18 +468,7 @@ final class LauncherModel: ObservableObject {
                 out += recentApps().prefix(5)
                 out += menuItems()
             } else {
-                out += appItems(q, limit: 8)
-                out += actions.sessionItems(q).prefix(8)
-                out += agentItems(q)
-                out += workspaceItems(q)
-                out += commandItems(q)
-                out += menuItems().filter { Fuzzy.score(q, $0.title) != nil }
-                // Files come in a moment after the rest, below them, so the row you're on stays put.
-                out += fileItems().prefix(5)
-                out += searchEverywhere(q).prefix(3)
-                out.append(LauncherItem(id: "find-install", section: "Install", title: "Install “\(q)”…",
-                                        subtitle: "Search Homebrew and the App Store", icon: .symbol("arrow.down.circle"),
-                                        badge: "⇥", run: { [weak self] in self?.enter(.install); self?.setQuery(q) }))
+                out = searchRows(q, files: fileItems())
             }
         case .apps: out = appItems(q, limit: 500)
         case .files: out = fileItems()
@@ -491,6 +480,32 @@ final class LauncherModel: ObservableObject {
         }
         items = out
         if selected >= items.count { selected = max(0, items.count - 1) }
+    }
+
+    /// The main search's rows for what's typed, in the panel's order. `queryRows` lists the same rows for
+    /// `polycarp-spaces launcher query`, so keep every root search row in here.
+    private func searchRows(_ q: String, files: [LauncherItem]) -> [LauncherItem] {
+        var out = appItems(q, limit: 8)
+        out += actions.sessionItems(q).prefix(8)
+        out += agentItems(q)
+        out += workspaceItems(q)
+        out += commandItems(q)
+        out += menuItems().filter { Fuzzy.score(q, $0.title) != nil }
+        // Files come in a moment after the rest, below them, so the row you're on stays put.
+        out += files.prefix(5)
+        out += searchEverywhere(q).prefix(3)
+        out.append(LauncherItem(id: "find-install", section: "Install", title: "Install “\(q)”…",
+                                subtitle: "Search Homebrew and the App Store", icon: .symbol("arrow.down.circle"),
+                                badge: "⇥", run: { [weak self] in self?.enter(.install); self?.setQuery(q) }))
+        return out
+    }
+
+    /// `polycarp-spaces launcher query`: what the main search lists for `q` as the key is typed, before Spotlight's
+    /// files come in (they land below the rest), with no panel. Changes nothing the panel shows and records no pick:
+    /// it only reads which workspaces the apps are on, as opening the launcher does.
+    func queryRows(_ q: String, limit: Int) -> [LauncherItem] {
+        running = actions.workspacesByApp()
+        return Array((webItems(q) ?? searchRows(q, files: [])).prefix(limit))
     }
 
     /// The session rows changed while the launcher is open.
@@ -988,6 +1003,25 @@ final class LauncherModel: ObservableObject {
                                     if !NSWorkspace.shared.open(url) { NSSound.beep() }
                                 }, reveal: url)
         }
+    }
+}
+
+/// `polycarp-spaces launcher query` in the app: the panel's own rows as plain rows, timed in timing.log as
+/// `launcher query=<ms> rows=<n>`. What was typed goes into the reply only.
+enum LauncherQueryAnswer {
+    static func rows(_ q: String, limit: Int, model: LauncherModel, log: (String) -> Void) -> [LauncherQueryRow] {
+        let start = CFAbsoluteTimeGetCurrent()
+        let rows = model.queryRows(q, limit: limit).map {
+            LauncherQueryRow(id: $0.id, kind: LauncherQuery.kind(id: $0.id), title: $0.title, subtitle: $0.subtitle, section: $0.section)
+        }
+        log(LauncherQuery.timingLine(at: Date(), ms: (CFAbsoluteTimeGetCurrent() - start) * 1000, rows: rows.count))
+        return rows
+    }
+
+    /// Off the main thread, as `OpenClock` writes.
+    static func timing(_ line: String) {
+        let url = Spaces.folder.appendingPathComponent("timing.log")
+        DispatchQueue.global(qos: .utility).async { TimingLog.append(line, to: url) }
     }
 }
 
