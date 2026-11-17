@@ -6,6 +6,9 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 const DEFAULT: &str = include_str!("default-theme.json");
+/// The newest and oldest `schema` this reads, the same as the Mac's `PolycarpTheme.schema` and `oldestSchema`.
+const SCHEMA: u64 = 2;
+const OLDEST_SCHEMA: u64 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rgb(pub u8, pub u8, pub u8);
@@ -104,6 +107,17 @@ impl Theme {
     /// Reads `theme.json` for the `spaces` surface. An error names the first missing or bad field.
     pub fn parse(json: &str) -> Result<Theme, String> {
         let v: Value = serde_json::from_str(json).map_err(|e| format!("theme.json: {e}"))?;
+        // As the Mac reads it: schema 2 only adds keys, so 1 and 2 read; a newer file may change what a key means, so it
+        // is refused, not guessed at.
+        let schema = v["schema"].as_u64().ok_or("theme.json: schema is missing or not a whole number")?;
+        if schema > SCHEMA {
+            return Err(format!("theme.json: schema {schema} is newer than this Polycarp reads (schema {SCHEMA}): update Polycarp"));
+        }
+        if schema < OLDEST_SCHEMA {
+            return Err(format!(
+                "theme.json: schema {schema} is not one this Polycarp reads (schema {OLDEST_SCHEMA} to {SCHEMA})"
+            ));
+        }
         let s = &v["surfaces"]["spaces"];
         if !s.is_object() {
             return Err("theme.json has no surfaces.spaces".into());
@@ -319,6 +333,19 @@ mod tests {
         assert_eq!(t, Theme::default_theme());
         assert!(why.unwrap().contains("dark.accent"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn schema_one_and_two_read_and_a_newer_one_is_refused() {
+        let with = |schema: &str| DEFAULT.replace("\"schema\": 1", &format!("\"schema\": {schema}"));
+        assert_eq!(Theme::parse(&with("2")).unwrap(), Theme::default_theme());
+        assert_eq!(
+            Theme::parse(&with("3")).unwrap_err(),
+            "theme.json: schema 3 is newer than this Polycarp reads (schema 2): update Polycarp"
+        );
+        assert_eq!(Theme::parse(&with("0")).unwrap_err(), "theme.json: schema 0 is not one this Polycarp reads (schema 1 to 2)");
+        assert_eq!(Theme::parse(&with("1.5")).unwrap_err(), "theme.json: schema is missing or not a whole number");
+        assert_eq!(Theme::parse(&with("\"1\"")).unwrap_err(), "theme.json: schema is missing or not a whole number");
     }
 
     #[test]
