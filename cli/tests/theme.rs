@@ -4442,3 +4442,64 @@ fn follow_says_it_is_retired_as_text_and_as_json() {
 fn json_str(s: &str) -> Value {
     Value::String(s.to_string())
 }
+
+/// What `theme set` writes in `current/`, captured with the command built from the commit before
+/// the theme code moved into `crates/polycarp-theme`. Each case is (fixture folder, commands).
+const OUTPUT_CASES: &[(&str, &[&[&str]])] = &[
+    ("polycarp", &[&["set", "polycarp"]]),
+    ("still-water", &[&["set", "still-water"]]),
+    ("evening", &[&["set", "evening"]]),
+    ("parchment", &[&["set", "parchment"]]),
+    ("blocks", &[&["set", "blocks"]]),
+    ("calm", &[&["set", "calm"]]),
+    (
+        "evening-dark-accent",
+        &[
+            &["set", "evening", "--mode", "dark"],
+            &["accent", "#e0a060", "--mode", "dark"],
+        ],
+    ),
+];
+
+/// Every built-in theme writes the same `theme.json` and CSS, byte for byte, as it did before the
+/// move, so the move changed no output.
+#[test]
+fn every_builtin_writes_the_same_bytes_as_before_the_move() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/theme-outputs");
+    let mut covered = Vec::new();
+    for (case, steps) in OUTPUT_CASES {
+        let b = Box::new();
+        for args in *steps {
+            b.ok(args);
+        }
+        let want_dir = fixtures.join(case);
+        let mut want: Vec<PathBuf> = Vec::new();
+        files_under(&want_dir, &mut want);
+        want.sort();
+        let mut names: Vec<String> = want
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        let mut got: Vec<String> = fs::read_dir(b.cfg().join("current"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        got.sort();
+        assert_eq!(got, names, "{case}: the files in current/");
+        for p in want {
+            let name = p.file_name().unwrap();
+            let have = fs::read(b.cfg().join("current").join(name)).unwrap();
+            assert!(
+                have == fs::read(&p).unwrap(),
+                "{case}/{}: differs from the fixture",
+                name.to_string_lossy()
+            );
+        }
+        covered.push(case.to_string());
+    }
+    for t in BUILTINS {
+        assert!(covered.iter().any(|c| c == t), "{t} has no fixture");
+    }
+}
