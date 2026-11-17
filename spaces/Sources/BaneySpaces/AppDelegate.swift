@@ -973,7 +973,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             move: { [weak self] id, n in self?.run { $0.move(id, to: n) } },
             close: { [weak self] in self?.spaces.pressClose($0) ?? false },
             rescan: { [weak self] in self?.spaces.rescanForAgent() },
-            facts: { [weak self] in self?.spaces.agentFacts() })
+            facts: { [weak self] in self?.spaces.agentFacts() },
+            viewControl: { ViewControlSetting.shared.enabled },
+            switchTo: { [weak self] n, display in self?.run { s in
+                if let display { s.use(display: display) }
+                s.switchTo(n)
+            } },
+            focus: { [weak self] id, n in self?.run { $0.focus(id, on: n) } },
+            setFrame: { [weak self] id, f in self?.spaces.placeFrame(id, f) ?? "skipped" })
         // The agent cursor: drawn on the agent workspace while you look at it, and over a lent app.
         session.hands.host.cursorMark = { CursorController.shared.mark(window: $0) }
         session.connectorHands.host = session.hands.host

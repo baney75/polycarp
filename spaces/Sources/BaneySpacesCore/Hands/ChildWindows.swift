@@ -550,7 +550,7 @@ public struct SessionWindows: Equatable, Sendable {
 /// The verbs that manage the agent workspace, and who may use them.
 public enum WorkspaceVerbs {
     /// Change where windows are or whether they exist. Never for a connector (`forRemote` allows nothing like them).
-    public static let manage: Set<String> = ["arrange", "move", "close"]
+    public static let manage: Set<String> = ["arrange", "move", "close", "switch", "focus", "frame"]
 
     public static func connectorRefusal(verb: String) -> HandsError? {
         guard manage.contains(verb) else { return nil }
