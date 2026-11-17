@@ -37,33 +37,36 @@ extension ViewControl {
     }
 }
 
-/// The "Agents may change what you see" switch itself (review F2). It is never stored: it starts off, nothing on disk is
-/// read for it, and it turns on only when `confirm` says Donovan confirmed Polycarp's sheet. Turning it off never asks.
-public struct ViewControlSwitch {
-    public private(set) var on = false
-    public init() {}
+/// The "Agents may change what you see" switch as the running app holds it, from launch on (review F2). It is never
+/// stored. Made at launch from the app's defaults, it removes a value saved under the legacy key unread, by an older
+/// build or by anyone with a shell, sealed or not, reads no Keychain item, and starts off. It turns on only when
+/// `confirm` says Donovan confirmed Polycarp's sheet; turning it off never asks.
+public final class ViewControlState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var on = false
+    /// Whether launch found a saved value and removed it.
+    public let forgotSaved: Bool
 
-    /// Sets the switch; true when it now reads `new`.
+    public init(launchingWith defaults: UserDefaults) {
+        if defaults.object(forKey: ViewControl.legacyDefaultsKey) != nil {
+            defaults.removeObject(forKey: ViewControl.legacyDefaultsKey)
+            forgotSaved = true
+        } else {
+            forgotSaved = false
+        }
+    }
+
+    public var enabled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return on
+    }
+
+    /// Sets the switch; true when it now reads `new`. `confirm` (the sheet) runs outside the lock.
     @discardableResult
-    public mutating func set(_ new: Bool, confirm: () -> Bool) -> Bool {
-        if new == on { return true }
+    public func set(_ new: Bool, confirm: () -> Bool) -> Bool {
+        if enabled == new { return true }
         if new, !confirm() { return false }
-        on = new
-        return true
-    }
-
-    /// The switch as the app starts: always off. A value under the legacy key, sealed or not, is removed unread, and no
-    /// Keychain item is consulted (review F2, round 2). `forgot` says a value was there.
-    public static func atLaunch(_ defaults: UserDefaults) -> (state: ViewControlSwitch, forgot: Bool) {
-        (ViewControlSwitch(), forgetSaved(in: defaults))
-    }
-
-    /// Removes a value saved under the legacy key, by an older build or by anyone with a shell; true when one was there.
-    /// It is only ever removed, never read.
-    @discardableResult
-    public static func forgetSaved(in defaults: UserDefaults) -> Bool {
-        guard defaults.object(forKey: ViewControl.legacyDefaultsKey) != nil else { return false }
-        defaults.removeObject(forKey: ViewControl.legacyDefaultsKey)
+        lock.lock(); on = new; lock.unlock()
         return true
     }
 }
