@@ -91,7 +91,11 @@ extension HandsRouter {
         let what = "framing window \(w.id) of \(w.app)"
         func viewProblem(_ ws: Int) -> HandsError? {
             let (agent, shown) = shownNow()
-            return AgentCommands.changesView(from: ws, to: ws, agentWorkspace: agent, shown: shown) ? viewRefusal(what) : nil
+            switch AgentCommands.need(from: ws, to: ws, agentWorkspace: agent, shown: shown) {
+            case .nothing: return nil
+            case .notWhileShown: return ViewControl.notWhileShown(what)
+            case .viewControl: return viewRefusal(what)
+            }
         }
         if let e = viewProblem(n) { return .failure(e) }
         if let e = awaitUse(w, verb: "frame", delivery: .posted, wait: req.int("wait"), session: session) { return .failure(e) }

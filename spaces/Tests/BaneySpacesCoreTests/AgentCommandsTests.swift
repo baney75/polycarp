@@ -55,19 +55,25 @@ final class AgentCommandsTests: XCTestCase {
         }
     }
 
-    func testOnlyTheAgentWorkspaceOutOfSightLeavesTheViewAlone() {
-        XCTAssertFalse(AgentCommands.changesView(from: 9, to: 9, agentWorkspace: 9, shown: [1, 2]), "frame on the hidden agent workspace")
-        XCTAssertFalse(AgentCommands.changesView(from: 3, to: 9, agentWorkspace: 9, shown: [1, 2]), "from a hidden workspace onto it")
-        XCTAssertTrue(AgentCommands.changesView(from: 9, to: 9, agentWorkspace: 9, shown: [9]), "Donovan is looking at it")
-        XCTAssertTrue(AgentCommands.changesView(from: 1, to: 9, agentWorkspace: 9, shown: [1]), "from under him")
-        XCTAssertTrue(AgentCommands.changesView(from: 9, to: 4, agentWorkspace: 9, shown: [1]), "onto one of his workspaces")
-        XCTAssertTrue(AgentCommands.changesView(from: 9, to: 9, agentWorkspace: nil, shown: []), "no agent workspace")
-        XCTAssertTrue(AgentCommands.changesView(from: 1, to: 9, agentWorkspace: 9, shown: [1, 2]), "review F1: off a workspace he sees")
-        XCTAssertTrue(AgentCommands.changesView(from: nil, to: 9, agentWorkspace: 9, shown: []), "a window with no workspace")
+    /// Review r2 first-F1: only work off the agent workspace needs view control; a shown workspace only means not now.
+    func testOnlyWorkOffTheAgentWorkspaceNeedsViewControlAndAShownOneWaits() {
+        XCTAssertEqual(AgentCommands.need(from: 9, to: 9, agentWorkspace: 9, shown: [1, 2]), .nothing, "frame on the hidden agent workspace")
+        XCTAssertEqual(AgentCommands.need(from: 3, to: 9, agentWorkspace: 9, shown: [1, 2]), .nothing, "from a hidden workspace onto it")
+        XCTAssertEqual(AgentCommands.need(from: 9, to: 9, agentWorkspace: 9, shown: [9]), .notWhileShown, "Donovan is looking at it")
+        XCTAssertEqual(AgentCommands.need(from: 1, to: 9, agentWorkspace: 9, shown: [1]), .notWhileShown, "from under him")
+        XCTAssertEqual(AgentCommands.need(from: 1, to: 9, agentWorkspace: 9, shown: [1, 2]), .notWhileShown, "review F1: off a workspace he sees")
+        XCTAssertEqual(AgentCommands.need(from: 9, to: 4, agentWorkspace: 9, shown: [1]), .viewControl, "onto one of his workspaces")
+        XCTAssertEqual(AgentCommands.need(from: 4, to: 4, agentWorkspace: 9, shown: []), .viewControl, "framing one of his windows, even out of sight")
+        XCTAssertEqual(AgentCommands.need(from: 9, to: 9, agentWorkspace: nil, shown: []), .viewControl, "no agent workspace")
+        XCTAssertEqual(AgentCommands.need(from: nil, to: 9, agentWorkspace: 9, shown: []), .viewControl, "a window with no workspace")
+        let e = ViewControl.notWhileShown("framing window 4211 of TextEdit on the agent workspace")
+        XCTAssertEqual(e.code, .inUse, "a passing condition, never permission_denied")
+        XCTAssertEqual(e.retry, .safe)
     }
 
-    /// Review F1: `move --window <a window on his workspace> --workspace 9` under Full Access with view control off never
-    /// takes it from under him, and `move --frame` on the agent workspace while a display shows it needs view control.
+    /// Review F1: `move --window <a window on his workspace> --workspace 9` under Full Access never takes it from under
+    /// him, and `move --frame` on the agent workspace while a display shows it waits, with view control or without
+    /// (r2 first-F1, second-F3): `in_use`, `retry: safe`, never `permission_denied`.
     func testMoveNeverChangesAWorkspaceHeSeesWithoutViewControl() throws {
         let his = HandsWindow(id: 77, pid: 300, app: "Mail", bundle: "com.apple.mail", title: "Inbox", workspace: 1)
         let e = try XCTUnwrap(WorkspaceVerbs.moveRefusal(window: his, scope: .fullAccess, agentWorkspace: 9, agentShown: false, sourceShown: true))
@@ -75,11 +81,14 @@ final class AgentCommandsTests: XCTestCase {
         XCTAssertEqual(e.retry, .safe)
         let mine = HandsWindow(id: 4211, pid: 901, app: "TextEdit", bundle: "com.apple.TextEdit", title: "Untitled", workspace: 9)
         XCTAssertNil(WorkspaceVerbs.moveRefusal(window: mine, scope: .onAgentWorkspace, agentWorkspace: 9, agentShown: true, sourceShown: true),
-                     "the old rule lets a reframe through on a shown agent workspace, so the router checks view control for it")
-        let router = try Repo.text("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
-        XCTAssertTrue(router.contains("if req.string(\"frame\") != nil, before.agentShown, let e = viewRefusal(reframing) { return .failure(e) }"))
-        XCTAssertTrue(router.contains("if case .success = r, relative != nil, after.agentShown, let e = viewRefusal(reframing) { return .failure(e) }"),
+                     "the old rule lets a reframe through on a shown agent workspace, so the router checks it")
+        let router = try Repo.code("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
+        XCTAssertTrue(router.contains("if req.string(\"frame\") != nil, before.agentShown { return .failure(ViewControl.notWhileShown(reframing)) }"))
+        XCTAssertTrue(router.contains("if case .success = r, relative != nil, after.agentShown { return .failure(ViewControl.notWhileShown(reframing)) }"),
                       "checked again in the pass that frames")
+        XCTAssertFalse(router.contains("viewRefusal(reframing)"), "a shown agent workspace is never permission_denied")
+        let frame = try Repo.code("Sources/BaneySpaces/Hands/HandsRouter+Commands.swift")
+        XCTAssertTrue(frame.contains("case .notWhileShown: return ViewControl.notWhileShown(what)"))
         let commands = try Repo.text("Sources/BaneySpaces/Hands/HandsRouter+Commands.swift")
         XCTAssertTrue(commands.contains("let what = \"moving window \\(w.id) of \\(w.app) to workspace \\(n)\"\n        if let e = viewRefusal(what) { return .failure(e) }"),
                       "any other workspace always needs view control")
