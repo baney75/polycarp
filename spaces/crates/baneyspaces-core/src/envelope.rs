@@ -90,7 +90,7 @@ pub fn refuse_right_click(verb: &str, args: &Value) -> Option<Envelope> {
         Some(Value::String(b)) => b.eq_ignore_ascii_case("left"),
         Some(_) => false,
     };
-    if verb != "click" || (left && args.get("item").map_or(true, Value::is_null)) {
+    if verb != "click" || (left && args.get("item").is_none_or(Value::is_null)) {
         return None;
     }
     Some(Envelope::err(
@@ -104,8 +104,10 @@ pub fn refuse_right_click(verb: &str, args: &Value) -> Option<Envelope> {
 /// `agent click|toggle <ref> [--button B] [--item I]`, `--button=B` too: the flags into `args`, the ref left in `words`.
 /// A flag with no value, a flag on `toggle`, or any other `--` word is refused, never dropped: a dropped `--button=right`
 /// pressed the element as a left click (231 r1 second-S2, second-S3).
+// The error is the reply itself, built once on a cold path: boxing it would change every caller for nothing.
+#[allow(clippy::result_large_err)]
 pub fn click_flags(verb: &str, words: &mut Vec<String>, args: &mut Value) -> Result<(), Envelope> {
-    let bad = |why: String| Envelope::err("invalid_args", why, Retry::Never, &format!("usage: agent {verb} <ref>{}", if verb == "click" { " [--button left|right] [--item <title>]" } else { "" }));
+    let bad = |why: String| Envelope::err("invalid_args", why, Retry::Never, format!("usage: agent {verb} <ref>{}", if verb == "click" { " [--button left|right] [--item <title>]" } else { "" }));
     for k in ["button", "item"] {
         let (flag, inline) = (format!("--{k}"), format!("--{k}="));
         while let Some(i) = words.iter().position(|w| *w == flag || w.starts_with(&inline)) {
