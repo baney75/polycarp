@@ -27,7 +27,7 @@
         "id": { "$ref": "#/$defs/window_id" },
         "pid": { "type": "integer" },
         "app": { "type": "string" },
-        "bundle": { "type": "string" },
+        "bundle": { "type": "string", "minLength": 1, "description": "As in window_identity: the bundle id, or the executable's full path when there is none. Never empty." },
         "title": { "type": "string" },
         "workspace": { "oneOf": [{ "$ref": "#/$defs/workspace_number" }, { "type": "null" }] },
         "display": { "oneOf": [{ "$ref": "#/$defs/display_id" }, { "type": "null" }] },
@@ -99,7 +99,7 @@
             }
           }
         },
-        "saved": { "type": "array", "items": { "type": "string" } }
+        "saved": { "type": "array", "items": { "$ref": "#/$defs/saved_layout" } }
       }
     },
     "polycarp_theme": {
@@ -223,7 +223,7 @@
         "name": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
         "workspace": { "$ref": "#/$defs/workspace_number" },
         "windows": { "type": "integer", "minimum": 0 },
-        "saved": { "type": "array", "items": { "type": "string" } },
+        "saved": { "type": "array", "items": { "$ref": "#/$defs/saved_layout" } },
         "moved": { "type": "array", "items": { "$ref": "#/$defs/window_id" }, "description": "Windows in scope on the workspace that were given their saved frame." },
         "missing": {
           "type": "array",
@@ -231,12 +231,21 @@
         }
       }
     },
+    "saved_layout": {
+      "type": "object",
+      "description": "A saved layout. Names are unique per workspace only, so a layout is named by both.",
+      "required": ["workspace", "name"],
+      "properties": {
+        "workspace": { "$ref": "#/$defs/workspace_number" },
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" }
+      }
+    },
     "window_identity": {
       "type": "object",
       "description": "A window known again once its id is gone: same bundle, then title, then title rules, then creation order. No window id.",
       "required": ["bundle", "title", "order"],
       "properties": {
-        "bundle": { "type": "string", "minLength": 1, "description": "macOS: the bundle id. Windows: the executable's full path." },
+        "bundle": { "type": "string", "minLength": 1, "description": "macOS: the bundle id, or the executable's full path for a process with none. Windows: the executable's full path." },
         "title": { "type": "string" },
         "order": { "type": "integer", "minimum": 0, "description": "Creation order among its process's windows, oldest first." },
         "app": { "type": "string" }
