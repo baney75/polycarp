@@ -28,8 +28,8 @@ function RunValue { (Get-ItemProperty $run -Name Polycarp -ErrorAction SilentlyC
 function UserPath { [Environment]::GetEnvironmentVariable('Path', 'User') }
 # The ProductCodes Windows Installer has registered under Polycarp.wxs's UpgradeCode.
 function Products {
-    $l = (New-Object -ComObject WindowsInstaller.Installer).RelatedProducts('{EF27631F-61D9-4BC6-BAC2-896014A8ED96}')
-    @(for ($i = 0; $i -lt $l.Count; $i++) { $l.Item($i) })
+    # Enumerated by the pipeline: the StringList's Count reads back as one count per item once it holds two.
+    @((New-Object -ComObject WindowsInstaller.Installer).RelatedProducts('{EF27631F-61D9-4BC6-BAC2-896014A8ED96}') | ForEach-Object { "$_" })
 }
 function Msiexec([string[]]$a, [string]$log) { (Start-Process msiexec -ArgumentList ($a + @('/qn', '/l*v', "`"$env:RUNNER_TEMP\$log`"")) -Wait -PassThru).ExitCode }
 function Cloak([long]$h) {
@@ -77,7 +77,7 @@ Check 'a window sent to workspace 2 is cloaked' ($ms -ge 0) "$(Describe $h)"
 $code = Msiexec @('/i', "`"$Msi2`"") same-version.log
 Check 'a second build of the same version installs over the first (exit 0, not 3010)' ($code -eq 0) "exit $code"
 $second = if ((Get-Content "$Manifest2\*.installer.yaml" -Raw) -match "ProductCode: '([^']+)'") { $Matches[1] } else { '?' }
-Check 'one registered product, the second build' ((Products) -join ',' -eq $second) "registered: $((Products) -join ', '); second build: $second"
+Check 'one registered product, the second build' (((Products) -join ',') -eq $second) "registered: $((Products) -join ', '); second build: $second"
 $ms = Wait-Until { (Daemons).Count -eq 1 } 10000
 Check 'one daemon runs after it' ($ms -ge 0) "$((Daemons).Count) daemon(s)"
 Check 'the cloaked window was shown again by the stop before it' ([PcWin]::Shown($h)) "$(Describe $h)"
