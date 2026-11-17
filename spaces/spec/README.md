@@ -1,6 +1,6 @@
-# BaneySpaces spec
+# Polycarp spec
 
-One contract keeps BaneySpaces the same product on the Mac, Linux and Windows. A behavior that is
+One contract keeps Polycarp the same product on the Mac, Linux and Windows. A behavior that is
 not written here does not ship on one platform alone.
 
 | File | What it fixes |

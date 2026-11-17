@@ -97,7 +97,7 @@ mod = "cmd"                        # cmd | ctrl | alt (macOS), super (Linux), wi
 - **Modes.** A mode is a named set of bindings, like a Hyprland submap. `escape` leaves it unless
   it's rebound.
 - **Conflicts with the system.** A chord the OS or the compositor already owns is reported with
-  `config validate` and in Settings, with what owns it. On Omarchy, chords BaneySpaces doesn't
+  `config validate` and in Settings, with what owns it. On Omarchy, chords Polycarp doesn't
   bind stay Omarchy's (see `platforms/linux/PARITY.md`).
 
 ## Themes

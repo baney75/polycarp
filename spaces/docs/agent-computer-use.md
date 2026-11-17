@@ -1,31 +1,31 @@
-# BaneySpaces agent computer use
+# Polycarp agent computer use
 
-(For every platform BaneySpaces runs on, see "Every platform" below: Donovan, 2026-11-01, "Baney spaces is for all devices now including Mac, Windows and Linux.")
+(For every platform Polycarp runs on, see "Every platform" below: Donovan, 2026-11-01, "Baney spaces is for all devices now including Mac, Windows and Linux.")
 
-Decided 2026-10-31 (Donovan): BaneySpaces is the fleet's computer-use layer on the Mac. Cua's driver
+Decided 2026-10-31 (Donovan): Polycarp is the fleet's computer-use layer on the Mac. Cua's driver
 and Cua Spaces are removed from every machine. Polycarp stays the way agents read and act on pages in
 Donovan's own Helium tabs. Everything else an agent does in a desktop app, any browser included, goes
-through BaneySpaces.
+through Polycarp.
 
 ## Why ours can beat both
 
 Every other computer-use tool is a guest on the desktop, or hides from it inside a VM and gives up your
 real apps. It has to guess which window is safe to touch,
 and it fights whatever manages the windows. On 2026-10-31 that fight was visible: Cua's stock driver
-(0.34.1) raised apps on Donovan's workspaces, BaneySpaces followed each activation, and the screen
-jumped. BaneySpaces owns workspaces, window placement and focus following, so it can make guarantees
+(0.34.1) raised apps on Donovan's workspaces, Polycarp followed each activation, and the screen
+jumped. Polycarp owns workspaces, window placement and focus following, so it can make guarantees
 a guest can't:
 
 1. **Agents never take your screen.** Agent windows live on the agent workspace, parked out of view
    but still drivable. No agent action activates an app, raises a window, posts global input or
-   changes a Space. If an app activates itself as a side effect (some do on AXPress), BaneySpaces
+   changes a Space. If an app activates itself as a side effect (some do on AXPress), Polycarp
    does not follow it, holds your keystrokes in a listen-and-hold event tap until your previous front
    app is back (target: within 50 ms), and the action's result reports it; the probe counts it as a
    failure. Apps seen to self-activate are put on a list and refused (`not_supported`) until a route
    that doesn't activate them exists. Nothing an agent does changes your workspace,
    your front app, your pointer or your keyboard focus.
 2. **Your workspaces are off limits by default, and the line is drawn by process.** On your Mac an
-   agent only acts on a process BaneySpaces started for it as a new instance (`open -n`, its own pid,
+   agent only acts on a process Polycarp started for it as a new instance (`open -n`, its own pid,
    checked against the pids you were already running), or on windows you lend (below). An app that
    can't run a second instance (Finder, Safari, Notes, Mail, Messages, Calendar, Photos, single-instance
    Electron apps such as Obsidian, Office apps you have open) is never driven by an agent on your Mac:
@@ -44,7 +44,7 @@ a guest can't:
 | --- | --- | --- |
 | agent-desktop (Vercel Labs) | The observation and semantic-action engine through its C library (`libagent_desktop_ffi`): accessibility snapshots with refs, strict fail-closed ref resolution, the evidence tri-state, partial observation, web-wrapper collapsing, 56 commands. Built from source at a pinned commit with its `Cargo.lock`, never through npm's postinstall. | Apache-2.0, NOTICE kept |
 | cua-driver (trycua) | The background-input rules from its `macos-background-input-v1-plan`: every action carries an exact `(pid, CGWindowID)`; routes in order semantic AX, exact browser target, window-local pointer, per-process keys with delivery proof; SkyLight per-process event posting for canvas apps; per-process AX enablement for Electron. Ported to Swift where we need them. | MIT, attributed |
-| BaneySpaces | Workspaces, parking, the focus watcher, the agent workspace, the launcher, remote (tailnet) and the dock. The part neither of them has. | MIT |
+| Polycarp | Workspaces, parking, the focus watcher, the agent workspace, the launcher, remote (tailnet) and the dock. The part neither of them has. | MIT |
 
 Before the engine goes in, `tools/vet_supply.py` from BaneyFleet runs on the pinned source. Its first
 run (2026-10-31, commit 5261b52) came back `ask`: new to the fleet, no release attestations, and three
@@ -58,13 +58,13 @@ fails the build instead of passing silently.
 | | Agent workspace | Sandbox |
 | --- | --- | --- |
 | What | Workspace 9 on your Mac, with real apps | A throwaway macOS VM (Apple Virtualization, through Tart) |
-| For | Apps BaneySpaces starts for the agent as a separate process (a browser with its own profile, `open -n TextEdit` on a temp file), plus windows you lend | Untrusted sites, throwaway logins, long unattended jobs, the once-per-user apps above, anything that installs software, and benchmark runs that need a clean machine |
+| For | Apps Polycarp starts for the agent as a separate process (a browser with its own profile, `open -n TextEdit` on a temp file), plus windows you lend | Untrusted sites, throwaway logins, long unattended jobs, the once-per-user apps above, anything that installs software, and benchmark runs that need a clean machine |
 | Speed | Instant, no VM | Boots in seconds from a warm suspended state; resets to clean by APFS clone |
 | Your data | The agent's apps run as your macOS user, so they can open your files: window rules don't protect files. That's why untrusted content and anything that installs go to the sandbox, and why a connector needs its own unticked permission and never gets more than Default (below) | Not there at all: no iCloud, no keychain, no shared folders except one handoff folder per task |
 | Network | Yours | Internet only: no LAN, no tailnet, no access to the Mac itself |
 | Screen | Its windows live on workspace 9 | Its window lives on workspace 9; you can watch it or never look |
 
-Apple Virtualization allows two macOS guests at once. BaneySpaces runs one sandbox per task; a third
+Apple Virtualization allows two macOS guests at once. Polycarp runs one sandbox per task; a third
 request gets `busy` with `retry: after` and its place in the queue.
 
 The host talks to the guest's hands daemon over a host-initiated vsock channel. Everything that comes
@@ -72,15 +72,15 @@ back is untrusted: schema-validated, size-capped, never passed to a shell or App
 `guest-asserted` in results. The guest's network is Tart softnet with the host, its gateway, the LAN,
 the tailnet and link-local blocked.
 
-`baneyspaces agent` takes `--in sandbox` (or `--in host`, the default), and the router picks the
+`polycarp-spaces agent` takes `--in sandbox` (or `--in host`, the default), and the router picks the
 sandbox by itself for the app classes above. The same commands, refs, evidence and agent cursor work
-in both, because the sandbox runs a headless BaneySpaces hands daemon inside the guest. That is what
+in both, because the sandbox runs a headless Polycarp hands daemon inside the guest. That is what
 the VM-only setups (agent-desktop in a VM, posted 2026-10-31) can't do: they give up your real apps
 entirely, and you manage the VM window yourself.
 
 ## What each place protects against
 
-The agent workspace protects Donovan from accidents: an agent acting on the wrong window, stealing focus, switching his workspace, touching an app he is using, or opening his documents by mistake. It is not a security boundary. Every agent on the Mac runs as his macOS user and can already read his files and run commands, so nothing BaneySpaces does on the host can stop a hostile same-user process (for example one that rewrites BaneySpaces' files under ~/Library or drives an Open panel on purpose). Anything untrusted (web content, downloads, remote callers, code that isn't ours) runs in the sandbox, which is the security boundary.
+The agent workspace protects Donovan from accidents: an agent acting on the wrong window, stealing focus, switching his workspace, touching an app he is using, or opening his documents by mistake. It is not a security boundary. Every agent on the Mac runs as his macOS user and can already read his files and run commands, so nothing Polycarp does on the host can stop a hostile same-user process (for example one that rewrites Polycarp's files under ~/Library or drives an Open panel on purpose). Anything untrusted (web content, downloads, remote callers, code that isn't ours) runs in the sandbox, which is the security boundary.
 
 ## Lending
 
@@ -89,7 +89,7 @@ Lending is the only way an agent touches a window you were already using, and on
 - `lend` and `return` are not agent verbs and not MCP tools. An agent that needs a window gets
   `needs_lend` naming what it wants and why.
 - You lend from the menu or the launcher, or a CLI request raises an on-screen confirmation that only real
-  input accepts (BaneySpaces checks the click's source pid, so a synthetic click can't accept it).
+  input accepts (Polycarp checks the click's source pid, so a synthetic click can't accept it).
 - A lend names one agent (the requester shown in the confirmation) and the specific windows you
   picked, not the whole app. Windows the app opens later aren't included. Another agent gets
   `needs_lend`.
@@ -131,8 +131,8 @@ leaves the front.
 ## Windows that come from windows
 
 Decided 2026-11-10 (Donovan: "if a window pops up and it needs to press something on that window it should be able
-to"). BaneySpaces places only standard windows, so a dialog an app opens was refused as unmanaged. Now a window W that
-BaneySpaces does not place is usable, with its parent's scope, only when all of these hold (`ChildWindowRule.decide` in
+to"). Polycarp places only standard windows, so a dialog an app opens was refused as unmanaged. Now a window W that
+Polycarp does not place is usable, with its parent's scope, only when all of these hold (`ChildWindowRule.decide` in
 `BaneySpacesCore/Hands/ChildWindows.swift`, checked in this order):
 
 1. W is not a system prompt: SecurityAgent, coreauthd, UserNotificationCenter or TCC, by bundle or process name, and
@@ -177,7 +177,7 @@ verbs, in MCP and the CLI, all on the agent workspace only:
   `window_identified: false` (for 30 s); an open of an app already running takes a window only while it is that app's
   only open, and overlapping opens of it (and any in the 30 s after) get none. A window no open owns stays usable under
   the scope rules; `close` just won't close it), and reports `focus: {changed, returned}` when the launch took the keyboard and
-  BaneySpaces gave it back. URLs stay refused until agent browser profiles exist.
+  Polycarp gave it back. URLs stay refused until agent browser profiles exist.
 - `arrange full | halves | thirds | grid | frames id=x,y,w,h …`: agent workspace windows only, laid out on the display
   that shows the agent workspace (parked: the one ⌘1–⌘9 change, where it is shown next; `AgentArea`). A parked window
   keeps its new size and takes the position when the workspace is shown.
@@ -219,29 +219,29 @@ Donovan picks how much agents may use in Settings > Agents (Donovan, 2026-11-04)
 | Mode | Agents may |
 | --- | --- |
 | Read Only | List, `snapshot`, `find`, `get` and `shot` the windows Default allows. Every verb that changes something (`click`, `type`, `set-value`, `press`, `click-at`, `drag`, `scroll`, `select`, `toggle`, `open`, `arrange`, `move`, `close`) and the session ops `agent open`, `run`, `move`, `on` and `off` answer `permission_denied` (retry never), checked again right before each action is delivered. |
-| Default | Everything above, on the agent workspace, in apps BaneySpaces starts from its short list, and in lent windows. |
-| Full Access | Read and act on every window BaneySpaces places, on every workspace (scope `full_access`), and `agent open` any app (browsers included) and any existing file or folder. An app off the list that isn't running starts on the agent workspace; one already running gets a new window there instead of a second copy, waiting while Donovan is using it. |
+| Default | Everything above, on the agent workspace, in apps Polycarp starts from its short list, and in lent windows. |
+| Full Access | Read and act on every window Polycarp places, on every workspace (scope `full_access`), and `agent open` any app (browsers included) and any existing file or folder. An app off the list that isn't running starts on the agent workspace; one already running gets a new window there instead of a second copy, waiting while Donovan is using it. |
 
 Every mode keeps the background-only rules below: no activation, no raised window, no Space change, no global input,
 actions wait while Donovan is using the app (see "While Donovan uses an app"), no Open or Save panel (or a window
-holding one), and no window BaneySpaces doesn't place unless it is a child the rules above allow, and never BaneySpaces' own windows. `agent open` takes no URL argument in any mode
+holding one), and no window Polycarp doesn't place unless it is a child the rules above allow, and never Polycarp's own windows. `agent open` takes no URL argument in any mode
 (that waits for agent browser profiles).
 
 - What Full Access let in goes out with it: a process `agent open` started off the list, or one of Donovan's apps it
   claimed a window of, is refused on the agent workspace once the mode is no longer Full Access.
 - `agent open` from another machine (`remote on`), and every call from a connector, gets Default at most: Full Access is for agents on this Mac. Remote
   `agent run` already runs any command as Donovan, so the mode doesn't change it.
-- What Full Access let in is kept (pid and start time) across a relaunch of BaneySpaces, and is refused by `agent move`
+- What Full Access let in is kept (pid and start time) across a relaunch of Polycarp, and is refused by `agent move`
   and left out of `agent status` once the mode narrows.
 
 - Only Donovan changes the mode: the Settings picker or the menu's "Switch to Default" row. A change that widens access
   (to Default from Read Only, or to Full Access) shows a sheet whose confirm button is off for the first second and
   counts only a hardware click or key on it, the same check as a lend (`LendConsent.notByHand`). Narrowing never asks.
-- The socket refuses `agent mode <name>`; `baneyspaces agent mode` and `agent status` show the mode, `agent windows`
+- The socket refuses `agent mode <name>`; `polycarp-spaces agent mode` and `agent status` show the mode, `agent windows`
   carries `access`, and `state.json` has `agentAccess`. No config.toml key sets it.
 - While it isn't Default, the menu has a row saying so, and under Full Access the menu bar shows "Full". `trace.log`
   records each change and, at launch, a saved mode other than Default.
-- Known limit: BaneySpaces hides the apps of the workspaces you aren't on, and a hidden app's windows refuse keys and
+- Known limit: Polycarp hides the apps of the workspaces you aren't on, and a hidden app's windows refuse keys and
   the pointer (`not_supported`) even under Full Access; the accessibility verbs (`click`, `type`, `set-value`, `toggle`,
   `select`) still reach them. Put the app on Settings > Automation's keep-usable list to park it instead of hiding it.
 
@@ -250,17 +250,17 @@ holding one), and no window BaneySpaces doesn't place unless it is a child the r
 One command family and one MCP server, the same verbs either way:
 
 ```sh
-baneyspaces agent snapshot --app TextEdit -i        # refs for what an agent can act on
-baneyspaces agent click @s1:e8                      # act on a ref; prints the evidence
-baneyspaces agent type @s1:e3 "Hello"               # AX value or insertion
-baneyspaces agent press @s1:e3 "cmd+a"              # keys to that one process, window not in front (phase 4)
-baneyspaces agent drag --window 4211 --x 60 --y 90 --x2 320 --y2 230   # window-local pointer (phase 4)
-baneyspaces agent open TextEdit ~/tmp/notes.txt     # on the agent workspace, you stay put
-baneyspaces agent open Safari https://example.com   # routed to the sandbox (once-per-user app)
-baneyspaces agent shot --window 4211                # one window, even while parked
-baneyspaces agent lend Excel / agent return Excel   # Donovan lends an app (see Lending)
-baneyspaces sandbox up | reset | down | status      # the sandbox VM
-baneyspaces mcp                                     # stdio MCP server with the same tools
+polycarp-spaces agent snapshot --app TextEdit -i        # refs for what an agent can act on
+polycarp-spaces agent click @s1:e8                      # act on a ref; prints the evidence
+polycarp-spaces agent type @s1:e3 "Hello"               # AX value or insertion
+polycarp-spaces agent press @s1:e3 "cmd+a"              # keys to that one process, window not in front (phase 4)
+polycarp-spaces agent drag --window 4211 --x 60 --y 90 --x2 320 --y2 230   # window-local pointer (phase 4)
+polycarp-spaces agent open TextEdit ~/tmp/notes.txt     # on the agent workspace, you stay put
+polycarp-spaces agent open Safari https://example.com   # routed to the sandbox (once-per-user app)
+polycarp-spaces agent shot --window 4211                # one window, even while parked
+polycarp-spaces agent lend Excel / agent return Excel   # Donovan lends an app (see Lending)
+polycarp-spaces sandbox up | reset | down | status      # the sandbox VM
+polycarp-spaces mcp                                     # stdio MCP server with the same tools
 ```
 
 Output is one JSON envelope per command: `ok`, `data` or `error` with `code`, `retry` (`safe`,
@@ -268,7 +268,7 @@ Output is one JSON envelope per command: `ok`, `data` or `error` with `code`, `r
 other machines, look-and-act in the sandbox only.
 
 The connector is the one remote way onto the agent workspace, and it is off until you tick it. `polycarp browser serve` gives a
-session granted `computer.read` or `computer.act` its own `baneyspaces mcp --connector`, named from a fixed list (never `lend`). The
+session granted `computer.read` or `computer.act` its own `polycarp-spaces mcp --connector`, named from a fixed list (never `lend`). The
 app sends those calls to a second router capped at `forRemote`: Default at most, so Full Access on this Mac never reaches a connector,
 Read Only stops it, and it can't lend itself anything. What it can touch is what Default allows: the agent workspace, apps from the
 short list, windows you lent. No agent drives an Open or Save panel on any window, and an app started for an agent can't show a
@@ -276,9 +276,9 @@ document from outside the handoff folder; a lent app is lent with what it shows.
 `polycarp-connector`, and that helper asks the app on every call whether it caps connectors, so an old part never runs a connector uncapped.
 
 An agent on this Mac doesn't need a second MCP entry for the hands. The browser's local stdio server (`polycarp browser mcp`)
-runs `baneyspaces mcp` without `--connector` the first time its tools are listed and offers every tool that helper lists as
+runs `polycarp-spaces mcp` without `--connector` the first time its tools are listed and offers every tool that helper lists as
 `computer_<name>`, with the helper's own descriptions and schemas, so the two can't drift. Being local, it gets the access mode
-Donovan set, Full Access included, exactly as a `baneyspaces mcp` registered by hand would. `lend` and `return` are never offered.
+Donovan set, Full Access included, exactly as a `polycarp-spaces mcp` registered by hand would. `lend` and `return` are never offered.
 A missing, slow (over 2 seconds) or stopped helper leaves the browser tools as they are, and `computer_status` says why.
 
 Targets are a ref, a window id, or a pid. An app name resolves only when exactly one matching process
@@ -287,7 +287,7 @@ has windows in scope; otherwise the command fails with `ambiguous` and lists the
 ## The agent cursor
 
 Donovan asked for it on 2026-10-31: you should see an agent work. Each agent gets a small cursor
-of its own, drawn by BaneySpaces in a click-through overlay. It is never the real pointer, and it
+of its own, drawn by Polycarp in a click-through overlay. It is never the real pointer, and it
 never moves yours.
 
 - It glides from its last spot to the target element's center (about 150 ms, eased; instant when
@@ -348,13 +348,13 @@ never moves yours.
   on the display after its 100 glides, only when Donovan has been idle 10 minutes, and also sends W
   to another macOS Space when the display has one (the overlay must leave this one). A Space switch
   you make yourself takes posted keys, which the probe never sends, so that one is checked by hand.
-- `baneyspaces agent cursor on|theme <name>|status` and a Settings switch. It's on by default. Only Donovan turns it
+- `polycarp-spaces agent cursor on|theme <name>|status` and a Settings switch. It's on by default. Only Donovan turns it
   off, in Settings: the cursor is how he sees agents work, so the socket refuses `agent cursor off` (and logs it) and
   a `behavior.cursor.enabled = false` line in `config.toml` is ignored. Agents may change its theme.
-  This guards the socket and the config file, not the user's other files: BaneySpaces' saved settings (its defaults
+  This guards the socket and the config file, not the user's other files: Polycarp's saved settings (its defaults
   domain) are the user's, and any process of the same user can edit them, as it can any other file of his. That is
   out of scope under the host threat model above (nothing on the host stops a hostile same-user process; the sandbox is
-  the boundary). It is not silent: BaneySpaces writes a line to `trace.log` at launch when the saved setting is off.
+  the boundary). It is not silent: Polycarp writes a line to `trace.log` at launch when the saved setting is off.
 
 The bench measures it too: drawing the cursor must add under 5 ms to the median action.
 
@@ -363,8 +363,8 @@ The bench measures it too: drawing the cursor must add under 5 ms to the median 
 All of them, without taking the screen:
 
 - **Chromium family** (Helium, Chrome, Edge, Brave, Arc, Electron apps): per-process
-  `AXManualAccessibility` so the page tree is real, refs into page content. A browser BaneySpaces
-  starts for an agent is its own process with its own profile (`--user-data-dir` under BaneySpaces'
+  `AXManualAccessibility` so the page tree is real, refs into page content. A browser Polycarp
+  starts for an agent is its own process with its own profile (`--user-data-dir` under Polycarp's
   agent folder), so it never shares a process with yours, and page actions go over
   `--remote-debugging-pipe`, never a TCP port another local process could reach. Donovan's
   signed-in profiles are never opened with DevTools.
@@ -376,17 +376,17 @@ All of them, without taking the screen:
 
 | Phase | Ships | Done when |
 | --- | --- | --- |
-| 1 | Engine linked in; `agent windows/snapshot/find/get/click/type/set-value/press/scroll/select/toggle/shot/open/lend/return`; MCP server; focus guard; `type` through AX only (keys refuse with `not_supported` until phase 3). | `scripts/agent-hands-probe.swift`: 200 actions in TextEdit on temp documents and Finder inside a temp folder on the agent workspace, watching events for the whole run (app activation, Space and workspace changes, focused-window changes, any window appearing on another workspace) with a 50 ms sampler as a second check; zero events. Every driven pid is one BaneySpaces started (`open -n`). Fleet routing points desktop work at `baneyspaces mcp` when phase 1 merges; until then desktop tasks report "not available". Never Notes or any once-per-user app. Plus `swift test`. |
+| 1 | Engine linked in; `agent windows/snapshot/find/get/click/type/set-value/press/scroll/select/toggle/shot/open/lend/return`; MCP server; focus guard; `type` through AX only (keys refuse with `not_supported` until phase 3). | `scripts/agent-hands-probe.swift`: 200 actions in TextEdit on temp documents and Finder inside a temp folder on the agent workspace, watching events for the whole run (app activation, Space and workspace changes, focused-window changes, any window appearing on another workspace) with a 50 ms sampler as a second check; zero events. Every driven pid is one Polycarp started (`open -n`). Fleet routing points desktop work at `polycarp-spaces mcp` when phase 1 merges; until then desktop tasks report "not available". Never Notes or any once-per-user app. Plus `swift test`. |
 | 1b | The agent cursor. | Visible on the agent workspace during the probe, zero changes to the real pointer, under 5 ms added per action. |
 | 2 | The sandbox (two at most; `busy` beyond that): `sandbox up/reset/down/status`, the guest hands daemon, routing of once-per-user and untrusted work, the handoff folder, network limited to the internet. | The probe passes inside the sandbox; a sandbox job can't reach the Mac, the LAN or the tailnet (checked from inside); reset returns a clean guest in under 10 s; a malformed or oversized daemon reply is rejected; the guest can't reach the host gateway; the sandbox window never appears on your workspaces. |
 | 3 | Browsers and Electron: agent browser profiles over the debugging pipe, Safari and Firefox in the sandbox. | A page form filled and read back in Helium and Chrome (agent profiles on the host), and in Firefox, Safari and Obsidian with a scratch vault (all three in the sandbox), with zero screen-change events. |
 | 4 | Window-local pointer and per-process keys (SkyLight) for apps without a usable tree; the refusal contract. See "Phase 4: keys and pointer" below. | A canvas app drawn on from behind with zero changes; every refused route returns a suggestion. `scripts/agent-keys-probe.swift`: TextEdit keys (⌘A, ⌘B, Return, menu-free keys) with another app in front, the bench tasks marked phase 4 that the routes can run, and a canvas stroke checked by pixels; 50 ms sampler on the front app, workspace, real pointer and key window; zero changes. Plus `swift test`. |
-| 5 | Head-to-head (`bench/`): the same 30 tasks through BaneySpaces, agent-desktop and ChatGPT's computer use, each run in the same place (all on the agent workspace where the task allows it, all in the sandbox otherwise), scored on success, screen changes, time and turns. Cua's driver is a column only inside the sandbox. Fleet routing switches to BaneySpaces' MCP. | BaneySpaces is best or tied on every column; the numbers and the tool versions are committed under `bench/results/`, and the ratchet blocks any regression. |
+| 5 | Head-to-head (`bench/`): the same 30 tasks through Polycarp, agent-desktop and ChatGPT's computer use, each run in the same place (all on the agent workspace where the task allows it, all in the sandbox otherwise), scored on success, screen changes, time and turns. Cua's driver is a column only inside the sandbox. Fleet routing switches to Polycarp's MCP. | Polycarp is best or tied on every column; the numbers and the tool versions are committed under `bench/results/`, and the ratchet blocks any regression. |
 
 ## Every platform
 
-Donovan, 2026-11-01: BaneySpaces runs on the Mac, Windows and Linux; on Omarchy it is the default
-window manager layer (Hyprland stays the compositor, BaneySpaces owns everything you interact with);
+Donovan, 2026-11-01: Polycarp runs on the Mac, Windows and Linux; on Omarchy it is the default
+window manager layer (Hyprland stays the compositor, Polycarp owns everything you interact with);
 nightly builds ship for every platform; it gets tested on every platform before it's called done.
 
 | | macOS | Linux (Omarchy, Hyprland) | Windows 11 |
@@ -397,7 +397,7 @@ nightly builds ship for every platform; it gets tested on every platform before 
 | Workspace Dock, launcher, ⌘Tab bar, overview | SwiftUI/AppKit | Omarchy shell (Quickshell) plugins, so they match Omarchy's look | Native overlay windows (Rust, `windows` crate) |
 | Agent hands | agent-desktop engine through its C library | agent-desktop's Linux adapter (AT-SPI), built from the pinned source and run by the daemon as a child process (headless, after the scope guard) | agent-desktop's Windows adapter (UI Automation) linked as a Rust crate |
 | Sandbox | Tart macOS VM | A KVM VM (libvirt) | Hyper-V or Windows Sandbox |
-| Keys | ⌘1–9, ⌘⇧1–9 | Super+1–9, Super+Shift+1–9 (Omarchy's own bindings are rebound to BaneySpaces) | Win+1–9 is taken by the taskbar; Alt+1–9 and Alt+Shift+1–9 by default, changeable |
+| Keys | ⌘1–9, ⌘⇧1–9 | Super+1–9, Super+Shift+1–9 (Omarchy's own bindings are rebound to Polycarp) | Win+1–9 is taken by the taskbar; Alt+1–9 and Alt+Shift+1–9 by default, changeable |
 
 The agent workspace verbs (`workspaces`, `open` with `new_window` and `wait`, `arrange`, `move --window`,
 `close`, child windows), per platform:
@@ -461,7 +461,7 @@ call answers `outside_agent_workspace` (`ContextMenu`, `HandsRouter+ContextMenu.
 One transport per action, chosen before the post; there is no second route after a post whose proof failed.
 
 Who receives events, checked at execution time on the process's queue, not when the request is parsed:
-a window on the agent workspace of a process BaneySpaces started (pid and start time, so a reused pid
+a window on the agent workspace of a process Polycarp started (pid and start time, so a reused pid
 fails), or a window Donovan lent, and only while he is not using the app. The window server must still say
 the window belongs to that pid. Any other pid is never posted to.
 
@@ -498,13 +498,13 @@ fails the action. The answer comes when the action is proven, not when the secon
 fail an answer already given, so it's judged the same way once the second ends, and an app that came forward by itself
 is refused from its next action on. If the target came forward and a hardware event was heard in the span it was Donovan (`user_activated`,
 `in_use`): the action stops and the route is not blamed. If a tap was listening and heard no hardware, the app is shut
-out of the route for the run; if nothing was listening, only that process is. BaneySpaces does not follow any of
+out of the route for the run; if nothing was listening, only that process is. Polycarp does not follow any of
 them. A front app that cannot be read is not a pass. The real pointer is Donovan's: a listen-only session tap runs
 during the action, and the check fails only when the pointer ends where an event was aimed, or moved with no hardware
-event to explain it, or one of BaneySpaces' own events reached the session. His hand moving the mouse is ignored
+event to explain it, or one of Polycarp's own events reached the session. His hand moving the mouse is ignored
 (`pointer: user_moved`). The tap is made only when Input Monitoring is already granted (checked without asking);
 otherwise the pointer's own position and the system's idle clock stand in, and the result says `pointer_check:
-idle_fallback`. BaneySpaces never puts a permission prompt on the screen for an agent action.
+idle_fallback`. Polycarp never puts a permission prompt on the screen for an agent action.
 
 Refusals, each with a suggestion: not our process (`needs_lend`), window moved to another process
 (`stale_ref`), Donovan is in the app (`in_use`), minimized or hidden window, a sheet or file panel, other windows
@@ -514,7 +514,7 @@ in its title bar, nothing readable to prove it (all `not_supported` except as na
 window's top-left corner, title bar included.
 
 The probe's test app ships inside the bundle (Resources/probe), signed with the app's own identity, with its code
-hash recorded in the sealed Resources at build time. BaneySpaces starts it for an agent only from there and only
+hash recorded in the sealed Resources at build time. Polycarp starts it for an agent only from there and only
 when the signature is valid, the team matches (when there is one) and the hash matches.
 
 Ported from cua-driver (MIT, trycua/cua, attributed in NOTICE): the event field recipe for background mouse
@@ -529,7 +529,7 @@ Not proved live yet: see the pull request. The unit tests prove the decisions; o
 ## Rules that do not bend
 
 - No global HID events from agent actions, ever. The only synthetic input on Donovan's Mac comes from
-  BaneySpaces' own probes (`scripts/*-probe.swift`), only after 10 idle minutes, and each probe aborts
+  Polycarp's own probes (`scripts/*-probe.swift`), only after 10 idle minutes, and each probe aborts
   the moment a listen-only event tap sees an event whose source isn't the probe's own pid.
 - No `activate`, `SetFrontProcess` or Space change on behalf of an agent.
 - No action on a window outside the agent workspace unless that app is lent, or Donovan set Full Access (see Access modes).

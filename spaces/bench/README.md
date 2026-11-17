@@ -1,6 +1,6 @@
 # Head-to-head bench
 
-Proves (or disproves) that BaneySpaces' agent computer use is the best: the same 30 tasks, the same
+Proves (or disproves) that Polycarp's agent computer use is the best: the same 30 tasks, the same
 screen-change monitor, every tool, each in the same place. Design: [docs/agent-computer-use.md](../docs/agent-computer-use.md)
 (phase 5, "Two places for agent work").
 
@@ -11,7 +11,7 @@ screen-change monitor, every tool, each in the same place. Design: [docs/agent-c
 | `agent-desktop-headed` | the same binary with `--headed`: its best case for success, since it may take focus and the pointer. **Runs only in the sandbox (#111), never on this Mac**: on the host it reports `unavailable: sandbox_only` for every task, like ChatGPT |
 | `chatgpt` | ChatGPT/Codex computer use, driven by `codex exec` through ChatGPT.app's `cua_repl` server. **Runs only inside the sandbox VM, never on this Mac**: every task, at every level, is `unavailable: needs sandbox` until the sandbox exists |
 
-On the host only the background columns run: BaneySpaces, and agent-desktop in its non-headed mode. Cua's driver is removed from the fleet. A Cua column is only meaningful inside the sandbox (phase 2) and is **pending**.
+On the host only the background columns run: Polycarp, and agent-desktop in its non-headed mode. Cua's driver is removed from the fleet. A Cua column is only meaningful inside the sandbox (phase 2) and is **pending**.
 
 ## Run it
 
@@ -21,7 +21,7 @@ bench/run.sh --tool baneyspaces              # all levels that apply to the tool
 bench/run.sh --tool all --level scripted
 bench/run.sh --tool chatgpt --level agent --only calculator-add
 bench/run_tests.sh                           # the harness's own unit tests (fakes only)
-python3 -I bench/ratchet.py                  # fail if BaneySpaces regressed (see Ratchet)
+python3 -I bench/ratchet.py                  # fail if Polycarp regressed (see Ratchet)
 ```
 
 ## It never touches Donovan's data or windows
@@ -56,7 +56,7 @@ python3 -I bench/ratchet.py                  # fail if BaneySpaces regressed (se
   same place. A test fails if a task opens a once-per-user app on the host.
 - **Host tasks use only what `baneyspaces agent open` starts on the host** (phase 1, `AgentAppPolicy`): TextEdit, Preview and
   Calculator, each a NEW instance started with `-ApplePersistenceIgnoreState YES` (so it restores nothing of Donovan's), on
-  fixture files in the agent handoff folder (`~/Library/Application Support/BaneySpaces/hands/handoff`, where this run makes a
+  fixture files in the agent handoff folder (`~/Library/Application Support/Polycarp/hands/handoff`, where this run makes a
   directory of its own). Anything else (Finder, browsers, Electron apps, System Settings) answers `needs_sandbox` and the task
   is `unavailable`. After an open, if the app owns a window the bench did not create, or a window the bench did create is not
   on the agent workspace, the task is `infra_error` and the tool does not run. Calculator runs only if it is not already
@@ -79,11 +79,11 @@ python3 -I bench/ratchet.py                  # fail if BaneySpaces regressed (se
   The bench quits only the **instance it started**, by pid (`agent open` starts a new instance each time, so another running copy of TextEdit is never touched), and only after every window that pid owns, on every workspace, has been enumerated and is gone; a window left open or an enumeration that fails means no quit and a `teardown_pending` entry with the pid. A teardown that throws is recorded the same way and the accounting and temp-dir clean-up still run. Teardown shares the run's
   abort and checks it before every action: after an abort nothing more is done and `teardown_pending` in the result
   lists what was left on the agent workspace.
-- **The agent columns are confined.** The BaneySpaces column reaches the Mac only through `baneyspaces mcp`, which
+- **The agent columns are confined.** The Polycarp column reaches the Mac only through `baneyspaces mcp`, which
   refuses windows outside the agent workspace, and claude may call only the exact tools `windows snapshot find get click type
   set_value press scroll select toggle`: not `open`, `lend`, `return` or `shot`, so an agent that follows a refusal's
   suggestion cannot pull a window of Donovan's onto the agent workspace or start an app there (a test compares the list with
-  the tools BaneySpaces ships). The agent-desktop column's Bash may run only `bench/agent-desktop-guard`,
+  the tools Polycarp ships). The agent-desktop column's Bash may run only `bench/agent-desktop-guard`,
   which is an allowlist: per verb, only listed flags and positionals; every act verb must carry exactly one ref from a
   snapshot of an allowed window (so nothing is aimed at "whatever is focused"); it refuses every other window id, `--app`,
   `--headed`, desktop-wide surfaces, and filters `list-windows`. Its own refusals are code `guard_refused`: they are recorded
@@ -96,16 +96,16 @@ python3 -I bench/ratchet.py                  # fail if BaneySpaces regressed (se
 
 | Level | File | What it measures |
 | --- | --- | --- |
-| `agent` (end to end) | `results/<date>-<time>-<tool>.json` | The tool's own agent does each task from its goal: `claude -p` (one model for both, `BENCH_CLAUDE_MODEL`, default `sonnet`) with the BaneySpaces MCP server or Bash limited to the agent-desktop binary; `codex exec` with ChatGPT computer use. Success, screen changes, wall time, model turns. |
+| `agent` (end to end) | `results/<date>-<time>-<tool>.json` | The tool's own agent does each task from its goal: `claude -p` (one model for both, `BENCH_CLAUDE_MODEL`, default `sonnet`) with the Polycarp MCP server or Bash limited to the agent-desktop binary; `codex exec` with ChatGPT computer use. Success, screen changes, wall time, model turns. |
 | `scripted` | `results/<date>-<time>-<tool>-scripted.json` | The same step script through each tool's command line. Isolates the tool from the model. |
-| `micro` (driver level) | `results/<date>-<time>-<tool>-micro.json` | Per-action latency (snapshot, click, type, read-back), 20 repetitions for every tool (a measurement with a failed action, a failed read-back check or fewer samples is `invalid`: kept as a diagnostic, never a result). **Reported, never gated across tools**: a CLI tool is timed as one spawned process per action minus the median no-op spawn of the same binary, the Sky primitives in-process, so the numbers are comparable in kind only. BaneySpaces is compared with its own earlier numbers. |
+| `micro` (driver level) | `results/<date>-<time>-<tool>-micro.json` | Per-action latency (snapshot, click, type, read-back), 20 repetitions for every tool (a measurement with a failed action, a failed read-back check or fewer samples is `invalid`: kept as a diagnostic, never a result). **Reported, never gated across tools**: a CLI tool is timed as one spawned process per action minus the median no-op spawn of the same binary, the Sky primitives in-process, so the numbers are comparable in kind only. Polycarp is compared with its own earlier numbers. |
 
 Tools take turns task by task (rotating who goes first), so a quota running out or a warm cache cannot favor one
 column. Each result file has a run id and is never overwritten. Only **full** runs (every task attempted, no `--only`,
 not cut short) feed `results/latest.md` and the ratchet; partial runs are kept and listed.
 
 `results/latest.md` has the comparison table per level, the per-task matrix, the gate, and the version and commit of every
-tool: bench commit, BaneySpaces installed app version and the commit its bundle records, agent-desktop version and pinned
+tool: bench commit, Polycarp installed app version and the commit its bundle records, agent-desktop version and pinned
 commit, ChatGPT.app, codex, `@oai/sky` and the `cua_repl` definition used, claude version and model.
 
 ### How ChatGPT computer use is run
@@ -134,7 +134,7 @@ stops that column and leaves it `n/a` instead of scoring nothing 30 times.
 
 - **Windows are cut from the whole log after teardown.** A window that appears without a workspace is reported by the
   sampler a second later, stamped with when it first appeared on its own line (never merged into the current sample's
-  changes), and BaneySpaces writes `state.json` a moment after a window exists. So nothing is assigned to setup, the task
+  changes), and Polycarp writes `state.json` a moment after a window exists. So nothing is assigned to setup, the task
   or teardown at the moment that window closes. The setup-leak gate waits until the sampler has published a sample
   `drain_s` (1.5 s) past its query point; after teardown the runner waits for the sampler to get `drain_s` past the end and
   cuts setup `[ts0, t0)`, task `[t0, tt0)` and teardown `[tt0, end)` from the full event log by stamp, and only then
@@ -177,14 +177,14 @@ stops that column and leaves it `n/a` instead of scoring nothing 30 times.
 
 `python3 -I bench/ratchet.py` fails (exit 1) when, over the tasks **both runs completed**:
 
-- BaneySpaces regresses against `bench/baseline/baneyspaces-<level>.json` on success, screen changes, tasks with a change,
+- Polycarp regresses against `bench/baseline/baneyspaces-<level>.json` on success, screen changes, tasks with a change,
   median or p90 (25% + 0.25 s of slack), good refusals or collateral, or a task that passed there fails now; or
-- BaneySpaces is behind any other tool at the same level: success must be `>=`; screen changes, tasks with a change,
+- Polycarp is behind any other tool at the same level: success must be `>=`; screen changes, tasks with a change,
   median and p90 must be `<=`.
 
 **There is no seeded baseline.** A run that scored nothing is never `full`, and one that completed under half the baseline's scored
 tasks is a ratchet problem. `bench/baseline/` is empty until `ratchet.py --update` is run on a measured, full,
-un-aborted BaneySpaces run. `--update` refuses a partial run, a run that scored no task, an invalid micro measurement, refuses a run that regresses, and keeps the old entry for
+un-aborted Polycarp run. `--update` refuses a partial run, a run that scored no task, an invalid micro measurement, refuses a run that regresses, and keeps the old entry for
 any task the new run did not complete, so a smaller run never shrinks the ratchet. `--require` makes "no result to compare"
 an error (exit 2).
 
@@ -219,7 +219,7 @@ Drop `bench/tasks/<id>.json` (the file name is the id). Fields:
 - Check kinds: `file` (`equals contains regex is_dir absent`), `ax` (`equals contains gt exists`, `property`, `surface`),
   `window_title`, `window_gone`, `answer` (`contains`), `form`, `nothing`, `all`. `allowed_change_fields` (`front`, `key_window`) names the changes a task's own intended action causes (closing its own window); they are recorded as `intended_changes`, not charged. A task with `requires_tool_call` needs an `answer` check.
 - `expected_fail` marks a task a tool cannot do yet. It still runs and counts as a failure. Phase 1 types through the
-  accessibility tree only, so every task that presses a key is an expected failure for BaneySpaces (phase 4).
+  accessibility tree only, so every task that presses a key is an expected failure for Polycarp (phase 4).
 - Impossible tasks use `category: "refusal"` and `impossible: true`.
 
 ## Status of this build
@@ -236,7 +236,7 @@ Known gaps to read before trusting a number:
 - `agent-desktop` headless cannot send keys to a window that is not frontmost (`STALE_REF`, `exact_window_focus_unconfirmed`),
   so key tasks fail for it unless `--headed`, which is why that is its own column.
 - ChatGPT is not measured at all until the phase 2 sandbox can run it.
-- The installed BaneySpaces app bundle may not record its commit; the result then says so (read with `plutil -extract`, absent key = not recorded).
+- The installed Polycarp app bundle may not record its commit; the result then says so (read with `plutil -extract`, absent key = not recorded).
 - The sampler needs Input Monitoring for the tap; the first run will say whether it has it.
 
 ## Known follow-ups
