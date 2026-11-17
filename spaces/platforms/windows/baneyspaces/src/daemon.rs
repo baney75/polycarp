@@ -205,8 +205,8 @@ impl Core {
         });
         if let Some(w) = focus {
             if let Some(i) = self.info.get(&w) {
-                if !self.hidden.contains(i.hwnd) {
-                    winapi::set_foreground(to_hwnd(i.hwnd));
+                if !self.hidden.contains(i.hwnd) && !winapi::set_foreground(to_hwnd(i.hwnd)) {
+                    self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
                 }
             }
         }
@@ -223,7 +223,9 @@ impl Core {
             return;
         }
         let target = self.model.active().and_then(|w| self.info.get(w)).filter(|i| !self.hidden.contains(i.hwnd)).map(|i| to_hwnd(i.hwnd));
-        winapi::set_foreground(target.unwrap_or_else(winapi::shell_window));
+        if !winapi::set_foreground(target.unwrap_or_else(winapi::shell_window)) {
+            self.log("focus is on a hidden window and Windows refused to move it");
+        }
     }
 
     fn visible_workspaces(&self) -> BTreeSet<u8> {
