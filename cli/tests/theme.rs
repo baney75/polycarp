@@ -17,7 +17,7 @@ const BUILTINS: [&str; 6] = [
     "blocks",
     "calm",
 ];
-const SURFACES: [&str; 4] = ["spaces", "voice", "browser", "site"];
+const SURFACES: [&str; 5] = ["spaces", "voice", "browser", "site", "studio"];
 const ROLES: [&str; 13] = [
     "background",
     "surface",
@@ -2301,6 +2301,7 @@ fn schema_describes_every_field_of_every_builtin() {
         groups["^syntax$"]["properties"].as_object().unwrap().len(),
         13
     );
+    assert!(schema["properties"]["surface"]["properties"]["studio"].is_object());
 }
 
 #[test]
@@ -3407,7 +3408,7 @@ fn on_brings_the_last_theme_back_and_set_accent_change_turn_it_on_and_say_so() {
     b.ok(&["set", "evening"]);
     b.ok(&["off"]);
     assert!(b.ok(&["on"]).contains("theme: evening"));
-    assert_eq!(current_files(&b).len(), 5);
+    assert_eq!(current_files(&b).len(), 6);
     assert!(b.ok(&["on"]).contains("already on"));
     assert!(!fs::read_to_string(b.state_file())
         .unwrap()
@@ -3423,7 +3424,7 @@ fn on_brings_the_last_theme_back_and_set_accent_change_turn_it_on_and_say_so() {
         assert_eq!(c, 0, "{args:?} {v}");
         assert!(v["data"]["notes"].to_string().contains("was off"), "{v}");
         assert_eq!(b.json(&["current", "--json"])["enabled"], true, "{args:?}");
-        assert_eq!(current_files(&b).len(), 5, "{args:?}");
+        assert_eq!(current_files(&b).len(), 6, "{args:?}");
     }
 }
 
@@ -3437,7 +3438,7 @@ fn reset_says_it_turns_the_theme_on_with_the_default() {
     assert!(said.contains("turned it on"), "{said}");
     assert_eq!(b.json(&["current", "--json"])["enabled"], true);
     assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp");
-    assert_eq!(current_files(&b).len(), 5);
+    assert_eq!(current_files(&b).len(), 6);
 }
 
 #[test]
@@ -3508,7 +3509,7 @@ fn off_and_on_bring_current_into_line_even_when_the_state_is_unchanged() {
     let n = b.history_count();
     let said = b.ok(&["on"]);
     assert!(said.contains("already on"), "{said}");
-    assert_eq!(current_files(&b).len(), 5);
+    assert_eq!(current_files(&b).len(), 6);
     assert!(!said.contains("config.toml"), "{said}");
     assert_eq!(b.history_count(), n);
 }
@@ -3608,7 +3609,7 @@ fn only_an_activating_apply_and_a_change_on_a_user_theme_turn_the_theme_on() {
     let v: Value = serde_json::from_str(&out(&o)).unwrap();
     assert!(v["data"]["notes"].to_string().contains("was off"), "{v}");
     assert_eq!(b.json(&["current", "--json"])["enabled"], true);
-    assert_eq!(current_files(&b).len(), 5);
+    assert_eq!(current_files(&b).len(), 6);
 }
 
 #[test]
@@ -4066,7 +4067,7 @@ fn png_preview_writes_one_image_per_product_and_mode() {
     let (c, v) = b.jrun(&["preview", "calm", "--format", "png"]);
     assert_eq!(c, 0, "{v}");
     let images = v["data"]["images"].as_array().unwrap();
-    assert_eq!(images.len(), 8);
+    assert_eq!(images.len(), 10);
     let mut seen = std::collections::BTreeSet::new();
     for i in images {
         let p = PathBuf::from(i["path"].as_str().unwrap());
@@ -4082,7 +4083,7 @@ fn png_preview_writes_one_image_per_product_and_mode() {
             )
         );
     }
-    assert_eq!(seen.len(), 8, "every image is different");
+    assert_eq!(seen.len(), 10, "every image is different");
 
     let (c, v) = b.jrun(&[
         "preview",
@@ -4326,7 +4327,8 @@ fn a_pin_to_a_missing_folder_is_ignored() {
 }
 
 /// What `theme set` writes in `current/`, captured with the command built from the commit before
-/// the theme code moved into `crates/polycarp-theme`. Each case is (fixture folder, commands).
+/// the theme code moved into `crates/polycarp-theme` (schema 1, four surfaces). Each case is
+/// (fixture folder, commands).
 const OUTPUT_CASES: &[(&str, &[&[&str]])] = &[
     ("polycarp", &[&["set", "polycarp"]]),
     ("still-water", &[&["set", "still-water"]]),
@@ -4343,10 +4345,11 @@ const OUTPUT_CASES: &[(&str, &[&[&str]])] = &[
     ),
 ];
 
-/// Every built-in theme writes the same `theme.json` and CSS, byte for byte, as it did before the
-/// move, so the move changed no output.
+/// Every built-in theme writes the same CSS, byte for byte, as it did before the move, and the
+/// same `theme.json` once what schema 2 added is taken out: `studio.css`, the studio surface, and
+/// the code colors. So schema 2 only adds.
 #[test]
-fn every_builtin_writes_the_same_bytes_as_before_the_move() {
+fn every_builtin_writes_the_same_output_as_before_plus_what_schema_2_adds() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/theme-outputs");
     let mut covered = Vec::new();
     for (case, steps) in OUTPUT_CASES {
@@ -4362,17 +4365,47 @@ fn every_builtin_writes_the_same_bytes_as_before_the_move() {
             .iter()
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
-        let mut got: Vec<String> = fs::read_dir(b.cfg().join("current"))
+        let cur = b.cfg().join("current");
+        let mut got: Vec<String> = fs::read_dir(&cur)
             .unwrap()
             .flatten()
             .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "studio.css")
             .collect();
         names.sort();
         got.sort();
         assert_eq!(got, names, "{case}: the files in current/");
+        // No built-in overrides a product, so studio.css is spaces.css under its own name.
+        let spaces = fs::read_to_string(cur.join("spaces.css")).unwrap();
+        assert_eq!(
+            fs::read_to_string(cur.join("studio.css")).unwrap(),
+            spaces.replacen("surface \"spaces\"", "surface \"studio\"", 1),
+            "{case}/studio.css"
+        );
         for p in want {
             let name = p.file_name().unwrap();
-            let have = fs::read(b.cfg().join("current").join(name)).unwrap();
+            let have = fs::read(cur.join(name)).unwrap();
+            if name == "theme.json" {
+                let mut v: Value = serde_json::from_slice(&have).unwrap();
+                assert_eq!(v["schema"], 2, "{case}");
+                v["schema"] = Value::from(1);
+                let surfaces = v["surfaces"].as_object_mut().unwrap();
+                surfaces.remove("studio");
+                for s in surfaces.values_mut() {
+                    for mode in ["light", "dark"] {
+                        let m = s[mode].as_object_mut().unwrap();
+                        for g in ["terminal", "syntax", "diff"] {
+                            assert!(m.remove(g).is_some(), "{case}: {mode}.{g} missing");
+                        }
+                    }
+                }
+                let want: Value = serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+                assert_eq!(
+                    v, want,
+                    "{case}/theme.json: differs beyond what schema 2 adds"
+                );
+                continue;
+            }
             assert!(
                 have == fs::read(&p).unwrap(),
                 "{case}/{}: differs from the fixture",
@@ -4384,6 +4417,49 @@ fn every_builtin_writes_the_same_bytes_as_before_the_move() {
     for t in BUILTINS {
         assert!(covered.iter().any(|c| c == t), "{t} has no fixture");
     }
+}
+
+fn current_json(b: &Box) -> Value {
+    serde_json::from_str(&fs::read_to_string(b.cfg().join("current/theme.json")).unwrap()).unwrap()
+}
+
+/// A theme that sets no code colors gets every one derived, for every product, in `theme.json`
+/// schema 2. One it sets is kept, and `get` reaches them by path.
+#[test]
+fn a_theme_without_code_sections_derives_them() {
+    let b = Box::new();
+    b.ok(&["set", "calm"]);
+    assert!(b.cfg().join("current/studio.css").is_file());
+    let v = current_json(&b);
+    assert_eq!(v["schema"], 2);
+    for s in SURFACES {
+        for mode in ["light", "dark"] {
+            for (group, n) in [("terminal", 20), ("syntax", 13), ("diff", 7)] {
+                let g = v["surfaces"][s][mode][group]
+                    .as_object()
+                    .unwrap_or_else(|| panic!("{s}.{mode}.{group} is missing"));
+                assert_eq!(g.len(), n, "{s}.{mode}.{group}");
+                for (k, c) in g {
+                    let c = c.as_str().unwrap_or("");
+                    assert!(
+                        c.len() == 7 && c.starts_with('#'),
+                        "{s}.{mode}.{group}.{k} = {c:?}"
+                    );
+                }
+            }
+        }
+    }
+    let doc = user_theme("coder", "calm", "[dark.terminal]\nred = \"#ff7b72\"\n");
+    assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], &doc)), 0);
+    assert_eq!(
+        b.json(&["get", "dark.terminal.red", "--json"])["value"],
+        "#ff7b72"
+    );
+    let keyword = b.json(&["get", "dark.syntax.keyword", "--json"])["value"].clone();
+    assert!(
+        keyword.as_str().is_some_and(|c| c.starts_with('#')),
+        "{keyword}"
+    );
 }
 
 /// A syntax color that does not read on the background is refused with its path and the ratio

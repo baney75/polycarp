@@ -60,8 +60,8 @@ struct Tool {
 
 fn tools() -> Vec<Tool> {
     let name = json!({"type":"string","description":"A theme name from theme_list. Leave out for the current theme."});
-    let surface = json!({"type":"string","enum":["spaces","voice","browser","site"],
-        "description":"One product: spaces (Polycarp Spaces), voice (Silas), browser (the Polycarp browser helper) or site. Leave out for the theme without product overrides."});
+    let surface = json!({"type":"string","enum":["spaces","voice","browser","site","studio"],
+        "description":"One product: spaces (Polycarp Spaces), voice (Silas), browser (the Polycarp browser helper), site, or studio (Local Studio). Leave out for the theme without product overrides."});
     let theme_doc = json!({"type":["object","string"],
         "description":"The whole theme: a JSON object, or a string of TOML or JSON. Same shape as theme_schema. Use `extends` and list only what changes."});
     vec![
@@ -203,12 +203,12 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_preview",
-            description: "Show the theme on product UI, written only into the previews folder of the config folder. With format \"png\" it writes one image per product and mode (the dock and window bar, the dictation pill, the browser side panel with a permission prompt, the site) and returns data.images, a list of {surface, mode, path}: look at each image, fix what is wrong, and preview again. Needs no browser. With format \"html\" (the default) it writes one page with every product, to open in a browser and show the person. Call it after every change.",
+            description: "Show the theme on product UI, written only into the previews folder of the config folder. With format \"png\" it writes one image per product and mode (the dock and window bar, the dictation pill, the browser side panel with a permission prompt, the site, Local Studio's code, diff and terminal) and returns data.images, a list of {surface, mode, path}: look at each image, fix what is wrong, and preview again. Needs no browser. With format \"html\" (the default) it writes one page with every product, to open in a browser and show the person. Call it after every change.",
             schema: obj(json!({
                 "name": name,
                 "mode": {"type":"string","enum":["light","dark","both"],"description":"Default both: side by side in html, one image each in png."},
-                "surface": {"type":"string","enum":["spaces","voice","browser","site"],
-                    "description":"One product: spaces (Polycarp Spaces), voice (Silas), browser (the Polycarp browser helper) or site. Leave out for every product (png) or the theme without product overrides (html)."},
+                "surface": {"type":"string","enum":["spaces","voice","browser","site","studio"],
+                    "description":"One product: spaces (Polycarp Spaces), voice (Silas), browser (the Polycarp browser helper), site, or studio (Local Studio). Leave out for every product (png) or the theme without product overrides (html)."},
                 "format": {"type":"string","enum":["html","png"],"description":"png to look at it yourself, html to show the person. Default html."},
             }), &[]),
             read_only: false,

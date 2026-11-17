@@ -204,7 +204,7 @@ An explicit `[surface.*]` value beats a global `theme accent` for that product a
 | `[shape]` | `radius_small`, `radius`, `radius_large`, `border_width`, `blur`, `shadow`, `density`, `indicator` |
 | `[type]` | `display`, `ui`, `mono`, `size`, `weight`, `line_height` |
 | `[motion]` | `fast`, `normal`, `slow`, `easing`, `scale_from`, `reduced` |
-| `[surface.spaces]`, `[surface.voice]`, `[surface.browser]`, `[surface.site]` | Any of the above, for that product only |
+| `[surface.spaces]`, `[surface.voice]`, `[surface.browser]`, `[surface.site]`, `[surface.studio]` | Any of the above, for that product only |
 
 `polycarp theme schema` prints every field with its meaning and range.
 

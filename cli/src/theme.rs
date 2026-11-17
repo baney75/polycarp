@@ -23,10 +23,10 @@ mod png;
 mod preview;
 
 use polycarp_theme::{
-    apply_accents, check_value, color_lines, css, ext_of, fields, is_builtin, is_hex, load_raw,
-    parse_toml, read_theme_file, resolve_doc, resolve_name, resolved_json, schema, shared_vars,
-    theme_json, valid_name, Full, Kind, Resolved, State as Choice, Themes, BUILTINS, DEFAULT_THEME,
-    MAX_DEPTH, MODES, SECTIONS, SURFACES,
+    apply_accents, check_value, color_lines, css, ext_of, fields, is_builtin, is_hex, json_of,
+    load_raw, parse_toml, read_theme_file, resolve_doc, resolve_name, resolved_json, schema,
+    shared_vars, theme_json, valid_name, Full, Kind, Resolved, State as Choice, Themes, BUILTINS,
+    DEFAULT_THEME, MAX_DEPTH, MODES, SECTIONS, SURFACES,
 };
 // What the Omarchy code in `omarchy` uses from the theme library; it reads through `super::*`.
 use polycarp_theme::{colors_of, contrast, merge, pairs, without_meta, Colors, ROLES, TEXT_MIN};
@@ -68,7 +68,7 @@ Usage:
   polycarp theme folder [--pin | --unpin] [--json]
   polycarp theme delete <name> [--force]
   polycarp theme validate <file|->
-  polycarp theme export <css|json|toml> [name] [--surface spaces|voice|browser|site]
+  polycarp theme export <css|json|toml> [name] [--surface spaces|voice|browser|site|studio]
   polycarp theme undo [--force]
   polycarp theme history [--json]
   polycarp theme follow [omarchy [--sync | --if-fresh] | reset | off] [--json]
@@ -1584,7 +1584,7 @@ fn lookup(full: &Full, path: &str) -> Result<Json, ApiErr> {
     } else {
         (&full.base, &segs[..])
     };
-    let mut v = serde_json::to_value(resolved).unwrap_or(Json::Null);
+    let mut v = json_of(resolved);
     let mut at = String::new();
     for seg in rest {
         let next = v.get(*seg).cloned();

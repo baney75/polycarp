@@ -3,6 +3,10 @@
 use super::{Full, Resolved, State, MODES, ROLES, SURFACES};
 use serde_json::{json, Value as Json};
 
+/// The shape of `theme.json`. It goes up by one whenever the shape changes; readers ignore
+/// fields they don't know.
+pub const SCHEMA: u32 = 2;
+
 fn num(f: f64) -> String {
     format!("{f}")
 }
@@ -82,8 +86,22 @@ pub fn css(full: &Full, surface: Option<&str>, forced: Option<&str>) -> String {
     s
 }
 
+/// A resolved theme as JSON, with every code color (set or derived) inside `light` and `dark`.
+pub fn json_of(r: &Resolved) -> Json {
+    let mut v = serde_json::to_value(r).unwrap_or(Json::Null);
+    for m in MODES {
+        if let Some(o) = v.get_mut(m).and_then(Json::as_object_mut) {
+            for (group, colors) in r.code(m) {
+                o.insert(group, json!(colors));
+            }
+        }
+    }
+    v
+}
+
+/// What products read: `json_of` after `reduced` motion is applied.
 pub fn resolved_json(r: &Resolved) -> Json {
-    serde_json::to_value(r.exported()).unwrap_or(Json::Null)
+    json_of(&r.exported())
 }
 
 pub fn theme_json(full: &Full, state: Option<&State>) -> Json {
@@ -92,7 +110,7 @@ pub fn theme_json(full: &Full, state: Option<&State>) -> Json {
         surfaces.insert(s.to_string(), resolved_json(full.surface(s)));
     }
     let mut v = json!({
-        "schema": 1,
+        "schema": SCHEMA,
         "name": full.name,
         "title": full.title,
         "description": full.description,

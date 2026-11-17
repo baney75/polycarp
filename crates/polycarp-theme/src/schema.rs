@@ -23,6 +23,7 @@ pub fn describe(path: &str) -> &'static str {
         "surface.voice" => "Overrides for Silas: the dictation overlay and its settings window.",
         "surface.browser" => "Overrides for Tabkyra: the browser side panel, chat and permission prompts.",
         "surface.site" => "Overrides for the Polycarp website.",
+        "surface.studio" => "Overrides for Local Studio: its desktop apps, its iPhone app and its built-in plugins, Fonsviva standalone included.",
         "code.terminal" => "Optional. The terminal palette: background, foreground, cursor, selection and the 16 ANSI colors (black to white, bright_black to bright_white). Anything left out is derived from the 13 colors. Foreground needs 4.5 on background and on selection; cursor and the 12 colored entries need 3.0 on background; black, white, bright_black and bright_white are not checked.",
         "code.syntax" => "Optional. Syntax highlighting colors for code: keyword, string, number, comment, function, type, variable, constant, operator, punctuation, tag, attribute and property. Anything left out is derived from the 13 colors. Each needs 4.5 on background.",
         "code.diff" => "Optional. Diff colors: added, removed and modified lines, the tinted added_surface and removed_surface behind them, and the gutter marks. Anything left out is derived from the 13 colors. added and foreground need 4.5 on added_surface, removed and foreground on removed_surface; modified and the gutters need 3.0 on background.",
