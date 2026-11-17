@@ -53,19 +53,12 @@ function Sign($path) { if ($sign) { Run $sign @($path) } }
 Get-ChildItem "$bin\*.exe" | ForEach-Object { Sign $_.FullName }
 
 $msi = Join-Path $Out "Polycarp-$version-x64.msi"
-Run wix @('build', "$here\Polycarp.wxs", '-arch', 'x64', '-d', "Version=$version", '-d', "BinDir=$bin", '-d', "SourceDir=$spaces", '-o', $msi)
+# A new ProductCode for every build, chosen here so the manifest can carry it: winget matches the installed package
+# to the manifest by it.
+$productCode = '{' + ([guid]::NewGuid().ToString().ToUpperInvariant()) + '}'
+Run wix @('build', "$here\Polycarp.wxs", '-arch', 'x64', '-d', "Version=$version", '-d', "ProductCode=$productCode", '-d', "BinDir=$bin", '-d', "SourceDir=$spaces", '-o', $msi)
 Sign $msi
 $sha = (Get-FileHash $msi -Algorithm SHA256).Hash
-# WiX makes a new ProductCode for every build; winget matches the installed package to the manifest by it.
-$wi = New-Object -ComObject WindowsInstaller.Installer
-$db = $wi.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $wi, @($msi, 0))
-$view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @("SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductCode'"))
-$null = $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
-$rec = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
-$productCode = $rec.GetType().InvokeMember('StringData', 'GetProperty', $null, $rec, @(1))
-$null = $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null)
-[void][Runtime.InteropServices.Marshal]::ReleaseComObject($db)
-if ($productCode -notmatch '^\{[0-9A-F-]{36}\}$') { throw "no ProductCode in $msi ($productCode)" }
 
 $wg = Join-Path $Out 'winget'
 New-Item -ItemType Directory -Force $wg | Out-Null
