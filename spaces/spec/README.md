@@ -9,6 +9,7 @@ not written here does not ship on one platform alone.
 | [keys.json](keys.json) | The key map per platform, and what Linux replaces in Omarchy |
 | [envelope.md](envelope.md) | The JSON envelope every CLI and MCP result uses, and the error codes |
 | [cli.md](cli.md) | The command family and which commands exist on which platform |
+| [launcher-extensions.md](launcher-extensions.md) | Launcher extensions: the folder, the manifest, how a script runs and what its output becomes |
 | [mcp-tools.json](mcp-tools.json) | The MCP tools, as `tools/list` returns them (generated from the Rust core) |
 | [conformance/](conformance/) | Cases as JSON: inputs, the effects they must produce, the state they must leave |
 
