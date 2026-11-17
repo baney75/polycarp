@@ -164,9 +164,29 @@ pub fn may_start(app: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// The list is read from `POLYCARP_CONFIG_DIR`, which is the whole process's: tests that read or set it take turns.
+    static CONFIG_DIR: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Runs `f` with the config folder at a fresh empty folder, then puts the variable back.
+    fn with_config<T>(name: &str, f: impl FnOnce(&std::path::Path) -> T) -> T {
+        let _turn = CONFIG_DIR.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("polycarp-agent-apps-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = std::env::var_os("POLYCARP_CONFIG_DIR");
+        std::env::set_var("POLYCARP_CONFIG_DIR", &dir);
+        let out = f(&dir);
+        match old {
+            Some(v) => std::env::set_var("POLYCARP_CONFIG_DIR", v),
+            None => std::env::remove_var("POLYCARP_CONFIG_DIR"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        out
+    }
+
     #[test]
     fn production_allows_nothing() {
-        assert!(allowed().is_empty());
+        with_config("none", |_| assert!(allowed().is_empty()));
         for app in ["notepad", "explorer", "bs-testapp", r"C:\x\bs-testapp.exe", "cmd.exe", "powershell", ""] {
             assert!(!may_start_with(app, false), "{app}");
         }
@@ -187,7 +207,7 @@ mod tests {
         if !cfg!(feature = "test-ops") {
             std::env::set_var("BANEYSPACES_TEST_OPS", "1");
             assert!(!test_ops_enabled());
-            assert!(!may_start("bs-testapp"));
+            with_config("feature", |_| assert!(!may_start("bs-testapp")));
             std::env::remove_var("BANEYSPACES_TEST_OPS");
         }
     }
@@ -195,21 +215,16 @@ mod tests {
     /// Council gap A1 on Windows: an app the user lists starts; before the list, nothing did.
     #[test]
     fn a_listed_app_may_start_and_only_then() {
-        let dir = std::env::temp_dir().join(format!("polycarp-agent-apps-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let old = std::env::var_os("POLYCARP_CONFIG_DIR");
-        std::env::set_var("POLYCARP_CONFIG_DIR", &dir);
-        let _ = std::fs::remove_file(dir.join("agent-apps.toml"));
-        assert!(!may_start("charmap"), "nothing listed, nothing starts");
-        std::fs::write(dir.join("agent-apps.toml"), "# apps agents may open\napps = [\n  \"charmap\", # Character Map\n  'C:\\Tools\\viewer.exe',\n]\n").unwrap();
-        assert!(may_start("charmap"));
-        assert!(may_start("CharMap.exe"));
-        assert!(may_start(r"C:\tools\VIEWER"));
-        assert!(!may_start(r"D:\evil\charmap.exe"), "a bare entry never matches some other path");
-        assert!(!may_start("viewer"), "a path entry never matches a bare name");
-        assert!(!may_start("calc"));
-        match old { Some(v) => std::env::set_var("POLYCARP_CONFIG_DIR", v), None => std::env::remove_var("POLYCARP_CONFIG_DIR") }
-        let _ = std::fs::remove_dir_all(&dir);
+        with_config("listed", |dir| {
+            assert!(!may_start("charmap"), "nothing listed, nothing starts");
+            std::fs::write(dir.join("agent-apps.toml"), "# apps agents may open\napps = [\n  \"charmap\", # Character Map\n  'C:\\Tools\\viewer.exe',\n]\n").unwrap();
+            assert!(may_start("charmap"));
+            assert!(may_start("CharMap.exe"));
+            assert!(may_start(r"C:\tools\VIEWER"));
+            assert!(!may_start(r"D:\evil\charmap.exe"), "a bare entry never matches some other path");
+            assert!(!may_start("viewer"), "a path entry never matches a bare name");
+            assert!(!may_start("calc"));
+        });
     }
 
     /// The scope guard holds: a kind that is never an agent's stays refused when listed, under any spelling.
