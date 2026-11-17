@@ -16,6 +16,7 @@ use toml::{Table, Value};
 
 mod apps;
 mod edit;
+mod import;
 mod picture;
 mod png;
 mod preview;
@@ -58,6 +59,7 @@ Usage:
   polycarp theme accent <#rrggbb> [--mode light|dark] | --clear [--mode light|dark]
   polycarp theme change <path> <value> [<path> <value> ...] [--theme <name>] [--json]
   polycarp theme apply <file|-> [--name <name>] [--no-activate] [--json]
+  polycarp theme import <file|url|-> [--name <name>] [--json]
   polycarp theme preview [name] [--mode light|dark|both] [--surface <s>] [--format html|png] [--out <file|folder>] [--json]
   polycarp theme create <name> --extends <base> [--force]
   polycarp theme edit-path <name>
@@ -2614,6 +2616,76 @@ pub(crate) fn op_validate(c: &Ctx, doc: &Doc, expect: Option<&str>, label: &str)
     }
 }
 
+/// `theme import`: a base16 or base24 scheme from a file, an https address or standard input,
+/// saved as a theme without making it current. Colors that would not read are moved, with a
+/// warning for each.
+pub(crate) fn op_import(c: &Ctx, source: &str, name: Option<&str>) -> Res {
+    if source.starts_with("http://") {
+        return Err(ApiErr::usage(format!(
+            "{source}: only https addresses are fetched"
+        )));
+    }
+    let text = if source.starts_with("https://") || source.starts_with("file://") {
+        fetch(source)?
+    } else {
+        read_input(source)?
+    };
+    let scheme = import::parse(&text)
+        .map_err(|e| ApiErr::at("invalid_theme", "$", format!("{source}: {e}")))?;
+    let name = name.map_or_else(|| import::slug(&scheme), str::to_string);
+    let from = if source == "-" {
+        "standard input"
+    } else {
+        source
+    };
+    let (theme, moved) = import::theme_toml(&scheme, &name, from);
+    let mut out = op_apply(c, parse_doc(&theme)?, Some(&name), false)?;
+    out.text = format!(
+        "imported {} ({}), {} moved to read\n{}",
+        scheme.name,
+        scheme.system,
+        match moved.len() {
+            1 => "1 color".to_string(),
+            n => format!("{n} colors"),
+        },
+        out.text
+    );
+    for m in &moved {
+        out = out.caution(m.clone());
+    }
+    Ok(out.with(json!({"scheme": scheme.name, "system": scheme.system, "moved": moved})))
+}
+
+/// The text at `url`, fetched with the system's `curl` (https, or file for a local copy).
+fn fetch(url: &str) -> Result<String, ApiErr> {
+    let out = std::process::Command::new("curl")
+        .args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--proto",
+            "=https,file",
+            "--proto-redir",
+            "=https",
+            "--max-time",
+            "30",
+            "--max-filesize",
+            "1000000",
+            "--",
+            url,
+        ])
+        .output()
+        .map_err(|e| io_err(format!("could not run curl to fetch {url}: {e}")))?;
+    if !out.status.success() {
+        return Err(io_err(format!(
+            "could not fetch {url}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    String::from_utf8(out.stdout).map_err(|_| io_err(format!("{url} is not text")))
+}
+
 pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) -> Res {
     let Doc {
         mut table,
@@ -3784,6 +3856,14 @@ pub fn run(args: &[OsString]) -> i32 {
             let text = read_input(&p.pos[0])?;
             let doc = parse_doc(&text)?;
             op_apply(c, doc, p.val("name"), !p.flag("no-activate"))
+        }),
+        "import" => cmd(rest, &["name"], &[], |c, p| {
+            exactly(
+                p,
+                1,
+                "a scheme file, an https address, or - for standard input",
+            )?;
+            op_import(c, &p.pos[0], p.val("name"))
         }),
         "create" => cmd(rest, &["extends"], &["force"], |c, p| {
             exactly(p, 1, "one theme name")?;

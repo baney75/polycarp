@@ -10,7 +10,7 @@ pub mod schema;
 mod validate;
 
 pub use code::{
-    code_keys, code_pairs, code_problems, derive, mix, Code, CODE, DIFF, SYNTAX, TERMINAL,
+    code_keys, code_pairs, code_problems, derive, fit, mix, Code, CODE, DIFF, SYNTAX, TERMINAL,
 };
 pub use contrast::{combine, contrast, contrast_on, pairs, Colors, MARK_MIN, TEXT_MIN};
 pub use export::{color_lines, css, json_of, resolved_json, shared_vars, theme_json, SCHEMA};

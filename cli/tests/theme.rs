@@ -4949,3 +4949,165 @@ fn a_bad_apps_table_is_a_warning_and_leaves_the_rest() {
     assert!(b.app_file("ghostty/themes/polycarp-dark").exists());
     assert!(!b.app_file("nvim/colors/polycarp.lua").exists());
 }
+
+// ---------------------------------------------------------------------------------------------
+// Import: base16 and base24 schemes
+// ---------------------------------------------------------------------------------------------
+
+const SCHEMES: [&str; 3] = ["gruvbox-dark-hard", "rose-pine-dawn", "dracula"];
+
+fn scheme(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/schemes/{name}.yaml"))
+}
+
+impl Box {
+    fn get_in(&self, path: &str, theme: &str) -> String {
+        self.json(&["get", path, theme, "--json"])["value"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+}
+
+/// Each fixture imports with no error, validates, and is saved without being made current. A
+/// color that reads is kept as the scheme has it; one that does not is moved and reported.
+#[test]
+fn every_scheme_fixture_imports_and_reads() {
+    let b = Box::new();
+    b.ok(&["set", "calm"]);
+    for name in SCHEMES {
+        let v = b.json(&["import", scheme(name).to_str().unwrap(), "--json"]);
+        assert_eq!(v["name"], name);
+        assert_eq!(v["activated"], false);
+        let file = b.cfg().join(format!("themes/{name}.toml"));
+        b.ok(&["validate", file.to_str().unwrap()]);
+        for m in v["moved"].as_array().unwrap() {
+            assert!(m.as_str().unwrap().contains(" instead"), "{m}");
+        }
+    }
+    assert_eq!(b.json(&["current", "--json"])["theme"], "calm");
+    // Gruvbox's red reads on its background as a terminal color, so it is kept; its comment
+    // color does not read as text, so it moves.
+    assert_eq!(
+        b.get_in("dark.terminal.red", "gruvbox-dark-hard"),
+        "#fb4934"
+    );
+    assert_eq!(b.get_in("light.background", "gruvbox-dark-hard"), "#1d2021");
+    assert_ne!(
+        b.get_in("dark.syntax.comment", "gruvbox-dark-hard"),
+        "#665c54"
+    );
+    // Dracula is base24: its bright colors are its own, not copies of the normal ones.
+    assert_eq!(b.get_in("dark.terminal.bright_red", "dracula"), "#ff6e6e");
+    assert_eq!(b.get_in("dark.terminal.red", "dracula"), "#ff5555");
+    assert_eq!(
+        b.get_in("light.accent", "rose-pine-dawn"),
+        b.get_in("dark.accent", "rose-pine-dawn")
+    );
+}
+
+/// `theme set` on an imported theme rewrites every app file PR C's writers make, and every
+/// product's colors in theme.json.
+#[test]
+fn an_imported_theme_changes_every_app_surface() {
+    let b = Box::new();
+    b.ok(&["set", "polycarp"]);
+    for app in ["ghostty", "neovim", "btop", "zed", "windows-terminal"] {
+        b.ok(&["apps", app, "on"]);
+    }
+    let snap = |b: &Box| {
+        let mut found = Vec::new();
+        files_under(&b.root.join("home"), &mut found);
+        // Polycarp's own files; Ghostty's config only holds the line that points at them.
+        found.retain(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("polycarp")
+        });
+        found.sort();
+        let files: Vec<(PathBuf, Vec<u8>)> = found
+            .into_iter()
+            .map(|p| (p.clone(), fs::read(&p).unwrap()))
+            .collect();
+        let json: Value =
+            serde_json::from_slice(&fs::read(b.cfg().join("current/theme.json")).unwrap()).unwrap();
+        (files, json)
+    };
+    let (before, before_json) = snap(&b);
+    assert_eq!(before.len(), 7);
+    for name in SCHEMES {
+        b.ok(&["import", scheme(name).to_str().unwrap()]);
+        b.ok(&["set", name]);
+        let (after, after_json) = snap(&b);
+        assert_eq!(after.len(), before.len());
+        for ((p, was), (q, now)) in before.iter().zip(&after) {
+            assert_eq!(p, q);
+            assert_ne!(was, now, "{name}: {} did not change", p.display());
+        }
+        for s in SURFACES {
+            for m in ["light", "dark"] {
+                let at = |j: &Value| j["surfaces"][s][m]["background"].clone();
+                assert_ne!(at(&before_json), at(&after_json), "{name} {s} {m}");
+            }
+        }
+    }
+}
+
+#[test]
+fn import_reads_the_older_flat_format_and_refuses_what_is_not_a_scheme() {
+    let b = Box::new();
+    let slots: String = (0..16)
+        .map(|i| {
+            format!(
+                "base0{i:X}: \"{}\"\n",
+                ["1d2021", "f8f8f2"][usize::from(i >= 5)]
+            )
+        })
+        .collect();
+    let o = b.run_stdin(
+        &["theme", "import", "-", "--name", "old-style", "--json"],
+        &format!("scheme: \"Old Style\"\nauthor: \"Someone\"\n{slots}"),
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(b.get_in("dark.foreground", "old-style"), "#f8f8f2");
+    let text = fs::read_to_string(b.cfg().join("themes/old-style.toml")).unwrap();
+    assert!(text.contains("from standard input"), "{text}");
+
+    let before = b.snapshot();
+    let short = slots.replace("base0F: \"f8f8f2\"\n", "");
+    let o = b.run_stdin(&["theme", "import", "-", "--name", "short"], &short);
+    assert_eq!(code(&o), 1);
+    assert!(err(&o).contains("no base0F"), "{}", err(&o));
+    let bad = slots.replace("base07: \"f8f8f2\"", "base07: \"blue\"");
+    let o = b.run_stdin(&["theme", "import", "-", "--name", "bad"], &bad);
+    assert_eq!(code(&o), 1);
+    assert!(err(&o).contains("not a color"), "{}", err(&o));
+    let o = b.run(&[
+        "theme",
+        "import",
+        scheme("dracula").to_str().unwrap(),
+        "--name",
+        "calm",
+    ]);
+    assert_eq!(code(&o), 1);
+    assert_eq!(b.snapshot(), before);
+}
+
+/// An address is fetched with curl. A file address stands in for https, so no test needs the
+/// network.
+#[cfg(unix)]
+#[test]
+fn import_fetches_an_address() {
+    let b = Box::new();
+    let url = format!("file://{}", scheme("dracula").display());
+    let v = b.json(&["import", &url, "--name", "fetched", "--json"]);
+    assert_eq!(v["scheme"], "Dracula");
+    assert_eq!(v["system"], "base24");
+    let o = b.run(&["theme", "import", "file:///no/such/scheme.yaml"]);
+    assert_eq!(code(&o), 1);
+    assert!(err(&o).contains("could not fetch"), "{}", err(&o));
+    let o = b.run(&["theme", "import", "http://example.com/scheme.yaml"]);
+    assert_eq!(code(&o), 2);
+    assert!(err(&o).contains("only https"), "{}", err(&o));
+}
