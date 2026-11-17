@@ -66,7 +66,7 @@ function wait_line($pattern, [int]$from = 0, [int]$ms = 8000) {
     $null
 }
 function shot($name) { try { [Desk]::Shot((Join-Path $Out "$name.png"), 0); [Desk]::Shot((Join-Path $Out "bar-$name.png"), $script:barPx * 3) } catch { say "  (no shot $name`: $_)" } }
-function cli { $o = (& $bs @args 2>&1 | Out-String).Trim(); Add-Content $log "`$ baneyspaces $args  ->  $o"; $o }
+function bsx { $o = (& $bs @args 2>&1 | Out-String).Trim(); Add-Content $log "`$ baneyspaces $args  ->  $o"; $o }
 function theme { $o = (& $Cli theme @args 2>&1 | Out-String).Trim(); Add-Content $log "`$ polycarp theme $args  ->  $($o.Substring(0, [Math]::Min(300, $o.Length)))"; $o }
 function shell_proc { Get-Process baneyspaces -ErrorAction SilentlyContinue | Where-Object { $_.Id -eq $script:shellPid } }
 
@@ -75,7 +75,7 @@ $workBefore = [Desk]::WorkTop()
 
 say '== 1. the daemon, then the bar with the built-in theme'
 [void](theme set polycarp)
-say "daemon: $(cli daemon --background --log $dlog)"
+say "daemon: $(bsx daemon --background --log $dlog)"
 $p = Start-Process -FilePath $bs -ArgumentList @('shell', '--log', $slog) -PassThru -WindowStyle Hidden
 $script:shellPid = $p.Id
 $ready = wait_line 'ready pid=' 0 15000
@@ -101,7 +101,7 @@ shot '1-workspace-1'
 
 say '== 3. a switch redraws the bar within a frame'
 $n = @(lines).Count
-say "switch: $(cli switch 3)"
+say "switch: $(bsx switch 3)"
 $moved = wait_line '-> 3$' $n 3000
 check ($null -ne $moved) 'the bar hears the switch to 3'
 $first = wait_line 'first frame \\\\\.\\DISPLAY\d+ current=3 ([\d.]+) ms from the feed line' $n 3000
@@ -121,7 +121,7 @@ check ($null -ne (wait_line 'drawn \\\\\.\\DISPLAY1 current=2 ' $n 4000)) 'and t
 Start-Sleep -Milliseconds 400
 
 say '== 5. a theme change restyles the bar'
-[void](cli switch 1); Start-Sleep -Milliseconds 600
+[void](bsx switch 1); Start-Sleep -Milliseconds 600
 shot '3-before-theme'
 $n = @(lines).Count
 [void](theme set blocks)
@@ -158,11 +158,11 @@ if ($sp) {
 } else { bad 'the shell is still running' }
 
 say '== 8. stop gives the top of the screen back'
-say "stop: $(cli shell stop)"
+say "stop: $(bsx shell stop)"
 Start-Sleep -Milliseconds 500
 check (-not (shell_proc)) 'the shell quits'
 check ([Desk]::WorkTop() -eq $workBefore) "the work area top is $([Desk]::WorkTop()) again (was $workBefore)"
-[void](cli stop)
+[void](bsx stop)
 Get-Process notepad -ErrorAction SilentlyContinue | Stop-Process -Force
 
 $results.pass = $script:pass; $results.fail = $script:fail; $results.bar_px = $script:barPx
