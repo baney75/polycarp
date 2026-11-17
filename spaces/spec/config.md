@@ -16,6 +16,11 @@ fails its conformance test.
 | macOS, Linux, Omarchy | `$XDG_CONFIG_HOME/baneyspaces/config.toml` (default `~/.config/baneyspaces/config.toml`) |
 | Windows | `%APPDATA%\BaneySpaces\config.toml` |
 
+On macOS the folder is the `polycarp` command's (`~/.config/polycarp`, or `$POLYCARP_CONFIG_DIR`), and Spaces' own
+sections, `[keys]` and `[[rules]]`, live in `spaces.toml` beside `config.toml`. `config.toml` belongs to the `polycarp`
+command, which rewrites it for themes; a file of its own means a key typo never costs the theme and a theme command never
+drops the keys. Same syntax, same rules.
+
 Custom themes go in `themes/<name>.toml` next to the file. History goes in `history/`, the last 50
 versions, each stamped with who changed it.
 
@@ -94,6 +99,11 @@ mod = "cmd"                        # cmd | ctrl | alt (macOS), super (Linux), wi
   `baneyspaces config schema`.
 - **Chords.** A chord is modifiers plus one key, in a fixed spelling: `mod`, `cmd`, `ctrl`, `alt`,
   `shift`, `super` and `win`, then a key name from `keys.json`.
+- **macOS today.** The actions are `macos_actions` in `keys.json`; `exec` and modes are refused as "not on macOS
+  yet". A chord needs cmd, ctrl or alt (an F key may go bare). `[keys.bindings]` lays over the defaults: a chord the file
+  names does what the file says, and every default keeps its chord unless the file reuses it or sets it to `none`. A
+  file with any problem changes nothing: the keys in force stay (the defaults at launch), and a short notice and the
+  trace log name the line, the path and the reason. A file that changes is applied within about a second.
 - **Modes.** A mode is a named set of bindings, like a Hyprland submap. `escape` leaves it unless
   it's rebound.
 - **Conflicts with the system.** A chord the OS or the compositor already owns is reported with

@@ -10,6 +10,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let session = SessionController()
     private lazy var sandbox = AppSandbox(spaces: { [weak self] in self?.spaces })
     private let hotkeys = Hotkeys()
+    /// Every chord and its action, from `spaces.toml` over the defaults.
+    private lazy var keys: KeymapController = {
+        let k = KeymapController()
+        k.onChange = { [weak self] in self?.registerShortcuts() }
+        return k
+    }()
     private let updater = Updater()
     private var statusItem: NSStatusItem!
     private var started = false { didSet { MissionControlKeys.appStarted = started } }
@@ -243,7 +249,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var setup: SetupWindowController = {
         setupBuilt = true
         let c = SetupWindowController()
-        c.model.onModifierChange = { [weak self] _ in self?.registerShortcuts() }
+        c.model.onModifierChange = { [weak self] _ in
+            self?.keys.settingsModChanged()
+            self?.registerShortcuts()
+        }
         c.model.onUninstall = { [weak self] in self?.uninstall() }
         c.model.onBringBack = { [weak self] in self?.bringBack() }
         c.model.onAbout = { [weak self] in self?.about() }
@@ -846,31 +855,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// The shortcuts are taken only once they work, so the keys keep their usual meaning in other
-    /// apps until then. Picking a different modifier in setup re-registers them.
+    /// apps until then. Every chord comes from the keymap (`spaces.toml` over the defaults), which reloads live; picking
+    /// a different modifier in setup re-registers them. The recovery chord is always held, whatever the file says.
     private func registerShortcuts() {
         hotkeys.removeAll()
         guard PartsModel.shared.current.contains(.workspaces) else { return }
-        if Launcher.onCmdSpace, !SystemShortcuts.spotlightOwnsCmdSpace {
-            hotkeys.register(keyCode: kVK_Space, modifiers: cmdKey) { [weak self] in self?.launcher.toggle() }
-        }
-        // ⌃⌘K opens the launcher from any app, with or without Accessibility.
-        hotkeys.register(keyCode: kVK_ANSI_K, modifiers: controlKey | cmdKey) { [weak self] in self?.session.onSearch() }
-        // ⌃⌘U goes to the agent that finished, from any app.
-        hotkeys.register(keyCode: kVK_ANSI_U, modifiers: controlKey | cmdKey) { [weak self] in
-            if self?.session.started == true { self?.session.jumpToFinished() }
-        }
-        guard started else { return }
-        let mods = Modifier.current.carbon
-        for (i, code) in Hotkeys.digitKeyCodes.enumerated() {
-            let n = i + 1
-            hotkeys.register(keyCode: code, modifiers: mods) { [weak self] in
-                guard let self, self.stillTrusted() else { return }
-                self.spaces.switchTo(n)
+        keys.watch()
+        hotkeys.registerHold(keyCode: Chord.recovery.keyCode, modifiers: Chord.recovery.carbonModifiers,
+                             seconds: Chord.recoveryHoldSeconds) { [weak self] in self?.keys.recover() }
+        var refused: [Chord] = []
+        for b in keys.keymap.bindings where started || !b.action.needsStart {
+            // ⌘Space is the launcher's only while Settings gives it ⌘Space and Spotlight has let go of it.
+            if b.chord == Chord([.cmd], "space"), !Launcher.onCmdSpace || SystemShortcuts.spotlightOwnsCmdSpace { continue }
+            let action = b.action
+            if !hotkeys.register(keyCode: b.chord.keyCode, modifiers: b.chord.carbonModifiers, { [weak self] in self?.perform(action) }) {
+                refused.append(b.chord)
             }
-            hotkeys.register(keyCode: code, modifiers: mods | shiftKey) { [weak self] in
-                guard let self, self.stillTrusted() else { return }
-                self.spaces.moveFocused(to: n)
-            }
+        }
+        keys.refused(refused)
+    }
+
+    private func perform(_ action: KeyAction) {
+        if action.needsStart, !stillTrusted() { return }
+        switch action {
+        case let .switchTo(n): spaces.switchTo(n)
+        case let .move(n): spaces.moveFocused(to: n)
+        case .launcher: launcher.toggle()
+        case .search: session.onSearch()
+        case .agentFinished: if session.started { session.jumpToFinished() }
+        case .overview: viewer.open()
+        case .none: break
         }
     }
 
