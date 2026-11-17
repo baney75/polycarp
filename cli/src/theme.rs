@@ -1052,6 +1052,12 @@ fn old_follow(cfg: &Cfg) -> Option<OldFollow> {
         .as_str()
         .filter(|s| valid_name(s))?;
     let mode = t.get("previous_mode")?.as_str().filter(|m| mode_ok(m))?;
+    // A mode chosen while following was the person's own choice, and it won over the one from before.
+    let mode = t
+        .get("mode_override")
+        .and_then(Value::as_str)
+        .filter(|m| mode_ok(m))
+        .unwrap_or(mode);
     let hex = |k: &str| {
         t.get(k)
             .and_then(Value::as_str)
@@ -1068,9 +1074,11 @@ fn old_follow(cfg: &Cfg) -> Option<OldFollow> {
 
 /// Following Omarchy's theme is retired with the Linux desktop. A follow record an older Polycarp
 /// left ends the way `theme follow off` ended it: the accents from before come back and, if the
-/// following theme is current, so do the theme and mode from before (the default if that theme is
-/// gone). An accent that no longer reads on the theme is cleared. The next write saves this and
-/// drops the table (`state_table`).
+/// following theme is current, so do the theme from before (the default if that theme is gone) and
+/// the mode (one chosen while following, else the one from before). An accent that no longer reads on
+/// the theme is cleared. The next write saves this and drops the table (`state_table`). Until then,
+/// `current/` keeps the files the follow wrote. Accents set while following, and the colors a sync
+/// fitted in omarchy-overrides.toml, are not carried over.
 fn end_old_follow(cfg: &Cfg, st: &mut State, f: OldFollow) {
     st.accent_light = f.accent_light;
     st.accent_dark = f.accent_dark;

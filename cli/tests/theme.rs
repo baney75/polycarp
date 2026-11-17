@@ -4362,7 +4362,8 @@ fn an_old_omarchy_follow_record_loads_as_the_theme_from_before() {
     assert_eq!(rc, 0, "{v}");
     let d = &v["data"];
     assert_eq!(d["theme"], "calm", "{v}");
-    assert_eq!(d["mode"], "light", "{v}");
+    // The mode chosen while following wins over the one from before.
+    assert_eq!(d["mode"], "dark", "{v}");
     assert_eq!(d["accent_light"], "#2255aa", "{v}");
     assert_eq!(d["accent_dark"], Value::Null, "{v}");
     assert!(d.get("warnings").is_none(), "{v}");
@@ -4382,7 +4383,7 @@ fn the_first_change_after_an_old_omarchy_follow_saves_what_came_before_and_remov
     let d = b.json(&["current", "--json"]);
     assert_eq!(
         (&d["theme"], &d["mode"]),
-        (&json_str("calm"), &json_str("light")),
+        (&json_str("calm"), &json_str("dark")),
         "{d}"
     );
     assert!(!hook.exists());
