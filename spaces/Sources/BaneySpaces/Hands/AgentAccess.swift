@@ -86,30 +86,23 @@ final class AgentAccess {
 /// agent writes to disk turns it on (review F2). Polycarp's own windows are never an agent's, so no agent clicks it.
 final class ViewControlSetting {
     static let shared = ViewControlSetting()
-    private let lock = NSLock()
-    private var state: ViewControlSwitch
+    private let state = ViewControlState(launchingWith: .standard)
 
     private init() {
-        let launch = ViewControlSwitch.atLaunch(.standard)
-        state = launch.state
-        if launch.forgot {
+        if state.forgotSaved {
             Trace.log("agent view control at launch: off (a saved value was removed; the switch is never stored)")
         }
     }
 
-    var enabled: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return state.on
-    }
+    var enabled: Bool { state.enabled }
 
     /// Settings > Agents only, on the main thread. Turning it on asks first; turning it off never does.
     func set(_ new: Bool) {
-        lock.lock(); var next = state; lock.unlock()
-        guard next.set(new, confirm: AccessConsent.askViewControl) else {
+        let was = state.enabled
+        guard state.set(new, confirm: AccessConsent.askViewControl) else {
             Trace.log("agent view control: stays off, not confirmed on the sheet")
             return
         }
-        lock.lock(); let changed = state.on != next.on; state = next; lock.unlock()
-        if changed { Trace.log("agent view control: \(new ? "on until Polycarp quits" : "off")") }
+        if was != new { Trace.log("agent view control: \(new ? "on until Polycarp quits" : "off")") }
     }
 }

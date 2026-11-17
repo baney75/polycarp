@@ -140,8 +140,8 @@ final class AgentCommandsTests: XCTestCase {
         XCTAssertTrue(try Repo.text("Sources/BaneySpaces/AppDelegate.swift").contains("viewControl: { ViewControlSetting.shared.enabled }"))
         XCTAssertTrue(try Repo.text("Sources/BaneySpaces/Setup.swift").contains("ViewControlSetting.shared.set($0)"))
         let setting = try Repo.code("Sources/BaneySpaces/Hands/AgentAccess.swift")
-        XCTAssertTrue(setting.contains("next.set(new, confirm: AccessConsent.askViewControl)"), "turning it on asks on Polycarp's sheet")
-        XCTAssertTrue(setting.contains("ViewControlSwitch.forgetSaved(in: .standard)"))
+        XCTAssertTrue(setting.contains("state.set(new, confirm: AccessConsent.askViewControl)"), "turning it on asks on Polycarp's sheet")
+        XCTAssertTrue(setting.contains("private let state = ViewControlState(launchingWith: .standard)"), "the app's launch path is ViewControlState")
         let sheet = try Repo.code("Sources/BaneySpaces/LendConsent.swift")
         XCTAssertTrue(sheet.contains("static func askViewControl() -> Bool {\n        confirm("), "the same sheet and hardware-click check as Full Access")
     }
@@ -155,16 +155,19 @@ final class AgentCommandsTests: XCTestCase {
         let written: [Any] = [true, 1, "true", "on", "YES", Data("on".utf8), ["on": true]]
         for value in written {
             d.set(value, forKey: ViewControl.legacyDefaultsKey)
-            XCTAssertTrue(ViewControlSwitch.forgetSaved(in: d), "\(value)")
+            let launched = ViewControlState(launchingWith: d)
+            XCTAssertFalse(launched.enabled, "\(value)")
+            XCTAssertTrue(launched.forgotSaved, "\(value)")
             XCTAssertNil(d.object(forKey: ViewControl.legacyDefaultsKey), "\(value) is removed")
-            XCTAssertFalse(ViewControlSwitch().on, "\(value)")
         }
-        XCTAssertFalse(ViewControlSwitch.forgetSaved(in: d), "nothing saved, nothing to remove")
+        XCTAssertFalse(ViewControlState(launchingWith: d).forgotSaved, "nothing saved, nothing to remove")
     }
 
-    /// Review F2, round 2: what the sealed design (3a4b0e34) trusted no longer turns view control on. Plant a key, as an
-    /// agent could in the Keychain item that design read, and the seal that key makes under the old defaults key: the
-    /// plant verifies by the old rule, yet the switch reads off at launch and the value is removed unread.
+    /// Review F2, round 2, the attack on the sealed design (3a4b0e34's spec, d635ede7's code): plant a key the attacker
+    /// knows, as it could in the Keychain item that design read, and the seal that key makes, computed exactly as that
+    /// design's `ViewControl.seal` did, under the old defaults key. The plant verifies by the old rule, yet the app's
+    /// launch path (`ViewControlState(launchingWith:)`, what `ViewControlSetting` makes at launch) reads off and removes
+    /// it unread. The same attack reads on at d635ede7 (the do-not-merge fail proof, #505).
     func testAPlantedKeyAndMatchingSealLeaveViewControlOffAtLaunch() throws {
         let suite = "polycarp-view-control-seal-\(UUID().uuidString)"
         let d = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -176,11 +179,11 @@ final class AgentCommandsTests: XCTestCase {
                       "the plant is a seal the sealed design accepted")
         d.set(seal, forKey: ViewControl.legacyDefaultsKey)
 
-        let launch = ViewControlSwitch.atLaunch(d)
-        XCTAssertFalse(launch.state.on, "a valid seal under a planted key reads off")
-        XCTAssertTrue(launch.forgot)
+        let launched = ViewControlState(launchingWith: d)
+        XCTAssertFalse(launched.enabled, "a valid seal under a planted key reads off")
+        XCTAssertTrue(launched.forgotSaved)
         XCTAssertNil(d.object(forKey: ViewControl.legacyDefaultsKey), "removed unread")
-        XCTAssertFalse(ViewControlSwitch.atLaunch(d).state.on, "and off on every launch after")
+        XCTAssertFalse(ViewControlState(launchingWith: d).enabled, "and off on every launch after")
 
         // Nothing reads a Keychain item for the switch, so a planted one is never consulted.
         let sources = try FileManager.default.subpathsOfDirectory(atPath: Repo.root.appendingPathComponent("Sources").path).filter { $0.hasSuffix(".swift") }
@@ -189,7 +192,8 @@ final class AgentCommandsTests: XCTestCase {
             XCTAssertFalse(code.contains("com.baney.polycarp.agentViewControl"), path)
             XCTAssertFalse(code.contains("ViewControlKey"), path)
         }
-        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Hands/AgentAccess.swift").contains("ViewControlSwitch.atLaunch(.standard)"), "the app starts from atLaunch")
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Hands/AgentAccess.swift").contains("private let state = ViewControlState(launchingWith: .standard)"),
+                      "the app launches through the object tested here")
     }
 
     /// Review F2, round 2: an event that isn't a hardware click can't confirm the view control sheet. The sheet counts an
@@ -220,14 +224,16 @@ final class AgentCommandsTests: XCTestCase {
             ("somewhere else on the sheet", Answer(inside: false)),
             ("a key that doesn't press the button", Answer(kind: .keyDown)),
         ]
+        let suite = "polycarp-view-control-click-\(UUID().uuidString)"
+        let d = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+        let launched = ViewControlState(launchingWith: d)
         for (why, answer) in synthetic {
-            var s = ViewControlSwitch()
-            XCTAssertFalse(s.set(true) { byHand(answer) }, why)
-            XCTAssertFalse(s.on, why)
+            XCTAssertFalse(launched.set(true) { byHand(answer) }, why)
+            XCTAssertFalse(launched.enabled, why)
         }
-        var s = ViewControlSwitch()
-        XCTAssertTrue(s.set(true) { byHand(Answer()) }, "a hardware click on Turn On")
-        XCTAssertTrue(s.on)
+        XCTAssertTrue(launched.set(true) { byHand(Answer()) }, "a hardware click on Turn On")
+        XCTAssertTrue(launched.enabled)
 
         // The view control sheet goes through that check, the same one a lend's answer does.
         let sheet = try Repo.code("Sources/BaneySpaces/LendConsent.swift")
@@ -235,20 +241,23 @@ final class AgentCommandsTests: XCTestCase {
         XCTAssertTrue(sheet.contains("if let why = LendConsent.notByHand(alert: alert, button: button, enabledAt: enabledAt) {"))
         XCTAssertTrue(sheet.contains("UserEventSource.isGenuine(sourcePID: cg.getIntegerValueField(.eventSourceUnixProcessID),"))
         XCTAssertTrue(sheet.contains("ConsentClick.valid(kind: kind, eventTime: event.timestamp, buttonEnabledAt: enabledAt, insideButton: inside, keyIsActivation: activation)"))
-        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Hands/AgentAccess.swift").contains("next.set(new, confirm: AccessConsent.askViewControl)"))
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Hands/AgentAccess.swift").contains("state.set(new, confirm: AccessConsent.askViewControl)"))
     }
 
     /// Review F2: on only after the sheet is confirmed; a declined sheet leaves it off; off never asks.
-    func testViewControlTurnsOnOnlyWhenTheSheetIsConfirmed() {
-        var s = ViewControlSwitch()
+    func testViewControlTurnsOnOnlyWhenTheSheetIsConfirmed() throws {
+        let suite = "polycarp-view-control-sheet-\(UUID().uuidString)"
+        let d = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+        let s = ViewControlState(launchingWith: d)
         var asked = 0
         XCTAssertFalse(s.set(true) { asked += 1; return false })
-        XCTAssertFalse(s.on)
+        XCTAssertFalse(s.enabled)
         XCTAssertTrue(s.set(true) { asked += 1; return true })
-        XCTAssertTrue(s.on)
+        XCTAssertTrue(s.enabled)
         XCTAssertTrue(s.set(true) { asked += 1; return true }, "already on: no second sheet")
         XCTAssertTrue(s.set(false) { asked += 1; return false }, "turning it off never asks")
-        XCTAssertFalse(s.on)
+        XCTAssertFalse(s.enabled)
         XCTAssertEqual(asked, 2)
     }
 }
