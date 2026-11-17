@@ -19,7 +19,7 @@ jobs:
       voice: ${{ steps.f.outputs.voice }}
       browser: ${{ steps.f.outputs.browser }}
       core: ${{ steps.f.outputs.core }}
-      spaces-linux: ${{ steps.f.outputs.spaces-linux }}
+      spaces-rust: ${{ steps.f.outputs.spaces-rust }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: f
@@ -32,9 +32,8 @@ jobs:
             voice: ['voice/**', 'core/**', '.github/workflows/ci.yml']
             core: ['core/**', '.github/workflows/ci.yml']
             browser: ['browser/**', '.github/workflows/ci.yml']
-            # The spaces Rust workspace (core, the Linux daemon, the Windows crates it also builds) and what the Linux side shares.
-            # one-command-install.sh runs the root install.sh, which builds the browser helper and the extension too.
-            spaces-linux: ['spaces/Cargo.toml', 'spaces/Cargo.lock', 'spaces/crates/**', 'spaces/spec/**', 'spaces/platforms/linux/**', 'spaces/platforms/windows/**', 'cli/**', 'install.sh', 'browser/**', '.github/workflows/ci.yml']
+            # The spaces Rust workspace: the shared core, the conformance cases and the Windows crates.
+            spaces-rust: ['spaces/Cargo.toml', 'spaces/Cargo.lock', 'spaces/crates/**', 'spaces/spec/**', 'spaces/platforms/windows/**', '.github/workflows/ci.yml']
 
   cli:
     needs: changes
@@ -118,42 +117,11 @@ jobs:
       - name: Test
         run: swift test
 
-  # The Linux side of spaces (Omarchy: Arch and Hyprland). nested.sh is not run here: it needs Hyprland, which Ubuntu 24.04's
-  # apt does not carry (packages.ubuntu.com has no hyprland in noble), plus a GPU render node and AT-SPI. It runs on an Omarchy seat.
-  spaces-linux:
-    needs: changes
-    if: needs.changes.outputs.spaces-linux == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    defaults:
-      run:
-        working-directory: spaces
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with: { workspaces: spaces, key: spaces-linux }
-      # Node for the browser half of the one-command install below.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-      - name: Core, the conformance cases and the Linux daemon's pure parts
-        run: cargo test --workspace --locked
-      - name: Install and uninstall scripts against a throwaway HOME
-        run: platforms/linux/tests/omarchy-scripts.sh
-      # The root install.sh, end to end: it builds and installs every part through `polycarp update` into a throwaway
-      # HOME, runs again to find it current, and ends with `polycarp version --check` (0, or 75 when a part gave no
-      # answer in time; the script says why).
-      - name: The one-command Linux install against a throwaway HOME
-        run: bash -n ../install.sh && platforms/linux/tests/one-command-install.sh
-
-  # The Windows daemon keeps everything that touches Windows behind cfg(windows), so spaces-linux builds only its stubs.
-  # This job compiles and tests the real Windows code (issue #379, item 1).
+  # The spaces Rust workspace on Windows: the shared core, the conformance cases and the real Windows code
+  # (issue #379, item 1). The Linux daemon that also built here is retired.
   spaces-windows:
     needs: changes
-    if: needs.changes.outputs.spaces-linux == 'true'
+    if: needs.changes.outputs.spaces-rust == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:

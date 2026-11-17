@@ -2,10 +2,11 @@
 
 # Polycarp
 
-Polycarp is one app for your workspaces, your voice and the browser your agents use. On a Mac they all
-live in `Polycarp.app`, with one Settings window, one set of permissions and one command. On Linux the same install
-line builds every part from source ([Install on Linux](#install-on-linux)). The Windows, iPhone, iPad and Android
-versions share the same Rust core and are on the way; see [the plan](PLAN.md).
+Polycarp is the Omarchy-like device theme and launcher for Mac and Windows.
+
+On a Mac it lives in `Polycarp.app` with your workspaces, your voice and the browser your agents use: one Settings
+window, one set of permissions and one command. The Windows version is on the way; see [the plan](PLAN.md).
+The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 It grew from three apps, whose full history is here: [BaneySpaces](https://github.com/baney75/baneyspaces)
 (`spaces/`), [Silas](https://github.com/baney75/silas) (`voice/`) and [Tabkyra](https://github.com/baney75/tabkyra)
@@ -38,36 +39,11 @@ scroll down and press Open Anyway. If you open Polycarp from the file or your Do
 offers to move itself there. If you used BaneySpaces, Polycarp moves it to the Trash once it is running, with your settings
 copied first.
 
-## Install on Linux
+## Linux
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
-```
-
-The same line builds every part from source and installs it for you alone, under `~/.local`: no `sudo`. It keeps a
-checkout in `~/.local/share/polycarp/src` (`POLYCARP_SOURCE` picks another), builds the `polycarp` command from it
-and runs `polycarp update --source <checkout> --yes`, which builds everything first and installs only once every build
-passed. What you get depends on what is there:
-
-| Part | Installed when | Where |
-| --- | --- | --- |
-| The `polycarp` command | always | `~/.local/bin/polycarp` |
-| The spaces daemon, the hands engine and the Hyprland include | `~/.config/hypr/hyprland.lua` is there (Hyprland, as on Omarchy) | `~/.local/bin/baneyspaces`, `~/.local/share/baneyspaces/engine`, a marked block in `hyprland.lua` |
-| The browser helper and the extension | Node 20 or later and npm are on `PATH` | `~/.local/share/polycarp/browser/source`, `~/.local/bin/polycarp-browser` |
-
-It needs git, a C compiler and [Rust](https://rustup.rs). It installs no system packages itself; when one is missing
-it stops, or skips that part, with the line to run:
-
-| Distribution | Build tools | Node and npm |
-| --- | --- | --- |
-| Arch, Omarchy, Manjaro | `sudo pacman -S git base-devel` | `sudo pacman -S nodejs npm` |
-| Debian, Ubuntu, Pop!_OS | `sudo apt install git build-essential` | `sudo apt install nodejs npm` (Ubuntu 24.04's is Node 18, too old: get 20 or later from [nodejs.org](https://nodejs.org/en/download)) |
-| Fedora | `sudo dnf install git gcc` | `sudo dnf install nodejs npm` |
-
-At the end it prints `polycarp version` and what is left for you: load the extension in your browser from
-`~/.local/share/polycarp/browser/source/dist-chrome` (Developer mode, Load unpacked), and log in to Hyprland if you
-installed from outside it, which starts the spaces daemon. On Omarchy, Polycarp follows the system theme from the start.
-The log is `~/.local/state/polycarp/install.log`. Run the line again, or `polycarp update`, to update every part.
+The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces. Run on Linux, the install
+line above says so, points to Tychicus for browser and computer use, and installs nothing, and so does
+`polycarp update`.
 
 ## The name
 
@@ -106,13 +82,11 @@ polycarp update     # bring every part to the newest commit, together
 line whether every installed part comes from the same commit. A part that isn't installed is listed as such and is not
 an error. `--json` prints the same as JSON; `--check` exits 0 when they match and 1 when one differs, and names it.
 `polycarp doctor` ends with the same line, then one indented line for each part that is missing or does not match:
-what is wrong and the one command that fixes it on this platform (on Linux, `baneyspaces skill install` for the agent
-skill and the folder to load as an unpacked extension).
+what is wrong and the one command that fixes it on this platform.
 
-The agent skill is compared with the copy the installed spaces command carries: on a Mac the one in the app, on Linux
-the one built into `baneyspaces`, read from its file without running it.
+The agent skill is compared with the copy the installed spaces command carries, the one in the app.
 
-Two things hold on a Mac and on Linux alike. The `polycarp` command in the list is the installed one
+Two things hold on a Mac. The `polycarp` command in the list is the installed one
 (`~/.local/bin/polycarp`), whichever `polycarp` you ran, so a build in a checkout reports what is installed and not
 itself. And a browser that is connected but slow is its own state: each browser gets a share of the time limit, the
 helper asks them all at once, and one that has not answered is listed as "no answer in time". It is never counted as a
@@ -130,7 +104,6 @@ What it does depends on how Polycarp got onto the device:
 | --- | --- |
 | **Mac app from the download or the install script** | Asks the app's own updater (`polycarp-spaces update --now`): the same check, signature check and installer as **Settings > Updates > Update Now**. The app restarts itself when it is done. |
 | **Built from source, Mac** | Fetches `origin/main`, makes a clean copy of it in `~/Library/Caches/polycarp`, gets the packages the build needs (`browser/scripts/setup-siblings.sh`), and runs `make -C spaces install` there: the app with the command, the helper, the extension and the skill inside, installed and restarted. Then the newly installed command reloads the extension, unless an agent is working in the browser, and checks every part. |
-| **Built from source, Linux (Omarchy)** | The same clean copy (in `~/.cache/polycarp`). Everything is built first: on Hyprland the spaces daemon and the engine; with Node 20 or later, the packages, the browser helper and the extension. Only then is anything installed: the helper and the extension are copied to `~/.local/share/polycarp/browser/source` with `~/.local/bin/polycarp-browser` pointing there, `spaces/platforms/linux/omarchy/install.sh` runs, and the `polycarp` command goes into `~/.local/bin` last. Then the newly installed command registers the helper with your browsers (a device where no browser has been opened yet skips this and says so), reloads the extension, stops the daemon, reloads Hyprland (which starts the new one) and checks every part. |
 | **Windows** | Not supported yet: it prints the build-from-source steps from [spaces/platforms/windows/README.md](spaces/platforms/windows/README.md) and exits 2. `polycarp version` works. |
 
 For a source install, tell it once where your checkout is:
@@ -139,7 +112,7 @@ For a source install, tell it once where your checkout is:
 polycarp update --source ~/src/polycarp
 ```
 
-It remembers the path in `source.toml` in Polycarp's config folder (`~/.config/polycarp` on a Mac and Linux), and from
+It remembers the path in `source.toml` in Polycarp's config folder (`~/.config/polycarp` on a Mac), and from
 then on `polycarp update` is enough. Only `origin/main` is ever installed, and only from the clean copy: never a
 branch, never files you have changed, never the checkout you work in, which is used for `git fetch` and
 `git worktree` and nothing else. It refuses a checkout whose `origin` is not this repo. When every part this update
@@ -147,9 +120,8 @@ installs is already there and at that commit it says so and stops before buildin
 browser helper on a device that has gained Node since) counts as an update, and an extension that only has to reload
 does not: the update says "reload pending" and exits 0.
 
-Nothing that is installed runs from the clean copy, on a Mac or on Linux, so the cache folder can be deleted at any
-time; the next update makes it again. On Linux, load the extension from
-`~/.local/share/polycarp/browser/source/dist-chrome`.
+Nothing that is installed runs from the clean copy, so the cache folder can be deleted at any time; the next update
+makes it again.
 
 **The first run.** An installed `polycarp` from before this command does not know `update`. Build one and run it:
 
@@ -158,15 +130,14 @@ cd ~/src/polycarp/cli && cargo build --release
 ./target/release/polycarp update --source ~/src/polycarp
 ```
 
-That works on a Mac and on Linux. The `polycarp` that starts an update fetches, builds and installs. After the step
+That works on a Mac. The `polycarp` that starts an update fetches, builds and installs. After the step
 that replaces the installed command, it runs nothing more itself: it hands over to the installed command
 (`~/.local/bin/polycarp update --finish`), which reloads, restarts and checks by its own rules. So an updater that is
 older than what it installs cannot finish an update the old way, and the plan (`--dry-run`) prints which command runs
 each step. If the handover fails, every part is already installed and the report says which last steps did not run.
 On Windows there is no update yet, so there is no first run: it exits 2 with the build steps.
 
-A source build needs what the first build needed: Rust everywhere; on a Mac Apple's command line tools, Bun and Node;
-on Linux git and a C compiler, and Node 20 or later for the browser part. The Linux install line above checks them.
+A source build needs what the first build needed: Rust, Apple's command line tools, Bun and Node.
 
 The older per-part ways still exist and say when this is the better one: the app's **Settings > Updates**
 ([spaces/README.md](spaces/README.md#updates)), and the standalone browser's updater

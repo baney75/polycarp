@@ -1,6 +1,6 @@
 # Polycarp plan
 
-BaneySpaces, Tabkyra and Silas become one product on Mac, Windows, Linux, iPhone, iPad and Android. Old apps keep
+BaneySpaces, Tabkyra and Silas become one product on Mac, Windows, iPhone, iPad and Android. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces. Old apps keep
 working, and their repos stay up. A box is checked only when its check has passed.
 
 ## 1. Bring the code together
@@ -16,7 +16,7 @@ working, and their repos stay up. A box is checked only when its check has passe
 ## 3. One core, a native app on each device
 - [ ] Shared Rust core for workspaces, voice and sync, growing from `spaces/crates/baneyspaces-core` and `voice/src-tauri`. Check: `spaces/spec/conformance` passes on every platform
 - [ ] Mac: the Swift app hosts voice, with one settings window. Check: `spaces/AGENTS.md` probes and live gestures, and `voice/AGENTS.md` rules (never paste, never auto-unload)
-- [ ] Windows and Linux: voice, workspaces and browser agents in one app. Check: run on a Windows VM and on Omarchy
+- [ ] Windows: voice, workspaces and browser agents in one app. Check: run on a Windows VM
 - [ ] iPhone, iPad, Android: voice in its own app and keyboard, plus control of your computer's workspaces and browser. Check: Simulator, emulator and a real device. To verify: iOS limits microphone use inside keyboards
 - [ ] Dictionary and settings sync directly between your own devices, with no Polycarp cloud. Check: an edit on one device appears on another with no third-party server in the path
 - [ ] Each app follows its platform's conventions. Check: screenshots from the real target, plus keyboard, touch, focus, reduced motion and text size
@@ -25,8 +25,6 @@ working, and their repos stay up. A box is checked only when its check has passe
 Asked for by Donovan, 2026-11-04.
 - [ ] Mac: a Polycarp bar replaces the system menu bar, with the system bar auto-hidden, so app menus, status items, clock and Control Center stay reachable. Check: live on a real Mac across displays, full screen and every workspace; nothing from today's bar is lost
 - [ ] Windows: a bar that reserves space across the top of the screen. Check: on a Windows VM, maximized windows stop below it
-- [ ] Omarchy: modify the existing Waybar instead of replacing it, easy to change and to undo. Check: live on Omarchy; the user's own Waybar changes survive, and uninstall restores the original
-- [ ] Linux outside Omarchy: decide after Omarchy works. Check: the decision is written here, as items with checks of their own
 
 Phones get no bar: iOS and Android don't let an app replace the status bar.
 
@@ -64,11 +62,11 @@ Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos s
 - [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Voice and Browser. The Silas app is not trashed by the installer or by Polycarp on its own: after the first dictation that typed text, one notification says so, and Settings > Silas offers "Move the Silas app to the Trash" (Silas on, the app installed). Check: dictation and agents' browser work through Polycarp before Silas and Tabkyra go
 
 ## One app, everywhere
-Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows, Linux and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.
+Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.
 - [x] Voice engine in `core/voice` with a C interface in `core/ffi`, used by the Tauri app and the Swift app. Check: both test suites
 - [x] Mac: voice and browser agents inside `Polycarp.app`, with one Settings window, one welcome window and one install. Check: tests and renders; live check below
 - [ ] Live on a real Mac: dictate into another app (Silas stays until that has worked once), the agents' browser connects, Silas's dictionary and models come across. Check: Donovan's install
-- [ ] Windows and Linux: one Tauri app with voice, workspaces and browser agents. Check: a Windows VM and Omarchy
+- [ ] Windows: one Tauri app with voice, workspaces and browser agents. Check: a Windows VM
 - [ ] iPhone, iPad, Android: one app with voice and control of your computer. Check: Simulator, emulator and a real device
 - [ ] Speed: launch, workspace switch, press-to-record and agent tools each have a target in `spaces/spec/speed.json`, and a regression fails. Check: the ratchets, including the two still unmeasured
 
@@ -81,9 +79,7 @@ Asked for by Donovan, 2026-11-05: installation and permissions need to be excell
 - [ ] Voice and Browser install from the same command, and share the welcome window. Check: `install.sh` against a temporary home installs both, and the welcome window lists both
 
 ## Omarchy
-Asked for by Donovan, 2026-11-05: on Omarchy, Polycarp matches the system theme.
-- [ ] Polycarp follows Omarchy's current theme, live, when you run `omarchy-theme-set`. Check: on a real Omarchy machine, read back from the theme files after a switch
-- [ ] Polycarp's bar is the existing Waybar, themed by Omarchy, with its own additions easy to remove. Check: on a real Omarchy machine, the bar follows a theme switch, and removing Polycarp's additions leaves the user's Waybar as it was
+Retired with the Linux desktop, 2026-11-17. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 ## Agents' computer use
 Asked for by Donovan, 2026-11-05: it has to work better and look much better, with a better cursor.

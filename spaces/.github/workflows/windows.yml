@@ -1,10 +1,10 @@
 name: Windows
 on:
   pull_request:
-    paths: ['crates/**', 'platforms/windows/**', 'platforms/linux/engine.pin', 'spec/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/windows.yml']
+    paths: ['crates/**', 'platforms/windows/**', 'spec/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/windows.yml']
   push:
     branches: [main]
-    paths: ['crates/**', 'platforms/windows/**', 'platforms/linux/engine.pin', 'spec/**', 'Cargo.toml', 'Cargo.lock']
+    paths: ['crates/**', 'platforms/windows/**', 'spec/**', 'Cargo.toml', 'Cargo.lock']
 # The repo is public, so windows-latest minutes are free.
 jobs:
   test:
@@ -31,7 +31,7 @@ jobs:
           name: baneyspaces-windows-pr
           path: target/release/baneyspaces.exe
   engine:
-    # The pinned agent-desktop (platforms/linux/engine.pin) still builds with --locked on Windows.
+    # The pinned agent-desktop (platforms/windows/engine.pin) still builds with --locked on Windows.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +42,6 @@ jobs:
       - name: The engine is the pinned commit
         shell: pwsh
         run: |
-          $pin = (Get-Content platforms/linux/engine.pin | Where-Object { $_ -match '^commit=' }) -replace 'commit=', ''
+          $pin = (Get-Content platforms/windows/engine.pin | Where-Object { $_ -match '^commit=' }) -replace 'commit=', ''
           if ((Get-Content platforms/windows/engine/COMMIT) -ne $pin.Trim()) { throw 'engine is not the pinned commit' }
           platforms/windows/engine/agent-desktop.exe version
