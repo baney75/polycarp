@@ -39,6 +39,9 @@ A window outside the caller's scope is left out of every list and every event: n
 which workspace each display shows, and the displays themselves are not private and are always listed. The focused
 window outside scope is reported as `"window": null`.
 
+A caller from another machine may query and subscribe. Every command below is refused for it with `permission_denied`,
+`retry: never`, as `arrange` and `move` are today.
+
 ## View control
 
 Commands that change what Donovan sees: `switch`, `focus`, and `move`, `frame` or `layout restore` on a window or
@@ -96,6 +99,8 @@ Each answers with the state it read back after acting, never with what it asked 
 - `focus` brings the window's app forward and switches to its workspace. It is the one command that takes keyboard
   focus, which is why it always needs view control.
 
+Every command also takes `wait`, as every hands action does: how long to wait while Donovan is using the app.
+
 Command line: `polycarp-spaces agent <command> --window 4211 --workspace 3`. MCP: one tool per command, named as in the
 table with `-` spelled `_`.
 
@@ -128,8 +133,11 @@ reported on its next scan, not at once.
 
 Measured by the contract test against the running app on an otherwise idle machine:
 
-- Every query, and every command on a responsive app, answers in under 50 ms at the 95th percentile over 100 calls.
+- Every query, and every `move` and `frame` of a window on the agent workspace while it is out of sight, answers in
+  under 50 ms at the 95th percentile over 100 calls, with the app the window belongs to responsive.
 - Every state change a command makes is seen as an event within 100 ms of the command's answer.
+- `switch` and `focus` move every window on a display; their time is the switch time `scripts/bench.sh` holds.
+- A command that doesn't see its change in the model within 1 s answers `unverified`, `retry: after_snapshot`.
 
 ## Checks
 
