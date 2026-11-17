@@ -1121,7 +1121,8 @@ struct SetupView: View {
                 }
                 .textFieldStyle(.roundedBorder)
                 HStack {
-                    Toggle("It's an AI agent", isOn: $model.newIsAgent)
+                    // A switch with its label shown names only the text beside it; this names the switch itself.
+                    Toggle("It's an AI agent", isOn: $model.newIsAgent).accessibilityLabel("It's an AI agent")
                     Spacer()
                     Button("Add Bang", action: model.addBang)
                 }

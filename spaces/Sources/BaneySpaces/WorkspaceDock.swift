@@ -1574,6 +1574,8 @@ private struct HoverScale: ViewModifier {
     var anchor: UnitPoint = .center
     let spring: Animation
     func body(content: Content) -> some View {
+        // Under Reduce Motion the tile still grows, at once.
+        let spring: Animation? = Chrome.reduceMotion ? nil : self.spring
         if #available(macOS 14, *) {
             content.animation(spring) { $0.scaleEffect(scale, anchor: anchor) }
         } else {
