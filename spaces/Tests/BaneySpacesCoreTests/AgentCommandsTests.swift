@@ -61,6 +61,27 @@ final class AgentCommandsTests: XCTestCase {
         XCTAssertTrue(AgentCommands.changesView(from: 1, to: 9, agentWorkspace: 9, shown: [1]), "from under him")
         XCTAssertTrue(AgentCommands.changesView(from: 9, to: 4, agentWorkspace: 9, shown: [1]), "onto one of his workspaces")
         XCTAssertTrue(AgentCommands.changesView(from: 9, to: 9, agentWorkspace: nil, shown: []), "no agent workspace")
+        XCTAssertTrue(AgentCommands.changesView(from: 1, to: 9, agentWorkspace: 9, shown: [1, 2]), "review F1: off a workspace he sees")
+        XCTAssertTrue(AgentCommands.changesView(from: nil, to: 9, agentWorkspace: 9, shown: []), "a window with no workspace")
+    }
+
+    /// Review F1: `move --window <a window on his workspace> --workspace 9` under Full Access with view control off never
+    /// takes it from under him, and `move --frame` on the agent workspace while a display shows it needs view control.
+    func testMoveNeverChangesAWorkspaceHeSeesWithoutViewControl() throws {
+        let his = HandsWindow(id: 77, pid: 300, app: "Mail", bundle: "com.apple.mail", title: "Inbox", workspace: 1)
+        let e = try XCTUnwrap(WorkspaceVerbs.moveRefusal(window: his, scope: .fullAccess, agentWorkspace: 9, agentShown: false, sourceShown: true))
+        XCTAssertEqual(e.code, .inUse)
+        XCTAssertEqual(e.retry, .safe)
+        let mine = HandsWindow(id: 4211, pid: 901, app: "TextEdit", bundle: "com.apple.TextEdit", title: "Untitled", workspace: 9)
+        XCTAssertNil(WorkspaceVerbs.moveRefusal(window: mine, scope: .onAgentWorkspace, agentWorkspace: 9, agentShown: true, sourceShown: true),
+                     "the old rule lets a reframe through on a shown agent workspace, so the router checks view control for it")
+        let router = try Repo.text("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
+        XCTAssertTrue(router.contains("if req.string(\"frame\") != nil, before.agentShown, let e = viewRefusal(reframing) { return .failure(e) }"))
+        XCTAssertTrue(router.contains("if case .success = r, relative != nil, after.agentShown, let e = viewRefusal(reframing) { return .failure(e) }"),
+                      "checked again in the pass that frames")
+        let commands = try Repo.text("Sources/BaneySpaces/Hands/HandsRouter+Commands.swift")
+        XCTAssertTrue(commands.contains("let what = \"moving window \\(w.id) of \\(w.app) to workspace \\(n)\"\n        if let e = viewRefusal(what) { return .failure(e) }"),
+                      "any other workspace always needs view control")
     }
 
     /// The router builds each answer from `place`; every shape validates against the schema.
@@ -98,15 +119,50 @@ final class AgentCommandsTests: XCTestCase {
         XCTAssertEqual(m.int("workspace"), 3)
     }
 
-    /// Only the Settings switch writes the setting; the app reads it once at launch (`ViewControlSetting`), never live.
+    /// Only the Settings switch turns view control on, through the consent sheet, and the hands read the live switch.
     func testOnlySettingsTurnsViewControlOn() throws {
         let sources = try FileManager.default.subpathsOfDirectory(atPath: Repo.root.appendingPathComponent("Sources").path).filter { $0.hasSuffix(".swift") }
         let naming = try sources.filter { path in
-            let text = try Repo.text("Sources/" + path)
-            return text.contains("ViewControl.defaultsKey") || text.contains("\"agentViewControl\"")
+            let text = try Repo.code("Sources/" + path)
+            return text.contains("legacyDefaultsKey") || text.contains("\"agentViewControl\"")
         }
-        XCTAssertEqual(Set(naming), ["BaneySpacesCore/AgentCommands.swift", "BaneySpaces/Hands/AgentAccess.swift"])
+        XCTAssertEqual(Set(naming), ["BaneySpacesCore/AgentCommands.swift"], "only the Core code that removes it names the old key")
         XCTAssertTrue(try Repo.text("Sources/BaneySpaces/AppDelegate.swift").contains("viewControl: { ViewControlSetting.shared.enabled }"))
         XCTAssertTrue(try Repo.text("Sources/BaneySpaces/Setup.swift").contains("ViewControlSetting.shared.set($0)"))
+        let setting = try Repo.code("Sources/BaneySpaces/Hands/AgentAccess.swift")
+        XCTAssertTrue(setting.contains("next.set(new, confirm: AccessConsent.askViewControl)"), "turning it on asks on Polycarp's sheet")
+        XCTAssertTrue(setting.contains("ViewControlSwitch.forgetSaved(in: .standard)"))
+        let sheet = try Repo.code("Sources/BaneySpaces/LendConsent.swift")
+        XCTAssertTrue(sheet.contains("static func askViewControl() -> Bool {\n        confirm("), "the same sheet and hardware-click check as Full Access")
+    }
+
+    /// Review F2: what `defaults write com.baney.polycarp agentViewControl -bool true`, a hand edit of the plist or a value
+    /// copied from another Mac leaves on disk never turns view control on. The app removes it and starts off.
+    func testADefaultsWriteLeavesViewControlOff() throws {
+        let suite = "polycarp-view-control-test-\(UUID().uuidString)"
+        let d = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+        let written: [Any] = [true, 1, "true", "on", "YES", Data("on".utf8), ["on": true]]
+        for value in written {
+            d.set(value, forKey: ViewControl.legacyDefaultsKey)
+            XCTAssertTrue(ViewControlSwitch.forgetSaved(in: d), "\(value)")
+            XCTAssertNil(d.object(forKey: ViewControl.legacyDefaultsKey), "\(value) is removed")
+            XCTAssertFalse(ViewControlSwitch().on, "\(value)")
+        }
+        XCTAssertFalse(ViewControlSwitch.forgetSaved(in: d), "nothing saved, nothing to remove")
+    }
+
+    /// Review F2: on only after the sheet is confirmed; a declined sheet leaves it off; off never asks.
+    func testViewControlTurnsOnOnlyWhenTheSheetIsConfirmed() {
+        var s = ViewControlSwitch()
+        var asked = 0
+        XCTAssertFalse(s.set(true) { asked += 1; return false })
+        XCTAssertFalse(s.on)
+        XCTAssertTrue(s.set(true) { asked += 1; return true })
+        XCTAssertTrue(s.on)
+        XCTAssertTrue(s.set(true) { asked += 1; return true }, "already on: no second sheet")
+        XCTAssertTrue(s.set(false) { asked += 1; return false }, "turning it off never asks")
+        XCTAssertFalse(s.on)
+        XCTAssertEqual(asked, 2)
     }
 }
