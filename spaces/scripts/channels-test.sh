@@ -52,6 +52,7 @@ for ch in stable nightly dev; do
   v=$(scripts/channel-version.sh "$ch")
   feed arm64 "$ch" "$v" || { bad "write-feed refused $ch $v"; continue; }
   case $ch in stable) url="https://github.com/baney75/polycarp/releases/download/v$v/Polycarp.zip" ;;
+              nightly) url="https://github.com/baney75/polycarp/releases/download/nightly-20261118070000/Polycarp.zip" ;;
               *) url="https://github.com/baney75/polycarp/releases/download/$ch/Polycarp.zip" ;; esac
   expect "$ch feed" "$(field '[d["product"], d["channel"], d["version"], d["commit"], d["protocol"]]')" "['polycarp', '$ch', '$v', '$c', 1]"
   expect "$ch url" "$(field 'd["platforms"]["darwin-aarch64"]["url"]')" "$url"
@@ -63,7 +64,12 @@ feed arm64 nightly "$base" && bad "a nightly feed took a stable version"
 feed arm64 stable "$base-nightly.20261118070000+1a2b3c4" && bad "a stable feed took a nightly version"
 feed arm64 dev "$base-nightly.20261118070000+1a2b3c4" && bad "a dev feed took a nightly version"
 feed arm64 preview "$base" && bad "write-feed took the preview channel"
+feed arm64 nightly "$base-nightly.2026111807+1a2b3c4" && bad "write-feed took a nightly version with no build time"
 POLYCARP_FEED_ARCHS=ppc scripts/write-feed.sh nightly "$(scripts/channel-version.sh nightly)" "$c" "$tmp/Polycarp.zip" "$tmp/x.json" >/dev/null 2>&1 \
   && bad "a feed with no Mac architecture was written"
+# The bridge marks preview as the old publisher did: its tag on the build's commit, the marker in its notes.
+bridge=$(sed -n '/if \[ "$BRIDGE" = 1 \]; then/,/^fi/p' scripts/publish-channel.sh)
+grep -qF 'git/refs/tags/preview" -f sha="$COMMIT"' <<<"$bridge" || bad "the bridge leaves the preview tag on the old commit"
+grep -qF '<!-- baneyspaces commit=$COMMIT date=$DATE -->' <<<"$bridge" || bad "the bridge's preview notes have no commit marker"
 [ $status = 0 ] && echo "channels-test: pass"
 exit $status

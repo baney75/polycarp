@@ -17,9 +17,16 @@ SEMVER='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[
 if [ "$CHANNEL" = stable ]; then [[ "$VERSION" != *-* ]] || fail "a stable version has no pre-release part."
 else [[ "$VERSION" == *"-$CHANNEL."* ]] || fail "a $CHANNEL version reads X.Y.Z-$CHANNEL.<time>+<sha7>."; fi
 [ -f "$ZIP" ] || fail "$ZIP doesn't exist."
+# The url names a release whose files never change, so any copy of this feed (the nightly-<time> release, the
+# bridge's preview/latest.json, a feed re-published to roll back) still matches its sha256 after the next build.
+# Dev keeps only its rolling release, so a dev feed is good until the next dev build and can't be rolled back to.
 case "$CHANNEL" in
   stable) DOWNLOAD="https://github.com/baney75/polycarp/releases/download/v$VERSION" ;;
-  *) DOWNLOAD="https://github.com/baney75/polycarp/releases/download/$CHANNEL" ;;
+  nightly)
+    TIME=$(printf '%s' "$VERSION" | sed -n 's/.*-nightly\.\([0-9]\{14\}\)+.*/\1/p')
+    [ -n "$TIME" ] || fail "a nightly version carries its build time: X.Y.Z-nightly.YYYYMMDDHHMMSS+<sha7>."
+    DOWNLOAD="https://github.com/baney75/polycarp/releases/download/nightly-$TIME" ;;
+  dev) DOWNLOAD="https://github.com/baney75/polycarp/releases/download/dev" ;;
 esac
 # POLYCARP_FEED_ARCHS stands in for lipo in tests (a fake zip has no app in it).
 ARCHS="${POLYCARP_FEED_ARCHS:-}"

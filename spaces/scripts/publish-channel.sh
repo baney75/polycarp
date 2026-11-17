@@ -79,8 +79,12 @@ curl -fsSL "$FEED" | grep -qF "\"version\": \"$VERSION\"" || fail "$FEED doesn't
 if [ "$BRIDGE" = 1 ]; then
   step "Putting the bridge build on preview"
   gh release upload preview -R "$REPO" "${FILES[@]/#/build/}" --clobber
+  # As the old publisher did: the preview tag names the commit of the files it holds, and the notes carry the marker.
+  gh api -X PATCH "repos/$REPO/git/refs/tags/preview" -f sha="$COMMIT" -F force=true >/dev/null
   gh release edit preview -R "$REPO" --prerelease --latest=false --title "Preview (moved to Nightly)" \
-    --notes "Preview is now Nightly: https://github.com/$REPO/releases/tag/nightly. This last preview build is Polycarp $VERSION and follows the Nightly channel by itself."
+    --notes "Preview is now Nightly: https://github.com/$REPO/releases/tag/nightly. This last preview build is Polycarp $VERSION, built from $COMMIT, and follows the Nightly channel by itself.
+<!-- baneyspaces commit=$COMMIT date=$DATE -->"
+  [ "$(gh api "repos/$REPO/git/ref/tags/preview" --jq .object.sha)" = "$COMMIT" ] || fail "the preview tag isn't on $COMMIT."
   back=$(mktemp -d); trap 'rm -rf "$back"' EXIT
   gh release download preview -R "$REPO" --dir "$back" --pattern '*'
   for f in "${FILES[@]}"; do cmp -s "build/$f" "$back/$f" || fail "the uploaded preview $f differs from the one built."; done

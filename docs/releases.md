@@ -40,7 +40,9 @@ After stable `X.Y.Z` ships, `main` bumps to `X.(Y+1).0`; patches belong to hotfi
 `spaces/scripts/write-feed.sh` writes `latest.json`: Tauri v2's updater manifest plus `product`, `channel`,
 `commit`, `protocol` and `sha256`. Polycarp's Mac app does not check Tauri's minisign `signature` (it is empty).
 An update is trusted by the code signature (`requirement`, the release requirement) and the zip's `sha256`, both
-checked by the installer before anything is replaced. `verify-release.sh` fails a release whose feed doesn't
+checked by the installer before anything is replaced. A feed's `url` names a release whose files never change: `vX.Y.Z` for stable and
+`nightly-YYYYMMDDHHMMSS` for nightly, so any copy of a nightly feed stays good for the 14 days that release is
+kept. Dev has only its rolling release, so a dev feed is good until the next dev build and can't be rolled back to. `verify-release.sh` fails a release whose feed doesn't
 name its zip's checksum, version and commit.
 
 ## Publishing
