@@ -19,6 +19,13 @@ final class AgentAPIContractTests: XCTestCase {
         return String(rest[..<(rest.range(of: "\n## ")?.lowerBound ?? rest.endIndex)])
     }
 
+    /// Whether `text` says `phrase`, however either is wrapped: runs of white space count as one space (review r2
+    /// first-F5), so rewrapping a paragraph never fails a check.
+    func says(_ text: String, _ phrase: String) -> Bool {
+        func flat(_ s: String) -> String { s.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        return flat(text).contains(flat(phrase))
+    }
+
     /// A table row's cells, by its first cell's name, in one section.
     func row(_ name: String, in text: String) -> [String] {
         guard let line = text.split(separator: "\n").first(where: { $0.hasPrefix("| `\(name)` |") }) else { return [] }
@@ -80,8 +87,14 @@ final class AgentAPIContractTests: XCTestCase {
         XCTAssertTrue(schema.problems(json: noTitle, against: "window").contains("$.title: missing"))
         XCTAssertFalse(schema.problems(json: Self.state.replacingOccurrences(of: #""version":1"#, with: #""version":2"#), against: "state_result").isEmpty)
         XCTAssertFalse(schema.problems(json: Self.window.replacingOccurrences(of: #""workspace":9"#, with: #""workspace":10"#), against: "window").isEmpty)
-        XCTAssertFalse(schema.problems(json: #"{"version":1,"seq":0,"at":1,"type":"hello","data":{"scope":"agent"}}"#, against: "event").isEmpty,
+        // A hello whose only defect is a missing state (review r2 second-F5): seq, access and events are all valid.
+        let hello = #"{"scope":"agent","access":"default","events":["hello"]}"#
+        XCTAssertEqual(schema.problems(json: hello, against: "hello_data"), ["$.state: missing"])
+        XCTAssertFalse(schema.problems(json: #"{"version":1,"seq":1,"at":1,"type":"hello","data":\#(hello)}"#, against: "event").isEmpty,
                        "a hello without its state is not a hello")
+        let whole = #"{"scope":"agent","access":"default","events":["hello"],"state":\#(Self.state)}"#
+        XCTAssertEqual(schema.problems(json: #"{"version":1,"seq":1,"at":1,"type":"hello","data":\#(whole)}"#, against: "event"), [],
+                       "the same hello with its state is one")
         XCTAssertFalse(schema.problems(json: #"{"version":1,"seq":1,"at":1,"type":"workspace_switched","data":{"display":null,"from":1,"to":0}}"#, against: "event").isEmpty)
         XCTAssertFalse(schema.problems(json: #"{"version":1,"action":"save","name":"has space"}"#, against: "layout_command_result").isEmpty)
         // ECMA-262's `$` is the very end, so a name with a line break after it is no name (review F7).
@@ -92,19 +105,26 @@ final class AgentAPIContractTests: XCTestCase {
 
     // MARK: the rules review round 1 asked for (spec/agent-api.md)
 
-    /// F1: one view control rule, and the command table says the same for every command.
+    /// F1: one view control rule, and the command table says the same for every command. Round 2 first-F1 and
+    /// second-F3: a shown workspace is a passing condition, so work on the agent workspace waits (`in_use`, `retry: safe`)
+    /// whatever the setting, and only work off it is `permission_denied`.
     func testOneViewControlRuleAndTheTableAgrees() {
-        XCTAssertTrue(section("View control").contains("**One rule:** a command needs view control unless every workspace it touches is out of sight and the workspace it acts\non is the agent workspace."))
+        let rule = section("View control")
+        XCTAssertTrue(says(rule, "**One rule:** a command that acts on any workspace other than the agent workspace needs view control."))
+        XCTAssertTrue(says(rule, "**Not while he looks:** a command that acts on the agent workspace never changes a workspace a display shows"))
+        XCTAssertTrue(says(rule, "With view control or without, it answers `in_use`, `retry: safe`, and goes once no display shows them."))
+        XCTAssertTrue(says(rule, "A shown workspace is a passing condition, so it is never `permission_denied`."))
+        XCTAssertFalse(says(rule, "is never done, even with view control"), "the special case that two moves got around")
         let commands = section("Commands")
         let expected = [
             "switch": "always", "focus": "always",
-            "move": "unless it goes from a workspace out of sight onto the agent workspace while it is out of sight",
-            "frame": "unless the window is on the agent workspace while it is out of sight",
-            "layout": "`restore`, unless on the agent workspace while it is out of sight",
+            "move": "unless it goes onto the agent workspace (then `in_use` while a workspace it touches is shown)",
+            "frame": "unless the window is on the agent workspace (then `in_use` while it is shown)",
+            "layout": "`restore`, unless on the agent workspace (then `in_use` while it is shown)",
         ]
         for (c, column) in expected { XCTAssertEqual(row(c, in: commands).last, column, c) }
         XCTAssertTrue(row("theme-set", in: commands).last?.hasPrefix("never") == true)
-        XCTAssertTrue(section("View control").contains("Taking a window onto the agent workspace from a workspace a display shows is never done"))
+        XCTAssertTrue(says(String(doc.prefix(1200)), "`theme-set` is the one stated exception"), "round 2 first-F3: the opening promise names it")
     }
 
     /// F2: the switch is never stored, so nothing an agent writes to disk turns view control on. A sealed stored value
@@ -116,8 +136,11 @@ final class AgentAPIContractTests: XCTestCase {
                        "value leaves view control off: nothing on disk is read for it",
                        "A Keychain item planted with a matching seal, which an earlier draft of this rule trusted, is never read",
                        "Hands refuse Polycarp's own windows in every mode"] {
-            XCTAssertTrue(rule.contains(phrase), phrase)
+            XCTAssertTrue(says(rule, phrase), phrase)
         }
+        XCTAssertTrue(says(rule, "On Windows, until the daemon has a confirmation that synthetic input can't answer, the switch stays off."),
+                      "round 2 second-F1: no DPAPI seal, which any process of the user can open")
+        XCTAssertFalse(says(doc, "DPAPI"))
         XCTAssertFalse(doc.contains("No command, tool or\n   setting an agent can reach turns it on"), "a claim the stored flag couldn't keep")
         XCTAssertFalse(rule.contains("MAC"), "a seal under a Keychain key another process can make first")
     }
@@ -126,6 +149,9 @@ final class AgentAPIContractTests: XCTestCase {
     func testNothingCountsAWindowOutOfScope() throws {
         let scope = section("Scope")
         XCTAssertTrue(scope.contains("left out of every list, every count and every event"))
+        // Round 2 second-F4: ids and pids rise globally, so the promise covers lists, counts and events and names that.
+        XCTAssertFalse(says(scope, "no number that changes when it opens or closes"))
+        XCTAssertTrue(says(scope, "that side channel is known and not closed"))
         XCTAssertTrue(scope.contains("focus moving between two windows outside scope sends no event"))
         let ws = try XCTUnwrap(try AgentAPISchema.load().defs["workspace"] as? [String: Any])
         let windows = try XCTUnwrap((ws["properties"] as? [String: Any])?["windows"] as? [String: Any])
@@ -145,8 +171,18 @@ final class AgentAPIContractTests: XCTestCase {
     func testLayoutsStayInScopeAndKeyWindowsByIdentity() throws {
         let commands = section("Commands")
         XCTAssertTrue(commands.contains("`layout save` records the ordinary windows in scope on one workspace"))
-        XCTAssertTrue(commands.contains("Under scope `agent` only the agent workspace can be saved\n  or restored"))
-        XCTAssertTrue(commands.contains("It never moves a window to another workspace and never touches a window outside\n  scope"))
+        XCTAssertTrue(says(commands, "Under scope `agent` only the agent workspace can be saved or restored"))
+        XCTAssertTrue(says(commands, "It never moves a window to another workspace and never touches a window outside scope"))
+        // Round 2 second-F2: one folder per workspace, names without case, no silent overwrite, list in scope.
+        for phrase in ["`layouts/<workspace>/<name>.json`, so a save on one workspace never replaces a layout of another",
+                       "Names are compared without case",
+                       "answers `invalid_args`, `retry: never`, unless it passes `replace: true`",
+                       "`layout list` and the `layout` query name only layouts of workspaces in the caller's scope"] {
+            XCTAssertTrue(says(commands, phrase), phrase)
+        }
+        // Round 2 first-F4: creation order never picks a renamed document's window.
+        XCTAssertTrue(says(doc, "Creation order decides only when no saved window of that bundle matches a live one by title and the saved and live counts of that bundle agree"))
+        XCTAssertFalse(says(doc, "then by the same creation order."))
         XCTAssertNil(commands.range(of: #"by id\b"#, options: .regularExpression), "a saved window id can name another window after a restart")
         XCTAssertTrue(doc.contains("- **Window identity.** A window that must be known again once its id is gone"))
         let schema = try AgentAPISchema.load()
