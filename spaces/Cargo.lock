@@ -11,6 +11,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "baneyspaces-linux"
+version = "0.0.0"
+
+[[package]]
 name = "baneyspaces-testapp"
 version = "0.1.0"
 dependencies = [

@@ -1601,6 +1601,56 @@ fn on_linux_update_says_the_desktop_is_retired_and_runs_nothing() {
     }
 }
 
+/// A `polycarp` from before the retirement, run as `polycarp update` on an Omarchy machine, builds
+/// its own plan (`linux_steps` at 4fa0e4df) and runs it in a clean copy of this tree: it builds the
+/// `baneyspaces-linux` package, runs the engine and Omarchy install scripts, installs the new
+/// command and hands off to it with `update --finish`. Each of those steps must pass on this tree,
+/// or that machine never gets the command that says the desktop is retired. The two cli builds are
+/// left out: they build this crate, which this test already is.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_older_linux_update_plan_lands_on_this_tree() {
+    let s = Sandbox::new();
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let spaces = repo.join("spaces");
+    // The old plan's steps that run something from the tree, with their argv and folder, in order.
+    let build = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .args(["build", "--release", "--locked", "-p", "baneyspaces-linux"])
+        .current_dir(&spaces)
+        .env("CARGO_TARGET_DIR", s.dir("target"))
+        .output()
+        .unwrap();
+    assert_eq!(code(&build), 0, "build the spaces daemon: {}", err(&build));
+    let home = s.dir("home");
+    for script in [
+        "platforms/linux/scripts/build-engine.sh",
+        "platforms/linux/omarchy/install.sh",
+    ] {
+        let o = Command::new(spaces.join(script))
+            .current_dir(&spaces)
+            .env("HOME", &home)
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 0, "{script}: {}", err(&o));
+        assert!(out(&o).contains("The Linux desktop is retired"), "{script}");
+    }
+    assert_eq!(
+        fs::read_dir(&home).unwrap().count(),
+        0,
+        "a stub wrote to HOME"
+    );
+    // The handoff: the command it just installed finishes, says the desktop is retired and exits 0.
+    let o = s
+        .cmd(&["update", "--finish", "--source", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(
+        out(&o),
+        "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n"
+    );
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn update_dry_run_prints_the_plan_and_changes_nothing() {

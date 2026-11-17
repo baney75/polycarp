@@ -1,0 +1,11 @@
+[package]
+name = "baneyspaces-linux"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+description = "Kept only so an older `polycarp update` on Linux, which builds this package, finishes and installs the command that says the Linux desktop is retired."
+publish = false
+
+[[bin]]
+name = "baneyspaces"
+path = "src/main.rs"
