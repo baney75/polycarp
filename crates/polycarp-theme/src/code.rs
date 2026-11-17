@@ -140,7 +140,15 @@ pub fn derive(c: &Colors, given: &Code) -> Code {
     let ink = |color: &str| fit(color, &bg, &fg, MARK_MIN);
     or(&mut t, "cursor", |_| ink(&role("accent")));
     or(&mut t, "selection", |_| role("selection"));
+    let (dark, light) = if luminance(&bg) < luminance(&fg) {
+        (bg.clone(), fg.clone())
+    } else {
+        (fg.clone(), bg.clone())
+    };
+    // Blue, magenta and cyan take urgent's lightness, and no more color than the theme's quiet
+    // roles can sit beside.
     let (s, l) = sat_light(&role("urgent"));
+    let s = s.min(0.55);
     for (k, v) in [
         ("red", role("urgent")),
         ("green", role("done")),
@@ -151,17 +159,14 @@ pub fn derive(c: &Colors, given: &Code) -> Code {
     ] {
         or(&mut t, k, |_| ink(&v));
     }
+    // Bright is lighter in both modes, as far as it still reads.
     for k in HUES {
         or(&mut t, &format!("bright_{k}"), |m| {
-            ink(&mix(&m[k], &fg, 0.3))
+            ink(&mix(&m[k], &light, 0.3))
         });
     }
-    let (dark, light) = if luminance(&bg) < luminance(&fg) {
-        (bg.clone(), fg.clone())
-    } else {
-        (fg.clone(), bg.clone())
-    };
-    or(&mut t, "black", |_| dark.clone());
+    // Black and white sit just inside the ends, so neither vanishes into the background.
+    or(&mut t, "black", |_| mix(&dark, &light, 0.15));
     or(&mut t, "white", |_| mix(&light, &dark, 0.15));
     or(&mut t, "bright_black", |_| ink(&role("muted")));
     or(&mut t, "bright_white", |_| light.clone());
