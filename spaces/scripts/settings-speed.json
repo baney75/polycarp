@@ -1,0 +1,126 @@
+{
+  "goalMs": 16,
+  "measured": "2026-11-17",
+  "commit": "polish-x2-settings-speed",
+  "loadAverage": 14.5,
+  "cores": "efficiency (taskpolicy -b)",
+  "rounds": "two runs of 7, mean of medians",
+  "panes": {
+    "General": {
+      "cpuOpenMs": 88.0,
+      "cpuSwitchMs": 66.3,
+      "wallOpenMs": 116.8,
+      "wallSwitchMs": 75.6
+    },
+    "Keys": {
+      "cpuOpenMs": 109.9,
+      "cpuSwitchMs": 92.0,
+      "wallOpenMs": 131.6,
+      "wallSwitchMs": 108.5
+    },
+    "Dock": {
+      "cpuOpenMs": 116.6,
+      "cpuSwitchMs": 102.3,
+      "wallOpenMs": 151.5,
+      "wallSwitchMs": 112.8
+    },
+    "Appearance": {
+      "cpuOpenMs": 157.6,
+      "cpuSwitchMs": 160.7,
+      "wallOpenMs": 260.9,
+      "wallSwitchMs": 193.0
+    },
+    "Launcher": {
+      "cpuOpenMs": 115.8,
+      "cpuSwitchMs": 125.2,
+      "wallOpenMs": 141.5,
+      "wallSwitchMs": 144.1
+    },
+    "Automation": {
+      "cpuOpenMs": 51.3,
+      "cpuSwitchMs": 45.5,
+      "wallOpenMs": 88.3,
+      "wallSwitchMs": 51.7
+    },
+    "Permissions": {
+      "cpuOpenMs": 102.0,
+      "cpuSwitchMs": 97.5,
+      "wallOpenMs": 151.8,
+      "wallSwitchMs": 109.9
+    },
+    "Updates": {
+      "cpuOpenMs": 83.8,
+      "cpuSwitchMs": 85.0,
+      "wallOpenMs": 124.2,
+      "wallSwitchMs": 101.3
+    },
+    "Agents": {
+      "cpuOpenMs": 146.9,
+      "cpuSwitchMs": 138.1,
+      "wallOpenMs": 167.6,
+      "wallSwitchMs": 156.3
+    },
+    "Silas": {
+      "cpuOpenMs": 163.4,
+      "cpuSwitchMs": 173.3,
+      "wallOpenMs": 199.9,
+      "wallSwitchMs": 188.8
+    },
+    "Browser": {
+      "cpuOpenMs": 64.8,
+      "cpuSwitchMs": 68.5,
+      "wallOpenMs": 90.1,
+      "wallSwitchMs": 73.2
+    }
+  },
+  "before": {
+    "commit": "12f0d4b1",
+    "note": "the PR base, timed in the same session, alternating with this build",
+    "panes": {
+      "General": {
+        "cpuOpenMs": 90.8,
+        "cpuSwitchMs": 80.5
+      },
+      "Keys": {
+        "cpuOpenMs": 112.5,
+        "cpuSwitchMs": 101.9
+      },
+      "Dock": {
+        "cpuOpenMs": 113.4,
+        "cpuSwitchMs": 118.2
+      },
+      "Appearance": {
+        "cpuOpenMs": 230.2,
+        "cpuSwitchMs": 225.8
+      },
+      "Launcher": {
+        "cpuOpenMs": 124.1,
+        "cpuSwitchMs": 137.9
+      },
+      "Automation": {
+        "cpuOpenMs": 52.7,
+        "cpuSwitchMs": 48.0
+      },
+      "Permissions": {
+        "cpuOpenMs": 115.5,
+        "cpuSwitchMs": 92.7
+      },
+      "Updates": {
+        "cpuOpenMs": 94.5,
+        "cpuSwitchMs": 85.9
+      },
+      "Agents": {
+        "cpuOpenMs": 144.2,
+        "cpuSwitchMs": 142.6
+      },
+      "Silas": {
+        "cpuOpenMs": 225.2,
+        "cpuSwitchMs": 233.9
+      },
+      "Browser": {
+        "cpuOpenMs": 69.0,
+        "cpuSwitchMs": 95.8
+      }
+    }
+  }
+}

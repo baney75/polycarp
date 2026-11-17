@@ -93,7 +93,7 @@ struct ThemeShelf: View {
         VStack(alignment: .leading, spacing: 10) {
             ScrollViewReader { scroller in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                LazyHStack(spacing: 8) {
                     ForEach(library.tiles) { tile in
                         ThemeShelfTile(tile: tile, selected: tile.theme.name == current) { pick(tile.theme.name) }
                             .onDrag {
@@ -227,23 +227,36 @@ struct ThemeShelfTile: View {
     }
 }
 
-/// The Appearance tab as a drop target for theme files and pictures.
-struct ThemeDropTarget<Content: View>: View {
+/// The Appearance tab as a drop target for theme files and pictures. The target is a clear view behind the pane, never a
+/// modifier above it: a drop target reads a preference from every row the lazy stack under it places, which cost Settings
+/// about a third of each pane's time, even with no types to take (#350). Other panes get no target at all.
+struct ThemeDropTarget: ViewModifier {
     let current: String?
-    @ViewBuilder var content: () -> Content
+    let on: Bool
     @State private var over = false
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) { content() }
-            .overlay {
-                if over {
-                    Chrome.shape(.settingsCallout).strokeBorder(Chrome.accent, lineWidth: Chrome.width(.settingsTile, focused: true))
-                        .padding(-6).allowsHitTesting(false)
+    @ViewBuilder func body(content: Content) -> some View {
+        if on {
+            content
+                .background {
+                    Color.clear.contentShape(Rectangle())
+                        .onDrop(of: [UTType.fileURL], isTargeted: $over) { providers in
+                            ThemeDrop.urls(providers) { ThemeLibrary.shared.dropped($0, current: current) }
+                            return true
+                        }
                 }
-            }
-            .onDrop(of: [UTType.fileURL], isTargeted: $over) { providers in
-                ThemeDrop.urls(providers) { ThemeLibrary.shared.dropped($0, current: current) }
-                return true
-            }
+                .overlay {
+                    if over {
+                        Chrome.shape(.settingsCallout).strokeBorder(Chrome.accent, lineWidth: Chrome.width(.settingsTile, focused: true))
+                            .padding(6).allowsHitTesting(false)
+                    }
+                }
+        } else {
+            content
+        }
     }
+}
+
+extension View {
+    func themeDrop(current: String?, on: Bool) -> some View { modifier(ThemeDropTarget(current: current, on: on)) }
 }
