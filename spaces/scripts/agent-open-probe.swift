@@ -10,8 +10,8 @@
 //   time any window of the new process (alpha 0.1 or more) showed at least 8x8 pt on a display, not covered by a window
 //   in front of it.
 //   The agent workspace is not shown while the probe runs, so all of that was on Donovan's workspace. With the cover on
-//   (`defaults write com.baney.polycarp agentOpenFlashGuard cover`), over 50 ms in one open fails it (zero is the
-//   target); with it off, the default, the times print as "known, flag off" and fail nothing. 11-12 on 639dd5f: Font Book and Dictionary showed for 0.7 to 1.5 s, and the
+//   (the default since 2026-11-17), over 50 ms in one open fails it (zero is the target); with it turned off
+//   (`defaults write com.baney.polycarp agentOpenFlashGuard off`) the times print as "known, flag off" and fail nothing. 11-12 on 639dd5f: Font Book and Dictionary showed for 0.7 to 1.5 s, and the
 //   check above passed, because it looked only at where the window ended up.
 // Apps already running are skipped (an open of a running app asks that copy, which isn't this probe's). It quits only
 // the copies it started: new pids, started after the probe, run with -ApplePersistenceIgnoreState.
@@ -40,8 +40,8 @@ let coverLevel = 4
 /// Polycarp's pid, by bundle id, as the window server owns its covers (owner names can change; the pid can't).
 let polycarpPid: pid_t = NSRunningApplication.runningApplications(withBundleIdentifier: "com.baney.polycarp").first?.processIdentifier ?? -1
 
-/// The seen check gates only with the cover on (`agentOpenFlashGuard cover`). With it off (the default), the times are
-/// printed as known and fail nothing: every open of a starting app shows for about 1 s until the cover is on by default.
+/// The seen check gates only with the cover on (the default). Turned off (`agentOpenFlashGuard off`), the times are
+/// printed as known and fail nothing: every open of a starting app shows for about 1 s without the cover.
 func seenFails(_ ms: Double, guardOn: Bool, bar: Double = 50) -> Bool { guardOn && ms > bar }
 /// A run whose samples were ever more than this apart is invalid, not passed: a flash could hide in the gap (review of
 /// PR 225, sol-F3).
@@ -319,8 +319,9 @@ defer { try? FileManager.default.removeItem(at: note) }
 if agentShown() { print("untested live: the agent workspace is shown, so a window there can't be told from a flash"); exit(3) }
 let seenBarMs = 50.0
 // The app's own domain, the one it reads the flag from (`OpenFlashGuard.defaultsDomain`).
-let guardOn = UserDefaults(suiteName: "com.baney.polycarp")?.string(forKey: "agentOpenFlashGuard") == "cover"
-print(guardOn ? "seen check: gating (agentOpenFlashGuard cover)" : "seen check: known, flag off (times printed, not failed)")
+// Only `off` turns it off (`OpenFlashGuard.from`).
+let guardOn = UserDefaults(suiteName: "com.baney.polycarp")?.string(forKey: "agentOpenFlashGuard") != "off"
+print(guardOn ? "seen check: gating (cover on, the default)" : "seen check: known, flag off (times printed, not failed)")
 var opens = 0, identified = 0, strays = 0, focusChanges = 0, closes = 0, closeMismatches = 0, flashes = 0
 var seenAll: [Double] = []
 var failures: [String] = [], invalid: [String] = []
