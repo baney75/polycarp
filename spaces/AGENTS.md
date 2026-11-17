@@ -19,6 +19,10 @@ A change is done when steps 1 to 3 pass on its branch and step 4 passes on `main
    no budget.
 3. For anything that hides, parks, moves or restores windows: `swift scripts/motion-probe.swift <a> <b>`
    with Helium or Ghostty on one of the two workspaces. It must print "no window slid".
+   For how fast a switch shows and parks (`Parking`, `Spaces.bringHome`, `park`, `parkAlongside`, `settle`):
+   `swift scripts/switch-probe.swift speed` (about 40 windows of its own, 200 switches, key-down to the last frame the
+   window server confirms). It needs 10 idle minutes (exit 3 and "untested live" otherwise) and must print
+   "switch-probe speed: pass" against `spacesSwitch` in `spec/speed.json`.
    For anything that decides which windows exist or where they live: `swift scripts/closed-window-probe.swift <empty n>`.
    For the drag to the top of the screen (`TopDrag`, `TopDragWatcher`, the viewer's carrying mode):
    `swift scripts/top-drag-probe.swift`. It takes the pointer for ten seconds; run it while Donovan is away.
@@ -127,7 +131,7 @@ When one returns, add the date and the commit that brought it back.
 
 | Bug Donovan sees | Reported | Fixed, then broken by | Guard |
 | --- | --- | --- | --- |
-| Windows slide to and from the bottom-right corner | 10-10, 10-12 (×2), 10-13 | `9801f13` hid apps instead of parking. `9512b94` brought parking back for the Keep Usable by Automation list (Helium, Cua Spaces). `5d080f0` only hid the slide from view. Root cause (10-13): apps with `AXEnhancedUserInterface` on animate every Accessibility move; `Window.withoutAnimation` turns it off for each move. Every app split across workspaces (Ghostty) slid until then. | `motion-probe.swift` (10-13: 26–30 positions per window before, none after) |
+| Windows slide to and from the bottom-right corner | 10-10, 10-12 (×2), 10-13 | `9801f13` hid apps instead of parking. `9512b94` brought parking back for the Keep Usable by Automation list (Helium, Cua Spaces). `5d080f0` only hid the slide from view. Root cause (10-13): apps with `AXEnhancedUserInterface` on animate every Accessibility move; `Window.withoutAnimation` turns it off for each move. Every app split across workspaces (Ghostty) slid until then. 11-17: the hide around each move (`whileHidden`) that `5d080f0` added stayed in `bringHome` and `park` and cost 40 to 100 ms a switch, and it hid apps that undo moves on unhide (Claude, T3 Code) around their move home; only an app on `SlowMovers` with its path in sight hides now (`Parking.route`). | `motion-probe.swift` (10-13: 26–30 positions per window before, none after); `ParkingTests`; `switch-probe.swift speed` |
 | Going to an empty workspace pulls you back to another one | 10-13 | Never guarded. Hiding the app in front makes macOS activate the next app (Finder, Ghostty), and `followFocus` followed it. Only parked apps were ignored. | none automatic: switch to an empty workspace 5 times and read `current` in `state.json` |
 | An app open elsewhere, opened again here, takes you to its old workspace | 10-13 | Never guarded. The app activates ~54 ms before its new window exists (Ghostty, measured). | none automatic: on an empty workspace press Ghostty's new-window key; the window must land there |
 | An app doesn't come forward from ⌘Tab, the Dock or the launcher; a workspace shows an app that isn't there | 10-13, 10-14 | Never guarded. Ghostty keeps closed windows alive in the window server, and a background tab looks the same; `Workspaces.sync` kept every alive window, and `focusApp` picked the oldest. Fixed by `closedWindows` and `dormant` in `Spaces.swift`. | `closed-window-probe.swift` |

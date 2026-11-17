@@ -534,7 +534,7 @@ final class Spaces {
             } else if saved.frames[id] != nil {
                 saved.frames[id] = f
                 w.setSize(f.size)
-                if let b = Windows.serverWindows()[id]?.bounds, !Geometry.isStranded(b, screens: screens) { w.setOrigin(Geometry.hidingSpot(screens: screens)) }
+                if let b = Windows.serverWindows()[id]?.bounds, !Geometry.isStranded(b, screens: screens) { w.setOrigin(Parking.spot(for: f, screens: screens)) }
                 out[id] = "size now, place when shown"
             } else if saved.hiddenApps.contains(w.pid), Windows.allOffscreen([id]) {
                 w.setFrame(f)
@@ -1825,7 +1825,6 @@ final class Spaces {
     /// nothing here hides for the moment its windows move instead; one with a window here moves
     /// in place.
     private func park(_ how: Concealment, parkedApps: Set<pid_t>, screens: [CGRect], gen: Int, then: @escaping () -> Void) {
-        let spot = Geometry.hidingSpot(screens: screens)
         // Apps with a window here parked theirs already (`parkAlongside`).
         // On a native full-screen Space the window server lists only that Space, so "not listed" says nothing about a window.
         let inSight: Set<WindowID>? = DockSpaces.current().unsafe ? nil : Windows.onScreenIDs()
@@ -1848,21 +1847,26 @@ final class Spaces {
         }
         guard !todo.isEmpty || !hiddenByUs.isEmpty else { return then() }
         let moving = Set(todo.map(\.id))
-        let server = Windows.serverWindows()
+        // Each window waits in a corner of its own display (`Parking.spot`), sized from where it stood.
+        var spots: [WindowID: CGPoint] = [:]
+        for w in todo { spots[w.id] = Parking.spot(for: saved.frames[w.id] ?? w.frame ?? .null, screens: screens) }
+        lazy var server = Windows.serverWindows()
         func path(_ w: Window) -> CGRect {
-            (server[w.id]?.bounds ?? saved.frames[w.id] ?? .null).union(CGRect(origin: spot, size: CGSize(width: 1, height: 1)))
+            (server[w.id]?.bounds ?? saved.frames[w.id] ?? .null).union(CGRect(origin: spots[w.id] ?? .zero, size: CGSize(width: 1, height: 1)))
         }
-        // Windows of apps hiding right now still read as on screen for a moment; they don't cover.
+        // Only an app seen animating its moves, with the path in sight, hides around the move (`Parking.route`). Windows of
+        // apps hiding right now still read as on screen for a moment; they don't cover.
         let exposed = todo.filter { w in
-            guard !UnhideUndoesMoves.contains(w.pid) else { return false }
-            return hiddenByUs.contains(w.pid) || !Windows.isCovered(w.id, ignoring: moving, apps: how.hideApps, path: path(w))
+            Parking.route(hidden: hiddenByUs.contains(w.pid) || NSRunningApplication(processIdentifier: w.pid)?.isHidden == true,
+                          animates: SlowMovers.contains(w.pid), undoesMovesOnUnhide: UnhideUndoesMoves.contains(w.pid),
+                          covered: { Windows.isCovered(w.id, ignoring: moving, apps: how.hideApps, path: path(w)) }) == .whileHidden
         }
         let exposedIDs = Set(exposed.map(\.id))
-        for w in todo where !exposedIDs.contains(w.id) { w.setOrigin(spot) }
-        whileHidden(exposed, move: { exposed.forEach { $0.setOrigin(spot) } }) { [self] justHid in
+        for w in todo where !exposedIDs.contains(w.id) { w.setOrigin(spots[w.id] ?? .zero) }
+        whileHidden(exposed, move: { exposed.forEach { $0.setOrigin(spots[$0.id] ?? .zero) } }) { [self] justHid in
             guard gen == generation, active else { return }
             let hid = justHid.union(hiddenByUs)
-            settle(moving, screens: screens) { [self] in
+            settle(moving, targets: spots, away: true, screens: screens) { [self] in
                 guard gen == generation, active else { return }
                 // An app kept unhidden for automation can ignore the move, or stop answering.
                 // Read it back: one whose window didn't park is hidden after all, rather than
@@ -1886,7 +1890,7 @@ final class Spaces {
                     saved.hiddenApps.remove(pid)
                 }
                 then()
-                recheckParked(todo.filter { reshown.contains($0.pid) }, spot: spot, screens: screens, gen: gen)
+                recheckParked(todo.filter { reshown.contains($0.pid) }, spots: spots, screens: screens, gen: gen)
             }
         }
     }
@@ -1894,7 +1898,7 @@ final class Spaces {
     /// The read-back above is from before the unhide, and unhiding can undo the move: T3 Code's window jumped back 20 ms later and
     /// sat in sight on the wrong workspace. So look again once it's had time. One that came back is moved in plain sight, and
     /// remembered so it never goes through this again. One that still won't stay is hidden after all.
-    private func recheckParked(_ moved: [Window], spot: CGPoint, screens: [CGRect], gen: Int) {
+    private func recheckParked(_ moved: [Window], spots: [WindowID: CGPoint], screens: [CGRect], gen: Int) {
         guard !moved.isEmpty else { return }
         func back(_ list: [Window]) -> [Window] {
             let bounds = Windows.serverWindows()
@@ -1909,7 +1913,7 @@ final class Spaces {
             guard !returned.isEmpty else { return }
             for pid in Set(returned.map(\.pid)) { UnhideUndoesMoves.remember(pid) }
             Trace.log("parked: \(Set(returned.map(\.appName)).sorted().joined(separator: ", ")) came back when unhidden; moving in plain sight")
-            returned.forEach { $0.setOrigin(spot) }
+            returned.forEach { $0.setOrigin(spots[$0.id] ?? Geometry.hidingSpot(screens: screens)) }
             DispatchQueue.main.asyncAfter(deadline: .now() + ParkRecheck.afterPlainMove) { [self] in
                 guard gen == generation, active else { return }
                 let stubborn = Set(back(returned).map(\.pid))
@@ -1929,7 +1933,6 @@ final class Spaces {
     /// Parks, in place and at once, the other windows of apps that have a window here. Hiding
     /// such an app would hide the window you came for, so these move where they are.
     private func parkAlongside(_ how: Concealment, screens: [CGRect]) {
-        let spot = Geometry.hidingSpot(screens: screens)
         for id in how.park {
             guard let w = windows[id], how.showApps.contains(w.pid), !w.isMinimized,
                   saved.frames[id] == nil || w.frame.map({ !Geometry.isStranded($0, screens: screens) }) == true else { continue }
@@ -1938,7 +1941,7 @@ final class Spaces {
                 guard let f = w.frame else { continue }
                 saved.frames[id] = f
             }
-            w.setOrigin(spot)
+            w.setOrigin(Parking.spot(for: saved.frames[id] ?? .null, screens: screens))
         }
     }
 
@@ -1953,11 +1956,15 @@ final class Spaces {
         }
         guard !targets.isEmpty else { return then() }
         let moving = Set(targets.map(\.0.id))
-        let server = Windows.serverWindows()
-        let inSight = Windows.pidsInSight(screens: screens)
+        lazy var server = Windows.serverWindows()
+        lazy var inSight = Windows.pidsInSight(screens: screens)
+        // Shown first, in place: only an app seen animating its moves, with the path in sight, hides around the move
+        // (`Parking.route`). A hidden app's window moves now, unseen; the app shows later in the switch.
         let exposed = targets.filter { w, to in
-            if NSRunningApplication(processIdentifier: w.pid)?.isHidden == true { return true }
-            return !inSight.contains(w.pid) && !Windows.isCovered(w.id, ignoring: moving, apps: [], path: (server[w.id]?.bounds ?? .null).union(to))
+            Parking.route(hidden: NSRunningApplication(processIdentifier: w.pid)?.isHidden == true,
+                          animates: SlowMovers.contains(w.pid), undoesMovesOnUnhide: UnhideUndoesMoves.contains(w.pid),
+                          covered: { inSight.contains(w.pid)
+                              || Windows.isCovered(w.id, ignoring: moving, apps: [], path: (server[w.id]?.bounds ?? .null).union(to)) }) == .whileHidden
         }
         let exposedIDs = Set(exposed.map(\.0.id))
         func place(_ list: [(Window, CGRect)]) {
@@ -1967,7 +1974,7 @@ final class Spaces {
         whileHidden(exposed.map(\.0), move: { place(exposed) }) { [self] hid in
             guard gen == generation, active else { return }
             let goal = Dictionary(uniqueKeysWithValues: targets.map { ($0.0.id, $0.1.origin) })
-            settle(moving, targets: goal, screens: screens) { [self] in
+            settle(moving, targets: goal, away: false, screens: screens) { [self] in
                 guard gen == generation, active else { return }
                 // A busy app can drop the move: the window only counts as shown once it's on
                 // screen. Otherwise it stays parked in the record and the next switch tries again.
@@ -2003,17 +2010,18 @@ final class Spaces {
         }
     }
 
-    /// Waits until each window has stopped where it was sent: exactly at its target when one is
-    /// given, otherwise anywhere parked, still for 50 ms. Some apps animate a move over several
+    /// Waits until each window has stopped where it was sent: exactly at its target, or, placed a
+    /// little differently by its app, still for 50 ms out of sight (`away`) or in sight (coming
+    /// home). It looks once before any timer (`Parking.landed`). Some apps animate a move over several
     /// frames; an app whose window was still changing position after 0.12 s is remembered in
     /// `SlowMovers` and hidden instead of parked from then on. Gives up after 0.4 s.
-    private func settle(_ ids: Set<WindowID>, targets: [WindowID: CGPoint] = [:], screens: [CGRect], then: @escaping () -> Void) {
+    private func settle(_ ids: Set<WindowID>, targets: [WindowID: CGPoint], away: Bool, screens: [CGRect], then: @escaping () -> Void) {
         guard !ids.isEmpty else { return then() }
         var last: [WindowID: CGRect] = [:]
         var stillSince: [WindowID: Date] = [:]
         var slow: Set<WindowID> = []
         let start = Date()
-        waitUntil(timeout: 0.4, interval: 0.01, {
+        let landed: () -> Bool = {
             let now = Windows.serverWindows().compactMapValues(\.bounds).filter { ids.contains($0.key) }
             let t = Date()
             // Only position counts: an app snapping its size to a grid isn't animating a move.
@@ -2025,18 +2033,21 @@ final class Spaces {
             last = now
             return ids.allSatisfy { id in
                 guard let b = now[id] else { return true }
-                if let to = targets[id], abs(b.minX - to.x) < 1, abs(b.minY - to.y) < 1 { return true }
-                let still = t.timeIntervalSince(stillSince[id] ?? start) >= 0.05
-                return still && (targets[id] == nil ? Geometry.isStranded(b, screens: screens) : !Geometry.isStranded(b, screens: screens))
+                return Parking.landed(b, target: targets[id], away: away, still: t.timeIntervalSince(stillSince[id] ?? start), screens: screens)
             }
-        }, then: { [self] in
+        }
+        let done = { [self] in
             for pid in Set(slow.compactMap { windows[$0]?.pid }) {
                 guard let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier, !SlowMovers.bundleIDs.contains(id) else { continue }
                 SlowMovers.bundleIDs.insert(id)
                 Trace.log("slow mover: \(id) animates its moves; hiding it instead of parking")
             }
             then()
-        })
+        }
+        // A move is usually in the window server by the time its Accessibility call returns: look once now, so a switch
+        // whose windows all landed doesn't wait a timer tick.
+        if landed() { return done() }
+        waitUntil(timeout: 0.4, interval: 0.01, landed, then: done)
     }
 
     /// Brings a parked window back and reads it back. A busy app can drop the move, so the

@@ -150,5 +150,11 @@
         "target": "X2 (#350): every pane under 16"
       }
     }
+  },
+  "spacesSwitch": {
+    "about": "A workspace switch from the key-down to the last frame the window server confirms (every window of the new workspace where it stood, every other off screen or parked), on about 40 windows over every workspace: swift scripts/switch-probe.swift speed, 200 switches, idle-gated. Before (origin/main 4fa0e4d, Donovan's timing.log over 8.8 days): done p50 72 ms p90 112, parked p50 190 p90 343 max 627.",
+    "switch_total_ms_p90": 120,
+    "switch_total_ms_max": 250,
+    "measuredWith": "scripts/switch-probe.swift speed"
   }
 }
