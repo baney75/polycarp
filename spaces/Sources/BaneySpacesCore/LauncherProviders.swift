@@ -23,6 +23,10 @@ public enum LauncherAction: Equatable, Sendable {
     case moveWindow(Int)
     /// A window action by name (`WindowCommandProvider.commands`).
     case windowCommand(String)
+    /// Run a launcher extension on what's typed (`ExtensionProvider.run`); its output becomes the top rows.
+    case runExtension(query: String)
+    /// Put this text in the main search, as Tab on a menu row does.
+    case fill(String)
 }
 
 /// One row a provider offers.
@@ -103,6 +107,7 @@ public enum LauncherProviders {
         var out: [LauncherProvider] = [CalculatorProvider()]
         if let file = SnippetStore.defaultFile(env: env) { out.append(SnippetProvider(store: SnippetStore(file: file))) }
         out.append(WindowCommandProvider())
+        if let folder = LauncherExtensionStore.defaultFolder(env: env) { out.append(ExtensionProvider(store: LauncherExtensionStore(folder: folder))) }
         return out
     }
 }

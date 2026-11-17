@@ -281,7 +281,7 @@ struct LauncherItem: Identifiable {
 
 final class LauncherModel: ObservableObject {
     enum Scope: String, CaseIterable {
-        case root, web, apps, files, install, remove, update, system, workspaces, clipboard, snippets
+        case root, web, apps, files, install, remove, update, system, workspaces, clipboard, snippets, extensions
 
         var title: String {
             switch self {
@@ -296,6 +296,7 @@ final class LauncherModel: ObservableObject {
             case .workspaces: "Workspaces"
             case .clipboard: "Clipboard History"
             case .snippets: "Snippets"
+            case .extensions: "Extensions"
             }
         }
         var symbol: String {
@@ -311,6 +312,7 @@ final class LauncherModel: ObservableObject {
             case .workspaces: "rectangle.split.3x3"
             case .clipboard: "doc.on.clipboard"
             case .snippets: "text.quote"
+            case .extensions: "puzzlepiece.extension"
             }
         }
         var blurb: String {
@@ -326,6 +328,7 @@ final class LauncherModel: ObservableObject {
             case .workspaces: "Go to any of the nine"
             case .clipboard: "Text you copied lately; never passwords"
             case .snippets: "Text you paste often, by keyword, from snippets.toml"
+            case .extensions: "Your own scripts, run by keyword"
             }
         }
         var placeholder: String {
@@ -505,7 +508,7 @@ final class LauncherModel: ObservableObject {
         case .update: out = updateItems().filter { q.isEmpty || Fuzzy.score(q, $0.title) != nil }
         case .system: out = commandItems(q)
         case .workspaces: out = workspaceItems(q, all: true)
-        case .clipboard, .snippets: out = menuListing(q)
+        case .clipboard, .snippets, .extensions: out = menuListing(q)
         }
         items = out
         if selected >= items.count { selected = max(0, items.count - 1) }
@@ -558,6 +561,14 @@ final class LauncherModel: ObservableObject {
         case .windowCommand(let id):
             close()
             actions.windowCommand(id)
+        case .runExtension(let query):
+            guard let p = providers.lazy.compactMap({ $0 as? ExtensionProvider }).first else { return }
+            // Its row says "Running" until the output comes back, then the output takes its place.
+            p.run(query) { [weak self] in self?.rebuildKeepingSelection() }
+            rebuildKeepingSelection()
+        case .fill(let text):
+            enter(.root)
+            setQuery(text)
         }
     }
 
