@@ -506,6 +506,8 @@ final class Spaces {
             guard var h = handsWindow(id, ws) else { return nil }
             let s = server[id]
             h.title = s?.name ?? ""
+            // A process with no bundle id is known by its executable's path, so `bundle` is never empty (434 r2 second-S3).
+            if h.bundle.isEmpty { h.bundle = NSRunningApplication(processIdentifier: h.pid)?.executableURL?.path ?? "pid \(h.pid)" }
             let parked = saved.frames[id]
             let hidden = windows[id].map { NSRunningApplication(processIdentifier: $0.pid)?.isHidden == true } ?? false
             let minimized = shown.contains(ws) && parked == nil && !hidden && s != nil && s?.onScreen == false
