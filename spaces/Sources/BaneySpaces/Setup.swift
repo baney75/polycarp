@@ -73,7 +73,6 @@ final class SetupModel: ObservableObject {
             let clock = windowVisible() && tab != oldValue ? OpenClock("settings-" + tab.rawValue.lowercased()) : nil
             defer { clock?.shown() }
             if tab == .automation { reloadParked() }
-            if tab == .updates { onUpdatesShown?() }
             if tab == .agents { refreshSandbox() }
         }
     }
@@ -119,14 +118,11 @@ final class SetupModel: ObservableObject {
         var have = ""
         var channel = UpdateChannel.stable
         var daily = true
-        var nightlyNeedsTools = false
         /// A release waiting, or installing.
         var notice: UpdateNotice?
     }
     @Published var update = UpdateInfo()
     var updateInfo: () -> UpdateInfo = { UpdateInfo() }
-    /// The Updates tab came up: look again for the command line tools, which a Mac can gain while this runs.
-    var onUpdatesShown: (() -> Void)?
     var onCheckForUpdates: (() -> Void)?
     var onOfferUpdate: (() -> Void)?
     var onSetUpdateChannel: ((UpdateChannel) -> Void)?
@@ -801,7 +797,8 @@ struct SetupView: View {
             SettingsBlock {
                 Picker("Follow", selection: binding({ model.update.channel }, { model.setUpdateChannel($0) })) {
                     Text("Stable: tested releases").tag(UpdateChannel.stable)
-                    Text(model.update.nightlyNeedsTools ? "Nightly: needs Apple's command line tools" : "Nightly: newest changes, every night").tag(UpdateChannel.nightly)
+                    Text("Nightly: newest changes, every night").tag(UpdateChannel.nightly)
+                    Text("Dev: every change as it lands, for testing").tag(UpdateChannel.dev)
                 }
                 .pickerStyle(.radioGroup)
             }
@@ -1273,7 +1270,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         if !model.ready { model.tab = model.trusted ? .general : .permissions }
         model.dockAgentStatus = WorkspaceDock.agentStatus
         model.readShown(opening: true)
-        if model.tab == .updates { model.onUpdatesShown?() }
         model.reloadBangs()
         model.startWatching()
         NSApp.activate(ignoringOtherApps: true)

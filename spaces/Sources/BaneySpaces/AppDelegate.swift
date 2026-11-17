@@ -251,7 +251,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         c.model.parkedApps = { [weak self] in self?.parkedRows() ?? [] }
         c.model.onToggleParked = { [weak self] id in self?.toggleParked(id) }
         c.model.updateInfo = { [weak self] in self?.updateInfo() ?? .init() }
-        c.model.onUpdatesShown = { [weak self] in self?.refreshCommandLineTools() }
         c.model.onCheckForUpdates = { [weak self] in self?.checkForUpdates() }
         c.model.onOfferUpdate = { [weak self] in if let r = self?.updater.available { self?.updater.offer(r) } }
         c.model.onSetUpdateChannel = { [weak self] in self?.updater.channel = $0 }
@@ -1239,23 +1238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// What Settings > Updates shows: the build you have, the channel, and any release waiting.
     private func updateInfo() -> SetupModel.UpdateInfo {
-        .init(have: Updater.buildDescription, channel: updater.channel, daily: updater.checksAutomatically,
-              nightlyNeedsTools: !commandLineTools, notice: updateNotice())
-    }
-
-    /// Whether Apple's command line tools are installed, as of the last look: `refreshCommandLineTools`
-    /// looks again (it runs a process, so off the main thread) whenever Settings > Updates appears.
-    private var commandLineTools = true
-
-    private func refreshCommandLineTools() {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let found = Updater.hasCommandLineTools
-            DispatchQueue.main.async {
-                guard let self, self.commandLineTools != found else { return }
-                self.commandLineTools = found
-                self.setup.model.reload()
-            }
-        }
+        .init(have: Updater.buildDescription, channel: updater.channel, daily: updater.checksAutomatically, notice: updateNotice())
     }
 
     private func checkForUpdates() { updater.check(manual: true) }

@@ -370,28 +370,30 @@ Spotlight.
 
 One command updates every part of Polycarp together, the app included: `polycarp update`. See
 [Updating](../README.md#updating) in the main README. For an app installed from the download it uses the app's own
-updater, described here; `polycarp-spaces update --check` and `--now` reach the same updater from a terminal.
+updater, described here; `polycarp-spaces update --check` and `--now` reach the same updater from a terminal, and
+`--channel stable|nightly|dev` chooses the channel first.
 
 BaneySpaces looks for a new version once a day and, when there is one, the menu bar menu shows **Update to BaneySpaces …** (the row is there only while
 a release is waiting) and so does **Settings > Updates**. Check by hand there with **Check for Updates Now…**. Nothing installs until you press **Update Now** in the window that
 shows what changed. The update installs the same way the first install did, into the folder the
-app is in. A stable release downloads the ready-made app; a Nightly build, or a copy that was
-built on your Mac (while the command line tools are installed), is built on your Mac, so the
-Accessibility permission carries over. Then BaneySpaces restarts and shows the release notes. If
+app is in. Every channel downloads the ready-made app, signed with the one release key, so the
+Accessibility permission carries over; only a copy that was built on your Mac (while the command
+line tools are installed) is updated by building on your Mac, which keeps its own signature. Then BaneySpaces restarts and shows the release notes. If
 the update fails, BaneySpaces keeps running as it was and offers the log.
 
 Pick what you follow under **Settings > Updates**:
 
-- **Stable** (the default): tagged releases, each one tested and described in the
+- **Stable**: tagged releases, each one tested and described in the
   [changelog](CHANGELOG.md).
-- **Nightly**: a build of the newest code, published each night something changed. It is built
-  on your Mac, so it needs Apple's command line tools; without them Settings says so and Stable
-  keeps working. Its notes
-  list what's coming in the next release and every change since the last one. Switching back
-  to Stable waits for a stable release newer than the nightly you have, so you never go
-  backwards.
+- **Nightly**: a build of the newest code, published each night something changed (Apple silicon).
+  It replaced the old Preview channel, and a copy installed from Preview follows it.
+- **Dev**: every change on main as CI passes it (Apple silicon), for testing.
 
-The daily check asks GitHub's public release list and sends nothing about your Mac. Turn it off
+A copy follows the channel it was installed from until you pick another ([releases](../docs/releases.md)). Switching
+to a channel offers that channel's build only when it contains the one you have, so you never go
+backwards.
+
+The daily check reads the channel's public `latest.json` on GitHub and sends nothing about your Mac. Turn it off
 under **Settings > Updates > Check for updates daily** and use **Check for Updates Now…** instead.
 
 ### If the permission won't take

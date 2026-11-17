@@ -177,18 +177,27 @@ final class InstallScriptTests: XCTestCase {
     func testABackgroundUpdateNeverOpensAppleInstallerAndTheSourceBuildUsesItsOwnInstallStep() throws {
         let install = try read("install.sh")
         let gate = try index(of: "if ! have_tools; then", in: install)
-        let failFast = try index(of: "needs Apple's command line tools (Nightly builds always do", in: install)
+        let failFast = try index(of: "this update is built on your Mac and needs Apple's command line tools.", in: install)
         XCTAssertLessThan(gate, failFast)
         XCTAssertLessThan(failFast, try index(of: "xcode-select --install", in: install))
         XCTAssertTrue(install.contains(#"Resources/install-app.sh" "$SRC/build/Polycarp.app""#))
         XCTAssertTrue(install.contains(#"bundle.sh" --install"#), "older revisions only")
     }
 
-    func testNightlyIsNotOfferedWithoutTheCommandLineTools() throws {
+    /// Every channel ships a ready-made app now, so no channel waits for the command line tools: the updater
+    /// reads only the channel's feed, which names a ready-made app for this Mac or isn't offered.
+    func testEveryChannelInstallsReadyMade() throws {
         let updater = try read("Sources/BaneySpaces/Updater.swift")
-        XCTAssertTrue(updater.contains("!(toolsMissing && $0.isNightly)"))
-        XCTAssertTrue(updater.contains("guard !release.isNightly || Self.hasCommandLineTools"))
-        XCTAssertTrue(updater.contains("Stable installs ready-made"))
+        XCTAssertTrue(updater.contains("channel.feedURL"))
+        XCTAssertTrue(updater.contains("Updates.offer($0, channel: channel, build: Self.build)"))
+        for gone in ["hasCommandLineTools", "api.github.com/repos/baney75/polycarp/releases?"] {
+            XCTAssertFalse(updater.contains(gone), gone)
+        }
+        // `polycarp-spaces update --channel <c>` (and so `polycarp update --channel <c>`) chooses the channel
+        // before it asks for the check.
+        let cli = try read("Sources/baneyspaces-cli/main.swift")
+        XCTAssertLessThan(try index(of: #"_ = ask("channel \(channel.rawValue)")"#, in: cli), try index(of: #"let before = ask("check")"#, in: cli))
+        XCTAssertTrue(updater.contains(#"if what.hasPrefix("channel ")"#))
     }
 
     func testReleaseRefusesAPublishedReleaseAndAnUnpushedTag() throws {
