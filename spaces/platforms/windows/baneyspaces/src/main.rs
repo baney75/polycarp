@@ -388,6 +388,8 @@ fn run_daemon(args: &[String]) -> i32 {
 }
 
 fn main() {
+    #[cfg(windows)]
+    winapi::keep_std_handles();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let text = take_switch(&mut args, "--text");
     let agent = take(&mut args, "--agent-id")

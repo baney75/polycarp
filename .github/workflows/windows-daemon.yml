@@ -1,0 +1,47 @@
+name: Windows daemon
+# `baneyspaces daemon --background` must come back to a caller that reads its output. Rust starts every child with
+# handle inheritance on, so the background daemon held the caller's stdout pipe and `| Out-String` never ended.
+on:
+  push:
+    branches: [main]
+    paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/Cargo.lock', '.github/workflows/windows-daemon.yml']
+  pull_request:
+    paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/Cargo.lock', '.github/workflows/windows-daemon.yml']
+  workflow_dispatch:
+concurrency:
+  group: windows-daemon-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  background:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: spaces
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: spaces, key: windows-daemon }
+      - run: cargo build --locked -p baneyspaces-windows
+      - name: daemon --background | Out-String returns within 30 s, and the daemon answers
+        timeout-minutes: 3
+        run: |
+          $bs = "$PWD\target\debug\baneyspaces.exe"
+          $env:BANEYSPACES_STATE_DIR = "$env:RUNNER_TEMP\bs-state"
+          # In a job (it inherits this environment), so a hang is timed and reported here.
+          $job = Start-Job { param($bs) & $bs daemon --background | Out-String } -ArgumentList $bs
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $done = Wait-Job $job -Timeout 30
+          $ms = $sw.ElapsedMilliseconds
+          $out = if ($done) { (Receive-Job $job | Out-String).Trim() } else { '' }
+          $daemon = ((& $bs doctor | Out-String | ConvertFrom-Json).data.checks | Where-Object check -eq 'daemon').ok -eq $true
+          & $bs daemon stop | Out-Null
+          Remove-Job $job -Force
+          if (-not $done) { "FAIL daemon --background | Out-String still running after $ms ms (daemon answering: $daemon)"; exit 1 }
+          if (-not $daemon) { "FAIL returned in $ms ms but the daemon does not answer: $out"; exit 1 }
+          "ok   returned in $ms ms and the daemon answers: $out"
