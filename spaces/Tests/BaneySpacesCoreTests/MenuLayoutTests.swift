@@ -127,7 +127,7 @@ final class MenuLayoutTests: XCTestCase {
     func testSettingsListsRefreshAndAutomationWaitsForAccessibility() throws {
         let setup = try code("Sources/BaneySpaces/Setup.swift")
         let app = try code("Sources/BaneySpaces/AppDelegate.swift")
-        XCTAssertTrue(setup.contains("if tab == .automation { reloadParked() }\n            if tab == .updates"), "the parked list reads when the tab appears")
+        XCTAssertTrue(setup.contains("if tab == .automation { reloadParked() }\n            if tab == .agents"), "the parked list reads when the tab appears")
         // ...and not on every reload: the bodies of reload() and reloadOptional() never read it.
         for name in ["func reload() {", "private func reloadOptional() {"] {
             let from = try XCTUnwrap(setup.range(of: name))
