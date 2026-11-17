@@ -32,6 +32,14 @@ final class ScanFanOutTests: XCTestCase {
     static let pids: [Int32] = [1, 2, 3, 4, 99]
     static let hungWindows: Set<WindowID> = [990, 991]
 
+    /// A model that already knows each window on its workspace (`assign` moves only windows it knows).
+    static func model(_ placed: [WindowID: Int]) -> Workspaces {
+        var m = Workspaces()
+        m.sync(seen: Array(placed.keys), alive: Set(placed.keys))
+        for (id, n) in placed { m.assign(id, to: n, focus: false) }
+        return m
+    }
+
     /// The main thread's part of a scan: the round, then the model brought up to date from what came back.
     static func scan(_ fan: ScanFanOut<Read>, _ apps: Apps, model: inout Workspaces, alive: Set<WindowID>) -> (ScanFanOut<Read>.Round, TimeInterval) {
         let start = ProcessInfo.processInfo.systemUptime
@@ -46,8 +54,7 @@ final class ScanFanOutTests: XCTestCase {
         let late = expectation(description: "the hung app's answer comes in late")
         late.assertForOverFulfill = false
         let fan = ScanFanOut<Read> { late.fulfill() }
-        var model = Workspaces()
-        for id in Self.hungWindows { model.assign(id, to: 3, focus: false) }
+        var model = Self.model([990: 3, 991: 3])
         let alive = Set([10, 11, 20, 21, 30, 31, 40, 41] as [WindowID]).union(Self.hungWindows)
 
         // Warm up the queue's threads so the first measured round isn't paying for thread creation.
@@ -95,9 +102,7 @@ final class ScanFanOutTests: XCTestCase {
         let late = expectation(description: "the timeout comes back")
         late.assertForOverFulfill = false
         let fan = ScanFanOut<Read> { late.fulfill() }
-        var model = Workspaces()
-        for id in Self.hungWindows { model.assign(id, to: 3, focus: false) }
-        model.assign(10, to: 1, focus: false)
+        var model = Self.model([990: 3, 991: 3, 10: 1])
         let alive: Set<WindowID> = [10, 11, 20, 21, 30, 31, 40, 41, 990, 991]
         let everyone = Set(Self.pids)
         let before = everyone // every app answered in full last time
