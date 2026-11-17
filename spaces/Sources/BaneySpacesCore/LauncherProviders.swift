@@ -15,6 +15,9 @@ public enum LauncherAction: Equatable, Sendable {
     case command(provider: String, id: String)
     /// Close the launcher.
     case close
+    /// Put the text on the pasteboard (marked transient, so clipboard history skips it) and paste it into
+    /// the app you were in.
+    case paste(String)
 }
 
 /// One row a provider offers.
@@ -91,7 +94,9 @@ public enum LauncherProviders {
     }
 
     /// The providers the launcher starts with, in the order their rows show.
-    public static func standard() -> [LauncherProvider] {
-        [CalculatorProvider()]
+    public static func standard(env: [String: String] = ProcessInfo.processInfo.environment) -> [LauncherProvider] {
+        var out: [LauncherProvider] = [CalculatorProvider()]
+        if let file = SnippetStore.defaultFile(env: env) { out.append(SnippetProvider(store: SnippetStore(file: file))) }
+        return out
     }
 }
