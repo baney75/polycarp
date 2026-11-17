@@ -262,7 +262,7 @@ mod win {
         use windows_sys::Win32::Foundation::RECT;
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             EnumWindows, GetDlgItem, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-            SendMessageW, WM_CLOSE,
+            IsWindowVisible, SendMessageW, WM_CLOSE,
         };
 
         fn testapp() -> std::path::PathBuf {
@@ -310,7 +310,8 @@ mod win {
             let mut child = std::process::Command::new(&path).spawn().unwrap();
             let mut top = None;
             for _ in 0..100 {
-                top = window_of(child.id());
+                // Found once shown: a child of a window not yet shown counts as invisible.
+                top = window_of(child.id()).filter(|&h| unsafe { IsWindowVisible(h) } != 0);
                 if top.is_some() {
                     break;
                 }
