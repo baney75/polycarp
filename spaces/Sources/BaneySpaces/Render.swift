@@ -61,6 +61,7 @@ enum Render {
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
             guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return false }
             host.cacheDisplay(in: host.bounds, to: rep)
+            AccessibilityAudit.record(host, name)
             let png = rep.representation(using: .png, properties: [:])
             return (try? png?.write(to: folder.appendingPathComponent(name))) != nil
         }
@@ -69,6 +70,7 @@ enum Render {
         }
         // BANEYSPACES_RENDER_SWATCHES=1 checks only what the workspace colors sit on in dark mode (scripts/swatch-check.sh).
         if ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SWATCHES"] == "1" { return SwatchCheck.run(into: folder) }
+        AccessibilityAudit.start()
         // BANEYSPACES_RENDER_THEME_EDITOR=<user theme> draws only the theme editor and the Appearance tab, light and dark.
         if let name = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME_EDITOR"], !name.isEmpty {
             return ThemeEditorRender.run(name) { save($0, $1, $2) }
@@ -111,11 +113,14 @@ enum Render {
         setup.finished = [.init(id: "a", label: "Claude Code · baneyspaces")]
         guard save(SetupView(model: setup, close: {}).background(Color(nsColor: .windowBackgroundColor)),
                    "setup.png", SettingsSidebar.windowSize) else { return 1 }
+        AccessibilityAudit.read(SetupView(model: setup, close: {}, height: 3600), "setup-general full height", CGSize(width: SettingsSidebar.windowSize.width, height: 3600))
         // Each settings tab, for checks.
         for tab in SettingsTab.allCases.dropFirst() {
             setup.tab = tab
             guard save(SetupView(model: setup, close: {}).background(Color(nsColor: .windowBackgroundColor)),
                        "setup-\(tab.rawValue.lowercased()).png", SettingsSidebar.windowSize) else { return 1 }
+            AccessibilityAudit.read(SetupView(model: setup, close: {}, height: 3600), "setup-\(tab.rawValue.lowercased()) full height",
+                                    CGSize(width: SettingsSidebar.windowSize.width, height: 3600))
         }
         // Settings > Silas at full height, and each overlay face, for checks (never on screen).
         guard save(ScrollView { VoiceSettingsView().padding(20) }.frame(height: 2600).background(Color(nsColor: .windowBackgroundColor)),
@@ -357,7 +362,7 @@ enum Render {
         let welcome = WelcomeModel()
         welcome.granted = [.accessibility]
         guard save(WelcomeView(model: welcome), "welcome.png", CGSize(width: 560, height: 0)) else { return 1 }
-        return 0
+        return AccessibilityAudit.finish(into: folder)
     }
 }
 
