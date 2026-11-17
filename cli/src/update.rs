@@ -16,9 +16,11 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::{IsTerminal, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use crate::channel::{self, Channel};
 use crate::version::{self, Part};
@@ -80,6 +82,9 @@ pub struct Facts {
     pub skill_installed: bool,
     /// Input and output are a terminal, so the plan can be shown and confirmed.
     pub terminal: bool,
+    /// A Mac app asked to follow `--channel`: whether its `polycarp-spaces` takes the flag. `None` when it
+    /// wasn't asked, which is always so without `--channel`.
+    pub spaces_takes_channel: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -181,6 +186,8 @@ https://github.com/baney75/polycarp (see spaces/platforms/windows/README.md):
 
 `polycarp version` works on Windows and shows what is installed.";
 
+const TOO_OLD_FOR_CHANNEL: &str = "This Polycarp.app is too old to choose a channel. Run `polycarp update` once without --channel, then set the channel.";
+
 const NO_SOURCE: &str = "\
 polycarp update does not know how Polycarp was installed on this device.
 Point it at a checkout of https://github.com/baney75/polycarp once:
@@ -217,7 +224,17 @@ pub fn plan(f: &Facts, o: Options) -> Plan {
         }
         Install::MacRelease {
             spaces: Some(spaces),
-        } => release_steps(spaces, o),
+        } => {
+            // An app from before the channels refuses `--channel` with its usage and exit 2, and merging
+            // the new app changes nothing here: the installed one answers.
+            if o.channel.is_some() && f.spaces_takes_channel != Some(true) {
+                return Plan::Refuse {
+                    code: 1,
+                    message: TOO_OLD_FOR_CHANNEL.to_string(),
+                };
+            }
+            release_steps(spaces, o)
+        }
         Install::Source {
             checkout,
             origin,
@@ -291,6 +308,67 @@ fn release_steps(spaces: &Path, o: Options) -> (String, Vec<Step>, Vec<String>) 
         "If Polycarp said it is up to date, nothing was installed. Otherwise it downloads the release in the background, checks that it is signed with the release key, installs it and restarts itself. Run `polycarp version --check` once it is back.".to_string(),
     ];
     (summary, vec![step], notes)
+}
+
+/// How long `polycarp-spaces update --help` may take before the app counts as one that can't choose a channel.
+const CHANNEL_PROBE_LIMIT: Duration = Duration::from_secs(10);
+
+/// Whether this Mac app's `polycarp-spaces` takes `--channel`: the usage `update --help` prints names it. An app
+/// from before the channels prints `usage: polycarp-spaces update --check|--now` and exits 2, the code a newer
+/// one gives a bad flag too, so only the text tells them apart. Both streams count: the old app writes its usage
+/// to stderr.
+pub fn spaces_takes_channel(spaces: &Path) -> bool {
+    let Ok(mut child) = Command::new(spaces)
+        .args(["update", "--help"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    else {
+        return false;
+    };
+    fn read_into<R: Read + Send + 'static>(stream: Option<R>, tx: mpsc::Sender<String>) {
+        if let Some(stream) = stream {
+            std::thread::spawn(move || {
+                let mut text = String::new();
+                let _ = stream.take(64 * 1024).read_to_string(&mut text);
+                let _ = tx.send(text);
+            });
+        }
+    }
+    let (tx, rx) = mpsc::channel();
+    read_into(child.stdout.take(), tx.clone());
+    read_into(child.stderr.take(), tx);
+    // A stream held open past the limit (a helper left running) stops the wait, never the update.
+    let deadline = Instant::now() + CHANNEL_PROBE_LIMIT;
+    let mut named = false;
+    while !named {
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(text) => named = text.contains("--channel"),
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    named
+}
+
+/// Asks the Mac app's command whether it takes `--channel`, and only when a channel was given: without one
+/// nothing runs before the plan.
+fn channel_support(
+    install: &Install,
+    channel: Option<Channel>,
+    probe: &dyn Fn(&Path) -> bool,
+) -> Option<bool> {
+    match (install, channel) {
+        (
+            Install::MacRelease {
+                spaces: Some(spaces),
+            },
+            Some(_),
+        ) => Some(probe(spaces)),
+        _ => None,
+    }
 }
 
 /// `polycarp-spaces update` with `--channel <c>` when one was given: the app chooses it first.
@@ -1850,6 +1928,7 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         skill_installed: home.join(".claude/skills/baneyspaces/SKILL.md").is_file(),
         terminal: std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
         home: home.clone(),
+        spaces_takes_channel: channel_support(&install, o.channel, &spaces_takes_channel),
         install,
     };
     let (summary, mut steps, notes, ask) = match plan(&facts, o) {
@@ -1990,6 +2069,7 @@ mod tests {
             node: true,
             skill_installed: false,
             terminal: false,
+            spaces_takes_channel: None,
         }
     }
 
@@ -2546,6 +2626,128 @@ mod tests {
         assert!(message.contains("polycarp-spaces command was not found"));
     }
 
+    /// A fake `polycarp-spaces` that logs each argv to `ran` and then runs `body`.
+    #[cfg(unix)]
+    fn fake_spaces(name: &str, body: &str) -> (PathBuf, PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("polycarp-spaces-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let (spaces, ran) = (dir.join("polycarp-spaces"), dir.join("ran"));
+        fs::write(
+            &spaces,
+            format!("#!/bin/sh\necho \"$@\" >> {}\n{body}\n", ran.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&spaces, fs::Permissions::from_mode(0o755)).unwrap();
+        (dir, spaces, ran)
+    }
+
+    /// Gate round 1 of PR 437: an app from before the channels (main's polycarp-spaces) prints its usage and
+    /// exits 2 for `update --check --channel nightly`, so it is asked first and refused before any step runs.
+    #[cfg(unix)]
+    #[test]
+    fn an_app_from_before_the_channels_is_refused_a_channel_and_runs_no_step() {
+        let (dir, spaces, ran) = fake_spaces(
+            "old",
+            "echo 'usage: polycarp-spaces update --check|--now' >&2\nexit 2",
+        );
+        let install = Install::MacRelease {
+            spaces: Some(spaces.clone()),
+        };
+        let f = Facts {
+            spaces_takes_channel: channel_support(
+                &install,
+                Some(Channel::Nightly),
+                &spaces_takes_channel,
+            ),
+            ..facts(Platform::Mac, install)
+        };
+        assert_eq!(f.spaces_takes_channel, Some(false));
+        for o in [YES, CHECK] {
+            let (code, message) = refusal(plan(
+                &f,
+                Options {
+                    channel: Some(Channel::Nightly),
+                    ..o
+                },
+            ));
+            assert_eq!(code, 1);
+            assert_eq!(
+                message,
+                "This Polycarp.app is too old to choose a channel. Run `polycarp update` once without --channel, then set the channel."
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(&ran).unwrap(),
+            "update --help\n",
+            "only the probe ran"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// An app whose usage names --channel is passed it, whichever stream the usage is on and whatever it exits
+    /// with (#456 prints it on stdout and exits 0; a bad flag gets it on stderr with exit 2).
+    #[cfg(unix)]
+    #[test]
+    fn an_app_whose_usage_names_channel_is_passed_it() {
+        let usage = "usage: polycarp-spaces update --check|--now [--channel stable|nightly|dev]";
+        for (name, body) in [
+            ("new", format!("echo '{usage}'")),
+            ("new-stderr", format!("echo '{usage}' >&2\nexit 2")),
+        ] {
+            let (dir, spaces, _) = fake_spaces(name, &body);
+            let install = Install::MacRelease {
+                spaces: Some(spaces.clone()),
+            };
+            let f = Facts {
+                spaces_takes_channel: channel_support(
+                    &install,
+                    Some(Channel::Nightly),
+                    &spaces_takes_channel,
+                ),
+                ..facts(Platform::Mac, install)
+            };
+            assert_eq!(f.spaces_takes_channel, Some(true), "{name}");
+            let nightly = Options {
+                channel: Some(Channel::Nightly),
+                ..YES
+            };
+            assert_eq!(
+                commands(&steps_of(plan(&f, nightly))),
+                vec![format!(
+                    "{} update --now --channel nightly",
+                    spaces.display()
+                )],
+                "{name}"
+            );
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// Without --channel the app isn't asked anything, and the plan is the one it always was.
+    #[test]
+    fn without_a_channel_the_app_is_not_asked() {
+        let spaces =
+            PathBuf::from("/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces");
+        let install = Install::MacRelease {
+            spaces: Some(spaces.clone()),
+        };
+        let never = |_: &Path| -> bool { panic!("the app was asked about --channel") };
+        assert_eq!(channel_support(&install, None, &never), None);
+        assert_eq!(
+            channel_support(&source(Some(ORIGIN), false), Some(Channel::Nightly), &never),
+            None,
+            "a source install builds the channel itself"
+        );
+        let f = facts(Platform::Mac, install);
+        assert_eq!(
+            commands(&steps_of(plan(&f, YES))),
+            vec![format!("{} update --now", spaces.display())]
+        );
+    }
+
     #[test]
     fn a_channel_picks_what_an_update_follows() {
         let parsed = |a: &[&str]| parse(&a.iter().map(OsString::from).collect::<Vec<_>>());
@@ -2560,12 +2762,15 @@ mod tests {
         // A Mac app is asked to follow it.
         let spaces =
             PathBuf::from("/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces");
-        let f = facts(
-            Platform::Mac,
-            Install::MacRelease {
-                spaces: Some(spaces.clone()),
-            },
-        );
+        let f = Facts {
+            spaces_takes_channel: Some(true),
+            ..facts(
+                Platform::Mac,
+                Install::MacRelease {
+                    spaces: Some(spaces.clone()),
+                },
+            )
+        };
         let dev = Options {
             channel: Some(Channel::Dev),
             ..YES
