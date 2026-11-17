@@ -271,9 +271,9 @@ extension HandsRouter {
                 return MoveState(agentWorkspace: agent, window: w, scope: scope, agentShown: workspaceShown(agent), sourceShown: workspaceShown(w.workspace))
             }
             if let e = WorkspaceVerbs.moveRefusal(window: w, scope: scope, agentWorkspace: before.agentWorkspace, agentShown: before.agentShown, sourceShown: before.sourceShown) { return .failure(e) }
-            // Framing a window on the agent workspace while a display shows it changes what Donovan sees (review F1).
-            let reframing = "framing window \(w.id) of \(w.app) on the agent workspace while a display shows it"
-            if req.string("frame") != nil, before.agentShown, let e = viewRefusal(reframing) { return .failure(e) }
+            // Framing a window on the agent workspace while a display shows it waits, with view control or without (review F1, r2 first-F1).
+            let reframing = "framing window \(w.id) of \(w.app) on the agent workspace"
+            if req.string("frame") != nil, before.agentShown { return .failure(ViewControl.notWhileShown(reframing)) }
             if let e = awaitUse(w, verb: "move", delivery: .posted, wait: req.int("wait"), session: session) { return .failure(e) }
             if let e = actingCheck(w, verb: "move", delivery: .posted, session: session)() { return .failure(e) }
             // After the wait: the agent workspace, the live window, its scope and whether it is shown, read together on the
@@ -290,7 +290,7 @@ extension HandsRouter {
                     ?? .denied(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows`.", retry: .afterSnapshot))
                 let after = MoveState(agentWorkspace: agent, window: live, scope: now, agentShown: workspaceShown(agent), sourceShown: workspaceShown(live?.workspace))
                 let r = MoveDecision.decide(before: before, after: after)
-                if case .success = r, relative != nil, after.agentShown, let e = viewRefusal(reframing) { return .failure(e) }
+                if case .success = r, relative != nil, after.agentShown { return .failure(ViewControl.notWhileShown(reframing)) }
                 if case .success(let go) = r, go.moves, let live, let from = live.workspace {
                     // What it may do there ends with the lend or Full Access that let it move, and then it goes back.
                     let origin = MovedInWindows.origin(scope: now, agentOwned: host.agentOwned().contains(live.pid))
