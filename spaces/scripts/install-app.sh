@@ -69,6 +69,15 @@ if [ "$IN_PLACE" = 0 ] && [ -z "$TEST" ]; then
   # Quit by bundle ID so the app brings every hidden window back before it exits.
   osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
   for _ in $(seq 1 50); do app_is_running || break; sleep 0.2; done
+  # Over SSH osascript has no Automation permission and fails silently, so the app never hears the quit. SIGTERM reaches it
+  # anyway, and the app takes it as a menu quit (`NSApp.terminate`): every window and the Dock come back first. Only the
+  # app's own process, never a `--restart-when-safe` helper.
+  if app_is_running; then
+    { pgrep -f "$DEST/Contents/MacOS/$EXECUTABLE" 2>/dev/null || true; } | while read -r pid; do
+      ps -o args= -p "$pid" 2>/dev/null | grep -q -- --restart-when-safe || kill -TERM "$pid" 2>/dev/null || true
+    done
+    for _ in $(seq 1 50); do app_is_running || break; sleep 0.2; done
+  fi
   # A helper from a build that ran it as the app makes `open` fail with -600 while it waits. Builds since run it as the
   # command-line tool, which doesn't. The new app restarts the Dock itself if that's still owed.
   # pgrep finds nothing in the normal case, and under pipefail that must not end the install with the old app already gone.
