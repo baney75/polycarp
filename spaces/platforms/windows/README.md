@@ -82,8 +82,10 @@ is hidden again within a poll, keeping the position it will be restored to.
   handle, pid, process start time and class) and the shown workspace back on each monitor. A daemon that dies
   within 5 s of starting three times in a row is not started again (the log says "not starting the daemon
   again"); every window stays shown. The crash history is `watchdog.json`. `BANEYSPACES_WATCHDOG=0` turns it
-  off. Like GlazeWM's `wm-watcher` it is a separate process that restores on exit; unlike it, it also brings the
-  daemon back, as komorebi's reaper and reconciliator recover windows inside one process.
+  off. Like GlazeWM's `wm-watcher` it is a separate process that shows every window when the manager dies;
+  unlike it, it also starts the daemon again with each window on its workspace. komorebi's reaper (drops destroyed
+  windows) and monitor reconciliator (display changes) run inside its one process; after a hard kill its hidden
+  windows stay hidden until you run `komorebic restore-windows`.
   Checked on a runner (`windows-safety.yml`): 20 kills mid-switch, a crash loop, 5 explorer.exe restarts.
 - **Agent windows are the exception.** They belong off your screen, so after a restart they stay ghosted while
   their process (pid and start time) still runs. If it is gone they are shown, never lost. The daemon does
