@@ -33,6 +33,17 @@
       "description": "Show or hide the agent workspace."
     }
   },
+  "key_names": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "space", "return", "tab", "escape", "delete", "forwarddelete", "left", "right", "up", "down", "home", "end", "pageup", "pagedown", "grave", "minus", "equal", "leftbracket", "rightbracket", "backslash", "semicolon", "quote", "comma", "period", "slash"],
+  "chord_note": "A chord is modifiers then one key, joined by +: mod, cmd, ctrl, alt, shift, super, win, then a key name above. mod is the workspace modifier. A chord needs cmd, ctrl, alt, super or win (an F key may go bare), so it never takes a plain key from every app.",
+  "macos_actions": {
+    "switch {n}": "Go to workspace n.",
+    "move {n}": "Send the front window to workspace n and follow it.",
+    "launcher": "Open or close the launcher.",
+    "search": "Open the launcher to search, from any app.",
+    "agent finished": "Go to the agent that finished.",
+    "overview": "Show the overview.",
+    "none": "Unbind the chord."
+  },
   "platforms": {
     "macos": {
       "switch": "cmd+{n}",
@@ -41,7 +52,9 @@
       "overview": "ctrl+up",
       "agent_toggle": "cmd+9",
       "alternates": "Setup can swap cmd for ctrl, alt or ctrl+alt.",
-      "agent_workspace": "workspace 9, when agent mode is on"
+      "agent_workspace": "workspace 9, when agent mode is on",
+      "recovery": "cmd+shift+escape",
+      "keymap_file": "spaces.toml in the Polycarp config folder (~/.config/polycarp, or $POLYCARP_CONFIG_DIR)"
     },
     "linux": {
       "switch": "SUPER + {key}",
