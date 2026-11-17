@@ -1407,17 +1407,17 @@ mod pipe {
 /// with the core held: a client that subscribes and never reads must not stall the daemon.
 fn subscribe(shared: &Shared, peer: u32, mut pipe: Pipe) {
     let c = lock(shared);
-    let state = (!peer_is_agent(&c, peer)).then(|| c.shell_line());
-    let feed = c.feed.clone();
-    drop(c);
-    let Some(state) = state else {
-        let env = Envelope::err("not_in_scope", "subscribe is for your shell, not an agent: it was refused", Retry::Never, "Agents read `state` instead.");
-        let _ = writeln!(pipe, "{}", env.to_json());
+    if !peer_is_agent(&c, peer) {
+        // Handed over with the core held, so no change can publish between the state read here and the feed taking
+        // it: the new shell never starts on a state older than the feed's last. The feed's channel never blocks.
+        if let Some(feed) = &c.feed {
+            feed(crate::feed::FeedMsg::Greet(pipe, Envelope::ok(json!({ "subscribed": true })).to_json(), c.shell_line()));
+        }
         return;
-    };
-    if let Some(feed) = feed {
-        feed(crate::feed::FeedMsg::Greet(pipe, Envelope::ok(json!({ "subscribed": true })).to_json(), state));
     }
+    drop(c);
+    let env = Envelope::err("not_in_scope", "subscribe is for your shell, not an agent: it was refused", Retry::Never, "Agents read `state` instead.");
+    let _ = writeln!(pipe, "{}", env.to_json());
 }
 
 /// One request, one answer. Anything that is not a JSON object is refused; the peer is what the pipe says.
