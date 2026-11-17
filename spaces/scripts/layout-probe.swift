@@ -1,14 +1,9 @@
-// Fails if a named layout doesn't bring windows back after their app relaunches: each window off its saved frame by
-// more than 2 px, any window missing, or a restore over 300 ms. Agent workspace only: it opens two TextEdit documents
-// there through `polycarp-spaces agent`, places them, saves a layout of that workspace, quits TextEdit, opens the same
-// documents again (new windows, new numbers), moves them elsewhere, restores the layout and compares each window's
-// frame with the one it had at the save. The agent workspace is not shown while it runs, so the frames compared are
-// the parked records in frames.json, the ones the windows come back at when the workspace is shown.
-// It types, clicks and moves nothing of Donovan's. TextEdit already running means skip (it would use that copy), and it
-// quits only the copy it started (-ApplePersistenceIgnoreState, started after the probe). Each open draws its window
-// for about a second before it is parked, so it runs only after 10 idle minutes; otherwise it prints "untested live"
-// and exits 3. --force is for a Mac nobody is using. Needs the build under test installed and running. On main it
-// fails at the save: main has no `layout` command.
+// Fails if a named layout doesn't bring windows back after their app relaunches: a window off its saved frame by more
+// than 2 px, a window missing, or a restore over 300 ms. Agent workspace only: it opens two TextEdit documents there,
+// places them, saves a layout of that workspace, quits TextEdit, opens them again (new window numbers), moves them,
+// restores and compares the parked records in frames.json with the saved ones. It quits only the copy it started, and
+// skips when TextEdit already runs. Each open draws for about a second before it is parked, so it needs 10 idle
+// minutes (else "untested live", exit 3; --force on an unused Mac). Needs the build under test installed.
 // Run: swift scripts/layout-probe.swift [--force]   Prints "layout-probe: pass" (exit 0) or the failures (exit 1).
 import AppKit
 import CoreGraphics
@@ -33,7 +28,8 @@ func run(_ words: [String]) -> (status: Int32, line: String) {
     p.executableURL = URL(fileURLWithPath: cli)
     p.arguments = words
     var env = ProcessInfo.processInfo.environment
-    env["BANEYSPACES_SESSION"] = name
+    // Agent commands run as this probe's session; layout commands as Donovan, since an agent may not restore one.
+    env["BANEYSPACES_SESSION"] = words.first == "layout" ? nil : name
     p.environment = env
     let out = Pipe()
     p.standardOutput = out

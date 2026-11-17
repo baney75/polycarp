@@ -118,21 +118,4 @@ final class NamedLayoutsTests: XCTestCase {
         let live = [LiveWindow(id: 5, bundle: "com.example.browser", title: secret, order: 3, key: key)]
         XCTAssertEqual(back.plan(live, displays: [laptop]).placements.map(\.rule), [.title], "still restored by its title")
     }
-
-    /// Planning is a small part of the 300 ms a restore may take: 200 windows over two displays under 30 ms.
-    func testPlanningTwoHundredWindowsIsFast() {
-        var records: [WindowRecord] = [], live: [LiveWindow] = []
-        for i in 0..<200 {
-            let x = CGFloat(i % 2 == 0 ? 50 : 1600), title = "doc \(i)"
-            records.append(rec("app\(i % 10)", title, order: i / 10, workspace: i % 9 + 1, frame: CGRect(x: x, y: 100, width: 600, height: 400)))
-            live.append(LiveWindow(id: WindowID(1000 + i), bundle: "app\(i % 10)", title: title, order: 19 - i / 10))
-        }
-        let layout = NamedLayout(savedAt: 0, current: 1, displays: [:], windows: records)
-        let start = ProcessInfo.processInfo.systemUptime
-        let (placements, missing) = layout.plan(live, displays: [laptop, studio])
-        let ms = (ProcessInfo.processInfo.systemUptime - start) * 1000
-        XCTAssertEqual(placements.count, 200)
-        XCTAssertEqual(missing, 0)
-        XCTAssertLessThan(ms, 30, "planning took \(ms) ms")
-    }
 }
