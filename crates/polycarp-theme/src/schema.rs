@@ -287,10 +287,10 @@ pub fn schema() -> Json {
         "x-contrast": rules,
         "x-code-contrast": code_rules,
         "x-paths": {
-            "form": "<section>.<key> or surface.<product>.<section>.<key>",
+            "form": "<section>.<key>, <mode>.<group>.<key> (group is terminal, syntax or diff), or either one after surface.<product>.",
             "sections": SECTIONS,
             "products": SURFACES,
-            "examples": ["dark.accent", "shape.radius", "type.mono", "motion.easing", "surface.site.light.accent"]
+            "examples": ["dark.accent", "shape.radius", "type.mono", "motion.easing", "surface.site.light.accent", "dark.syntax.comment", "surface.studio.dark.terminal.blue"]
         },
         "examples": [{
             "name": "warmer",

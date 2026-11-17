@@ -4548,7 +4548,7 @@ fn current_json(b: &Box) -> Value {
 }
 
 /// A theme that sets no code colors gets every one derived, for every product, in `theme.json`
-/// schema 2. One it sets is kept, and `get` reaches them by path.
+/// schema 2. One it sets is kept, and `get` and `change` reach them by path.
 #[test]
 fn a_theme_without_code_sections_derives_them() {
     let b = Box::new();
@@ -4589,6 +4589,18 @@ fn a_theme_without_code_sections_derives_them() {
         keyword.as_str().is_some_and(|c| c.starts_with('#')),
         "{keyword}"
     );
+    b.ok(&["change", "surface.studio.dark.terminal.red", "#FFA198"]);
+    let v = current_json(&b);
+    assert_eq!(
+        v["surfaces"]["studio"]["dark"]["terminal"]["red"],
+        "#ffa198"
+    );
+    assert_eq!(
+        v["surfaces"]["spaces"]["dark"]["terminal"]["red"],
+        "#ff7b72"
+    );
+    let e = b.refused(&["change", "dark.terminal.purple", "#ff00ff"]);
+    assert!(e.contains("\"purple\" is not a field of terminal"), "{e}");
 }
 
 /// A syntax color that does not read on the background is refused with its path and the ratio
