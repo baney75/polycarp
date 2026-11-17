@@ -27,6 +27,8 @@ mod cloak;
 #[cfg(windows)]
 mod daemon;
 #[cfg(windows)]
+mod desk;
+#[cfg(windows)]
 mod hook;
 #[cfg(windows)]
 mod winapi;
