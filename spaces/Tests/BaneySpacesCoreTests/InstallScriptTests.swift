@@ -198,6 +198,10 @@ final class InstallScriptTests: XCTestCase {
         let cli = try read("Sources/baneyspaces-cli/main.swift")
         XCTAssertLessThan(try index(of: #"_ = ask("channel \(channel.rawValue)")"#, in: cli), try index(of: #"let before = ask("check")"#, in: cli))
         XCTAssertTrue(updater.contains(#"if what.hasPrefix("channel ")"#))
+        // `polycarp update --channel` runs `polycarp-spaces update --help` and passes --channel only when the
+        // usage names it; an app from before the channels prints a usage without it.
+        XCTAssertTrue(cli.contains(#"let usage = "usage: \(me) update --check|--now [--channel stable|nightly|dev]""#))
+        XCTAssertTrue(cli.contains(#"if rest == ["--help"] { out(usage); exit(0) }"#))
         // A check still running for the old channel never answers for the new one, so `update --now --channel dev`
         // can't install the old channel's build.
         let stale = "guard channel == self.channel else"
