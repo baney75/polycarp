@@ -4734,7 +4734,10 @@ fn apps_are_left_alone_until_turned_on() {
         .iter()
         .map(|a| a["app"].clone())
         .collect();
-    assert_eq!(names, ["ghostty", "neovim", "btop"]);
+    assert_eq!(
+        names,
+        ["ghostty", "neovim", "btop", "zed", "windows-terminal"]
+    );
     assert!(apps.as_array().unwrap().iter().all(|a| a["on"] == false));
     let o = b.run(&["theme", "apps", "kitty", "on"]);
     assert_eq!(code(&o), 2);
@@ -4877,6 +4880,55 @@ fn neovim_and_btop_get_the_accent_and_the_terminal_colors() {
     let mut left = Vec::new();
     files_under(&b.root.join("home"), &mut left);
     assert!(left.is_empty(), "{left:?}");
+}
+
+#[test]
+fn zed_and_windows_terminal_get_themes_named_for_each_mode() {
+    let b = Box::new();
+    let zed_dir = b.app_file("zed/themes");
+    fs::create_dir_all(&zed_dir).unwrap();
+    fs::write(zed_dir.join("mine.json"), "{}").unwrap();
+    b.ok(&["set", "evening"]);
+    b.ok(&["accent", "#3a8f6a"]);
+    b.ok(&["apps", "zed", "on"]);
+    b.ok(&["apps", "windows-terminal", "on"]);
+    let read = |p: PathBuf| -> Value { serde_json::from_slice(&fs::read(p).unwrap()).unwrap() };
+    let zed = read(zed_dir.join("polycarp.json"));
+    let wt_file = b
+        .root
+        .join("home/AppData/Local/Microsoft/Windows Terminal/Fragments/Polycarp/polycarp.json");
+    let wt = read(wt_file.clone());
+    for (i, m) in ["light", "dark"].iter().enumerate() {
+        let accent = b.get(&format!("{m}.accent"));
+        let title = if *m == "light" { "Light" } else { "Dark" };
+        let z = &zed["themes"][i];
+        assert_eq!(z["name"], format!("Polycarp {title}"));
+        assert_eq!(z["appearance"], *m);
+        assert_eq!(z["style"]["players"][0]["cursor"], accent);
+        assert_eq!(z["style"]["text.accent"], accent);
+        let comment = b.get(&format!("{m}.syntax.comment"));
+        assert_eq!(z["style"]["syntax"]["comment"]["color"], comment);
+        let w = &wt["schemes"][i];
+        assert_eq!(w["name"], format!("Polycarp {title}"));
+        assert_eq!(w["cursorColor"], b.get(&format!("{m}.terminal.cursor")));
+        for k in ANSI {
+            let want = b.get(&format!("{m}.terminal.{k}"));
+            assert_eq!(
+                z["style"][format!("terminal.ansi.{k}")],
+                want,
+                "zed {m} {k}"
+            );
+            let wk = match k.replace("magenta", "purple").strip_prefix("bright_") {
+                Some(r) => format!("bright{}{}", r[..1].to_uppercase(), &r[1..]),
+                None => k.replace("magenta", "purple"),
+            };
+            assert_eq!(w[&wk], want, "terminal {m} {wk}");
+        }
+    }
+    b.ok(&["off"]);
+    assert!(!zed_dir.join("polycarp.json").exists());
+    assert!(!wt_file.exists());
+    assert_eq!(fs::read(zed_dir.join("mine.json")).unwrap(), b"{}");
 }
 
 #[test]

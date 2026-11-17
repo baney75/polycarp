@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use toml::{Table, Value};
 
-pub(super) const APPS: [&str; 3] = ["ghostty", "neovim", "btop"];
+pub(super) const APPS: [&str; 5] = ["ghostty", "neovim", "btop", "zed", "windows-terminal"];
 
 const ANSI: [&str; 16] = [
     "black",
@@ -37,26 +37,40 @@ const ANSI: [&str; 16] = [
 
 const GHOSTTY_LINE: &str = "theme = light:polycarp-light,dark:polycarp-dark";
 
+fn var(k: &str) -> Option<PathBuf> {
+    env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
 /// Where apps keep their settings. `POLYCARP_APPS_HOME` stands in for the home folder, so tests
-/// and agents never touch a person's real app settings.
+/// and agents never touch a person's real app settings; under it the Windows folders are
+/// `AppData/Local` and `AppData/Roaming`.
 fn config_home() -> Option<PathBuf> {
-    let set = |k: &str| env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-    if let Some(h) = set("POLYCARP_APPS_HOME") {
+    if let Some(h) = var("POLYCARP_APPS_HOME") {
         return Some(h.join(".config"));
     }
     if cfg!(windows) {
-        return set("LOCALAPPDATA");
+        return var("LOCALAPPDATA");
     }
-    set("XDG_CONFIG_HOME").or_else(|| set("HOME").map(|h| h.join(".config")))
+    var("XDG_CONFIG_HOME").or_else(|| var("HOME").map(|h| h.join(".config")))
 }
 
 /// The app's settings folder, or None where it does not run.
 fn app_dir(app: &str) -> Option<PathBuf> {
-    let base = config_home()?;
-    let override_set = env::var_os("POLYCARP_APPS_HOME").is_some_and(|v| !v.is_empty());
+    let over = var("POLYCARP_APPS_HOME");
+    let windows = cfg!(windows) && over.is_none();
     match app {
-        "neovim" => Some(base.join("nvim")),
-        "ghostty" | "btop" if override_set || !cfg!(windows) => Some(base.join(app)),
+        "neovim" => Some(config_home()?.join("nvim")),
+        "ghostty" | "btop" if !windows => Some(config_home()?.join(app)),
+        "zed" if windows => Some(var("APPDATA")?.join("Zed")),
+        "zed" => Some(config_home()?.join("zed")),
+        "windows-terminal" => {
+            let local = match over {
+                Some(h) => h.join("AppData").join("Local"),
+                None if cfg!(windows) => var("LOCALAPPDATA")?,
+                None => return None,
+            };
+            Some(local.join("Microsoft/Windows Terminal/Fragments/Polycarp"))
+        }
         _ => None,
     }
 }
@@ -169,8 +183,140 @@ fn files(app: &str, dir: &Path, full: &Full, mode: &str) -> Vec<(PathBuf, String
             s.push_str(NVIM_BODY);
             vec![(dir.join("colors").join("polycarp.lua"), s)]
         }
+        "zed" => {
+            let themes: Vec<Json> = p
+                .iter()
+                .map(|(m, c, t, code)| zed_theme(m, c, t, code))
+                .collect();
+            let doc = json!({
+                "$schema": "https://zed.dev/schema/themes/v0.2.0.json",
+                "name": "Polycarp",
+                "author": "Polycarp",
+                "themes": themes,
+            });
+            let mut s = format!("{doc:#}\n");
+            // Zed's theme files are JSON, which has no comments, so the note is a field.
+            s.insert_str(1, &format!("\n  \"$comment\": {},", json!(head("").trim())));
+            vec![(dir.join("themes").join("polycarp.json"), s)]
+        }
+        // A fragment Windows Terminal reads at start; its schemes join the user's own.
+        "windows-terminal" => {
+            let schemes: Vec<Json> = p
+                .iter()
+                .map(|(m, _, t, _)| {
+                    let mut o = serde_json::Map::new();
+                    o.insert("name".into(), json!(format!("Polycarp {}", title(m))));
+                    for (k, v) in [
+                        ("background", "background"),
+                        ("foreground", "foreground"),
+                        ("cursorColor", "cursor"),
+                        ("selectionBackground", "selection"),
+                    ] {
+                        o.insert(k.into(), json!(t[v]));
+                    }
+                    for k in ANSI {
+                        o.insert(wt_name(k), json!(t[k]));
+                    }
+                    Json::Object(o)
+                })
+                .collect();
+            let doc = json!({"schemes": schemes});
+            let mut s = format!("{doc:#}\n");
+            s.insert_str(1, &format!("\n  \"$comment\": {},", json!(head("").trim())));
+            vec![(dir.join("polycarp.json"), s)]
+        }
         _ => Vec::new(),
     }
+}
+
+fn title(mode: &str) -> &'static str {
+    if mode == "light" {
+        "Light"
+    } else {
+        "Dark"
+    }
+}
+
+/// Windows Terminal's name for a terminal color: `bright_magenta` is `brightPurple`.
+fn wt_name(k: &str) -> String {
+    let k = k.replace("magenta", "purple");
+    match k.strip_prefix("bright_") {
+        Some(rest) => format!("bright{}{}", rest[..1].to_uppercase(), &rest[1..]),
+        None => k,
+    }
+}
+
+/// One theme of Zed's theme family.
+fn zed_theme(mode: &str, c: &Colors, t: &Colors, code: &Code) -> Json {
+    let mut style = serde_json::Map::new();
+    let mut put = |k: &str, v: &str| {
+        style.insert(k.into(), json!(v));
+    };
+    for (k, role) in [
+        ("background", "background"),
+        ("surface.background", "surface"),
+        ("elevated_surface.background", "surface"),
+        ("panel.background", "surface"),
+        ("editor.background", "background"),
+        ("editor.gutter.background", "background"),
+        ("editor.active_line.background", "sunken"),
+        ("editor.foreground", "foreground"),
+        ("editor.line_number", "muted"),
+        ("editor.active_line_number", "accent"),
+        ("tab_bar.background", "sunken"),
+        ("tab.active_background", "background"),
+        ("tab.inactive_background", "sunken"),
+        ("title_bar.background", "sunken"),
+        ("status_bar.background", "sunken"),
+        ("toolbar.background", "background"),
+        ("border", "border"),
+        ("border.variant", "border"),
+        ("border.focused", "accent"),
+        ("element.background", "surface"),
+        ("element.hover", "sunken"),
+        ("element.selected", "selection"),
+        ("ghost_element.hover", "sunken"),
+        ("ghost_element.selected", "selection"),
+        ("text", "foreground"),
+        ("text.muted", "muted"),
+        ("text.placeholder", "muted"),
+        ("text.accent", "accent"),
+        ("icon", "foreground"),
+        ("icon.muted", "muted"),
+        ("icon.accent", "accent"),
+        ("error", "urgent"),
+        ("warning", "working"),
+        ("success", "done"),
+        ("info", "accent"),
+    ] {
+        put(k, &c[role]);
+    }
+    put("terminal.background", &t["background"]);
+    put("terminal.foreground", &t["foreground"]);
+    for k in ANSI {
+        put(&format!("terminal.ansi.{k}"), &t[k]);
+    }
+    let diff = &code["diff"];
+    put("created", &diff["added"]);
+    put("deleted", &diff["removed"]);
+    put("modified", &diff["modified"]);
+    put("version_control.added", &diff["gutter_added"]);
+    put("version_control.deleted", &diff["gutter_removed"]);
+    put("version_control.modified", &diff["modified"]);
+    let syntax: serde_json::Map<String, Json> = code["syntax"]
+        .iter()
+        .map(|(k, v)| (k.clone(), json!({ "color": v })))
+        .collect();
+    style.insert("syntax".into(), Json::Object(syntax));
+    style.insert(
+        "players".into(),
+        json!([{"cursor": c["accent"], "background": c["accent"], "selection": c["selection"]}]),
+    );
+    json!({
+        "name": format!("Polycarp {}", title(mode)),
+        "appearance": mode,
+        "style": style,
+    })
 }
 
 const NVIM_BODY: &str = r#"}
