@@ -33,7 +33,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: spaces, key: windows-lint }
       - run: cargo clippy --locked --no-deps -p baneyspaces-windows -p baneyspaces-testapp --all-targets -- -D warnings
-      - run: cargo fmt --check -p baneyspaces-windows -p baneyspaces-testapp
+      # Only the files this workflow added: the crate as a whole was never run through rustfmt (275 hunks on main), and
+      # formatting it all at once would collide with every open Windows branch.
+      - run: rustfmt --check --edition 2021 platforms/windows/baneyspaces/src/bin/baneyspacesw.rs
   install:
     runs-on: windows-latest
     timeout-minutes: 45

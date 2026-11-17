@@ -6,7 +6,7 @@
 # builder to accept an end-user license tied to a paid maintenance fee, so the version is pinned below 6.
 #
 # Writes DIR\Polycarp-<version>-x64.msi and DIR\winget\ (the three manifest files from winget\, with the MSI's real
-# SHA-256 and, when -UrlBase is given, InstallerUrl set to UrlBase/<msi file name>). The version is baneyspaces-windows' Cargo.toml version; the
+# SHA-256 and ProductCode and, when -UrlBase is given, InstallerUrl set to UrlBase/<msi file name>). The version is baneyspaces-windows' Cargo.toml version; the
 # manifests in winget\ must carry the same one.
 #
 # Unsigned. Signing costs money, so there is a hook and no certificate: when POLYCARP_SIGN is set to a script path,
@@ -56,17 +56,29 @@ $msi = Join-Path $Out "Polycarp-$version-x64.msi"
 Run wix @('build', "$here\Polycarp.wxs", '-arch', 'x64', '-d', "Version=$version", '-d', "BinDir=$bin", '-d', "SourceDir=$spaces", '-o', $msi)
 Sign $msi
 $sha = (Get-FileHash $msi -Algorithm SHA256).Hash
+# WiX makes a new ProductCode for every build; winget matches the installed package to the manifest by it.
+$wi = New-Object -ComObject WindowsInstaller.Installer
+$db = $wi.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $wi, @($msi, 0))
+$view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @("SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductCode'"))
+$null = $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
+$rec = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+$productCode = $rec.GetType().InvokeMember('StringData', 'GetProperty', $null, $rec, @(1))
+$null = $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null)
+[void][Runtime.InteropServices.Marshal]::ReleaseComObject($db)
+if ($productCode -notmatch '^\{[0-9A-F-]{36}\}$') { throw "no ProductCode in $msi ($productCode)" }
 
 $wg = Join-Path $Out 'winget'
 New-Item -ItemType Directory -Force $wg | Out-Null
 foreach ($f in Get-ChildItem "$here\winget\*.yaml") {
     $text = Get-Content $f.FullName -Raw
     $text = $text -replace '(?m)^(\s*InstallerSha256: )[0-9A-Fa-f]{64}', "`${1}$sha"
+    $text = $text -replace "(?m)^(\s*ProductCode: ).*$", "`${1}'$productCode'"
     if ($UrlBase) { $text = $text -replace '(?m)^(\s*InstallerUrl: ).*$', "`${1}$($UrlBase.TrimEnd('/'))/$(Split-Path $msi -Leaf)" }
     # The template's note about the placeholder hash does not belong in a filled-in manifest.
-    $text = ($text -split "`n" | Where-Object { $_ -notmatch '^# (build-msi|The all-zero)' }) -join "`n"
+    $text = ($text -split "`n" | Where-Object { $_ -notmatch '^# (build-msi|The all-zero|needs it)' }) -join "`n"
     Set-Content -Path (Join-Path $wg $f.Name) -Value $text -NoNewline -Encoding utf8NoBOM
 }
 "msi: $msi"
 "sha256: $sha"
+"product code: $productCode"
 "winget manifest: $wg"
