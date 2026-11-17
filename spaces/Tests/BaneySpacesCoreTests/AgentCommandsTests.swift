@@ -61,6 +61,27 @@ final class AgentCommandsTests: XCTestCase {
         XCTAssertTrue(AgentCommands.changesView(from: 1, to: 9, agentWorkspace: 9, shown: [1]), "from under him")
         XCTAssertTrue(AgentCommands.changesView(from: 9, to: 4, agentWorkspace: 9, shown: [1]), "onto one of his workspaces")
         XCTAssertTrue(AgentCommands.changesView(from: 9, to: 9, agentWorkspace: nil, shown: []), "no agent workspace")
+        XCTAssertTrue(AgentCommands.changesView(from: 1, to: 9, agentWorkspace: 9, shown: [1, 2]), "review F1: off a workspace he sees")
+        XCTAssertTrue(AgentCommands.changesView(from: nil, to: 9, agentWorkspace: 9, shown: []), "a window with no workspace")
+    }
+
+    /// Review F1: `move --window <a window on his workspace> --workspace 9` under Full Access with view control off never
+    /// takes it from under him, and `move --frame` on the agent workspace while a display shows it needs view control.
+    func testMoveNeverChangesAWorkspaceHeSeesWithoutViewControl() throws {
+        let his = HandsWindow(id: 77, pid: 300, app: "Mail", bundle: "com.apple.mail", title: "Inbox", workspace: 1)
+        let e = try XCTUnwrap(WorkspaceVerbs.moveRefusal(window: his, scope: .fullAccess, agentWorkspace: 9, agentShown: false, sourceShown: true))
+        XCTAssertEqual(e.code, .inUse)
+        XCTAssertEqual(e.retry, .safe)
+        let mine = HandsWindow(id: 4211, pid: 901, app: "TextEdit", bundle: "com.apple.TextEdit", title: "Untitled", workspace: 9)
+        XCTAssertNil(WorkspaceVerbs.moveRefusal(window: mine, scope: .onAgentWorkspace, agentWorkspace: 9, agentShown: true, sourceShown: true),
+                     "the old rule lets a reframe through on a shown agent workspace, so the router checks view control for it")
+        let router = try Repo.text("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
+        XCTAssertTrue(router.contains("if req.string(\"frame\") != nil, before.agentShown, let e = viewRefusal(reframing) { return .failure(e) }"))
+        XCTAssertTrue(router.contains("if case .success = r, relative != nil, after.agentShown, let e = viewRefusal(reframing) { return .failure(e) }"),
+                      "checked again in the pass that frames")
+        let commands = try Repo.text("Sources/BaneySpaces/Hands/HandsRouter+Commands.swift")
+        XCTAssertTrue(commands.contains("let what = \"moving window \\(w.id) of \\(w.app) to workspace \\(n)\"\n        if let e = viewRefusal(what) { return .failure(e) }"),
+                      "any other workspace always needs view control")
     }
 
     /// The router builds each answer from `place`; every shape validates against the schema.
@@ -108,5 +129,34 @@ final class AgentCommandsTests: XCTestCase {
         XCTAssertEqual(Set(naming), ["BaneySpacesCore/AgentCommands.swift", "BaneySpaces/Hands/AgentAccess.swift"])
         XCTAssertTrue(try Repo.text("Sources/BaneySpaces/AppDelegate.swift").contains("viewControl: { ViewControlSetting.shared.enabled }"))
         XCTAssertTrue(try Repo.text("Sources/BaneySpaces/Setup.swift").contains("ViewControlSetting.shared.set($0)"))
+    }
+
+    /// Review F2: what `defaults write com.baney.polycarp agentViewControl -bool true` (or a hand edit of the plist, or a
+    /// seal saved before a turn-off) leaves in the app's defaults reads as off. Only the seal under the live key is on.
+    func testADefaultsWriteLeavesViewControlOff() throws {
+        let suite = "polycarp-view-control-test-\(UUID().uuidString)"
+        let d = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { d.removePersistentDomain(forName: suite) }
+        let key = ViewControl.newKey(), earlier = ViewControl.newKey()
+        let written: [Any] = [true, 1, "true", "on", "YES", ViewControl.seal(key: earlier), Data(ViewControl.seal(key: key).utf8)]
+        for value in written {
+            d.set(value, forKey: ViewControl.defaultsKey)
+            XCTAssertFalse(ViewControl.isOn(d.object(forKey: ViewControl.defaultsKey), key: key), "\(value)")
+        }
+        d.set(ViewControl.seal(key: key), forKey: ViewControl.defaultsKey)
+        XCTAssertTrue(ViewControl.isOn(d.object(forKey: ViewControl.defaultsKey), key: key))
+        XCTAssertFalse(ViewControl.isOn(d.object(forKey: ViewControl.defaultsKey), key: nil), "no Keychain key is off")
+        XCTAssertFalse(ViewControl.isOn(d.object(forKey: ViewControl.defaultsKey), key: Data()), "an empty key is off")
+        XCTAssertNotEqual(key, earlier)
+    }
+
+    /// Review F2: the app reads the setting only through the seal, and turning it off drops the key.
+    func testTheAppReadsViewControlOnlyThroughTheSeal() throws {
+        let text = try Repo.text("Sources/BaneySpaces/Hands/AgentAccess.swift")
+        XCTAssertFalse(text.contains("bool(forKey: ViewControl.defaultsKey)"), "a plain bool is what `defaults write` sets")
+        XCTAssertTrue(text.contains("on = stored != nil && ViewControl.isOn(stored, key: ViewControlKey.read())"))
+        XCTAssertTrue(text.contains("UserDefaults.standard.set(ViewControl.seal(key: key), forKey: ViewControl.defaultsKey)"))
+        XCTAssertTrue(text.contains("UserDefaults.standard.removeObject(forKey: ViewControl.defaultsKey)\n            ViewControlKey.delete()"))
+        XCTAssertTrue(text.contains("noPrompt.interactionNotAllowed = true"), "a launch never shows a Keychain prompt")
     }
 }

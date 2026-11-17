@@ -1,4 +1,5 @@
 import CoreGraphics
+import CryptoKit
 import Foundation
 
 /// The agent API's commands that change what Donovan sees (spec/agent-api.md, "View control"): `switch`, `focus`, and
@@ -8,6 +9,23 @@ public enum ViewControl {
     /// The app's own defaults key (com.baney.polycarp), off unless Donovan turns it on. No agent command writes it.
     public static let defaultsKey = "agentViewControl"
     public static let settingTitle = "Agents may change what you see"
+
+    /// The stored value when the switch is on: an HMAC-SHA256 under a key only the app holds (its own Keychain item),
+    /// base64. Any other value, a plain `true` from `defaults write` included, reads as off.
+    public static func seal(key: Data) -> String {
+        Data(HMAC<SHA256>.authenticationCode(for: Data(sealed.utf8), using: SymmetricKey(data: key))).base64EncodedString()
+    }
+
+    /// Whether `stored` is the seal under `key`. A missing key, a missing or non-string value, or a wrong MAC is off.
+    public static func isOn(_ stored: Any?, key: Data?) -> Bool {
+        guard let key, !key.isEmpty, let text = stored as? String, let mac = Data(base64Encoded: text) else { return false }
+        return HMAC<SHA256>.isValidAuthenticationCode(mac, authenticating: Data(sealed.utf8), using: SymmetricKey(data: key))
+    }
+
+    /// A fresh key for each time the switch is turned on, so a seal saved before a turn-off never verifies again.
+    public static func newKey() -> Data { SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) } }
+
+    static let sealed = "com.baney.polycarp agentViewControl on"
 
     /// Why `what` can't change the view, or nil when all three hold. The message names the first one missing.
     public static func refusal(_ what: String, access: AgentAccessMode, enabled: Bool, remote: Bool) -> HandsError? {

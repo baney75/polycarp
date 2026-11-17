@@ -1,5 +1,7 @@
 import AppKit
 import BaneySpacesCore
+import LocalAuthentication
+import Security
 
 /// The agent access mode Donovan picked (Settings > Agents), read by the hands on any thread. Only `set`, called
 /// from Settings or the menu after `AccessConsent` when it widens access, changes it; nothing on the socket and no
@@ -82,14 +84,24 @@ final class AgentAccess {
 }
 
 /// Donovan's "Agents may change what you see" (`ViewControl`). Like the access mode it is read once at launch and changed
-/// only from Settings, so a `defaults write` by another process takes effect at the next launch at the earliest, and is
-/// logged then. Polycarp's own windows are never an agent's, so no agent can click the switch.
+/// only from Settings. The stored value is sealed (`ViewControl.seal`) under a key in the app's own Keychain item, so a
+/// `defaults write`, a hand edit of the plist or a value copied from an earlier turn-on reads as off. Turning it off
+/// deletes the key; turning it on makes a new one. Polycarp's own windows are never an agent's, so no agent clicks it.
 final class ViewControlSetting {
     static let shared = ViewControlSetting()
     private let lock = NSLock()
-    private var on = UserDefaults.standard.bool(forKey: ViewControl.defaultsKey)
+    private var on: Bool
 
-    private init() { if on { Trace.log("agent view control at launch: on (saved in Settings)") } }
+    private init() {
+        let stored = UserDefaults.standard.object(forKey: ViewControl.defaultsKey)
+        // No stored value, no Keychain read: a launch with the switch off never touches the Keychain.
+        on = stored != nil && ViewControl.isOn(stored, key: ViewControlKey.read())
+        if on {
+            Trace.log("agent view control at launch: on (sealed in Settings)")
+        } else if stored != nil {
+            Trace.log("agent view control at launch: off (the saved value has no valid seal)")
+        }
+    }
 
     var enabled: Bool {
         lock.lock(); defer { lock.unlock() }
@@ -98,9 +110,52 @@ final class ViewControlSetting {
 
     /// Settings > Agents only, on the main thread.
     func set(_ new: Bool) {
-        lock.lock(); let old = on; on = new; lock.unlock()
+        lock.lock(); let old = on; lock.unlock()
         guard old != new else { return }
-        UserDefaults.standard.set(new, forKey: ViewControl.defaultsKey)
+        if new {
+            let key = ViewControl.newKey()
+            guard ViewControlKey.write(key) else {
+                Trace.log("agent view control: stays off, the Keychain refused its key")
+                return
+            }
+            UserDefaults.standard.set(ViewControl.seal(key: key), forKey: ViewControl.defaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: ViewControl.defaultsKey)
+            ViewControlKey.delete()
+        }
+        lock.lock(); on = new; lock.unlock()
         Trace.log("agent view control: \(new ? "on" : "off")")
+    }
+}
+
+/// The view control key: one generic password item the app makes, readable without a prompt only by the app that made it.
+/// Reads never show a Keychain dialog; one that would counts as no key, so the switch reads off.
+enum ViewControlKey {
+    static let service = "com.baney.polycarp.agentViewControl"
+    static let account = "seal-key"
+
+    static func read() -> Data? {
+        let noPrompt = LAContext()
+        noPrompt.interactionNotAllowed = true
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                kSecAttrAccount as String: account, kSecReturnData as String: true,
+                                kSecMatchLimit as String: kSecMatchLimitOne,
+                                kSecUseAuthenticationContext as String: noPrompt]
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess else { return nil }
+        return out as? Data
+    }
+
+    static func write(_ key: Data) -> Bool {
+        delete()
+        let item: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                   kSecAttrAccount as String: account, kSecValueData as String: key,
+                                   kSecAttrLabel as String: "Polycarp agent view control"]
+        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+    }
+
+    static func delete() {
+        SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                       kSecAttrAccount as String: account] as CFDictionary)
     }
 }
