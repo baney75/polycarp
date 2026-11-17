@@ -95,6 +95,8 @@ final class Spaces {
     }
     private var screensWork: DispatchWorkItem?
     var onChange: (() -> Void)?
+    /// After every change the model publishes (`persist`) and every focus: the agent API's events (`AgentEventHub`).
+    var onModelChange: (() -> Void)?
 
     static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Polycarp")
@@ -1021,6 +1023,7 @@ final class Spaces {
     /// The window in focus on its workspace, and its app the one used there last.
     private func noteFocus(_ id: WindowID) {
         model.noteFocus(id)
+        onModelChange?()
         guard let pid = windows[id]?.pid, let n = model.workspace(of: id) else { return }
         activations.note("\(pid)", on: n, at: Date().timeIntervalSinceReferenceDate)
     }
@@ -2257,6 +2260,7 @@ final class Spaces {
     /// Saves the parked-window record and state.json. The snapshot is taken here; the disk
     /// writes happen off the main thread so they never delay a switch.
     private func persist() {
+        onModelChange?()
         let frames = saved
         // state.json is for scripts and checks: the current workspace and where each window lives.
         let state: [String: Any] = [

@@ -486,6 +486,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
 
+        // The agent API's events: the hub reads and diffs once per main-thread turn, and only while someone subscribes.
+        spaces.onModelChange = { [weak self] in self?.session.hands.events.changed() }
+        NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
+            self?.session.hands.events.changed()
+        }
         spaces.onChange = { [weak self] in
             self?.updateIcon()
             self?.dock.reload()

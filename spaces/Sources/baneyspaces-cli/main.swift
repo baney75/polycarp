@@ -19,6 +19,7 @@ usage: \(me) <command>
   state                       the session engine's live state as JSON
   query [windows|workspaces|displays|focused|layout|theme|state] [--json]
                               the window manager's state, as agents see it (spec/agent-api.md)
+  subscribe [--events a,b]    its changes as they happen, one JSON event per line
   agent status|on [N]|off     the agent workspace: agents drive apps there while you work here
   agent open <app> [file…]    open an app (or files in it) there, without switching you
                               (Full Access: "System Settings" x-apple.systempreferences:<pane> opens that pane)
@@ -182,6 +183,22 @@ case "query":
     else if env.ok, let data = env.data { out(AgentAPI.text(q, data)) }
     else { fail(env.error.map { "\($0.message) (\($0.suggestion))" } ?? "failed") }
     exit(env.ok ? 0 : 1)
+
+case "subscribe":
+    // The agent API's events (spec/agent-api.md): one JSON object per line until stopped or the app quits.
+    let types = flag("--events", in: rest)
+    if case .failure(let e) = AgentEvents.filter(types) { fail("\(e.message) (\(e.suggestion))", code: 2) }
+    setvbuf(stdout, nil, _IOLBF, 0)
+    var refused = false
+    let reached = Wire.stream(Wire.Request(op: .subscribe, target: HandsCLI.defaultSession(), text: types)) { line in
+        let text = String(decoding: line, as: UTF8.self)
+        // A refusal is one envelope line; events never carry "ok".
+        if JSONValue.parse(text)?["ok"]?.bool == false { refused = true }
+        print(text)
+        return !refused
+    }
+    if !reached { fail("Polycarp isn't running") }
+    exit(refused ? 1 : 0)
 
 case "state":
     guard let d = FileManager.default.contents(atPath: Wire.statePath) else { fail("no state yet: is Polycarp running?") }
