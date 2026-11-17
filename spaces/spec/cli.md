@@ -36,7 +36,7 @@ window id, or a pid.
 | `agent lend|return` | the user only | `not_supported` (later) | the user only |
 | `keys [--platform P]` | yes | yes | yes |
 | `daemon` | the app | yes | the app |
-| `shell [--log FILE]`, `shell stop` (the top bar on each display, an AppBar fed by `subscribe`, `spec/shell.md`) | the app draws its own | Waybar (Omarchy) | yes |
+| `shell [--log FILE]`, `shell stop`, `shell launcher` (the top bar on each display, an AppBar fed by `subscribe`, and the launcher, `spec/shell.md`) | the app draws its own | Waybar (Omarchy) | yes |
 | `stop` | quit the app | yes (the uninstall script uses it) | quit the app |
 | `mcp` | yes | yes | yes |
 | `doctor` | yes | yes | yes |

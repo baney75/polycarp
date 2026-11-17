@@ -1,5 +1,5 @@
 name: Windows shell
-# The Windows shell (the bar, later the launcher) on a real Windows desktop: GitHub's windows-latest runner has an
+# The Windows shell (the bar and the launcher) on a real Windows desktop: GitHub's windows-latest runner has an
 # interactive session, so windows draw, the pointer can click and the screen can be captured. The job runs the real
 # daemon and the real `polycarp theme` command, and saves its screenshots as an artifact.
 on:
@@ -35,7 +35,7 @@ jobs:
       - name: Build the polycarp command
         working-directory: cli
         run: cargo build --release --locked
-      - name: The bar on the runner's desktop
+      - name: The bar and the launcher on the runner's desktop
         shell: powershell
         run: >-
           spaces/platforms/windows/tests/ci/shell.ps1

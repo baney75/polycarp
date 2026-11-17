@@ -1,5 +1,5 @@
-# The Windows shell (the top bar) on a GitHub Actions Windows runner's own desktop: the real daemon, the real bar,
-# real theme changes through the `polycarp` command. Saves full-screen and bar-only screenshots, reads back the work
+# The Windows shell (the top bar and the launcher) on a GitHub Actions Windows runner's own desktop: the real daemon,
+# the real bar, real theme changes through the `polycarp` command, and the launcher opened by its real key. Saves full-screen and bar-only screenshots, reads back the work
 # area and a maximized window's frame, and prints PASS or FAIL with counts; exits 1 on any FAIL.
 # Usage (Windows PowerShell 5.1, which has System.Drawing):
 #   shell.ps1 -Bin <dir with baneyspaces.exe> -Cli <polycarp.exe> -Themes <repo>\themes -Out <evidence dir>
@@ -36,6 +36,12 @@ public static class Desk {
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int c);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out RECT r, int s);
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    // Presses the keys in order and lets them go in reverse, as a hand does a chord.
+    public static void Chord(params byte[] keys) {
+        foreach (var k in keys) keybd_event(k, 0, 0, UIntPtr.Zero);
+        for (int i = keys.Length - 1; i >= 0; i--) keybd_event(keys[i], 0, 2, UIntPtr.Zero);
+    }
     public static int WorkTop() { var r = new RECT(); SystemParametersInfoW(0x30, 0, ref r, 0); return r.Top; }
     // The window's visible frame (DWM's extended frame bounds), not its rect, which includes invisible borders.
     public static int[] Frame(IntPtr h) { RECT r; DwmGetWindowAttribute(h, 9, out r, Marshal.SizeOf(typeof(RECT))); return new int[] { r.Left, r.Top, r.Right, r.Bottom }; }
@@ -154,7 +160,63 @@ $n = @(lines).Count
 [void](theme off)
 check ($null -ne (wait_line 'theme \S+ -> polycarp' $n 5000)) 'theme off goes back to the built-in theme'
 
-say '== 7. idle'
+say '== 7. the launcher: its key, type notepad, Enter starts Notepad'
+$held = wait_line 'launcher key ' 0 1000
+check ($held -match 'Ctrl\+Win\+K') 'the launcher holds Ctrl+Win+K' "$held"
+check ($null -ne (wait_line 'launcher apps \d+ in' 0 20000)) 'the Start menu apps are read' (lines | Select-String 'launcher' | Out-String)
+# Step 2's Notepad goes, so the Notepad found is the app, and the window that appears is the launcher's doing.
+Get-Process notepad -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Milliseconds 1500
+$n = @(lines).Count
+[Desk]::Chord(0x11, 0x5B, 0x4B)   # Ctrl, left Win, K
+$shown = wait_line 'launcher shown by key' $n 3000
+check ($null -ne $shown) 'Ctrl+Win+K opens the launcher' (lines | Select-Object -Last 4 | Out-String)
+if ($shown -match 'first frame ([\d.]+) ms') { $results.launcher_open_first_frame_ms = [double]$Matches[1] }
+check ($shown -match ', in front') 'and it takes the keyboard' "$shown"
+$n = @(lines).Count
+foreach ($c in 'NOTEPAD'.ToCharArray()) { [Desk]::Chord([byte][char]$c); Start-Sleep -Milliseconds 80 }
+$typed = @()
+$end = [DateTime]::UtcNow.AddSeconds(4)
+while ($typed.Count -lt 7 -and [DateTime]::UtcNow -lt $end) {
+    $typed = @(@(lines) | Select-Object -Skip $n | Where-Object { $_ -match 'launcher key->paint=' }); Start-Sleep -Milliseconds 50
+}
+$ms = @($typed | ForEach-Object { if ($_ -match 'key->paint=([\d.]+) results=(\d+)') { [double]$Matches[1] } } | Sort-Object)
+$rows = if ($typed.Count -gt 0 -and $typed[-1] -match 'results=(\d+)') { [int]$Matches[1] } else { 0 }
+if ($ms.Count -gt 0) {
+    $results.launcher_key_to_paint_ms_median = $ms[[int][math]::Floor(($ms.Count - 1) / 2)]
+    $results.launcher_key_to_paint_ms_max = $ms[-1]
+}
+check ($ms.Count -eq 7) "each of the 7 keystrokes is drawn and logged ($($ms.Count) lines)"
+check ($ms.Count -gt 0 -and $results.launcher_key_to_paint_ms_max -lt 16.7) "every keystroke reaches the screen within a 60 Hz frame (median $($results.launcher_key_to_paint_ms_median) ms, max $($results.launcher_key_to_paint_ms_max) ms)"
+check ($rows -gt 0) "notepad finds something ($rows rows)"
+check (-not (@($typed) -match 'notepad')) 'the timing lines never hold what was typed'
+Start-Sleep -Milliseconds 300
+shot '5-launcher-notepad'
+$sp = shell_proc
+if ($sp) {
+    $c0 = $sp.TotalProcessorTime.TotalMilliseconds; Start-Sleep -Seconds 10; $sp.Refresh(); $c1 = $sp.TotalProcessorTime.TotalMilliseconds
+    $results.launcher_open_idle_cpu_percent = [math]::Round(($c1 - $c0) / 10000.0 * 100.0, 3)
+    check ($results.launcher_open_idle_cpu_percent -lt 0.5) "the open launcher idles at $($results.launcher_open_idle_cpu_percent)% of one core over 10 s"
+}
+$n = @(lines).Count
+[Desk]::Chord(0x0D)
+check ($null -ne (wait_line 'launcher run: app' $n 3000)) 'Enter starts the top hit, an app' (lines | Select-Object -Last 4 | Out-String)
+$h = [IntPtr]::Zero
+for ($i = 0; $i -lt 60 -and $h -eq [IntPtr]::Zero; $i++) {
+    Start-Sleep -Milliseconds 250
+    $h = (Get-Process notepad -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).MainWindowHandle
+    if ($null -eq $h) { $h = [IntPtr]::Zero }
+}
+check ($h -ne [IntPtr]::Zero) 'and a Notepad window appears'
+Start-Sleep -Milliseconds 800
+shot '6-launched-notepad'
+$n = @(lines).Count
+[Desk]::Chord(0x11, 0x5B, 0x4B)
+check ($null -ne (wait_line 'launcher shown by key' $n 3000)) 'the key opens it again'
+[Desk]::Chord(0x1B)
+check ($null -ne (wait_line 'launcher hidden: Esc' $n 3000)) 'and Esc closes it'
+
+say '== 8. idle'
 Start-Sleep -Seconds 3
 $sp = shell_proc
 if ($sp) {
@@ -165,7 +227,7 @@ if ($sp) {
     check ($results.idle_cpu_percent_of_one_core -lt 0.5) "idle CPU $($results.idle_cpu_percent_of_one_core)% of one core over 30 s; memory $($results.private_mb) MB private, $($results.working_set_mb) MB working set"
 } else { bad 'the shell is still running' }
 
-say '== 8. stop gives the top of the screen back'
+say '== 9. stop gives the top of the screen back'
 say "stop: $(bsx shell stop)"
 Start-Sleep -Milliseconds 500
 check (-not (shell_proc)) 'the shell quits'

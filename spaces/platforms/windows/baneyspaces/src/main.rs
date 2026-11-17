@@ -62,6 +62,7 @@ const HELP: &str = "baneyspaces (Windows)
   daemon --background            run it with no console window (the Startup shortcut runs this)
   shell [--log FILE]             the bar: one themed top bar per display, fed by the daemon
   shell stop                     close the bar and give the top of each display back
+  shell launcher                 open the running shell's launcher (its key is Ctrl+Win+K)
   stop                           ask the running daemon to put every window back and exit (also: daemon stop)
   mcp                            MCP server on stdio (agent tools only)
   doctor                         what works and what does not

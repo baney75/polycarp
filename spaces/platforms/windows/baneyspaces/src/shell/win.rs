@@ -33,6 +33,13 @@ const WM_FEED: u32 = WM_APP + 2;
 const WM_FEED_DOWN: u32 = WM_APP + 3;
 const WM_THEME: u32 = WM_APP + 4;
 const WM_REPLACE: u32 = WM_APP + 5;
+/// The Start-menu scan finished.
+const WM_APPS: u32 = WM_APP + 6;
+/// `baneyspaces shell launcher`: open the launcher.
+const WM_LAUNCHER: u32 = WM_APP + 7;
+
+#[path = "win_launcher.rs"]
+mod panel;
 
 const T_CLOCK: usize = 1;
 const T_ANIM: usize = 2;
@@ -111,6 +118,8 @@ mod gfx {
         brush: ID2D1SolidColorBrush,
         _target: IDCompositionTarget,
         _visual: IDCompositionVisual,
+        /// The last frame's time in Direct2D (through EndDraw) and in Present, in ms.
+        pub split: std::cell::Cell<(f64, f64)>,
     }
 
     pub struct Fonts {
@@ -189,7 +198,7 @@ mod gfx {
             visual.SetContent(&swap)?;
             target.SetRoot(&visual)?;
             self.dcomp.Commit()?;
-            Ok(Surface { swap, ctx, brush, _target: target, _visual: visual })
+            Ok(Surface { swap, ctx, brush, _target: target, _visual: visual, split: Default::default() })
         }
 
         /// The first family of `stack` that is installed, else the last (the generic fallback, always there).
@@ -239,6 +248,7 @@ mod gfx {
     impl Surface {
         pub unsafe fn draw(&self, fonts: &Fonts, clear: D2D1_COLOR_F, items: &[Draw]) -> Result<()> {
             let c = &self.ctx;
+            let t0 = std::time::Instant::now();
             c.BeginDraw();
             c.Clear(Some(&clear));
             for d in items {
@@ -276,7 +286,11 @@ mod gfx {
                 }
             }
             c.EndDraw(None, None)?;
-            self.swap.Present(1, DXGI_PRESENT(0)).ok()
+            let t1 = std::time::Instant::now();
+            let presented = self.swap.Present(1, DXGI_PRESENT(0)).ok();
+            let ms = |a: std::time::Instant, b: std::time::Instant| b.duration_since(a).as_secs_f64() * 1000.0;
+            self.split.set((ms(t0, t1), ms(t1, std::time::Instant::now())));
+            presented
         }
     }
 }
@@ -300,6 +314,17 @@ fn ink(p: &Palette, i: Ink) -> Rgb {
 
 fn rect(r: bar::Rect) -> gfx::D2D_RECT_F {
     gfx::D2D_RECT_F { left: r.x, top: r.y, right: r.x + r.w, bottom: r.y + r.h }
+}
+
+/// A layout's ops in the palette's colors, ready to draw.
+fn draws<'a>(p: &Palette, ops: &'a [Op]) -> Vec<gfx::Draw<'a>> {
+    ops.iter()
+        .map(|o| match o {
+            Op::Fill { r, radius, ink: k } => gfx::Draw::Fill(rect(*r), *radius, color(ink(p, *k))),
+            Op::Stroke { r, radius, ink: k, width } => gfx::Draw::Stroke(rect(*r), *radius, color(ink(p, *k)), *width),
+            Op::Text { r, text, face, ink: k, align } => gfx::Draw::Text(rect(*r), text.as_str(), *face, color(ink(p, *k)), *align),
+        })
+        .collect()
 }
 
 // ---- the shell ----------------------------------------------------------------------------------------------
@@ -346,6 +371,7 @@ struct Shell {
     state: ShellState,
     feed_up: bool,
     bars: Vec<Bar>,
+    panel: panel::Panel,
 }
 
 fn displays() -> Vec<Display> {
@@ -535,16 +561,7 @@ impl Shell {
         let (Some(s), Some(f)) = (self.bars[i].surface.as_ref(), self.fonts.as_ref()) else {
             return;
         };
-        let items: Vec<gfx::Draw> = l
-            .ops
-            .iter()
-            .map(|o| match o {
-                Op::Fill { r, radius, ink: k } => gfx::Draw::Fill(rect(*r), *radius, color(ink(&p, *k))),
-                Op::Stroke { r, radius, ink: k, width } => gfx::Draw::Stroke(rect(*r), *radius, color(ink(&p, *k)), *width),
-                Op::Text { r, text, face, ink: k, align } => gfx::Draw::Text(rect(*r), text.as_str(), *face, color(ink(&p, *k)), *align),
-            })
-            .collect();
-        if let Err(e) = unsafe { s.draw(f, color(p.surface), &items) } {
+        if let Err(e) = unsafe { s.draw(f, color(p.surface), &draws(&p, &l.ops)) } {
             log(&format!("error: drawing {}: {e}", self.bars[i].monitor));
             return;
         }
@@ -699,7 +716,8 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             if let Some((st, heard)) = LATEST.lock().ok().and_then(|mut l| l.take()) {
                 if !with_shell(|s| {
                     s.feed_up = true;
-                    s.on_state(st.clone(), heard)
+                    s.on_state(st.clone(), heard);
+                    panel::state_changed(s);
                 }) {
                     if let Ok(mut l) = LATEST.lock() {
                         l.get_or_insert((st, heard));
@@ -719,6 +737,18 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         // Many change notices come for one save: read the file once things settle.
         WM_THEME => {
             SetTimer(hwnd, T_THEME, 80, None);
+            0
+        }
+        WM_HOTKEY => {
+            with_shell(|s| panel::toggle(s, "key"));
+            0
+        }
+        WM_LAUNCHER => {
+            with_shell(|s| panel::show(s, "command"));
+            0
+        }
+        WM_APPS => {
+            with_shell(panel::took_apps);
             0
         }
         WM_REPLACE => {
@@ -916,9 +946,29 @@ fn stop() -> i32 {
     1
 }
 
+/// Asks the running shell to open its launcher, and lets it take the front.
+fn open_launcher() -> i32 {
+    let class = wide(MAIN_CLASS);
+    let h = unsafe { FindWindowW(class.as_ptr(), std::ptr::null()) };
+    if h.is_null() {
+        println!(r#"{{"ok":false,"error":{{"code":"shell_down","message":"the shell is not running","retry":"safe","suggestion":"Start it: baneyspaces shell"}}}}"#);
+        return 1;
+    }
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(h, &mut pid);
+        AllowSetForegroundWindow(pid);
+        PostMessageW(h, WM_LAUNCHER, 0, 0);
+    }
+    println!(r#"{{"ok":true,"data":{{"launcher":"shown"}}}}"#);
+    0
+}
+
 pub fn run(args: &[String]) -> i32 {
-    if args.get(1).map(String::as_str) == Some("stop") {
-        return stop();
+    match args.get(1).map(String::as_str) {
+        Some("stop") => return stop(),
+        Some("launcher") => return open_launcher(),
+        _ => {}
     }
     let _ = STARTED.set(Instant::now());
     let log_path = args.iter().position(|a| a == "--log").and_then(|i| args.get(i + 1)).map(PathBuf::from);
@@ -946,9 +996,11 @@ pub fn run(args: &[String]) -> i32 {
     let inst = unsafe { GetModuleHandleW(std::ptr::null()) };
     let main_class = wide(MAIN_CLASS);
     let bar_class = wide(BAR_CLASS);
+    let panel_class = wide(panel::CLASS);
     let main = unsafe {
         let cursor = LoadCursorW(std::ptr::null_mut(), IDC_ARROW);
-        let classes: [(&Vec<u16>, WNDPROC); 2] = [(&main_class, Some(main_proc)), (&bar_class, Some(bar_proc))];
+        let classes: [(&Vec<u16>, WNDPROC); 3] =
+            [(&main_class, Some(main_proc)), (&bar_class, Some(bar_proc)), (&panel_class, Some(panel::panel_proc))];
         for (class, proc_) in classes {
             let wc = WNDCLASSW {
                 style: 0,
@@ -986,6 +1038,12 @@ pub fn run(args: &[String]) -> i32 {
         return 1;
     }
     MAIN.store(main as isize, Ordering::Relaxed);
+    let launcher = panel::create(inst);
+    if launcher.is_null() {
+        log("error: the launcher's window could not be created");
+        return 1;
+    }
+    panel::register_key(main);
 
     let config = theme::config_dir();
     let (t, err) = theme::load(config.as_deref());
@@ -1004,16 +1062,19 @@ pub fn run(args: &[String]) -> i32 {
         state: ShellState::default(),
         feed_up: false,
         bars: vec![],
+        panel: panel::Panel::new(launcher),
     };
     shell.load_fonts();
     shell.rebuild();
     SHELL.with(|c| *c.borrow_mut() = Some(shell));
+    with_shell(panel::warm);
 
     std::thread::Builder::new().name("shell-feed".into()).spawn(move || feed(paths)).ok();
     if let Some(dir) = config {
         std::thread::Builder::new().name("shell-theme".into()).spawn(move || watch(dir)).ok();
     }
     arm_clock(main);
+    panel::scan();
     unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(on_ctrl), 1) };
     log(&format!("ready pid={}", std::process::id()));
 
