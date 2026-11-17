@@ -11,7 +11,7 @@ fn channel(c: u8) -> f64 {
     }
 }
 
-fn luminance(hex: &str) -> f64 {
+pub(crate) fn luminance(hex: &str) -> f64 {
     let b = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0);
     0.2126 * channel(b(1)) + 0.7152 * channel(b(3)) + 0.0722 * channel(b(5))
 }
@@ -53,6 +53,12 @@ pub fn pairs() -> Vec<(&'static str, &'static str, f64)> {
     v
 }
 
+/// How a pair that does not read is reported, such as `dark.muted on dark.sunken is 3.10, needs 4.5`.
+pub(crate) fn problem(mode: &str, fg: &str, bg: &str, ratio: f64, min: f64) -> String {
+    let shown = ((ratio * 100.0 + 1e-9).floor()) / 100.0;
+    format!("{mode}.{fg} on {mode}.{bg} is {shown:.2}, needs {min:?}")
+}
+
 pub fn contrast_on(light: &Colors, dark: &Colors) -> Vec<String> {
     let mut out = Vec::new();
     for (mode, colors) in [("light", light), ("dark", dark)] {
@@ -60,10 +66,7 @@ pub fn contrast_on(light: &Colors, dark: &Colors) -> Vec<String> {
             if let (Some(f), Some(b)) = (colors.get(fg), colors.get(bg)) {
                 let ratio = contrast(f, b);
                 if ratio < min {
-                    let shown = ((ratio * 100.0 + 1e-9).floor()) / 100.0;
-                    out.push(format!(
-                        "{mode}.{fg} on {mode}.{bg} is {shown:.2}, needs {min:?}"
-                    ));
+                    out.push(problem(mode, fg, bg, ratio, min));
                 }
             }
         }

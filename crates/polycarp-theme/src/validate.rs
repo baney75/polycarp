@@ -1,6 +1,6 @@
 //! Checks one theme file by itself: names, types, ranges and unknown keys.
 
-use super::{fields, Kind, SECTIONS, SURFACES};
+use super::{fields, Kind, CODE, MODES, SECTIONS, SURFACES};
 use toml::{Table, Value};
 
 /// Names Windows will not use for a file, whatever the extension. Refused on every system so a
@@ -179,6 +179,10 @@ fn check_section(path: &str, section: &str, v: &Value, out: &mut Vec<String>) {
     };
     let known = fields(section);
     for (k, val) in t {
+        if MODES.contains(&section) && CODE.contains(&k.as_str()) {
+            check_section(&format!("{path}.{k}"), k, val, out);
+            continue;
+        }
         match known.iter().find(|(n, _)| n == k) {
             Some((_, kind)) => check_value(&format!("{path}.{k}"), val, *kind, out),
             None => out.push(format!("{path}.{k}: unknown key")),

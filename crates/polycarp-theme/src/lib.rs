@@ -2,17 +2,22 @@
 //! overrides, and the `theme.json` and CSS text products read. It writes no files and takes no lock;
 //! the `polycarp theme` command does that, so every write goes through one place.
 
+mod code;
 mod contrast;
 mod export;
 mod resolve;
 pub mod schema;
 mod validate;
 
+pub use code::{
+    code_keys, code_pairs, code_problems, derive, mix, Code, CODE, DIFF, SYNTAX, TERMINAL,
+};
 pub use contrast::{combine, contrast, contrast_on, pairs, Colors, MARK_MIN, TEXT_MIN};
 pub use export::{color_lines, css, resolved_json, shared_vars, theme_json};
 pub use resolve::{
-    apply_accents, colors_of, ext_of, is_builtin, load_raw, merge, parse_toml, read_theme_file,
-    resolve_doc, resolve_name, without_meta, Full, Motion, Resolved, Shape, Themes, Typo,
+    apply_accents, code_of, colors_of, ext_of, is_builtin, load_raw, merge, parse_toml,
+    read_theme_file, resolve_doc, resolve_name, without_meta, Full, Motion, Resolved, Shape,
+    Themes, Typo,
 };
 pub use validate::{check_doc, check_easing, check_font, check_value, is_hex, valid_name};
 
@@ -98,7 +103,7 @@ pub fn fields(section: &str) -> Vec<(&'static str, Kind)> {
         "shape" => SHAPE.to_vec(),
         "type" => TYPE.to_vec(),
         "motion" => MOTION.to_vec(),
-        _ => Vec::new(),
+        g => code_keys(g).iter().map(|k| (*k, Kind::Hex)).collect(),
     }
 }
 
