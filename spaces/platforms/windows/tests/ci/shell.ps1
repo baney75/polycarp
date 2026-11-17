@@ -12,6 +12,8 @@ param(
 $ErrorActionPreference = 'Continue'
 New-Item -ItemType Directory -Force $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
+# Absolute, so a background job (which starts in another folder) finds the binary too.
+$Bin = (Resolve-Path $Bin).Path
 $log = Join-Path $Out 'shell-test.log'; Set-Content $log ''
 $slog = Join-Path $Out 'shell.log'; Remove-Item $slog -ErrorAction SilentlyContinue
 $dlog = Join-Path $Out 'daemon.log'
@@ -80,7 +82,7 @@ say '== 1. the daemon, then the bar with the built-in theme'
 $job = Start-Job -ScriptBlock { param($b, $l) (& $b daemon --background --log $l 2>&1 | Out-String).Trim() } -ArgumentList $bs, $dlog
 $started = Wait-Job $job -Timeout 20
 check ($null -ne $started) 'daemon --background returns while its output is read through a pipe'
-if ($started) { say "daemon: $(Receive-Job $job)" } else { say 'daemon: no answer in 20 s'; Stop-Job $job }
+if ($started) { say "daemon: $(Receive-Job $job 2>&1)" } else { say 'daemon: no answer in 20 s'; Stop-Job $job }
 Remove-Job $job -Force
 $p = Start-Process -FilePath $bs -ArgumentList @('shell', '--log', $slog) -PassThru -WindowStyle Hidden
 $script:shellPid = $p.Id
