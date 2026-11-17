@@ -57,6 +57,11 @@ public enum HandsTools {
         HandsTool(verb: "query", summary: "Read only, never waits. The window manager's state as one versioned JSON object (spec/agent-api.md): windows (id, app, title, workspace, display, frame, focused), workspaces, displays, focused, layout (each window's frame, and saved layouts), theme, or state for all of them at once. Lists only the windows you may use (scope agent), or every window under Full Access (scope all). Use it before `move`, `frame` or `layout`.", params: [
             HandsParam("what", .string, "windows, workspaces, displays, focused, layout, theme or state (the default: all of them).", positional: true),
         ], acts: false),
+        HandsTool(verb: "events", summary: "Read only. What changed since your last call, as the agent API's events (spec/agent-api.md): workspace_switched, window_focused, window_created, window_closed, window_moved, theme_changed, only for windows you may use. Call it first without since: it answers hello with the whole state and next. Then pass that next as since; with wait_ms it waits up to that long for the first event. A lagged event means some were missed: query state again.", params: [
+            HandsParam("since", .integer, "The next from your last events call. Leave it out to start again with hello."),
+            HandsParam("wait_ms", .integer, "Wait up to this long, 0 to \(AgentEventPoll.longestWait), when no event is waiting (default 0)."),
+            HandsParam("events", .string, "Without since: only these types, comma separated. hello and lagged always come."),
+        ], acts: false),
         HandsTool(verb: "snapshot", summary: "Read one window, one row per element: [N] role \"name\" =value (states), indented under its parent. Act on row N with ref \"N\" (this snapshot) or the full ref the header shows. After acting, read again with since: \"latest\" to see only what changed. Example: {\"window\":4211,\"query\":\"Save\"}", params: [
             HandsParam("app", .string, "App name or bundle id. With several windows on the agent workspace the newest is read; pass window to choose."),
             HandsParam("window", .integer, "Window id from `windows`, `open` or a previous snapshot."),

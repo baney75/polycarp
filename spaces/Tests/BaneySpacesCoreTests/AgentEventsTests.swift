@@ -118,11 +118,11 @@ final class AgentEventsTests: XCTestCase {
         XCTAssertTrue(AgentEvents.ends(agentView, AgentAPI.View(access: .readOnly, inScope: agentView.inScope)))
         XCTAssertFalse(AgentEvents.ends(agentView, AgentAPI.View(access: .standard, inScope: [])), "a lend ending is a diff")
         let hub = try Repo.code("Sources/BaneySpaces/Hands/AgentEventHub.swift")
-        XCTAssertTrue(hub.contains("if AgentEvents.ends(s.view, view) { s.finish(); continue }"))
-        XCTAssertTrue(hub.contains("for s in subscribers { s.finish() }"))
+        XCTAssertTrue(hub.contains("if AgentEvents.ends(l.view, view) { l.finish(); continue }"))
+        XCTAssertTrue(hub.contains("for l in listeners { l.finish() }"))
         let app = try Repo.code("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(app.contains("AgentAccess.shared.onChange = { [weak self] mode in"))
-        XCTAssertTrue(app.contains("self.session.hands.events.end(\"agent access is now \\(mode.rawValue)\")"))
+        XCTAssertTrue(app.contains("self.session.eventsEnd(\"agent access is now \\(mode.rawValue)\")"))
     }
 
     func testTheLookChanging() {
@@ -174,7 +174,10 @@ final class AgentEventsTests: XCTestCase {
         XCTAssertTrue(spaces.contains("private func persist() {\n        onModelChange?()"))
         XCTAssertTrue(spaces.contains("model.noteFocus(id)\n        onModelChange?()"))
         let app = try Repo.code("Sources/BaneySpaces/AppDelegate.swift")
-        XCTAssertTrue(app.contains("spaces.onModelChange = { [weak self] in self?.session.hands.events.changed() }"))
-        XCTAssertTrue(app.contains("forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in\n            self?.session.hands.events.changed()"))
+        XCTAssertTrue(app.contains("spaces.onModelChange = { [weak self] in self?.session.eventsChanged() }"))
+        XCTAssertTrue(app.contains("forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in\n            self?.session.eventsChanged()"))
+        // A connector polls through its own router: its hub hears every change too.
+        let session = try Repo.code("Sources/BaneySpaces/Session/SessionController.swift")
+        XCTAssertTrue(session.contains("hands.events.changed()\n        connectorHands.events.changed()"))
     }
 }
