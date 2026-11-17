@@ -62,6 +62,9 @@ those no longer match and the entry is dropped and logged without touching anyth
 tracked, on their workspace, are neither shown nor hidden while off the current desktop
 (`IVirtualDesktopManager`), and come back as they were. (Driven live: a second desktop is created and closed
 and every window keeps its workspace.)
+CI holds this on every change (`tests/ci/shell-check.ps1`, workflow `windows-shell.yml`): through 50 switches every
+window on a workspace stays on the current desktop and each test window is shell-cloaked exactly when its workspace is
+not shown, and explorer.exe loads no Polycarp module. Polycarp talks to the shell only through COM; it injects nothing.
 
 And what is hidden is **read back from Windows on every poll**, never taken from memory: a cloak the shell
 dropped (a virtual-desktop switch re-evaluates them), a parked window an app moved back, a ghost an app reset
