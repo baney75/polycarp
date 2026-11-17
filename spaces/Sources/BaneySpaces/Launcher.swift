@@ -409,15 +409,14 @@ final class LauncherModel: ObservableObject {
             + Scope.allCases.filter { $0 != .root }.map { .menu(id: "scope:" + $0.rawValue, title: $0.title) })
     }
 
-    /// What you used lately lifts an app a little (spec/launcher.md R-L10), as does one already running.
-    private func boost(_ id: String) -> Int {
-        guard id.hasPrefix("app:") else { return 0 }
-        let path = String(id.dropFirst(4))
-        return recents.boost(path) / 4 + (running[path] != nil ? 4 : 0)
-    }
-
+    /// What you pick lifts it, more after typing the same thing (spec/launcher.md R-L10); an app
+    /// already running lifts a little too.
     private func search(_ q: String, kinds: Set<LauncherIndex.Kind>? = nil) -> [LauncherIndex.Hit] {
-        index.search(q, kinds: kinds, boost: boost)
+        let picked = LauncherPicks.shared.frecency.boost(for: q)
+        let running = running
+        return index.search(q, kinds: kinds) { id in
+            picked(id) + (id.hasPrefix("app:") && running[String(id.dropFirst(4))] != nil ? 4 : 0)
+        }
     }
 
     func prepare(scope: Scope) {
@@ -493,12 +492,20 @@ final class LauncherModel: ObservableObject {
             if url.isFileURL { NSWorkspace.shared.activateFileViewerSelecting([url]) } else { NSWorkspace.shared.open(url) }
             return
         }
+        notePick(item)
         item.run()
     }
 
     func run(_ item: LauncherItem) {
         if let i = items.firstIndex(where: { $0.id == item.id }) { selected = i }
+        notePick(item)
         item.run()
+    }
+
+    /// An app, command, workspace or menu picked: remembered with what was typed, as hashes.
+    private func notePick(_ item: LauncherItem) {
+        guard index.contains(id: item.id) else { return }
+        LauncherPicks.shared.picked(item.id, query: query)
     }
 
     /// Tab: into the selected menu, or complete "Install …" from the search.

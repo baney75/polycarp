@@ -84,9 +84,19 @@ query is not empty.
 Highest score first. Ties go by kind (app, window, workspace, command, menu, the order of the
 launcher's sections), then by the order the entries were added.
 
-### R-L10 Boost
-A platform may add a boost per entry (what you pick often). It applies only once something is typed;
-with an empty query the launcher shows its own fixed list.
+### R-L10 Boost: what you pick
+Each pick of an entry adds 1 to its weight, and 1 to the weight of the query typed before it
+leading to that entry (the query as the matcher reads it: folded words, single spaces). Weights
+halve every 14 days. With something typed, an entry's boost is
+`min(24, round(8 × log2(1 + used)))` plus `min(40, round(25 × typed))`, where `used` is its
+weight now and `typed` that of this exact query leading to it. So one pick of Calculator after
+"cal" puts Calculator first for "cal", and use alone lifts a near tie but not a much better
+name. With an empty query nothing is boosted; the launcher shows its own fixed list.
+
+The weights are kept on the device only, keyed by FNV-1a 64-bit hashes (in lowercase hex) of the
+entry id and of the query, so the store names no entry and no query. Weights under 0.05 are
+dropped and at most 500 of each kind are kept. A platform may add a small lift of its own (macOS
+adds 4 for an app already running). Pinned by `FrecencyTests`.
 
 ## Showing results
 
