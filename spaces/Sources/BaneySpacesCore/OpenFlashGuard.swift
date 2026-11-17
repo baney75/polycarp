@@ -8,7 +8,8 @@ import Foundation
 /// either: it waits on the same answer (0.69 and 0.84 s to the claim for Font Book), so that prototype was dropped.
 /// The cover needs no answer from the app: the window server lists the new window, and an opaque Polycarp panel
 /// painted with the screen as it was goes over it until it is out of sight. Measured by `scripts/agent-open-probe.swift`
-/// (seen_ms). Off by default: `defaults write com.baney.polycarp agentOpenFlashGuard cover`.
+/// (seen_ms and the frames it captures). On by default (council gap G9: "an occasional 1 s screen flash"); only
+/// `defaults write com.baney.polycarp agentOpenFlashGuard off` turns it off, and any other value leaves it on.
 ///
 /// Limits (review of PR 209): only the process the launch returned is covered, never one matched by name; never while
 /// the agent workspace is shown; never without a shot of every display; and a cover comes down 1.5 s after it went up
@@ -22,7 +23,7 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
     case cover
 
     public static let defaultsKey = "agentOpenFlashGuard"
-    /// The domain the flag is written to, the app's own: `defaults write com.baney.polycarp agentOpenFlashGuard cover`.
+    /// The domain the flag is written to, the app's own: `defaults write com.baney.polycarp agentOpenFlashGuard off`.
     /// The app reads it from `UserDefaults.standard`, which is that domain (a suite named after the app's own bundle id
     /// is unsupported: CFPreferences ignores it). Scripts, which are other processes, read it by this suite name.
     public static let defaultsDomain = Product.bundleID
@@ -35,7 +36,8 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
     public static let captureLimit: Double = 0.3
     /// How long a guarded open waits for the one before it to finish, then opens unguarded.
     public static let waitForTurn: Double = 2
-    public static func from(_ raw: String?) -> OpenFlashGuard { raw.flatMap(Self.init(rawValue:)) ?? .off }
+    /// The cover unless the flag says exactly `off`.
+    public static func from(_ raw: String?) -> OpenFlashGuard { raw.flatMap(Self.init(rawValue:)) ?? .cover }
 
     /// How long a launch is watched and its windows covered: the claim on a process the agent started (`claimNextWindow`
     /// within 8 s), counted from when the launch handed back its process.

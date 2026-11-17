@@ -48,11 +48,13 @@ A change is done when steps 1 to 3 pass on its branch and step 4 passes on `main
    runs on `main` after merge). Each open draws its window on Donovan's workspace for about a second before it is parked,
    so it runs only when he has been idle 10 minutes (it prints "untested live" and exits 3 otherwise; say "untested live"
    and run it when he is away). It must print "agent-open-probe: pass". That gates identified, stray, focus and close
-   on every run. The seen check (time a new window shows on Donovan's workspace) gates only with
-   `agentOpenFlashGuard cover` set in the app's own domain, where it keeps all its settings (`defaults write
-   com.baney.polycarp agentOpenFlashGuard cover`); with the flag off,
-   the default, it prints the times as "known, flag off" and fails nothing. A change to `OpenFlashGuard` or
-   `OpenFlashWatch` runs it twice: flag off, then flag on. The probe knows a cover by Polycarp's pid and window level 4.
+   on every run. The seen check (time a new window shows on Donovan's workspace) and the frame check (frames of his
+   displays, captured during each open, in which a new window shows) gate unless `agentOpenFlashGuard off` is set in
+   the app's own domain, where it keeps all its settings (`defaults write com.baney.polycarp agentOpenFlashGuard off`;
+   the cover is on by default); with the flag off they print as "known, flag off" and fail nothing. The frame check
+   needs Screen Recording for the process that runs the probe; without it the probe says "untested live" and exits 3
+   (`--no-frames` skips it). A change to `OpenFlashGuard` or `OpenFlashWatch` runs it twice: default, then flag off.
+   The probe knows a cover by Polycarp's pid and window level 4.
    For anything that decides what each display shows (`Workspaces.shown`, `displays`, `carry`,
    `noteMovedAcrossDisplays`): `swift scripts/displays-probe.swift` with two displays (Sidecar counts).
    For anything under `Sources/BaneySpacesCore/Sandbox/`: `swift scripts/sandbox-probe.swift` (headless, no window; needs
