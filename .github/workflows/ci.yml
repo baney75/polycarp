@@ -2,9 +2,9 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'crates/**', 'themes/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
   pull_request:
-    paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'crates/**', 'themes/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -26,7 +26,8 @@ jobs:
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
           filters: |
-            cli: ['cli/**', '.github/workflows/ci.yml']
+            # The command builds the theme crate in, so a change to either runs both.
+            cli: ['cli/**', 'crates/**', 'themes/**', '.github/workflows/ci.yml']
             # The root install.sh is read by the spaces tests (RootInstallerTests, FeaturesTests).
             spaces: ['spaces/**', 'core/**', 'install.sh', '.github/workflows/ci.yml']
             voice: ['voice/**', 'core/**', '.github/workflows/ci.yml']
@@ -52,10 +53,22 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with: { workspaces: cli }
+        with:
+          workspaces: |
+            cli
+            crates/polycarp-theme
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo fmt --check
+      - name: Theme crate tests
+        working-directory: crates/polycarp-theme
+        run: cargo test
+      - name: Theme crate clippy
+        working-directory: crates/polycarp-theme
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Theme crate format
+        working-directory: crates/polycarp-theme
+        run: cargo fmt --check
 
   core:
     needs: changes

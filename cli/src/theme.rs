@@ -19,7 +19,7 @@ mod picture;
 mod png;
 mod preview;
 
-use crate::polycarp_theme::{
+use polycarp_theme::{
     apply_accents, check_value, color_lines, css, ext_of, fields, is_builtin, is_hex, load_raw,
     parse_toml, read_theme_file, resolve_doc, resolve_name, resolved_json, schema, shared_vars,
     theme_json, valid_name, Full, Kind, Resolved, State, Themes, BUILTINS, DEFAULT_THEME,
