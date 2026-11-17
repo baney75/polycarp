@@ -222,6 +222,35 @@ jobs:
           name: windows-live
           path: ${{ runner.temp }}/live
 
+  # The switch-speed bench on the runner's desktop: 30 windows over nine workspaces, 200 Win+n switches typed with
+  # SendInput, each timed until DWM reads every window right and checked by screenshot, and an outside uncloak timed
+  # until the daemon undoes it. Limits are in tests/ci/switch-bench.ps1 and spec/speed.json (windowsSwitch).
+  spaces-windows-speed:
+    needs: changes
+    if: needs.changes.outputs.spaces-linux == 'true' || needs.changes.outputs.spaces-windows == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: spaces
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: spaces, key: spaces-windows-speed }
+      - name: Build the daemon with the test hooks
+        run: cargo build --release --locked -p baneyspaces-windows --features baneyspaces-windows/test-ops
+      - name: Switch bench
+        shell: powershell
+        run: platforms/windows/tests/ci/switch-bench.ps1 -Bin target/release -Out ${{ runner.temp }}/speed -Speed spec/speed.json
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-speed
+          path: ${{ runner.temp }}/speed
+
   spaces-bundle:
     needs: changes
     # The bundle holds the voice core, the browser helper and the `polycarp` command, so a change to any of them can break it.
@@ -482,7 +511,7 @@ jobs:
   # instead of naming jobs that a path filter can skip.
   ci-ok:
     if: always()
-    needs: [changes, cli, core, spaces, spaces-linux, spaces-windows, spaces-windows-live, spaces-bundle, voice, browser-skills, browser-skill-regression, browser-check, browser-cli-windows, browser-e2e]
+    needs: [changes, cli, core, spaces, spaces-linux, spaces-windows, spaces-windows-live, spaces-windows-speed, spaces-bundle, voice, browser-skills, browser-skill-regression, browser-check, browser-cli-windows, browser-e2e]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job passed or was skipped
