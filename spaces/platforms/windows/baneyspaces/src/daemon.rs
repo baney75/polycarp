@@ -29,6 +29,7 @@ use crate::hook::{self, EndSession, Msg};
 use crate::keys;
 use crate::paths::Paths;
 use crate::settings;
+use crate::watchdog;
 use crate::winapi::{self, hwnd as to_hwnd, id_of, window_name};
 use baneyspaces_core::agent::{check_scope, ActionRecord, WindowFacts};
 use baneyspaces_core::envelope::{Envelope, Retry};
@@ -84,6 +85,12 @@ pub struct Core {
     pub tx: Sender<Msg>,
     /// When the action log was last pruned (`Paths::append_action`).
     pub last_prune: std::cell::Cell<u64>,
+    /// Started by the watchdog after a crash (`daemon --recover`): where the dead daemon had each window, read once
+    /// at start so the windows already open go back to those workspaces.
+    recorded: Option<watchdog::Recorded>,
+    /// `baneyspaces watchdog`, started again by `poll` if it ends. None when it is turned off or could not start.
+    watchdog: Option<std::process::Child>,
+    log_path: Option<PathBuf>,
 }
 
 pub type Shared = Arc<Mutex<Core>>;
@@ -486,7 +493,23 @@ impl Core {
         v["settings"] = Value::Object(self.settings.clone());
         v["overview"] = json!({ "shown": self.overview_shown });
         v["daemon"] = json!({ "pid": self.our_pid, "started": self.started, "events": self.events_seen, "problems": self.problems });
+        v["places"] = json!(self.places());
         self.paths.write_atomic("state.json", &serde_json::to_string_pretty(&v).unwrap_or_default())
+    }
+
+    /// Each tracked window's workspace, with what tells that window apart after a restart. A daemon the watchdog
+    /// starts after a crash reads these back (`watchdog::Recorded`).
+    fn places(&self) -> Vec<watchdog::Place> {
+        let mut v: Vec<watchdog::Place> = self
+            .info
+            .iter()
+            .filter_map(|(id, i)| match self.model.home(id) {
+                Some(Home::Workspace { n }) => Some(watchdog::Place { hwnd: i.hwnd, pid: i.pid, start: i.start, class: winapi::class(to_hwnd(i.hwnd)), n: *n }),
+                _ => None,
+            })
+            .collect();
+        v.sort_by_key(|p| p.hwnd);
+        v
     }
 
     // ---- windows -------------------------------------------------------------------------
@@ -555,7 +578,9 @@ impl Core {
         if existing {
             // Already open: exactly where it is. Agent windows (parked from a previous run) stay parked.
             let on_agent = self.is_agent_pid(info.pid) || self.hidden.get(hwnd).is_some_and(|h| h.agent);
-            let workspace = if on_agent { None } else { monitor.as_deref().and_then(|m| self.model.current(m)).filter(|n| *n != 0).or(Some(1)) };
+            // After a crash, the workspace the dead daemon had it on, if it is still the same window.
+            let recorded = self.recorded.as_ref().and_then(|r| r.workspace_of(hwnd, info.pid, info.start, &winapi::class(to_hwnd(hwnd))));
+            let workspace = if on_agent { None } else { recorded.or_else(|| monitor.as_deref().and_then(|m| self.model.current(m)).filter(|n| *n != 0)).or(Some(1)) };
             let _ = self.apply(Event::ObserveWindow { window: id, pid: info.pid, start: info.start, app: info.app, workspace });
             return;
         }
@@ -1456,7 +1481,7 @@ fn on_end_session(e: EndSession) {
 }
 
 /// One daemon per user: a named mutex, taken before anything is touched. None means another is running.
-fn single_instance(paths: &Paths) -> Option<windows_sys::Win32::Foundation::HANDLE> {
+pub(crate) fn single_instance(paths: &Paths) -> Option<windows_sys::Win32::Foundation::HANDLE> {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::CreateMutexW;
     let name: Vec<u16> = paths.mutex_name().encode_utf16().chain(std::iter::once(0)).collect();
@@ -1506,6 +1531,14 @@ impl Core {
 
     /// One poll: monitors, windows, what is hidden checked against Windows, focus.
     fn poll(&mut self) {
+        if !STOPPING.load(Ordering::SeqCst) {
+            if let Some(w) = self.watchdog.as_mut() {
+                if !matches!(w.try_wait(), Ok(None)) {
+                    say("baneyspaces daemon: the watchdog ended; starting it again");
+                    self.watchdog = watchdog::spawn(self.log_path.as_deref(), self.trace);
+                }
+            }
+        }
         // An agent process that exited, or whose pid Windows gave to another program, is forgotten.
         for (pid, start) in self.model.agent_pids() {
             if !winapi::alive(pid, start) || start == 0 {
@@ -1523,8 +1556,8 @@ impl Core {
     }
 }
 
-pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
-    if let Some(p) = log {
+pub fn run(trace: bool, log: Option<PathBuf>, recover: bool) -> i32 {
+    if let Some(p) = &log {
         if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
             let _ = LOG.set(Mutex::new(f));
         }
@@ -1576,6 +1609,9 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         settings: settings::parse(&paths.read("settings.json").unwrap_or_default()),
         tx: tx.clone(),
         last_prune: std::cell::Cell::new(0),
+        recorded: None,
+        watchdog: None,
+        log_path: log.clone(),
     };
     let shared: Shared = Arc::new(Mutex::new(core));
     let _ = SHARED.set(shared.clone());
@@ -1614,7 +1650,8 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
             let _ = c.paths.write_atomic("actions.jsonl", &log.render());
         }
         // Agent processes from a previous run that are still the same process.
-        let left = hidden::parse_state(&c.paths.read("state.json").unwrap_or_default());
+        let text = c.paths.read("state.json").unwrap_or_default();
+        let left = hidden::parse_state(&text);
         for a in &left.agents {
             if winapi::alive(a.pid, a.start) {
                 let _ = c.model.apply(Event::AgentRegister { pid: a.pid, start: a.start });
@@ -1626,13 +1663,35 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
             c.hidden.insert(h);
         }
         c.sync_monitors();
+        if recover {
+            // What each display showed, then each window on its saved workspace (in `open_window`).
+            let r = watchdog::Recorded::parse(&text);
+            for (m, n) in &r.current {
+                if c.model.monitors().any(|x| x == m.as_str()) {
+                    let _ = c.apply(Event::ObserveWorkspace { monitor: m.clone(), n: *n });
+                }
+            }
+            c.recorded = Some(r);
+        }
         c.resync_windows(true);
+        if let Some(r) = c.recorded.take() {
+            let back = r.places.iter().filter(|p| matches!(c.model.home(&window_name(p.hwnd)), Some(Home::Workspace { n }) if *n == p.n)).count();
+            say(&format!("baneyspaces daemon: started again after a crash: {back} of {} window(s) back on their workspaces", r.places.len()));
+            // Hide now what belongs on a workspace that is not shown, rather than at the first poll.
+            if let Err(e) = c.sync_visibility() {
+                c.problem(format!("could not save the hidden-window record; nothing new was hidden: {e}"));
+            }
+        }
         let _ = c.persist();
         let problems = hook::start(tx.clone(), keys::bindings(), on_end_session);
         for p in &problems {
             say(&format!("baneyspaces daemon: {p}"));
         }
         c.problems.extend(problems);
+        c.watchdog = watchdog::spawn(log.as_deref(), trace);
+        if let Some(w) = &c.watchdog {
+            say(&format!("baneyspaces daemon: watchdog running (pid {})", w.id()));
+        }
         let _ = c.persist();
     }
     // The control pipe: two listeners, so there is always a free instance.
@@ -1695,6 +1754,9 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         let _ = c.persist();
         restore_from_file(&paths, true)
     };
+    // Told last, after every window is back: whatever ends this process now (a closed console), the watchdog reads it
+    // as a clean stop and starts nothing.
+    let _ = paths.write_atomic(watchdog::STOPPED_FILE, &std::process::id().to_string());
     say(&format!("baneyspaces daemon: stopped; {shown} window(s) put back, {kept} agent window(s) still on the agent workspace, {failed} not restored (kept in state.json)"));
     FINISHED.store(true, Ordering::SeqCst);
     0

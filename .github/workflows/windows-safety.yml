@@ -1,0 +1,42 @@
+name: Windows crash safety
+# Crash and restart safety on a windows-latest runner's own desktop: the daemon killed mid-switch 20 times, a crash
+# loop, and explorer.exe restarted 5 times (spaces/platforms/windows/tests/ci/crash-check.ps1 says what each checks).
+# `cargo test` for these crates runs in ci.yml (spaces-windows); clippy in windows-install.yml (lint).
+on:
+  push:
+    branches: [main]
+    paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/Cargo.lock', '.github/workflows/windows-safety.yml']
+  pull_request:
+    paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/Cargo.lock', '.github/workflows/windows-safety.yml']
+  workflow_dispatch:
+concurrency:
+  group: windows-safety-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  crash:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: spaces, key: windows-safety }
+      - name: Build
+        working-directory: spaces
+        run: cargo build --release --locked -p baneyspaces-windows -p baneyspaces-testapp
+      - name: Kill the daemon mid-switch, crash-loop it, restart explorer
+        run: |
+          $env:BANEYSPACES_STATE_DIR = "$env:RUNNER_TEMP\bs-state"
+          spaces/platforms/windows/tests/ci/crash-check.ps1 -Bin "$env:GITHUB_WORKSPACE\spaces\target\release" -Out "$env:RUNNER_TEMP\crash"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: windows-crash-evidence
+          path: |
+            ${{ runner.temp }}/crash
+            ${{ runner.temp }}/bs-state
+          if-no-files-found: ignore
