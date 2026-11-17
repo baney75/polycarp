@@ -109,6 +109,9 @@ mod = "cmd"                        # cmd | ctrl | alt (macOS), super (Linux), wi
   first and last two thirds; ⌃⌥C center; ⌃⌥↩ maximize; ⌃⌥⌫ restore; ⌃⌥= and ⌃⌥- grow and shrink; ⌃⌥⇧ arrows
   focus that way; ⌃⌥⇧⌘ arrows swap that way; ⌃⌥⌘ → and ← next and previous display. A window moves at once, never
   animated, and lands inside the visible frame less Polycarp's dock while a script keeps it up.
+- **Cheat sheet on macOS.** ⌃⌥/ (`cheat-sheet`) shows every binding in force, made from the keymap Polycarp
+  registered, plus ⌘⇥, the overview and fill keys as Settings has them and the recovery chord. A chord another app
+  holds is struck through. Any key or click closes it, and it never takes focus.
 - **Modes.** A mode is a named set of bindings, like a Hyprland submap. `escape` leaves it unless
   it's rebound.
 - **Conflicts with the system.** A chord the OS or the compositor already owns is reported with

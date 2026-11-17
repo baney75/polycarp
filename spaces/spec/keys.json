@@ -42,6 +42,7 @@
     "search": "Open the launcher to search, from any app.",
     "agent finished": "Go to the agent that finished.",
     "overview": "Show the overview.",
+    "cheat-sheet": "Show every live binding, made from the keymap in force, until any key or click.",
     "none": "Unbind the chord.",
     "window {placement}": "Put the front window at a placement from window_placements, inside the visible frame less Polycarp's dock while it stays up. Pressed again, a half or quarter goes 2/3 then 1/3 wide, and a first or last third steps along.",
     "window center": "Center the front window, its size kept.",
