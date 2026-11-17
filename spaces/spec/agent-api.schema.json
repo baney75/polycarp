@@ -1,0 +1,322 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/baney75/polycarp/spaces/spec/agent-api.schema.json",
+  "title": "Polycarp agent API, version 1",
+  "description": "Query results, command results and events (spec/agent-api.md). Every object allows fields it does not name: clients ignore unknown fields.",
+  "$defs": {
+    "version": { "const": 1 },
+    "scope": { "enum": ["agent", "all"] },
+    "access": { "enum": ["read_only", "default", "full"] },
+    "workspace_number": { "type": "integer", "minimum": 1, "maximum": 9 },
+    "window_id": { "type": "integer", "minimum": 0 },
+    "display_id": { "type": "string", "minLength": 1 },
+    "frame": {
+      "type": "object",
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number", "minimum": 0 },
+        "height": { "type": "number", "minimum": 0 }
+      }
+    },
+    "window": {
+      "type": "object",
+      "required": ["id", "pid", "app", "bundle", "title", "workspace", "display", "frame", "focused", "agent", "minimized"],
+      "properties": {
+        "id": { "$ref": "#/$defs/window_id" },
+        "pid": { "type": "integer" },
+        "app": { "type": "string" },
+        "bundle": { "type": "string" },
+        "title": { "type": "string" },
+        "workspace": { "oneOf": [{ "$ref": "#/$defs/workspace_number" }, { "type": "null" }] },
+        "display": { "oneOf": [{ "$ref": "#/$defs/display_id" }, { "type": "null" }] },
+        "frame": { "oneOf": [{ "$ref": "#/$defs/frame" }, { "type": "null" }] },
+        "focused": { "type": "boolean" },
+        "agent": { "type": "boolean", "description": "On the agent workspace." },
+        "minimized": { "type": "boolean" }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "required": ["number", "name", "shown", "display", "current", "agent", "windows", "window_ids"],
+      "properties": {
+        "number": { "$ref": "#/$defs/workspace_number" },
+        "name": { "type": ["string", "null"] },
+        "shown": { "type": "boolean" },
+        "display": { "oneOf": [{ "$ref": "#/$defs/display_id" }, { "type": "null" }] },
+        "current": { "type": "boolean" },
+        "agent": { "type": "boolean" },
+        "windows": { "type": "integer", "minimum": 0, "description": "Every window on it, in scope or not." },
+        "window_ids": { "type": "array", "items": { "$ref": "#/$defs/window_id" }, "description": "Only windows in scope." }
+      }
+    },
+    "display": {
+      "type": "object",
+      "required": ["id", "name", "main", "frame", "visible", "scale", "workspace", "focused"],
+      "properties": {
+        "id": { "$ref": "#/$defs/display_id" },
+        "name": { "type": "string" },
+        "main": { "type": "boolean" },
+        "frame": { "$ref": "#/$defs/frame" },
+        "visible": { "$ref": "#/$defs/frame" },
+        "scale": { "type": "number", "exclusiveMinimum": 0 },
+        "workspace": { "oneOf": [{ "$ref": "#/$defs/workspace_number" }, { "type": "null" }] },
+        "focused": { "type": "boolean" }
+      }
+    },
+    "focused": {
+      "type": "object",
+      "required": ["display", "workspace", "window"],
+      "properties": {
+        "display": { "oneOf": [{ "$ref": "#/$defs/display_id" }, { "type": "null" }] },
+        "workspace": { "$ref": "#/$defs/workspace_number" },
+        "window": { "oneOf": [{ "$ref": "#/$defs/window_id" }, { "type": "null" }] }
+      }
+    },
+    "layout_window": {
+      "type": "object",
+      "required": ["id", "app", "title", "frame"],
+      "properties": {
+        "id": { "$ref": "#/$defs/window_id" },
+        "app": { "type": "string" },
+        "title": { "type": "string" },
+        "frame": { "oneOf": [{ "$ref": "#/$defs/frame" }, { "type": "null" }] }
+      }
+    },
+    "layout": {
+      "type": "object",
+      "required": ["workspaces", "saved"],
+      "properties": {
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["number", "windows"],
+            "properties": {
+              "number": { "$ref": "#/$defs/workspace_number" },
+              "windows": { "type": "array", "items": { "$ref": "#/$defs/layout_window" } }
+            }
+          }
+        },
+        "saved": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "polycarp_theme": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["name", "title", "mode"],
+          "properties": { "name": { "type": "string" }, "title": { "type": "string" }, "mode": { "type": "string" } }
+        }
+      ]
+    },
+    "theme": {
+      "type": "object",
+      "required": ["theme", "palette", "polycarp_theme"],
+      "properties": {
+        "theme": { "type": "string" },
+        "palette": { "type": "string" },
+        "polycarp_theme": { "$ref": "#/$defs/polycarp_theme" }
+      }
+    },
+    "result_base": {
+      "type": "object",
+      "required": ["version", "scope", "access"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "access": { "$ref": "#/$defs/access" }
+      }
+    },
+    "windows_result": {
+      "allOf": [{ "$ref": "#/$defs/result_base" }],
+      "required": ["windows"],
+      "properties": { "windows": { "type": "array", "items": { "$ref": "#/$defs/window" } } }
+    },
+    "workspaces_result": {
+      "allOf": [{ "$ref": "#/$defs/result_base" }],
+      "required": ["current", "agent_workspace", "workspaces"],
+      "properties": {
+        "current": { "$ref": "#/$defs/workspace_number" },
+        "agent_workspace": { "oneOf": [{ "$ref": "#/$defs/workspace_number" }, { "type": "null" }] },
+        "workspaces": { "type": "array", "minItems": 9, "maxItems": 9, "items": { "$ref": "#/$defs/workspace" } }
+      }
+    },
+    "displays_result": {
+      "allOf": [{ "$ref": "#/$defs/result_base" }],
+      "required": ["displays"],
+      "properties": { "displays": { "type": "array", "items": { "$ref": "#/$defs/display" } } }
+    },
+    "focused_result": {
+      "allOf": [{ "$ref": "#/$defs/result_base" }],
+      "required": ["focused"],
+      "properties": { "focused": { "$ref": "#/$defs/focused" } }
+    },
+    "layout_result": {
+      "allOf": [{ "$ref": "#/$defs/result_base" }],
+      "required": ["layout"],
+      "properties": { "layout": { "$ref": "#/$defs/layout" } }
+    },
+    "theme_result": {
+      "allOf": [{ "$ref": "#/$defs/result_base" }],
+      "required": ["theme"],
+      "properties": { "theme": { "$ref": "#/$defs/theme" } }
+    },
+    "state_result": {
+      "allOf": [
+        { "$ref": "#/$defs/windows_result" },
+        { "$ref": "#/$defs/workspaces_result" },
+        { "$ref": "#/$defs/displays_result" },
+        { "$ref": "#/$defs/focused_result" },
+        { "$ref": "#/$defs/layout_result" },
+        { "$ref": "#/$defs/theme_result" }
+      ]
+    },
+    "switch_result": {
+      "type": "object",
+      "required": ["version", "workspace", "display", "shown"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "workspace": { "$ref": "#/$defs/workspace_number" },
+        "display": { "oneOf": [{ "$ref": "#/$defs/display_id" }, { "type": "null" }] },
+        "shown": { "const": true }
+      }
+    },
+    "focus_result": {
+      "type": "object",
+      "required": ["version", "window", "workspace", "focused"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "window": { "$ref": "#/$defs/window_id" },
+        "workspace": { "$ref": "#/$defs/workspace_number" },
+        "focused": { "const": true }
+      }
+    },
+    "move_result": {
+      "type": "object",
+      "required": ["version", "window", "workspace", "display", "frame"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "window": { "$ref": "#/$defs/window_id" },
+        "workspace": { "$ref": "#/$defs/workspace_number" },
+        "display": { "oneOf": [{ "$ref": "#/$defs/display_id" }, { "type": "null" }] },
+        "frame": { "oneOf": [{ "$ref": "#/$defs/frame" }, { "type": "null" }] }
+      }
+    },
+    "frame_result": {
+      "type": "object",
+      "required": ["version", "window", "frame"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "window": { "$ref": "#/$defs/window_id" },
+        "frame": { "$ref": "#/$defs/frame" }
+      }
+    },
+    "layout_command_result": {
+      "type": "object",
+      "required": ["version", "action"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "action": { "enum": ["save", "restore", "list"] },
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+        "workspace": { "$ref": "#/$defs/workspace_number" },
+        "windows": { "type": "integer", "minimum": 0 },
+        "saved": { "type": "array", "items": { "type": "string" } },
+        "moved": { "type": "array", "items": { "$ref": "#/$defs/window_id" } },
+        "missing": {
+          "type": "array",
+          "items": { "type": "object", "required": ["app", "title"], "properties": { "app": { "type": "string" }, "title": { "type": "string" } } }
+        }
+      }
+    },
+    "theme_set_result": {
+      "type": "object",
+      "required": ["version", "theme", "palette", "drawn"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "theme": { "type": "string" },
+        "palette": { "type": "string" },
+        "drawn": { "type": "boolean" }
+      }
+    },
+    "place": {
+      "type": "object",
+      "required": ["workspace", "display"],
+      "properties": {
+        "workspace": { "oneOf": [{ "$ref": "#/$defs/workspace_number" }, { "type": "null" }] },
+        "display": { "oneOf": [{ "$ref": "#/$defs/display_id" }, { "type": "null" }] },
+        "frame": { "$ref": "#/$defs/frame" }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": ["version", "seq", "at", "type", "data"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "at": { "type": "integer", "minimum": 0 },
+        "type": { "type": "string" },
+        "data": { "type": "object" }
+      },
+      "oneOf": [
+        { "properties": { "type": { "const": "hello" }, "data": { "$ref": "#/$defs/hello_data" } } },
+        { "properties": { "type": { "const": "workspace_switched" }, "data": { "$ref": "#/$defs/workspace_switched_data" } } },
+        { "properties": { "type": { "const": "window_focused" }, "data": { "$ref": "#/$defs/focused" } } },
+        { "properties": { "type": { "const": "window_created" }, "data": { "$ref": "#/$defs/window_created_data" } } },
+        { "properties": { "type": { "const": "window_closed" }, "data": { "$ref": "#/$defs/window_closed_data" } } },
+        { "properties": { "type": { "const": "window_moved" }, "data": { "$ref": "#/$defs/window_moved_data" } } },
+        { "properties": { "type": { "const": "theme_changed" }, "data": { "$ref": "#/$defs/theme" } } },
+        { "properties": { "type": { "const": "lagged" }, "data": { "$ref": "#/$defs/lagged_data" } } },
+        { "properties": { "type": { "not": { "enum": ["hello", "workspace_switched", "window_focused", "window_created", "window_closed", "window_moved", "theme_changed", "lagged"] } } } }
+      ]
+    },
+    "hello_data": {
+      "type": "object",
+      "required": ["scope", "access", "events", "state"],
+      "properties": {
+        "scope": { "$ref": "#/$defs/scope" },
+        "access": { "$ref": "#/$defs/access" },
+        "events": { "type": "array", "items": { "type": "string" } },
+        "state": { "$ref": "#/$defs/state_result" }
+      }
+    },
+    "workspace_switched_data": {
+      "type": "object",
+      "required": ["display", "from", "to"],
+      "properties": {
+        "display": { "oneOf": [{ "$ref": "#/$defs/display_id" }, { "type": "null" }] },
+        "from": { "oneOf": [{ "$ref": "#/$defs/workspace_number" }, { "type": "null" }] },
+        "to": { "$ref": "#/$defs/workspace_number" }
+      }
+    },
+    "window_created_data": {
+      "type": "object",
+      "required": ["window"],
+      "properties": { "window": { "$ref": "#/$defs/window" } }
+    },
+    "window_closed_data": {
+      "type": "object",
+      "required": ["window", "workspace"],
+      "properties": {
+        "window": { "$ref": "#/$defs/window_id" },
+        "workspace": { "oneOf": [{ "$ref": "#/$defs/workspace_number" }, { "type": "null" }] }
+      }
+    },
+    "window_moved_data": {
+      "type": "object",
+      "required": ["window", "from", "to"],
+      "properties": {
+        "window": { "$ref": "#/$defs/window_id" },
+        "from": { "$ref": "#/$defs/place" },
+        "to": { "$ref": "#/$defs/place" }
+      }
+    },
+    "lagged_data": {
+      "type": "object",
+      "required": ["missed"],
+      "properties": { "missed": { "type": "integer", "minimum": 1 } }
+    }
+  }
+}
