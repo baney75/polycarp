@@ -11,12 +11,14 @@ A change is done when steps 1 to 3 pass on its branch and step 4 passes on `main
 1. `swift test`
 2. `scripts/bench.sh` (median no-op switch under 40 ms; p90 of your real switches in `timing.log` under 250 ms).
    Exit 3 means fewer than 20 real switches since the build started: make them, or report "real-use budget unchecked".
-   Then `scripts/speed-report.sh` (read-only; also daily): the last day of `timing.log` against every budget in
-   `spec/speed.json` `spacesTiming` (switch, parked and each `open` kind, p50/p90/p99), and a count of dock stuck-open and
-   ⌘Tab switcher-wrong lines in `trace.log` that must be 0. Exit 1 is a miss: put its table in the report. Until the
-   switch, parked and dock budgets are met (gaps P1 to P3) a speed miss is reported, not a merge blocker; a non-zero
-   glitch count is a regression and follows the ledger rule below. `SpeedBudgetTests` fails when the app logs a kind with
-   no budget.
+   `scripts/speed-report.sh` is not a branch check: it reads the logs of the installed build, which is `main`. Run it with
+   step 4 on `main` after merge, and daily: the last day of `timing.log` against every budget in `spec/speed.json`
+   `spacesTiming` (switch, parked and each `open` kind; p50/p90 at 10 lines, p99 at 100), and a count of dock stuck-open
+   and ⌘Tab switcher-wrong lines in `trace.log` that must be 0. Exit 1 is a miss: put its table in the report. Exit 3
+   means no trace line covers the window, so the counts are untested. Until the switch, parked and dock budgets are met
+   (gaps P1 to P3) a speed miss is reported, not a merge blocker; a non-zero glitch count on `main` is a regression and
+   follows the ledger rule below. `SpeedBudgetTests` fails when the app logs a kind with no budget or the report counts a
+   trace line the app no longer writes.
 3. For anything that hides, parks, moves or restores windows: `swift scripts/motion-probe.swift <a> <b>`
    with Helium or Ghostty on one of the two workspaces. It must print "no window slid".
    For anything that decides which windows exist or where they live: `swift scripts/closed-window-probe.swift <empty n>`.
@@ -92,7 +94,7 @@ adds `crash loop: Dock and drag to the top restored, Mission Control saved setti
 when Mission Control came back), then `Quit, staying stopped` or `Start Anyway, N crashes forgiven`; a clean
 quit writes `crash loop: clean quit (<mode>), pid N cleared from the ledger`. The text lives in
 `CrashLoopReport` (pinned by `CrashLoopReportTests`). Read it back from the file
-(`grep -E 'launch:|crash loop:' ~/Library/Application\ Support/BaneySpaces/trace.log`, epoch seconds first;
+(`grep -E 'launch:|crash loop:' ~/Library/Application\ Support/Polycarp/trace.log`, epoch seconds first;
 the file rotates at 200 KB into `trace.log.1` and `trace.log.2`) or the unified log, which survives rotation:
 `/usr/bin/log show --last 1h --predicate 'subsystem == "com.baney.polycarp"' | grep -E 'launch:|crash loop:'`.
 The crash itself is in `~/Library/Logs/DiagnosticReports/BaneySpaces-*.ips`. These lines hold counts, pids,
