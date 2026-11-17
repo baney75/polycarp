@@ -27,46 +27,188 @@ pub struct Binding {
     pub args: Vec<String>,
 }
 
-/// `"win+shift+{n}"` with a digit, or `"win+grave"`, as modifiers and a virtual-key code.
-pub fn parse_chord(template: &str, digit: Option<u8>) -> Option<(Mods, u32)> {
-    let mut mods = Mods::default();
-    let mut vk = None;
-    for part in template.split('+').map(str::trim) {
-        match part {
-            "win" | "cmd" | "super" => mods.win = true,
-            "shift" => mods.shift = true,
-            "alt" => mods.alt = true,
-            "ctrl" => mods.ctrl = true,
-            "{n}" => vk = Some(0x30 + u32::from(digit?)),
-            "grave" => vk = Some(VK_OEM_3),
-            _ => return None,
-        }
+/// A key name from spec/keymap.md as a virtual-key code: `0`-`9`, `a`-`z`, `f1`-`f24`, the arrows and named keys.
+pub fn key_vk(name: &str) -> Option<u32> {
+    let b = name.as_bytes();
+    if b.len() == 1 && b[0].is_ascii_digit() {
+        return Some(0x30 + u32::from(b[0] - b'0'));
     }
-    vk.map(|k| (mods, k))
+    if b.len() == 1 && b[0].is_ascii_lowercase() {
+        return Some(0x41 + u32::from(b[0] - b'a'));
+    }
+    if let Some(n) = name.strip_prefix('f').and_then(|n| n.parse::<u32>().ok()) {
+        return (1..=24).contains(&n).then_some(0x6F + n);
+    }
+    Some(match name {
+        "left" => 0x25,
+        "up" => 0x26,
+        "right" => 0x27,
+        "down" => 0x28,
+        "grave" => VK_OEM_3,
+        "escape" => 0x1B,
+        "return" => 0x0D,
+        "space" => 0x20,
+        "tab" => 0x09,
+        "backspace" => 0x08,
+        "insert" => 0x2D,
+        "delete" => 0x2E,
+        "home" => 0x24,
+        "end" => 0x23,
+        "pageup" => 0x21,
+        "pagedown" => 0x22,
+        "minus" => 0xBD,
+        "equal" => 0xBB,
+        "comma" => 0xBC,
+        "period" => 0xBE,
+        "slash" => 0xBF,
+        "semicolon" => 0xBA,
+        "quote" => 0xDE,
+        "bracketleft" => 0xDB,
+        "bracketright" => 0xDD,
+        "backslash" => 0xDC,
+        _ => return None,
+    })
 }
 
-/// Every binding the spec gives Windows: switch 1-9, move 1-9, move-and-stay 1-9 (none by default),
-/// the agent workspace toggle. Overview has no key in part 1.
-pub fn bindings() -> Vec<Binding> {
+/// `keys.mod`: the modifier `mod` stands for (`win`, `ctrl` or `alt`).
+pub fn parse_mod(name: &str) -> Option<Mods> {
+    match name {
+        "win" => Some(Mods { win: true, ..Mods::default() }),
+        "ctrl" => Some(Mods { ctrl: true, ..Mods::default() }),
+        "alt" => Some(Mods { alt: true, ..Mods::default() }),
+        _ => None,
+    }
+}
+
+/// A chord such as `"mod+shift+left"` or `"win+grave"`: modifiers, then one key, `mod` standing for `m`. Every chord
+/// holds Win, Ctrl or Alt: the hook never takes a bare key or Shift+key from what you type.
+pub fn parse_chord(chord: &str, m: Mods) -> Result<(Mods, u32), String> {
+    let mut mods = Mods::default();
+    let mut vk = None;
+    for part in chord.split('+').map(str::trim) {
+        let add = match part {
+            "mod" => m,
+            "win" | "super" => Mods { win: true, ..Mods::default() },
+            "ctrl" => Mods { ctrl: true, ..Mods::default() },
+            "alt" => Mods { alt: true, ..Mods::default() },
+            "shift" => Mods { shift: true, ..Mods::default() },
+            k if vk.is_none() => {
+                vk = Some(key_vk(k).ok_or_else(|| format!("{k:?} is not a key name (spec/keymap.md lists them)"))?);
+                continue;
+            }
+            k => return Err(format!("{k:?} after the key: a chord is modifiers, then one key")),
+        };
+        if vk.is_some() {
+            return Err("the key goes last".into());
+        }
+        mods = Mods { win: mods.win || add.win, shift: mods.shift || add.shift, alt: mods.alt || add.alt, ctrl: mods.ctrl || add.ctrl };
+    }
+    let vk = vk.ok_or("no key, only modifiers")?;
+    if !(mods.win || mods.ctrl || mods.alt) {
+        return Err("needs win, ctrl or alt (or mod): a bare key or shift+key is yours to type".into());
+    }
+    if mods.win && mods.shift && !mods.ctrl && !mods.alt && vk == 0x1B {
+        return Err("win+shift+escape is the recovery chord (spec/config.md); config can't rebind it".into());
+    }
+    Ok((mods, vk))
+}
+
+const DIRS: [(&str, &str, &str); 4] = [("left", "-40", "0"), ("right", "40", "0"), ("up", "0", "-40"), ("down", "0", "40")];
+
+/// The default keys, from the Windows column of `spec/keys.json`, with `mod` standing for `m`: switch 1-9, move 1-9,
+/// move-and-stay 1-9 (none by default), the agent workspace toggle, focus and swap by direction, resize (left and up
+/// shrink, right and down grow, 40 px) and send to the next display. Overview has no key in part 1.
+pub fn defaults(m: Mods) -> Vec<Binding> {
     let k = keymap::keys();
     let w = &k["platforms"]["windows"];
     let mut out = vec![];
-    let mut add = |template: &str, digit: Option<u8>, args: Vec<String>| {
-        if let Some((mods, vk)) = parse_chord(template, digit) {
-            out.push(Binding { mods, vk, args });
+    let mut add = |action: &str, fill: (&str, &str), args: Vec<&str>| {
+        let t = w[action].as_str().unwrap_or("");
+        if let (false, Ok((mods, vk))) = (t.is_empty(), parse_chord(&t.replace(fill.0, fill.1), m)) {
+            out.push(Binding { mods, vk, args: args.into_iter().map(String::from).collect() });
         }
     };
     for n in 1..=9u8 {
-        add(w["switch"].as_str().unwrap_or(""), Some(n), vec!["switch".into(), n.to_string()]);
+        let d = n.to_string();
+        add("switch", ("{n}", &d), vec!["switch", &d]);
+        add("move", ("{n}", &d), vec!["move", &d]);
+        add("move_stay", ("{n}", &d), vec!["move", &d, "--stay"]);
     }
-    for n in 1..=9u8 {
-        add(w["move"].as_str().unwrap_or(""), Some(n), vec!["move".into(), n.to_string()]);
+    add("agent_toggle", ("", ""), vec!["agent-workspace", "toggle"]);
+    for (dir, dx, dy) in DIRS {
+        add("focus", ("{dir}", dir), vec!["window", "focus", dir]);
+        add("swap", ("{dir}", dir), vec!["window", "swap", dir]);
+        add("resize", ("{dir}", dir), vec!["window", "resize", dx, dy]);
     }
-    for n in 1..=9u8 {
-        add(w["move_stay"].as_str().unwrap_or(""), Some(n), vec!["move".into(), n.to_string(), "--stay".into()]);
-    }
-    add(w["agent_toggle"].as_str().unwrap_or(""), None, vec!["agent-workspace".into(), "toggle".into()]);
+    add("display", ("", ""), vec!["window", "display", "next"]);
     out
+}
+
+/// The keys `config.toml` asks for: `[keys] mod` and `[keys.bindings]` over the defaults (spec/keymap.md). `check`
+/// says whether an action is a command the CLI takes. Err is the exact path and reason; then nothing changes.
+/// Also returns what was read but is not on Windows yet (`[keys.modes]`), to be logged.
+pub fn from_config(text: &str, check: impl Fn(&[String]) -> Result<(), String>) -> Result<(Vec<Binding>, Vec<String>), String> {
+    let doc: toml::Table = text.parse().map_err(|e: toml::de::Error| format!("config.toml: {}", e.message()))?;
+    let empty = toml::Table::new();
+    let keys = match doc.get("keys") {
+        None => &empty,
+        Some(toml::Value::Table(t)) => t,
+        Some(_) => return Err("keys: must be a table".into()),
+    };
+    let mut skipped = vec![];
+    for k in keys.keys().filter(|k| !matches!(k.as_str(), "mod" | "bindings")) {
+        skipped.push(format!("keys.{k}: not on Windows yet, ignored"));
+    }
+    let m = match keys.get("mod") {
+        None => parse_mod("win").unwrap_or_default(),
+        Some(toml::Value::String(s)) => parse_mod(s).ok_or_else(|| format!("keys.mod: {s:?} is not win, ctrl or alt"))?,
+        Some(_) => return Err("keys.mod: must be a string".into()),
+    };
+    let mut table = defaults(m);
+    let binds = match keys.get("bindings") {
+        None => &empty,
+        Some(toml::Value::Table(t)) => t,
+        Some(_) => return Err("keys.bindings: must be a table".into()),
+    };
+    for (chord, action) in binds {
+        let at = format!("keys.bindings.{chord:?}");
+        let (mods, vk) = parse_chord(chord, m).map_err(|e| format!("{at}: {e}"))?;
+        let action = action.as_str().ok_or_else(|| format!("{at}: the action must be a string"))?.trim();
+        table.retain(|b| !(b.mods == mods && b.vk == vk));
+        if action == "none" {
+            continue;
+        }
+        if action.starts_with("exec ") || action.starts_with("mode ") {
+            return Err(format!("{at}: {:?} is not on Windows yet", action.split(' ').next().unwrap_or("")));
+        }
+        let args: Vec<String> = action.split_whitespace().map(String::from).collect();
+        check(&args).map_err(|e| format!("{at}: {action:?}: {e}"))?;
+        table.push(Binding { mods, vk, args });
+    }
+    if !table.iter().any(|b| b.args.first().map(String::as_str) == Some("switch")) {
+        return Err("keys.bindings: no key is left to switch workspaces".into());
+    }
+    Ok((table, skipped))
+}
+
+/// For `window focus` and `window swap`: the nearest of `others` (id, frame as left, top, right, bottom) in direction
+/// `dir` from the middle of `from`. Only windows whose middle lies that way count; distance along `dir` plus twice the
+/// distance across it, so a window straight across wins over a nearer one far off to the side.
+pub fn neighbor<'a>(from: [i32; 4], dir: &str, others: &'a [(String, [i32; 4])]) -> Option<&'a (String, [i32; 4])> {
+    let mid = |r: [i32; 4]| (i64::from(r[0] + r[2]) / 2, i64::from(r[1] + r[3]) / 2);
+    let (x, y) = mid(from);
+    let cost = |r: [i32; 4]| {
+        let (ox, oy) = mid(r);
+        let (along, across) = match dir {
+            "left" => (x - ox, oy - y),
+            "right" => (ox - x, oy - y),
+            "up" => (y - oy, ox - x),
+            "down" => (oy - y, ox - x),
+            _ => return None,
+        };
+        (along > 0).then_some(along + 2 * across.abs())
+    };
+    others.iter().filter_map(|o| cost(o.1).map(|c| (c, o))).min_by_key(|(c, _)| *c).map(|(_, o)| o)
 }
 
 /// The binding for this key with exactly these modifiers held, if any.
@@ -165,13 +307,30 @@ mod tests {
     const WIN: Mods = Mods { win: true, shift: false, alt: false, ctrl: false };
     const WIN_SHIFT: Mods = Mods { win: true, shift: true, alt: false, ctrl: false };
 
+    fn bindings() -> Vec<Binding> {
+        defaults(WIN)
+    }
+
+    fn args(t: &[Binding], vk: u32, m: Mods) -> Option<Vec<String>> {
+        lookup(t, vk, m).map(|b| b.args.clone())
+    }
+
+    fn any_command(_: &[String]) -> Result<(), String> {
+        Ok(())
+    }
+
     #[test]
     fn windows_has_switch_move_and_the_agent_toggle() {
         let t = bindings();
-        assert_eq!(t.len(), 9 + 9 + 1, "move_stay has no default key on Windows");
+        assert_eq!(t.len(), 9 + 9 + 1 + 4 + 4 + 4 + 1, "move_stay has no default key on Windows");
         assert_eq!(lookup(&t, 0x32, WIN).unwrap().args, ["switch", "2"]);
         assert_eq!(lookup(&t, 0x39, WIN_SHIFT).unwrap().args, ["move", "9"]);
         assert_eq!(lookup(&t, VK_OEM_3, WIN).unwrap().args, ["agent-workspace", "toggle"]);
+        let alt = Mods { alt: true, ..WIN };
+        assert_eq!(args(&t, 0x25, alt).unwrap(), ["window", "focus", "left"]);
+        assert_eq!(args(&t, 0x27, Mods { shift: true, ..alt }).unwrap(), ["window", "swap", "right"]);
+        assert_eq!(args(&t, 0x28, Mods { ctrl: true, ..alt }).unwrap(), ["window", "resize", "0", "40"]);
+        assert_eq!(args(&t, 0xBE, alt).unwrap(), ["window", "display", "next"]);
     }
 
     #[test]
@@ -195,11 +354,55 @@ mod tests {
 
     #[test]
     fn the_spec_column_is_what_the_daemon_reads() {
-        let (m, vk) = parse_chord("win+shift+{n}", Some(4)).unwrap();
-        assert_eq!((m, vk), (WIN_SHIFT, 0x34));
-        assert!(parse_chord("win+nonsense", None).is_none());
-        assert!(parse_chord("", None).is_none());
-        assert!(parse_chord("win+{n}", None).is_none(), "a digit chord needs a digit");
+        assert_eq!(parse_chord("win+shift+4", WIN), Ok((WIN_SHIFT, 0x34)));
+        assert_eq!(parse_chord("mod+shift+4", WIN), Ok((WIN_SHIFT, 0x34)));
+        assert_eq!(parse_chord("mod+f12", parse_mod("ctrl").unwrap()), Ok((Mods { ctrl: true, ..Mods::default() }, 0x7B)));
+        assert!(parse_chord("win+nonsense", WIN).is_err());
+        assert!(parse_chord("", WIN).is_err());
+        assert!(parse_chord("win+{n}", WIN).is_err(), "a template is not a chord");
+        assert!(parse_chord("shift+a", WIN).is_err(), "shift+a is typing");
+        assert!(parse_chord("win+a+shift", WIN).is_err(), "the key goes last");
+        assert!(parse_chord("mod+shift+escape", WIN).unwrap_err().contains("recovery chord"));
+    }
+
+    #[test]
+    fn neighbor_is_the_nearest_window_that_way() {
+        let w = |id: &str, l, t| (id.to_string(), [l, t, l + 100, t + 100]);
+        let others = vec![w("left", 0, 200), w("far-left", -400, 200), w("up-left", 50, 0), w("right", 400, 210), w("below", 200, 500)];
+        let from = [200, 200, 300, 300];
+        let pick = |d: &str| neighbor(from, d, &others).map(|o| o.0.as_str());
+        assert_eq!(pick("left"), Some("left"), "straight across beats the one far off and the one up and to the side");
+        assert_eq!(pick("right"), Some("right"));
+        assert_eq!(pick("down"), Some("below"));
+        assert_eq!(pick("up"), Some("up-left"));
+        assert_eq!(neighbor(from, "right", &others[..3]), None, "nothing that way");
+        assert_eq!(neighbor(from, "sideways", &others), None);
+    }
+
+    #[test]
+    fn config_rebinds_unbinds_and_changes_the_modifier() {
+        let text = "[keys]\nmod = \"ctrl\"\n[keys.bindings]\n\"mod+alt+j\" = \"switch 2\"\n\"mod+1\" = \"switch 3\"\n\"mod+2\" = \"none\"\n[keys.modes.resize]\nh = \"window resize -40 0\"\n";
+        let (t, skipped) = from_config(text, any_command).unwrap();
+        let ctrl = Mods { ctrl: true, ..Mods::default() };
+        assert_eq!(args(&t, 0x4A, Mods { alt: true, ..ctrl }).unwrap(), ["switch", "2"]);
+        assert_eq!(args(&t, 0x31, ctrl).unwrap(), ["switch", "3"], "a binding replaces the default on its chord");
+        assert!(lookup(&t, 0x32, ctrl).is_none(), "none unbinds");
+        assert!(lookup(&t, 0x33, WIN).is_none(), "mod is ctrl now, not win");
+        assert_eq!(args(&t, 0x33, ctrl).unwrap(), ["switch", "3"], "the other defaults follow mod");
+        assert_eq!(skipped, ["keys.modes: not on Windows yet, ignored"]);
+        assert_eq!(from_config("", any_command).unwrap().0, bindings(), "no file, no keys section: the defaults");
+    }
+
+    #[test]
+    fn a_bad_config_names_the_path_and_the_reason() {
+        let bad = |t: &str| from_config(t, |a: &[String]| if a[0] == "warp" { Err("unknown command".into()) } else { Ok(()) }).unwrap_err();
+        assert_eq!(bad("[keys]\nmod = \"hyper\""), "keys.mod: \"hyper\" is not win, ctrl or alt");
+        assert!(bad("[keys.bindings]\n\"mod+alt+j\" = \"warp 9\"").starts_with("keys.bindings.\"mod+alt+j\": \"warp 9\": unknown command"));
+        assert!(bad("[keys.bindings]\n\"mod+hyper\" = \"switch 1\"").starts_with("keys.bindings.\"mod+hyper\": "));
+        assert!(bad("[keys.bindings]\n\"mod+t\" = \"exec wt\"").contains("not on Windows yet"));
+        assert!(bad("keys = [").starts_with("config.toml: "));
+        let all_off: String = (1..=9).map(|n| format!("\"mod+{n}\" = \"none\"\n")).collect();
+        assert_eq!(bad(&format!("[keys.bindings]\n{all_off}")), "keys.bindings: no key is left to switch workspaces");
     }
 
     #[test]
