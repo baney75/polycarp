@@ -1,10 +1,12 @@
-//! The desktop shell for Windows: one themed top bar per display, fed live by the daemon (`spec/shell.md`) and
-//! restyled when the theme changes. This is its look and layout, plain Rust tested on any system; the window that
-//! draws it comes next.
-#![allow(dead_code)] // the bar that draws this comes in the next change
+//! `baneyspaces shell`: the desktop shell for Windows. One themed top bar per display, reserved as an AppBar so
+//! maximized windows stop below it, fed live by the daemon (`spec/shell.md`) and restyled when the theme changes.
+//! The layout and the theme are plain Rust and tested anywhere; drawing and the window are in `win.rs`.
+#![cfg_attr(not(windows), allow(dead_code))]
 
 pub mod bar;
 pub mod theme;
+#[cfg(windows)]
+mod win;
 
 const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -21,6 +23,19 @@ pub fn clock_text(weekday: u16, hour: u16, minute: u16) -> String {
 /// Milliseconds until the clock next changes, a little after the minute turns.
 pub fn until_next_minute(second: u16, millis: u16) -> u32 {
     (60 - u32::from(second.min(59))) * 1000 - u32::from(millis.min(999)) + 20
+}
+
+pub fn run(args: &[String]) -> i32 {
+    #[cfg(windows)]
+    {
+        win::run(args)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = args;
+        eprintln!("baneyspaces shell: this build is not for Windows");
+        1
+    }
 }
 
 #[cfg(test)]

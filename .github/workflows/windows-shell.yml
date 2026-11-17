@@ -1,0 +1,50 @@
+name: Windows shell
+# The Windows shell (the bar, later the launcher) on a real Windows desktop: GitHub's windows-latest runner has an
+# interactive session, so windows draw, the pointer can click and the screen can be captured. The job runs the real
+# daemon and the real `polycarp theme` command, and saves its screenshots as an artifact.
+on:
+  pull_request:
+    paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/spec/**', 'spaces/Cargo.lock', 'cli/**', 'themes/**', '.github/workflows/windows-shell.yml']
+  push:
+    branches: [main]
+    paths: ['spaces/platforms/windows/**', 'spaces/crates/**', 'spaces/spec/**', 'spaces/Cargo.lock', 'cli/**', 'themes/**', '.github/workflows/windows-shell.yml']
+  workflow_dispatch:
+concurrency:
+  group: windows-shell-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  bar:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: |
+            spaces
+            cli
+          key: windows-shell
+      - name: Build the daemon and shell
+        working-directory: spaces
+        run: cargo build --release --locked -p baneyspaces-windows
+      - name: Build the polycarp command
+        working-directory: cli
+        run: cargo build --release --locked
+      - name: The bar on the runner's desktop
+        shell: powershell
+        run: >-
+          spaces/platforms/windows/tests/ci/shell.ps1
+          -Bin spaces/target/release
+          -Cli cli/target/release/polycarp.exe
+          -Themes themes
+          -Out evidence
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: windows-shell-bar
+          path: evidence

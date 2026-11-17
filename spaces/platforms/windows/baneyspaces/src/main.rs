@@ -60,6 +60,8 @@ const HELP: &str = "baneyspaces (Windows)
   keys                           the key map for this platform
   daemon [--trace] [--log FILE]  run the daemon in this console
   daemon --background            run it with no console window (the Startup shortcut runs this)
+  shell [--log FILE]             the bar: one themed top bar per display, fed by the daemon
+  shell stop                     close the bar and give the top of each display back
   stop                           ask the running daemon to put every window back and exit (also: daemon stop)
   mcp                            MCP server on stdio (agent tools only)
   doctor                         what works and what does not
@@ -411,6 +413,7 @@ fn main() {
             0
         }
         "daemon" => run_daemon(&args),
+        "shell" => shell::run(&args),
         "keys" => {
             let platform = take(&mut args, "--platform").unwrap_or_else(|| "windows".into());
             let all = keymap::keys();
