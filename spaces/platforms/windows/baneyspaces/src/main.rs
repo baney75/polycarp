@@ -32,6 +32,8 @@ mod desk;
 mod hook;
 #[cfg(windows)]
 mod winapi;
+#[cfg(all(windows, test))]
+mod testwin;
 
 use baneyspaces_core::envelope::{Envelope, Retry};
 use baneyspaces_core::{keymap, mcp};

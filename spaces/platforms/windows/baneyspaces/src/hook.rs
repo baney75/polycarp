@@ -307,3 +307,7 @@ pub fn mask_start_menu() {
     let inputs = [key(0), key(KEYEVENTF_KEYUP)];
     unsafe { SendInput(2, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
 }
+
+#[cfg(test)]
+#[path = "hook_tests.rs"]
+mod tests;
