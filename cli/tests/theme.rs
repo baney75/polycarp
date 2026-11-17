@@ -4681,7 +4681,7 @@ fn an_unreadable_syntax_color_is_refused() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Other apps: Ghostty
+// Other apps: Ghostty, Neovim and btop
 // ---------------------------------------------------------------------------------------------
 
 const ANSI: [&str; 16] = [
@@ -4734,7 +4734,7 @@ fn apps_are_left_alone_until_turned_on() {
         .iter()
         .map(|a| a["app"].clone())
         .collect();
-    assert_eq!(names, ["ghostty"]);
+    assert_eq!(names, ["ghostty", "neovim", "btop"]);
     assert!(apps.as_array().unwrap().iter().all(|a| a["on"] == false));
     let o = b.run(&["theme", "apps", "kitty", "on"]);
     assert_eq!(code(&o), 2);
@@ -4829,6 +4829,54 @@ fn ghostty_keeps_edits_and_lines_it_did_not_add() {
     b.ok(&["apps", "ghostty", "off"]);
     assert_eq!(fs::read_to_string(&config).unwrap(), mine);
     assert!(!b.app_file("ghostty/themes/polycarp-dark").exists());
+}
+
+#[test]
+fn neovim_and_btop_get_the_accent_and_the_terminal_colors() {
+    let b = Box::new();
+    b.ok(&["set", "still-water"]);
+    b.ok(&["accent", "#c04a7a"]);
+    b.ok(&["apps", "neovim", "on"]);
+    b.ok(&["apps", "btop", "on"]);
+    let lua = fs::read_to_string(b.app_file("nvim/colors/polycarp.lua")).unwrap();
+    assert!(lua.contains("vim.g.colors_name = \"polycarp\""));
+    assert!(!lua.contains("vim.o.background = \""));
+    for m in ["light", "dark"] {
+        let block = lua
+            .split(&format!("  {m} = {{\n"))
+            .nth(1)
+            .unwrap()
+            .split("  },")
+            .next()
+            .unwrap();
+        assert!(block.contains(&format!(
+            "    accent = \"{}\",",
+            b.get(&format!("{m}.accent"))
+        )));
+        for k in ANSI {
+            let want = format!("    {k} = \"{}\",", b.get(&format!("{m}.terminal.{k}")));
+            assert!(block.contains(&want), "{m} {k}");
+        }
+        let comment = b.get(&format!("{m}.syntax.comment"));
+        assert!(block.contains(&format!("    syntax_comment = \"{comment}\",")));
+        let btop =
+            fs::read_to_string(b.app_file(&format!("btop/themes/polycarp-{m}.theme"))).unwrap();
+        let accent = b.get(&format!("{m}.accent"));
+        assert!(btop.contains(&format!("theme[hi_fg]=\"{accent}\"")));
+        let red = b.get(&format!("{m}.terminal.red"));
+        assert!(btop.contains(&format!("theme[cpu_end]=\"{red}\"")));
+    }
+    // A forced mode colors both files with that mode and tells Neovim.
+    b.ok(&["set", "still-water", "--mode", "dark"]);
+    let lua = fs::read_to_string(b.app_file("nvim/colors/polycarp.lua")).unwrap();
+    assert!(lua.contains("vim.o.background = \"dark\"\n"));
+    let light = fs::read_to_string(b.app_file("btop/themes/polycarp-light.theme")).unwrap();
+    assert!(light.contains(&format!("theme[main_bg]=\"{}\"", b.get("dark.background"))));
+
+    b.ok(&["off"]);
+    let mut left = Vec::new();
+    files_under(&b.root.join("home"), &mut left);
+    assert!(left.is_empty(), "{left:?}");
 }
 
 #[test]

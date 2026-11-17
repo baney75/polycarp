@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use toml::{Table, Value};
 
-pub(super) const APPS: [&str; 1] = ["ghostty"];
+pub(super) const APPS: [&str; 3] = ["ghostty", "neovim", "btop"];
 
 const ANSI: [&str; 16] = [
     "black",
@@ -55,7 +55,8 @@ fn app_dir(app: &str) -> Option<PathBuf> {
     let base = config_home()?;
     let override_set = env::var_os("POLYCARP_APPS_HOME").is_some_and(|v| !v.is_empty());
     match app {
-        "ghostty" if override_set || !cfg!(windows) => Some(base.join(app)),
+        "neovim" => Some(base.join("nvim")),
+        "ghostty" | "btop" if override_set || !cfg!(windows) => Some(base.join(app)),
         _ => None,
     }
 }
@@ -103,9 +104,131 @@ fn files(app: &str, dir: &Path, full: &Full, mode: &str) -> Vec<(PathBuf, String
                 (dir.join("themes").join(format!("polycarp-{m}")), s)
             })
             .collect(),
+        "btop" => p
+            .iter()
+            .map(|(m, c, t, _)| {
+                let mut s = head("#");
+                let mut put = |k: &str, v: &str| s.push_str(&format!("theme[{k}]=\"{v}\"\n"));
+                for (k, role) in [
+                    ("main_bg", "background"),
+                    ("main_fg", "foreground"),
+                    ("title", "strong"),
+                    ("hi_fg", "accent"),
+                    ("selected_bg", "selection"),
+                    ("selected_fg", "strong"),
+                    ("inactive_fg", "muted"),
+                    ("graph_text", "muted"),
+                    ("meter_bg", "sunken"),
+                    ("proc_misc", "accent"),
+                    ("cpu_box", "border"),
+                    ("mem_box", "border"),
+                    ("net_box", "border"),
+                    ("proc_box", "border"),
+                    ("div_line", "border"),
+                ] {
+                    put(k, &c[role]);
+                }
+                for (k, [a, b, d]) in [
+                    ("temp", ["green", "yellow", "red"]),
+                    ("cpu", ["green", "yellow", "red"]),
+                    ("free", ["green", "cyan", "blue"]),
+                    ("cached", ["blue", "cyan", "magenta"]),
+                    ("available", ["cyan", "green", "yellow"]),
+                    ("used", ["yellow", "red", "red"]),
+                    ("download", ["blue", "cyan", "green"]),
+                    ("upload", ["magenta", "red", "yellow"]),
+                    ("process", ["green", "yellow", "red"]),
+                ] {
+                    put(&format!("{k}_start"), &t[a]);
+                    put(&format!("{k}_mid"), &t[b]);
+                    put(&format!("{k}_end"), &t[d]);
+                }
+                (dir.join("themes").join(format!("polycarp-{m}.theme")), s)
+            })
+            .collect(),
+        "neovim" => {
+            let mut s = head("--");
+            s.push_str("vim.cmd(\"highlight clear\")\nvim.g.colors_name = \"polycarp\"\n");
+            if mode == "light" || mode == "dark" {
+                s.push_str(&format!("vim.o.background = \"{mode}\"\n"));
+            }
+            s.push_str("local palettes = {\n");
+            for (m, c, t, code) in &p {
+                s.push_str(&format!("  {m} = {{\n"));
+                for (k, v) in c.iter().chain(t.iter().filter(|(k, _)| ANSI.contains(&k.as_str()))) {
+                    s.push_str(&format!("    {k} = \"{v}\",\n"));
+                }
+                for (k, v) in &code["syntax"] {
+                    s.push_str(&format!("    syntax_{k} = \"{v}\",\n"));
+                }
+                for (k, v) in &code["diff"] {
+                    s.push_str(&format!("    diff_{k} = \"{v}\",\n"));
+                }
+                s.push_str("  },\n");
+            }
+            s.push_str(NVIM_BODY);
+            vec![(dir.join("colors").join("polycarp.lua"), s)]
+        }
         _ => Vec::new(),
     }
 }
+
+const NVIM_BODY: &str = r#"}
+local p = palettes[vim.o.background == "light" and "light" or "dark"]
+local function hl(group, spec) vim.api.nvim_set_hl(0, group, spec) end
+for i, k in ipairs({ "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "bright_black", "bright_red", "bright_green", "bright_yellow", "bright_blue", "bright_magenta",
+  "bright_cyan", "bright_white" }) do
+  vim.g["terminal_color_" .. (i - 1)] = p[k]
+end
+hl("Normal", { fg = p.foreground, bg = p.background })
+hl("NormalFloat", { fg = p.foreground, bg = p.surface })
+hl("FloatBorder", { fg = p.border, bg = p.surface })
+hl("Cursor", { fg = p.on_accent, bg = p.accent })
+hl("CursorLine", { bg = p.sunken })
+hl("CursorLineNr", { fg = p.accent, bold = true })
+hl("LineNr", { fg = p.muted })
+hl("Visual", { bg = p.selection })
+hl("Search", { fg = p.on_accent, bg = p.accent })
+hl("IncSearch", { fg = p.on_accent, bg = p.accent })
+hl("MatchParen", { fg = p.accent, bold = true })
+hl("Pmenu", { fg = p.foreground, bg = p.surface })
+hl("PmenuSel", { fg = p.on_accent, bg = p.accent })
+hl("StatusLine", { fg = p.foreground, bg = p.surface })
+hl("StatusLineNC", { fg = p.muted, bg = p.sunken })
+hl("WinSeparator", { fg = p.border })
+hl("NonText", { fg = p.border })
+hl("Title", { fg = p.strong, bold = true })
+hl("Directory", { fg = p.syntax_function })
+hl("ErrorMsg", { fg = p.urgent })
+hl("WarningMsg", { fg = p.working })
+hl("DiagnosticError", { fg = p.urgent })
+hl("DiagnosticWarn", { fg = p.working })
+hl("DiagnosticInfo", { fg = p.accent })
+hl("DiagnosticOk", { fg = p.done })
+hl("Comment", { fg = p.syntax_comment, italic = true })
+hl("Keyword", { fg = p.syntax_keyword })
+hl("Statement", { fg = p.syntax_keyword })
+hl("String", { fg = p.syntax_string })
+hl("Number", { fg = p.syntax_number })
+hl("Function", { fg = p.syntax_function })
+hl("Type", { fg = p.syntax_type })
+hl("Identifier", { fg = p.syntax_variable })
+hl("Constant", { fg = p.syntax_constant })
+hl("Operator", { fg = p.syntax_operator })
+hl("Delimiter", { fg = p.syntax_punctuation })
+hl("Tag", { fg = p.syntax_tag })
+hl("@tag", { fg = p.syntax_tag })
+hl("@tag.attribute", { fg = p.syntax_attribute })
+hl("@property", { fg = p.syntax_property })
+hl("@variable", { fg = p.syntax_variable })
+hl("DiffAdd", { fg = p.diff_added, bg = p.diff_added_surface })
+hl("DiffDelete", { fg = p.diff_removed, bg = p.diff_removed_surface })
+hl("DiffChange", { fg = p.diff_modified })
+hl("Added", { fg = p.diff_gutter_added })
+hl("Removed", { fg = p.diff_gutter_removed })
+hl("Changed", { fg = p.diff_modified })
+"#;
 
 /// The one line an app's own config needs to use Polycarp's files: (config file, line).
 fn include(app: &str, dir: &Path) -> Option<(PathBuf, &'static str)> {

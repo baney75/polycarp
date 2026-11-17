@@ -82,7 +82,7 @@ $POLYCARP_CONFIG_DIR if set (an absolute path), else the folder `theme folder --
 else $XDG_CONFIG_HOME/polycarp (default ~/.config/polycarp), or %APPDATA%\\Polycarp on Windows.
 Set POLYCARP_CALLER to record who made a change (default: user).
 
-`theme apps ghostty on` makes `set` theme that app too, writing only
+`theme apps ghostty on` (or neovim, btop) makes `set` theme that app too, writing only
 Polycarp's own files there. POLYCARP_APPS_HOME stands in for the home folder when apps are written.
 
 Products read the files in <config>/current/ once their adapters land.

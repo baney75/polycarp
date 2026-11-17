@@ -253,11 +253,13 @@ polycarp theme apps ghostty on
 polycarp theme apps ghostty off
 ```
 
-Polycarp can color Ghostty too. It is off until you turn it on, and the setting lives under `[apps]` in `config.toml`. While an app is on, every theme change rewrites its Polycarp files, from the theme's light and dark terminal and code colors:
+Polycarp can color Ghostty, Neovim and btop too. Each app is off until you turn it on, and the setting lives under `[apps]` in `config.toml`. While an app is on, every theme change rewrites its Polycarp files, from the theme's light and dark terminal and code colors:
 
 | App | Polycarp writes | You pick it with |
 | --- | --- | --- |
 | Ghostty | `themes/polycarp-light` and `themes/polycarp-dark` in Ghostty's folder | Nothing: Polycarp adds the line `theme = light:polycarp-light,dark:polycarp-dark` to the end of Ghostty's `config.ghostty` (or `config`) |
+| Neovim | `colors/polycarp.lua` in Neovim's folder | `:colorscheme polycarp` |
+| btop | `themes/polycarp-light.theme` and `themes/polycarp-dark.theme` in btop's folder | `color_theme = "polycarp-dark"` in btop's settings |
 
 Polycarp writes only its own files there, plus Ghostty's one line. Turning an app off, `polycarp theme off` and `undo` remove those files and put Ghostty's config back byte for byte. If you edited that config since, only Polycarp's line comes out. What Polycarp wrote is kept in `apps/` in the settings folder. `POLYCARP_APPS_HOME` stands in for your home folder when the apps are written, so you can try it on a copy.
 
