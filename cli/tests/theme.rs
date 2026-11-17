@@ -3424,7 +3424,7 @@ fn on_brings_the_last_theme_back_and_set_accent_change_turn_it_on_and_say_so() {
         assert_eq!(c, 0, "{args:?} {v}");
         assert!(v["data"]["notes"].to_string().contains("was off"), "{v}");
         assert_eq!(b.json(&["current", "--json"])["enabled"], true, "{args:?}");
-        assert_eq!(current_files(&b).len(), 5, "{args:?}");
+        assert_eq!(current_files(&b).len(), 6, "{args:?}");
     }
 }
 
