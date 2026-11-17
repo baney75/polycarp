@@ -22,7 +22,7 @@ function bad($m) { $script:fail++; say "  FAIL: $m" }
 function check([bool]$c, $m, $why = '') { if ($c) { ok $m } else { bad "$m$(if ($why) { " ($why)" })" } }
 function skip($m) { $script:skips += $m; say "  skip: $m" }
 function shot($n) { try { [Desk]::Shot((Join-Path $Out "$n.png")) } catch { say "  (no shot $n`: $_)" } }
-function cli { $o = (& $bs @args 2>&1 | Out-String).Trim(); Add-Content $log "`$ baneyspaces $args  ->  $($o.Substring(0, [Math]::Min(300, $o.Length)))"; $o }
+function bsc { $o = (& $bs @args 2>&1 | Out-String).Trim(); Add-Content $log "`$ baneyspaces $args  ->  $($o.Substring(0, [Math]::Min(300, $o.Length)))"; $o }
 function j($text) { try { $text | ConvertFrom-Json } catch { $null } }
 function win($h) { [Desk]::Read([long]$h) }
 function cloaked($h) { $w = win $h; if ($w) { $w.Cloaked } else { -1 } }
@@ -34,11 +34,11 @@ function keys([int[]]$vk, [switch]$Unmarked) { [void][Desk]::Keys([uint16[]]$vk,
 $WIN = 0x5B; $SHIFT = 0x10; $CTRL = 0x11; $F4 = 0x73; $D = 0x44; $GRAVE = 0xC0
 function daemon_start([switch]$Test) {
   if ($Test) { $env:BANEYSPACES_TEST_OPS = '1' } else { Remove-Item Env:BANEYSPACES_TEST_OPS -ErrorAction SilentlyContinue }
-  $o = cli daemon --background --trace --log $dlog
+  $o = bsc daemon --background --trace --log $dlog
   Remove-Item Env:BANEYSPACES_TEST_OPS -ErrorAction SilentlyContinue
   say "daemon start$(if ($Test) { ' (test ops)' }): $o"
 }
-function daemon_stop { [void](cli stop); for ($i = 0; $i -lt 40 -and (Get-Process baneyspaces -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 250 } }
+function daemon_stop { [void](bsc stop); for ($i = 0; $i -lt 40 -and (Get-Process baneyspaces -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 250 } }
 function hidden_entry($st, $h) { @($st.data.hidden | ? { $_.hwnd -eq [long]$h })[0] }
 function acl_deny { icacls $state /deny "$($env:USERNAME):(OI)(CI)(WD,AD)" | Out-Null }
 function acl_allow { icacls $state /remove:d "$($env:USERNAME)" | Out-Null }
@@ -54,8 +54,8 @@ taskkill /F /IM baneyspaces.exe 2>&1 | Out-Null
 Get-Process notepad, bs-testapp -ErrorAction SilentlyContinue | Stop-Process -Force
 Remove-Item -Recurse -Force (Join-Path $state 'state.json'), (Join-Path $state 'actions.jsonl'), (Join-Path $state 'settings.json') -ErrorAction SilentlyContinue
 daemon_start -Test
-$doc = j (cli doctor)
-check ($doc.data.healthy -eq $true) 'doctor is healthy with the daemon up (daemon, engine, state directory)' (cli doctor)
+$doc = j (bsc doctor)
+check ($doc.data.healthy -eq $true) 'doctor is healthy with the daemon up (daemon, engine, state directory)' (bsc doctor)
 
 say '== 1. open Notepad, Explorer and two test app windows'
 Start-Process notepad; Start-Sleep 2
@@ -67,12 +67,12 @@ $ta = @($all | ? { $_.Class -eq 'BaneySpacesTestApp' })
 say "notepad $(hw $np)  explorer $(hw $ex)  test apps $(($ta | % { hw $_ }) -join ' ')"
 check ($np -and $np.Seen) 'Notepad shows'; check ($ex -and $ex.Seen) 'Explorer shows'; check ($ta.Count -eq 2 -and ($ta | ? { $_.Seen }).Count -eq 2) 'both test app windows show'
 Start-Sleep 1
-$st = j (cli state)
+$st = j (bsc state)
 check ($st.data.windows.(hw $np).home -eq '1' -or "$($st.data.windows.(hw $np).home)" -match '1') 'the daemon tracks Notepad on workspace 1' ($st.data.windows | ConvertTo-Json -Compress -Depth 4)
 $npRect = "$($np.L),$($np.T),$($np.R),$($np.B)"
 
 say '== 2. move Notepad to workspace 2 and a test app to 3 (--stay)'
-[void](cli move 2 --stay --window (hw $np)); [void](cli move 3 --stay --window (hw $ta[0])); Start-Sleep 1
+[void](bsc move 2 --stay --window (hw $np)); [void](bsc move 3 --stay --window (hw $ta[0])); Start-Sleep 1
 $s = seen; shot '02-moved'
 check ($s -notmatch 'Notepad') 'Notepad is hidden on workspace 1' $s
 check ((win $ta[0].Hwnd).Seen -eq $false) 'test app A is hidden on workspace 1'
@@ -82,13 +82,13 @@ check ($n.Cloaked -eq 2) 'Notepad is hidden by the shell cloak (DWM cloaked = 2)
 check ("$($n.L),$($n.T),$($n.R),$($n.B)" -eq $npRect) "a cloaked window keeps its frame ($npRect)" $n
 
 say '== 3. switch 1 -> 2 -> 3 -> 1 with the CLI'
-[void](cli switch 2); Start-Sleep 1; $s = seen; shot '03-switch-2'
+[void](bsc switch 2); Start-Sleep 1; $s = seen; shot '03-switch-2'
 check ($s -match 'Notepad') 'workspace 2 shows Notepad' $s; check ($s -notmatch 'CabinetWClass') 'workspace 2 hides Explorer' $s
 check ((win $ta[0].Hwnd).Seen -eq $false) 'workspace 2 hides test app A'
 check ([Desk]::Foreground() -eq $np.Hwnd) 'the shown workspace''s window takes the front (Notepad)' "front is w-$([Desk]::Foreground())"
-[void](cli switch 3); Start-Sleep 1; $s = seen; shot '03-switch-3'
+[void](bsc switch 3); Start-Sleep 1; $s = seen; shot '03-switch-3'
 check ((win $ta[0].Hwnd).Seen) 'workspace 3 shows test app A'; check ($s -notmatch 'Notepad') 'workspace 3 hides Notepad' $s
-[void](cli switch 1); Start-Sleep 1; $s = seen; shot '03-switch-1'
+[void](bsc switch 1); Start-Sleep 1; $s = seen; shot '03-switch-1'
 check ($s -match 'CabinetWClass') 'workspace 1 shows Explorer' $s; check ($s -notmatch 'Notepad') 'workspace 1 hides Notepad' $s
 check ((win $ta[0].Hwnd).Seen -eq $false) 'workspace 1 hides test app A'
 $fg = win ([Desk]::Foreground())
@@ -102,22 +102,22 @@ check ($fg -and $fg.Class -ne 'Windows.UI.Core.CoreWindow' -and $fg.Class -notma
 keys $WIN, 0x33; check ((win $ta[0].Hwnd).Seen) 'Win+3 shows workspace 3 (test app A)'
 keys $WIN, 0x31; $s = seen; shot '04-win-1'
 check ($s -match 'CabinetWClass') 'Win+1 is back on workspace 1' $s; check ((win $ta[0].Hwnd).Seen -eq $false) 'Win+1 hid test app A'
-$cur = (j (cli state)).data.monitors.PSObject.Properties | % { $_.Value.current }
+$cur = (j (bsc state)).data.monitors.PSObject.Properties | % { $_.Value.current }
 # Unmarked Win+7: the daemon must ignore it (it would switch to 7); the shell has no seventh taskbar button to open.
 keys $WIN, 0x37 -Unmarked
-$cur2 = (j (cli state)).data.monitors.PSObject.Properties | % { $_.Value.current }
+$cur2 = (j (bsc state)).data.monitors.PSObject.Properties | % { $_.Value.current }
 check ("$cur" -eq "$cur2" -and (win $ta[0].Hwnd).Seen -eq $false) 'an injected Win+7 without the mark is ignored (only typed keys switch)' "$cur -> $cur2"
-[void](cli switch 1); Start-Sleep 1
+[void](bsc switch 1); Start-Sleep 1
 [void][Desk]::Front($ta[1].Hwnd); Start-Sleep 1
-$before = @((j (cli state)).data.windows.PSObject.Properties | ? { "$($_.Value.home)" -match '2' }).Count
+$before = @((j (bsc state)).data.windows.PSObject.Properties | ? { "$($_.Value.home)" -match '2' }).Count
 keys $WIN, $SHIFT, 0x32
-$st = j (cli state)
+$st = j (bsc state)
 $after = @($st.data.windows.PSObject.Properties | ? { "$($_.Value.home)" -match '2' }).Count
 check ($after -gt $before) "Win+Shift+2 sent the front window to workspace 2 ($before -> $after windows there)"
 check ((win $ta[1].Hwnd).Seen) 'and followed it there (test app B shows)'
-[void](cli switch 1); Start-Sleep 1
-keys $WIN, $GRAVE; $a1 = (j (cli agent status)).data.shown
-keys $WIN, $GRAVE; $a2 = (j (cli agent status)).data.shown
+[void](bsc switch 1); Start-Sleep 1
+keys $WIN, $GRAVE; $a1 = (j (bsc agent status)).data.shown
+keys $WIN, $GRAVE; $a2 = (j (bsc agent status)).data.shown
 check ($a1 -eq $true -and $a2 -eq $false) 'Win+` shows the agent workspace, and again hides it' "$a1 then $a2"
 
 say '== 5. taskkill /F the daemon while windows are hidden, then start it again'
@@ -127,16 +127,16 @@ check ((cloaked $np.Hwnd) -eq 2) 'after the kill the windows are still cloaked (
 daemon_start -Test; Start-Sleep 2; $s = seen; shot '06-restarted'
 check ($s -match 'Notepad') 'restart: Notepad is back' $s; check ((win $ta[0].Hwnd).Seen) 'restart: test app A is back'; check ($s -match 'CabinetWClass') 'restart: Explorer is there' $s
 check (@(wins | ? { $_.Cloaked -eq 2 }).Count -eq 0) 'nothing is left cloaked after the restart'
-[void](cli switch 1)
+[void](bsc switch 1)
 
 say '== 5b. things that go wrong while windows are hidden'
 $ut = $ta[0].Hwnd
-[void](cli move 2 --stay --window "w-$ut"); Start-Sleep 1
+[void](bsc move 2 --stay --window "w-$ut"); Start-Sleep 1
 check ((cloaked $ut) -eq 2) 'a window of yours is cloaked on workspace 2'
-[void][Desk]::SetTitle($ut, ''); Start-Sleep 2; [void](cli switch 2); Start-Sleep 1
+[void][Desk]::SetTitle($ut, ''); Start-Sleep 2; [void](bsc switch 2); Start-Sleep 1
 check ((cloaked $ut) -eq 0) 'its title became empty while hidden: switching to 2 still shows it'
 [void][Desk]::SetTitle($ut, 'BaneySpaces test app'); Start-Sleep 2
-[void](cli move 2 --stay --window "w-$ut"); [void](cli switch 1); Start-Sleep 1
+[void](bsc move 2 --stay --window "w-$ut"); [void](bsc switch 1); Start-Sleep 1
 check ((cloaked $ut) -eq 2) 'with its title back it is hidden on workspace 2 again'
 say "    $([Desk]::Uncloak($ut))"; Start-Sleep 2
 check ((cloaked $ut) -eq 2) 'an outside uncloak was undone within two polls'
@@ -153,123 +153,123 @@ Add-Content $log ($replies -join "`n")
 check (@($replies | ? { $_ -match 'invalid_args' }).Count -eq 3 -and ($replies[3] -match 'pong')) '"x", [1] and 5 are refused (invalid_args) and a ping after them is answered' ($replies -join ' ')
 check ((cloaked $ut) -eq 2) 'the daemon kept the window hidden through it'
 acl_deny
-$o = cli switch 2
+$o = bsc switch 2
 check ($o -match 'nothing was hidden' -and $o -match '"retry":"safe"') 'with state.json unwritable, switch 2 is refused (nothing was hidden, retry safe)' $o
 check ((seen) -match 'CabinetWClass') 'and your windows are still showing'
 acl_allow
-check ((cli switch 2) -match '"ok":true') 'once the record can be saved, the same switch works'
+check ((bsc switch 2) -match '"ok":true') 'once the record can be saved, the same switch works'
 Start-Sleep 1; check ((seen) -notmatch 'CabinetWClass') 'before sign-out: workspace 1 (Explorer) is hidden'
 say "    $([Desk]::EndSession($false))"; Start-Sleep 2
 check ((seen) -match 'CabinetWClass') 'WM_QUERYENDSESSION put the windows back'
 say "    $([Desk]::EndSession($true))"; Start-Sleep 3
 check ((seen) -notmatch 'CabinetWClass') 'a cancelled sign-out: the next poll hides workspace 1 again'
-[void](cli switch 1); Start-Sleep 1
-[void](cli move 2 --stay --window "w-$ut"); Start-Sleep 1
+[void](bsc switch 1); Start-Sleep 1
+[void](bsc move 2 --stay --window "w-$ut"); Start-Sleep 1
 Stop-Process -Name explorer -Force; Start-Sleep 9
 if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe; Start-Sleep 6 }
 check ((cloaked $ut) -eq 2) 'explorer.exe restarted: the hidden window is still hidden'
-[void](cli switch 2); Start-Sleep 2
+[void](bsc switch 2); Start-Sleep 2
 check ((cloaked $ut) -eq 0) 'and it shows again when its workspace is shown'
 acl_deny
-$o = cli agent move "w-$ut"
+$o = bsc agent move "w-$ut"
 check ($o -match 'nothing was hidden') 'agent move of your window is refused when the record cannot be saved' $o
 check ((cloaked $ut) -eq 0) 'and your window is still showing (not ghosted unrecorded)'
 acl_allow
-check ((cli agent move "w-$ut") -match '"ok":true') 'agent move works once it can be recorded'
-Start-Sleep 1; $e = hidden_entry (j (cli state)) $ut
+check ((bsc agent move "w-$ut") -match '"ok":true') 'agent move works once it can be recorded'
+Start-Sleep 1; $e = hidden_entry (j (bsc state)) $ut
 check ($e.how -eq 'cloak' -and $e.agent -eq $false) 'it is recorded as yours (cloak, agent false), not as an agent''s ghost' ($e | ConvertTo-Json -Compress)
-[void](cli agent bring "w-$ut"); Start-Sleep 1
+[void](bsc agent bring "w-$ut"); Start-Sleep 1
 check ((cloaked $ut) -eq 0) 'agent bring puts it back'
-[void](cli move 2 --stay --window "w-$ut"); [void](cli switch 1); Start-Sleep 1
+[void](bsc move 2 --stay --window "w-$ut"); [void](bsc switch 1); Start-Sleep 1
 taskkill /F /IM baneyspaces.exe 2>&1 | Out-Null; Start-Sleep 1
 $f = Join-Path $state 'state.json'; ((Get-Content $f -Raw) -replace '"class":\s*"BaneySpacesTestApp"', '"class": "SomeOtherClass"') | Set-Content $f
 daemon_start -Test; Start-Sleep 2
 check ((cloaked $ut) -eq 2) 'a recorded window whose class no longer matches was left alone (still cloaked, not touched)'
 check ((Get-Content $dlog | Select-String 'left alone' | Measure-Object).Count -gt 0) 'and it was logged'
 say "    $([Desk]::Uncloak($ut))"
-$ids = { $d = (j (cli state)).data.windows; ($d.PSObject.Properties | % { "$($_.Name)=$($_.Value.home)" } | Sort-Object) -join ' ' }
+$ids = { $d = (j (bsc state)).data.windows; ($d.PSObject.Properties | % { "$($_.Name)=$($_.Value.home)" } | Sort-Object) -join ' ' }
 $s0 = & $ids
 keys $WIN, $CTRL, $D; Start-Sleep 2; $s1 = & $ids; shot '07-virtual-desktop'
 check ($s0 -eq $s1) 'on a second virtual desktop every window is still tracked, on the same workspace' "$s0 / $s1"
 keys $WIN, $CTRL, $F4; Start-Sleep 2; $s2 = & $ids
 check ($s0 -eq $s2) 'and after closing it they are all back, with the same workspaces' "$s0 / $s2"
-[void](cli switch 1)
+[void](bsc switch 1)
 Get-Process bs-testapp -ErrorAction SilentlyContinue | Stop-Process -Force
 
 say '== 6. production refuses every agent launch (a daemon without test ops)'
 daemon_stop; daemon_start
 foreach ($app in 'notepad', 'explorer', $testapp) {
-  $o = cli agent open $app
+  $o = bsc agent open $app
   check ($o -match '"code":"needs_sandbox"') "agent open $(Split-Path -Leaf $app) is refused (needs_sandbox) before anything starts" $o
 }
 Start-Sleep 1; check (-not ((seen) -match 'BaneySpacesTestApp')) 'no test window appeared'
-check ((cli agent run '--' cmd) -match '"code":"needs_sandbox"') 'agent run is refused too'
+check ((bsc agent run '--' cmd) -match '"code":"needs_sandbox"') 'agent run is refused too'
 
 say '== 6b. the agent flow with the test app (a test daemon), your Notepad open'
-daemon_stop; daemon_start -Test; [void](cli switch 2); Start-Sleep 1
+daemon_stop; daemon_start -Test; [void](bsc switch 2); Start-Sleep 1
 [Desk]::WatchStart($false)
-$o = cli agent open $testapp
+$o = bsc agent open $testapp
 Start-Sleep 6; $wr = [Desk]::WatchStop(); $wr | % { Add-Content $log "    $_" }
 check ($o -match '"ok":true') 'agent open bs-testapp' $o
 $aw = if ($o -match '"window":"(w-\d+)"') { $Matches[1] } else { '' }
 check (($wr -join "`n") -notmatch 'NEW none' -and ($wr -join "`n") -match 'visible_polls=0' -and ($wr -join "`n") -notmatch 'visible_polls=[1-9]') "the agent window was never visible while it opened ($($wr[0]))" ($wr -join ' | ')
 shot '08-agent-open'
-$sn = cli agent snapshot --window $aw -i; $snj = j $sn
+$sn = bsc agent snapshot --window $aw -i; $snj = j $sn
 $ref = if ($snj) { find_ref $snj.data.result.tree 'textfield' $null }
 check ([bool]$ref) "agent snapshot found a text field ($ref)" $sn.Substring(0, [Math]::Min(300, $sn.Length))
 check ($sn -match '"screen_changed":false') 'snapshot changed nothing you can see'
-$t = cli agent type $ref 'hello from the agent'
+$t = bsc agent type $ref 'hello from the agent'
 check ($t -match '"verified":true') 'agent type landed and the engine read it back (verified)' $t
 check ($t -match '"screen_changed":false') 'typing changed nothing you can see'
 $btn = if ($snj) { find_ref $snj.data.result.tree 'button' 'Open dialog' }
 check ([bool]$btn) "the snapshot has the test app's Open dialog button ($btn)"
 [Desk]::WatchStart($true)
-$c = cli agent click $btn
+$c = bsc agent click $btn
 Start-Sleep 5; $wr = [Desk]::WatchStop(); $wr | % { Add-Content $log "    $_" }
 check ($c -match '"ok":true') 'agent click on Open dialog' $c
 $dl = @($wr | ? { $_ -match 'Test dialog' })[0]
 $vp = if ($dl -match 'visible_polls=(\d+)') { [int]$Matches[1] } else { -1 }; $exms = if ($dl -match 'exposed_ms=(\d+)') { [int]$Matches[1] } else { 99 }
 check ($vp -ge 0 -and $vp -le 5 -and $exms -le 33) "the dialog the app opened was ghosted at once: visible in $vp of $($wr[0]) polls, exposed $exms ms" ($wr -join ' | ')
-$as = j (cli agent status)
+$as = j (bsc agent status)
 check (@($as.data.windows).Count -eq 2) 'the dialog is an agent window (agent status lists both)'
 $dw = @($as.data.windows | ? { $_.window -ne $aw })[0].window
-$ds = j (cli agent snapshot --window $dw -i); $okb = if ($ds) { find_ref $ds.data.result.tree 'button' 'OK' }
-check ($okb -and ((cli agent click $okb) -match '"ok":true')) 'the agent dismissed the dialog through its own window (OK)'
-Start-Sleep 2; check (@((j (cli agent status)).data.windows).Count -eq 1) 'the dialog is gone from the agent workspace'
+$ds = j (bsc agent snapshot --window $dw -i); $okb = if ($ds) { find_ref $ds.data.result.tree 'button' 'OK' }
+check ($okb -and ((bsc agent click $okb) -match '"ok":true')) 'the agent dismissed the dialog through its own window (OK)'
+Start-Sleep 2; check (@((j (bsc agent status)).data.windows).Count -eq 1) 'the dialog is gone from the agent workspace'
 $awh = [long]($aw -replace 'w-', ''); shot '09-agent-typed'
 check (-not (win $awh).Seen) 'the agent''s window is still invisible after typing' (win $awh)
 check (-not ((win $np.Hwnd).Title -match '^\*')) 'your Notepad still says Untitled (not modified)' (win $np.Hwnd).Title
-check ((cli agent log --since 300) -match '"verb":"type"') 'the action log recorded the type (no content)'
-[void](cli agent-workspace show); Start-Sleep 1; $w = win $awh
+check ((bsc agent log --since 300) -match '"verb":"type"') 'the action log recorded the type (no content)'
+[void](bsc agent-workspace show); Start-Sleep 1; $w = win $awh
 check ($w.Alpha -eq 255 -and $w.Seen) 'agent-workspace show: the agent''s window is opaque and showing' $w
-[void](cli agent-workspace hide); Start-Sleep 1
+[void](bsc agent-workspace hide); Start-Sleep 1
 check ((win $awh).Alpha -eq 0) 'agent-workspace hide: a ghost again' (win $awh)
 $before = (Get-Content $dlog | Select-String 'is not hidden any more' | Measure-Object).Count
-$pp = cli agent open $testapp --refuse-ghost
+$pp = bsc agent open $testapp --refuse-ghost
 check ($pp -match '"ok":true') 'agent open of a window that refuses the ghost' $pp
 $pw = if ($pp -match '"window":"w-(\d+)"') { $Matches[1] } else { '0' }; $ppid = if ($pp -match '"pid":(\d+)') { $Matches[1] } else { '0' }
-Start-Sleep 4; $e = hidden_entry (j (cli state)) $pw
+Start-Sleep 4; $e = hidden_entry (j (bsc state)) $pw
 check ($e.how -eq 'park' -and $e.agent -eq $true) 'it is parked and recorded as parked (agent)' ($e | ConvertTo-Json -Compress)
 Start-Sleep 3; $after = (Get-Content $dlog | Select-String 'is not hidden any more' | Measure-Object).Count
 check ($before -eq $after) "and it is not re-hidden over and over ($before -> $after)"
 check (-not (win $pw).Seen) 'it is not on your screen' (win $pw)
-[void](cli agent-workspace show); Start-Sleep 1; [void](cli agent-workspace hide); Start-Sleep 1
-check ((hidden_entry (j (cli state)) $pw).how -eq 'park') 'show then hide leaves it parked and recorded'
+[void](bsc agent-workspace show); Start-Sleep 1; [void](bsc agent-workspace hide); Start-Sleep 1
+check ((hidden_entry (j (bsc state)) $pw).how -eq 'park') 'show then hide leaves it parked and recorded'
 Stop-Process -Id $ppid -Force -ErrorAction SilentlyContinue
 
 say '== 7. deny by default, settings, and agent peers'
-check ((cli get) -match '"dock.enabled":true') 'settings default: dock true'
-check ((cli set dock.enabled false) -match '"ok":true' -and (cli get dock.enabled) -match 'false') 'set/get round-trips dock.enabled'
-check ((cli set appearance.theme neon) -match 'invalid_args') 'a bad theme is invalid_args'
-[void](cli set dock.enabled true)
+check ((bsc get) -match '"dock.enabled":true') 'settings default: dock true'
+check ((bsc set dock.enabled false) -match '"ok":true' -and (bsc get dock.enabled) -match 'false') 'set/get round-trips dock.enabled'
+check ((bsc set appearance.theme neon) -match 'invalid_args') 'a bad theme is invalid_args'
+[void](bsc set dock.enabled true)
 $peer = Join-Path $Out 'peer.txt'; $pc = Join-Path $Out 'peer.cmd'
 Set-Content $pc "@echo off`r`n`"$bs`" set dock.enabled false > `"$peer`" 2>&1`r`n`"$bs`" switch 2 >> `"$peer`" 2>&1"
-[void](cli agent open cmd.exe /c $pc); Start-Sleep 3
+[void](bsc agent open cmd.exe /c $pc); Start-Sleep 3
 $pt = Get-Content $peer -Raw -ErrorAction SilentlyContinue; Add-Content $log "peer: $pt"
 check (([regex]::Matches("$pt", 'not_in_scope')).Count -eq 1 -and "$pt" -match '"dock.enabled":false') 'from an agent''s own process: switch is refused (not_in_scope), set dock.enabled is accepted' $pt
-check ((cli get dock.enabled) -match 'false') 'the agent''s set took effect (agents may customize appearance)'
-check ((cli agent log --since 300) -match '"verb":"set"') 'the set was logged with its caller'
-[void](cli set dock.enabled true)
+check ((bsc get dock.enabled) -match 'false') 'the agent''s set took effect (agents may customize appearance)'
+check ((bsc agent log --since 300) -match '"verb":"set"') 'the set was logged with its caller'
+[void](bsc set dock.enabled true)
 
 say '== 8. plug and unplug a display (R-M2, R-M3)'
 if ([Desk]::Displays() -lt 2) { skip "section 8: the runner has $([Desk]::Displays()) display and no way to add one without installing a display driver (untested live)" }
