@@ -2,7 +2,7 @@ import CoreGraphics
 import CryptoKit
 import Foundation
 
-/// A display as the window book needs it: its UUID and its whole and usable areas, in
+/// A display as a window record needs it: its UUID and its whole and usable areas, in
 /// Accessibility coordinates (top-left origin, y down).
 public struct DisplayArea: Equatable, Sendable {
     public var key: DisplayKey
