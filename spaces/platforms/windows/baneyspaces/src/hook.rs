@@ -23,7 +23,7 @@ use windows_sys::Win32::System::RemoteDesktop::WTSRegisterSessionNotification;
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 /// What the hooks tell the worker.
@@ -356,7 +356,5 @@ pub fn stop() {
 /// digit, so press and release an unassigned key (VK 0xE8) while Win is still down: Windows
 /// then counts the chord as used. The hook ignores it because it is injected.
 pub fn mask_start_menu() {
-    let key = |flags| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: 0xE8, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } };
-    let inputs = [key(0), key(KEYEVENTF_KEYUP)];
-    unsafe { SendInput(2, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
+    crate::winapi::nudge_input();
 }

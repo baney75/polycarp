@@ -215,6 +215,8 @@ jobs:
           cp platforms/windows/engine/* "$dest/"
       - name: Live suite
         shell: powershell
+        # The suite takes a few minutes; a hang ends the step here, so the artifact below still uploads.
+        timeout-minutes: 20
         run: platforms/windows/tests/ci/live.ps1 -Bin target/release -Out ${{ runner.temp }}/live
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -244,10 +246,13 @@ jobs:
         run: cargo build --release --locked -p baneyspaces-windows --features baneyspaces-windows/test-ops
       - name: Switch bench
         shell: powershell
+        # The bench takes a few minutes; a hang ends the step here, so the artifact below still uploads.
+        timeout-minutes: 15
         run: platforms/windows/tests/ci/switch-bench.ps1 -Bin target/release -Out ${{ runner.temp }}/speed -Speed spec/speed.json
       - name: Keymap
         if: always()
         shell: powershell
+        timeout-minutes: 10
         run: platforms/windows/tests/ci/keymap.ps1 -Bin target/release -Out ${{ runner.temp }}/speed/keymap
       - name: Win+drag
         if: always()

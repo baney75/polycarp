@@ -384,6 +384,17 @@ fn run_daemon(args: &[String]) -> i32 {
                 cmd.arg("--trace");
             }
             cmd.creation_flags(0x0800_0000 | 0x0000_0008).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+            // The daemon must not inherit this command's own standard handles. Windows hands a child every
+            // inheritable handle (Rust's spawn asks it to), so a caller that reads this command's output to the
+            // end, such as PowerShell's `$r = baneyspaces daemon --background`, would wait for as long as the
+            // daemon runs. This process keeps using them; only the inherit flag goes.
+            {
+                use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+                use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
+                for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+                    unsafe { SetHandleInformation(GetStdHandle(which), HANDLE_FLAG_INHERIT, 0) };
+                }
+            }
             if let Err(e) = cmd.spawn() {
                 return print(&fail("internal", &format!("cannot start the daemon: {e}"), ""), false);
             }
