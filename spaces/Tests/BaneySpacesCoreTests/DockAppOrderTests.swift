@@ -25,24 +25,6 @@ final class DockAppOrderTests: XCTestCase {
         XCTAssertEqual(DockAppOrder.sort(space1, activatedAt: used.on(1)).prefix(2), ["grok", "silas"])
     }
 
-    /// The tile showed Word, Obsidian, T3 and "+2" with Grok Bot hidden in the list, though it was in front.
-    func testTheTileAndItsPlusNListShareOneOrder() {
-        var used = AppActivations()
-        used.note("silas", on: 1, at: 10)
-        used.note("grok", on: 1, at: 20)
-        let tile = DockTiles.make(current: 1, windows: [1: space1 + ["grok"]], activatedAt: used.all)[0]
-        let keys = tile.apps.map(\.key)
-        XCTAssertEqual(keys, ["grok", "silas", "word", "obsidian", "t3"])
-        XCTAssertEqual(tile.apps.first, .init(key: "grok", windows: 2))
-        let shown = 3
-        XCTAssertEqual(DockLabel.hidden(keys.count, shown: shown), 2)
-        // The icons are the head of the order and the "+N" list is the rest, in the same order.
-        XCTAssertEqual(Array(keys.prefix(shown)), ["grok", "silas", "word"])
-        XCTAssertEqual(Array(keys.dropFirst(shown)), ["obsidian", "t3"])
-        // An agent's app still moves into view after the sort.
-        XCTAssertEqual(DockTiles.agentsInView(keys, flagged: ["t3"], shown: shown), ["grok", "silas", "t3", "word", "obsidian"])
-    }
-
     /// Apps never used on the workspace keep their windows' order, after the ones that were.
     func testAppsNeverUsedThereKeepTheirWindowOrder() {
         XCTAssertEqual(DockAppOrder.sort(space1, activatedAt: [:]), space1)
@@ -59,8 +41,8 @@ final class DockAppOrderTests: XCTestCase {
         used.note("ghostty", on: 2, at: 1)
         used.note("helium", on: 2, at: 2)
         used.note("ghostty", on: 1, at: 3)
-        let tiles = DockTiles.make(current: 1, windows: [1: ["helium", "ghostty"], 2: ["ghostty", "helium"]], activatedAt: used.all)
-        XCTAssertEqual(tiles.map { $0.apps.map(\.key) }, [["ghostty", "helium"], ["helium", "ghostty"]])
+        XCTAssertEqual(DockAppOrder.sort(["helium", "ghostty"], activatedAt: used.on(1)), ["ghostty", "helium"])
+        XCTAssertEqual(DockAppOrder.sort(["ghostty", "helium"], activatedAt: used.on(2)), ["helium", "ghostty"])
     }
 
     func testWhileHoveringTheHeldOrderStaysAndAReplayIsOwed() {
@@ -93,17 +75,18 @@ final class DockAppOrderTests: XCTestCase {
     }
 }
 
-/// The dock and ⌘Tab's workspace cards read the same order from `Spaces.activations`.
+/// ⌘Tab's workspace cards sort by `Spaces.activations`; the dock's tiles don't.
 final class DockAppOrderWiringTests: XCTestCase {
-    func testTheDockAndTheSwitcherSortWithTheSameActivations() throws {
+    func testTheSwitcherSortsByUseAndTheDockByJoinOrder() throws {
         let dock = try Repo.code("Sources/BaneySpaces/WorkspaceDock.swift")
-        XCTAssertTrue(dock.contains("activatedAt: spaces.activations.all"), "the dock's tiles must sort by when each app was used")
+        // Donovan, 2026-11-16: the tile re-sorted after each switch, so his next click hit another app.
+        XCTAssertFalse(dock.contains("activations"), "focus must not reorder the dock's tiles")
+        XCTAssertTrue(dock.contains("joinOrder.update("), "the dock must keep each workspace's join order")
+        XCTAssertTrue(dock.contains("joined: joinOrder"), "the dock's tiles must follow the join order")
         let switcher = try Repo.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
-        XCTAssertTrue(switcher.contains("DockAppOrder.sort(keys, activatedAt: spaces.activations.on(n))"), "⌘Tab's cards must use the dock's order")
+        XCTAssertTrue(switcher.contains("DockAppOrder.sort(keys, activatedAt: spaces.activations.on(n))"), "⌘Tab's cards still put the app used last first")
         let spaces = try Repo.code("Sources/BaneySpaces/Spaces.swift")
         XCTAssertTrue(spaces.contains("activations.note("), "focus must stamp the app")
-        let delegate = try Repo.code("Sources/BaneySpaces/AppDelegate.swift")
-        XCTAssertTrue(delegate.contains("self.dock.reload()"), "an activation must reorder a dock in view")
         XCTAssertTrue(dock.contains("DockAppOrder.held("), "the dock must take its hold-still decision from the Core helper")
         XCTAssertTrue(dock.contains("onReplayOrder()"), "the pointer leaving a held tile must replay the order")
         XCTAssertTrue(dock.contains("model.onReplayOrder = { [weak self] in self?.reload() }"), "the replay must reload the dock")
