@@ -47,8 +47,17 @@ final class AgentAPIQueryTests: XCTestCase {
         XCTAssertEqual(data["windows"]?.array?.compactMap { $0["id"]?.int }, [4211])
         XCTAssertEqual(data["focused"]?["window"], .null, "Donovan's focused window is out of scope")
         let ws1 = data["workspaces"]?.array?.first { $0["number"]?.int == 1 }
-        XCTAssertEqual(ws1?["windows"]?.int, 1, "counts stay: they say nothing about the window")
+        XCTAssertEqual(ws1?["windows"]?.int, 0, "counts are of windows in scope too")
         XCTAssertEqual(ws1?["window_ids"]?.array, [])
+    }
+
+    /// Review F3: a window of his opening or closing changes nothing an agent-scoped caller can read.
+    func testAWindowOutOfScopeOpeningChangesNoAnswer() {
+        var more = Self.facts()
+        more.windows.append(.init(window: HandsWindow(id: 90, pid: 310, app: "Mail", bundle: "com.apple.mail", title: "Inbox", workspace: 1)))
+        for q in AgentAPI.Query.allCases {
+            XCTAssertEqual(AgentAPI.result(q, more, Self.agentView), AgentAPI.result(q, Self.facts(), Self.agentView), q.rawValue)
+        }
     }
 
     func testFullAccessSeesEveryWindowAndTheFocusedOne() {

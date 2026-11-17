@@ -120,11 +120,13 @@ public enum AgentAPI {
         case .workspaces:
             let rows: [JSONValue] = Workspaces.range.map { n in
                 let display = f.display(showing: n)
+                // Only windows in scope: a count of his would change as he opens and closes them (review F3).
+                let ids = mine.filter { $0.window.workspace == n }.map { JSONValue.int(Int($0.window.id)) }
                 return .object([
                     "number": .int(n), "name": opt(f.names[n].flatMap { $0.isEmpty ? nil : $0 }, JSONValue.string),
                     "shown": .bool(display != nil), "display": opt(display, JSONValue.string), "current": .bool(f.current == n),
-                    "agent": .bool(f.agentWorkspace == n), "windows": .int(f.windows.filter { $0.window.workspace == n }.count),
-                    "window_ids": .array(mine.filter { $0.window.workspace == n }.map { .int(Int($0.window.id)) }),
+                    "agent": .bool(f.agentWorkspace == n), "windows": .int(ids.count),
+                    "window_ids": .array(ids),
                 ])
             }
             return ["current": .int(f.current), "agent_workspace": opt(f.agentWorkspace, JSONValue.int), "workspaces": .array(rows)]
