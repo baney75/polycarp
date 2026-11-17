@@ -62,6 +62,7 @@ impl Box {
             .env("HOME", self.root.join("home"))
             .env("USERPROFILE", self.root.join("home"))
             .env("POLYCARP_CONFIG_DIR", self.root.join("cfg"))
+            .env("POLYCARP_APPS_HOME", self.root.join("home"))
             .env("TMPDIR", self.root.join("tmp"))
             .env("TEMP", self.root.join("tmp"))
             .env("TMP", self.root.join("tmp"))
@@ -4677,4 +4678,174 @@ fn an_unreadable_syntax_color_is_refused() {
         let e = b.refused(&["validate", p.to_str().unwrap()]);
         assert!(e.contains(want), "{body}: {e}");
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Other apps: Ghostty
+// ---------------------------------------------------------------------------------------------
+
+const ANSI: [&str; 16] = [
+    "black",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "white",
+    "bright_black",
+    "bright_red",
+    "bright_green",
+    "bright_yellow",
+    "bright_blue",
+    "bright_magenta",
+    "bright_cyan",
+    "bright_white",
+];
+const GHOSTTY_LINE: &str = "theme = light:polycarp-light,dark:polycarp-dark\n";
+
+impl Box {
+    /// A file in an app's settings folder, under the test's stand-in home.
+    fn app_file(&self, rel: &str) -> PathBuf {
+        self.root.join("home/.config").join(rel)
+    }
+    fn get(&self, path: &str) -> String {
+        self.json(&["get", path, "--json"])["value"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+}
+
+#[test]
+fn apps_are_left_alone_until_turned_on() {
+    let b = Box::new();
+    let config = b.app_file("ghostty/config");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, "font-size = 13\n").unwrap();
+    b.ok(&["set", "polycarp"]);
+    let mut found = Vec::new();
+    files_under(&b.root.join("home"), &mut found);
+    assert_eq!(found, vec![config.clone()]);
+    let apps = b.json(&["apps", "--json"])["apps"].clone();
+    let names: Vec<_> = apps
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["app"].clone())
+        .collect();
+    assert_eq!(names, ["ghostty"]);
+    assert!(apps.as_array().unwrap().iter().all(|a| a["on"] == false));
+    let o = b.run(&["theme", "apps", "kitty", "on"]);
+    assert_eq!(code(&o), 2);
+    assert!(
+        err(&o).contains("not an app Polycarp themes"),
+        "{}",
+        err(&o)
+    );
+    assert_eq!(fs::read(&config).unwrap(), b"font-size = 13\n");
+}
+
+/// Ghostty gets its two theme files with the theme's terminal colors, and one line at the end of
+/// its config. Turning it off, `theme off` and `undo` each put the config back byte for byte.
+#[test]
+fn ghostty_gets_the_terminal_colors_and_its_config_comes_back_exactly() {
+    let b = Box::new();
+    let config = b.app_file("ghostty/config");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    // No newline at the end, so a careless put-back would show.
+    let original = b"font-size = 13\ntheme = Dracula".to_vec();
+    fs::write(&config, &original).unwrap();
+    b.ok(&["set", "polycarp"]);
+    b.ok(&["apps", "ghostty", "on"]);
+    assert_eq!(
+        fs::read_to_string(&config).unwrap(),
+        format!("font-size = 13\ntheme = Dracula\n{GHOSTTY_LINE}")
+    );
+    for m in ["light", "dark"] {
+        let text = fs::read_to_string(b.app_file(&format!("ghostty/themes/polycarp-{m}"))).unwrap();
+        assert!(text.contains(&format!(
+            "cursor-color = {}\n",
+            b.get(&format!("{m}.accent"))
+        )));
+        for (i, k) in ANSI.iter().enumerate() {
+            let want = format!("palette = {i}={}\n", b.get(&format!("{m}.terminal.{k}")));
+            assert!(text.contains(&want), "{m} {k}: {text}");
+        }
+    }
+    // A theme change rewrites the files.
+    b.ok(&["set", "evening"]);
+    let dark = fs::read_to_string(b.app_file("ghostty/themes/polycarp-dark")).unwrap();
+    assert!(dark.contains(&format!("palette = 1={}\n", b.get("dark.terminal.red"))));
+    assert!(dark.contains("\"evening\""));
+
+    b.ok(&["off"]);
+    assert_eq!(fs::read(&config).unwrap(), original);
+    assert!(!b.app_file("ghostty/themes/polycarp-dark").exists());
+    b.ok(&["undo"]);
+    assert!(fs::read_to_string(&config).unwrap().ends_with(GHOSTTY_LINE));
+    assert!(b.app_file("ghostty/themes/polycarp-dark").exists());
+    b.ok(&["apps", "ghostty", "off"]);
+    assert_eq!(fs::read(&config).unwrap(), original);
+    assert!(!b.app_file("ghostty/themes").join("polycarp-light").exists());
+    // Undoing the opt-out turns it back on; undoing the opt-in puts the config back again.
+    b.ok(&["undo"]);
+    assert!(fs::read_to_string(&config).unwrap().ends_with(GHOSTTY_LINE));
+    b.ok(&["undo"]);
+    b.ok(&["undo"]);
+    assert_eq!(fs::read(&config).unwrap(), original);
+    let mut left = Vec::new();
+    files_under(&b.cfg().join("apps"), &mut left);
+    assert!(left.is_empty(), "{left:?}");
+}
+
+/// A config edited after the line went in keeps the edits; only Polycarp's line comes out. A
+/// config that already had the line keeps it, and one Ghostty never had is made and then removed.
+#[test]
+fn ghostty_keeps_edits_and_lines_it_did_not_add() {
+    let b = Box::new();
+    let config = b.app_file("ghostty/config");
+    b.ok(&["set", "polycarp"]);
+    b.ok(&["apps", "ghostty", "on"]);
+    assert_eq!(fs::read_to_string(&config).unwrap(), GHOSTTY_LINE);
+    b.ok(&["apps", "ghostty", "off"]);
+    assert!(!config.exists());
+
+    fs::write(&config, "font-size = 13\n").unwrap();
+    b.ok(&["apps", "ghostty", "on"]);
+    let mut text = fs::read_to_string(&config).unwrap();
+    text.push_str("window-padding-x = 4\n");
+    fs::write(&config, &text).unwrap();
+    b.ok(&["off"]);
+    assert_eq!(
+        fs::read_to_string(&config).unwrap(),
+        "font-size = 13\nwindow-padding-x = 4\n"
+    );
+
+    let mine = format!("font-size = 13\n{GHOSTTY_LINE}");
+    fs::write(&config, &mine).unwrap();
+    b.ok(&["on"]);
+    assert_eq!(fs::read_to_string(&config).unwrap(), mine);
+    b.ok(&["apps", "ghostty", "off"]);
+    assert_eq!(fs::read_to_string(&config).unwrap(), mine);
+    assert!(!b.app_file("ghostty/themes/polycarp-dark").exists());
+}
+
+#[test]
+fn a_bad_apps_table_is_a_warning_and_leaves_the_rest() {
+    let b = Box::new();
+    b.ok(&["set", "polycarp"]);
+    let text = fs::read_to_string(b.state_file()).unwrap();
+    fs::write(
+        b.state_file(),
+        format!("{text}\n[apps]\nghostty = true\nkitty = true\nneovim = \"yes\"\n"),
+    )
+    .unwrap();
+    let (code, v) = b.jrun(&["set", "evening"]);
+    assert_eq!(code, 0, "{v}");
+    let warned = v.to_string();
+    assert!(warned.contains("apps.kitty: not an app"), "{warned}");
+    assert!(warned.contains("apps.neovim"), "{warned}");
+    assert!(b.app_file("ghostty/themes/polycarp-dark").exists());
+    assert!(!b.app_file("nvim/colors/polycarp.lua").exists());
 }
