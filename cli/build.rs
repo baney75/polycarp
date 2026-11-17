@@ -25,7 +25,13 @@ fn main() {
     }
     // Naming any file turns off cargo's own "rerun when the package changes", so name the sources too:
     // an edit to them can make the tree dirty.
-    for path in ["build.rs", "src", "Cargo.toml", "../themes"] {
+    for path in [
+        "build.rs",
+        "src",
+        "Cargo.toml",
+        "../themes",
+        "../crates/polycarp-theme",
+    ] {
         println!("cargo:rerun-if-changed={path}");
     }
     // HEAD's log changes on every commit, checkout and reset; the index changes when files are staged.
