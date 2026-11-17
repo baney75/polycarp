@@ -2,10 +2,12 @@ import XCTest
 @testable import LauncherMatch
 
 /// The launcher answers a keystroke from memory: 200 queries typed against an index of 2,000
-/// entries, each timed from the query string to the ranked list. The budget is 8 ms at p90 in a
-/// debug build (a release build is several times faster), half a 60 Hz frame. The old matcher,
-/// which folded every name with Foundation per keystroke, took p90 48 ms on this corpus (abbey1,
-/// 2026-11-17) against 2.5 ms for this one, so this fails if names stop being prepared ahead.
+/// entries, each timed from the query string to the ranked list. The budget is 8 ms at p90, half
+/// a 60 Hz frame. The module is built with -O even for `swift test` (Package.swift), so this times
+/// the code that ships, not an unoptimized build that CI's runners slow down another eight times.
+/// Built the same way on abbey1 (2026-11-17), the old matcher, which folded every name with
+/// Foundation per keystroke, took p90 27 ms on this corpus against 0.24 ms for this one, so this
+/// fails if names stop being prepared ahead.
 final class LatencyTests: XCTestCase {
     static let budgetMs = 8.0
 

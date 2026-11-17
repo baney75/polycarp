@@ -15,8 +15,9 @@ let package = Package(
     ],
     targets: [
         // The launcher's matcher and ranking: Foundation only, no Apple frameworks, so other platforms
-        // can build it as is. The rules it follows are written in spec/launcher.md.
-        .target(name: "LauncherMatch"),
+        // can build it as is. The rules it follows are written in spec/launcher.md. Optimized in
+        // debug builds too, so `swift test` times the matcher as it ships (LatencyTests).
+        .target(name: "LauncherMatch", swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]),
         // Which window lives where, and where hidden windows go: no AppKit, fully unit-tested.
         .target(name: "BaneySpacesCore", dependencies: ["LauncherMatch"]),
         // agent-desktop's C header, for the hands engine in the app.
