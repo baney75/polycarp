@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: baney75.Polycarp
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Donovan Baney
+PublisherUrl: https://github.com/baney75
+PackageName: Polycarp
+PackageUrl: https://github.com/baney75/polycarp
+License: MIT
+LicenseUrl: https://github.com/baney75/polycarp/blob/main/spaces/LICENSE
+ShortDescription: Nine workspaces on Windows with Win+1 to Win+9, a CLI, and an agent workspace kept off your screen.
+Tags:
+  - workspaces
+  - window-manager
+  - productivity
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

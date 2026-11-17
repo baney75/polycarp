@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+# build-msi.ps1 writes a copy with the real InstallerSha256 (and InstallerUrl, when given one) next to the MSI it built.
+# The all-zero hash and ProductCode below are placeholders: this file is the template, not a manifest to submit as is.
+# build-msi.ps1 picks a new ProductCode for each build and passes it to WiX with -d ProductCode; winget needs it to find the installed package again for upgrade and uninstall.
+PackageIdentifier: baney75.Polycarp
+PackageVersion: 0.1.0
+InstallerType: wix
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+Commands:
+  - polycarp
+  - baneyspaces
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/baney75/polycarp/releases/download/windows-v0.1.0/Polycarp-0.1.0-x64.msi
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    ProductCode: '{00000000-0000-0000-0000-000000000000}'
+ManifestType: installer
+ManifestVersion: 1.6.0

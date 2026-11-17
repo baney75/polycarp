@@ -6,7 +6,7 @@ use baneyspaces_core::envelope::{Envelope, Retry};
 use serde_json::Value;
 
 pub fn down() -> Envelope {
-    Envelope::err("daemon_down", "baneyspaces daemon is not running", Retry::Safe, "Start it: baneyspaces daemon --background (the Startup shortcut runs it at sign-in).")
+    Envelope::err("daemon_down", "baneyspaces daemon is not running", Retry::Safe, "Start it: baneyspaces daemon --background (the installer's sign-in entry runs it).")
 }
 
 /// Opens the pipe. A daemon between two clients has no free instance for a moment (ERROR_PIPE_BUSY):

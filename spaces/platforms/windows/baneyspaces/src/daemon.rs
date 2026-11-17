@@ -1004,6 +1004,7 @@ fn agent_status(c: &Core) -> Value {
     json!({ "workspace": AGENT_WORKSPACE, "shown": c.model.agent_shown(), "windows": windows, "processes": c.model.agent_pids().len(), "refused": c.model.refused() })
 }
 
+#[allow(clippy::too_many_arguments)] // one field per column of the action log
 fn record(c: &Core, agent: &str, verb: &str, pid: Option<u32>, window: Option<&str>, reference: Option<&str>, route: &str, env: &Envelope) {
     c.paths.append_action(&ActionRecord::from_result(now(), agent, verb, pid, window, reference, route, env).to_line(), now(), &c.last_prune);
 }
@@ -1518,7 +1519,7 @@ fn on_end_session(e: EndSession) {
 }
 
 /// One daemon per user: a named mutex, taken before anything is touched. None means another is running.
-fn single_instance(paths: &Paths) -> Option<windows_sys::Win32::Foundation::HANDLE> {
+pub fn single_instance(paths: &Paths) -> Option<windows_sys::Win32::Foundation::HANDLE> {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::CreateMutexW;
     let name: Vec<u16> = paths.mutex_name().encode_utf16().chain(std::iter::once(0)).collect();
