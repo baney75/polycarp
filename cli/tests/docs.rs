@@ -240,19 +240,24 @@ fn every_flag_in_a_guide_example_is_in_that_commands_usage() {
         };
         let mut words = rest.split_whitespace();
         let sub = words.next().unwrap();
-        let usage_line = usage
+        let usage_lines: Vec<&str> = usage
             .lines()
-            .find(|l| {
-                let l = l.trim();
-                l == format!("polycarp theme {sub}")
+            .map(str::trim)
+            .filter(|l| {
+                *l == format!("polycarp theme {sub}")
                     || l.starts_with(&format!("polycarp theme {sub} "))
             })
-            .unwrap_or_else(|| panic!("the guide runs `polycarp theme {sub}`, which has no usage"));
+            .collect();
+        assert!(
+            !usage_lines.is_empty(),
+            "the guide runs `polycarp theme {sub}`, which has no usage"
+        );
         for flag in words.filter(|w| w.starts_with("--")) {
             checked += 1;
             assert!(
-                usage_line.contains(flag),
-                "the guide uses {flag} with `theme {sub}`, but its usage is: {usage_line}"
+                usage_lines.iter().any(|l| l.contains(flag)),
+                "the guide uses {flag} with `theme {sub}`, but its usage is: {}",
+                usage_lines.join(" / ")
             );
         }
     }

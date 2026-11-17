@@ -250,10 +250,14 @@ polycarp theme on
 ```sh
 polycarp theme import ~/Downloads/gruvbox-dark-hard.yaml
 polycarp theme import https://raw.githubusercontent.com/tinted-theming/schemes/spec-0.11/base24/dracula.yaml
+polycarp theme import ~/.config/omarchy/themes/kanagawa
 polycarp theme set gruvbox-dark-hard
+polycarp theme export base24 still-water --mode dark
 ```
 
-`import` reads a base16 or base24 scheme in the tinted-theming format, from a file, an https address or standard input (`-`), and saves it as a theme named after the scheme (`--name` picks another). It does not make it current. A scheme has one set of colors, so the theme's light and dark modes both use them. Any color that would not pass the rules under Readable by rule is moved until it does, and `import` says which ones moved and to what. Addresses are fetched with `curl`.
+`import` reads a base16 or base24 scheme in the tinted-theming format, from a file, an https address or standard input (`-`), or an Omarchy theme folder (its `colors.toml`, or the `alacritty.toml` or `ghostty.conf` older Omarchy themes had), and saves it as a theme named after the scheme or folder (`--name` picks another). An Omarchy theme keeps its own accent. Polycarp has no wallpaper setting yet, so a folder's background images are listed but not used. It does not make it current. A scheme has one set of colors, so the theme's light and dark modes both use them. Any color that would not pass the rules under Readable by rule is moved until it does, and `import` says which ones moved and to what. Addresses are fetched with `curl`.
+
+`export base24` writes one mode of a theme as a base24 scheme, for tools that read them. Importing it gives back the same 24 colors.
 
 ### Theme other apps
 
