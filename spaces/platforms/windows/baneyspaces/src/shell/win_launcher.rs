@@ -247,10 +247,19 @@ pub fn warm(s: &mut Shell) {
             ops.push(Op::Text { r, text: chunk.iter().collect(), face, ink: Ink::Foreground, align: Align::Start });
         }
     }
+    // Then a whole panel of rows, as the first keystroke draws: section heads, the selected row's fill, details set
+    // at the right. Made-up apps in a throwaway model; the real one is untouched.
+    let mut m = Launcher::default();
+    let apps: Vec<App> = (1..=12).map(|i| App { name: format!("Warm App {i}"), target: String::new() }).collect();
+    m.set_sources(&apps, &s.state);
+    m.key(Key::Char('w'));
+    let full = model::layout(&m, &s.theme);
     let p = s.palette().clone();
     if let (Some((surf, ..)), Some((fonts, ..))) = (s.panel.surface.as_ref(), s.panel.fonts.as_ref()) {
-        if unsafe { surf.draw(fonts, color(p.surface), &draws(&p, &ops)) }.is_ok() {
-            log(&format!("launcher warmed in {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0));
+        let glyphs = unsafe { surf.draw(fonts, color(p.surface), &draws(&p, &ops)) };
+        let rows = unsafe { surf.draw(fonts, color(p.surface), &draws(&p, &full.ops)) };
+        if glyphs.is_ok() && rows.is_ok() {
+            log(&format!("launcher warmed in {:.1} ms ({} rows)", t0.elapsed().as_secs_f64() * 1000.0, m.rows.len()));
         }
     }
 }
@@ -348,10 +357,12 @@ fn key(s: &mut Shell, k: Key) {
                 let end = Instant::now();
                 // R-L13: the time and the count, never what was typed.
                 log(&format!("launcher key->paint={:.1} results={}", ms(pressed, end), s.panel.model.rows.len()));
-                // Where a slow key's time went: Windows handing over its character, ranking, or drawing.
+                // Where a slow key's time went: Windows handing over its character, ranking, Direct2D, or Present.
                 if ms(pressed, end) > 8.0 {
+                    let (d2d, present) = s.panel.surface.as_ref().map(|(surf, ..)| surf.split.get()).unwrap_or_default();
                     log(&format!(
-                        "launcher slow key: {:.1} ms to the character, {:.1} ms ranking, {:.1} ms drawing",
+                        "launcher slow key: {:.1} ms to the character, {:.1} ms ranking, {:.1} ms drawing \
+                         ({d2d:.1} ms Direct2D, {present:.1} ms Present)",
                         ms(pressed, start),
                         ms(start, ranked),
                         ms(ranked, end)

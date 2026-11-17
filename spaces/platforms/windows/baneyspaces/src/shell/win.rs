@@ -118,6 +118,8 @@ mod gfx {
         brush: ID2D1SolidColorBrush,
         _target: IDCompositionTarget,
         _visual: IDCompositionVisual,
+        /// The last frame's time in Direct2D (through EndDraw) and in Present, in ms.
+        pub split: std::cell::Cell<(f64, f64)>,
     }
 
     pub struct Fonts {
@@ -196,7 +198,7 @@ mod gfx {
             visual.SetContent(&swap)?;
             target.SetRoot(&visual)?;
             self.dcomp.Commit()?;
-            Ok(Surface { swap, ctx, brush, _target: target, _visual: visual })
+            Ok(Surface { swap, ctx, brush, _target: target, _visual: visual, split: Default::default() })
         }
 
         /// The first family of `stack` that is installed, else the last (the generic fallback, always there).
@@ -246,6 +248,7 @@ mod gfx {
     impl Surface {
         pub unsafe fn draw(&self, fonts: &Fonts, clear: D2D1_COLOR_F, items: &[Draw]) -> Result<()> {
             let c = &self.ctx;
+            let t0 = std::time::Instant::now();
             c.BeginDraw();
             c.Clear(Some(&clear));
             for d in items {
@@ -283,7 +286,11 @@ mod gfx {
                 }
             }
             c.EndDraw(None, None)?;
-            self.swap.Present(1, DXGI_PRESENT(0)).ok()
+            let t1 = std::time::Instant::now();
+            let presented = self.swap.Present(1, DXGI_PRESENT(0)).ok();
+            let ms = |a: std::time::Instant, b: std::time::Instant| b.duration_since(a).as_secs_f64() * 1000.0;
+            self.split.set((ms(t0, t1), ms(t1, std::time::Instant::now())));
+            presented
         }
     }
 }
