@@ -43,6 +43,12 @@ public struct ViewControlSwitch {
         return true
     }
 
+    /// The switch as the app starts: always off. A value under the legacy key, sealed or not, is removed unread, and no
+    /// Keychain item is consulted (review F2, round 2). `forgot` says a value was there.
+    public static func atLaunch(_ defaults: UserDefaults) -> (state: ViewControlSwitch, forgot: Bool) {
+        (ViewControlSwitch(), forgetSaved(in: defaults))
+    }
+
     /// Removes a value saved under the legacy key, by an older build or by anyone with a shell; true when one was there.
     /// It is only ever removed, never read.
     @discardableResult
