@@ -215,6 +215,8 @@ jobs:
           cp platforms/windows/engine/* "$dest/"
       - name: Live suite
         shell: powershell
+        # The suite takes a few minutes; a hang ends the step here, so the artifact below still uploads.
+        timeout-minutes: 20
         run: platforms/windows/tests/ci/live.ps1 -Bin target/release -Out ${{ runner.temp }}/live
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
