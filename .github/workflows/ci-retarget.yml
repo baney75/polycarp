@@ -21,4 +21,5 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.event.pull_request.head.ref }}
-        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          PR: ${{ github.event.pull_request.number }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH" -f pr="$PR"
