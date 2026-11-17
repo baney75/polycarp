@@ -102,5 +102,19 @@ worked out) whenever the list changes, never per keystroke. The budget for scori
 
 ### R-L13 Timing, without the query
 Each keystroke logs `launcher key->paint=<ms> results=<n>` to `timing.log`: from the key event to the
-end of the frame that draws its list, and the number of rows. The query text, titles and names are
-never logged.
+end of the frame that draws its list, and the number of rows. The first files for a query log
+`launcher files first=<ms>`, from the key event to the end of the frame that shows them. The query
+text, titles, names and paths are never logged.
+
+### R-L14 Files stream in below, and never move your row
+Files come from a disk search, so they arrive after the rows from memory, below them. A search
+starts once typing pauses for 40 ms, and every keystroke stops the one in flight at once. Each batch
+the search finds is ranked with what came before and shown as it comes. Rows at or above the one you
+moved the selection to since your last keystroke never move:
+
+- selection above the file rows, or not moved: the file rows take the newest ranking;
+- selection on a file row: that row and the file rows above it stay; the rest fill in below;
+- selection below the file rows: no file row is added or dropped.
+
+Until a search finds something, the last search's files that still match stay up (`LateRows`,
+pinned by `LateRowsTests`).
