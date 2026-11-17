@@ -4,10 +4,13 @@
 //   swift run -c release scan-bench --rounds 50     more scans
 //   swift run -c release scan-bench --hung          also asks a hung app: a windowless helper this bench starts, whose
 //                                                   main thread never returns, so every ask of it runs out its deadline
+//   swift run -c release scan-bench --wait-for-all  the scan as it was: the main thread waits for every app, up to the
+//                                                   old 0.25 s deadline (the "before" number)
 //
 // Each scan makes the same reads Polycarp's does (`AXScan`: each app's window list, then each window's subrole and
-// modal flag) of every regular app that owns a window, from this process's main thread, and prints its `scan` line
-// (`ScanCheck.Cost`): main= is how long the main thread waited, bg= the slowest app's read. It only reads: it moves,
+// modal flag) of every regular app that owns a window, through `ScanFanOut` as `Windows.all` does, and prints its `scan`
+// line (`ScanCheck.Cost`): main= is how long the main thread waited, bg= the slowest read merged, late= the apps still
+// out (merged by a later scan, as Polycarp's `lateAnswers` does). It only reads: it moves,
 // hides and focuses nothing, starts nothing but its own helper, and writes nothing to Polycarp's logs. The helper has no
 // window and no Dock icon; it quits with the bench, or on its own once the bench is gone.
 //
@@ -73,16 +76,27 @@ func owners() -> [Int32] {
         .map(\.processIdentifier)
 }
 
-print("scan-bench: \(rounds) scans, load \(loadAverage())\(helper.map { ", with a hung app (pid \($0.processIdentifier))" } ?? "")")
+let waitForAll = args.contains("--wait-for-all")
+let fanOut = ScanFanOut<AXAppRead>(onLate: {})
+print("scan-bench: \(rounds) scans, \(waitForAll ? "waiting for every app (before)" : "fan-out (after)"), load \(loadAverage())"
+      + (helper.map { ", with a hung app (pid \($0.processIdentifier))" } ?? ""))
 var mains: [Double] = []
 for _ in 0..<rounds {
     var pids = owners()
     if let h = helper { pids.append(h.processIdentifier) }
     let start = ProcessInfo.processInfo.systemUptime
-    let reads = AXScan.all(pids)
+    let reads: [AXAppRead], late: Int
+    if waitForAll {
+        reads = AXScan.all(pids)
+        late = 0
+    } else {
+        let round = fanOut.round(pids) { AXScan.read($0) }
+        reads = Array(round.answered.values)
+        late = round.pending.count
+    }
     let main = ProcessInfo.processInfo.systemUptime - start
     let cost = ScanCheck.Cost(main: main, background: reads.map(\.seconds).max() ?? 0, apps: pids.count,
-                              timedOut: reads.filter(\.timedOut).count)
+                              timedOut: reads.filter(\.timedOut).count, late: late)
     print(cost.line(kind: "bench", switching: false))
     mains.append(main * 1000)
     Thread.sleep(forTimeInterval: gap)

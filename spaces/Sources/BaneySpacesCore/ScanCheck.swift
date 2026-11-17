@@ -28,17 +28,20 @@ public enum ScanCheck {
         public var background: TimeInterval
         public var apps: Int
         public var timedOut: Int
+        /// Apps still out when the main thread stopped waiting (`ScanFanOut`): merged when they answer.
+        public var late: Int
 
-        public init(main: TimeInterval, background: TimeInterval, apps: Int, timedOut: Int) {
+        public init(main: TimeInterval, background: TimeInterval, apps: Int, timedOut: Int, late: Int = 0) {
             self.main = main
             self.background = background
             self.apps = apps
             self.timedOut = timedOut
+            self.late = late
         }
 
-        /// `scan main=<ms> bg=<ms> apps=<n> timedout=<n> kind=<kind>`, plus ` mid-switch` for a switch's own scan.
+        /// `scan main=<ms> bg=<ms> apps=<n> timedout=<n> late=<n> kind=<kind>`, plus ` mid-switch` for a switch's own scan.
         public func line(kind: String, switching: Bool) -> String {
-            "scan main=\(Self.ms(main)) bg=\(Self.ms(background)) apps=\(apps) timedout=\(timedOut) kind=\(kind)\(switching ? " mid-switch" : "")"
+            "scan main=\(Self.ms(main)) bg=\(Self.ms(background)) apps=\(apps) timedout=\(timedOut) late=\(late) kind=\(kind)\(switching ? " mid-switch" : "")"
         }
 
         /// Whether timing.log gets it too: the main thread lost a frame, or an app timed out. timing.log keeps 500 lines
@@ -46,6 +49,18 @@ public enum ScanCheck {
         public var worthTiming: Bool { main >= ScanCheck.frame || timedOut > 0 }
 
         static func ms(_ s: TimeInterval) -> Int { Int((s * 1000).rounded()) }
+    }
+
+    /// Known windows their app closed but keeps (Ghostty keeps every window it closes, and a tab behind another tab is
+    /// one too). A window is closed only when its app answered this scan in full (`vouching`) and didn't list it, the
+    /// window server isn't drawing it, and it's on no macOS desktop or on one being shown. An app that timed out, or
+    /// whose answer hasn't come back, closes nothing: its windows keep their workspace.
+    public static func closed(known: Set<WindowID>, listed: Set<WindowID>, vouching: Set<Int32>, offscreen: [WindowID: Int32],
+                              onNoOtherDesktop: (WindowID) -> Bool) -> Set<WindowID> {
+        known.filter { id in
+            guard !listed.contains(id), let pid = offscreen[id], vouching.contains(pid) else { return false }
+            return onNoOtherDesktop(id)
+        }
     }
 
     /// The app windows on screen that no workspace holds. `onScreen` maps each window the server

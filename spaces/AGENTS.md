@@ -14,6 +14,9 @@ A change is done when steps 1 to 3 pass on its branch and step 4 passes on `main
 3. For anything that hides, parks, moves or restores windows: `swift scripts/motion-probe.swift <a> <b>`
    with Helium or Ghostty on one of the two workspaces. It must print "no window slid".
    For anything that decides which windows exist or where they live: `swift scripts/closed-window-probe.swift <empty n>`.
+   For the window scan (`Windows.all`, `ScanFanOut`, `AXScan`): `swift run -c release scan-bench --hung` (read-only, any
+   time; it starts a hung helper app of its own). Its median main thread per scan must stay under 16 ms; compare with
+   `--wait-for-all`, the scan as it was. Record the load average it prints next to the numbers.
    For the drag to the top of the screen (`TopDrag`, `TopDragWatcher`, the viewer's carrying mode):
    `swift scripts/top-drag-probe.swift`. It takes the pointer for ten seconds; run it while Donovan is away.
    For a window dragged down to the dock (`DockCarry`, `WorkspaceDock.carryMoved`/`endCarry`, the watcher's

@@ -172,8 +172,12 @@ final class Spaces {
         let offKnown = offscreenKnown(snap.offscreen)
         let stray = ScanCheck.unplaced(onScreen: snap.onScreen, placed: Set(model.home.keys),
                                        notWindows: notWindows, unsure: lastScan?.unsure ?? [])
+        // Nothing opened, closed or launched: no app is asked. Answers that came after their scan stopped waiting are
+        // still merged (`lateAnswers`).
+        var unchanged = false
         if !full, let last = lastScan, last.windows == snap.appWindows, last.pids == pids,
-           last.offscreen == offKnown, !unplaced.due(stray, now: Date()) {
+           last.offscreen == offKnown, !unplaced.due(stray, now: Date()) { unchanged = true }
+        if unchanged, !Windows.hasLate {
             prune(alive: snap.alive)
             unplaced.keep(stray)
             scheduleHeal()
@@ -182,21 +186,22 @@ final class Spaces {
             return
         }
         let firstScan = lastScan == nil
-        clock.scan = firstScan ? "first" : full ? "full" : last(lastScan!, snap.appWindows, pids, offKnown)
+        clock.scan = unchanged ? "late" : firstScan ? "first" : full ? "full" : last(lastScan!, snap.appWindows, pids, offKnown)
         RunningApps.invalidate()
         let pidsNow = RunningApps.regular
         Windows.keepBench(pidsNow)
         let scanStart = ProcessInfo.processInfo.systemUptime
-        let scan = Windows.all(owners: snap.owners)
-        let (list, unsure, listed, partial, nonStandard, asks) = (scan.windows, scan.unsure, scan.listed, scan.partial, scan.notWindows, scan.asking)
+        let scan = Windows.all(owners: snap.owners, lateOnly: unchanged)
+        let (list, unsure, listed, nonStandard, asks) = (scan.windows, scan.unsure, scan.listed, scan.notWindows, scan.asking)
         let missed = unsure.map { NSRunningApplication(processIdentifier: $0)?.localizedName ?? "pid \($0)" }
         let held = ProcessInfo.processInfo.systemUptime - scanStart
         if let line = ScanCheck.slowScanLine(seconds: held, kind: clock.scan, switching: switching, missed: missed) { Trace.log(line) }
-        logScan(ScanCheck.Cost(main: held, background: scan.slowest, apps: scan.asked, timedOut: scan.timedOut), kind: clock.scan)
+        logScan(ScanCheck.Cost(main: held, background: scan.slowest, apps: scan.asked, timedOut: scan.timedOut, late: scan.late), kind: clock.scan)
         notWindows = nonStandard
         asking = asks
-        // A window the app closed but kept isn't one any more, though the window server says it's alive.
-        let answered = pidsNow.intersection(snap.owners).subtracting(unsure).subtracting(partial)
+        // A window the app closed but kept isn't one any more, though the window server says it's alive. Only an app
+        // that answered this scan in full judges; one still out or timed out keeps its windows where they are.
+        let answered = scan.answered.intersection(pidsNow).intersection(snap.owners)
         let closed = closedWindows(listed: listed, answered: answered, offscreen: snap.offscreen)
         for id in closed {
             guard let ws = model.workspace(of: id), let pid = snap.offscreen[id] else { continue }
@@ -628,10 +633,8 @@ final class Spaces {
     /// it's on no macOS desktop or on one being shown. A minimized window, and a hidden app's,
     /// is still listed; one on another desktop, or in full screen, is on a desktop not shown.
     private func closedWindows(listed: Set<WindowID>, answered: Set<pid_t>, offscreen: [WindowID: pid_t]) -> Set<WindowID> {
-        Set(Set(model.home.keys).union(pendingLayout.keys).filter { id in
-            guard !listed.contains(id), let pid = offscreen[id], answered.contains(pid) else { return false }
-            return Windows.onNoOtherDesktop(id)
-        })
+        ScanCheck.closed(known: Set(model.home.keys).union(pendingLayout.keys), listed: listed, vouching: answered,
+                         offscreen: offscreen, onNoOtherDesktop: Windows.onNoOtherDesktop)
     }
 
     /// The known windows that are off screen while their app is shown, the ones `closedWindows`
@@ -652,6 +655,17 @@ final class Spaces {
         if switching { return scheduleRetry() }
         refresh(full: true)
         persist()
+    }
+
+    /// Apps answered after their scan stopped waiting (`Windows.onLate`): their windows are merged in one short step on
+    /// main, asking no app. During a switch it waits for the switch, whose own scan takes them first.
+    func lateAnswers() {
+        guard active else { return }
+        if switching { return enqueue { [weak self] in self?.lateAnswers() } }
+        let before = model
+        refresh()
+        persist()
+        if model != before { onChange?() }
     }
 
     /// Re-reads apps that a scan couldn't, once they're willing to answer again, in the

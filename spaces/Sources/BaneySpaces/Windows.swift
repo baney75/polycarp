@@ -181,11 +181,49 @@ enum Windows {
         return holds.holds(pid, now: ProcessInfo.processInfo.systemUptime)
     }
 
+    /// Whether the main thread may ask `pid` anything now. An app whose scan read is still out is busy with it, so a main
+    /// thread call (a frame, a move) would wait behind it: it is left alone until its read comes back.
     static func isResponsive(_ pid: pid_t) -> Bool {
+        isAskable(pid) && !fanOut.isReading(pid)
+    }
+
+    /// Whether a scan asks `pid`: no launch hold skips it and the bench hasn't put it aside.
+    private static func isAskable(_ pid: pid_t) -> Bool {
         unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
         let now = Date()
         return !holds.skips(pid, now: ProcessInfo.processInfo.systemUptime) && !bench.isBenched(pid, now: now)
     }
+
+    /// Reads every app off the main thread (`ScanFanOut`); a scan waits for them 5 ms at most.
+    private static let fanOut = ScanFanOut<AXAppRead> { lateCame() }
+    private static var lateQueued = false
+    /// On the main thread, once per batch of answers that came after their scan stopped waiting (`Spaces.lateAnswers`).
+    static var onLate: (() -> Void)?
+
+    /// From a read's queue: one hop to main however many answers come in before it runs.
+    private static func lateCame() {
+        unresponsiveLock.lock()
+        let first = !lateQueued
+        lateQueued = true
+        unresponsiveLock.unlock()
+        guard first else { return }
+        DispatchQueue.main.async {
+            unresponsiveLock.lock(); lateQueued = false; unresponsiveLock.unlock()
+            onLate?()
+        }
+    }
+
+    /// Whether answers wait to be merged.
+    static var hasLate: Bool { fanOut.hasLate }
+
+    /// Each app's part of its last full answer, kept for a scan that merges late answers alone: the apps it doesn't ask
+    /// keep their sheets, panels and waiting windows. Main thread only, like `all`.
+    private struct Piece {
+        var listed = Set<WindowID>()
+        var notWindows = Set<WindowID>()
+        var asking: [WaitingWindow.Seen] = []
+    }
+    private static var pieces: [pid_t: Piece] = [:]
 
     static func markUnresponsive(_ pid: pid_t, call: String, error: AXError) {
         let app = NSRunningApplication(processIdentifier: pid)
@@ -227,12 +265,14 @@ enum Windows {
     }
 
     /// Every standard window of every regular app except BaneySpaces itself. Dialogs, panels,
-    /// popovers and windows on other macOS desktops are left alone. Apps are asked in parallel:
-    /// Accessibility answers each app separately, so a slow app no longer delays the rest.
-    /// `unsure` lists the apps that were skipped or didn't answer in time; their windows may be
-    /// missing from the result. `listed` is every window number the apps gave, of any kind, and
-    /// `partial` the apps that gave an element whose number couldn't be read: only an app that
-    /// answered in full can say a window it didn't list is closed.
+    /// popovers and windows on other macOS desktops are left alone. Apps are read off the main
+    /// thread (`ScanFanOut`), which waits for them 5 ms at most: an app that answers later is
+    /// merged by the next scan (`lateOnly`, from `onLate`), so a slow or hung app never holds up
+    /// the main thread or the other apps.
+    /// `unsure` lists the apps that were skipped, didn't answer, or haven't answered yet; their
+    /// windows may be missing from the result and keep their workspace. `listed` is every window
+    /// number the apps gave, of any kind, and `answered` the apps that answered this scan in full,
+    /// every element's number read: only these can say a window they didn't list is closed.
     /// `notWindows` are listed elements whose subrole was read and isn't a standard window's
     /// (sheets, panels). One whose subrole couldn't be read is neither: it stays unplaced, so
     /// `UnplacedWindows` looks at it again.
@@ -242,62 +282,79 @@ enum Windows {
         var windows: [Window] = []
         var unsure = Set<pid_t>()
         var listed = Set<WindowID>()
-        var partial = Set<pid_t>()
+        var answered = Set<pid_t>()
         var notWindows = Set<WindowID>()
         var asking: [WaitingWindow.Seen] = []
-        /// Seconds the calling thread waited for the apps' answers, and the slowest app's read.
+        /// Seconds the calling thread waited for the apps' answers, and the slowest read merged.
         var waited: Double = 0
         var slowest: Double = 0
-        /// Apps asked, and how many of them ran out their deadline.
+        /// Reads started, how many answers merged ran out their deadline, and the apps still out.
         var asked = 0
         var timedOut = 0
+        var late = 0
     }
 
-    static func all(owners: Set<pid_t>? = nil) -> Scan {
+    /// One scan. `lateOnly` asks nobody and merges the answers that came in since the last one; every other app's last
+    /// full answer stands (`ScanTally.standing`).
+    static func all(owners: Set<pid_t>? = nil, lateOnly: Bool = false) -> Scan {
         // Only apps that own a window are asked. A running app with no windows is often frozen by
         // macOS and never answers, which would cost a full timeout on every scan.
         let candidates = owners.map { RunningApps.regular.intersection($0) } ?? RunningApps.regular
         var scan = Scan()
-        scan.unsure = Set(candidates.filter { !isResponsive($0) })
-        let apps = candidates.compactMap { pid -> (pid_t, String)? in
-            guard isResponsive(pid), let app = NSRunningApplication(processIdentifier: pid) else { return nil }
-            return (pid, app.localizedName ?? "App")
-        }
+        let askable = candidates.filter(isAskable)
+        scan.unsure = candidates.subtracting(askable)
         let start = ProcessInfo.processInfo.systemUptime
-        let reads = AXScan.all(apps.map(\.0))
+        let round = lateOnly ? fanOut.takeLate() : fanOut.round(Array(askable)) { AXScan.read($0) }
         scan.waited = ProcessInfo.processInfo.systemUptime - start
-        scan.asked = apps.count
-        let names = Dictionary(apps, uniquingKeysWith: { a, _ in a })
-        for read in reads { take(read, name: names[read.pid] ?? "App", into: &scan) }
+        scan.asked = round.asked
+        pieces = pieces.filter { candidates.contains($0.key) }
+        let tally = ScanTally.of(round, apps: askable, answeredBefore: Set(pieces.keys), ok: \.answered)
+        for (pid, read) in round.answered where askable.contains(pid) {
+            let piece = take(read, name: NSRunningApplication(processIdentifier: pid)?.localizedName ?? "App", into: &scan)
+            pieces[pid] = read.answered ? piece : nil
+        }
+        for pid in tally.standing {
+            guard let p = pieces[pid] else { continue }
+            scan.listed.formUnion(p.listed)
+            scan.notWindows.formUnion(p.notWindows)
+            scan.asking += p.asking
+        }
+        scan.unsure.formUnion(tally.unsure)
+        scan.late = tally.pending.count
+        let partial = Set(round.answered.values.filter { $0.elements.contains { $0.id == nil } }.map(\.pid))
+        scan.answered = tally.fresh.subtracting(partial)
         return scan
     }
 
-    /// One app's answer, folded into the scan: the bench hears of it, and its windows join the lists.
-    private static func take(_ read: AXAppRead, name: String, into scan: inout Scan) {
+    /// One app's answer, folded into the scan: the bench hears of it, and its windows join the lists. Returns its part.
+    private static func take(_ read: AXAppRead, name: String, into scan: inout Scan) -> Piece {
         let pid = read.pid
         scan.slowest = max(scan.slowest, read.seconds)
         if read.timedOut { scan.timedOut += 1 }
         // Any failure, not just a timeout, counts: otherwise an app that answers with an error
         // would be retried at full speed forever instead of backing off.
         if !read.answered {
-            scan.unsure.insert(pid)
             markUnresponsive(pid, call: kAXWindowsAttribute, error: read.error)
         } else { markResponsive(pid) }
         if read.elementTimedOut { markUnresponsive(pid, call: kAXSubroleAttribute, error: .cannotComplete) }
+        var piece = Piece()
         for el in read.elements {
             guard let id = el.id, let subrole = el.subrole else { continue }
             if subrole == kAXStandardWindowSubrole as String {
                 scan.windows.append(Window(id: id, element: el.element, pid: pid, appName: name))
                 // A standard window that blocks its app (a lent app's modal) waits on you too:
                 // placed like any window, and marked when it is out of sight.
-                if el.modal == true { scan.asking.append(.init(id: id, pid: pid, subrole: subrole, modal: true)) }
+                if el.modal == true { piece.asking.append(.init(id: id, pid: pid, subrole: subrole, modal: true)) }
                 continue
             }
-            scan.notWindows.insert(id)
-            if WaitingWindow.asks(subrole: subrole, modal: el.modal) { scan.asking.append(.init(id: id, pid: pid, subrole: subrole, modal: el.modal)) }
+            piece.notWindows.insert(id)
+            if WaitingWindow.asks(subrole: subrole, modal: el.modal) { piece.asking.append(.init(id: id, pid: pid, subrole: subrole, modal: el.modal)) }
         }
-        scan.listed.formUnion(read.elements.compactMap(\.id))
-        if read.elements.contains(where: { $0.id == nil }) { scan.partial.insert(pid) }
+        piece.listed = Set(read.elements.compactMap(\.id))
+        scan.listed.formUnion(piece.listed)
+        scan.notWindows.formUnion(piece.notWindows)
+        scan.asking += piece.asking
+        return piece
     }
 
     static func alive() -> Set<WindowID> { snapshot(apps: RunningApps.regular).alive }

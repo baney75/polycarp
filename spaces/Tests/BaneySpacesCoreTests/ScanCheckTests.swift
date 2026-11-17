@@ -127,10 +127,10 @@ final class SlowScanLineTests: XCTestCase {
     func testRefreshTimesItsScan() throws {
         let s = try HandsSourceTests.code("Sources/BaneySpaces/Spaces.swift")
         let r = try XCTUnwrap(HandsSourceTests.block(after: "func refresh(full: Bool = false)", in: s))
-        XCTAssertTrue(r.contains("let scanStart = ProcessInfo.processInfo.systemUptime\n        let scan = Windows.all(owners: snap.owners)"))
+        XCTAssertTrue(r.contains("let scanStart = ProcessInfo.processInfo.systemUptime\n        let scan = Windows.all(owners: snap.owners, lateOnly: unchanged)"))
         XCTAssertTrue(r.contains("let held = ProcessInfo.processInfo.systemUptime - scanStart"))
         XCTAssertTrue(r.contains("ScanCheck.slowScanLine(seconds: held"))
-        XCTAssertTrue(r.contains("logScan(ScanCheck.Cost(main: held, background: scan.slowest, apps: scan.asked, timedOut: scan.timedOut)"))
+        XCTAssertTrue(r.contains("logScan(ScanCheck.Cost(main: held, background: scan.slowest, apps: scan.asked, timedOut: scan.timedOut, late: scan.late)"))
     }
 }
 
@@ -138,9 +138,9 @@ final class SlowScanLineTests: XCTestCase {
 /// Every scan now says what it cost the main thread.
 final class ScanCostTests: XCTestCase {
     func testTheLineIsMillisecondsAndCountsOnly() {
-        let c = ScanCheck.Cost(main: 0.0124, background: 0.2516, apps: 23, timedOut: 1)
-        XCTAssertEqual(c.line(kind: "windows+1-0", switching: false), "scan main=12 bg=252 apps=23 timedout=1 kind=windows+1-0")
-        XCTAssertEqual(c.line(kind: "full", switching: true), "scan main=12 bg=252 apps=23 timedout=1 kind=full mid-switch")
+        let c = ScanCheck.Cost(main: 0.0124, background: 0.2516, apps: 23, timedOut: 1, late: 2)
+        XCTAssertEqual(c.line(kind: "windows+1-0", switching: false), "scan main=12 bg=252 apps=23 timedout=1 late=2 kind=windows+1-0")
+        XCTAssertEqual(c.line(kind: "full", switching: true), "scan main=12 bg=252 apps=23 timedout=1 late=2 kind=full mid-switch")
     }
 
     /// timing.log keeps 500 lines and bench.sh reads switches from them: a scan that cost no frame stays out.
