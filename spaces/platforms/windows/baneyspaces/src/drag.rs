@@ -132,16 +132,12 @@ fn begin(h: HWND, pt: POINT, right: bool, now: u32) -> Live {
     let mut start = frame(h).unwrap_or([pt.x, pt.y, pt.x + 1, pt.y + 1]);
     let mut restored = false;
     if !right && winapi::is_zoomed(h) {
-        // A filled window comes out at its normal size, under the pointer at the same share of its width.
         let mut wp: WINDOWPLACEMENT = unsafe { std::mem::zeroed() };
         wp.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
         if unsafe { GetWindowPlacement(h, &mut wp) } != 0 {
             let n = wp.rcNormalPosition;
             let (w, ht) = (n.right - n.left, n.bottom - n.top);
-            let x = pt.x
-                - ((pt.x - start[0]) as i64 * w as i64 / (start[2] - start[0]).max(1) as i64)
-                    as i32;
-            start = [x, start[1], x + w, start[1] + ht];
+            start = snap::restored(start, w, ht, pt.x, pt.y);
             unsafe { ShowWindowAsync(h, SW_SHOWNOACTIVATE) };
             restored = true;
         }

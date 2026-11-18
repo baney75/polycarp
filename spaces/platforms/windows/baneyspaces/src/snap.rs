@@ -51,6 +51,16 @@ pub fn dragged(kind: Kind, start: Rect, dx: i32, dy: i32) -> Rect {
     }
 }
 
+/// A filled window `filled` dragged from `x`, `y` comes out at its normal size `w` by `h`, under the pointer at the
+/// same share of its width.
+pub fn restored(filled: Rect, w: i32, h: i32, x: i32, _y: i32) -> Rect {
+    let share = |p: i32, a: i32, b: i32, n: i32| {
+        p - ((p - a) as i64 * n as i64 / (b - a).max(1) as i64) as i32
+    };
+    let left = share(x, filled[0], filled[2], w);
+    [left, filled[1], left + w, filled[1] + h]
+}
+
 /// The snap a move would end in with the pointer at `x`, `y`, given every display's work area: its name and frame.
 /// Left and right edges give halves, the top edge the whole work area, the bottom edge the lower half, and the
 /// corners quarters. A pointer off every work area (over the taskbar) counts with the nearest one.
@@ -174,5 +184,28 @@ mod tests {
             [-7, 0, 519, 735]
         );
         assert_eq!(to_window(frame, window, frame), window);
+    }
+
+    #[test]
+    fn a_filled_window_comes_out_under_the_press_at_the_same_share_of_its_size() {
+        // Review of #475: a 1920x1040 work area, normal size 800x500, pressed low at y 700.
+        let filled = [0, 0, 1920, 1040];
+        for (x, y) in [(960, 700), (100, 1000), (1900, 20), (480, 260)] {
+            let r = restored(filled, 800, 500, x, y);
+            assert_eq!((r[2] - r[0], r[3] - r[1]), (800, 500), "{x},{y}: {r:?}");
+            assert!(
+                r[0] <= x && x < r[2] && r[1] <= y && y < r[3],
+                "{x},{y} is outside {r:?}"
+            );
+            let share = |p: i32, a: i32, b: i32| (p - a) as f64 / (b - a) as f64;
+            assert!(
+                (share(x, r[0], r[2]) - share(x, 0, 1920)).abs() < 0.01,
+                "{x},{y}: {r:?}"
+            );
+            assert!(
+                (share(y, r[1], r[3]) - share(y, 0, 1040)).abs() < 0.01,
+                "{x},{y}: {r:?}"
+            );
+        }
     }
 }
