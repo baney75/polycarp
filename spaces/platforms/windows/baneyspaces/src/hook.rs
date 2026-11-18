@@ -364,6 +364,13 @@ pub fn start(tx: Sender<Msg>, on_end: fn(EndSession)) -> Vec<String> {
     problems
 }
 
+/// A Win+drag took the press while Win is down: count it as a chord, so letting Win go doesn't open Start, the same
+/// way a Win chord the hook takes is masked (#557).
+pub fn mask_start_menu() {
+    WIN.chord();
+    crate::winapi::nudge_input();
+}
+
 pub fn stop() {
     for t in [&KB_THREAD, &EV_THREAD, &SESSION_THREAD] {
         let id = t.load(Ordering::Relaxed);
