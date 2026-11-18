@@ -5,7 +5,9 @@
 //!   launcher can exec a working tree outside the app, so they keep serving a claude.ai connector after the update.
 //!   Each is retired only once Tychicus runs its counterpart (`com.tychicus.serve` for serve and cloudflared,
 //!   `com.tychicus.hub`, `com.tychicus.link`) and `~/.config/tychicus/remote.json` exists. Until then it is left running
-//!   and one line says how to move it.
+//!   and one line says how to move it, unless its program was inside Polycarp.app or a folder this move removed: that
+//!   program is gone, so the job could only be restarted forever by launchd. It is retired then, and one line says the
+//!   connector is off until Tychicus runs it.
 //! - Any other of the helper's labels (`com.polycarp.browser`, `com.tabkyra.*`) is retired only when its program is
 //!   inside Polycarp.app or a folder this move removed, since that program is gone and launchd would restart it forever.
 //!
@@ -39,6 +41,8 @@ const GATED: [(&str, &str); 4] = [
 ];
 /// Tychicus writes this once it has taken the remote connector over.
 const TYCHICUS_REMOTE: &str = ".config/tychicus/remote.json";
+/// Printed once when a connector job's program is gone and Tychicus does not run the connector yet.
+pub const CONNECTOR_OFF: &str = "Your remote connector ran on the browser helper that left Polycarp, so it is off now; install Tychicus (https://github.com/baney75/tychicus) and run `tychicus remote import-polycarp` to turn it back on.";
 /// Printed once when a connector job waits for Tychicus.
 pub const CONNECTOR_STAYS: &str = "Your remote connector still runs on Polycarp's helper; run `tychicus remote import-polycarp` to move it to Tychicus.";
 
@@ -54,6 +58,9 @@ pub enum Verdict {
     HandedOver,
     /// A remote connector job left running until Tychicus runs its counterpart.
     Waiting,
+    /// A remote connector job whose program left with the helper, before Tychicus runs its counterpart: booted out and
+    /// its plist removed, so launchd stops restarting a program that is gone.
+    Stranded { program: String },
 }
 
 #[derive(Debug, PartialEq)]
@@ -88,7 +95,7 @@ pub fn retire(home: &Path, uid: &str, launchctl: &Path) -> Vec<Job> {
                     stop(uid, launchctl, &label, &plist)
                         .map_or_else(|f| f, |()| Verdict::HandedOver)
                 }
-                Some(_) => Verdict::Waiting,
+                Some(_) => strand(home, uid, launchctl, &label, &plist),
                 None => judge(home, uid, launchctl, &label, &plist),
             };
             Job {
@@ -122,6 +129,15 @@ fn label_of(plist: &Path) -> String {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// A connector job whose gate is unmet: retired when its program was Polycarp's (now gone), else left waiting.
+fn strand(home: &Path, uid: &str, launchctl: &Path, label: &str, plist: &Path) -> Verdict {
+    match fs::read_to_string(plist).ok().and_then(|t| program_of(&t)) {
+        Some(program) if polycarps(home, &program) => stop(uid, launchctl, label, plist)
+            .map_or_else(|f| f, |()| Verdict::Stranded { program }),
+        _ => Verdict::Waiting,
+    }
 }
 
 fn judge(home: &Path, uid: &str, launchctl: &Path, label: &str, plist: &Path) -> Verdict {
@@ -248,6 +264,7 @@ pub fn command(home: &Path) -> i32 {
     };
     let mut failed = false;
     let mut waiting = false;
+    let mut off = false;
     for job in retire(home, &uid, &launchctl) {
         match job.verdict {
             Verdict::Retired { program } => println!(
@@ -259,6 +276,13 @@ pub fn command(home: &Path) -> i32 {
                 job.label
             ),
             Verdict::Waiting => waiting = true,
+            Verdict::Stranded { program } => {
+                off = true;
+                println!(
+                    "retired {}: it ran {program}, which left Polycarp with the browser (now Tychicus)",
+                    job.label
+                );
+            }
             Verdict::Kept { why } => println!("left {} alone: {why}", job.label),
             Verdict::Failed { why } => {
                 failed = true;
@@ -268,6 +292,8 @@ pub fn command(home: &Path) -> i32 {
     }
     if waiting {
         println!("{CONNECTOR_STAYS}");
+    } else if off {
+        println!("{CONNECTOR_OFF}");
     }
     i32::from(failed)
 }
@@ -318,6 +344,61 @@ mod tests {
         assert_eq!(gate_of("com.polycarp.link"), Some("com.tychicus.link"));
         assert_eq!(gate_of("com.polycarp.browser"), None);
         assert_eq!(gate_of("com.tabkyra.serve"), None);
+    }
+
+    /// A connector job whose program was inside Polycarp.app is retired before Tychicus runs the connector, since
+    /// that program is gone; one whose program is elsewhere (Homebrew's cloudflared) keeps waiting, plist and all.
+    #[cfg(unix)]
+    #[test]
+    fn a_connector_job_whose_program_left_with_the_app_is_retired_without_tychicus() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("retire-strand-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let agents = root.join("home/Library/LaunchAgents");
+        fs::create_dir_all(&agents).unwrap();
+        let home = root.join("home");
+        let log = root.join("launchctl.log");
+        let launchctl = root.join("launchctl");
+        // Nothing is loaded: `print` exits 113, `bootout` 0.
+        fs::write(
+            &launchctl,
+            format!(
+                "#!/bin/sh\necho \"$*\" >> {}\ncase \"$1\" in print) exit 113;; esac\nexit 0\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&launchctl, fs::Permissions::from_mode(0o755)).unwrap();
+        let serve = agents.join("com.polycarp.serve.plist");
+        let tunnel = agents.join("com.polycarp.cloudflared.plist");
+        let in_app = "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser";
+        fs::write(&serve, plist(in_app)).unwrap();
+        fs::write(&tunnel, plist("/opt/homebrew/bin/cloudflared")).unwrap();
+
+        let jobs = retire(&home, "501", &launchctl);
+        let verdict = |label: &str| &jobs.iter().find(|j| j.label == label).unwrap().verdict;
+        assert_eq!(
+            verdict("com.polycarp.serve"),
+            &Verdict::Stranded {
+                program: in_app.to_string()
+            }
+        );
+        assert!(!serve.exists(), "the stranded job's plist is removed");
+        assert_eq!(verdict("com.polycarp.cloudflared"), &Verdict::Waiting);
+        assert!(
+            tunnel.exists(),
+            "a job whose program is elsewhere keeps its plist"
+        );
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(
+            calls.contains("bootout gui/501/com.polycarp.serve"),
+            "{calls}"
+        );
+        assert!(
+            !calls.contains("bootout gui/501/com.polycarp.cloudflared"),
+            "{calls}"
+        );
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
