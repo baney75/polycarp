@@ -46,7 +46,7 @@ impl Channel {
     pub fn target(self) -> &'static str {
         match self {
             Channel::Stable => "refs/remotes/origin/stable",
-            Channel::Nightly => "refs/tags/nightly",
+            Channel::Nightly => "refs/polycarp/nightly",
             Channel::Dev => "refs/remotes/origin/main",
         }
     }
@@ -56,7 +56,8 @@ impl Channel {
     pub fn refspec(self) -> &'static str {
         match self {
             Channel::Stable => "+refs/heads/stable:refs/remotes/origin/stable",
-            Channel::Nightly => "+refs/tags/nightly:refs/tags/nightly",
+            // A ref of Polycarp's own, never refs/tags/nightly: a tag of that name in the checkout stays.
+            Channel::Nightly => "+refs/tags/nightly:refs/polycarp/nightly",
             Channel::Dev => "+refs/heads/main:refs/remotes/origin/main",
         }
     }
@@ -121,7 +122,14 @@ mod tests {
             assert!(from.starts_with("refs/"), "{c:?}");
         }
         assert_eq!(Channel::Dev.target(), "refs/remotes/origin/main");
-        assert_eq!(name_of("refs/tags/nightly"), "nightly");
+        assert_eq!(name_of("refs/polycarp/nightly"), "nightly");
+        // first-F5 of the review of #437: the nightly tag is fetched into Polycarp's own ref, so a tag named
+        // nightly in the person's checkout is never replaced.
+        assert_eq!(
+            Channel::Nightly.refspec(),
+            "+refs/tags/nightly:refs/polycarp/nightly"
+        );
+        assert!(!Channel::Nightly.target().starts_with("refs/tags/"));
         assert_eq!(name_of("HEAD"), "origin/main");
     }
 }
