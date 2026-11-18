@@ -13,7 +13,7 @@
 //!   console when it runs in the background, so no console event reaches it), session lock and unlock,
 //!   and `TaskbarCreated` (explorer.exe restarted).
 
-use crate::keys::{lookup, Binding, ModState, MOD_KEYS};
+use crate::keys::{lookup, Binding, ModState, MOD_KEYS, WIN_KEYS};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::OnceLock;
@@ -60,6 +60,10 @@ static ON_END: OnceLock<fn(EndSession)> = OnceLock::new();
 #[allow(clippy::declare_interior_mutable_const)]
 const OFF: AtomicBool = AtomicBool::new(false);
 static SWALLOWED: [AtomicBool; 256] = [OFF; 256];
+/// A chord with Win was taken since Win went down, so its release must not reach the shell bare (`keyboard`).
+static WIN_USED: AtomicBool = AtomicBool::new(false);
+/// Win is down, so a key-down of it is the auto-repeat, not a fresh press.
+static WIN_HELD: AtomicBool = AtomicBool::new(false);
 static MODS: ModState = ModState::new();
 static KB_THREAD: AtomicU32 = AtomicU32::new(0);
 static EV_THREAD: AtomicU32 = AtomicU32::new(0);
@@ -118,6 +122,8 @@ pub fn reset_keys() {
     for s in SWALLOWED.iter() {
         s.store(false, Ordering::Relaxed);
     }
+    WIN_USED.store(false, Ordering::Relaxed);
+    WIN_HELD.store(false, Ordering::Relaxed);
 }
 
 unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -131,6 +137,22 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
             MODS.event(vk, down, k.time);
         }
         if !injected && vk < 256 {
+            if WIN_KEYS.contains(&vk) {
+                // Windows opens Start when Win goes down and up with no key between, and the chord's key never
+                // reached it. A fresh Win press starts clean, so a release missed on the secure desktop can't eat a
+                // later lone tap; the auto-repeat of a held Win is not one. On the release after a chord: hold it back
+                // and send the masking key and then the release, in one batch here in the hook, so nothing typed after
+                // can come between.
+                if down && !WIN_HELD.swap(true, Ordering::Relaxed) {
+                    WIN_USED.store(false, Ordering::Relaxed);
+                } else if up {
+                    WIN_HELD.store(false, Ordering::Relaxed);
+                    if WIN_USED.swap(false, Ordering::Relaxed) {
+                        crate::winapi::release_masked(vk as u16);
+                        return 1;
+                    }
+                }
+            }
             if down {
                 if SWALLOWED[vk as usize].load(Ordering::Relaxed) {
                     return 1; // auto-repeat of a chord we took
@@ -144,6 +166,9 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
                         if let (Some(table), Some(tx)) = (table(), TX.get()) {
                             if let Some(b) = lookup(table, vk, mods) {
                                 SWALLOWED[vk as usize].store(true, Ordering::Relaxed);
+                                if mods.win {
+                                    WIN_USED.store(true, Ordering::Relaxed);
+                                }
                                 let _ = tx.send(Msg::Chord { args: b.args.clone(), at: k.time });
                                 return 1;
                             }
@@ -331,13 +356,6 @@ pub fn stop() {
             unsafe { PostThreadMessageW(id, WM_QUIT, 0, 0) };
         }
     }
-}
-
-/// Windows opens the Start menu when Win is released with nothing pressed in between. We took the
-/// digit, so press and release an unassigned key (VK 0xE8) while Win is still down: Windows
-/// then counts the chord as used. The hook ignores it because it is injected.
-pub fn mask_start_menu() {
-    crate::winapi::nudge_input();
 }
 
 #[cfg(test)]

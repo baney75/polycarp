@@ -114,8 +114,10 @@ in force and says why in `state` (`keys.error`). The full rules are in `spec/key
 hint: on every candidate chord each modifier it believes down is confirmed against `GetAsyncKeyState` (or a
 key-down within 40 ms, when the system's state has not caught up), so a key-up that was missed (Win+L and the
 secure desktop, Ctrl+Alt+Del, a UAC prompt) cannot leave Win "stuck". The count is also cleared on session lock
-and unlock and when the input desktop changes. The hook swallows the digit's key-up too, and presses an
-unassigned key (0xE8) so releasing Win does not open the Start menu.
+and unlock and when the input desktop changes. The hook swallows the digit's key-up too. It also holds back the
+release of Win after a chord and sends an unassigned key (0xE8) and then the release, in one batch from the hook, so
+the shell never sees a bare Win tap and doesn't open Start (Search). Sending 0xE8 from the daemon's worker instead
+lost the race to a quick release (#557).
 
 Limit (by design): Windows keeps a normal-level hook from seeing keys typed into an **elevated** window
 (UIPI), so **the chords do nothing while an elevated window has focus** (Task Manager, an administrator

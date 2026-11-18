@@ -53,15 +53,14 @@ fn send(keys: &[INPUT]) {
     assert_eq!(n as usize, keys.len(), "SendInput was blocked");
 }
 
-/// Win+digit as the daemon sees a person type it: Win down, the digit, the masking key, then Win up.
+/// Win+digit as a person types it: Win down, the digit down and up, Win up.
 fn chord(digit: u16, extra: usize) {
     send(&[
         key(VK_LWIN, false, extra),
         key(digit, false, extra),
         key(digit, true, extra),
+        key(VK_LWIN, true, extra),
     ]);
-    mask_start_menu();
-    send(&[key(VK_LWIN, true, extra)]);
 }
 
 /// What a hook behind the daemon's sees (it is installed first, so it is called after ours): Win, the digits and the
