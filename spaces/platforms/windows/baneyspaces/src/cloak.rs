@@ -213,21 +213,34 @@ pub fn identity_ok_on(d: &impl Desk, entry: &Hidden) -> bool {
     true
 }
 
-/// Is the window on the virtual desktop you are looking at? (The documented IVirtualDesktopManager.)
+/// Is a window on the virtual desktop you are looking at? (The documented IVirtualDesktopManager.)
 /// A window on another desktop is cloaked by Windows itself: it is not a window that vanished, and it is
-/// neither shown nor hidden from here. None when it cannot be told: treated as here.
-pub fn on_current_desktop(h: HWND) -> Option<bool> {
-    COM.with(|_| ());
-    unsafe {
+/// neither shown nor hidden from here. One manager serves a batch of checks (a switch asks once per window
+/// it shows) and is dropped after: explorer.exe may restart between two batches.
+pub struct Desktops(*mut c_void);
+
+impl Desktops {
+    pub fn new() -> Option<Self> {
+        COM.with(|_| ());
         let mut m: *mut c_void = std::ptr::null_mut();
-        if CoCreateInstance(&CLSID_VIRTUAL_DESKTOP_MANAGER, std::ptr::null_mut(), CLSCTX_ALL, &IID_IVIRTUAL_DESKTOP_MANAGER, &mut m) < 0 || m.is_null() {
-            return None;
+        let hr = unsafe { CoCreateInstance(&CLSID_VIRTUAL_DESKTOP_MANAGER, std::ptr::null_mut(), CLSCTX_ALL, &IID_IVIRTUAL_DESKTOP_MANAGER, &mut m) };
+        (hr >= 0 && !m.is_null()).then_some(Self(m))
+    }
+
+    /// None when it cannot be told: treated as here.
+    pub fn on_current(&self, h: HWND) -> Option<bool> {
+        unsafe {
+            let f: unsafe extern "system" fn(*mut c_void, HWND, *mut i32) -> i32 = std::mem::transmute(slot(self.0, 3));
+            let mut on = 0;
+            let hr = f(self.0, h, &mut on);
+            (hr >= 0).then_some(on != 0)
         }
-        let f: unsafe extern "system" fn(*mut c_void, HWND, *mut i32) -> i32 = std::mem::transmute(slot(m, 3));
-        let mut on = 0;
-        let hr = f(m, h, &mut on);
-        release(m);
-        (hr >= 0).then_some(on != 0)
+    }
+}
+
+impl Drop for Desktops {
+    fn drop(&mut self) {
+        unsafe { release(self.0) };
     }
 }
 
