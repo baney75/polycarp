@@ -144,7 +144,7 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
                 // queue before that mask is held back and sent again behind it (`WinMask`).
                 if down {
                     WIN.win_down(held(vk));
-                } else if up && WIN.win_up(|| crate::winapi::release_masked(vk as u16)) {
+                } else if up && WIN.win_up(k.time, || crate::winapi::release_masked(vk as u16)) {
                     return 1;
                 }
             }
@@ -161,9 +161,11 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
                         if let (Some(table), Some(tx)) = (table(), TX.get()) {
                             if let Some(b) = lookup(table, vk, mods) {
                                 SWALLOWED[vk as usize].store(true, Ordering::Relaxed);
-                                if mods.win {
-                                    WIN.chord();
-                                    crate::winapi::nudge_input();
+                                if crate::keys::chord_masks(mods) {
+                                    let took = crate::winapi::nudge_input();
+                                    if mods.win {
+                                        WIN.chord(took == 2, k.time);
+                                    }
                                 }
                                 let _ = tx.send(Msg::Chord { args: b.args.clone(), at: k.time });
                                 return 1;
