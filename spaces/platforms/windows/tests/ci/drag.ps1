@@ -32,6 +32,7 @@ function say($m) { Write-Host $m; Add-Content $log $m }
 function check([bool]$c, $m, $why = '') { if ($c) { $script:pass++; say "  ok:   $m" } else { $script:fail++; say "  FAIL: $m$(if ($why) { " ($why)" })" } }
 function bsc { $o = (& $bs @args 2>&1 | Out-String).Trim(); Add-Content $log "`$ baneyspaces $args  ->  $($o.Substring(0, [Math]::Min(200, $o.Length)))"; $o }
 function near($a, $b) { if ($null -eq $a -or $null -eq $b) { return $false }; for ($i = 0; $i -lt 4; $i++) { if ([Math]::Abs($a[$i] - $b[$i]) -gt 2) { return $false } }; $true }
+function who($w) { $r = [Desk]::Read($w); if (-not $r) { "w-$w (gone)" } else { "w-$w pid $($r.Pid) ($((Get-Process -Id $r.Pid -ErrorAction SilentlyContinue).ProcessName)) class '$($r.Class)' title '$($r.Title)'" } }
 function txt($r) { if ($null -eq $r) { 'none' } else { $r -join ',' } }
 function half($a, $b) { $a + [int][Math]::Floor(($b - $a) / 2) }
 
@@ -84,13 +85,22 @@ function drags($name, $h) {
   $ok = 0; $settle = @()
   for ($i = 0; $i -lt 50; $i++) {
     $c = $cases[$i % $cases.Count]
-    [Drag]::Place($h, 250, 160, 520, 400); Start-Sleep -Milliseconds 120
-    $f = [Drag]::Frame($h)
-    $x0 = $f[0] + [int](($f[2] - $f[0]) * $(if ($c.at) { $c.at[0] } else { 0.5 }))
-    $y0 = $f[1] + [int](($f[3] - $f[1]) * $(if ($c.at) { $c.at[1] } else { 0.5 }))
+    # The press must land on the window under test. Something else on top there (a Start or Search flyout an earlier
+    # script's bare Win tap opened) would take the press, and the drag would miss through no fault of the daemon's.
+    # Named, closed with Escape, and checked again; still covered, the drag runs anyway and fails as it would.
+    for ($k = 0; $k -lt 4; $k++) {
+      [Drag]::Place($h, 250, 160, 520, 400); Start-Sleep -Milliseconds 120
+      $f = [Drag]::Frame($h)
+      $x0 = $f[0] + [int](($f[2] - $f[0]) * $(if ($c.at) { $c.at[0] } else { 0.5 }))
+      $y0 = $f[1] + [int](($f[3] - $f[1]) * $(if ($c.at) { $c.at[1] } else { 0.5 }))
+      $cover = [Drag]::Under($x0, $y0)
+      if ($cover -eq $h -or $k -eq 3) { break }
+      say "  drag $i ($($c.n)): $(who $cover) is over the window at $x0,$y0; Escape"
+      [Drag]::Escape(); Start-Sleep -Milliseconds 300
+    }
     $to = if ($c.to) { $c.to } else { @(($x0 + $c.by[0]), ($y0 + $c.by[1])) }
-    $pv = $null
-    $p = [Drag]::Run($x0, $y0, $to[0], $to[1], [bool]$c.right, [bool]$c.esc, [ref]$pv)
+    $pv = $null; [long]$under = 0
+    $p = [Drag]::Run($x0, $y0, $to[0], $to[1], [bool]$c.right, [bool]$c.esc, [ref]$pv, [ref]$under)
     $dx = $p[2] - $p[0]; $dy = $p[3] - $p[1]
     $want = if ($c.snap) { @($c.snap) } elseif ($c.esc) { $f } elseif ($c.edges) {
       $e = @($f[0], $f[1], $f[2], $f[3]); foreach ($k in $c.edges) { $e[$k] += $(if ($k % 2 -eq 0) { $dx } else { $dy }) }; $e
@@ -101,7 +111,7 @@ function drags($name, $h) {
     $fine = (near $got $want) -and $pvOk
     if ($fine) { $ok++; $settle += $sw.ElapsedMilliseconds } else {
       [Desk]::Shot((Join-Path $Out ('{0}-{1:D2}.png' -f ($name -replace '\W', ''), $i)))
-      say "  drag $i ($($c.n)): frame $(txt $got), want $(txt $want); preview $(txt $pv); pointer $(txt $p)"
+      say "  drag $i ($($c.n)): frame $(txt $got), want $(txt $want); preview $(txt $pv); pointer $(txt $p); pressed on $(if ($under -eq $h) { 'the window' } else { who $under })"
     }
     Add-Content $log "  drag $i ($($c.n)): $(if ($fine) { "ok in $($sw.ElapsedMilliseconds) ms" } else { 'FAIL' })"
   }
