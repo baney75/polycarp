@@ -378,8 +378,9 @@ pub fn nudge_input() {
 /// Presses and releases VK 0xE8, then releases `win`, as one SendInput batch: the shell sees a key inside the Win press,
 /// so it doesn't open Start. Injected, so the daemon's own hook lets all three through. Returns how many SendInput took.
 pub fn release_masked(win: u16) -> u32 {
+    use crate::cause::OWN_INPUT_MARK;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP};
-    let key = |vk, flags| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } };
+    let key = |vk, flags| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: OWN_INPUT_MARK } } };
     let inputs = [key(0xE8, 0), key(0xE8, KEYEVENTF_KEYUP), key(win, KEYEVENTF_KEYUP)];
     unsafe { SendInput(3, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) }
 }
