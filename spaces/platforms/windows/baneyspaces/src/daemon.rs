@@ -182,8 +182,19 @@ impl Core {
             return;
         }
         let known: Vec<String> = self.model.monitors().map(String::from).collect();
-        for ev in displays::monitor_events(&known, &now) {
-            let _ = self.apply(ev);
+        let you = self.model.focused_monitor().and_then(|f| self.model.current(f).map(|n| (f.to_string(), n)));
+        // The poll's events go to the model first and are carried out once, so a swap never hides your windows
+        // for the removal and shows them again for the switch that follows.
+        let events = displays::monitor_events(&known, &now, you.as_ref().map(|(f, n)| (f.as_str(), *n)));
+        if !events.is_empty() {
+            let mut effects = vec![];
+            for ev in events {
+                self.events_seen += 1;
+                effects.extend(self.model.apply(ev).unwrap_or_default());
+            }
+            if let Err(e) = self.exec(&effects) {
+                self.problem(format!("could not save the hidden-window record, so no window was hidden: {e}"));
+            }
         }
         if self.model.focused_monitor().is_none() {
             if let Some(m) = now.first() {

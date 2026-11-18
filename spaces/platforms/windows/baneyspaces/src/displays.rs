@@ -14,10 +14,18 @@ pub type Rect = [i32; 4];
 /// swapped for another in one poll, as when a laptop lid closes on a dock: the new display is then the first one
 /// and shows what you were on (R-M1, R-M3), instead of an empty workspace while yours goes out of sight. A
 /// reorder with the same names is no change: a workspace belongs to its display, not to its place in the list.
-pub fn monitor_events(known: &[String], now: &[String]) -> Vec<Event> {
+/// `you` is the display you were on and the workspace it showed. When every display went in that poll, a display
+/// that was here before would show what it showed last time (R-M2), an empty workspace with yours out of sight, so
+/// a switch to yours follows: you keep what you were on.
+pub fn monitor_events(known: &[String], now: &[String], you: Option<(&str, u8)>) -> Vec<Event> {
     let gone = known.iter().filter(|m| !now.contains(m)).map(|m| Event::MonitorRemoved { monitor: m.clone() });
     let came = now.iter().filter(|m| !known.contains(m)).map(|m| Event::MonitorAdded { monitor: m.clone() });
-    gone.chain(came).collect()
+    let mut events: Vec<Event> = gone.chain(came).collect();
+    let swapped = !known.is_empty() && !now.is_empty() && known.iter().all(|m| !now.contains(m));
+    if let Some((_, n)) = you.filter(|_| swapped).filter(|&(_, n)| (1..=9).contains(&n)) {
+        events.push(Event::Switch { n });
+    }
+    events
 }
 
 fn overlap(a: Rect, b: Rect) -> i64 {
@@ -104,7 +112,8 @@ mod tests {
     fn sync(m: &mut Model, now: &[&str]) {
         let now: Vec<String> = now.iter().map(|s| s.to_string()).collect();
         let known: Vec<String> = m.monitors().map(String::from).collect();
-        for ev in monitor_events(&known, &now) {
+        let you = m.focused_monitor().and_then(|f| m.current(f).map(|n| (f.to_string(), n)));
+        for ev in monitor_events(&known, &now, you.as_ref().map(|(f, n)| (f.as_str(), *n))) {
             m.apply(ev).unwrap();
         }
     }
@@ -141,7 +150,7 @@ mod tests {
     fn a_reorder_changes_nothing() {
         let mut m = Model::new();
         sync(&mut m, &["A", "B"]);
-        assert!(monitor_events(&["A".into(), "B".into()], &["B".into(), "A".into()]).is_empty());
+        assert!(monitor_events(&["A".into(), "B".into()], &["B".into(), "A".into()], Some(("A", 1))).is_empty());
         sync(&mut m, &["B", "A"]);
         assert_eq!((m.current("A"), m.current("B")), (Some(1), Some(2)));
     }
@@ -158,12 +167,30 @@ mod tests {
     }
 
     #[test]
+    fn a_swap_to_a_display_that_was_here_before_shows_what_you_were_on() {
+        // Docked every day: the external display was here before and last showed 7.
+        let mut m = Model::new();
+        sync(&mut m, &["LAPTOP", "DOCK"]);
+        m.apply(Event::ObserveFocusMonitor { monitor: "DOCK".into() }).unwrap();
+        m.apply(Event::Switch { n: 7 }).unwrap();
+        sync(&mut m, &["LAPTOP"]);
+        open(&mut m, "w1", "LAPTOP");
+        sync(&mut m, &["DOCK"]);
+        assert_eq!((m.current("DOCK"), m.focused_monitor()), (Some(1), Some("DOCK")), "not its old 7 with yours out of sight");
+        assert_eq!(m.active(), Some("w1"));
+        // A display unplugged while another stays is R-M3 as before: no switch.
+        sync(&mut m, &["DOCK", "LAPTOP"]);
+        assert!(!monitor_events(&["DOCK".into(), "LAPTOP".into()], &["DOCK".into()], Some(("LAPTOP", 2))).iter().any(|e| matches!(e, Event::Switch { .. })));
+    }
+
+    #[test]
     fn the_daemon_syncs_displays_through_monitor_events() {
         let src = include_str!("daemon.rs").replace("\r\n", "\n");
         let start = src.find("pub fn sync_monitors(").expect("sync_monitors");
         let body = &src[start..start + src[start..].find("\n    }\n").expect("end of sync_monitors")];
         assert!(body.contains("displays::monitor_events("), "sync_monitors must apply displays::monitor_events in its order");
         assert!(!body.contains("Event::MonitorAdded"), "no second, add-first path");
+        assert!(body.contains("self.model.apply(ev)") && !body.contains("self.apply(ev)"), "one exec for the poll's events, not one per event");
     }
 
     fn two() -> Vec<(String, Rect)> {
