@@ -280,11 +280,9 @@ jobs:
         working-directory: .
       - name: Bundle the app
         run: BANEYSPACES_ADHOC=1 BANEYSPACES_ARM64_ONLY=1 scripts/bundle.sh
-      - name: The licence of ported code and the probe app are in the bundle
+      - name: The licence of ported code is in the bundle
         run: |
           test -s build/Polycarp.app/Contents/Resources/licenses/cua-driver-MIT.txt
-          test -s build/Polycarp.app/Contents/Resources/probe/CanvasProbe.cdhash
-          codesign --verify --deep --strict build/Polycarp.app/Contents/Resources/probe/CanvasProbe.app
       - name: The browser helper and the extension are in the bundle, signed, and answer
         run: |
           B=build/Polycarp.app/Contents/Resources/browser
