@@ -933,7 +933,7 @@ impl Core {
         }
         match &blocked {
             Some(p) => say(&format!(
-                "baneyspaces daemon: keys: {p} runs as administrator and is in front; Windows keeps keys typed into it from BaneySpaces (UIPI), so your BaneySpaces keys do nothing until another window is in front"
+                "baneyspaces daemon: keys: {p} runs as administrator (or as another account) and is in front; Windows keeps keys typed into it from BaneySpaces (UIPI), so your BaneySpaces keys do nothing until another window is in front"
             )),
             None => say("baneyspaces daemon: keys: the window in front takes your BaneySpaces keys again"),
         }
@@ -1057,7 +1057,8 @@ fn watch_config(file: PathBuf, tx: Sender<Msg>) {
         }
         while WaitForSingleObject(h, INFINITE) == 0 {
             let at = Instant::now();
-            // An editor saves in steps (truncate, write, rename): let it finish.
+            // An editor saves in steps (truncate, write, rename): read once the folder has been quiet for 30 ms. The
+            // watch is re-armed before each wait, so a step that lands after the read wakes the next round.
             std::thread::sleep(Duration::from_millis(30));
             if tx.send(Msg::Reload { at }).is_err() || FindNextChangeNotification(h) == 0 {
                 break;

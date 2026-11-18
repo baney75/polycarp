@@ -109,6 +109,15 @@ fn need(args: &[String], n: usize, usage: &str) -> Result<(), Envelope> {
     }
 }
 
+/// A workspace number, 1 to 9, checked here so a key bound to `switch 12` is refused when config.toml is read.
+#[allow(dead_code)]
+fn workspace_n(n: &str) -> Result<(), Envelope> {
+    match n.parse::<u8>() {
+        Ok(1..=9) => Ok(()),
+        _ => Err(fail("invalid_args", &format!("{n:?} is not a workspace: a number 1 to 9 is required"), "Example: baneyspaces switch 3")),
+    }
+}
+
 /// Turns the command line into a daemon request.
 fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
     let Some(cmd) = (!a.is_empty()).then(|| a.remove(0)) else {
@@ -547,6 +556,9 @@ mod tests {
 
     #[test]
     fn switch_and_move_become_requests() {
+        for words in [&["switch", "bananas"][..], &["switch", "12"], &["switch", "0"], &["move", "x"], &["move", "10", "--stay"]] {
+            assert_eq!(request(v(words)).unwrap_err().error.unwrap().code, "invalid_args", "{words:?}");
+        }
         assert_eq!(request(v(&["switch", "3"])).unwrap(), json!({"op":"switch","args":{"n":"3"}}));
         let r = request(v(&["move", "2", "--stay", "--app", "notepad"])).unwrap();
         assert_eq!(r["args"], json!({"n":"2","stay":true,"window":null,"app":"notepad"}));

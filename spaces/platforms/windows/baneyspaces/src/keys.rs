@@ -188,6 +188,7 @@ pub fn from_config(text: &str, check: impl Fn(&[String]) -> Result<(), String>) 
         Some(_) => return Err("keys.mod: must be a string".into()),
     };
     let mut table = defaults(m);
+    let mut seen: Vec<(Mods, u32, &String)> = vec![];
     let binds = match keys.get("bindings") {
         None => &empty,
         Some(toml::Value::Table(t)) => t,
@@ -196,6 +197,7 @@ pub fn from_config(text: &str, check: impl Fn(&[String]) -> Result<(), String>) 
     for (chord, action) in binds {
         let at = format!("keys.bindings.{chord:?}");
         let (mods, vk) = parse_chord(chord, m).map_err(|e| format!("{at}: {e}"))?;
+        seen.push((mods, vk, chord));
         let action = action.as_str().ok_or_else(|| format!("{at}: the action must be a string"))?.trim();
         table.retain(|b| !(b.mods == mods && b.vk == vk));
         if action == "none" {
@@ -212,6 +214,21 @@ pub fn from_config(text: &str, check: impl Fn(&[String]) -> Result<(), String>) 
         return Err("keys.bindings: no key is left to switch workspaces".into());
     }
     Ok((table, skipped))
+}
+
+/// After a change in the config folder, waits until it has been quiet for `quiet_ms` (an editor saves in steps:
+/// truncate, write, rename), at most about `cap_ms`. `rearm_wait(ms)` re-arms the watch, then waits up to `ms` and
+/// says whether another change came. The watch is re-armed before every wait, so a step that lands after the read is
+/// seen by the next round, never lost. Returns how many waits saw a change.
+pub fn settle(quiet_ms: u32, cap_ms: u32, mut rearm_wait: impl FnMut(u32) -> bool) -> u32 {
+    let mut changes = 0;
+    while rearm_wait(quiet_ms) {
+        changes += 1;
+        if changes * quiet_ms >= cap_ms {
+            break;
+        }
+    }
+    changes
 }
 
 /// `config.toml` as text for `from_config`. No file is the defaults (an empty text). A file that is there but can't be
@@ -386,6 +403,37 @@ mod tests {
                 assert!(!(a.vk == b.vk && a.mods == b.mods), "{:?} twice", a.args);
             }
         }
+    }
+
+    #[test]
+    fn a_chord_the_file_binds_twice_is_an_error() {
+        let e = from_config("[keys.bindings]\n\"win+1\" = \"switch 3\"\n\"mod+1\" = \"switch 5\"\n", any_command).unwrap_err();
+        assert!(e.contains("the same chord as"), "{e}");
+    }
+
+    #[test]
+    fn the_watch_waits_for_quiet_and_is_re_armed_before_every_wait() {
+        let mut waits = vec![true, true, false].into_iter();
+        assert_eq!(settle(30, 500, |ms| { assert_eq!(ms, 30); waits.next().unwrap() }), 2, "two more steps, then 30 ms of quiet");
+        let mut calls = 0;
+        assert_eq!(settle(30, 500, |_| { calls += 1; true }), 17, "a folder that never goes quiet is read after about 500 ms");
+        assert_eq!(calls, 17);
+        let src = &include_str!("daemon.rs").replace("\r\n", "\n");
+        let body = &src[src.find("fn watch_config(").expect("watch_config")..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        assert!(!body.contains("thread::sleep"), "a fixed sleep from the first change misses a save that comes later");
+        let s = body.find("keys::settle(").expect("watch_config settles");
+        let (re, wait) = (body[s..].find("FindNextChangeNotification").expect("re-arms"), body[s..].find("WaitForSingleObject").expect("waits"));
+        assert!(re < wait, "re-armed before it waits, so no change is lost");
+    }
+
+    #[test]
+    fn a_swap_mirrors_the_moves_like_a_display_send() {
+        // SetWindowPos raises no EVENT_SYSTEM_MOVESIZEEND, so a swap across displays must update the model itself.
+        let src = &include_str!("daemon.rs").replace("\r\n", "\n");
+        let at = src.find("winapi::set_frame(oh, r);").expect("the swap");
+        let rest = &src[at..];
+        assert!(rest[..rest.find("Envelope::ok").unwrap()].contains("self.mirror_moves();"), "the swap branch mirrors moves");
     }
 
     const EVERY_MOD: [&str; 3] = ["win", "ctrl", "alt"];

@@ -14,7 +14,7 @@ mod = "win"                        # win (the default), ctrl or alt
 
 [keys.bindings]
 "mod+1" = "switch 3"               # rebind a default
-"mod+alt+j" = "switch 2"           # add a chord: any CLI command line
+"mod+alt+j" = "switch 2"           # add a chord: a CLI command line
 "mod+alt+left" = "none"            # unbind a default
 "mod+ctrl+alt+l" = "window resize 100 0"
 ```
@@ -33,7 +33,7 @@ are not safe to bind there.
 
 Modifiers, then one key, joined with `+`. Modifiers: `mod`, `win`, `ctrl`, `alt`, `shift`. A chord needs at least one of
 `win`, `ctrl` or `alt` (after `mod` is read), so a bare letter or Shift+letter can never be taken from your typing.
-Each modifier is named once: with `mod = "alt"`, `mod+alt+j` is an error (`"alt" names a modifier twice`).
+A chord the file names twice, in any spelling (`win+1` and `mod+1`), is an error. Each modifier is named once: with `mod = "alt"`, `mod+alt+j` is an error (`"alt" names a modifier twice`).
 Keys: `0` to `9`, `a` to `z`, `f1` to `f24`, `left`, `right`, `up`, `down`, `grave`, `escape`, `return`, `space`,
 `tab`, `backspace`, `insert`, `delete`, `home`, `end`, `pageup`, `pagedown`, `minus`, `equal`, `comma`, `period`,
 `slash`, `semicolon`, `quote`, `bracketleft`, `bracketright`, `backslash`.
@@ -61,6 +61,12 @@ window straight across wins over a closer one far off to the side. Only windows 
 Not on Windows yet: `exec` and `mode` (a file using either is refused with that path), and `[keys.modes]` (read, logged
 as ignored, not refused).
 
+An action is one the daemon runs: `switch`, `move`, `window`, `focus-monitor`, `ls`, `state`, `overview`, `get`, `set`,
+`agent-workspace` and `agent`. `stop`, `doctor`, `keys` and the other commands the CLI runs itself are refused as unknown,
+and `switch` and `move` need a workspace 1 to 9. A key runs its action as you, with every operation you may ask for.
+So `config.toml` is yours to trust, like your shell profile: any program running as you, an agent's included, can
+write it. Agents should never edit it.
+
 ## Reload
 
 The daemon watches the folder. A saved file is in force within 1 s (CI measures it, `tests/ci/keymap.ps1`), and the
@@ -85,7 +91,7 @@ window is in front (Task Manager, an administrator terminal, an installer), **no
 to that window as if BaneySpaces were not running. The daemon doesn't ask for UI access and doesn't run elevated.
 
 So the failure is never silent, the daemon checks each window that comes to the front. When it is elevated, the log
-says `keys: <program> runs as administrator and is in front; ... your BaneySpaces keys do nothing until another window
+says `keys: <program> runs as administrator (or as another account) and is in front; ... your BaneySpaces keys do nothing until another window
 is in front`, and `state` shows the program under `keys.blocked_by`; both clear when another window comes to the front.
 An on-screen notice comes with the window bar (part 2). Untested live on Windows: the CI runner's own session is
 elevated, so it has no window above the daemon.

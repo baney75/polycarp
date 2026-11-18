@@ -176,7 +176,7 @@ pub fn process_name(pid: u32) -> String {
 }
 
 /// Does `pid` run elevated (as administrator)? A process that is not elevated cannot open an elevated one's token,
-/// so that refusal answers yes. None when the process cannot be opened at all.
+/// so that refusal answers yes; it is also the answer for another account's process, which blocks keys the same way. None when the process cannot be opened at all.
 pub fn is_elevated(pid: u32) -> Option<bool> {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ACCESS_DENIED};
     use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
