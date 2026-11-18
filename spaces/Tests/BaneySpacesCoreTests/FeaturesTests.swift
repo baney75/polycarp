@@ -177,7 +177,8 @@ final class FeaturesTests: XCTestCase {
         XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.browser]))
         let alone = try temp()
         XCTAssertEqual(try installer("write_parts '\(alone.path)' 'voice'").0, 0)
-        XCTAssertNil(FeatureFile.load(path: alone.appendingPathComponent("features.toml").path), "voice alone leaves the choice to the welcome window")
+        let written = try String(contentsOf: alone.appendingPathComponent("features.toml"), encoding: .utf8)
+        XCTAssertTrue(written.contains("workspaces = false"), "voice alone still writes workspaces off, so the old app is kept: \(written)")
     }
 
     func testSpacesAroundThePartsAreFine() throws {

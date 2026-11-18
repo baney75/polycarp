@@ -210,12 +210,11 @@ PARTS_FILE=features.toml
 # Writes the chosen parts, comma-separated. A file that's already there stays, and a name nobody knows is an error.
 write_parts() {
   local list=${2//[[:space:]]/,}
-  # voice is still accepted so older scripted installs keep working. Silas is its own app now, so it writes nothing,
-  # and a choice of voice alone leaves the file unwritten for the welcome window to ask.
+  # voice is still accepted so older scripted installs keep working. Silas is its own app now, so it gets no line;
+  # voice alone writes every part off, as before, so the old app is kept for someone who didn't take workspaces.
   local dir=$1 chosen=",$list," part file="$1/$PARTS_FILE" known=",workspaces,browser,voice,"
   [ -e "$file" ] && return 0
   [ -n "${list//,/}" ] || return 2
-  local other=",${list//,/,,},"; other=${other//,voice,/}; [ -n "${other//,/}" ] || return 0
   local rest=${list//,/ } name
   for name in $rest; do case "$known" in *",$name,"*) ;; *) return 2 ;; esac; done
   mkdir -p "$dir" || return 1
