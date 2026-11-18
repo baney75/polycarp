@@ -67,6 +67,23 @@ pub struct SnapInfo {
     pub start: u64,
 }
 
+/// The fronts the daemon asked Windows for (cause::Asks).
+static ASKS: cause::Asks = cause::Asks::new();
+
+/// Asks Windows to bring `h` to the front. Noted first: Windows may grant it late, even after reporting it refused
+/// (cause::ASKED_MS). An ask granted at once is used up at once.
+fn bring_to_front(h: windows_sys::Win32::Foundation::HWND) -> bool {
+    if h.is_null() {
+        return false;
+    }
+    ASKS.note(id_of(h), id_of(winapi::root_owner(h)), winapi::tick_ms());
+    let landed = winapi::set_foreground(h);
+    if landed {
+        ASKS.landed(id_of(h));
+    }
+    landed
+}
+
 pub struct Core {
     pub model: Model,
     pub paths: Paths,
@@ -270,15 +287,8 @@ impl Core {
         });
         if let Some(w) = focus {
             if let Some(i) = self.info.get(&w) {
-                if !self.hidden.contains(i.hwnd) {
-                    // Noted first: Windows may grant it late, even after reporting it refused (cause::ASKED_MS).
-                    let h = to_hwnd(i.hwnd);
-                    cause::note_asked(i.hwnd, id_of(winapi::root_owner(h)), winapi::tick_ms());
-                    if winapi::set_foreground(h) {
-                        cause::landed(i.hwnd);
-                    } else {
-                        self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
-                    }
+                if !self.hidden.contains(i.hwnd) && !bring_to_front(to_hwnd(i.hwnd)) {
+                    self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
                 }
             }
         }
@@ -295,10 +305,11 @@ impl Core {
             return;
         }
         let target = self.model.active().and_then(|w| self.info.get(w)).filter(|i| !self.hidden.contains(i.hwnd)).map(|i| to_hwnd(i.hwnd));
-        if let Some(t) = target {
-            cause::note_asked(id_of(t), id_of(winapi::root_owner(t)), winapi::tick_ms());
-        }
-        if !winapi::set_foreground(target.unwrap_or_else(winapi::shell_window)) {
+        let moved = match target {
+            Some(t) => bring_to_front(t),
+            None => winapi::set_foreground(winapi::shell_window()),
+        };
+        if !moved {
             self.log("focus is on a hidden window and Windows refused to move it");
         }
     }
@@ -795,7 +806,13 @@ impl Core {
     /// R-F2). `cause::foreground_by` decides whose it was, and a close is never yours (R-E1).
     fn on_foreground(&mut self, hwnd: i64) {
         let id = window_name(hwnd);
-        if !self.model.is_tracked(&id) || self.model.active() == Some(id.as_str()) {
+        if !self.model.is_tracked(&id) {
+            return;
+        }
+        // Used up whenever its front lands, on the window already active too: left, it refuses your click there later.
+        let now = winapi::tick_ms();
+        let asked = ASKS.take(hwnd, id_of(winapi::root_owner(to_hwnd(hwnd))), now);
+        if self.model.active() == Some(id.as_str()) {
             return;
         }
         let active_gone = self.model.active().and_then(|w| self.info.get(w)).is_some_and(|i| {
@@ -803,8 +820,6 @@ impl Core {
             !winapi::exists(h) || !winapi::is_visible(h)
         });
         let since_close = self.closed_at.map(|t| winapi::tick_ms().wrapping_sub(t));
-        let now = winapi::tick_ms();
-        let asked = cause::take_asked(hwnd, id_of(winapi::root_owner(to_hwnd(hwnd))), now);
         let cause = cause::foreground_by(crate::hook::idle_ms(now), since_close, active_gone, asked);
         self.log(&format!("foreground {id} cause {cause:?}"));
         let _ = self.apply(Event::Activate { window: Some(id), cause });
@@ -987,7 +1002,7 @@ impl Core {
                 };
                 let oh = to_hwnd(self.info.get(&other).map(|i| i.hwnd).unwrap_or(0));
                 if op == "window_focus" {
-                    winapi::set_foreground(oh);
+                    bring_to_front(oh);
                 } else {
                     winapi::set_frame(h, of);
                     winapi::set_frame(oh, r);

@@ -125,7 +125,8 @@ elevated window comes to the front the log names it and `state` shows it under `
 ## Focus
 
 An activation reaches the daemon as `EVENT_SYSTEM_FOREGROUND`. Windows does not say who caused it, so
-input in the last 300 ms (`GetLastInputInfo`) counts as yours (R-F1) and anything else as the app's
+input in the last 300 ms counts as yours (R-F1): the input hooks' time, or `GetLastInputInfo`'s when it is newer,
+leaving out only the daemon's own 0xE8 nudge, and anything else as the app's
 (R-F2): the model refuses to follow it and the daemon puts your previous window back. A window that
 opens joins the workspace its display shows (R-P1). Focus never rests on a window that is out of sight: when a
 window is minimized (`EVENT_SYSTEM_MINIMIZESTART`), Windows hands the front to the next window in z-order, which may

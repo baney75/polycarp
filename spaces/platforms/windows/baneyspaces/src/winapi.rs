@@ -366,10 +366,11 @@ fn try_foreground(h: HWND) -> bool {
 }
 
 /// Presses and releases VK 0xE8, which no keyboard sends and no app reads. The hook ignores it
-/// because it is injected.
+/// because it is injected, and the idle clock by its mark (`cause::OWN_INPUT_MARK`).
 pub fn nudge_input() {
+    use crate::cause::OWN_INPUT_MARK;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP};
-    let key = |flags| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: 0xE8, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } };
+    let key = |flags| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: 0xE8, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: OWN_INPUT_MARK } } };
     let inputs = [key(0), key(KEYEVENTF_KEYUP)];
     unsafe { SendInput(2, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
 }
