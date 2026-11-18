@@ -11,6 +11,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 mod browsers;
+mod channel;
 mod features;
 mod mcp;
 mod theme;
@@ -70,7 +71,7 @@ const BROWSER: Tool = Tool {
     bundled: &[
         "~/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
         "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
-        // Where `polycarp update` links the helper on Linux: before PATH, so an older `npm link` never answers for it.
+        // Where an earlier `polycarp update` linked the helper on Linux: before PATH, so an older `npm link` never answers for it.
         "~/.local/bin/polycarp-browser",
     ],
     spots: &[
@@ -110,6 +111,8 @@ Usage:
 
 The apps must already be installed. Each tool can be set with
 POLYCARP_SPACES_BIN, POLYCARP_BROWSER_BIN or POLYCARP_VOICE_BIN.
+
+The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 ";
 
 fn main() {
@@ -804,11 +807,6 @@ fn doctor() -> i32 {
         // Stop printing after a write error, but finish the checks, so the exit code stays true.
         if printing && writeln!(out, "{line}").is_err() {
             printing = false;
-        }
-    }
-    if let Some(line) = theme::doctor_line() {
-        if printing {
-            let _ = writeln!(out, "{line}");
         }
     }
     // The same one line `polycarp version` ends with. It informs; it does not change the exit code.
