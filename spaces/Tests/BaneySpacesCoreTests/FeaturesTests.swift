@@ -170,6 +170,16 @@ final class FeaturesTests: XCTestCase {
         XCTAssertNil(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path))
     }
 
+    func testTheInstallerStillAcceptsVoiceButWritesNothingForIt() throws {
+        let dir = try temp()
+        let (code, output) = try installer("write_parts '\(dir.path)' 'voice,browser'")
+        XCTAssertEqual(code, 0, output)
+        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.browser]))
+        let alone = try temp()
+        XCTAssertEqual(try installer("write_parts '\(alone.path)' 'voice'").0, 0)
+        XCTAssertNil(FeatureFile.load(path: alone.appendingPathComponent("features.toml").path), "voice alone leaves the choice to the welcome window")
+    }
+
     func testSpacesAroundThePartsAreFine() throws {
         let dir = try temp()
         XCTAssertEqual(try installer("write_parts '\(dir.path)' 'workspaces, browser'").0, 0)
