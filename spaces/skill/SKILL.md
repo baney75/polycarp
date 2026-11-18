@@ -55,4 +55,6 @@ baneyspaces agent move 4127       # send a window there (a window number from ls
 Polycarp places; send one of his own windows only when he asked. Errors carry a code: `agent_workspace_off`,
 `no_such_window`, `bad_request` (docs/agent-workspace-api.md).
 
-To read, click or type into a desktop app, use Tychicus, not BaneySpaces.
+BaneySpaces doesn't read, click or type into apps: use Tychicus for that. Don't drive an app through AppleScript, JXA or
+Shortcuts (`osascript`, `shortcuts run`) instead: they pick an app by name, not by window, so they can reach Donovan's own
+copy of it or start one on his workspace. Never run anything that takes focus or raises a window.
