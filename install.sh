@@ -6,8 +6,9 @@
 # Run it again any time to update. POLYCARP_REF picks a branch or tag.
 # POLYCARP_SOURCE=/path/to/checkout builds that checkout instead of downloading.
 # Linux: the Linux and Omarchy desktop is retired. Run there, this prints one line saying so and installs nothing.
-# The browser helper moved to Tychicus and the voice app to Silas: POLYCARP_FEATURES that names browser or voice
-# prints one line saying where to get it (*_MOVED below) and installs nothing.
+# The browser helper moved to Tychicus and the voice app to Silas: POLYCARP_FEATURES that names browser prints where
+# to get it (BROWSER_MOVED below) and installs nothing. Dictation is still a part of the app, so naming voice prints
+# where the voice app went (VOICE_MOVED) and installs as asked.
 # Everything is inside main(), called on the last line: run through a pipe (curl | bash), a download that
 # stops halfway runs nothing, and no step can read the script's own text from stdin.
 set -euo pipefail
@@ -20,11 +21,7 @@ main() {
     printf '%s\n' "$LINUX_MOVED"
     return 0
   fi
-  if names_part browser "${POLYCARP_FEATURES:-}" || names_part voice "${POLYCARP_FEATURES:-}"; then
-    if names_part browser "${POLYCARP_FEATURES:-}"; then printf '%s\n' "$BROWSER_MOVED"; fi
-    if names_part voice "${POLYCARP_FEATURES:-}"; then printf '%s\n' "$VOICE_MOVED"; fi
-    return 0
-  fi
+  moved_notes "${POLYCARP_FEATURES:-}" || return 0
   local REPO="https://github.com/baney75/polycarp.git"
   local REF="${POLYCARP_REF:-main}"
   # Where the ready-made app comes from, and the signature every release has to carry.
@@ -66,7 +63,7 @@ main() {
   if [ ! -e "$CFG/$PARTS_FILE" ]; then
     REPLY="${POLYCARP_FEATURES:-}"
     [ -n "$REPLY" ] || choose_parts
-    if [ -n "$REPLY" ]; then write_parts "$CFG" "$REPLY" || fail "POLYCARP_FEATURES has a part Polycarp doesn't know. Use workspaces."; fi
+    if [ -n "$REPLY" ]; then write_parts "$CFG" "$REPLY" || fail "POLYCARP_FEATURES has a part Polycarp doesn't know. Use workspaces, voice or both."; fi
   fi
   [ "$(uname -s)" = Darwin ] || fail "This installer is for a Mac. The polycarp command runs elsewhere: cargo install --git $REPO polycarp"
   [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 13 ] || fail "Polycarp needs macOS 13 Ventura or later."
@@ -158,6 +155,7 @@ main() {
   local install_failed="If Polycarp is running, quit it from its menu, then run this again."
   [ ${#OLD_APPS[@]} -eq 0 ] || install_failed="BaneySpaces is still installed; open it again from Applications."
   STEP_FAIL="$install_failed" step "Installing Polycarp" "$NEW_APP/Contents/Resources/install-app.sh" "$NEW_APP"
+  connector_notice "$LOG"
   HEADING="Polycarp is installed, but one step didn't finish."
 
   # 4. Only now retire the old app: stop its watchdog and move it to the Trash, where you can put it back.
@@ -208,6 +206,21 @@ TYCHICUS_INSTALL='tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --
 SILAS_HOME="https://github.com/baney75/silas"
 BROWSER_MOVED="The browser helper is now Tychicus: download $TYCHICUS_ASSET from $TYCHICUS_RELEASES, then \`$TYCHICUS_INSTALL\`"
 VOICE_MOVED="The voice app is now Silas: see $SILAS_HOME"
+
+# The parts that left Polycarp, as named in POLYCARP_FEATURES ($1): one line each saying where it went. Returns 1 when
+# the install must stop there (the browser is all Tychicus now), 0 to carry on (dictation is still in the app).
+moved_notes() {
+  if names_part browser "$1"; then printf '%s\n' "$BROWSER_MOVED"; fi
+  if names_part voice "$1"; then printf '%s\n' "$VOICE_MOVED"; fi
+  ! names_part browser "$1"
+}
+
+# The lines `polycarp update --retire-old-browser` writes about the remote connector (CONNECTOR_OFF and CONNECTOR_STAYS
+# in cli/src/retire.rs), from the install log ($1) to the terminal: the step that ran it only shows a check mark.
+connector_notice() {
+  { grep -E '^Your remote connector ' "$1" 2>/dev/null || true; } | while IFS= read -r line; do printf '  %s\n' "$line"; done
+  return 0
+}
 
 # True when a comma- or space-separated list of parts ($2) names the part $1.
 names_part() {
