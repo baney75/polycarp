@@ -2077,3 +2077,7 @@ mod feed_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(test)]
+#[path = "daemon_tests.rs"]
+mod tests;
