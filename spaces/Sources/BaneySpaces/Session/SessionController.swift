@@ -12,7 +12,7 @@ struct AgentHost {
     /// The windows on the agent workspace (`Spaces.agentWindows`).
     var windows: () -> [AgentAPI.Window] = { [] }
     /// Whether Polycarp places a window (it is on some workspace).
-    var placesWindow: (UInt32) -> Bool = { _ in false }
+    var window: (UInt32) -> AgentAPI.Candidate? = { _ in nil }
     /// Whether a workspace holds any window.
     var occupied: (Int) -> Bool = { _ in false }
 }
@@ -469,7 +469,7 @@ final class SessionController {
         case "windows":
             return AgentAPI.windows(agentWorkspace: h.workspace(), h.windows())
         case "move":
-            switch AgentAPI.move(args: args, agentWorkspace: h.workspace(), places: h.placesWindow) {
+            switch AgentAPI.move(args: args, agentWorkspace: h.workspace(), window: h.window) {
             case .refused(let reply): return reply
             case .move(let id, let n):
                 h.move(id, n)

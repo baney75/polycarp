@@ -762,6 +762,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if TopDragWatcher.enabled { SystemTopDrag.takeOver() } else { SystemTopDrag.restore() }
         syncWindowDrags()
         startSession()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.sendBackOldMovedIn() }
         updateIcon()
         watchdog?.invalidate()
         watchdog = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -869,6 +870,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Once: the windows an older build's agents moved onto the agent workspace go back (`AgentAPI.OldMovedIn`), then the
+    /// record goes. It waits for the first scan, since before it no window is placed.
+    private func sendBackOldMovedIn(tries: Int = 15) {
+        let url = Spaces.folder.appendingPathComponent("moved-in.json")
+        guard let data = try? Data(contentsOf: url) else { return }
+        if spaces.model.home.isEmpty, tries > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.sendBackOldMovedIn(tries: tries - 1) }
+            return
+        }
+        let saved = AgentAPI.OldMovedIn.decode(data)
+        let back = AgentAPI.OldMovedIn.sendBack(saved, window: { [spaces] in spaces.moveCandidate($0) },
+                                                current: spaces.model.current, agentWorkspace: Spaces.agentWorkspace)
+        for b in back { run { $0.move(b.window, to: b.to) } }
+        try? FileManager.default.removeItem(at: url)
+        Trace.log("agent workspace: old moved-in record: \(back.count) of \(saved.count) windows sent back, record removed")
+    }
+
     private func run(_ action: (Spaces) -> Void) {
         guard stillTrusted() else { return NSSound.beep() }
         action(spaces)
@@ -906,7 +924,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         h.current = { [weak self] in self?.spaces.model.current ?? 1 }
         h.move = { [weak self] id, n in self?.run { $0.move(id, to: n) } }
         h.windows = { [weak self] in self?.spaces.agentWindows() ?? [] }
-        h.placesWindow = { [weak self] id in self?.spaces.placesWindow(id) ?? false }
+        h.window = { [weak self] id in self?.spaces.moveCandidate(id) }
         h.occupied = { [weak self] n in self?.spaces.isOccupied(n) ?? false }
         session.agentHost = h
         session.updateHandler = { [weak self] what in self?.updater.answer(what) ?? Wire.Reply(ok: false, error: "the updater isn't ready") }

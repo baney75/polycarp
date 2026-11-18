@@ -42,8 +42,11 @@ agent workspace answers `ok: true` with `"windows": "[]"`.
 
 ## move
 
-One argument: the window number, in decimal. The window goes to the agent workspace, from any workspace. It must be a
-window Polycarp places (one it shows on some workspace). On success `info` holds `version`, `workspace` and `window`.
+One argument: the window number, in decimal. It must be a live window Polycarp places: one it shows on some workspace,
+whose process still runs. A window already on the agent workspace may always move (a reframe). A window on another
+workspace moves only when its process started in the last 60 seconds, so a caller can bring over an app it has just
+started but never one of Donovan's apps that has been running. The start time is the app's launch date, or the
+kernel's start time for a process launchd started. On success `info` holds `version`, `workspace` and `window`.
 
 The move is the same one Polycarp makes when you send a window with its keys: the window is parked out of sight if
 you aren't looking at the agent workspace.
@@ -55,7 +58,8 @@ A refusal is `ok: false` with `error` for people and `info.code` for programs:
 | `code` | When |
 | --- | --- |
 | `agent_workspace_off` | no agent workspace is set; `polycarp-spaces agent on [N]` sets one |
-| `no_such_window` | `move` named a window Polycarp doesn't place (closed, never seen, or on no workspace) |
+| `no_such_window` | `move` named a window Polycarp doesn't place (closed, its process gone, never seen, or on no workspace) |
+| `refused` | `move` named a window on another workspace whose process has run for over 60 seconds |
 | `bad_request` | `move` got no window number, more than one, or something that isn't one; or an unknown operation |
 
 `ok: false` with no `code` means the app can't answer yet: it is still starting or waits for Accessibility. No reply

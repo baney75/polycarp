@@ -486,8 +486,21 @@ final class Spaces {
         return AgentStatusRows.live(rows, pid: { $0.pid })
     }
 
-    /// Whether Polycarp places window `id` (it is on some workspace), for the API's `move`.
-    func placesWindow(_ id: WindowID) -> Bool { windows[id] != nil && model.workspace(of: id) != nil }
+    /// Window `id` as the API's `move` sees it, or nil when Polycarp doesn't place it.
+    func moveCandidate(_ id: WindowID) -> AgentAPI.Candidate? {
+        guard let w = windows[id], let n = model.workspace(of: id) else { return nil }
+        return AgentAPI.Candidate(workspace: n, pid: w.pid, started: Self.processStart(w.pid))
+    }
+
+    /// When a process started: its launch date, or the kernel's start time for one launchd started (no launch date).
+    static func processStart(_ pid: pid_t) -> Date? {
+        if let d = NSRunningApplication(processIdentifier: pid)?.launchDate { return d }
+        var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        let t = info.kp_proc.p_un.__p_starttime
+        return Date(timeIntervalSince1970: Double(t.tv_sec) + Double(t.tv_usec) / 1_000_000)
+    }
 
     /// Why a full scan ran, for timing.log.
     private func last(_ l: (windows: Set<WindowID>, pids: Set<pid_t>, unsure: Set<pid_t>, offscreen: Set<WindowID>), _ w: Set<WindowID>, _ p: Set<pid_t>, _ off: Set<WindowID>) -> String {
