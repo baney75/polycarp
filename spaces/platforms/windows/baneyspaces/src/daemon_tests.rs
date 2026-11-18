@@ -108,7 +108,26 @@ impl Rig {
     }
 
     fn settles(&self, w: &TestWin, hidden: bool) -> bool {
-        if eventually(|| out_of_sight(w) == hidden) {
+        // The shell can take a cloak off by itself (Win-key input, Start, a view refresh; #453's hook test types real
+        // keys beside these tests). The daemon answers that with `recheck_hidden` on EVENT_OBJECT_UNCLOAKED, from its
+        // worker, which this rig doesn't run: so the wait does it, and the daemon's own code still puts the window
+        // right. How many read-backs it took is said, so a cloak that never holds shows up in the log.
+        // The first 200 ms are the request's own: only after that does the wait read back, as the worker would.
+        let (mut polls, mut rechecks) = (0, 0);
+        if eventually(|| {
+            if out_of_sight(w) == hidden {
+                return true;
+            }
+            polls += 1;
+            if polls >= 10 {
+                rechecks += 1;
+                lock(&self.shared).recheck_hidden();
+            }
+            false
+        }) {
+            if rechecks > 0 {
+                eprintln!("{} settled after {rechecks} read-back(s) of what is hidden", window_name(w.id()));
+            }
             return true;
         }
         let c = lock(&self.shared);
