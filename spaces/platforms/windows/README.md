@@ -194,8 +194,10 @@ visibility, DWM cloak state, layered alpha) after every step. `tests/evidence/` 
 interactive desktop (session 2, explorer.exe and DWM running), real Notepad, Explorer and `bs-testapp` windows, and
 the keyboard hook fed with SendInput. It reads the windows back after every step, saves screenshots, prints
 `RESULT: PASS|FAIL passed= failed= skipped=`, lists failures and skips in the job summary, and uploads `live.log`,
-`daemon.log` and the screenshots as the `windows-live` artifact. By hand on a Windows desktop, after the test-ops
-build and `build-engine.ps1 -Install`: `powershell -File platforms/windows/tests/ci/live.ps1 -Bin target/release -Out <dir>`.
+`daemon.log` and the screenshots as the `windows-live` artifact. It kills BaneySpaces, deletes its recovery record
+(`state.json`, what puts hidden windows back) and force-closes every Notepad, so off a CI runner it refuses (exit 2)
+unless given `-Disposable`. By hand only on a disposable Windows desktop (a VM), after the test-ops build and
+`build-engine.ps1 -Install`: `powershell -File platforms/windows/tests/ci/live.ps1 -Bin target/release -Out <dir> -Disposable`.
 The CLI helper in the script is `bsc`: `cli` is a built-in PowerShell alias for Clear-Item, and aliases win over
 functions.
 

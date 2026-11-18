@@ -213,6 +213,18 @@ jobs:
           dest="$(cygpath -u "$LOCALAPPDATA")/BaneySpaces/engine"
           mkdir -p "$dest"
           cp platforms/windows/engine/* "$dest/"
+      # Off a runner the suite must refuse before it touches anything: no -Disposable, exit 2, Notepad left open.
+      - name: Live suite refuses a desktop that isn't disposable
+        shell: powershell
+        run: |
+          $n = Start-Process notepad -PassThru; Start-Sleep 2
+          $env:GITHUB_ACTIONS = ''
+          powershell -NoProfile -File platforms/windows/tests/ci/live.ps1 -Bin target/release -Out "$env:RUNNER_TEMP/refused"
+          $code = $LASTEXITCODE
+          $env:GITHUB_ACTIONS = 'true'
+          $alive = -not $n.HasExited
+          Stop-Process -Id $n.Id -Force -ErrorAction SilentlyContinue
+          if ($code -ne 2 -or -not $alive) { Write-Error "exit $code, notepad alive $alive"; exit 1 }
       - name: Live suite
         shell: powershell
         # The suite takes a few minutes; a hang ends the step here, so the artifact below still uploads.

@@ -4,8 +4,14 @@
 # what the runner cannot run and why. Reads back Win32 state after every step and saves screenshots.
 # Needs: a release build with the test-ops feature (baneyspaces.exe, bs-testapp.exe) and the engine installed in
 # %LOCALAPPDATA%\BaneySpaces\engine (build-engine.ps1 -Install). Prints PASS or FAIL with counts; exits 1 on any FAIL.
-# Usage (Windows PowerShell 5.1): live.ps1 -Bin <target\release> -Out <evidence dir>
-param([Parameter(Mandatory = $true)][string]$Bin, [Parameter(Mandatory = $true)][string]$Out)
+# Usage (Windows PowerShell 5.1): live.ps1 -Bin <target\release> -Out <evidence dir> [-Disposable]
+# It kills BaneySpaces, deletes its recovery record (state.json, what puts hidden windows back) and force-closes every
+# Notepad, so it runs only on a desktop nobody needs: a CI runner (GITHUB_ACTIONS=true), or by hand with -Disposable.
+param([Parameter(Mandatory = $true)][string]$Bin, [Parameter(Mandatory = $true)][string]$Out, [switch]$Disposable)
+if ($env:GITHUB_ACTIONS -ne 'true' -and -not $Disposable) {
+  [Console]::Error.WriteLine('live.ps1: refused. It kills BaneySpaces, deletes its recovery record and closes every Notepad. Run it only on a disposable desktop (a VM), with -Disposable.')
+  exit 2
+}
 $ErrorActionPreference = 'Continue'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Add-Type -Path (Join-Path $here 'Desk.cs') -ReferencedAssemblies System.Drawing
