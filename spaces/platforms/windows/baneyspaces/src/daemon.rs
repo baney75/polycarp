@@ -70,18 +70,17 @@ pub struct SnapInfo {
 /// The fronts the daemon asked Windows for (cause::Asks).
 static ASKS: cause::Asks = cause::Asks::new();
 
-/// Asks Windows to bring `h` to the front. Noted first: Windows may grant it late, even after reporting it refused
-/// (cause::ASKED_MS). An ask granted at once is used up at once.
+/// Asks Windows to bring `h` to the front for a workspace. Noted first: Windows may grant it late, even after
+/// reporting it refused (cause::ASKED_MS). A grant at once still sends a foreground event, maybe after the next
+/// switch, and that event uses the ask up (#545). Only a window already in front sends none, so it notes no ask.
 fn bring_to_front(h: windows_sys::Win32::Foundation::HWND) -> bool {
     if h.is_null() {
         return false;
     }
-    ASKS.note(id_of(h), id_of(winapi::root_owner(h)), winapi::tick_ms());
-    let landed = winapi::set_foreground(h);
-    if landed {
-        ASKS.landed(id_of(h));
+    if winapi::foreground() != h {
+        ASKS.note(id_of(h), id_of(winapi::root_owner(h)), winapi::tick_ms());
     }
-    landed
+    winapi::set_foreground(h)
 }
 
 pub struct Core {
@@ -805,14 +804,12 @@ impl Core {
     /// The foreground changed. Only an activation you caused may take you to another workspace (R-F1,
     /// R-F2). `cause::foreground_by` decides whose it was, and a close is never yours (R-E1).
     fn on_foreground(&mut self, hwnd: i64) {
-        let id = window_name(hwnd);
-        if !self.model.is_tracked(&id) {
-            return;
-        }
-        // Used up whenever its front lands, on the window already active too: left, it refuses your click there later.
+        // Used up whenever its front lands: on the window already active, or on an owned dialog nothing tracks. Left,
+        // it refuses your click on that window later.
         let now = winapi::tick_ms();
         let asked = ASKS.take(hwnd, id_of(winapi::root_owner(to_hwnd(hwnd))), now);
-        if self.model.active() == Some(id.as_str()) {
+        let id = window_name(hwnd);
+        if !self.model.is_tracked(&id) || self.model.active() == Some(id.as_str()) {
             return;
         }
         let active_gone = self.model.active().and_then(|w| self.info.get(w)).is_some_and(|i| {
@@ -1002,7 +999,8 @@ impl Core {
                 };
                 let oh = to_hwnd(self.info.get(&other).map(|i| i.hwnd).unwrap_or(0));
                 if op == "window_focus" {
-                    bring_to_front(oh);
+                    // Your own command: no ask, or a late grant would be refused and put the old window back.
+                    winapi::set_foreground(oh);
                 } else {
                     winapi::set_frame(h, of);
                     winapi::set_frame(oh, r);

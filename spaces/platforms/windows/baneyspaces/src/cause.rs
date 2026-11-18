@@ -41,11 +41,6 @@ impl Asks {
         a.push((hwnd, root, now));
     }
 
-    /// Windows put `hwnd` in front at once when asked: no ask of it is left to land late.
-    pub fn landed(&self, hwnd: i64) {
-        self.list().retain(|&(h, _, _)| h != hwnd);
-    }
-
     /// `hwnd` (root owner `root`) took the front: how long ago the daemon asked for it, within `ASKED_MS`. An ask
     /// covers every window under the asked one's root owner, since Windows gives the front to a window's open dialog
     /// instead. The ask is used up: a later front of that window is decided by your input alone.
@@ -61,6 +56,7 @@ impl Asks {
 pub const OWN_INPUT_MARK: usize = 0xBA5E_00E8;
 
 /// GetLastInputInfo and the hooks time one event a tick or two apart: the system's count is newer only past this.
+/// Known limit: input the hooks miss within this long after a daemon nudge is not counted.
 const SYSTEM_SLACK_MS: u32 = 50;
 
 /// When you last typed or pointed. Input another program sends for you (On-Screen Keyboard, voice access, a remapper)
