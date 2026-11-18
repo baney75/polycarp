@@ -313,7 +313,7 @@ impl Core {
             How::Ghost => {
                 // Under the turn: the event thread is not half way through a ghost of it, and its early record, if
                 // it made one, is taken here whichever path records the window first (an event or a full look).
-                let mut turn = hook::window_turn();
+                let mut turn = hook::window_turn_for(hwnd);
                 let u = turn.take_early(hwnd).unwrap_or_else(|| match cloak::has_ghost_bits(h) {
                     true => cloak::undo_unrecorded_ghost(winapi::ex_style(h)),
                     false => cloak::GhostUndo { ex_style: winapi::ex_style(h), alpha: winapi::layered_alpha(h) },
@@ -793,7 +793,7 @@ impl Core {
     /// workspace was shown in between, or the process is not an agent's any more), so its own style goes back, in
     /// the same turn. One whose handle another process owns now was dropped by `take_early`, and changes nothing.
     fn settle_early(&self, id: i64) {
-        let mut turn = hook::window_turn();
+        let mut turn = hook::window_turn_for(id);
         let Some(u) = turn.take_early(id) else { return };
         if self.hidden.get(id).is_some_and(|e| e.how == How::Ghost) {
             return; // its record, made before this ghost, holds the window's own style

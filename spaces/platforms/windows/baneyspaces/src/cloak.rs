@@ -127,7 +127,7 @@ pub fn taskbar_button(h: HWND, visible: bool) {
 /// Hides one of your windows. Returns how it was hidden: cloaked, or parked if the cloak was
 /// refused or did not take. The caller has already recorded the window.
 pub fn hide_user(h: HWND, cloaker: Option<&Cloaker>) -> How {
-    let _turn = crate::hook::window_turn();
+    let _turn = crate::hook::window_turn_for(h as isize as i64);
     hide_user_on(&Real(cloaker), h)
 }
 
@@ -150,7 +150,7 @@ pub struct GhostUndo {
 /// that already draws with per-pixel alpha cannot take a constant alpha): the style is put back and the
 /// caller parks the window instead.
 pub fn ghost(h: HWND) -> Option<GhostUndo> {
-    let _turn = crate::hook::window_turn();
+    let _turn = crate::hook::window_turn_for(h as isize as i64);
     ghost_on(&Real(None), h)
 }
 
@@ -189,14 +189,18 @@ pub fn ghost_on(d: &impl Desk, h: HWND) -> Option<GhostUndo> {
 /// The worker's hide of an agent's window recorded as `entry` (a ghost): a ghost, or parked when the window refuses
 /// one. Returns how it is hidden now.
 pub fn ghost_or_park(entry: &Hidden) -> How {
-    let _turn = crate::hook::window_turn();
+    let _turn = crate::hook::window_turn_for(entry.hwnd);
     ghost_or_park_on(&Real(None), entry)
 }
 
 pub fn ghost_or_park_on(d: &impl Desk, entry: &Hidden) -> How {
     let h = winapi::hwnd(entry.hwnd);
-    if ghost_on(d, h).is_some() {
+    if still_hidden_on(d, entry) || ghost_on(d, h).is_some() {
         return How::Ghost;
+    }
+    if d.ex_style(h) & GHOST != 0 {
+        d.set_layered_alpha(h, entry.alpha.unwrap_or(255));
+        d.set_ex_style(h, entry.ex_style.unwrap_or(d.ex_style(h) & !GHOST));
     }
     d.set_pos(h, PARK, PARK);
     How::Park
@@ -282,7 +286,7 @@ impl Drop for Desktops {
 /// are both undone whichever of them had happened, so an entry written just before a crash is fine. Safe to
 /// call on a window that is not hidden.
 pub fn show(entry: &Hidden, cloaker: Option<&Cloaker>) -> bool {
-    let _turn = crate::hook::window_turn();
+    let _turn = crate::hook::window_turn_for(entry.hwnd);
     show_on(&Real(cloaker), entry)
 }
 
