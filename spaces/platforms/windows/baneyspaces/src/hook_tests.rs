@@ -238,3 +238,53 @@ fn a_window_the_worker_is_showing_is_left_alone() {
     assert_eq!(kept, None, "the event thread ghosted a window the worker is showing and kept the ghost as its style");
     assert_eq!(crate::winapi::layered_alpha(w.hwnd), Some(255), "the window was left as the worker had it");
 }
+
+/// What the window under test saw while the early ghost changed its style: was the turn free, and did the ghost of
+/// another window made from inside that call take.
+static PREV_PROC: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static OTHER: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static TURN_FREE: Mutex<Option<bool>> = Mutex::new(None);
+
+unsafe extern "system" fn style_watch(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{CallWindowProcW, WM_STYLECHANGING, WNDPROC};
+    let mut seen = TURN_FREE.lock().unwrap();
+    if msg == WM_STYLECHANGING && seen.is_none() {
+        // As a nested event would: the event thread is re-entered while it waits on this window's thread.
+        let free = TURN.try_lock().is_ok();
+        *seen = Some(free);
+        drop(seen);
+        if free {
+            ghost_early(OTHER.load(Ordering::SeqCst) as HWND);
+        }
+    } else {
+        drop(seen);
+    }
+    let prev: WNDPROC = std::mem::transmute(PREV_PROC.load(Ordering::SeqCst));
+    CallWindowProcW(prev, h, msg, wp, lp)
+}
+
+#[test]
+fn the_early_ghost_lets_go_of_the_turn_while_it_waits_on_the_window() {
+    // first-F1: the style change sends to the window's thread and waits, and so does the taskbar call. An event
+    // that re-enters the event thread in that wait (an agent opening its window and a dialog together) ghosts its
+    // own window, and every hide and show the worker makes needs the turn too: neither may find it held.
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowLongPtrW, GWLP_WNDPROC};
+    let _agents = crate::testwin::agents_turn();
+    let w = crate::testwin::TestWin::open("early, waited on", 0);
+    let other = crate::testwin::TestWin::open("early, from inside", 0);
+    OTHER.store(other.hwnd as isize, Ordering::SeqCst);
+    *TURN_FREE.lock().unwrap() = None;
+    let prev = unsafe { SetWindowLongPtrW(w.hwnd, GWLP_WNDPROC, style_watch as *const () as isize) };
+    PREV_PROC.store(prev, Ordering::SeqCst);
+    let pid = std::process::id();
+    share_agents(vec![(pid, crate::winapi::process_start(pid))], 0, false);
+    ghost_early(w.hwnd);
+    let free = TURN_FREE.lock().unwrap().take();
+    let outer = take_early(w.id());
+    let inner = take_early(other.id());
+    share_agents(vec![], 0, true);
+    unsafe { SetWindowLongPtrW(w.hwnd, GWLP_WNDPROC, prev) };
+    assert_eq!(free, Some(true), "the early ghost held the turn while the window's thread answered its style change");
+    assert!(outer.is_some(), "the window was ghosted and left for the worker to record");
+    assert!(inner.is_some(), "a ghost made from inside that wait took");
+}

@@ -186,6 +186,22 @@ pub fn ghost_on(d: &impl Desk, h: HWND) -> Option<GhostUndo> {
     Some(GhostUndo { ex_style: ex, alpha })
 }
 
+/// The worker's hide of an agent's window recorded as `entry` (a ghost): a ghost, or parked when the window refuses
+/// one. Returns how it is hidden now.
+pub fn ghost_or_park(entry: &Hidden) -> How {
+    let _turn = crate::hook::window_turn();
+    ghost_or_park_on(&Real(None), entry)
+}
+
+pub fn ghost_or_park_on(d: &impl Desk, entry: &Hidden) -> How {
+    let h = winapi::hwnd(entry.hwnd);
+    if ghost_on(d, h).is_some() {
+        return How::Ghost;
+    }
+    d.set_pos(h, PARK, PARK);
+    How::Park
+}
+
 /// Does the window still look hidden the way the entry says? Reality, not the daemon's memory:
 /// the shell can drop a cloak (a virtual desktop switch re-evaluates them), an app can move itself
 /// back from the parking spot or reset its alpha.

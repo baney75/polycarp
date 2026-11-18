@@ -763,10 +763,9 @@ impl Core {
         if let Err(why) = self.persist() {
             self.problem(format!("could not save the record of an agent window ({why}); it is hidden anyway"));
         }
-        if cloak::ghost(h).is_none() {
+        if cloak::ghost_or_park(&e) == How::Park {
             // It refused: parked, and recorded as parked (the method actually applied), and left alone.
             self.problem(format!("{} would not ghost: parked it instead", window_name(id)));
-            winapi::set_pos(h, cloak::PARK, cloak::PARK);
             if let Some(mut e) = self.hidden.remove(id) {
                 e.how = How::Park;
                 self.hidden.insert(e);
