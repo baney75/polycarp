@@ -2016,8 +2016,6 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
                 lock(&shared).poll();
             }
             Ok(Msg::Chord { args, at }) => {
-                // First, tell Windows the Win key was used so releasing it does not open Start.
-                hook::mask_start_menu();
                 // A binding is a CLI command line (spec/keymap.md), checked when the keys were loaded.
                 let env = match crate::request(args.clone()) {
                     Ok(req) => handle(&shared, &req),
