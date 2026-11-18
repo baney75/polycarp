@@ -1,13 +1,11 @@
 //! The daemon's requests against real windows on the runner's desktop. Each test builds its own `Core` over a fresh
 //! state directory and tracks only the windows it opens (`open_window(.., true)`), never `resync_windows`, which
 //! would track and hide the runner's own windows. The tests share the daemon's statics (`STOPPING`), so they run
-//! one at a time.
+//! one at a time, and never while the hook test types Win keys (`testwin::desktop_turn`).
 
 use super::*;
-use crate::testwin::{eventually, TestWin};
+use crate::testwin::{desktop_turn, eventually, TestWin};
 use std::sync::atomic::AtomicUsize;
-
-static SERIAL: Mutex<()> = Mutex::new(());
 
 struct Rig {
     shared: Shared,
@@ -17,7 +15,7 @@ struct Rig {
 }
 
 fn rig() -> Rig {
-    let turn = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    let turn = desktop_turn();
     STOPPING.store(false, Ordering::SeqCst);
     static N: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
@@ -108,26 +106,7 @@ impl Rig {
     }
 
     fn settles(&self, w: &TestWin, hidden: bool) -> bool {
-        // The shell can take a cloak off by itself (Win-key input, Start, a view refresh; #453's hook test types real
-        // keys beside these tests). The daemon answers that with `recheck_hidden` on EVENT_OBJECT_UNCLOAKED, from its
-        // worker, which this rig doesn't run: so the wait does it, and the daemon's own code still puts the window
-        // right. How many read-backs it took is said, so a cloak that never holds shows up in the log.
-        // The first 200 ms are the request's own: only after that does the wait read back, as the worker would.
-        let (mut polls, mut rechecks) = (0, 0);
-        if eventually(|| {
-            if out_of_sight(w) == hidden {
-                return true;
-            }
-            polls += 1;
-            if polls >= 10 {
-                rechecks += 1;
-                lock(&self.shared).recheck_hidden();
-            }
-            false
-        }) {
-            if rechecks > 0 {
-                eprintln!("{} settled after {rechecks} read-back(s) of what is hidden", window_name(w.id()));
-            }
+        if eventually(|| out_of_sight(w) == hidden) {
             return true;
         }
         let c = lock(&self.shared);

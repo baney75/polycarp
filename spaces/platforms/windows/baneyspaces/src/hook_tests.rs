@@ -71,6 +71,8 @@ fn session_window() -> HWND {
 
 #[test]
 fn the_hooks_on_a_real_desktop() {
+    // The chords below are real Win keys: no daemon test may hide windows meanwhile.
+    let _turn = crate::testwin::desktop_turn();
     let (tx, rx) = channel();
     let problems = start(tx, crate::keys::bindings(), on_end);
     assert!(problems.is_empty(), "{problems:?}");

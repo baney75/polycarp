@@ -2,13 +2,21 @@
 //! window lives. CI runs `cargo test` on a runner with an interactive desktop (explorer.exe and DWM), so the
 //! shell cloak, layered alpha and the foreground all behave as they do on a person's machine.
 
-use std::sync::{mpsc, OnceLock};
+use std::sync::{mpsc, Mutex, MutexGuard, OnceLock};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::COLOR_WINDOW;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 pub const CLASS: &str = "BaneySpacesUnitTest";
+
+/// One turn at the runner's desktop. The hook test types real Win keys, which the shell answers (it can take a
+/// cloak off a window), so it never runs while a daemon test hides windows. Every test that types keys or reads
+/// back what the daemon hid holds this.
+pub fn desktop_turn() -> MutexGuard<'static, ()> {
+    static DESKTOP: Mutex<()> = Mutex::new(());
+    DESKTOP.lock().unwrap_or_else(|p| p.into_inner())
+}
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
