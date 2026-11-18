@@ -101,6 +101,9 @@ pub fn parse_chord(chord: &str, m: Mods) -> Result<(Mods, u32), String> {
         if vk.is_some() {
             return Err("the key goes last".into());
         }
+        if (add.win && mods.win) || (add.shift && mods.shift) || (add.alt && mods.alt) || (add.ctrl && mods.ctrl) {
+            return Err(format!("{part:?} names a modifier twice (mod is {})", mod_name(m)));
+        }
         mods = Mods { win: mods.win || add.win, shift: mods.shift || add.shift, alt: mods.alt || add.alt, ctrl: mods.ctrl || add.ctrl };
     }
     let vk = vk.ok_or("no key, only modifiers")?;
@@ -111,6 +114,26 @@ pub fn parse_chord(chord: &str, m: Mods) -> Result<(Mods, u32), String> {
         return Err("win+shift+escape is the recovery chord (spec/config.md); config can't rebind it".into());
     }
     Ok((mods, vk))
+}
+
+/// The name `parse_mod` takes for `m`.
+fn mod_name(m: Mods) -> &'static str {
+    if m.ctrl {
+        "ctrl"
+    } else if m.alt {
+        "alt"
+    } else {
+        "win"
+    }
+}
+
+/// A default chord from `spec/keys.json` with `mod` standing for `m`. The column is written for `mod = win`; when mod
+/// is ctrl or alt, that modifier and win trade places, so `mod+alt+left` with mod = alt is Win+Alt+Left. Each default
+/// keeps its own chord and the window keys keep two of Win, Ctrl and Alt, never an app's own Alt+arrow.
+fn default_chord(template: &str, m: Mods) -> Result<(Mods, u32), String> {
+    let name = mod_name(m);
+    let swapped: Vec<&str> = template.split('+').map(|p| if p.trim() == name { "win" } else { p }).collect();
+    parse_chord(&swapped.join("+"), m)
 }
 
 const DIRS: [(&str, &str, &str); 4] = [("left", "-40", "0"), ("right", "40", "0"), ("up", "0", "-40"), ("down", "0", "40")];
@@ -124,7 +147,7 @@ pub fn defaults(m: Mods) -> Vec<Binding> {
     let mut out = vec![];
     let mut add = |action: &str, fill: (&str, &str), args: Vec<&str>| {
         let t = w[action].as_str().unwrap_or("");
-        if let (false, Ok((mods, vk))) = (t.is_empty(), parse_chord(&t.replace(fill.0, fill.1), m)) {
+        if let (false, Ok((mods, vk))) = (t.is_empty(), default_chord(&t.replace(fill.0, fill.1), m)) {
             out.push(Binding { mods, vk, args: args.into_iter().map(String::from).collect() });
         }
     };
@@ -191,9 +214,17 @@ pub fn from_config(text: &str, check: impl Fn(&[String]) -> Result<(), String>) 
     Ok((table, skipped))
 }
 
-/// `config.toml` as text for `from_config`. No file is the defaults (an empty text).
+/// `config.toml` as text for `from_config`. No file is the defaults (an empty text). A file that is there but can't be
+/// read (held open by an editor, not UTF-8) is an error, never the defaults: the keys in force stay.
 pub fn read_config(path: &std::path::Path) -> Result<String, String> {
-    Ok(std::fs::read_to_string(path).unwrap_or_default())
+    match std::fs::read(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("config.toml: cannot read: {e}")),
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => Ok(text.strip_prefix('\u{feff}').map(str::to_owned).unwrap_or(text)),
+            Err(_) => Err("config.toml: cannot read: not UTF-8 (save it as UTF-8; Windows PowerShell's > and Out-File write UTF-16)".into()),
+        },
+    }
 }
 
 /// For `window focus` and `window swap`: the nearest of `others` (id, frame as left, top, right, bottom) in direction

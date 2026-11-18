@@ -22,10 +22,18 @@ mod = "win"                        # win (the default), ctrl or alt
 Bindings go over the defaults: a chord the file names replaces the default on that chord, `none` removes it, and
 every other default stays.
 
+The defaults are written for `mod = "win"`. With `mod = "alt"` or `"ctrl"`, that modifier and Win trade places in
+each default, so every default keeps its own chord and the window keys keep two of Win, Ctrl and Alt: with
+`mod = "alt"`, focus left is Win+Alt+Left (not Alt+Left, which is Back in a browser and in Explorer), swap is
+Win+Alt+Shift+Left and resize is Alt+Ctrl+Win+Left. Switch and move are Alt+1 and Alt+Shift+1. With `mod = "ctrl"`,
+focus is Ctrl+Alt+Left: on keyboard layouts with AltGr, Ctrl+Alt is AltGr, so keys that type a character with AltGr
+are not safe to bind there.
+
 ## Chords
 
 Modifiers, then one key, joined with `+`. Modifiers: `mod`, `win`, `ctrl`, `alt`, `shift`. A chord needs at least one of
 `win`, `ctrl` or `alt` (after `mod` is read), so a bare letter or Shift+letter can never be taken from your typing.
+Each modifier is named once: with `mod = "alt"`, `mod+alt+j` is an error (`"alt" names a modifier twice`).
 Keys: `0` to `9`, `a` to `z`, `f1` to `f24`, `left`, `right`, `up`, `down`, `grave`, `escape`, `return`, `space`,
 `tab`, `backspace`, `insert`, `delete`, `home`, `end`, `pageup`, `pagedown`, `minus`, `equal`, `comma`, `period`,
 `slash`, `semicolon`, `quote`, `bracketleft`, `bracketright`, `backslash`.
@@ -64,6 +72,11 @@ good file replaces it. The reason starts with the exact path, for example
 `keys.bindings."mod+alt+j": "warp 9": unknown command "warp"`, `keys.mod: "super" is not win, ctrl or alt`, or
 `keys.bindings: no key is left to switch workspaces`. A file that is already bad when the daemon starts gives the
 defaults.
+
+A file that is there but can't be read is an error the same way, never the defaults: `config.toml: cannot read: not
+UTF-8` (Windows PowerShell's `>` and `Out-File` write UTF-16; save it as UTF-8) or `config.toml: cannot read: <the
+system's reason>` (an editor holding it open). The next change in the folder reads it again. Only a missing file is
+the defaults.
 
 ## Elevated windows
 

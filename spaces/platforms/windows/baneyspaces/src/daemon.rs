@@ -881,12 +881,17 @@ impl Core {
     /// `changed_at`: when the folder watcher saw the change, for the log line that times a reload.
     pub fn load_keys(&mut self, changed_at: Option<Instant>) {
         let file = crate::paths::config_file();
-        let text = keys::read_config(&file).unwrap_or_default();
-        if changed_at.is_some() && self.keys.text.as_deref() == Some(text.as_str()) {
-            return; // another file in the folder, or a save with nothing new
+        // A file that can't be read is an error like a bad one, never the defaults; its text isn't kept, so the next
+        // change in the folder reads it again (an editor that held it open has let go by then).
+        let read = keys::read_config(&file);
+        if let (Some(_), Ok(text)) = (changed_at, &read) {
+            if self.keys.text.as_deref() == Some(text.as_str()) {
+                return; // another file in the folder, or a save with nothing new
+            }
         }
+        let text = read.as_ref().ok().cloned();
         let check = |a: &[String]| crate::request(a.to_vec()).map(|_| ()).map_err(|e| e.error.map(|b| b.message).unwrap_or_default());
-        match keys::from_config(&text, check) {
+        match read.and_then(|text| keys::from_config(&text, check)) {
             Ok((table, skipped)) => {
                 self.keys.bindings = table.len();
                 hook::set_table(table);
@@ -896,7 +901,7 @@ impl Core {
                     self.log(&format!("keys: {s}"));
                 }
                 let after = changed_at.map(|t| format!(", {:.0} ms after the change", t.elapsed().as_secs_f64() * 1000.0)).unwrap_or_default();
-                say(&format!("baneyspaces daemon: keys: {} bindings from {}{after}", self.keys.bindings, if text.is_empty() { "the defaults" } else { "config.toml" }));
+                say(&format!("baneyspaces daemon: keys: {} bindings from {}{after}", self.keys.bindings, if text.as_deref().unwrap_or("").is_empty() { "the defaults" } else { "config.toml" }));
             }
             Err(e) => {
                 if self.keys.loads == 0 {
@@ -910,7 +915,7 @@ impl Core {
                 self.keys.error = Some(e);
             }
         }
-        self.keys.text = Some(text);
+        self.keys.text = text;
         let _ = self.persist();
     }
 

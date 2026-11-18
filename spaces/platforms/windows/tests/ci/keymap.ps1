@@ -8,8 +8,14 @@
 # Not here (the runner cannot show them): a second display (`window display` is checked to refuse with one), and an
 # elevated window in front (the runner's own session is elevated, so nothing is above the daemon).
 # Needs: a release build with the test-ops feature (baneyspaces.exe). Prints PASS or FAIL; exits 1 on any FAIL.
-# Usage (Windows PowerShell 5.1): keymap.ps1 -Bin <target\release> -Out <evidence dir>
-param([Parameter(Mandatory = $true)][string]$Bin, [Parameter(Mandatory = $true)][string]$Out)
+# Usage (Windows PowerShell 5.1): keymap.ps1 -Bin <target\release> -Out <evidence dir> [-Disposable]
+# It kills BaneySpaces and deletes its recovery record (state.json), so it runs only on a desktop nobody needs: a CI
+# runner (GITHUB_ACTIONS=true), or by hand with -Disposable.
+param([Parameter(Mandatory = $true)][string]$Bin, [Parameter(Mandatory = $true)][string]$Out, [switch]$Disposable)
+if ($env:GITHUB_ACTIONS -ne 'true' -and -not $Disposable) {
+  [Console]::Error.WriteLine('keymap.ps1: refused. It kills BaneySpaces and deletes its recovery record. Run it only on a disposable desktop (a VM), with -Disposable.')
+  exit 2
+}
 $ErrorActionPreference = 'Continue'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 New-Item -ItemType Directory -Force $Out | Out-Null
