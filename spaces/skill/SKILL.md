@@ -99,7 +99,9 @@ Scope rules, enforced by the app, not by your good behavior:
   and URLs wait for the agent browser profiles. Only TextEdit and Preview (each needs a handoff file) and Calculator start; every other
   app, Finder, every browser and password manager included, answers `needs_sandbox`; work with files directly, not through Finder. Each starts as a separate copy that restores nothing.
   Never ask him to switch workspaces or look at the screen.
-- `press` always answers `not_supported` for now: keys reach only the app in front, and BaneySpaces never raises one for you.
+- `press @s1:e3 "cmd+a"` posts keys to that window's own process while it stays in the background, and `type` inserts text. Both
+  reach only windows on the agent workspace: a lent window on one of Donovan's workspaces answers `outside_agent_workspace` until you
+  bring it over with `move --window N`.
   Use `type`, `set-value` or `click`.
 - `shot --out name.png` writes only into BaneySpaces' own shots folder; pass a file name, not a path.
 - Snapshots and shots can hold private content. They stay on this Mac; don't paste them into logs, issues
