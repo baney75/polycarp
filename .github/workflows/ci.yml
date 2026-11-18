@@ -24,6 +24,19 @@ jobs:
       spaces-rust: ${{ steps.f.outputs.spaces-rust }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # A job gated on an output this job doesn't define is always skipped, and ci-ok counts a skip as a pass.
+      - name: Every changes output a job reads is defined here
+        run: |
+          python3 - <<'EOF'
+          import re, sys
+          s = open('.github/workflows/ci.yml').read()
+          block = re.search(r'^  changes:\n(?:    .*\n)*?    outputs:\n((?:      .*\n)+)', s, re.M).group(1)
+          have = set(re.findall(r'^      ([\w-]+):', block, re.M))
+          want = set(re.findall(r'needs\.changes\.outputs\.([\w-]+)', s))
+          if want - have:
+              sys.exit(f"ci.yml reads changes outputs it never defines: {sorted(want - have)}")
+          print(f"{len(want)} outputs read, all defined: {sorted(want)}")
+          EOF
       - id: f
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
@@ -178,8 +191,9 @@ jobs:
           dest="$(cygpath -u "$LOCALAPPDATA")/BaneySpaces/engine"
           mkdir -p "$dest"
           cp platforms/windows/engine/* "$dest/"
-      # Off a runner the suite must refuse before it touches anything: no -Disposable, exit 2, Notepad left open.
-      - name: Live suite refuses a desktop that isn't disposable
+      # Off a runner the live suite and the switch bench must refuse before they touch anything: no -Disposable, exit 2,
+      # Notepad left open, state.json kept.
+      - name: Live suite and switch bench refuse a desktop that isn't disposable
         shell: powershell
         run: platforms/windows/tests/ci/refuses.ps1 -Bin target/release -Out ${{ runner.temp }}/refused
       - name: Live suite
@@ -198,7 +212,7 @@ jobs:
   # until the daemon undoes it. Limits are in tests/ci/switch-bench.ps1 and spec/speed.json (windowsSwitch).
   spaces-windows-speed:
     needs: changes
-    if: needs.changes.outputs.spaces-linux == 'true' || needs.changes.outputs.spaces-windows == 'true'
+    if: needs.changes.outputs.spaces-rust == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:

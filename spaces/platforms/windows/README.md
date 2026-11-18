@@ -77,6 +77,8 @@ workspaces on a `windows-latest` runner, types Win+n 200 times with `SendInput`,
 going in until DWM reads every window right; a screenshot after each must hold no pixel of another workspace's
 color. It fails at p90 100 ms, max 250 ms, or 25% over `windowsSwitch` in `spec/speed.json`, and when a window
 uncloaked from outside is not cloaked again within 100 ms at p90 (a 400 ms poll misses that).
+Like the live suite, it kills BaneySpaces and deletes `state.json`, so off a runner it refuses (exit 2) unless given
+`-Disposable`.
 
 - On a clean exit (`baneyspaces stop`, Ctrl+C or closing a foreground console) every window is shown.
   **Sign-out and shutdown:** a background daemon has no console, so it owns a hidden *top-level* window (a

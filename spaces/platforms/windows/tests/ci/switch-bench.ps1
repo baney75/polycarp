@@ -7,8 +7,14 @@
 # Fails when: switch p90 >= 100 ms, max >= 250 ms, any switch not settled in 2 s, any wrong pixel, uncloak p90 >= 100 ms,
 # or switch p90 over spec/speed.json windowsSwitch.p90Ms times regressionLimit (with floorMs of slack, for runner noise).
 # Needs: a release build with the test-ops feature (baneyspaces.exe). Prints PASS or FAIL; exits 1 on any FAIL.
-# Usage (Windows PowerShell 5.1): switch-bench.ps1 -Bin <target\release> -Out <evidence dir> [-Speed <spec\speed.json>]
-param([Parameter(Mandatory = $true)][string]$Bin, [Parameter(Mandatory = $true)][string]$Out, [string]$Speed = '')
+# Usage (Windows PowerShell 5.1): switch-bench.ps1 -Bin <target\release> -Out <evidence dir> [-Speed <spec\speed.json>] [-Disposable]
+# It kills BaneySpaces and deletes its recovery record (state.json), so it runs only on a desktop nobody needs: a CI
+# runner (GITHUB_ACTIONS=true), or by hand with -Disposable. Anywhere else it refuses (exit 2) before it touches anything.
+param([Parameter(Mandatory = $true)][string]$Bin, [Parameter(Mandatory = $true)][string]$Out, [string]$Speed = '', [switch]$Disposable)
+if ($env:GITHUB_ACTIONS -ne 'true' -and -not $Disposable) {
+  [Console]::Error.WriteLine('switch-bench.ps1: refused. It kills BaneySpaces and deletes its recovery record. Run it only on a disposable desktop (a VM), with -Disposable.')
+  exit 2
+}
 $ErrorActionPreference = 'Continue'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 New-Item -ItemType Directory -Force $Out | Out-Null
