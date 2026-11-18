@@ -142,7 +142,14 @@ fn the_hooks_on_a_real_desktop() {
 
     // Win+8 typed in one go, as the harness's SendInput batch or a quick person types it: Win is up before the daemon's
     // worker can act on the chord. Behind the hook, Win must never go down and up with nothing between: the shell
-    // opens Start (Search) on that, over the user's window.
+    // opens Start (Search) on that, over the user's window. Win+5's own release and mask come first: the hook re-sends
+    // them at the end of the input queue, so wait for Win to read up, then let the rest of that queue drain.
+    let end = Instant::now() + Duration::from_secs(2);
+    while held(VK_LWIN as u32) && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!held(VK_LWIN as u32), "Win+5's release never came back from the hook");
+    std::thread::sleep(Duration::from_millis(200));
     SEEN.lock().unwrap().clear();
     WATCH.store(true, Ordering::Relaxed);
     send(&[
