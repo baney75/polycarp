@@ -101,6 +101,8 @@ fn session_window() -> HWND {
 
 #[test]
 fn the_hooks_on_a_real_desktop() {
+    // The chords below are real Win keys: no daemon test may hide windows meanwhile.
+    let _turn = crate::testwin::desktop_turn();
     let watcher = watch_behind();
     let (tx, rx) = channel();
     set_table(crate::keys::defaults(crate::keys::parse_mod("win").expect("win")));
