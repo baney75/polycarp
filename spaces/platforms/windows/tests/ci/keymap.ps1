@@ -54,7 +54,11 @@ function front($h) {
   # Read the front window itself: one that isn't visible is in no window list, and a lookup there said nothing.
   $f = [Desk]::Foreground(); $w = [Desk]::Read($f)
   $name = if ($w) { (Get-Process -Id $w.Pid -ErrorAction SilentlyContinue).ProcessName } else { '' }
-  check $false "the harness brings $h to the front before the key" "front is $f ($(if ($w) { "$name, visible $([Desk]::Visible($f)), $w" } else { 'no window' }))"
+  check $false "the harness brings $h to the front before the key" "front is $f ($(if ($w) { "$name, visible $([Desk]::Visible($f)), owner $(owner $f), $w" } else { 'no window' }))"
+}
+function owner($h) {
+  $o = [Desk]::Owner($h); if ($o -eq 0) { return 'none' }
+  $w = [Desk]::Read($o); "$o ($((Get-Process -Id $w.Pid -ErrorAction SilentlyContinue).ProcessName), $w)"
 }
 function frame($h) { $w = [Desk]::Read($h); "$($w.L),$($w.T),$($w.R),$($w.B)" }
 $WIN = 0x5B; $SHIFT = 0x10; $CTRL = 0x11; $ALT = 0x12; $LEFT = 0x25; $RIGHT = 0x27; $J = 0x4A

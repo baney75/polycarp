@@ -101,6 +101,7 @@ public static class Desk {
     public static long Foreground() { return GetForegroundWindow().ToInt64(); }
     public static bool Front(long h) { return SetForegroundWindow((IntPtr)h); }
     public static bool Visible(long h) { return IsWindowVisible((IntPtr)h); }
+    public static long Owner(long h) { return GetWindow((IntPtr)h, 4).ToInt64(); }
     public static bool SetTitle(long h, string t) { return SetWindowTextW((IntPtr)h, t); }
     // The window's own thread hides it (SW_HIDE) or shows it without taking the front (SW_SHOWNA), as a tray app
     // does with its window: ShowWindowAsync posts the call to the thread that owns the window.
