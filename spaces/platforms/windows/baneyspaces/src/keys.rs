@@ -197,6 +197,9 @@ pub fn from_config(text: &str, check: impl Fn(&[String]) -> Result<(), String>) 
     for (chord, action) in binds {
         let at = format!("keys.bindings.{chord:?}");
         let (mods, vk) = parse_chord(chord, m).map_err(|e| format!("{at}: {e}"))?;
+        if let Some((_, _, other)) = seen.iter().find(|(m2, v2, _)| *m2 == mods && *v2 == vk) {
+            return Err(format!("{at}: the same chord as keys.bindings.{other:?}"));
+        }
         seen.push((mods, vk, chord));
         let action = action.as_str().ok_or_else(|| format!("{at}: the action must be a string"))?.trim();
         table.retain(|b| !(b.mods == mods && b.vk == vk));

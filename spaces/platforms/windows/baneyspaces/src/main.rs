@@ -110,7 +110,6 @@ fn need(args: &[String], n: usize, usage: &str) -> Result<(), Envelope> {
 }
 
 /// A workspace number, 1 to 9, checked here so a key bound to `switch 12` is refused when config.toml is read.
-#[allow(dead_code)]
 fn workspace_n(n: &str) -> Result<(), Envelope> {
     match n.parse::<u8>() {
         Ok(1..=9) => Ok(()),
@@ -131,6 +130,7 @@ fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
     match cmd.as_str() {
         "switch" => {
             need(&a, 1, "switch <n>")?;
+            workspace_n(&a[0])?;
             req("switch", json!({ "n": a[0] }))
         }
         "move" => {
@@ -138,6 +138,7 @@ fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
             let window = take(&mut a, "--window");
             let app = take(&mut a, "--app");
             need(&a, 1, "move <n> [--stay] [--window W|--app NAME]")?;
+            workspace_n(&a[0])?;
             req("move", json!({ "n": a[0], "stay": stay, "window": window, "app": app }))
         }
         "window" => {

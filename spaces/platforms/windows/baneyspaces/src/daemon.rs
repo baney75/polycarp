@@ -979,6 +979,8 @@ impl Core {
                 } else {
                     winapi::set_frame(h, of);
                     winapi::set_frame(oh, r);
+                    // A swap can cross displays, and SetWindowPos raises no move event: the model follows here (R-V4).
+                    self.mirror_moves();
                 }
                 Envelope::ok(json!({ "window": id, "other": other, "changed": true }))
             }
@@ -1059,8 +1061,12 @@ fn watch_config(file: PathBuf, tx: Sender<Msg>) {
             let at = Instant::now();
             // An editor saves in steps (truncate, write, rename): read once the folder has been quiet for 30 ms. The
             // watch is re-armed before each wait, so a step that lands after the read wakes the next round.
-            std::thread::sleep(Duration::from_millis(30));
-            if tx.send(Msg::Reload { at }).is_err() || FindNextChangeNotification(h) == 0 {
+            let mut armed = true;
+            keys::settle(30, 500, |ms| {
+                armed = FindNextChangeNotification(h) != 0;
+                armed && WaitForSingleObject(h, ms) == 0
+            });
+            if tx.send(Msg::Reload { at }).is_err() || !armed {
                 break;
             }
         }
