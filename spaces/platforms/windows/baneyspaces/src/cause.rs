@@ -6,6 +6,10 @@
 //! the system's activation would pass for yours and switch you away from the workspace you emptied (R-E1: empty
 //! means empty). An activation is the system's when the window that was active is gone, or when a close came after
 //! your last input.
+//!
+//! A front the daemon asked for is never yours either. A switch asks Windows to bring its workspace's window to the
+//! front, and Windows can grant that after the next switch: followed, it took you back, and that workspace's own late
+//! front took you forward again, back and forth (#545).
 
 use baneyspaces_core::model::Cause;
 use std::sync::Mutex;
@@ -33,9 +37,9 @@ pub fn since_asked(hwnd: i64, now: u32) -> Option<u32> {
 /// `idle_ms`: time since the last keyboard or mouse input. `since_close_ms`: time since a tracked window last
 /// closed, if one has. `active_gone`: the window the model holds active no longer exists or is no longer visible.
 /// `since_asked_ms`: time since the daemon asked for this window to come to the front, within `ASKED_MS`.
-pub fn foreground_by(idle_ms: u32, since_close_ms: Option<u32>, active_gone: bool, _since_asked_ms: Option<u32>) -> Cause {
+pub fn foreground_by(idle_ms: u32, since_close_ms: Option<u32>, active_gone: bool, since_asked_ms: Option<u32>) -> Cause {
     let closed_after_input = since_close_ms.is_some_and(|s| s <= idle_ms);
-    if active_gone || closed_after_input || idle_ms >= 300 {
+    if active_gone || closed_after_input || since_asked_ms.is_some() || idle_ms >= 300 {
         Cause::App
     } else {
         Cause::User
