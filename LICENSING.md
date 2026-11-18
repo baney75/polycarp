@@ -4,7 +4,6 @@
 | --- | --- |
 | `cli/` | MIT |
 | `spaces/` | MIT |
-| `voice/` | MIT |
 | `browser/` | AGPL-3.0 |
 
 Each directory keeps its own `LICENSE` file, and those files govern that directory. The root has no

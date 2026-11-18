@@ -1,15 +1,12 @@
 #!/bin/bash
-# Installs Polycarp on a Mac or on Linux:
+# Installs Polycarp on a Mac:
 #   curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
 # Mac: downloads the signed app, which holds workspaces, voice, browser agents and the `polycarp` command, and
 # opens it. No developer tools needed. POLYCARP_FROM_SOURCE=1 builds it on this Mac instead.
 # It asks macOS for nothing itself: Polycarp's welcome window walks you through each permission.
 # Run it again any time to update. POLYCARP_REF picks a branch or tag.
 # POLYCARP_SOURCE=/path/to/checkout builds that checkout instead of downloading.
-# Linux: keeps a checkout in ~/.local/share/polycarp/src (POLYCARP_SOURCE picks another), builds the polycarp
-# command from it and runs `polycarp update --source <checkout> --yes`, which builds every part of origin/main
-# (the spaces daemon and the hands engine on Hyprland, the browser helper and the extension with Node) and installs
-# them only once every build passed. It needs git, a C compiler and Rust, and installs no system packages itself.
+# Linux: the Linux and Omarchy desktop is retired. Run there, this prints one line saying so and installs nothing.
 # Everything is inside main(), called on the last line: run through a pipe (curl | bash), a download that
 # stops halfway runs nothing, and no step can read the script's own text from stdin.
 set -euo pipefail
@@ -17,6 +14,11 @@ set -euo pipefail
 main() {
   # Tests source this file for its functions and run nothing.
   [ -z "${POLYCARP_INSTALL_FUNCTIONS_ONLY:-}" ] || return 0
+  # Before anything is written, even the log.
+  if [ "$(uname -s)" = Linux ]; then
+    printf '%s\n' "$LINUX_MOVED"
+    return 0
+  fi
   local REPO="https://github.com/baney75/polycarp.git"
   local REF="${POLYCARP_REF:-main}"
   # Where the ready-made app comes from, and the signature every release has to carry.
@@ -29,7 +31,6 @@ main() {
     green=$(tput setaf 2 2>/dev/null || true)
   else bold=""; dim=""; reset=""; green=""; fi
   LOG="$HOME/Library/Logs/polycarp-install.log"
-  [ "$(uname -s)" = Darwin ] || LOG="$HOME/.local/state/polycarp/install.log"
   mkdir -p "$(dirname "$LOG")"; : > "$LOG"
   WORK=$(mktemp -d)
   trap 'rm -rf "$WORK"' EXIT
@@ -53,11 +54,6 @@ main() {
 
   say ""; say "${bold}Polycarp${reset}  ${dim}Bear much fruit.${reset}"; say ""
 
-  if [ "$(uname -s)" = Linux ]; then
-    linux_main
-    return 0
-  fi
-
   local CFG="${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}"
   # Which parts to run. POLYCARP_FEATURES=voice,browser answers without asking; with no terminal and no answer, the
   # welcome window asks instead. A reinstall keeps what was chosen.
@@ -66,7 +62,7 @@ main() {
     [ -n "$REPLY" ] || choose_parts
     if [ -n "$REPLY" ]; then write_parts "$CFG" "$REPLY" || fail "POLYCARP_FEATURES has a part Polycarp doesn't know. Use workspaces, voice and browser."; fi
   fi
-  [ "$(uname -s)" = Darwin ] || fail "This installer is for a Mac or Linux. The polycarp command runs elsewhere: cargo install --git $REPO polycarp"
+  [ "$(uname -s)" = Darwin ] || fail "This installer is for a Mac. The polycarp command runs elsewhere: cargo install --git $REPO polycarp"
   [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 13 ] || fail "Polycarp needs macOS 13 Ventura or later."
   local BIN="$HOME/.local/bin"
   # 1. Get the app. Nothing on this Mac changes until it is here and checked.
@@ -199,150 +195,8 @@ main() {
   say ""
 }
 
-# Linux: every part, through `polycarp update`, which builds everything before it installs anything. Runs inside main,
-# so it has main's REPO, LOG and colors, and say, fail and step.
-linux_main() {
-  local SRC="${POLYCARP_SOURCE:-$HOME/.local/share/polycarp/src}" OS_RELEASE=/etc/os-release
-  local BIN="$HOME/.local/bin" origin node_ok=0 node_why="" hypr=0 v major line
-  [ -z "${POLYCARP_REF:-}" ] || say "  ${dim}POLYCARP_REF is for the Mac. On Linux, Polycarp installs origin/main.${reset}"
-  # rustup's default spot, for a shell that hasn't picked it up yet.
-  [ -x "$HOME/.cargo/bin/cargo" ] && PATH="$HOME/.cargo/bin:$PATH"
-  line=$(fix_line "$OS_RELEASE" git git git)
-  command -v git >/dev/null || fail "Getting the source needs git. Install it${line:+ with $line}, then run this again."
-  line=$(fix_line "$OS_RELEASE" base-devel build-essential gcc)
-  command -v cc >/dev/null || fail "Building it needs a C compiler and linker. Install them${line:+ with $line}, then run this again."
-  command -v cargo >/dev/null || fail "Building it needs Rust. Install it from https://rustup.rs, then run this again."
-
-  # What is optional, said before the long part. polycarp update reads the same two things.
-  if command -v node >/dev/null && command -v npm >/dev/null; then
-    v=$(node --version 2>/dev/null </dev/null || true); major=${v#v}; major=${major%%.*}
-    case $major in ''|*[!0-9]*) major=0 ;; esac
-    if [ "$major" -ge "$NODE_MIN" ]; then node_ok=1
-    else node_why="Node ${v:-of an unknown version} is older than $NODE_MIN, which the browser helper needs"; fi
-  else node_why="Node and npm aren't installed"; fi
-  [ "$node_ok" = 1 ] || say "  ${dim}$node_why, so the browser helper and the extension are skipped.${reset}"
-  if [ -f "$HOME/.config/hypr/hyprland.lua" ]; then hypr=1
-  else say "  ${dim}No Hyprland here (no ~/.config/hypr/hyprland.lua), so the spaces daemon is skipped: it runs on Hyprland only, as on Omarchy.${reset}"; fi
-
-  # The checkout. One that is there must be this repo, the same rule polycarp update uses, since its code is built and run.
-  if [ -d "$SRC" ] && [ -n "$(ls -A "$SRC" 2>/dev/null)" ]; then
-    [ "$(git -C "$SRC" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$SRC" && pwd -P)" ] \
-      || fail "$SRC is there but isn't a git checkout. Move it away, or point POLYCARP_SOURCE at a checkout of $REPO, then run this again."
-    origin=$(git -C "$SRC" remote get-url origin 2>/dev/null || true)
-    is_polycarp_origin "$origin" \
-      || fail "$SRC has origin ${origin:-(none)}, which is not the Polycarp repo, so nothing was built. Point POLYCARP_SOURCE at a checkout of $REPO, then run this again."
-    step "Fetching the newest source" git -C "$SRC" fetch --quiet origin +refs/heads/main:refs/remotes/origin/main
-    # The command that starts the update is built from this tree, so the checkout this script made follows main. One you
-    # named stays as you left it: polycarp update builds origin/main in a clean copy either way.
-    if [ -z "${POLYCARP_SOURCE:-}" ] && ! git -C "$SRC" merge --ff-only --quiet refs/remotes/origin/main </dev/null >>"$LOG" 2>&1; then
-      say "  ${dim}$SRC has changes of its own, so it stays as it is. The update still installs origin/main.${reset}"
-    fi
-  elif [ -e "$SRC" ] && [ ! -d "$SRC" ]; then
-    fail "$SRC is a file. Move it away, or point POLYCARP_SOURCE at a checkout of $REPO, then run this again."
-  else
-    mkdir -p "$(dirname "$SRC")"
-    step "Downloading the source" git clone --quiet "$REPO" "$SRC"
-  fi
-  SRC=$(cd "$SRC" && pwd -P)
-
-  step "Building the polycarp command" cargo build --quiet --release --locked --manifest-path "$SRC/cli/Cargo.toml" --target-dir "$SRC/cli/target"
-  STEP_FAIL="The log says which part's build or install stopped. polycarp update builds every part before it installs any, so a failed build changed nothing; run this again once it's fixed." \
-    update_step "Building and installing every part (several minutes the first time)" \
-    in_home "$SRC/cli/target/release/polycarp" update --source "$SRC" --yes
-  HEADING="Polycarp is installed, but one step didn't finish."
-  step "Matching your system theme, if you're on Omarchy" "$BIN/polycarp" theme follow omarchy --if-fresh
-
-  say ""
-  # The update prints this last when it installed something. A gate that found every part current stops before it.
-  if grep -q '^polycarp update: done\.' "$LOG"; then say "  ${bold}Polycarp is installed.${reset}"; else say "  ${bold}Polycarp is up to date.${reset}"; fi
-  say ""
-  "$BIN/polycarp" version </dev/null 2>&1 | sed 's/^/  /' || true
-
-  # What is still yours to do, one line each.
-  local todo=() first
-  first=$(command -v polycarp || true)
-  case ":$PATH:" in
-    *":$BIN:"*) [ -z "$first" ] || [ "$first" -ef "$BIN/polycarp" ] \
-                  || todo+=("Your shell runs an older polycarp at $first. Remove it, or put $BIN first on your PATH.") ;;
-    *) todo+=("Add $BIN to your PATH, so your shell finds polycarp.") ;;
-  esac
-  if [ "$node_ok" = 1 ]; then
-    todo+=("If you haven't yet, load the extension: open your browser, go to chrome://extensions, turn on Developer mode, choose Load unpacked and pick $HOME/.local/share/polycarp/browser/source/dist-chrome. Then run polycarp browser setup, which registers the helper and checks it.")
-  else
-    line=$(fix_line "$OS_RELEASE" "nodejs npm" "nodejs npm" "nodejs npm")
-    case "$node_why:$line" in
-      *"older than"*) line="Install Node $NODE_MIN or later from https://nodejs.org/en/download" ;;
-      # Ubuntu 24.04's apt has Node 18, too old for the helper.
-      *apt*) line="Install Node and npm with $line (if that gives a Node older than $NODE_MIN, as on Ubuntu 24.04, get one from https://nodejs.org/en/download)" ;;
-      *) line="Install Node and npm${line:+ with $line}" ;;
-    esac
-    todo+=("$line, then run polycarp update to add the browser helper and the extension.")
-  fi
-  if [ "$hypr" = 1 ] && [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
-    todo+=("Log in to Hyprland. The spaces daemon starts with it.")
-  fi
-  say ""
-  say "  ${bold}Left for you:${reset}"
-  for line in "${todo[@]}"; do say "  - $line"; done
-  say ""
-  say "  ${dim}Change how it looks: polycarp theme list${reset}"
-  say "  ${dim}Update every part later: polycarp update${reset}"
-  say ""
-}
-
-# The oldest Node the browser helper runs on (NODE_MIN in cli/src/update.rs, engines in browser/cli/package.json).
-NODE_MIN=20
-
-# Runs a command from the home folder, where polycarp trusts the tools it finds on PATH.
-in_home() ( cd "$HOME" && exec "$@" )
-
-# Like step, for polycarp update: the line shows which of its steps is running, and all of its output goes to the log.
-update_step() {
-  local label=$1 start=$SECONDS; shift
-  printf '  %s…' "$label"
-  if "$@" </dev/null 2>&1 | show_progress "$label"; then
-    printf '\r  %s✓%s %s %s(%ss)%s\033[K\n' "$green" "$reset" "$label" "$dim" "$((SECONDS - start))" "$reset"
-  else printf '\r  ✗ %s\033[K\n' "$label"; fail "${STEP_FAIL:-That step did not finish.}"; fi
-}
-
-# Copies its input to the log. On a terminal, it also shows the latest "step N of M: what" line after the label.
-show_progress() {
-  local line shown cols
-  cols=$(tput cols 2>/dev/null || echo 80)
-  while IFS= read -r line; do
-    printf '%s\n' "$line" >>"$LOG"
-    [ -t 1 ] || continue
-    case $line in
-      "step "[0-9]*" of "[0-9]*": "*) shown="$1: ${line#step }"; printf '\r  %s…\033[K' "${shown:0:$((cols - 5))}" ;;
-    esac
-  done
-}
-
-# The address rule polycarp update uses (is_polycarp_origin in cli/src/update.rs): this repo on GitHub, over https or ssh.
-is_polycarp_origin() {
-  local u
-  u=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-  while [ "${u%/}" != "$u" ]; do u=${u%/}; done
-  u=${u%.git}
-  case $u in
-    https://github.com/baney75/polycarp|git@github.com:baney75/polycarp|ssh://git@github.com/baney75/polycarp) return 0 ;;
-  esac
-  return 1
-}
-
-# The command that installs a package on this Linux: fix_line <os-release file> <Arch package> <Debian package>
-# <Fedora package>. Prints nothing for a distribution it doesn't know. It reads ID and ID_LIKE, so Omarchy and Manjaro
-# count as Arch and Pop!_OS as Debian. It only prints: this script installs no system packages and never runs sudo.
-fix_line() {
-  local file=$1 word
-  for word in $(sed -n 's/^ID\(_LIKE\)\{0,1\}=//p' "$file" 2>/dev/null | tr -d "\"'" | tr '[:upper:]' '[:lower:]'); do
-    case $word in
-      arch) printf 'sudo pacman -S %s' "$2"; return 0 ;;
-      debian|ubuntu) printf 'sudo apt install %s' "$3"; return 0 ;;
-      fedora|rhel) printf 'sudo dnf install %s' "$4"; return 0 ;;
-    esac
-  done
-}
+# The one line a Linux run prints (LINUX_MOVED in cli/src/update.rs says the same).
+LINUX_MOVED="Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus"
 
 # Where an old copy can be. Test mode leaves out /Applications, which a temporary home doesn't hide.
 old_app_paths() {

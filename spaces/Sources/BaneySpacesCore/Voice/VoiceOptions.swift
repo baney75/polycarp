@@ -1,6 +1,6 @@
 import Foundation
 
-/// The choices Settings > Silas offers beyond the switches, worded as the Silas app words them (voice/src/settings.ts),
+/// The choices Settings > Silas offers beyond the switches, worded as the Silas app words them (baney75/silas, src/settings.ts),
 /// and the menu bar's Start dictation item. Plain data, tested without SwiftUI.
 public enum VoiceOptions {
     public struct Choice: Equatable, Sendable, Identifiable {
