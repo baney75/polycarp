@@ -34,6 +34,8 @@ struct HandsHost {
     /// A full scan now, every app asked again (`Spaces.refresh(full:)`): a window an app still starting couldn't show
     /// a moment ago is placed.
     var rescan: () -> Void = {}
+    /// The agent API's facts (`Spaces.agentFacts`): the model, one window-server read, displays and the look.
+    var facts: () -> AgentAPI.Facts? = { nil }
 }
 
 /// Runs one agent command: checks scope, calls the engine, returns evidence. Lives in the app process,
@@ -108,7 +110,7 @@ final class HandsRouter {
             case .failure(let e): return .failure(e)
             }
         }
-        if req.verb != "windows", req.verb != "workspaces", req.verb != "open", let problem = HandsEngine.shared.permissionProblem() { return .failure(problem) }
+        if req.verb != "windows", req.verb != "workspaces", req.verb != "query", req.verb != "open", let problem = HandsEngine.shared.permissionProblem() { return .failure(problem) }
         // A click by text: the element is picked from a read of the window now, then clicked by its ref like any click.
         if req.verb == "click", req.args["ref"] == nil, let text = req.string("text") {
             switch clickTarget(req, text: text) {
@@ -127,6 +129,7 @@ final class HandsRouter {
         switch req.verb {
         case "windows": return windows(session: req.session ?? "")
         case "workspaces": return workspaces(req)
+        case "query": return query(req)
         case "arrange": return arrange(req)
         case "move": return move(req)
         case "close": return close(req)
