@@ -52,13 +52,14 @@ pub fn dragged(kind: Kind, start: Rect, dx: i32, dy: i32) -> Rect {
 }
 
 /// A filled window `filled` dragged from `x`, `y` comes out at its normal size `w` by `h`, under the pointer at the
-/// same share of its width.
-pub fn restored(filled: Rect, w: i32, h: i32, x: i32, _y: i32) -> Rect {
+/// same share of its width and height, so the press stays on the same spot of the window.
+pub fn restored(filled: Rect, w: i32, h: i32, x: i32, y: i32) -> Rect {
     let share = |p: i32, a: i32, b: i32, n: i32| {
         p - ((p - a) as i64 * n as i64 / (b - a).max(1) as i64) as i32
     };
     let left = share(x, filled[0], filled[2], w);
-    [left, filled[1], left + w, filled[1] + h]
+    let top = share(y, filled[1], filled[3], h);
+    [left, top, left + w, top + h]
 }
 
 /// The snap a move would end in with the pointer at `x`, `y`, given every display's work area: its name and frame.

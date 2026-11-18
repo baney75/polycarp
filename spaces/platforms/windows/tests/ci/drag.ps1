@@ -7,8 +7,14 @@
 # and the snap preview showed just before the release exactly when a snap was due, at the snap's frame (2 px).
 # Fails unless 50 of 50 pass for each window.
 # Needs: a release build with the test-ops feature (baneyspaces.exe), and nuget.org for the pinned WebView2 package.
-# Usage (Windows PowerShell 5.1): drag.ps1 -Bin <target\release> -Out <evidence dir>
-param([Parameter(Mandatory = $true)][string]$Bin, [Parameter(Mandatory = $true)][string]$Out)
+# Usage (Windows PowerShell 5.1): drag.ps1 -Bin <target\release> -Out <evidence dir> [-Disposable]
+# It kills BaneySpaces and deletes its recovery record (state.json), so it runs only on a desktop nobody needs: a CI
+# runner (GITHUB_ACTIONS=true), or by hand with -Disposable.
+param([Parameter(Mandatory = $true)][string]$Bin, [Parameter(Mandatory = $true)][string]$Out, [switch]$Disposable)
+if ($env:GITHUB_ACTIONS -ne 'true' -and -not $Disposable) {
+  [Console]::Error.WriteLine('drag.ps1: refused. It kills BaneySpaces and deletes its recovery record. Run it only on a disposable desktop (a VM), with -Disposable.')
+  exit 2
+}
 $ErrorActionPreference = 'Continue'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 New-Item -ItemType Directory -Force $Out | Out-Null
