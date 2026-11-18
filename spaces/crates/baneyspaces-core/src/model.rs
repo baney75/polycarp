@@ -219,6 +219,8 @@ pub struct Model {
     monitors: BTreeMap<MonitorId, Monitor>,
     /// What each display showed last, so one that comes back shows it again.
     last_shown: BTreeMap<MonitorId, u8>,
+    /// R-M3: the workspace you were on when the last display went; the next display to arrive shows it.
+    waiting: Option<u8>,
     focused_monitor: Option<MonitorId>,
     windows: BTreeMap<WindowId, Window>,
     /// The last window in front on each workspace, so coming back lands where you left off.
@@ -461,10 +463,9 @@ impl Model {
         let slot = (0..).find(|s| !taken.contains(s)).unwrap_or(0);
         let first = self.monitors.is_empty();
         let current = if first {
-            self.last_shown
-                .get(&id)
-                .copied()
-                .filter(|n| *n != 0)
+            self.waiting
+                .take()
+                .or_else(|| self.last_shown.get(&id).copied().filter(|n| *n != 0))
                 .unwrap_or(1)
         } else {
             self.pick(&id)
@@ -492,6 +493,9 @@ impl Model {
         };
         if gone.current != 0 {
             self.last_shown.insert(id.to_string(), gone.current);
+        }
+        if self.monitors.is_empty() && gone.current != 0 {
+            self.waiting = Some(gone.current);
         }
         if self.focused_monitor.as_deref() == Some(id) {
             self.focused_monitor = self
@@ -1033,6 +1037,29 @@ mod tests {
             assert_ne!(a, b, "after switch {n}");
             assert!(m.shown_on(n).is_some());
         }
+    }
+
+    #[test]
+    fn a_display_seen_before_arriving_when_none_is_left_shows_what_you_were_on() {
+        // DISPLAY2 was here before and last showed 7; you are on DISPLAY1 on 1 when they swap.
+        let mut m = Model::new();
+        for e in [
+            json!({"do":"monitor_added","monitor":"DISPLAY1"}),
+            json!({"do":"monitor_added","monitor":"DISPLAY2"}),
+            json!({"do":"observe_focus_monitor","monitor":"DISPLAY2"}),
+            json!({"do":"switch","n":7}),
+            json!({"do":"monitor_removed","monitor":"DISPLAY2"}),
+            json!({"do":"open","window":"w1","pid":1,"app":"notepad"}),
+            json!({"do":"monitor_removed","monitor":"DISPLAY1"}),
+            json!({"do":"monitor_added","monitor":"DISPLAY2"}),
+        ] {
+            m.apply(ev(e)).unwrap();
+        }
+        assert_eq!(m.current("DISPLAY2"), Some(1), "not its old 7 with your windows out of sight");
+        assert_eq!(m.active(), Some("w1"));
+        // A display after it last showed 1, which is shown now, so it gets the first empty one (R-M2).
+        m.apply(ev(json!({"do":"monitor_added","monitor":"DISPLAY1"}))).unwrap();
+        assert_eq!((m.current("DISPLAY1"), m.current("DISPLAY2")), (Some(2), Some(1)));
     }
 
     #[test]

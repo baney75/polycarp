@@ -182,10 +182,9 @@ impl Core {
             return;
         }
         let known: Vec<String> = self.model.monitors().map(String::from).collect();
-        let you = self.model.focused_monitor().and_then(|f| self.model.current(f).map(|n| (f.to_string(), n)));
         // The poll's events go to the model first and are carried out once, so a swap never hides your windows
         // for the removal and shows them again for the switch that follows.
-        let events = displays::monitor_events(&known, &now, you.as_ref().map(|(f, n)| (f.as_str(), *n)));
+        let events = displays::monitor_events(&known, &now);
         if !events.is_empty() {
             let mut effects = vec![];
             for ev in events {

@@ -142,6 +142,14 @@ mod tests {
     }
 
     #[test]
+    fn r_m3_says_the_first_display_after_none_shows_what_you_were_on() {
+        let rules = std::fs::read_to_string(spec_dir().join("workspaces.md")).unwrap();
+        let flat = rules.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat.contains("With no display left the windows wait. The first display to arrive after that, new or seen before, shows the workspace you were on; any display after it shows what it showed last, if that workspace isn't already shown."));
+        assert!(!flat.contains("a display that comes back shows what it showed"), "the old R-M3 clause hid your windows on a swap");
+    }
+
+    #[test]
     fn the_runner_fails_on_a_wrong_expectation() {
         let case = json!({"name":"bad","steps":[{"do":"monitor_added","monitor":"A"},{"do":"switch","n":2,"expect":{"monitors":{"A":{"current":3}}}}]});
         assert!(run_case(&case).is_err());
