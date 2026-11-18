@@ -2163,3 +2163,82 @@ fn a_slow_browser_is_no_answer_in_time_and_never_fails_the_update() {
     ));
     assert_eq!(code(&run(&["version", "--check"])), 1);
 }
+
+/// Review of #529 r2, first-F1: `update --channel stable` on a source install whose origin/stable predates release
+/// channels stops right after the fetch, before anything is built. A binary built from that stable would not read the
+/// saved channel, so the next plain update would build origin/main and the one after stable again.
+#[cfg(unix)]
+#[test]
+fn a_channel_whose_ref_predates_channels_is_refused_before_any_build() {
+    let sb = Sandbox::new();
+    let git = |dir: &Path, args: &[&str]| {
+        let o = Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "init.defaultBranch=main",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            o.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    };
+    let origin = sb.dir("origin");
+    fs::create_dir_all(origin.join("cli/src")).unwrap();
+    git(&origin, &["init", "-q"]);
+    fs::write(origin.join("cli/src/update.rs"), "fn plan() {}\n").unwrap();
+    git(&origin, &["add", "-A"]);
+    git(&origin, &["commit", "-q", "-m", "before channels"]);
+    git(&origin, &["branch", "stable"]);
+    let checkout = sb.dir("checkout");
+    git(
+        &sb.root,
+        &[
+            "clone",
+            "-q",
+            origin.to_str().unwrap(),
+            checkout.to_str().unwrap(),
+        ],
+    );
+    // The update takes only a checkout of the Polycarp repo: this git answers its origin as that and runs the real
+    // git for everything else, so the fetch reads the local origin above.
+    stub(
+        &sb.dir("bin"),
+        "git",
+        "if [ \"$3\" = remote ] && [ \"$4\" = get-url ]; then echo https://github.com/baney75/polycarp; exit 0; fi\nexec /usr/bin/git \"$@\"\n",
+    );
+    let run = |extra: &[&str]| {
+        let mut args = vec![
+            "update",
+            "--source",
+            checkout.to_str().unwrap(),
+            "--channel",
+            "stable",
+        ];
+        args.extend_from_slice(extra);
+        let path = format!("{}:/usr/bin:/bin", sb.dir("bin").display());
+        sb.cmd(&args).env("PATH", path).output().unwrap()
+    };
+    let plan = out(&run(&["--dry-run"]));
+    assert!(
+        plan.contains("Stop unless origin/stable has release channels"),
+        "{plan}"
+    );
+    let o = run(&["--yes"]);
+    let text = out(&o);
+    assert_eq!(code(&o), 1, "{text}\n{}", err(&o));
+    assert!(text.contains("step 2 of"), "{text}");
+    assert!(
+        text.contains("failed (exit 1): Stop unless origin/stable has release channels"),
+        "{text}"
+    );
+    assert!(!text.contains("step 3 of"), "nothing after it ran: {text}");
+}
