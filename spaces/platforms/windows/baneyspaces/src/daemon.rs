@@ -270,8 +270,12 @@ impl Core {
         });
         if let Some(w) = focus {
             if let Some(i) = self.info.get(&w) {
-                if !self.hidden.contains(i.hwnd) && !winapi::set_foreground(to_hwnd(i.hwnd)) {
-                    self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
+                if !self.hidden.contains(i.hwnd) {
+                    // Noted first: Windows may grant it late, even after reporting it refused (cause::ASKED_MS).
+                    cause::note_asked(i.hwnd, winapi::tick_ms());
+                    if !winapi::set_foreground(to_hwnd(i.hwnd)) {
+                        self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
+                    }
                 }
             }
         }
@@ -288,6 +292,9 @@ impl Core {
             return;
         }
         let target = self.model.active().and_then(|w| self.info.get(w)).filter(|i| !self.hidden.contains(i.hwnd)).map(|i| to_hwnd(i.hwnd));
+        if let Some(t) = target {
+            cause::note_asked(t as isize as i64, winapi::tick_ms());
+        }
         if !winapi::set_foreground(target.unwrap_or_else(winapi::shell_window)) {
             self.log("focus is on a hidden window and Windows refused to move it");
         }
@@ -793,7 +800,7 @@ impl Core {
             !winapi::exists(h) || !winapi::is_visible(h)
         });
         let since_close = self.closed_at.map(|t| winapi::tick_ms().wrapping_sub(t));
-        let cause = cause::foreground_by(winapi::idle_ms(), since_close, active_gone);
+        let cause = cause::foreground_by(winapi::idle_ms(), since_close, active_gone, cause::since_asked(hwnd, winapi::tick_ms()));
         self.log(&format!("foreground {id} cause {cause:?}"));
         let _ = self.apply(Event::Activate { window: Some(id), cause });
     }
@@ -2009,8 +2016,6 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
                 lock(&shared).poll();
             }
             Ok(Msg::Chord { args, at }) => {
-                // First, tell Windows the Win key was used so releasing it does not open Start.
-                hook::mask_start_menu();
                 // A binding is a CLI command line (spec/keymap.md), checked when the keys were loaded.
                 let env = match crate::request(args.clone()) {
                     Ok(req) => handle(&shared, &req),
