@@ -10,3 +10,4 @@ Sources/BaneySpaces/WorkspaceDock.swift | NSColor.white | agent status badge: th
 Sources/BaneySpaces/WorkspaceDock.swift | a.duration = 1 | the agent spinner's turn period, a loop and not a transition
 Sources/BaneySpaces/Launcher.swift | Color.orange | launcher builder's area: a failed row should take the `urgent` role, left for that lane
 Sources/BaneySpacesCore/Voice/SilasMarkImage.swift | NSColor.black | a template image mask: macOS tints it, black only marks the shape
+Sources/BaneySpaces/SwatchCheck.swift | RGB(r: 1, g: 1, b: 1) | render check only (scripts/swatch-check.sh): a pixel it cannot read counts as white, the worst case for the dark-mode swatch check, never drawn in the app

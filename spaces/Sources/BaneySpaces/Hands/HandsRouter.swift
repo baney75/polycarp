@@ -38,6 +38,14 @@ struct HandsHost {
     var rescan: () -> Void = {}
     /// The agent API's facts (`Spaces.agentFacts`): the model, one window-server read, displays and the look.
     var facts: () -> AgentAPI.Facts? = { nil }
+    /// Donovan's "Agents may change what you see" (`ViewControlSetting`): never stored, off at every launch.
+    var viewControl: () -> Bool = { false }
+    /// Shows workspace n on a display (the focused one when nil): `Spaces.use(display:)`, then `switchTo`.
+    var switchTo: (Int, String?) -> Void = { _, _ in }
+    /// Goes to workspace n and brings window id forward (`Spaces.focus(_:on:)`).
+    var focus: (UInt32, Int) -> Void = { _, _ in }
+    /// Sets one window's frame wherever it is (`Spaces.placeFrame`); how it was applied.
+    var setFrame: (UInt32, CGRect) -> String = { _, _ in "skipped" }
 }
 
 /// Runs one agent command: checks scope, calls the engine, returns evidence. Lives in the app process,
@@ -133,7 +141,10 @@ final class HandsRouter {
         case "workspaces": return workspaces(req)
         case "query": return query(req)
         case "arrange": return arrange(req)
-        case "move": return move(req)
+        case "move": return moveCommand(req)
+        case "switch": return switchWorkspace(req)
+        case "focus": return focusWindow(req)
+        case "frame": return frameWindow(req)
         case "close": return close(req)
         case "snapshot": return snapshot(req)
         case "find": return find(req)

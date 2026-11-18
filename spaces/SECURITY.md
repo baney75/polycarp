@@ -1,10 +1,10 @@
 # Security
 
 Report a vulnerability privately through
-[GitHub security advisories](https://github.com/baney75/baneyspaces/security/advisories/new),
+[GitHub security advisories](https://github.com/baney75/polycarp/security/advisories/new),
 not a public issue.
 
-## What BaneySpaces can do
+## What Polycarp can do
 
 - **Accessibility.** Needed to list, hide, show and move other apps' windows, and to watch the
   Mission Control key and ⌃↑ so the overview can open in their place. It checks each key
@@ -13,13 +13,13 @@ not a public issue.
   switching shortcuts, only when you click it.
 - **Automation (Apple Events).** The session engine reads Ghostty's, Terminal's, iTerm2's and Chromium
   browsers' windows and tabs through AppleScript, and asks macOS for permission once per app.
-  It types into a terminal only when you or an agent run `baneyspaces send`.
-- **A local socket.** `baneyspaces.sock` in `~/Library/Application Support/BaneySpaces` takes commands
-  from the `baneyspaces` tool and agent hooks. Any program running as you can use it, the same
+  It types into a terminal only when you or an agent run `polycarp-spaces send`.
+- **A local socket.** `polycarp.sock` in `~/Library/Application Support/Polycarp` takes commands
+  from the `polycarp-spaces` tool and agent hooks. Any program running as you can use it, the same
   as any program running as you can already script your apps. Other users can't.
 - **Network.** No analytics and no account. The only request it makes on its own is the daily
   update check, which reads GitHub's public release list and can be turned off. Nothing listens
-  for connections unless you turn it on: `baneyspaces remote on`
+  for connections unless you turn it on: `polycarp-spaces remote on`
   listens on your Tailscale address only (100.64.0.0/10 on a tunnel interface), needs a 256-bit
   token stored with mode 0600, and allows only looking (ping, list, agent status) and giving the
   agent workspace work (agent open, agent run). A remote caller can't focus, type, move windows
@@ -33,7 +33,7 @@ not a public issue.
   from behind). In every mode agents may read a window of an app you are using, and an action on it waits
   until the app has been out of the front for 5 seconds (up to the action's `wait`, 20 s by default); only
   accessibility actions on a background window of that app on the agent workspace, which take no keyboard focus
-  and post no events, go ahead without waiting. Only a real click in BaneySpaces widens it;
+  and post no events, go ahead without waiting. Only a real click in Polycarp widens it;
   the socket can read it but never change it, and `agent open` from another machine never gets
   more than Default. `agent run` from another machine already runs any command as you, so the
   mode doesn't change what it can do.
@@ -47,9 +47,9 @@ not a public issue.
   switch, create, rename or delete workspaces. A connector may answer a dialog under exactly these rules, held to Default:
   only when the dialog's app has a window on the agent workspace or one you lent, never through Full Access. It gets no
   arranging, moving or closing, and reads the workspace list only.
-- **Hooks.** `baneyspaces hooks install` adds entries to `~/.claude/settings.json` and a file
+- **Hooks.** `polycarp-spaces hooks install` adds entries to `~/.claude/settings.json` and a file
   in `~/.grok/hooks`. It backs up the settings file once and removes only its own entries.
-- Settings and window positions stay in `~/Library/Application Support/BaneySpaces` and its
+- Settings and window positions stay in `~/Library/Application Support/Polycarp` and its
   preferences.
 - **Signing.** The installer builds the app on your Mac and signs it with a local certificate
   kept in its own keychain, never the login keychain. It is not trusted for anything else.

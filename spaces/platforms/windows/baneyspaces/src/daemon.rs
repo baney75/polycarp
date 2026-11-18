@@ -85,7 +85,14 @@ pub struct Core {
     pub tx: Sender<Msg>,
     /// When the action log was last pruned (`Paths::append_action`).
     pub last_prune: std::cell::Cell<u64>,
+    /// Where the shell's feed is sent (`feed.rs`); `None` sends it nowhere. A test's own, never shared.
+    pub feed: Option<FeedTx>,
 }
+
+/// A subscriber's pipe, as the feed holds it.
+pub type Pipe = Box<dyn Write + Send>;
+/// Hands a message to the shell's feed. The daemon's never blocks (an unbounded channel).
+pub type FeedTx = Arc<dyn Fn(crate::feed::FeedMsg<Pipe>) + Send + Sync>;
 
 pub type Shared = Arc<Mutex<Core>>;
 
@@ -143,8 +150,6 @@ static FINISHED: AtomicBool = AtomicBool::new(false);
 static CTRL_TX: OnceLock<Sender<Msg>> = OnceLock::new();
 static SHARED: OnceLock<Shared> = OnceLock::new();
 static PATHS: OnceLock<Paths> = OnceLock::new();
-/// The shell's live feed (`feed.rs`): started with the daemon, fed after every change.
-static FEED: OnceLock<std::sync::mpsc::Sender<crate::feed::FeedMsg<std::fs::File>>> = OnceLock::new();
 
 /// What a request that wanted to hide windows says when it could not save where they were.
 fn save_error(why: &str) -> Envelope {
@@ -531,8 +536,8 @@ impl Core {
 
     /// Sends the state to the shell's feed; the feed drops it when nothing it shows changed. `Locked` calls it.
     fn publish(&self) {
-        if let Some(tx) = FEED.get() {
-            let _ = tx.send(crate::feed::FeedMsg::Publish(self.shell_line()));
+        if let Some(feed) = &self.feed {
+            feed(crate::feed::FeedMsg::Publish(self.shell_line()));
         }
     }
 
@@ -1402,6 +1407,23 @@ mod pipe {
     }
 }
 
+/// `subscribe`: hands the pipe to the shell's feed, which writes to it from now on. Nothing is written to the pipe
+/// with the core held: a client that subscribes and never reads must not stall the daemon.
+fn subscribe(shared: &Shared, peer: u32, mut pipe: Pipe) {
+    let c = lock(shared);
+    if !peer_is_agent(&c, peer) {
+        // Handed over with the core held, so no change can publish between the state read here and the feed taking
+        // it: the new shell never starts on a state older than the feed's last. The feed's channel never blocks.
+        if let Some(feed) = &c.feed {
+            feed(crate::feed::FeedMsg::Greet(pipe, Envelope::ok(json!({ "subscribed": true })).to_json(), c.shell_line()));
+        }
+        return;
+    }
+    drop(c);
+    let env = Envelope::err("not_in_scope", "subscribe is for your shell, not an agent: it was refused", Retry::Never, "Agents read `state` instead.");
+    let _ = writeln!(pipe, "{}", env.to_json());
+}
+
 /// One request, one answer. Anything that is not a JSON object is refused; the peer is what the pipe says.
 fn serve_conn(shared: Shared, f: std::fs::File) {
     let mut line = String::new();
@@ -1418,21 +1440,7 @@ fn serve_conn(shared: Shared, f: std::fs::File) {
     };
     // `subscribe`: the shell's feed. This connection stays open and the feed thread writes to it from now on.
     if serde_json::from_str::<Value>(&line).is_ok_and(|v| v["op"] == "subscribe") {
-        let c = lock(&shared);
-        let state = (!peer_is_agent(&c, peer)).then(|| c.shell_line());
-        // Nothing is written to the pipe with the core held: a client that subscribes and never reads must not
-        // stall the daemon. The answer and the state go out on the subscriber's own thread (`feed.rs`).
-        drop(c);
-        let mut f = f;
-        let Some(state) = state else {
-            let env = Envelope::err("not_in_scope", "subscribe is for your shell, not an agent: it was refused", Retry::Never, "Agents read `state` instead.");
-            let _ = writeln!(f, "{}", env.to_json());
-            return;
-        };
-        if let Some(tx) = FEED.get() {
-            let _ = tx.send(crate::feed::FeedMsg::Greet(f, Envelope::ok(json!({ "subscribed": true })).to_json(), state));
-        }
-        return;
+        return subscribe(&shared, peer, Box::new(f));
     }
     let env = match serde_json::from_str::<Value>(&line) {
         Ok(Value::Object(mut req)) => {
@@ -1642,6 +1650,12 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         settings: settings::parse(&paths.read("settings.json").unwrap_or_default()),
         tx: tx.clone(),
         last_prune: std::cell::Cell::new(0),
+        feed: Some({
+            let tx = crate::feed::spawn::<Pipe>();
+            Arc::new(move |m| {
+                let _ = tx.send(m);
+            })
+        }),
     };
     let shared: Shared = Arc::new(Mutex::new(core));
     let _ = SHARED.set(shared.clone());
@@ -1672,7 +1686,6 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         }));
     }
     let _ = CTRL_TX.set(tx.clone());
-    let _ = FEED.set(crate::feed::spawn());
     unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(ctrl_handler), 1) };
     {
         let mut c = lock(&shared);
@@ -1770,14 +1783,15 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
 #[cfg(test)]
 mod feed_tests {
     use super::*;
-    use crate::feed::FeedMsg;
+    use crate::feed::{Feed, FeedMsg};
     use baneyspaces_core::shell::ShellState;
+    use std::sync::Weak;
     use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow};
 
-    type Feed = Receiver<FeedMsg<std::fs::File>>;
+    type Rx = Receiver<FeedMsg<Pipe>>;
 
     /// The next state the feed is sent, within 2 s.
-    fn next(rx: &Feed) -> Option<ShellState> {
+    fn next(rx: &Rx) -> Option<ShellState> {
         match rx.recv_timeout(Duration::from_secs(2)) {
             Ok(FeedMsg::Publish(l)) => ShellState::parse_line(&l),
             _ => None,
@@ -1785,7 +1799,7 @@ mod feed_tests {
     }
 
     /// The last state the feed was sent so far.
-    fn last(rx: &Feed) -> Option<ShellState> {
+    fn last(rx: &Rx) -> Option<ShellState> {
         let mut state = None;
         while let Ok(m) = rx.try_recv() {
             if let FeedMsg::Publish(l) = m {
@@ -1795,22 +1809,13 @@ mod feed_tests {
         state
     }
 
-    /// first-F1: a change made without a publish (the poll re-reading a title) never reached the feed. second-S1: a
-    /// switch refused because `state.json` could not be saved still sent the feed the workspace it never reached.
-    #[test]
-    fn every_change_reaches_the_feed_and_a_refused_switch_shows_where_you_are() {
-        let (feed_tx, rx) = channel();
-        assert!(FEED.set(feed_tx).is_ok(), "the feed is this test's alone");
-        let dir = std::env::temp_dir().join(format!("baneyspaces-feed-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        // A real window, never shown, so the switch has a window of yours to record before hiding it.
-        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
-        let h = unsafe { CreateWindowExW(0, class.as_ptr(), class.as_ptr(), 0, 0, 0, 100, 100, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()) };
-        assert!(!h.is_null(), "a test window");
-        let (tx, _keep) = channel();
+    /// A core with one window of yours, `w-1` titled "one" on workspace 1, sending its feed to `feed`.
+    fn core_with(dir: &std::path::Path, hwnd: i64, feed: Option<FeedTx>) -> Shared {
+        let (tx, rx) = channel();
+        std::mem::forget(rx);
         let core = Core {
             model: Model::new(),
-            paths: Paths { state: dir.clone() },
+            paths: Paths { state: dir.to_path_buf() },
             hidden: HiddenSet::default(),
             info: HashMap::new(),
             job: None,
@@ -1825,14 +1830,130 @@ mod feed_tests {
             settings: serde_json::Map::new(),
             tx,
             last_prune: std::cell::Cell::new(0),
+            feed,
         };
         let shared: Shared = Arc::new(Mutex::new(core));
         {
             let mut c = lock(&shared);
             c.model.apply(Event::MonitorAdded { monitor: "m".into() }).unwrap();
             c.model.apply(Event::Open { window: "w-1".into(), pid: 4242, start: 0, app: "Test".into(), monitor: Some("m".into()), workspace: Some(1) }).unwrap();
-            c.info.insert("w-1".into(), WinInfo { hwnd: id_of(h), pid: 4242, start: 0, title: "one".into(), app: "Test".into() });
+            c.info.insert("w-1".into(), WinInfo { hwnd, pid: 4242, start: 0, title: "one".into(), app: "Test".into() });
         }
+        shared
+    }
+
+    fn retitle(c: &mut Core) {
+        c.info.get_mut("w-1").unwrap().title = "two".into();
+    }
+
+    /// A test shell's pipe: what it heard.
+    #[derive(Clone, Default)]
+    struct Heard(Arc<Mutex<String>>);
+    impl Write for Heard {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().push_str(&String::from_utf8_lossy(buf));
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Heard {
+        /// The title the shell shows within 2 s, once it shows `want`.
+        fn shows(&self, want: &str) -> String {
+            let t = Instant::now();
+            loop {
+                let text = self.0.lock().unwrap().clone();
+                let title = text.lines().rev().find_map(ShellState::parse_line).and_then(|s| s.windows.first().map(|w| w.title.clone())).unwrap_or_default();
+                if title == want || t.elapsed() > Duration::from_secs(2) {
+                    return title;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+
+    /// A shell that subscribes and never reads: every write hangs.
+    struct Hangs;
+    impl Write for Hangs {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            loop {
+                std::thread::sleep(Duration::from_secs(3600));
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A feed run in the test, on the caller's thread.
+    fn feed_into(feed: &Arc<Mutex<Feed>>) -> FeedTx {
+        let feed = feed.clone();
+        Arc::new(move |m| feed.lock().unwrap().handle(m))
+    }
+
+    /// first-F1 (review of #481): the greeting was handed to the feed after the core was let go. A change landing in
+    /// between published the new state, then the greeting set the feed back to the old one, and the new shell showed
+    /// it until something else changed.
+    #[test]
+    fn a_change_between_subscribe_and_greeting_never_leaves_the_new_shell_on_the_old_state() {
+        let feed = Arc::new(Mutex::new(Feed::new()));
+        let me: Arc<OnceLock<Weak<Mutex<Core>>>> = Arc::default();
+        let changed = Arc::new(AtomicBool::new(false));
+        let tx: FeedTx = {
+            let (into, me, changed) = (feed_into(&feed), me.clone(), changed.clone());
+            Arc::new(move |m| {
+                // The change lands as the greeting is handed over, if the core is free then.
+                if matches!(m, FeedMsg::Greet(..)) {
+                    if let Some(core) = me.get().and_then(Weak::upgrade) {
+                        if let Ok(mut c) = core.try_lock() {
+                            retitle(&mut c);
+                            c.publish();
+                            changed.store(true, Ordering::SeqCst);
+                        }
+                    }
+                }
+                into(m)
+            })
+        };
+        let shared = core_with(&std::env::temp_dir(), 1, Some(tx));
+        let _ = me.set(Arc::downgrade(&shared));
+        let shell = Heard::default();
+        subscribe(&shared, 0, Box::new(shell.clone()));
+        if !changed.load(Ordering::SeqCst) {
+            retitle(&mut lock(&shared));
+        }
+        assert_eq!(shell.shows("two"), "two", "the new shell is left on the state from before the change");
+    }
+
+    /// first-F3 of #431 as behavior (review of #481): a shell that subscribes and never reads holds up neither the
+    /// subscribe nor another thread that wants the core.
+    #[test]
+    fn a_shell_that_never_reads_holds_up_nothing() {
+        let shared = core_with(&std::env::temp_dir(), 1, Some(feed_into(&Arc::new(Mutex::new(Feed::new())))));
+        let (done_tx, done) = channel();
+        let s = shared.clone();
+        std::thread::spawn(move || {
+            subscribe(&s, 0, Box::new(Hangs));
+            retitle(&mut lock(&s));
+            let _ = done_tx.send(());
+        });
+        assert!(done.recv_timeout(Duration::from_secs(2)).is_ok(), "subscribe, or the core after it, was held up by a shell that never reads");
+    }
+
+    /// The previous round's first-F1 and second-S1: a change made without a publish (the poll re-reading a title)
+    /// never reached the feed, and a switch refused because `state.json` could not be saved still sent the feed the
+    /// workspace it never reached.
+    #[test]
+    fn every_change_reaches_the_feed_and_a_refused_switch_shows_where_you_are() {
+        let (feed_tx, rx) = channel();
+        let dir = std::env::temp_dir().join(format!("baneyspaces-feed-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A real window, never shown, so the switch has a window of yours to record before hiding it.
+        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+        let h = unsafe { CreateWindowExW(0, class.as_ptr(), class.as_ptr(), 0, 0, 0, 100, 100, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()) };
+        assert!(!h.is_null(), "a test window");
+        let shared = core_with(&dir, id_of(h), Some(Arc::new(move |m| drop(feed_tx.send(m)))));
         let s = next(&rx).expect("the feed heard the window open");
         assert_eq!(s.windows.first().map(|w| w.title.as_str()), Some("one"));
         lock(&shared).info.get_mut("w-1").unwrap().title = "two".into();

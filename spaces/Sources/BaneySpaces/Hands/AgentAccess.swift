@@ -80,3 +80,29 @@ final class AgentAccess {
         return true
     }
 }
+
+/// Donovan's "Agents may change what you see" (`ViewControl`). Never stored: off at every launch, and on only after Donovan
+/// confirms Polycarp's sheet with a real click or key (`AccessConsent.askViewControl`, checked as a lend's is). Nothing an
+/// agent writes to disk turns it on (review F2). Polycarp's own windows are never an agent's, so no agent clicks it.
+final class ViewControlSetting {
+    static let shared = ViewControlSetting()
+    private let state = ViewControlState(launchingWith: .standard)
+
+    private init() {
+        if state.forgotSaved {
+            Trace.log("agent view control at launch: off (a saved value was removed; the switch is never stored)")
+        }
+    }
+
+    var enabled: Bool { state.enabled }
+
+    /// Settings > Agents only, on the main thread. Turning it on asks first; turning it off never does.
+    func set(_ new: Bool) {
+        let was = state.enabled
+        guard state.set(new, confirm: AccessConsent.askViewControl) else {
+            Trace.log("agent view control: stays off, not confirmed on the sheet")
+            return
+        }
+        if was != new { Trace.log("agent view control: \(new ? "on until Polycarp quits" : "off")") }
+    }
+}
