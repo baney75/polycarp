@@ -10,9 +10,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 pub const CLASS: &str = "BaneySpacesUnitTest";
 
-/// One turn at the runner's desktop. The hook test types real Win keys, which the shell answers (it can take a
-/// cloak off a window), so it never runs while a daemon test hides windows. Every test that types keys or reads
-/// back what the daemon hid holds this.
+/// One turn at the runner's desktop: every test that types keys, cloaks or uncloaks a window through the shell, or
+/// reads back what the daemon hid holds this, so no test's shell call lands while another reads its own back.
 pub fn desktop_turn() -> MutexGuard<'static, ()> {
     static DESKTOP: Mutex<()> = Mutex::new(());
     DESKTOP.lock().unwrap_or_else(|p| p.into_inner())
