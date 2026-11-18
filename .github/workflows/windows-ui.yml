@@ -1,0 +1,65 @@
+name: Windows UI
+# The Windows UI stack spike on a real Windows desktop: GitHub's windows-latest runner has an interactive session, so
+# windows draw, keys can be sent with SendInput and the screen can be read back. It runs only for the spike's own files.
+on:
+  pull_request:
+    paths: ['spaces/platforms/windows/spike/**', '.github/workflows/windows-ui.yml']
+  push:
+    branches: [main]
+    paths: ['spaces/platforms/windows/spike/**', '.github/workflows/windows-ui.yml']
+  workflow_dispatch:
+concurrency:
+  group: windows-ui-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  stack-spike:
+    # The UI stack decision: the same launcher-sized frame drawn natively (Direct2D through DirectComposition) and in
+    # WebView2, each timed from the hotkey to the frame read back from the screen, with cold start over five launches,
+    # idle CPU, private memory and process count of its process tree.
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: spaces/platforms/windows/spike
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: spaces/platforms/windows/spike, key: windows-ui-spike }
+      - name: Build both candidates
+        run: cargo build --release
+      - name: Binary sizes
+        shell: pwsh
+        run: Get-Item target/release/spike-*.exe | ForEach-Object { "{0} {1:N0} KB" -f $_.Name, ($_.Length / 1KB) }
+      - name: A draw that fails must fail the measurement
+        # SPIKE_FAIL_DRAW makes every native draw fail before Present. measure.ps1 must refuse that run: the candidate
+        # logs an error instead of painted, and nothing reaches the screen.
+        shell: powershell
+        run: |
+          $env:SPIKE_FAIL_DRAW = '1'
+          try { & ./measure.ps1 -Exe target/release/spike-native.exe -Name native-faildraw -Out results -Opens 3 -IdleSeconds 1 -Launches 1; $passed = $true } catch { $passed = $false; Write-Host "measure.ps1: $_" }
+          Write-Host '--- the candidate log:'; Get-Content results/native-faildraw.log -ErrorAction SilentlyContinue | Select-Object -First 12
+          if ($passed) { Write-Host 'FAIL: measure.ps1 passed a run in which every draw failed'; exit 1 }
+          Write-Host 'ok: measure.ps1 refused the run'
+          exit 0
+      - name: Measure native (Direct2D and DirectComposition)
+        shell: powershell
+        run: ./measure.ps1 -Exe target/release/spike-native.exe -Name native -Out results
+      - name: Measure WebView2 (wry)
+        shell: powershell
+        run: ./measure.ps1 -Exe target/release/spike-webview.exe -Name webview -Out results
+      - name: Control, no screen probe (native, then WebView2)
+        # The same opens timed only by each candidate's own painted line, to show what reading the screen back costs.
+        shell: powershell
+        run: |
+          ./measure.ps1 -Exe target/release/spike-native.exe -Name native-noprobe -Out results -NoProbe -Launches 1 -IdleSeconds 5
+          ./measure.ps1 -Exe target/release/spike-webview.exe -Name webview-noprobe -Out results -NoProbe -Launches 1 -IdleSeconds 5
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: stack-spike
+          path: spaces/platforms/windows/spike/results

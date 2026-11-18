@@ -1,0 +1,11 @@
+# The UI stack spike: two candidates for the Windows shell, measured by measure.ps1 in CI (job stack-spike in windows-ui.yml).
+# Its own workspace, so its dependencies stay out of spaces/Cargo.lock.
+[workspace]
+resolver = "2"
+members = ["native", "webview"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
