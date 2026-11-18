@@ -6,3 +6,6 @@ dist/
 dist-chrome/
 .DS_Store
 core/*/target/
+# Sibling clones an older release.sh made at the root; ignored so release.sh still sees a clean tree.
+/mini-lit/
+/pi-mono/

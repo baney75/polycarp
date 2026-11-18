@@ -5,9 +5,9 @@
 //!   launcher can exec a working tree outside the app, so they keep serving a claude.ai connector after the update.
 //!   Each is retired only once Tychicus runs its counterpart (`com.tychicus.serve` for serve and cloudflared,
 //!   `com.tychicus.hub`, `com.tychicus.link`) and `~/.config/tychicus/remote.json` exists. Until then it is left running
-//!   and one line says how to move it, unless its program was inside Polycarp.app or a folder this move removed: that
-//!   program is gone, so the job could only be restarted forever by launchd. It is retired then, and one line says the
-//!   connector is off until Tychicus runs it.
+//!   and one line says how to move it, unless the Polycarp program it runs (itself, or what its link or launcher leads
+//!   to) is no longer on disk, as the helper inside a replaced Polycarp.app is not: launchd could only restart it
+//!   forever. It is retired then, and one line says the connector is off until Tychicus runs it.
 //! - Any other of the helper's labels (`com.polycarp.browser`, `com.tabkyra.*`) is retired only when its program is
 //!   inside Polycarp.app or a folder this move removed, since that program is gone and launchd would restart it forever.
 //!
@@ -131,13 +131,50 @@ fn label_of(plist: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// A connector job whose gate is unmet: retired when its program was Polycarp's (now gone), else left waiting.
+/// A connector job whose gate is unmet: retired when the Polycarp program it runs is gone from disk, else left
+/// waiting. A helper still in `~/.local/share/polycarp/browser` serves the connector, so that job waits.
 fn strand(home: &Path, uid: &str, launchctl: &Path, label: &str, plist: &Path) -> Verdict {
     match fs::read_to_string(plist).ok().and_then(|t| program_of(&t)) {
-        Some(program) if polycarps(home, &program) => stop(uid, launchctl, label, plist)
+        Some(program) if gone(home, &program) => stop(uid, launchctl, label, plist)
             .map_or_else(|f| f, |()| Verdict::Stranded { program }),
         _ => Verdict::Waiting,
     }
+}
+
+/// The Polycarp places `program` runs from: itself, the end of its link chain, and the quoted paths on a launcher's
+/// exec lines (a launcher reached through links too), kept only where `inside` says Polycarp put them.
+fn polycarp_targets(home: &Path, program: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut at = PathBuf::from(program);
+    for _ in 0..8 {
+        if inside(home, &at.to_string_lossy()) {
+            out.push(at.clone());
+        }
+        match fs::read_link(&at) {
+            Ok(next) => at = at.parent().map_or(next.clone(), |d| d.join(&next)),
+            Err(_) => break,
+        }
+    }
+    if let Ok(script) = fs::read_to_string(&at) {
+        let words = script
+            .lines()
+            .filter(|l| l.trim_start().starts_with("exec "))
+            .flat_map(|l| {
+                l.split('"')
+                    .skip(1)
+                    .step_by(2)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            });
+        out.extend(words.filter(|w| inside(home, w)).map(PathBuf::from));
+    }
+    out
+}
+
+/// Polycarp's program behind `program` is no longer on disk, so launchd could only restart it forever.
+fn gone(home: &Path, program: &str) -> bool {
+    let targets = polycarp_targets(home, program);
+    !targets.is_empty() && targets.iter().all(|t| !t.exists())
 }
 
 fn judge(home: &Path, uid: &str, launchctl: &Path, label: &str, plist: &Path) -> Verdict {
@@ -149,6 +186,11 @@ fn judge(home: &Path, uid: &str, launchctl: &Path, label: &str, plist: &Path) ->
     if !polycarps(home, &program) {
         return Verdict::Kept {
             why: format!("it runs {program}, which Polycarp did not install"),
+        };
+    }
+    if !gone(home, &program) {
+        return Verdict::Kept {
+            why: format!("it runs {program}, which is still on disk"),
         };
     }
     stop(uid, launchctl, label, plist).map_or_else(|f| f, |()| Verdict::Retired { program })
@@ -290,10 +332,11 @@ pub fn command(home: &Path) -> i32 {
             }
         }
     }
-    if waiting {
-        println!("{CONNECTOR_STAYS}");
-    } else if off {
+    // A connector with any job retired here is off, even while another of its jobs waits.
+    if off {
         println!("{CONNECTOR_OFF}");
+    } else if waiting {
+        println!("{CONNECTOR_STAYS}");
     }
     i32::from(failed)
 }
@@ -398,6 +441,32 @@ mod tests {
             !calls.contains("bootout gui/501/com.polycarp.cloudflared"),
             "{calls}"
         );
+
+        // A helper still in ~/.local/share/polycarp/browser serves the connector: that job waits, plist and all.
+        let live = home.join(".local/share/polycarp/browser/source/cli/dist/index.js");
+        fs::create_dir_all(live.parent().unwrap()).unwrap();
+        fs::write(&live, "").unwrap();
+        fs::write(&serve, plist(&live.to_string_lossy())).unwrap();
+        // A launcher reached through a link that execs the helper of a replaced app is gone with it.
+        let launchers = home.join(".config/tabkyra");
+        fs::create_dir_all(&launchers).unwrap();
+        fs::write(
+            launchers.join("polycarp"),
+            format!("#!/bin/sh\nexec \"{in_app}\" serve \"$@\"\n"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(launchers.join("polycarp"), launchers.join("tabkyra")).unwrap();
+        let hub = agents.join("com.polycarp.hub.plist");
+        fs::write(&hub, plist(&launchers.join("tabkyra").to_string_lossy())).unwrap();
+        let jobs = retire(&home, "501", &launchctl);
+        let verdict = |label: &str| &jobs.iter().find(|j| j.label == label).unwrap().verdict;
+        assert_eq!(verdict("com.polycarp.serve"), &Verdict::Waiting);
+        assert!(serve.exists(), "a live helper's job keeps its plist");
+        assert!(matches!(
+            verdict("com.polycarp.hub"),
+            Verdict::Stranded { .. }
+        ));
+        assert!(!hub.exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
