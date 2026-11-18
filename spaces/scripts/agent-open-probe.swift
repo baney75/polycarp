@@ -13,7 +13,10 @@
 //   open until it settles. The first frame is the "before"; any pixel that changes in the 1.2 s before the open (a
 //   blinking cursor, a clock, a video) is noise and never counts. After the open, a frame in which a place where a window
 //   of the new process was listed at any time during the open differs from the first frame (8x8 pt or more, luma off by
-//   over 24, noise left out) shows that window. Frames are judged once the open settles, against every place listed by
+//   over 24, noise left out) shows that window when the changed part spans half the place each way. A smaller part in a
+//   place (a cursor that first blinks after the pre-roll, or a window seen only in part), a window-sized part (48 pt or
+//   more each way) in no listed place (a window drawn for one refresh between samples), or a place mostly masked as
+//   noise makes the open invalid, not passed or failed. Frames are judged once the open settles, against every place listed by
 //   then, so a frame that came before its window's first sample still counts. A display whose capture fails after its
 //   first frame makes the open invalid, not passed. A cover is painted from the screen as it was, so a covered window
 //   shows nothing. Council gap G9 ("an occasional 1 s screen flash"): zero frames is the bar.
@@ -29,11 +32,13 @@
 // It runs only when Donovan has been idle 10 minutes. 11-12: each open drew its window on his workspace for 0.7 to 1.7 s
 // before it was parked, and a 10-open run while he worked read to him as "random windows keep opening like font book".
 // Otherwise it prints "untested live" and exits 3, opening nothing. --force is for a Mac nobody is using. A run whose
-// samples were ever over 16 ms apart is invalid (exit 4), not passed.
+// samples were ever over 16 ms apart is invalid (exit 4), not passed. It keeps the display awake while it runs, starts
+// no open on an asleep display or a locked screen ("untested live", exit 3), and an open during a sleep or lock is invalid.
 //   swift scripts/agent-open-probe.swift [rounds] [App ...] [--force] [--no-frames]
 // Default: 5 rounds of 10 apps, 50 opens.
 import AppKit
 import CoreMedia
+import IOKit.pwr_mgt
 import ScreenCaptureKit
 
 /// One window from the window server's on-screen list, front to back.
@@ -180,25 +185,94 @@ struct FrameJudge {
         kept.append(bits)
     }
 
-    /// Judged frames, how many show a window in `boxes` (pixel rects), and the most pixels changed in one.
-    func judge(_ boxes: [CGRect]) -> (frames: Int, showing: Int, worst: Int) {
-        guard let base else { return (0, 0, 0) }
-        var inside = [Int]()
-        var mark = [Bool](repeating: false, count: base.w * base.h)
-        for b in boxes {
-            let x0 = max(0, Int(b.minX.rounded(.down))), x1 = min(base.w, Int(b.maxX.rounded(.up)))
+    /// Judged frames, how many show a window in `boxes` (pixel rects), how many show a change that can't be told from a
+    /// window or from noise (`unverified`, which makes the open invalid), the most pixels changed in the boxes in one, and
+    /// why the boxes can't be watched (`hidden`), if they can't. Changed pixels are taken in 8-connected parts. A part is
+    /// the window when it spans half its place each way. One under that inside a place is a cursor or a window seen in
+    /// part, which can't be told apart (review of #498 r2, sol-first-F1), and one 24 px (48 pt) or more each way outside
+    /// every place is a window the 4 ms sampler never listed, such as one drawn for a single refresh (sol-sol-F1).
+    func judge(_ boxes: [CGRect]) -> (frames: Int, showing: Int, worst: Int, unverified: Int, hidden: String?) {
+        guard let base else { return (0, 0, 0, 0, nil) }
+        let w = base.w
+        let rects = boxes.compactMap { b -> (x0: Int, y0: Int, x1: Int, y1: Int)? in
+            let x0 = max(0, Int(b.minX.rounded(.down))), x1 = min(w, Int(b.maxX.rounded(.up)))
             let y0 = max(0, Int(b.minY.rounded(.down))), y1 = min(base.h, Int(b.maxY.rounded(.up)))
-            guard x0 < x1, y0 < y1 else { continue }
-            for y in y0..<y1 { for x in x0..<x1 where !mark[y * base.w + x] { mark[y * base.w + x] = true; inside.append(y * base.w + x) } }
+            return x0 < x1 && y0 < y1 ? (x0, y0, x1, y1) : nil
         }
-        var showing = 0, worst = 0
+        var inside = [Int](), mark = [Bool](repeating: false, count: w * base.h), hidden: String?
+        for r in rects {
+            var masked = 0
+            for y in r.y0..<r.y1 { for x in r.x0..<r.x1 {
+                if noise[y * w + x] { masked += 1 }
+                if !mark[y * w + x] { mark[y * w + x] = true; inside.append(y * w + x) }
+            } }
+            // A video or animation in the pre-roll masks its pixels; a place left with too few to show a window can't
+            // be watched (sol-sol-F3).
+            let area = (r.x1 - r.x0) * (r.y1 - r.y0)
+            if area - masked < max(framePixelBar, area / 2) { hidden = "had \(masked * 100 / area)% of a window's place masked as noise before the open" }
+        }
+        var showing = 0, worst = 0, unverified = 0
         for bits in kept {
-            let n = inside.reduce(0) { $0 + (bits[$1 >> 6] >> UInt64($1 & 63) & 1 == 1 ? 1 : 0) }
-            worst = max(worst, n)
-            if n >= framePixelBar { showing += 1 }
+            worst = max(worst, inside.reduce(0) { $0 + (bits[$1 >> 6] >> UInt64($1 & 63) & 1 == 1 ? 1 : 0) })
+            var shows = false, odd = false
+            for part in parts(bits, w: w, h: base.h) {
+                var window = false
+                for r in rects {
+                    var n = 0, x0 = Int.max, x1 = -1, y0 = Int.max, y1 = -1
+                    for i in part where i % w >= r.x0 && i % w < r.x1 && i / w >= r.y0 && i / w < r.y1 {
+                        n += 1; x0 = min(x0, i % w); x1 = max(x1, i % w); y0 = min(y0, i / w); y1 = max(y1, i / w)
+                    }
+                    guard n >= framePixelBar else { continue }
+                    if (x1 - x0 + 1) * 2 >= r.x1 - r.x0 && (y1 - y0 + 1) * 2 >= r.y1 - r.y0 { window = true } else { odd = true }
+                }
+                if window { shows = true; continue }
+                let xs = part.map { $0 % w }, ys = part.map { $0 / w }
+                if part.count >= framePixelBar, xs.max()! - xs.min()! + 1 >= windowPartPx, ys.max()! - ys.min()! + 1 >= windowPartPx { odd = true }
+            }
+            if shows { showing += 1 } else if odd { unverified += 1 }
         }
-        return (kept.count, showing, worst)
+        return (kept.count, showing, worst, unverified, hidden)
     }
+
+    /// A kept frame's changed pixels, in 8-connected parts.
+    private func parts(_ bits: [UInt64], w: Int, h: Int) -> [[Int]] {
+        var done = [Bool](repeating: false, count: w * h), out: [[Int]] = []
+        for (k, word) in bits.enumerated() where word != 0 {
+            for b in 0..<64 where word >> UInt64(b) & 1 == 1 && !done[k * 64 + b] {
+                var part = [k * 64 + b], next = 0
+                done[part[0]] = true
+                while next < part.count {
+                    let i = part[next], x = i % w, y = i / w
+                    next += 1
+                    for yy in max(0, y - 1)...min(h - 1, y + 1) { for xx in max(0, x - 1)...min(w - 1, x + 1) {
+                        let j = yy * w + xx
+                        if !done[j], bits[j >> 6] >> UInt64(j & 63) & 1 == 1 { done[j] = true; part.append(j) }
+                    } }
+                }
+                out.append(part)
+            }
+        }
+        return out
+    }
+}
+
+/// A changed part this wide and tall (24 px, 48 pt) outside every listed place is a window, not a cursor or a clock.
+let windowPartPx = 24
+
+/// Why the screen can't show a flash right now, or nil: an asleep display or a locked screen draws nothing, so frames
+/// and samples taken then pass anything (review of #498 r2, second-F11).
+func screenProblem(asleep: Bool, locked: Bool) -> String? {
+    if asleep { return "a display is asleep" }
+    if locked { return "the screen is locked" }
+    return nil
+}
+
+func screenProblemNow() -> String? {
+    var ids = [CGDirectDisplayID](repeating: 0, count: 16), n: UInt32 = 0
+    CGGetOnlineDisplayList(16, &ids, &n)
+    let session = CGSessionCopyCurrentDictionary() as? [String: Any]
+    return screenProblem(asleep: ids.prefix(Int(n)).contains { CGDisplayIsAsleep($0) != 0 },
+                         locked: (session?["CGSSessionScreenIsLocked"] as? Bool) == true)
 }
 
 /// Why one display's frames for an open can't be judged, or nil. A capture that started but stopped with an error
@@ -275,21 +349,49 @@ if CommandLine.arguments.contains("--selftest") {
     check("a 3x3 pixel change (6x6 pt) doesn't, 4x4 does", !frameShows(blank, painted(CGRect(x: 10, y: 10, width: 3, height: 3), 230), in: [box])
           && frameShows(blank, painted(CGRect(x: 10, y: 10, width: 4, height: 4), 230), in: [box]))
     check("overlapping places count a pixel once", changed(blank, painted(box, 230), in: [box, box]) == 80)
-    // Review of #498. first-F1: a cursor that blinks under the window's place while nothing opens is noise.
-    // A 4x8 px block, as the review measured a terminal cursor: alone it is over the 16 px bar.
-    let cursor = CGRect(x: 12, y: 10, width: 4, height: 8)
-    check("that cursor alone would show without the noise mask", frameShows(blank, painted(cursor, 230), in: [box]))
+    // Review of #498. FrameJudge runs on a 120x90 frame with a 60x40 px (120x80 pt) place, so a cursor is small next to
+    // a window as on a real screen. first-F1: a cursor that blinks under the window's place while nothing opens is
+    // noise. A 4x8 px block, as the review measured a terminal cursor: alone it is over the 16 px bar.
+    let plain = Luma(w: 120, h: 90, px: [UInt8](repeating: 100, count: 120 * 90))
+    func on(_ base: Luma, _ r: CGRect, _ v: UInt8) -> Luma {
+        var px = base.px
+        for y in Int(r.minY)..<Int(r.maxY) { for x in Int(r.minX)..<Int(r.maxX) { px[y * base.w + x] = v } }
+        return Luma(w: base.w, h: base.h, px: px)
+    }
+    let place = CGRect(x: 30, y: 20, width: 60, height: 40)
+    let cursor = CGRect(x: 40, y: 30, width: 4, height: 8)
+    check("that cursor alone would show without the noise mask", frameShows(plain, on(plain, cursor, 230), in: [place]))
     var blink = FrameJudge()
-    blink.add(blank); blink.add(painted(cursor, 230)); blink.add(blank)
+    blink.add(plain); blink.add(on(plain, cursor, 230)); blink.add(plain)
     blink.learning = false
-    blink.add(painted(cursor, 230)); blink.add(blank); blink.add(painted(cursor, 230))
-    check("a cursor that blinked before the open doesn't show (first-F1)", blink.judge([box]).showing == 0)
-    blink.add(painted(box, 230))
-    check("a window drawn over that cursor still shows", blink.judge([box]).showing == 1)
+    blink.add(on(plain, cursor, 230)); blink.add(plain); blink.add(on(plain, cursor, 230))
+    check("a cursor that blinked before the open doesn't show (first-F1)", blink.judge([place]).showing == 0 && blink.judge([place]).unverified == 0)
+    blink.add(on(plain, place, 230))
+    check("a window drawn over that cursor still shows", blink.judge([place]).showing == 1 && blink.judge([place]).hidden == nil)
+    // Round 2, sol-first-F1: a cursor quiet in the pre-roll that blinks in the place later is neither window nor noise.
+    var quiet = FrameJudge()
+    quiet.add(plain); quiet.learning = false
+    quiet.add(on(plain, cursor, 230))
+    let q = quiet.judge([place])
+    check("a cursor that first blinks after the pre-roll makes the open invalid, not failed (sol-first-F1)", q.showing == 0 && q.unverified == 1)
     var late = FrameJudge()
-    late.add(blank); late.learning = false
-    late.add(painted(box, 230))
-    check("a frame captured before its window's first sample still shows (sol-F1)", late.judge([]).showing == 0 && late.judge([box]).showing == 1)
+    late.add(plain); late.learning = false
+    late.add(on(plain, place, 230))
+    check("a frame captured before its window's first sample still shows (sol-F1)", late.judge([]).showing == 0 && late.judge([place]).showing == 1)
+    // Round 2, sol-sol-F1: a window drawn for one refresh between samples is in no listed place. A clock's digits aren't.
+    check("a window-sized change in no listed place makes the open invalid (sol-sol-F1)", late.judge([]).unverified == 1)
+    var clock = FrameJudge()
+    clock.add(plain); clock.learning = false
+    clock.add(on(plain, CGRect(x: 100, y: 2, width: 8, height: 10), 230))
+    check("a clock's digits outside every place don't", clock.judge([place]).unverified == 0 && clock.judge([place]).showing == 0)
+    // Round 2, sol-sol-F3: a video playing over the place in the pre-roll masks it; the open is invalid, not passed.
+    var video = FrameJudge()
+    video.add(plain); video.add(on(plain, place, 180)); video.add(on(plain, place, 140))
+    video.learning = false
+    video.add(on(plain, place, 230))
+    check("a place masked by a video in the pre-roll makes the open invalid (sol-sol-F3)", video.judge([place]).showing == 0 && video.judge([place]).hidden != nil)
+    check("an asleep display or a locked screen stops the run (second-F11)",
+          screenProblem(asleep: true, locked: false) != nil && screenProblem(asleep: false, locked: true) != nil && screenProblem(asleep: false, locked: false) == nil)
     check("a display that stopped capturing after its first frame makes the open invalid (sol-F2)",
           captureProblem(started: true, stopError: "stream stopped", resized: false) != nil
           && captureProblem(started: false, stopError: nil, resized: false) != nil
@@ -515,17 +617,17 @@ final class FrameWatch: NSObject, SCStreamOutput, SCStreamDelegate {
 
     /// The open's frames judged against `places` (points, as the window server lists them), and why they can't be
     /// trusted, if they can't.
-    func result(places: [CGRect]) -> (frames: Int, showing: Int, worst: Int, problem: String?) {
+    func result(places: [CGRect]) -> (frames: Int, showing: Int, worst: Int, unverified: Int, problem: String?) {
         lock.lock(); defer { lock.unlock() }
         let problem = captureProblem(started: started, stopError: stopError, resized: judge.resized)
-        guard let base = judge.base else { return (0, 0, 0, problem) }
+        guard let base = judge.base else { return (0, 0, 0, 0, problem) }
         let sx = CGFloat(base.w) / bounds.width, sy = CGFloat(base.h) / bounds.height
         let boxes = places.compactMap { r -> CGRect? in
             let c = r.intersection(bounds)
             return c.isNull || c.isEmpty ? nil : CGRect(x: (c.minX - bounds.minX) * sx, y: (c.minY - bounds.minY) * sy, width: c.width * sx, height: c.height * sy)
         }
         let r = judge.judge(boxes)
-        return (r.frames, r.showing, r.worst, problem)
+        return (r.frames, r.showing, r.worst, r.unverified, problem ?? r.hidden)
     }
 }
 
@@ -578,9 +680,24 @@ var framesAll = 0, framesShowing = 0, frameOpens = 0
 var seenAll: [Double] = []
 var failures: [String] = [], invalid: [String] = []
 setbuf(stdout, nil)
+// The probe needs 10 idle minutes, which is when macOS sleeps the display or locks the screen (second-F11): hold the
+// display awake for the run, start only on a lit, unlocked screen, and make an open during a sleep or lock invalid.
+var awake = IOPMAssertionID(0)
+if IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                               "agent-open-probe watches the screen" as CFString, &awake) != kIOReturnSuccess {
+    print("untested live: the probe couldn't keep the display awake"); exit(3)
+}
+defer { IOPMAssertionRelease(awake) }
+var screenChanged = false
+for name in ["com.apple.screenIsLocked", "com.apple.screensaver.didstart"] {
+    DistributedNotificationCenter.default().addObserver(forName: Notification.Name(name), object: nil, queue: nil) { _ in screenChanged = true }
+}
+NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: nil) { _ in screenChanged = true }
 for app in apps {
     if !pids(app).isEmpty { print("skip \(app): already running"); continue }
     for round in 1...rounds {
+        if let p = screenProblemNow() { print("untested live: \(p), so the screen shows nothing to judge"); exit(3) }
+        screenChanged = false
         let before = pids(app)
         let front0 = NSWorkspace.shared.frontmostApplication?.processIdentifier
         var frontChanged = false
@@ -622,6 +739,10 @@ for app in apps {
         for r in watches.map({ $0.result(places: places) }) {
             shot.frames += r.frames; shot.showing += r.showing; shot.worst = max(shot.worst, r.worst)
             if let p = r.problem { problems.append(p) }
+            if r.unverified > 0 { problems.append("showed \(r.unverified) frame(s) with a change that is neither noise nor a window in a listed place") }
+        }
+        if let p = screenProblemNow() ?? (screenChanged ? "slept or locked" : nil) {
+            invalid.append("\(app) #\(round): \(p) during the open, so nothing it drew could be seen")
         }
         if displays != nil {
             if !problems.isEmpty { invalid.append("\(app) #\(round): a display \(problems.joined(separator: "; ")), so its frames can't be judged") }

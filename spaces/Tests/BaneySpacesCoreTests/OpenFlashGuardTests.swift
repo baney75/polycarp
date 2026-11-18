@@ -395,9 +395,20 @@ final class OpenFlashGuardTests: XCTestCase {
                      "a cursor that blinked before the open doesn't show (first-F1)",
                      "a window drawn over that cursor still shows",
                      "a frame captured before its window's first sample still shows (sol-F1)",
-                     "a display that stopped capturing after its first frame makes the open invalid (sol-F2)"] {
+                     "a display that stopped capturing after its first frame makes the open invalid (sol-F2)",
+                     "a cursor that first blinks after the pre-roll makes the open invalid, not failed (sol-first-F1)",
+                     "a window-sized change in no listed place makes the open invalid (sol-sol-F1)",
+                     "a clock's digits outside every place don't",
+                     "a place masked by a video in the pre-roll makes the open invalid (sol-sol-F3)",
+                     "an asleep display or a locked screen stops the run (second-F11)"] {
             XCTAssertTrue(text.contains("ok   " + line), "\(line)\n\(text)")
         }
+        XCTAssertTrue(text.contains("selftest: pass"), text)
+        let probe = try String(contentsOf: CursorSourceTests.root.appendingPathComponent("scripts/agent-open-probe.swift"), encoding: .utf8)
+        XCTAssertTrue(probe.contains("IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep"), "second-F11: the display stays awake")
+        XCTAssertTrue(probe.contains("if let p = screenProblemNow() { print(\"untested live: "), "second-F11: checked before each open")
+        XCTAssertTrue(probe.contains("if let p = screenProblemNow() ?? (screenChanged ? \"slept or locked\" : nil)"), "second-F11: a sleep or lock during the open")
+        XCTAssertTrue(probe.contains("if r.unverified > 0 { problems.append("), "sol-first-F1 and sol-sol-F1 make the open invalid")
     }
 
     func testTheProbeSelftestClassifiesWithItsFixturePid() throws {
