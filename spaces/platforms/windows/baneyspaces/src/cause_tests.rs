@@ -56,11 +56,19 @@ fn an_ask_that_landed_never_refuses_your_front_later() {
     assert_eq!(asks.take(x, x, 20_080), Some(80), "x's front landed late: the daemon's");
     asks.note(a, a, 20_200);
     assert_eq!(asks.take(x, x, 20_500), None, "x's ask was used up when its front landed");
-    // An ask Windows granted at once leaves nothing to land late.
-    let y = 0x40220;
-    asks.note(y, y, 20_000);
-    asks.landed(y);
-    assert_eq!(asks.take(y, y, 20_100), None);
+}
+
+#[test]
+fn an_ask_granted_at_once_still_covers_its_front_event() {
+    // r2 second-S1, #545 again: Win+2 asks for a and Windows grants it at once, but a's foreground event comes
+    // through after Win+6, already queued, asked for b. It arrives 40 ms after Win+6's keys: the daemon's, not yours.
+    let asks = Asks::new();
+    let (a, b) = (0x60216, 0x60264);
+    asks.note(a, a, 40_000);
+    asks.note(b, b, 40_020);
+    assert_eq!(foreground_by(40, None, false, asks.take(a, a, 40_060)), Cause::App, "a's front event");
+    assert_eq!(foreground_by(50, None, false, asks.take(b, b, 40_070)), Cause::App, "b's");
+    assert_eq!(asks.take(a, a, 40_300), None, "each event uses its ask up");
 }
 
 #[test]
@@ -123,13 +131,23 @@ fn the_daemon_asks_before_it_calls_an_activation_yours() {
     let take = f.find("ASKS.take(").expect("on_foreground must know which windows the daemon asked for");
     let guard = f.find("self.model.active() == Some(").expect("the guard for the window already active");
     assert!(take < guard, "an ask is used up when its front lands, on the window already active too");
-    // first-F2: every ask goes through one helper, which uses the ask up when Windows grants it at once.
+    // r2 first-F1: a late front on an owned dialog nothing tracks uses up its owner's ask too.
+    let tracked = f.find("is_tracked(").expect("the guard for untracked windows");
+    assert!(take < tracked, "the ask is taken by root owner before an untracked window returns");
+    // Every workspace-driven ask goes through one helper. r2 second-S1: a grant at once still sends a foreground
+    // event, which uses the ask up, so the helper never drops it; it skips the note only for the window already in
+    // front, which sends none.
     assert_eq!(src.matches("ASKS.note(").count(), 1, "one place notes asks");
     let b = body(&src, "bring_to_front");
-    assert!(b.contains("ASKS.note(") && b.contains("winapi::set_foreground(") && b.contains("ASKS.landed("));
+    assert!(b.contains("ASKS.note(") && b.contains("winapi::set_foreground(") && b.contains("winapi::foreground()"));
+    assert!(!src.contains("ASKS.landed("), "an ask granted at once is used up by its foreground event, not dropped");
     for f in ["exec", "keep_focus_off_hidden_windows"] {
         assert!(body(&src, f).contains("bring_to_front("), "{f} must ask through bring_to_front");
     }
+    // r2 first-F2: Win+Alt+arrow is your own command. Noted as an ask, a late grant would be refused and bounce back.
+    let wf = &src[src.find("if op == \"window_focus\" {").expect("window_focus")..];
+    let wf = &wf[..wf.find("} else {").expect("end of window_focus")];
+    assert!(wf.contains("winapi::set_foreground(oh)") && !wf.contains("bring_to_front("), "window_focus notes no ask");
     let f = body(&src, "close_window");
     assert!(f.contains("self.closed_at = Some("), "close_window must note when the close happened");
 }
