@@ -38,6 +38,8 @@ $colors = @(0xC91153, 0x11A3C9, 0xE98D09, 0x6117BB, 0x29C73D, 0xFBD325, 0x055971
 $split = @(4, 4, 4, 3, 3, 3, 3, 3, 3)
 $wsOf = @(); for ($n = 1; $n -le 9; $n++) { for ($k = 0; $k -lt $split[$n - 1]; $k++) { $wsOf += $n } }
 function others($n) { [int[]]@(for ($m = 1; $m -le 9; $m++) { if ($m -ne $n) { $colors[$m - 1] } }) }
+# How many of workspace n's windows are cloaked, plus how many of the others are not: 0 when every flag is right.
+function flagsWrong($n) { @($on[$n] | ? { [Bench]::Cloaked($_) -ne 0 }).Count + @($off[$n] | ? { [Bench]::Cloaked($_) -eq 0 }).Count }
 
 say "== runner: $([Environment]::OSVersion.VersionString), session $((Get-Process -Id $PID).SessionId), displays $([Desk]::Displays()), cpus $([Environment]::ProcessorCount)"
 
@@ -68,7 +70,7 @@ check (($c0 | Measure-Object -Sum).Sum -eq 0) 'no other workspace''s color is on
 say '== 2. 200 switches with Win+n'
 # Five untimed switches first (the first show of a window loads the shell's view of it), then 200 timed. Each target
 # differs from the one before (steps of 4 mod 9), so every switch shows 3 or 4 windows and hides 3 or 4.
-$cur = 1; $times = @(); $late = 0; $wrong = 0; $shots = 0
+$cur = 1; $times = @(); $late = 0; $wrong = 0; $shots = 0; $after = 0; $last = -2
 for ($i = -5; $i -lt 200; $i++) {
   $n = (($cur - 1 + 4) % 9) + 1
   $t = [Bench]::Switch([uint16](0x30 + $n), $on[$n], $off[$n], 2000)
@@ -78,22 +80,28 @@ for ($i = -5; $i -lt 200; $i++) {
   $times += $t
   Start-Sleep -Milliseconds 60
   $path = if ($i -lt 9 -or ($wrong -gt 0 -and $shots -lt 5)) { Join-Path $Out ('switch-{0:D3}-to-{1}.png' -f $i, $n) } else { $null }
+  # #545: the cloak flags just before and just after the read, so a window that came back and was cloaked again
+  # within the read is still caught.
+  $fb = flagsWrong $n
   $cs = [Bench]::Count([int[]]$colors, $path)
+  $read = [Diagnostics.Stopwatch]::StartNew(); $fa = flagsWrong $n
   $bad = 0; for ($m = 1; $m -le 9; $m++) { if ($m -ne $n) { $bad += $cs[$m - 1] } }
   if ($bad -gt 0 -or $cs[$n - 1] -eq 0) {
     $wrong++; $shots++
-    # #545: read the cloak flags first, as close to the bad read as can be.
-    $flagsWrong = @($on[$n] | ? { [Bench]::Cloaked($_) -ne 0 }).Count + @($off[$n] | ? { [Bench]::Cloaked($_) -eq 0 }).Count
+    if ($last -eq $i - 1) { $after++ }
+    $last = $i
     $p = Join-Path $Out ('wrong-{0:D3}-to-{1}.png' -f $i, $n); [void][Bench]::Count([int[]]$colors, $p)
-    # How long until the pixels come right? Flags right with pixels wrong is the screen lagging the flags; a flag
-    # wrong is a window that really came back.
-    $clear = [Diagnostics.Stopwatch]::StartNew(); $right = -1
-    while ($clear.ElapsedMilliseconds -lt 2000) {
-      $c2 = [Bench]::Count([int[]]$colors, $null); $b2 = 0; for ($m = 1; $m -le 9; $m++) { if ($m -ne $n) { $b2 += $c2[$m - 1] } }
-      if ($b2 -eq 0 -and $c2[$n - 1] -gt 0) { $right = $clear.ElapsedMilliseconds; break }
+    # How long until the pixels come right, timed from the bad read? Flags right throughout with pixels wrong is the
+    # screen lagging the flags; a flag wrong at any read is a window that really came back.
+    $right = -1; $samples = 0; $fp = 0
+    while ($read.ElapsedMilliseconds -lt 2000) {
+      $fp = [Math]::Max($fp, (flagsWrong $n))
+      $c2 = [Bench]::Count([int[]]$colors, $null); $samples++; $b2 = 0; for ($m = 1; $m -le 9; $m++) { if ($m -ne $n) { $b2 += $c2[$m - 1] } }
+      if ($b2 -eq 0 -and $c2[$n - 1] -gt 0) { $right = $read.ElapsedMilliseconds; break }
       Start-Sleep -Milliseconds 20
     }
-    say "  switch $i to $n wrong screen: $flagsWrong window(s) with the wrong cloak flag at the bad read; pixels $(if ($right -ge 0) { "right $right ms after it" } else { 'still wrong 2 s after it' })"
+    $poll = "$samples read(s), $([int]($read.ElapsedMilliseconds / [Math]::Max(1, $samples))) ms apart"
+    say "  switch $i to $n wrong screen: window(s) with the wrong cloak flag $fb just before the bad read, $fa just after, $fp at most while polling; pixels $(if ($right -ge 0) { "right $right ms after the bad read" } else { 'still wrong 2 s after the bad read' }) ($poll)"
     say "  switch $i to $n in $(ms $t) ms: own color $($cs[$n - 1]) px, other colors $bad px ($($cs -join ','))"
   }
   Add-Content $log ("  switch {0} to {1}: {2} ms" -f $i, $n, (ms $t))
@@ -134,7 +142,10 @@ if ($spec -and $spec.p90Ms) {
 
 taskkill /F /IM baneyspaces.exe 2>&1 | Out-Null
 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-@{ switch = @{ n = $times.Count; p50Ms = ms $p50; p90Ms = ms $p90; p99Ms = ms $p99; maxMs = ms $max; notSettled = $late; wrongScreens = $wrong }
+# wrongRightAfterWrong: wrong screens on the switch right after another. A wrong screen is polled for up to 2 s before
+# the next switch (since #546), which can let a condition that builds over back-to-back switches clear, so runs since
+# then don't compare with older wrongScreens counts; this count keeps a cluster visible.
+@{ switch = @{ n = $times.Count; p50Ms = ms $p50; p90Ms = ms $p90; p99Ms = ms $p99; maxMs = ms $max; notSettled = $late; wrongScreens = $wrong; wrongRightAfterWrong = $after }
    uncloak = @{ n = 20; p90Ms = ms $ep90 }; times = @($times | % { ms $_ }); uncloakTimes = @($exp | % { ms $_ }) } |
   ConvertTo-Json -Depth 4 | Set-Content (Join-Path $Out 'bench.json')
 $res = if ($script:fail -eq 0) { 'PASS' } else { 'FAIL' }
