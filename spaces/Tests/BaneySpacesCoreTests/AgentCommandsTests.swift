@@ -94,7 +94,7 @@ final class AgentCommandsTests: XCTestCase {
                       "any other workspace always needs view control")
         // Review of #441, first-F1: a move that waited (`--wait`) checks view control again in the pass that moves.
         let wait = try XCTUnwrap(HandsSourceTests.between("if let e = awaitUse(w, verb: \"move\"", "host.move(w.id, n)", in: frame))
-        let inPass = try XCTUnwrap(HandsSourceTests.between("if cancelled() { return .failure(busy) }", "host.move(w.id, n)", in: wait), wait)
+        let inPass = try XCTUnwrap(wait.range(of: "if cancelled() { return .failure(busy) }").map { String(wait[$0.upperBound...]) }, wait)
         XCTAssertTrue(inPass.contains("if let e = viewRefusal(what) { return .failure(e) }"), wait)
         XCTAssertTrue(wait.contains("live.workspace == from"), "the window is still where it was")
     }
