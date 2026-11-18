@@ -94,6 +94,21 @@ pub struct Core {
     /// Something only a read-back can catch is pending: a window parked or ghosted (no event says an app moved it
     /// back or reset its alpha) or a show to retry. The worker then reads what is hidden back every `RECHECK`.
     pub recheck: bool,
+    /// The keys in force (spec/keymap.md): the config text they came from, how many bindings, how many loads, and why
+    /// the last read of config.toml was not applied, if it was not.
+    pub keys: KeysState,
+    /// The program in front runs as administrator and this daemon does not: Windows keeps every key typed into it
+    /// from the hook (UIPI), so the chords do nothing until another window is in front.
+    pub keys_blocked_by: Option<String>,
+}
+
+#[derive(Default)]
+pub struct KeysState {
+    pub text: Option<String>,
+    pub bindings: usize,
+    pub loads: u64,
+    pub error: Option<String>,
+    pub elevated_self: bool,
 }
 
 /// A subscriber's pipe, as the feed holds it.
@@ -564,6 +579,7 @@ impl Core {
         v["settings"] = Value::Object(self.settings.clone());
         v["overview"] = json!({ "shown": self.overview_shown });
         v["daemon"] = json!({ "pid": self.our_pid, "started": self.started, "events": self.events_seen, "problems": self.problems });
+        v["keys"] = self.keys_json();
         let text = serde_json::to_string_pretty(&v).unwrap_or_default();
         if *self.written.borrow() == text {
             return Ok(()); // already on disk: idle reconciles write nothing
@@ -807,6 +823,7 @@ impl Core {
                 if !self.model.is_tracked(&window_name(hwnd)) && winapi::is_manageable(h, false, self.our_pid, self.is_agent_pid(winapi::pid_of(h))) {
                     self.open_window(hwnd, false);
                 }
+                self.note_elevation(h);
                 self.on_foreground(hwnd)
             }
             // A window can become one of ours by being created, shown, restored, uncloaked (a UWP or WinUI window
@@ -859,6 +876,125 @@ impl Core {
         self.keep_focus_off_hidden_windows();
     }
 
+    /// Reads `config.toml` and puts its keys in force (spec/keymap.md). A file that does not validate changes nothing:
+    /// the keys in force stay (the defaults, at start), and the path and reason go to the log and `state.json`.
+    /// `changed_at`: when the folder watcher saw the change, for the log line that times a reload.
+    pub fn load_keys(&mut self, changed_at: Option<Instant>) {
+        let file = crate::paths::config_file();
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        if changed_at.is_some() && self.keys.text.as_deref() == Some(text.as_str()) {
+            return; // another file in the folder, or a save with nothing new
+        }
+        let check = |a: &[String]| crate::request(a.to_vec()).map(|_| ()).map_err(|e| e.error.map(|b| b.message).unwrap_or_default());
+        match keys::from_config(&text, check) {
+            Ok((table, skipped)) => {
+                self.keys.bindings = table.len();
+                hook::set_table(table);
+                self.keys.loads += 1;
+                self.keys.error = None;
+                for s in &skipped {
+                    self.log(&format!("keys: {s}"));
+                }
+                let after = changed_at.map(|t| format!(", {:.0} ms after the change", t.elapsed().as_secs_f64() * 1000.0)).unwrap_or_default();
+                say(&format!("baneyspaces daemon: keys: {} bindings from {}{after}", self.keys.bindings, if text.is_empty() { "the defaults" } else { "config.toml" }));
+            }
+            Err(e) => {
+                if self.keys.loads == 0 {
+                    // At start nothing is in force yet: the defaults, so a broken file never leaves you without keys.
+                    let table = keys::defaults(keys::parse_mod("win").unwrap_or_default());
+                    self.keys.bindings = table.len();
+                    hook::set_table(table);
+                    self.keys.loads = 1;
+                }
+                say(&format!("baneyspaces daemon: keys: {} not applied, the keys in force stay: {e}", file.display()));
+                self.keys.error = Some(e);
+            }
+        }
+        self.keys.text = Some(text);
+        let _ = self.persist();
+    }
+
+    fn keys_json(&self) -> Value {
+        json!({ "config": crate::paths::config_file(), "bindings": self.keys.bindings, "loads": self.keys.loads, "error": self.keys.error, "blocked_by": self.keys_blocked_by })
+    }
+
+    /// The window in front is an elevated program's and this daemon is not elevated: say so once, plainly, instead of
+    /// letting every chord vanish without a trace (spec/keymap.md, "Elevated windows").
+    fn note_elevation(&mut self, h: windows_sys::Win32::Foundation::HWND) {
+        let pid = winapi::pid_of(h);
+        let blocked = (!self.keys.elevated_self && pid != 0 && winapi::is_elevated(pid) == Some(true)).then(|| winapi::process_name(pid));
+        if blocked == self.keys_blocked_by {
+            return;
+        }
+        match &blocked {
+            Some(p) => say(&format!(
+                "baneyspaces daemon: keys: {p} runs as administrator and is in front; Windows keeps keys typed into it from BaneySpaces (UIPI), so your BaneySpaces keys do nothing until another window is in front"
+            )),
+            None => say("baneyspaces daemon: keys: the window in front takes your BaneySpaces keys again"),
+        }
+        self.keys_blocked_by = blocked;
+        let _ = self.persist();
+    }
+
+    /// `window focus|swap|resize|display` on the front window. Only windows you can see take part.
+    fn window_op(&mut self, op: &str, args: &Value) -> Envelope {
+        let Some(id) = self.front_window() else {
+            return Envelope::err("not_found", "no window of yours is in front", Retry::Never, "Click the window first.");
+        };
+        let h = to_hwnd(self.info.get(&id).map(|i| i.hwnd).unwrap_or(0));
+        let Some(r) = winapi::rect(h) else {
+            return Envelope::err("not_found", format!("{id} has no frame"), Retry::Safe, "");
+        };
+        match op {
+            "window_resize" => {
+                let d = |k: &str| args[k].as_i64().unwrap_or(0) as i32;
+                // Never smaller than 100 x 100: a key held down must not shrink a window to nothing.
+                let to = [r[0], r[1], r[0] + (r[2] - r[0] + d("dx")).max(100), r[1] + (r[3] - r[1] + d("dy")).max(100)];
+                winapi::set_frame(h, to);
+                Envelope::ok(json!({ "window": id, "frame": winapi::rect(h) }))
+            }
+            "window_focus" | "window_swap" => {
+                let dir = args["dir"].as_str().unwrap_or("");
+                let others: Vec<(String, [i32; 4])> = self
+                    .info
+                    .iter()
+                    .filter(|(o, i)| **o != id && !self.hidden.contains(i.hwnd))
+                    .filter(|(_, i)| {
+                        let w = to_hwnd(i.hwnd);
+                        winapi::is_visible(w) && !winapi::is_iconic(w) && winapi::cloaked(w) == 0
+                    })
+                    .filter_map(|(o, i)| winapi::rect(to_hwnd(i.hwnd)).map(|f| (o.clone(), f)))
+                    .collect();
+                let Some((other, of)) = keys::neighbor(r, dir, &others).cloned() else {
+                    return Envelope::ok(json!({ "window": id, "changed": false, "note": format!("no window you can see to the {dir}") }));
+                };
+                let oh = to_hwnd(self.info.get(&other).map(|i| i.hwnd).unwrap_or(0));
+                if op == "window_focus" {
+                    winapi::set_foreground(oh);
+                } else {
+                    winapi::set_frame(h, of);
+                    winapi::set_frame(oh, r);
+                }
+                Envelope::ok(json!({ "window": id, "other": other, "changed": true }))
+            }
+            _ => {
+                let all: Vec<(String, displays::Rect)> = winapi::monitors().into_iter().map(|m| (m.name, m.rect)).collect();
+                let here = displays::display_of(r, &all).and_then(|d| all.iter().position(|(n, _)| n == d)).unwrap_or(0);
+                if all.len() < 2 {
+                    return Envelope::ok(json!({ "window": id, "changed": false, "note": "one display: nowhere to send it" }));
+                }
+                let step = if args["to"] == "prev" { all.len() - 1 } else { 1 };
+                let to = all[(here + step) % all.len()].0.clone();
+                if let Some(f) = displays::carried(r, &all, &to, winapi::is_zoomed(h)) {
+                    winapi::set_frame(h, f);
+                }
+                // R-V4: it now belongs to the workspace that display shows.
+                self.mirror_moves();
+                Envelope::ok(json!({ "window": id, "display": to, "changed": true }))
+            }
+        }
+    }
+
     /// The window you mean when you did not name one: the front window, if it is one of ours.
     fn front_window(&self) -> Option<String> {
         let id = window_name(id_of(winapi::foreground()));
@@ -891,11 +1027,38 @@ fn model_err(e: ModelError) -> Envelope {
 /// started) is refused: agents never change your workspaces, your windows or the daemon. The three
 /// appearance settings are the exception (Donovan, 2026-11-01): an agent may customize them, and
 /// every `set` is logged with who asked.
-const USER_OPS: &[&str] = &["switch", "move", "focus_monitor", "overview", "agent_show", "agent_hide", "agent_toggle", "agent_move", "agent_bring", "quit"];
+const USER_OPS: &[&str] = &["switch", "move", "focus_monitor", "window_focus", "window_swap", "window_resize", "window_display", "overview", "agent_show", "agent_hide", "agent_toggle", "agent_move", "agent_bring", "quit"];
 
 /// Is the process on the other end of the pipe an agent's? By pid, against the model and the jobs.
 fn peer_is_agent(c: &Core, pid: u32) -> bool {
     c.is_agent_pid(pid)
+}
+
+/// Watches the folder `config.toml` lives in and sends `Msg::Reload` on every change, so a saved file is in force
+/// within a few milliseconds (spec/keymap.md: under 1 s). The folder is made if it is missing.
+fn watch_config(file: PathBuf, tx: Sender<Msg>) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{FindFirstChangeNotificationW, FindNextChangeNotification, FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SIZE};
+    use windows_sys::Win32::System::Threading::{WaitForSingleObject, INFINITE};
+    let Some(dir) = file.parent().map(PathBuf::from) else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    std::thread::spawn(move || unsafe {
+        let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let h = FindFirstChangeNotificationW(wide.as_ptr(), 0, FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE);
+        if h == INVALID_HANDLE_VALUE {
+            say(&format!("baneyspaces daemon: keys: cannot watch {}; config.toml is read at start only", dir.display()));
+            return;
+        }
+        while WaitForSingleObject(h, INFINITE) == 0 {
+            let at = Instant::now();
+            // An editor saves in steps (truncate, write, rename): let it finish.
+            std::thread::sleep(Duration::from_millis(30));
+            if tx.send(Msg::Reload { at }).is_err() || FindNextChangeNotification(h) == 0 {
+                break;
+            }
+        }
+    });
 }
 
 pub fn handle(shared: &Shared, req: &Value) -> Envelope {
@@ -943,6 +1106,7 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
                 Err(e) => e,
             }
         }
+        "window_focus" | "window_swap" | "window_resize" | "window_display" => lock(shared).window_op(op, &args),
         "focus_monitor" => {
             let mut c = lock(shared);
             match c.apply_checked(Event::FocusMonitor { monitor: arg_str(&args, "monitor").unwrap_or("").into() }) {
@@ -990,6 +1154,7 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
             v["version"] = json!(1);
             v["platform"] = json!("windows");
             v["hidden"] = c.hidden.to_json();
+            v["keys"] = c.keys_json();
             Envelope::ok(v)
         }
         "ls" => Envelope::ok(ls(&lock(shared))),
@@ -1741,6 +1906,8 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         }),
         written: std::cell::RefCell::new(String::new()),
         recheck: true,
+        keys: KeysState { elevated_self: winapi::is_elevated(std::process::id()) == Some(true), ..KeysState::default() },
+        keys_blocked_by: None,
     };
     let shared: Shared = Arc::new(Mutex::new(core));
     let _ = SHARED.set(shared.clone());
@@ -1793,7 +1960,9 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         c.sync_monitors();
         c.resync_windows(true);
         let _ = c.persist();
-        let problems = hook::start(tx.clone(), keys::bindings(), on_end_session);
+        c.load_keys(None);
+        watch_config(crate::paths::config_file(), tx.clone());
+        let problems = hook::start(tx.clone(), on_end_session);
         for p in &problems {
             say(&format!("baneyspaces daemon: {p}"));
         }
@@ -1830,15 +1999,11 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
             Ok(Msg::Chord { args, at }) => {
                 // First, tell Windows the Win key was used so releasing it does not open Start.
                 hook::mask_start_menu();
-                let mut req = json!({ "op": "", "args": {} });
-                match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-                    ["switch", n] => req = json!({ "op": "switch", "args": { "n": n } }),
-                    ["move", n] => req = json!({ "op": "move", "args": { "n": n, "stay": false } }),
-                    ["move", n, "--stay"] => req = json!({ "op": "move", "args": { "n": n, "stay": true } }),
-                    ["agent-workspace", "toggle"] => req = json!({ "op": "agent_toggle", "args": {} }),
-                    _ => {}
-                }
-                let env = handle(&shared, &req);
+                // A binding is a CLI command line (spec/keymap.md), checked when the keys were loaded.
+                let env = match crate::request(args.clone()) {
+                    Ok(req) => handle(&shared, &req),
+                    Err(e) => e,
+                };
                 if trace {
                     say(&format!("[baneyspaces] chord {args:?}: done {} ms after the key went down", winapi::tick_ms().wrapping_sub(at)));
                 }
@@ -1851,6 +2016,9 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
             }
             Ok(Msg::Press { x, y }) => {
                 lock(&shared).on_press(x, y);
+            }
+            Ok(Msg::Reload { at }) => {
+                lock(&shared).load_keys(Some(at));
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(_) => break,
@@ -1932,6 +2100,8 @@ mod feed_tests {
             feed,
             written: std::cell::RefCell::new(String::new()),
             recheck: false,
+            keys: KeysState::default(),
+            keys_blocked_by: None,
         };
         let shared: Shared = Arc::new(Mutex::new(core));
         {

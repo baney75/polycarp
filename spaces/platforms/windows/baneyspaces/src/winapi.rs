@@ -175,6 +175,32 @@ pub fn process_name(pid: u32) -> String {
     }
 }
 
+/// Does `pid` run elevated (as administrator)? A process that is not elevated cannot open an elevated one's token,
+/// so that refusal answers yes. None when the process cannot be opened at all.
+pub fn is_elevated(pid: u32) -> Option<bool> {
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ACCESS_DENIED};
+    use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    use windows_sys::Win32::System::Threading::OpenProcessToken;
+    unsafe {
+        let p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if p.is_null() {
+            return None;
+        }
+        let mut t = std::ptr::null_mut();
+        let opened = OpenProcessToken(p, TOKEN_QUERY, &mut t) != 0;
+        let err = GetLastError();
+        CloseHandle(p);
+        if !opened {
+            return (err == ERROR_ACCESS_DENIED).then_some(true);
+        }
+        let mut e = TOKEN_ELEVATION { TokenIsElevated: 0 };
+        let mut n = 0u32;
+        let ok = GetTokenInformation(t, TokenElevation, &mut e as *mut TOKEN_ELEVATION as *mut c_void, std::mem::size_of::<TOKEN_ELEVATION>() as u32, &mut n) != 0;
+        CloseHandle(t);
+        ok.then_some(e.TokenIsElevated != 0)
+    }
+}
+
 /// Does `pid` run as the same account as this process?
 pub fn same_user(pid: u32) -> bool {
     unsafe {

@@ -43,6 +43,9 @@ const HELP: &str = "baneyspaces (Windows)
 
   switch <n>                     show workspace n (1-9) here, or go to the display that shows it
   move <n> [--stay] [--window W|--app NAME]  send the front window (or W: w-<hwnd>) to workspace n and follow it
+  window focus|swap left|right|up|down   bring the nearest visible window that way to the front, or swap frames with it
+  window resize <dx> <dy>        resize the front window by dx, dy pixels (top-left corner kept)
+  window display next|prev       send the front window to the next or previous display
   focus-monitor <name>           go to a monitor (\\\\.\\DISPLAY1 ...)
   ls                             windows by workspace, and the agent workspace
   state                          the whole model as JSON
@@ -127,6 +130,17 @@ fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
             let app = take(&mut a, "--app");
             need(&a, 1, "move <n> [--stay] [--window W|--app NAME]")?;
             req("move", json!({ "n": a[0], "stay": stay, "window": window, "app": app }))
+        }
+        "window" => {
+            const USAGE: &str = "window focus|swap left|right|up|down, window resize <dx> <dy>, window display next|prev";
+            need(&a, 2, USAGE)?;
+            let px = |s: &str| s.parse::<i32>().ok().filter(|v| v.abs() <= 10_000);
+            match (a[0].as_str(), a[1].as_str(), a.get(2).map(String::as_str)) {
+                ("focus" | "swap", d @ ("left" | "right" | "up" | "down"), None) => req(&format!("window_{}", a[0]), json!({ "dir": d })),
+                ("resize", dx, Some(dy)) if a.len() == 3 && px(dx).is_some() && px(dy).is_some() => req("window_resize", json!({ "dx": px(dx), "dy": px(dy) })),
+                ("display", d @ ("next" | "prev"), None) => req("window_display", json!({ "to": d })),
+                _ => Err(fail("invalid_args", &format!("usage: {USAGE}"), "Example: baneyspaces window focus left")),
+            }
         }
         "focus-monitor" => {
             need(&a, 1, "focus-monitor <name>")?;

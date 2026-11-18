@@ -31,6 +31,21 @@
     },
     "agent_toggle": {
       "description": "Show or hide the agent workspace."
+    },
+    "focus": {
+      "args": "dir",
+      "description": "Bring the nearest window that way (left, right, up, down) to the front, among the ones you can see."
+    },
+    "swap": {
+      "args": "dir",
+      "description": "Swap the front window's frame with the nearest visible window that way."
+    },
+    "resize": {
+      "args": "dir",
+      "description": "Make the front window 40 px narrower (left), wider (right), shorter (up) or taller (down), its top-left corner kept."
+    },
+    "display": {
+      "description": "Send the front window to the next display, keeping its place and size there, and its workspace becomes the one that display shows."
     }
   },
   "platforms": {
@@ -41,7 +56,11 @@
       "overview": "ctrl+up",
       "agent_toggle": "cmd+9",
       "alternates": "Setup can swap cmd for ctrl, alt or ctrl+alt.",
-      "agent_workspace": "workspace 9, when agent mode is on"
+      "agent_workspace": "workspace 9, when agent mode is on",
+      "focus": "",
+      "swap": "",
+      "resize": "",
+      "display": ""
     },
     "linux": {
       "switch": "SUPER + {key}",
@@ -80,15 +99,23 @@
         "SUPER + SHIFT + ALT + code:17",
         "SUPER + SHIFT + ALT + code:18",
         "SUPER + TAB"
-      ]
+      ],
+      "focus": "",
+      "swap": "",
+      "resize": "",
+      "display": ""
     },
     "windows": {
-      "switch": "win+{n}",
-      "move": "win+shift+{n}",
+      "switch": "mod+{n}",
+      "move": "mod+shift+{n}",
       "move_stay": "",
       "overview": "alt+tab+tab",
-      "agent_toggle": "win+grave",
-      "note": "Explorer owns Win+1-9 (taskbar), so RegisterHotKey fails: the daemon swallows these chords in a WH_KEYBOARD_LL hook. Changeable. Overview has no key in part 1.",
+      "agent_toggle": "mod+grave",
+      "focus": "mod+alt+{dir}",
+      "swap": "mod+alt+shift+{dir}",
+      "resize": "mod+ctrl+alt+{dir}",
+      "display": "mod+alt+period",
+      "note": "mod is keys.mod in config.toml, win by default (spec/keymap.md). Explorer owns Win+1-9 (taskbar), so RegisterHotKey fails: the daemon swallows these chords in a WH_KEYBOARD_LL hook. Overview has no key in part 1.",
       "agent_workspace": "a ghost (alpha 0, click-through), not a cloak: UI Automation skips cloaked windows. Never shown unless you ask"
     }
   }
