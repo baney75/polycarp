@@ -230,9 +230,18 @@ export async function launchFixtureBrowser({ extraEnv = {}, extraArgs = [], exte
 	async function close() {
 		browser.kill();
 		await Promise.race([exited, sleep(10000).then(() => browser.kill("SIGKILL"))]);
-		rmSync(home, { recursive: true, force: true });
-		rmSync(socketDir, { recursive: true, force: true });
+		for (const dir of [home, socketDir]) tidy(dir);
 	}
 
 	return { home, socketDir, env, devtools, targets, swEval, tabsWithGroups, storedSessions, tabkyra, waitConnected, reloadExtension, hostPid, reloads: () => reloadsSent, close };
+}
+
+// Chromium's helper processes can outlive the parent and keep writing the profile, so a leftover
+// temp directory is logged, never thrown: it must not fail a run whose checks passed (#563).
+export function tidy(dir) {
+	try {
+		rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+	} catch (err) {
+		console.error(`left ${dir}: ${err.message}`);
+	}
 }
