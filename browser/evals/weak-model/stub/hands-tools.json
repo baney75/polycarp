@@ -51,6 +51,32 @@
 				"openWorldHint": false,
 				"readOnlyHint": true
 			},
+			"description": "Read only. What changed since your last call, as the agent API's events (spec/agent-api.md): workspace_switched, window_focused, window_created, window_closed, window_moved, theme_changed, only for windows you may use. Call it first without since: it answers hello with the whole state and next. Then pass that next as since; with wait_ms it waits up to that long for the first event. A lagged event means some were missed: query state again.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"events": {
+						"description": "Without since: only these types, comma separated. hello and lagged always come.",
+						"type": "string"
+					},
+					"since": {
+						"description": "The next from your last events call. Leave it out to start again with hello.",
+						"type": "integer"
+					},
+					"wait_ms": {
+						"description": "Wait up to this long, 0 to 5000, when no event is waiting (default 0).",
+						"type": "integer"
+					}
+				},
+				"type": "object"
+			},
+			"name": "events"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": true
+			},
 			"description": "Read one window, one row per element: [N] role \"name\" =value (states), indented under its parent. Act on row N with ref \"N\" (this snapshot) or the full ref the header shows. After acting, read again with since: \"latest\" to see only what changed. Example: {\"window\":4211,\"query\":\"Save\"}",
 			"inputSchema": {
 				"additionalProperties": false,

@@ -75,7 +75,7 @@ installed. A switch writes `state.json` once, and an unchanged state is never wr
 **Speed, measured in CI.** `tests/ci/switch-bench.ps1` (job `spaces-windows-speed`) opens 30 windows over nine
 workspaces on a `windows-latest` runner, types Win+n 200 times with `SendInput`, and times each switch from the keys
 going in until DWM reads every window right; a screenshot after each must hold no pixel of another workspace's
-color. It fails at p90 100 ms, max 250 ms, or 25% over `windowsSwitch` in `spec/speed.json`, and when a window
+color. It fails at p90 100 ms, p99 250 ms (the max is reported, not gated), or 25% over `windowsSwitch` in `spec/speed.json`, and when a window
 uncloaked from outside is not cloaked again within 100 ms at p90 (a 400 ms poll misses that).
 Like the live suite, it kills BaneySpaces and deletes `state.json`, so off a runner it refuses (exit 2) unless given
 `-Disposable`.
