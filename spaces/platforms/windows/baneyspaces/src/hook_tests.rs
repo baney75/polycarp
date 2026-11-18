@@ -158,29 +158,44 @@ fn the_hooks_on_a_real_desktop() {
     // left what it replaced for the worker to record. The worker may be busy for tens of milliseconds (a
     // request holding its lock, a write of state.json), and the live suite caught a dialog drawn in that time.
     let form = "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object Windows.Forms.Form; $f.Text = 'bs early ghost'; [Windows.Forms.Application]::Run($f)";
+    // No console window (CREATE_NO_WINDOW): one would report the same pid and is not the window under test.
+    use std::os::windows::process::CommandExt;
     let mut agent = std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", form])
+        .creation_flags(0x0800_0000)
         .spawn()
         .expect("powershell.exe starts");
     let pid = agent.id();
     share_agents(vec![(pid, crate::winapi::process_start(pid))], 0, false);
-    let theirs = |m: &Msg| match m {
-        Msg::Win { event, hwnd } if *event == EVENT_OBJECT_CREATE || *event == EVENT_OBJECT_SHOW => {
+    // The form, by its title, when it is shown: that is when it would draw. Its CREATE may come before its caption.
+    let form_shown = |m: &Msg| match m {
+        Msg::Win { event, hwnd } if *event == EVENT_OBJECT_SHOW => {
             let h = crate::winapi::hwnd(*hwnd);
-            crate::winapi::pid_of(h) == pid && crate::winapi::is_top_level(h) && crate::winapi::has_caption(h)
+            crate::winapi::pid_of(h) == pid && crate::winapi::title(h) == "bs early ghost"
         }
         _ => false,
     };
-    let seen = first(&rx, Duration::from_secs(30), theirs);
-    let ghosted = seen.as_ref().map(|m| match m {
-        Msg::Win { hwnd, .. } => (crate::cloak::is_ghost(crate::winapi::hwnd(*hwnd)), take_early(*hwnd)),
+    let seen = first(&rx, Duration::from_secs(30), form_shown);
+    let read = seen.as_ref().map(|m| match m {
+        Msg::Win { hwnd, .. } => {
+            let h = crate::winapi::hwnd(*hwnd);
+            let facts = format!(
+                "ex_style {:#x}, alpha {:?}, caption {}, top-level {}, visible {}",
+                crate::winapi::ex_style(h),
+                crate::winapi::layered_alpha(h),
+                crate::winapi::has_caption(h),
+                crate::winapi::is_top_level(h),
+                crate::winapi::is_visible(h)
+            );
+            (crate::cloak::is_ghost(h), take_early(*hwnd), facts)
+        }
         _ => unreachable!(),
     });
     share_agents(vec![], 0, true);
     let _ = agent.kill();
     let _ = agent.wait();
-    let (is_ghost, undo) = ghosted.expect("no window event for the agent's form");
-    assert!(is_ghost, "the agent's form was not a ghost when its event reached the worker");
+    let (is_ghost, undo, facts) = read.expect("no SHOW event for the agent's form");
+    assert!(is_ghost, "the agent's form was not a ghost when its SHOW reached the worker: {facts}");
     let undo = undo.expect("the event thread left nothing for the worker to record");
     assert_ne!(undo.alpha, Some(0), "the record holds the form's own alpha, not the ghost's");
     assert_eq!(undo.ex_style & (WS_EX_TRANSPARENT as i64), 0, "the record holds the form's own style, not the ghost's");
