@@ -22,6 +22,12 @@ final class CalculatorTests: XCTestCase {
 
     func testPercentFunctionsConstantsAndGrouping() {
         XCTAssertEqual(calc("15% * 80"), "12")
+        // Review of #448, first-F1: the PR's own example, as typed.
+        XCTAssertEqual(calc("15% of 80"), "12")
+        XCTAssertEqual(calc("15 % of 80"), "12")
+        XCTAssertEqual(calc("20% of 50 + 1"), "11")
+        XCTAssertNil(calc("15 of 80"), "of only follows a percent")
+        XCTAssertNil(calc("15% of"))
         XCTAssertEqual(calc("sqrt(16) + 1"), "5")
         XCTAssertEqual(calc("2pi"), Calculator.format(2 * Double.pi))
         XCTAssertEqual(calc("3(4+5)"), "27")

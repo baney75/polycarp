@@ -139,10 +139,18 @@ public enum Calculator {
 
         private mutating func postfix() -> Double? {
             guard var v = primary() else { return nil }
+            var percent = false
             while peek() == "%" {
                 i += 1
                 sawWork = true
+                percent = true
                 v /= 100
+            }
+            // `15% of 80`: "of" after a percent multiplies (review of #448, first-F1).
+            if percent, peek() != nil, word(at: i) == "of" {
+                i += 2
+                guard let r = unary() else { return nil }
+                return v * r
             }
             // Implicit multiplication: `2pi`, `2(3+4)`, `(1+2)(3+4)`.
             if let c = peek(), c == "(" || (c.isLetter && Self.constants[word(at: i) ?? ""] != nil) {
