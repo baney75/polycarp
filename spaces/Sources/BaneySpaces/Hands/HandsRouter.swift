@@ -200,6 +200,12 @@ final class HandsRouter {
         return { [self] in AgentAccessGate.actingRefusal(mode: access) ?? scope() ?? inUseProblem(w, verb: verb, delivery: delivery) ?? also?() }
     }
 
+    /// `type` into a window off the agent workspace: refused, lent or not, in any mode (`AgentKeys`).
+    func typingRefusal(_ w: HandsWindow, verb: String) -> HandsError? {
+        let (placed, agent) = onMain { (host.live(w.id), host.agentWorkspace()) }
+        return AgentKeys.refusal(verb: verb, app: w.app, window: w.id, workspace: (placed ?? w).workspace, agentWorkspace: agent)
+    }
+
     // MARK: in use
 
     /// How Donovan's use of the app stands for this action, from facts read now. The app's focused and main windows are
@@ -662,6 +668,9 @@ final class HandsRouter {
         case .success(let (w, scope)):
             // Before the mark: an activation while it waits is Donovan's, never taken for the agent's.
             // Every verb here goes through the engine's strict Headless accessibility path (`HandsEngine.act`).
+            // Text goes only into a window on the agent workspace (`AgentKeys`), checked now and again at dispatch.
+            let typing: HandsEngine.Check? = kind == .typeText ? { [self] in typingRefusal(w, verb: name) } : nil
+            if let e = typing?() { return .failure(e) }
             if let e = awaitUse(w, verb: name, delivery: .headlessAX, wait: req.int("wait"), session: session) { return .failure(e) }
             // A select or click that opens a pop-up menu: only with the window on screen under the agent workspace.
             if kind == .select || kind == .click, let e = popupRefusal(w, ref: ref, verb: name, session: session) { return .failure(e) }
@@ -703,7 +712,7 @@ final class HandsRouter {
                 return clickRow(w, scope: scope, ref: ref, plan: plan, session: session, childrenBefore: childrenBefore)
             }
             // The scope and ref checks run again on the process queue, at the moment the call executes.
-            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session))
+            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session, also: typing))
             switch reply {
             case .failed(let e): return .failure(e)
             case .ok(let engine):

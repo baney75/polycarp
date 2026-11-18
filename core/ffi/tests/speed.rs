@@ -1,4 +1,4 @@
-//! Speed of the voice fast path, in a test with the fixture audio that ships in core/voice/bench.
+//! Speed of the voice fast path, in a test with the fixture audio that ships in the polycarp-voice crate (its bench folder, in baney75/silas).
 //!
 //! Measures, with a throwaway data folder (never the real one, never a microphone or the keyboard):
 //!   * `start_to_ready_ms`: from `pc_open` + `pc_start` until the engine is settled (a model loaded, or, with none

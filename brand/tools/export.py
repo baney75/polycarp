@@ -20,11 +20,10 @@ SETS = [
     ("macos", "icon-{}.png", "icon-macos.svg", [16, 32, 64, 128, 256, 512, 1024]),
     ("ios", "icon-{}.png", "icon-full-bleed.svg", [1024]),
     ("windows", "icon-{}.png", "icon-full-bleed.svg", [16, 24, 32, 48, 64, 256]),
-    ("linux", "icon-{}.png", "icon-full-bleed.svg", [48, 128, 256, 512]),
     ("web", "icon-{}.png", "icon-full-bleed.svg", [16, 32, 180, 192, 512]),
     ("android", "legacy-{}.png", "icon-full-bleed.svg", [48, 72, 96, 144, 192, 512]),
     ("android", "adaptive-foreground-{}.png", "icon-android-foreground.svg", [432]),
-    # Black on transparent: macOS and Linux trays tint a template image themselves.
+    # Black on transparent: the macOS tray tints a template image itself.
     ("tray", "tray-{}.png", "mark-small.svg", [16, 22, 32, 44]),
 ]
 ICO = ("windows", "polycarp.ico", [16, 24, 32, 48, 64, 256])

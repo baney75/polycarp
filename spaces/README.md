@@ -496,8 +496,9 @@ Every command prints one JSON envelope: `{"ok":true,"data":{…}}`, or `{"ok":fa
 "retry","suggestion"}}` with `retry` one of `safe`, `after_snapshot`, `never`. Four rules, all enforced by the app:
 an agent acts only on windows on the agent workspace or on an app you lent (anything else answers
 `outside_agent_workspace`, and reads are refused the same way; scope is checked again right before every engine call);
-an action never activates an app, raises a window, moves the pointer or posts a global keystroke (`press` answers
-`not_supported` until keys can reach one background app); BaneySpaces ignores an app activation an agent action
+an action never activates an app, raises a window, moves the pointer or posts a global keystroke (`press` posts keys to
+the one background process, and `press` and `type` reach only windows on the agent workspace: a lent window on one of
+your workspaces answers `outside_agent_workspace` until the agent brings it over with `move --window`); BaneySpaces ignores an app activation an agent action
 caused, for the window the action worked on and only while it ran, so your workspace doesn't follow it and your own
 windows of the same app still do; and every action returns what it verified from the exact window it targeted.
 `scripts/agent-hands-probe.swift` proves the rest on your Mac: 200 actions in TextEdit (a temporary document) and
