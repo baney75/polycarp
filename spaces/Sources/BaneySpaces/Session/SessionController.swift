@@ -167,6 +167,11 @@ final class SessionController {
         server.handle = { [weak self] in self?.handle($0) ?? Wire.Reply(ok: false) }
         server.handleHands = { [weak self] in self?.handleHands($0) ?? Wire.Reply(ok: false) }
         server.handleSandbox = { [weak self] in self?.sandboxHandler?($0) ?? Wire.Reply(ok: false, error: "the sandbox isn't ready") }
+        _ = hands.events  // made here, on the main thread, before any connection can reach it (it is lazy)
+        server.handleSubscribe = { [weak self] fd, req in
+            guard let self else { close(fd); return }
+            self.hands.events.add(fd, req)
+        }
         server.start()
         remote.handle = { [weak self] in self?.handle($0) ?? Wire.Reply(ok: false) }
         if Self.remoteEnabled { startRemote() }
@@ -484,6 +489,10 @@ final class SessionController {
             // Answered by the server off the main thread (`handleSandbox`); a sandbox request that
             // reaches here came through a path that doesn't know how.
             return .init(ok: false, error: "sandbox requests are not answered on the main thread")
+        case .subscribe:
+            // The server hands a subscribe connection to `handleSubscribe`, which keeps it; one that reaches here
+            // came through a path that can't hold a stream.
+            return .init(ok: false, error: "subscribe needs the local socket")
         case .remote:
             switch r.text ?? "status" {
             case "on":

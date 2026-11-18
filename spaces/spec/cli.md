@@ -23,6 +23,7 @@ window id, or a pid.
 | `agent arrange full\|halves\|thirds\|grid [window...]`, `frames ID=x,y,w,h ...` | yes | yes | not supported yet |
 | `agent move --window W [--frame x,y,w,h]` (the agent's verb; without `--window` it is yours) | yes | yes; a window that needs a lend or Full Access is `not_supported` | not supported yet |
 | `query windows\|workspaces\|displays\|focused\|layout\|theme\|state [--json]`, `agent query <name>` ([agent-api.md](agent-api.md)) | yes | not supported yet | not supported yet |
+| `subscribe [--events a,b]`: NDJSON events, `hello` first with the whole state ([agent-api.md](agent-api.md), "Events") | yes | not supported yet | not supported yet |
 | `agent switch N [--display D]`, `agent focus --window W`, `agent frame x,y,w,h --window W`, `agent move --window W --workspace N\|--display D` (view control) | yes | not supported yet | not supported yet |
 | `agent close --window W` (only windows this session's `open` made) | yes | yes | not supported yet |
 | `agent snapshot|find|get|click|set-value|type|toggle|select|scroll|shot` | yes | yes (AT-SPI) | yes (UI Automation) |
