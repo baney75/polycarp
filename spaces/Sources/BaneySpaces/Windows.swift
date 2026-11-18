@@ -1,7 +1,6 @@
 import AppKit
 import ApplicationServices
 import BaneySpacesCore
-import BaneySpacesCursor
 
 // Private but stable since macOS 10.x: the WindowServer number behind an Accessibility window.
 // Every window manager on the Mac relies on it; there is no public way to match the two.
