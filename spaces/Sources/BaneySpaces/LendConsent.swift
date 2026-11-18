@@ -101,7 +101,7 @@ enum AppAllowConsent {
 
     /// Main thread only. False for Don't Allow, a timeout, a sheet while one is up or within the pause, and any answer
     /// that did not come from a real click or key.
-    static func ask(app: String) -> Bool {
+    static func ask(app: String, bundle: String, path: String) -> Bool {
         guard Thread.isMainThread, !showing, Date().timeIntervalSince(lastShown) >= pause else { return false }
         if let r = refusals[app], r.count >= LendConsent.maxRefusals, Date().timeIntervalSince(r.last) < 3600 { return false }
         showing = true
@@ -110,7 +110,7 @@ enum AppAllowConsent {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Let agents open \(app)?"
-        alert.informativeText = "A program on this Mac asked. If you didn't start it, choose Don't Allow. Agents could start their own copy of \(app) on the agent workspace whenever they like, until you run `polycarp-spaces agent allow --remove \(app)`. Their copy is separate from yours, but it may open files or accounts \(app) keeps for you."
+        alert.informativeText = "A program on this Mac asked. If you didn't start it, choose Don't Allow. Agents could start their own copy of \(app) on the agent workspace whenever they like, until you run `polycarp-spaces agent allow --remove \(app)`. Their copy is separate from yours, but it may open files or accounts \(app) keeps for you. This lasts until Polycarp quits.\n\nBundle id: \(bundle)\nApp: \(path)"
         alert.addButton(withTitle: "Don't Allow")   // first button: the default (Return)
         alert.addButton(withTitle: "Allow")
         let button = alert.buttons[1]

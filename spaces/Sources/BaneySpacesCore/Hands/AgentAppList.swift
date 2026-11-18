@@ -1,37 +1,81 @@
-import Foundation
+import AppKit
+import Security
 
-/// Apps Donovan lets agents open on the agent workspace, beyond the built-in ones. Only Polycarp changes the list, and
-/// only after Donovan clicks Allow in its sheet (`polycarp-spaces agent allow <app>`; `AppAllowConsent` in the app). The
-/// session socket and every file a process of his can write are open to an agent with a shell, so nothing an agent can
-/// write grants an open (review of #496, first-F1). The app reads its saved copy once at launch, keeps the list here in
-/// memory, and saves it only after a click or a removal; a change to the saved copy while it runs is never read.
+/// Apps Donovan lets agents open on the agent workspace, beyond the built-in ones, each with the copy he allowed. Only
+/// Polycarp adds one, and only after Donovan clicks Allow in its sheet (`polycarp-spaces agent allow <app>`;
+/// `AppAllowConsent` in the app). The list lives in Polycarp's memory and nowhere else: the session socket, its defaults
+/// and every file a process of his can write are open to an agent with a shell, and an ad hoc or Local Signing identity
+/// has no team for a keychain item only Polycarp can read, so a saved copy could be forged (review of #533, first-F1).
+/// An allow lasts until Polycarp quits; after a restart Donovan is asked again.
 public enum AgentAppGrants {
     private static let lock = NSLock()
-    private static var apps: Set<String> = []
-    /// Where the app saves the list (its own defaults domain, as it does Agent Access).
-    public static let defaultsKey = "agentApps"
+    private static var apps: [String: AgentAppCopy] = [:]
 
-    public static var current: Set<String> { lock.lock(); defer { lock.unlock() }; return apps }
+    public static var current: Set<String> { lock.lock(); defer { lock.unlock() }; return Set(apps.keys) }
+    public static func copy(of bundle: String) -> AgentAppCopy? { lock.lock(); defer { lock.unlock() }; return apps[bundle] }
 
-    /// The app only: at launch from its saved copy, and after Donovan's click or a removal. A kind that is never an
-    /// agent's, or a string that isn't a bundle id, is dropped.
-    public static func replace(_ new: Set<String>) {
-        let kept = new.filter { isBundleID($0) && AgentAppPolicy.neverListed(bundle: $0) == nil }
-        lock.lock(); apps = kept; lock.unlock()
+    /// The app only, after Donovan's click. A kind that is never an agent's, or a string that isn't a bundle id, is dropped.
+    public static func add(_ bundle: String, _ copy: AgentAppCopy) {
+        guard isBundleID(bundle), AgentAppPolicy.neverListed(bundle: bundle) == nil else { return }
+        lock.lock(); apps[bundle] = copy; lock.unlock()
     }
 
-    /// The app only, once at launch: its saved copy.
-    public static func loadSaved(_ defaults: UserDefaults = .standard) {
-        replace(Set(defaults.stringArray(forKey: defaultsKey) ?? []))
-    }
+    public static func remove(_ bundle: String) { lock.lock(); apps[bundle] = nil; lock.unlock() }
+    /// Tests only.
+    public static func clear() { lock.lock(); apps = [:]; lock.unlock() }
 
-    /// The app only, after Donovan's click or a removal.
-    public static func save(_ defaults: UserDefaults = .standard) {
-        defaults.set(current.sorted(), forKey: defaultsKey)
+    /// Why the copy at `appURL` is not the one Donovan allowed for `bundle`, or nil when it is (review of #533, second-F7).
+    public static func copyProblem(bundle: String, at appURL: URL?) -> String? {
+        guard let allowed = copy(of: bundle) else { return "Polycarp has no record of the copy Donovan allowed" }
+        guard let appURL else { return "Polycarp can't find its bundle" }
+        if let why = AgentAppCopy.placeProblem(appURL, registered: NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle)) { return why }
+        if AgentAppCopy.path(appURL) != allowed.path { return "it is not the copy Donovan allowed (\(allowed.path))" }
+        if !AgentAppCopy.meets(appURL, allowed.requirement) { return "its code is not signed as the copy Donovan allowed was" }
+        return nil
     }
 
     public static func isBundleID(_ id: String) -> Bool {
         id.range(of: #"^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+$"#, options: .regularExpression) != nil
+    }
+}
+
+/// The copy of an app Donovan allowed: where it is and its designated code requirement, checked again at every open. A
+/// bundle id says nothing by itself: any folder can hold a bundle that claims a real app's id (review of #533, second-F7).
+public struct AgentAppCopy: Equatable, Sendable {
+    public let path: String
+    public let requirement: String
+    public init(path: String, requirement: String) { self.path = path; self.requirement = requirement }
+
+    /// The folders an allowed app may be in. A copy elsewhere (Downloads, a temporary folder) is refused.
+    public static let folders = ["/Applications/", "/System/Applications/"]
+
+    public static func path(_ url: URL) -> String { url.standardizedFileURL.resolvingSymlinksInPath().path }
+
+    /// Why a copy at `url` can't be allowed or opened, or nil: it must sit in `folders` and be the copy LaunchServices
+    /// opens for its id (`registered`), so the sheet and the open name the same app.
+    public static func placeProblem(_ url: URL, registered: URL?) -> String? {
+        let p = path(url)
+        if !folders.contains(where: { p.hasPrefix($0) }) { return "it is not in /Applications or /System/Applications (\(p))" }
+        if registered.map(path) != p { return "it is not the copy macOS opens for its bundle id (\(registered.map(path) ?? "none"))" }
+        return nil
+    }
+
+    /// The copy at `url` as Donovan is asked to allow it, or nil when its signature can't be read.
+    public static func read(_ url: URL) -> AgentAppCopy? {
+        var code: SecStaticCode?, req: SecRequirement?, text: CFString?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
+              SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSCheckAllArchitectures), nil) == errSecSuccess,
+              SecCodeCopyDesignatedRequirement(code, [], &req) == errSecSuccess, let req,
+              SecRequirementCopyString(req, [], &text) == errSecSuccess, let text else { return nil }
+        return AgentAppCopy(path: path(url), requirement: text as String)
+    }
+
+    /// Whether the code at `url` is intact and meets `requirement`.
+    public static func meets(_ url: URL, _ requirement: String) -> Bool {
+        var code: SecStaticCode?, req: SecRequirement?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
+              SecRequirementCreateWithString(requirement as CFString, [], &req) == errSecSuccess, let req else { return false }
+        return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSCheckAllArchitectures), req) == errSecSuccess
     }
 }
 

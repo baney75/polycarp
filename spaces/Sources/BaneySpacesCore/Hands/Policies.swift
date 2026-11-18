@@ -78,10 +78,13 @@ public enum AgentAppPolicy {
 
     /// nil when the app may start; else `needs_sandbox`, saying why.
     public static func refusal(app: String, bundle: String, appURL: URL? = nil, probeFolder: URL? = nil, probeTrusted: Bool = false,
-                               added: Set<String> = AgentAppGrants.current) -> HandsError? {
-        let facts = added.contains(bundle) ? AgentAppFacts.read(appURL) : nil
-        if allowed(bundle: bundle, added: added, facts: facts) || isProbeApp(bundle: bundle, at: appURL, in: probeFolder, trusted: probeTrusted) { return nil }
-        let kind = neverListed(bundle: bundle) ?? (added.contains(bundle) ? facts?.refusal ?? "Polycarp can't read its bundle" : nil)
+                               added: Set<String> = AgentAppGrants.current,
+                               copyProblem: (String, URL?) -> String? = AgentAppGrants.copyProblem) -> HandsError? {
+        // An allowed app opens only as the copy Donovan allowed (second-F7), checked before its bundle is read.
+        let moved = added.contains(bundle) && !separateInstance.contains(bundle) ? copyProblem(bundle, appURL) : nil
+        let facts = added.contains(bundle) && moved == nil ? AgentAppFacts.read(appURL) : nil
+        if moved == nil && allowed(bundle: bundle, added: added, facts: facts) || isProbeApp(bundle: bundle, at: appURL, in: probeFolder, trusted: probeTrusted) { return nil }
+        let kind = neverListed(bundle: bundle) ?? moved ?? (added.contains(bundle) ? facts?.refusal ?? "Polycarp can't read its bundle" : nil)
         let why = kind ?? "Donovan hasn't allowed it"
         let ask = kind == nil
             ? "run `polycarp-spaces agent allow \(app)`: Polycarp asks Donovan in a sheet, and only his click on Allow lets agents open it"

@@ -955,8 +955,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The agent hands: what the scope guard needs from the workspaces, and what to do when a lend changes.
         // The engine's state folder is set here, once, on the main thread, before any engine queue exists.
         HandsEngine.prepareEnvironment()
-        // The apps Donovan allowed agents to open: read once here, never again while the app runs (`AgentAppGrants`).
-        AgentAppGrants.loadSaved()
         // The windows agents moved in before a relaunch: loaded and settled before the session socket takes any request.
         _ = HandsMovedIn.shared
         session.hands.host = HandsHost(
@@ -968,7 +966,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             inspect: { [weak self] in self?.spaces.handsInspect($0) ?? (nil, false) },
             agentOwned: { AgentOwned.shared.pids },
             askToLend: { app, minutes, takeBack in LendConsent.ask(app: app, minutes: minutes, takeBack: takeBack) },
-            askToAllow: { AppAllowConsent.ask(app: $0) },
+            askToAllow: { AppAllowConsent.ask(app: $0, bundle: $1, path: $2) },
             open: { [weak self] args in self?.session.agent("open", args) ?? Wire.Reply(ok: false, error: "not ready") },
             workspaceRows: { [weak self] in self?.spaces.workspaceRows() ?? [] },
             agentArea: { [weak self] in self?.spaces.agentArea() ?? .zero },

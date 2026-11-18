@@ -484,7 +484,9 @@ read it at any time while actions on it wait until you have been out of it for 5
 `needs_lend`. `agent move` moves only windows of apps BaneySpaces started for an agent; send your own window with its
 workspace key. `agent open` starts TextEdit and Preview on a file from the handoff folder, Calculator, and any app you
 allow: `polycarp-spaces agent allow Grapher` shows a sheet in Polycarp, and only your click on Allow adds it (`--remove`
-takes it off, `--list` shows them). Nothing an agent can write adds an app; Polycarp reads its saved list once at launch.
+takes it off, `--list` shows them). The sheet names the bundle id and the app's path, and only that copy opens: it must be
+the copy macOS opens for the id, in /Applications or /System/Applications, signed as it was when you allowed it. Polycarp
+keeps the list in memory only, so an allow lasts until Polycarp quits and nothing an agent can write adds an app.
 Each allowed app starts as a separate copy on the agent workspace, and only its windows there are the agent's, but only
 the three built-in apps are known to restore nothing: an allowed app may open files or accounts it keeps for you. An open
 that starts no copy of its own, or reaches the copy you run, is refused. Browsers, password managers, settings, shells,

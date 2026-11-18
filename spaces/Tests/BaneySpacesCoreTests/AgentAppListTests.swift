@@ -2,19 +2,20 @@
 import XCTest
 
 /// Apps Donovan lets agents open on the agent workspace beyond the three built-ins (council gap A1: "agents can open only
-/// three test apps"). Only his click on Allow in Polycarp's sheet adds one (review of #496, first-F1); each is refused by
-/// kind and by what its bundle says it is, and its open must start a new copy (second-F6).
+/// three test apps"). Only his click on Allow in Polycarp's sheet adds one (review of #496, first-F1), held in memory only
+/// (review of #533, first-F1); each is refused by kind, by what its bundle says it is and when it isn't the copy he
+/// allowed (#533, second-F7), and its open must start a new copy (#496, second-F6).
 final class AgentAppListTests: XCTestCase {
     private var dir: URL!
 
     override func setUpWithError() throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("polycarp-agent-apps-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        AgentAppGrants.replace([])
+        AgentAppGrants.clear()
     }
 
     override func tearDownWithError() throws {
-        AgentAppGrants.replace([])
+        AgentAppGrants.clear()
         try? FileManager.default.removeItem(at: dir)
     }
 
@@ -27,16 +28,24 @@ final class AgentAppListTests: XCTestCase {
         return url
     }
 
+    /// The real Grapher, the copy macOS opens for its id.
+    private func grapher() throws -> URL {
+        let url = URL(fileURLWithPath: "/System/Applications/Utilities/Grapher.app")
+        guard FileManager.default.fileExists(atPath: url.path) else { throw XCTSkip("no Grapher on this Mac") }
+        return url
+    }
+
+    private func open(_ url: URL) -> Result<[String], HandsError> {
+        AgentOpenGate.check(app: "Grapher", bundle: "com.apple.grapher", targets: [], handoff: dir.appendingPathComponent("handoff"), appURL: url)
+    }
+
     /// The gate every caller uses opens an app once Donovan allowed it, and not before.
     func testAnAllowedAppOpensOnTheAgentWorkspace() throws {
-        let grapher = try app("Grapher", ["CFBundleIdentifier": "com.apple.grapher", "LSApplicationCategoryType": "public.app-category.education"])
-        func open() -> Result<[String], HandsError> {
-            AgentOpenGate.check(app: "Grapher", bundle: "com.apple.grapher", targets: [], handoff: dir.appendingPathComponent("handoff"), appURL: grapher)
-        }
-        guard case .failure(let before) = open() else { return XCTFail("an app Donovan never allowed opened") }
+        let grapher = try grapher()
+        guard case .failure(let before) = open(grapher) else { return XCTFail("an app Donovan never allowed opened") }
         XCTAssertEqual(before.code, .needsSandbox)
-        AgentAppGrants.replace(["com.apple.grapher"])
-        guard case .success(let files) = open() else { return XCTFail("an allowed app was refused") }
+        AgentAppGrants.add("com.apple.grapher", try XCTUnwrap(AgentAppCopy.read(grapher)))
+        guard case .success(let files) = open(grapher) else { return XCTFail("an allowed app was refused") }
         XCTAssertEqual(files, [])
         XCTAssertTrue(AgentAppPolicy.needsSeparateInstance(bundle: "com.apple.grapher"), "a separate copy")
         XCTAssertTrue(AgentAppPolicy.isListed(bundle: "com.apple.grapher"), "checked again after the launch")
@@ -63,11 +72,10 @@ final class AgentAppListTests: XCTestCase {
     /// first-F1: only the app changes the list, only after a real click, and it reads its saved copy once at launch.
     func testOnlyDonovansClickInPolycarpAddsAnApp() throws {
         let router = try CursorSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
-        let ask = try XCTUnwrap(HandsSourceTests.between("func askToAllow(target: String, verb: String) -> HandsEnvelope {", "AgentAppGrants.replace(AgentAppGrants.current.union([bundle]))", in: router))
-        XCTAssertTrue(ask.contains("guard host.askToAllow(name) else {"), "the add follows the sheet")
+        let ask = try XCTUnwrap(HandsSourceTests.between("func askToAllow(target: String, verb: String) -> HandsEnvelope {", "AgentAppGrants.add(bundle, copy)", in: router))
+        XCTAssertTrue(ask.contains("guard let copy, host.askToAllow(name, bundle, copy.path) else {"), "the add follows the sheet")
         let delegate = try CursorSourceTests.code("Sources/BaneySpaces/AppDelegate.swift")
-        XCTAssertTrue(delegate.contains("askToAllow: { AppAllowConsent.ask(app: $0) },"))
-        XCTAssertEqual(delegate.components(separatedBy: "AgentAppGrants.loadSaved()").count, 2, "read once, at launch")
+        XCTAssertTrue(delegate.contains("askToAllow: { AppAllowConsent.ask(app: $0, bundle: $1, path: $2) },"))
         let consent = try CursorSourceTests.code("Sources/BaneySpaces/LendConsent.swift")
         let sheet = try XCTUnwrap(HandsSourceTests.between("enum AppAllowConsent {", "enum AccessConsent {", in: consent))
         XCTAssertTrue(sheet.contains("if let why = LendConsent.notByHand(alert: alert, button: button, enabledAt: enabledAt) { return refuse(why) }"), "a real click only")
@@ -77,21 +85,48 @@ final class AgentAppListTests: XCTestCase {
         // Nothing else in the app writes the list.
         var writers = 0
         for file in ["Sources/BaneySpaces/Hands/HandsRouter.swift", "Sources/BaneySpaces/AppDelegate.swift", "Sources/BaneySpaces/Session/SessionController.swift"] {
-            writers += try CursorSourceTests.code(file).components(separatedBy: "AgentAppGrants.save()").count - 1
+            writers += try CursorSourceTests.code(file).components(separatedBy: "AgentAppGrants.add(").count - 1
         }
-        XCTAssertEqual(writers, 2, "after the click, and on a removal")
+        XCTAssertEqual(writers, 1, "after the click only")
         XCTAssertFalse(Remote.allows(Wire.Request(op: .agent, text: "allow-ask", args: ["add", "Grapher"])), "never from another Mac")
     }
 
-    /// The saved copy the app reads at launch keeps only bundle ids of kinds that may be allowed.
-    func testTheSavedCopyIsReadStrictly() throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "polycarp-agent-apps-test-\(UUID().uuidString)"))
-        defaults.set(["com.apple.grapher", "not an id", "com.apple.Terminal", "net.kovidgoyal.kitty"], forKey: AgentAppGrants.defaultsKey)
-        AgentAppGrants.loadSaved(defaults)
-        XCTAssertEqual(AgentAppGrants.current, ["com.apple.grapher"])
-        AgentAppGrants.replace(["org.videolan.vlc", "com.apple.grapher"])
-        AgentAppGrants.save(defaults)
-        XCTAssertEqual(defaults.stringArray(forKey: AgentAppGrants.defaultsKey), ["com.apple.grapher", "org.videolan.vlc"])
+    /// Review of #533, first-F1: Polycarp's defaults are open to an agent with a shell (`defaults write` and a restart),
+    /// so no list is saved or read; an allow lasts until Polycarp quits.
+    func testNothingSavedGrantsAnOpenAfterARestart() throws {
+        let grapher = try grapher()
+        UserDefaults.standard.set(["com.apple.grapher"], forKey: "agentApps")
+        defer { UserDefaults.standard.removeObject(forKey: "agentApps") }
+        XCTAssertEqual(AgentAppPolicy.refusal(app: "Grapher", bundle: "com.apple.grapher", appURL: grapher)?.code, .needsSandbox)
+        let core = try CursorSourceTests.code("Sources/BaneySpacesCore/Hands/AgentAppList.swift")
+        XCTAssertFalse(core.contains("UserDefaults"), "first-F1: the list is never saved")
+        XCTAssertFalse(core.contains("contents(atPath"))
+        for file in ["Sources/BaneySpaces/AppDelegate.swift", "Sources/BaneySpaces/Session/SessionController.swift"] {
+            XCTAssertFalse(try CursorSourceTests.code(file).contains("AgentAppGrants.load"), file)
+        }
+        let consent = try CursorSourceTests.code("Sources/BaneySpaces/LendConsent.swift")
+        XCTAssertTrue(consent.contains("This lasts until Polycarp quits."), "the sheet says so")
+    }
+
+    /// Review of #533, second-F7: a bundle that claims a real app's id is not that app. The allow and every open take
+    /// only the copy macOS opens for the id, in /Applications or /System/Applications, signed as the copy Donovan allowed.
+    func testOnlyTheCopyDonovanAllowedOpens() throws {
+        let grapher = try grapher()
+        let copy = try XCTUnwrap(AgentAppCopy.read(grapher))
+        XCTAssertTrue(copy.requirement.contains("com.apple.grapher"), copy.requirement)
+        AgentAppGrants.add("com.apple.grapher", copy)
+        let fake = try app("Grapher", ["CFBundleIdentifier": "com.apple.grapher", "LSApplicationCategoryType": "public.app-category.education"])
+        guard case .failure(let e) = open(fake) else { return XCTFail("a fake bundle with Grapher's id opened") }
+        XCTAssertTrue(e.message.contains("not in /Applications or /System/Applications"), e.message)
+        XCTAssertNotNil(AgentAppCopy.placeProblem(grapher, registered: fake), "not the copy macOS opens for the id")
+        XCTAssertNil(AgentAppCopy.placeProblem(grapher, registered: grapher))
+        // The same path signed otherwise (a copy swapped in place): Calculator's requirement stands in for another signer.
+        let calculator = try XCTUnwrap(AgentAppCopy.read(URL(fileURLWithPath: "/System/Applications/Calculator.app")))
+        AgentAppGrants.add("com.apple.grapher", AgentAppCopy(path: copy.path, requirement: calculator.requirement))
+        guard case .failure(let swapped) = open(grapher) else { return XCTFail("a copy signed otherwise opened") }
+        XCTAssertTrue(swapped.message.contains("not signed as the copy Donovan allowed"), swapped.message)
+        let consent = try CursorSourceTests.code("Sources/BaneySpaces/LendConsent.swift")
+        XCTAssertTrue(consent.contains("Bundle id: \\(bundle)\\nApp: \\(path)"), "the sheet names the copy")
     }
 
     /// first-F1: every id the review found passing, and a browser, terminal or code runner that no list names, is refused
@@ -105,7 +140,7 @@ final class AgentAppListTests: XCTestCase {
                      "app.zen-browser.zen", "com.kagi.kagimacOS", "com.duckduckgo.macos.browser", "net.kovidgoyal.kitty", "org.alacritty",
                      "com.github.wez.wezterm", "com.vscodium", "com.barebones.bbedit", "org.hammerspoon.Hammerspoon", "com.raycast.macos",
                      "com.stairways.keyboardmaestro.editor", "com.apple.Home", "com.apple.findmy", "com.apple.freeform", "com.apple.iBooksX"]
-        AgentAppGrants.replace(Set(never))
+        for b in never { AgentAppGrants.add(b, AgentAppCopy(path: "/Applications/X.app", requirement: "anchor apple")) }
         XCTAssertEqual(AgentAppGrants.current, [], "none can even be kept")
         for b in never {
             XCTAssertNotNil(AgentAppPolicy.neverListed(bundle: b), b)
@@ -120,11 +155,11 @@ final class AgentAppListTests: XCTestCase {
         let once = try app("Once", ["CFBundleIdentifier": "com.example.once", "LSMultipleInstancesProhibited": true])
         let fine = try app("Fine", ["CFBundleIdentifier": "com.example.fine", "CFBundleURLTypes": [["CFBundleURLSchemes": ["fine"]]]])
         let added: Set<String> = ["com.example.surf", "com.example.edit", "com.example.once", "com.example.fine", "com.example.gone"]
-        XCTAssertTrue(try XCTUnwrap(AgentAppPolicy.refusal(app: "Surf", bundle: "com.example.surf", appURL: browser, added: added)).message.contains("browser"))
-        XCTAssertTrue(try XCTUnwrap(AgentAppPolicy.refusal(app: "Edit", bundle: "com.example.edit", appURL: editor, added: added)).message.contains("developer tool"))
-        XCTAssertTrue(try XCTUnwrap(AgentAppPolicy.refusal(app: "Once", bundle: "com.example.once", appURL: once, added: added)).message.contains("one copy only"))
-        XCTAssertNil(AgentAppPolicy.refusal(app: "Fine", bundle: "com.example.fine", appURL: fine, added: added))
-        XCTAssertNotNil(AgentAppPolicy.refusal(app: "Gone", bundle: "com.example.gone", appURL: nil, added: added), "no bundle to read: refused")
+        XCTAssertTrue(try XCTUnwrap(AgentAppPolicy.refusal(app: "Surf", bundle: "com.example.surf", appURL: browser, added: added, copyProblem: { _, _ in nil })).message.contains("browser"))
+        XCTAssertTrue(try XCTUnwrap(AgentAppPolicy.refusal(app: "Edit", bundle: "com.example.edit", appURL: editor, added: added, copyProblem: { _, _ in nil })).message.contains("developer tool"))
+        XCTAssertTrue(try XCTUnwrap(AgentAppPolicy.refusal(app: "Once", bundle: "com.example.once", appURL: once, added: added, copyProblem: { _, _ in nil })).message.contains("one copy only"))
+        XCTAssertNil(AgentAppPolicy.refusal(app: "Fine", bundle: "com.example.fine", appURL: fine, added: added, copyProblem: { _, _ in nil }))
+        XCTAssertNotNil(AgentAppPolicy.refusal(app: "Gone", bundle: "com.example.gone", appURL: nil, added: added, copyProblem: { _, _ in nil }), "no bundle to read: refused")
     }
 
     /// second-F6: an allowed app's open that started no copy of its own, or reached Donovan's running copy, is refused.

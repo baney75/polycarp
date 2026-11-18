@@ -98,7 +98,7 @@ Scope rules, enforced by the app, not by your good behavior:
   where he is. Put files you want it to open in `~/Library/Application Support/BaneySpaces/hands/handoff/`; no other path is accepted,
   and URLs wait for the agent browser profiles. TextEdit and Preview (each needs a handoff file), Calculator and any app he allowed start;
   every other app answers `needs_sandbox`. To ask for one, run `polycarp-spaces agent allow <app>`: Polycarp shows him a sheet and only his
-  click adds it. Browsers, password managers, shells, settings, Finder, code runners and apps signed in to his accounts can't be allowed.
+  click adds it, until Polycarp quits (then ask again). Browsers, password managers, shells, settings, Finder, code runners and apps signed in to his accounts can't be allowed.
   Work with files directly, not through Finder. Each starts as a separate copy; only TextEdit, Preview and Calculator are known to restore nothing.
   Never ask him to switch workspaces or look at the screen.
 - `press @s1:e3 "cmd+a"` posts keys to that window's own process while it stays in the background, and `type` inserts text. Both
