@@ -418,9 +418,10 @@ public enum PolycarpThemeFile {
 
 // MARK: Following the file
 
-/// Looks at the file about once a second (a stat, on its own queue) and hands over the theme when it
-/// appears, changes or goes. Nothing here touches the main thread: `deliver` is called on the watcher's
-/// queue and the caller moves to the main queue to apply.
+/// Hands over the theme when the file appears, changes or goes. The kernel says when the file, its folder
+/// or the config folder changes (`fileEvents`, a kqueue watch), so a `polycarp theme set` lands within a few
+/// milliseconds; a stat every `interval` (30 s) is only a safety net for a change no event reported. Nothing here
+/// touches the main thread: `deliver` is called on the watcher's queue and the caller moves to the main queue to apply.
 public final class PolycarpThemeWatcher: @unchecked Sendable {
     private let path: String?
     private let interval: TimeInterval
@@ -429,20 +430,48 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
     private let log: (String) -> Void
     private let load: (String) -> PolycarpThemeFile.Loaded
     private let schedule: Schedule
+    private let watch: Watch
     private var cancel: (() -> Void)?
+    private var unwatch: (() -> Void)?
+    /// A look is due on `queue`: events that arrive together make one look.
+    private var lookDue = false
+    /// A read that failed for now is tried again after this long, with or without an event.
+    private let retry: TimeInterval
     // Only touched on `queue`.
     private var last: PolycarpThemeFile.Stamp?
     private var started = false
     private var lastProblem: String?
     private var lastName: String?
+    /// The stamp of a bad read an event caused, held back once for `settle` (see `tick(fromEvent:)`).
+    private var settling: (stamp: PolycarpThemeFile.Stamp?, until: DispatchTime)?
 
-    public init(path: String?, interval: TimeInterval = 1,
-                queue: DispatchQueue = DispatchQueue(label: "com.baney.polycarp.polycarp-theme", qos: .utility),
+    /// How long a bad read an event caused waits before it counts: an edit in place (truncate, then write) reads
+    /// empty or half written in between, and the person's own look must not flash for that.
+    public static let settle: DispatchTimeInterval = .milliseconds(150)
+
+    /// The safety look's period. Events do the real work; this only catches a change no event reported.
+    public static let safetyInterval: TimeInterval = 30
+
+    public init(path: String?, interval: TimeInterval = PolycarpThemeWatcher.safetyInterval,
+                queue: DispatchQueue = DispatchQueue(label: "com.baney.polycarp.polycarp-theme", qos: .userInitiated),
                 log: @escaping (String) -> Void = { _ in },
                 load: @escaping (String) -> PolycarpThemeFile.Loaded = { PolycarpThemeFile.load(path: $0) },
                 schedule: @escaping Schedule = PolycarpThemeWatcher.systemTimer,
+                watch: @escaping Watch = PolycarpThemeWatcher.fileEvents,
+                retry: TimeInterval = 1,
                 deliver: @escaping (PolycarpTheme?) -> Void) {
-        self.path = path; self.interval = interval; self.queue = queue; self.log = log; self.load = load; self.schedule = schedule; self.deliver = deliver
+        self.path = path; self.interval = interval; self.queue = queue; self.log = log; self.load = load; self.schedule = schedule
+        self.watch = watch; self.retry = retry; self.deliver = deliver
+    }
+
+    /// Calls `changed` on `queue` whenever something at `path` or a folder above it may have changed; returns what stops it.
+    /// Tests pass one that never fires, to hold the watcher to their own clock.
+    public typealias Watch = (_ queue: DispatchQueue, _ path: String, _ changed: @escaping () -> Void) -> () -> Void
+
+    public static let fileEvents: Watch = { queue, path, changed in
+        let w = PathEvents(path: path, queue: queue, changed: changed)
+        queue.async { w.arm() }
+        return { queue.async { w.stop() } }
     }
 
     /// Calls `fire` on `queue` after `first` seconds and then every `interval`; returns what stops it. Tests pass their own
@@ -492,6 +521,7 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
                 }
             }
             cancel = schedule(queue, interval, timeout > 0 ? interval : 0) { [weak self] in self?.tick() }
+            unwatch = watch(queue, path!) { [weak self] in self?.changed() }
         }
         guard timeout > 0 else { return .pending }
         _ = sem.wait(timeout: .now() + timeout)
@@ -501,12 +531,25 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
     }
 
     public func stop() {
-        queue.async { [self] in cancel?(); cancel = nil }
+        queue.async { [self] in cancel?(); cancel = nil; unwatch?(); unwatch = nil }
+    }
+
+    /// An event: look once, after the events already queued, so a burst (the command writes five files) is one or two
+    /// looks, and an unchanged stamp costs a stat. No timer: a short `asyncAfter` is coalesced by up to about 100 ms
+    /// when the process runs at background priority.
+    private func changed() {
+        guard !lookDue else { return }
+        lookDue = true
+        queue.async { [weak self] in
+            guard let self, self.cancel != nil else { return }
+            self.lookDue = false
+            self.tick(fromEvent: true)
+        }
     }
 
     /// One look. Stat, read if it changed, stat again: a file that moved while being read is tried again on
     /// the next tick, so half a write never sticks. Call it on `queue` only (tests do, through `tickNow`).
-    func tick(into out: ((PolycarpTheme?) -> Void)? = nil) {
+    func tick(into out: ((PolycarpTheme?) -> Void)? = nil, fromEvent: Bool = false) {
         guard let path else { return }
         let before = PolycarpThemeFile.stamp(path)
         if started && before == last { return }
@@ -517,8 +560,24 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
             // (`last` stays as it was, so the stamp still differs).
             if why != lastProblem { log("polycarp theme: could not read \(displayPath(path)): \(why); keeping the current theme and trying again") }
             lastProblem = why
+            // No event may come for a read that failed with the file unchanged, so look again soon on our own.
+            if cancel != nil { queue.asyncAfter(deadline: .now() + retry) { [weak self] in if self?.cancel != nil { self?.tick() } } }
             return
         }
+        // An event's bad read may be half an edit in place: look again in a moment, and only a file that still reads
+        // bad and hasn't changed drops the theme. A good read (the command renames a whole file in) lands at once.
+        if fromEvent, case .rejected = loaded {
+            if let s = settling, s.stamp == before {
+                // Held already: only the look `settle` after it may let it through.
+                if DispatchTime.now() < s.until { return }
+            } else {
+                let until = DispatchTime.now() + Self.settle
+                settling = (before, until)
+                queue.asyncAfter(deadline: until) { [weak self] in if self?.cancel != nil { self?.tick(fromEvent: true) } }
+                return
+            }
+        }
+        settling = nil
         last = before
         started = true
         switch loaded {
@@ -545,6 +604,92 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
     private func displayPath(_ p: String) -> String {
         let home = NSHomeDirectory()
         return p.hasPrefix(home + "/") ? "~" + p.dropFirst(home.count) : p
+    }
+}
+
+/// A kqueue watch on a path and the two folders above it (`current/` and the config folder), or, when neither
+/// folder is there yet, the nearest one that is. The command writes a temp file and renames it into place, so the
+/// file's own watch dies with the old file: every event re-arms the whole set before it is reported, and a change
+/// that happens between the event and the re-arm is seen by the look that follows. Only touched on `queue`.
+final class PathEvents: @unchecked Sendable {
+    private let path: String
+    private let queue: DispatchQueue
+    private let changed: () -> Void
+    private var sources: [DispatchSourceFileSystemObject] = []
+    private var stopped = false
+    /// Which `arm` is current, so a late registration from an older one is ignored.
+    private var generation = 0
+
+    init(path: String, queue: DispatchQueue, changed: @escaping () -> Void) {
+        self.path = path; self.queue = queue; self.changed = changed
+    }
+
+    /// What is watched: the file, its folder and the folder above, as far as they exist, else the nearest folder that does.
+    static func targets(_ path: String) -> [String] {
+        func parent(_ p: String) -> String {
+            guard let i = p.lastIndex(of: "/") else { return "." }
+            return i == p.startIndex ? "/" : String(p[..<i])
+        }
+        func exists(_ p: String) -> Bool { var st = stat(); return stat(p, &st) == 0 }
+        let folder = parent(path), above = parent(folder)
+        var out = [path, folder, above].filter(exists)
+        if !exists(folder) && !exists(above) {
+            var p = parent(above)
+            while !exists(p) && p != "/" { p = parent(p) }
+            out.append(p)
+        }
+        var seen = Set<String>()
+        return out.filter { seen.insert($0).inserted }
+    }
+
+    /// Watches the targets afresh, then looks once every watch is live. A source hears events only once GCD has
+    /// registered it, some time after `resume()`: a change in that gap has no event. So when the last registration
+    /// comes in, a folder that appeared or went meanwhile (the command's `mkdir current`) arms again, and otherwise
+    /// one look catches whatever the gap hid (measured: 30 of 60 first sets into a config with no `current/` missed).
+    func arm() {
+        guard !stopped else { return }
+        for s in sources { s.cancel() }
+        sources = []
+        generation += 1
+        let gen = generation
+        let targets = PathEvents.targets(path)
+        var waiting = targets.count
+        func live() {
+            if PathEvents.targets(path) != targets { arm() } else { changed() }
+        }
+        if waiting == 0 { live(); return }
+        for target in targets {
+            let fd = open(target, O_EVTONLY | O_CLOEXEC)
+            guard fd >= 0 else {
+                waiting -= 1
+                if waiting == 0 { live() }
+                continue
+            }
+            let s = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .delete, .rename, .extend, .attrib, .link, .revoke],
+                                                              queue: queue)
+            s.setEventHandler { [weak self] in
+                guard let self, !self.stopped else { return }
+                self.arm()
+                self.changed()
+            }
+            s.setRegistrationHandler { [weak self] in
+                guard let self, !self.stopped, self.generation == gen else { return }
+                waiting -= 1
+                if waiting == 0 { live() }
+            }
+            s.setCancelHandler { close(fd) }
+            s.resume()
+            sources.append(s)
+        }
+    }
+
+    /// The number of paths watched now, for tests.
+    var count: Int { sources.count }
+
+    func stop() {
+        stopped = true
+        for s in sources { s.cancel() }
+        sources = []
     }
 }
 
