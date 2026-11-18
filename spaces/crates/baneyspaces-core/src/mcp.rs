@@ -124,7 +124,7 @@ fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
 pub fn handle(msg: &Value, call: &mut dyn FnMut(&str, &Value) -> Envelope) -> Option<Value> {
     let id = msg.get("id").cloned();
     let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
-    let Some(id) = id else { return None }; // notifications get no reply
+    let id = id?; // notifications get no reply
     Some(match method {
         "initialize" => {
             let ver = msg["params"]["protocolVersion"].as_str().unwrap_or(FALLBACK_PROTOCOL);

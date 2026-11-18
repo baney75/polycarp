@@ -1,7 +1,7 @@
 import XCTest
 @testable import BaneySpacesCore
 
-/// Settings > Silas and the overlay, when dictation can't do what was asked (core/voice core.rs `fail`, `notice`).
+/// Settings > Silas and the overlay, when dictation can't do what was asked (polycarp-voice core.rs `fail`, `notice`, in baney75/silas).
 final class VoiceProblemsTests: XCTestCase {
     private func state(_ json: String) throws -> VoiceState { try JSONDecoder().decode(VoiceState.self, from: Data(json.utf8)) }
 

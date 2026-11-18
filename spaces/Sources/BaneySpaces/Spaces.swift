@@ -488,6 +488,29 @@ final class Spaces {
         return model.home.compactMap { id, ws in handsWindow(id, ws) }
     }
 
+    /// Every placed window for the agent API's queries, from the model and one window-server read: no Accessibility call,
+    /// so a query never waits on an app. A parked window reports the frame it goes back to. Minimized is known only on a
+    /// workspace a display shows (a window there that the window server doesn't draw, of an app that isn't hidden).
+    func apiWindows() -> [AgentAPI.WindowFacts] {
+        let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        var server: [WindowID: (frame: CGRect?, name: String, onScreen: Bool)] = [:]
+        for d in list {
+            guard let n = (d[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { continue }
+            let frame = (d[kCGWindowBounds as String] as? [String: Any]).flatMap { CGRect(dictionaryRepresentation: $0 as CFDictionary) }
+            server[n] = (frame, d[kCGWindowName as String] as? String ?? "", (d[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false)
+        }
+        let shown = Set(model.shown.values).union([model.current])
+        return model.home.compactMap { id, ws in
+            guard var h = handsWindow(id, ws) else { return nil }
+            let s = server[id]
+            h.title = s?.name ?? ""
+            let parked = saved.frames[id]
+            let hidden = windows[id].map { NSRunningApplication(processIdentifier: $0.pid)?.isHidden == true } ?? false
+            let minimized = shown.contains(ws) && parked == nil && !hidden && s != nil && s?.onScreen == false
+            return AgentAPI.WindowFacts(window: h, frame: parked ?? s?.frame ?? nil, minimized: minimized)
+        }
+    }
+
     /// One window straight from the model, for the check right before an engine call.
     func handsLive(_ id: UInt32) -> HandsWindow? {
         guard let ws = model.home[id] else { return nil }

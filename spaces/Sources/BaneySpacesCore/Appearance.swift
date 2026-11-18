@@ -175,6 +175,9 @@ public struct AppearanceSettings: Codable, Equatable {
     /// The color palette (`appearance.palette`): "auto", or a name in palettes.json. Not the
     /// workspace colors above, which are `palette`.
     public var colorPalette: String = AppearanceSettings.autoPalette
+    /// Settings › Appearance › "Theme sets the desktop picture": while a Polycarp theme is in force, every display shows
+    /// the theme's picture, and each display's own picture is kept and put back. Off until the person turns it on.
+    public var themeWallpaper = false
 
     public static let autoPalette = "auto"
     public static let defaultPanelOpacity = 0.88
@@ -185,7 +188,7 @@ public struct AppearanceSettings: Codable, Equatable {
 
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case accent, palette, overrides, panelStyle, panelOpacity, dockSize, theme, colorPalette }
+    private enum CodingKeys: String, CodingKey { case accent, palette, overrides, panelStyle, panelOpacity, dockSize, theme, colorPalette, themeWallpaper }
 
     /// Each field on its own: one missing or unreadable (a newer build's value, an older build's
     /// blob) takes its default and leaves the rest as saved.
@@ -200,6 +203,7 @@ public struct AppearanceSettings: Codable, Equatable {
         dockSize = (try? c.decodeIfPresent(DockSize.self, forKey: .dockSize)) ?? dockSize
         theme = (try? c.decodeIfPresent(ThemeID.self, forKey: .theme)) ?? theme
         colorPalette = (try? c.decodeIfPresent(String.self, forKey: .colorPalette)) ?? colorPalette
+        themeWallpaper = (try? c.decodeIfPresent(Bool.self, forKey: .themeWallpaper)) ?? themeWallpaper
     }
 
     // MARK: Saving

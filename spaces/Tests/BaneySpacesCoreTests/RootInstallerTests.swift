@@ -59,11 +59,35 @@ final class RootInstallerTests: XCTestCase {
         XCTAssertLessThan(upd, one, "the first-run message is the else branch")
     }
 
-    /// On Omarchy, Polycarp matches the system theme from the install on, and never overrides a choice already made.
-    func testLinuxInstallsTheCommandAndFollowsOmarchyOnlyIfFresh() throws {
-        let t = try installer()
-        XCTAssertTrue(t.contains("theme follow omarchy --if-fresh"))
-        XCTAssertTrue(t.contains(#"[ "$(uname -s)" = Linux ]"#))
+    /// The Linux desktop is retired: run there, the installer prints one line saying so, exits 0 and writes
+    /// nothing, not even its log. A `uname` on PATH that answers Linux stands in for the machine.
+    func testOnLinuxItSaysTheDesktopIsRetiredAndInstallsNothing() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("root-installer-\(UUID().uuidString)")
+        let home = dir.appendingPathComponent("home"), bin = dir.appendingPathComponent("bin")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let uname = bin.appendingPathComponent("uname")
+        try "#!/bin/sh\necho Linux\n".write(to: uname, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uname.path)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = [Repo.root.deletingLastPathComponent().appendingPathComponent("install.sh").path]
+        p.environment = ["HOME": home.path, "PATH": "\(bin.path):/usr/bin:/bin"]
+        let out = Pipe(), err = Pipe()
+        p.standardOutput = out
+        p.standardError = err
+        p.standardInput = FileHandle.nullDevice
+        try p.run()
+        let said = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let errors = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        XCTAssertEqual(p.terminationStatus, 0, errors)
+        XCTAssertEqual(said, "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n")
+        XCTAssertEqual(errors, "")
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: home.path), [], "a Linux run wrote into HOME")
+        XCTAssertFalse(try installer().contains("theme follow omarchy"), "the Omarchy theme follow left with Linux")
     }
 
     func testTestModeNeverQuitsOrOpensAnything() throws {

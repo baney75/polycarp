@@ -397,7 +397,8 @@ extension HandsRouter {
             targetIsFront: frontPid() == w.pid, transports: BackgroundPoster.support,
             block: BackgroundBreaker.shared.block(bundle: w.bundle, pid: w.pid, kind: kind), verifier: verifier,
             pointInsideWindow: path.allSatisfy { PointerPath.inside($0, size: size) },
-            pointInTitleBar: path.contains { $0.y < titleBar }, focusedElementUnplaced: focus.unplaced)
+            pointInTitleBar: path.contains { $0.y < titleBar }, focusedElementUnplaced: focus.unplaced,
+            onAgentWorkspace: agent != nil && live.workspace == agent)
         return (facts, server.frame)
     }
 }

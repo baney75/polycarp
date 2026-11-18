@@ -307,13 +307,18 @@ final class AppearanceTests: XCTestCase {
     }
 
     func testBothColorPickersIgnoreAnEchoOfTheColorShown() throws {
-        let text = try appSource("Setup.swift")
-        let start = try XCTUnwrap(text.range(of: "ColorPicker(\"Custom accent\""))
-        let block = String(text[start.lowerBound...].prefix(900))
-        XCTAssertTrue(block.contains("appearance.accentRGB"), "the accent picker must compare with the accent shown")
-        XCTAssertTrue(block.contains("> 0.01 else { return }"), "an echo of the shown color must not switch to Custom")
-        XCTAssertLessThan(try XCTUnwrap(block.range(of: "> 0.01 else { return }")).lowerBound,
-                          try XCTUnwrap(block.range(of: ".custom(rgb)")).lowerBound)
+        // Both open the shared color panel through `ColorSwatch`; the panel answers with the color it was given, and
+        // `ColorPanelPick.changed` drops that echo before anything is applied.
+        let setup = try appSource("Setup.swift")
+        let start = try XCTUnwrap(setup.range(of: "ColorSwatch(key: \"accent\""))
+        let block = String(setup[start.lowerBound...].prefix(300))
+        XCTAssertTrue(block.contains("color: appearance.settings.accentRGB(system: Appearance.systemAccent)"), "the panel opens on the accent shown")
+        XCTAssertTrue(block.contains(".custom($0)"))
+        let swatch = try appSource("Appearance/ColorSwatch.swift")
+        let changed = try XCTUnwrap(swatch.range(of: "@objc private func changed"))
+        let body = String(swatch[changed.lowerBound...].prefix(500))
+        XCTAssertLessThan(try XCTUnwrap(body.range(of: "<= 0.01 { return }"), "an echo of the shown color must not switch to Custom").lowerBound,
+                          try XCTUnwrap(body.range(of: "apply?(rgb)")).lowerBound)
     }
 
     func testTheDockKeepsAndRemovesItsAppearanceObserver() throws {
