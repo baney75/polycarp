@@ -441,6 +441,15 @@ fn source_steps(
         ));
         return (summary, steps, notes);
     }
+    // A binary built from a ref that predates channels doesn't read the saved one, so the next plain
+    // update would build origin/main and the one after the channel again (review of #529 r2, first-F1).
+    if channel != Channel::Dev {
+        steps.push(Step::new(
+            Role::Git,
+            &format!("Stop unless {name} has release channels, so the next plain update stays on it (until then use --channel dev)"),
+            &["git", "-C", &co, "grep", "-q", KNOWS_CHANNELS, target, "--", "cli/src/update.rs"],
+        ));
+    }
     if dirty {
         notes.push(format!(
             "{co} has uncommitted changes. They are left alone and are not installed: only {name} is."
@@ -944,6 +953,9 @@ fn git_line(dir: &Path, args: &[&str]) -> Option<String> {
 }
 
 const SOURCE_FILE: &str = "source.toml";
+
+/// In `cli/src/update.rs` of every ref whose build follows a saved channel.
+const KNOWS_CHANNELS: &str = "fn recorded_channel(";
 
 fn source_table(config: &Path) -> Option<toml::Table> {
     toml::from_str(&fs::read_to_string(config.join(SOURCE_FILE)).ok()?).ok()
@@ -2392,13 +2404,20 @@ mod tests {
             f.worktree_exists = false;
             let cmds = commands(&steps_of(plan(&f, o)));
             assert_eq!(cmds[0], format!("git -C {CHECKOUT} fetch origin {fetch}"));
+            // Review of #529 r2, first-F1: a ref from before channels is refused before anything is built.
             assert_eq!(
-                cmds[2],
+                cmds[1],
+                format!(
+                    "git -C {CHECKOUT} grep -q fn recorded_channel( {target} -- cli/src/update.rs"
+                )
+            );
+            assert_eq!(
+                cmds[3],
                 format!("git -C {CHECKOUT} worktree add --detach --force {WORKTREE} {target}")
             );
             f.worktree_exists = true;
             let cmds = commands(&steps_of(plan(&f, o)));
-            assert_eq!(cmds[1], format!("git -C {WORKTREE} reset --hard {target}"));
+            assert_eq!(cmds[2], format!("git -C {WORKTREE} reset --hard {target}"));
             let check = Options { check: true, ..o };
             let cmds = commands(&steps_of(plan(&f, check)));
             assert!(
