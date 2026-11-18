@@ -159,7 +159,14 @@ enum AccessConsent {
         confirm(title: AgentEverything.consentTitle, text: AgentEverything.consentBody, button: AgentEverything.consentButton, log: "everything")
     }
 
-    private static func confirm(title: String, text: String, button confirmTitle: String, log: String) -> Bool {
+    /// "Agents may change what you see": the same sheet. The switch is never stored, so this is the only way it turns on.
+    static func askViewControl() -> Bool {
+        confirm(title: "Let agents change what you see?",
+                text: "With Full Access, agents on this Mac could switch your workspaces, focus a window, and move or size windows on your workspaces until Polycarp quits. If you didn't turn this on yourself, choose Keep Off.",
+                button: "Turn On", log: "view control", keep: "Keep Off")
+    }
+
+    private static func confirm(title: String, text: String, button confirmTitle: String, log: String, keep: String? = nil) -> Bool {
         guard Thread.isMainThread, !showing else { return false }
         showing = true
         defer { showing = false }
@@ -168,7 +175,7 @@ enum AccessConsent {
         alert.alertStyle = .warning
         alert.messageText = title
         alert.informativeText = text
-        alert.addButton(withTitle: "Keep \(AgentAccess.shared.current.title)")   // first button: the default (Return)
+        alert.addButton(withTitle: keep ?? "Keep \(AgentAccess.shared.current.title)")   // first button: the default (Return)
         alert.addButton(withTitle: confirmTitle)
         let button = alert.buttons[1]
         button.isEnabled = false

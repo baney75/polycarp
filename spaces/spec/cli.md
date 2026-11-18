@@ -22,6 +22,9 @@ window id, or a pid.
 | `agent open ... [--new_window=false] [--wait S]` | yes | yes | not supported yet |
 | `agent arrange full\|halves\|thirds\|grid [window...]`, `frames ID=x,y,w,h ...` | yes | yes | not supported yet |
 | `agent move --window W [--frame x,y,w,h]` (the agent's verb; without `--window` it is yours) | yes | yes; a window that needs a lend or Full Access is `not_supported` | not supported yet |
+| `query windows\|workspaces\|displays\|focused\|layout\|theme\|state [--json]`, `agent query <name>` ([agent-api.md](agent-api.md)) | yes | not supported yet | not supported yet |
+| `subscribe [--events a,b]`: NDJSON events, `hello` first with the whole state ([agent-api.md](agent-api.md), "Events") | yes | not supported yet | not supported yet |
+| `agent switch N [--display D]`, `agent focus --window W`, `agent frame x,y,w,h --window W`, `agent move --window W --workspace N\|--display D` (view control) | yes | not supported yet | not supported yet |
 | `agent close --window W` (only windows this session's `open` made) | yes | yes | not supported yet |
 | `agent snapshot|find|get|click|set-value|type|toggle|select|scroll|shot` | yes | yes (AT-SPI) | yes (UI Automation) |
 | `agent get <ref> --copy`, `agent type <ref> --paste` (the agent clipboard: text held per session in Polycarp's memory, gone when the session ends or after an hour unused; a call with no session of its own, or the shared `default`, gets none. The session id is trusted as given: a CLI caller that sets `BANEYSPACES_SESSION` to another agent's id, or its tty name, reads what that agent copied, so the clipboard keeps apart MCP connections, not agents of one user that choose ids. cmd+c, cmd+x and cmd+v in `press`, by key code and by the key's character in the Mac's layouts, and a `click` or `select` of a Cut, Copy or Paste item answer `not_supported`: an item by its AppKit action in any language, or by English title when it has none; a click by the snapshot's own record of the ref, however many reads came after; a `select` also by the item the engine finds once the popup is open, before it is pressed) | yes | not listed (`invalid_args`) | not listed |
@@ -62,8 +65,8 @@ holds snapshot text, values, typed text or captures. Records older than 30 days 
 
 `baneyspaces mcp` serves [mcp-tools.json](mcp-tools.json) over stdio: the Rust core's catalog, as Linux serves it. The Mac's
 `computer_*` tools come from its own catalog (`HandsTools` in Tools.swift) and add macOS-only arguments, such as `copy` on
-`get` and `paste` on `type`. There is no tool that switches,
-moves or lists your workspaces.
+`get` and `paste` on `type`. The agent API's queries and commands ([agent-api.md](agent-api.md)) are tools too. The ones that
+switch, focus, or move or size a window on your workspaces need view control, which is off until you turn it on.
 
 ## Global flags
 

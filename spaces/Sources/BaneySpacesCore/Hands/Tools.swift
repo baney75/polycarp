@@ -156,6 +156,19 @@ public enum HandsTools {
         HandsTool(verb: "move", summary: "Move a window you may use onto the agent workspace (a lent window, or any window under Full Access, comes off Donovan's workspace), or give a window already there a new frame. A moved window goes back when its lend ends or Full Access is narrowed. Never onto a workspace Donovan is looking at, never one of his windows he hasn't lent, never a dialog (it goes with its app).", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
             HandsParam("frame", .string, "x,y,width,height in points from the top-left of the screen's usable area (optional)."),
+            HandsParam("workspace", .integer, "1 to 9: send it to this workspace instead. Off the agent workspace this needs view control (spec/agent-api.md)."),
+            HandsParam("display", .string, "A display id from `query displays`: send it to the workspace that display shows (needs view control)."),
+        ], acts: true),
+        HandsTool(verb: "switch", summary: "Show workspace 1 to 9 on a display (the focused one by default). It changes what Donovan sees, so it needs view control: this Mac, Full Access, and his setting \"\(ViewControl.settingTitle)\" (spec/agent-api.md). Answers with what the display shows after.", params: [
+            HandsParam("workspace", .integer, "1 to 9.", required: true, positional: true),
+            HandsParam("display", .string, "A display id from `query displays`."),
+        ], acts: true),
+        HandsTool(verb: "focus", summary: "Go to a window's workspace and bring the window forward with keyboard focus. Needs view control, always (spec/agent-api.md). Answers once the window is focused.", params: [
+            HandsParam("window", .integer, "Window id from `query windows`.", required: true),
+        ], acts: true),
+        HandsTool(verb: "frame", summary: "Set one window's position and size, in points with the origin at the top left of the main display, as `query windows` reports frames. On the agent workspace this needs nothing more, but answers in_use (retry safe) while a display shows it; anywhere else it needs view control. Answers with the frame read back.", params: [
+            HandsParam("window", .integer, "Window id from `query windows`.", required: true),
+            HandsParam("frame", .string, "x,y,width,height, like 0,40,800,600.", required: true, positional: true),
         ], acts: true),
         HandsTool(verb: "close", summary: "Close a window this session opened with `open`, through its close button, from behind. Anything else is refused, and no app is ever quit. If the app asks to save, the sheet appears in the result as opened: answer it (Don't Save or Cancel; a Save panel stays refused, so save first through a document you opened from the handoff folder).", params: [
             HandsParam("window", .integer, "Window id that your `open` returned.", required: true),

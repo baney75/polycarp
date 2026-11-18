@@ -109,10 +109,15 @@ or an unreadable file or folder, means no Polycarp theme and one log line in `tr
 (`polycarp theme: ignored ...`, once until the reason changes); the app never fails on it. A missing
 file is not a problem and logs nothing (unless a theme was in force: `file removed`).
 
-**Following.** About once a second a background queue stats the file; a change is read there and applied
-on the main queue. A file that changed while it was read is read again on the next tick, and so is one whose read failed
-for now (out of file handles, an I/O error): the theme in force stays and one line says so. A change of
-mode (`chmod`) counts as a change.
+**Following.** A kqueue watch on the file, `current/` and the config folder (or the nearest folder that exists)
+wakes a background queue the moment any of them changes; the queue stats the file, reads a change and applies it on
+the main queue. The command renames a temp file into place, so every event re-arms the watch; a watch goes live a moment after it is armed, so when it does it arms again if a folder appeared or went meanwhile (the first set makes `current/`), and otherwise looks once. A burst of events (the
+command writes five files) is one or two looks, queued behind the events already in, with no timer. A file that reads bad on an event is looked at again 150 ms later and drops the theme only if it is unchanged and still bad, so an edit in place never flashes your own look mid-write. A stat every 30 s is only a safety net. A file that
+changed while it was read is read again on the next event or look, and one whose read failed for now (out of file
+handles, an I/O error) is read again after 1 s: the theme in force stays and one line says so. A change of mode
+(`chmod`) counts as a change. Budget: `polycarp theme set` to the first dock frame in the new theme under 200 ms
+(`BANEYSPACES_RENDER_THEME_RELOAD=20 Polycarp --render <folder>` measures it; `PolycarpThemeReloadTests` holds the
+watcher to it).
 
 **Mapping.** The look is the `minimal` look (palette colors everywhere, the theme's own widths)
 with these values:
@@ -167,6 +172,25 @@ On macOS a source lint backs it (`ThemeLiteralLintTests`): a color or animation 
 as a literal in `Sources`, outside the theme module and the agent cursor, fails unless
 `spec/theme-literals-allow.txt` lists it with a reason. A line there that no longer matches fails
 too, so the list only shrinks.
+
+## Window borders
+
+On macOS, Polycarp can draw a border around the focused window in the theme's `accent`, and
+optionally one around every other window in its `border` color. It is off until you turn it on
+(Settings > Appearance > Window borders) and holds no watcher, timer or window while off.
+
+- Width is the theme's focused width (`border_width` x 1.5), else its border width, else 2 pt,
+  held to 1 to 8 pt. The radius is `radius_large`, so a square theme draws square borders.
+- The border sits wholly outside the window, in Polycarp's own click-through windows. Polycarp
+  never draws into another app's window and never moves one for a border.
+- Only ordinary windows mostly on a display get one: not menus, panels, clear overlays, slivers
+  under 50 pt, full-screen windows or Polycarp's own. At most 32 at once.
+- While a window moves, its border follows it. The budget is at most one frame behind at 120 Hz,
+  measured by `BANEYSPACES_RENDER_BORDER_LAG`. Following the window server's list does not meet it
+  yet (median about one frame, p99 several under load), which is one more reason it starts off.
+
+This section is macOS only: on Linux the compositor draws window borders itself (Hyprland's own
+border settings).
 
 ## The dock switch
 
