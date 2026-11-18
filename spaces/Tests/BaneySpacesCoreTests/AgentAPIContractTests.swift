@@ -110,7 +110,12 @@ final class AgentAPIContractTests: XCTestCase {
     /// whatever the setting, and only work off it is `permission_denied`.
     func testOneViewControlRuleAndTheTableAgrees() {
         let rule = section("View control")
-        XCTAssertTrue(says(rule, "**One rule:** a command that acts on any workspace other than the agent workspace needs view control."))
+        XCTAssertTrue(says(rule, "**One rule:** a command needs view control when it lands a window on, or changes a window in place on, a workspace other than the agent workspace."))
+        // Round 2 first-F1: the rule once counted the workspace a window leaves, so a move onto the agent workspace
+        // needed view control while the move row said it needed none. The rule now names the move row's exception.
+        XCTAssertFalse(says(rule, "A command acts on the workspace a window lands on and the workspace of a window it changes"))
+        XCTAssertTrue(says(rule, "`move` needs it unless it goes onto the agent workspace."))
+        XCTAssertTrue(says(rule, "A `move` onto the agent workspace needs no view control from any workspace"))
         XCTAssertTrue(says(rule, "**Not while he looks:** a command that acts on the agent workspace never changes a workspace a display shows"))
         XCTAssertTrue(says(rule, "With view control or without, it answers `in_use`, `retry: safe`, and goes once no display shows them."))
         XCTAssertTrue(says(rule, "A shown workspace is a passing condition, so it is never `permission_denied`."))
@@ -123,6 +128,9 @@ final class AgentAPIContractTests: XCTestCase {
             "layout": "`restore`, unless on the agent workspace (then `in_use` while it is shown)",
         ]
         for (c, column) in expected { XCTAssertEqual(row(c, in: commands).last, column, c) }
+        let moveRow = row("move", in: commands).last ?? ""
+        XCTAssertTrue(moveRow.hasPrefix("unless it goes onto the agent workspace") && says(rule, "`move` needs it " + "unless it goes onto the agent workspace"),
+                      "the move row and the One rule name the same exception")
         XCTAssertTrue(row("theme-set", in: commands).last?.hasPrefix("never") == true)
         XCTAssertTrue(says(String(doc.prefix(1200)), "`theme-set` is the one stated exception"), "round 2 first-F3: the opening promise names it")
     }

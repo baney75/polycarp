@@ -66,10 +66,11 @@ with `permission_denied`, `retry: never`. It keeps every query, `layout list`, `
 
 ## View control
 
-**One rule:** a command that acts on any workspace other than the agent workspace needs view control. A command acts on
-the workspace a window lands on and the workspace of a window it changes. So `switch` and `focus` always need it, and
-`move`, `frame` and `layout restore` need it unless they act on the agent workspace. A command that needs view control
-runs only when all three hold:
+**One rule:** a command needs view control when it lands a window on, or changes a window in place on, a workspace
+other than the agent workspace. So `switch` and `focus` always need it, `frame` and `layout restore` need it unless the
+window is on the agent workspace, and `move` needs it unless it goes onto the agent workspace. A `move` onto the agent
+workspace needs no view control from any workspace: the workspace it leaves only sets when it may go (see **Not while he
+looks**). A command that needs view control runs only when all three hold:
 
 1. The caller is on this machine (never a connector or `--on HOST`).
 2. Access is Full Access.
