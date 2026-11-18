@@ -98,7 +98,6 @@ final class PartsModel: ObservableObject {
         let candidates: [URL]
         switch feature {
         case .workspaces: candidates = []
-        case .voice: candidates = [Product.voiceDir(home: home).appendingPathComponent("models", isDirectory: true)]
         case .browser: candidates = [ExtensionCopy.destination(supportDir: support)]
         }
         return candidates.filter { FileManager.default.fileExists(atPath: $0.path) }
@@ -108,9 +107,6 @@ final class PartsModel: ObservableObject {
     func remove(_ feature: Feature) {
         let alert = NSAlert()
         switch feature {
-        case .voice:
-            alert.messageText = "Remove Silas's speech models?"
-            alert.informativeText = "They go to the Trash. Your dictionary and history stay. Turning Silas on again downloads a model."
         case .browser:
             alert.messageText = "Remove the browser extension's copy?"
             alert.informativeText = "It goes to the Trash, and browsers lose their link to Polycarp. To take the extension out of a browser, remove it from that browser's Extensions page."

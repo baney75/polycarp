@@ -2,9 +2,9 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ['cli/**', 'spaces/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'spaces/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
   pull_request:
-    paths: ['cli/**', 'spaces/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'spaces/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
 # A new push to a pull request cancels its older run. Each push to main gets its own group and is never cancelled:
 # with one group per ref, back-to-back merges cancelled each other (49 of the 102 cancelled runs in 200), leaving main
 # untested.
@@ -20,7 +20,6 @@ jobs:
       cli: ${{ steps.f.outputs.cli }}
       spaces: ${{ steps.f.outputs.spaces }}
       browser: ${{ steps.f.outputs.browser }}
-      core: ${{ steps.f.outputs.core }}
       spaces-rust: ${{ steps.f.outputs.spaces-rust }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -45,8 +44,7 @@ jobs:
             # and check the spaces workspace's binary names.
             cli: ['cli/**', 'spaces/platforms/linux/**', 'spaces/Cargo.toml', 'spaces/Cargo.lock', '.github/workflows/ci.yml']
             # The root install.sh is read by the spaces tests (RootInstallerTests, FeaturesTests).
-            spaces: ['spaces/**', 'core/**', 'install.sh', '.github/workflows/ci.yml']
-            core: ['core/**', '.github/workflows/ci.yml']
+            spaces: ['spaces/**', 'install.sh', '.github/workflows/ci.yml']
             browser: ['browser/**', '.github/workflows/ci.yml']
             # The spaces Rust workspace: the shared core, the conformance cases, the Windows crates and the Linux update stub.
             spaces-rust: ['spaces/Cargo.toml', 'spaces/Cargo.lock', 'spaces/crates/**', 'spaces/spec/**', 'spaces/platforms/windows/**', 'spaces/platforms/linux/**', '.github/workflows/ci.yml']
@@ -73,42 +71,6 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo fmt --check
 
-  core:
-    needs: changes
-    if: needs.changes.outputs.core == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, ubuntu-24.04, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      # Rust 1.100 moved build scripts' OUT_DIR one folder deeper. ort-sys 2.0.0-rc.13 finds the
-      # target dir from it and panics copying DirectML.dll on Windows; rc.14 fixes that, but
-      # transcribe-rs 0.3.12 doesn't build against rc.14. Drop the pin when transcribe-rs moves.
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
-        with:
-          toolchain: ${{ matrix.os == 'windows-latest' && '1.99.1' || 'stable' }}
-          components: clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          workspaces: |
-            core/ffi
-          key: ${{ matrix.os }}
-      - name: Linux packages
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libxdo-dev
-      # The engine (polycarp-voice) lives in baney75/silas; this tests the commit core/ffi's Cargo.lock pins.
-      - name: Voice engine tests, at the pinned Silas commit
-        working-directory: core/ffi
-        run: cargo test --locked -p polycarp-voice
-      - name: C ABI tests, on macOS for the native app's library
-        if: runner.os == 'macOS'
-        working-directory: core/ffi
-        run: cargo test && cargo clippy --all-targets -- -D warnings
-
   spaces:
     needs: changes
     if: needs.changes.outputs.spaces == 'true'
@@ -118,18 +80,10 @@ jobs:
         working-directory: spaces
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      # Rust builds the same crates every run. The engine isn't cached: its script rebuilds that tree from a pinned tarball.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          workspaces: |
-            core/ffi
-          key: spaces
       - name: Check the install scripts
-        run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh && bash -n scripts/build-core.sh && bash -n scripts/build-browser.sh
+        run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh && bash -n scripts/build-browser.sh
       - name: Build the hands engine
         run: BANEYSPACES_ARM64_ONLY=1 scripts/build-engine.sh
-      - name: Build the voice core
-        run: BANEYSPACES_ARM64_ONLY=1 scripts/build-core.sh
       - name: Test
         run: swift test
 
@@ -254,8 +208,8 @@ jobs:
 
   spaces-bundle:
     needs: changes
-    # The bundle holds the voice core, the browser helper and the `polycarp` command, so a change to any of them can break it.
-    if: needs.changes.outputs.spaces == 'true' || needs.changes.outputs.browser == 'true' || needs.changes.outputs.cli == 'true' || needs.changes.outputs.core == 'true'
+    # The bundle holds the browser helper and the `polycarp` command, so a change to either can break it.
+    if: needs.changes.outputs.spaces == 'true' || needs.changes.outputs.browser == 'true' || needs.changes.outputs.cli == 'true'
     runs-on: macos-15
     defaults:
       run:
@@ -265,7 +219,6 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: |
-            core/ffi
             cli -> ../spaces/build/cli-target
           key: spaces-bundle
       # The helper is compiled with Bun from the esbuild bundle; the extension needs the pinned siblings.
@@ -467,7 +420,7 @@ jobs:
   # instead of naming jobs that a path filter can skip.
   ci-ok:
     if: always()
-    needs: [changes, cli, core, spaces, spaces-windows, spaces-windows-live, spaces-windows-speed, spaces-bundle, browser-skills, browser-skill-regression, browser-check, browser-cli-windows, browser-e2e]
+    needs: [changes, cli, spaces, spaces-windows, spaces-windows-live, spaces-windows-speed, spaces-bundle, browser-skills, browser-skill-regression, browser-check, browser-cli-windows, browser-e2e]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job passed or was skipped

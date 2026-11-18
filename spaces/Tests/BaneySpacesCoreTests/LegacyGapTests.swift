@@ -8,13 +8,12 @@ final class LegacyGapTests: XCTestCase {
         let src = try String(contentsOf: SourceText.root.appendingPathComponent("Sources/BaneySpaces/LegacyWatcher.swift"), encoding: .utf8)
         let start = try XCTUnwrap(src.range(of: "func start() {"))
         let observe = try XCTUnwrap(src.range(of: "forName: NSWorkspace.didLaunchApplicationNotification", range: start.upperBound..<src.endIndex))
-        let sweep = try XCTUnwrap(src.range(of: "for app in NSWorkspace.shared.runningApplications where !app.isTerminated { handle(app, takesOver: false) }",
+        let sweep = try XCTUnwrap(src.range(of: "for app in NSWorkspace.shared.runningApplications where !app.isTerminated { handle(app) }",
                                             range: start.upperBound..<src.endIndex), "start() sweeps")
         XCTAssertLessThan(observe.lowerBound, sweep.lowerBound, "listening first, so a launch is caught by one or the other")
 
-        // The sweep's rule: BaneySpaces is asked to quit; Silas is left to the voice.
-        XCTAssertTrue(LegacyHandover.onLaunch(bundleID: Product.Legacy.bundleID, alreadyNotified: false, takesOver: false).quit)
-        XCTAssertFalse(LegacyHandover.onLaunch(bundleID: Product.Silas.bundleID, alreadyNotified: false, takesOver: false).quit)
-        XCTAssertFalse(LegacyHandover.onLaunch(bundleID: "com.apple.Terminal", alreadyNotified: false, takesOver: false).quit)
+        // The sweep's rule: BaneySpaces is asked to quit; any other app is left alone.
+        XCTAssertTrue(LegacyHandover.onLaunch(bundleID: Product.Legacy.bundleID, alreadyNotified: false).quit)
+        XCTAssertFalse(LegacyHandover.onLaunch(bundleID: "com.apple.Terminal", alreadyNotified: false).quit)
     }
 }

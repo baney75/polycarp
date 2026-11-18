@@ -4,13 +4,14 @@
 
 Polycarp is the Omarchy-like device theme and launcher for Mac and Windows.
 
-On a Mac it lives in `Polycarp.app` with your workspaces, your voice and the browser your agents use: one Settings
+On a Mac it lives in `Polycarp.app` with your workspaces and the browser your agents use: one Settings
 window, one set of permissions and one command. The Windows version is on the way; see [the plan](PLAN.md).
 The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
-It grew from three apps: [BaneySpaces](https://github.com/baney75/baneyspaces)
-(`spaces/`), [Silas](https://github.com/baney75/silas) and [Tabkyra](https://github.com/baney75/tabkyra)
-(`browser/`). The Silas app's source lives in its own repo. Those repos stay up, so you can keep using the independent apps. The shared engine is in `core/`.
+It grew from [BaneySpaces](https://github.com/baney75/baneyspaces) (`spaces/`) and
+[Tabkyra](https://github.com/baney75/tabkyra) (`browser/`). Those repos stay up, so you can keep using the independent apps.
+
+Dictation is not part of Polycarp. [Silas](https://github.com/baney75/silas) is its own app: install and update it on its own.
 
 ## Install on a Mac
 
@@ -20,12 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | 
 
 This downloads the signed app for Apple silicon and opens it; no developer tools are needed. A window walks you
 through the permissions. If you have BaneySpaces, it goes to the Trash, because it can't run beside Polycarp, and
-Polycarp copies its settings. The voice part keeps its name, Silas: hold a key, speak and it types. If you have the Silas app, it stays installed and
-working: Polycarp copies its dictionary, history and speech models, and Silas inside Polycarp takes over only when it is
-on, a speech model is installed and the copy has finished. After the first dictation that really typed text, one
-notification says dictation is working; Settings > Silas then offers "Move the Silas app to the Trash" when you're
-ready. Nothing moves on its own. With Silas off, the Silas app runs freely, untouched.
-On an Intel Mac, or with
+Polycarp copies its settings. On an Intel Mac, or with
 `POLYCARP_FROM_SOURCE=1`, it builds on your Mac, which needs Apple's command line tools, Rust, Bun and Node.
 
 ### Download and open
@@ -56,13 +52,12 @@ bears much fruit, for apart from me you can do nothing."
 
 ## The command
 
-`polycarp` is one command that hands off to the three apps. It comes with the Mac app and with the install
+`polycarp` is one command that hands off to the parts of Polycarp. It comes with the Mac app and with the install
 script; [Updating](#updating) keeps it current with everything else.
 
 ```
 polycarp spaces ls          # runs baneyspaces ls
 polycarp browser --version  # runs tabkyra --version
-polycarp voice              # opens Silas's settings in Polycarp (the Silas app only if Polycarp isn't installed)
 polycarp doctor             # shows which tools it found, and whether their builds match
 polycarp version            # every part, the commit it was built from, and whether they all match
 polycarp update             # brings every part to the newest commit together
@@ -74,7 +69,7 @@ Build it with `cd cli && cargo build`. See [cli/](cli/).
 ## Updating
 
 Polycarp is several parts on one device: the `polycarp` command, the app, the `polycarp-spaces` command, the browser
-helper, the extension in each browser, the voice core and the agent skill. They are built from one repo and are meant to
+helper, the extension in each browser and the agent skill. They are built from one repo and are meant to
 come from the same commit. Two commands keep them that way:
 
 ```sh

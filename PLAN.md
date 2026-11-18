@@ -10,14 +10,14 @@ working, and their repos stay up. A box is checked only when its check has passe
 
 ## 2. One name, one command
 - [x] `polycarp spaces`, `polycarp browser`, `polycarp voice`. Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
-- [x] `polycarp voice` opens Silas's settings in Polycarp (`polycarp://voice`); the Silas app only if Polycarp isn't installed. It gains commands later
+- Moved to Silas (baney75/silas), 2026-11-18: `polycarp voice` only says Silas is its own app and where to get it
 - [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
 
 ## 3. One core, a native app on each device
-- [ ] Shared Rust core for workspaces, voice and sync, growing from `spaces/crates/baneyspaces-core` and the Silas app (baney75/silas). Check: `spaces/spec/conformance` passes on every platform
-- [ ] Mac: the Swift app hosts voice, with one settings window. Check: `spaces/AGENTS.md` probes and live gestures, and the Silas app's `AGENTS.md` rules (never paste, never auto-unload)
-- [ ] Windows: voice, workspaces and browser agents in one app. Check: run on a Windows VM
-- [ ] iPhone, iPad, Android: voice in its own app and keyboard, plus control of your computer's workspaces and browser. Check: Simulator, emulator and a real device. To verify: iOS limits microphone use inside keyboards
+- [ ] Shared Rust core for workspaces and sync, growing from `spaces/crates/baneyspaces-core`. Check: `spaces/spec/conformance` passes on every platform
+- Moved to Silas (baney75/silas), 2026-11-18: dictation on every device, the Mac's included, is the Silas app, not part of Polycarp
+- [ ] Windows: workspaces and browser agents in one app. Check: run on a Windows VM
+- [ ] iPhone, iPad, Android: control of your computer's workspaces and browser. Check: Simulator, emulator and a real device
 - [ ] Dictionary and settings sync directly between your own devices, with no Polycarp cloud. Check: an edit on one device appears on another with no third-party server in the path
 - [ ] Each app follows its platform's conventions. Check: screenshots from the real target, plus keyboard, touch, focus, reduced motion and text size
 
@@ -54,21 +54,21 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 ## 5. Switch over
 - [ ] Polycarp installs and updates on each device. Settings, dictionary and skills move across. Check: on each device, `polycarp update` ends with `polycarp version` showing every part at one commit, and the old settings, dictionary and skills read back in Polycarp
 - [ ] Old apps get a final release that points to Polycarp. Check: each old repo's latest release names Polycarp and links to it
-- [ ] Donovan grants Accessibility and Microphone once on his Mac, since macOS ties them to the app's identity. Check: `polycarp-spaces doctor` shows both granted, and an update keeps them
+- [ ] Donovan grants Accessibility once on his Mac, since macOS ties it to the app's identity. Check: `polycarp-spaces doctor` shows it granted, and an update keeps it
 
 ## 6. The old apps
 Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos stay up, so people can keep using the independent apps. They are not archived.
 - [ ] Land or move open PRs that belong in Polycarp. Check: `gh pr list` in each old repo shows none that belong here
-- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Voice and Browser. The Silas app is not trashed by the installer or by Polycarp on its own: after the first dictation that typed text, one notification says so, and Settings > Silas offers "Move the Silas app to the Trash" (Silas on, the app installed). Check: dictation and agents' browser work through Polycarp before Silas and Tabkyra go
+- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Browser. Silas stays: it is its own app. Check: agents' browser work through Polycarp before Tabkyra goes
 
 ## One app, everywhere
 Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.
-- [x] Voice engine (polycarp-voice, now held in baney75/silas and pinned by `core/ffi`) with a C interface in `core/ffi`, used by the Tauri app and the Swift app. Check: both test suites
-- [x] Mac: voice and browser agents inside `Polycarp.app`, with one Settings window, one welcome window and one install. Check: tests and renders; live check below
-- [ ] Live on a real Mac: dictate into another app (Silas stays until that has worked once), the agents' browser connects, Silas's dictionary and models come across. Check: Donovan's install
-- [ ] Windows: one Tauri app with voice, workspaces and browser agents. Check: a Windows VM
-- [ ] iPhone, iPad, Android: one app with voice and control of your computer. Check: Simulator, emulator and a real device
-- [ ] Speed: launch, workspace switch, press-to-record and agent tools each have a target in `spaces/spec/speed.json`, and a regression fails. Check: the ratchets, including the two still unmeasured
+- Moved to Silas (baney75/silas), 2026-11-18: the voice engine and its C interface. `core/` left this repo with them
+- [x] Mac: browser agents inside `Polycarp.app` with the workspaces, with one Settings window, one welcome window and one install. Check: tests and renders; live check below
+- [ ] Live on a real Mac: the agents' browser connects. Check: Donovan's install
+- [ ] Windows: one Tauri app with workspaces and browser agents. Check: a Windows VM
+- [ ] iPhone, iPad, Android: one app with control of your computer. Check: Simulator, emulator and a real device
+- [ ] Speed: launch, workspace switch and agent tools each have a target in `spaces/spec/speed.json`, and a regression fails. Check: the ratchets, including the two still unmeasured
 
 ## Install and permissions
 Asked for by Donovan, 2026-11-05: installation and permissions need to be excellent.
@@ -84,10 +84,13 @@ Retired with the Linux desktop, 2026-11-17. The Linux and Omarchy desktop is ret
 ## Agents' computer use
 Moved to Tychicus (baney75/tychicus, issue #27), 2026-11-18. Polycarp keeps the agent workspace and its two-call API (`spaces/docs/agent-workspace-api.md`).
 
+## Voice
+Moved to Silas (baney75/silas), 2026-11-18. Silas is its own app. Polycarp has no dictation, no voice core and no
+microphone permission; what an earlier build stored under `~/Library/Application Support/Polycarp/voice` is left in place.
+
 ## Later, with an owner's decision
 - Paid: domains, Apple Developer and Google Play accounts, Windows code signing
 - An attorney's trademark search, including logos, before filing or a big launch
 - The free install route (Download, disk image, Open Anyway) shows Apple's own warning the first time Polycarp opens, because the app isn't notarized. An owner decision on Apple Developer enrollment would remove it.
 - [ ] A BaneySpaces login item starts nothing once BaneySpaces is in the Trash. Check: live on a real Mac, after a person installs from the download and BaneySpaces goes to the Trash, with BaneySpaces set to start at login: restart the Mac and check nothing starts it, or that Polycarp quits it if it does (`LegacyWatcher`). Polycarp doesn't launch the old app to clear its login item.
-- [x] Naming: the voice part in the Mac app is called Silas (tab, menu, overlay, welcome row, alerts), with its pen-nib mark instead of a microphone; the older separate app is "the Silas app". Only the Microphone permission row says Microphone, because that's macOS's word.
-- [ ] The listening pen and dot in the real menu bar, light and dark. Check: live on a preview build. Checked so far only in an offscreen render.
+- Moved to Silas (baney75/silas), 2026-11-18: its name, pen-nib mark and listening dot left Polycarp's menu bar and Settings with it.

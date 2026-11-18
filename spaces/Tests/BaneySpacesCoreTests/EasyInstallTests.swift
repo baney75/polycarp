@@ -291,15 +291,15 @@ final class LegacyRetirementTests: XCTestCase {
         XCTAssertFalse(LegacyRetirement.settingsCopied(supportDir: pending, legacySupportDir: temp().appendingPathComponent("none")), "a half import isn't done")
     }
 
-    func testEveryCopyInBothFoldersIsFoundAndSilasNever() throws {
+    func testEveryCopyInBothFoldersIsFoundAndNoOtherApp() throws {
         let home = temp()
         try plant(home.appendingPathComponent("Applications/BaneySpaces.app"), id: Product.Legacy.bundleID)
-        try plant(home.appendingPathComponent("Applications/Silas.app"), id: Product.Silas.bundleID)
-        XCTAssertEqual(LegacyRetirement.copies(home: home, system: home.appendingPathComponent("system")).map(\.lastPathComponent), ["BaneySpaces.app"], "Silas stays")
+        try plant(home.appendingPathComponent("Applications/Other.app"), id: "com.example.other")
+        XCTAssertEqual(LegacyRetirement.copies(home: home, system: home.appendingPathComponent("system")).map(\.lastPathComponent), ["BaneySpaces.app"], "the other app stays")
         XCTAssertNil(LegacyApp.installed(in: [home.appendingPathComponent("Applications")].filter { $0.lastPathComponent == "nope" }))
-        // A folder that holds only Silas yields nothing.
+        // A folder that holds only another app yields nothing.
         let only = temp()
-        try plant(only.appendingPathComponent("Applications/Silas.app"), id: Product.Silas.bundleID)
+        try plant(only.appendingPathComponent("Applications/Other.app"), id: "com.example.other")
         XCTAssertEqual(LegacyRetirement.copies(home: only, system: only.appendingPathComponent("system")), [])
     }
 

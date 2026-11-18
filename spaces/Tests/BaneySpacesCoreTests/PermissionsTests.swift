@@ -14,7 +14,6 @@ final class PermissionsTests: XCTestCase {
         XCTAssertEqual(Permissions.all.map(\.id), PermissionID.allCases)
         let want: [PermissionID: (GrantKind, String)] = [
             .accessibility: (.list, "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"),
-            .microphone: (.prompt, "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"),
             .automation: (.perApp, "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"),
             .notifications: (.prompt, "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.baney.polycarp"),
         ]
@@ -41,17 +40,17 @@ final class PermissionsTests: XCTestCase {
     func testThePromptKindsHaveTheirUsageStringsOrNeedNone() throws {
         let plist = try Repo.text("Resources/Info.plist")
         // macOS shows these strings in its own box; without them the request fails.
-        XCTAssertTrue(plist.contains("NSMicrophoneUsageDescription"))
         XCTAssertTrue(plist.contains("NSAppleEventsUsageDescription"))
+        // Nothing in the app listens: no microphone string and no audio-input entitlement.
+        XCTAssertFalse(plist.contains("NSMicrophoneUsageDescription"))
         let entitlements = try Repo.text("Resources/Polycarp.entitlements")
-        XCTAssertTrue(entitlements.contains("com.apple.security.device.audio-input"))
+        XCTAssertFalse(entitlements.contains("com.apple.security.device.audio-input"))
     }
 
     func testEachPermissionNamesThePartsThatUseIt() {
-        XCTAssertEqual(Permissions.entry(.accessibility).features, [.workspaces, .voice])
-        XCTAssertEqual(Permissions.entry(.microphone).features, [.voice])
+        XCTAssertEqual(Permissions.entry(.accessibility).features, [.workspaces])
         XCTAssertEqual(Permissions.entry(.automation).features, [.workspaces])
-        XCTAssertEqual(Permissions.entry(.accessibility).stops(with: FeatureSet([.voice])), ["Silas's key and typing"])
+        XCTAssertEqual(Permissions.entry(.accessibility).stops(with: FeatureSet([.browser])), [])
     }
 
     // MARK: macOS's answers
@@ -63,8 +62,6 @@ final class PermissionsTests: XCTestCase {
     }
 
     func testTheSystemsRawAnswersMapToState() {
-        // AVAuthorizationStatus: notDetermined, restricted, denied, authorized.
-        XCTAssertEqual([0, 1, 2, 3, 7].map(Permissions.microphoneState), [.notAsked, .denied, .denied, .granted, .unknown])
         // UNAuthorizationStatus: notDetermined, denied, authorized, provisional, ephemeral.
         XCTAssertEqual([0, 1, 2, 3, 4, 8].map(Permissions.notificationState), [.notAsked, .denied, .granted, .granted, .granted, .unknown])
         // noErr, errAEEventWouldRequireUserConsent, errAEEventNotPermitted, procNotFound.
@@ -74,16 +71,16 @@ final class PermissionsTests: XCTestCase {
     // MARK: The one button
 
     func testEachKindsButtonDoesTheRightThing() {
-        let mic = Permissions.entry(.microphone), ax = Permissions.entry(.accessibility), auto = Permissions.entry(.automation)
+        let note = Permissions.entry(.notifications), ax = Permissions.entry(.accessibility), auto = Permissions.entry(.automation)
         // macOS asks once, with its own box; after a no, only the list.
-        XCTAssertEqual(Permissions.action(mic, .notAsked), .ask)
-        XCTAssertEqual(Permissions.action(mic, .denied), .openSettings(requestFirst: false, helper: false))
+        XCTAssertEqual(Permissions.action(note, .notAsked), .ask)
+        XCTAssertEqual(Permissions.action(note, .denied), .openSettings(requestFirst: false, helper: false))
         // A list: the pane and the helper, and macOS's own request the first time, which puts Polycarp in the list.
         XCTAssertEqual(Permissions.action(ax, .notAsked), .openSettings(requestFirst: true, helper: true))
         XCTAssertEqual(Permissions.action(ax, .denied), .openSettings(requestFirst: false, helper: true))
         XCTAssertEqual(Permissions.action(auto, .notAsked), .openSettings(requestFirst: false, helper: false))
         for e in Permissions.all { XCTAssertEqual(Permissions.action(e, .granted), .none, "\(e.id)"); XCTAssertNil(Permissions.buttonTitle(e, .granted)) }
-        XCTAssertEqual(Permissions.buttonTitle(mic, .notAsked), "Allow")
+        XCTAssertEqual(Permissions.buttonTitle(note, .notAsked), "Allow")
         XCTAssertEqual(Permissions.buttonTitle(ax, .denied), "Open Accessibility")
         XCTAssertEqual(Permissions.buttonTitle(auto, .denied), "Open Automation")
     }
@@ -101,18 +98,13 @@ final class PermissionsTests: XCTestCase {
 
     func testRequiredFirstAndTheRestOptionalForPartsThatAreOff() {
         var s = states(.notAsked)
-        s[.microphone] = .granted
+        s[.automation] = .granted
         let all = Permissions.plan(states: s, features: .all)
-        XCTAssertEqual(all.needed.map(\.id), [.accessibility, .microphone, .automation])
+        XCTAssertEqual(all.needed.map(\.id), [.accessibility, .automation])
         XCTAssertEqual(all.optional.map(\.id), [.notifications], "nice to have waits with the optional ones")
         XCTAssertEqual(all.next, .accessibility)
         XCTAssertFalse(all.canStart)
-
-        let voice = Permissions.plan(states: s, features: FeatureSet([.voice]))
-        XCTAssertEqual(voice.needed.map(\.id), [.accessibility, .microphone])
-        XCTAssertEqual(voice.optional.map(\.id), [.automation, .notifications])
-        XCTAssertTrue(voice.optional.allSatisfy(\.optional))
-        XCTAssertEqual(voice.needed.first?.stops, ["Silas's key and typing"])
+        XCTAssertEqual(all.needed.first?.stops, ["Workspaces, the dock and the overview"])
 
         let browser = Permissions.plan(states: s, features: FeatureSet([.browser]))
         XCTAssertEqual(browser.needed, [], "the browser part needs nothing from macOS")
@@ -123,11 +115,9 @@ final class PermissionsTests: XCTestCase {
         var s = states(.granted)
         XCTAssertEqual(Permissions.summary(Permissions.plan(states: s, features: .all)), "Polycarp has everything it needs for what you use.")
         XCTAssertNil(Permissions.plan(states: s, features: .all).next)
-        s[.microphone] = .denied
-        XCTAssertEqual(Permissions.summary(Permissions.plan(states: s, features: .all)), "One permission left for what you use.")
-        XCTAssertEqual(Permissions.plan(states: s, features: .all).next, .microphone)
         s[.automation] = .notAsked
-        XCTAssertEqual(Permissions.summary(Permissions.plan(states: s, features: .all)), "2 permissions left for what you use.")
+        XCTAssertEqual(Permissions.summary(Permissions.plan(states: s, features: .all)), "One permission left for what you use.")
+        XCTAssertEqual(Permissions.plan(states: s, features: .all).next, .automation)
         s[.accessibility] = .notAsked
         XCTAssertEqual(Permissions.summary(Permissions.plan(states: s, features: .all)), "Polycarp needs Accessibility to start. The rest can wait.")
         // An optional one that's off never counts as left.

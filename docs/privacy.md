@@ -2,7 +2,7 @@
 title: Polycarp privacy policy
 seo_title: "Polycarp privacy policy: what it reads and where it goes"
 description: What the Polycarp extension and Mac app read, where that goes, what stays on your computer, and how to delete it. No accounts, no analytics.
-updated: November 6, 2026
+updated: November 18, 2026
 ---
 
 # Polycarp privacy policy
@@ -50,7 +50,6 @@ The use of information received from Google APIs will adhere to the [Chrome Web 
 
 ## The Polycarp app for Mac
 
-- **Silas, the voice part,** turns speech into text on your Mac. It listens only from when you press the key until you let go or tap again. The audio isn't saved or sent anywhere. Your dictionary and history stay on your Mac. It downloads speech models from Handy's server or Hugging Face, and a list of which model suits which Mac from GitHub. It can make a device report to share, but only you can send one, by reviewing and submitting a GitHub issue yourself.
 - **Workspaces** reads window titles and positions to arrange your windows. These stay on your Mac.
 - **The launcher** looks up apps when you ask. It sends what you typed to Apple's App Store search, and it downloads Homebrew's public list of apps.
 - **Updates.** The app asks GitHub about new releases.

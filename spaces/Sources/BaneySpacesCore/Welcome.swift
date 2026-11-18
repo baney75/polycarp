@@ -2,7 +2,7 @@ import Foundation
 
 /// A macOS permission Polycarp asks for on first run.
 public enum PermissionKind: String, CaseIterable, Sendable {
-    case accessibility, microphone
+    case accessibility
 }
 
 /// What the welcome window says about one permission, in the order they're asked for. Every word here has to be true of
@@ -29,39 +29,16 @@ public enum Welcome {
             settingsName: "Accessibility",
             settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             after: "Turn on Polycarp in the list. This window updates by itself."),
-        PermissionStep(
-            kind: .microphone,
-            title: "Let Silas hear you",
-            why: "Silas: hold a key, speak and it types. It listens only from when you press the key until you let go or tap again. Speech becomes text on this Mac, and the audio isn't saved or sent anywhere.",
-            isRequired: false,
-            settingsName: "Microphone",
-            settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-            after: "Choose Allow in the box macOS shows, or turn on Polycarp in the list. This window updates by itself."),
     ]
 
-    /// The walk for the parts that are on. Workspaces asks for all it uses, Silas needs Accessibility to read its key and
-    /// type, and Browser needs nothing from macOS at all.
+    /// The walk for the parts that are on. Workspaces asks for all it uses, and Browser needs nothing from macOS at all.
     public static func steps(for features: FeatureSet) -> [PermissionStep] {
-        steps.compactMap { step in
+        steps.filter { step in
             switch step.kind {
-            case .accessibility:
-                if features.contains(.workspaces) { return step }
-                guard features.contains(.voice) else { return nil }
-                return PermissionStep(kind: step.kind, title: "Let Silas type for you",
-                                      why: "Silas watches for its key and types what you said into the app you're in. It doesn't read what you type.",
-                                      isRequired: true, settingsName: step.settingsName, settingsURL: step.settingsURL, after: step.after)
-            case .microphone:
-                return features.contains(.voice) ? step : nil
+            case .accessibility: features.contains(.workspaces)
             }
         }
     }
-
-    /// macOS's answer about the microphone, without the framework: `AVCaptureDevice.authorizationStatus(for: .audio)` mapped.
-    public enum MicrophoneAccess: Sendable { case notDetermined, authorized, denied }
-
-    /// "Allow" on the microphone row: macOS asks itself while it has never been asked, so Settings opens only after a
-    /// no (macOS never asks twice, and the list is the only way back).
-    public static func opensSettingsWhenAllowing(microphone: MicrophoneAccess) -> Bool { microphone == .denied }
 
     /// The last row: not a permission, so it never blocks starting and is never "current". On by default.
     public enum StartAtLogin {

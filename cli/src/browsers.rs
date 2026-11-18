@@ -224,8 +224,7 @@ mod tests {
             let entry = format!("{{ name: \"{name}\", dir: join(");
             let line = install
                 .lines()
-                .find(|l| l.contains(&entry) && l.contains(&tail.join(", ")))
-                .is_some();
+                .any(|l| l.contains(&entry) && l.contains(&tail.join(", ")));
             assert!(line, "{name} at {} is not in browserDirs()", dir.display());
         }
     }

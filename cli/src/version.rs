@@ -650,14 +650,6 @@ pub fn gather(d: &Device) -> Vec<Part> {
             parts.push(Part::absent("extension", "not installed"));
         }
     }
-    // The voice core is a static library inside the app's own binary, so it is the app's build.
-    parts.push(match &app {
-        Some((path, (_, build))) => {
-            Part::installed("voice core", None, build.clone(), Some((*path).clone()))
-                .note("linked into the app")
-        }
-        None => Part::absent("voice core", "not installed"),
-    });
     let skill = d
         .home
         .as_ref()
@@ -710,7 +702,7 @@ fn fix_absent(name: &str, why: &str, os: Os) -> Option<String> {
             "It connects within 30 seconds; run `polycarp doctor` again".to_string()
         }
         (Os::Mac, "app") => format!("Install it: `{MAC_INSTALL}`"),
-        (Os::Mac, "spaces command" | "browser helper" | "voice core") => {
+        (Os::Mac, "spaces command" | "browser helper") => {
             format!("It comes with the app: `{MAC_INSTALL}`")
         }
         (Os::Mac, _) if extension => "Run `polycarp browser setup`".to_string(),
@@ -1346,14 +1338,13 @@ mod tests {
             Part::absent("extension", "no browser is connected"),
             Part::absent("extension (Helium)", ASLEEP),
             Part::unanswered("extension (Chrome)", NO_ANSWER),
-            Part::absent("voice core", "not installed"),
             Part::absent("agent skill", "not installed"),
         ];
         let verdict = compare(&parts);
         let mut mac_parts = parts.clone();
         mac_parts.insert(1, Part::absent("app", "not installed"));
         let mac = fixes(&mac_parts, &compare(&mac_parts), Os::Mac);
-        assert_eq!(mac.len(), 7, "{mac:#?}");
+        assert_eq!(mac.len(), 6, "{mac:#?}");
         assert!(
             mac[0].starts_with("  app: not installed. Install it: `curl -fsSL "),
             "{}",
@@ -1367,7 +1358,7 @@ mod tests {
             .any(|l| l == "  extension: no browser is connected. Run `polycarp browser setup`."));
         assert!(mac
             .iter()
-            .any(|l| l.starts_with("  voice core: not installed. It comes with the app")));
+            .any(|l| l.starts_with("  browser helper: not installed. It comes with the app")));
         assert!(
             !mac.iter()
                 .any(|l| l.contains("Linux") || l.contains("baneyspaces skill")),

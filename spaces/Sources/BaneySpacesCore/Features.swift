@@ -1,14 +1,13 @@
 import Foundation
 
-/// The three parts of Polycarp. All three ship in the one app; a part that's off doesn't run, asks macOS for nothing and
+/// The parts of Polycarp. All of them ship in the one app; a part that's off doesn't run, asks macOS for nothing and
 /// downloads nothing. `<config>/features.toml` holds the choice, and `polycarp features` and Settings > General change it.
 public enum Feature: String, CaseIterable, Sendable {
-    case workspaces, voice, browser
+    case workspaces, browser
 
     public var title: String {
         switch self {
         case .workspaces: "Workspaces"
-        case .voice: "Silas"
         case .browser: "Browser"
         }
     }
@@ -16,7 +15,6 @@ public enum Feature: String, CaseIterable, Sendable {
     public var summary: String {
         switch self {
         case .workspaces: "Nine workspaces, the dock, the overview and the launcher."
-        case .voice: "Hold a key, speak and it types. Speech stays on this Mac."
         case .browser: "Lets AI agents work in your browser, in their own tab group."
         }
     }
@@ -25,7 +23,6 @@ public enum Feature: String, CaseIterable, Sendable {
     public var settingsTabs: Set<String> {
         switch self {
         case .workspaces: ["Keys", "Dock", "Launcher", "Agents", "Automation"]
-        case .voice: ["Silas"]
         case .browser: ["Browser"]
         }
     }
