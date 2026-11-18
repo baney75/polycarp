@@ -36,6 +36,8 @@ fn core() -> Core {
         feed: None,
         written: std::cell::RefCell::new(String::new()),
         recheck: false,
+        keys: KeysState::default(),
+        keys_blocked_by: None,
     }
 }
 

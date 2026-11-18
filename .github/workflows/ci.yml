@@ -191,9 +191,9 @@ jobs:
           dest="$(cygpath -u "$LOCALAPPDATA")/BaneySpaces/engine"
           mkdir -p "$dest"
           cp platforms/windows/engine/* "$dest/"
-      # Off a runner the live suite and the switch bench must refuse before they touch anything: no -Disposable, exit 2,
+      # Off a runner the live suite, the switch bench and the keymap check must refuse before they touch anything: no -Disposable, exit 2,
       # Notepad left open, state.json kept.
-      - name: Live suite and switch bench refuse a desktop that isn't disposable
+      - name: Live suite, switch bench and keymap check refuse a desktop that isn't disposable
         shell: powershell
         run: platforms/windows/tests/ci/refuses.ps1 -Bin target/release -Out ${{ runner.temp }}/refused
       # refuses.ps1 writes a stand-in record, so off a runner it must refuse too and leave a real state.json as it was.
@@ -242,6 +242,10 @@ jobs:
         # The bench takes a few minutes; a hang ends the step here, so the artifact below still uploads.
         timeout-minutes: 15
         run: platforms/windows/tests/ci/switch-bench.ps1 -Bin target/release -Out ${{ runner.temp }}/speed -Speed spec/speed.json
+      - name: Keymap
+        if: always()
+        shell: powershell
+        run: platforms/windows/tests/ci/keymap.ps1 -Bin target/release -Out ${{ runner.temp }}/speed/keymap
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

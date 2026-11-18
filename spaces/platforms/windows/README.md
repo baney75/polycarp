@@ -106,8 +106,11 @@ every workspace's windows. An agent's window has no button.
 Explorer owns Win+1 to Win+9, so `RegisterHotKey` fails for them. The daemon runs a `WH_KEYBOARD_LL` hook on its
 own thread with its own message loop. The callback matches a small table and posts to the worker over a
 channel; it takes no lock and never waits (Windows drops a hook whose callback is slow). It swallows only
-the chords in the Windows column of `spec/keys.json`: **Win+1-9** switch, **Win+Shift+1-9** move,
-**Win+`** show or hide the agent workspace. It keeps its own count of which modifiers are down, but only as a
+the chords in force: the Windows column of `spec/keys.json` (**Win+1-9** switch, **Win+Shift+1-9** move,
+**Win+`** show or hide the agent workspace, **Win+Alt+arrow** focus, **Win+Alt+Shift+arrow** swap,
+**Win+Ctrl+Alt+arrow** resize, **Win+Alt+.** send to the next display) with `%APPDATA%\BaneySpaces\config.toml`
+over them. The daemon watches that file and swaps in a new table within 1 s of a save; a bad file keeps the keys
+in force and says why in `state` (`keys.error`). The full rules are in `spec/keymap.md`. It keeps its own count of which modifiers are down, but only as a
 hint: on every candidate chord each modifier it believes down is confirmed against `GetAsyncKeyState` (or a
 key-down within 40 ms, when the system's state has not caught up), so a key-up that was missed (Win+L and the
 secure desktop, Ctrl+Alt+Del, a UAC prompt) cannot leave Win "stuck". The count is also cleared on session lock
@@ -115,8 +118,9 @@ and unlock and when the input desktop changes. The hook swallows the digit's key
 unassigned key (0xE8) so releasing Win does not open the Start menu.
 
 Limit (by design): Windows keeps a normal-level hook from seeing keys typed into an **elevated** window
-(UIPI), so **the Win chords do nothing while an elevated window has focus** (Task Manager, an elevated
-terminal). The daemon is not elevated and does not ask for UI access.
+(UIPI), so **the chords do nothing while an elevated window has focus** (Task Manager, an administrator
+terminal). The daemon is not elevated and does not ask for UI access. It says so instead of failing silently: when an
+elevated window comes to the front the log names it and `state` shows it under `keys.blocked_by`.
 
 ## Focus
 

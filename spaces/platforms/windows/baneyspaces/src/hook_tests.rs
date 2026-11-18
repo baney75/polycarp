@@ -72,7 +72,8 @@ fn session_window() -> HWND {
 #[test]
 fn the_hooks_on_a_real_desktop() {
     let (tx, rx) = channel();
-    let problems = start(tx, crate::keys::bindings(), on_end);
+    set_table(crate::keys::defaults(crate::keys::parse_mod("win").expect("win")));
+    let problems = start(tx, on_end);
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(
         TEST_INPUT.load(Ordering::Relaxed),
