@@ -156,74 +156,89 @@ unsafe extern "system" fn mouse(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     CallNextHookEx(std::ptr::null_mut(), code, wp, lp)
 }
 
-/// Who the agents are, as the worker last saw them: their processes (pid, start time), the agent job's raw
-/// handle (0: none), and whether the agent workspace is showing. Starts as showing, so nothing is ghosted here
-/// until the worker has said who the agents are.
-struct Agents {
+/// The one turn at changing a window's ghost: the event thread's early ghost, and every hide and show the worker
+/// makes (`cloak::show`, `cloak::ghost`, `cloak::hide_user` take it). A window is never seen half shown, and an
+/// early ghost and the worker's record of it are handed over under it. It also holds who the agents are, as the
+/// worker last said, and the early ghosts the worker has not taken yet. Held for a few system calls, never for a
+/// file write. Starts as shown, so nothing is ghosted here until the worker has said who the agents are.
+pub struct Turn {
     procs: Vec<(u32, u64)>,
     job: isize,
     shown: bool,
+    early: Vec<Early>,
 }
-static AGENTS: Mutex<Agents> = Mutex::new(Agents { procs: Vec::new(), job: 0, shown: true });
 
-/// Windows this thread ghosted before the worker saw them, with what to put back. The worker takes each one
-/// when it handles the window's event (`take_early`), which is always after it was put here.
-static EARLY: Mutex<Vec<(i64, crate::cloak::GhostUndo)>> = Mutex::new(Vec::new());
+/// A window the event thread ghosted, the process it belonged to then, and what the ghost replaced.
+struct Early {
+    hwnd: i64,
+    pid: u32,
+    start: u64,
+    undo: crate::cloak::GhostUndo,
+}
 
-/// The worker tells the event thread who the agents are. Called whenever what is hidden is worked out again.
+static TURN: Mutex<Turn> = Mutex::new(Turn { procs: Vec::new(), job: 0, shown: true, early: Vec::new() });
+
+pub fn window_turn() -> std::sync::MutexGuard<'static, Turn> {
+    TURN.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+impl Turn {
+    /// What the event thread's ghost of `hwnd` replaced, if it made one and the handle is still that process's
+    /// window. One whose process is gone (the handle may be another program's now) is dropped, never applied.
+    pub fn take_early(&mut self, hwnd: i64) -> Option<crate::cloak::GhostUndo> {
+        let i = self.early.iter().position(|e| e.hwnd == hwnd)?;
+        let e = self.early.swap_remove(i);
+        let pid = crate::winapi::pid_of(crate::winapi::hwnd(hwnd));
+        (pid == e.pid && crate::winapi::process_start(pid) == e.start).then_some(e.undo)
+    }
+}
+
+/// The worker tells the event thread who the agents are. Called whenever what is hidden is worked out again,
+/// before any window is shown.
 pub fn share_agents(procs: Vec<(u32, u64)>, job: isize, shown: bool) {
-    let mut a = AGENTS.lock().unwrap_or_else(|p| p.into_inner());
-    a.procs = procs;
-    a.job = job;
-    a.shown = shown;
+    let mut t = window_turn();
+    t.procs = procs;
+    t.job = job;
+    t.shown = shown;
 }
 
-/// What this thread's ghost of `hwnd` replaced, if it made one. The worker records the window with these
-/// values, so showing it puts back the window's own style, not the ghost's.
+/// `Turn::take_early` in a turn of its own.
+#[cfg(test)]
 pub fn take_early(hwnd: i64) -> Option<crate::cloak::GhostUndo> {
-    let mut e = EARLY.lock().unwrap_or_else(|p| p.into_inner());
-    let i = e.iter().position(|(h, _)| *h == hwnd)?;
-    Some(e.swap_remove(i).1)
+    window_turn().take_early(hwnd)
 }
 
 /// A window an agent's process just made or showed is ghosted here, on the event thread, before its event
 /// reaches the worker. The worker may be busy for tens of milliseconds (holding its lock for a request, or
 /// writing `state.json`), and a dialog drawn in that time is on your screen. The worker then records it.
 /// The same tests the worker makes for these two events (`Core::on_win_event`): a top-level window with a
-/// caption, a frame or a dialog, not one of the process's helper windows, menus or tooltips.
+/// caption, a frame or a dialog, not one of the process's helper windows, menus or tooltips. One that already
+/// has the ghost's bits is left to the worker: a ghost, or what a daemon killed mid-ghost left.
 pub(crate) fn ghost_early(h: HWND) {
     use crate::winapi;
-    if crate::daemon::stopping() || !winapi::exists(h) || !winapi::is_top_level(h) || !winapi::has_caption(h) {
-        return;
-    }
-    let pid = winapi::pid_of(h);
-    if pid == 0 {
-        return;
-    }
-    let (start, job) = {
-        let a = AGENTS.lock().unwrap_or_else(|p| p.into_inner());
-        if a.shown {
-            return;
-        }
-        (a.procs.iter().find(|(p, _)| *p == pid).map(|(_, s)| *s), a.job)
-    };
-    let agent = start.is_some_and(|s| s != 0 && winapi::process_start(pid) == s) || crate::agent::in_job_handle(job, pid);
-    if !agent || crate::cloak::is_ghost(h) {
+    let mut t = window_turn();
+    if t.shown || crate::daemon::stopping() || !winapi::exists(h) || !winapi::is_top_level(h) || !winapi::has_caption(h) {
         return;
     }
     let id = h as isize as i64;
-    if EARLY.lock().unwrap_or_else(|p| p.into_inner()).iter().any(|(w, _)| *w == id) {
+    let pid = winapi::pid_of(h);
+    if pid == 0 || crate::cloak::has_ghost_bits(h) || t.early.iter().any(|e| e.hwnd == id) {
         return;
     }
-    if let Some(undo) = crate::cloak::ghost(h) {
-        EARLY.lock().unwrap_or_else(|p| p.into_inner()).push((id, undo));
+    let start = winapi::process_start(pid);
+    let agent = t.procs.iter().any(|&(p, s)| p == pid && s != 0 && s == start) || crate::agent::in_job_handle(t.job, pid);
+    if !agent {
+        return;
+    }
+    if let Some(undo) = crate::cloak::ghost_on(&crate::desk::Real(None), h) {
+        t.early.push(Early { hwnd: id, pid, start, undo });
     }
 }
 
 /// A test's own early ghost record, as if the event thread had ghosted `hwnd` for process `pid` started at `start`.
 #[cfg(test)]
-pub fn plant_early(hwnd: i64, _pid: u32, _start: u64, undo: crate::cloak::GhostUndo) {
-    EARLY.lock().unwrap_or_else(|p| p.into_inner()).push((hwnd, undo));
+pub fn plant_early(hwnd: i64, pid: u32, start: u64, undo: crate::cloak::GhostUndo) {
+    window_turn().early.push(Early { hwnd, pid, start, undo });
 }
 
 unsafe extern "system" fn win_event(_h: HWINEVENTHOOK, event: u32, hwnd: HWND, id_object: i32, id_child: i32, _thread: u32, _time: u32) {

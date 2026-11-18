@@ -310,11 +310,16 @@ impl Core {
         let owner_pid = winapi::pid_of(h);
         let agent = self.is_agent_pid(pid) || self.is_agent_pid(owner_pid);
         let (ex_style, alpha) = match how {
-            How::Ghost if cloak::is_ghost(h) => {
-                let u = cloak::undo_unrecorded_ghost(winapi::ex_style(h));
+            How::Ghost => {
+                // Under the turn: the event thread is not half way through a ghost of it, and its early record, if
+                // it made one, is taken here whichever path records the window first (an event or a full look).
+                let mut turn = hook::window_turn();
+                let u = turn.take_early(hwnd).unwrap_or_else(|| match cloak::has_ghost_bits(h) {
+                    true => cloak::undo_unrecorded_ghost(winapi::ex_style(h)),
+                    false => cloak::GhostUndo { ex_style: winapi::ex_style(h), alpha: winapi::layered_alpha(h) },
+                });
                 (Some(u.ex_style), u.alpha)
             }
-            How::Ghost => (Some(winapi::ex_style(h)), winapi::layered_alpha(h)),
             _ => (None, None),
         };
         Hidden {
@@ -706,7 +711,7 @@ impl Core {
             let agent = *agent_pids.entry(pid).or_insert_with(|| self.is_agent_pid(pid));
             if agent {
                 // An agent's window, whatever it looks like: ghost it before anything else.
-                self.keep_agent_window_hidden(h, false, None);
+                self.keep_agent_window_hidden(h, false);
             }
             if winapi::is_manageable(h, self.hidden.contains(id), self.our_pid, agent) {
                 live.push(id);
@@ -746,28 +751,19 @@ impl Core {
 
     /// A window of an agent's process that is not recorded yet (a dialog, a popup, a second window) is
     /// ghosted now, before the model hears of it. Recorded first, like any hidden window.
-    /// `early` is what the event thread's own ghost of this window replaced, when it made one first
-    /// (`hook::take_early`): the window is recorded with those values, or that ghost is undone.
-    fn keep_agent_window_hidden(&mut self, h: windows_sys::Win32::Foundation::HWND, created: bool, early: Option<cloak::GhostUndo>) {
+    /// If the event thread ghosted it first, `entry_for` records what that ghost replaced.
+    fn keep_agent_window_hidden(&mut self, h: windows_sys::Win32::Foundation::HWND, created: bool) {
         let id = id_of(h);
         if !self.should_keep_hidden(h, id, created) {
-            if let Some(u) = early {
-                self.undo_early(id, u);
-            }
             return;
         }
         let pid = winapi::real_pid(h);
-        let mut e = self.entry_for(id, pid, winapi::process_start(pid), How::Ghost);
-        if let Some(u) = early {
-            e.ex_style = Some(u.ex_style);
-            e.alpha = u.alpha;
-            self.log(&format!("{} ghosted by the event thread as it appeared", window_name(id)));
-        }
+        let e = self.entry_for(id, pid, winapi::process_start(pid), How::Ghost);
         self.hidden.insert(e.clone());
         if let Err(why) = self.persist() {
             self.problem(format!("could not save the record of an agent window ({why}); it is hidden anyway"));
         }
-        if early.is_none() && cloak::ghost(h).is_none() {
+        if cloak::ghost(h).is_none() {
             // It refused: parked, and recorded as parked (the method actually applied), and left alone.
             self.problem(format!("{} would not ghost: parked it instead", window_name(id)));
             winapi::set_pos(h, cloak::PARK, cloak::PARK);
@@ -794,20 +790,17 @@ impl Core {
         created || winapi::is_visible(h)
     }
 
-    /// The event thread ghosted a window the worker does not keep hidden after all (the agent workspace was shown
-    /// in between, or the process is not an agent's any more): put its own style back. A window already recorded
-    /// as a ghost keeps its first record, which holds the style from before any ghost.
-    fn undo_early(&mut self, id: i64, u: cloak::GhostUndo) {
+    /// After a window's CREATE or SHOW: an early ghost no record took is one the worker does not keep (the agent
+    /// workspace was shown in between, or the process is not an agent's any more), so its own style goes back, in
+    /// the same turn. One whose handle another process owns now was dropped by `take_early`, and changes nothing.
+    fn settle_early(&self, id: i64) {
+        let mut turn = hook::window_turn();
+        let Some(u) = turn.take_early(id) else { return };
         if self.hidden.get(id).is_some_and(|e| e.how == How::Ghost) {
-            return;
+            return; // its record, made before this ghost, holds the window's own style
         }
-        let h = to_hwnd(id);
-        let pid = winapi::real_pid(h);
-        let mut e = self.entry_for(id, pid, winapi::process_start(pid), How::Ghost);
-        e.ex_style = Some(u.ex_style);
-        e.alpha = u.alpha;
-        e.rect = None; // never parked by the event thread: nothing to move back
-        cloak::show(&e, None);
+        let e = Hidden { hwnd: id, pid: 0, start: 0, how: How::Ghost, rect: None, agent: true, ex_style: Some(u.ex_style), alpha: u.alpha, class: String::new(), owner_pid: 0, owner_start: 0 };
+        cloak::show_on(&crate::desk::Real(None), &e);
     }
 
     /// The foreground changed. Only an activation you caused may take you to another workspace (R-F1,
@@ -843,12 +836,10 @@ impl Core {
         // if the event arrives in time: this is what catches a dialog its app opens.
         // The event thread ghosts it itself when it can (`hook::ghost_early`); this records it.
         if matches!(event, hook::EVENT_OBJECT_CREATE | hook::EVENT_OBJECT_SHOW) {
-            let early = hook::take_early(hwnd);
             if winapi::exists(h) && winapi::is_top_level(h) && self.is_agent_pid(winapi::pid_of(h)) {
-                self.keep_agent_window_hidden(h, true, early);
-            } else if let Some(u) = early {
-                self.undo_early(hwnd, u);
+                self.keep_agent_window_hidden(h, true);
             }
+            self.settle_early(hwnd);
         }
         match event {
             hook::EVENT_SYSTEM_FOREGROUND => {

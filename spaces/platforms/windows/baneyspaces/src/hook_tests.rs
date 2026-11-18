@@ -188,7 +188,7 @@ fn the_hooks_on_a_real_desktop() {
                 crate::winapi::is_top_level(h),
                 crate::winapi::is_visible(h)
             );
-            (crate::cloak::is_ghost(h), take_early(*hwnd), facts)
+            (crate::cloak::has_ghost_bits(h) && crate::winapi::layered_alpha(h) == Some(0), take_early(*hwnd), facts)
         }
         _ => unreachable!(),
     });

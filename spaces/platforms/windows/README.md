@@ -139,9 +139,13 @@ created or shown (if it has a caption), and is an agent window like the first, s
 WinEvent thread ghosts it itself, before the worker hears of it: the worker can be busy for tens of milliseconds
 (a request holding its lock, a write of `state.json`), and dialogs drawn in that time were on screen for 62 to 98 ms
 in the live suite. The worker records it right after, with the style the ghost replaced, or undoes that ghost if
-the agent workspace was shown in between. A daemon killed in that gap leaves the window a ghost with no record, which is
-where an agent's window stays after a restart anyway; the next daemon records such a window with the ghost's bits
-taken off, so `agent-workspace show` shows it.
+the agent workspace was shown in between. That ghost, and every hide and show the worker makes, take one turn
+(`hook::window_turn`), so neither ever sees a window half changed by the other; an early ghost is kept with its
+process (pid and start time), and one whose handle another program owns by then is dropped, never applied. A
+daemon killed in that gap, or between a ghost's style and its alpha, leaves the window with the ghost's bits and no
+record, which is where an agent's window stays after a restart anyway; the next daemon records such a window with
+those bits taken off and opaque, so `agent-workspace show` shows it (an app's own layered, click-through window
+with no record would be taken for one).
 Every action runs the scope guard first (`check_scope`: on the agent workspace, a registered process,
 the same pid and start time), and the engine is run as a child process with no `--headed`: it sends
 no `SendInput`, never moves the cursor and never draws the cursor overlay. The engine's own `type` is

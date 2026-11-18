@@ -56,7 +56,7 @@ fn a_look_that_finds_an_early_ghost_first_records_the_windows_own_alpha() {
     this_process_is_the_agent();
     hook::ghost_early(w.hwnd);
     let mut c = core();
-    c.keep_agent_window_hidden(w.hwnd, false, None); // the full look (resync_windows)
+    c.keep_agent_window_hidden(w.hwnd, false); // the full look (resync_windows)
     c.on_win_event(hook::EVENT_OBJECT_SHOW, w.id()); // then the window's own event
     hook::share_agents(vec![], 0, true);
     let e = c.hidden.get(w.id()).cloned().expect("the window is recorded");
@@ -92,7 +92,7 @@ fn a_ghost_cut_off_before_its_alpha_is_recorded_without_the_ghosts_bits() {
     let own = winapi::ex_style(w.hwnd);
     winapi::set_ex_style(w.hwnd, own | GHOST_BITS);
     let mut c = core();
-    c.keep_agent_window_hidden(w.hwnd, false, None);
+    c.keep_agent_window_hidden(w.hwnd, false);
     let e = c.hidden.get(w.id()).cloned().expect("the window is recorded");
     let kept = e.ex_style.unwrap_or(0);
     assert_eq!(kept & (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE) as i64, 0, "the record has the ghost's bits as the window's own: {kept:#x}");
