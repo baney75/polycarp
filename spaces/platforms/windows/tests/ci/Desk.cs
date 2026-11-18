@@ -45,6 +45,7 @@ public static class Desk {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool SetWindowTextW(IntPtr h, string t);
+    [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr h, int c);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowW(string c, string t);
     [DllImport("user32.dll")] static extern IntPtr SendMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -100,6 +101,9 @@ public static class Desk {
     public static long Foreground() { return GetForegroundWindow().ToInt64(); }
     public static bool Front(long h) { return SetForegroundWindow((IntPtr)h); }
     public static bool SetTitle(long h, string t) { return SetWindowTextW((IntPtr)h, t); }
+    // The window's own thread hides it (SW_HIDE) or shows it without taking the front (SW_SHOWNA), as a tray app
+    // does with its window: ShowWindowAsync posts the call to the thread that owns the window.
+    public static bool AppShow(long h, bool show) { return ShowWindowAsync((IntPtr)h, show ? 8 : 0); }
 
     // Keys pressed in order and released in reverse, as one SendInput batch. marked: as a person (see Mark).
     public static uint Keys(ushort[] vks, bool marked) {

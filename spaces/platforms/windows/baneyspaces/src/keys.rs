@@ -209,7 +209,7 @@ pub fn from_config(text: &str, check: impl Fn(&[String]) -> Result<(), String>) 
         if action.starts_with("exec ") || action.starts_with("mode ") {
             return Err(format!("{at}: {:?} is not on Windows yet", action.split(' ').next().unwrap_or("")));
         }
-        let args: Vec<String> = action.split_whitespace().map(String::from).collect();
+        let args = words(action).map_err(|e| format!("{at}: {action:?}: {e}"))?;
         check(&args).map_err(|e| format!("{at}: {action:?}: {e}"))?;
         table.push(Binding { mods, vk, args });
     }
@@ -217,6 +217,43 @@ pub fn from_config(text: &str, check: impl Fn(&[String]) -> Result<(), String>) 
         return Err("keys.bindings: no key is left to switch workspaces".into());
     }
     Ok((table, skipped))
+}
+
+/// An action as the words a command line passes: split at spaces, a double-quoted part kept whole
+/// (`--app "Windows Terminal"`), `\"` a quote inside one.
+fn words(action: &str) -> Result<Vec<String>, String> {
+    let (mut out, mut word, mut quoted, mut any) = (vec![], String::new(), false, false);
+    let mut chars = action.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&'"') => {
+                word.push('"');
+                chars.next();
+                any = true;
+            }
+            '"' => {
+                quoted = !quoted;
+                any = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if any {
+                    out.push(std::mem::take(&mut word));
+                    any = false;
+                }
+            }
+            c => {
+                word.push(c);
+                any = true;
+            }
+        }
+    }
+    if quoted {
+        return Err("a quote is opened and never closed".into());
+    }
+    if any {
+        out.push(word);
+    }
+    Ok(out)
 }
 
 /// After a change in the config folder, waits until it has been quiet for `quiet_ms` (an editor saves in steps:
@@ -437,6 +474,14 @@ mod tests {
         let at = src.find("winapi::set_frame(oh, r);").expect("the swap");
         let rest = &src[at..];
         assert!(rest[..rest.find("Envelope::ok").unwrap()].contains("self.mirror_moves();"), "the swap branch mirrors moves");
+    }
+
+    #[test]
+    fn an_action_keeps_a_quoted_app_name_whole() {
+        let (t, _) = from_config("[keys.bindings]\n\"mod+alt+k\" = 'move 2 --app \"Windows Terminal\"'\n", any_command).unwrap();
+        assert_eq!(args(&t, 0x4B, Mods { win: true, alt: true, ..Mods::default() }).unwrap(), ["move", "2", "--app", "Windows Terminal"]);
+        let e = from_config("[keys.bindings]\n\"mod+alt+k\" = 'move 2 --app \"Windows'\n", any_command).unwrap_err();
+        assert!(e.contains("quote"), "an open quote is an error: {e}");
     }
 
     const EVERY_MOD: [&str; 3] = ["win", "ctrl", "alt"];

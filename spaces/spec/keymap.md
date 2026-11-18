@@ -63,7 +63,8 @@ as ignored, not refused).
 
 An action is one the daemon runs: `switch`, `move`, `window`, `focus-monitor`, `ls`, `state`, `overview`, `get`, `set`,
 `agent-workspace` and `agent`. `stop`, `doctor`, `keys` and the other commands the CLI runs itself are refused as unknown,
-and `switch` and `move` need a workspace 1 to 9. A key runs its action as you, with every operation you may ask for.
+and `switch` and `move` need a workspace 1 to 9. Words split at spaces; double quotes keep one word whole, as in
+`'move 2 --app "Windows Terminal"'` (a TOML literal string, so the quotes need no escaping). A key runs its action as you, with every operation you may ask for.
 So `config.toml` is yours to trust, like your shell profile: any program running as you, an agent's included, can
 write it. Agents should never edit it.
 
