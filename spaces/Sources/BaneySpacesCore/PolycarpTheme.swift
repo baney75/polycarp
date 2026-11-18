@@ -182,15 +182,19 @@ public struct PolycarpTheme: Equatable, Sendable {
     private static let roleNames = ["accent", "background", "border", "done", "foreground", "muted", "on_accent",
                                     "selection", "strong", "sunken", "surface", "urgent", "working"]
 
-    /// The `schema` this reads. A newer file may keep a key and change what it means, so it is refused, not guessed at.
-    public static let schema = 1
+    /// The newest `schema` this reads. A newer file may keep a key and change what it means, so it is refused, not guessed at.
+    /// Schema 2 only adds (the studio surface, and terminal, syntax and diff colors inside light and dark), so 1 reads too.
+    public static let schema = 2
+    public static let oldestSchema = 1
 
     private static func build(_ root: [String: Any], checkContrast: Bool) throws -> PolycarpTheme {
         guard let n = root["schema"] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue == n.doubleValue.rounded() else {
             throw PolycarpThemeError("schema is missing or not a whole number")
         }
         if n.intValue > schema { throw PolycarpThemeError("schema \(n.intValue) is newer than this Polycarp reads (schema \(schema)): update Polycarp") }
-        guard n.intValue == schema else { throw PolycarpThemeError("schema \(n.intValue) is not one this Polycarp reads (schema \(schema))") }
+        guard (oldestSchema...schema).contains(n.intValue) else {
+            throw PolycarpThemeError("schema \(n.intValue) is not one this Polycarp reads (schema \(oldestSchema) to \(schema))")
+        }
         guard let modeText = root["mode"] as? String, let mode = Mode(rawValue: modeText) else {
             throw PolycarpThemeError("mode is missing or not auto, light or dark")
         }
