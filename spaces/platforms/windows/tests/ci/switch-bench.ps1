@@ -82,7 +82,18 @@ for ($i = -5; $i -lt 200; $i++) {
   $bad = 0; for ($m = 1; $m -le 9; $m++) { if ($m -ne $n) { $bad += $cs[$m - 1] } }
   if ($bad -gt 0 -or $cs[$n - 1] -eq 0) {
     $wrong++; $shots++
+    # #545: read the cloak flags first, as close to the bad read as can be.
+    $flagsWrong = @($on[$n] | ? { [Bench]::Cloaked($_) -ne 0 }).Count + @($off[$n] | ? { [Bench]::Cloaked($_) -eq 0 }).Count
     $p = Join-Path $Out ('wrong-{0:D3}-to-{1}.png' -f $i, $n); [void][Bench]::Count([int[]]$colors, $p)
+    # How long until the pixels come right? Flags right with pixels wrong is the screen lagging the flags; a flag
+    # wrong is a window that really came back.
+    $clear = [Diagnostics.Stopwatch]::StartNew(); $right = -1
+    while ($clear.ElapsedMilliseconds -lt 2000) {
+      $c2 = [Bench]::Count([int[]]$colors, $null); $b2 = 0; for ($m = 1; $m -le 9; $m++) { if ($m -ne $n) { $b2 += $c2[$m - 1] } }
+      if ($b2 -eq 0 -and $c2[$n - 1] -gt 0) { $right = $clear.ElapsedMilliseconds; break }
+      Start-Sleep -Milliseconds 20
+    }
+    say "  switch $i to $n wrong screen: $flagsWrong window(s) with the wrong cloak flag at the bad read; pixels $(if ($right -ge 0) { "right $right ms after it" } else { 'still wrong 2 s after it' })"
     say "  switch $i to $n in $(ms $t) ms: own color $($cs[$n - 1]) px, other colors $bad px ($($cs -join ','))"
   }
   Add-Content $log ("  switch {0} to {1}: {2} ms" -f $i, $n, (ms $t))
