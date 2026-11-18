@@ -127,6 +127,11 @@ Limit (by design): Windows keeps a normal-level hook from seeing keys typed into
 terminal). The daemon is not elevated and does not ask for UI access. It says so instead of failing silently: when an
 elevated window comes to the front the log names it and `state` shows it under `keys.blocked_by`.
 
+Win+drag moves a window from anywhere in it, Win+right drag resizes it from the nearest corner, and a move let go at a
+display's edge snaps it to a half, a quarter or the whole work area, with a preview first; Escape undoes the drag.
+`drag.rs` runs inside the same mouse hook and never waits on the app (`SWP_ASYNCWINDOWPOS`). Rules in
+`spec/keymap.md`, "Dragging".
+
 ## Focus
 
 An activation reaches the daemon as `EVENT_SYSTEM_FOREGROUND`. Windows does not say who caused it, so
