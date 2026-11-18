@@ -139,7 +139,7 @@ pub fn hide_user_on(d: &impl Desk, h: HWND) -> How {
 }
 
 /// What a ghost needs to put a window back exactly: its extended style and constant alpha before.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct GhostUndo {
     pub ex_style: i64,
     pub alpha: Option<u8>,
@@ -153,6 +153,19 @@ pub fn ghost(h: HWND) -> Option<GhostUndo> {
 }
 
 const GHOST: i64 = (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE) as i64;
+
+/// Is the window a ghost already (whoever made it one)?
+pub fn is_ghost(h: HWND) -> bool {
+    let d = Real(None);
+    d.ex_style(h) & GHOST == GHOST && d.layered_alpha(h) == Some(0)
+}
+
+/// What to put back on a window that is a ghost with no record of what it was: a daemon killed between the
+/// event thread's ghost and the worker's record left it so. Only the daemon ghosts windows, so the ghost's own
+/// bits come off and the alpha goes back to opaque.
+pub fn undo_unrecorded_ghost(ex_style: i64) -> GhostUndo {
+    GhostUndo { ex_style: ex_style & !GHOST, alpha: None }
+}
 
 pub fn ghost_on(d: &impl Desk, h: HWND) -> Option<GhostUndo> {
     // Test builds only (the `test-ops` feature, and the variable set): a window titled "(refuses ghost)" refuses.

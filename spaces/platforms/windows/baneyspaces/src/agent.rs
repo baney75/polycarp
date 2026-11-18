@@ -112,3 +112,9 @@ pub fn in_job(job: &Job, pid: u32) -> bool {
         ok && inside != 0
     }
 }
+
+/// The same from the job's raw handle, which the event thread holds as a number (`hook::share_agents`).
+/// `Job` closes nothing when dropped, so the borrowed handle stays the daemon's.
+pub fn in_job_handle(job: isize, pid: u32) -> bool {
+    job != 0 && in_job(&Job(job as HANDLE), pid)
+}

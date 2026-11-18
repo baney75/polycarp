@@ -16,7 +16,7 @@
 use crate::keys::{lookup, Binding, ModState, MOD_KEYS};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::RemoteDesktop::WTSRegisterSessionNotification;
@@ -156,6 +156,70 @@ unsafe extern "system" fn mouse(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     CallNextHookEx(std::ptr::null_mut(), code, wp, lp)
 }
 
+/// Who the agents are, as the worker last saw them: their processes (pid, start time), the agent job's raw
+/// handle (0: none), and whether the agent workspace is showing. Starts as showing, so nothing is ghosted here
+/// until the worker has said who the agents are.
+struct Agents {
+    procs: Vec<(u32, u64)>,
+    job: isize,
+    shown: bool,
+}
+static AGENTS: Mutex<Agents> = Mutex::new(Agents { procs: Vec::new(), job: 0, shown: true });
+
+/// Windows this thread ghosted before the worker saw them, with what to put back. The worker takes each one
+/// when it handles the window's event (`take_early`), which is always after it was put here.
+static EARLY: Mutex<Vec<(i64, crate::cloak::GhostUndo)>> = Mutex::new(Vec::new());
+
+/// The worker tells the event thread who the agents are. Called whenever what is hidden is worked out again.
+pub fn share_agents(procs: Vec<(u32, u64)>, job: isize, shown: bool) {
+    let mut a = AGENTS.lock().unwrap_or_else(|p| p.into_inner());
+    a.procs = procs;
+    a.job = job;
+    a.shown = shown;
+}
+
+/// What this thread's ghost of `hwnd` replaced, if it made one. The worker records the window with these
+/// values, so showing it puts back the window's own style, not the ghost's.
+pub fn take_early(hwnd: i64) -> Option<crate::cloak::GhostUndo> {
+    let mut e = EARLY.lock().unwrap_or_else(|p| p.into_inner());
+    let i = e.iter().position(|(h, _)| *h == hwnd)?;
+    Some(e.swap_remove(i).1)
+}
+
+/// A window an agent's process just made or showed is ghosted here, on the event thread, before its event
+/// reaches the worker. The worker may be busy for tens of milliseconds (holding its lock for a request, or
+/// writing `state.json`), and a dialog drawn in that time is on your screen. The worker then records it.
+/// The same tests the worker makes for these two events (`Core::on_win_event`): a top-level window with a
+/// caption, a frame or a dialog, not one of the process's helper windows, menus or tooltips.
+fn ghost_early(h: HWND) {
+    use crate::winapi;
+    if crate::daemon::stopping() || !winapi::exists(h) || !winapi::is_top_level(h) || !winapi::has_caption(h) {
+        return;
+    }
+    let pid = winapi::pid_of(h);
+    if pid == 0 {
+        return;
+    }
+    let (start, job) = {
+        let a = AGENTS.lock().unwrap_or_else(|p| p.into_inner());
+        if a.shown {
+            return;
+        }
+        (a.procs.iter().find(|(p, _)| *p == pid).map(|(_, s)| *s), a.job)
+    };
+    let agent = start.is_some_and(|s| s != 0 && winapi::process_start(pid) == s) || crate::agent::in_job_handle(job, pid);
+    if !agent || crate::cloak::is_ghost(h) {
+        return;
+    }
+    let id = h as isize as i64;
+    if EARLY.lock().unwrap_or_else(|p| p.into_inner()).iter().any(|(w, _)| *w == id) {
+        return;
+    }
+    if let Some(undo) = crate::cloak::ghost(h) {
+        EARLY.lock().unwrap_or_else(|p| p.into_inner()).push((id, undo));
+    }
+}
+
 unsafe extern "system" fn win_event(_h: HWINEVENTHOOK, event: u32, hwnd: HWND, id_object: i32, id_child: i32, _thread: u32, _time: u32) {
     if event == EVENT_SYSTEM_DESKTOPSWITCH {
         // To or from the secure desktop (Win+L, Ctrl+Alt+Del, a UAC prompt): key-ups may have been missed.
@@ -166,6 +230,9 @@ unsafe extern "system" fn win_event(_h: HWINEVENTHOOK, event: u32, hwnd: HWND, i
         return;
     }
     if id_object == OBJID_WINDOW && id_child == 0 && !hwnd.is_null() {
+        if event == EVENT_OBJECT_CREATE || event == EVENT_OBJECT_SHOW {
+            ghost_early(hwnd);
+        }
         if let Some(tx) = TX.get() {
             let _ = tx.send(Msg::Win { event, hwnd: hwnd as isize as i64 });
         }

@@ -158,6 +158,11 @@ pub fn say(msg: &str) {
 
 /// Sign-out or shutdown is under way: windows are shown and nothing is hidden until it is cancelled.
 static STOPPING: AtomicBool = AtomicBool::new(false);
+
+/// Is the daemon putting windows back to stop? Then nothing is hidden any more, by any thread.
+pub fn stopping() -> bool {
+    STOPPING.load(Ordering::SeqCst)
+}
 static FINISHED: AtomicBool = AtomicBool::new(false);
 static CTRL_TX: OnceLock<Sender<Msg>> = OnceLock::new();
 static SHARED: OnceLock<Shared> = OnceLock::new();
@@ -304,6 +309,14 @@ impl Core {
         let h = to_hwnd(hwnd);
         let owner_pid = winapi::pid_of(h);
         let agent = self.is_agent_pid(pid) || self.is_agent_pid(owner_pid);
+        let (ex_style, alpha) = match how {
+            How::Ghost if cloak::is_ghost(h) => {
+                let u = cloak::undo_unrecorded_ghost(winapi::ex_style(h));
+                (Some(u.ex_style), u.alpha)
+            }
+            How::Ghost => (Some(winapi::ex_style(h)), winapi::layered_alpha(h)),
+            _ => (None, None),
+        };
         Hidden {
             hwnd,
             pid,
@@ -311,8 +324,8 @@ impl Core {
             how,
             rect: winapi::rect(h),
             agent,
-            ex_style: (how == How::Ghost).then(|| winapi::ex_style(h)),
-            alpha: if how == How::Ghost { winapi::layered_alpha(h) } else { None },
+            ex_style,
+            alpha,
             class: winapi::class(h),
             owner_pid,
             owner_start: winapi::process_start(owner_pid),
@@ -329,6 +342,8 @@ impl Core {
         let stopping = STOPPING.load(Ordering::SeqCst);
         let shown = self.visible_workspaces();
         let agent_shown = self.model.agent_shown();
+        // Before any window is shown: the event thread stops ghosting new agent windows first.
+        hook::share_agents(self.model.agent_pids(), self.job.as_ref().map_or(0, |j| j.0 as isize), agent_shown);
         #[derive(Clone, Copy, PartialEq)]
         enum Want {
             Visible,
@@ -691,7 +706,7 @@ impl Core {
             let agent = *agent_pids.entry(pid).or_insert_with(|| self.is_agent_pid(pid));
             if agent {
                 // An agent's window, whatever it looks like: ghost it before anything else.
-                self.keep_agent_window_hidden(h, false);
+                self.keep_agent_window_hidden(h, false, None);
             }
             if winapi::is_manageable(h, self.hidden.contains(id), self.our_pid, agent) {
                 live.push(id);
@@ -731,29 +746,28 @@ impl Core {
 
     /// A window of an agent's process that is not recorded yet (a dialog, a popup, a second window) is
     /// ghosted now, before the model hears of it. Recorded first, like any hidden window.
-    fn keep_agent_window_hidden(&mut self, h: windows_sys::Win32::Foundation::HWND, created: bool) {
-        if self.model.agent_shown() || STOPPING.load(Ordering::SeqCst) {
-            return;
-        }
+    /// `early` is what the event thread's own ghost of this window replaced, when it made one first
+    /// (`hook::take_early`): the window is recorded with those values, or that ghost is undone.
+    fn keep_agent_window_hidden(&mut self, h: windows_sys::Win32::Foundation::HWND, created: bool, early: Option<cloak::GhostUndo>) {
         let id = id_of(h);
-        if self.hidden.contains(id) || !winapi::exists(h) || !winapi::is_top_level(h) {
-            return;
-        }
-        // Created: only a window that will draw as a frame or a dialog (a caption) is worth ghosting before it is
-        // shown; the process's invisible helper windows (IME, GDI+) are not. Otherwise it has to be visible.
-        if created && !winapi::has_caption(h) {
-            return;
-        }
-        if !created && !winapi::is_visible(h) {
+        if !self.should_keep_hidden(h, id, created) {
+            if let Some(u) = early {
+                self.undo_early(id, u);
+            }
             return;
         }
         let pid = winapi::real_pid(h);
-        let e = self.entry_for(id, pid, winapi::process_start(pid), How::Ghost);
+        let mut e = self.entry_for(id, pid, winapi::process_start(pid), How::Ghost);
+        if let Some(u) = early {
+            e.ex_style = Some(u.ex_style);
+            e.alpha = u.alpha;
+            self.log(&format!("{} ghosted by the event thread as it appeared", window_name(id)));
+        }
         self.hidden.insert(e.clone());
         if let Err(why) = self.persist() {
             self.problem(format!("could not save the record of an agent window ({why}); it is hidden anyway"));
         }
-        if cloak::ghost(h).is_none() {
+        if early.is_none() && cloak::ghost(h).is_none() {
             // It refused: parked, and recorded as parked (the method actually applied), and left alone.
             self.problem(format!("{} would not ghost: parked it instead", window_name(id)));
             winapi::set_pos(h, cloak::PARK, cloak::PARK);
@@ -763,6 +777,37 @@ impl Core {
             }
         }
         let _ = self.persist();
+    }
+
+    fn should_keep_hidden(&self, h: windows_sys::Win32::Foundation::HWND, id: i64, created: bool) -> bool {
+        if self.model.agent_shown() || STOPPING.load(Ordering::SeqCst) {
+            return false;
+        }
+        if self.hidden.contains(id) || !winapi::exists(h) || !winapi::is_top_level(h) {
+            return false;
+        }
+        // Created: only a window that will draw as a frame or a dialog (a caption) is worth ghosting before it is
+        // shown; the process's invisible helper windows (IME, GDI+) are not. Otherwise it has to be visible.
+        if created && !winapi::has_caption(h) {
+            return false;
+        }
+        created || winapi::is_visible(h)
+    }
+
+    /// The event thread ghosted a window the worker does not keep hidden after all (the agent workspace was shown
+    /// in between, or the process is not an agent's any more): put its own style back. A window already recorded
+    /// as a ghost keeps its first record, which holds the style from before any ghost.
+    fn undo_early(&mut self, id: i64, u: cloak::GhostUndo) {
+        if self.hidden.get(id).is_some_and(|e| e.how == How::Ghost) {
+            return;
+        }
+        let h = to_hwnd(id);
+        let pid = winapi::real_pid(h);
+        let mut e = self.entry_for(id, pid, winapi::process_start(pid), How::Ghost);
+        e.ex_style = Some(u.ex_style);
+        e.alpha = u.alpha;
+        e.rect = None; // never parked by the event thread: nothing to move back
+        cloak::show(&e, None);
     }
 
     /// The foreground changed. Only an activation you caused may take you to another workspace (R-F1,
@@ -796,10 +841,13 @@ impl Core {
         let h = to_hwnd(hwnd);
         // A window of an agent's process is ghosted the moment it is created or shown, before it paints
         // if the event arrives in time: this is what catches a dialog its app opens.
-        if matches!(event, hook::EVENT_OBJECT_CREATE | hook::EVENT_OBJECT_SHOW) && winapi::exists(h) && winapi::is_top_level(h) {
-            let pid = winapi::pid_of(h);
-            if self.is_agent_pid(pid) {
-                self.keep_agent_window_hidden(h, true);
+        // The event thread ghosts it itself when it can (`hook::ghost_early`); this records it.
+        if matches!(event, hook::EVENT_OBJECT_CREATE | hook::EVENT_OBJECT_SHOW) {
+            let early = hook::take_early(hwnd);
+            if winapi::exists(h) && winapi::is_top_level(h) && self.is_agent_pid(winapi::pid_of(h)) {
+                self.keep_agent_window_hidden(h, true, early);
+            } else if let Some(u) = early {
+                self.undo_early(hwnd, u);
             }
         }
         match event {

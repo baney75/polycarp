@@ -154,6 +154,37 @@ fn the_hooks_on_a_real_desktop() {
         "other session changes are not a resync"
     );
 
+    // An agent's new window is a ghost before its event reaches the worker: the event thread ghosted it, and
+    // left what it replaced for the worker to record. The worker may be busy for tens of milliseconds (a
+    // request holding its lock, a write of state.json), and the live suite caught a dialog drawn in that time.
+    let form = "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object Windows.Forms.Form; $f.Text = 'bs early ghost'; [Windows.Forms.Application]::Run($f)";
+    let mut agent = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", form])
+        .spawn()
+        .expect("powershell.exe starts");
+    let pid = agent.id();
+    share_agents(vec![(pid, crate::winapi::process_start(pid))], 0, false);
+    let theirs = |m: &Msg| match m {
+        Msg::Win { event, hwnd } if *event == EVENT_OBJECT_CREATE || *event == EVENT_OBJECT_SHOW => {
+            let h = crate::winapi::hwnd(*hwnd);
+            crate::winapi::pid_of(h) == pid && crate::winapi::is_top_level(h) && crate::winapi::has_caption(h)
+        }
+        _ => false,
+    };
+    let seen = first(&rx, Duration::from_secs(30), theirs);
+    let ghosted = seen.as_ref().map(|m| match m {
+        Msg::Win { hwnd, .. } => (crate::cloak::is_ghost(crate::winapi::hwnd(*hwnd)), take_early(*hwnd)),
+        _ => unreachable!(),
+    });
+    share_agents(vec![], 0, true);
+    let _ = agent.kill();
+    let _ = agent.wait();
+    let (is_ghost, undo) = ghosted.expect("no window event for the agent's form");
+    assert!(is_ghost, "the agent's form was not a ghost when its event reached the worker");
+    let undo = undo.expect("the event thread left nothing for the worker to record");
+    assert_ne!(undo.alpha, Some(0), "the record holds the form's own alpha, not the ghost's");
+    assert_eq!(undo.ex_style & (WS_EX_TRANSPARENT as i64), 0, "the record holds the form's own style, not the ghost's");
+
     // A window another process opens is reported (the hook skips the daemon's own process).
     let mut app = std::process::Command::new("notepad.exe")
         .spawn()

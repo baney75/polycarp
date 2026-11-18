@@ -195,6 +195,25 @@ fn a_window_that_refuses_the_alpha_is_left_as_it_was() {
 }
 
 #[test]
+fn a_ghost_left_with_no_record_comes_back_as_an_ordinary_window() {
+    // The event thread ghosted it and the daemon died before the worker wrote it down: the next daemon reads only
+    // the ghost. Recorded from that, showing it must still give the window back, opaque and on the taskbar.
+    let d = Fake::with(&[(1, app([10, 20, 410, 320]))]);
+    ghost_on(&d, h(1)).expect("an ordinary window takes the ghost");
+    let undo = undo_unrecorded_ghost(d.win(1).ex_style);
+    let e = Hidden {
+        ex_style: Some(undo.ex_style),
+        alpha: undo.alpha,
+        ..entry(1, How::Ghost, None)
+    };
+    assert!(show_on(&d, &e));
+    let w = d.win(1);
+    assert_eq!(w.ex_style, 0x100, "the ghost's bits are off");
+    assert_ne!(w.alpha, Some(0), "it is not transparent");
+    assert!(w.on_taskbar);
+}
+
+#[test]
 fn a_ghost_whose_alpha_was_reset_reads_as_not_hidden() {
     let d = Fake::with(&[(1, app([10, 20, 410, 320]))]);
     let undo = ghost_on(&d, h(1)).unwrap();

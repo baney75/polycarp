@@ -135,8 +135,13 @@ uses a launch token in the environment; a job answers "is this process one we st
 one?" directly), minimized and without focus, so a window that honors the show command is never drawn
 on your screen. The model registers the pid and its start time (read from the process handle before it runs) before the first window can be seen. A registration only holds for that process: the live start time must still match, and a process that exits is unregistered within one full look (3 s), so a pid Windows hands to another program is never taken for an agent's. Every window of an
 agent's process is ghosted, owned or not: a dialog or popup its app opens is caught from the WinEvent when it is
-created (if it has a frame) or shown, and is an agent window like the first, so the agent can still drive it. This
-is measured, not claimed away: one dialog was visible in 1 of ~110,000 polls (under a frame) before the ghost took.
+created or shown (if it has a caption), and is an agent window like the first, so the agent can still drive it. The
+WinEvent thread ghosts it itself, before the worker hears of it: the worker can be busy for tens of milliseconds
+(a request holding its lock, a write of `state.json`), and dialogs drawn in that time were on screen for 62 to 98 ms
+in the live suite. The worker records it right after, with the style the ghost replaced, or undoes that ghost if
+the agent workspace was shown in between. A daemon killed in that gap leaves the window a ghost with no record, which is
+where an agent's window stays after a restart anyway; the next daemon records such a window with the ghost's bits
+taken off, so `agent-workspace show` shows it.
 Every action runs the scope guard first (`check_scope`: on the agent workspace, a registered process,
 the same pid and start time), and the engine is run as a child process with no `--headed`: it sends
 no `SendInput`, never moves the cursor and never draws the cursor overlay. The engine's own `type` is
