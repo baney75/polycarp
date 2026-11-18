@@ -483,13 +483,15 @@ read it at any time while actions on it wait until you have been out of it for 5
 `state.json` and `baneyspaces doctor`. Agents can't lend: the MCP server has no such tool and an agent's `lend` answers
 `needs_lend`. `agent move` moves only windows of apps BaneySpaces started for an agent; send your own window with its
 workspace key. `agent open` starts TextEdit and Preview on a file from the handoff folder, Calculator, and any app you
-list by bundle id in `~/.config/polycarp/agent-apps.toml` (`apps = ["com.apple.grapher"]`, read on every open). Each
-starts as a separate copy that restores nothing it saved, and only its windows on the agent workspace are the agent's.
-Browsers, password managers, settings, shells, Finder, apps that run code (Script Editor, Xcode, code editors), apps
-signed in to your accounts (Mail, Messages, Slack) and Polycarp itself are refused even when listed. Every other app
-answers `needs_sandbox`, and a window of the agent's copy that shows a document from outside the handoff folder, or an
-Open or Save panel, is off limits. The list is a file you own; an agent with a shell could edit it too, which is why
-the refused kinds can't be listed. The agent workspace protects you from accidents; it is not a security
+allow: `polycarp-spaces agent allow Grapher` shows a sheet in Polycarp, and only your click on Allow adds it (`--remove`
+takes it off, `--list` shows them). Nothing an agent can write adds an app; Polycarp reads its saved list once at launch.
+Each allowed app starts as a separate copy on the agent workspace, and only its windows there are the agent's, but only
+the three built-in apps are known to restore nothing: an allowed app may open files or accounts it keeps for you. An open
+that starts no copy of its own, or reaches the copy you run, is refused. Browsers, password managers, settings, shells,
+Finder, apps that run code (Script Editor, Xcode, code editors, any developer tool), apps signed in to your accounts
+(Mail, Messages, Slack, Home) and Polycarp itself can't be allowed, nor any app that opens web links or runs one copy
+only. Every other app answers `needs_sandbox`, and a window of the agent's copy that shows a document from outside the
+handoff folder, or an Open or Save panel, is off limits. The agent workspace protects you from accidents; it is not a security
 boundary (see [docs/agent-computer-use.md](docs/agent-computer-use.md)).
 
 Every command prints one JSON envelope: `{"ok":true,"data":{…}}`, or `{"ok":false,"error":{"code","message",

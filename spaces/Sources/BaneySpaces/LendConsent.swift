@@ -89,6 +89,56 @@ enum LendConsent {
     }
 }
 
+/// Letting agents open an app beyond the built-in ones (`polycarp-spaces agent allow <app>`) is decided here, the same
+/// way a lend is: Don't Allow is the default, Allow is disabled for the first second and counts only for a real click
+/// or key on it, asking slows down after every refusal and stops for an app after three in an hour. Nothing an agent
+/// can write adds an app (review of #496, first-F1).
+enum AppAllowConsent {
+    private static var showing = false
+    private static var lastShown = Date.distantPast
+    private static var pause: TimeInterval = 15
+    private static var refusals: [String: (count: Int, last: Date)] = [:]
+
+    /// Main thread only. False for Don't Allow, a timeout, a sheet while one is up or within the pause, and any answer
+    /// that did not come from a real click or key.
+    static func ask(app: String) -> Bool {
+        guard Thread.isMainThread, !showing, Date().timeIntervalSince(lastShown) >= pause else { return false }
+        if let r = refusals[app], r.count >= LendConsent.maxRefusals, Date().timeIntervalSince(r.last) < 3600 { return false }
+        showing = true
+        defer { showing = false; lastShown = Date() }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Let agents open \(app)?"
+        alert.informativeText = "A program on this Mac asked. If you didn't start it, choose Don't Allow. Agents could start their own copy of \(app) on the agent workspace whenever they like, until you run `polycarp-spaces agent allow --remove \(app)`. Their copy is separate from yours, but it may open files or accounts \(app) keeps for you."
+        alert.addButton(withTitle: "Don't Allow")   // first button: the default (Return)
+        alert.addButton(withTitle: "Allow")
+        let button = alert.buttons[1]
+        button.isEnabled = false
+        let enabledAt = ProcessInfo.processInfo.systemUptime + LendConsent.enableAfter
+        let enable = Timer(timeInterval: LendConsent.enableAfter, repeats: false) { _ in button.isEnabled = true }
+        RunLoop.main.add(enable, forMode: .common)
+        var timedOut = false
+        let timer = Timer(timeInterval: LendConsent.giveUp, repeats: false) { _ in timedOut = true; NSApp.abortModal() }
+        RunLoop.main.add(timer, forMode: .common)
+        defer { timer.invalidate(); enable.invalidate() }
+        let response = alert.runModal()
+        func refuse(_ why: String) -> Bool {
+            let r = refusals[app] ?? (0, .distantPast)
+            refusals[app] = (r.count + 1, Date())
+            pause = min(pause * 2, 600)
+            Trace.log("allow \(app) refused: \(why)")
+            return false
+        }
+        guard response == .alertSecondButtonReturn, !timedOut else { return refuse("not confirmed") }
+        if let why = LendConsent.notByHand(alert: alert, button: button, enabledAt: enabledAt) { return refuse(why) }
+        refusals[app] = nil
+        pause = 15
+        Trace.log("allow \(app): Donovan clicked Allow")
+        return true
+    }
+}
+
 /// Widening agent access (Read Only to Default, or anything to Full Access) is decided here, the same way a lend is:
 /// a sheet whose confirm button is disabled for the first second and counts only for a real click or key on it.
 /// The Settings picker and the menu are ordinary controls an Accessibility client could press, so they only ask.

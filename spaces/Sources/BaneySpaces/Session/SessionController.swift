@@ -712,6 +712,9 @@ final class SessionController {
             // Not a grant: it shows Donovan a sheet in BaneySpaces and only a real click on it lends (see LendConsent).
             let target = args.first ?? ""
             return .init(ok: true, info: ["envelope": hands.askToLend(target: target, duration: args.dropFirst().first, session: args.dropFirst(2).first ?? "").line])
+        case "allow-ask":
+            // Not a grant either: only a real click on Allow in Polycarp's sheet adds an app (see AppAllowConsent).
+            return .init(ok: true, info: ["envelope": hands.askToAllow(target: args.dropFirst().first ?? "", verb: args.first ?? "add").line])
         case "run":
             guard let n = h.workspace() else { return .init(ok: false, error: "the agent workspace is off: polycarp-spaces agent on") }
             let cmd = args.drop { $0 != "--" }.dropFirst().joined(separator: " ")

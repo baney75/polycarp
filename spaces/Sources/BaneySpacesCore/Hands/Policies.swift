@@ -1,7 +1,8 @@
 import Foundation
 
-/// Which apps an agent may start on this Mac. Default deny: only apps verified to start a separate instance
-/// that restores nothing of Donovan's, and holds none of his data, are on the list. Everything else
+/// Which apps an agent may start on this Mac. Default deny: the built-in apps were verified to start a separate
+/// instance that restores nothing of Donovan's and holds none of his data; an app Donovan allows in Polycarp's sheet
+/// (`AgentAppGrants`) starts as a separate copy too, but only the built-ins are known to restore nothing. Everything else
 /// (every browser, password managers, Keychain Access, System Settings, mail, messages, notes, calendars, photos,
 /// terminals other than the agent's own Ghostty, Office and any app nobody has checked) answers `needs_sandbox`.
 public enum AgentAppPolicy {
@@ -18,12 +19,18 @@ public enum AgentAppPolicy {
     /// copy that claims the bundle id, is refused like any unlisted app.
     public static let canvasProbeBundle = "com.baney.polycarp.canvasprobe"
 
-    /// Built in, or listed by Donovan in `agent-apps.toml` (`added`) and of no kind that is never opened for an agent.
-    public static func allowed(bundle: String, added: Set<String> = AgentAppList.load().apps) -> Bool {
-        separateInstance.contains(bundle) || (added.contains(bundle) && neverListed(bundle: bundle) == nil)
+    /// Built in, or allowed by Donovan in Polycarp's sheet (`added`), of no kind that is never opened for an agent, and
+    /// with a bundle whose facts (`AgentAppFacts`, read now) don't refuse it. An allowed app with no bundle to read is refused.
+    public static func allowed(bundle: String, added: Set<String> = AgentAppGrants.current, facts: AgentAppFacts? = nil) -> Bool {
+        separateInstance.contains(bundle) || (added.contains(bundle) && neverListed(bundle: bundle) == nil && facts != nil && facts?.refusal == nil)
     }
-    public static func needsSeparateInstance(bundle: String, added: Set<String> = AgentAppList.load().apps) -> Bool {
-        allowed(bundle: bundle, added: added) || bundle == canvasProbeBundle
+    /// A copy started for an agent with `open -n`: the built-ins, the probe app and every allowed app.
+    public static func needsSeparateInstance(bundle: String, added: Set<String> = AgentAppGrants.current) -> Bool {
+        separateInstance.contains(bundle) || bundle == canvasProbeBundle || (added.contains(bundle) && neverListed(bundle: bundle) == nil)
+    }
+    /// Allowed by Donovan, not built in: its open is checked afterwards (`ListedOpen`).
+    public static func isListed(bundle: String, added: Set<String> = AgentAppGrants.current) -> Bool {
+        !separateInstance.contains(bundle) && added.contains(bundle) && neverListed(bundle: bundle) == nil
     }
 
     /// The probe app is allowed when the bundle id is its own, the app sits inside the app bundle's probe folder, and
@@ -35,23 +42,30 @@ public enum AgentAppPolicy {
     }
 
     static let kinds: [(prefixes: [String], why: String)] = [
-        (["com.google.Chrome", "org.mozilla.firefox", "company.thebrowser.Browser", "com.brave.Browser", "com.microsoft.edgemac", "com.apple.Safari", "net.imput.helium", "org.chromium.Chromium", "com.operasoftware.Opera", "com.vivaldi.Vivaldi"],
+        (["com.google.Chrome", "org.mozilla.", "company.thebrowser.", "com.brave.Browser", "com.microsoft.edgemac", "com.apple.Safari", "com.apple.SafariTechnologyPreview", "net.imput.helium", "org.chromium.Chromium", "com.operasoftware.", "com.vivaldi.Vivaldi",
+          "app.zen-browser.", "com.kagi.", "com.duckduckgo.", "org.torproject.", "com.sigmaos.", "com.openai.atlas"],
          "a browser holds Donovan's logins (an agent gets its own browser profile in a later phase)"),
         (["com.1password", "com.agilebits", "com.apple.Passwords", "com.bitwarden", "com.apple.keychainaccess", "org.keepassxc", "com.lastpass"],
          "it holds Donovan's passwords"),
-        (["com.apple.systempreferences", "com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty", "dev.warp.Warp", "co.zeit.hyper"],
+        (["com.apple.systempreferences", "com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty", "dev.warp.Warp", "co.zeit.hyper",
+          "net.kovidgoyal.kitty", "org.alacritty", "io.alacritty", "com.github.wez.wezterm", "com.raycast.", "com.runningwithcrayons.Alfred", "org.hammerspoon.",
+          "com.stairways.keyboardmaestro.", "com.apple.Home", "com.apple.findmy"],
          "it controls this Mac (settings, a shell)"),
-        (["com.apple.Notes", "com.apple.mail", "com.apple.MobileSMS", "com.apple.iCal", "com.apple.Photos", "com.apple.reminders", "com.apple.AddressBook", "com.apple.Music", "com.apple.FaceTime", "com.microsoft."],
+        (["com.apple.Notes", "com.apple.mail", "com.apple.MobileSMS", "com.apple.iCal", "com.apple.Photos", "com.apple.reminders", "com.apple.AddressBook", "com.apple.Music",
+          "com.apple.FaceTime", "com.microsoft.", "com.apple.freeform", "com.apple.iBooksX", "com.apple.news", "com.apple.podcasts", "com.apple.TV", "com.apple.Maps",
+          "com.apple.VoiceMemos", "com.apple.journal", "com.apple.Stocks", "md.obsidian", "notion.id", "com.spotify.client"],
          "it holds Donovan's own data and exists once per user"),
         (["com.apple.ScriptEditor2", "com.apple.Automator", "com.apple.shortcuts", "com.apple.dt.", "com.apple.ActivityMonitor", "com.apple.Console",
           "com.apple.DiskUtility", "com.apple.finder", "com.apple.AppStore", "com.apple.systemevents", "com.todesktop.", "dev.zed.", "com.sublimetext.",
-          "com.panic.", "com.jetbrains.", "com.docker.", "com.utmapp.", "com.parallels.", "org.vim.", "com.baney.polycarp", "com.anthropic.", "com.openai."],
+          "com.panic.", "com.jetbrains.", "com.docker.", "com.utmapp.", "com.parallels.", "org.vim.", "com.baney.polycarp", "com.anthropic.", "com.openai.",
+          "com.vscodium", "com.barebones.", "com.visualstudio.", "com.github.GitHubClient"],
          "it runs code, controls other apps or shows Donovan's files"),
         (["com.tinyspeck.slackmacgap", "com.hnc.Discord", "ru.keepcoder.Telegram", "net.whatsapp.", "org.whispersystems.", "us.zoom.", "com.readdle.", "com.superhuman."],
          "it is signed in to Donovan's accounts"),
     ]
 
-    /// Why `bundle` is never opened for an agent, even when Donovan lists it in `agent-apps.toml`; nil when it may be listed.
+    /// Why `bundle` is never opened for an agent, even when Donovan allows it; nil when it may be allowed. A hand-kept
+    /// list: `AgentAppFacts` also refuses an app by what its bundle says it is.
     public static func neverListed(bundle: String) -> String? {
         let id = bundle.lowercased()
         return kinds.first { k in
@@ -64,12 +78,13 @@ public enum AgentAppPolicy {
 
     /// nil when the app may start; else `needs_sandbox`, saying why.
     public static func refusal(app: String, bundle: String, appURL: URL? = nil, probeFolder: URL? = nil, probeTrusted: Bool = false,
-                               added: Set<String> = AgentAppList.load().apps) -> HandsError? {
-        if allowed(bundle: bundle, added: added) || isProbeApp(bundle: bundle, at: appURL, in: probeFolder, trusted: probeTrusted) { return nil }
-        let kind = neverListed(bundle: bundle)
-        let why = kind ?? "Donovan hasn't listed it in \(AgentAppList.name)"
+                               added: Set<String> = AgentAppGrants.current) -> HandsError? {
+        let facts = added.contains(bundle) ? AgentAppFacts.read(appURL) : nil
+        if allowed(bundle: bundle, added: added, facts: facts) || isProbeApp(bundle: bundle, at: appURL, in: probeFolder, trusted: probeTrusted) { return nil }
+        let kind = neverListed(bundle: bundle) ?? (added.contains(bundle) ? facts?.refusal ?? "Polycarp can't read its bundle" : nil)
+        let why = kind ?? "Donovan hasn't allowed it"
         let ask = kind == nil
-            ? "ask Donovan to add \"\(bundle)\" to the apps list in ~/.config/polycarp/\(AgentAppList.name) if he wants agents to use it"
+            ? "run `polycarp-spaces agent allow \(app)`: Polycarp asks Donovan in a sheet, and only his click on Allow lets agents open it"
             : "ask Donovan to lend \(app) and be away from it while you work"
         let listed = added.filter { neverListed(bundle: $0) == nil }.sorted()
         return HandsError(.needsSandbox, "\(app): \(why)",
