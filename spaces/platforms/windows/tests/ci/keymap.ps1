@@ -13,7 +13,7 @@ param([Parameter(Mandatory = $true)][string]$Bin, [Parameter(Mandatory = $true)]
 $ErrorActionPreference = 'Continue'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 New-Item -ItemType Directory -Force $Out | Out-Null
-Add-Type -Path (Join-Path $here 'Desk.cs')
+Add-Type -Path (Join-Path $here 'Desk.cs') -ReferencedAssemblies System.Drawing
 $swatch = Join-Path $Out 'swatch.exe'
 Add-Type -Path (Join-Path $here 'Swatch.cs') -OutputAssembly $swatch -OutputType WindowsApplication -ReferencedAssemblies System.Drawing, System.Windows.Forms
 $log = Join-Path $Out 'keymap.log'; Set-Content $log ''
