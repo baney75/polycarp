@@ -181,19 +181,7 @@ jobs:
       # Off a runner the suite must refuse before it touches anything: no -Disposable, exit 2, Notepad left open.
       - name: Live suite refuses a desktop that isn't disposable
         shell: powershell
-        run: |
-          # Start-Process keeps the child's stderr out of this shell: PowerShell 5.1 turns a native stderr line into an
-          # error record, and Actions fails the step on it.
-          $n = Start-Process notepad -PassThru; Start-Sleep 2
-          $env:GITHUB_ACTIONS = ''
-          $err = Join-Path $env:RUNNER_TEMP 'refused.err'
-          $p = Start-Process powershell -ArgumentList '-NoProfile', '-File', 'platforms/windows/tests/ci/live.ps1', '-Bin', 'target/release', '-Out', "$env:RUNNER_TEMP/refused" -NoNewWindow -Wait -PassThru -RedirectStandardError $err
-          $env:GITHUB_ACTIONS = 'true'
-          $o = Get-Content $err -Raw; Write-Host $o
-          $alive = -not $n.HasExited
-          Stop-Process -Id $n.Id -Force -ErrorAction SilentlyContinue
-          if ($p.ExitCode -ne 2 -or -not $alive -or $o -notmatch 'live.ps1: refused') { Write-Host "exit $($p.ExitCode), notepad alive $alive"; exit 1 }
-          exit 0
+        run: platforms/windows/tests/ci/refuses.ps1 -Bin target/release -Out ${{ runner.temp }}/refused
       - name: Live suite
         shell: powershell
         # The suite takes a few minutes; a hang ends the step here, so the artifact below still uploads.
