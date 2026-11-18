@@ -146,7 +146,7 @@ fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
         "window" => {
             const USAGE: &str = "window focus|swap left|right|up|down, window resize <dx> <dy>, window display next|prev";
             need(&a, 2, USAGE)?;
-            let px = |s: &str| s.parse::<i32>().ok().filter(|v| v.abs() <= 10_000);
+            let px = |s: &str| s.parse::<i32>().ok().filter(|v| (-10_000..=10_000).contains(v));
             match (a[0].as_str(), a[1].as_str(), a.get(2).map(String::as_str)) {
                 ("focus" | "swap", d @ ("left" | "right" | "up" | "down"), None) => req(&format!("window_{}", a[0]), json!({ "dir": d })),
                 ("resize", dx, Some(dy)) if a.len() == 3 && px(dx).is_some() && px(dy).is_some() => req("window_resize", json!({ "dx": px(dx), "dy": px(dy) })),
