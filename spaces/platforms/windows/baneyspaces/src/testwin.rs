@@ -61,6 +61,7 @@ impl TestWin {
         register();
         let (tx, rx) = mpsc::channel::<isize>();
         let title = title.to_string();
+        let title_of = title.clone();
         let thread = std::thread::spawn(move || unsafe {
             let (class, text) = (wide(CLASS), wide(&title));
             let h = CreateWindowExW(
@@ -89,10 +90,25 @@ impl TestWin {
         });
         let h = rx.recv().unwrap_or(0) as HWND;
         assert!(!h.is_null(), "CreateWindowExW failed");
-        Self {
+        let w = Self {
             hwnd: h,
             thread: Some(thread),
+        };
+        // The shell puts a new window on a virtual desktop a moment after it exists, and re-decides its cloak
+        // when it does: a cloak put on before then can come off. A test starts once the window is on this one.
+        if let Some(d) = crate::cloak::Desktops::new() {
+            let t = std::time::Instant::now();
+            assert!(
+                eventually(|| d.on_current(h) == Some(true)),
+                "the shell did not put {title_of:?} on the current virtual desktop within 2 s (it says {:?})",
+                d.on_current(h)
+            );
+            let ms = t.elapsed().as_millis();
+            if ms > 0 {
+                eprintln!("{title_of:?} was on the current virtual desktop after {ms} ms");
+            }
         }
+        w
     }
 
     pub fn id(&self) -> i64 {
