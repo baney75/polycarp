@@ -217,14 +217,17 @@ jobs:
       - name: Live suite refuses a desktop that isn't disposable
         shell: powershell
         run: |
+          # Actions runs this with ErrorActionPreference 'stop', and PowerShell 5.1 makes the child's stderr line a terminating error.
+          $ErrorActionPreference = 'Continue'
           $n = Start-Process notepad -PassThru; Start-Sleep 2
           $env:GITHUB_ACTIONS = ''
-          powershell -NoProfile -File platforms/windows/tests/ci/live.ps1 -Bin target/release -Out "$env:RUNNER_TEMP/refused"
+          $o = powershell -NoProfile -File platforms/windows/tests/ci/live.ps1 -Bin target/release -Out "$env:RUNNER_TEMP/refused" 2>&1 | Out-String
           $code = $LASTEXITCODE
           $env:GITHUB_ACTIONS = 'true'
           $alive = -not $n.HasExited
           Stop-Process -Id $n.Id -Force -ErrorAction SilentlyContinue
-          if ($code -ne 2 -or -not $alive) { Write-Error "exit $code, notepad alive $alive"; exit 1 }
+          Write-Host $o
+          if ($code -ne 2 -or -not $alive -or $o -notmatch 'live.ps1: refused') { Write-Host "exit $code, notepad alive $alive"; exit 1 }
       - name: Live suite
         shell: powershell
         # The suite takes a few minutes; a hang ends the step here, so the artifact below still uploads.
