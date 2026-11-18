@@ -408,6 +408,30 @@ pub fn restore_minimized_no_activate(h: HWND) {
 }
 
 
+/// A process opened only to wait for it to end. Opened before anything asks it to exit, the handle keeps naming that
+/// process even once its pid is free for reuse.
+pub struct Process(windows_sys::Win32::Foundation::HANDLE);
+
+impl Process {
+    pub fn open(pid: u32) -> Option<Process> {
+        use windows_sys::Win32::System::Threading::PROCESS_SYNCHRONIZE;
+        let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        (pid != 0 && !h.is_null()).then_some(Process(h))
+    }
+
+    /// Waits up to `ms` for the process to end. True when it has.
+    pub fn wait(&self, ms: u32) -> bool {
+        use windows_sys::Win32::{Foundation::WAIT_OBJECT_0, System::Threading::WaitForSingleObject};
+        unsafe { WaitForSingleObject(self.0, ms) == WAIT_OBJECT_0 }
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.0) };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
