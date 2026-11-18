@@ -339,3 +339,7 @@ pub fn stop() {
 pub fn mask_start_menu() {
     crate::winapi::nudge_input();
 }
+
+#[cfg(test)]
+#[path = "hook_tests.rs"]
+mod tests;
