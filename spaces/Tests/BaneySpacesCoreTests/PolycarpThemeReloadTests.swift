@@ -130,11 +130,16 @@ final class PolycarpThemeReloadTests: XCTestCase {
         let h = try FileHandle(forWritingTo: URL(fileURLWithPath: file))
         try h.truncate(atOffset: 0)
         try h.write(contentsOf: bytes.prefix(bytes.count / 2))
+        let paused = Date()
         Thread.sleep(forTimeInterval: 0.02)   // an editor's write, caught between its two halves
         try h.write(contentsOf: bytes.suffix(from: bytes.count / 2))
+        let gap = Date().timeIntervalSince(paused)
         try h.close()
         XCTAssertNotNil(seen.wait(for: 1, limit: 1))
         Thread.sleep(forTimeInterval: 0.2)
+        // A half file that holds still for `settle` does turn the theme off, by design. A slow runner can stretch the
+        // 20 ms pause past it, and then this run proves nothing about a pause shorter than settle.
+        if gap >= 0.15 { throw XCTSkip("the pause took \(Int(gap * 1000)) ms, not under settle (150 ms)") }
         XCTAssertEqual(seen.names, ["blocks"], "half a file never took the theme away, even for a frame")
     }
 
