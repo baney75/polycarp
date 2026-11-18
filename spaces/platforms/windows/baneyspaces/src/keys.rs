@@ -5,7 +5,7 @@
 //! be fast, so the match is a small pure function over a pre-built table.
 
 use baneyspaces_core::keymap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 pub const VK_LWIN: u32 = 0x5B;
 pub const VK_RWIN: u32 = 0x5C;
@@ -393,6 +393,62 @@ impl ModState {
     }
 }
 
+/// What the hook knows about the Win key between a press and its release, so a Win chord's release never reaches the
+/// shell bare (Windows opens Start, or Search, on a Win press and release with no key between). All atomics: the hook
+/// callback takes no lock.
+pub struct WinMask {
+    /// A chord with Win was taken since this Win press.
+    used: AtomicBool,
+    /// The hook sent the masking key for that chord, and the shell hasn't seen it yet.
+    pending: AtomicBool,
+}
+
+impl Default for WinMask {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WinMask {
+    pub const fn new() -> Self {
+        Self { used: AtomicBool::new(false), pending: AtomicBool::new(false) }
+    }
+
+    /// A Win key-down. `already_down` is the system's key state before this event: true for the auto-repeat. A fresh
+    /// press starts clean, so a release the hook never saw (an elevated window, the secure desktop) leaves nothing.
+    pub fn win_down(&self, already_down: bool) {
+        if !already_down {
+            self.reset();
+        }
+    }
+
+    /// The hook took a chord with Win held, and sends the masking key now, while Win is down.
+    pub fn chord(&self) {
+        self.used.store(true, Ordering::Relaxed);
+        self.pending.store(true, Ordering::Relaxed);
+    }
+
+    /// The hook saw the masking key (VK 0xE8) go up: the shell has seen a key inside this Win press.
+    pub fn mask_through(&self) {
+        self.pending.store(false, Ordering::Relaxed);
+    }
+
+    /// A real Win key-up. True means the hook swallows it: only when it beat the mask to the queue (the chord was
+    /// typed in one batch) and `resend` got all three of mask down, mask up and the release into the input. A person's
+    /// release comes after the mask and goes through as typed, so no key typed after it can pass it.
+    pub fn win_up(&self, resend: impl FnOnce() -> u32) -> bool {
+        let early = self.used.load(Ordering::Relaxed) && self.pending.load(Ordering::Relaxed);
+        self.reset();
+        early && resend() == 3
+    }
+
+    /// Forget everything: the session locked or the input desktop changed.
+    pub fn reset(&self) {
+        self.used.store(false, Ordering::Relaxed);
+        self.pending.store(false, Ordering::Relaxed);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,5 +705,81 @@ mod tests {
         m.event(VK_LWIN, true, 1000);
         m.reset();
         assert_eq!(m.mods(1001, |_| true), Mods::default());
+    }
+
+    /// A chord, then its release. `took` is what SendInput answers for the resend; `resent` counts the calls.
+    fn release(m: &WinMask, took: u32, resent: &std::cell::Cell<u32>) -> bool {
+        m.win_up(|| {
+            resent.set(resent.get() + 1);
+            took
+        })
+    }
+
+    #[test]
+    fn a_release_before_the_mask_is_held_back_and_resent() {
+        let m = WinMask::new();
+        let resent = std::cell::Cell::new(0);
+        m.win_down(false);
+        m.chord();
+        assert!(release(&m, 3, &resent), "the release beat the mask, so it waits behind one");
+        assert_eq!(resent.get(), 1);
+    }
+
+    #[test]
+    fn a_mask_already_through_never_holds_the_release() {
+        // A person's Win-up comes long after the hook's own mask; holding it back would re-send it at the end of the
+        // input queue, behind a key typed right after it, which would then run as Win+key.
+        let m = WinMask::new();
+        let resent = std::cell::Cell::new(0);
+        m.win_down(false);
+        m.chord();
+        m.mask_through();
+        assert!(!release(&m, 3, &resent));
+        assert_eq!(resent.get(), 0);
+    }
+
+    #[test]
+    fn a_refused_resend_lets_the_real_release_through() {
+        // SendInput took fewer than all three (UIPI, a desktop change): swallowing would leave Win held.
+        let m = WinMask::new();
+        let resent = std::cell::Cell::new(0);
+        for took in [0, 1, 2] {
+            m.win_down(false);
+            m.chord();
+            assert!(!release(&m, took, &resent), "SendInput took {took} of 3");
+        }
+    }
+
+    #[test]
+    fn a_win_up_missed_under_an_elevated_window_leaves_nothing_stale() {
+        // Win+1 taken, then the release went to an elevated window and the hook never saw it. The next press is fresh
+        // by the system's key state (up before it), so a lone tap after it is a real tap and its release goes through.
+        let m = WinMask::new();
+        let resent = std::cell::Cell::new(0);
+        m.win_down(false);
+        m.chord();
+        m.win_down(false);
+        assert!(!release(&m, 3, &resent));
+        assert_eq!(resent.get(), 0);
+    }
+
+    #[test]
+    fn the_auto_repeat_of_a_held_win_keeps_the_chord() {
+        let m = WinMask::new();
+        let resent = std::cell::Cell::new(0);
+        m.win_down(false);
+        m.chord();
+        m.win_down(true);
+        m.win_down(true);
+        assert!(release(&m, 3, &resent));
+    }
+
+    #[test]
+    fn a_lone_win_tap_goes_through() {
+        let m = WinMask::new();
+        let resent = std::cell::Cell::new(0);
+        m.win_down(false);
+        assert!(!release(&m, 3, &resent));
+        assert_eq!(resent.get(), 0);
     }
 }
