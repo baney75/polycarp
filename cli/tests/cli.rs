@@ -1676,14 +1676,41 @@ fn the_spaces_workspace_has_no_two_binaries_with_one_name() {
     assert!(seen.contains_key("baneyspaces"), "{seen:?}");
 }
 
-/// On Linux the line comes first: a --source that is not a folder, an unknown flag or no home
-/// folder gets it too, exit 0, and nothing is run or written.
+/// On Linux the line comes first: a --source that is not a folder, an unknown flag, no home
+/// folder, or a plan's own --is-current and --reload-wait get it too, exit 0, and nothing is run
+/// or written.
 #[cfg(target_os = "linux")]
 #[test]
 fn on_linux_update_says_the_desktop_is_retired_before_it_reads_anything() {
     let s = Sandbox::new();
     let missing = s.dir("no-such-checkout");
-    let cases: [(&[&str], bool); 4] = [
+    let ran = s.dir("home").join("ran");
+    let cases: [(&[&str], bool); 6] = [
+        (
+            &[
+                "update",
+                "--is-current",
+                missing.to_str().unwrap(),
+                "HEAD",
+                "--needs",
+                "polycarp command",
+            ],
+            true,
+        ),
+        (
+            &[
+                "update",
+                "--reload-wait",
+                missing.to_str().unwrap(),
+                "HEAD",
+                "--wait",
+                "1",
+                "--",
+                "touch",
+                ran.to_str().unwrap(),
+            ],
+            true,
+        ),
         (&["update", "--source", missing.to_str().unwrap()], true),
         (
             &["update", "--check", "--source", missing.to_str().unwrap()],
@@ -1923,7 +1950,7 @@ fn update_without_a_known_install_says_how_to_point_it_at_a_checkout() {
 }
 
 /// A repo with one empty commit, and that commit.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn repo_with_a_commit(s: &Sandbox, name: &str, path: &Path) -> (PathBuf, String) {
     let dir = s.dir(name);
     fs::create_dir_all(&dir).unwrap();
@@ -1948,7 +1975,7 @@ fn repo_with_a_commit(s: &Sandbox, name: &str, path: &Path) -> (PathBuf, String)
 }
 
 /// A stand-in for an installed `polycarp`: a file that carries the build stamp a real one does.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn install_stamped(s: &Sandbox, commit: &str) -> PathBuf {
     let dir = s.dir("home").join(".local/bin");
     fs::create_dir_all(&dir).unwrap();
@@ -1962,7 +1989,8 @@ fn install_stamped(s: &Sandbox, commit: &str) -> PathBuf {
 /// The documented first run: `cargo build --release` in `cli/`, then run that binary. It is not the
 /// installed command, and it may be older or newer than it. What is compared with origin/main, by
 /// `version` and by the update's own gate, is the installed command.
-#[cfg(unix)]
+/// macOS only: on Linux `update` answers only that the desktop is retired.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_build_in_a_checkout_judges_the_installed_command_not_itself() {
     let s = Sandbox::new();
@@ -2038,7 +2066,8 @@ fn the_placed_browser_helper_wins_over_an_older_one_on_path() {
 /// A browser that is connected but slow. The helper is stopped at its limit, the extension is
 /// reported as "no answer in time", `version --check` says so with its own exit code, and the
 /// update's final check does not fail on it.
-#[cfg(unix)]
+/// macOS only: on Linux `update` answers only that the desktop is retired.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_slow_browser_is_no_answer_in_time_and_never_fails_the_update() {
     let s = Sandbox::new();

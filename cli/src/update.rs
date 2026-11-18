@@ -1435,6 +1435,14 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
 }
 
 pub fn run(args: &[OsString], device: &Device) -> i32 {
+    // The Linux desktop is retired: say so before anything else is read, checked or run, so a bad
+    // --source, a missing home folder or a plan's own --is-current and --reload-wait get the same
+    // answer and git and the reload command never run. An older plan's verify and reload steps
+    // then pass, so it still lands this tree.
+    if platform() == Platform::Linux {
+        println!("{LINUX_MOVED}");
+        return 0;
+    }
     // The two commands a plan runs for itself. Neither is in the usage text.
     match args.first().and_then(|a| a.to_str()) {
         Some("--is-current") if args.len() >= 3 => {
@@ -1456,12 +1464,6 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
             return reload_wait_command(args, device, &mut runner);
         }
         _ => {}
-    }
-    // The Linux desktop is retired: say so before anything else is read, checked or run, so a bad
-    // --source or a missing home folder gets the same answer and git never runs.
-    if platform() == Platform::Linux {
-        println!("{LINUX_MOVED}");
-        return 0;
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print!("{USAGE}");
