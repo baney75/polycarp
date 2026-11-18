@@ -34,7 +34,7 @@ public enum ProductRenderPlan {
             return [
                 1: [Window("Safari", "/Applications/Safari.app", "Swift documentation"),
                     Window("Notes", "/System/Applications/Notes.app", "Launch checklist"),
-                    Window("Terminal", "/System/Applications/Utilities/Terminal.app", "~/Projects/baneyspaces")],
+                    Window("Terminal", "/System/Applications/Utilities/Terminal.app", "~/Projects/polycarp")],
                 2: [Window("Mail", "/System/Applications/Mail.app", "Inbox"),
                     Window("Calendar", "/System/Applications/Calendar.app", "October 2026")],
                 3: [Window("Music", "/System/Applications/Music.app", "Deep Focus")],
@@ -47,7 +47,7 @@ public enum ProductRenderPlan {
         case .reported:
             return [
                 1: [Window("Safari", "/Applications/Safari.app", "Swift documentation"),
-                    Window("Terminal", "/System/Applications/Utilities/Terminal.app", "~/Projects/baneyspaces"),
+                    Window("Terminal", "/System/Applications/Utilities/Terminal.app", "~/Projects/polycarp"),
                     Window("Terminal", "/System/Applications/Utilities/Terminal.app", "swift test"),
                     Window("Notes", "/System/Applications/Notes.app", "Launch checklist"),
                     Window("Mail", "/System/Applications/Mail.app", "Inbox"),
