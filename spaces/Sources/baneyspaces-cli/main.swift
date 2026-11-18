@@ -17,6 +17,8 @@ usage: \(me) <command>
   send <id | words> <text>    type text into a Ghostty terminal, as if pasted
   notify [message]            flag the terminal this runs in as needing you
   state                       the session engine's live state as JSON
+  query [windows|workspaces|displays|focused|layout|theme|state] [--json]
+                              the window manager's state, as agents see it (spec/agent-api.md)
   agent status|on [N]|off     the agent workspace: agents drive apps there while you work here
   agent open <app> [file…]    open an app (or files in it) there, without switching you
                               (Full Access: "System Settings" x-apple.systempreferences:<pane> opens that pane)
@@ -28,6 +30,7 @@ usage: \(me) <command>
   agent cursor on|theme <name>|status   each agent's cursor on the agent workspace (default, minimal, classic, omarchy); only Settings turns it off
   agent shot --window ID --cursor   draw the agent's cursor into the capture (off by default)
   agent lend <app|pid> [--for 30m]   asks you, in a sheet in Polycarp, whether agents may use an app you have open
+  agent allow [--remove] <app>       asks you, in a sheet in Polycarp, whether agents may open an app (--list shows them)
                               (only a real click on Lend lends it; running this lends nothing by itself)
   mcp                         the same commands as a stdio MCP server (claude mcp add baneyspaces -- polycarp-spaces mcp)
   agent move <id | words>     send a window there (only windows of apps started for an agent)
@@ -169,6 +172,18 @@ case "notify":
                         message: rest.joined(separator: " "), at: Date().timeIntervalSince1970)
     _ = call(Wire.Request(op: .notify, text: rest.joined(separator: " "), event: ev))
 
+case "query":
+    // The agent API's read surface (spec/agent-api.md): a short table, or with --json the envelope.
+    let what = rest.first { !$0.hasPrefix("-") } ?? AgentAPI.Query.state.rawValue
+    guard let q = AgentAPI.Query(rawValue: what) else {
+        fail("usage: \(me) query [\(AgentAPI.Query.allCases.map(\.rawValue).joined(separator: "|"))] [--json]", code: 2)
+    }
+    let env = HandsCLI.send(HandsRequest(verb: "query", args: ["what": .string(q.rawValue)], session: HandsCLI.defaultSession()), timeout: 10)
+    if rest.contains("--json") { out(env.line) }
+    else if env.ok, let data = env.data { out(AgentAPI.text(q, data)) }
+    else { fail(env.error.map { "\($0.message) (\($0.suggestion))" } ?? "failed") }
+    exit(env.ok ? 0 : 1)
+
 case "state":
     guard let d = FileManager.default.contents(atPath: Wire.statePath) else { fail("no state yet: is Polycarp running?") }
     out(String(data: d, encoding: .utf8) ?? "")
@@ -212,6 +227,9 @@ case "agent" where AgentHelp.asked(rest):
 
 case "agent" where HandsTools.userOnly.contains(rest.first ?? ""):
     HandsCLI.lendOrReturn(rest)
+
+case "agent" where rest.first == "allow":
+    HandsCLI.allow(rest)
 
 // `--on HOST agent open …` is the session engine's own op (the hands run on this Mac only): it falls through to the arm below.
 // `agent move <id | words>` stays the session op; `agent move --window N` is the hands verb.

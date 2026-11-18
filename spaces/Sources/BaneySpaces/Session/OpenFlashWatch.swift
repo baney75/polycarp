@@ -2,7 +2,7 @@ import AppKit
 import BaneySpacesCore
 import ScreenCaptureKit
 
-/// Runs `OpenFlashGuard.cover` around one `agent open` launch when it is set in defaults. The watch starts when the
+/// Runs `OpenFlashGuard.cover` around one `agent open` launch unless defaults turn it off. The watch starts when the
 /// launch hands back its process and covers only that process's windows (`OpenFlashGuard.Plan`). Each queued cover
 /// carries a `Ticket` and is raised only while it still holds. Trace lines carry ms since the watch began.
 enum OpenFlashWatch {

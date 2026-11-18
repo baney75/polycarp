@@ -10,7 +10,7 @@ Polycarp is one app for your workspaces, your voice and the browser your agents 
 
 - **Mac, Apple silicon:** workspaces, dictation and browser agents are all inside `Polycarp.app`, with one Settings window and one set of permissions.
 - **Other devices:** the same Rust core is on its way to them. Until then, Silas offers nightly voice builds on Windows and Linux, and Tabkyra's installer for them is written but not yet tried live. Those repos stay up.
-- **Themes:** `polycarp theme` checks, writes, previews and undoes themes, and agents can do the same over MCP. The Mac app follows your theme live. On Omarchy, Polycarp matches your system theme, and you can still change anything; that hasn't run on a real theme switch yet.
+- **Themes:** `polycarp theme` checks, writes, previews and undoes themes, and agents can do the same over MCP. The Mac app follows your theme live.
 - `polycarp theme off` removes the theme files. Apps that read them are expected to use their own look when they next check. `polycarp theme on` brings your theme back.
 
 The [plan](https://github.com/baney75/polycarp/blob/main/PLAN.md) lists every step and the check that proves it.
@@ -31,7 +31,9 @@ On an Intel Mac, or with `POLYCARP_FROM_SOURCE=1`, it builds on your Mac instead
 
 ### On Linux
 
-The same install script needs [Rust](https://rustup.rs) and installs the `polycarp` command and every theme. On Omarchy it also turns on matching your system theme. The app for Linux is on the way.
+Polycarp no longer installs on Linux. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces. Run on Linux, the install script says so, points to Tychicus for browser and computer use, and exits.
+
+An earlier install that is still in place keeps its block in `~/.config/hypr/hyprland.lua`, which binds your workspace keys to the retired daemon. `spaces/platforms/linux/omarchy/uninstall.sh` takes it out and gives Omarchy its own keys back; run it with `--dry-run` first to see what it does. Nothing runs it for you.
 
 ### On Windows
 
@@ -46,7 +48,7 @@ polycarp doctor
 
 ## The command
 
-`polycarp` comes with the Mac app. On Linux and Windows it comes from the install steps above. It reaches each part from one place:
+`polycarp` comes with the Mac app. On Windows it comes from the install steps above. It reaches each part from one place:
 
 | Command | What it does |
 | --- | --- |
@@ -111,7 +113,7 @@ polycarp theme preview still-water --mode both
 
 It prints the path of a page you can open in any browser. Previews go in `previews/` in your settings folder unless you choose a file with `--out`. `--surface` previews one product's overrides.
 
-With no browser at hand (a Linux box, Omarchy, SSH, or an agent that reads images), ask for pictures instead:
+With no browser at hand (over SSH, or for an agent that reads images), ask for pictures instead:
 
 ```sh
 polycarp theme preview still-water --format png
@@ -255,27 +257,6 @@ polycarp theme show still-water
 
 CSS variables start with `--pc-`: colors and shape use the field name, such as `--pc-accent` and `--pc-radius-large`; fonts add `font-`, such as `--pc-font-display`; and motion adds `motion-`, such as `--pc-motion-fast`.
 
-### On Omarchy
-
-On Omarchy, Polycarp can match the system theme and change with it, and you can still change anything on top. The Polycarp installer turns this on for you by running `polycarp theme follow omarchy --if-fresh`, which follows only if Omarchy is found and Polycarp has no settings yet, and does nothing (exit 0) otherwise. Without the installer, the first of `theme change`, `theme accent`, `theme on` or `theme reset` on such a machine starts following by itself and says so in its notes. `theme set`, `theme apply` and `theme off` are choices and are respected, and an existing settings file is never overridden.
-
-```sh
-polycarp theme follow
-polycarp theme follow omarchy
-polycarp theme follow reset
-polycarp theme follow off
-```
-
-**What following does.** `follow omarchy` reads the colors of the theme Omarchy is using, builds a theme named `omarchy` on top of `blocks` (square corners, a monospace face: Omarchy's own look), and makes `omarchy-overrides` current, in the mode Omarchy's theme has. It adds a small hook at `~/.config/omarchy/hooks/theme-set.d/polycarp`; Omarchy runs it after every theme switch and Polycarp updates the colors. The hook prints nothing, asks nothing, gives the sync 5 seconds where the `timeout` command exists, and always exits 0, so it cannot break or stall Omarchy's switch. If the sync fails, or the program the hook calls is gone, a line starting `FAILED` goes to `follow.log` in the config folder, and `follow` and `doctor` show the last one. The hook names its config folder: a hook for another folder, or any file that is not Polycarp's, is never replaced or removed; the command refuses and names it.
-
-**Change anything on top.** While following, use the usual commands: `theme accent '#ffcc66'`, `theme accent`, a font, corners, a `surface.<product>` override, or `theme set omarchy-overrides --mode light`. They go into `omarchy-overrides.toml`, the accent settings and a mode choice. A switch of Omarchy's theme does not overwrite them: your change wins over every later Omarchy theme, and changing something never stops following. `polycarp theme follow` lists the changes in force. `polycarp theme follow reset` clears them, the mode choice too, and returns to Omarchy's own colors; `undo` reverses one change, or the reset. `theme set omarchy` while following means `omarchy-overrides`.
-
-**Readable by rule.** Omarchy's colors are kept exactly wherever they already read well. If one would fail the contrast rules (a muted gray on a dark background, say), only that color moves, by the smallest change in lightness that passes, and the command lists each move in `notes`. A theme is never refused: in the rare palette where no text color reads on every one of its surfaces at once, a surface, sunken or selection color moves toward the background, and the background itself never moves. Your changes are checked when you make them. If a later Omarchy theme makes one unreadable, the switch still goes through: that color is moved the smallest step, written into `omarchy-overrides.toml` with your original remembered, and noted. When a theme where your color reads comes back, your exact color is back.
-
-**Stopping.** `follow off` removes only Polycarp's own hook and goes back to the theme, mode and accents you had before. `theme set <other>` does the same and says so. Your changes stay in `omarchy-overrides.toml` (a mode choice is not kept); `follow omarchy` picks them up again. After `undo`, `reset` or `on`, Polycarp puts the hook and the colors in line with the settings, and `follow` and `doctor` say when they disagree. On a machine without Omarchy, `follow omarchy` exits with an error and changes nothing, and no command behaves differently.
-
-What is verified: the mapping and the readability rule hold for all 22 themes that ship with Omarchy 4.0.4 (their `colors.toml` files are test data, checked against an independent copy of the mapping), changes survive switches between several of them, and the hook runs correctly when started the way Omarchy's `omarchy-hook` starts it (`bash <file> <theme name>`). Not yet run on a live Omarchy machine.
-
 ### Where files live
 
 | What | Where |
@@ -323,7 +304,6 @@ Any other MCP client can start the same command.
 | `theme_export` | Get CSS, JSON or the theme's TOML file |
 | `theme_create`, `theme_delete` | Start a new theme file, or clean up one you made. A theme the agent didn't make in that session is refused unless it passes `force` |
 | `theme_off`, `theme_on` | Remove the theme files so apps that read them use their own look, or bring the theme back |
-| `theme_follow` | On Omarchy, match the system theme and follow it, keeping your changes on top (`target` omarchy, reset, off, or leave out to see the state and the changes) |
 | `theme_history`, `theme_undo`, `theme_reset` | See changes and go back |
 
 ### The workflow
@@ -367,13 +347,13 @@ One file for all of them, with undo and a recovery key, is on the plan. Its cont
 | Part | Mac | Windows | Linux | iPhone and iPad | Android |
 | --- | --- | --- | --- | --- | --- |
 | Voice | In the app | Nightly, as Silas | Nightly | In progress, iPad first | Planned |
-| Workspaces | In the app | In progress | In progress | Planned: control your computer's | Planned: control your computer's |
+| Workspaces | In the app | In progress | Retired | Planned: control your computer's | Planned: control your computer's |
 | Browser agents | In the app | Not yet tried | Not yet tried | Planned: watch and steer your computer's | Planned: watch and steer your computer's |
-| Themes | In the app | Command works | Command works; Omarchy matching not yet tried live | Planned | Planned |
+| Themes | In the app | Command works | Retired | Planned | Planned |
 
 ### The top bar
 
-Replacing the top bar is planned. On a Mac, a Polycarp bar will replace the menu bar. On Windows, a bar will reserve space across the top of the screen. On Omarchy, Polycarp will modify your existing Waybar. Phones don't allow it.
+Replacing the top bar is planned. On a Mac, a Polycarp bar will replace the menu bar. On Windows, a bar will reserve space across the top of the screen. Phones don't allow it.
 
 ## Troubleshooting
 

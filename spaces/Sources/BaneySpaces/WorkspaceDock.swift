@@ -1630,7 +1630,7 @@ private struct RowHighlight: View {
 private struct DragLift: ViewModifier {
     let lifted: Bool
     func body(content: Content) -> some View {
-        let spring: Animation? = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.7)
+        let spring: Animation? = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : Chrome.spring(0.2, damping: 0.7)
         if #available(macOS 14, *) {
             content.animation(spring) {
                 $0.scaleEffect(lifted ? DockMotion.lift : 1).shadow(color: Chrome.shadow(lifted ? 0.35 : 0), radius: 6, y: 2)
@@ -2051,7 +2051,7 @@ struct DockView: View {
                 .allowsHitTesting(false)
         }
         .help(waiting.map { DockAttention.label(app: $0.app, workspace: $0.workspace) } ?? "")
-        .modifier(HoverScale(scale: hovered ? Chrome.grow(1.06) : 1, anchor: .bottom, spring: .spring(response: 0.25, dampingFraction: 0.72)))
+        .modifier(HoverScale(scale: hovered ? Chrome.grow(1.06) : 1, anchor: .bottom, spring: Chrome.spring(0.25, damping: 0.72)))
         .contextMenu { tileMenu(tile) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title(tile, shown: .max) + (tile.isCurrent ? ", current" : "")
@@ -2234,7 +2234,7 @@ struct DockView: View {
                 }
             }
             .modifier(CenterReport(key: "\(tile.id):\(app.id)"))
-            .modifier(HoverScale(scale: hovered ? Chrome.grow(1.18) : 1, spring: .spring(response: 0.22, dampingFraction: 0.65)))
+            .modifier(HoverScale(scale: hovered ? Chrome.grow(1.18) : 1, spring: Chrome.spring(0.22, damping: 0.65)))
             .opacity(dragging ? 0.3 : 1)
             .contentShape(Rectangle())
             .onHover { model.setHover(.app(tile.id, app.id), $0) }
@@ -2337,7 +2337,7 @@ struct DockView: View {
             .overlay(Image(systemName: symbol).font(Chrome.font(13, .semibold)).foregroundStyle(Chrome.wash(hovered ? 0.95 : 0.6)))
             .frame(width: size.width, height: size.height)
             .modifier(CenterReport(key: which == .launcher ? "btn:launcher" : "btn:overview"))
-            .modifier(HoverScale(scale: hovered ? Chrome.grow(1.06) : 1, spring: .spring(response: 0.25, dampingFraction: 0.72)))
+            .modifier(HoverScale(scale: hovered ? Chrome.grow(1.06) : 1, spring: Chrome.spring(0.25, damping: 0.72)))
             .contentShape(Rectangle())
             .onHover { model.setHover(which, $0) }
             .onTapGesture(perform: action)
