@@ -7,7 +7,7 @@
 // (`npx playwright-core install chromium`).
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { chromium } from "playwright-core";
+import { tidy } from "../eval/fixture-browser.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "dist", "index.js");
@@ -149,8 +150,7 @@ export async function startHarness() {
 		serverB.close();
 		// Chromium's helper processes can still be writing the profile after the browser exits (ENOTEMPTY on CI), so the
 		// removal retries, as the panel tests' does.
-		rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-		rmSync(socketDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+		for (const dir of [home, socketDir]) tidy(dir);
 	};
 
 	try {
