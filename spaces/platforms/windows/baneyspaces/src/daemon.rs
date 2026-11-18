@@ -793,7 +793,7 @@ impl Core {
             !winapi::exists(h) || !winapi::is_visible(h)
         });
         let since_close = self.closed_at.map(|t| winapi::tick_ms().wrapping_sub(t));
-        let cause = cause::foreground_by(winapi::idle_ms(), since_close, active_gone);
+        let cause = cause::foreground_by(winapi::idle_ms(), since_close, active_gone, None);
         self.log(&format!("foreground {id} cause {cause:?}"));
         let _ = self.apply(Event::Activate { window: Some(id), cause });
     }
