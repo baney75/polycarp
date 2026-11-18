@@ -70,7 +70,7 @@ pub fn bindings() -> Vec<Binding> {
 }
 
 /// The binding for this key with exactly these modifiers held, if any.
-pub fn lookup<'a>(table: &'a [Binding], vk: u32, mods: Mods) -> Option<&'a Binding> {
+pub fn lookup(table: &[Binding], vk: u32, mods: Mods) -> Option<&Binding> {
     table.iter().find(|b| b.vk == vk && b.mods == mods)
 }
 

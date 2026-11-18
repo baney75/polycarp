@@ -4318,3 +4318,128 @@ fn a_pin_to_a_missing_folder_is_ignored() {
         Some(home.display().to_string().as_str())
     );
 }
+
+const FOLLOW_RETIRED: &str = "polycarp: following the Omarchy theme is retired with the Linux desktop. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.\nPolycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n";
+
+impl Box {
+    /// What an older Polycarp left while it followed Omarchy's theme: the following theme current,
+    /// the `[omarchy]` record of what came before, and its hook. `hook_mark` is the hook's second line.
+    fn old_follow(&self, hook_mark: &str) -> PathBuf {
+        fs::create_dir_all(self.cfg()).unwrap();
+        fs::write(
+            self.state_file(),
+            "[appearance]\ntheme = \"omarchy-overrides\"\nmode = \"dark\"\naccent_dark = \"#ff00ff\"\n\n\
+             [omarchy]\nfollowing = true\nprevious_theme = \"calm\"\nprevious_mode = \"light\"\n\
+             prev_accent_light = \"#2255aa\"\nmode_override = \"dark\"\n\n\
+             [omarchy.fits]\n\"light.accent\" = [\"\", \"#123456\"]\n",
+        )
+        .unwrap();
+        let hook = self
+            .root
+            .join("home/.config/omarchy/hooks/theme-set.d/polycarp");
+        fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        fs::write(
+            &hook,
+            format!("#!/bin/bash\n{hook_mark}\nexe='/x/polycarp'\nexit 0\n"),
+        )
+        .unwrap();
+        hook
+    }
+    fn ours(&self) -> String {
+        format!("# polycarp-managed-hook: config={}", self.cfg().display())
+    }
+}
+
+/// Following Omarchy's theme is retired. A config an older Polycarp left while following still
+/// loads, with no warning, as the theme, mode and accents from before (here the following theme's
+/// files are gone, as on a machine that cleaned them up), and nothing is written until a change.
+#[test]
+fn an_old_omarchy_follow_record_loads_as_the_theme_from_before() {
+    let b = Box::new();
+    let hook = b.old_follow(&b.ours());
+    let before = fs::read_to_string(b.state_file()).unwrap();
+    let (rc, v) = b.jrun(&["current"]);
+    assert_eq!(rc, 0, "{v}");
+    let d = &v["data"];
+    assert_eq!(d["theme"], "calm", "{v}");
+    // The mode chosen while following wins over the one from before.
+    assert_eq!(d["mode"], "dark", "{v}");
+    assert_eq!(d["accent_light"], "#2255aa", "{v}");
+    assert_eq!(d["accent_dark"], Value::Null, "{v}");
+    assert!(d.get("warnings").is_none(), "{v}");
+    assert_eq!(fs::read_to_string(b.state_file()).unwrap(), before);
+    assert!(hook.exists());
+}
+
+/// The first change saves the theme from before, drops the `[omarchy]` table and removes the hook
+/// Polycarp wrote for this config folder.
+#[test]
+fn the_first_change_after_an_old_omarchy_follow_saves_what_came_before_and_removes_the_hook() {
+    let b = Box::new();
+    let hook = b.old_follow(&b.ours());
+    b.ok(&["accent", "#2255aa", "--mode", "light"]);
+    let cfg = fs::read_to_string(b.state_file()).unwrap();
+    assert!(!cfg.contains("omarchy"), "{cfg}");
+    let d = b.json(&["current", "--json"]);
+    assert_eq!(
+        (&d["theme"], &d["mode"]),
+        (&json_str("calm"), &json_str("dark")),
+        "{d}"
+    );
+    assert!(!hook.exists());
+}
+
+/// `theme follow off` ends an old follow record the same way, says the feature is retired, and
+/// leaves a hook alone that is not Polycarp's for this config folder.
+#[test]
+fn follow_off_ends_an_old_omarchy_follow_and_leaves_a_hook_that_is_not_ours() {
+    for (mark, removed) in [
+        (None, true),
+        (
+            Some("# polycarp-managed-hook: config=/somewhere/else"),
+            false,
+        ),
+        (Some("# someone else's hook"), false),
+    ] {
+        let b = Box::new();
+        let ours = b.ours();
+        let hook = b.old_follow(mark.unwrap_or(&ours));
+        let (rc, v) = b.jrun(&["follow", "off"]);
+        assert_eq!(rc, 0, "{v}");
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(v["data"]["retired"], true, "{v}");
+        assert_eq!(v["data"]["restored"], true, "{v}");
+        let cfg = fs::read_to_string(b.state_file()).unwrap();
+        assert!(
+            !cfg.contains("omarchy") && cfg.contains("theme = \"calm\""),
+            "{cfg}"
+        );
+        assert_eq!(!hook.exists(), removed, "{mark:?}");
+    }
+}
+
+/// `theme follow`, in any form, says the feature is retired, as text or as the `--json` envelope,
+/// and exits 0 without writing anything when there is no old record.
+#[test]
+fn follow_says_it_is_retired_as_text_and_as_json() {
+    let b = Box::new();
+    for args in [
+        vec!["theme", "follow"],
+        vec!["theme", "follow", "omarchy", "--sync"],
+        vec!["theme", "follow", "off"],
+    ] {
+        let o = b.run(&args);
+        assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
+        assert_eq!(out(&o), FOLLOW_RETIRED, "{args:?}");
+    }
+    let (rc, v) = b.jrun(&["follow"]);
+    assert_eq!(rc, 0, "{v}");
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["data"]["retired"], true, "{v}");
+    assert_eq!(v["data"]["restored"], false, "{v}");
+    assert!(!b.state_file().exists());
+}
+
+fn json_str(s: &str) -> Value {
+    Value::String(s.to_string())
+}

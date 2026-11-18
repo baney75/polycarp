@@ -481,6 +481,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Wait a moment for the first look (a stat and a small read) so a theme file that is already there
         // draws from the first panel on; a slow disk costs 0.15 s at most and the theme then arrives as any change does.
         if case .theme(let t) = watcher.start(firstLookWithin: 0.15) { Appearance.shared.usePolycarp(t) }
+        // Settings › Appearance › "Theme sets the desktop picture" (off by default): looks once now, then on each change.
+        ThemeWallpaperApplier.shared.start()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self
@@ -966,13 +968,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             inspect: { [weak self] in self?.spaces.handsInspect($0) ?? (nil, false) },
             agentOwned: { AgentOwned.shared.pids },
             askToLend: { app, minutes, takeBack in LendConsent.ask(app: app, minutes: minutes, takeBack: takeBack) },
+            askToAllow: { AppAllowConsent.ask(app: $0, bundle: $1, path: $2) },
             open: { [weak self] args in self?.session.agent("open", args) ?? Wire.Reply(ok: false, error: "not ready") },
             workspaceRows: { [weak self] in self?.spaces.workspaceRows() ?? [] },
             agentArea: { [weak self] in self?.spaces.agentArea() ?? .zero },
             arrange: { [weak self] in self?.spaces.arrangeAgentWindows($0) ?? [:] },
             move: { [weak self] id, n in self?.run { $0.move(id, to: n) } },
             close: { [weak self] in self?.spaces.pressClose($0) ?? false },
-            rescan: { [weak self] in self?.spaces.rescanForAgent() })
+            rescan: { [weak self] in self?.spaces.rescanForAgent() },
+            facts: { [weak self] in self?.spaces.agentFacts() })
         // The agent cursor: drawn on the agent workspace while you look at it, and over a lent app.
         session.hands.host.cursorMark = { CursorController.shared.mark(window: $0) }
         session.connectorHands.host = session.hands.host

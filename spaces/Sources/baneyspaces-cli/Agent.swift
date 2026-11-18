@@ -51,6 +51,26 @@ enum HandsCLI {
         finish(.failure(HandsError(.engineError, reply.error ?? "no answer", suggestion: "Update Polycarp and try again.", retry: .never)))
     }
 
+    /// `agent allow [--remove|--list] <app>`: asks, as `lend` does. The app shows Donovan a sheet and only a real click
+    /// on Allow adds the app; nothing this command or an agent writes can (review of #496, first-F1).
+    static func allow(_ words: [String]) -> Never {
+        var rest = Array(words.dropFirst())
+        var verb = "add"
+        if let i = rest.firstIndex(of: "--remove") { verb = "remove"; rest.remove(at: i) }
+        if let i = rest.firstIndex(of: "--list") { verb = "list"; rest.remove(at: i) }
+        func finish(_ env: HandsEnvelope) -> Never { print(env.line); exit(env.ok ? 0 : 1) }
+        let app = rest.joined(separator: " ")
+        guard verb == "list" || !app.isEmpty else {
+            finish(.failure(HandsError(.badArguments, "say which app", suggestion: "usage: polycarp-spaces agent allow [--remove] <app> | --list", retry: .safe)))
+        }
+        if verb == "add" { FileHandle.standardError.write(Data("Asking Donovan in Polycarp to let agents open \(app)…\n".utf8)) }
+        guard let reply = Wire.call(Wire.Request(op: .agent, text: "allow-ask", args: [verb, app]), timeout: 90) else {
+            finish(.failure(HandsError(.notRunning, "Polycarp isn't running, or didn't answer", suggestion: "Open Polycarp and run `polycarp-spaces doctor`.", retry: .safe)))
+        }
+        if let line = reply.info?["envelope"], let env = HandsEnvelope.decode(line) { finish(env) }
+        finish(.failure(HandsError(.engineError, reply.error ?? "no answer", suggestion: "Update Polycarp and try again.", retry: .never)))
+    }
+
     static func run(_ words: [String]) -> Never {
         switch HandsParse.command(words, session: defaultSession()) {
         case .failure(let e):

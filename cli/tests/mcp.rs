@@ -130,7 +130,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 21] = [
+const TOOLS: [&str; 20] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -150,7 +150,6 @@ const TOOLS: [&str; 21] = [
     "theme_history",
     "theme_off",
     "theme_on",
-    "theme_follow",
     "theme_reset",
 ];
 

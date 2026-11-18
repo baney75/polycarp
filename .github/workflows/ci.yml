@@ -2,12 +2,15 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'spaces/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
   pull_request:
-    paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'spaces/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
+# A new push to a pull request cancels its older run. Each push to main gets its own group and is never cancelled:
+# with one group per ref, back-to-back merges cancelled each other (49 of the 102 cancelled runs in 200), leaving main
+# untested.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
@@ -16,25 +19,24 @@ jobs:
     outputs:
       cli: ${{ steps.f.outputs.cli }}
       spaces: ${{ steps.f.outputs.spaces }}
-      voice: ${{ steps.f.outputs.voice }}
       browser: ${{ steps.f.outputs.browser }}
       core: ${{ steps.f.outputs.core }}
-      spaces-linux: ${{ steps.f.outputs.spaces-linux }}
+      spaces-rust: ${{ steps.f.outputs.spaces-rust }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: f
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
           filters: |
-            cli: ['cli/**', '.github/workflows/ci.yml']
+            # The cli tests also replay an older Linux update against the stubs in spaces/platforms/linux,
+            # and check the spaces workspace's binary names.
+            cli: ['cli/**', 'spaces/platforms/linux/**', 'spaces/Cargo.toml', 'spaces/Cargo.lock', '.github/workflows/ci.yml']
             # The root install.sh is read by the spaces tests (RootInstallerTests, FeaturesTests).
             spaces: ['spaces/**', 'core/**', 'install.sh', '.github/workflows/ci.yml']
-            voice: ['voice/**', 'core/**', '.github/workflows/ci.yml']
             core: ['core/**', '.github/workflows/ci.yml']
             browser: ['browser/**', '.github/workflows/ci.yml']
-            # The spaces Rust workspace (core, the Linux daemon, the Windows crates it also builds) and what the Linux side shares.
-            # one-command-install.sh runs the root install.sh, which builds the browser helper and the extension too.
-            spaces-linux: ['spaces/Cargo.toml', 'spaces/Cargo.lock', 'spaces/crates/**', 'spaces/spec/**', 'spaces/platforms/linux/**', 'spaces/platforms/windows/**', 'cli/**', 'install.sh', 'browser/**', '.github/workflows/ci.yml']
+            # The spaces Rust workspace: the shared core, the conformance cases, the Windows crates and the Linux update stub.
+            spaces-rust: ['spaces/Cargo.toml', 'spaces/Cargo.lock', 'spaces/crates/**', 'spaces/spec/**', 'spaces/platforms/windows/**', 'spaces/platforms/linux/**', '.github/workflows/ci.yml']
 
   cli:
     needs: changes
@@ -78,7 +80,6 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: |
-            core/voice
             core/ffi
           key: ${{ matrix.os }}
       - name: Linux packages
@@ -86,9 +87,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev libxdo-dev
-      - name: Voice engine tests
-        working-directory: core/voice
-        run: cargo test
+      # The engine (polycarp-voice) lives in baney75/silas; this tests the commit core/ffi's Cargo.lock pins.
+      - name: Voice engine tests, at the pinned Silas commit
+        working-directory: core/ffi
+        run: cargo test --locked -p polycarp-voice
       - name: C ABI tests, on macOS for the native app's library
         if: runner.os == 'macOS'
         working-directory: core/ffi
@@ -118,13 +120,13 @@ jobs:
       - name: Test
         run: swift test
 
-  # The Linux side of spaces (Omarchy: Arch and Hyprland). nested.sh is not run here: it needs Hyprland, which Ubuntu 24.04's
-  # apt does not carry (packages.ubuntu.com has no hyprland in noble), plus a GPU render node and AT-SPI. It runs on an Omarchy seat.
-  spaces-linux:
+  # The spaces Rust workspace on Windows: the shared core, the conformance cases and the real Windows code
+  # (issue #379, item 1). The Linux daemon that also built here is retired.
+  spaces-windows:
     needs: changes
-    if: needs.changes.outputs.spaces-linux == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    if: needs.changes.outputs.spaces-rust == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: spaces
@@ -133,27 +135,24 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with: { workspaces: spaces, key: spaces-linux }
-      # Node for the browser half of the one-command install below.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
-      - name: Core, the conformance cases and the Linux daemon's pure parts
-        run: cargo test --workspace --locked
-      - name: Install and uninstall scripts against a throwaway HOME
-        run: platforms/linux/tests/omarchy-scripts.sh
-      # The root install.sh, end to end: it builds and installs every part through `polycarp update` into a throwaway
-      # HOME, runs again to find it current, and ends with `polycarp version --check` (0, or 75 when a part gave no
-      # answer in time; the script says why).
-      - name: The one-command Linux install against a throwaway HOME
-        run: bash -n ../install.sh && platforms/linux/tests/one-command-install.sh
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: spaces, key: spaces-windows }
+      - name: Core and the Windows daemon, built for Windows
+        run: cargo test --locked -p baneyspaces-core -p baneyspaces-windows -p baneyspaces-testapp -p baneyspaces-linux
+      - name: Clippy on the Windows crates (with and without the test hooks)
+        shell: bash
+        run: |
+          cargo clippy --locked -p baneyspaces-windows -p baneyspaces-testapp --all-targets -- -D warnings
+          cargo clippy --locked -p baneyspaces-windows --all-targets --features test-ops -- -D warnings
 
-  # The Windows daemon keeps everything that touches Windows behind cfg(windows), so spaces-linux builds only its stubs.
-  # This job compiles and tests the real Windows code (issue #379, item 1).
-  spaces-windows:
+  # The daemon live on the runner's own desktop (an interactive session with explorer.exe and DWM): real windows,
+  # the real keyboard hook typed into with SendInput, Win32 read-backs and screenshots. tests/ci/live.ps1 ports
+  # tests/live.sh; platforms/windows/README.md lists what a runner can't run.
+  spaces-windows-live:
     needs: changes
-    if: needs.changes.outputs.spaces-linux == 'true'
+    if: needs.changes.outputs.spaces-rust == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:
@@ -165,9 +164,34 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with: { workspaces: spaces, key: spaces-windows }
-      - name: Core and the Windows daemon, built for Windows
-        run: cargo test --locked -p baneyspaces-core -p baneyspaces-windows -p baneyspaces-testapp
+        with: { workspaces: spaces, key: spaces-windows-live }
+      # The hands engine at the pinned commit, built once per pin.
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: spaces/platforms/windows/engine
+          key: windows-engine-${{ hashFiles('spaces/platforms/windows/engine.pin') }}
+      - name: Build the daemon with the test hooks, the test app and the engine
+        shell: bash
+        run: |
+          cargo build --release --locked -p baneyspaces-windows --features baneyspaces-windows/test-ops -p baneyspaces-testapp
+          test -f platforms/windows/engine/agent-desktop.exe || pwsh -NoProfile -File platforms/windows/scripts/build-engine.ps1
+          dest="$(cygpath -u "$LOCALAPPDATA")/BaneySpaces/engine"
+          mkdir -p "$dest"
+          cp platforms/windows/engine/* "$dest/"
+      # Off a runner the suite must refuse before it touches anything: no -Disposable, exit 2, Notepad left open.
+      - name: Live suite refuses a desktop that isn't disposable
+        shell: powershell
+        run: platforms/windows/tests/ci/refuses.ps1 -Bin target/release -Out ${{ runner.temp }}/refused
+      - name: Live suite
+        shell: powershell
+        # The suite takes a few minutes; a hang ends the step here, so the artifact below still uploads.
+        timeout-minutes: 20
+        run: platforms/windows/tests/ci/live.ps1 -Bin target/release -Out ${{ runner.temp }}/live
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-live
+          path: ${{ runner.temp }}/live
 
   spaces-bundle:
     needs: changes
@@ -217,49 +241,6 @@ jobs:
       - name: The helper's cold start against spec/speed.json (25%)
         continue-on-error: true
         run: POLYCARP_SPEED_HELPER=$PWD/build/Polycarp.app/Contents/Resources/browser/polycarp-browser node scripts/browser-speed.mjs $PWD/build/Polycarp.app/Contents/Resources/browser/polycarp-browser --check
-
-  voice:
-    needs: changes
-    if: needs.changes.outputs.voice == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, ubuntu-24.04, windows-latest]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: voice
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.3.14
-      # The same ort-sys pin as the core job.
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
-        with:
-          toolchain: ${{ matrix.os == 'windows-latest' && '1.99.1' || 'stable' }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with: { workspaces: voice/src-tauri, key: "${{ matrix.os }}" }
-      - name: Linux packages
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libudev-dev libxdo-dev
-      - name: Release requirement pin
-        if: runner.os == 'Linux'
-        run: scripts/check-requirement.sh --pin && scripts/check-requirement-test.sh && bash scripts/signing-identity-test.sh && bash scripts/install-requirement-test.sh
-      - run: bun install --frozen-lockfile
-      - run: bun run build
-      - run: bun run check:theme
-      - name: Theme unit tests
-        run: bun test
-      - name: Unit tests
-        working-directory: voice/src-tauri
-        run: cargo test --lib
-      - name: Lint
-        if: runner.os == 'macOS'
-        working-directory: voice/src-tauri
-        run: cargo clippy --lib -- -D warnings
 
   browser-skills:
     needs: changes
@@ -423,3 +404,19 @@ jobs:
       - name: DOM benchmark against the floor
         working-directory: browser/cli
         run: npm run bench:dom
+
+  # The one check the merge gate requires: it fails when any job failed or was cancelled, and passes when every job
+  # passed or was skipped by its path filter. Require "ci-ok" on main (a ruleset, or merge_green.py --check ci-ok)
+  # instead of naming jobs that a path filter can skip.
+  ci-ok:
+    if: always()
+    needs: [changes, cli, core, spaces, spaces-windows, spaces-windows-live, spaces-bundle, browser-skills, browser-skill-regression, browser-check, browser-cli-windows, browser-e2e]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          test "$FAILED" = false

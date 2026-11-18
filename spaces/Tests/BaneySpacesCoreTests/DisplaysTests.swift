@@ -33,6 +33,25 @@ final class DisplaysTests: XCTestCase {
         XCTAssertEqual(m.focusedDisplay, laptop)
     }
 
+    /// R-M3 (spec/workspaces.md, #530): with no display left, the first display to arrive, new or seen before, shows
+    /// the workspace you were on, not what it showed last. Windows came back on an empty workspace with your windows
+    /// hidden (win11-bs, 2026-11-17); this pins that the Mac model never does.
+    func testTheFirstDisplayAfterNoneShowsWhatYouWereOnEvenOneSeenBefore() {
+        var m = model()
+        m.displays([laptop, ipad])
+        m.focus(display: ipad)
+        _ = m.switchTo(4)
+        XCTAssertEqual(m.shown, [laptop: 1, ipad: 4])
+        m.displays([])
+        XCTAssertEqual(m.current, 4, "the windows wait with no display")
+        m.displays([laptop])
+        XCTAssertEqual(m.shown, [laptop: 4], "the laptop last showed 1, but you were on 4")
+        XCTAssertEqual(m.current, 4)
+        m.displays([laptop, ipad])
+        XCTAssertEqual(m.shown[laptop], 4)
+        XCTAssertNotEqual(m.shown[ipad], 4, "a display after it never shows a workspace already shown")
+    }
+
     /// ⌘N changes only the display you're on; the other keeps its workspace and windows.
     func testSwitchingChangesOnlyTheFocusedDisplay() {
         var m = model()

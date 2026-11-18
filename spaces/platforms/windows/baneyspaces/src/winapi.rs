@@ -307,12 +307,27 @@ pub fn foreground() -> HWND {
 
 /// Puts `h` in front. Windows only lets the process that got the last input do this, so a
 /// daemon acting on a key or a CLI call attaches to the current foreground thread's input first.
+/// When Windows still refuses (a CLI call: the last input went to the terminal, not the daemon),
+/// it presses and releases an unassigned key (VK 0xE8, the same one that masks Start after a
+/// chord) so the daemon holds the last input, and tries once more. Measured on a GitHub runner:
+/// without it `baneyspaces switch 2` left the front on the terminal it had just cloaked.
 pub fn set_foreground(h: HWND) -> bool {
+    if h.is_null() {
+        return false;
+    }
+    if try_foreground(h) {
+        return true;
+    }
+    nudge_input();
+    try_foreground(h)
+}
+
+fn try_foreground(h: HWND) -> bool {
     unsafe {
-        if h.is_null() {
-            return false;
-        }
         let fg = GetForegroundWindow();
+        if fg == h {
+            return true;
+        }
         let me = GetCurrentThreadId();
         let fg_thread = if fg.is_null() { 0 } else { GetWindowThreadProcessId(fg, std::ptr::null_mut()) };
         let attached = fg_thread != 0 && fg_thread != me && windows_sys::Win32::System::Threading::AttachThreadInput(me, fg_thread, 1) != 0;
@@ -320,8 +335,17 @@ pub fn set_foreground(h: HWND) -> bool {
         if attached {
             windows_sys::Win32::System::Threading::AttachThreadInput(me, fg_thread, 0);
         }
-        ok
+        ok && GetForegroundWindow() == h
     }
+}
+
+/// Presses and releases VK 0xE8, which no keyboard sends and no app reads. The hook ignores it
+/// because it is injected.
+pub fn nudge_input() {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP};
+    let key = |flags| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: 0xE8, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } };
+    let inputs = [key(0), key(KEYEVENTF_KEYUP)];
+    unsafe { SendInput(2, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
 }
 
 pub fn shell_window() -> HWND {
@@ -407,6 +431,30 @@ pub fn restore_minimized_no_activate(h: HWND) {
     unsafe { ShowWindow(h, SW_SHOWNOACTIVATE) };
 }
 
+
+/// A process opened only to wait for it to end. Opened before anything asks it to exit, the handle keeps naming that
+/// process even once its pid is free for reuse.
+pub struct Process(windows_sys::Win32::Foundation::HANDLE);
+
+impl Process {
+    pub fn open(pid: u32) -> Option<Process> {
+        use windows_sys::Win32::System::Threading::PROCESS_SYNCHRONIZE;
+        let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        (pid != 0 && !h.is_null()).then_some(Process(h))
+    }
+
+    /// Waits up to `ms` for the process to end. True when it has.
+    pub fn wait(&self, ms: u32) -> bool {
+        use windows_sys::Win32::{Foundation::WAIT_OBJECT_0, System::Threading::WaitForSingleObject};
+        unsafe { WaitForSingleObject(self.0, ms) == WAIT_OBJECT_0 }
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.0) };
+    }
+}
 
 #[cfg(test)]
 mod tests {
