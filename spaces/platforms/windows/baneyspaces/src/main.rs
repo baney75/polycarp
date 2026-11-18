@@ -619,11 +619,21 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn stop_waits_for_the_process_not_the_pipe() {
-        let mut child = std::process::Command::new("powershell").args(["-NoProfile", "-Command", "Start-Sleep 2"]).spawn().unwrap();
+        // The test ends the process itself 1.5 s in. A `powershell Start-Sleep 2` lived 2.3 to 8.7 s on a runner running
+        // tests side by side (a cold PowerShell start, #554), and past stop's 10 s now and then, which failed this test
+        // with stop working. `cmd` reading a pipe that stays open runs until it is killed.
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("cmd").stdin(Stdio::piped()).stdout(Stdio::null()).spawn().unwrap();
+        let wait = process_waiter(child.id());
         let t = std::time::Instant::now();
-        let env = stop_then_wait(|| Envelope::ok(json!({ "stopping": true })), process_waiter(child.id()));
+        let end = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            let _ = child.kill();
+            let _ = child.wait();
+        });
+        let env = stop_then_wait(|| Envelope::ok(json!({ "stopping": true })), wait);
         let took = t.elapsed();
-        let _ = child.wait();
+        end.join().unwrap();
         assert!(env.ok && env.data.unwrap()["exited"] == true, "stop must report the exit");
         assert!(took >= std::time::Duration::from_millis(1500), "stop returned after {took:?}, before the process ended");
     }
