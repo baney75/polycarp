@@ -3,9 +3,9 @@
 Polycarp is for macOS and Windows. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 Browser and voice work goes to Tychicus and Silas; Linux desktop work is retired. A PR here that adds any of it is refused.
-Until `voice/` and `browser/` leave this repo, a fix for something that broke in them still lands here.
+Until `browser/` leaves this repo, a fix for something that broke in it still lands here.
 
-This repo holds three apps and one small command (`cli/`) with their full history. Each directory keeps its own `AGENTS.md`
+This repo holds two apps and one small command (`cli/`) with their full history. Each directory keeps its own `AGENTS.md`
 rules; read the one for the directory you touch before you change it. No renaming of the products
 yet.
 
@@ -17,8 +17,6 @@ Run each from its directory.
 
 - `cli/`: `cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check`.
 - `spaces/`: `swift build` and `swift test` (its `AGENTS.md` adds probes and a live check).
-- `voice/`: `bun install --frozen-lockfile`, then
-  `bun run build && (cd src-tauri && cargo test --lib && cargo clippy --lib -- -D warnings)`.
 - `browser/`: `scripts/setup-siblings.sh`, `npm ci` (and in `cli/`), then `npx biome check .`,
   `npx tsc --noEmit`, `node --import tsx --test test/*.test.mjs`,
   `(cd cli && npx tsc --noEmit && npm test)`, `node cli/dist/index.js skill lint skills` and
@@ -27,7 +25,7 @@ Run each from its directory.
 
 - The root `install.sh`: `bash -n install.sh`. Never run `install.sh` itself against your real home to test it.
 
-`./check.sh` at the root runs all three in order and continues past a failure.
+`./check.sh` at the root runs them in order and continues past a failure.
 
 ## Themes
 

@@ -14,8 +14,8 @@ working, and their repos stay up. A box is checked only when its check has passe
 - [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
 
 ## 3. One core, a native app on each device
-- [ ] Shared Rust core for workspaces, voice and sync, growing from `spaces/crates/baneyspaces-core` and `voice/src-tauri`. Check: `spaces/spec/conformance` passes on every platform
-- [ ] Mac: the Swift app hosts voice, with one settings window. Check: `spaces/AGENTS.md` probes and live gestures, and `voice/AGENTS.md` rules (never paste, never auto-unload)
+- [ ] Shared Rust core for workspaces, voice and sync, growing from `spaces/crates/baneyspaces-core` and the Silas app (baney75/silas). Check: `spaces/spec/conformance` passes on every platform
+- [ ] Mac: the Swift app hosts voice, with one settings window. Check: `spaces/AGENTS.md` probes and live gestures, and the Silas app's `AGENTS.md` rules (never paste, never auto-unload)
 - [ ] Windows: voice, workspaces and browser agents in one app. Check: run on a Windows VM
 - [ ] iPhone, iPad, Android: voice in its own app and keyboard, plus control of your computer's workspaces and browser. Check: Simulator, emulator and a real device. To verify: iOS limits microphone use inside keyboards
 - [ ] Dictionary and settings sync directly between your own devices, with no Polycarp cloud. Check: an edit on one device appears on another with no third-party server in the path

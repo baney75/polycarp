@@ -1,7 +1,7 @@
 import AppKit
 import BaneySpacesCore
 
-/// The pill that shows while dictating: a level meter while listening, "Writing…" after. Ported from voice/overlay.html
+/// The pill that shows while dictating: a level meter while listening, "Writing…" after. Ported from overlay.html in baney75/silas
 /// and overlay.ts (16 bars that flow right to left, eased, tapered at the edges; a ticking clock; the learned
 /// "from → to" for a couple of seconds). A native panel with Core Animation layers, no web view. It never takes focus
 /// or clicks: non-activating, ignores the mouse, can't become key or main, and joins every Space including
