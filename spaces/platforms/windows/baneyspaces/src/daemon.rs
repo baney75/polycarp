@@ -85,6 +85,8 @@ pub struct Core {
     pub tx: Sender<Msg>,
     /// When the action log was last pruned (`Paths::append_action`).
     pub last_prune: std::cell::Cell<u64>,
+    /// When the display list last changed: for a few seconds after, Windows moves windows itself.
+    display_change: Option<Instant>,
 }
 
 pub type Shared = Arc<Mutex<Core>>;
@@ -182,7 +184,11 @@ impl Core {
             return;
         }
         let known: Vec<String> = self.model.monitors().map(String::from).collect();
-        for ev in displays::monitor_events(&known, &now) {
+        let events = displays::monitor_events(&known, &now);
+        if !events.is_empty() {
+            self.display_change = Some(Instant::now());
+        }
+        for ev in events {
             let _ = self.apply(ev);
         }
         if self.model.focused_monitor().is_none() {
@@ -1556,7 +1562,12 @@ impl Core {
             })
             .collect();
         let moved = displays::moved_across(&on_screen, &all, |d| self.model.current(d));
+        let settling = displays::settling(self.display_change.map(|t| t.elapsed()));
         for (id, display, m) in moved {
+            if settling {
+                self.put_back_after_display_change(&id, &display, &all);
+                continue;
+            }
             self.log(&format!("{id} was moved to {display}: now on workspace {m}"));
             let front = self.model.active() == Some(id.as_str());
             let _ = self.apply(Event::ObserveMove { window: id.clone(), n: Some(m) });
@@ -1564,6 +1575,17 @@ impl Core {
                 let _ = self.apply(Event::Activate { window: Some(id), cause: Cause::User });
             }
         }
+    }
+
+    /// R-M2, R-M3: Windows puts a window back on a display that comes back ("Remember window locations based on
+    /// monitor connection"). That is not your move: the window goes back to the display showing its workspace.
+    fn put_back_after_display_change(&mut self, id: &str, display: &str, all: &[(String, displays::Rect)]) {
+        let Some(Home::Workspace { n }) = self.model.home(id).cloned() else { return };
+        let Some(to) = self.model.shown_on(n).map(String::from) else { return };
+        let Some(h) = self.info.get(id).map(|i| to_hwnd(i.hwnd)) else { return };
+        let Some(r) = winapi::rect(h).and_then(|r| displays::carried(r, all, &to, winapi::is_zoomed(h))) else { return };
+        self.log(&format!("{id} was moved to {display} by Windows after a display change: back to {to}, where workspace {n} shows: {r:?}"));
+        winapi::set_frame(h, r);
     }
 
     /// One poll: monitors, windows, what is hidden checked against Windows, focus.
@@ -1638,6 +1660,7 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         settings: settings::parse(&paths.read("settings.json").unwrap_or_default()),
         tx: tx.clone(),
         last_prune: std::cell::Cell::new(0),
+        display_change: None,
     };
     let shared: Shared = Arc::new(Mutex::new(core));
     let _ = SHARED.set(shared.clone());
@@ -1821,6 +1844,7 @@ mod feed_tests {
             settings: serde_json::Map::new(),
             tx,
             last_prune: std::cell::Cell::new(0),
+            display_change: None,
         };
         let shared: Shared = Arc::new(Mutex::new(core));
         {

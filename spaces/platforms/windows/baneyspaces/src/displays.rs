@@ -95,6 +95,15 @@ pub fn moved_across(windows: &[(String, u8, Rect)], displays: &[(String, Rect)],
     out
 }
 
+/// How long after a display change a window that moves is taken as Windows' own doing: it moves windows off a
+/// display that goes and puts them back when the display returns. On win11-bs it does so within the poll or two
+/// after the change; a drag of yours that soon after is put back too.
+pub const SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
+
+pub fn settling(since_change: Option<std::time::Duration>) -> bool {
+    since_change.is_some_and(|t| t < SETTLE)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +164,26 @@ mod tests {
         sync(&mut m, &["DOCK"]);
         assert_eq!((m.current("DOCK"), m.focused_monitor()), (Some(1), Some("DOCK")), "not an empty workspace with yours out of sight");
         assert_eq!(m.active(), Some("w1"));
+    }
+
+    #[test]
+    fn windows_own_moves_count_only_just_after_a_display_change() {
+        use std::time::Duration;
+        assert!(!settling(None), "no display change yet: a move is yours");
+        assert!(settling(Some(Duration::from_millis(400))));
+        assert!(!settling(Some(SETTLE)), "after the settle, a drag is yours again");
+    }
+
+    #[test]
+    fn the_daemon_puts_back_what_windows_moved_after_a_display_change() {
+        let src = include_str!("daemon.rs").replace("\r\n", "\n");
+        let sync = &src[src.find("pub fn sync_monitors(").unwrap()..];
+        let sync = &sync[..sync.find("\n    }\n").unwrap()];
+        assert!(sync.contains("self.display_change = Some(Instant::now())"), "a display change starts the settle");
+        let mirror = &src[src.find("fn mirror_moves(&mut self)").unwrap()..];
+        let mirror = &mirror[..mirror.find("\n    }\n").unwrap()];
+        let back = mirror.find("self.put_back_after_display_change(").expect("Windows' move after a display change is put back");
+        assert!(back < mirror.find("Event::ObserveMove").unwrap() && mirror.contains("continue;"), "and never mirrored as yours");
     }
 
     #[test]
