@@ -198,17 +198,14 @@ jobs:
         run: platforms/windows/tests/ci/refuses.ps1 -Bin target/release -Out ${{ runner.temp }}/refused
       # refuses.ps1 writes a stand-in record, so off a runner it must refuse too and leave a real state.json as it was.
       - name: The refusal check itself refuses a desktop that isn't disposable
-        shell: powershell
+        shell: bash
         run: |
-          $record = Join-Path $env:LOCALAPPDATA 'BaneySpaces\state.json'; New-Item -ItemType Directory -Force (Split-Path $record) | Out-Null
-          $mark = "a real recovery record $([guid]::NewGuid())"; Set-Content $record $mark
-          $env:GITHUB_ACTIONS = ''
-          $err = Join-Path $env:RUNNER_TEMP 'refuses-self.err'
-          $p = Start-Process powershell -ArgumentList '-NoProfile', '-File', 'platforms/windows/tests/ci/refuses.ps1', '-Bin', 'target/release', '-Out', "$env:RUNNER_TEMP/refused-self" -NoNewWindow -Wait -PassThru -RedirectStandardError $err
-          $o = Get-Content $err -Raw; $kept = (Get-Content $record -Raw).Trim() -eq $mark
-          Write-Host "refuses.ps1 -> exit $($p.ExitCode), state.json kept $kept`: $o"
-          Remove-Item -Force $record
-          if ($p.ExitCode -ne 2 -or -not $kept -or $o -notmatch 'refuses.ps1: refused') { exit 1 }
+          rec="$(cygpath -u "$LOCALAPPDATA")/BaneySpaces/state.json"; mkdir -p "$(dirname "$rec")"
+          mark="a real recovery record $RANDOM$RANDOM"; printf '%s' "$mark" > "$rec"
+          code=0; GITHUB_ACTIONS= powershell -NoProfile -File platforms/windows/tests/ci/refuses.ps1 -Bin target/release -Out "$RUNNER_TEMP/refused-self" 2> "$RUNNER_TEMP/refuses-self.err" || code=$?
+          now="$(tr -d '\r\n' < "$rec")"; rm -f "$rec"
+          echo "refuses.ps1 -> exit $code, state.json kept $([ "$now" = "$mark" ] && echo True || echo False): $(cat "$RUNNER_TEMP/refuses-self.err")"
+          [ "$code" = 2 ] && [ "$now" = "$mark" ] && grep -q 'refuses.ps1: refused' "$RUNNER_TEMP/refuses-self.err"
       - name: Live suite
         shell: powershell
         # The suite takes a few minutes; a hang ends the step here, so the artifact below still uploads.
