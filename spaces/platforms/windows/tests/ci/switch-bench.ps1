@@ -104,7 +104,7 @@ say "switch: n=$($times.Count) p50=$(ms $p50) p90=$(ms $p90) p99=$(ms $p99) max=
 check ($late -eq 0) 'every switch settled within 2 s' "$late did not"
 check ($p90 -lt 100) "switch p90 under 100 ms ($(ms $p90) ms)"
 # p99, not the max: of 200 switches it is the third slowest, so one stall of a busy runner is reported, not failed.
-check ($p99 -lt 250) "switch p99 under 250 ms ($(ms $p99) ms; max $(ms $max) ms, reported only)"
+check ($p99 -lt 250) "switch p99 under 250 ms ($(ms $p99) ms); max $(ms $max) ms (reported only)"
 check ($wrong -eq 0) "after each of 200 switches the screen shows the new workspace's color and no other ($wrong wrong)"
 $inner = @(Get-Content $dlog -ErrorAction SilentlyContinue | % { if ($_ -match 'done (\d+) ms after the key went down') { [int]$Matches[1] } })
 if ($inner.Count) { say "daemon's own count (key down to chord done, 16 ms ticks): n=$($inner.Count) p50=$(pct $inner 0.5) p90=$(pct $inner 0.9) max=$(($inner | Measure-Object -Maximum).Maximum) ms" }
