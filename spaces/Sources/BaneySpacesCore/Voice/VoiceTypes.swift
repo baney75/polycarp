@@ -40,7 +40,7 @@ public struct VoiceState: Codable, Equatable, Sendable {
     public var permissions: VoicePermissions?
 }
 
-/// `Settings` in core/voice/src/store.rs. Keys are camelCase on the wire.
+/// `Settings` in polycarp-voice's store.rs (baney75/silas). Keys are camelCase on the wire.
 public struct VoiceSettings: Codable, Equatable, Sendable {
     public var hotkey: String
     /// Which default `hotkey` was last settled against (`migrate_hotkey`). Kept so a save never drops it.

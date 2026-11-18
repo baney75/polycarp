@@ -8,6 +8,7 @@ envelope are `crates/baneyspaces-core`, the same code the Linux daemon runs.
 platforms/windows/baneyspaces/   the `baneyspaces` binary: CLI, `daemon`, `mcp`
 platforms/windows/scripts/       build-engine.ps1: the pinned agent-desktop, built with --locked
 platforms/windows/tests/         live.sh (the live test in the VM), readback.ps1, watch.ps1, evidence/
+platforms/windows/tests/ci/      live.ps1 and Desk.cs: the live test on a GitHub Actions Windows runner
 platforms/windows/vm/            provision-toolchain.ps1: Rust + the MSVC build tools inside the test VM
 ```
 
@@ -184,6 +185,36 @@ Windows crate also cross-checks on Linux with `cargo xwin check --target x86_64-
 and switches with the CLI and with real Win+n keys (`virsh send-key`), kills the daemon with
 `taskkill /F` and starts it again, and runs the agent flow with `bs-testapp` (after checking that production refuses every launch), reading back the windows (EnumWindows,
 visibility, DWM cloak state, layered alpha) after every step. `tests/evidence/` has its log and screenshots.
+
+
+### CI live suite
+
+`tests/ci/live.ps1` (with `tests/ci/Desk.cs` for the Win32 read-backs) ports `live.sh` sections 0 to 8 to the
+`spaces-windows-live` CI job on a GitHub-hosted `windows-latest` runner: the real daemon on the runner's own
+interactive desktop (session 2, explorer.exe and DWM running), real Notepad, Explorer and `bs-testapp` windows, and
+the keyboard hook fed with SendInput. It reads the windows back after every step, saves screenshots, prints
+`RESULT: PASS|FAIL passed= failed= skipped=`, lists failures and skips in the job summary, and uploads `live.log`,
+`daemon.log` and the screenshots as the `windows-live` artifact. It kills BaneySpaces, deletes its recovery record
+(`state.json`, what puts hidden windows back) and force-closes every Notepad, so off a CI runner it refuses (exit 2)
+unless given `-Disposable`. By hand only on a disposable Windows desktop (a VM), after the test-ops build and
+`build-engine.ps1 -Install`: `powershell -File platforms/windows/tests/ci/live.ps1 -Bin target/release -Out <dir> -Disposable`.
+The CLI helper in the script is `bsc`: `cli` is a built-in PowerShell alias for Clear-Item, and aliases win over
+functions.
+
+What the runner can't run, so it stays untested live on Windows hardware:
+
+- Two displays (section 8, R-M2 and R-M3). The runner has one 1024x768 display, and a second needs a display
+  driver install. The suite reports it as a skip.
+- Real hardware keys. Only SendInput reaches the hook, and only input marked with `TEST_INPUT_MARK` in a test-ops
+  build run with `BANEYSPACES_TEST_OPS` counts as typed. The negative check sends an unmarked Win+7: an unmarked
+  Win+2 reaches the shell and opens the second taskbar item (Edge).
+- A standard user. The runner's account is an elevated administrator (High integrity), so UIPI never stands
+  between the daemon and an elevated window the way it does for a person who doesn't run as admin.
+- Calculator and Store apps. The runner has neither, so the suite uses Notepad, Explorer and `bs-testapp`.
+- Windows 11's shell. The runner is Windows Server 2025 (10.0.26100) with classic Notepad: no Snap layouts and no
+  Windows 11 taskbar.
+- A real sign-out. The suite sends WM_QUERYENDSESSION and WM_ENDSESSION to the session window; it can't end the
+  runner's session.
 
 Not done in part 1: multi-monitor placement (windows are not moved between displays; the model is, and
 this is untested without a second display), the Startup shortcut, the overview, the dock and themed UI.
