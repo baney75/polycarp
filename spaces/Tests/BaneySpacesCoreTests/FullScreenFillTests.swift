@@ -155,7 +155,7 @@ final class FullScreenFillTests: XCTestCase {
 
     func testFromANativeFullScreenSpaceEveryWindowIsStillParked() throws {
         // The window server lists only that Space then. Reading "not listed" as "hidden by its app" would leave windows out.
-        let code = try HandsSourceTests.code("Sources/BaneySpaces/Spaces.swift")
+        let code = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
         XCTAssertTrue(code.contains("let inSight: Set<WindowID>? = DockSpaces.current().unsafe ? nil : Windows.onScreenIDs()"))
         XCTAssertTrue(code.contains("(inSight?.contains(w.id) ?? true)"))
     }

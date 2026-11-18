@@ -31,7 +31,7 @@ final class StatePathTests: XCTestCase {
     }
 
     func testTheAppWritesItsStateIntoItsOwnFolder() throws {
-        let session = try String(contentsOf: HandsSourceTests.root.appendingPathComponent("Sources/BaneySpaces/Session/SessionController.swift"), encoding: .utf8)
+        let session = try String(contentsOf: SourceText.root.appendingPathComponent("Sources/BaneySpaces/Session/SessionController.swift"), encoding: .utf8)
         XCTAssertTrue(session.contains("URL(fileURLWithPath: Wire.ownStatePath)"))
         XCTAssertFalse(session.contains("URL(fileURLWithPath: Wire.statePath)"), "never into the old app's folder")
     }

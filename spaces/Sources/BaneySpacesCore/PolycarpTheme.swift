@@ -418,7 +418,7 @@ public enum PolycarpThemeFile {
 
 // MARK: Following the file
 
-/// Hands over the theme when the file appears, changes or goes. The kernel says when the file, its folder
+/// Passes on the theme when the file appears, changes or goes. The kernel says when the file, its folder
 /// or the config folder changes (`fileEvents`, a kqueue watch), so a `polycarp theme set` lands within a few
 /// milliseconds; a stat every `interval` (30 s) is only a safety net for a change no event reported. Nothing here
 /// touches the main thread: `deliver` is called on the watcher's queue and the caller moves to the main queue to apply.

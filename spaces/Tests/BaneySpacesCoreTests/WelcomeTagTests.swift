@@ -4,7 +4,7 @@ import XCTest
 /// view then contains itself, and the Welcome window overflows the stack on first run (found by the render, 2026-11-07).
 final class WelcomeTagTests: XCTestCase {
     func testNoViewCallsABareTag() throws {
-        let code = try HandsSourceTests.code("Sources/BaneySpaces/WelcomeWindow.swift")
+        let code = try SourceText.code("Sources/BaneySpaces/WelcomeWindow.swift")
         let bare = code.split(separator: "\n").filter { line in
             let t = line.trimmingCharacters(in: .whitespaces)
             return t.hasPrefix("tag(") || t.contains("{ tag(")

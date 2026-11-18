@@ -49,14 +49,11 @@ public enum Wire {
             /// Mark `target` (or the caller's row) as needing you.
             case notify
             case ping
-            /// The agent workspace: `text` is status, on, off, open, run or move; `args` the rest.
+            /// The agent workspace: `text` is status, on, off, windows or move; `args` the rest
+            /// (docs/agent-workspace-api.md).
             case agent
             /// Remote machines (local callers only): `text` is on, off or status.
             case remote
-            /// An agent computer-use command (`baneyspaces agent snapshot|click|…`): `text` is a
-            /// HandsRequest as JSON, the reply's `info["envelope"]` the JSON envelope. Local only:
-            /// `Remote.allows` refuses it, so no other machine can act on this one.
-            case hands
             /// Read or change a setting (`SettingKey`): `target` is its name, `text` the new value
             /// (none reads it). Agents may change how this Mac looks (Donovan, 2026-11-01), so a remote
             /// token may too; every change is logged with its caller (`caller`). Workspace and window
@@ -70,10 +67,6 @@ public enum Wire {
             /// check (ask GitHub again) or now (install the release on offer). The reply's `info` is an
             /// `UpdateReport`. Local callers only (`Remote.allows` never lets it through).
             case update
-            /// `polycarp-spaces subscribe`: the agent API's events (spec/agent-api.md). `target` is the session, `text`
-            /// the event types (comma separated, none for all). The app keeps the connection and writes one event per
-            /// line until either side closes it. Local only: `Remote.allows` never lets it through.
-            case subscribe
         }
         public var op: Op
         public var target: String?
@@ -119,38 +112,6 @@ public enum Wire {
             if connected { return (reply, true) }
         }
         return (nil, false)
-    }
-
-    /// `subscribe`: sends the request and hands `line` each line the app writes until it closes the connection or `line`
-    /// returns false. False when nothing listened.
-    public static func stream(_ request: Request, path: String? = nil, line: (Data) -> Bool) -> Bool {
-        for p in path.map({ [$0] }) ?? socketCandidates() {
-            let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-            guard fd >= 0, var addr = address(path: p) else { continue }
-            defer { close(fd) }
-            var noSigPipe: Int32 = 1
-            setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
-            let ok = withUnsafePointer(to: &addr) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
-            }
-            guard ok == 0 else { continue }
-            guard var data = try? JSONEncoder().encode(request) else { return true }
-            data.append(0x0A)
-            guard writeAll(fd, data) else { return true }
-            var pending = Data()
-            var buf = [UInt8](repeating: 0, count: 65536)
-            while true {
-                let n = read(fd, &buf, buf.count)
-                if n <= 0 { return true }
-                pending.append(contentsOf: buf[0..<n])
-                while let nl = pending.firstIndex(of: 0x0A) {
-                    let one = pending.subdata(in: pending.startIndex..<nl)
-                    pending.removeSubrange(pending.startIndex...nl)
-                    if !line(one) { return true }
-                }
-            }
-        }
-        return false
     }
 
     private static func exchange(_ request: Request, timeout: Double, path: String) -> (Reply?, connected: Bool) {

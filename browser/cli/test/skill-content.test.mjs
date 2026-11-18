@@ -344,14 +344,15 @@ test("bulk-actions: the recount checks each item's state, and toggles are never 
 // The Spaces skill (spaces/skill/SKILL.md) ships in Polycarp.app beside this package; it has no lint of its own.
 const spacesSkill = join(repo, "..", "spaces", "skill", "SKILL.md");
 
-test("spaces: the agent acts only on its own window and never scripts an app by name", { skip: !existsSync(spacesSkill) && "no spaces checkout" }, () => {
+test("spaces: the skill sends app driving to Tychicus and never scripts an app by name", { skip: !existsSync(spacesSkill) && "no spaces checkout" }, () => {
 	const text = readFileSync(spacesSkill, "utf8").replace(/\s+/g, " ");
-	const i = text.indexOf("Act only on the window your own `agent open` returned (`data.window`, on the agent workspace)");
-	assert.ok(i >= 0, "acts only on the window its own open returned");
-	const para = text.slice(i, text.indexOf("`baneyspaces agent", i));
-	assert.ok(para.includes("If you can't tell which window is yours, stop and tell Donovan; never guess."), "refuses without its window");
+	const i = text.indexOf("BaneySpaces doesn't read, click or type into apps: use Tychicus for that.");
+	assert.ok(i >= 0, "computer use is Tychicus");
+	const para = text.slice(i);
 	assert.ok(para.includes("Don't drive an app through AppleScript, JXA or Shortcuts"), "no scripting by app name");
 	assert.ok(para.includes("Never run anything that takes focus or raises a window."), "focus is forbidden");
 	// The old wording sent the agent to osascript first, which can reach Donovan's own copy of the app.
 	assert.doesNotMatch(text, /check for a programmatic route before you click|If the app has a scripting interface/);
+	// The hands left with computer use (baney75/polycarp#568).
+	assert.doesNotMatch(text, /agent (open|snapshot|click|lend|allow)\b/);
 });

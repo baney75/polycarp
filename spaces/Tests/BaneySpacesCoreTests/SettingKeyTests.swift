@@ -50,12 +50,12 @@ final class SettingKeyTests: XCTestCase {
     }
 
     func testWorkspaceAndWindowOpsStayUserOnly() {
-        for op in [Wire.Request.Op.focus, .open, .send, .notify, .remote, .hands, .event] {
+        for op in [Wire.Request.Op.focus, .open, .send, .notify, .remote, .event] {
             XCTAssertFalse(Remote.allows(Wire.Request(op: op, target: "x", text: "x")), "\(op)")
         }
         XCTAssertFalse(Remote.allows(Wire.Request(op: .agent, text: "on")))
         XCTAssertFalse(Remote.allows(Wire.Request(op: .agent, text: "move")))
-        XCTAssertFalse(Remote.allows(Wire.Request(op: .agent, text: "lend")))
+        XCTAssertFalse(Remote.allows(Wire.Request(op: .agent, text: "windows")))
     }
 
     func testEachChangeIsLoggedWithItsCallerAndTheLogNeverHoldsTheToken() throws {

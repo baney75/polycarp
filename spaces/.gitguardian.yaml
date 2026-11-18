@@ -2,6 +2,4 @@
 # Prior Generic Password hits were prose about password managers, not credentials.
 version: 2
 secret:
-  ignored_paths:
-    # Bench fixture helpers (no live credentials).
-    - bench/benchlib/fixtures.py
+  ignored_paths: []

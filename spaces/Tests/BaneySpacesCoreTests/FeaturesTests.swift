@@ -52,9 +52,9 @@ final class FeaturesTests: XCTestCase {
     // MARK: What each part asks of macOS
 
     func testAPartThatIsOffAsksForNothing() {
-        XCTAssertEqual(Welcome.steps(for: .all).map(\.kind), [.accessibility, .microphone, .screenRecording, .inputMonitoring])
+        XCTAssertEqual(Welcome.steps(for: .all).map(\.kind), [.accessibility, .microphone])
         XCTAssertEqual(Welcome.steps(for: FeatureSet([.voice])).map(\.kind), [.accessibility, .microphone])
-        XCTAssertEqual(Welcome.steps(for: FeatureSet([.workspaces])).map(\.kind), [.accessibility, .screenRecording, .inputMonitoring])
+        XCTAssertEqual(Welcome.steps(for: FeatureSet([.workspaces])).map(\.kind), [.accessibility])
         XCTAssertEqual(Welcome.steps(for: FeatureSet([.browser])).map(\.kind), [])
     }
 

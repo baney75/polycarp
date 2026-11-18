@@ -1,6 +1,6 @@
 # The sandbox
 
-A throwaway macOS VM for agent work (agent computer use, phase 2; see `agent-computer-use.md`). Apple
+A throwaway macOS VM for agent work (agent computer use, phase 2; that design moved to Tychicus with computer use). Apple
 Virtualization through Tart, pinned in `sandbox/PIN`. Code: `Sources/BaneySpacesCore/Sandbox/`.
 
 ```sh

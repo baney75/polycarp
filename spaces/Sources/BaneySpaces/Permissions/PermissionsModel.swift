@@ -3,7 +3,6 @@ import ApplicationServices
 import AVFoundation
 import BaneySpacesCore
 import Carbon
-import IOKit.hid
 import UserNotifications
 
 /// macOS's live answers for every permission in `Permissions.all`, for Settings > Permissions, the welcome window and the
@@ -94,8 +93,6 @@ final class PermissionsModel: ObservableObject {
         if sample { return states[id] ?? .unknown }
         switch id {
         case .accessibility: return Permissions.listState(granted: AXIsProcessTrusted(), asked: asked(id))
-        case .screenRecording: return Permissions.listState(granted: CGPreflightScreenCaptureAccess(), asked: asked(id))
-        case .inputMonitoring: return Permissions.hidState(IOHIDCheckAccess(kIOHIDRequestTypeListenEvent).rawValue)
         case .microphone: return Permissions.microphoneState(AVCaptureDevice.authorizationStatus(for: .audio).rawValue)
         case .notifications: return notifications
         case .automation: return Permissions.automationState(targets.map(\.state))
@@ -170,8 +167,6 @@ final class PermissionsModel: ObservableObject {
         case .accessibility:
             let prompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
             _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
-        case .screenRecording: _ = CGRequestScreenCaptureAccess()
-        case .inputMonitoring: _ = CGRequestListenEventAccess()
         case .microphone:
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in DispatchQueue.main.async { self?.wake(force: true) } }
         case .notifications:
@@ -205,7 +200,7 @@ final class PermissionsModel: ObservableObject {
     func useRenderSample() {
         sample = true
         timer?.invalidate(); timer = nil
-        states = [.accessibility: .granted, .screenRecording: .notAsked, .inputMonitoring: .denied, .microphone: .granted,
+        states = [.accessibility: .granted, .microphone: .granted,
                   .automation: .notAsked, .notifications: .notAsked]
         let pick: [String: PermissionState] = ["com.mitchellh.ghostty": .granted, "net.imput.helium": .notAsked,
                                                "com.apple.Terminal": .unknown, "com.apple.systemevents": .denied]

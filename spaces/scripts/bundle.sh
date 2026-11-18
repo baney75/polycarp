@@ -66,26 +66,6 @@ cp uninstall.sh "$APP/Contents/Resources/uninstall.sh"
 cp scripts/install-app.sh "$APP/Contents/Resources/install-app.sh"
 cp scripts/product.env "$APP/Contents/Resources/product.env"
 
-# The pointer probe's test app, inside the bundle so that it is sealed with it and signed with the same identity.
-# Polycarp starts it for an agent only from here and only when its signature and code hash match (ProbeAppTrust).
-PROBE="$APP/Contents/Resources/probe/CanvasProbe.app"
-mkdir -p "$PROBE/Contents/MacOS"
-PROBE_SLICES=()
-for ARCH in $(for a in "${ARCHS[@]}"; do [ "$a" = "--arch" ] || echo "$a"; done); do
-  swiftc -O -target "$ARCH-apple-macos13.0" -o "build/CanvasProbe-$ARCH" scripts/canvas-probe-app.swift
-  PROBE_SLICES+=("build/CanvasProbe-$ARCH")
-done
-lipo -create "${PROBE_SLICES[@]}" -output "$PROBE/Contents/MacOS/CanvasProbe"
-cat > "$PROBE/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>$BUNDLE_ID.canvasprobe</string><key>CFBundleName</key><string>Canvas Probe</string>
-<key>CFBundleExecutable</key><string>CanvasProbe</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>1</string>
-<key>LSMinimumSystemVersion</key><string>13.0</string><key>NSPrincipalClass</key><string>NSApplication</string>
-</dict></plist>
-PLIST
-
 # The brand's own macOS icon (brand/export/macos), at every size an .icns needs.
 ICONSET="build/$PRODUCT_NAME.iconset"
 rm -rf "$ICONSET"; mkdir -p "$ICONSET"
@@ -113,8 +93,6 @@ if [ "${BANEYSPACES_ADHOC:-}" != 1 ] && IDENT=$(scripts/signing-identity.sh 2>/d
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.command" "$APP/Contents/Resources/bin/polycarp"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.browser" "$BROWSER_DIR/polycarp-browser"
-  codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.canvasprobe" "$PROBE"
-  codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p' > "$APP/Contents/Resources/probe/CanvasProbe.cdhash"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
 else
   ADHOC_NOTE="note: signed ad-hoc, so macOS will ask for Accessibility again after each update"
@@ -123,13 +101,9 @@ else
   codesign --force --sign - --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
   codesign --force --sign - --identifier "$BUNDLE_ID.command" "$APP/Contents/Resources/bin/polycarp"
   codesign --force --sign - --identifier "$BUNDLE_ID.browser" "$BROWSER_DIR/polycarp-browser"
-  codesign --force --sign - --identifier "$BUNDLE_ID.canvasprobe" "$PROBE"
-  codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p' > "$APP/Contents/Resources/probe/CanvasProbe.cdhash"
   codesign --force --sign - --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
 fi
 codesign --verify --deep --strict "$APP"
-# The probe app's recorded hash must be the hash of the signed app inside the sealed bundle.
-[ -s "$APP/Contents/Resources/probe/CanvasProbe.cdhash" ] && [ "$(cat "$APP/Contents/Resources/probe/CanvasProbe.cdhash")" = "$(codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p')" ] || { echo "bundle: the probe app's code hash is not recorded" >&2; exit 1; }
 # The licence of ported code ships with the app.
 [ -s "$APP/Contents/Resources/licenses/cua-driver-MIT.txt" ] || { echo "bundle: the cua-driver licence is missing from the bundle" >&2; exit 1; }
 # The browser helper and the extension folder are in the sealed bundle, and the helper is signed with the app's identity.

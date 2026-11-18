@@ -3,7 +3,7 @@
 // untouched world fails. No real app, window or model is involved.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -58,8 +58,10 @@ function startStub(name, files = {}) {
 const task = (id) => stubTasks.find((t) => t.id === id);
 const scored = (s, id, final = "") => task(id).check(s.world(), { final, file: s.file, dir: s.dir });
 
-test("the stub lists the real helper's verbs and arguments (spaces Tools.swift), and names itself the connector", async () => {
-	const swift = readFileSync(join(here, "..", "..", "spaces", "Sources", "BaneySpacesCore", "Hands", "Tools.swift"), "utf8");
+// The helper's catalog left Polycarp with computer use (Tychicus, baney75/polycarp#568); the stub has no source to match.
+const toolsSwift = join(here, "..", "..", "spaces", "Sources", "BaneySpacesCore", "Hands", "Tools.swift");
+test("the stub lists the real helper's verbs and arguments (spaces Tools.swift), and names itself the connector", { skip: !existsSync(toolsSwift) && "computer use moved to Tychicus: spaces has no Tools.swift" }, async () => {
+	const swift = readFileSync(toolsSwift, "utf8");
 	const base = swift.slice(swift.indexOf("static let base"));
 	const want = new Map();
 	for (const m of base.matchAll(/HandsTool\(verb: "([a-z-]+)", summary: (?:[^\n]*?), params: \[([\s\S]*?)\], acts: (true|false)\)/g)) {

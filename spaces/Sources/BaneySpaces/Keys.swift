@@ -156,7 +156,7 @@ enum SystemShortcuts {
         return params[1] == spotlight.code && params[2] == spotlight.mods
     }
 
-    /// Hands ⌘Space to the launcher. Only Spotlight on ⌘Space is switched off, and only that is
+    /// Gives ⌘Space to the launcher. Only Spotlight on ⌘Space is switched off, and only that is
     /// recorded, so giving it back never turns on a shortcut the person had turned off or moved.
     /// Slow; run it on `spotlightQueue`.
     static func freeSpotlight() {
@@ -222,13 +222,12 @@ enum Desktops {
 /// Apps that are never hidden whole ("Keep Usable by Automation"). macOS refuses background
 /// clicks and keystrokes to a hidden app, so automation that drives apps from behind stops
 /// working on them. Their windows on other workspaces are parked out of view instead, the way an
-/// app split across workspaces already is. The list starts empty: the agent hands need no
-/// entry, because an app with a window on the agent workspace, or lent with `agent lend`, is
-/// parked automatically. Cua Spaces was on it until Cua's driver left the fleet (2026-10-31).
+/// app split across workspaces already is. The list starts empty. Cua Spaces was on it until
+/// Cua's driver left the fleet (2026-10-31).
 enum ParkedApps {
     private static let key = "parkInsteadOfHide"
     private static let initial: [String] = []
-    /// Left over from before the hands replaced Cua; dropped from a list saved earlier.
+    /// Left over from Cua; dropped from a list saved earlier.
     private static let retired: Set<String> = ["com.trycua.spaces.macos"]
 
     static var bundleIDs: Set<String> {

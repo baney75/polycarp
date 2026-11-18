@@ -125,8 +125,8 @@ final class SlowScanLineTests: XCTestCase {
     }
 
     func testRefreshTimesItsScan() throws {
-        let s = try HandsSourceTests.code("Sources/BaneySpaces/Spaces.swift")
-        let r = try XCTUnwrap(HandsSourceTests.block(after: "func refresh(full: Bool = false)", in: s))
+        let s = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
+        let r = try XCTUnwrap(SourceText.block(after: "func refresh(full: Bool = false)", in: s))
         XCTAssertTrue(r.contains("let scanStart = ProcessInfo.processInfo.systemUptime\n        let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)"))
         XCTAssertTrue(r.contains("ScanCheck.slowScanLine(seconds: ProcessInfo.processInfo.systemUptime - scanStart"))
     }

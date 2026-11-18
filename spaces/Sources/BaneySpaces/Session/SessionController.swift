@@ -8,55 +8,13 @@ struct AgentHost {
     var workspace: () -> Int? = { nil }
     var setWorkspace: (Int?) -> Void = { _ in }
     var current: () -> Int = { 1 }
-    /// The next window of a process goes to a workspace: `newProcess` when the agent started
-    /// that process itself (its windows so far go too), `title` to take only the window of a file.
-    var claim: (_ pid: pid_t, _ workspace: Int, _ newProcess: Bool, _ title: String?) -> Void = { _, _, _, _ in }
-    var unclaim: (pid_t) -> Void = { _ in }
     var move: (UInt32, Int) -> Void = { _, _ in }
-    var windows: () -> [(id: WindowID, app: String, title: String)] = { [] }
-    /// The process a window belongs to.
-    var pidOf: (UInt32) -> pid_t? = { _ in nil }
+    /// The windows on the agent workspace (`Spaces.agentWindows`).
+    var windows: () -> [AgentAPI.Window] = { [] }
+    /// Whether Polycarp places a window (it is on some workspace).
+    var window: (UInt32) -> AgentAPI.Candidate? = { _ in nil }
     /// Whether a workspace holds any window.
     var occupied: (Int) -> Bool = { _ in false }
-    /// The workspaces on screen, one per display.
-    var showing: () -> OpenFlashGuard.Showing = { .init(current: 1, byDisplay: [:]) }
-}
-
-/// Processes BaneySpaces started for an agent (`agent open` of an app, `agent run`): the only ones an agent
-/// caller may move windows of to the agent workspace, and whose new windows always go there. Each is kept with its
-/// start time, so a pid macOS reuses for one of Donovan's apps is never taken for it, and dropped when it quits.
-final class AgentOwned {
-    static let shared = AgentOwned()
-    private let lock = NSLock()
-    private var set = AgentOwnedSet()
-
-    init() {
-        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: nil) { [weak self] note in
-            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            self?.remove(app.processIdentifier)
-        }
-    }
-
-    /// When the process started, in seconds (the kernel's record for this pid).
-    static func startTime(_ pid: Int32) -> Double? {
-        var info = kinfo_proc()
-        var size = MemoryLayout<kinfo_proc>.stride
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
-        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
-        let t = info.kp_proc.p_un.__p_starttime
-        return Double(t.tv_sec) + Double(t.tv_usec) / 1_000_000
-    }
-
-    func add(_ pid: Int32) {
-        guard let t = Self.startTime(pid) else { return }
-        lock.lock(); set.add(pid, startedAt: t); lock.unlock()
-    }
-    func remove(_ pid: Int32) { lock.lock(); set.remove(pid); lock.unlock() }
-    /// The processes still running that are the ones started for an agent.
-    var pids: Set<Int32> {
-        lock.lock(); let all = set; lock.unlock()
-        return all.pids.filter { all.contains($0, startedAt: Self.startTime($0)) }
-    }
 }
 
 /// The session engine: the engine behind every terminal split, browser tab and coding agent BaneySpaces
@@ -70,8 +28,6 @@ final class SessionController {
     let server = Server()
     let phones = PhoneWatcher()
     let remote = RemoteServer()
-    /// Starts apps for `agent open` (AgentLaunch.swift); one seam, so a test can stand in for NSWorkspace.
-    let agentLauncher: AgentAppLauncher = SystemAppLauncher()
     private var remoteRetry: Timer?
 
     static var remoteEnabled: Bool {
@@ -93,11 +49,6 @@ final class SessionController {
     private(set) var started = false
 
     var agentHost = AgentHost()
-    /// The agent hands: snapshot and act on the agent workspace (see Hands/).
-    let hands = HandsRouter()
-    /// The same hands for an assistant that came in through the connector: never more than Default, whatever this Mac allows
-    /// the agents on it. Its refs are its own.
-    let connectorHands = HandsRouter(cap: { $0.forRemote }, remote: true)
     /// Answers `baneyspaces sandbox …` (the app delegate sets it); called off the main thread.
     var sandboxHandler: ((Wire.Request) -> Wire.Reply)?
     /// Answers `polycarp-spaces update status|check|now` with the app's updater (the app delegate sets it).
@@ -112,9 +63,6 @@ final class SessionController {
     /// Which rows are working, asking or stopped changed, so the Workspace Dock's badges can follow.
     var onWorkingChange: () -> Void = {}
     private var lastWorking: [String: String] = [:]
-    /// Set by the app delegate: an agent session's name or status as the agent cursor shows it changed (keyed by its tty).
-    var onCursorAgentChange: (String) -> Void = { _ in }
-    private var lastCursorAgents: [String: String] = [:]
 
     /// Agents working, asking, stopped on an error or finished unseen, for the Workspace Dock: each with its window, so the
     /// dock can badge the app it runs in and go straight to it.
@@ -129,15 +77,6 @@ final class SessionController {
         }
         let rank = { (a: DockAgent) in unseen.firstIndex(of: a.id) ?? unseen.count }
         return agents.sorted { rank($0) < rank($1) }
-    }
-
-    /// The name and status the agent cursor wears for a hands session (its terminal): the session engine's row for that tty.
-    /// A session the session engine doesn't know (an MCP caller) is "Agent", working.
-    func cursorAgent(_ session: String) -> (name: String, status: DockAgent.State) {
-        guard started, !session.isEmpty, let item = engine.items.first(where: { $0.tty == session }) else { return ("Agent", .working) }
-        let name = item.agent.isEmpty ? item.appName : item.agent.prefix(1).uppercased() + item.agent.dropFirst()
-        let state = DockAgent.State.of(activity: item.activity, unseen: engine.attention.unseen.contains(item.id), notice: item.notice)
-        return (name, state ?? .working)
     }
 
     /// Goes to an agent's own row: its tab or split selected, and a finished one marked seen.
@@ -165,15 +104,7 @@ final class SessionController {
         engine.start()
         phones.start()
         server.handle = { [weak self] in self?.handle($0) ?? Wire.Reply(ok: false) }
-        server.handleHands = { [weak self] in self?.handleHands($0) ?? Wire.Reply(ok: false) }
         server.handleSandbox = { [weak self] in self?.sandboxHandler?($0) ?? Wire.Reply(ok: false, error: "the sandbox isn't ready") }
-        // Made here, on the main thread, before any connection can reach them (they are lazy).
-        _ = hands.events
-        _ = connectorHands.events
-        server.handleSubscribe = { [weak self] fd, req in
-            guard let self else { close(fd); return }
-            self.hands.events.add(fd, req)
-        }
         server.start()
         remote.handle = { [weak self] in self?.handle($0) ?? Wire.Reply(ok: false) }
         if Self.remoteEnabled { startRemote() }
@@ -222,15 +153,6 @@ final class SessionController {
         let working = Dictionary(engine.items.filter { $0.activity == .working || !$0.notice.isEmpty }
             .map { ($0.id, $0.activity == .working ? "" : $0.notice) }) { a, _ in a }
         if working != lastWorking { lastWorking = working; onWorkingChange() }
-        let cursorAgents = Dictionary(engine.items.filter { !$0.tty.isEmpty }.map { item in
-            let a = cursorAgent(item.tty)
-            return (item.tty, "\(a.name)|\(a.status)")
-        }) { a, _ in a }
-        if cursorAgents != lastCursorAgents {
-            let changed = Set(cursorAgents.keys).union(lastCursorAgents.keys).filter { cursorAgents[$0] != lastCursorAgents[$0] }
-            lastCursorAgents = cursorAgents
-            for tty in changed.sorted() { onCursorAgentChange(tty) }
-        }
         lastUnseen = unseen
         if engine.items != lastItems { lastItems = engine.items; onItemsChange() }
         writeState()
@@ -411,32 +333,6 @@ final class SessionController {
 
     // MARK: socket
 
-    /// Main thread: the model or the look changed. Both routers' event hubs diff it for their own callers.
-    func eventsChanged() {
-        hands.events.changed()
-        connectorHands.events.changed()
-    }
-
-    /// Main thread: Access changed, so every listener on both routers ends and starts again in the new scope.
-    func eventsEnd(_ why: String) {
-        hands.events.end(why)
-        connectorHands.events.end(why)
-    }
-
-    /// `baneyspaces agent snapshot|click|…`: off the main thread (see `Server.handleHands`).
-    func handleHands(_ r: Wire.Request) -> Wire.Reply {
-        guard started else {
-            let e = HandsEnvelope.failure(HandsError(.notRunning, "Polycarp hasn't finished starting (it needs Accessibility)",
-                                                     suggestion: "Run `polycarp-spaces doctor`; allow Accessibility if it asks.", retry: .safe))
-            return .init(ok: true, info: ["envelope": e.line])
-        }
-        if HandsCaller.isRemote(r.caller) {
-            Trace.log("hands: connector \(r.caller ?? "") asked")
-            return connectorHands.handleWire(r)
-        }
-        return hands.handleWire(r)
-    }
-
     /// `doctor`'s line for a Polycarp theme: in force (it draws instead of appearance.theme and appearance.palette) or none.
     static func polycarpThemeStatus() -> String {
         guard let p = Appearance.shared.polycarp else { return "none (appearance.theme and appearance.palette draw)" }
@@ -457,24 +353,16 @@ final class SessionController {
         case .ping:
             var info = engine.statusInfo
             info["accessibility"] = AXIsProcessTrusted() ? "allowed" : "not allowed"
-            info["hands"] = AXIsProcessTrusted() ? "ready" : "needs Accessibility"
-            info["lent"] = HandsLends.shared.current().active(now: Date()).map(\.app).joined(separator: ", ")
             info["version"] = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
-            info[HandsCaller.capKey] = HandsCaller.capValue
             info["polycarp_theme"] = Self.polycarpThemeStatus()
             return .init(ok: true, info: info)
         case .list:
             return .init(ok: true, items: engine.items)
-        case .hands:
-            // Engine calls wait on semaphores: never on the main thread. The socket sends them to handleHands.
-            return .init(ok: false, error: "agent commands don't run here")
         case .setting:
             return setting(r)
         case .event:
             guard let e = r.event else { return .init(ok: false, error: "no event") }
             engine.apply(e)
-            // An agent session that ended gives back every app lent to it.
-            if e.state == .end { HandsLends.shared.giveBackAll(session: e.session); SessionClipboardBox.shared.end(session: e.session) }
             return .init(ok: true)
         case .notify:
             guard let e = r.event else { return .init(ok: false, error: "no event") }
@@ -494,8 +382,8 @@ final class SessionController {
             guard let q = r.target, let item = engine.find(q) else { return .init(ok: false, error: "nothing matches") }
             guard engine.send(item, r.text ?? "") else { return .init(ok: false, error: "\(item.label) isn't a Ghostty terminal") }
             return .init(ok: true, info: ["id": item.id, "label": item.label])
-        // The remote server names every caller "remote …" (Server.swift), and a local caller claiming it only loses access.
-        case .agent: return agent(r.text ?? "status", r.args ?? [], remote: r.caller?.hasPrefix("remote ") == true)
+        // A caller on another machine gets only `agent status` (`Remote.allows`).
+        case .agent: return agent(r.text ?? "status", r.args ?? [])
         case .update:
             // Answered above, before the Accessibility check.
             return .init(ok: false, error: "the updater isn't ready")
@@ -503,10 +391,6 @@ final class SessionController {
             // Answered by the server off the main thread (`handleSandbox`); a sandbox request that
             // reaches here came through a path that doesn't know how.
             return .init(ok: false, error: "sandbox requests are not answered on the main thread")
-        case .subscribe:
-            // The server hands a subscribe connection to `handleSubscribe`, which keeps it; one that reaches here
-            // came through a path that can't hold a stream.
-            return .init(ok: false, error: "subscribe needs the local socket")
         case .remote:
             switch r.text ?? "status" {
             case "on":
@@ -525,20 +409,6 @@ final class SessionController {
             else if Self.remoteEnabled { info["listening"] = "waiting for Tailscale" }
             return .init(ok: true, info: info)
         }
-    }
-
-    /// An agent just started this process (`agent open` for an app, `agent run` for a Terminal): it is the agent's, its
-    /// first windows go to the agent workspace as a new process's (`newProcess: true`, which holds even if the app
-    /// brings itself forward as it launches), and for a few seconds it can't keep your keyboard (`AgentLaunchFocus`).
-    func adoptAgentStartedProcess(_ pid: pid_t, workspace n: Int, title: String?, host h: AgentHost, grantAccess: Bool) {
-        AgentOwned.shared.add(pid)
-        // A miss before this record took the hung back-off (5 s, then 30 s: past the claim). Now that it is the agent's,
-        // it is asked again at once, and later misses while it starts take the young schedule (review 163 second-F6).
-        Windows.markResponsive(pid)
-        if grantAccess { AgentAccess.shared.grant(pid) }
-        AgentActivity.shared.markLaunch(pid: pid, for: 8)
-        h.claim(pid, n, true, title)
-        AgentLaunchFocus.shared.watch(pid: pid, for: 8)
     }
 
     private var notReady: Wire.Reply { .init(ok: false, error: "Polycarp isn't ready for settings yet; try again in a moment") }
@@ -577,18 +447,15 @@ final class SessionController {
 
     // MARK: agent workspace
 
-    /// `baneyspaces agent …`: work for agents on a workspace you aren't looking at.
-    func agent(_ sub: String, _ args: [String], remote: Bool = false) -> Wire.Reply {
+    /// `polycarp-spaces agent …`: the agent workspace (on, off, status) and its API's two operations, `windows` and `move`
+    /// (docs/agent-workspace-api.md). Computer use (reading and driving apps) is Tychicus's, not Polycarp's.
+    func agent(_ sub: String, _ args: [String]) -> Wire.Reply {
         let h = agentHost
-        // Read Only (Settings > Agents) refuses every op that starts or moves something, whoever sent it.
-        if let e = AgentAccessGate.sessionRefusal(op: sub, mode: AgentAccess.shared.current) {
-            return .init(ok: false, error: e.message, info: ["code": e.code.rawValue, "suggestion": e.suggestion])
-        }
         switch sub {
         case "on":
             let n = args.first.flatMap(Int.init) ?? h.workspace() ?? 9
             guard Workspaces.range.contains(n) else { return .init(ok: false, error: "pick a workspace from 1 to 9") }
-            // Every window on the agent workspace is open to agents: a workspace with windows on it is someone's.
+            // A workspace with windows on it is someone's: the agent workspace starts empty.
             if n != h.workspace(), h.occupied(n) {
                 return .init(ok: false, error: "workspace \(n) has windows on it; pick an empty workspace: polycarp-spaces agent on <N>")
             }
@@ -599,205 +466,25 @@ final class SessionController {
             return .init(ok: true, info: ["workspace": "off"])
         case "status":
             return agentStatus()
-        case "mode":
-            // Shows the mode only: changing it is Donovan's, in Settings (SocketPolicy refuses `agent mode <name>`).
-            let mode = AgentAccess.shared.current
-            return .init(ok: true, info: ["access": mode.rawValue, "title": mode.title, "detail": mode.detail])
-        case "open":
-            // Full Access is for agents on this Mac: a caller on another machine gets Default at most.
-            let mode = remote ? AgentAccess.shared.current.forRemote : AgentAccess.shared.current
-            guard let n = h.workspace() else { return .init(ok: false, error: "the agent workspace is off: polycarp-spaces agent on") }
-            guard let name = args.first, let url = Self.appURL(name) else { return .init(ok: false, error: "no app called \(args.first ?? "")") }
-            let appName = url.deletingPathExtension().lastPathComponent
-            let bundle = Bundle(url: url)?.bundleIdentifier ?? ""
-            // The gate every caller of this op goes through, the socket included: only apps verified to start a
-            // separate instance, only files from the handoff folder, no URLs. Full Access (Donovan's) opens any app and file.
-            let files: [URL]
-            let launch: AgentLaunchRequest
-            switch AgentOpenGate.check(app: appName, bundle: bundle, targets: Array(args.dropFirst()), handoff: HandsRouter.handoffFolder, appURL: url,
-                                     probeFolder: ProbeAppTrust.folder, probeTrusted: bundle == AgentAppPolicy.canvasProbeBundle && ProbeAppTrust.trusted(url),
-                                     mode: mode) {
-            case .failure(let e): return .init(ok: false, error: e.message, info: ["code": e.code.rawValue, "suggestion": e.suggestion])
-            // A System Settings pane link is a URL the app opens, not a file (`SettingsPaneLink`, checked by the gate).
-            case .success(let paths): files = AgentLaunch.targets(paths); launch = AgentLaunchRequest(app: url, paths: paths)
-            }
-            let before = Set(NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier))
-            let cfg = NSWorkspace.OpenConfiguration()
-            cfg.activates = false
-            cfg.addsToRecentItems = false
-            // Only apps verified to run a separate copy get here (the gate above). A new instance every time,
-            // told not to restore what the app had open (it would be Donovan's documents), so every window it makes
-            // is the agent's.
-            let separate = AgentAppPolicy.needsSeparateInstance(bundle: bundle)
-            guard separate || mode == .full else {
-                return .init(ok: false, error: "\(appName) isn't an app an agent starts", info: ["code": "needs_sandbox"])
-            }
-            // Full Access, an app off the list that is already running: no second copy (many apps can't run one). Its next
-            // window is claimed for the agent workspace and made from behind; the process stays Donovan's.
-            if !separate, let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundle && before.contains($0.processIdentifier) }) {
-                let pid = running.processIdentifier
-                if let e = SettingsPaneLink.runningRefusal(targets: Array(args.dropFirst()), alreadyRunning: true) {
-                    return .init(ok: false, error: e.message, info: ["code": e.code.rawValue, "suggestion": e.suggestion])
-                }
-                // His hands are on it: nothing is claimed, opened or pressed. The hands' `open` waits for this before it asks
-                // (`HandsRouter.open`); this op runs on the main thread, so it never waits itself.
-                if UserActivity.shared.inUse(pid) {
-                    let e = InUseWait.refusal(app: appName, state: UserActivity.shared.state(pid), waited: nil)
-                    return .init(ok: false, error: e.message, info: ["code": e.code.rawValue, "suggestion": e.suggestion])
-                }
-                // An app whose new window comes forward (Finder), or one that left a window on his side: nothing is pressed.
-                if let e = RunningOpen.shared.refusal(app: appName, bundle: bundle) {
-                    return .init(ok: false, error: e.message, info: ["code": e.code.rawValue, "suggestion": e.suggestion])
-                }
-                AgentAccess.shared.grant(pid)
-                // Only as long as the claim (3 s for a running app): an activation the New Window press causes isn't followed,
-                // and if the press brings the app forward the keyboard goes back to the app he was in.
-                AgentActivity.shared.markLaunch(pid: pid, for: 3)
-                AgentLaunchFocus.shared.watch(pid: pid, for: 3)
-                h.claim(pid, n, false, nil)
-                let asked: Bool
-                if !files.isEmpty {
-                    NSWorkspace.shared.open(files, withApplicationAt: url, configuration: cfg) { _, _ in }
-                    asked = true
-                } else if let item = Windows.newWindowItem(pid) {
-                    asked = AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
-                } else { asked = false }
-                guard asked else {
-                    h.unclaim(pid)
-                    return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "pid": "\(pid)", SessionWindows.noWindowKey: "1",
-                                                  "note": "\(appName) is already running and has no New Window command; with full access its windows are open to agents where they are"])
-                }
-                return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "pid": "\(pid)", "note": "\(appName) is already running; its new window opens on the agent workspace in a moment"])
-            }
-            // From here on the launch is `launch` (AgentLaunchRequest): no activation, a new copy, nothing restored.
-            // Until this launch's own process is known, an activation of the bundle by a process that was not
-            // already running is the launch's; Donovan's running copies are excluded.
-            AgentActivity.shared.markLaunch(bundle: bundle, excluding: before, for: 10)
-            AgentLaunchFocus.shared.watch(bundle: bundle, excluding: before, for: 10)
-            var claimed = false
-            // The hands request this launch is for (set by `HandsRouter.open` around this call), told the pid on completion.
-            let launchToken = AgentLaunches.shared.current
-            /// A new window from behind through the app's own New Window command, claimed first.
-            func newWindow(_ app: NSRunningApplication) -> Bool {
-                // Claimed only once there is a command to press: a lookup that found none leaves the launch's claim
-                // alone (review of PR 232, sol-F1).
-                guard let item = Windows.newWindowItem(app.processIdentifier) else { return false }
-                h.claim(app.processIdentifier, n, false, nil)
-                guard AXUIElementPerformAction(item, kAXPressAction as CFString) == .success else {
-                    h.unclaim(app.processIdentifier)
-                    return false
-                }
-                return true
-            }
-            /// Only the process this very request launched, handed back to its own completion handler: never a
-            /// launch notification for the bundle, which could be Donovan opening his own copy.
-            func claimLaunch(_ app: NSRunningApplication) {
-                guard !claimed else { return }
-                claimed = true
-                AgentActivity.shared.clearLaunch(bundle: bundle)
-                // Not a new process (the app ran this launch inside Donovan's): leave it entirely alone.
-                guard !before.contains(app.processIdentifier) else { return }
-                adoptAgentStartedProcess(app.processIdentifier, workspace: n, title: nil, host: h, grantAccess: !separate)
-                if files.isEmpty {
-                    /// No window yet: New Window must ask the app. While the launch's hold is on it waits, up to
-                    /// `holdFor`, since asking blocks main when a cover may need to rise (review of PR 213, first-F2).
-                    /// It leaves the hold to the watch, the one owner of a skipped ask (review of PR 225, first-F3).
-                    func newWindowCheck(waited: Double) {
-                        let pid = app.processIdentifier
-                        if OpenFlashGuard.newWindowWaits(held: Windows.isHeld(pid), waited: waited) {
-                            return DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { newWindowCheck(waited: waited + 0.1) }
-                        }
-                        // The mode may have narrowed since the request was let in.
-                        let now = AgentAccess.shared.current
-                        guard AgentAccessGate.sessionRefusal(op: "open", mode: now) == nil, separate || now == .full else { return }
-                        if Windows.standardIDs(of: pid).isEmpty { _ = newWindow(app) }
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { newWindowCheck(waited: 1.5) }
-                }
-            }
-            func finished(_ app: NSRunningApplication?) {
-                DispatchQueue.main.async {
-                    guard let app else { AgentActivity.shared.clearLaunch(bundle: bundle); return }
-                    if !before.contains(app.processIdentifier) { AgentLaunches.shared.launched(launchToken, pid: app.processIdentifier) }
-                    claimLaunch(app)
-                }
-            }
-            let launcher = agentLauncher
-            // Covers the new window on Donovan's workspace until it is parked; off unless set (`OpenFlashGuard`).
-            OpenFlashWatch.around(app: appName, before: before, showing: { h.showing() }, agent: n) { started in
-                launcher.launch(launch) { app in started(app); finished(app) }
-            }
-            return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "note": "starting a separate copy; its window opens there in a moment"])
-        case "cursor":
-            // `agent cursor on|theme <name>|status`: the agent cursor's look (only Settings turns it off).
-            return CursorController.shared.command(args)
-        case "lend-ask":
-            // Not a grant: it shows Donovan a sheet in BaneySpaces and only a real click on it lends (see LendConsent).
-            let target = args.first ?? ""
-            return .init(ok: true, info: ["envelope": hands.askToLend(target: target, duration: args.dropFirst().first, session: args.dropFirst(2).first ?? "").line])
-        case "allow-ask":
-            // Not a grant either: only a real click on Allow in Polycarp's sheet adds an app (see AppAllowConsent).
-            return .init(ok: true, info: ["envelope": hands.askToAllow(target: args.dropFirst().first ?? "", verb: args.first ?? "add").line])
-        case "run":
-            guard let n = h.workspace() else { return .init(ok: false, error: "the agent workspace is off: polycarp-spaces agent on") }
-            let cmd = args.drop { $0 != "--" }.dropFirst().joined(separator: " ")
-            guard !cmd.isEmpty else { return .init(ok: false, error: "usage: polycarp-spaces agent run [--dir DIR] -- <command>") }
-            let dir = args.firstIndex(of: "--dir").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
-            guard engine.newAgentTerminal(in: dir, command: cmd, opened: { [weak self] pid, name, startedNew in
-                if MovedInWindows.ProcessOrigin(startedNew: startedNew).ownsWholeProcess {
-                    // A Terminal this run started: the same treatment as an app `agent open` started.
-                    self?.adoptAgentStartedProcess(pid, workspace: n, title: name, host: h, grantAccess: false)
-                } else {
-                    // Your running Terminal: yours, never agent-owned (sol-sol-F2), so only its next window is claimed.
-                    h.claim(pid, n, false, name)
-                }
-            }) else {
-                return .init(ok: false, error: "couldn't start a terminal for it")
-            }
-            return .init(ok: true, info: ["workspace": "\(n)", "command": cmd])
+        case "windows":
+            return AgentAPI.windows(agentWorkspace: h.workspace(), h.windows())
         case "move":
-            guard let n = h.workspace() else { return .init(ok: false, error: "the agent workspace is off: polycarp-spaces agent on") }
-            // A window number (what `agent windows` and `agent status` show), or a row by ID or words.
-            var id: UInt32?
-            if args.count == 1, let w = UInt32(args[0]) { id = w }
-            else if let q = args.first, let item = engine.find(args.joined(separator: " ")) ?? engine.find(q), item.windowNumber != 0 { id = item.windowNumber }
-            guard let id else { return .init(ok: false, error: "nothing matches") }
-            // Anyone can reach this op through the socket, so it moves only windows of processes started for an agent.
-            // Sending one of your own windows here is yours to do, with the keys or the dock.
-            // A process Full Access let in is the agent's only while the mode is still Full Access.
-            let granted = h.pidOf(id).map { AgentAccess.shared.current != .full && AgentAccess.shared.grantedUnderFull($0) } ?? false
-            guard !granted, SocketPolicy.mayMove(windowPid: h.pidOf(id), startedForAgents: AgentOwned.shared.pids) else {
-                return .init(ok: false, error: "needs_lend: window \(id) isn't an agent's; only windows of apps Polycarp started for an agent move here",
-                             info: ["code": "needs_lend", "suggestion": "Move your own window with its workspace key (⌘⇧\(n)), or lend the app with `polycarp-spaces agent lend <app>`."])
+            switch AgentAPI.move(args: args, agentWorkspace: h.workspace(), window: h.window) {
+            case .refused(let reply): return reply
+            case .move(let id, let n):
+                h.move(id, n)
+                return AgentAPI.moved(id, to: n)
             }
-            h.move(id, n)
-            return .init(ok: true, info: ["workspace": "\(n)", "moved": "window \(id)"])
         default:
-            return .init(ok: false, error: "usage: polycarp-spaces agent status|mode|on [N]|off|open <app> [file…]|lend <app>|run [--dir D] -- <cmd>|move <row>|cursor on|theme <name>, or a hands verb: \(HandsTools.verbLine)")
+            return AgentAPI.refusal(.badRequest, "usage: polycarp-spaces agent status|on [N]|off|windows|move <window number>")
         }
     }
 
     func agentStatus() -> Wire.Reply {
-        let access = AgentAccess.shared.current.rawValue
-        guard let n = agentHost.workspace() else { return .init(ok: true, info: ["workspace": "off", "access": access]) }
-        var info = ["workspace": "\(n)", "current": "\(agentHost.current())", "access": access]
-        // A process Full Access let in is listed only while the mode is still Full Access.
-        let full = AgentAccess.shared.current == .full
-        let listed = agentHost.windows().filter { w in full || !(agentHost.pidOf(w.id).map { AgentAccess.shared.grantedUnderFull($0) } ?? false) }
-        for (i, w) in listed.enumerated() { info["window.\(i)"] = "\(w.id)\t\(w.app)\t\(w.title)" }
+        guard let n = agentHost.workspace() else { return .init(ok: true, info: ["workspace": "off"]) }
+        var info = ["workspace": "\(n)", "current": "\(agentHost.current())"]
+        for (i, w) in agentHost.windows().enumerated() { info["window.\(i)"] = "\(w.id)\t\(w.app)\t\(w.title)" }
         return .init(ok: true, items: engine.items.filter { $0.workspace == n }, info: info)
-    }
-
-    /// An app by bundle ID, path, or name ("Helium", "helium").
-    static func appURL(_ name: String) -> URL? {
-        if let u = NSWorkspace.shared.urlForApplication(withBundleIdentifier: name) { return u }
-        if name.hasSuffix(".app"), FileManager.default.fileExists(atPath: name) { return URL(fileURLWithPath: name) }
-        let dirs = ["/Applications", NSHomeDirectory() + "/Applications", "/System/Applications", "/System/Applications/Utilities"]
-        for d in dirs {
-            guard let names = try? FileManager.default.contentsOfDirectory(atPath: d) else { continue }
-            if let hit = names.first(where: { $0.lowercased() == name.lowercased() + ".app" }) { return URL(fileURLWithPath: d).appendingPathComponent(hit) }
-        }
-        return nil
     }
 
     // MARK: finished agents

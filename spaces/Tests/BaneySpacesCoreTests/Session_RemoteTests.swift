@@ -5,8 +5,6 @@ final class RemoteTests: XCTestCase {
     func testRemoteCallersCantTouchYourScreen() {
         XCTAssertTrue(Remote.allows(Wire.Request(op: .list)))
         XCTAssertTrue(Remote.allows(Wire.Request(op: .ping)))
-        XCTAssertTrue(Remote.allows(Wire.Request(op: .agent, text: "run")))
-        XCTAssertTrue(Remote.allows(Wire.Request(op: .agent, text: "open")))
         XCTAssertTrue(Remote.allows(Wire.Request(op: .agent)), "status by default")
         for sub in ["status", "check", "now"] {
             XCTAssertFalse(Remote.allows(Wire.Request(op: .update, text: sub)), "another machine never updates or restarts this one")
@@ -14,7 +12,7 @@ final class RemoteTests: XCTestCase {
         for op in [Wire.Request.Op.focus, .send, .open, .notify, .event, .remote] {
             XCTAssertFalse(Remote.allows(Wire.Request(op: op)), "\(op) changes what you see")
         }
-        for sub in ["on", "off", "move", "anything"] {
+        for sub in ["on", "off", "windows", "move", "run", "open", "anything"] {
             XCTAssertFalse(Remote.allows(Wire.Request(op: .agent, text: sub)), "agent \(sub)")
         }
     }

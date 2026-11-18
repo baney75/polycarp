@@ -464,44 +464,6 @@ final class Engine {
         return true
     }
 
-    /// A terminal for agent work, opened from behind in Terminal, not your Ghostty. Every way of
-    /// getting a Ghostty window without bringing Ghostty forward failed on 2026-10-14: scripting
-    /// your Ghostty to open one froze all its terminals for seven minutes (AppKit folding the new
-    /// window into its tab group), a second Ghostty started with `-e` shows "Allow Ghostty to
-    /// execute?" in the middle of your screen every time, and one started without `-e` opens no
-    /// window until it's brought forward. Terminal runs a `.command` script from behind with no
-    /// prompt, in a process that can't stall your terminals. `opened` gets Terminal's pid, the
-    /// script's name, which its window carries in its title, to claim it.
-    func newAgentTerminal(in dir: String?, command: String, opened: @escaping (_ pid: pid_t, _ title: String, _ startedNewProcess: Bool) -> Void) -> Bool {
-        guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: TerminalChoice.terminal) else { return false }
-        let folder = Wire.supportDir.appendingPathComponent("agent-runs")
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let name = ClaimRule.runScriptName()
-        let script = folder.appendingPathComponent(name)
-        let cd = dir.map { "cd '\($0.replacingOccurrences(of: "'", with: "'\\''"))' || exit 1\n" } ?? "cd ~\n"
-        // A login shell, so it gets your PATH; a shell stays open when the command is done.
-        let body = "#!/bin/zsh -l\n\(cd)\(command)\nexec \"${SHELL:-/bin/zsh}\" -l\n"
-        guard FileManager.default.createFile(atPath: script.path, contents: Data(body.utf8), attributes: [.posixPermissions: 0o700]) else { return false }
-        let running = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == TerminalChoice.terminal }
-        if let running { opened(running.processIdentifier, name, false) }
-        // Until the new Terminal's pid comes back (below), an activation by a Terminal that wasn't running is this run's,
-        // so it can't take your keyboard before the watch by pid starts (PR 20 sol-F4). `agent open` does the same.
-        if running == nil {
-            AgentActivity.shared.markLaunch(bundle: TerminalChoice.terminal, excluding: [], for: 10)
-            AgentLaunchFocus.shared.watch(bundle: TerminalChoice.terminal, excluding: [], for: 10)
-        }
-        let cfg = NSWorkspace.OpenConfiguration()
-        cfg.activates = false
-        cfg.addsToRecentItems = false
-        NSWorkspace.shared.open([script], withApplicationAt: terminal, configuration: cfg) { app, _ in
-            guard let app, running == nil else { return }
-            DispatchQueue.main.async { opened(app.processIdentifier, name, true) }
-        }
-        // Terminal has read it by then; the folder doesn't fill up.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { try? FileManager.default.removeItem(at: script) }
-        return true
-    }
-
     private lazy var ghosttyRun = Scripts.ghosttyRun()
 
     /// AppleScript errors that mean the request never reached Ghostty, so opening the file instead can't make a second window.

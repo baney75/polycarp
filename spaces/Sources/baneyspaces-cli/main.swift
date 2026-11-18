@@ -17,25 +17,9 @@ usage: \(me) <command>
   send <id | words> <text>    type text into a Ghostty terminal, as if pasted
   notify [message]            flag the terminal this runs in as needing you
   state                       the session engine's live state as JSON
-  query [windows|workspaces|displays|focused|layout|theme|state] [--json]
-                              the window manager's state, as agents see it (spec/agent-api.md)
-  subscribe [--events a,b]    its changes as they happen, one JSON event per line
-  agent status|on [N]|off     the agent workspace: agents drive apps there while you work here
-  agent open <app> [file…]    open an app (or files in it) there, without switching you
-                              (Full Access: "System Settings" x-apple.systempreferences:<pane> opens that pane)
-  agent run [--dir D] -- CMD  run a command (claude, grok…) in a Ghostty window there
-  agent \(HandsTools.verbLine)
-                              read and act on apps on the agent workspace (or lent ones) without touching
-                              your screen; each prints one JSON envelope (agent <command> --help, or with
-                              no arguments, shows its usage). `agent open` prints one too.
-  agent cursor on|theme <name>|status   each agent's cursor on the agent workspace (default, minimal, classic, omarchy); only Settings turns it off
-  agent shot --window ID --cursor   draw the agent's cursor into the capture (off by default)
-  agent lend <app|pid> [--for 30m]   asks you, in a sheet in Polycarp, whether agents may use an app you have open
-  agent allow [--remove] <app>       asks you, in a sheet in Polycarp, whether agents may open an app (--list shows them)
-                              (only a real click on Lend lends it; running this lends nothing by itself)
-  mcp                         the same commands as a stdio MCP server (claude mcp add baneyspaces -- polycarp-spaces mcp)
-  agent move <id | words>     send a window there (only windows of apps started for an agent)
-  agent move --window ID [--frame x,y,w,h]   the hands verb: a window you may use onto the agent workspace
+  agent status|on [N]|off     the agent workspace: a workspace of its own for agent apps, out of your way
+  agent windows [--json]      the windows on the agent workspace (docs/agent-workspace-api.md)
+  agent move <window number>  send a window Polycarp places to the agent workspace
   sandbox up|down|reset|status|view|guest   a throwaway macOS VM for agent work (sandbox help)
   phone ls|ui|shot|tap|swipe|type|key|shell|mirror   phones for agents (phone help)
   set <setting> <value>       appearance.theme omarchy|baneyspaces|minimal, appearance.palette auto|<name>,
@@ -43,8 +27,8 @@ usage: \(me) <command>
   get [setting]               read one setting, or all three
   update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it
   --version                   this command's version and the commit it was built from
-  remote on|off|status|token  let your other machines (tailnet only) send agent work here
-  --on HOST <command>         run ls or agent status|open|run on another machine
+  remote on|off|status|token  let your other machines (tailnet only) look at this one
+  --on HOST <command>         run ls or agent status on another machine
   hook claude|grok            for agent hooks: reads the hook JSON on stdin
   event --state S [--agent A] [--session ID] [--cwd DIR] [--message M] [--started] [--at SECS]
                               report any agent's state (working, waiting, idle, end);
@@ -127,7 +111,7 @@ if CommandLine.arguments.count == 3, CommandLine.arguments[1] == DockRestartHelp
 }
 
 var argv = Array(CommandLine.arguments.dropFirst())
-// Only in front of the command: `agent run -- tool --on staging` is the tool's own flag.
+// Only in front of the command: a later `--on` belongs to the command, not to us.
 if argv.first == "--on", argv.count > 1 {
     remoteHost = argv[1]
     argv.removeFirst(2)
@@ -173,34 +157,6 @@ case "notify":
                         message: rest.joined(separator: " "), at: Date().timeIntervalSince1970)
     _ = call(Wire.Request(op: .notify, text: rest.joined(separator: " "), event: ev))
 
-case "query":
-    // The agent API's read surface (spec/agent-api.md): a short table, or with --json the envelope.
-    let what = rest.first { !$0.hasPrefix("-") } ?? AgentAPI.Query.state.rawValue
-    guard let q = AgentAPI.Query(rawValue: what) else {
-        fail("usage: \(me) query [\(AgentAPI.Query.allCases.map(\.rawValue).joined(separator: "|"))] [--json]", code: 2)
-    }
-    let env = HandsCLI.send(HandsRequest(verb: "query", args: ["what": .string(q.rawValue)], session: HandsCLI.defaultSession()), timeout: 10)
-    if rest.contains("--json") { out(env.line) }
-    else if env.ok, let data = env.data { out(AgentAPI.text(q, data)) }
-    else { fail(env.error.map { "\($0.message) (\($0.suggestion))" } ?? "failed") }
-    exit(env.ok ? 0 : 1)
-
-case "subscribe":
-    // The agent API's events (spec/agent-api.md): one JSON object per line until stopped or the app quits.
-    let types = flag("--events", in: rest)
-    if case .failure(let e) = AgentEvents.filter(types) { fail("\(e.message) (\(e.suggestion))", code: 2) }
-    setvbuf(stdout, nil, _IOLBF, 0)
-    var refused = false
-    let reached = Wire.stream(Wire.Request(op: .subscribe, target: HandsCLI.defaultSession(), text: types)) { line in
-        let text = String(decoding: line, as: UTF8.self)
-        // A refusal is one envelope line; events never carry "ok".
-        if JSONValue.parse(text)?["ok"]?.bool == false { refused = true }
-        print(text)
-        return !refused
-    }
-    if !reached { fail("Polycarp isn't running") }
-    exit(refused ? 1 : 0)
-
 case "state":
     guard let d = FileManager.default.contents(atPath: Wire.statePath) else { fail("no state yet: is Polycarp running?") }
     out(String(data: d, encoding: .utf8) ?? "")
@@ -233,46 +189,31 @@ case "sandbox":
 case "phone", "phones":
     PhoneCommand.run(rest)
 
-case "mcp":
-    MCPCommand.run(connector: rest.contains("--connector"))
-
-// `agent <verb> --help` (or -h): that verb's usage, before any arm below can read --help as search words or an app name.
-case "agent" where AgentHelp.asked(rest):
-    let verb = rest.first.flatMap { AgentHelp.words.contains($0) ? nil : $0 }
-    out(AgentHelp.text(verb: verb, usage: usage))
-    exit(0)
-
-case "agent" where HandsTools.userOnly.contains(rest.first ?? ""):
-    HandsCLI.lendOrReturn(rest)
-
-case "agent" where rest.first == "allow":
-    HandsCLI.allow(rest)
-
-// `--on HOST agent open …` is the session engine's own op (the hands run on this Mac only): it falls through to the arm below.
-// `agent move <id | words>` stays the session op; `agent move --window N` is the hands verb.
-case "agent" where HandsTools.tool(verb: rest.first ?? "") != nil && !(remoteHost != nil && rest.first == "open")
-    && !(rest.first == "move" && !HandsTools.movesWindow(rest)):
-    HandsCLI.run(rest)
-
 case "agent":
     // The agent workspace: agents work there while you work here.
     let sub = rest.first ?? "status"
-    let r = call(Wire.Request(op: .agent, text: sub, args: Array(rest.dropFirst())))
+    let r = call(Wire.Request(op: .agent, text: sub, args: Array(rest.dropFirst()).filter { $0 != "--json" }))
     let info = r.info ?? [:]
-    if rest.contains("--json") {
+    if sub == "windows" {
+        // The API's reply as it came (docs/agent-workspace-api.md), or one window a line.
+        guard let wins = AgentAPI.decodeWindows(r) else { fail("the agent workspace API answered without a window list") }
+        if rest.contains("--json") {
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+            out(String(data: try! enc.encode(wins), encoding: .utf8)!)
+        } else {
+            out(wins.isEmpty ? "no windows on agent workspace \(info["workspace"] ?? "?")" : wins.map { "\($0.id)\t\($0.app)\t\($0.title)" }.joined(separator: "\n"))
+        }
+    } else if sub == "move" {
+        out("window \(info["window"] ?? "?") is on agent workspace \(info["workspace"] ?? "?")")
+    } else if rest.contains("--json") {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         struct Out: Encodable { let info: [String: String]; let items: [Item] }
         out(String(data: try! enc.encode(Out(info: info, items: r.items ?? [])), encoding: .utf8)!)
-    } else if sub == "mode" {
-        out("agent access: \(info["title"] ?? info["access"] ?? "?")")
-        if let d = info["detail"] { out("  " + d) }
-        out("  Donovan changes it in Polycarp Settings > Agents.")
     } else if sub == "status" || sub == "on" {
-        let access = AgentAccessMode(saved: info["access"]).title
-        guard let ws = info["workspace"], ws != "off" else { out("agent workspace: off (polycarp-spaces agent on [N])\nagent access: \(access)"); break }
+        guard let ws = info["workspace"], ws != "off" else { out("agent workspace: off (polycarp-spaces agent on [N])"); break }
         out("agent workspace: \(ws) (you're on \(info["current"] ?? "?"))")
-        out("agent access: \(access)")
         let wins = info.filter { $0.key.hasPrefix("window.") }.sorted { $0.key < $1.key }.map(\.value)
         out(wins.isEmpty ? "  no windows there yet" : wins.map { "  " + $0 }.joined(separator: "\n"))
     } else {

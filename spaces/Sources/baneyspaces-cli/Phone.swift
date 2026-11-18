@@ -19,8 +19,8 @@ enum PhoneCommand {
       shell [command…]          adb shell (Android)
       mirror                    show the phone's screen: scrcpy, or iPhone Mirroring
 
-    An iPhone is driven through its iPhone Mirroring window: `polycarp-spaces agent open
-    "iPhone Mirroring"` puts it on the agent workspace, then `polycarp-spaces agent` works it from behind.
+    An iPhone shows in its iPhone Mirroring window (`mirror`); `polycarp-spaces agent move <window>` puts
+    that window on the agent workspace.
     """
 
     static var adb: String? {
@@ -80,7 +80,7 @@ enum PhoneCommand {
             guard code.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { fail("not a key: \(k)", code: 2) }
             _ = adbRun(["shell", "input", "keyevent", code])
         case "shell":
-            // Hands the terminal to adb, so an interactive shell works.
+            // Gives the terminal to adb, so an interactive shell works.
             let argv = [adb, "-s", s, "shell"] + rest
             var cargs = argv.map { strdup($0) } + [nil]
             execv(adb, &cargs)

@@ -43,25 +43,25 @@ final class TerminalAgentTests: XCTestCase {
     }
 
     func testGhosttyIsNeverHandedAScriptFileWhenItCanBeScripted() throws {
-        let launcher = try HandsSourceTests.code("Sources/BaneySpaces/Launcher.swift")
-        let open = try XCTUnwrap(HandsSourceTests.block(after: "static func open(_ agent: TerminalAgent, at path: String, in terminal: URL)", in: launcher))
+        let launcher = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        let open = try XCTUnwrap(SourceText.block(after: "static func open(_ agent: TerminalAgent, at path: String, in terminal: URL)", in: launcher))
         let viaGhostty = try XCTUnwrap(open.range(of: "if isGhostty(terminal), let ghostty { return ghostty(NSHomeDirectory(), url, openFile) }"))
         let fallback = try XCTUnwrap(open.range(of: "\n        openFile()"))
         XCTAssertTrue(viaGhostty.lowerBound < fallback.lowerBound, "Ghostty first, opening the file only as the fallback")
-        let brew = try XCTUnwrap(HandsSourceTests.block(after: "private static func runInTerminal(_ command: String)", in: launcher))
+        let brew = try XCTUnwrap(SourceText.block(after: "private static func runInTerminal(_ command: String)", in: launcher))
         let brewGhostty = try XCTUnwrap(brew.range(of: "if Terminals.isGhostty(Terminals.handler()), let ghostty = Terminals.ghostty {"))
         let brewOpen = try XCTUnwrap(brew.range(of: "\n        NSWorkspace.shared.open(url)\n    }"))
         XCTAssertTrue(brewGhostty.lowerBound < brewOpen.lowerBound, "brew: Ghostty before opening the file")
-        let engine = try HandsSourceTests.code("Sources/BaneySpaces/Session/Engine.swift")
-        let run = try XCTUnwrap(HandsSourceTests.block(after: "func runInGhostty(", in: engine))
+        let engine = try SourceText.code("Sources/BaneySpaces/Session/Engine.swift")
+        let run = try XCTUnwrap(SourceText.block(after: "func runInGhostty(", in: engine))
         XCTAssertTrue(run.contains("let r = s.run(\"runWindow\", [dir ?? \"\", command])") && run.contains("Self.neverReached.contains(r.error)"), "only an unsent request falls back")
-        let scripts = try String(contentsOf: HandsSourceTests.root.appendingPathComponent("Sources/BaneySpaces/Session/Scripts.swift"), encoding: .utf8)
-        let handler = try XCTUnwrap(HandsSourceTests.between("on runWindow(dir, cmd)", "end runWindow", in: scripts))
+        let scripts = try String(contentsOf: SourceText.root.appendingPathComponent("Sources/BaneySpaces/Session/Scripts.swift"), encoding: .utf8)
+        let handler = try XCTUnwrap(SourceText.between("on runWindow(dir, cmd)", "end runWindow", in: scripts))
         XCTAssertTrue(handler.contains("set command of cfg to cmd") && handler.contains("set wait after command of cfg to true"), "run as the window's command, never typed into his shell")
         XCTAssertTrue(handler.contains("with timeout of 10 seconds"), "every tell carries a timeout")
         XCTAssertTrue(handler.range(of: "activate")!.lowerBound < handler.range(of: "new window with configuration cfg")!.lowerBound, "Ghostty in front before the window is made")
         XCTAssertTrue(handler.contains("is running) then return \"not running\""), "never launches Ghostty from the script")
-        XCTAssertTrue(try HandsSourceTests.code("Sources/BaneySpaces/AppDelegate.swift").contains("self.session.engine.runInGhostty(in: dir, script: script, orElse: orElse)"))
+        XCTAssertTrue(try SourceText.code("Sources/BaneySpaces/AppDelegate.swift").contains("self.session.engine.runInGhostty(in: dir, script: script, orElse: orElse)"))
     }
 
     func testTerminalIsTheLastResort() {
