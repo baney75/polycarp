@@ -24,19 +24,25 @@ pub const ASKED_MS: u32 = 1_000;
 static ASKS: Mutex<Vec<(i64, i64, u32)>> = Mutex::new(Vec::new());
 
 /// The daemon is asking Windows to bring `hwnd` (root owner `root`) to the front now (`now`: `winapi::tick_ms`).
-pub fn note_asked(hwnd: i64, _root: i64, now: u32) {
+pub fn note_asked(hwnd: i64, root: i64, now: u32) {
     let mut a = ASKS.lock().unwrap_or_else(|e| e.into_inner());
     a.retain(|&(h, _, t)| h != hwnd && now.wrapping_sub(t) < ASKED_MS);
-    a.push((hwnd, 0, now));
+    a.push((hwnd, root, now));
 }
 
 /// Windows put `hwnd` in front at once when asked: no ask of it is left to land late.
-pub fn landed(_hwnd: i64) {}
+pub fn landed(hwnd: i64) {
+    ASKS.lock().unwrap_or_else(|e| e.into_inner()).retain(|&(h, _, _)| h != hwnd);
+}
 
-/// `hwnd` (root owner `root`) took the front: how long ago the daemon asked for it, within `ASKED_MS`.
-pub fn take_asked(hwnd: i64, _root: i64, now: u32) -> Option<u32> {
-    let a = ASKS.lock().unwrap_or_else(|e| e.into_inner());
-    a.iter().rev().find(|&&(h, _, _)| h == hwnd).map(|&(_, _, t)| now.wrapping_sub(t)).filter(|&d| d < ASKED_MS)
+/// `hwnd` (root owner `root`) took the front: how long ago the daemon asked for it, within `ASKED_MS`. An ask covers
+/// every window under the asked one's root owner, since Windows gives the front to a window's open dialog instead. The
+/// ask is used up: a later front of that window is decided by your input alone.
+pub fn take_asked(hwnd: i64, root: i64, now: u32) -> Option<u32> {
+    let mut a = ASKS.lock().unwrap_or_else(|e| e.into_inner());
+    a.retain(|&(_, _, t)| now.wrapping_sub(t) < ASKED_MS);
+    let i = a.iter().rposition(|&(h, r, _)| h == hwnd || (root != 0 && r == root))?;
+    Some(now.wrapping_sub(a.remove(i).2))
 }
 
 /// When a person last typed or pointed, as the input hooks see it.
@@ -50,8 +56,10 @@ impl InputClock {
     }
 
     /// A keyboard or mouse event at `tick`. `real` is false for input software injected.
-    pub fn note(&self, _real: bool, tick: u32) {
-        self.last.store(tick.max(1), Ordering::Relaxed);
+    pub fn note(&self, real: bool, tick: u32) {
+        if real {
+            self.last.store(tick.max(1), Ordering::Relaxed);
+        }
     }
 
     /// Milliseconds from the last real input to `now`, or None before the hooks have seen any.

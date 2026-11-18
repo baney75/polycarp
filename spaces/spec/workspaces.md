@@ -100,7 +100,9 @@ takes you to that display.
 An activation caused by an app (a notification, an attention request) never changes the workspace or
 the display you are on. If it already moved the compositor's focus, the front window you had is put back.
 The result is `refuse_follow` with reason `not_user_caused`. An activation BaneySpaces asked for itself, to bring a workspace's
-window to the front, counts as not user caused too, even when it lands after the next switch.
+window to the front, counts as not user caused too, even when it lands after the next switch or on a dialog that
+window owns. Each ask covers one front: once it lands, that window's next activation is judged as any other. Input
+that software sent (BaneySpaces' own keys included) never makes an activation user caused.
 
 ### R-F3 Windows outside the scheme are ignored
 The model tracks only windows on BaneySpaces workspaces. Others (a platform's own scratchpad, a
