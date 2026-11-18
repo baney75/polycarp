@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::desk::fake::{h, Fake, Win};
-use crate::testwin::{eventually, TestWin};
+use crate::testwin::{desktop_turn, eventually, TestWin};
 
 fn app(rect: [i32; 4]) -> Win {
     Win {
@@ -275,10 +275,12 @@ fn a_reused_handle_is_never_taken_for_the_window_recorded() {
     );
 }
 
-// The real desk: the shell's cloak, DWM's answer, layered alpha and the taskbar, on the runner's own session.
+// The real desk: the shell's cloak, DWM's answer, layered alpha and the taskbar, on the runner's own session. Each
+// takes the desktop turn: a cloak or uncloak here goes through the same shell as the daemon tests' hides.
 
 #[test]
 fn real_the_shell_cloaks_and_uncloaks_a_window_in_place() {
+    let _turn = desktop_turn();
     let w = TestWin::open("cloak test", 0);
     let c = Cloaker::new().expect("ImmersiveShell is there on a desktop with explorer.exe");
     let before = winapi::rect(w.hwnd);
@@ -300,6 +302,7 @@ fn real_the_shell_cloaks_and_uncloaks_a_window_in_place() {
 
 #[test]
 fn real_without_the_shell_a_window_is_parked_and_comes_back() {
+    let _turn = desktop_turn();
     let w = TestWin::open("park test", 0);
     let before = winapi::rect(w.hwnd).unwrap();
     assert_eq!(hide_user(w.hwnd, None), How::Park);
@@ -315,6 +318,7 @@ fn real_without_the_shell_a_window_is_parked_and_comes_back() {
 
 #[test]
 fn real_a_ghost_is_transparent_and_comes_back_opaque() {
+    let _turn = desktop_turn();
     let w = TestWin::open("ghost test", 0);
     let undo = ghost(w.hwnd).expect("an ordinary window takes the ghost");
     assert_eq!(winapi::layered_alpha(w.hwnd), Some(0));
@@ -336,6 +340,7 @@ fn real_a_ghost_is_transparent_and_comes_back_opaque() {
 
 #[test]
 fn real_a_new_window_is_on_the_current_virtual_desktop() {
+    let _turn = desktop_turn();
     let w = TestWin::open("desktop test", 0);
     let d = Desktops::new().expect("the virtual desktop manager");
     assert_ne!(d.on_current(w.hwnd), Some(false));
