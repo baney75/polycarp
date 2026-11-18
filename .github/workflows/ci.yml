@@ -242,6 +242,10 @@ jobs:
         # The bench takes a few minutes; a hang ends the step here, so the artifact below still uploads.
         timeout-minutes: 15
         run: platforms/windows/tests/ci/switch-bench.ps1 -Bin target/release -Out ${{ runner.temp }}/speed -Speed spec/speed.json
+      - name: Keymap
+        if: always()
+        shell: powershell
+        run: platforms/windows/tests/ci/keymap.ps1 -Bin target/release -Out ${{ runner.temp }}/speed/keymap
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
