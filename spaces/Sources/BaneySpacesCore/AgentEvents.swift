@@ -33,11 +33,14 @@ public enum AgentEvents {
                                 "state": AgentAPI.result(.state, f, v)]))
     }
 
-    /// One line on the wire.
-    public static func line(_ e: Event, seq: Int, at: Date) -> String {
-        JSONValue.object(["version": .int(AgentAPI.version), "seq": .int(seq), "at": .int(Int(at.timeIntervalSince1970 * 1000)),
-                          "type": .string(e.type), "data": e.data]).text
+    /// One event as sent: `$defs/event`.
+    public static func object(_ e: Event, seq: Int, at: Date) -> JSONValue {
+        .object(["version": .int(AgentAPI.version), "seq": .int(seq), "at": .int(Int(at.timeIntervalSince1970 * 1000)),
+                 "type": .string(e.type), "data": e.data])
     }
+
+    /// One line on the wire.
+    public static func line(_ e: Event, seq: Int, at: Date) -> String { object(e, seq: seq, at: at).text }
 
     static func place(_ w: AgentAPI.WindowFacts, _ f: AgentAPI.Facts) -> JSONValue {
         var o: [String: JSONValue] = ["workspace": AgentAPI.opt(w.window.workspace, JSONValue.int),
