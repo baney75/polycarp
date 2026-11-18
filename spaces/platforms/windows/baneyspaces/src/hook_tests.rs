@@ -160,6 +160,7 @@ fn the_hooks_on_a_real_desktop() {
     let form = "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object Windows.Forms.Form; $f.Text = 'bs early ghost'; [Windows.Forms.Application]::Run($f)";
     // No console window (CREATE_NO_WINDOW): one would report the same pid and is not the window under test.
     use std::os::windows::process::CommandExt;
+    let agents = crate::testwin::agents_turn();
     let mut agent = std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", form])
         .creation_flags(0x0800_0000)
@@ -192,6 +193,7 @@ fn the_hooks_on_a_real_desktop() {
         _ => unreachable!(),
     });
     share_agents(vec![], 0, true);
+    drop(agents);
     let _ = agent.kill();
     let _ = agent.wait();
     let (is_ghost, undo, facts) = read.expect("no SHOW event for the agent's form");
@@ -214,4 +216,25 @@ fn the_hooks_on_a_real_desktop() {
     assert!(shown.is_some(), "no window event for a new Notepad");
 
     stop();
+}
+
+/// The ghost's own bits: layered, click-through, never activated.
+const GHOST_BITS: i64 = (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE) as i64;
+
+#[test]
+fn a_window_the_worker_is_showing_is_left_alone() {
+    // sol-F1: the worker shows a ghost alpha first, then its style. A window caught between the two has the ghost's
+    // bits at alpha 255. The event thread must not ghost it again: what it would keep to put back is the ghost.
+    let _agents = crate::testwin::agents_turn();
+    let w = crate::testwin::TestWin::open("mid show", 0);
+    let own = crate::winapi::ex_style(w.hwnd);
+    crate::winapi::set_ex_style(w.hwnd, own | GHOST_BITS);
+    assert!(crate::winapi::set_layered_alpha(w.hwnd, 255));
+    let pid = std::process::id();
+    share_agents(vec![(pid, crate::winapi::process_start(pid))], 0, false);
+    ghost_early(w.hwnd);
+    let kept = take_early(w.id());
+    share_agents(vec![], 0, true);
+    assert_eq!(kept, None, "the event thread ghosted a window the worker is showing and kept the ghost as its style");
+    assert_eq!(crate::winapi::layered_alpha(w.hwnd), Some(255), "the window was left as the worker had it");
 }

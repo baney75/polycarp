@@ -191,7 +191,7 @@ pub fn take_early(hwnd: i64) -> Option<crate::cloak::GhostUndo> {
 /// writing `state.json`), and a dialog drawn in that time is on your screen. The worker then records it.
 /// The same tests the worker makes for these two events (`Core::on_win_event`): a top-level window with a
 /// caption, a frame or a dialog, not one of the process's helper windows, menus or tooltips.
-fn ghost_early(h: HWND) {
+pub(crate) fn ghost_early(h: HWND) {
     use crate::winapi;
     if crate::daemon::stopping() || !winapi::exists(h) || !winapi::is_top_level(h) || !winapi::has_caption(h) {
         return;
@@ -218,6 +218,12 @@ fn ghost_early(h: HWND) {
     if let Some(undo) = crate::cloak::ghost(h) {
         EARLY.lock().unwrap_or_else(|p| p.into_inner()).push((id, undo));
     }
+}
+
+/// A test's own early ghost record, as if the event thread had ghosted `hwnd` for process `pid` started at `start`.
+#[cfg(test)]
+pub fn plant_early(hwnd: i64, _pid: u32, _start: u64, undo: crate::cloak::GhostUndo) {
+    EARLY.lock().unwrap_or_else(|p| p.into_inner()).push((hwnd, undo));
 }
 
 unsafe extern "system" fn win_event(_h: HWINEVENTHOOK, event: u32, hwnd: HWND, id_object: i32, id_child: i32, _thread: u32, _time: u32) {

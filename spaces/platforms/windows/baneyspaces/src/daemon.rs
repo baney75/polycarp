@@ -1928,6 +1928,10 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
 }
 
 #[cfg(test)]
+#[path = "early_tests.rs"]
+mod early_tests;
+
+#[cfg(test)]
 mod feed_tests {
     use super::*;
     use crate::feed::{Feed, FeedMsg};
