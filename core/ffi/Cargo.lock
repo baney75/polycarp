@@ -1467,6 +1467,7 @@ dependencies = [
 [[package]]
 name = "polycarp-voice"
 version = "0.1.6"
+source = "git+https://github.com/baney75/silas?rev=15128062d9c2ac08a688b6b0e3e2d112f399fd19#15128062d9c2ac08a688b6b0e3e2d112f399fd19"
 dependencies = [
  "anyhow",
  "chrono",

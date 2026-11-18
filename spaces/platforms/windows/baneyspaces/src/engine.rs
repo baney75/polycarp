@@ -1,5 +1,5 @@
 //! The hands engine: vercel-labs/agent-desktop's Windows adapter (UI Automation), built from the
-//! pinned commit (platforms/linux/engine.pin, the same one macOS and Linux use) by
+//! pinned commit (platforms/windows/engine.pin, the same one macOS uses) by
 //! `platforms/windows/scripts/build-engine.ps1`.
 //!
 //! The engine never decides what an agent may touch: the daemon checks scope first, by pid and by

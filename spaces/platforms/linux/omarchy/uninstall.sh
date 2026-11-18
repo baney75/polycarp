@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# The Linux desktop is retired, but an earlier install may still be in place: this script, kept from
+# before the retirement, takes it out. Nothing runs it on its own; omarchy/install.sh only points here.
+#
 # Removes what install.sh added and leaves ~/.config/hypr/hyprland.lua as it was. The agent skill
 # goes only where its text is still what baneyspaces wrote. `--dry-run` prints what would happen.
 # Omarchy's own bindings come back on the next Hyprland reload, because the include that unbound them
@@ -10,7 +13,7 @@ DRY=0; PURGE=0; BIN_DIR="$HOME/.local/bin"
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1;; --purge) PURGE=1;; --bin) BIN_DIR="$2"; shift;;
-    -h|--help) sed -n '2,7p' "$0"; exit 0;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0;;
     *) echo "unknown option $1" >&2; exit 2;;
   esac; shift
 done
@@ -45,7 +48,8 @@ if [ -f "$MAIN" ] && grep -qF -- "$BEGIN" "$MAIN"; then
     cat "$tmp" > "$MAIN"; rm -f "$tmp"
     # Byte for byte: if the original had no trailing newline, the rewrite above added one. Take it
     # off again when that makes the file equal to the backup taken at install.
-    orig="$(sed -n 's/.*"backup":"\([^"]*\)".*/\1/p' "$STATE/install.json" 2>/dev/null)/hyprland.lua"
+    # No install.json (state removed by hand) is no backup to compare with, not a failure.
+    orig="$(sed -n 's/.*"backup":"\([^"]*\)".*/\1/p' "$STATE/install.json" 2>/dev/null || true)/hyprland.lua"
     if [ -f "$orig" ] && ! cmp -s "$orig" "$MAIN" && [ -n "$(tail -c1 "$orig")" ]; then
       tmp="$(mktemp)"; head -c -1 "$MAIN" > "$tmp"
       if cmp -s "$orig" "$tmp"; then cat "$tmp" > "$MAIN"; fi

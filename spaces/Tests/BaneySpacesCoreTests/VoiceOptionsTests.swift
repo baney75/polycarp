@@ -20,10 +20,9 @@ final class VoiceOptionsTests: XCTestCase {
         XCTAssertEqual(Set(VoiceOptions.languages.map(\.id)).count, VoiceOptions.languages.count)
     }
 
-    /// The core learns only on a U.S. layout (focus.rs `us_layout`); the setting says so.
-    func testLearningSaysItNeedsAUSLayout() throws {
+    /// The core learns only on a U.S. layout (polycarp-voice focus.rs `us_layout`, in baney75/silas); the setting says so.
+    func testLearningSaysItNeedsAUSLayout() {
         XCTAssertTrue(VoiceOptions.learnHelp.contains("U.S. or ABC"))
-        XCTAssertTrue(try Repo.text("../core/voice/src/core.rs").contains("crate::focus::us_layout()"), "the limit is still real")
     }
 
     func testImportSaysWhatItAdded() {
