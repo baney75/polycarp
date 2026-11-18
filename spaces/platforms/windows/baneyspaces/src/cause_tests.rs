@@ -155,7 +155,11 @@ fn the_daemon_asks_before_it_calls_an_activation_yours() {
 #[test]
 fn the_daemons_nudge_carries_its_own_mark() {
     let src = include_str!("winapi.rs").replace("\r\n", "\n");
-    assert!(body(&src, "nudge_input").contains("dwExtraInfo: OWN_INPUT_MARK"), "the idle clock knows the nudge by its mark");
+    // The Win release the hook resends (#557) is the daemon's too: counted, "other programs' input counts" would make
+    // it yours.
+    for f in ["nudge_input", "release_masked"] {
+        assert!(body(&src, f).contains("dwExtraInfo: OWN_INPUT_MARK"), "the idle clock knows {f}'s keys by their mark");
+    }
     let src = include_str!("hook.rs").replace("\r\n", "\n");
     assert_eq!(src.matches("OWN_INPUT_MARK").count(), 2, "both hooks tell the daemon's own input apart");
     assert!(body(&src, "idle_ms").contains("crate::winapi::idle_ms()"), "idle_ms must weigh the system's count too");
