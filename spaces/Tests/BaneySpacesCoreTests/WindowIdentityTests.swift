@@ -112,13 +112,16 @@ final class WindowIdentityTests: XCTestCase {
         let key = TitleHash.key(at: folder.appendingPathComponent("title.key"))
         XCTAssertEqual(key.count, 32)
         XCTAssertEqual(TitleHash.key(at: folder.appendingPathComponent("title.key")), key, "made once")
-        let secret = "Private Browsing - Statement for Account 4471"
+        let secret = "Private Browsing - Statement for Account 4471-zz"
         let r = WindowRecord(bundle: "com.example.browser", title: secret, order: 0, workspace: 1, frame: nil, displays: [laptop],
                              window: 1, pid: 1, at: 1, key: key)
         let url = folder.appendingPathComponent("records.json")
         PrivateFile.write(try JSONEncoder().encode([r]), to: url)
         let text = try String(contentsOf: url, encoding: .utf8).lowercased()
-        for word in ["private", "browsing", "statement", "account", "4471"] { XCTAssertFalse(text.contains(word), word) }
+        // A keyed hash is hex or base64, so a checked word made only of hex digits would match by chance (1 run in 100 for "4471").
+        let words = ["private", "browsing", "statement", "account", "4471-zz"]
+        for word in words { XCTAssertTrue(word.contains { !$0.isHexDigit }, "\(word) could appear in a hash") }
+        for word in words { XCTAssertFalse(text.contains(word), word) }
         for file in [url, folder.appendingPathComponent("title.key")] {
             let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
             XCTAssertEqual(mode?.intValue, 0o600, file.lastPathComponent)

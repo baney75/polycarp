@@ -2,13 +2,20 @@
 //! window lives. CI runs `cargo test` on a runner with an interactive desktop (explorer.exe and DWM), so the
 //! shell cloak, layered alpha and the foreground all behave as they do on a person's machine.
 
-use std::sync::{mpsc, OnceLock};
+use std::sync::{mpsc, Mutex, MutexGuard, OnceLock};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::COLOR_WINDOW;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 pub const CLASS: &str = "BaneySpacesUnitTest";
+
+/// One turn at the runner's desktop: every test that types keys, cloaks or uncloaks a window through the shell, or
+/// reads back what the daemon hid holds this, so no test's shell call lands while another reads its own back.
+pub fn desktop_turn() -> MutexGuard<'static, ()> {
+    static DESKTOP: Mutex<()> = Mutex::new(());
+    DESKTOP.lock().unwrap_or_else(|p| p.into_inner())
+}
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -54,6 +61,7 @@ impl TestWin {
         register();
         let (tx, rx) = mpsc::channel::<isize>();
         let title = title.to_string();
+        let title_of = title.clone();
         let thread = std::thread::spawn(move || unsafe {
             let (class, text) = (wide(CLASS), wide(&title));
             let h = CreateWindowExW(
@@ -82,10 +90,25 @@ impl TestWin {
         });
         let h = rx.recv().unwrap_or(0) as HWND;
         assert!(!h.is_null(), "CreateWindowExW failed");
-        Self {
+        let w = Self {
             hwnd: h,
             thread: Some(thread),
+        };
+        // The shell puts a new window on a virtual desktop a moment after it exists, and re-decides its cloak
+        // when it does: a cloak put on before then can come off. A test starts once the window is on this one.
+        if let Some(d) = crate::cloak::Desktops::new() {
+            let t = std::time::Instant::now();
+            assert!(
+                eventually(|| d.on_current(h) == Some(true)),
+                "the shell did not put {title_of:?} on the current virtual desktop within 2 s (it says {:?})",
+                d.on_current(h)
+            );
+            let ms = t.elapsed().as_millis();
+            if ms > 0 {
+                eprintln!("{title_of:?} was on the current virtual desktop after {ms} ms");
+            }
         }
+        w
     }
 
     pub fn id(&self) -> i64 {
