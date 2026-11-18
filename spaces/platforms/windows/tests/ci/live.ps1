@@ -277,6 +277,32 @@ check (-not (win $pw).Seen) 'it is not on your screen' (win $pw)
 check ((hidden_entry (j (bsc state)) $pw).how -eq 'park') 'show then hide leaves it parked and recorded'
 Stop-Process -Id $ppid -Force -ErrorAction SilentlyContinue
 
+say '== 6c. a window on a hidden workspace that its app hides and shows again stays hidden'
+# The daemon hides your other workspaces with the shell's own cloak, and the shell decides a window's cloak again when
+# the window is shown (it places it on a virtual desktop). A tray app restoring its window on workspace 3 while you are
+# on 2 must not draw it on 2, even for the moment between the shell's decision and the daemon's next look.
+$rp = Start-Process $testapp -PassThru; Start-Sleep 2
+$rw = @(wins | ? { $_.Pid -eq $rp.Id -and $_.Seen })[0]
+$cur = "$((j (bsc state)).data.monitors.PSObject.Properties | % { $_.Value.current })"
+[void](bsc move 3 --stay --window (hw $rw)); Start-Sleep 1
+check ($rw -and (win $rw.Hwnd).Cloaked -ne 0) 'a test app window sent to workspace 3 is cloaked' (win $rw.Hwnd)
+[void][Desk]::AppShow($rw.Hwnd, $false); Start-Sleep 1
+check (-not (win $rw.Hwnd).Seen) 'its app hid it (SW_HIDE)' (win $rw.Hwnd)
+$exp = @()
+foreach ($i in 1..5) {
+  [Desk]::WatchStart($false)
+  [void][Desk]::AppShow($rw.Hwnd, $true); Start-Sleep 3
+  $wr = [Desk]::WatchStop(); $wr | % { Add-Content $log "    $_" }
+  $ln = @($wr | ? { $_ -match "NEW w-$($rw.Hwnd) " })[0]
+  $exp += if ($ln -match 'visible_polls=(\d+) exposed_ms=(\d+)') { "$($Matches[1])/$($Matches[2])ms" } elseif ($ln) { '?' } else { 'not shown' }
+  if ($i -lt 5) { [void][Desk]::AppShow($rw.Hwnd, $false); Start-Sleep 1 }
+}
+check (-not ($exp | ? { $_ -notmatch '^0/' })) "in 5 shows by its app it was never seen on your workspace (visible polls/exposed: $($exp -join ', '))" ($exp -join ', ')
+$now = "$((j (bsc state)).data.monitors.PSObject.Properties | % { $_.Value.current })"
+check ($now -eq $cur) "you stayed on workspace $cur" "now $now"
+check ("$((j (bsc state)).data.windows.(hw $rw).home)" -match '3') 'it is still on workspace 3' ((j (bsc state)).data.windows.(hw $rw) | ConvertTo-Json -Compress)
+Stop-Process -Id $rp.Id -Force -ErrorAction SilentlyContinue
+
 say '== 7. deny by default, settings, and agent peers'
 check ((bsc get) -match '"dock.enabled":true') 'settings default: dock true'
 check ((bsc set dock.enabled false) -match '"ok":true' -and (bsc get dock.enabled) -match 'false') 'set/get round-trips dock.enabled'

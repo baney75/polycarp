@@ -217,6 +217,11 @@ unless given `-Disposable`. By hand only on a disposable Windows desktop (a VM),
 The CLI helper in the script is `bsc`: `cli` is a built-in PowerShell alias for Clear-Item, and aliases win over
 functions.
 
+Section 6c has the test app's own thread hide and then show (SW_HIDE, SW_SHOWNA) its window on hidden workspace 3,
+five times, while a watch polls every visible window as fast as it can. The shell decides a window's cloak again when
+it is shown, so this is the moment a tray app's restored window could draw on your workspace before the daemon's next
+look; any poll that sees it fails the check.
+
 What the runner can't run, so it stays untested live on Windows hardware:
 
 - Two displays (section 8, R-M2 and R-M3). The runner has one 1024x768 display, and a second needs a display
