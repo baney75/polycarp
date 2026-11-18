@@ -296,3 +296,27 @@ fn the_hooks_on_a_real_desktop() {
     stop();
     unsafe { PostThreadMessageW(watcher, WM_QUIT, 0, 0) };
 }
+
+#[test]
+fn the_chord_is_recorded_before_its_mask_goes_out() {
+    // #564 second-F4: sent first, the mask's 0xE8 key-up could be seen before the chord is recorded, and a release
+    // within PENDING_MS would then be held back and re-sent behind later keys (Win+1, then a quick E, runs Win+E).
+    let src = include_str!("hook.rs").replace("\r\n", "\n");
+    let at = src.find("if crate::keys::chord_masks(mods) {").expect("the chord's mask");
+    let block = &src[at..at + src[at..].find("Msg::Chord").expect("the chord message")];
+    let chord = block.find("WIN.chord(true, k.time)").expect("the chord recorded as masked");
+    let nudge = block.find("nudge_input()").expect("the mask sent");
+    assert!(chord < nudge, "the chord is recorded before the mask goes out");
+    assert!(block[nudge..].contains("WIN.reset()"), "a mask SendInput refused clears the chord again");
+    // And the cleared chord holds no release back.
+    let m = WinMask::new();
+    let resent = std::cell::Cell::new(0);
+    m.win_down(false);
+    m.chord(true, 100);
+    m.reset();
+    assert!(!m.win_up(110, || {
+        resent.set(resent.get() + 1);
+        3
+    }));
+    assert_eq!(resent.get(), 0);
+}
