@@ -173,6 +173,25 @@ as a literal in `Sources`, outside the theme module and the agent cursor, fails 
 `spec/theme-literals-allow.txt` lists it with a reason. A line there that no longer matches fails
 too, so the list only shrinks.
 
+## Window borders
+
+On macOS, Polycarp can draw a border around the focused window in the theme's `accent`, and
+optionally one around every other window in its `border` color. It is off until you turn it on
+(Settings > Appearance > Window borders) and holds no watcher, timer or window while off.
+
+- Width is the theme's focused width (`border_width` x 1.5), else its border width, else 2 pt,
+  held to 1 to 8 pt. The radius is `radius_large`, so a square theme draws square borders.
+- The border sits wholly outside the window, in Polycarp's own click-through windows. Polycarp
+  never draws into another app's window and never moves one for a border.
+- Only ordinary windows mostly on a display get one: not menus, panels, clear overlays, slivers
+  under 50 pt, full-screen windows or Polycarp's own. At most 32 at once.
+- While a window moves, its border follows it. The budget is at most one frame behind at 120 Hz,
+  measured by `BANEYSPACES_RENDER_BORDER_LAG`. Following the window server's list does not meet it
+  yet (median about one frame, p99 several under load), which is one more reason it starts off.
+
+This section is macOS only: on Linux the compositor draws window borders itself (Hyprland's own
+border settings).
+
 ## The dock switch
 
 `themes.json` keeps `default` a plain bool (`true`) and lists the exceptions under
