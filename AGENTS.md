@@ -1,5 +1,10 @@
 # Polycarp agent rules
 
+Polycarp is for macOS and Windows. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
+
+Browser and voice work goes to Tychicus and Silas; Linux desktop work is retired. A PR here that adds any of it is refused.
+Until `voice/` and `browser/` leave this repo, a fix for something that broke in them still lands here.
+
 This repo holds three apps and one small command (`cli/`) with their full history. Each directory keeps its own `AGENTS.md`
 rules; read the one for the directory you touch before you change it. No renaming of the products
 yet.
@@ -20,9 +25,7 @@ Run each from its directory.
   `(cd cli && node --test test/skill-lint.test.mjs)`. Do not run `browser/check.sh` (it writes with
   `--write`), `./dev.sh` or `npm run dev`. Build only with `TABKYRA_NO_BUMP=1 TABKYRA_OUT_DIR=<scratch dir>`.
 
-- The root `install.sh`: `bash -n install.sh`, and for its Linux path
-  `TMPDIR=/var/tmp spaces/platforms/linux/tests/one-command-install.sh`, which installs every part into a throwaway
-  HOME (a few GB of builds, so not on a RAM-backed /tmp). Never run `install.sh` itself against your real home to test it.
+- The root `install.sh`: `bash -n install.sh`. Never run `install.sh` itself against your real home to test it.
 
 `./check.sh` at the root runs all three in order and continues past a failure.
 

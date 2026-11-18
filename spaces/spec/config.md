@@ -98,7 +98,7 @@ mod = "cmd"                        # cmd | ctrl | alt (macOS), super (Linux), wi
   it's rebound.
 - **Conflicts with the system.** A chord the OS or the compositor already owns is reported with
   `config validate` and in Settings, with what owns it. On Omarchy, chords BaneySpaces doesn't
-  bind stay Omarchy's (see `platforms/linux/PARITY.md`).
+  bind stay Omarchy's (BaneySpaces documents them).
 
 ## Themes
 

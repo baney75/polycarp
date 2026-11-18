@@ -333,7 +333,7 @@ pub fn summary(parts: &[Part], verdict: &Verdict) -> String {
 // ---- Reading the device ---------------------------------------------------------------------------
 
 /// The stamp this command carries (cli/build.rs), so another `polycarp` can read its build from the
-/// file without running it: the same shape as the Linux spaces binary's.
+/// file without running it.
 #[used]
 pub static BUILD_STAMP: &str = env!("POLYCARP_BUILD_STAMP");
 
@@ -370,7 +370,7 @@ pub fn plist_identity(xml: &str) -> (Option<String>, Build) {
     (plist_string(xml, "CFBundleShortVersionString"), build)
 }
 
-/// The start of the stamp the Linux spaces binary carries, so its build can be read without running it:
+/// The start of the stamp a binary carries, so its build can be read without running it:
 /// `polycarp-build|v1|<commit>|<commit date>|<0 or 1 for dirty>|<version>|end|`.
 pub const STAMP_START: &[u8] = b"polycarp-build|v1|";
 
@@ -399,29 +399,6 @@ pub fn stamp_identity(bytes: &[u8]) -> Option<(Option<String>, Build)> {
         from += at + STAMP_START.len();
     }
     without_commit
-}
-
-/// The markers around the agent skill the Linux spaces binary carries
-/// (spaces/platforms/linux/baneyspaces/src/skill.rs), so the skill it would write is read from the file.
-pub const SKILL_BEGIN: &[u8] = b"polycarp-skill|v1|begin|\n";
-pub const SKILL_END: &[u8] = b"polycarp-skill|v1|end|";
-
-/// The skill text inside a binary's bytes, if it carries one. Like the stamp, the start text alone can
-/// sit in a binary (this one holds it), so only a start followed by text and an end counts.
-pub fn skill_in_binary(bytes: &[u8]) -> Option<&[u8]> {
-    let find = |hay: &[u8], needle: &[u8]| hay.windows(needle.len()).position(|w| w == needle);
-    let mut from = 0;
-    while let Some(at) = find(&bytes[from..], SKILL_BEGIN) {
-        let start = from + at + SKILL_BEGIN.len();
-        let rest = &bytes[start..];
-        let end = find(rest, SKILL_END)?;
-        let text = &rest[..end];
-        if !text.is_empty() && find(text, SKILL_BEGIN).is_none() {
-            return Some(text);
-        }
-        from = start;
-    }
-    None
 }
 
 /// The app bundle a file sits in (`X.app/Contents/Resources/bin/<file>` or `…/browser/<file>`).
@@ -698,24 +675,9 @@ pub fn gather(d: &Device) -> Vec<Part> {
                     .note("differs from the copy in the app (`polycarp spaces skill install` refreshes it)")
             }
         }
-        // Linux: the skill the installed spaces command would write, read from its file.
-        (Some(path), None) => match d.spaces.as_ref().and_then(|s| fs::read(s).ok().map(|b| (s, b))) {
-            Some((spaces, bytes)) => match skill_in_binary(&bytes) {
-                Some(text) if fs::read(&path).ok().as_deref() == Some(text) => {
-                    let build = file_identity(spaces).map(|(_, b)| b).unwrap_or_default();
-                    Part::installed("agent skill", None, build, Some(path))
-                        .note("same text as the installed baneyspaces")
-                }
-                Some(_) => Part::installed("agent skill", None, Build::default(), Some(path))
-                    .note("differs (`baneyspaces skill install` refreshes it)"),
-                None => Part::installed("agent skill", None, Build::default(), Some(path))
-                    .note("the installed spaces command carries no skill to compare with (`polycarp update` brings one that does)")
-                    .uncompared(),
-            },
-            None => Part::installed("agent skill", None, Build::default(), Some(path))
-                .note("has no app copy to compare with")
-                .uncompared(),
-        },
+        (Some(path), None) => Part::installed("agent skill", None, Build::default(), Some(path))
+            .note("has no app copy to compare with")
+            .uncompared(),
     });
     parts
 }
@@ -724,7 +686,6 @@ pub fn gather(d: &Device) -> Vec<Part> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Os {
     Mac,
-    Linux,
     Other,
 }
 
@@ -732,8 +693,6 @@ impl Os {
     pub fn current() -> Os {
         if cfg!(target_os = "macos") {
             Os::Mac
-        } else if cfg!(target_os = "linux") {
-            Os::Linux
         } else {
             Os::Other
         }
@@ -750,15 +709,6 @@ fn fix_absent(name: &str, why: &str, os: Os) -> Option<String> {
         _ if extension && why == ASLEEP => {
             "It connects within 30 seconds; run `polycarp doctor` again".to_string()
         }
-        (Os::Linux, "spaces command") => {
-            "Run `polycarp update` (on Hyprland it installs the spaces daemon)".to_string()
-        }
-        (Os::Linux, "browser helper") => {
-            "Run `polycarp update` (it needs Node and npm on PATH)".to_string()
-        }
-        (Os::Linux, _) if extension => "Load ~/.local/share/polycarp/browser/source/dist-chrome as an unpacked extension (chrome://extensions, Developer mode, Load unpacked), or run `polycarp browser setup`".to_string(),
-        (Os::Linux, "voice core") => "Not available on Linux yet".to_string(),
-        (Os::Linux, "agent skill") => SKILL_FIX_LINUX.to_string(),
         (Os::Mac, "app") => format!("Install it: `{MAC_INSTALL}`"),
         (Os::Mac, "spaces command" | "browser helper" | "voice core") => {
             format!("It comes with the app: `{MAC_INSTALL}`")
@@ -769,7 +719,6 @@ fn fix_absent(name: &str, why: &str, os: Os) -> Option<String> {
     })
 }
 
-const SKILL_FIX_LINUX: &str = "Run `baneyspaces skill install`";
 const SKILL_FIX_MAC: &str = "Run `polycarp spaces skill install`";
 
 /// One indented line per part that is not installed or does not match: what is wrong, then the one
@@ -789,7 +738,6 @@ pub fn fixes(parts: &[Part], verdict: &Verdict, os: Os) -> Vec<String> {
                     let why = &odd.iter().find(|o| o.name == p.name)?.why;
                     let fix = match (os, p.name.as_str()) {
                         (Os::Other, _) => return None,
-                        (Os::Linux, "agent skill") => SKILL_FIX_LINUX,
                         (Os::Mac, "agent skill") => SKILL_FIX_MAC,
                         _ => "Run `polycarp update`",
                     };
@@ -1389,105 +1337,6 @@ mod tests {
         );
     }
 
-    fn framed(text: &str) -> Vec<u8> {
-        let mut b = SKILL_BEGIN.to_vec();
-        b.extend_from_slice(text.as_bytes());
-        b.extend_from_slice(SKILL_END);
-        b
-    }
-
-    #[test]
-    fn reads_the_skill_a_spaces_binary_carries() {
-        let mut bytes = b"\x7fELF junk ".to_vec();
-        bytes.extend(framed("---\nname: baneyspaces\n---\n"));
-        bytes.extend_from_slice(b"\0more");
-        assert_eq!(
-            skill_in_binary(&bytes),
-            Some(&b"---\nname: baneyspaces\n---\n"[..])
-        );
-        assert_eq!(skill_in_binary(b"no skill here"), None);
-        // The start text alone (this binary holds it), then a real frame: the real one is read.
-        let mut two = SKILL_BEGIN.to_vec();
-        two.extend_from_slice(b"junk ");
-        two.extend(framed("the skill\n"));
-        assert_eq!(skill_in_binary(&two), Some(&b"the skill\n"[..]));
-        let mut cut = SKILL_BEGIN.to_vec();
-        cut.extend_from_slice(b"no end");
-        assert_eq!(
-            skill_in_binary(&cut),
-            None,
-            "a skill without its end is not read"
-        );
-        assert_eq!(skill_in_binary(&framed("")), None);
-    }
-
-    /// Linux: the installed skill is compared with the one the installed spaces command would write,
-    /// read from its file. The command is never run.
-    #[test]
-    fn on_linux_the_skill_is_compared_with_the_installed_baneyspaces() {
-        let dir = std::env::temp_dir().join(format!("polycarp-skill-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        let skill = dir.join(".claude/skills/baneyspaces/SKILL.md");
-        fs::create_dir_all(skill.parent().unwrap()).unwrap();
-        let spaces = dir.join("baneyspaces");
-        let mut bin = b"#!/bin/sh\nexit 9\n# ".to_vec();
-        bin.extend_from_slice(STAMP_START);
-        bin.extend_from_slice(format!("{A}|2026-11-01T00:00:00Z|0|0.1.0|end|\n").as_bytes());
-        bin.extend(framed("the linux skill\n"));
-        fs::write(&spaces, &bin).unwrap();
-        let never = |_: &Path, _: &[&str]| Answer::NotRun;
-        let mut d = device(&dir, None, None, &never);
-        d.home = Some(dir.clone());
-        d.spaces = Some(spaces.clone());
-        let skill_part = |d: &Device| {
-            gather(d)
-                .into_iter()
-                .find(|p| p.name == "agent skill")
-                .unwrap()
-        };
-
-        fs::write(&skill, "the linux skill\n").unwrap();
-        let p = skill_part(&d);
-        assert_eq!(
-            p.note.as_deref(),
-            Some("same text as the installed baneyspaces")
-        );
-        assert!(p.compared);
-        assert!(
-            matches!(&p.found, Found::Installed { build, .. } if build.commit.as_deref() == Some(A))
-        );
-
-        fs::write(&skill, "an older skill\n").unwrap();
-        let p = skill_part(&d);
-        assert_eq!(
-            p.note.as_deref(),
-            Some("differs (`baneyspaces skill install` refreshes it)")
-        );
-        let parts = gather(&d);
-        let verdict = compare(&parts);
-        assert!(
-            verdict.line().contains("agent skill differs"),
-            "{}",
-            verdict.line()
-        );
-        assert!(fixes(&parts, &verdict, Os::Linux).contains(
-            &"  agent skill: differs (`baneyspaces skill install` refreshes it). Run `baneyspaces skill install`.".to_string()
-        ));
-
-        // A spaces command from before `skill`: listed, not compared.
-        fs::write(&spaces, b"#!/bin/sh\n").unwrap();
-        let p = skill_part(&d);
-        assert!(!p.compared, "{p:?}");
-        assert!(p.note.unwrap().contains("carries no skill"));
-        // No spaces command at all: as before.
-        d.spaces = None;
-        assert_eq!(
-            skill_part(&d).note.as_deref(),
-            Some("has no app copy to compare with")
-        );
-        let _ = fs::remove_dir_all(&dir);
-    }
-
     #[test]
     fn doctor_names_the_fix_for_each_missing_or_odd_part_on_each_platform() {
         let parts = vec![
@@ -1501,22 +1350,10 @@ mod tests {
             Part::absent("agent skill", "not installed"),
         ];
         let verdict = compare(&parts);
-        let linux = fixes(&parts, &verdict, Os::Linux);
-        assert_eq!(
-            linux,
-            [
-                "  spaces command: is at bbbbbbb. Run `polycarp update`.",
-                "  browser helper: not installed. Run `polycarp update` (it needs Node and npm on PATH).",
-                "  extension: no browser is connected. Load ~/.local/share/polycarp/browser/source/dist-chrome as an unpacked extension (chrome://extensions, Developer mode, Load unpacked), or run `polycarp browser setup`.",
-                "  extension (Helium): running, but its extension is not connected yet. It connects within 30 seconds; run `polycarp doctor` again.",
-                "  voice core: not installed. Not available on Linux yet.",
-                "  agent skill: not installed. Run `baneyspaces skill install`.",
-            ]
-        );
         let mut mac_parts = parts.clone();
         mac_parts.insert(1, Part::absent("app", "not installed"));
         let mac = fixes(&mac_parts, &compare(&mac_parts), Os::Mac);
-        assert_eq!(mac.len(), linux.len() + 1, "{mac:#?}");
+        assert_eq!(mac.len(), 7, "{mac:#?}");
         assert!(
             mac[0].starts_with("  app: not installed. Install it: `curl -fsSL "),
             "{}",
@@ -1542,6 +1379,6 @@ mod tests {
             ["  extension (Helium): running, but its extension is not connected yet. It connects within 30 seconds; run `polycarp doctor` again."]
         );
         let fine = vec![at("polycarp command", A), at("spaces command", A)];
-        assert!(fixes(&fine, &compare(&fine), Os::Linux).is_empty());
+        assert!(fixes(&fine, &compare(&fine), Os::Mac).is_empty());
     }
 }

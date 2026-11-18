@@ -173,7 +173,7 @@ value). Workspace and window operations stay user-only.
 cargo test -p baneyspaces-core -p baneyspaces-windows --locked   # the Linux crate is unix-only, so test by package
 cargo build --release --locked -p baneyspaces-windows
 cargo build --release -p baneyspaces-windows --features baneyspaces-windows/test-ops -p baneyspaces-testapp   # what live.sh runs
-platforms/windows/scripts/build-engine.ps1 -Install              # the pinned agent-desktop (platforms/linux/engine.pin), copied to %LOCALAPPDATA%\BaneySpaces\engine
+platforms/windows/scripts/build-engine.ps1 -Install              # the pinned agent-desktop (platforms/windows/engine.pin), copied to %LOCALAPPDATA%\BaneySpaces\engine
 baneyspaces daemon --background                                  # no console window; --log FILE, --trace
 ```
 

@@ -1509,74 +1509,6 @@ fn version_check_names_the_part_from_another_commit_and_never_runs_spaces() {
     assert!(!log.exists(), "doctor ran the spaces command");
 }
 
-/// Linux: the agent skill is compared with the one the installed spaces command carries (read from its
-/// file, never by running it), and `doctor` gives the one command that fixes each missing or odd part.
-#[cfg(target_os = "linux")]
-#[test]
-fn on_linux_version_compares_the_skill_and_doctor_names_each_fix() {
-    let s = Sandbox::new();
-    let log = s.dir("calls");
-    stub(
-        &s.dir("bin"),
-        "polycarp-spaces",
-        &format!(
-            "echo called >> '{}'\n# polycarp-build|v1|{OTHER_COMMIT}|2026-11-01T00:00:00Z|0|0.1.0|end|\n# polycarp-skill|v1|begin|\nthe linux skill\npolycarp-skill|v1|end|",
-            log.display()
-        ),
-    );
-    let skill = s.dir("home").join(".claude/skills/baneyspaces/SKILL.md");
-    fs::create_dir_all(skill.parent().unwrap()).unwrap();
-    fs::write(&skill, "the linux skill\n").unwrap();
-    let run = |args: &[&str]| s.cmd(args).env("PATH", s.dir("bin")).output().unwrap();
-    let v = json(&run(&["version", "--json"]));
-    let p = part(&v, "agent skill");
-    assert_eq!(p["note"], "same text as the installed baneyspaces", "{v}");
-    assert_eq!(
-        p["commit"], OTHER_COMMIT,
-        "the skill is the spaces command's build"
-    );
-
-    fs::write(&skill, "an older skill\n").unwrap();
-    let v = json(&run(&["version", "--json"]));
-    assert_eq!(
-        part(&v, "agent skill")["note"],
-        "differs (`baneyspaces skill install` refreshes it)"
-    );
-    let o = run(&["doctor"]);
-    let t = out(&o);
-    let lines: Vec<&str> = t.lines().collect();
-    let at = lines
-        .iter()
-        .position(|l| l.starts_with("versions: "))
-        .unwrap_or_else(|| panic!("{t}"));
-    let fixes = &lines[at + 1..];
-    for want in [
-        "  spaces command: is at bbbbbbb. Run `polycarp update`.",
-        "  agent skill: differs (`baneyspaces skill install` refreshes it). Run `baneyspaces skill install`.",
-        "  voice core: not installed. Not available on Linux yet.",
-        "  browser helper: not installed. Run `polycarp update` (it needs Node and npm on PATH).",
-    ] {
-        assert!(fixes.contains(&want), "missing {want:?} in:\n{t}");
-    }
-    assert!(
-        fixes.iter().any(|l| l.starts_with("  extension: not installed. Load ~/.local/share/polycarp/browser/source/dist-chrome as an unpacked extension")),
-        "{t}"
-    );
-    assert!(
-        !t.contains("polycarp spaces skill install"),
-        "that is the Mac's fix: {t}"
-    );
-    assert!(!log.exists(), "doctor or version ran the spaces command");
-    // With the skill gone it is "not installed", and the fix is the same command.
-    fs::remove_file(&skill).unwrap();
-    let t = out(&run(&["doctor"]));
-    assert!(
-        t.lines()
-            .any(|l| l == "  agent skill: not installed. Run `baneyspaces skill install`."),
-        "{t}"
-    );
-}
-
 #[cfg(target_os = "macos")]
 #[test]
 fn version_reads_the_app_from_its_info_plist() {
@@ -1635,7 +1567,226 @@ fn checkout(s: &Sandbox, name: &str, origin: &str, path: &Path) -> PathBuf {
     dir.canonicalize().unwrap()
 }
 
-#[cfg(unix)]
+/// The Linux desktop is retired: `update` on a real Polycarp checkout says so,
+/// exits 0 and runs nothing, not even git, with or without --yes.
+#[cfg(target_os = "linux")]
+#[test]
+fn on_linux_update_says_the_desktop_is_retired_and_runs_nothing() {
+    let s = Sandbox::new();
+    let Some(path) = git_only_path(&s) else {
+        return;
+    };
+    let repo = checkout(&s, "src", "https://github.com/baney75/polycarp.git", &path);
+    let cache = s.dir("cache");
+    for args in [
+        vec!["update", "--dry-run", "--source"],
+        vec!["update", "--yes", "--source"],
+    ] {
+        let mut args = args.clone();
+        args.push(repo.to_str().unwrap());
+        let o = s
+            .cmd(&args)
+            .env("PATH", &path)
+            .env("POLYCARP_CACHE_DIR", &cache)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
+        assert_eq!(
+            out(&o),
+            "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n"
+        );
+        assert!(!repo.join(".git/FETCH_HEAD").exists() && !cache.exists());
+        assert!(!s.dir("home").join(".config/polycarp/source.toml").exists());
+    }
+}
+
+/// On a machine an earlier install set up, the Omarchy install stub only reads hyprland.lua and says how to
+/// take the block out; the uninstaller kept beside it takes out the block and its folder and leaves the rest.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_linux_install_stub_points_to_the_uninstaller_that_takes_the_old_block_out() {
+    let s = Sandbox::new();
+    let omarchy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spaces/platforms/linux/omarchy");
+    let hypr = s.dir("home").join(".config/hypr");
+    fs::create_dir_all(hypr.join("baneyspaces")).unwrap();
+    let main = hypr.join("hyprland.lua");
+    let before = "-- mine\n\n-- >>> baneyspaces (managed by baneyspaces install.sh) >>>\nrequire(\"baneyspaces\")\n-- <<< baneyspaces <<<\n-- also mine\n";
+    fs::write(&main, before).unwrap();
+    // Only system tools: no `baneyspaces` on PATH, so nothing real is stopped.
+    let run = |script: &str| {
+        Command::new(omarchy.join(script))
+            .env_clear()
+            .env("HOME", s.dir("home"))
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap()
+    };
+    let o = run("install.sh");
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(
+        out(&o).contains("The Linux desktop is retired"),
+        "{}",
+        out(&o)
+    );
+    assert!(out(&o).contains("omarchy/uninstall.sh"), "{}", out(&o));
+    assert_eq!(fs::read_to_string(&main).unwrap(), before);
+    let o = run("uninstall.sh");
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert_eq!(
+        fs::read_to_string(&main).unwrap(),
+        "-- mine\n-- also mine\n"
+    );
+    assert!(!hypr.join("baneyspaces").exists());
+    // With the block gone, the stub has nothing to point to.
+    let o = run("install.sh");
+    assert!(!out(&o).contains("uninstall.sh"), "{}", out(&o));
+}
+
+/// No two binaries in the spaces workspace share a name: `cargo build --workspace` would write both to one
+/// file, and whichever built last would win (the Linux update stub once took the Windows daemon's name).
+#[test]
+fn the_spaces_workspace_has_no_two_binaries_with_one_name() {
+    let spaces = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spaces");
+    let o = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--offline",
+        ])
+        .current_dir(&spaces)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let meta: serde_json::Value = serde_json::from_str(&out(&o)).unwrap();
+    let mut seen = std::collections::BTreeMap::new();
+    for pkg in meta["packages"].as_array().unwrap() {
+        for t in pkg["targets"].as_array().unwrap() {
+            if t["kind"].as_array().unwrap().iter().any(|k| k == "bin") {
+                let name = t["name"].as_str().unwrap().to_string();
+                let package = pkg["name"].as_str().unwrap().to_string();
+                if let Some(first) = seen.insert(name.clone(), package.clone()) {
+                    panic!("binary {name} is in both {first} and {package}");
+                }
+            }
+        }
+    }
+    assert!(seen.contains_key("baneyspaces"), "{seen:?}");
+}
+
+/// On Linux the line comes first: a --source that is not a folder, an unknown flag, no home
+/// folder, or a plan's own --is-current and --reload-wait get it too, exit 0, and nothing is run
+/// or written.
+#[cfg(target_os = "linux")]
+#[test]
+fn on_linux_update_says_the_desktop_is_retired_before_it_reads_anything() {
+    let s = Sandbox::new();
+    let missing = s.dir("no-such-checkout");
+    let ran = s.dir("home").join("ran");
+    let cases: [(&[&str], bool); 6] = [
+        (
+            &[
+                "update",
+                "--is-current",
+                missing.to_str().unwrap(),
+                "HEAD",
+                "--needs",
+                "polycarp command",
+            ],
+            true,
+        ),
+        (
+            &[
+                "update",
+                "--reload-wait",
+                missing.to_str().unwrap(),
+                "HEAD",
+                "--wait",
+                "1",
+                "--",
+                "touch",
+                ran.to_str().unwrap(),
+            ],
+            true,
+        ),
+        (&["update", "--source", missing.to_str().unwrap()], true),
+        (
+            &["update", "--check", "--source", missing.to_str().unwrap()],
+            true,
+        ),
+        (&["update", "--no-such-flag"], true),
+        (&["update", "--yes"], false),
+    ];
+    for (args, with_home) in cases {
+        let mut c = s.cmd(args);
+        if !with_home {
+            c.env_remove("HOME").env_remove("USERPROFILE");
+        }
+        let o = c.stdin(Stdio::null()).output().unwrap();
+        assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
+        assert_eq!(
+            out(&o),
+            "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n",
+            "{args:?}"
+        );
+        assert_eq!(err(&o), "", "{args:?}");
+    }
+    assert_eq!(fs::read_dir(s.dir("home")).unwrap().count(), 0);
+}
+
+/// A `polycarp` from before the retirement, run as `polycarp update` on an Omarchy machine, builds
+/// its own plan (`linux_steps` at 4fa0e4df) and runs it in a clean copy of this tree: it builds the
+/// `baneyspaces-linux` package, runs the engine and Omarchy install scripts, installs the new
+/// command and hands off to it with `update --finish`. Each of those steps must pass on this tree,
+/// or that machine never gets the command that says the desktop is retired. The two cli builds are
+/// left out: they build this crate, which this test already is.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_older_linux_update_plan_lands_on_this_tree() {
+    let s = Sandbox::new();
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let spaces = repo.join("spaces");
+    // The old plan's steps that run something from the tree, with their argv and folder, in order.
+    let build = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .args(["build", "--release", "--locked", "-p", "baneyspaces-linux"])
+        .current_dir(&spaces)
+        .env("CARGO_TARGET_DIR", s.dir("target"))
+        .output()
+        .unwrap();
+    assert_eq!(code(&build), 0, "build the spaces daemon: {}", err(&build));
+    let home = s.dir("home");
+    for script in [
+        "platforms/linux/scripts/build-engine.sh",
+        "platforms/linux/omarchy/install.sh",
+    ] {
+        let o = Command::new(spaces.join(script))
+            .current_dir(&spaces)
+            .env("HOME", &home)
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 0, "{script}: {}", err(&o));
+        assert!(out(&o).contains("The Linux desktop is retired"), "{script}");
+    }
+    assert_eq!(
+        fs::read_dir(&home).unwrap().count(),
+        0,
+        "a stub wrote to HOME"
+    );
+    // The handoff: the command it just installed finishes, says the desktop is retired and exits 0.
+    let o = s
+        .cmd(&["update", "--finish", "--source", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(
+        out(&o),
+        "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n"
+    );
+}
+
+#[cfg(target_os = "macos")]
 #[test]
 fn update_dry_run_prints_the_plan_and_changes_nothing() {
     let s = Sandbox::new();
@@ -1764,6 +1915,15 @@ fn update_without_a_known_install_says_how_to_point_it_at_a_checkout() {
         &["update", "--yes"],
     ] {
         let o = s.run(args);
+        if cfg!(target_os = "linux") {
+            // The Linux desktop is retired: one line says so, nothing runs, and it is not a failure.
+            assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
+            assert_eq!(
+                out(&o),
+                "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n"
+            );
+            continue;
+        }
         assert_eq!(code(&o), 2, "{args:?}: {}", out(&o));
         let e = err(&o);
         if cfg!(windows) {
@@ -1775,15 +1935,22 @@ fn update_without_a_known_install_says_how_to_point_it_at_a_checkout() {
             assert!(e.contains("polycarp update --source"), "{e}");
         }
     }
-    assert_eq!(code(&s.run(&["update", "--bogus"])), 2);
-    assert_eq!(code(&s.run(&["update", "--source"])), 2);
+    // On Linux every form gets the line first (on_linux_update_says_the_desktop_is_retired_before_it_reads_anything).
+    let wrong = if cfg!(target_os = "linux") { 0 } else { 2 };
+    assert_eq!(code(&s.run(&["update", "--bogus"])), wrong);
+    assert_eq!(code(&s.run(&["update", "--source"])), wrong);
     let o = s.run(&["update", "--help"]);
     assert_eq!(code(&o), 0);
-    assert!(out(&o).contains("--dry-run"));
+    let help = if cfg!(target_os = "linux") {
+        "The Linux desktop is retired"
+    } else {
+        "--dry-run"
+    };
+    assert!(out(&o).contains(help), "{}", out(&o));
 }
 
 /// A repo with one empty commit, and that commit.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn repo_with_a_commit(s: &Sandbox, name: &str, path: &Path) -> (PathBuf, String) {
     let dir = s.dir(name);
     fs::create_dir_all(&dir).unwrap();
@@ -1808,7 +1975,7 @@ fn repo_with_a_commit(s: &Sandbox, name: &str, path: &Path) -> (PathBuf, String)
 }
 
 /// A stand-in for an installed `polycarp`: a file that carries the build stamp a real one does.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn install_stamped(s: &Sandbox, commit: &str) -> PathBuf {
     let dir = s.dir("home").join(".local/bin");
     fs::create_dir_all(&dir).unwrap();
@@ -1822,7 +1989,8 @@ fn install_stamped(s: &Sandbox, commit: &str) -> PathBuf {
 /// The documented first run: `cargo build --release` in `cli/`, then run that binary. It is not the
 /// installed command, and it may be older or newer than it. What is compared with origin/main, by
 /// `version` and by the update's own gate, is the installed command.
-#[cfg(unix)]
+/// macOS only: on Linux `update` answers only that the desktop is retired.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_build_in_a_checkout_judges_the_installed_command_not_itself() {
     let s = Sandbox::new();
@@ -1898,7 +2066,8 @@ fn the_placed_browser_helper_wins_over_an_older_one_on_path() {
 /// A browser that is connected but slow. The helper is stopped at its limit, the extension is
 /// reported as "no answer in time", `version --check` says so with its own exit code, and the
 /// update's final check does not fail on it.
-#[cfg(unix)]
+/// macOS only: on Linux `update` answers only that the desktop is retired.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_slow_browser_is_no_answer_in_time_and_never_fails_the_update() {
     let s = Sandbox::new();
@@ -1993,52 +2162,4 @@ fn a_slow_browser_is_no_answer_in_time_and_never_fails_the_update() {
         "echo '{{\"connected\":true,\"extensions\":[{{\"browser\":\"Helium\",\"answered\":true,\"version\":\"1.2.2\",\"commit\":\"{OTHER_COMMIT}\"}}]}}'"
     ));
     assert_eq!(code(&run(&["version", "--check"])), 1);
-}
-
-/// Linux: the helper is copied out of the clean copy, and `polycarp browser` runs it from there
-/// after the clean copy is gone.
-#[cfg(unix)]
-#[test]
-fn the_placed_browser_helper_runs_after_the_clean_copy_is_deleted() {
-    let s = Sandbox::new();
-    let from = s.dir("cache").join("source-1/browser");
-    for (rel, text) in [
-        ("package.json", "{}"),
-        ("static/manifest.chrome.json", "{}"),
-        ("cli/package.json", "{}"),
-        ("cli/dist/index.js", "#!/bin/sh\necho \"helper ran: $*\"\n"),
-        ("dist-chrome/manifest.json", "{}"),
-    ] {
-        let p = from.join(rel);
-        fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(p, text).unwrap();
-    }
-    let home = s.dir("home").canonicalize().unwrap();
-    let to = home.join(".local/share/polycarp/browser/source");
-    let link = home.join(".local/bin/polycarp-browser");
-    let o = s.run(&[
-        "update",
-        "--place-browser",
-        from.to_str().unwrap(),
-        to.to_str().unwrap(),
-        link.to_str().unwrap(),
-    ]);
-    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
-    fs::remove_dir_all(s.dir("cache")).unwrap();
-    assert!(to.join("dist-chrome/manifest.json").is_file());
-    // Nothing is on PATH: the command is found where the update put it.
-    let o = s.run(&["browser", "hello", "there"]);
-    assert_eq!(code(&o), 0, "{}", err(&o));
-    assert_eq!(out(&o), "helper ran: hello there\n");
-    // Nothing to place is an error with a reason, and the installed copy is untouched.
-    let o = s.run(&[
-        "update",
-        "--place-browser",
-        from.to_str().unwrap(),
-        to.to_str().unwrap(),
-        link.to_str().unwrap(),
-    ]);
-    assert_eq!(code(&o), 1, "{}", out(&o));
-    assert!(err(&o).contains("no build to install"), "{}", err(&o));
-    assert_eq!(out(&s.run(&["browser", "x"])), "helper ran: x\n");
 }
