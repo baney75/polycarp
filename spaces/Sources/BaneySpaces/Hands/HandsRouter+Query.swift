@@ -20,12 +20,21 @@ extension HandsRouter {
     /// Recording) gets its title from Accessibility; a window out of scope is never read.
     func apiRead(session: String) -> (AgentAPI.Facts, AgentAPI.View)? {
         guard var (facts, agent) = onMain({ host.facts().map { ($0, host.agentWorkspace()) } }) else { return nil }
-        let inScope = Set(facts.windows.filter { decide($0.window, agent, session: session).allowed }.map(\.window.id))
+        let inScope = scope(facts, agent, session: session)
         let untitled = facts.windows.filter { inScope.contains($0.window.id) && $0.window.title.isEmpty }.map(\.window.id)
         if !untitled.isEmpty {
             let titles = onMain { host.titles(untitled) }
             for i in facts.windows.indices { if let t = titles[facts.windows[i].window.id] { facts.windows[i].window.title = t } }
         }
         return (facts, AgentAPI.View(access: access, inScope: inScope))
+    }
+
+    /// What `session` may see of facts already read, for the event diff. Main thread; reads no titles.
+    func apiView(_ facts: AgentAPI.Facts, session: String) -> AgentAPI.View {
+        AgentAPI.View(access: access, inScope: scope(facts, host.agentWorkspace(), session: session))
+    }
+
+    private func scope(_ facts: AgentAPI.Facts, _ agent: Int?, session: String) -> Set<WindowID> {
+        Set(facts.windows.filter { decide($0.window, agent, session: session).allowed }.map(\.window.id))
     }
 }
