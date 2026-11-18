@@ -154,6 +154,54 @@ fn the_hooks_on_a_real_desktop() {
         "other session changes are not a resync"
     );
 
+    // An agent's new window is a ghost before its event reaches the worker: the event thread ghosted it, and
+    // left what it replaced for the worker to record. The worker may be busy for tens of milliseconds (a
+    // request holding its lock, a write of state.json), and the live suite caught a dialog drawn in that time.
+    let form = "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object Windows.Forms.Form; $f.Text = 'bs early ghost'; [Windows.Forms.Application]::Run($f)";
+    // No console window (CREATE_NO_WINDOW): one would report the same pid and is not the window under test.
+    use std::os::windows::process::CommandExt;
+    let agents = crate::testwin::agents_turn();
+    let mut agent = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", form])
+        .creation_flags(0x0800_0000)
+        .spawn()
+        .expect("powershell.exe starts");
+    let pid = agent.id();
+    share_agents(vec![(pid, crate::winapi::process_start(pid))], 0, false);
+    // The form, by its title, when it is shown: that is when it would draw. Its CREATE may come before its caption.
+    let form_shown = |m: &Msg| match m {
+        Msg::Win { event, hwnd } if *event == EVENT_OBJECT_SHOW => {
+            let h = crate::winapi::hwnd(*hwnd);
+            crate::winapi::pid_of(h) == pid && crate::winapi::title(h) == "bs early ghost"
+        }
+        _ => false,
+    };
+    let seen = first(&rx, Duration::from_secs(30), form_shown);
+    let read = seen.as_ref().map(|m| match m {
+        Msg::Win { hwnd, .. } => {
+            let h = crate::winapi::hwnd(*hwnd);
+            let facts = format!(
+                "ex_style {:#x}, alpha {:?}, caption {}, top-level {}, visible {}",
+                crate::winapi::ex_style(h),
+                crate::winapi::layered_alpha(h),
+                crate::winapi::has_caption(h),
+                crate::winapi::is_top_level(h),
+                crate::winapi::is_visible(h)
+            );
+            (crate::cloak::has_ghost_bits(h) && crate::winapi::layered_alpha(h) == Some(0), take_early(*hwnd), facts)
+        }
+        _ => unreachable!(),
+    });
+    share_agents(vec![], 0, true);
+    drop(agents);
+    let _ = agent.kill();
+    let _ = agent.wait();
+    let (is_ghost, undo, facts) = read.expect("no SHOW event for the agent's form");
+    assert!(is_ghost, "the agent's form was not a ghost when its SHOW reached the worker: {facts}");
+    let undo = undo.expect("the event thread left nothing for the worker to record");
+    assert_ne!(undo.alpha, Some(0), "the record holds the form's own alpha, not the ghost's");
+    assert_eq!(undo.ex_style & (WS_EX_TRANSPARENT as i64), 0, "the record holds the form's own style, not the ghost's");
+
     // A window another process opens is reported (the hook skips the daemon's own process).
     let mut app = std::process::Command::new("notepad.exe")
         .spawn()
@@ -168,4 +216,75 @@ fn the_hooks_on_a_real_desktop() {
     assert!(shown.is_some(), "no window event for a new Notepad");
 
     stop();
+}
+
+/// The ghost's own bits: layered, click-through, never activated.
+const GHOST_BITS: i64 = (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE) as i64;
+
+#[test]
+fn a_window_the_worker_is_showing_is_left_alone() {
+    // sol-F1: the worker shows a ghost alpha first, then its style. A window caught between the two has the ghost's
+    // bits at alpha 255. The event thread must not ghost it again: what it would keep to put back is the ghost.
+    let _agents = crate::testwin::agents_turn();
+    let w = crate::testwin::TestWin::open("mid show", 0);
+    let own = crate::winapi::ex_style(w.hwnd);
+    crate::winapi::set_ex_style(w.hwnd, own | GHOST_BITS);
+    assert!(crate::winapi::set_layered_alpha(w.hwnd, 255));
+    let pid = std::process::id();
+    share_agents(vec![(pid, crate::winapi::process_start(pid))], 0, false);
+    ghost_early(w.hwnd);
+    let kept = take_early(w.id());
+    share_agents(vec![], 0, true);
+    assert_eq!(kept, None, "the event thread ghosted a window the worker is showing and kept the ghost as its style");
+    assert_eq!(crate::winapi::layered_alpha(w.hwnd), Some(255), "the window was left as the worker had it");
+}
+
+/// What the window under test saw while the early ghost changed its style: was the turn free, and did the ghost of
+/// another window made from inside that call take.
+static PREV_PROC: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static OTHER: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static TURN_FREE: Mutex<Option<bool>> = Mutex::new(None);
+
+unsafe extern "system" fn style_watch(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{CallWindowProcW, WM_STYLECHANGING, WNDPROC};
+    let mut seen = TURN_FREE.lock().unwrap();
+    if msg == WM_STYLECHANGING && seen.is_none() {
+        // As a nested event would: the event thread is re-entered while it waits on this window's thread.
+        let free = TURN.try_lock().is_ok();
+        *seen = Some(free);
+        drop(seen);
+        if free {
+            ghost_early(OTHER.load(Ordering::SeqCst) as HWND);
+        }
+    } else {
+        drop(seen);
+    }
+    let prev: WNDPROC = std::mem::transmute(PREV_PROC.load(Ordering::SeqCst));
+    CallWindowProcW(prev, h, msg, wp, lp)
+}
+
+#[test]
+fn the_early_ghost_lets_go_of_the_turn_while_it_waits_on_the_window() {
+    // first-F1: the style change sends to the window's thread and waits, and so does the taskbar call. An event
+    // that re-enters the event thread in that wait (an agent opening its window and a dialog together) ghosts its
+    // own window, and every hide and show the worker makes needs the turn too: neither may find it held.
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowLongPtrW, GWLP_WNDPROC};
+    let _agents = crate::testwin::agents_turn();
+    let w = crate::testwin::TestWin::open("early, waited on", 0);
+    let other = crate::testwin::TestWin::open("early, from inside", 0);
+    OTHER.store(other.hwnd as isize, Ordering::SeqCst);
+    *TURN_FREE.lock().unwrap() = None;
+    let prev = unsafe { SetWindowLongPtrW(w.hwnd, GWLP_WNDPROC, style_watch as *const () as isize) };
+    PREV_PROC.store(prev, Ordering::SeqCst);
+    let pid = std::process::id();
+    share_agents(vec![(pid, crate::winapi::process_start(pid))], 0, false);
+    ghost_early(w.hwnd);
+    let free = TURN_FREE.lock().unwrap().take();
+    let outer = take_early(w.id());
+    let inner = take_early(other.id());
+    share_agents(vec![], 0, true);
+    unsafe { SetWindowLongPtrW(w.hwnd, GWLP_WNDPROC, prev) };
+    assert_eq!(free, Some(true), "the early ghost held the turn while the window's thread answered its style change");
+    assert!(outer.is_some(), "the window was ghosted and left for the worker to record");
+    assert!(inner.is_some(), "a ghost made from inside that wait took");
 }
