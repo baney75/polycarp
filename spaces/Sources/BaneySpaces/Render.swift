@@ -108,7 +108,7 @@ enum Render {
                             .init(id: "com.example.automation", name: "Automation Helper", on: true, animates: false),
                             .init(id: "com.mitchellh.ghostty", name: "Ghostty", on: true, animates: true)] }
         setup.update = .init(have: "0.3.0 (abc1234)", channel: .stable, daily: true, nightlyNeedsTools: false, notice: UpdateNotice(name: "Polycarp 0.3.1", isNightly: false, installing: false))
-        setup.finished = [.init(id: "a", label: "Claude Code · baneyspaces")]
+        setup.finished = [.init(id: "a", label: "Claude Code · polycarp")]
         guard save(SetupView(model: setup, close: {}).background(Color(nsColor: .windowBackgroundColor)),
                    "setup.png", SettingsSidebar.windowSize) else { return 1 }
         // Each settings tab, for checks.
@@ -267,7 +267,7 @@ enum Render {
         bar.mode = .apps
         bar.windowBar = .init(pid: 1, name: "Helium", icon: icon("/Applications/Safari.app"),
                               windows: [.init(id: 1, title: "YouTube — I finally ported TypeScript to Go", workspace: 4),
-                                        .init(id: 2, title: "GitHub — baney75/baneyspaces pull request 3", workspace: 4),
+                                        .init(id: 2, title: "baney75/polycarp pull request 3 · GitHub", workspace: 4),
                                         .init(id: 3, title: "Gmail — Inbox", workspace: 1)], selected: 1)
         guard save(SwitcherView(model: bar).padding(30), "switcher-windows.png", CGSize(width: 820, height: 0)) else { return 1 }
 

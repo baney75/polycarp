@@ -359,6 +359,8 @@ final class LauncherModel: ObservableObject {
     private var bangs = Launcher.loadBangs()
     /// Terminal agents found on this Mac: command to path.
     var agents: [String: String] = [:]
+    /// Calculator and the other providers, asked on every keystroke of the main search.
+    var providers: [LauncherProvider] = LauncherProviders.standard()
 
     init(actions: LauncherActions) {
         self.actions = actions
@@ -468,9 +470,12 @@ final class LauncherModel: ObservableObject {
                 out += recentApps().prefix(5)
                 out += menuItems()
             } else {
+                let provided = LauncherProviders.results(providers, for: q)
+                out += provided.top.map(providedItem)
                 out += appItems(q, limit: 8)
                 out += actions.sessionItems(q).prefix(8)
                 out += agentItems(q)
+                out += provided.normal.map(providedItem)
                 out += workspaceItems(q)
                 out += commandItems(q)
                 out += menuItems().filter { Fuzzy.score(q, $0.title) != nil }
@@ -495,6 +500,25 @@ final class LauncherModel: ObservableObject {
 
     /// The session rows changed while the launcher is open.
     func rowsChanged() { rebuildKeepingSelection() }
+
+    // MARK: Providers
+
+    /// A provider's row as the launcher draws it; choosing it does what its action says.
+    private func providedItem(_ r: LauncherResult) -> LauncherItem {
+        LauncherItem(id: "provider:\(r.id)", section: r.section, title: r.title, subtitle: r.subtitle, icon: .symbol(r.symbol),
+                     badge: r.badge, run: { [weak self] in self?.perform(r.action) })
+    }
+
+    private func perform(_ action: LauncherAction) {
+        switch action {
+        case .copy(let text):
+            close()
+            LauncherPasteboard.copy(text)
+            Toast.show("Copied \(text.count > 40 ? String(text.prefix(40)) + "…" : text)", symbol: "doc.on.doc")
+        case .open(let url): openWeb(url)
+        case .none: break
+        }
+    }
 
     /// Rebuilds for results that came in after the typing (files, the App Store): the row you
     /// were on stays selected wherever it moved, so Return still does what it showed.
