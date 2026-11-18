@@ -42,7 +42,18 @@ function waitfor([int]$ms, [scriptblock]$cond) {
   -1
 }
 function press([uint16[]]$vks) { [void][Desk]::Keys($vks, $true) }
-function front($h) { [void][Desk]::Front($h); [void](waitfor 1000 { [Desk]::Foreground() -eq $h }) }
+# Windows refuses SetForegroundWindow to a process that hasn't had the last input (the foreground lock), so a refused
+# call is retried after an Alt tap typed with SendInput. A window that still won't come to the front is said as a
+# harness failure, naming the one in front, so a key check after it is never read as the daemon's fault.
+function front($h) {
+  for ($i = 0; $i -lt 3; $i++) {
+    [void][Desk]::Front($h)
+    if ((waitfor 500 { [Desk]::Foreground() -eq $h }) -ge 0) { return }
+    press @($ALT)
+  }
+  $f = [Desk]::Foreground(); $w = [Desk]::Windows($true) | ? { $_.Hwnd -eq $f } | Select-Object -First 1
+  check $false "the harness brings $h to the front before the key" "front is $f, pid $($w.Pid), class '$($w.Class)', title '$($w.Title)'"
+}
 function frame($h) { $w = [Desk]::Read($h); "$($w.L),$($w.T),$($w.R),$($w.B)" }
 $WIN = 0x5B; $SHIFT = 0x10; $CTRL = 0x11; $ALT = 0x12; $LEFT = 0x25; $RIGHT = 0x27; $J = 0x4A
 
