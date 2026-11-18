@@ -968,6 +968,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             inspect: { [weak self] in self?.spaces.handsInspect($0) ?? (nil, false) },
             agentOwned: { AgentOwned.shared.pids },
             askToLend: { app, minutes, takeBack in LendConsent.ask(app: app, minutes: minutes, takeBack: takeBack) },
+            askToAllow: { AppAllowConsent.ask(app: $0, bundle: $1, path: $2) },
             open: { [weak self] args in self?.session.agent("open", args) ?? Wire.Reply(ok: false, error: "not ready") },
             workspaceRows: { [weak self] in self?.spaces.workspaceRows() ?? [] },
             agentArea: { [weak self] in self?.spaces.agentArea() ?? .zero },

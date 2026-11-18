@@ -30,6 +30,7 @@ usage: \(me) <command>
   agent cursor on|theme <name>|status   each agent's cursor on the agent workspace (default, minimal, classic, omarchy); only Settings turns it off
   agent shot --window ID --cursor   draw the agent's cursor into the capture (off by default)
   agent lend <app|pid> [--for 30m]   asks you, in a sheet in Polycarp, whether agents may use an app you have open
+  agent allow [--remove] <app>       asks you, in a sheet in Polycarp, whether agents may open an app (--list shows them)
                               (only a real click on Lend lends it; running this lends nothing by itself)
   mcp                         the same commands as a stdio MCP server (claude mcp add baneyspaces -- polycarp-spaces mcp)
   agent move <id | words>     send a window there (only windows of apps started for an agent)
@@ -226,6 +227,9 @@ case "agent" where AgentHelp.asked(rest):
 
 case "agent" where HandsTools.userOnly.contains(rest.first ?? ""):
     HandsCLI.lendOrReturn(rest)
+
+case "agent" where rest.first == "allow":
+    HandsCLI.allow(rest)
 
 // `--on HOST agent open …` is the session engine's own op (the hands run on this Mac only): it falls through to the arm below.
 // `agent move <id | words>` stays the session op; `agent move --window N` is the hands verb.

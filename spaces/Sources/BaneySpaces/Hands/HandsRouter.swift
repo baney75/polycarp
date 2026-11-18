@@ -17,6 +17,8 @@ struct HandsHost {
     var agentOwned: () -> Set<Int32> = { [] }
     /// Asks Donovan, in a sheet, whether to lend an app; true only for a real click on "Lend".
     var askToLend: (_ app: String, _ minutes: Int, _ takeBack: Bool) -> Bool = { _, _, _ in false }
+    /// Asks Donovan, in a sheet, whether agents may open an app; true only for a real click on "Allow".
+    var askToAllow: (_ app: String, _ bundle: String, _ path: String) -> Bool = { _, _, _ in false }
     /// Where the agent cursor last acted in a window, for `agent shot --cursor`.
     var cursorMark: (UInt32) -> CursorMark? = { _ in nil }
     /// The session engine's `agent open <app> [files…]`.
@@ -853,6 +855,9 @@ final class HandsRouter {
             }
         }
         try? FileManager.default.createDirectory(at: Self.handoffFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // An app Donovan allowed in Polycarp's sheet (not a built-in): checked again after the launch (`ListedOpen`).
+        let listed = access != .full && AgentAppPolicy.isListed(bundle: bundle)
+        if listed { Trace.log("agent open: \(display) (\(bundle)) is one Donovan allowed") }
         let files: [String]
         switch AgentOpenGate.check(app: display, bundle: bundle, targets: targets, handoff: Self.handoffFolder, appURL: url,
                                      probeFolder: ProbeAppTrust.folder, probeTrusted: bundle == AgentAppPolicy.canvasProbeBundle && ProbeAppTrust.trusted(url),
@@ -991,6 +996,23 @@ final class HandsRouter {
                 return .failure(RunningOpen.shared.escaped(app: display, bundle: bundle, windows: left, agent: agent, keyboardReturned: returned))
             }
         }
+        // An allowed app must have started its own copy, and Donovan's copy must not have grown a window (second-F6).
+        if listed {
+            let now = Set(NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier))
+            let (all, agent) = listWindows(fresh: true)
+            let old = pidsBefore.flatMap { RunningOpen.strays(of: $0, known: known, in: all, agent: agent) }
+            if let e = ListedOpen.refusal(app: display, newCopies: now.subtracting(pidsBefore).count, oldCopyWindows: old.count) {
+                childLocked { sessionWindows.cancelOpen(token) }
+                if let pid = launched, now.contains(pid) { NSRunningApplication(processIdentifier: pid)?.terminate() }
+                onMain {
+                    // His copy brought forward by the open: the keyboard goes back to what was in front.
+                    if let front = NSWorkspace.shared.frontmostApplication?.processIdentifier, pidsBefore.contains(front),
+                       let back = RunningOpen.giveBack(front: front, opened: front, before: frontBefore) { _ = AgentLaunchFocus.shared.giveBack(to: back) }
+                }
+                Trace.log("agent open \(display): refused after the launch: \(e.message)")
+                return .failure(e)
+            }
+        }
         var data: [String: JSONValue] = (reply.info ?? [:]).mapValues(JSONValue.string)
         let (frontAfter, returnsAfter) = onMain { (NSWorkspace.shared.frontmostApplication?.processIdentifier, AgentLaunchFocus.shared.returns) }
         data["focus"] = .object(["changed": .bool(frontAfter != frontBefore), "returned": .bool(returnsAfter > returnsBefore)])
@@ -1127,4 +1149,37 @@ final class HandsRouter {
                                  "until": .int(Int((entry?.until ?? Date()).timeIntervalSince1970)),
                                  "note": .string(note)]))
     }
+
+    // MARK: allowing apps (Donovan's, the same way as lending)
+
+    /// `agent allow <app>`: not a grant. It checks the app, then asks Donovan in a sheet; only a real click on Allow adds
+    /// it (`AppAllowConsent`), with the copy the sheet named (`AgentAppGrants`, in memory). `--remove` narrows and never asks;
+    /// `--list` reads. Called on the main thread.
+    func askToAllow(target: String, verb: String) -> HandsEnvelope {
+        func list() -> JSONValue { .array(AgentAppGrants.current.sorted().map(JSONValue.string)) }
+        if verb == "list" { return .success(.object(["allowed": list()])) }
+        guard !target.isEmpty, let url = SessionController.appURL(target) else {
+            return .failure(HandsError(.appNotFound, "no app called \(target)", suggestion: "usage: polycarp-spaces agent allow [--remove] <app>", retry: .safe))
+        }
+        let bundle = Bundle(url: url)?.bundleIdentifier ?? ""
+        let name = url.deletingPathExtension().lastPathComponent
+        if verb == "remove" {
+            AgentAppGrants.remove(bundle)
+            return .success(.object(["removed": .string(bundle), "allowed": list()]))
+        }
+        if AgentAppPolicy.separateInstance.contains(bundle) { return .success(.object(["allowed": list(), "note": .string("\(name) is built in")])) }
+        let facts = AgentAppFacts.read(url)
+        // The copy macOS opens for the id, in /Applications, signed: the sheet names it, and only it opens (second-F7).
+        let copy = AgentAppCopy.read(url)
+        if let why = AgentAppPolicy.neverListed(bundle: bundle) ?? AgentAppCopy.placeProblem(url, registered: NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle))
+            ?? (copy == nil ? "Polycarp can't check its code signature" : nil) ?? (facts == nil ? "Polycarp can't read its bundle" : facts?.refusal) {
+            return .failure(HandsError(.needsSandbox, "\(name): \(why), so it can't be allowed", suggestion: "Ask Donovan to lend \(name) while he is away from it.", retry: .never))
+        }
+        guard let copy, host.askToAllow(name, bundle, copy.path) else {
+            return .failure(HandsError(.permissionDenied, "Donovan didn't allow \(name)", suggestion: "Nothing changed.", retry: .never))
+        }
+        AgentAppGrants.add(bundle, copy)
+        return .success(.object(["allowed": list(), "added": .string(bundle)]))
+    }
+
 }
