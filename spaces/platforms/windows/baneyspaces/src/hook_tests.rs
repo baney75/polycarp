@@ -53,15 +53,45 @@ fn send(keys: &[INPUT]) {
     assert_eq!(n as usize, keys.len(), "SendInput was blocked");
 }
 
-/// Win+digit as the daemon sees a person type it: Win down, the digit, the masking key, then Win up.
+/// Win+digit as a person types it: Win down, the digit down and up, Win up.
 fn chord(digit: u16, extra: usize) {
     send(&[
         key(VK_LWIN, false, extra),
         key(digit, false, extra),
         key(digit, true, extra),
+        key(VK_LWIN, true, extra),
     ]);
-    mask_start_menu();
-    send(&[key(VK_LWIN, true, extra)]);
+}
+
+/// What a hook behind the daemon's sees (it is installed first, so it is called after ours): Win, the digits and the
+/// masking key, while `WATCH` is on. That is what the shell gets.
+static WATCH: AtomicBool = AtomicBool::new(false);
+static SEEN: Mutex<Vec<(u32, bool)>> = Mutex::new(Vec::new());
+
+unsafe extern "system" fn behind(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if code == HC_ACTION as i32 && WATCH.load(Ordering::Relaxed) {
+        let k = &*(lp as *const KBDLLHOOKSTRUCT);
+        if matches!(k.vkCode, 0x5B | 0xE8 | 0x30..=0x39) {
+            let up = wp as u32 == WM_KEYUP || wp as u32 == WM_SYSKEYUP;
+            SEEN.lock().unwrap().push((k.vkCode, up));
+        }
+    }
+    CallNextHookEx(std::ptr::null_mut(), code, wp, lp)
+}
+
+/// Installs `behind` on a thread of its own with a message loop; returns that thread's id, for WM_QUIT.
+fn watch_behind() -> u32 {
+    let (tx, rx) = channel();
+    std::thread::spawn(move || unsafe {
+        let h = SetWindowsHookExW(WH_KEYBOARD_LL, Some(behind), std::ptr::null_mut(), 0);
+        let _ = tx.send((!h.is_null(), GetCurrentThreadId()));
+        let mut msg: MSG = std::mem::zeroed();
+        while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {}
+        UnhookWindowsHookEx(h);
+    });
+    let (ok, id) = rx.recv().expect("the watching thread starts");
+    assert!(ok, "the watching hook is installed");
+    id
 }
 
 fn session_window() -> HWND {
@@ -73,6 +103,7 @@ fn session_window() -> HWND {
 fn the_hooks_on_a_real_desktop() {
     // The chords below are real Win keys: no daemon test may hide windows meanwhile.
     let _turn = crate::testwin::desktop_turn();
+    let watcher = watch_behind();
     let (tx, rx) = channel();
     set_table(crate::keys::defaults(crate::keys::parse_mod("win").expect("win")));
     let problems = start(tx, on_end);
@@ -107,6 +138,43 @@ fn the_hooks_on_a_real_desktop() {
     assert!(
         !SWALLOWED[b'5' as usize].load(Ordering::Relaxed),
         "the key-up of a taken chord is swallowed too"
+    );
+
+    // Win+8 typed in one go, as the harness's SendInput batch or a quick person types it: Win is up before the daemon's
+    // worker can act on the chord. Behind the hook, Win must never go down and up with nothing between: the shell
+    // opens Start (Search) on that, over the user's window. Win+5's own release and mask come first: the hook re-sends
+    // them at the end of the input queue, so wait for Win to read up, then let the rest of that queue drain.
+    let end = Instant::now() + Duration::from_secs(2);
+    while held(VK_LWIN as u32) && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!held(VK_LWIN as u32), "Win+5's release never came back from the hook");
+    std::thread::sleep(Duration::from_millis(200));
+    SEEN.lock().unwrap().clear();
+    WATCH.store(true, Ordering::Relaxed);
+    send(&[
+        key(VK_LWIN, false, TEST_INPUT_MARK),
+        key(b'8' as u16, false, TEST_INPUT_MARK),
+        key(b'8' as u16, true, TEST_INPUT_MARK),
+        key(VK_LWIN, true, TEST_INPUT_MARK),
+    ]);
+    match first(&rx, Duration::from_secs(3), is_chord) {
+        Some(Msg::Chord { args, .. }) => assert_eq!(args, ["switch", "8"]),
+        other => panic!("no chord for a marked Win+8 typed in one go: {other:?}"),
+    }
+    let end = Instant::now() + Duration::from_secs(2);
+    while !SEEN.lock().unwrap().contains(&(0x5B, true)) && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    WATCH.store(false, Ordering::Relaxed);
+    let seen = SEEN.lock().unwrap().clone();
+    let win_up = seen.iter().position(|&e| e == (0x5B, true));
+    assert!(
+        seen.first() == Some(&(0x5B, false))
+            && win_up.is_some_and(|i| seen[..i].contains(&(0xE8, false)) && seen[..i].contains(&(0xE8, true)))
+            && !seen.iter().any(|&(vk, _)| vk == b'8' as u32),
+        "behind the hook, Win+8 typed in one go must read Win down, the masking key, Win up, and no 8: {seen:x?}"
     );
 
     chord(b'6' as u16, 0);
@@ -171,4 +239,5 @@ fn the_hooks_on_a_real_desktop() {
     assert!(shown.is_some(), "no window event for a new Notepad");
 
     stop();
+    unsafe { PostThreadMessageW(watcher, WM_QUIT, 0, 0) };
 }
