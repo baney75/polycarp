@@ -5,9 +5,12 @@ on:
     paths: ['cli/**', 'spaces/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
   pull_request:
     paths: ['cli/**', 'spaces/**', 'core/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
+# A new push to a pull request cancels its older run. Each push to main gets its own group and is never cancelled:
+# with one group per ref, back-to-back merges cancelled each other (49 of the 102 cancelled runs in 200), leaving main
+# untested.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
@@ -132,10 +135,63 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: spaces, key: spaces-windows }
       - name: Core and the Windows daemon, built for Windows
         run: cargo test --locked -p baneyspaces-core -p baneyspaces-windows -p baneyspaces-testapp -p baneyspaces-linux
+      - name: Clippy on the Windows crates (with and without the test hooks)
+        shell: bash
+        run: |
+          cargo clippy --locked -p baneyspaces-windows -p baneyspaces-testapp --all-targets -- -D warnings
+          cargo clippy --locked -p baneyspaces-windows --all-targets --features test-ops -- -D warnings
+
+  # The daemon live on the runner's own desktop (an interactive session with explorer.exe and DWM): real windows,
+  # the real keyboard hook typed into with SendInput, Win32 read-backs and screenshots. tests/ci/live.ps1 ports
+  # tests/live.sh; platforms/windows/README.md lists what a runner can't run.
+  spaces-windows-live:
+    needs: changes
+    if: needs.changes.outputs.spaces-rust == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: spaces
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: spaces, key: spaces-windows-live }
+      # The hands engine at the pinned commit, built once per pin.
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: spaces/platforms/windows/engine
+          key: windows-engine-${{ hashFiles('spaces/platforms/windows/engine.pin') }}
+      - name: Build the daemon with the test hooks, the test app and the engine
+        shell: bash
+        run: |
+          cargo build --release --locked -p baneyspaces-windows --features baneyspaces-windows/test-ops -p baneyspaces-testapp
+          test -f platforms/windows/engine/agent-desktop.exe || pwsh -NoProfile -File platforms/windows/scripts/build-engine.ps1
+          dest="$(cygpath -u "$LOCALAPPDATA")/BaneySpaces/engine"
+          mkdir -p "$dest"
+          cp platforms/windows/engine/* "$dest/"
+      # Off a runner the suite must refuse before it touches anything: no -Disposable, exit 2, Notepad left open.
+      - name: Live suite refuses a desktop that isn't disposable
+        shell: powershell
+        run: platforms/windows/tests/ci/refuses.ps1 -Bin target/release -Out ${{ runner.temp }}/refused
+      - name: Live suite
+        shell: powershell
+        # The suite takes a few minutes; a hang ends the step here, so the artifact below still uploads.
+        timeout-minutes: 20
+        run: platforms/windows/tests/ci/live.ps1 -Bin target/release -Out ${{ runner.temp }}/live
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-live
+          path: ${{ runner.temp }}/live
 
   spaces-bundle:
     needs: changes
@@ -348,3 +404,19 @@ jobs:
       - name: DOM benchmark against the floor
         working-directory: browser/cli
         run: npm run bench:dom
+
+  # The one check the merge gate requires: it fails when any job failed or was cancelled, and passes when every job
+  # passed or was skipped by its path filter. Require "ci-ok" on main (a ruleset, or merge_green.py --check ci-ok)
+  # instead of naming jobs that a path filter can skip.
+  ci-ok:
+    if: always()
+    needs: [changes, cli, core, spaces, spaces-windows, spaces-windows-live, spaces-bundle, browser-skills, browser-skill-regression, browser-check, browser-cli-windows, browser-e2e]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          test "$FAILED" = false
