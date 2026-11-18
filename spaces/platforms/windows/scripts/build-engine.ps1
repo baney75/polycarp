@@ -1,11 +1,11 @@
 # Fetch agent-desktop at the pinned commit and build its CLI (Windows adapter, UI Automation) with --locked.
-# The pin is the same file the Linux build reads (platforms/linux/engine.pin): one commit on every platform.
+# The pin is platforms/windows/engine.pin, the same commit macOS pins in engine/PIN.
 # Output: platforms/windows/engine/agent-desktop.exe
 # Usage: build-engine.ps1 [-Profile release]
 param([string]$Profile = 'release', [switch]$Install)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $PSScriptRoot            # platforms/windows
-$pinFile = Join-Path (Split-Path -Parent $here) 'linux\engine.pin'
+$pinFile = Join-Path $here 'engine.pin'
 $pin = @{}
 Get-Content $pinFile | Where-Object { $_ -match '^\s*(\w+)=(.+)$' } | ForEach-Object { $pin[$Matches[1]] = $Matches[2].Trim() }
 $repo = $pin['repo']; $commit = $pin['commit']
