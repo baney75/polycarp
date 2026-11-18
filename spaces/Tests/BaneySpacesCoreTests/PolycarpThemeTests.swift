@@ -652,7 +652,7 @@ final class PolycarpThemeTests: XCTestCase {
         var scheduled: (interval: TimeInterval, first: TimeInterval)?
         let w = PolycarpThemeWatcher(path: file, interval: 1, queue: q, schedule: { _, interval, first, f in
             scheduled = (interval, first); fire = f; return { fire = nil }
-        }, deliver: { ThemeCenter.use(.omarchy, polycarp: $0) })
+        }, watch: { _, _, _ in {} }, deliver: { ThemeCenter.use(.omarchy, polycarp: $0) })
         w.start()
         q.sync {}
         XCTAssertEqual(scheduled?.interval, 1)

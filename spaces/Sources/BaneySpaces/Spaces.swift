@@ -504,6 +504,8 @@ final class Spaces {
             guard var h = handsWindow(id, ws) else { return nil }
             let s = server[id]
             h.title = s?.name ?? ""
+            // A process with no bundle id is known by its executable's path, so `bundle` is never empty (434 r2 second-S3).
+            if h.bundle.isEmpty { h.bundle = NSRunningApplication(processIdentifier: h.pid)?.executableURL?.path ?? "pid \(h.pid)" }
             let parked = saved.frames[id]
             let hidden = windows[id].map { NSRunningApplication(processIdentifier: $0.pid)?.isHidden == true } ?? false
             let minimized = shown.contains(ws) && parked == nil && !hidden && s != nil && s?.onScreen == false
@@ -550,25 +552,39 @@ final class Spaces {
         var out: [WindowID: String] = [:]
         let screens = Windows.screens()
         for (id, f) in frames {
-            guard model.workspace(of: id) == agent, let w = windows[id] else { out[id] = "skipped: not on the agent workspace"; continue }
-            if model.isShown(agent) {
-                w.setFrame(f)
-                out[id] = "now"
-            } else if saved.frames[id] != nil {
-                saved.frames[id] = f
-                w.setSize(f.size)
-                if let b = Windows.serverWindows()[id]?.bounds, !Geometry.isStranded(b, screens: screens) { w.setOrigin(Geometry.hidingSpot(screens: screens)) }
-                out[id] = "size now, place when shown"
-            } else if saved.hiddenApps.contains(w.pid), Windows.allOffscreen([id]) {
-                w.setFrame(f)
-                out[id] = "now, while hidden"
-            } else {
-                out[id] = "skipped: neither parked nor hidden"
-            }
+            guard model.workspace(of: id) == agent, windows[id] != nil else { out[id] = "skipped: not on the agent workspace"; continue }
+            out[id] = place(id, f, screens: screens)
         }
         persist()
         Trace.log("hands: arranged \(frames.count) agent windows")
         return out
+    }
+
+    /// The agent API's `frame`: one window, on any workspace (the router has checked view control). How it was applied.
+    func placeFrame(_ id: WindowID, _ f: CGRect) -> String {
+        guard active, windows[id] != nil, model.workspace(of: id) != nil else { return "skipped: not a window Polycarp places" }
+        let how = place(id, f, screens: Windows.screens())
+        persist()
+        Trace.log("hands: framed window \(id) for an agent: \(how)")
+        return how
+    }
+
+    /// A shown window takes the frame now; a parked one takes its size now and the place when its workspace is shown.
+    private func place(_ id: WindowID, _ f: CGRect, screens: [CGRect]) -> String {
+        guard let w = windows[id], let n = model.workspace(of: id) else { return "skipped" }
+        if model.isShown(n) {
+            w.setFrame(f)
+            return "now"
+        } else if saved.frames[id] != nil {
+            saved.frames[id] = f
+            w.setSize(f.size)
+            if let b = Windows.serverWindows()[id]?.bounds, !Geometry.isStranded(b, screens: screens) { w.setOrigin(Geometry.hidingSpot(screens: screens)) }
+            return "size now, place when shown"
+        } else if saved.hiddenApps.contains(w.pid), Windows.allOffscreen([id]) {
+            w.setFrame(f)
+            return "now, while hidden"
+        }
+        return "skipped: neither parked nor hidden"
     }
 
     /// `close`: presses the window's close button from behind (no raise, no activation). False when it has none.
