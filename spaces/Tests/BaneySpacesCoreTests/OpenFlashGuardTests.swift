@@ -375,7 +375,29 @@ final class OpenFlashGuardTests: XCTestCase {
         XCTAssertFalse(a.contains("com.baney.baneyspaces"), "first-F5, first-F4 (PR 225): the app reads .standard and logs as com.baney.polycarp")
         XCTAssertTrue(a.contains("defaults write com.baney.polycarp crashLoopLimit"))
         XCTAssertTrue(a.contains("defaults write com.baney.polycarp agentOpenFlashGuard off"))
+        XCTAssertTrue(a.contains("runs it twice: flag off first, then the\n   default, after `defaults delete com.baney.polycarp agentOpenFlashGuard` turns the cover back on."), "review of #498, second-F6: the run ends with the cover on")
+        XCTAssertFalse(a.contains("runs it twice: default, then flag off."), "second-F6: that order left the flag off on his Mac")
         XCTAssertFalse(a.contains("is the retired app's"))
+    }
+
+    /// Review of #498: the probe's selftest runs with the tests, so its frame judge is checked on every run, not only when
+    /// someone runs the script by hand.
+    func testTheProbeSelftestPassesItsFrameChecks() throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        p.arguments = ["swift", CursorSourceTests.root.appendingPathComponent("scripts/agent-open-probe.swift").path, "--selftest"]
+        let out = Pipe()
+        p.standardOutput = out; p.standardError = out
+        try p.run()
+        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        for line in ["a window drawn in its listed place shows",
+                     "a cursor that blinked before the open doesn't show (first-F1)",
+                     "a window drawn over that cursor still shows",
+                     "a frame captured before its window's first sample still shows (sol-F1)",
+                     "a display that stopped capturing after its first frame makes the open invalid (sol-F2)"] {
+            XCTAssertTrue(text.contains("ok   " + line), "\(line)\n\(text)")
+        }
     }
 
     func testTheProbeSelftestClassifiesWithItsFixturePid() throws {
@@ -605,7 +627,10 @@ final class OpenFlashGuardRound1Tests: XCTestCase {
         XCTAssertTrue(probe.contains("let rounds = args.first.flatMap(Int.init) ?? 5"), "5 rounds of the 10 default apps")
         XCTAssertTrue(probe.contains("let defaults = [\"Calculator\", \"Font Book\", \"Chess\", \"Dictionary\", \"Grapher\", \"Activity Monitor\", \"Console\",\n                \"Digital Color Meter\", \"System Information\", \"TextEdit\"]"))
         XCTAssertTrue(probe.contains("string(forKey: \"agentOpenFlashGuard\") != \"off\""), "the probe gates unless the flag says off, as the app does")
-        XCTAssertTrue(probe.contains("let watches = (displays ?? []).map { FrameWatch(display: $0, places: { sampler.places }) }"))
+        XCTAssertTrue(probe.contains("let watches = (displays ?? []).map { FrameWatch(display: $0) }"))
+        XCTAssertTrue(probe.contains("for r in watches.map({ $0.result(places: places) }) {"), "sol-F1: judged after the open, against every place listed")
+        XCTAssertTrue(probe.contains("configuration: config, delegate: self)"), "sol-F2: a stream that stops is heard")
+        XCTAssertTrue(probe.contains("if !problems.isEmpty { invalid.append("), "sol-F2: and makes the open invalid")
         XCTAssertTrue(probe.contains("if guardOn, shot.showing > 0 {"))
         XCTAssertTrue(probe.contains("config.showsCursor = false"), "the pointer moving is not a window")
         XCTAssertTrue(probe.contains("check(\"a window drawn in its listed place shows\""), "the selftest checks the frame judge")

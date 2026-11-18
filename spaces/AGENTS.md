@@ -59,7 +59,9 @@ A change is done when steps 1 to 3 pass on its branch and step 4 passes on `main
    the app's own domain, where it keeps all its settings (`defaults write com.baney.polycarp agentOpenFlashGuard off`;
    the cover is on by default); with the flag off they print as "known, flag off" and fail nothing. The frame check
    needs Screen Recording for the process that runs the probe; without it the probe says "untested live" and exits 3
-   (`--no-frames` skips it). A change to `OpenFlashGuard` or `OpenFlashWatch` runs it twice: default, then flag off.
+   (`--no-frames` skips it). A change to `OpenFlashGuard` or `OpenFlashWatch` runs it twice: flag off first, then the
+   default, after `defaults delete com.baney.polycarp agentOpenFlashGuard` turns the cover back on. Never leave the flag
+   off: only `main` is installed on Donovan's Mac, and every open would draw on his workspace again.
    The probe knows a cover by Polycarp's pid and window level 4.
    For anything that decides what each display shows (`Workspaces.shown`, `displays`, `carry`,
    `noteMovedAcrossDisplays`): `swift scripts/displays-probe.swift` with two displays (Sidecar counts).

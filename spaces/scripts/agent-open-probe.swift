@@ -9,10 +9,14 @@
 //   seen: from the open until it settles, a sampler reads the window server every 4 ms (on screen only) and adds up the
 //   time any window of the new process (alpha 0.1 or more) showed at least 8x8 pt on a display, not covered by a window
 //   in front of it.
-//   frames: every display is captured (ScreenCaptureKit, half size, up to 60 frames a second) from just before the
-//   open until it settles, and a frame in which the place where a window of the new process is listed differs from the
-//   first frame (8x8 pt or more, luma off by over 24) shows that window. A cover is painted from the screen as it
-//   was, so a covered window shows nothing. Council gap G9 ("an occasional 1 s screen flash"): zero frames is the bar.
+//   frames: every display is captured (ScreenCaptureKit, half size, up to 60 frames a second) from 1.2 s before the
+//   open until it settles. The first frame is the "before"; any pixel that changes in the 1.2 s before the open (a
+//   blinking cursor, a clock, a video) is noise and never counts. After the open, a frame in which a place where a window
+//   of the new process was listed at any time during the open differs from the first frame (8x8 pt or more, luma off by
+//   over 24, noise left out) shows that window. Frames are judged once the open settles, against every place listed by
+//   then, so a frame that came before its window's first sample still counts. A display whose capture fails after its
+//   first frame makes the open invalid, not passed. A cover is painted from the screen as it was, so a covered window
+//   shows nothing. Council gap G9 ("an occasional 1 s screen flash"): zero frames is the bar.
 //   The agent workspace is not shown while the probe runs, so all of that was on Donovan's workspace. With the cover on,
 //   the default, over 50 ms seen or any frame showing a window fails the open; with
 //   `defaults write com.baney.polycarp agentOpenFlashGuard off` both print as "known, flag off" and fail nothing.
@@ -141,6 +145,71 @@ func changed(_ base: Luma, _ frame: Luma, in boxes: [CGRect], level: Int = 24) -
 let framePixelBar = 16
 func frameShows(_ base: Luma, _ frame: Luma, in boxes: [CGRect]) -> Bool { changed(base, frame, in: boxes) >= framePixelBar }
 
+/// Seconds the frame check watches each display before an open, to learn its noise. A text cursor blinks about once a
+/// second and a clock with seconds ticks once, so 1.2 s sees each change at least once (review of #498, first-F1).
+let prerollSeconds = 1.2
+
+/// The frame check's arithmetic, apart from ScreenCaptureKit so the selftest drives it with made-up frames. The first
+/// frame is the base. While `learning` (the pre-roll), every pixel that differs from the base, and its 8 neighbours,
+/// becomes noise. After it, each frame is kept as one bit a pixel (changed from the base, not noise) and judged only at
+/// the end, against every place listed by then (review of #498: first-F1, the noise; sol-F1, a frame before its
+/// window's first sample).
+struct FrameJudge {
+    private(set) var base: Luma?
+    private(set) var noise: [Bool] = []
+    private var kept: [[UInt64]] = []
+    /// A frame came at another size than the base, so the open's frames can't be judged.
+    private(set) var resized = false
+    var learning = true
+    let level: Int
+    init(level: Int = 24) { self.level = level }
+
+    mutating func add(_ frame: Luma) {
+        guard let base else { base = frame; noise = [Bool](repeating: false, count: frame.w * frame.h); return }
+        guard frame.w == base.w, frame.h == base.h else { resized = true; return }
+        let w = base.w, h = base.h
+        if learning {
+            for i in 0..<(w * h) where abs(Int(base.px[i]) - Int(frame.px[i])) > level {
+                let x = i % w, y = i / w
+                for yy in max(0, y - 1)...min(h - 1, y + 1) { for xx in max(0, x - 1)...min(w - 1, x + 1) { noise[yy * w + xx] = true } }
+            }
+            return
+        }
+        var bits = [UInt64](repeating: 0, count: (w * h + 63) / 64)
+        for i in 0..<(w * h) where !noise[i] && abs(Int(base.px[i]) - Int(frame.px[i])) > level { bits[i >> 6] |= 1 << UInt64(i & 63) }
+        kept.append(bits)
+    }
+
+    /// Judged frames, how many show a window in `boxes` (pixel rects), and the most pixels changed in one.
+    func judge(_ boxes: [CGRect]) -> (frames: Int, showing: Int, worst: Int) {
+        guard let base else { return (0, 0, 0) }
+        var inside = [Int]()
+        var mark = [Bool](repeating: false, count: base.w * base.h)
+        for b in boxes {
+            let x0 = max(0, Int(b.minX.rounded(.down))), x1 = min(base.w, Int(b.maxX.rounded(.up)))
+            let y0 = max(0, Int(b.minY.rounded(.down))), y1 = min(base.h, Int(b.maxY.rounded(.up)))
+            guard x0 < x1, y0 < y1 else { continue }
+            for y in y0..<y1 { for x in x0..<x1 where !mark[y * base.w + x] { mark[y * base.w + x] = true; inside.append(y * base.w + x) } }
+        }
+        var showing = 0, worst = 0
+        for bits in kept {
+            let n = inside.reduce(0) { $0 + (bits[$1 >> 6] >> UInt64($1 & 63) & 1 == 1 ? 1 : 0) }
+            worst = max(worst, n)
+            if n >= framePixelBar { showing += 1 }
+        }
+        return (kept.count, showing, worst)
+    }
+}
+
+/// Why one display's frames for an open can't be judged, or nil. A capture that started but stopped with an error
+/// before the open settled saw only part of it (review of #498, sol-F2).
+func captureProblem(started: Bool, stopError: String?, resized: Bool) -> String? {
+    if !started { return "gave no first frame" }
+    if let stopError { return "stopped capturing during the open (\(stopError))" }
+    if resized { return "changed size during the open" }
+    return nil
+}
+
 if CommandLine.arguments.contains("--selftest") {
     let screen = [CGRect(x: 0, y: 0, width: 1512, height: 982)]
     let app = Seen(pid: 7, layer: 0, alpha: 1, bounds: CGRect(x: 400, y: 300, width: 500, height: 400))
@@ -206,6 +275,25 @@ if CommandLine.arguments.contains("--selftest") {
     check("a 3x3 pixel change (6x6 pt) doesn't, 4x4 does", !frameShows(blank, painted(CGRect(x: 10, y: 10, width: 3, height: 3), 230), in: [box])
           && frameShows(blank, painted(CGRect(x: 10, y: 10, width: 4, height: 4), 230), in: [box]))
     check("overlapping places count a pixel once", changed(blank, painted(box, 230), in: [box, box]) == 80)
+    // Review of #498. first-F1: a cursor that blinks under the window's place while nothing opens is noise.
+    // A 4x8 px block, as the review measured a terminal cursor: alone it is over the 16 px bar.
+    let cursor = CGRect(x: 12, y: 10, width: 4, height: 8)
+    check("that cursor alone would show without the noise mask", frameShows(blank, painted(cursor, 230), in: [box]))
+    var blink = FrameJudge()
+    blink.add(blank); blink.add(painted(cursor, 230)); blink.add(blank)
+    blink.learning = false
+    blink.add(painted(cursor, 230)); blink.add(blank); blink.add(painted(cursor, 230))
+    check("a cursor that blinked before the open doesn't show (first-F1)", blink.judge([box]).showing == 0)
+    blink.add(painted(box, 230))
+    check("a window drawn over that cursor still shows", blink.judge([box]).showing == 1)
+    var late = FrameJudge()
+    late.add(blank); late.learning = false
+    late.add(painted(box, 230))
+    check("a frame captured before its window's first sample still shows (sol-F1)", late.judge([]).showing == 0 && late.judge([box]).showing == 1)
+    check("a display that stopped capturing after its first frame makes the open invalid (sol-F2)",
+          captureProblem(started: true, stopError: "stream stopped", resized: false) != nil
+          && captureProblem(started: false, stopError: nil, resized: false) != nil
+          && captureProblem(started: true, stopError: nil, resized: false) == nil)
     print(bad == 0 ? "selftest: pass" : "selftest: fail"); exit(bad == 0 ? 0 : 1)
 }
 
@@ -350,21 +438,21 @@ final class Sampler {
     func stop() { lock.lock(); stopped = true; lock.unlock(); done.wait() }
 }
 
-/// Records one display from just before an open until it settles, judging each frame as it comes against the first:
-/// `showing` counts frames in which a place the sampler lists differs from it. Frames are never kept.
-final class FrameWatch: NSObject, SCStreamOutput {
+/// Records one display from the pre-roll before an open until it settles. Each frame goes to a `FrameJudge`, which is
+/// judged once the open settles, against every place the sampler listed by then.
+final class FrameWatch: NSObject, SCStreamOutput, SCStreamDelegate {
     private let lock = NSLock()
     private let bounds: CGRect
-    private let places: () -> [CGRect]
     private var stream: SCStream?
-    private var base: Luma?
-    private(set) var frames = 0, showing = 0, worst = 0
+    private var judge = FrameJudge()
+    private var stopError: String?
+    private var stopping = false
     private let queue = DispatchQueue(label: "agent-open-probe.frames", qos: .userInteractive)
     private let first = DispatchSemaphore(value: 0)
+    private var started = false
 
-    init(display: SCDisplay, places: @escaping () -> [CGRect]) {
+    init(display: SCDisplay) {
         bounds = CGDisplayBounds(display.displayID)
-        self.places = places
         super.init()
         let config = SCStreamConfiguration()
         config.width = max(2, Int(bounds.width / 2)); config.height = max(2, Int(bounds.height / 2))
@@ -372,25 +460,36 @@ final class FrameWatch: NSObject, SCStreamOutput {
         config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
         config.showsCursor = false
         config.queueDepth = 6
-        let s = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: config, delegate: nil)
+        let s = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: config, delegate: self)
         try? s.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         stream = s
     }
 
     /// Starts and waits for the first frame (the "before"); false when none came in a second.
     func start() -> Bool {
-        let started = DispatchSemaphore(value: 0)
+        let done = DispatchSemaphore(value: 0)
         var ok = false
-        stream?.startCapture { ok = $0 == nil; started.signal() }
-        started.wait()
-        return ok && first.wait(timeout: .now() + 1) == .success
+        stream?.startCapture { ok = $0 == nil; done.signal() }
+        done.wait()
+        let got = ok && first.wait(timeout: .now() + 1) == .success
+        lock.lock(); started = got; lock.unlock()
+        return got
     }
 
+    /// The pre-roll is over: frames from here on are judged, not learned as noise.
+    func endPreroll() { lock.lock(); judge.learning = false; lock.unlock() }
+
     func stop() {
+        lock.lock(); stopping = true; lock.unlock()
         let stopped = DispatchSemaphore(value: 0)
         stream?.stopCapture { _ in stopped.signal() }
         _ = stopped.wait(timeout: .now() + 2)
         queue.sync {}
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        lock.lock(); defer { lock.unlock() }
+        if !stopping { stopError = error.localizedDescription }
     }
 
     func stream(_ s: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -408,20 +507,26 @@ final class FrameWatch: NSObject, SCStreamOutput {
             let p = bytes + y * row + x * 4   // B, G, R, A
             px[y * w + x] = UInt8((Int(p[2]) * 77 + Int(p[1]) * 150 + Int(p[0]) * 29) >> 8)
         } }
-        let frame = Luma(w: w, h: h, px: px)
         lock.lock(); defer { lock.unlock() }
-        guard let base else { base = frame; first.signal(); return }
-        let sx = CGFloat(w) / bounds.width, sy = CGFloat(h) / bounds.height
-        let boxes = places().compactMap { r -> CGRect? in
+        let wasFirst = judge.base == nil
+        judge.add(Luma(w: w, h: h, px: px))
+        if wasFirst { first.signal() }
+    }
+
+    /// The open's frames judged against `places` (points, as the window server lists them), and why they can't be
+    /// trusted, if they can't.
+    func result(places: [CGRect]) -> (frames: Int, showing: Int, worst: Int, problem: String?) {
+        lock.lock(); defer { lock.unlock() }
+        let problem = captureProblem(started: started, stopError: stopError, resized: judge.resized)
+        guard let base = judge.base else { return (0, 0, 0, problem) }
+        let sx = CGFloat(base.w) / bounds.width, sy = CGFloat(base.h) / bounds.height
+        let boxes = places.compactMap { r -> CGRect? in
             let c = r.intersection(bounds)
             return c.isNull || c.isEmpty ? nil : CGRect(x: (c.minX - bounds.minX) * sx, y: (c.minY - bounds.minY) * sy, width: c.width * sx, height: c.height * sy)
         }
-        frames += 1
-        let n = changed(base, frame, in: boxes)
-        worst = max(worst, n == Int.max ? 0 : n)
-        if n >= framePixelBar { showing += 1 }
+        let r = judge.judge(boxes)
+        return (r.frames, r.showing, r.worst, problem)
     }
-    var result: (frames: Int, showing: Int, worst: Int) { lock.lock(); defer { lock.unlock() }; return (frames, showing, worst) }
 }
 
 func started(_ pid: pid_t) -> Bool {
@@ -483,8 +588,11 @@ for app in apps {
         let done = DispatchSemaphore(value: 0)
         // Running copies of other names are never this app's; a pid that was running before the open is not new.
         let sampler = Sampler(app: app) { !before.contains($0) }
-        let watches = (displays ?? []).map { FrameWatch(display: $0, places: { sampler.places }) }
-        let recording = watches.allSatisfy { $0.start() }
+        let watches = (displays ?? []).map { FrameWatch(display: $0) }
+        _ = watches.map { $0.start() }
+        // The pre-roll: what changes on its own before the open is noise (first-F1).
+        if !watches.isEmpty { RunLoop.current.run(until: Date().addingTimeInterval(prerollSeconds)) }
+        watches.forEach { $0.endPreroll() }
         let t0 = Date()
         DispatchQueue.global().async {
             reply = agent(["open", app] + (app == "TextEdit" ? [note.path] : []))
@@ -508,9 +616,15 @@ for app in apps {
         watches.forEach { $0.stop() }
         // A loop, not a reduce over a tuple: the reduce took the type checker past its limit (a compile error).
         var shot: (frames: Int, showing: Int, worst: Int) = (0, 0, 0)
-        for r in watches.map(\.result) { shot.frames += r.frames; shot.showing += r.showing; shot.worst = max(shot.worst, r.worst) }
+        var problems: [String] = []
+        // Judged now, against every place listed during the open (sol-F1).
+        let places = sampler.places
+        for r in watches.map({ $0.result(places: places) }) {
+            shot.frames += r.frames; shot.showing += r.showing; shot.worst = max(shot.worst, r.worst)
+            if let p = r.problem { problems.append(p) }
+        }
         if displays != nil {
-            if !recording { invalid.append("\(app) #\(round): a display gave no first frame, so its frames can't be judged") }
+            if !problems.isEmpty { invalid.append("\(app) #\(round): a display \(problems.joined(separator: "; ")), so its frames can't be judged") }
             else { frameOpens += 1; framesAll += shot.frames; framesShowing += shot.showing }
             if guardOn, shot.showing > 0 {
                 failures.append("\(app) #\(round): \(shot.showing) of \(shot.frames) captured frames show a window of it on Donovan's workspace (up to \(shot.worst) px changed)")
