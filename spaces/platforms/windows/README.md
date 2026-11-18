@@ -115,13 +115,15 @@ hint: on every candidate chord each modifier it believes down is confirmed again
 key-down within 40 ms, when the system's state has not caught up), so a key-up that was missed (Win+L and the
 secure desktop, Ctrl+Alt+Del, a UAC prompt) cannot leave Win "stuck". The count is also cleared on session lock
 and unlock and when the input desktop changes. The hook swallows the digit's key-up too. So the shell never sees
-a bare Win tap and opens Start (Search), and an app never sees a bare Alt tap and opens its menu bar, the hook sends
-an unassigned key (0xE8) the moment it takes a Win or Alt chord. A
+a bare Win tap and opens Start (Search), and an Alt release that comes after the mask never reaches an app as a bare
+Alt tap that opens its menu bar, the hook sends an unassigned key (0xE8) the moment it takes a Win or Alt chord. A
 person's Win release comes after it and goes through as typed. A release already queued ahead of it (a chord typed in
 one SendInput batch) is held back and sent again behind 0xE8, unless SendInput refuses, when the real release goes
 through instead. A release a second after the chord goes through too, in case another hook ate the 0xE8. Known
 limit: when the hook thread falls behind and keys typed right after the release are already queued, they reach the
-shell ahead of the re-sent release, so Win+1 then a quick E can open Explorer. A fresh Win press, by the system's key state, starts clean, so a release the hook missed (an
+shell ahead of the re-sent release, so Win+1 then a quick E can open Explorer. Known limit: an Alt chord that arrives
+in one batch (AutoHotkey, RDP, a VM's send-key) already has Alt's release queued ahead of 0xE8, so the app sees a bare
+Alt tap and opens its menu bar; only Win's release is held back and sent again. A fresh Win press, by the system's key state, starts clean, so a release the hook missed (an
 elevated window) never eats a later tap. Sending 0xE8 from the daemon's worker instead lost the race to a quick
 release (#557).
 

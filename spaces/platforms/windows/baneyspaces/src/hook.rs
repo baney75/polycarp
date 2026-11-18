@@ -162,9 +162,13 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
                             if let Some(b) = lookup(table, vk, mods) {
                                 SWALLOWED[vk as usize].store(true, Ordering::Relaxed);
                                 if crate::keys::chord_masks(mods) {
-                                    let took = crate::winapi::nudge_input();
+                                    // Recorded before the mask goes out, so its 0xE8 key-up is never seen first.
                                     if mods.win {
-                                        WIN.chord(took == 2, k.time);
+                                        WIN.chord(true, k.time);
+                                    }
+                                    let took = crate::winapi::nudge_input();
+                                    if mods.win && took != 2 {
+                                        WIN.reset();
                                     }
                                 }
                                 let _ = tx.send(Msg::Chord { args: b.args.clone(), at: k.time });
