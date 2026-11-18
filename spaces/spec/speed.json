@@ -44,7 +44,7 @@
     "inPiecesMs": 81
   },
   "windowsSwitch": {
-    "about": "Win+n on a windows-latest runner, timed from SendInput until DWM reads all 30 swatch windows right (9 workspaces, 3 or 4 shown, the rest cloaked): platforms/windows/tests/ci/switch-bench.ps1, CI job spaces-windows-speed. It fails over p90Ms times regressionLimit (or p90Ms plus floorMs, whichever is more, since runners vary), and on its own fixed limits (p90 100 ms, max 250 ms, an outside uncloak undone at p90 under 100 ms).",
+    "about": "Win+n on a windows-latest runner, timed from SendInput until DWM reads all 30 swatch windows right (9 workspaces, 3 or 4 shown, the rest cloaked): platforms/windows/tests/ci/switch-bench.ps1, CI job spaces-windows-speed. It fails over p90Ms times regressionLimit (or p90Ms plus floorMs, whichever is more, since runners vary), and on its own fixed limits (p90 100 ms, p99 250 ms, the max only reported, an outside uncloak undone at p90 under 100 ms).",
     "p90Ms": null,
     "maxMs": null,
     "uncloakP90Ms": null,
