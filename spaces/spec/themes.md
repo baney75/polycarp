@@ -163,6 +163,11 @@ mistaken for yours.
 Each platform has a check that fails when a surface ignores the theme: it renders every surface
 in all three themes and compares the tokens it used with `themes.json`.
 
+On macOS a source lint backs it (`ThemeLiteralLintTests`): a color or animation duration written
+as a literal in `Sources`, outside the theme module and the agent cursor, fails unless
+`spec/theme-literals-allow.txt` lists it with a reason. A line there that no longer matches fails
+too, so the list only shrinks.
+
 ## The dock switch
 
 `themes.json` keeps `default` a plain bool (`true`) and lists the exceptions under

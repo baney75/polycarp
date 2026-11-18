@@ -885,7 +885,7 @@ final class ToastPanel: NSPanel {
     }
 
     private func fade() {
-        NSAnimationContext.runAnimationGroup({ $0.duration = 0.25; animator().alphaValue = 0 }, completionHandler: { [weak self] in self?.orderOut(nil) })
+        NSAnimationContext.runAnimationGroup({ $0.duration = Chrome.duration(0.25, .panelOut); animator().alphaValue = 0 }, completionHandler: { [weak self] in self?.orderOut(nil) })
     }
 }
 
