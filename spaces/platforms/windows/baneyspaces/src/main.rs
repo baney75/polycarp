@@ -558,6 +558,15 @@ mod tests {
     }
 
     #[test]
+    fn a_resize_far_out_of_range_is_refused_not_a_panic() {
+        // i32::MIN.abs() overflows: a debug daemon would panic validating config.toml.
+        for words in [&["window", "resize", "-2147483648", "0"][..], &["window", "resize", "0", "-2147483648"], &["window", "resize", "10001", "0"]] {
+            assert_eq!(request(v(words)).unwrap_err().error.unwrap().code, "invalid_args", "{words:?}");
+        }
+        assert!(request(v(&["window", "resize", "-10000", "10000"])).is_ok());
+    }
+
+    #[test]
     fn switch_and_move_become_requests() {
         for words in [&["switch", "bananas"][..], &["switch", "12"], &["switch", "0"], &["move", "x"], &["move", "10", "--stay"]] {
             assert_eq!(request(v(words)).unwrap_err().error.unwrap().code, "invalid_args", "{words:?}");

@@ -439,6 +439,14 @@ mod tests {
         assert!(rest[..rest.find("Envelope::ok").unwrap()].contains("self.mirror_moves();"), "the swap branch mirrors moves");
     }
 
+    #[test]
+    fn an_action_keeps_a_quoted_app_name_whole() {
+        let (t, _) = from_config("[keys.bindings]\n\"mod+alt+k\" = 'move 2 --app \"Windows Terminal\"'\n", any_command).unwrap();
+        assert_eq!(args(&t, 0x4B, Mods { win: true, alt: true, ..Mods::default() }).unwrap(), ["move", "2", "--app", "Windows Terminal"]);
+        let e = from_config("[keys.bindings]\n\"mod+alt+k\" = 'move 2 --app \"Windows'\n", any_command).unwrap_err();
+        assert!(e.contains("quote"), "an open quote is an error: {e}");
+    }
+
     const EVERY_MOD: [&str; 3] = ["win", "ctrl", "alt"];
 
     #[test]
