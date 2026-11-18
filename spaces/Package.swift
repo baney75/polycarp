@@ -2,7 +2,8 @@
 import Foundation
 import PackageDescription
 
-// The hands engine (agent-desktop's C library, built by scripts/build-engine.sh into engine/lib).
+// agent-desktop's C library, built by scripts/build-engine.sh into engine/lib. Nothing calls it since computer use moved
+// to Tychicus; it stays linked until the engine wiring (build, bundle, release, update) is taken out on its own.
 // An absolute path, because the linker's working directory isn't always the package's.
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 
@@ -20,19 +21,17 @@ let package = Package(
         .target(name: "LauncherMatch", swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]),
         // Which window lives where, and where hidden windows go: no AppKit, fully unit-tested.
         .target(name: "BaneySpacesCore"),
-        // agent-desktop's C header, for the hands engine in the app.
+        // agent-desktop's C header (see the note at the top).
         .systemLibrary(name: "CAgentDesktop", path: "Sources/CAgentDesktop"),
         // The voice core's C header (core/ffi). The library, scripts/build-core.sh's core-lib/libpolycarp_core.a,
         // is linked into the BaneySpaces target, so dictation runs inside the app's own process.
         .target(name: "CPolycarpCore"),
-        // The agent cursor's renderer: Core Animation layers in click-through overlay panels. AppKit, no SwiftUI.
-        .target(name: "BaneySpacesCursor", dependencies: ["BaneySpacesCore"]),
-        // The menu bar app: hotkeys, Accessibility, moving real windows, and the hands agents use.
+        // The menu bar app: hotkeys, Accessibility and moving real windows.
         // The engine's library sits in Contents/Frameworks in the bundle; `engine/lib` is where a
         // `swift build` finds it.
         .executableTarget(
             name: "BaneySpaces",
-            dependencies: ["BaneySpacesCore", "BaneySpacesCursor", "CAgentDesktop", "CPolycarpCore"],
+            dependencies: ["BaneySpacesCore", "CAgentDesktop", "CPolycarpCore"],
             linkerSettings: [
                 .unsafeFlags([
                     "-L\(root)/engine/lib", "-lagent_desktop_ffi",
@@ -47,17 +46,8 @@ let package = Package(
             ]),
         // `baneyspaces`, the command for hooks, agents and you. Foundation only, so it starts in milliseconds.
         .executableTarget(name: "baneyspaces-cli", dependencies: ["BaneySpacesCore"]),
-        // `swift run -c release cursor-probe`: 100 glides on an offscreen overlay, frame times and the real pointer.
-        .executableTarget(name: "cursor-probe", dependencies: ["BaneySpacesCore", "BaneySpacesCursor"],
-                          // scripts/ holds many files; the cursor probe is the only one SwiftPM builds. Named here, not
-                          // found by listing the folder: SwiftPM caches the evaluated manifest, so a list made while the
-                          // manifest runs goes stale when a script is added, and the new script is then compiled into
-                          // this target (PR 146 broke `make install` that way).
-                          path: "scripts", sources: ["cursor-probe.swift"]),
         .testTarget(name: "BaneySpacesCoreTests", dependencies: ["BaneySpacesCore"]),
         // The ranking table and the 2,000-entry latency check for the launcher's matcher.
         .testTarget(name: "LauncherMatchTests", dependencies: ["LauncherMatch"]),
-        // The overlay's real layers: marks attached, cursors surviving a display change, the panel never key or main.
-        .testTarget(name: "BaneySpacesCursorTests", dependencies: ["BaneySpacesCore", "BaneySpacesCursor"]),
     ]
 )

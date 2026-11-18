@@ -1,5 +1,5 @@
 .PHONY: build test app install release clean bench brand shots engine
-# The hands engine (agent-desktop's library) must exist before swift build or swift test link it.
+# agent-desktop's library must exist before swift build or swift test link it (Package.swift says why it stays).
 engine:
 	scripts/build-engine.sh
 build: engine

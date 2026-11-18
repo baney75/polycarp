@@ -3,26 +3,22 @@ import XCTest
 
 final class WelcomeTests: XCTestCase {
     func testPermissionsAreAskedInOrderAndOnlyAccessibilityIsRequired() {
-        XCTAssertEqual(Welcome.steps.map(\.kind), [.accessibility, .microphone, .screenRecording, .inputMonitoring])
+        XCTAssertEqual(Welcome.steps.map(\.kind), [.accessibility, .microphone])
         XCTAssertEqual(Welcome.steps.filter(\.isRequired).map(\.kind), [.accessibility])
         XCTAssertEqual(Welcome.next(granted: [], skipped: []), .accessibility)
         XCTAssertEqual(Welcome.next(granted: [.accessibility], skipped: []), .microphone)
-        XCTAssertEqual(Welcome.next(granted: [.accessibility], skipped: [.microphone]), .screenRecording)
-        XCTAssertEqual(Welcome.next(granted: [.accessibility], skipped: [.microphone, .screenRecording]), .inputMonitoring)
-        XCTAssertNil(Welcome.next(granted: [.accessibility], skipped: [.screenRecording, .inputMonitoring, .microphone]))
+        XCTAssertNil(Welcome.next(granted: [.accessibility], skipped: [.microphone]))
     }
 
     func testARequiredPermissionCantBeSkippedAndAnOptionalOneDoesntBlock() {
         XCTAssertFalse(Welcome.canSkip(.accessibility))
-        XCTAssertTrue(Welcome.canSkip(.screenRecording))
-        XCTAssertFalse(Welcome.canStart(granted: [.screenRecording, .inputMonitoring]))
+        XCTAssertTrue(Welcome.canSkip(.microphone))
+        XCTAssertFalse(Welcome.canStart(granted: [.microphone]))
         XCTAssertTrue(Welcome.canStart(granted: [.accessibility]))
     }
 
     func testEachStepOpensItsOwnSettingsList() {
         XCTAssertTrue(Welcome.step(.accessibility).settingsURL.hasSuffix("Privacy_Accessibility"))
-        XCTAssertTrue(Welcome.step(.screenRecording).settingsURL.hasSuffix("Privacy_ScreenCapture"))
-        XCTAssertTrue(Welcome.step(.inputMonitoring).settingsURL.hasSuffix("Privacy_ListenEvent"))
         XCTAssertTrue(Welcome.step(.microphone).settingsURL.hasSuffix("Privacy_Microphone"))
         for s in Welcome.steps { XCTAssertTrue(s.settingsURL.hasPrefix("x-apple.systempreferences:com.apple.preference.security?")) }
     }
@@ -34,11 +30,12 @@ final class WelcomeTests: XCTestCase {
         XCTAssertTrue(Welcome.shouldShow(hasFinished: true, granted: [.accessibility], forced: true))
     }
 
-    func testThePermissionWordsAreTrueOfWhatAgentsCanDo() {
-        let ax = Welcome.step(.accessibility).why, sr = Welcome.step(.screenRecording).why
-        XCTAssertTrue(ax.contains("read and act in the windows they're allowed to use"), ax)
+    /// Computer use lives in Tychicus: Polycarp's words promise agents nothing in your apps.
+    func testThePermissionWordsAreTrueOfWhatPolycarpDoes() {
+        let ax = Welcome.step(.accessibility).why
+        XCTAssertFalse(ax.contains("Agents"), ax)
         XCTAssertFalse(ax.contains("can't read what you type"), "not a claim the code guarantees")
-        XCTAssertTrue(sr.contains("With Full Access it can capture any window"), sr)
+        XCTAssertEqual(Set(Welcome.steps.map(\.kind)), [.accessibility, .microphone], "no Screen Recording or Input Monitoring: nothing here uses them")
     }
 
     func testStartAtLoginIsALastRowThatIsOnByDefault() {
@@ -48,16 +45,14 @@ final class WelcomeTests: XCTestCase {
         XCTAssertFalse(Welcome.StartAtLogin.shouldRegister(chosen: true, offered: false, registered: false), "a decision is kept")
         XCTAssertFalse(Welcome.StartAtLogin.shouldRegister(chosen: false, offered: true, registered: false))
         XCTAssertFalse(Welcome.StartAtLogin.shouldRegister(chosen: false, offered: false, registered: true))
-        XCTAssertEqual(Welcome.steps.count, 4, "it is not a permission step")
+        XCTAssertEqual(Welcome.steps.count, 2, "it is not a permission step")
     }
 
     func testTheWalkIsPressFlipPressFlip() {
         XCTAssertEqual(Welcome.defaultAction(granted: [], skipped: []), .allow(.accessibility))
         XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility], skipped: []), .allow(.microphone))
-        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility, .microphone], skipped: []), .allow(.screenRecording))
-        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility, .microphone, .screenRecording], skipped: []), .allow(.inputMonitoring))
-        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility, .microphone, .screenRecording, .inputMonitoring], skipped: []), .finish)
-        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility], skipped: [.screenRecording, .inputMonitoring, .microphone]), .finish)
+        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility, .microphone], skipped: []), .finish)
+        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility], skipped: [.microphone]), .finish)
     }
 
     func testTheWordsStaySafe() {

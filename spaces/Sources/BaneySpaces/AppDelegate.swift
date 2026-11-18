@@ -273,7 +273,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         c.model.onTopDragChange = { [weak self] on in self?.setTopDrag(on) }
         c.model.onDockEdgeChange = { [weak self] e in self?.setDockEdge(e) }
         c.model.onDockAgentStatusChange = { [weak self] on in self?.setDockAgentStatus(on) }
-        c.model.onAgentAccessPick = { AgentAccess.shared.request($0) }
         // Every event, not just any: an older install lacks StopFailure, which the red badge needs.
         c.model.hooksInstalled = {
             guard let d = FileManager.default.contents(atPath: NSHomeDirectory() + "/.claude/settings.json") else { return .noClaudeCode }
@@ -488,18 +487,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
 
-        // The agent API's events: the hub reads and diffs once per main-thread turn, and only while someone subscribes.
-        spaces.onModelChange = { [weak self] in self?.session.eventsChanged() }
-        NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
-            self?.session.eventsChanged()
-        }
         spaces.onChange = { [weak self] in
             self?.updateIcon()
             self?.dock.reload()
-            // The agent cursor hides the moment you leave the agent workspace.
-            CursorController.shared.environmentChanged()
-            // Any workspace switch ends every launch's covers: they show the screen from before it.
-            if let self { OpenFlashWatch.environmentChanged(showing: self.showing) }
         }
         // A new theme redraws the menu bar indicator as well as the panels.
         NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
@@ -516,8 +506,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                                           object: nil, queue: .main) { [weak self] note in
             guard let self, let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             self.switcher.noteActivated(app.processIdentifier)
-            // An activation an agent's launch or action caused isn't Donovan using the app.
-            UserActivity.shared.activated(app.processIdentifier, byAgent: AgentActivity.shared.causedByAnyAction(pid: app.processIdentifier, bundle: app.bundleIdentifier))
             guard self.started else { return }
             self.spaces.appActivated(app)
             self.session.appChanged()
@@ -881,31 +869,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// A window an agent moved onto the agent workspace goes back where it came from once the lend or Full Access that let
-    /// it move ends (`MovedInWindows`). Main thread, from the lend and access change hooks.
-    private func sendBackMovedIn() {
-        let back = HandsMovedIn.shared.settle(lends: HandsLends.shared.current(), now: Date(), mode: AgentAccess.shared.current)
-        guard !back.isEmpty else { return }
-        let rows = spaces.workspaceRows()
-        let existing = Set(rows.map(\.number)), shown = Set(rows.filter(\.shown).map(\.number))
-        for e in back {
-            // Not in the model yet (a launch before the first scan): it stays denied and is tried again on the next tick.
-            guard let w = spaces.handsLive(e.window), w.pid == e.pid else { continue }
-            // Off the workspace the agent put it on (sent back, or Donovan moved it): done.
-            guard w.workspace == e.to else { HandsMovedIn.shared.returned(window: e.window); continue }
-            // Not from under Donovan: while he looks at the workspace it sits on, it waits there, denied, for the next tick.
-            guard MovedInWindows.mayGoBack(e, shown: shown) else { continue }
-            let to = MovedInWindows.destination(e, workspaces: existing, current: spaces.model.current, agentWorkspace: Spaces.agentWorkspace)
-            run { $0.move(e.window, to: to) }
-            Trace.log("hands: window \(e.window) going back to workspace \(to): the \(e.origin == .lent ? "lend" : "Full Access") that let an agent move it ended")
-            // Dropped only once it is read back off the agent workspace; until then it stays denied.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                guard let self, let now = self.spaces.handsLive(e.window), now.pid == e.pid, now.workspace != e.to else { return }
-                HandsMovedIn.shared.returned(window: e.window)
-            }
-        }
-    }
-
     private func run(_ action: (Spaces) -> Void) {
         guard stillTrusted() else { return NSSound.beep() }
         action(spaces)
@@ -929,103 +892,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if listening, let base = image { statusItem.button?.image = SilasMenuBarImage.composite(base: base) } else { statusItem.button?.image = image }
         // Agents that finished while you were elsewhere, counted beside the workspace number.
         let n = started && session.started ? session.unseenCount : 0
-        // Full Access stays until Donovan changes it, so the menu bar says so for as long as it is on.
-        let full = AgentAccess.shared.current == .full ? " Full" : ""
-        statusItem.button?.title = (n > 0 ? " \(n)" : "") + full
-        statusItem.button?.toolTip = full.isEmpty ? nil : "Agents have full access (Settings > Agents)"
+        statusItem.button?.title = n > 0 ? " \(n)" : ""
+        statusItem.button?.toolTip = nil
         statusItem.button?.imagePosition = .imageLeading
         if listening { statusItem.button?.toolTip = "Silas is listening" }
     }
-
-    /// The workspace each display shows and the current one, for the open cover (`OpenFlashGuard.Showing`).
-    var showing: OpenFlashGuard.Showing { .init(current: spaces.model.current, byDisplay: spaces.model.shown) }
 
     private func startSession() {
         session.onUnseenChange = { [weak self] _ in self?.updateIcon(); self?.dock.reload() }
         var h = AgentHost()
         h.workspace = { Spaces.agentWorkspace }
-        h.setWorkspace = { [weak self] n in Spaces.agentWorkspace = n; self?.run { $0.reapply() }; CursorController.shared.environmentChanged() }
+        h.setWorkspace = { [weak self] n in Spaces.agentWorkspace = n; self?.run { $0.reapply() } }
         h.current = { [weak self] in self?.spaces.model.current ?? 1 }
-        h.claim = { [weak self] pid, n, fresh, title in
-            // A process the agent started gets the full 8 s; your running app only 3, so a claim
-            // that comes to nothing can't sit waiting for your next window.
-            self?.spaces.claimNextWindow(of: pid, for: n, within: fresh ? 8 : 3, newProcess: fresh, title: title)
-        }
-        h.unclaim = { [weak self] pid in self?.spaces.cancelClaim(of: pid) }
         h.move = { [weak self] id, n in self?.run { $0.move(id, to: n) } }
         h.windows = { [weak self] in self?.spaces.agentWindows() ?? [] }
-        h.pidOf = { [weak self] id in self?.spaces.handsLive(id)?.pid }
+        h.placesWindow = { [weak self] id in self?.spaces.placesWindow(id) ?? false }
         h.occupied = { [weak self] n in self?.spaces.isOccupied(n) ?? false }
-        h.showing = { [weak self] in self?.showing ?? .init(current: 1, byDisplay: [:]) }
-        Windows.onHoldEnd = { [weak self] pid in self?.spaces.askAgain(pid) }
         session.agentHost = h
-        // The agent hands: what the scope guard needs from the workspaces, and what to do when a lend changes.
-        // The engine's state folder is set here, once, on the main thread, before any engine queue exists.
-        HandsEngine.prepareEnvironment()
-        // The windows agents moved in before a relaunch: loaded and settled before the session socket takes any request.
-        _ = HandsMovedIn.shared
-        session.hands.host = HandsHost(
-            agentWorkspace: { Spaces.agentWorkspace },
-            windows: { [weak self] in self?.spaces.handsWindows(fresh: false) ?? [] },
-            freshWindows: { [weak self] in self?.spaces.handsWindows(fresh: true) ?? [] },
-            live: { [weak self] in self?.spaces.handsLive($0) },
-            titles: { [weak self] in self?.spaces.handsTitles($0) ?? [:] },
-            inspect: { [weak self] in self?.spaces.handsInspect($0) ?? (nil, false) },
-            agentOwned: { AgentOwned.shared.pids },
-            askToLend: { app, minutes, takeBack in LendConsent.ask(app: app, minutes: minutes, takeBack: takeBack) },
-            askToAllow: { AppAllowConsent.ask(app: $0, bundle: $1, path: $2) },
-            open: { [weak self] args in self?.session.agent("open", args) ?? Wire.Reply(ok: false, error: "not ready") },
-            workspaceRows: { [weak self] in self?.spaces.workspaceRows() ?? [] },
-            agentArea: { [weak self] in self?.spaces.agentArea() ?? .zero },
-            arrange: { [weak self] in self?.spaces.arrangeAgentWindows($0) ?? [:] },
-            move: { [weak self] id, n in self?.run { $0.move(id, to: n) } },
-            close: { [weak self] in self?.spaces.pressClose($0) ?? false },
-            rescan: { [weak self] in self?.spaces.rescanForAgent() },
-            facts: { [weak self] in self?.spaces.agentFacts() },
-            viewControl: { ViewControlSetting.shared.enabled },
-            switchTo: { [weak self] n, display in self?.run { s in
-                if let display { s.use(display: display) }
-                s.switchTo(n)
-            } },
-            focus: { [weak self] id, n in self?.run { $0.focus(id, on: n) } },
-            setFrame: { [weak self] id, f in self?.spaces.placeFrame(id, f) ?? "skipped" })
-        // The agent cursor: drawn on the agent workspace while you look at it, and over a lent app.
-        session.hands.host.cursorMark = { CursorController.shared.mark(window: $0) }
-        session.connectorHands.host = session.hands.host
-        session.connectorHands.host.open = { [weak self] args in self?.session.agent("open", args, remote: true) ?? Wire.Reply(ok: false, error: "not ready") }
-        CursorController.shared.start(shown: { [weak self] in self.map { Set($0.spaces.model.shown.values).union([$0.spaces.model.current]) } ?? [1] }, agentWorkspace: { Spaces.agentWorkspace },
-                                      agent: { [weak self] in self?.session.cursorAgent($0) ?? ("Agent", .working) },
-                                      windowFrame: { WindowFrames.frame(of: $0) })
-        HandsLends.shared.onChange = { [weak self] in
-            DispatchQueue.main.async {
-                // A lent app is parked, not hidden, while it is lent: the workspace is applied again.
-                self?.spaces.saveState()
-                self?.run { $0.reapply() }
-                self?.sendBackMovedIn()
-            }
-        }
-        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            HandsLends.shared.expire()
-            // Retries any window still on its way back (one not scanned yet at launch, or one whose move didn't take).
-            self?.sendBackMovedIn()
-        }
-        // What a relaunch found on its way back goes now, once the first scan has the windows.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.sendBackMovedIn() }
-        AgentAccess.shared.onChange = { [weak self] mode in
-            guard let self else { return }
-            if self.setup.model.agentAccess != mode { self.setup.model.agentAccess = mode }
-            self.sendBackMovedIn()
-            self.session.eventsEnd("agent access is now \(mode.rawValue)")
-            self.spaces.saveState()
-            self.updateIcon()
-        }
         session.updateHandler = { [weak self] what in self?.updater.answer(what) ?? Wire.Reply(ok: false, error: "the updater isn't ready") }
         session.sandboxHandler = { [weak self] r in self?.sandbox.service.handle(r) ?? Wire.Reply(ok: false, error: "not ready") }
         sandbox.start()
         sandbox.cleanupAtLaunch()
         session.onWorkingChange = { [weak self] in self?.dock.reload() }
-        // A status change with no new action (working to needs you) reaches the cursor and the veil at once.
-        session.onCursorAgentChange = { CursorController.shared.agentChanged($0) }
         // A moment after launch: setting up an observer per app costs the main thread a few
         // hundred milliseconds, which would otherwise land on your first workspace switch.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -1080,7 +968,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for n in Workspaces.range { apps[n] = spaces.apps(on: n) }
         let entries = MenuLayout.entries(rows: MenuLayout.rows(current: spaces.model.current, apps: apps),
                                          finished: session.started ? session.unseenCount : 0, update: updateNotice(),
-                                         dockOn: WorkspaceDock.enabled, access: AgentAccess.shared.current)
+                                         dockOn: WorkspaceDock.enabled)
         for entry in entries { menu.addItem(menuItem(for: entry)) }
     }
 
@@ -1119,18 +1007,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 it.attributedTitle = NSAttributedString(string: it.title, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
             }
             return it
-        case .access(let mode):
-            let it = item(MenuLayout.accessTitle(mode), #selector(accessToDefault))
-            if mode == .full { it.attributedTitle = NSAttributedString(string: it.title, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)]) }
-            return it
         case .separator:
             return .separator()
         }
-    }
-
-    /// Full Access back to Default narrows and happens at once; Read Only to Default widens and asks first.
-    @objc private func accessToDefault() {
-        DispatchQueue.main.async { AgentAccess.shared.request(.standard) }
     }
 
     private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {

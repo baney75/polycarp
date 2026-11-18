@@ -29,8 +29,6 @@ final class WelcomeModel: ObservableObject {
     static func read() -> Set<PermissionKind> {
         var s = Set<PermissionKind>()
         if AXIsProcessTrusted() { s.insert(.accessibility) }
-        if CGPreflightScreenCaptureAccess() { s.insert(.screenRecording) }
-        if CGPreflightListenEventAccess() { s.insert(.inputMonitoring) }
         if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized { s.insert(.microphone) }
         return s
     }
@@ -135,7 +133,6 @@ struct WelcomeView: View {
     @ObservedObject var model: WelcomeModel
     @ObservedObject private var parts = PartsModel.shared
     @ObservedObject private var browser = BrowserModel.shared
-    @State private var fullAccess = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -171,7 +168,6 @@ struct WelcomeView: View {
                 ForEach(Welcome.steps(for: parts.current).filter { !$0.isRequired }, id: \.kind) { row($0) }
                 loginRow
                 if parts.current.contains(.browser) { BrowserWelcomeRow() }
-                if parts.current.contains(.workspaces) { everythingRow }
             }
             .padding(.horizontal, 20)
 
@@ -204,37 +200,6 @@ struct WelcomeView: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 4)
         }
-    }
-
-    /// Off until chosen, and it never blocks starting. The sheet says what it covers.
-    private var everythingRow: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(AgentEverything.title).font(Chrome.font(13, .bold))
-                Text(AgentEverything.why).font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
-                if let message = browser.message { Text(message).font(Chrome.font(11)).foregroundStyle(Chrome.working).fixedSize(horizontal: false, vertical: true) }
-            }
-            Spacer(minLength: 8)
-            if everythingOn {
-                Image(systemName: "checkmark.circle.fill").font(Chrome.font(16)).foregroundStyle(Chrome.accent)
-            } else {
-                Button(AgentEverything.button) {
-                    // After the click's own event, as in Settings: the sheet's real-click check reads the current event.
-                    DispatchQueue.main.async {
-                        guard AgentAccess.shared.requestEverything() else { return }
-                        fullAccess = AgentAccess.shared.current == .full
-                        browser.turnOnEverything()
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 12).padding(.vertical, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .onAppear { fullAccess = AgentAccess.shared.current == .full }
-    }
-
-    private var everythingOn: Bool {
-        AgentEverything.isOn(access: fullAccess ? .full : .standard, anySite: browser.status?.anySite, claudeAllowed: browser.status?.claudeAllowed ?? false, claudeReady: browser.status?.claudeReady ?? false)
     }
 
     /// Right under what makes it possible, not below the optional steps.

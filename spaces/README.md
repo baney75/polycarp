@@ -434,96 +434,39 @@ polycarp-spaces doctor                 # what's working and what isn't
 
 `polycarp-spaces skill install` teaches Claude Code the same commands.
 
-## Agents work beside you
+## A workspace for agents
 
-Turn on the agent workspace and agents get a workspace of their own (9 unless you pick
-another) to drive real apps on while you work on yours:
+Turn on the agent workspace and agents' apps get a workspace of their own (9 unless you pick
+another), out of your way while you work on yours:
 
 ```sh
-polycarp-spaces agent on                              # workspace 9 becomes the agent workspace
-polycarp-spaces agent run --dir ~/Projects/atlas -- claude   # a Claude Code session there
-polycarp-spaces agent open TextEdit notes.txt         # an app, or files in it, there
-polycarp-spaces agent status                          # what's there, with window IDs
+polycarp-spaces agent on              # workspace 9 becomes the agent workspace
+polycarp-spaces agent status          # which workspace it is
+polycarp-spaces agent windows         # the windows on it, with window numbers
+polycarp-spaces agent move 4127       # send a window there
+polycarp-spaces agent off
 ```
 
 Three rules keep it from ever taking your screen. Its apps are parked out of view instead of
-hidden, so agents can still click and type in them from behind. Nothing
-on it coming forward takes you there: you go with ⌘9, its Dock tile or a launcher row. And a window
-an agent opens in the background lands there, not on your workspace. `agent run` starts a
-Ghostty of its own for the agent, a separate process from yours, so nothing the agent does
-there can stall your terminals. `scripts/agent-hands-probe.swift` (phase 1) proves it on your Mac: an
-agent's command runs there, and only your own keyboard and mouse change what you see.
+hidden, so tools can still click and type in them from behind. Nothing on it coming forward takes
+you there: you go with ⌘9, its Dock tile or a launcher row. And a window an app on it opens in the
+background lands there, not on your workspace.
 
-### The hands: snapshot an app, act on it, check the result
-
-Polycarp is also the hands agents use there. They read an app's accessibility tree, act on what's in
-it and check the result, all on the agent workspace and never in the foreground. Cua's driver is no longer
-used. The engine is [agent-desktop](https://github.com/vercel-labs/agent-desktop) (Apache-2.0), built from a
-pinned commit by `make install` and linked into the app; the scope and focus guards, the evidence and the
-MCP server are Polycarp's.
-
-```sh
-polycarp-spaces agent open TextEdit notes.txt       # on the agent workspace; files only from the handoff folder; prints the window id
-polycarp-spaces agent snapshot --app TextEdit -i    # refs for what an agent can act on
-polycarp-spaces agent type @s8f3k2p9:e2 "Hello"     # act on a ref; the result carries what it read back
-polycarp-spaces agent click|set-value|toggle|scroll|select|press <ref> …
-polycarp-spaces agent find --window 4211 --role button --name Save
-polycarp-spaces agent get @s8f3k2p9:e2 value        # check from the live element
-polycarp-spaces agent shot --window 4211            # one window as a PNG in Polycarp's shots folder, even while parked (needs Screen Recording)
-polycarp-spaces agent windows                       # the windows an agent may use right now
-claude mcp add polycarp-spaces -- polycarp-spaces mcp   # the same tools over MCP, for Claude Code and Codex
-```
-
-You, not an agent, lend an app from your workspaces. `polycarp-spaces agent lend Excel --for 20m` shows a sheet in Polycarp
-(Don't Lend is the default button) and only a real click on **Lend** lends it: a click posted by a program, or an
-accessibility press, is refused, and running the command (or an agent running it) lends nothing by itself. Nothing sent
-to the Polycarp socket lends. Run the command again for an app that is lent and the sheet offers **Take Back**. A lend names
-that process and its windows as they are then, can be asked for while you use the app (the sheet is yours to answer), lets agents
-read it at any time while actions on it wait until you have been out of it for 5 seconds (`in_use` if their `wait` runs out), ends after 30 minutes (up to 8 hours) or, if you gave `--session`, when that session ends, and is listed in
-`state.json` and `polycarp-spaces doctor`. Agents can't lend: the MCP server has no such tool and an agent's `lend` answers
-`needs_lend`. `agent move` moves only windows of apps Polycarp started for an agent; send your own window with its
-workspace key. `agent open` starts TextEdit and Preview on a file from the handoff folder, Calculator, and any app you
-allow: `polycarp-spaces agent allow Grapher` shows a sheet in Polycarp, and only your click on Allow adds it (`--remove`
-takes it off, `--list` shows them). The sheet names the bundle id and the app's path, and only that copy opens: it must be
-the copy macOS opens for the id, in /Applications or /System/Applications, signed as it was when you allowed it. Polycarp
-keeps the list in memory only, so an allow lasts until Polycarp quits and nothing an agent can write adds an app.
-Each allowed app starts as a separate copy on the agent workspace, and only its windows there are the agent's, but only
-the three built-in apps are known to restore nothing: an allowed app may open files or accounts it keeps for you. An open
-that starts no copy of its own, or reaches the copy you run, is refused. Browsers, password managers, settings, shells,
-Finder, apps that run code (Script Editor, Xcode, code editors, any developer tool), apps signed in to your accounts
-(Mail, Messages, Slack, Home) and Polycarp itself can't be allowed, nor any app that opens web links or runs one copy
-only. Every other app answers `needs_sandbox`, and a window of the agent's copy that shows a document from outside the
-handoff folder, or an Open or Save panel, is off limits. The agent workspace protects you from accidents; it is not a security
-boundary (see [docs/agent-computer-use.md](docs/agent-computer-use.md)).
-
-Every command prints one JSON envelope: `{"ok":true,"data":{…}}`, or `{"ok":false,"error":{"code","message",
-"retry","suggestion"}}` with `retry` one of `safe`, `after_snapshot`, `never`. Four rules, all enforced by the app:
-an agent acts only on windows on the agent workspace or on an app you lent (anything else answers
-`outside_agent_workspace`, and reads are refused the same way; scope is checked again right before every engine call);
-an action never activates an app, raises a window, moves the pointer or posts a global keystroke (`press` posts keys to
-the one background process, and `press` and `type` reach only windows on the agent workspace: a lent window on one of
-your workspaces answers `outside_agent_workspace` until the agent brings it over with `move --window`); Polycarp ignores an app activation an agent action
-caused, for the window the action worked on and only while it ran, so your workspace doesn't follow it and your own
-windows of the same app still do; and every action returns what it verified from the exact window it targeted.
-`scripts/agent-hands-probe.swift` proves the rest on your Mac: 200 actions in TextEdit (a temporary document) and
-Calculator while it samples your front app, workspace, pointer, front window and any window
-appearing on another workspace every 50 ms.
-
-`make build` and `make test` build the engine first (Rust is needed once; `scripts/build-engine.sh`). The plan,
-the rules and the phases are in [docs/agent-computer-use.md](docs/agent-computer-use.md).
+Polycarp doesn't read, click or type into apps. Computer use lives in
+[Tychicus](https://github.com/baney75/tychicus), which keeps the windows it works in on the agent
+workspace through two calls on Polycarp's socket: list the windows there, and move a window there.
+They are documented in [docs/agent-workspace-api.md](docs/agent-workspace-api.md).
 
 **Phones.** Android phones (USB debugging on) and iPhones show in `polycarp-spaces ls` and the launcher the moment they're
 plugged in. A row opens the phone's screen: scrcpy for Android, iPhone Mirroring for an iPhone.
 Agents get `polycarp-spaces phone ui` (the screen's UI tree, to find a button by its text), `tap`,
-`swipe`, `type`, `key`, `shot` and `shell` for Android. An iPhone is driven through its iPhone
-Mirroring window: open it on the agent workspace and work it from behind like any other app.
+`swipe`, `type`, `key`, `shot` and `shell` for Android.
 
-**Other machines.** `polycarp-spaces remote on` lets your other machines send work to this one's
-agent workspace over your tailnet: `polycarp-spaces --on <host> agent run -- claude`. It listens
-only on this Mac's Tailscale address, every request needs the token from `polycarp-spaces remote
-token`, and a remote machine can only look and start agent work. It can't focus, type into
-your terminals, open pages or move your windows. macOS's firewall has to allow Polycarp
-incoming connections first.
+**Other machines.** `polycarp-spaces remote on` lets your other machines look at this one over your
+tailnet: `polycarp-spaces --on <host> ls`. It listens only on this Mac's Tailscale address, every
+request needs the token from `polycarp-spaces remote token`, and a remote machine can only look and
+change settings. It can't focus, type into your terminals, open pages or move your windows. macOS's
+firewall has to allow Polycarp incoming connections first.
 
 ### Keep apps usable by automation
 

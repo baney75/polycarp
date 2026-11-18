@@ -1,7 +1,7 @@
 import Foundation
 
-/// The agent workspace: one workspace where coding agents drive real apps through `baneyspaces agent`
-/// while you work somewhere else. Three rules keep it from ever taking over your screen:
+/// The agent workspace: one workspace for agents' apps (Tychicus drives them; Polycarp only places
+/// their windows) while you work somewhere else. Three rules keep it from ever taking over your screen:
 ///
 /// 1. Its apps are parked out of view instead of hidden, because macOS refuses background clicks
 ///    and keystrokes to a hidden app.
@@ -26,8 +26,8 @@ public enum AgentWorkspace {
     }
 
     /// Where a window that just opened belongs. `appFront` is whether its app is in front (you
-    /// clicked a link, pressed its New Window key); `claimed` is a workspace an agent asked for
-    /// with `baneyspaces agent open` or `agent run`. Nil leaves it where macOS put it.
+    /// clicked a link, pressed its New Window key); `claimed` is a workspace asked for
+    /// for the window when it opened. Nil leaves it where macOS put it.
     public static func homeForNewWindow(appFront: Bool, appWorkspaces: Set<Int>, claimed: Int?, current: Int, agent: Int?) -> Int? {
         if let claimed { return claimed }
         // An app with windows here too keeps opening them here, as it always has.

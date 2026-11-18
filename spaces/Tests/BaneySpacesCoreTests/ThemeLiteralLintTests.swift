@@ -17,9 +17,6 @@ final class ThemeLiteralLintTests: XCTestCase {
         "Sources/BaneySpaces/Appearance/",           // the theme editor
     ]
 
-    /// The spec's one named exception: the agent cursor keeps its own colors so agent activity is never mistaken for yours.
-    static let agentCursor = ["Sources/BaneySpacesCursor/", "Sources/BaneySpacesCore/Cursor/"]
-
     static let patterns: [(String, String)] = [
         ("color", #"\b(NS|CG|UI)?Color\((red|white|srgbRed|calibratedRed|calibratedWhite|deviceRed|deviceWhite|genericRed|genericGrayGamma2_2Gray|hue|displayP3Red|gray)\s*:\s*[0-9.]"#),
         ("color", #"\bRGB\(r:\s*[0-9.]"#),
@@ -47,9 +44,9 @@ final class ThemeLiteralLintTests: XCTestCase {
         }
     }
 
-    static func exempt(_ rel: String) -> Bool { (themeModule + agentCursor).contains { rel.hasPrefix($0) } }
+    static func exempt(_ rel: String) -> Bool { themeModule.contains { rel.hasPrefix($0) } }
 
-    /// Every hit in `Sources`, line comments dropped, the theme module and the agent cursor skipped.
+    /// Every hit in `Sources`, line comments dropped, the theme module skipped.
     static func hits() throws -> [Hit] {
         let root = Repo.root
         guard let walk = FileManager.default.enumerator(at: root.appendingPathComponent("Sources"), includingPropertiesForKeys: nil) else { return [] }
@@ -95,7 +92,6 @@ final class ThemeLiteralLintTests: XCTestCase {
         func hit(_ s: String) -> Bool { regexes.contains { $0.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil } }
         for s in caught { XCTAssertTrue(hit(s), "should be caught: \(s)") }
         for s in passed { XCTAssertFalse(hit(s), "should pass: \(s)") }
-        XCTAssertTrue(Self.exempt("Sources/BaneySpacesCursor/AgentCursor.swift"))
         XCTAssertTrue(Self.exempt("Sources/BaneySpacesCore/ThemeEditorPalette.swift"))
         XCTAssertFalse(Self.exempt("Sources/BaneySpaces/WorkspaceDock.swift"))
     }

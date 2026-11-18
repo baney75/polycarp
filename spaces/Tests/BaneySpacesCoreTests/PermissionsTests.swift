@@ -14,8 +14,6 @@ final class PermissionsTests: XCTestCase {
         XCTAssertEqual(Permissions.all.map(\.id), PermissionID.allCases)
         let want: [PermissionID: (GrantKind, String)] = [
             .accessibility: (.list, "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"),
-            .screenRecording: (.list, "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"),
-            .inputMonitoring: (.list, "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"),
             .microphone: (.prompt, "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"),
             .automation: (.perApp, "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"),
             .notifications: (.prompt, "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.baney.polycarp"),
@@ -52,8 +50,6 @@ final class PermissionsTests: XCTestCase {
     func testEachPermissionNamesThePartsThatUseIt() {
         XCTAssertEqual(Permissions.entry(.accessibility).features, [.workspaces, .voice])
         XCTAssertEqual(Permissions.entry(.microphone).features, [.voice])
-        XCTAssertEqual(Permissions.entry(.screenRecording).features, [.workspaces])
-        XCTAssertEqual(Permissions.entry(.inputMonitoring).features, [.workspaces])
         XCTAssertEqual(Permissions.entry(.automation).features, [.workspaces])
         XCTAssertEqual(Permissions.entry(.accessibility).stops(with: FeatureSet([.voice])), ["Silas's key and typing"])
     }
@@ -67,8 +63,6 @@ final class PermissionsTests: XCTestCase {
     }
 
     func testTheSystemsRawAnswersMapToState() {
-        // IOHIDAccessType: granted, denied, unknown.
-        XCTAssertEqual([0, 1, 2, 9].map { Permissions.hidState(UInt32($0)) }, [.granted, .denied, .notAsked, .unknown])
         // AVAuthorizationStatus: notDetermined, restricted, denied, authorized.
         XCTAssertEqual([0, 1, 2, 3, 7].map(Permissions.microphoneState), [.notAsked, .denied, .denied, .granted, .unknown])
         // UNAuthorizationStatus: notDetermined, denied, authorized, provisional, ephemeral.
@@ -100,7 +94,7 @@ final class PermissionsTests: XCTestCase {
             XCTAssertEqual(helper, e.kind == .list, "\(e.id)")
             XCTAssertEqual(Permissions.keyboardWay(e) != nil, e.kind == .list, "\(e.id)")
         }
-        XCTAssertTrue(Permissions.keyboardWay(Permissions.entry(.screenRecording))!.contains("click + and pick"))
+        XCTAssertTrue(Permissions.keyboardWay(Permissions.entry(.accessibility))!.contains("click + and pick"))
     }
 
     // MARK: What to show now
@@ -109,14 +103,14 @@ final class PermissionsTests: XCTestCase {
         var s = states(.notAsked)
         s[.microphone] = .granted
         let all = Permissions.plan(states: s, features: .all)
-        XCTAssertEqual(all.needed.map(\.id), [.accessibility, .screenRecording, .inputMonitoring, .microphone, .automation])
+        XCTAssertEqual(all.needed.map(\.id), [.accessibility, .microphone, .automation])
         XCTAssertEqual(all.optional.map(\.id), [.notifications], "nice to have waits with the optional ones")
         XCTAssertEqual(all.next, .accessibility)
         XCTAssertFalse(all.canStart)
 
         let voice = Permissions.plan(states: s, features: FeatureSet([.voice]))
         XCTAssertEqual(voice.needed.map(\.id), [.accessibility, .microphone])
-        XCTAssertEqual(voice.optional.map(\.id), [.screenRecording, .inputMonitoring, .automation, .notifications])
+        XCTAssertEqual(voice.optional.map(\.id), [.automation, .notifications])
         XCTAssertTrue(voice.optional.allSatisfy(\.optional))
         XCTAssertEqual(voice.needed.first?.stops, ["Silas's key and typing"])
 
@@ -129,9 +123,9 @@ final class PermissionsTests: XCTestCase {
         var s = states(.granted)
         XCTAssertEqual(Permissions.summary(Permissions.plan(states: s, features: .all)), "Polycarp has everything it needs for what you use.")
         XCTAssertNil(Permissions.plan(states: s, features: .all).next)
-        s[.screenRecording] = .denied
+        s[.microphone] = .denied
         XCTAssertEqual(Permissions.summary(Permissions.plan(states: s, features: .all)), "One permission left for what you use.")
-        XCTAssertEqual(Permissions.plan(states: s, features: .all).next, .screenRecording)
+        XCTAssertEqual(Permissions.plan(states: s, features: .all).next, .microphone)
         s[.automation] = .notAsked
         XCTAssertEqual(Permissions.summary(Permissions.plan(states: s, features: .all)), "2 permissions left for what you use.")
         s[.accessibility] = .notAsked

@@ -22,7 +22,7 @@ final class AgentStatusRowsTests: XCTestCase {
     func testStatusReadsOnlyLiveRows() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let spaces = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/Spaces.swift"), encoding: .utf8)
-        let body = try XCTUnwrap(spaces.range(of: "func agentWindows() -> [(id: WindowID, app: String, title: String)] {")).upperBound
+        let body = try XCTUnwrap(spaces.range(of: "func agentWindows() -> [AgentAPI.Window] {")).upperBound
         XCTAssertTrue(String(spaces[body...].prefix(600)).contains("return AgentStatusRows.live(rows, pid: { $0.pid })"))
     }
 }

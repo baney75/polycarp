@@ -2,11 +2,11 @@ import Foundation
 
 /// A macOS permission Polycarp asks for on first run.
 public enum PermissionKind: String, CaseIterable, Sendable {
-    case accessibility, screenRecording, inputMonitoring, microphone
+    case accessibility, microphone
 }
 
 /// What the welcome window says about one permission, in the order they're asked for. Every word here has to be true of
-/// what the code does: `WindowShot` needs Screen Recording, and `SessionTap` is listen-only and made only for one action.
+/// what the code does.
 public struct PermissionStep: Equatable, Sendable {
     public let kind: PermissionKind
     public let title: String
@@ -24,7 +24,7 @@ public enum Welcome {
         PermissionStep(
             kind: .accessibility,
             title: "Arrange your windows",
-            why: "Polycarp shows, hides and moves other apps' windows. Agents you allow can read and act in the windows they're allowed to use. It is the one permission Polycarp can't run without.",
+            why: "Polycarp shows, hides and moves other apps' windows. It is the one permission Polycarp can't run without.",
             isRequired: true,
             settingsName: "Accessibility",
             settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
@@ -37,22 +37,6 @@ public enum Welcome {
             settingsName: "Microphone",
             settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
             after: "Choose Allow in the box macOS shows, or turn on Polycarp in the list. This window updates by itself."),
-        PermissionStep(
-            kind: .screenRecording,
-            title: "Let agents see their own work",
-            why: "An agent can take a picture of a window on its own workspace, or one you've lent it, to check its work. With Full Access it can capture any window. Pictures go only to that agent.",
-            isRequired: false,
-            settingsName: "Screen & System Audio Recording",
-            settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-            after: "Turn on Polycarp in the list. macOS may ask to reopen it, which is fine."),
-        PermissionStep(
-            kind: .inputMonitoring,
-            title: "Notice when you're at the keyboard",
-            why: "While an agent acts, Polycarp checks whether you're using the keyboard or mouse, so the two of you don't collide. It only listens during that action and doesn't keep what you type.",
-            isRequired: false,
-            settingsName: "Input Monitoring",
-            settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
-            after: "Turn on Polycarp in the list. This window updates by itself."),
     ]
 
     /// The walk for the parts that are on. Workspaces asks for all it uses, Silas needs Accessibility to read its key and
@@ -66,8 +50,6 @@ public enum Welcome {
                 return PermissionStep(kind: step.kind, title: "Let Silas type for you",
                                       why: "Silas watches for its key and types what you said into the app you're in. It doesn't read what you type.",
                                       isRequired: true, settingsName: step.settingsName, settingsURL: step.settingsURL, after: step.after)
-            case .screenRecording, .inputMonitoring:
-                return features.contains(.workspaces) ? step : nil
             case .microphone:
                 return features.contains(.voice) ? step : nil
             }

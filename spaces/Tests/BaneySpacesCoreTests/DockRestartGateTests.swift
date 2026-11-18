@@ -27,7 +27,7 @@ final class DockRestartGateTests: XCTestCase {
         XCTAssertEqual(DockRestartGate.decide(onFullScreenSpace: false, switching: false, dockUptime: 60, sinceSpaceChange: 5), .restartNow)
     }
 
-    func testAQuitHandsItsRestartToAHelperAndAnInstallRestoresNothing() throws {
+    func testAQuitGivesItsRestartToAHelperAndAnInstallRestoresNothing() throws {
         let app = try source("Sources/BaneySpaces/AppDelegate.swift")
         let quit = try XCTUnwrap(app.range(of: "func applicationWillTerminate").map { String(app[$0.lowerBound...].prefix(2000)) })
         XCTAssertTrue(quit.contains("dock.stop(restoreSystemDock: !forInstall)"))

@@ -5,15 +5,9 @@ import BaneySpacesCore
 /// JSON line in and one out. Requests are handled on the main thread, where the engine lives.
 final class Server {
     var handle: (Wire.Request) -> Wire.Reply = { _ in Wire.Reply(ok: false, error: "not ready") }
-    /// Agent computer-use commands run on the connection's own thread, not the main one: a snapshot
-    /// of a slow app must never freeze the menu bar, the dock or a workspace switch. The hands
-    /// hop to the main thread only for the few reads that need it.
-    var handleHands: (Wire.Request) -> Wire.Reply = { _ in Wire.Reply(ok: false, error: "not ready") }
     /// Sandbox requests take seconds to a minute (a VM boots), so they never run on the main thread:
     /// the session engine, the dock and the hotkeys stay responsive while one waits.
     var handleSandbox: (Wire.Request) -> Wire.Reply = { _ in Wire.Reply(ok: false, error: "not ready") }
-    /// `subscribe`: takes the connection and keeps it, writing events until either side closes it (`AgentEventHub`).
-    var handleSubscribe: (Int32, Wire.Request) -> Void = { fd, _ in close(fd) }
     private var listeners: [(fd: Int32, path: String, source: DispatchSourceRead)] = []
     private let io = DispatchQueue(label: "baneyspaces.socket", attributes: .concurrent)
 
@@ -58,8 +52,7 @@ final class Server {
     }
 
     private func serve(_ client: Int32) {
-        var kept = false
-        defer { if !kept { close(client) } }
+        defer { close(client) }
         // BSD sockets inherit O_NONBLOCK from the listener; this one should block until its line arrives.
         _ = fcntl(client, F_SETFL, fcntl(client, F_GETFL) & ~O_NONBLOCK)
         var noSigPipe: Int32 = 1
@@ -73,15 +66,10 @@ final class Server {
             if let why = SocketPolicy.refusal(for: req) {
                 Trace.log("refused on the socket: \(req.op.rawValue) \(req.text ?? "") \((req.args ?? []).joined(separator: " "))")
                 reply = Wire.Reply(ok: false, error: why)
-            } else if req.op == .subscribe {
-                kept = true
-                return handleSubscribe(client, req)
+            } else if req.op == .sandbox {
+                reply = handleSandbox(req)
             } else {
-                if req.op == .sandbox {
-                    reply = handleSandbox(req)
-                } else {
-                    reply = req.op == .hands ? handleHands(req) : DispatchQueue.main.sync { handle(req) }
-                }
+                reply = DispatchQueue.main.sync { handle(req) }
             }
         } else {
             reply = Wire.Reply(ok: false, error: "bad request")

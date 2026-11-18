@@ -3,7 +3,7 @@ import BaneySpacesCore
 import SwiftUI
 
 /// The draft drawn the way the Mac app draws it, in one mode: a dock with its workspace marks, a panel with a selected row,
-/// buttons, a settings row, status colors and the agent cursor. Every color, corner, border and size comes from the draft,
+/// buttons, a settings row and status colors. Every color, corner, border and size comes from the draft,
 /// not from the theme the app is using now.
 struct ThemeEditorPreview: View {
     let theme: PolycarpTheme
@@ -30,7 +30,7 @@ struct ThemeEditorPreview: View {
         VStack(alignment: .leading, spacing: 12) {
             dock
             panel
-            HStack(spacing: 8) { buttons; Spacer(minLength: 0); cursor }
+            HStack(spacing: 8) { buttons; Spacer(minLength: 0) }
             settingsRow
             statuses
         }
@@ -147,24 +147,6 @@ struct ThemeEditorPreview: View {
                 .background(ThemedPreviewPill(square: square).fill(c("surface")))
                 .overlay(ThemedPreviewPill(square: square).strokeBorder(c("border"), lineWidth: w))
         }
-    }
-
-    /// The agent cursor on this page. Its colors are its own, never the theme's, so the swatch shows how it reads here.
-    private var cursor: some View {
-        let path = Path(CursorGlyphs.path(CursorTheme.standard.glyph, size: 18))
-        let status = CursorPalette.status(.working)
-        let white = RGB(r: 1, g: 1, b: 1)
-        return HStack(alignment: .top, spacing: 2) {
-            path.fill(Appearance.color(status))
-                .overlay(path.stroke(Appearance.color(white), lineWidth: 1.5))
-                .frame(width: 18, height: 18)
-            Text("Claude").font(font(9, bold: true)).foregroundStyle(Appearance.color(white))
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(Capsule().fill(Appearance.color(status)))
-                .offset(y: 10)
-        }
-        .frame(height: 30, alignment: .top)
-        .accessibilityLabel("Agent cursor")
     }
 
     private var settingsRow: some View {

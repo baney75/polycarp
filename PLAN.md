@@ -82,11 +82,7 @@ Asked for by Donovan, 2026-11-05: installation and permissions need to be excell
 Retired with the Linux desktop, 2026-11-17. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 ## Agents' computer use
-Asked for by Donovan, 2026-11-05: it has to work better and look much better, with a better cursor.
-- [x] The olive leaf cursor, calm status colors, a glide you can follow. Check: `CursorThemeTests`, and renders of the real layers in every theme on five backgrounds
-- [x] An app an agent starts stays off your screen, and your keyboard stays yours. Check: `FocusReturnTests`
-- [ ] The same on a real Mac. Check: `agent open Calculator` while typing elsewhere: its window lands on the agent workspace, `agent windows` lists it and focus returns
-- [ ] Measure the whole loop (open, read, act, check) on real apps, and lock the gains with a ratchet test. Check: the measured times are in a ratchet test that fails on a slower loop
+Moved to Tychicus (baney75/tychicus, issue #27), 2026-11-18. Polycarp keeps the agent workspace and its two-call API (`spaces/docs/agent-workspace-api.md`).
 
 ## Later, with an owner's decision
 - Paid: domains, Apple Developer and Google Play accounts, Windows code signing

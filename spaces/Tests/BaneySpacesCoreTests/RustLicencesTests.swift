@@ -5,7 +5,7 @@ import XCTest
 /// Before scripts/rust-licenses.py, the licenses folder named none of them.
 final class RustLicencesTests: XCTestCase {
     func testBundleWritesAndRequiresTheRustCratesLicences() throws {
-        let bundle = try String(contentsOf: HandsSourceTests.root.appendingPathComponent("scripts/bundle.sh"), encoding: .utf8)
+        let bundle = try String(contentsOf: SourceText.root.appendingPathComponent("scripts/bundle.sh"), encoding: .utf8)
         XCTAssertTrue(bundle.contains("scripts/rust-licenses.py --out \"$APP/Contents/Resources/licenses/polycarp-rust-crates.txt\""), "bundle.sh writes it")
         for root in ["../cli/Cargo.toml:polycarp", "../core/ffi/Cargo.toml:polycarp-core", "engine/.src/Cargo.toml:agent-desktop-ffi"] {
             XCTAssertTrue(bundle.contains(root), "every Rust piece the app ships: \(root)")
@@ -45,7 +45,7 @@ final class RustLicencesTests: XCTestCase {
         let manifest = tmp.appendingPathComponent("own/app/Cargo.toml").path
         guard try run(["cargo", "generate-lockfile", "--offline", "--manifest-path", manifest]) == 0 else { throw XCTSkip("cargo isn't usable here") }
         let out = tmp.appendingPathComponent("out.txt")
-        let script = HandsSourceTests.root.appendingPathComponent("scripts/rust-licenses.py").path
+        let script = SourceText.root.appendingPathComponent("scripts/rust-licenses.py").path
         XCTAssertEqual(try run(["python3", script, "--out", out.path, "--own", tmp.appendingPathComponent("own").path, manifest + ":app"]), 0)
         let text = try String(contentsOf: out, encoding: .utf8)
         XCTAssertTrue(text.contains("dep 1.0.0 (MIT)\n" + String(repeating: "=", count: 72) + "\ndep licence text"), text)

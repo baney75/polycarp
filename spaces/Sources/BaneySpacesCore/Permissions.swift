@@ -4,12 +4,11 @@ import Foundation
 /// state with no AppKit, so the words and the "what to show" rules are tested without macOS. The app reads the live
 /// answers (`PermissionsModel`) and hands them here.
 ///
-/// Each entry has to be true of the code: Accessibility is `AXIsProcessTrusted` (windows, agent hands, Silas's key and
-/// typing), Screen Recording is `WindowShot`, Input Monitoring is `BackgroundWatch`'s listen-only tap, the microphone is
-/// Silas, Automation is the launcher's scripts (`Scripts.swift`) and Notifications are the hand-over notes
+/// Each entry has to be true of the code: Accessibility is `AXIsProcessTrusted` (windows, Silas's key and typing), the
+/// microphone is Silas, Automation is the launcher's scripts (`Scripts.swift`) and Notifications are the hand-over notes
 /// (`LegacyWatcher`, `VoiceEngine.notifyIfDue`).
 public enum PermissionID: String, CaseIterable, Sendable, Identifiable {
-    case accessibility, screenRecording, inputMonitoring, microphone, automation, notifications
+    case accessibility, microphone, automation, notifications
     public var id: Self { self }
 
     /// The welcome window's own name for the four it walks through.
@@ -76,27 +75,12 @@ public enum Permissions {
     public static let all: [PermissionEntry] = [
         PermissionEntry(
             id: .accessibility, title: "Accessibility",
-            purpose: "Lets Polycarp show, hide and move windows, act for agents in the windows you allow, and type for Silas.",
+            purpose: "Lets Polycarp show, hide and move windows, and type for Silas.",
             never: "It never reads what you type.",
             uses: [PermissionUse(.workspaces, "Workspaces, the dock and the overview"),
-                   PermissionUse(.workspaces, "Agents working in their own windows"),
                    PermissionUse(.voice, "Silas's key and typing")],
             kind: .list, settingsName: "Accessibility", settingsURL: pane + "Privacy_Accessibility",
             blocksStart: true, niceToHave: false),
-        PermissionEntry(
-            id: .screenRecording, title: "Screen Recording",
-            purpose: "Lets an agent take a picture of a window it may use, to check its own work.",
-            never: "Pictures go only to that agent. Polycarp never records your screen or its sound.",
-            uses: [PermissionUse(.workspaces, "Agent screenshots")],
-            kind: .list, settingsName: "Screen & System Audio Recording", settingsURL: pane + "Privacy_ScreenCapture",
-            blocksStart: false, niceToHave: false),
-        PermissionEntry(
-            id: .inputMonitoring, title: "Input Monitoring",
-            purpose: "While an agent acts, Polycarp notices you at the keyboard or mouse, so the two of you don't collide.",
-            never: "It listens only during that action and keeps nothing you type.",
-            uses: [PermissionUse(.workspaces, "Agents pausing when you type or click")],
-            kind: .list, settingsName: "Input Monitoring", settingsURL: pane + "Privacy_ListenEvent",
-            blocksStart: false, niceToHave: false),
         PermissionEntry(
             id: .microphone, title: "Microphone",
             purpose: "Silas listens from when you press its key until you let go, and turns speech into text on this Mac.",
@@ -126,20 +110,10 @@ public enum Permissions {
 
     // MARK: Reading macOS's answers
 
-    /// A list permission (`AXIsProcessTrusted`, `CGPreflightScreenCaptureAccess`): macOS answers only yes or no, so a no
+    /// A list permission (`AXIsProcessTrusted`): macOS answers only yes or no, so a no
     /// is "off" once Polycarp has sent you to the list, and "not set up" before that.
     public static func listState(granted: Bool, asked: Bool) -> PermissionState {
         granted ? .granted : asked ? .denied : .notAsked
-    }
-
-    /// `IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)`: 0 granted, 1 denied, 2 unknown (never asked).
-    public static func hidState(_ access: UInt32) -> PermissionState {
-        switch access {
-        case 0: .granted
-        case 1: .denied
-        case 2: .notAsked
-        default: .unknown
-        }
     }
 
     /// `AVCaptureDevice.authorizationStatus(for: .audio).rawValue`: 0 not determined, 1 restricted, 2 denied, 3 authorized.

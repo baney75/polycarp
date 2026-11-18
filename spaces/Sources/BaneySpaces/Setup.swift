@@ -24,10 +24,6 @@ final class SetupModel: ObservableObject {
     var onDockEdgeChange: ((DockEdge) -> Void)?
     @Published var dockAgentStatus = WorkspaceDock.agentStatus
     var onDockAgentStatusChange: ((Bool) -> Void)?
-    /// What agents may use (Settings > Agents). Shows the mode in force: a pick that widens access takes effect
-    /// only after the consent sheet, so this follows `AgentAccess`, never the picker.
-    @Published var agentAccess = AgentAccess.shared.current
-    var onAgentAccessPick: ((AgentAccessMode) -> Void)?
     /// Whether Claude Code and Grok report to BaneySpaces; agent badges need it.
     enum HookState { case on, off, noClaudeCode, unreadable }
     var hooksInstalled: () -> HookState = { .on }
@@ -375,23 +371,6 @@ final class SetupModel: ObservableObject {
         onDockAgentStatusChange?(on)
     }
 
-    /// After the picker's own update: the consent sheet is modal and must not run inside a SwiftUI binding.
-    func pickAgentAccess(_ mode: AgentAccessMode) {
-        DispatchQueue.main.async { [weak self] in
-            self?.onAgentAccessPick?(mode)
-            self?.agentAccess = AgentAccess.shared.current
-        }
-    }
-
-    /// Settings > Agents, "Turn On Everything…". Asks in one sheet; nothing changes on a no.
-    func turnOnEverything() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, AgentAccess.shared.requestEverything() else { return }
-            self.agentAccess = AgentAccess.shared.current
-            BrowserModel.shared.turnOnEverything()
-        }
-    }
-
     func installHooks() {
         onInstallHooks?()
         hooks = hooksInstalled()
@@ -481,7 +460,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 struct SetupView: View {
     @ObservedObject var model: SetupModel
     @ObservedObject private var appearance = Appearance.shared
-    @ObservedObject private var cursor = CursorController.shared
     @ObservedObject private var parts = PartsModel.shared
     @StateObject private var themes = ThemePicker()
     var close: () -> Void
@@ -698,24 +676,6 @@ struct SetupView: View {
             }
         }
 
-        SettingsGroup("Agent cursor") {
-            SettingsRow("Show each agent's cursor on the agent workspace", help: "It never moves your pointer or takes a click.") {
-                Toggle("Agent cursor", isOn: binding({ cursor.settings.enabled }, { cursor.setEnabled($0) })).labelsHidden()
-            }
-            SettingsRow("Look") {
-                Picker("Look", selection: binding({ cursor.settings.resolvedTheme.name }, { cursor.setTheme($0) })) {
-                    ForEach(cursor.themeNames, id: \.self) { Text($0.capitalized).tag($0) }
-                }
-                .labelsHidden().disabled(!cursor.settings.enabled || cursor.themeSetInFile)
-            }
-            if cursor.themeSetInFile { SettingsNote("The look is set in config.toml (behavior.cursor.theme).") }
-            SettingsRow("Show when an agent is using a window", help: "A glowing edge and a name tag over the window. Clicks and keys still go to the window.") {
-                Toggle("In-use veil", isOn: binding({ cursor.settings.veil }, { cursor.setVeil($0) })).labelsHidden().disabled(cursor.veilSetInFile)
-            }
-            if cursor.veilSetInFile { SettingsNote("Set in config.toml (behavior.cursor.veil).") }
-            LearnMore("A small cursor with the agent's name glides to what it is working on, so you can follow it. It is drawn only inside the window the agent is using, only while that window is in sight, and never over a window in front of it. It shows on the agent workspace while you look at it, or over an app you lent. Its colors are its own. Agents can pick its look with polycarp-spaces agent cursor theme <name>, but only you can turn it or the veil off.")
-        }
-
         if !model.finished.isEmpty {
             SettingsGroup("Finished while you were away") {
                 ForEach(model.finished) { row in
@@ -833,28 +793,6 @@ struct SetupView: View {
     @ObservedObject private var browserModel = BrowserModel.shared
 
     @ViewBuilder private var agents: some View {
-        SettingsGroup("Agent access") {
-            SettingsBlock {
-                Picker("Agent access", selection: binding({ model.agentAccess }, { model.pickAgentAccess($0) })) {
-                    ForEach(AgentAccessMode.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented).labelsHidden()
-            }
-            SettingsNote(model.agentAccess.detail, tone: model.agentAccess == .full ? .urgent : .quiet)
-            SettingsNote("Only you change this, here or in the Polycarp menu. More access asks you first.")
-            SettingsRow(AgentEverything.title, help: AgentEverything.why) {
-                if AgentEverything.isOn(access: model.agentAccess, anySite: browserModel.status?.anySite, claudeAllowed: browserModel.status?.claudeAllowed ?? false, claudeReady: browserModel.status?.claudeReady ?? false) {
-                    Text(AgentEverything.on).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
-                } else {
-                    Button(AgentEverything.button) { model.turnOnEverything() }
-                }
-            }
-            SettingsRow(ViewControl.settingTitle, help: "With Full Access, agents on this Mac may switch workspaces, focus a window, and move or size windows on your workspaces. Off, they never change what you see. Turning it on asks you to confirm, and it is off again each time Polycarp starts.") {
-                Toggle(ViewControl.settingTitle, isOn: binding({ ViewControlSetting.shared.enabled }, { model.objectWillChange.send(); ViewControlSetting.shared.set($0) }))
-                    .labelsHidden().toggleStyle(.switch)
-            }
-        }
-
         SettingsGroup("Always allow") {
             SettingsRow("Agents open any site without asking", help: browserModel.status?.anySite == nil ? "Open your browser to change this." : "Otherwise they ask you before each new site.") {
                 Toggle("Any site", isOn: binding({ browserModel.status?.anySite ?? false }, { browserModel.setAnySite($0) }))

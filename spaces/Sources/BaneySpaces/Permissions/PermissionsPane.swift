@@ -277,7 +277,7 @@ struct PermissionTag: View {
     }
 }
 
-/// Hands back the window a view is in, so the model reads only while that window is on screen.
+/// Gives back the window a view is in, so the model reads only while that window is on screen.
 private struct WindowReader: NSViewRepresentable {
     let found: (NSWindow?) -> Void
     func makeNSView(context: Context) -> ReaderView { ReaderView(found: found) }

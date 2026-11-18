@@ -21,32 +21,13 @@ not a public issue.
   update check, which reads GitHub's public release list and can be turned off. Nothing listens
   for connections unless you turn it on: `polycarp-spaces remote on`
   listens on your Tailscale address only (100.64.0.0/10 on a tunnel interface), needs a 256-bit
-  token stored with mode 0600, and allows only looking (ping, list, agent status) and giving the
-  agent workspace work (agent open, agent run). A remote caller can't focus, type, move windows
-  or change what you see. `remote off` closes it. The `--on HOST` client sends the token only to
+  token stored with mode 0600, and allows only looking (ping, list, agent status) and the three
+  look settings. A remote caller can't focus, type, list or move windows, or change what you see. `remote off` closes it. The `--on HOST` client sends the token only to
   tailnet addresses.
-- **The connector.** `polycarp browser remote setup` is off until you run it. Each assistant you approve with your passcode gets only
-  what you tick. Computer use is two unticked permissions, and an assistant with them is held to Default whatever Settings says: the
-  agent workspace, apps on the short list, apps you lend. It can't lend, can't use Open or Save panels, and never gets Full Access.
-- **Agent access.** Settings > Agents sets what agent tools may use: Read Only, Default (the agent
-  workspace and apps you lend) or Full Access (every window on every workspace, and any app, still
-  from behind). In every mode agents may read a window of an app you are using, and an action on it waits
-  until the app has been out of the front for 5 seconds (up to the action's `wait`, 20 s by default); only
-  accessibility actions on a background window of that app on the agent workspace, which take no keyboard focus
-  and post no events, go ahead without waiting. Only a real click in Polycarp widens it;
-  the socket can read it but never change it, and `agent open` from another machine never gets
-  more than Default. `agent run` from another machine already runs any command as you, so the
-  mode doesn't change what it can do.
-- **Dialogs and the agent workspace.** An agent may answer a dialog, alert, sheet or palette only when it belongs to an
-  app whose windows the agent may already use and is clearly the agent's (every placed window of that app is usable, or
-  it appeared within 10 seconds of that agent's own action). Open and Save panels, and macOS password, keychain and
-  permission prompts (SecurityAgent, coreauthd, UserNotificationCenter, TCC), are always refused. Agents may lay out,
-  move onto the agent workspace and close only what the rules already let them use: close only windows they opened, never
-  quitting an app, and move never takes a window off your workspaces unless you lent it or set Full Access; such a window
-  goes back when the lend ends or Full Access is narrowed. Agents never
-  switch, create, rename or delete workspaces. A connector may answer a dialog under exactly these rules, held to Default:
-  only when the dialog's app has a window on the agent workspace or one you lent, never through Full Access. It gets no
-  arranging, moving or closing, and reads the workspace list only.
+- **Agents.** Polycarp drives no app for an agent: computer use (reading, clicking and typing into
+  apps) moved to Tychicus on 2026-11-18. What is left is the agent workspace, a workspace of its own
+  that agent apps can use, and a local API with two operations, list its windows and move a window
+  there ([docs/agent-workspace-api.md](docs/agent-workspace-api.md)). Both run on the local socket only.
 - **Hooks.** `polycarp-spaces hooks install` adds entries to `~/.claude/settings.json` and a file
   in `~/.grok/hooks`. It backs up the settings file once and removes only its own entries.
 - Settings and window positions stay in `~/Library/Application Support/Polycarp` and its
