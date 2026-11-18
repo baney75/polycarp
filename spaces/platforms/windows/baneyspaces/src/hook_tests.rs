@@ -64,14 +64,14 @@ fn chord(digit: u16, extra: usize) {
 }
 
 /// What a hook behind the daemon's sees (it is installed first, so it is called after ours): Win, the digits and the
-/// masking key, while `WATCH` is on. That is what the shell gets.
+/// masking key (and Alt), while `WATCH` is on. That is what the shell gets.
 static WATCH: AtomicBool = AtomicBool::new(false);
 static SEEN: Mutex<Vec<(u32, bool)>> = Mutex::new(Vec::new());
 
 unsafe extern "system" fn behind(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 && WATCH.load(Ordering::Relaxed) {
         let k = &*(lp as *const KBDLLHOOKSTRUCT);
-        if matches!(k.vkCode, 0x5B | 0xE8 | 0x30..=0x39) {
+        if matches!(k.vkCode, 0x5B | 0xE8 | 0x30..=0x39 | 0x12 | 0xA4 | 0xA5) {
             let up = wp as u32 == WM_KEYUP || wp as u32 == WM_SYSKEYUP;
             SEEN.lock().unwrap().push((k.vkCode, up));
         }
@@ -177,6 +177,61 @@ fn the_hooks_on_a_real_desktop() {
         "behind the hook, Win+8 typed in one go must read Win down, the masking key, Win up, and no 8: {seen:x?}"
     );
 
+    // A person's Win+9: the release comes after the mask has gone through, so the hook lets that very release pass and
+    // re-sends nothing (one 0xE8, then Win up).
+    let seen_now = |e: (u32, bool)| SEEN.lock().unwrap().contains(&e);
+    let wait_for = |e: (u32, bool)| {
+        let end = Instant::now() + Duration::from_secs(2);
+        while !seen_now(e) && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        seen_now(e)
+    };
+    std::thread::sleep(Duration::from_millis(200));
+    SEEN.lock().unwrap().clear();
+    WATCH.store(true, Ordering::Relaxed);
+    send(&[
+        key(VK_LWIN, false, TEST_INPUT_MARK),
+        key(b'9' as u16, false, TEST_INPUT_MARK),
+        key(b'9' as u16, true, TEST_INPUT_MARK),
+    ]);
+    assert!(wait_for((0xE8, true)), "the hook sends the mask while Win is down: {:x?}", SEEN.lock().unwrap());
+    send(&[key(VK_LWIN, true, TEST_INPUT_MARK)]);
+    assert!(wait_for((0x5B, true)), "Win's release reaches the shell");
+    std::thread::sleep(Duration::from_millis(200));
+    WATCH.store(false, Ordering::Relaxed);
+    let seen = SEEN.lock().unwrap().clone();
+    assert!(
+        seen == [(0x5B, false), (0xE8, false), (0xE8, true), (0x5B, true)],
+        "a slow Win+9 reads Win down, one mask, Win up, nothing re-sent: {seen:x?}"
+    );
+    assert!(matches!(first(&rx, Duration::from_secs(3), is_chord), Some(Msg::Chord { .. })));
+
+    // `[keys] mod = "alt"`: Alt+8 must not reach the app as a bare Alt tap, or it opens its menu bar on every switch.
+    set_table(crate::keys::defaults(crate::keys::parse_mod("alt").expect("alt")));
+    const VK_LMENU: u16 = 0xA4;
+    std::thread::sleep(Duration::from_millis(200));
+    SEEN.lock().unwrap().clear();
+    WATCH.store(true, Ordering::Relaxed);
+    send(&[
+        key(VK_LMENU, false, TEST_INPUT_MARK),
+        key(b'8' as u16, false, TEST_INPUT_MARK),
+        key(b'8' as u16, true, TEST_INPUT_MARK),
+    ]);
+    let masked = wait_for((0xE8, true));
+    send(&[key(VK_LMENU, true, TEST_INPUT_MARK)]);
+    let _ = wait_for((0xA4, true));
+    std::thread::sleep(Duration::from_millis(200));
+    WATCH.store(false, Ordering::Relaxed);
+    let seen = SEEN.lock().unwrap().clone();
+    let alt_up = seen.iter().position(|&e| e == (0xA4, true));
+    assert!(
+        masked && alt_up.is_some_and(|i| seen[..i].contains(&(0xE8, false)) && seen[..i].contains(&(0xE8, true))),
+        "behind the hook, Alt+8 must read Alt down, the masking key, Alt up: {seen:x?}"
+    );
+    assert!(matches!(first(&rx, Duration::from_secs(3), is_chord), Some(Msg::Chord { .. })), "Alt+8 is a chord with mod = alt");
+    set_table(crate::keys::defaults(crate::keys::parse_mod("win").expect("win")));
+
     chord(b'6' as u16, 0);
     assert!(
         first(&rx, Duration::from_millis(800), is_chord).is_none(),
@@ -240,4 +295,28 @@ fn the_hooks_on_a_real_desktop() {
 
     stop();
     unsafe { PostThreadMessageW(watcher, WM_QUIT, 0, 0) };
+}
+
+#[test]
+fn the_chord_is_recorded_before_its_mask_goes_out() {
+    // #564 second-F4: sent first, the mask's 0xE8 key-up could be seen before the chord is recorded, and a release
+    // within PENDING_MS would then be held back and re-sent behind later keys (Win+1, then a quick E, runs Win+E).
+    let src = include_str!("hook.rs").replace("\r\n", "\n");
+    let at = src.find("if crate::keys::chord_masks(mods) {").expect("the chord's mask");
+    let block = &src[at..at + src[at..].find("Msg::Chord").expect("the chord message")];
+    let chord = block.find("WIN.chord(true, k.time)").expect("the chord recorded as masked");
+    let nudge = block.find("nudge_input()").expect("the mask sent");
+    assert!(chord < nudge, "the chord is recorded before the mask goes out");
+    assert!(block[nudge..].contains("WIN.reset()"), "a mask SendInput refused clears the chord again");
+    // And the cleared chord holds no release back.
+    let m = WinMask::new();
+    let resent = std::cell::Cell::new(0);
+    m.win_down(false);
+    m.chord(true, 100);
+    m.reset();
+    assert!(!m.win_up(110, || {
+        resent.set(resent.get() + 1);
+        3
+    }));
+    assert_eq!(resent.get(), 0);
 }

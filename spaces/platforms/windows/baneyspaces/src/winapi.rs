@@ -366,12 +366,12 @@ fn try_foreground(h: HWND) -> bool {
 }
 
 /// Presses and releases VK 0xE8, which no keyboard sends and no app reads. The hook ignores it
-/// because it is injected.
-pub fn nudge_input() {
+/// because it is injected. Returns how many of the two SendInput took.
+pub fn nudge_input() -> u32 {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP};
     let key = |flags| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: 0xE8, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } } };
     let inputs = [key(0), key(KEYEVENTF_KEYUP)];
-    unsafe { SendInput(2, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
+    unsafe { SendInput(2, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) }
 }
 
 /// Presses and releases VK 0xE8, then releases `win`, as one SendInput batch: the shell sees a key inside the Win press,

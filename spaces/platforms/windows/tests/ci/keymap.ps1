@@ -58,7 +58,8 @@ function front($h) {
 }
 function owner($h) {
   $o = [Desk]::Owner($h); if ($o -eq 0) { return 'none' }
-  $w = [Desk]::Read($o); "$o ($((Get-Process -Id $w.Pid -ErrorAction SilentlyContinue).ProcessName), $w)"
+  $w = [Desk]::Read($o); if (-not $w) { return "$o (gone)" }
+  "$o ($((Get-Process -Id $w.Pid -ErrorAction SilentlyContinue).ProcessName), $w)"
 }
 function frame($h) { $w = [Desk]::Read($h); "$($w.L),$($w.T),$($w.R),$($w.B)" }
 $WIN = 0x5B; $SHIFT = 0x10; $CTRL = 0x11; $ALT = 0x12; $LEFT = 0x25; $RIGHT = 0x27; $J = 0x4A
