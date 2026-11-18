@@ -1,12 +1,14 @@
-//! `baneyspaces daemon`: the model driven by what Windows reports (WinEvents and a poll), the
+//! `baneyspaces daemon`: the model driven by what Windows reports (WinEvents, and a slow safety reconcile), the
 //! chords the keyboard hook swallows, the control pipe the CLI talks to, `state.json`, the agent
 //! workspace and the agent action log.
 //!
 //! The model decides; this file only carries it out. Where a window should be is derived, not
 //! replayed: after every event each tracked window is compared with what the model says (shown on
-//! some display, or not) and hidden or shown to match, and what is hidden is read back from Windows
-//! on every poll, never taken from memory. That makes every step idempotent, so a missed event costs
-//! one poll interval, not a lost window.
+//! some display, or not) and hidden or shown to match, and what is hidden is read back from Windows,
+//! never taken from memory. The worker waits on events (`hook.rs`); a full look at every window runs every
+//! `RECONCILE` as a safety net, and a cheap read-back of what is hidden every `RECHECK` only while something
+//! no event reports could go wrong (a parked or ghosted window, a show still to retry). Every step is
+//! idempotent, so a missed event costs one reconcile, not a lost window.
 //!
 //! Three rules keep a window from being lost:
 //! 1. **Record first.** A window is written to `state.json` (and flushed) before it is hidden. If that
@@ -87,12 +89,22 @@ pub struct Core {
     pub last_prune: std::cell::Cell<u64>,
     /// Where the shell's feed is sent (`feed.rs`); `None` sends it nowhere. A test's own, never shared.
     pub feed: Option<FeedTx>,
+    /// What `state.json` holds now, as last written: an unchanged state is not written again.
+    pub written: std::cell::RefCell<String>,
+    /// Something only a read-back can catch is pending: a window parked or ghosted (no event says an app moved it
+    /// back or reset its alpha) or a show to retry. The worker then reads what is hidden back every `RECHECK`.
+    pub recheck: bool,
 }
 
 /// A subscriber's pipe, as the feed holds it.
 pub type Pipe = Box<dyn Write + Send>;
 /// Hands a message to the shell's feed. The daemon's never blocks (an unbounded channel).
 pub type FeedTx = Arc<dyn Fn(crate::feed::FeedMsg<Pipe>) + Send + Sync>;
+
+/// The full look at every window (EnumWindows, titles, displays): a safety net behind the WinEvents.
+pub const RECONCILE: Duration = Duration::from_secs(3);
+/// The read-back of what is hidden while `Core::recheck` is set, and the full look when the WinEvent hooks are not in.
+pub const RECHECK: Duration = Duration::from_millis(400);
 
 pub type Shared = Arc<Mutex<Core>>;
 
@@ -362,6 +374,9 @@ impl Core {
             // Sign-out in progress: everything is shown by the restore; hide nothing.
             wants.retain(|w| w.3 == Want::Visible);
         }
+        let started = Instant::now();
+        let mut desktops: Option<Option<cloak::Desktops>> = None;
+        let mut elsewhere = |h: windows_sys::Win32::Foundation::HWND| desktops.get_or_insert_with(cloak::Desktops::new).as_ref().and_then(|d| d.on_current(h)) == Some(false);
         let mut cloaker: Option<Option<Cloaker>> = None;
         let get = |c: &mut Option<Option<Cloaker>>| -> Option<*const Cloaker> {
             if c.is_none() {
@@ -419,30 +434,39 @@ impl Core {
                 self.problem(format!("could not save the record of an agent window ({e}); it is hidden anyway"));
             }
         }
+        let recorded = started.elapsed();
         // 2. Show. An entry goes only after the window reads back as shown; a failure keeps it and the
-        //    next poll tries again (explorer.exe restarting is the usual reason). A window on another virtual
-        //    desktop is cloaked by Windows itself and cannot be shown from here: it waits.
+        //    worker tries again every RECHECK (explorer.exe restarting is the usual reason). A window on another
+        //    virtual desktop is cloaked by Windows itself and cannot be shown from here: it waits for its desktop
+        //    (whose windows' uncloak events bring the worker back here). The record is written once, below: an
+        //    entry still on disk for a window already shown only means a restart shows it again, which is safe.
+        let mut changed = !add.is_empty();
+        let (mut shown_n, mut waiting) = (0, false);
         for (hwnd, _, _, w) in &wants {
             if *w != Want::Visible {
                 continue;
             }
             if let Some(mut e) = self.hidden.get(*hwnd).cloned() {
-                if cloak::on_current_desktop(to_hwnd(*hwnd)) == Some(false) {
+                if elsewhere(to_hwnd(*hwnd)) {
+                    waiting = true;
                     continue;
                 }
                 self.carry_before_show(&mut e);
                 let c = get(&mut cloaker);
                 if cloak::show(&e, c.map(|p| unsafe { &*p })) {
                     self.hidden.remove(*hwnd);
-                    let _ = self.persist();
+                    changed = true;
+                    shown_n += 1;
                 } else {
+                    waiting = true;
                     self.log(&format!("{} did not read back as shown; will retry", window_name(*hwnd)));
                 }
             }
         }
+        let showed = started.elapsed();
         // 3. Hide, and read it back: re-apply whatever Windows no longer agrees with. The method recorded is
         //    always the one actually applied.
-        let mut changed = !add.is_empty();
+        let mut hid_n = 0;
         for (hwnd, _, _, w) in &wants {
             let h = to_hwnd(*hwnd);
             if *w == Want::Visible || !winapi::exists(h) {
@@ -457,9 +481,10 @@ impl Core {
             if cloak::still_hidden(&e) {
                 continue;
             }
-            if cloak::on_current_desktop(h) == Some(false) {
+            if elsewhere(h) {
                 continue; // another virtual desktop: Windows has it cloaked, and it is not ours to hide from here
             }
+            hid_n += 1;
             self.log(&format!("{} is not hidden any more ({:?}); hiding it again", window_name(*hwnd), e.how));
             let was = e.how;
             match *w {
@@ -507,8 +532,21 @@ impl Core {
             }
             self.hidden.insert(e);
         }
+        let hid = started.elapsed();
         if changed {
             let _ = self.persist();
+        }
+        self.recheck = waiting || self.hidden.entries().any(|e| e.how != How::Cloak);
+        if shown_n + hid_n > 0 {
+            let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+            self.log(&format!(
+                "sync: recorded {} in {:.1} ms, showed {shown_n} by {:.1} ms, hid {hid_n} by {:.1} ms, written by {:.1} ms",
+                add.len(),
+                ms(recorded),
+                ms(showed),
+                ms(hid),
+                ms(started.elapsed())
+            ));
         }
         Ok(())
     }
@@ -526,7 +564,13 @@ impl Core {
         v["settings"] = Value::Object(self.settings.clone());
         v["overview"] = json!({ "shown": self.overview_shown });
         v["daemon"] = json!({ "pid": self.our_pid, "started": self.started, "events": self.events_seen, "problems": self.problems });
-        self.paths.write_atomic("state.json", &serde_json::to_string_pretty(&v).unwrap_or_default())
+        let text = serde_json::to_string_pretty(&v).unwrap_or_default();
+        if *self.written.borrow() == text {
+            return Ok(()); // already on disk: idle reconciles write nothing
+        }
+        self.paths.write_atomic("state.json", &text)?;
+        *self.written.borrow_mut() = text;
+        Ok(())
     }
 
     /// What the shell shows, as the feed's line: your windows with their app and title, never an agent's.
@@ -765,20 +809,54 @@ impl Core {
                 }
                 self.on_foreground(hwnd)
             }
-            hook::EVENT_OBJECT_CREATE | hook::EVENT_OBJECT_SHOW | hook::EVENT_SYSTEM_MINIMIZEEND => {
-                let agent = self.is_agent_pid(winapi::pid_of(h));
-                if !self.model.is_tracked(&window_name(hwnd)) && winapi::is_manageable(h, self.hidden.contains(hwnd), self.our_pid, agent) {
-                    self.open_window(hwnd, false);
+            // A window can become one of ours by being created, shown, restored, uncloaked (a UWP or WinUI window
+            // starts cloaked until it has drawn) or titled (one shown untitled first). With no poll to catch it,
+            // each of these is a look.
+            hook::EVENT_OBJECT_CREATE | hook::EVENT_OBJECT_SHOW | hook::EVENT_SYSTEM_MINIMIZEEND | hook::EVENT_OBJECT_UNCLOAKED | hook::EVENT_OBJECT_NAMECHANGE => {
+                let id = window_name(hwnd);
+                if self.model.is_tracked(&id) {
+                    if event == hook::EVENT_OBJECT_NAMECHANGE {
+                        if let Some(i) = self.info.get_mut(&id) {
+                            i.title = winapi::title(h);
+                        }
+                    }
+                } else {
+                    let agent = self.is_agent_pid(winapi::pid_of(h));
+                    if winapi::is_manageable(h, self.hidden.contains(hwnd), self.our_pid, agent) {
+                        self.open_window(hwnd, false);
+                    }
+                }
+                // Someone took the cloak off a window we hid (another tool, a virtual desktop switch): read back now.
+                if event == hook::EVENT_OBJECT_UNCLOAKED && (self.hidden.contains(hwnd) || self.recheck) {
+                    self.recheck_hidden();
                 }
             }
             hook::EVENT_OBJECT_DESTROY | hook::EVENT_OBJECT_HIDE => {
                 let id = window_name(hwnd);
-                if self.model.is_tracked(&id) && !winapi::exists(h) {
+                // Gone as `resync_windows` would see it: destroyed, or no longer a window we would manage, not one we
+                // hid and not one cloaked by someone else (a window on another virtual desktop has not gone).
+                let gone = || {
+                    !winapi::exists(h)
+                        || (!self.hidden.contains(hwnd) && winapi::cloaked(h) == 0 && !winapi::is_manageable(h, false, self.our_pid, self.is_agent_pid(winapi::pid_of(h))))
+                };
+                if self.model.is_tracked(&id) && gone() {
                     self.close_window(&id);
                 }
             }
+            // Windows hands the front to the next window in z-order, which may be one we hid (R-E1).
+            hook::EVENT_SYSTEM_MINIMIZESTART => self.keep_focus_off_hidden_windows(),
+            // A drag or Win+Shift+Arrow may have taken a window to another display (R-V4).
+            hook::EVENT_SYSTEM_MOVESIZEEND => self.mirror_moves(),
             _ => {}
         }
+    }
+
+    /// The read-back of what is hidden, without looking for new windows: `sync_visibility` alone.
+    fn recheck_hidden(&mut self) {
+        if let Err(e) = self.sync_visibility() {
+            self.problem(format!("could not save the hidden-window record; nothing new was hidden: {e}"));
+        }
+        self.keep_focus_off_hidden_windows();
     }
 
     /// The window you mean when you did not name one: the front window, if it is one of ours.
@@ -1522,9 +1600,12 @@ fn on_end_session(e: EndSession) {
             }
         }
         EndSession::Cancelled => {
-            // Cancelled: carry on. The next poll hides again what belongs on a hidden workspace.
+            // Cancelled: carry on, and look at everything at once, which hides again what belongs on a hidden workspace.
             let _c = lock(shared);
             STOPPING.store(false, Ordering::SeqCst);
+            if let Some(tx) = CTRL_TX.get() {
+                let _ = tx.send(Msg::Resync);
+            }
         }
     }
 }
@@ -1547,6 +1628,8 @@ impl Core {
     /// Replaces the in-memory hidden set with what `state.json` says is still hidden (after a restore).
     pub fn reload_hidden_from_file(&mut self) {
         let left = hidden::parse_state(&self.paths.read("state.json").unwrap_or_default());
+        // The restore wrote state.json itself: the next persist must write, whatever it last wrote.
+        self.written.borrow_mut().clear();
         self.hidden = HiddenSet::default();
         for h in left.hidden {
             self.hidden.insert(h);
@@ -1656,6 +1739,8 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
                 let _ = tx.send(m);
             })
         }),
+        written: std::cell::RefCell::new(String::new()),
+        recheck: true,
     };
     let shared: Shared = Arc::new(Mutex::new(core));
     let _ = SHARED.set(shared.clone());
@@ -1723,20 +1808,26 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         std::thread::spawn(move || listen(s2, sv2, None));
     }
     say(&format!("baneyspaces daemon: ready ({})", paths.pipe_name()));
-    // The worker: hook messages as they come, a poll when quiet.
-    let mut last_poll = Instant::now();
+    // The worker: it waits for what the hooks report and acts on each as it comes. The full look at every window
+    // is a safety net every RECONCILE (every RECHECK if the WinEvent hooks are not in), and the read-back of what
+    // is hidden runs every RECHECK only while `recheck` says something no event reports could go wrong.
+    let mut last_full = Instant::now();
+    let mut last_check = Instant::now();
     loop {
-        match rx.recv_timeout(Duration::from_millis(400)) {
+        let full_every = if hook::events_live() { RECONCILE } else { RECHECK };
+        let recheck = lock(&shared).recheck;
+        let mut due = last_full + full_every;
+        if recheck {
+            due = due.min(last_check + RECHECK);
+        }
+        match rx.recv_timeout(due.saturating_duration_since(Instant::now())) {
             Ok(Msg::Quit) => break,
             Ok(Msg::Resync) => {
                 // explorer.exe restarted, the session unlocked, or the input desktop changed: look at everything now.
-                last_poll = Instant::now();
+                last_full = Instant::now();
                 lock(&shared).poll();
             }
-            Ok(Msg::Chord(args)) => {
-                if trace {
-                    say(&format!("[baneyspaces] chord {args:?}"));
-                }
+            Ok(Msg::Chord { args, at }) => {
                 // First, tell Windows the Win key was used so releasing it does not open Start.
                 hook::mask_start_menu();
                 let mut req = json!({ "op": "", "args": {} });
@@ -1748,6 +1839,9 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
                     _ => {}
                 }
                 let env = handle(&shared, &req);
+                if trace {
+                    say(&format!("[baneyspaces] chord {args:?}: done {} ms after the key went down", winapi::tick_ms().wrapping_sub(at)));
+                }
                 if !env.ok {
                     say(&format!("baneyspaces daemon: chord {args:?}: {}", env.to_json()));
                 }
@@ -1761,9 +1855,14 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(_) => break,
         }
-        if last_poll.elapsed() >= Duration::from_millis(400) {
-            last_poll = Instant::now();
+        let now = Instant::now();
+        if now >= last_full + full_every {
+            last_full = now;
+            last_check = now;
             lock(&shared).poll();
+        } else if recheck && now >= last_check + RECHECK {
+            last_check = now;
+            lock(&shared).recheck_hidden();
         }
     }
     // Shutting down: stop the hooks, then, under the lock with STOPPING set (requests that arrive meanwhile are
@@ -1831,6 +1930,8 @@ mod feed_tests {
             tx,
             last_prune: std::cell::Cell::new(0),
             feed,
+            written: std::cell::RefCell::new(String::new()),
+            recheck: false,
         };
         let shared: Shared = Arc::new(Mutex::new(core));
         {

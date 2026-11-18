@@ -50,7 +50,7 @@ hide it from the engine, so it is not used.)
 2. **Forget last.** An entry is removed only after the window reads back as shown (cloak off, back in place,
    and for a ghost every property that decides what you see: the layered bit, the alpha, click-through, no-activate,
    each as it was before the ghost; the original alpha and styles are in the record). A show that fails (explorer.exe restarting, the shell's COM down) keeps its entry
-   and every poll retries it; `TaskbarCreated` (explorer.exe rebuilt the taskbar) triggers a look at once.
+   and the daemon retries it every 400 ms until it takes; `TaskbarCreated` (explorer.exe rebuilt the taskbar) triggers a look at once.
 3. **Tracked while it exists.** A hidden window stays in the set for as long as `IsWindow` is true, whatever its
    title or styles become (an empty title, a tool-window style, an owner). Only a destroyed window leaves.
 
@@ -63,9 +63,20 @@ tracked, on their workspace, are neither shown nor hidden while off the current 
 (`IVirtualDesktopManager`), and come back as they were. (Driven live: a second desktop is created and closed
 and every window keeps its workspace.)
 
-And what is hidden is **read back from Windows on every poll**, never taken from memory: a cloak the shell
-dropped (a virtual-desktop switch re-evaluates them), a parked window an app moved back, a ghost an app reset
-is hidden again within a poll, keeping the position it will be restored to.
+And what is hidden is **read back from Windows**, never taken from memory, keeping the position it will be
+restored to. The daemon waits on events, not a timer (`hook.rs`, `daemon.rs`): WinEvent hooks report windows
+created, shown, hidden, destroyed, minimized, renamed, moved or resized, cloaked and uncloaked, and the foreground.
+A cloak someone else took off (a virtual-desktop switch re-evaluates them, or another tool) is put back as soon as
+`EVENT_OBJECT_UNCLOAKED` arrives. A parked window an app moved back or a ghost an app reset sends no event, so
+while one exists (or a show waits to be retried) the hidden set alone is read back every 400 ms. Behind all of it,
+a full look at every window runs every 3 s as a safety net, or every 400 ms if the WinEvent hooks could not be
+installed. A switch writes `state.json` once, and an unchanged state is never written again.
+
+**Speed, measured in CI.** `tests/ci/switch-bench.ps1` (job `spaces-windows-speed`) opens 30 windows over nine
+workspaces on a `windows-latest` runner, types Win+n 200 times with `SendInput`, and times each switch from the keys
+going in until DWM reads every window right; a screenshot after each must hold no pixel of another workspace's
+color. It fails at p90 100 ms, max 250 ms, or 25% over `windowsSwitch` in `spec/speed.json`, and when a window
+uncloaked from outside is not cloaked again within 100 ms at p90 (a 400 ms poll misses that).
 
 - On a clean exit (`baneyspaces stop`, Ctrl+C or closing a foreground console) every window is shown.
   **Sign-out and shutdown:** a background daemon has no console, so it owns a hidden *top-level* window (a
@@ -110,14 +121,17 @@ terminal). The daemon is not elevated and does not ask for UI access.
 An activation reaches the daemon as `EVENT_SYSTEM_FOREGROUND`. Windows does not say who caused it, so
 input in the last 300 ms (`GetLastInputInfo`) counts as yours (R-F1) and anything else as the app's
 (R-F2): the model refuses to follow it and the daemon puts your previous window back. A window that
-opens joins the workspace its display shows (R-P1). Focus never rests on a window that is out of sight.
+opens joins the workspace its display shows (R-P1). Focus never rests on a window that is out of sight: when a
+window is minimized (`EVENT_SYSTEM_MINIMIZESTART`), Windows hands the front to the next window in z-order, which may
+be a hidden one, so the daemon checks the front when the minimize starts and again on the foreground change that
+follows, and moves it to a window you can see.
 
 ## The agent workspace
 
 `baneyspaces agent open <app>` starts the app as its own process, **in the user's agent job object** (named, so a restarted daemon opens the same job and an agent's app that is still running is still recognized; a process that cannot join the job is not started) (Linux
 uses a launch token in the environment; a job answers "is this process one we started, or a child of
 one?" directly), minimized and without focus, so a window that honors the show command is never drawn
-on your screen. The model registers the pid and its start time (read from the process handle before it runs) before the first window can be seen. A registration only holds for that process: the live start time must still match, and a process that exits is unregistered on the next poll, so a pid Windows hands to another program is never taken for an agent's. Every window of an
+on your screen. The model registers the pid and its start time (read from the process handle before it runs) before the first window can be seen. A registration only holds for that process: the live start time must still match, and a process that exits is unregistered within one full look (3 s), so a pid Windows hands to another program is never taken for an agent's. Every window of an
 agent's process is ghosted, owned or not: a dialog or popup its app opens is caught from the WinEvent when it is
 created (if it has a frame) or shown, and is an agent window like the first, so the agent can still drive it. This
 is measured, not claimed away: one dialog was visible in 1 of ~110,000 polls (under a frame) before the ghost took.
@@ -137,7 +151,7 @@ through to the engine. `press`, `key` and `pointer` are `not_supported` (phase 3
   (Windows Sandbox or a Hyper-V VM). Single-instance forwarding is handled there as well; the
   `single_instance` error, with `windows_that_appeared`, stays as the backstop if an app forwards anyway.
 - **A window that refuses the ghost** (Windows would not take a constant alpha, as for a window that draws with per-pixel alpha) is
-  parked, recorded as parked, and left alone: it is not tried again each poll. If it later takes the ghost it is
+  parked, recorded as parked, and left alone: it is not tried again on every read-back. If it later takes the ghost it is
   recorded as a ghost with the styles to put back. `agent move` of one of *your* windows hides it the way yours
   are hidden (recorded first, `agent: false`), not as an agent's ghost.
 - **Tests only: `bs-testapp`** (`platforms/windows/testapp`) is a window with a text box: its own exe,
