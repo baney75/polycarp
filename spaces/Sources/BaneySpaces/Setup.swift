@@ -976,6 +976,9 @@ struct SetupView: View {
                     .disabled(!themes.available || themes.pendingName == ThemeChoice.ownColors)
                 }
             }
+            SettingsRow("Theme sets the desktop picture", help: "Every display shows the theme's picture while a theme is on. Your own picture is kept and comes back when you turn this off.") {
+                Toggle("Theme sets the desktop picture", isOn: binding({ appearance.settings.themeWallpaper }, { appearance.settings.themeWallpaper = $0 })).labelsHidden()
+            }
             if ThemeCommand.shared.available {
                 SettingsBlock { ThemeShelf(current: themes.pendingName ?? appearance.polycarp?.name) { themes.pick(name: $0) } }
             }
