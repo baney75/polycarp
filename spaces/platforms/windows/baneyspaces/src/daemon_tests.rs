@@ -46,6 +46,8 @@ fn rig() -> Rig {
         feed: None,
         written: std::cell::RefCell::new(String::new()),
         recheck: false,
+        keys: KeysState::default(),
+        keys_blocked_by: None,
     };
     let shared: Shared = Arc::new(Mutex::new(core));
     lock(&shared).sync_monitors();
