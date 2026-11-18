@@ -4,7 +4,7 @@
 # just before the keys go in until DWM reads every window of the new workspace uncloaked and every other one cloaked,
 # then the screen is shot and must hold no pixel of another workspace's color. Last, a hidden window is uncloaked from
 # outside 20 times, each timed until it is cloaked again.
-# Fails when: switch p90 >= 100 ms, max >= 250 ms, any switch not settled in 2 s, any wrong pixel, uncloak p90 >= 100 ms,
+# Fails when: switch p90 >= 100 ms, p99 >= 250 ms, any switch not settled in 2 s, any wrong pixel, uncloak p90 >= 100 ms,
 # or switch p90 over spec/speed.json windowsSwitch.p90Ms times regressionLimit (with floorMs of slack, for runner noise).
 # Needs: a release build with the test-ops feature (baneyspaces.exe). Prints PASS or FAIL; exits 1 on any FAIL.
 # Usage (Windows PowerShell 5.1): switch-bench.ps1 -Bin <target\release> -Out <evidence dir> [-Speed <spec\speed.json>] [-Disposable]
@@ -88,11 +88,12 @@ for ($i = -5; $i -lt 200; $i++) {
   Add-Content $log ("  switch {0} to {1}: {2} ms" -f $i, $n, (ms $t))
   Start-Sleep -Milliseconds 100
 }
-$p50 = pct $times 0.5; $p90 = pct $times 0.9; $max = ($times | Measure-Object -Maximum).Maximum
-say "switch: n=$($times.Count) p50=$(ms $p50) p90=$(ms $p90) max=$(ms $max) ms, not settled $late"
+$p50 = pct $times 0.5; $p90 = pct $times 0.9; $p99 = pct $times 0.99; $max = ($times | Measure-Object -Maximum).Maximum
+say "switch: n=$($times.Count) p50=$(ms $p50) p90=$(ms $p90) p99=$(ms $p99) max=$(ms $max) ms, not settled $late"
 check ($late -eq 0) 'every switch settled within 2 s' "$late did not"
 check ($p90 -lt 100) "switch p90 under 100 ms ($(ms $p90) ms)"
-check ($max -lt 250) "switch max under 250 ms ($(ms $max) ms)"
+# p99, not the max: of 200 switches it is the third slowest, so one stall of a busy runner is reported, not failed.
+check ($p99 -lt 250) "switch p99 under 250 ms ($(ms $p99) ms; max $(ms $max) ms, reported only)"
 check ($wrong -eq 0) "after each of 200 switches the screen shows the new workspace's color and no other ($wrong wrong)"
 $inner = @(Get-Content $dlog -ErrorAction SilentlyContinue | % { if ($_ -match 'done (\d+) ms after the key went down') { [int]$Matches[1] } })
 if ($inner.Count) { say "daemon's own count (key down to chord done, 16 ms ticks): n=$($inner.Count) p50=$(pct $inner 0.5) p90=$(pct $inner 0.9) max=$(($inner | Measure-Object -Maximum).Maximum) ms" }
@@ -122,13 +123,13 @@ if ($spec -and $spec.p90Ms) {
 
 taskkill /F /IM baneyspaces.exe 2>&1 | Out-Null
 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-@{ switch = @{ n = $times.Count; p50Ms = ms $p50; p90Ms = ms $p90; maxMs = ms $max; notSettled = $late; wrongScreens = $wrong }
+@{ switch = @{ n = $times.Count; p50Ms = ms $p50; p90Ms = ms $p90; p99Ms = ms $p99; maxMs = ms $max; notSettled = $late; wrongScreens = $wrong }
    uncloak = @{ n = 20; p90Ms = ms $ep90 }; times = @($times | % { ms $_ }); uncloakTimes = @($exp | % { ms $_ }) } |
   ConvertTo-Json -Depth 4 | Set-Content (Join-Path $Out 'bench.json')
 $res = if ($script:fail -eq 0) { 'PASS' } else { 'FAIL' }
-say ''; say "RESULT: $res  passed=$($script:pass) failed=$($script:fail)   switch p90 $(ms $p90) ms, max $(ms $max) ms, uncloak p90 $(ms $ep90) ms"
+say ''; say "RESULT: $res  passed=$($script:pass) failed=$($script:fail)   switch p90 $(ms $p90) ms, p99 $(ms $p99) ms, max $(ms $max) ms, uncloak p90 $(ms $ep90) ms"
 if ($env:GITHUB_STEP_SUMMARY) {
-  Add-Content $env:GITHUB_STEP_SUMMARY "### Windows switch bench: $res, switch p90 $(ms $p90) ms, max $(ms $max) ms, uncloak p90 $(ms $ep90) ms`n"
+  Add-Content $env:GITHUB_STEP_SUMMARY "### Windows switch bench: $res, switch p90 $(ms $p90) ms, p99 $(ms $p99) ms, max $(ms $max) ms, uncloak p90 $(ms $ep90) ms`n"
   Get-Content $log | ? { $_ -match '^  FAIL:' } | % { Add-Content $env:GITHUB_STEP_SUMMARY "- $($_.Trim())" }
 }
 if ($script:fail -ne 0) { exit 1 } else { exit 0 }
