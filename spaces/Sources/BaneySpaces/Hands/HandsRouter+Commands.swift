@@ -148,6 +148,12 @@ extension HandsRouter {
             let moved = onProcessQueues([w.pid], busy: busy) { [self] cancelled in
                 mutateOnMain([w], verb: "move", session: session) { _ -> Result<Void, HandsError> in
                     if cancelled() { return .failure(busy) }
+                    // Checked again after the wait: Donovan may have turned view control off or narrowed access while
+                    // the agent waited for him to leave the app (review of #441, first-F1).
+                    if let e = viewRefusal(what) { return .failure(e) }
+                    guard let live = host.live(w.id), live.pid == w.pid, live.workspace == from else {
+                        return .failure(HandsError(.windowNotFound, "window \(w.id) moved or is gone while the move waited", suggestion: "Read `query windows`.", retry: .afterSnapshot))
+                    }
                     host.move(w.id, n)
                     return .success(())
                 }
