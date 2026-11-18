@@ -1,5 +1,5 @@
-# Proves the three suites that wreck a desktop refuse one that isn't disposable. Off a runner and without -Disposable,
-# live.ps1, switch-bench.ps1 and keymap.ps1 each exit 2 with "<name>: refused" before any setup: a window already open (Notepad)
+# Proves the four suites that wreck a desktop refuse one that isn't disposable. Off a runner and without -Disposable,
+# live.ps1, switch-bench.ps1, keymap.ps1 and drag.ps1 each exit 2 with "<name>: refused" before any setup: a window already open (Notepad)
 # is left alone and the recovery record (state.json) is not deleted.
 # It writes a stand-in state.json to see that, so it runs only on a runner (GITHUB_ACTIONS=true) or with -Disposable,
 # refuses (exit 2) anywhere else, and puts back whatever state.json held before, whatever happens.
@@ -14,7 +14,7 @@ $record = Join-Path $state 'state.json'
 $had = Test-Path $record; $before = if ($had) { [IO.File]::ReadAllBytes($record) } else { $null }
 $bad = 0
 try {
-  foreach ($name in 'live.ps1', 'switch-bench.ps1', 'keymap.ps1') {
+  foreach ($name in 'live.ps1', 'switch-bench.ps1', 'keymap.ps1', 'drag.ps1') {
     $mark = "refuses.ps1 sentinel $([guid]::NewGuid())"; Set-Content $record $mark
     $n = Start-Process notepad -PassThru; Start-Sleep 2
     # Start-Process keeps the child's stderr out of this shell: PowerShell 5.1 turns a native stderr line into an
