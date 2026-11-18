@@ -145,12 +145,12 @@ struct PartsSection: View {
                     }
                 }
             }
-            SettingsNote("All three come with the app. A part that's off doesn't run, asks macOS for nothing and downloads nothing.")
+            SettingsNote("Both come with the app. A part that's off doesn't run, asks macOS for nothing and downloads nothing.")
         }
     }
 }
 
-/// The welcome window's first screen: three boxes, all ticked.
+/// The welcome window's first screen: two boxes, both ticked.
 struct WelcomePartsChooser: View {
     @ObservedObject var parts: PartsModel
     @State private var picked = FeatureSet.all
@@ -174,7 +174,7 @@ struct WelcomePartsChooser: View {
         }
         .padding(.horizontal, 20)
         HStack {
-            Text("All three come with the app. Off means it doesn't run.").font(Chrome.font(11)).foregroundStyle(Chrome.muted)
+            Text("Both come with the app. Off means it doesn't run.").font(Chrome.font(11)).foregroundStyle(Chrome.muted)
             Spacer()
             Button("Continue") { parts.choose(picked) }
                 .keyboardShortcut(.defaultAction)

@@ -9,7 +9,7 @@ working, and their repos stay up. A box is checked only when its check has passe
 - [x] Every suite in `./check.sh` passes on a Mac and in CI
 
 ## 2. One name, one command
-- [x] `polycarp spaces`, `polycarp browser`, `polycarp voice`. Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
+- [x] `polycarp spaces`, `polycarp browser`. Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
 - Moved to Silas (baney75/silas), 2026-11-18: `polycarp voice` only says Silas is its own app and where to get it
 - [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
 

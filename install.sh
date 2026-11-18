@@ -217,6 +217,7 @@ write_parts() {
   [ -n "${list//,/}" ] || return 2
   local rest=${list//,/ } name
   for name in $rest; do case "$known" in *",$name,"*) ;; *) return 2 ;; esac; done
+  case "$chosen" in *,voice,*) printf '  voice is Silas now, its own app: https://github.com/baney75/silas\n' >&2 ;; esac
   mkdir -p "$dir" || return 1
   {
     printf '# Which parts of Polycarp run. Change it in Settings > General or with `polycarp features`.\n'
