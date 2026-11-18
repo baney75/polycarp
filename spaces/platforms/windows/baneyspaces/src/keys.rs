@@ -191,6 +191,11 @@ pub fn from_config(text: &str, check: impl Fn(&[String]) -> Result<(), String>) 
     Ok((table, skipped))
 }
 
+/// `config.toml` as text for `from_config`. No file is the defaults (an empty text).
+pub fn read_config(path: &std::path::Path) -> Result<String, String> {
+    Ok(std::fs::read_to_string(path).unwrap_or_default())
+}
+
 /// For `window focus` and `window swap`: the nearest of `others` (id, frame as left, top, right, bottom) in direction
 /// `dir` from the middle of `from`. Only windows whose middle lies that way count; distance along `dir` plus twice the
 /// distance across it, so a window straight across wins over a nearer one far off to the side.
@@ -350,6 +355,62 @@ mod tests {
                 assert!(!(a.vk == b.vk && a.mods == b.mods), "{:?} twice", a.args);
             }
         }
+    }
+
+    const EVERY_MOD: [&str; 3] = ["win", "ctrl", "alt"];
+
+    #[test]
+    fn the_defaults_never_collide_for_any_mod() {
+        for name in EVERY_MOD {
+            let t = defaults(parse_mod(name).unwrap());
+            assert_eq!(t.len(), 9 + 9 + 1 + 4 + 4 + 4 + 1, "mod = {name}: every default is kept");
+            for (i, a) in t.iter().enumerate() {
+                for b in &t[i + 1..] {
+                    assert!(!(a.vk == b.vk && a.mods == b.mods), "mod = {name}: {:?} and {:?} are one chord", a.args, b.args);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_window_default_is_an_apps_own_alt_or_ctrl_key() {
+        // Alt+arrow is Back, Forward and Up in every browser and in Explorer, and Ctrl+arrow moves by word: the window
+        // keys hold two of Win, Ctrl and Alt whatever mod is.
+        for name in EVERY_MOD {
+            for b in defaults(parse_mod(name).unwrap()).iter().filter(|b| b.args[0] == "window") {
+                let held = [b.mods.win, b.mods.ctrl, b.mods.alt].iter().filter(|h| **h).count();
+                assert!(held >= 2, "mod = {name}: {:?} is {:?} on vk {:#x}", b.args, b.mods, b.vk);
+            }
+        }
+    }
+
+    #[test]
+    fn a_modifier_named_twice_is_refused() {
+        let alt = parse_mod("alt").unwrap();
+        assert!(parse_chord("mod+alt+j", alt).unwrap_err().contains("twice"), "with mod = alt, mod+alt is alt twice");
+        assert!(parse_chord("win+win+j", WIN).unwrap_err().contains("twice"));
+        assert_eq!(parse_chord("mod+alt+j", WIN), Ok((Mods { alt: true, ..WIN }, 0x4A)));
+    }
+
+    #[test]
+    fn only_a_missing_config_reads_as_the_defaults() {
+        let dir = std::env::temp_dir().join(format!("baneyspaces-config-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(read_config(&dir.join("absent.toml")), Ok(String::new()), "no file: the defaults");
+        let good = dir.join("good.toml");
+        std::fs::write(&good, "[keys]\nmod = \"alt\"\n").unwrap();
+        assert_eq!(read_config(&good).unwrap(), "[keys]\nmod = \"alt\"\n");
+        // What Windows PowerShell's > and Out-File write: UTF-16LE with a byte order mark.
+        let utf16 = dir.join("utf16.toml");
+        let bytes: Vec<u8> = [0xFEFFu16].into_iter().chain("[keys]\nmod = \"alt\"\n".encode_utf16()).flat_map(u16::to_le_bytes).collect();
+        std::fs::write(&utf16, bytes).unwrap();
+        let e = read_config(&utf16).unwrap_err();
+        assert!(e.starts_with("config.toml: cannot read") && e.contains("UTF-8"), "{e}");
+        // A file that is there and can't be read (a folder stands in for one an editor holds open).
+        let held = dir.join("held.toml");
+        std::fs::create_dir_all(&held).unwrap();
+        assert!(read_config(&held).unwrap_err().starts_with("config.toml: cannot read"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

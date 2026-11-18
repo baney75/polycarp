@@ -881,7 +881,7 @@ impl Core {
     /// `changed_at`: when the folder watcher saw the change, for the log line that times a reload.
     pub fn load_keys(&mut self, changed_at: Option<Instant>) {
         let file = crate::paths::config_file();
-        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        let text = keys::read_config(&file).unwrap_or_default();
         if changed_at.is_some() && self.keys.text.as_deref() == Some(text.as_str()) {
             return; // another file in the folder, or a save with nothing new
         }

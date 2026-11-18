@@ -191,9 +191,9 @@ jobs:
           dest="$(cygpath -u "$LOCALAPPDATA")/BaneySpaces/engine"
           mkdir -p "$dest"
           cp platforms/windows/engine/* "$dest/"
-      # Off a runner the live suite and the switch bench must refuse before they touch anything: no -Disposable, exit 2,
+      # Off a runner the live suite, the switch bench and the keymap check must refuse before they touch anything: no -Disposable, exit 2,
       # Notepad left open, state.json kept.
-      - name: Live suite and switch bench refuse a desktop that isn't disposable
+      - name: Live suite, switch bench and keymap check refuse a desktop that isn't disposable
         shell: powershell
         run: platforms/windows/tests/ci/refuses.ps1 -Bin target/release -Out ${{ runner.temp }}/refused
       # refuses.ps1 writes a stand-in record, so off a runner it must refuse too and leave a real state.json as it was.
