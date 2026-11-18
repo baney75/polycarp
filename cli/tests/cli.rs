@@ -2167,7 +2167,8 @@ fn a_slow_browser_is_no_answer_in_time_and_never_fails_the_update() {
 /// Review of #529 r2, first-F1: `update --channel stable` on a source install whose origin/stable predates release
 /// channels stops right after the fetch, before anything is built. A binary built from that stable would not read the
 /// saved channel, so the next plain update would build origin/main and the one after stable again.
-#[cfg(unix)]
+// macOS only: on Linux `polycarp update` stops first with the Linux-retired note.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_channel_whose_ref_predates_channels_is_refused_before_any_build() {
     let sb = Sandbox::new();
