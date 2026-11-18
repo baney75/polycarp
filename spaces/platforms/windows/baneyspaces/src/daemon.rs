@@ -238,8 +238,8 @@ impl Core {
         });
         if let Some(w) = focus {
             if let Some(i) = self.info.get(&w) {
-                if !self.hidden.contains(i.hwnd) {
-                    winapi::set_foreground(to_hwnd(i.hwnd));
+                if !self.hidden.contains(i.hwnd) && !winapi::set_foreground(to_hwnd(i.hwnd)) {
+                    self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
                 }
             }
         }
@@ -256,7 +256,9 @@ impl Core {
             return;
         }
         let target = self.model.active().and_then(|w| self.info.get(w)).filter(|i| !self.hidden.contains(i.hwnd)).map(|i| to_hwnd(i.hwnd));
-        winapi::set_foreground(target.unwrap_or_else(winapi::shell_window));
+        if !winapi::set_foreground(target.unwrap_or_else(winapi::shell_window)) {
+            self.log("focus is on a hidden window and Windows refused to move it");
+        }
     }
 
     fn visible_workspaces(&self) -> BTreeSet<u8> {
@@ -1004,6 +1006,8 @@ fn agent_status(c: &Core) -> Value {
     json!({ "workspace": AGENT_WORKSPACE, "shown": c.model.agent_shown(), "windows": windows, "processes": c.model.agent_pids().len(), "refused": c.model.refused() })
 }
 
+// Every field of one action-log row; a struct for them would be built at each call and used once.
+#[allow(clippy::too_many_arguments)]
 fn record(c: &Core, agent: &str, verb: &str, pid: Option<u32>, window: Option<&str>, reference: Option<&str>, route: &str, env: &Envelope) {
     c.paths.append_action(&ActionRecord::from_result(now(), agent, verb, pid, window, reference, route, env).to_line(), now(), &c.last_prune);
 }

@@ -411,23 +411,19 @@ The agent workspace verbs (`workspaces`, `open` with `new_window` and `wait`, `a
 | `close` | only windows this session opened | the same, by Hyprland address, pid and start time | not supported yet |
 | Child windows | the child window rules above | a floating window of an agent process, on `special:agent` or on no workspace yet; any other process's dialog is refused | not supported yet |
 
-Linux details (the Hyprland dispatch each verb sends and why none takes focus, the differences and a
-list of commands to try it on a live session) are in `platforms/linux/README.md`, "Agents manage
-their own workspace". On Linux these are CLI verbs; the shared MCP catalog does not list them yet.
+The Linux column describes the Linux and Omarchy desktop, which is retired; its last snapshot is in the archived
+baney75/baneyspaces.
 
 One contract keeps them the same product: `spec/` in this repo holds the workspace rules, the key map,
 the CLI and MCP schemas (one JSON envelope everywhere) and conformance cases as JSON. Every platform's
 test suite runs the same cases. A behavior that isn't in `spec/` doesn't ship on one platform alone.
 
 Code layout: `Sources/` stays the macOS app; `crates/baneyspaces-core` (Rust) holds the shared
-workspace model, CLI/MCP and hands routing for Linux and Windows; `platforms/linux` and
-`platforms/windows` hold each shell; `spec/` is shared.
+workspace model, CLI/MCP and hands routing for Windows (BaneySpaces carries its own copy for Linux);
+`platforms/windows` holds the Windows shell; `spec/` is shared.
 
-Testing on every platform: on Linux, CI (the `spaces-linux` job in the root `.github/workflows/ci.yml`)
-runs `cargo test --workspace` and `platforms/linux/tests/omarchy-scripts.sh` on Ubuntu; the nested
-Hyprland session (`platforms/linux/tests/nested.sh`, Hyprland inside a headless output) does not run
-in CI, because Ubuntu's apt carries no Hyprland, so it runs on an Omarchy seat (seat-a), then live on
-seat-b and seat-a; Windows runs in a Windows 11 VM on
+Testing on every platform: CI (the `spaces-windows` job in the root `.github/workflows/ci.yml`) runs
+the shared core and the Windows crates; Windows also runs in a Windows 11 VM on
 seat-a (KVM, resettable, never on desktop-a); macOS on the Mac (and the Mac mini node when it has a
 key). Each platform runs the hands probe and the bench in the same shape.
 
@@ -454,7 +450,7 @@ call answers `outside_agent_workspace` (`ContextMenu`, `HandsRouter+ContextMenu.
 | 1 | Semantic accessibility (`click`, `type`, `set-value`, `toggle`, `select`) | everything with an element | the tree; phase 1 |
 | 2 | Exact browser target | page content | phase 3 |
 | 3 | Window-local pointer (`click-at`, `drag`): mouse events to the pid, the window number in fields 51, 91 and 92, the pid in field 40, one gesture id, the point in window-local screen terms | surfaces with no tree (a canvas) | the pid is the agent's; the window is not minimized or hidden; the point is inside it; a verifier (the tree or the window's pixels) |
-| 4 | Per-process keys (`press`): key down and up with exactly the chord's flags, to the pid | shortcuts and keys no element exposes | the pid is the agent's; no other window of that process could take the key; the app's focused window and focused element are this window; the tree is readable |
+| 4 | Per-process keys (`press`): key down and up with exactly the chord's flags, to the pid | shortcuts and keys no element exposes | the window is on the agent workspace (a lent or Full Access window on one of Donovan's workspaces gets no keys, and no `type` either); the pid is the agent's; no other window of that process could take the key; the app's focused window and focused element are this window; the tree is readable |
 | 5 | SkyLight per-process posting | the transport under 3 and 4 | `SLEventPostToPid` found by name at run time; if the name does not resolve the public `CGEventPostToPid` carries the event, and with neither the route is unavailable (a refusal, never a crash) |
 | 6 | Per-process AX enablement for Electron | Electron apps | phase 3 |
 

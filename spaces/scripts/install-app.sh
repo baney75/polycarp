@@ -187,3 +187,18 @@ if { [ -z "$TEST" ] || [ "$IN_PLACE" = 1 ]; } && [ -x "$DEST/Contents/Resources/
 fi
 if [ "$IN_PLACE" = 0 ] && [ "${BANEYSPACES_NO_LAUNCH:-}" != 1 ]; then open "$DEST"; fi
 echo "installed $DEST and ~/.local/bin/$CLI_NAME"
+# Every part reports the commit this app was built from: the commands, the app, the browser helper and, once the app has
+# copied it, the browser extension. --wait gives the app that time. A part that differs fails the install; a browser that
+# gave no answer in time (75) can't be compared and is only a note. Skipped for test folders and in-place runs.
+if [ -z "$TEST" ] && [ "$IN_PLACE" = 0 ] && [ "${BANEYSPACES_NO_LAUNCH:-}" != 1 ] && [ -x "$DEST/Contents/Resources/bin/polycarp" ]; then
+  set +e
+  "$DEST/Contents/Resources/bin/polycarp" version --check --wait 30 </dev/null
+  same=$?
+  set -e
+  if [ "$same" = 75 ]; then
+    echo "note: a part gave no answer in time, so not every commit was compared (polycarp version --check)" >&2
+  elif [ "$same" != 0 ]; then
+    echo "install: the installed parts don't all report one commit (above); polycarp update brings the odd one up" >&2
+    exit 1
+  fi
+fi

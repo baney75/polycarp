@@ -21,7 +21,7 @@ Tagline: **Bear much fruit.** When a line must explain the product: **Speak it. 
 | `mark-small.svg` | Simpler branch for 16 to 24 px. Always use it in a menu bar or tray |
 | `wordmark.svg`, `wordmark-on-dark.svg` | Branch plus the name, outlined from Newsreader |
 | `icon-macos.svg` | Mac app icon, with the standard margin and corners |
-| `icon-full-bleed.svg` | iOS, Windows, Linux and web, as a square tile. iOS and other masked targets round its corners; Windows, Linux and favicons show the square as drawn, which is intended |
+| `icon-full-bleed.svg` | iOS, Windows and web, as a square tile. iOS and other masked targets round its corners; Windows and favicons show the square as drawn, which is intended |
 | `icon-android-foreground.svg` | Android adaptive icon foreground, on a `#59693F` background layer |
 | `browser/icon.svg`, `browser/icon-16.svg` | The browser extension: the branch and a pointer at 48 px and up, and the bolder branch alone at 16 and 32, which is what a toolbar shows |
 | `export/` | PNG sets per platform, `windows/polycarp.ico`, and `tray/` black-on-transparent template images |

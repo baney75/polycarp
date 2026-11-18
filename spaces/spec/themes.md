@@ -139,6 +139,18 @@ ease out), and the panel opacity setting (a Polycarp panel is not adjustable).
 `baneyspaces doctor` prints `polycarp_theme:` as `none ...` or `in force: <title> (<name>, mode <m>)`.
 Settings > Appearance names the theme in force and how to change it.
 
+**Desktop picture** (macOS, opt-in: Settings > Appearance > "Theme sets the desktop picture", off by default).
+While it is on and a Polycarp theme is in force, every display shows the theme's picture: `surfaces.spaces.wallpaper`
+when the theme names one (`solid:<role>`, `gradient:<role>,<role>` top to bottom, or `image:<file>` for a picture that
+ships in the app's `Wallpapers` folder), else a gradient from the mode's `background` to `sunken`. The theme reader
+ignores the key, so a file with it is a theme to every build. It is set through NSWorkspace's public desktop picture
+calls, which set the Space in front, so each Space takes it when you go there. Before covering a picture Polycarp
+records it for that display and Space and copies the file to `Application Support/Polycarp/Wallpaper/Kept`; a picture
+it can't copy (gone, or a folder of rotating pictures) is never covered. Turn it off or take the theme off and each
+Space gets its own picture back as you visit it, from the copy if the original is gone. Off with nothing covered, it
+reads nothing. `trace.log` says `theme wallpaper: set on N display(s)`, `your own picture back on N display(s)`, or
+`left display <key> alone: <why>`.
+
 ## Every surface uses the theme
 
 The dock, the "+N" list and window strip, the window switcher (⌘Tab or Alt+Tab), the launcher,
