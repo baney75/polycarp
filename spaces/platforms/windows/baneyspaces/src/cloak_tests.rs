@@ -1,7 +1,9 @@
-//! The hiding decisions against a fake desk: the refusals and races Windows can't be made to give on demand.
+//! The hiding decisions against a fake desk (refusals Windows can't be made to give on demand), then the same
+//! calls against real windows on the runner's desktop.
 
 use super::*;
 use crate::desk::fake::{h, Fake, Win};
+use crate::testwin::{eventually, TestWin};
 
 fn app(rect: [i32; 4]) -> Win {
     Win {
@@ -271,4 +273,70 @@ fn a_reused_handle_is_never_taken_for_the_window_recorded() {
         identity_ok_on(&d, &entry(1, How::Cloak, None)),
         "an entry from an older build is trusted"
     );
+}
+
+// The real desk: the shell's cloak, DWM's answer, layered alpha and the taskbar, on the runner's own session.
+
+#[test]
+fn real_the_shell_cloaks_and_uncloaks_a_window_in_place() {
+    let w = TestWin::open("cloak test", 0);
+    let c = Cloaker::new().expect("ImmersiveShell is there on a desktop with explorer.exe");
+    let before = winapi::rect(w.hwnd);
+    assert_eq!(hide_user(w.hwnd, Some(&c)), How::Cloak);
+    assert!(eventually(|| winapi::cloaked(w.hwnd) & 2 != 0));
+    assert_eq!(winapi::rect(w.hwnd), before, "the frame is kept");
+    let e = Hidden {
+        class: winapi::class(w.hwnd),
+        owner_pid: winapi::pid_of(w.hwnd),
+        owner_start: winapi::process_start(winapi::pid_of(w.hwnd)),
+        ..Hidden::base(w.id(), 0, 0, How::Cloak)
+    };
+    assert!(still_hidden(&e));
+    assert!(identity_ok(&e));
+    assert!(show(&e, Some(&c)));
+    assert!(eventually(|| winapi::cloaked(w.hwnd) == 0));
+    assert!(!still_hidden(&e));
+}
+
+#[test]
+fn real_without_the_shell_a_window_is_parked_and_comes_back() {
+    let w = TestWin::open("park test", 0);
+    let before = winapi::rect(w.hwnd).unwrap();
+    assert_eq!(hide_user(w.hwnd, None), How::Park);
+    assert!(winapi::is_parked(w.hwnd));
+    let e = Hidden {
+        rect: Some(before),
+        ..Hidden::base(w.id(), 0, 0, How::Park)
+    };
+    assert!(still_hidden(&e));
+    assert!(show(&e, None));
+    assert_eq!(winapi::rect(w.hwnd), Some(before));
+}
+
+#[test]
+fn real_a_ghost_is_transparent_and_comes_back_opaque() {
+    let w = TestWin::open("ghost test", 0);
+    let undo = ghost(w.hwnd).expect("an ordinary window takes the ghost");
+    assert_eq!(winapi::layered_alpha(w.hwnd), Some(0));
+    assert_eq!(
+        winapi::cloaked(w.hwnd),
+        0,
+        "a ghost is never cloaked: the engine skips cloaked windows"
+    );
+    let e = Hidden {
+        ex_style: Some(undo.ex_style),
+        alpha: undo.alpha,
+        ..Hidden::base(w.id(), 0, 0, How::Ghost)
+    };
+    assert!(still_hidden(&e));
+    assert!(show(&e, None));
+    assert_eq!(winapi::ex_style(w.hwnd), undo.ex_style);
+    assert_eq!(winapi::layered_alpha(w.hwnd), None);
+}
+
+#[test]
+fn real_a_new_window_is_on_the_current_virtual_desktop() {
+    let w = TestWin::open("desktop test", 0);
+    let d = Desktops::new().expect("the virtual desktop manager");
+    assert_ne!(d.on_current(w.hwnd), Some(false));
 }
