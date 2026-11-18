@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds the voice core: the polycarp-core crate (../core/ffi, over ../core/voice) as a static library,
+# Builds the voice core: the polycarp-core crate (../core/ffi, over polycarp-voice from baney75/silas, pinned in its Cargo.lock) as a static library,
 # into core-lib/libpolycarp_core.a (universal unless BANEYSPACES_ARM64_ONLY=1). Polycarp links it into
 # its own binary, so dictation runs in the same process as the app.
 #
@@ -18,8 +18,8 @@ OUT=core-lib
 TARGETS=(aarch64-apple-darwin)
 [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ] || TARGETS+=(x86_64-apple-darwin)
 
-# Everything the library is made of: sources, manifests and locks of both crates, the fixtures and data the engine embeds, and this script.
-SRC_HASH=$( (cd "$CORE" && find ffi/src ffi/include ffi/Cargo.toml ffi/Cargo.lock voice/src voice/bench voice/data voice/Cargo.toml -type f | LC_ALL=C sort | xargs shasum -a 256; shasum -a 256 "$ROOT/scripts/build-core.sh") | shasum -a 256 | cut -c1-64)
+# Everything the library is made of: the crate's sources, manifest and lock (which pins the engine's Silas commit), and this script.
+SRC_HASH=$( (cd "$CORE" && find ffi/src ffi/include ffi/Cargo.toml ffi/Cargo.lock -type f | LC_ALL=C sort | xargs shasum -a 256; shasum -a 256 "$ROOT/scripts/build-core.sh") | shasum -a 256 | cut -c1-64)
 STAMP="$SRC_HASH ${TARGETS[*]}"
 
 # The header the app compiles against must be the crate's, byte for byte.

@@ -63,7 +63,7 @@ Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos s
 
 ## One app, everywhere
 Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.
-- [x] Voice engine in `core/voice` with a C interface in `core/ffi`, used by the Tauri app and the Swift app. Check: both test suites
+- [x] Voice engine (polycarp-voice, now held in baney75/silas and pinned by `core/ffi`) with a C interface in `core/ffi`, used by the Tauri app and the Swift app. Check: both test suites
 - [x] Mac: voice and browser agents inside `Polycarp.app`, with one Settings window, one welcome window and one install. Check: tests and renders; live check below
 - [ ] Live on a real Mac: dictate into another app (Silas stays until that has worked once), the agents' browser connects, Silas's dictionary and models come across. Check: Donovan's install
 - [ ] Windows: one Tauri app with voice, workspaces and browser agents. Check: a Windows VM

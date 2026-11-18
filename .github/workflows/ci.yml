@@ -80,7 +80,6 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: |
-            core/voice
             core/ffi
           key: ${{ matrix.os }}
       - name: Linux packages
@@ -88,9 +87,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev libxdo-dev
-      - name: Voice engine tests
-        working-directory: core/voice
-        run: cargo test
+      # The engine (polycarp-voice) lives in baney75/silas; this tests the commit core/ffi's Cargo.lock pins.
+      - name: Voice engine tests, at the pinned Silas commit
+        working-directory: core/ffi
+        run: cargo test --locked -p polycarp-voice
       - name: C ABI tests, on macOS for the native app's library
         if: runner.os == 'macOS'
         working-directory: core/ffi
