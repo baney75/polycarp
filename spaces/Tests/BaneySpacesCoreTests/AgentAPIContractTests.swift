@@ -123,7 +123,7 @@ final class AgentAPIContractTests: XCTestCase {
         let commands = section("Commands")
         let expected = [
             "switch": "always", "focus": "always",
-            "move": "unless it goes onto the agent workspace (then `in_use` while a workspace it touches is shown)",
+            "move": "unless it goes onto the agent workspace (then `in_use` while the workspace it leaves or the agent workspace is shown)",
             "frame": "unless the window is on the agent workspace (then `in_use` while it is shown)",
             "layout": "`restore`, unless on the agent workspace (then `in_use` while it is shown)",
         ]
@@ -201,6 +201,23 @@ final class AgentAPIContractTests: XCTestCase {
         XCTAssertFalse(schema.problems(json: #"{"version":1,"action":"restore","name":"x","missing":[{"app":"TextEdit","title":"Notes"}]}"#, against: "layout_command_result").isEmpty)
     }
 
+    /// Round 2 (434 r2) second-S1: a layout name is unique per workspace only, so every list of saved layouts names the
+    /// workspace too; a bare name would leave a client to guess which workspace a restore moves windows on.
+    /// second-S3: `bundle` is never empty (a process with no bundle id is known by its executable's path).
+    /// first-F2: one code for a bad argument, the one envelope.md names.
+    func testSavedLayoutsNameTheirWorkspaceAndBadArgumentsHaveOneCode() throws {
+        let schema = try AgentAPISchema.load()
+        XCTAssertFalse(schema.problems(json: #"{"workspaces":[],"saved":["work","work"]}"#, against: "layout").isEmpty,
+                       "a bare string array can't say which workspace each layout is on")
+        XCTAssertFalse(schema.problems(json: #"{"version":1,"action":"list","saved":["work"]}"#, against: "layout_command_result").isEmpty)
+        XCTAssertEqual(schema.problems(json: #"{"workspaces":[],"saved":[{"workspace":1,"name":"work"},{"workspace":3,"name":"work"}]}"#, against: "layout"), [])
+        XCTAssertEqual(schema.problems(json: #"{"version":1,"action":"list","saved":[{"workspace":9,"name":"review"}]}"#, against: "layout_command_result"), [])
+        XCTAssertFalse(schema.problems(json: #"{"workspaces":[],"saved":[{"name":"work"}]}"#, against: "layout").isEmpty)
+        XCTAssertFalse(schema.problems(json: Self.window.replacingOccurrences(of: #""bundle":"com.apple.TextEdit""#, with: #""bundle":"""#), against: "window").isEmpty)
+        XCTAssertTrue(says(doc, "a macOS process with no bundle id: the full path of its executable; `bundle` is never empty"))
+        XCTAssertFalse(doc.contains("bad_arguments"), "envelope.md's code for a bad argument is invalid_args")
+    }
+
     /// F10 and F11: what an Access change does to a listener, and one meaning for `seq` and `since`.
     func testListenersEndWhenAccessChangesAndSeqIsPerSubscriber() throws {
         let events = section("Events")
@@ -231,6 +248,6 @@ final class AgentAPIContractTests: XCTestCase {
         }.joined(separator: ",")
     }
     static var state: String {
-        #"{"version":1,"scope":"agent","access":"default","windows":[\#(window)],"current":1,"agent_workspace":9,"workspaces":[\#(workspaces)],"displays":[\#(display)],"focused":{"display":"37D8832A-2D66-02CA-B9F7-8F30A301B230","workspace":1,"window":null},"layout":{"workspaces":[{"number":9,"windows":[{"id":4211,"app":"TextEdit","title":"Untitled","frame":{"x":0,"y":33,"width":756,"height":949}}]}],"saved":["review"]},"theme":{"theme":"baneyspaces","palette":"auto","polycarp_theme":null}}"#
+        #"{"version":1,"scope":"agent","access":"default","windows":[\#(window)],"current":1,"agent_workspace":9,"workspaces":[\#(workspaces)],"displays":[\#(display)],"focused":{"display":"37D8832A-2D66-02CA-B9F7-8F30A301B230","workspace":1,"window":null},"layout":{"workspaces":[{"number":9,"windows":[{"id":4211,"app":"TextEdit","title":"Untitled","frame":{"x":0,"y":33,"width":756,"height":949}}]}],"saved":[{"workspace":9,"name":"review"}]},"theme":{"theme":"baneyspaces","palette":"auto","polycarp_theme":null}}"#
     }
 }
