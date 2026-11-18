@@ -94,8 +94,10 @@ final class AgentEventsTests: XCTestCase {
         let lent = AgentAPI.View(access: .standard, inScope: [4211, 77])
         let after = facts { $0.windows[0].window.workspace = 3 }
         let events = AgentEvents.diff(facts(), lent, after, agentView)
-        XCTAssertEqual(events.map(\.type), ["window_closed"])
+        // 77 had the focus the caller saw, so it hears that focus went to nothing it can see, never to where 77 went.
+        XCTAssertEqual(events.map(\.type), ["window_closed", "window_focused"])
         XCTAssertEqual(events[0].data, .object(["window": 77, "workspace": 1]))
+        XCTAssertEqual(events[1].data["window"], .null, "\(events[1].data)")
     }
 
     /// Review F10: a lend ending mid-subscribe sends each window it took away as a close, and the focus moving to a window
@@ -140,7 +142,7 @@ final class AgentEventsTests: XCTestCase {
         unlink(path)
         let listener = socket(AF_UNIX, SOCK_STREAM, 0)
         var addr = try XCTUnwrap(Wire.address(path: path))
-        let bound = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+        let bound = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
         XCTAssertEqual(bound, 0)
         XCTAssertEqual(listen(listener, 1), 0)
         defer { close(listener); unlink(path) }

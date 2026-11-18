@@ -489,6 +489,10 @@ final class SessionController {
             // Answered by the server off the main thread (`handleSandbox`); a sandbox request that
             // reaches here came through a path that doesn't know how.
             return .init(ok: false, error: "sandbox requests are not answered on the main thread")
+        case .subscribe:
+            // The server hands a subscribe connection to `handleSubscribe`, which keeps it; one that reaches here
+            // came through a path that can't hold a stream.
+            return .init(ok: false, error: "subscribe needs the local socket")
         case .remote:
             switch r.text ?? "status" {
             case "on":
