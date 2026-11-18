@@ -360,8 +360,10 @@ impl ModState {
 /// shell bare (Windows opens Start, or Search, on a Win press and release with no key between). All atomics: the hook
 /// callback takes no lock.
 pub struct WinMask {
+    /// A chord with Win was taken since this Win press.
     used: AtomicBool,
-    held: AtomicBool,
+    /// The hook sent the masking key for that chord, and the shell hasn't seen it yet.
+    pending: AtomicBool,
 }
 
 impl Default for WinMask {
@@ -372,39 +374,41 @@ impl Default for WinMask {
 
 impl WinMask {
     pub const fn new() -> Self {
-        Self { used: AtomicBool::new(false), held: AtomicBool::new(false) }
+        Self { used: AtomicBool::new(false), pending: AtomicBool::new(false) }
     }
 
-    /// A Win key-down. `already_down` is the system's key state before this event (true for the auto-repeat).
-    pub fn win_down(&self, _already_down: bool) {
-        if !self.held.swap(true, Ordering::Relaxed) {
-            self.used.store(false, Ordering::Relaxed);
+    /// A Win key-down. `already_down` is the system's key state before this event: true for the auto-repeat. A fresh
+    /// press starts clean, so a release the hook never saw (an elevated window, the secure desktop) leaves nothing.
+    pub fn win_down(&self, already_down: bool) {
+        if !already_down {
+            self.reset();
         }
     }
 
-    /// The hook took a chord with Win held.
+    /// The hook took a chord with Win held, and sends the masking key now, while Win is down.
     pub fn chord(&self) {
         self.used.store(true, Ordering::Relaxed);
+        self.pending.store(true, Ordering::Relaxed);
     }
 
-    /// The hook saw the masking key (VK 0xE8) go up.
-    pub fn mask_through(&self) {}
+    /// The hook saw the masking key (VK 0xE8) go up: the shell has seen a key inside this Win press.
+    pub fn mask_through(&self) {
+        self.pending.store(false, Ordering::Relaxed);
+    }
 
-    /// A real Win key-up. `resend` sends the mask and the release and returns how many events Windows took.
-    /// True means the hook swallows this release.
+    /// A real Win key-up. True means the hook swallows it: only when it beat the mask to the queue (the chord was
+    /// typed in one batch) and `resend` got all three of mask down, mask up and the release into the input. A person's
+    /// release comes after the mask and goes through as typed, so no key typed after it can pass it.
     pub fn win_up(&self, resend: impl FnOnce() -> u32) -> bool {
-        self.held.store(false, Ordering::Relaxed);
-        if self.used.swap(false, Ordering::Relaxed) {
-            resend();
-            return true;
-        }
-        false
+        let early = self.used.load(Ordering::Relaxed) && self.pending.load(Ordering::Relaxed);
+        self.reset();
+        early && resend() == 3
     }
 
     /// Forget everything: the session locked or the input desktop changed.
     pub fn reset(&self) {
         self.used.store(false, Ordering::Relaxed);
-        self.held.store(false, Ordering::Relaxed);
+        self.pending.store(false, Ordering::Relaxed);
     }
 }
 

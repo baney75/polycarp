@@ -140,10 +140,8 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
         if !injected && vk < 256 {
             if WIN_KEYS.contains(&vk) {
                 // Windows opens Start when Win goes down and up with no key between, and the chord's key never
-                // reached it. A fresh Win press starts clean, so a release missed on the secure desktop can't eat a
-                // later lone tap; the auto-repeat of a held Win is not one. On the release after a chord: hold it back
-                // and send the masking key and then the release, in one batch here in the hook, so nothing typed after
-                // can come between.
+                // reached it. The hook sends the masking key when it takes the chord; a release that got into the
+                // queue before that mask is held back and sent again behind it (`WinMask`).
                 if down {
                     WIN.win_down(held(vk));
                 } else if up && WIN.win_up(|| crate::winapi::release_masked(vk as u16)) {
@@ -165,6 +163,7 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
                                 SWALLOWED[vk as usize].store(true, Ordering::Relaxed);
                                 if mods.win {
                                     WIN.chord();
+                                    crate::winapi::nudge_input();
                                 }
                                 let _ = tx.send(Msg::Chord { args: b.args.clone(), at: k.time });
                                 return 1;
