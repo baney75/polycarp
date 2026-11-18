@@ -607,6 +607,57 @@ mod tests {
 
     /// The daemon's pipe can be gone while its process still runs (putting windows back). `stop` must wait for the
     /// process: a stand-in that outlives any ping by 2 s holds `stop` for those 2 s.
+    /// Diagnostic only (draft PR, never merged): the stop test's own steps, many times over, with what each wait saw.
+    #[cfg(windows)]
+    fn stop_wait_rows(tag: &str) -> Vec<String> {
+        use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
+        use windows_sys::Win32::System::Threading::{GetExitCodeProcess, GetProcessId, OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE};
+        let mut rows = vec![];
+        for i in 0..12 {
+            let t0 = std::time::Instant::now();
+            let mut child = std::process::Command::new("powershell").args(["-NoProfile", "-Command", "Start-Sleep 2"]).spawn().unwrap();
+            let spawned = t0.elapsed().as_millis();
+            let pid = child.id();
+            let h = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+            let open_err = unsafe { GetLastError() };
+            let r = unsafe { WaitForSingleObject(h, 10_000) };
+            let err = unsafe { GetLastError() };
+            let waited = t0.elapsed().as_millis();
+            let hid = unsafe { GetProcessId(h) };
+            let mut code = 0u32;
+            unsafe { GetExitCodeProcess(h, &mut code) };
+            let st = child.wait();
+            let exited = t0.elapsed().as_millis();
+            unsafe { CloseHandle(h) };
+            rows.push(format!("{tag}{i}: spawn {spawned} ms, handle {h:?} (open err {open_err}), wait {r:#x} err {err} at {waited} ms, handle pid {hid} vs {pid}, code {code}, child {st:?} at {exited} ms"));
+        }
+        rows
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn diag_stop_wait_a() {
+        panic!("DIAG\n{}", stop_wait_rows("a").join("\n"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn diag_stop_wait_b() {
+        panic!("DIAG\n{}", stop_wait_rows("b").join("\n"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn diag_stop_wait_c() {
+        panic!("DIAG\n{}", stop_wait_rows("c").join("\n"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn diag_stop_wait_d() {
+        panic!("DIAG\n{}", stop_wait_rows("d").join("\n"));
+    }
+
     #[cfg(windows)]
     #[test]
     fn stop_waits_for_the_process_not_the_pipe() {
