@@ -33,6 +33,9 @@ function check([bool]$c, $m, $why = '') { if ($c) { $script:pass++; say "  ok:  
 function bsc { $o = (& $bs @args 2>&1 | Out-String).Trim(); Add-Content $log "`$ baneyspaces $args  ->  $($o.Substring(0, [Math]::Min(200, $o.Length)))"; $o }
 function near($a, $b) { if ($null -eq $a -or $null -eq $b) { return $false }; for ($i = 0; $i -lt 4; $i++) { if ([Math]::Abs($a[$i] - $b[$i]) -gt 2) { return $false } }; $true }
 function who($w) { $r = [Desk]::Read($w); if (-not $r) { "w-$w (gone)" } else { "w-$w pid $($r.Pid) ($((Get-Process -Id $r.Pid -ErrorAction SilentlyContinue).ProcessName)) class '$($r.Class)' title '$($r.Title)'" } }
+function procOf($w) { $r = [Desk]::Read($w); if ($r) { (Get-Process -Id $r.Pid -ErrorAction SilentlyContinue).ProcessName } }
+# Each drag whose press point another window covered, by that window's process: the harness repairs only what it counts.
+$script:covers = @()
 function txt($r) { if ($null -eq $r) { 'none' } else { $r -join ',' } }
 function half($a, $b) { $a + [int][Math]::Floor(($b - $a) / 2) }
 
@@ -87,17 +90,25 @@ function drags($name, $h) {
     $c = $cases[$i % $cases.Count]
     # The press must land on the window under test. Something else on top there (a Start or Search flyout an earlier
     # script's bare Win tap opened) would take the press, and the drag would miss through no fault of the daemon's.
-    # Named, closed with Escape, and checked again; still covered, the drag runs anyway and fails as it would.
+    # Counted, named, closed with Escape, and checked again; still covered, the drag runs anyway and fails as it would.
+    # The daemon's own window there (a ghost or drag preview left behind) is a BaneySpaces bug: that drag fails at
+    # once, with no Escape and no retry.
+    $covered = $false; $own = $false
     for ($k = 0; $k -lt 4; $k++) {
       [Drag]::Place($h, 250, 160, 520, 400); Start-Sleep -Milliseconds 120
       $f = [Drag]::Frame($h)
       $x0 = $f[0] + [int](($f[2] - $f[0]) * $(if ($c.at) { $c.at[0] } else { 0.5 }))
       $y0 = $f[1] + [int](($f[3] - $f[1]) * $(if ($c.at) { $c.at[1] } else { 0.5 }))
       $cover = [Drag]::Under($x0, $y0)
-      if ($cover -eq $h -or $k -eq 3) { break }
+      if ($cover -eq $h) { break }
+      $pn = procOf $cover
+      if (-not $covered) { $covered = $true; $script:covers += $(if ($pn) { $pn } else { "w-$cover" }) }
+      if ($pn -eq 'baneyspaces') { $own = $true; say "  drag $i ($($c.n)): FAIL: $(who $cover), the daemon's own window, is over the window at $x0,$y0 (no Escape)"; break }
+      if ($k -eq 3) { break }
       say "  drag $i ($($c.n)): $(who $cover) is over the window at $x0,$y0; Escape"
       [Drag]::Escape(); Start-Sleep -Milliseconds 300
     }
+    if ($own) { Add-Content $log "  drag $i ($($c.n)): FAIL"; continue }
     $to = if ($c.to) { $c.to } else { @(($x0 + $c.by[0]), ($y0 + $c.by[1])) }
     $pv = $null; [long]$under = 0
     $p = [Drag]::Run($x0, $y0, $to[0], $to[1], [bool]$c.right, [bool]$c.esc, [ref]$pv, [ref]$under)
@@ -144,5 +155,7 @@ $lines = @(Get-Content $dlog -ErrorAction SilentlyContinue | ? { $_ -match 'drag
 say "daemon's drag lines: $($lines.Count) (first: $(if ($lines.Count) { $lines[0] }))"
 taskkill /F /IM baneyspaces.exe 2>&1 | Out-Null
 if ($env:GITHUB_STEP_SUMMARY) { Add-Content $env:GITHUB_STEP_SUMMARY "### Windows Win+drag`n`n$script:pass passed, $script:fail failed" }
-if ($script:fail) { say "RESULT: FAIL ($script:fail failed, $script:pass passed)"; exit 1 }
-say "RESULT: PASS ($script:pass checks)"
+# Shell covers are only counted for now: with #557 on main there should be none, and a later change fails on any.
+$cv = "covers=$($script:covers.Count)$(if ($script:covers.Count) { " ($($script:covers -join ', '))" })"
+if ($script:fail) { say "RESULT: FAIL ($script:fail failed, $script:pass passed) $cv"; exit 1 }
+say "RESULT: PASS ($script:pass checks) $cv"
