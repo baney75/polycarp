@@ -45,6 +45,9 @@ const HELP: &str = "baneyspaces (Windows)
 
   switch <n>                     show workspace n (1-9) here, or go to the display that shows it
   move <n> [--stay] [--window W|--app NAME]  send the front window (or W: w-<hwnd>) to workspace n and follow it
+  window focus|swap left|right|up|down   bring the nearest visible window that way to the front, or swap frames with it
+  window resize <dx> <dy>        resize the front window by dx, dy pixels (top-left corner kept)
+  window display next|prev       send the front window to the next or previous display
   focus-monitor <name>           go to a monitor (\\\\.\\DISPLAY1 ...)
   ls                             windows by workspace, and the agent workspace
   state                          the whole model as JSON
@@ -108,6 +111,14 @@ fn need(args: &[String], n: usize, usage: &str) -> Result<(), Envelope> {
     }
 }
 
+/// A workspace number, 1 to 9, checked here so a key bound to `switch 12` is refused when config.toml is read.
+fn workspace_n(n: &str) -> Result<(), Envelope> {
+    match n.parse::<u8>() {
+        Ok(1..=9) => Ok(()),
+        _ => Err(fail("invalid_args", &format!("{n:?} is not a workspace: a number 1 to 9 is required"), "Example: baneyspaces switch 3")),
+    }
+}
+
 /// Turns the command line into a daemon request.
 fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
     let Some(cmd) = (!a.is_empty()).then(|| a.remove(0)) else {
@@ -121,6 +132,7 @@ fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
     match cmd.as_str() {
         "switch" => {
             need(&a, 1, "switch <n>")?;
+            workspace_n(&a[0])?;
             req("switch", json!({ "n": a[0] }))
         }
         "move" => {
@@ -128,7 +140,19 @@ fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
             let window = take(&mut a, "--window");
             let app = take(&mut a, "--app");
             need(&a, 1, "move <n> [--stay] [--window W|--app NAME]")?;
+            workspace_n(&a[0])?;
             req("move", json!({ "n": a[0], "stay": stay, "window": window, "app": app }))
+        }
+        "window" => {
+            const USAGE: &str = "window focus|swap left|right|up|down, window resize <dx> <dy>, window display next|prev";
+            need(&a, 2, USAGE)?;
+            let px = |s: &str| s.parse::<i32>().ok().filter(|v| v.abs() <= 10_000);
+            match (a[0].as_str(), a[1].as_str(), a.get(2).map(String::as_str)) {
+                ("focus" | "swap", d @ ("left" | "right" | "up" | "down"), None) => req(&format!("window_{}", a[0]), json!({ "dir": d })),
+                ("resize", dx, Some(dy)) if a.len() == 3 && px(dx).is_some() && px(dy).is_some() => req("window_resize", json!({ "dx": px(dx), "dy": px(dy) })),
+                ("display", d @ ("next" | "prev"), None) => req("window_display", json!({ "to": d })),
+                _ => Err(fail("invalid_args", &format!("usage: {USAGE}"), "Example: baneyspaces window focus left")),
+            }
         }
         "focus-monitor" => {
             need(&a, 1, "focus-monitor <name>")?;
@@ -535,6 +559,9 @@ mod tests {
 
     #[test]
     fn switch_and_move_become_requests() {
+        for words in [&["switch", "bananas"][..], &["switch", "12"], &["switch", "0"], &["move", "x"], &["move", "10", "--stay"]] {
+            assert_eq!(request(v(words)).unwrap_err().error.unwrap().code, "invalid_args", "{words:?}");
+        }
         assert_eq!(request(v(&["switch", "3"])).unwrap(), json!({"op":"switch","args":{"n":"3"}}));
         let r = request(v(&["move", "2", "--stay", "--app", "notepad"])).unwrap();
         assert_eq!(r["args"], json!({"n":"2","stay":true,"window":null,"app":"notepad"}));

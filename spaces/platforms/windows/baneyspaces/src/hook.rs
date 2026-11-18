@@ -1,9 +1,9 @@
 //! The hooks and the one hidden window the daemon runs, each on its own thread with its own message loop.
 //!
-//! * `WH_KEYBOARD_LL` swallows exactly the chords in `keys::bindings()` (Win+1-9, Win+Shift+1-9,
-//!   Win+`). Explorer owns Win+number, so `RegisterHotKey` would fail. The callback only matches a
-//!   table and posts to the worker; it takes no lock, allocates nothing, and never waits, because
-//!   Windows drops a low-level hook whose callback is slow.
+//! * `WH_KEYBOARD_LL` swallows exactly the chords in the current key table (`set_table`: the defaults from
+//!   `spec/keys.json` with `config.toml` over them, spec/keymap.md). Explorer owns Win+number, so `RegisterHotKey`
+//!   would fail. The callback only matches the table and posts to the worker; it takes no lock, allocates nothing,
+//!   and never waits, because Windows drops a low-level hook whose callback is slow.
 //! * `SetWinEventHook` reports foreground changes, windows appearing, hiding, closing, being minimized,
 //!   ending a move or resize, being renamed, and being cloaked or uncloaked by anyone. The worker acts on each one as it
 //!   comes; a full look at every window runs only as a slow safety net (`daemon::RECONCILE`), or every
@@ -14,7 +14,7 @@
 //!   and `TaskbarCreated` (explorer.exe restarted).
 
 use crate::keys::{lookup, Binding, ModState, MOD_KEYS};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::OnceLock;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -37,11 +37,25 @@ pub enum Msg {
     Press { x: i32, y: i32 },
     /// Look at every window again now: explorer.exe restarted, or the session was unlocked.
     Resync,
+    /// Something changed in the config folder: read `config.toml` again. `at`: when the change was seen.
+    Reload { at: std::time::Instant },
     Quit,
 }
 
 static TX: OnceLock<Sender<Msg>> = OnceLock::new();
-static TABLE: OnceLock<Vec<Binding>> = OnceLock::new();
+/// The key table the hook matches. Swapped whole by `set_table`; the hook never waits for it.
+static TABLE: AtomicPtr<Vec<Binding>> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Puts `table` in force for the next key. The old table is leaked on purpose: the hook thread may be reading it at
+/// this moment, and a reload happens only when a person saves `config.toml`, so the cost is a few KB a save.
+pub fn set_table(table: Vec<Binding>) {
+    TABLE.swap(Box::into_raw(Box::new(table)), Ordering::AcqRel);
+}
+
+fn table() -> Option<&'static [Binding]> {
+    // Only `set_table` writes it, always with a leaked Box that is never freed.
+    unsafe { TABLE.load(Ordering::Acquire).as_ref().map(Vec::as_slice) }
+}
 static ON_END: OnceLock<fn(EndSession)> = OnceLock::new();
 #[allow(clippy::declare_interior_mutable_const)]
 const OFF: AtomicBool = AtomicBool::new(false);
@@ -125,8 +139,9 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
                 // was missed (the secure desktop, an elevated window) cannot leave one stuck.
                 if !MOD_KEYS.contains(&vk) {
                     let mods = MODS.mods(k.time, held);
-                    if mods.win {
-                        if let (Some(table), Some(tx)) = (TABLE.get(), TX.get()) {
+                    // Every chord holds Win, Ctrl or Alt (keys::parse_chord): plain typing never reaches the table.
+                    if mods.win || mods.ctrl || mods.alt {
+                        if let (Some(table), Some(tx)) = (table(), TX.get()) {
                             if let Some(b) = lookup(table, vk, mods) {
                                 SWALLOWED[vk as usize].store(true, Ordering::Relaxed);
                                 let _ = tx.send(Msg::Chord { args: b.args.clone(), at: k.time });
@@ -225,9 +240,8 @@ unsafe extern "system" fn session_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
 }
 
 /// Starts the hook threads and the hidden window. Returns what could not be installed, if anything.
-pub fn start(tx: Sender<Msg>, table: Vec<Binding>, on_end: fn(EndSession)) -> Vec<String> {
+pub fn start(tx: Sender<Msg>, on_end: fn(EndSession)) -> Vec<String> {
     let _ = TX.set(tx);
-    let _ = TABLE.set(table);
     let _ = ON_END.set(on_end);
     TEST_INPUT.store(crate::apps::test_ops_enabled(), Ordering::Relaxed);
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
