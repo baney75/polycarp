@@ -2,7 +2,8 @@ import AppKit
 import BaneySpacesCore
 
 @_silgen_name("CGSMainConnectionID") private func CGSMainConnectionID() -> Int32
-@_silgen_name("CGSCopyManagedDisplaySpaces") private func CGSCopyManagedDisplaySpaces(_ cid: Int32) -> Unmanaged<CFArray>?
+// The same declaration as Keys.swift: one symbol may have only one Swift type in this module.
+@_silgen_name("CGSCopyManagedDisplaySpaces") private func CGSCopyManagedDisplaySpaces(_ cid: Int32) -> CFArray
 
 /// Settings › Appearance › "Theme sets the desktop picture" on the real desktop: `WallpaperKeeper` with NSWorkspace's
 /// public desktop picture calls. It looks when the theme or the switch changes, when the macOS Space changes (each Space
@@ -64,7 +65,7 @@ private struct SystemDesktop: DesktopPictures {
 
     /// The Space each display shows, by display UUID; "Main" when displays share one set of Spaces.
     private static func currentSpaces() -> [String: Int] {
-        guard let displays = CGSCopyManagedDisplaySpaces(CGSMainConnectionID())?.takeRetainedValue() as? [[String: Any]] else { return [:] }
+        guard let displays = CGSCopyManagedDisplaySpaces(CGSMainConnectionID()) as? [[String: Any]] else { return [:] }
         var out: [String: Int] = [:]
         for d in displays {
             guard let id = d["Display Identifier"] as? String, let space = (d["Current Space"] as? [String: Any])?["ManagedSpaceID"] as? Int else { continue }
