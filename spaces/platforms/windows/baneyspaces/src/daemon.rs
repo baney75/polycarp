@@ -67,6 +67,22 @@ pub struct SnapInfo {
     pub start: u64,
 }
 
+/// The fronts the daemon asked Windows for (cause::Asks).
+static ASKS: cause::Asks = cause::Asks::new();
+
+/// Asks Windows to bring `h` to the front for a workspace. Noted first: Windows may grant it late, even after
+/// reporting it refused (cause::ASKED_MS). A grant at once still sends a foreground event, maybe after the next
+/// switch, and that event uses the ask up (#545). Only a window already in front sends none, so it notes no ask.
+fn bring_to_front(h: windows_sys::Win32::Foundation::HWND) -> bool {
+    if h.is_null() {
+        return false;
+    }
+    if winapi::foreground() != h {
+        ASKS.note(id_of(h), id_of(winapi::root_owner(h)), winapi::tick_ms());
+    }
+    winapi::set_foreground(h)
+}
+
 pub struct Core {
     pub model: Model,
     pub paths: Paths,
@@ -270,12 +286,8 @@ impl Core {
         });
         if let Some(w) = focus {
             if let Some(i) = self.info.get(&w) {
-                if !self.hidden.contains(i.hwnd) {
-                    // Noted first: Windows may grant it late, even after reporting it refused (cause::ASKED_MS).
-                    cause::note_asked(i.hwnd, winapi::tick_ms());
-                    if !winapi::set_foreground(to_hwnd(i.hwnd)) {
-                        self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
-                    }
+                if !self.hidden.contains(i.hwnd) && !bring_to_front(to_hwnd(i.hwnd)) {
+                    self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
                 }
             }
         }
@@ -292,10 +304,11 @@ impl Core {
             return;
         }
         let target = self.model.active().and_then(|w| self.info.get(w)).filter(|i| !self.hidden.contains(i.hwnd)).map(|i| to_hwnd(i.hwnd));
-        if let Some(t) = target {
-            cause::note_asked(t as isize as i64, winapi::tick_ms());
-        }
-        if !winapi::set_foreground(target.unwrap_or_else(winapi::shell_window)) {
+        let moved = match target {
+            Some(t) => bring_to_front(t),
+            None => winapi::set_foreground(winapi::shell_window()),
+        };
+        if !moved {
             self.log("focus is on a hidden window and Windows refused to move it");
         }
     }
@@ -791,6 +804,10 @@ impl Core {
     /// The foreground changed. Only an activation you caused may take you to another workspace (R-F1,
     /// R-F2). `cause::foreground_by` decides whose it was, and a close is never yours (R-E1).
     fn on_foreground(&mut self, hwnd: i64) {
+        // Used up whenever its front lands: on the window already active, or on an owned dialog nothing tracks. Left,
+        // it refuses your click on that window later.
+        let now = winapi::tick_ms();
+        let asked = ASKS.take(hwnd, id_of(winapi::root_owner(to_hwnd(hwnd))), now);
         let id = window_name(hwnd);
         if !self.model.is_tracked(&id) || self.model.active() == Some(id.as_str()) {
             return;
@@ -800,7 +817,7 @@ impl Core {
             !winapi::exists(h) || !winapi::is_visible(h)
         });
         let since_close = self.closed_at.map(|t| winapi::tick_ms().wrapping_sub(t));
-        let cause = cause::foreground_by(winapi::idle_ms(), since_close, active_gone, cause::since_asked(hwnd, winapi::tick_ms()));
+        let cause = cause::foreground_by(crate::hook::idle_ms(now), since_close, active_gone, asked);
         self.log(&format!("foreground {id} cause {cause:?}"));
         let _ = self.apply(Event::Activate { window: Some(id), cause });
     }
@@ -982,6 +999,7 @@ impl Core {
                 };
                 let oh = to_hwnd(self.info.get(&other).map(|i| i.hwnd).unwrap_or(0));
                 if op == "window_focus" {
+                    // Your own command: no ask, or a late grant would be refused and put the old window back.
                     winapi::set_foreground(oh);
                 } else {
                     winapi::set_frame(h, of);

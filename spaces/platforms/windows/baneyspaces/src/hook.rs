@@ -64,6 +64,8 @@ static WIN: WinMask = WinMask::new();
 /// The key that masks Start: unassigned, so no keyboard sends it and no app reads it (`winapi::nudge_input`).
 const MASK_VK: u32 = 0xE8;
 static MODS: ModState = ModState::new();
+/// Your last input, keyboard or mouse, and the daemon's own (`idle_ms`).
+static INPUT: crate::cause::InputClock = crate::cause::InputClock::new();
 static KB_THREAD: AtomicU32 = AtomicU32::new(0);
 static EV_THREAD: AtomicU32 = AtomicU32::new(0);
 static SESSION_THREAD: AtomicU32 = AtomicU32::new(0);
@@ -111,6 +113,13 @@ pub fn events_live() -> bool {
     EVENTS_LIVE.load(Ordering::Relaxed)
 }
 
+/// Milliseconds from your last keyboard or mouse input to `now` (`winapi::tick_ms`), as `cause::InputClock::idle`
+/// weighs the hooks against GetLastInputInfo. The daemon's own nudge doesn't count, so its keys can't make an app's
+/// activation look like yours (R-F1).
+pub fn idle_ms(now: u32) -> u32 {
+    INPUT.idle(now, crate::winapi::idle_ms())
+}
+
 fn held(vk: u32) -> bool {
     unsafe { GetAsyncKeyState(vk as i32) as u16 & 0x8000 != 0 }
 }
@@ -128,6 +137,7 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
     if code == HC_ACTION as i32 {
         let k = &*(lp as *const KBDLLHOOKSTRUCT);
         let injected = injected_by_software(k.flags & LLKHF_INJECTED != 0, k.dwExtraInfo);
+        INPUT.note(k.flags & LLKHF_INJECTED != 0 && k.dwExtraInfo == crate::cause::OWN_INPUT_MARK, k.time);
         let vk = k.vkCode;
         let down = wp as u32 == WM_KEYDOWN || wp as u32 == WM_SYSKEYDOWN;
         let up = wp as u32 == WM_KEYUP || wp as u32 == WM_SYSKEYUP;
@@ -183,7 +193,9 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
 unsafe extern "system" fn mouse(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let m = &*(lp as *const MSLLHOOKSTRUCT);
-        if crate::focus::is_a_press(wp as u32, injected_by_software(m.flags & LLMHF_INJECTED != 0, m.dwExtraInfo)) {
+        let injected = injected_by_software(m.flags & LLMHF_INJECTED != 0, m.dwExtraInfo);
+        INPUT.note(m.flags & LLMHF_INJECTED != 0 && m.dwExtraInfo == crate::cause::OWN_INPUT_MARK, m.time);
+        if crate::focus::is_a_press(wp as u32, injected) {
             if let Some(tx) = TX.get() {
                 let _ = tx.send(Msg::Press { x: m.pt.x, y: m.pt.y });
             }

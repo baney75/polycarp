@@ -12,26 +12,82 @@
 //! front took you forward again, back and forth (#545).
 
 use baneyspaces_core::model::Cause;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 /// A window the daemon asked to bring to the front counts as asked for this long. Windows activates another process's
 /// window on its own time, so an ask it reports refused can still land well after the next switch (#545).
 pub const ASKED_MS: u32 = 1_000;
 
-/// The windows the daemon asked to bring to the front in the last `ASKED_MS`, with the tick of each ask.
-static ASKS: Mutex<Vec<(i64, u32)>> = Mutex::new(Vec::new());
-
-/// The daemon is asking Windows to bring `hwnd` to the front now (`now`: `winapi::tick_ms`).
-pub fn note_asked(hwnd: i64, now: u32) {
-    let mut a = ASKS.lock().unwrap_or_else(|e| e.into_inner());
-    a.retain(|&(h, t)| h != hwnd && now.wrapping_sub(t) < ASKED_MS);
-    a.push((hwnd, now));
+/// The windows the daemon asked to bring to the front in the last `ASKED_MS`: each window, its root owner
+/// (`GetAncestor(GA_ROOTOWNER)`, 0 if unknown) and the tick of the ask.
+pub struct Asks {
+    list: Mutex<Vec<(i64, i64, u32)>>,
 }
 
-/// How long ago the daemon last asked for `hwnd` to come to the front, within `ASKED_MS`.
-pub fn since_asked(hwnd: i64, now: u32) -> Option<u32> {
-    let a = ASKS.lock().unwrap_or_else(|e| e.into_inner());
-    a.iter().rev().find(|&&(h, _)| h == hwnd).map(|&(_, t)| now.wrapping_sub(t)).filter(|&d| d < ASKED_MS)
+impl Asks {
+    pub const fn new() -> Self {
+        Self { list: Mutex::new(Vec::new()) }
+    }
+
+    fn list(&self) -> std::sync::MutexGuard<'_, Vec<(i64, i64, u32)>> {
+        self.list.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The daemon is asking Windows to bring `hwnd` (root owner `root`) to the front now (`now`: `winapi::tick_ms`).
+    pub fn note(&self, hwnd: i64, root: i64, now: u32) {
+        let mut a = self.list();
+        a.retain(|&(h, _, t)| h != hwnd && now.wrapping_sub(t) < ASKED_MS);
+        a.push((hwnd, root, now));
+    }
+
+    /// `hwnd` (root owner `root`) took the front: how long ago the daemon asked for it, within `ASKED_MS`. An ask
+    /// covers every window under the asked one's root owner, since Windows gives the front to a window's open dialog
+    /// instead. The ask is used up: a later front of that window is decided by your input alone.
+    pub fn take(&self, hwnd: i64, root: i64, now: u32) -> Option<u32> {
+        let mut a = self.list();
+        a.retain(|&(_, _, t)| now.wrapping_sub(t) < ASKED_MS);
+        let i = a.iter().rposition(|&(h, r, _)| h == hwnd || (root != 0 && r == root))?;
+        Some(now.wrapping_sub(a.remove(i).2))
+    }
+}
+
+/// `dwExtraInfo` of the input the daemon sends itself (the 0xE8 nudge). It is the only input the idle clock ignores.
+pub const OWN_INPUT_MARK: usize = 0xBA5E_00E8;
+
+/// GetLastInputInfo and the hooks time one event a tick or two apart: the system's count is newer only past this.
+/// Known limit: input the hooks miss within this long after a daemon nudge is not counted.
+const SYSTEM_SLACK_MS: u32 = 50;
+
+/// When you last typed or pointed. Input another program sends for you (On-Screen Keyboard, voice access, a remapper)
+/// is yours too; only the daemon's own nudge is not, or its keys would make an app's activation look like yours (R-F1).
+pub struct InputClock {
+    last: AtomicU32,
+    own: AtomicU32,
+}
+
+impl InputClock {
+    pub const fn new() -> Self {
+        Self { last: AtomicU32::new(0), own: AtomicU32::new(0) }
+    }
+
+    /// A keyboard or mouse event the hooks saw at `tick`. `own`: the daemon sent it (`OWN_INPUT_MARK`).
+    pub fn note(&self, own: bool, tick: u32) {
+        let t = if own { &self.own } else { &self.last };
+        t.store(tick.max(1), Ordering::Relaxed);
+    }
+
+    /// Milliseconds from your last input to `now`. `system_idle` is GetLastInputInfo's count. When the system heard
+    /// input newer than anything the hooks heard (typed into an elevated window, a key a remapper swallowed and sent
+    /// again, a click after Windows dropped a slow hook), its count wins. Only the daemon's own input: `u32::MAX`.
+    pub fn idle(&self, now: u32, system_idle: u32) -> u32 {
+        let newer = |t: u32| t == 0 || now.wrapping_sub(t) > system_idle.saturating_add(SYSTEM_SLACK_MS);
+        match self.last.load(Ordering::Relaxed) {
+            last if newer(last) && newer(self.own.load(Ordering::Relaxed)) => system_idle,
+            0 => u32::MAX,
+            last => now.wrapping_sub(last),
+        }
+    }
 }
 
 /// `idle_ms`: time since the last keyboard or mouse input. `since_close_ms`: time since a tracked window last
@@ -47,66 +103,5 @@ pub fn foreground_by(idle_ms: u32, since_close_ms: Option<u32>, active_gone: boo
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn closing_the_last_window_does_not_follow_windows_to_another_workspace() {
-        // You click the close box (40 ms ago), the window closes (20 ms ago), Windows activates a hidden window.
-        assert_eq!(foreground_by(40, Some(20), false, None), Cause::App);
-        // The foreground event came before the close was seen: the active window is already gone.
-        assert_eq!(foreground_by(40, None, true, None), Cause::App);
-        assert_eq!(foreground_by(40, Some(9_000), true, None), Cause::App);
-    }
-
-    #[test]
-    fn a_click_after_a_close_is_still_yours() {
-        // A taskbar click 30 ms ago, after a close five seconds earlier, may take you to that window's workspace.
-        assert_eq!(foreground_by(30, Some(5_000), false, None), Cause::User);
-        assert_eq!(foreground_by(30, None, false, None), Cause::User);
-    }
-
-    #[test]
-    fn no_recent_input_is_the_apps() {
-        assert_eq!(foreground_by(2_000, None, false, None), Cause::App);
-        assert_eq!(foreground_by(300, Some(9_000), false, None), Cause::App);
-    }
-
-    #[test]
-    fn a_window_the_daemon_asked_for_is_never_yours() {
-        // Win+6 typed 40 ms ago, and the front goes to a window the daemon asked for 300 ms ago: the daemon's, not yours.
-        assert_eq!(foreground_by(40, None, false, Some(300)), Cause::App);
-        assert_eq!(foreground_by(40, None, false, Some(0)), Cause::App);
-        // An ask over ASKED_MS old no longer counts, and none at all leaves your input to decide.
-        assert_eq!(foreground_by(40, None, false, since_asked(0x7001, 5_000)), Cause::User);
-    }
-
-    #[test]
-    fn a_late_activation_from_the_switch_before_does_not_follow() {
-        // #545, speed run 44275966979: Win+2 asks for a (refused, it lands later); Win+6 asks for b; a takes the front
-        // 47 ms after Win+6 went down. Following it showed workspace 2 again, b's late front showed 6, seven times over.
-        let (a, b) = (0x10216, 0x30264);
-        note_asked(a, 10_000);
-        note_asked(b, 10_150);
-        assert_eq!(since_asked(a, 10_197), Some(197));
-        assert_eq!(foreground_by(47, None, false, since_asked(a, 10_197)), Cause::App, "a's late front is the daemon's");
-        assert_eq!(foreground_by(60, None, false, since_asked(b, 10_210)), Cause::App, "and so is b's");
-        assert_eq!(since_asked(a, 11_000), None, "an ask lasts ASKED_MS");
-    }
-
-    #[test]
-    fn the_daemon_asks_before_it_calls_an_activation_yours() {
-        let src = include_str!("daemon.rs").replace("\r\n", "\n");
-        let start = src.find("fn on_foreground(").expect("on_foreground");
-        let body = &src[start..start + src[start..].find("\n    }\n").expect("end of on_foreground")];
-        assert!(body.contains("cause::foreground_by("), "on_foreground must classify the activation with cause::foreground_by");
-        assert!(!body.contains("idle_ms() < 300"), "the bare 300 ms guess calls a close's activation yours");
-        assert!(body.contains("cause::since_asked("), "on_foreground must know which windows the daemon asked for");
-        let start = src.find("fn exec(").expect("exec");
-        let body = &src[start..start + src[start..].find("\n    }\n").expect("end of exec")];
-        assert!(body.contains("cause::note_asked("), "exec must note each window it asks to bring to the front");
-        let start = src.find("fn close_window(").expect("close_window");
-        let body = &src[start..start + src[start..].find("\n    }\n").expect("end of close_window")];
-        assert!(body.contains("self.closed_at = Some("), "close_window must note when the close happened");
-    }
-}
+#[path = "cause_tests.rs"]
+mod tests;
