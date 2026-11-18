@@ -12,26 +12,55 @@
 //! front took you forward again, back and forth (#545).
 
 use baneyspaces_core::model::Cause;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 /// A window the daemon asked to bring to the front counts as asked for this long. Windows activates another process's
 /// window on its own time, so an ask it reports refused can still land well after the next switch (#545).
 pub const ASKED_MS: u32 = 1_000;
 
-/// The windows the daemon asked to bring to the front in the last `ASKED_MS`, with the tick of each ask.
-static ASKS: Mutex<Vec<(i64, u32)>> = Mutex::new(Vec::new());
+/// The windows the daemon asked to bring to the front in the last `ASKED_MS`: each window, its root owner
+/// (`GetAncestor(GA_ROOTOWNER)`, 0 if unknown) and the tick of the ask.
+static ASKS: Mutex<Vec<(i64, i64, u32)>> = Mutex::new(Vec::new());
 
-/// The daemon is asking Windows to bring `hwnd` to the front now (`now`: `winapi::tick_ms`).
-pub fn note_asked(hwnd: i64, now: u32) {
+/// The daemon is asking Windows to bring `hwnd` (root owner `root`) to the front now (`now`: `winapi::tick_ms`).
+pub fn note_asked(hwnd: i64, _root: i64, now: u32) {
     let mut a = ASKS.lock().unwrap_or_else(|e| e.into_inner());
-    a.retain(|&(h, t)| h != hwnd && now.wrapping_sub(t) < ASKED_MS);
-    a.push((hwnd, now));
+    a.retain(|&(h, _, t)| h != hwnd && now.wrapping_sub(t) < ASKED_MS);
+    a.push((hwnd, 0, now));
 }
 
-/// How long ago the daemon last asked for `hwnd` to come to the front, within `ASKED_MS`.
-pub fn since_asked(hwnd: i64, now: u32) -> Option<u32> {
+/// Windows put `hwnd` in front at once when asked: no ask of it is left to land late.
+pub fn landed(_hwnd: i64) {}
+
+/// `hwnd` (root owner `root`) took the front: how long ago the daemon asked for it, within `ASKED_MS`.
+pub fn take_asked(hwnd: i64, _root: i64, now: u32) -> Option<u32> {
     let a = ASKS.lock().unwrap_or_else(|e| e.into_inner());
-    a.iter().rev().find(|&&(h, _)| h == hwnd).map(|&(_, t)| now.wrapping_sub(t)).filter(|&d| d < ASKED_MS)
+    a.iter().rev().find(|&&(h, _, _)| h == hwnd).map(|&(_, _, t)| now.wrapping_sub(t)).filter(|&d| d < ASKED_MS)
+}
+
+/// When a person last typed or pointed, as the input hooks see it.
+pub struct InputClock {
+    last: AtomicU32,
+}
+
+impl InputClock {
+    pub const fn new() -> Self {
+        Self { last: AtomicU32::new(0) }
+    }
+
+    /// A keyboard or mouse event at `tick`. `real` is false for input software injected.
+    pub fn note(&self, _real: bool, tick: u32) {
+        self.last.store(tick.max(1), Ordering::Relaxed);
+    }
+
+    /// Milliseconds from the last real input to `now`, or None before the hooks have seen any.
+    pub fn idle(&self, now: u32) -> Option<u32> {
+        match self.last.load(Ordering::Relaxed) {
+            0 => None,
+            t => Some(now.wrapping_sub(t)),
+        }
+    }
 }
 
 /// `idle_ms`: time since the last keyboard or mouse input. `since_close_ms`: time since a tracked window last
@@ -78,20 +107,57 @@ mod tests {
         assert_eq!(foreground_by(40, None, false, Some(300)), Cause::App);
         assert_eq!(foreground_by(40, None, false, Some(0)), Cause::App);
         // An ask over ASKED_MS old no longer counts, and none at all leaves your input to decide.
-        assert_eq!(foreground_by(40, None, false, since_asked(0x7001, 5_000)), Cause::User);
+        assert_eq!(foreground_by(40, None, false, take_asked(0x7001, 0x7001, 5_000)), Cause::User);
     }
 
     #[test]
     fn a_late_activation_from_the_switch_before_does_not_follow() {
         // #545, speed run 44275966979: Win+2 asks for a (refused, it lands later); Win+6 asks for b; a takes the front
         // 47 ms after Win+6 went down. Following it showed workspace 2 again, b's late front showed 6, seven times over.
-        let (a, b) = (0x10216, 0x30264);
-        note_asked(a, 10_000);
-        note_asked(b, 10_150);
-        assert_eq!(since_asked(a, 10_197), Some(197));
-        assert_eq!(foreground_by(47, None, false, since_asked(a, 10_197)), Cause::App, "a's late front is the daemon's");
-        assert_eq!(foreground_by(60, None, false, since_asked(b, 10_210)), Cause::App, "and so is b's");
-        assert_eq!(since_asked(a, 11_000), None, "an ask lasts ASKED_MS");
+        let (a, b, c) = (0x10216, 0x30264, 0x10218);
+        note_asked(c, c, 10_000);
+        note_asked(a, a, 10_000);
+        note_asked(b, b, 10_150);
+        assert_eq!(foreground_by(47, None, false, take_asked(a, a, 10_197)), Cause::App, "a's late front is the daemon's");
+        assert_eq!(foreground_by(60, None, false, take_asked(b, b, 10_210)), Cause::App, "and so is b's");
+        assert_eq!(take_asked(c, c, 11_000), None, "an ask lasts ASKED_MS");
+    }
+
+    #[test]
+    fn an_ask_that_landed_never_refuses_your_front_later() {
+        // Win+1 asks for x and x takes the front; Win+2 asks for a. Within the second you click x: that's yours.
+        let (x, a) = (0x40216, 0x40218);
+        note_asked(x, x, 20_000);
+        assert_eq!(take_asked(x, x, 20_080), Some(80), "x's front landed late: the daemon's");
+        note_asked(a, a, 20_200);
+        assert_eq!(take_asked(x, x, 20_500), None, "x's ask was used up when its front landed");
+        // An ask Windows granted at once leaves nothing to land late.
+        let y = 0x40220;
+        note_asked(y, y, 20_000);
+        landed(y);
+        assert_eq!(take_asked(y, y, 20_100), None);
+    }
+
+    #[test]
+    fn an_ask_covers_the_dialog_its_window_owns() {
+        // Win+2 asks for Notepad's window a, which owns an open Save As dialog d. Windows grants the ask late, and
+        // gives the front to d. That's the daemon's front too, or Win+6's 300 ms would call it yours (#545 again).
+        let (a, d) = (0x50216, 0x50300);
+        note_asked(a, a, 30_000);
+        assert_eq!(take_asked(d, a, 30_250), Some(250));
+        // A window with another root is no part of the ask.
+        note_asked(a, a, 30_400);
+        assert_eq!(take_asked(0x50400, 0x50400, 30_450), None);
+    }
+
+    #[test]
+    fn injected_input_is_never_yours() {
+        // The daemon's own masking key (0xE8) and SendInput from any app move GetLastInputInfo; a person didn't type.
+        let c = InputClock::new();
+        assert_eq!(c.idle(1_000), None);
+        c.note(true, 500);
+        c.note(false, 1_000);
+        assert_eq!(c.idle(1_100), Some(600), "only the real key at 500 counts");
     }
 
     #[test]
@@ -101,7 +167,8 @@ mod tests {
         let body = &src[start..start + src[start..].find("\n    }\n").expect("end of on_foreground")];
         assert!(body.contains("cause::foreground_by("), "on_foreground must classify the activation with cause::foreground_by");
         assert!(!body.contains("idle_ms() < 300"), "the bare 300 ms guess calls a close's activation yours");
-        assert!(body.contains("cause::since_asked("), "on_foreground must know which windows the daemon asked for");
+        assert!(body.contains("cause::take_asked("), "on_foreground must know which windows the daemon asked for");
+        assert!(body.contains("hook::idle_ms("), "on_foreground must time your input from the hooks, not GetLastInputInfo");
         let start = src.find("fn exec(").expect("exec");
         let body = &src[start..start + src[start..].find("\n    }\n").expect("end of exec")];
         assert!(body.contains("cause::note_asked("), "exec must note each window it asks to bring to the front");

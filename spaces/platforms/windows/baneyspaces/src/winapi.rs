@@ -378,6 +378,11 @@ pub fn shell_window() -> HWND {
     unsafe { GetShellWindow() }
 }
 
+/// The window at the top of `h`'s owner chain (`h` itself when nothing owns it), or null when `h` is gone.
+pub fn root_owner(h: HWND) -> HWND {
+    unsafe { GetAncestor(h, GA_ROOTOWNER) }
+}
+
 /// Milliseconds since boot, on the same clock as `idle_ms`.
 pub fn tick_ms() -> u32 {
     unsafe { GetTickCount() }

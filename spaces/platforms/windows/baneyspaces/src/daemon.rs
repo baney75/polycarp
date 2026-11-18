@@ -272,8 +272,11 @@ impl Core {
             if let Some(i) = self.info.get(&w) {
                 if !self.hidden.contains(i.hwnd) {
                     // Noted first: Windows may grant it late, even after reporting it refused (cause::ASKED_MS).
-                    cause::note_asked(i.hwnd, winapi::tick_ms());
-                    if !winapi::set_foreground(to_hwnd(i.hwnd)) {
+                    let h = to_hwnd(i.hwnd);
+                    cause::note_asked(i.hwnd, id_of(winapi::root_owner(h)), winapi::tick_ms());
+                    if winapi::set_foreground(h) {
+                        cause::landed(i.hwnd);
+                    } else {
                         self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
                     }
                 }
@@ -293,7 +296,7 @@ impl Core {
         }
         let target = self.model.active().and_then(|w| self.info.get(w)).filter(|i| !self.hidden.contains(i.hwnd)).map(|i| to_hwnd(i.hwnd));
         if let Some(t) = target {
-            cause::note_asked(t as isize as i64, winapi::tick_ms());
+            cause::note_asked(id_of(t), id_of(winapi::root_owner(t)), winapi::tick_ms());
         }
         if !winapi::set_foreground(target.unwrap_or_else(winapi::shell_window)) {
             self.log("focus is on a hidden window and Windows refused to move it");
@@ -800,7 +803,9 @@ impl Core {
             !winapi::exists(h) || !winapi::is_visible(h)
         });
         let since_close = self.closed_at.map(|t| winapi::tick_ms().wrapping_sub(t));
-        let cause = cause::foreground_by(winapi::idle_ms(), since_close, active_gone, cause::since_asked(hwnd, winapi::tick_ms()));
+        let now = winapi::tick_ms();
+        let asked = cause::take_asked(hwnd, id_of(winapi::root_owner(to_hwnd(hwnd))), now);
+        let cause = cause::foreground_by(crate::hook::idle_ms(now), since_close, active_gone, asked);
         self.log(&format!("foreground {id} cause {cause:?}"));
         let _ = self.apply(Event::Activate { window: Some(id), cause });
     }
