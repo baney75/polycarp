@@ -1,12 +1,14 @@
-//! `baneyspaces daemon`: the model driven by what Windows reports (WinEvents and a poll), the
+//! `baneyspaces daemon`: the model driven by what Windows reports (WinEvents, and a slow safety reconcile), the
 //! chords the keyboard hook swallows, the control pipe the CLI talks to, `state.json`, the agent
 //! workspace and the agent action log.
 //!
 //! The model decides; this file only carries it out. Where a window should be is derived, not
 //! replayed: after every event each tracked window is compared with what the model says (shown on
-//! some display, or not) and hidden or shown to match, and what is hidden is read back from Windows
-//! on every poll, never taken from memory. That makes every step idempotent, so a missed event costs
-//! one poll interval, not a lost window.
+//! some display, or not) and hidden or shown to match, and what is hidden is read back from Windows,
+//! never taken from memory. The worker waits on events (`hook.rs`); a full look at every window runs every
+//! `RECONCILE` as a safety net, and a cheap read-back of what is hidden every `RECHECK` only while something
+//! no event reports could go wrong (a parked or ghosted window, a show still to retry). Every step is
+//! idempotent, so a missed event costs one reconcile, not a lost window.
 //!
 //! Three rules keep a window from being lost:
 //! 1. **Record first.** A window is written to `state.json` (and flushed) before it is hidden. If that
@@ -85,7 +87,39 @@ pub struct Core {
     pub tx: Sender<Msg>,
     /// When the action log was last pruned (`Paths::append_action`).
     pub last_prune: std::cell::Cell<u64>,
+    /// Where the shell's feed is sent (`feed.rs`); `None` sends it nowhere. A test's own, never shared.
+    pub feed: Option<FeedTx>,
+    /// What `state.json` holds now, as last written: an unchanged state is not written again.
+    pub written: std::cell::RefCell<String>,
+    /// Something only a read-back can catch is pending: a window parked or ghosted (no event says an app moved it
+    /// back or reset its alpha) or a show to retry. The worker then reads what is hidden back every `RECHECK`.
+    pub recheck: bool,
+    /// The keys in force (spec/keymap.md): the config text they came from, how many bindings, how many loads, and why
+    /// the last read of config.toml was not applied, if it was not.
+    pub keys: KeysState,
+    /// The program in front runs as administrator and this daemon does not: Windows keeps every key typed into it
+    /// from the hook (UIPI), so the chords do nothing until another window is in front.
+    pub keys_blocked_by: Option<String>,
 }
+
+#[derive(Default)]
+pub struct KeysState {
+    pub text: Option<String>,
+    pub bindings: usize,
+    pub loads: u64,
+    pub error: Option<String>,
+    pub elevated_self: bool,
+}
+
+/// A subscriber's pipe, as the feed holds it.
+pub type Pipe = Box<dyn Write + Send>;
+/// Hands a message to the shell's feed. The daemon's never blocks (an unbounded channel).
+pub type FeedTx = Arc<dyn Fn(crate::feed::FeedMsg<Pipe>) + Send + Sync>;
+
+/// The full look at every window (EnumWindows, titles, displays): a safety net behind the WinEvents.
+pub const RECONCILE: Duration = Duration::from_secs(3);
+/// The read-back of what is hidden while `Core::recheck` is set, and the full look when the WinEvent hooks are not in.
+pub const RECHECK: Duration = Duration::from_millis(400);
 
 pub type Shared = Arc<Mutex<Core>>;
 
@@ -143,8 +177,6 @@ static FINISHED: AtomicBool = AtomicBool::new(false);
 static CTRL_TX: OnceLock<Sender<Msg>> = OnceLock::new();
 static SHARED: OnceLock<Shared> = OnceLock::new();
 static PATHS: OnceLock<Paths> = OnceLock::new();
-/// The shell's live feed (`feed.rs`): started with the daemon, fed after every change.
-static FEED: OnceLock<std::sync::mpsc::Sender<crate::feed::FeedMsg<std::fs::File>>> = OnceLock::new();
 
 /// What a request that wanted to hide windows says when it could not save where they were.
 fn save_error(why: &str) -> Envelope {
@@ -248,8 +280,8 @@ impl Core {
         });
         if let Some(w) = focus {
             if let Some(i) = self.info.get(&w) {
-                if !self.hidden.contains(i.hwnd) {
-                    winapi::set_foreground(to_hwnd(i.hwnd));
+                if !self.hidden.contains(i.hwnd) && !winapi::set_foreground(to_hwnd(i.hwnd)) {
+                    self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
                 }
             }
         }
@@ -266,7 +298,9 @@ impl Core {
             return;
         }
         let target = self.model.active().and_then(|w| self.info.get(w)).filter(|i| !self.hidden.contains(i.hwnd)).map(|i| to_hwnd(i.hwnd));
-        winapi::set_foreground(target.unwrap_or_else(winapi::shell_window));
+        if !winapi::set_foreground(target.unwrap_or_else(winapi::shell_window)) {
+            self.log("focus is on a hidden window and Windows refused to move it");
+        }
     }
 
     fn visible_workspaces(&self) -> BTreeSet<u8> {
@@ -365,6 +399,9 @@ impl Core {
             // Sign-out in progress: everything is shown by the restore; hide nothing.
             wants.retain(|w| w.3 == Want::Visible);
         }
+        let started = Instant::now();
+        let mut desktops: Option<Option<cloak::Desktops>> = None;
+        let mut elsewhere = |h: windows_sys::Win32::Foundation::HWND| desktops.get_or_insert_with(cloak::Desktops::new).as_ref().and_then(|d| d.on_current(h)) == Some(false);
         let mut cloaker: Option<Option<Cloaker>> = None;
         let get = |c: &mut Option<Option<Cloaker>>| -> Option<*const Cloaker> {
             if c.is_none() {
@@ -422,30 +459,39 @@ impl Core {
                 self.problem(format!("could not save the record of an agent window ({e}); it is hidden anyway"));
             }
         }
+        let recorded = started.elapsed();
         // 2. Show. An entry goes only after the window reads back as shown; a failure keeps it and the
-        //    next poll tries again (explorer.exe restarting is the usual reason). A window on another virtual
-        //    desktop is cloaked by Windows itself and cannot be shown from here: it waits.
+        //    worker tries again every RECHECK (explorer.exe restarting is the usual reason). A window on another
+        //    virtual desktop is cloaked by Windows itself and cannot be shown from here: it waits for its desktop
+        //    (whose windows' uncloak events bring the worker back here). The record is written once, below: an
+        //    entry still on disk for a window already shown only means a restart shows it again, which is safe.
+        let mut changed = !add.is_empty();
+        let (mut shown_n, mut waiting) = (0, false);
         for (hwnd, _, _, w) in &wants {
             if *w != Want::Visible {
                 continue;
             }
             if let Some(mut e) = self.hidden.get(*hwnd).cloned() {
-                if cloak::on_current_desktop(to_hwnd(*hwnd)) == Some(false) {
+                if elsewhere(to_hwnd(*hwnd)) {
+                    waiting = true;
                     continue;
                 }
                 self.carry_before_show(&mut e);
                 let c = get(&mut cloaker);
                 if cloak::show(&e, c.map(|p| unsafe { &*p })) {
                     self.hidden.remove(*hwnd);
-                    let _ = self.persist();
+                    changed = true;
+                    shown_n += 1;
                 } else {
+                    waiting = true;
                     self.log(&format!("{} did not read back as shown; will retry", window_name(*hwnd)));
                 }
             }
         }
+        let showed = started.elapsed();
         // 3. Hide, and read it back: re-apply whatever Windows no longer agrees with. The method recorded is
         //    always the one actually applied.
-        let mut changed = !add.is_empty();
+        let mut hid_n = 0;
         for (hwnd, _, _, w) in &wants {
             let h = to_hwnd(*hwnd);
             if *w == Want::Visible || !winapi::exists(h) {
@@ -460,9 +506,10 @@ impl Core {
             if cloak::still_hidden(&e) {
                 continue;
             }
-            if cloak::on_current_desktop(h) == Some(false) {
+            if elsewhere(h) {
                 continue; // another virtual desktop: Windows has it cloaked, and it is not ours to hide from here
             }
+            hid_n += 1;
             self.log(&format!("{} is not hidden any more ({:?}); hiding it again", window_name(*hwnd), e.how));
             let was = e.how;
             match *w {
@@ -510,8 +557,21 @@ impl Core {
             }
             self.hidden.insert(e);
         }
+        let hid = started.elapsed();
         if changed {
             let _ = self.persist();
+        }
+        self.recheck = waiting || self.hidden.entries().any(|e| e.how != How::Cloak);
+        if shown_n + hid_n > 0 {
+            let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+            self.log(&format!(
+                "sync: recorded {} in {:.1} ms, showed {shown_n} by {:.1} ms, hid {hid_n} by {:.1} ms, written by {:.1} ms",
+                add.len(),
+                ms(recorded),
+                ms(showed),
+                ms(hid),
+                ms(started.elapsed())
+            ));
         }
         Ok(())
     }
@@ -529,7 +589,14 @@ impl Core {
         v["settings"] = Value::Object(self.settings.clone());
         v["overview"] = json!({ "shown": self.overview_shown });
         v["daemon"] = json!({ "pid": self.our_pid, "started": self.started, "events": self.events_seen, "problems": self.problems });
-        self.paths.write_atomic("state.json", &serde_json::to_string_pretty(&v).unwrap_or_default())
+        v["keys"] = self.keys_json();
+        let text = serde_json::to_string_pretty(&v).unwrap_or_default();
+        if *self.written.borrow() == text {
+            return Ok(()); // already on disk: idle reconciles write nothing
+        }
+        self.paths.write_atomic("state.json", &text)?;
+        *self.written.borrow_mut() = text;
+        Ok(())
     }
 
     /// What the shell shows, as the feed's line: your windows with their app and title, never an agent's.
@@ -539,8 +606,8 @@ impl Core {
 
     /// Sends the state to the shell's feed; the feed drops it when nothing it shows changed. `Locked` calls it.
     fn publish(&self) {
-        if let Some(tx) = FEED.get() {
-            let _ = tx.send(crate::feed::FeedMsg::Publish(self.shell_line()));
+        if let Some(feed) = &self.feed {
+            feed(crate::feed::FeedMsg::Publish(self.shell_line()));
         }
     }
 
@@ -766,21 +833,182 @@ impl Core {
                 if !self.model.is_tracked(&window_name(hwnd)) && winapi::is_manageable(h, false, self.our_pid, self.is_agent_pid(winapi::pid_of(h))) {
                     self.open_window(hwnd, false);
                 }
+                self.note_elevation(h);
                 self.on_foreground(hwnd)
             }
-            hook::EVENT_OBJECT_CREATE | hook::EVENT_OBJECT_SHOW | hook::EVENT_SYSTEM_MINIMIZEEND => {
-                let agent = self.is_agent_pid(winapi::pid_of(h));
-                if !self.model.is_tracked(&window_name(hwnd)) && winapi::is_manageable(h, self.hidden.contains(hwnd), self.our_pid, agent) {
-                    self.open_window(hwnd, false);
+            // A window can become one of ours by being created, shown, restored, uncloaked (a UWP or WinUI window
+            // starts cloaked until it has drawn) or titled (one shown untitled first). With no poll to catch it,
+            // each of these is a look.
+            hook::EVENT_OBJECT_CREATE | hook::EVENT_OBJECT_SHOW | hook::EVENT_SYSTEM_MINIMIZEEND | hook::EVENT_OBJECT_UNCLOAKED | hook::EVENT_OBJECT_NAMECHANGE => {
+                let id = window_name(hwnd);
+                if self.model.is_tracked(&id) {
+                    if event == hook::EVENT_OBJECT_NAMECHANGE {
+                        if let Some(i) = self.info.get_mut(&id) {
+                            i.title = winapi::title(h);
+                        }
+                    }
+                } else {
+                    let agent = self.is_agent_pid(winapi::pid_of(h));
+                    if winapi::is_manageable(h, self.hidden.contains(hwnd), self.our_pid, agent) {
+                        self.open_window(hwnd, false);
+                    }
+                }
+                // Someone took the cloak off a window we hid (another tool, a virtual desktop switch): read back now.
+                if event == hook::EVENT_OBJECT_UNCLOAKED && (self.hidden.contains(hwnd) || self.recheck) {
+                    self.recheck_hidden();
                 }
             }
             hook::EVENT_OBJECT_DESTROY | hook::EVENT_OBJECT_HIDE => {
                 let id = window_name(hwnd);
-                if self.model.is_tracked(&id) && !winapi::exists(h) {
+                // Gone as `resync_windows` would see it: destroyed, or no longer a window we would manage, not one we
+                // hid and not one cloaked by someone else (a window on another virtual desktop has not gone).
+                let gone = || {
+                    !winapi::exists(h)
+                        || (!self.hidden.contains(hwnd) && winapi::cloaked(h) == 0 && !winapi::is_manageable(h, false, self.our_pid, self.is_agent_pid(winapi::pid_of(h))))
+                };
+                if self.model.is_tracked(&id) && gone() {
                     self.close_window(&id);
                 }
             }
+            // Windows hands the front to the next window in z-order, which may be one we hid (R-E1).
+            hook::EVENT_SYSTEM_MINIMIZESTART => self.keep_focus_off_hidden_windows(),
+            // A drag or Win+Shift+Arrow may have taken a window to another display (R-V4).
+            hook::EVENT_SYSTEM_MOVESIZEEND => self.mirror_moves(),
             _ => {}
+        }
+    }
+
+    /// The read-back of what is hidden, without looking for new windows: `sync_visibility` alone.
+    fn recheck_hidden(&mut self) {
+        if let Err(e) = self.sync_visibility() {
+            self.problem(format!("could not save the hidden-window record; nothing new was hidden: {e}"));
+        }
+        self.keep_focus_off_hidden_windows();
+    }
+
+    /// Reads `config.toml` and puts its keys in force (spec/keymap.md). A file that does not validate changes nothing:
+    /// the keys in force stay (the defaults, at start), and the path and reason go to the log and `state.json`.
+    /// `changed_at`: when the folder watcher saw the change, for the log line that times a reload.
+    pub fn load_keys(&mut self, changed_at: Option<Instant>) {
+        let file = crate::paths::config_file();
+        // A file that can't be read is an error like a bad one, never the defaults; its text isn't kept, so the next
+        // change in the folder reads it again (an editor that held it open has let go by then).
+        let read = keys::read_config(&file);
+        if let (Some(_), Ok(text)) = (changed_at, &read) {
+            if self.keys.text.as_deref() == Some(text.as_str()) {
+                return; // another file in the folder, or a save with nothing new
+            }
+        }
+        let text = read.as_ref().ok().cloned();
+        let check = |a: &[String]| crate::request(a.to_vec()).map(|_| ()).map_err(|e| e.error.map(|b| b.message).unwrap_or_default());
+        match read.and_then(|text| keys::from_config(&text, check)) {
+            Ok((table, skipped)) => {
+                self.keys.bindings = table.len();
+                hook::set_table(table);
+                self.keys.loads += 1;
+                self.keys.error = None;
+                for s in &skipped {
+                    self.log(&format!("keys: {s}"));
+                }
+                let after = changed_at.map(|t| format!(", {:.0} ms after the change", t.elapsed().as_secs_f64() * 1000.0)).unwrap_or_default();
+                say(&format!("baneyspaces daemon: keys: {} bindings from {}{after}", self.keys.bindings, if text.as_deref().unwrap_or("").is_empty() { "the defaults" } else { "config.toml" }));
+            }
+            Err(e) => {
+                if self.keys.loads == 0 {
+                    // At start nothing is in force yet: the defaults, so a broken file never leaves you without keys.
+                    let table = keys::defaults(keys::parse_mod("win").unwrap_or_default());
+                    self.keys.bindings = table.len();
+                    hook::set_table(table);
+                    self.keys.loads = 1;
+                }
+                say(&format!("baneyspaces daemon: keys: {} not applied, the keys in force stay: {e}", file.display()));
+                self.keys.error = Some(e);
+            }
+        }
+        self.keys.text = text;
+        let _ = self.persist();
+    }
+
+    fn keys_json(&self) -> Value {
+        json!({ "config": crate::paths::config_file(), "bindings": self.keys.bindings, "loads": self.keys.loads, "error": self.keys.error, "blocked_by": self.keys_blocked_by })
+    }
+
+    /// The window in front is an elevated program's and this daemon is not elevated: say so once, plainly, instead of
+    /// letting every chord vanish without a trace (spec/keymap.md, "Elevated windows").
+    fn note_elevation(&mut self, h: windows_sys::Win32::Foundation::HWND) {
+        let pid = winapi::pid_of(h);
+        let blocked = (!self.keys.elevated_self && pid != 0 && winapi::is_elevated(pid) == Some(true)).then(|| winapi::process_name(pid));
+        if blocked == self.keys_blocked_by {
+            return;
+        }
+        match &blocked {
+            Some(p) => say(&format!(
+                "baneyspaces daemon: keys: {p} runs as administrator (or as another account) and is in front; Windows keeps keys typed into it from BaneySpaces (UIPI), so your BaneySpaces keys do nothing until another window is in front"
+            )),
+            None => say("baneyspaces daemon: keys: the window in front takes your BaneySpaces keys again"),
+        }
+        self.keys_blocked_by = blocked;
+        let _ = self.persist();
+    }
+
+    /// `window focus|swap|resize|display` on the front window. Only windows you can see take part.
+    fn window_op(&mut self, op: &str, args: &Value) -> Envelope {
+        let Some(id) = self.front_window() else {
+            return Envelope::err("not_found", "no window of yours is in front", Retry::Never, "Click the window first.");
+        };
+        let h = to_hwnd(self.info.get(&id).map(|i| i.hwnd).unwrap_or(0));
+        let Some(r) = winapi::rect(h) else {
+            return Envelope::err("not_found", format!("{id} has no frame"), Retry::Safe, "");
+        };
+        match op {
+            "window_resize" => {
+                let d = |k: &str| args[k].as_i64().unwrap_or(0) as i32;
+                // Never smaller than 100 x 100: a key held down must not shrink a window to nothing.
+                let to = [r[0], r[1], r[0] + (r[2] - r[0] + d("dx")).max(100), r[1] + (r[3] - r[1] + d("dy")).max(100)];
+                winapi::set_frame(h, to);
+                Envelope::ok(json!({ "window": id, "frame": winapi::rect(h) }))
+            }
+            "window_focus" | "window_swap" => {
+                let dir = args["dir"].as_str().unwrap_or("");
+                let others: Vec<(String, [i32; 4])> = self
+                    .info
+                    .iter()
+                    .filter(|(o, i)| **o != id && !self.hidden.contains(i.hwnd))
+                    .filter(|(_, i)| {
+                        let w = to_hwnd(i.hwnd);
+                        winapi::is_visible(w) && !winapi::is_iconic(w) && winapi::cloaked(w) == 0
+                    })
+                    .filter_map(|(o, i)| winapi::rect(to_hwnd(i.hwnd)).map(|f| (o.clone(), f)))
+                    .collect();
+                let Some((other, of)) = keys::neighbor(r, dir, &others).cloned() else {
+                    return Envelope::ok(json!({ "window": id, "changed": false, "note": format!("no window you can see to the {dir}") }));
+                };
+                let oh = to_hwnd(self.info.get(&other).map(|i| i.hwnd).unwrap_or(0));
+                if op == "window_focus" {
+                    winapi::set_foreground(oh);
+                } else {
+                    winapi::set_frame(h, of);
+                    winapi::set_frame(oh, r);
+                    // A swap can cross displays, and SetWindowPos raises no move event: the model follows here (R-V4).
+                    self.mirror_moves();
+                }
+                Envelope::ok(json!({ "window": id, "other": other, "changed": true }))
+            }
+            _ => {
+                let all: Vec<(String, displays::Rect)> = winapi::monitors().into_iter().map(|m| (m.name, m.rect)).collect();
+                let here = displays::display_of(r, &all).and_then(|d| all.iter().position(|(n, _)| n == d)).unwrap_or(0);
+                if all.len() < 2 {
+                    return Envelope::ok(json!({ "window": id, "changed": false, "note": "one display: nowhere to send it" }));
+                }
+                let step = if args["to"] == "prev" { all.len() - 1 } else { 1 };
+                let to = all[(here + step) % all.len()].0.clone();
+                if let Some(f) = displays::carried(r, &all, &to, winapi::is_zoomed(h)) {
+                    winapi::set_frame(h, f);
+                }
+                // R-V4: it now belongs to the workspace that display shows.
+                self.mirror_moves();
+                Envelope::ok(json!({ "window": id, "display": to, "changed": true }))
+            }
         }
     }
 
@@ -816,11 +1044,43 @@ fn model_err(e: ModelError) -> Envelope {
 /// started) is refused: agents never change your workspaces, your windows or the daemon. The three
 /// appearance settings are the exception (Donovan, 2026-11-01): an agent may customize them, and
 /// every `set` is logged with who asked.
-const USER_OPS: &[&str] = &["switch", "move", "focus_monitor", "overview", "agent_show", "agent_hide", "agent_toggle", "agent_move", "agent_bring", "quit"];
+const USER_OPS: &[&str] = &["switch", "move", "focus_monitor", "window_focus", "window_swap", "window_resize", "window_display", "overview", "agent_show", "agent_hide", "agent_toggle", "agent_move", "agent_bring", "quit"];
 
 /// Is the process on the other end of the pipe an agent's? By pid, against the model and the jobs.
 fn peer_is_agent(c: &Core, pid: u32) -> bool {
     c.is_agent_pid(pid)
+}
+
+/// Watches the folder `config.toml` lives in and sends `Msg::Reload` on every change, so a saved file is in force
+/// within a few milliseconds (spec/keymap.md: under 1 s). The folder is made if it is missing.
+fn watch_config(file: PathBuf, tx: Sender<Msg>) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{FindFirstChangeNotificationW, FindNextChangeNotification, FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SIZE};
+    use windows_sys::Win32::System::Threading::{WaitForSingleObject, INFINITE};
+    let Some(dir) = file.parent().map(PathBuf::from) else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    std::thread::spawn(move || unsafe {
+        let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let h = FindFirstChangeNotificationW(wide.as_ptr(), 0, FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE);
+        if h == INVALID_HANDLE_VALUE {
+            say(&format!("baneyspaces daemon: keys: cannot watch {}; config.toml is read at start only", dir.display()));
+            return;
+        }
+        while WaitForSingleObject(h, INFINITE) == 0 {
+            let at = Instant::now();
+            // An editor saves in steps (truncate, write, rename): read once the folder has been quiet for 30 ms. The
+            // watch is re-armed before each wait, so a step that lands after the read wakes the next round.
+            let mut armed = true;
+            keys::settle(30, 500, |ms| {
+                armed = FindNextChangeNotification(h) != 0;
+                armed && WaitForSingleObject(h, ms) == 0
+            });
+            if tx.send(Msg::Reload { at }).is_err() || !armed {
+                break;
+            }
+        }
+    });
 }
 
 pub fn handle(shared: &Shared, req: &Value) -> Envelope {
@@ -868,6 +1128,7 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
                 Err(e) => e,
             }
         }
+        "window_focus" | "window_swap" | "window_resize" | "window_display" => lock(shared).window_op(op, &args),
         "focus_monitor" => {
             let mut c = lock(shared);
             match c.apply_checked(Event::FocusMonitor { monitor: arg_str(&args, "monitor").unwrap_or("").into() }) {
@@ -915,6 +1176,7 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
             v["version"] = json!(1);
             v["platform"] = json!("windows");
             v["hidden"] = c.hidden.to_json();
+            v["keys"] = c.keys_json();
             Envelope::ok(v)
         }
         "ls" => Envelope::ok(ls(&lock(shared))),
@@ -1014,6 +1276,8 @@ fn agent_status(c: &Core) -> Value {
     json!({ "workspace": AGENT_WORKSPACE, "shown": c.model.agent_shown(), "windows": windows, "processes": c.model.agent_pids().len(), "refused": c.model.refused() })
 }
 
+// Every field of one action-log row; a struct for them would be built at each call and used once.
+#[allow(clippy::too_many_arguments)]
 fn record(c: &Core, agent: &str, verb: &str, pid: Option<u32>, window: Option<&str>, reference: Option<&str>, route: &str, env: &Envelope) {
     c.paths.append_action(&ActionRecord::from_result(now(), agent, verb, pid, window, reference, route, env).to_line(), now(), &c.last_prune);
 }
@@ -1408,6 +1672,23 @@ mod pipe {
     }
 }
 
+/// `subscribe`: hands the pipe to the shell's feed, which writes to it from now on. Nothing is written to the pipe
+/// with the core held: a client that subscribes and never reads must not stall the daemon.
+fn subscribe(shared: &Shared, peer: u32, mut pipe: Pipe) {
+    let c = lock(shared);
+    if !peer_is_agent(&c, peer) {
+        // Handed over with the core held, so no change can publish between the state read here and the feed taking
+        // it: the new shell never starts on a state older than the feed's last. The feed's channel never blocks.
+        if let Some(feed) = &c.feed {
+            feed(crate::feed::FeedMsg::Greet(pipe, Envelope::ok(json!({ "subscribed": true })).to_json(), c.shell_line()));
+        }
+        return;
+    }
+    drop(c);
+    let env = Envelope::err("not_in_scope", "subscribe is for your shell, not an agent: it was refused", Retry::Never, "Agents read `state` instead.");
+    let _ = writeln!(pipe, "{}", env.to_json());
+}
+
 /// One request, one answer. Anything that is not a JSON object is refused; the peer is what the pipe says.
 fn serve_conn(shared: Shared, f: std::fs::File) {
     let mut line = String::new();
@@ -1424,21 +1705,7 @@ fn serve_conn(shared: Shared, f: std::fs::File) {
     };
     // `subscribe`: the shell's feed. This connection stays open and the feed thread writes to it from now on.
     if serde_json::from_str::<Value>(&line).is_ok_and(|v| v["op"] == "subscribe") {
-        let c = lock(&shared);
-        let state = (!peer_is_agent(&c, peer)).then(|| c.shell_line());
-        // Nothing is written to the pipe with the core held: a client that subscribes and never reads must not
-        // stall the daemon. The answer and the state go out on the subscriber's own thread (`feed.rs`).
-        drop(c);
-        let mut f = f;
-        let Some(state) = state else {
-            let env = Envelope::err("not_in_scope", "subscribe is for your shell, not an agent: it was refused", Retry::Never, "Agents read `state` instead.");
-            let _ = writeln!(f, "{}", env.to_json());
-            return;
-        };
-        if let Some(tx) = FEED.get() {
-            let _ = tx.send(crate::feed::FeedMsg::Greet(f, Envelope::ok(json!({ "subscribed": true })).to_json(), state));
-        }
-        return;
+        return subscribe(&shared, peer, Box::new(f));
     }
     let env = match serde_json::from_str::<Value>(&line) {
         Ok(Value::Object(mut req)) => {
@@ -1520,9 +1787,12 @@ fn on_end_session(e: EndSession) {
             }
         }
         EndSession::Cancelled => {
-            // Cancelled: carry on. The next poll hides again what belongs on a hidden workspace.
+            // Cancelled: carry on, and look at everything at once, which hides again what belongs on a hidden workspace.
             let _c = lock(shared);
             STOPPING.store(false, Ordering::SeqCst);
+            if let Some(tx) = CTRL_TX.get() {
+                let _ = tx.send(Msg::Resync);
+            }
         }
     }
 }
@@ -1545,6 +1815,8 @@ impl Core {
     /// Replaces the in-memory hidden set with what `state.json` says is still hidden (after a restore).
     pub fn reload_hidden_from_file(&mut self) {
         let left = hidden::parse_state(&self.paths.read("state.json").unwrap_or_default());
+        // The restore wrote state.json itself: the next persist must write, whatever it last wrote.
+        self.written.borrow_mut().clear();
         self.hidden = HiddenSet::default();
         for h in left.hidden {
             self.hidden.insert(h);
@@ -1648,6 +1920,16 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         settings: settings::parse(&paths.read("settings.json").unwrap_or_default()),
         tx: tx.clone(),
         last_prune: std::cell::Cell::new(0),
+        feed: Some({
+            let tx = crate::feed::spawn::<Pipe>();
+            Arc::new(move |m| {
+                let _ = tx.send(m);
+            })
+        }),
+        written: std::cell::RefCell::new(String::new()),
+        recheck: true,
+        keys: KeysState { elevated_self: winapi::is_elevated(std::process::id()) == Some(true), ..KeysState::default() },
+        keys_blocked_by: None,
     };
     let shared: Shared = Arc::new(Mutex::new(core));
     let _ = SHARED.set(shared.clone());
@@ -1678,7 +1960,6 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         }));
     }
     let _ = CTRL_TX.set(tx.clone());
-    let _ = FEED.set(crate::feed::spawn());
     unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(ctrl_handler), 1) };
     {
         let mut c = lock(&shared);
@@ -1701,7 +1982,9 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         c.sync_monitors();
         c.resync_windows(true);
         let _ = c.persist();
-        let problems = hook::start(tx.clone(), keys::bindings(), on_end_session);
+        c.load_keys(None);
+        watch_config(crate::paths::config_file(), tx.clone());
+        let problems = hook::start(tx.clone(), on_end_session);
         for p in &problems {
             say(&format!("baneyspaces daemon: {p}"));
         }
@@ -1716,31 +1999,36 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         std::thread::spawn(move || listen(s2, sv2, None));
     }
     say(&format!("baneyspaces daemon: ready ({})", paths.pipe_name()));
-    // The worker: hook messages as they come, a poll when quiet.
-    let mut last_poll = Instant::now();
+    // The worker: it waits for what the hooks report and acts on each as it comes. The full look at every window
+    // is a safety net every RECONCILE (every RECHECK if the WinEvent hooks are not in), and the read-back of what
+    // is hidden runs every RECHECK only while `recheck` says something no event reports could go wrong.
+    let mut last_full = Instant::now();
+    let mut last_check = Instant::now();
     loop {
-        match rx.recv_timeout(Duration::from_millis(400)) {
+        let full_every = if hook::events_live() { RECONCILE } else { RECHECK };
+        let recheck = lock(&shared).recheck;
+        let mut due = last_full + full_every;
+        if recheck {
+            due = due.min(last_check + RECHECK);
+        }
+        match rx.recv_timeout(due.saturating_duration_since(Instant::now())) {
             Ok(Msg::Quit) => break,
             Ok(Msg::Resync) => {
                 // explorer.exe restarted, the session unlocked, or the input desktop changed: look at everything now.
-                last_poll = Instant::now();
+                last_full = Instant::now();
                 lock(&shared).poll();
             }
-            Ok(Msg::Chord(args)) => {
-                if trace {
-                    say(&format!("[baneyspaces] chord {args:?}"));
-                }
+            Ok(Msg::Chord { args, at }) => {
                 // First, tell Windows the Win key was used so releasing it does not open Start.
                 hook::mask_start_menu();
-                let mut req = json!({ "op": "", "args": {} });
-                match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-                    ["switch", n] => req = json!({ "op": "switch", "args": { "n": n } }),
-                    ["move", n] => req = json!({ "op": "move", "args": { "n": n, "stay": false } }),
-                    ["move", n, "--stay"] => req = json!({ "op": "move", "args": { "n": n, "stay": true } }),
-                    ["agent-workspace", "toggle"] => req = json!({ "op": "agent_toggle", "args": {} }),
-                    _ => {}
+                // A binding is a CLI command line (spec/keymap.md), checked when the keys were loaded.
+                let env = match crate::request(args.clone()) {
+                    Ok(req) => handle(&shared, &req),
+                    Err(e) => e,
+                };
+                if trace {
+                    say(&format!("[baneyspaces] chord {args:?}: done {} ms after the key went down", winapi::tick_ms().wrapping_sub(at)));
                 }
-                let env = handle(&shared, &req);
                 if !env.ok {
                     say(&format!("baneyspaces daemon: chord {args:?}: {}", env.to_json()));
                 }
@@ -1751,12 +2039,20 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
             Ok(Msg::Press { x, y }) => {
                 lock(&shared).on_press(x, y);
             }
+            Ok(Msg::Reload { at }) => {
+                lock(&shared).load_keys(Some(at));
+            }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(_) => break,
         }
-        if last_poll.elapsed() >= Duration::from_millis(400) {
-            last_poll = Instant::now();
+        let now = Instant::now();
+        if now >= last_full + full_every {
+            last_full = now;
+            last_check = now;
             lock(&shared).poll();
+        } else if recheck && now >= last_check + RECHECK {
+            last_check = now;
+            lock(&shared).recheck_hidden();
         }
     }
     // Shutting down: stop the hooks, then, under the lock with STOPPING set (requests that arrive meanwhile are
@@ -1776,14 +2072,15 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
 #[cfg(test)]
 mod feed_tests {
     use super::*;
-    use crate::feed::FeedMsg;
+    use crate::feed::{Feed, FeedMsg};
     use baneyspaces_core::shell::ShellState;
+    use std::sync::Weak;
     use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow};
 
-    type Feed = Receiver<FeedMsg<std::fs::File>>;
+    type Rx = Receiver<FeedMsg<Pipe>>;
 
     /// The next state the feed is sent, within 2 s.
-    fn next(rx: &Feed) -> Option<ShellState> {
+    fn next(rx: &Rx) -> Option<ShellState> {
         match rx.recv_timeout(Duration::from_secs(2)) {
             Ok(FeedMsg::Publish(l)) => ShellState::parse_line(&l),
             _ => None,
@@ -1791,7 +2088,7 @@ mod feed_tests {
     }
 
     /// The last state the feed was sent so far.
-    fn last(rx: &Feed) -> Option<ShellState> {
+    fn last(rx: &Rx) -> Option<ShellState> {
         let mut state = None;
         while let Ok(m) = rx.try_recv() {
             if let FeedMsg::Publish(l) = m {
@@ -1801,22 +2098,13 @@ mod feed_tests {
         state
     }
 
-    /// first-F1: a change made without a publish (the poll re-reading a title) never reached the feed. second-S1: a
-    /// switch refused because `state.json` could not be saved still sent the feed the workspace it never reached.
-    #[test]
-    fn every_change_reaches_the_feed_and_a_refused_switch_shows_where_you_are() {
-        let (feed_tx, rx) = channel();
-        assert!(FEED.set(feed_tx).is_ok(), "the feed is this test's alone");
-        let dir = std::env::temp_dir().join(format!("baneyspaces-feed-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        // A real window, never shown, so the switch has a window of yours to record before hiding it.
-        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
-        let h = unsafe { CreateWindowExW(0, class.as_ptr(), class.as_ptr(), 0, 0, 0, 100, 100, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()) };
-        assert!(!h.is_null(), "a test window");
-        let (tx, _keep) = channel();
+    /// A core with one window of yours, `w-1` titled "one" on workspace 1, sending its feed to `feed`.
+    fn core_with(dir: &std::path::Path, hwnd: i64, feed: Option<FeedTx>) -> Shared {
+        let (tx, rx) = channel();
+        std::mem::forget(rx);
         let core = Core {
             model: Model::new(),
-            paths: Paths { state: dir.clone() },
+            paths: Paths { state: dir.to_path_buf() },
             hidden: HiddenSet::default(),
             info: HashMap::new(),
             job: None,
@@ -1831,14 +2119,134 @@ mod feed_tests {
             settings: serde_json::Map::new(),
             tx,
             last_prune: std::cell::Cell::new(0),
+            feed,
+            written: std::cell::RefCell::new(String::new()),
+            recheck: false,
+            keys: KeysState::default(),
+            keys_blocked_by: None,
         };
         let shared: Shared = Arc::new(Mutex::new(core));
         {
             let mut c = lock(&shared);
             c.model.apply(Event::MonitorAdded { monitor: "m".into() }).unwrap();
             c.model.apply(Event::Open { window: "w-1".into(), pid: 4242, start: 0, app: "Test".into(), monitor: Some("m".into()), workspace: Some(1) }).unwrap();
-            c.info.insert("w-1".into(), WinInfo { hwnd: id_of(h), pid: 4242, start: 0, title: "one".into(), app: "Test".into() });
+            c.info.insert("w-1".into(), WinInfo { hwnd, pid: 4242, start: 0, title: "one".into(), app: "Test".into() });
         }
+        shared
+    }
+
+    fn retitle(c: &mut Core) {
+        c.info.get_mut("w-1").unwrap().title = "two".into();
+    }
+
+    /// A test shell's pipe: what it heard.
+    #[derive(Clone, Default)]
+    struct Heard(Arc<Mutex<String>>);
+    impl Write for Heard {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().push_str(&String::from_utf8_lossy(buf));
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Heard {
+        /// The title the shell shows within 2 s, once it shows `want`.
+        fn shows(&self, want: &str) -> String {
+            let t = Instant::now();
+            loop {
+                let text = self.0.lock().unwrap().clone();
+                let title = text.lines().rev().find_map(ShellState::parse_line).and_then(|s| s.windows.first().map(|w| w.title.clone())).unwrap_or_default();
+                if title == want || t.elapsed() > Duration::from_secs(2) {
+                    return title;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+
+    /// A shell that subscribes and never reads: every write hangs.
+    struct Hangs;
+    impl Write for Hangs {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            loop {
+                std::thread::sleep(Duration::from_secs(3600));
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A feed run in the test, on the caller's thread.
+    fn feed_into(feed: &Arc<Mutex<Feed>>) -> FeedTx {
+        let feed = feed.clone();
+        Arc::new(move |m| feed.lock().unwrap().handle(m))
+    }
+
+    /// first-F1 (review of #481): the greeting was handed to the feed after the core was let go. A change landing in
+    /// between published the new state, then the greeting set the feed back to the old one, and the new shell showed
+    /// it until something else changed.
+    #[test]
+    fn a_change_between_subscribe_and_greeting_never_leaves_the_new_shell_on_the_old_state() {
+        let feed = Arc::new(Mutex::new(Feed::new()));
+        let me: Arc<OnceLock<Weak<Mutex<Core>>>> = Arc::default();
+        let changed = Arc::new(AtomicBool::new(false));
+        let tx: FeedTx = {
+            let (into, me, changed) = (feed_into(&feed), me.clone(), changed.clone());
+            Arc::new(move |m| {
+                // The change lands as the greeting is handed over, if the core is free then.
+                if matches!(m, FeedMsg::Greet(..)) {
+                    if let Some(core) = me.get().and_then(Weak::upgrade) {
+                        if let Ok(mut c) = core.try_lock() {
+                            retitle(&mut c);
+                            c.publish();
+                            changed.store(true, Ordering::SeqCst);
+                        }
+                    }
+                }
+                into(m)
+            })
+        };
+        let shared = core_with(&std::env::temp_dir(), 1, Some(tx));
+        let _ = me.set(Arc::downgrade(&shared));
+        let shell = Heard::default();
+        subscribe(&shared, 0, Box::new(shell.clone()));
+        if !changed.load(Ordering::SeqCst) {
+            retitle(&mut lock(&shared));
+        }
+        assert_eq!(shell.shows("two"), "two", "the new shell is left on the state from before the change");
+    }
+
+    /// first-F3 of #431 as behavior (review of #481): a shell that subscribes and never reads holds up neither the
+    /// subscribe nor another thread that wants the core.
+    #[test]
+    fn a_shell_that_never_reads_holds_up_nothing() {
+        let shared = core_with(&std::env::temp_dir(), 1, Some(feed_into(&Arc::new(Mutex::new(Feed::new())))));
+        let (done_tx, done) = channel();
+        let s = shared.clone();
+        std::thread::spawn(move || {
+            subscribe(&s, 0, Box::new(Hangs));
+            retitle(&mut lock(&s));
+            let _ = done_tx.send(());
+        });
+        assert!(done.recv_timeout(Duration::from_secs(2)).is_ok(), "subscribe, or the core after it, was held up by a shell that never reads");
+    }
+
+    /// The previous round's first-F1 and second-S1: a change made without a publish (the poll re-reading a title)
+    /// never reached the feed, and a switch refused because `state.json` could not be saved still sent the feed the
+    /// workspace it never reached.
+    #[test]
+    fn every_change_reaches_the_feed_and_a_refused_switch_shows_where_you_are() {
+        let (feed_tx, rx) = channel();
+        let dir = std::env::temp_dir().join(format!("baneyspaces-feed-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A real window, never shown, so the switch has a window of yours to record before hiding it.
+        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+        let h = unsafe { CreateWindowExW(0, class.as_ptr(), class.as_ptr(), 0, 0, 0, 100, 100, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()) };
+        assert!(!h.is_null(), "a test window");
+        let shared = core_with(&dir, id_of(h), Some(Arc::new(move |m| drop(feed_tx.send(m)))));
         let s = next(&rx).expect("the feed heard the window open");
         assert_eq!(s.windows.first().map(|w| w.title.as_str()), Some("one"));
         lock(&shared).info.get_mut("w-1").unwrap().title = "two".into();

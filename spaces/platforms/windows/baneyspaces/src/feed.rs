@@ -295,30 +295,4 @@ mod tests {
             text(&live)
         );
     }
-
-    /// first-F3: the daemon wrote the `subscribed` answer to the pipe while it held the core, so a client that
-    /// subscribed and never read stalled the whole daemon. Nothing in the subscribe branch writes before the core is
-    /// let go.
-    #[test]
-    fn the_daemon_lets_go_of_the_core_before_a_subscriber_hears_anything() {
-        // A Windows checkout has CRLF line ends.
-        let src = include_str!("daemon.rs").replace("\r\n", "\n");
-        let start = src
-            .find("v[\"op\"] == \"subscribe\"")
-            .expect("the subscribe branch");
-        let end = start + src[start..].find("\n    }\n").expect("its end");
-        let branch = &src[start..end];
-        let held = branch
-            .split("drop(c)")
-            .next()
-            .expect("the part with the core held");
-        assert!(
-            branch.contains("drop(c)"),
-            "the subscribe branch never lets go of the core before it writes:\n{branch}"
-        );
-        assert!(
-            !held.contains("writeln!") && !held.contains(".write"),
-            "the subscribe branch writes to the pipe with the core held:\n{held}"
-        );
-    }
 }

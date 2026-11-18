@@ -95,6 +95,8 @@ final class Spaces {
     }
     private var screensWork: DispatchWorkItem?
     var onChange: (() -> Void)?
+    /// After every change the model publishes (`persist`) and every focus: the agent API's events (`AgentEventHub`).
+    var onModelChange: (() -> Void)?
 
     static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Polycarp")
@@ -488,6 +490,31 @@ final class Spaces {
         return model.home.compactMap { id, ws in handsWindow(id, ws) }
     }
 
+    /// Every placed window for the agent API's queries, from the model and one window-server read: no Accessibility call,
+    /// so a query never waits on an app. A parked window reports the frame it goes back to. Minimized is known only on a
+    /// workspace a display shows (a window there that the window server doesn't draw, of an app that isn't hidden).
+    func apiWindows() -> [AgentAPI.WindowFacts] {
+        let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        var server: [WindowID: (frame: CGRect?, name: String, onScreen: Bool)] = [:]
+        for d in list {
+            guard let n = (d[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { continue }
+            let frame = (d[kCGWindowBounds as String] as? [String: Any]).flatMap { CGRect(dictionaryRepresentation: $0 as CFDictionary) }
+            server[n] = (frame, d[kCGWindowName as String] as? String ?? "", (d[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false)
+        }
+        let shown = Set(model.shown.values).union([model.current])
+        return model.home.compactMap { id, ws in
+            guard var h = handsWindow(id, ws) else { return nil }
+            let s = server[id]
+            h.title = s?.name ?? ""
+            // A process with no bundle id is known by its executable's path, so `bundle` is never empty (434 r2 second-S3).
+            if h.bundle.isEmpty { h.bundle = NSRunningApplication(processIdentifier: h.pid)?.executableURL?.path ?? "pid \(h.pid)" }
+            let parked = saved.frames[id]
+            let hidden = windows[id].map { NSRunningApplication(processIdentifier: $0.pid)?.isHidden == true } ?? false
+            let minimized = shown.contains(ws) && parked == nil && !hidden && s != nil && s?.onScreen == false
+            return AgentAPI.WindowFacts(window: h, frame: parked ?? s?.frame ?? nil, minimized: minimized)
+        }
+    }
+
     /// One window straight from the model, for the check right before an engine call.
     func handsLive(_ id: UInt32) -> HandsWindow? {
         guard let ws = model.home[id] else { return nil }
@@ -527,25 +554,39 @@ final class Spaces {
         var out: [WindowID: String] = [:]
         let screens = Windows.screens()
         for (id, f) in frames {
-            guard model.workspace(of: id) == agent, let w = windows[id] else { out[id] = "skipped: not on the agent workspace"; continue }
-            if model.isShown(agent) {
-                w.setFrame(f)
-                out[id] = "now"
-            } else if saved.frames[id] != nil {
-                saved.frames[id] = f
-                w.setSize(f.size)
-                if let b = Windows.serverWindows()[id]?.bounds, !Geometry.isStranded(b, screens: screens) { w.setOrigin(Geometry.hidingSpot(screens: screens)) }
-                out[id] = "size now, place when shown"
-            } else if saved.hiddenApps.contains(w.pid), Windows.allOffscreen([id]) {
-                w.setFrame(f)
-                out[id] = "now, while hidden"
-            } else {
-                out[id] = "skipped: neither parked nor hidden"
-            }
+            guard model.workspace(of: id) == agent, windows[id] != nil else { out[id] = "skipped: not on the agent workspace"; continue }
+            out[id] = place(id, f, screens: screens)
         }
         persist()
         Trace.log("hands: arranged \(frames.count) agent windows")
         return out
+    }
+
+    /// The agent API's `frame`: one window, on any workspace (the router has checked view control). How it was applied.
+    func placeFrame(_ id: WindowID, _ f: CGRect) -> String {
+        guard active, windows[id] != nil, model.workspace(of: id) != nil else { return "skipped: not a window Polycarp places" }
+        let how = place(id, f, screens: Windows.screens())
+        persist()
+        Trace.log("hands: framed window \(id) for an agent: \(how)")
+        return how
+    }
+
+    /// A shown window takes the frame now; a parked one takes its size now and the place when its workspace is shown.
+    private func place(_ id: WindowID, _ f: CGRect, screens: [CGRect]) -> String {
+        guard let w = windows[id], let n = model.workspace(of: id) else { return "skipped" }
+        if model.isShown(n) {
+            w.setFrame(f)
+            return "now"
+        } else if saved.frames[id] != nil {
+            saved.frames[id] = f
+            w.setSize(f.size)
+            if let b = Windows.serverWindows()[id]?.bounds, !Geometry.isStranded(b, screens: screens) { w.setOrigin(Geometry.hidingSpot(screens: screens)) }
+            return "size now, place when shown"
+        } else if saved.hiddenApps.contains(w.pid), Windows.allOffscreen([id]) {
+            w.setFrame(f)
+            return "now, while hidden"
+        }
+        return "skipped: neither parked nor hidden"
     }
 
     /// `close`: presses the window's close button from behind (no raise, no activation). False when it has none.
@@ -984,6 +1025,7 @@ final class Spaces {
     /// The window in focus on its workspace, and its app the one used there last.
     private func noteFocus(_ id: WindowID) {
         model.noteFocus(id)
+        onModelChange?()
         guard let pid = windows[id]?.pid, let n = model.workspace(of: id) else { return }
         activations.note("\(pid)", on: n, at: Date().timeIntervalSinceReferenceDate)
     }
@@ -2220,6 +2262,7 @@ final class Spaces {
     /// Saves the parked-window record and state.json. The snapshot is taken here; the disk
     /// writes happen off the main thread so they never delay a switch.
     private func persist() {
+        onModelChange?()
         let frames = saved
         // state.json is for scripts and checks: the current workspace and where each window lives.
         let state: [String: Any] = [

@@ -172,17 +172,20 @@ final class FullAccessOpenTests: XCTestCase {
 }
 
 final class FullAccessBackgroundTests: XCTestCase {
-    func facts(_ scope: ScopeKind, owned: Bool) -> BackgroundFacts {
+    /// `onAgent`: the window sits on the agent workspace now, the only place keys go (`AgentKeys`, #497).
+    func facts(_ scope: ScopeKind, owned: Bool, onAgent: Bool = true) -> BackgroundFacts {
         BackgroundFacts(kind: .keys, app: "Notes", pid: 500, window: 77, scope: scope, pidIsAgentOwned: owned,
                         windowOwnerPid: 500, axWindowResolved: true, siblingWindows: 0, condition: .normal, hasSheetOrPanel: false,
                         focusedWindow: 77, focusedElementWindow: 77, targetIsFront: false,
-                        transports: TransportSupport(skyLight: true), block: nil, verifier: .ax)
+                        transports: TransportSupport(skyLight: true), block: nil, verifier: .ax, onAgentWorkspace: onAgent)
     }
 
     func testFullAccessIsDonovansOwnProcessLikeALend() {
         guard case .success = BackgroundPlanner.plan(facts(.full, owned: false)) else { return XCTFail("a window of his under Full Access needs no agent-started process") }
         guard case .failure(let e) = BackgroundPlanner.plan(facts(.agentWorkspace, owned: false)) else { return XCTFail() }
         XCTAssertEqual(e.code, .needsLend, "the agent workspace still needs the agent's own process")
+        XCTAssertEqual(refused(facts(.full, owned: false, onAgent: false)), .outsideAgentWorkspace,
+                       "Full Access sends no keys to a window on one of Donovan's workspaces (#497)")
     }
 
     func testFullAccessKeepsTheBackgroundRules() {
@@ -226,7 +229,10 @@ final class AgentAccessSurfaceTests: XCTestCase {
         let sheet = try XCTUnwrap(HandsSourceTests.block(after: "private static func confirm(", in: consent))
         XCTAssertTrue(sheet.contains("button.isEnabled = false"))
         XCTAssertTrue(sheet.contains("LendConsent.notByHand(alert: alert, button: button, enabledAt: enabledAt)"), "a hardware click on the button only")
-        XCTAssertTrue(sheet.range(of: "alert.addButton(withTitle: \"Keep")!.lowerBound < sheet.range(of: "alert.addButton(withTitle: confirmTitle)")!.lowerBound, "the default button keeps")
+        // The keep button is first, so Return keeps; view control's sheet names its own ("Keep Off").
+        let keep = try XCTUnwrap(sheet.range(of: "alert.addButton(withTitle: keep ?? \"Keep"))
+        let confirm = try XCTUnwrap(sheet.range(of: "alert.addButton(withTitle: confirmTitle)"))
+        XCTAssertTrue(keep.lowerBound < confirm.lowerBound, "the default button keeps")
     }
 
     func testEveryEntryPointReadsTheMode() throws {
@@ -254,7 +260,7 @@ final class AgentAccessSurfaceTests: XCTestCase {
         XCTAssertTrue(decide.contains("selfPid: getpid()"), "BaneySpaces' own windows (first-F4)")
         XCTAssertTrue(decide.contains("d == .onAgentWorkspace, mode != .full, AgentAccess.shared.grantedUnderFull(w.pid)"), "grants end with Full Access (first-F1)")
         let act = try XCTUnwrap(HandsSourceTests.block(after: "private func act(", in: router))
-        XCTAssertTrue(act.contains("check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session))"), "Read Only at delivery (sol-F2)")
+        XCTAssertTrue(act.contains("check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session, also: typing))"), "Read Only at delivery (sol-F2)")
         let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
         XCTAssertTrue(bg.contains("let scopeCheck = actingCheck(w, ref: ref, verb: name, delivery: .posted, session: session)"), "and for keys and pointer, retries included")
         XCTAssertTrue(bg.contains("access == .full && !owned.contains(w.pid) ? .full : .agentWorkspace"), "sol-F3")

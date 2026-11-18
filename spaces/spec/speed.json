@@ -43,6 +43,16 @@
     "allAtOnceMs": 2057,
     "inPiecesMs": 81
   },
+  "windowsSwitch": {
+    "about": "Win+n on a windows-latest runner, timed from SendInput until DWM reads all 30 swatch windows right (9 workspaces, 3 or 4 shown, the rest cloaked): platforms/windows/tests/ci/switch-bench.ps1, CI job spaces-windows-speed. It fails over p90Ms times regressionLimit (or p90Ms plus floorMs, whichever is more, since runners vary), and on its own fixed limits (p90 100 ms, p99 250 ms, the max only reported, an outside uncloak undone at p90 under 100 ms).",
+    "p90Ms": null,
+    "maxMs": null,
+    "uncloakP90Ms": null,
+    "runs": 200,
+    "regressionLimit": 1.25,
+    "floorMs": 10,
+    "measuredOn": null
+  },
   "spacesTiming": {
     "about": "Budgets in ms for every event kind Spaces writes to timing.log: switch (a switch between two workspaces, its done= mark), parked (the same switch's parked= mark), and each `open <kind>=` line (settings-pane is any `open settings-<pane>=`). scripts/speed-report.sh checks the last day of the real timing.log against them and exits 1 on a miss; SpeedBudgetTests fails when the app logs a kind with no budget here. A percentile is judged only with minSamples lines or more. measured is the owner's Mac, 2026-11-16 to 11-17 (council brief polycarp-mac.md); budgets are tightened from it toward the targets in the 2026-11-17 gap list (P1 to P5, X2), so today's log is expected to miss some.",
     "minSamples": 10,

@@ -54,6 +54,14 @@ public enum HandsTools {
     static let base: [HandsTool] = [
         HandsTool(verb: "windows", summary: "List the windows an agent may use now: those on the agent workspace and those of lent apps, with their ids, plus the dialogs, alerts, sheets and palettes those apps raised (kind, parent, waiting: true when the app is blocked until it is answered). A dialog you may not use is listed with usable: false and the rule that refused it. A window of an app Donovan is using carries in_use: true and in_use_note; reads on it work now, and an action on it waits.", params: [], acts: false),
         HandsTool(verb: "workspaces", summary: "Read only. List the workspaces (number, shown or not, which one is the agent workspace) and where each window you may use is. Use it before `move` or `arrange`, or to see whether Donovan is looking at the agent workspace (agent_workspace_shown). Agents never switch, create, rename or delete workspaces.", params: [], acts: false),
+        HandsTool(verb: "query", summary: "Read only, never waits. The window manager's state as one versioned JSON object (spec/agent-api.md): windows (id, app, title, workspace, display, frame, focused), workspaces, displays, focused, layout (each window's frame, and saved layouts), theme, or state for all of them at once. Lists only the windows you may use (scope agent), or every window under Full Access (scope all). Use it before `move`, `frame` or `layout`.", params: [
+            HandsParam("what", .string, "windows, workspaces, displays, focused, layout, theme or state (the default: all of them).", positional: true),
+        ], acts: false),
+        HandsTool(verb: "events", summary: "Read only. What changed since your last call, as the agent API's events (spec/agent-api.md): workspace_switched, window_focused, window_created, window_closed, window_moved, theme_changed, only for windows you may use. Call it first without since: it answers hello with the whole state and next. Then pass that next as since; with wait_ms it waits up to that long for the first event. A lagged event means some were missed: query state again.", params: [
+            HandsParam("since", .integer, "The next from your last events call. Leave it out to start again with hello."),
+            HandsParam("wait_ms", .integer, "Wait up to this long, 0 to \(AgentEventPoll.longestWait), when no event is waiting (default 0)."),
+            HandsParam("events", .string, "Without since: only these types, comma separated. hello and lagged always come."),
+        ], acts: false),
         HandsTool(verb: "snapshot", summary: "Read one window, one row per element: [N] role \"name\" =value (states), indented under its parent. Act on row N with ref \"N\" (this snapshot) or the full ref the header shows. After acting, read again with since: \"latest\" to see only what changed. Example: {\"window\":4211,\"query\":\"Save\"}", params: [
             HandsParam("app", .string, "App name or bundle id. With several windows on the agent workspace the newest is read; pass window to choose."),
             HandsParam("window", .integer, "Window id from `windows`, `open` or a previous snapshot."),
@@ -153,6 +161,19 @@ public enum HandsTools {
         HandsTool(verb: "move", summary: "Move a window you may use onto the agent workspace (a lent window, or any window under Full Access, comes off Donovan's workspace), or give a window already there a new frame. A moved window goes back when its lend ends or Full Access is narrowed. Never onto a workspace Donovan is looking at, never one of his windows he hasn't lent, never a dialog (it goes with its app).", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
             HandsParam("frame", .string, "x,y,width,height in points from the top-left of the screen's usable area (optional)."),
+            HandsParam("workspace", .integer, "1 to 9: send it to this workspace instead. Off the agent workspace this needs view control (spec/agent-api.md)."),
+            HandsParam("display", .string, "A display id from `query displays`: send it to the workspace that display shows (needs view control)."),
+        ], acts: true),
+        HandsTool(verb: "switch", summary: "Show workspace 1 to 9 on a display (the focused one by default). It changes what Donovan sees, so it needs view control: this Mac, Full Access, and his setting \"\(ViewControl.settingTitle)\" (spec/agent-api.md). Answers with what the display shows after.", params: [
+            HandsParam("workspace", .integer, "1 to 9.", required: true, positional: true),
+            HandsParam("display", .string, "A display id from `query displays`."),
+        ], acts: true),
+        HandsTool(verb: "focus", summary: "Go to a window's workspace and bring the window forward with keyboard focus. Needs view control, always (spec/agent-api.md). Answers once the window is focused.", params: [
+            HandsParam("window", .integer, "Window id from `query windows`.", required: true),
+        ], acts: true),
+        HandsTool(verb: "frame", summary: "Set one window's position and size, in points with the origin at the top left of the main display, as `query windows` reports frames. On the agent workspace this needs nothing more, but answers in_use (retry safe) while a display shows it; anywhere else it needs view control. Answers with the frame read back.", params: [
+            HandsParam("window", .integer, "Window id from `query windows`.", required: true),
+            HandsParam("frame", .string, "x,y,width,height, like 0,40,800,600.", required: true, positional: true),
         ], acts: true),
         HandsTool(verb: "close", summary: "Close a window this session opened with `open`, through its close button, from behind. Anything else is refused, and no app is ever quit. If the app asks to save, the sheet appears in the result as opened: answer it (Don't Save or Cancel; a Save panel stays refused, so save first through a document you opened from the handoff folder).", params: [
             HandsParam("window", .integer, "Window id that your `open` returned.", required: true),

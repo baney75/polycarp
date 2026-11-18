@@ -5,6 +5,14 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
+/// `%APPDATA%\BaneySpaces\config.toml` (spec/config.md), or `config.toml` in `BANEYSPACES_CONFIG_DIR` for a test.
+pub fn config_file() -> PathBuf {
+    let dir = std::env::var("BANEYSPACES_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|_| {
+        std::env::var("APPDATA").map(|a| PathBuf::from(a).join("BaneySpaces")).unwrap_or_else(|_| std::env::temp_dir().join("BaneySpaces"))
+    });
+    dir.join("config.toml")
+}
+
 #[derive(Clone, Debug)]
 pub struct Paths {
     pub state: PathBuf,

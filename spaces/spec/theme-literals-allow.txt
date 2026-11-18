@@ -1,0 +1,13 @@
+# Hard-coded colors and animation durations allowed outside the theme module (ThemeLiteralLintTests).
+# One per line: file | code it contains | why. A line that matches nothing fails the test, so remove it with its code.
+# The theme module itself (Theme*, PolycarpTheme, Appearance, Chrome, the theme editor) and the agent cursor are exempt
+# in the test, as spec/themes.md says.
+
+Sources/BaneySpaces/Render.swift | Color(white: 0.3 | render mode only: the gray behind a sample dock, HUD or launcher in a screenshot, never drawn in the app
+Sources/BaneySpaces/WorkspaceDock.swift | Color.black.opacity | agent status badge: dark glyph and outline on its fixed status color, so "?" and "!" read the same in every theme
+Sources/BaneySpaces/WorkspaceDock.swift | Color.blue | agent status badge: the working spinner's fixed status color, kept apart from the theme like the agent cursor
+Sources/BaneySpaces/WorkspaceDock.swift | NSColor.white | agent status badge: the spinner arc on its fixed status color
+Sources/BaneySpaces/WorkspaceDock.swift | a.duration = 1 | the agent spinner's turn period, a loop and not a transition
+Sources/BaneySpaces/Launcher.swift | Color.orange | launcher builder's area: a failed row should take the `urgent` role, left for that lane
+Sources/BaneySpacesCore/Voice/SilasMarkImage.swift | NSColor.black | a template image mask: macOS tints it, black only marks the shape
+Sources/BaneySpaces/SwatchCheck.swift | RGB(r: 1, g: 1, b: 1) | render check only (scripts/swatch-check.sh): a pixel it cannot read counts as white, the worst case for the dark-mode swatch check, never drawn in the app

@@ -167,6 +167,13 @@ final class SessionController {
         server.handle = { [weak self] in self?.handle($0) ?? Wire.Reply(ok: false) }
         server.handleHands = { [weak self] in self?.handleHands($0) ?? Wire.Reply(ok: false) }
         server.handleSandbox = { [weak self] in self?.sandboxHandler?($0) ?? Wire.Reply(ok: false, error: "the sandbox isn't ready") }
+        // Made here, on the main thread, before any connection can reach them (they are lazy).
+        _ = hands.events
+        _ = connectorHands.events
+        server.handleSubscribe = { [weak self] fd, req in
+            guard let self else { close(fd); return }
+            self.hands.events.add(fd, req)
+        }
         server.start()
         remote.handle = { [weak self] in self?.handle($0) ?? Wire.Reply(ok: false) }
         if Self.remoteEnabled { startRemote() }
@@ -404,6 +411,18 @@ final class SessionController {
 
     // MARK: socket
 
+    /// Main thread: the model or the look changed. Both routers' event hubs diff it for their own callers.
+    func eventsChanged() {
+        hands.events.changed()
+        connectorHands.events.changed()
+    }
+
+    /// Main thread: Access changed, so every listener on both routers ends and starts again in the new scope.
+    func eventsEnd(_ why: String) {
+        hands.events.end(why)
+        connectorHands.events.end(why)
+    }
+
     /// `baneyspaces agent snapshot|click|…`: off the main thread (see `Server.handleHands`).
     func handleHands(_ r: Wire.Request) -> Wire.Reply {
         guard started else {
@@ -484,6 +503,10 @@ final class SessionController {
             // Answered by the server off the main thread (`handleSandbox`); a sandbox request that
             // reaches here came through a path that doesn't know how.
             return .init(ok: false, error: "sandbox requests are not answered on the main thread")
+        case .subscribe:
+            // The server hands a subscribe connection to `handleSubscribe`, which keeps it; one that reaches here
+            // came through a path that can't hold a stream.
+            return .init(ok: false, error: "subscribe needs the local socket")
         case .remote:
             switch r.text ?? "status" {
             case "on":
@@ -712,6 +735,9 @@ final class SessionController {
             // Not a grant: it shows Donovan a sheet in BaneySpaces and only a real click on it lends (see LendConsent).
             let target = args.first ?? ""
             return .init(ok: true, info: ["envelope": hands.askToLend(target: target, duration: args.dropFirst().first, session: args.dropFirst(2).first ?? "").line])
+        case "allow-ask":
+            // Not a grant either: only a real click on Allow in Polycarp's sheet adds an app (see AppAllowConsent).
+            return .init(ok: true, info: ["envelope": hands.askToAllow(target: args.dropFirst().first ?? "", verb: args.first ?? "add").line])
         case "run":
             guard let n = h.workspace() else { return .init(ok: false, error: "the agent workspace is off: polycarp-spaces agent on") }
             let cmd = args.drop { $0 != "--" }.dropFirst().joined(separator: " ")
@@ -882,7 +908,7 @@ final class ToastPanel: NSPanel {
     }
 
     private func fade() {
-        NSAnimationContext.runAnimationGroup({ $0.duration = 0.25; animator().alphaValue = 0 }, completionHandler: { [weak self] in self?.orderOut(nil) })
+        NSAnimationContext.runAnimationGroup({ $0.duration = Chrome.duration(0.25, .panelOut); animator().alphaValue = 0 }, completionHandler: { [weak self] in self?.orderOut(nil) })
     }
 }
 

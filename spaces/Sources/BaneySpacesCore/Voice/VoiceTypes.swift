@@ -1,8 +1,8 @@
 import Foundation
 
 /// What the voice core reports (core/ffi `pc_status`) and takes (`pc_settings_set`), as Swift types. Plain data, so the
-/// words and decisions are tested without the library or AppKit. Ported from voice/src: tray.rs (menu text), core.rs
-/// (`overlay_status`), overlay.ts (what the pill shows).
+/// words and decisions are tested without the library or AppKit. Ported from the Silas app (baney75/silas): tray.rs
+/// (menu text), core.rs (`overlay_status`), overlay.ts (what the pill shows).
 public enum VoiceStatus: String, Codable, Sendable {
     case loading, needsModel = "needs_model", ready, recording, transcribing, typing, error
 
@@ -40,7 +40,7 @@ public struct VoiceState: Codable, Equatable, Sendable {
     public var permissions: VoicePermissions?
 }
 
-/// `Settings` in core/voice/src/store.rs. Keys are camelCase on the wire.
+/// `Settings` in polycarp-voice's store.rs (baney75/silas). Keys are camelCase on the wire.
 public struct VoiceSettings: Codable, Equatable, Sendable {
     public var hotkey: String
     /// Which default `hotkey` was last settled against (`migrate_hotkey`). Kept so a save never drops it.

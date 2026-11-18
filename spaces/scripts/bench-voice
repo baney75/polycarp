@@ -1,5 +1,5 @@
 #!/bin/bash
-# Times the voice fast path with the fixture audio (core/voice/bench) and checks it against spec/speed.json.
+# Times the voice fast path with the fixture audio (the polycarp-voice crate's bench folder, from baney75/silas) and checks it against spec/speed.json.
 #   scripts/bench-voice           measure, and fail if the fast path is over 25% slower than its baseline
 #   scripts/bench-voice --write   measure and write the baselines (run on a quiet Mac, with a model for the RTF)
 #   POLYCARP_BENCH_MODELS=<a models folder>  also measures transcription's real-time factor (read only)

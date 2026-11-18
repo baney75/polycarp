@@ -14,8 +14,8 @@ working, and their repos stay up. A box is checked only when its check has passe
 - [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
 
 ## 3. One core, a native app on each device
-- [ ] Shared Rust core for workspaces, voice and sync, growing from `spaces/crates/baneyspaces-core` and `voice/src-tauri`. Check: `spaces/spec/conformance` passes on every platform
-- [ ] Mac: the Swift app hosts voice, with one settings window. Check: `spaces/AGENTS.md` probes and live gestures, and `voice/AGENTS.md` rules (never paste, never auto-unload)
+- [ ] Shared Rust core for workspaces, voice and sync, growing from `spaces/crates/baneyspaces-core` and the Silas app (baney75/silas). Check: `spaces/spec/conformance` passes on every platform
+- [ ] Mac: the Swift app hosts voice, with one settings window. Check: `spaces/AGENTS.md` probes and live gestures, and the Silas app's `AGENTS.md` rules (never paste, never auto-unload)
 - [ ] Windows: voice, workspaces and browser agents in one app. Check: run on a Windows VM
 - [ ] iPhone, iPad, Android: voice in its own app and keyboard, plus control of your computer's workspaces and browser. Check: Simulator, emulator and a real device. To verify: iOS limits microphone use inside keyboards
 - [ ] Dictionary and settings sync directly between your own devices, with no Polycarp cloud. Check: an edit on one device appears on another with no third-party server in the path
@@ -63,7 +63,7 @@ Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos s
 
 ## One app, everywhere
 Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.
-- [x] Voice engine in `core/voice` with a C interface in `core/ffi`, used by the Tauri app and the Swift app. Check: both test suites
+- [x] Voice engine (polycarp-voice, now held in baney75/silas and pinned by `core/ffi`) with a C interface in `core/ffi`, used by the Tauri app and the Swift app. Check: both test suites
 - [x] Mac: voice and browser agents inside `Polycarp.app`, with one Settings window, one welcome window and one install. Check: tests and renders; live check below
 - [ ] Live on a real Mac: dictate into another app (Silas stays until that has worked once), the agents' browser connects, Silas's dictionary and models come across. Check: Donovan's install
 - [ ] Windows: one Tauri app with voice, workspaces and browser agents. Check: a Windows VM

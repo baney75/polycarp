@@ -33,6 +33,50 @@
 				"openWorldHint": false,
 				"readOnlyHint": true
 			},
+			"description": "Read only, never waits. The window manager's state as one versioned JSON object (spec/agent-api.md): windows (id, app, title, workspace, display, frame, focused), workspaces, displays, focused, layout (each window's frame, and saved layouts), theme, or state for all of them at once. Lists only the windows you may use (scope agent), or every window under Full Access (scope all). Use it before `move`, `frame` or `layout`.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"what": {
+						"description": "windows, workspaces, displays, focused, layout, theme or state (the default: all of them).",
+						"type": "string"
+					}
+				},
+				"type": "object"
+			},
+			"name": "query"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": true
+			},
+			"description": "Read only. What changed since your last call, as the agent API's events (spec/agent-api.md): workspace_switched, window_focused, window_created, window_closed, window_moved, theme_changed, only for windows you may use. Call it first without since: it answers hello with the whole state and next. Then pass that next as since; with wait_ms it waits up to that long for the first event. A lagged event means some were missed: query state again.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"events": {
+						"description": "Without since: only these types, comma separated. hello and lagged always come.",
+						"type": "string"
+					},
+					"since": {
+						"description": "The next from your last events call. Leave it out to start again with hello.",
+						"type": "integer"
+					},
+					"wait_ms": {
+						"description": "Wait up to this long, 0 to 5000, when no event is waiting (default 0).",
+						"type": "integer"
+					}
+				},
+				"type": "object"
+			},
+			"name": "events"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": true
+			},
 			"description": "Read one window, one row per element: [N] role \"name\" =value (states), indented under its parent. Act on row N with ref \"N\" (this snapshot) or the full ref the header shows. After acting, read again with since: \"latest\" to see only what changed. Example: {\"window\":4211,\"query\":\"Save\"}",
 			"inputSchema": {
 				"additionalProperties": false,
@@ -645,6 +689,10 @@
 			"inputSchema": {
 				"additionalProperties": false,
 				"properties": {
+					"display": {
+						"description": "A display id from `query displays`: send it to the workspace that display shows (needs view control).",
+						"type": "string"
+					},
 					"frame": {
 						"description": "x,y,width,height in points from the top-left of the screen's usable area (optional).",
 						"type": "string"
@@ -656,6 +704,10 @@
 					"window": {
 						"description": "Window id from `windows`.",
 						"type": "integer"
+					},
+					"workspace": {
+						"description": "1 to 9: send it to this workspace instead. Off the agent workspace this needs view control (spec/agent-api.md).",
+						"type": "integer"
 					}
 				},
 				"required": [
@@ -664,6 +716,90 @@
 				"type": "object"
 			},
 			"name": "move"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Show workspace 1 to 9 on a display (the focused one by default). It changes what Donovan sees, so it needs view control: this Mac, Full Access, and his setting \"Agents may change what you see\" (spec/agent-api.md). Answers with what the display shows after.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"display": {
+						"description": "A display id from `query displays`.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					},
+					"workspace": {
+						"description": "1 to 9.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"workspace"
+				],
+				"type": "object"
+			},
+			"name": "switch"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Go to a window's workspace and bring the window forward with keyboard focus. Needs view control, always (spec/agent-api.md). Answers once the window is focused.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					},
+					"window": {
+						"description": "Window id from `query windows`.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"window"
+				],
+				"type": "object"
+			},
+			"name": "focus"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Set one window's position and size, in points with the origin at the top left of the main display, as `query windows` reports frames. On the agent workspace this needs nothing more, but answers in_use (retry safe) while a display shows it; anywhere else it needs view control. Answers with the frame read back.",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"frame": {
+						"description": "x,y,width,height, like 0,40,800,600.",
+						"type": "string"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					},
+					"window": {
+						"description": "Window id from `query windows`.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"window",
+					"frame"
+				],
+				"type": "object"
+			},
+			"name": "frame"
 		},
 		{
 			"annotations": {

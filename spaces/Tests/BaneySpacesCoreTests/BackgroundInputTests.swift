@@ -236,8 +236,38 @@ final class BackgroundScopeAtExecutionTests: XCTestCase {
     }
 
     func testALentWindowNeedsNoOwnershipButTheLendItself() throws {
-        var f = ready(); f.scope = .lent; f.pidIsAgentOwned = false
+        var f = ready(); f.scope = .lent; f.pidIsAgentOwned = false; f.onAgentWorkspace = true
         XCTAssertNotNil(try? BackgroundPlanner.plan(f).get(), "the lend names this pid and window; the scope guard checked it")
+    }
+
+    /// Council gap A2: keys go only to windows on the agent workspace. A lent window, or one Full Access reaches, on a
+    /// workspace of Donovan's gets none, with a clear error; the pointer rule for a lent window is unchanged.
+    func testKeysNeverGoToAWindowOnHisWorkspaces() throws {
+        for scope in [ScopeKind.lent, .full] {
+            var f = ready(); f.scope = scope; f.pidIsAgentOwned = false
+            let e = refusal(f)
+            XCTAssertEqual(e?.code, .outsideAgentWorkspace, scope.rawValue)
+            XCTAssertEqual(e?.retry, .never, scope.rawValue)
+            XCTAssertTrue(e?.message.contains("only to windows on the agent workspace") == true, e?.message ?? "")
+            XCTAssertTrue(e?.suggestion.contains("agent move --window 77") == true, e?.suggestion ?? "")
+            f.onAgentWorkspace = true
+            XCTAssertNil(refusal(f), "\(scope.rawValue) window brought onto the agent workspace")
+        }
+        var p = ready(.pointer); p.scope = .lent; p.pidIsAgentOwned = false
+        XCTAssertNil(refusal(p), "a click in a lent window is not a key")
+    }
+
+    /// `type` inserts through Accessibility, not the planner; it takes the same rule from the window's workspace.
+    func testTypeGoesOnlyIntoAWindowOnTheAgentWorkspace() throws {
+        XCTAssertNil(AgentKeys.refusal(verb: "type", app: "TextEdit", window: 77, workspace: 9, agentWorkspace: 9))
+        XCTAssertEqual(AgentKeys.refusal(verb: "type", app: "Mail", window: 78, workspace: 2, agentWorkspace: 9)?.code, .outsideAgentWorkspace)
+        XCTAssertNotNil(AgentKeys.refusal(verb: "type", app: "Mail", window: 78, workspace: nil, agentWorkspace: 9), "an unplaced window")
+        XCTAssertNotNil(AgentKeys.refusal(verb: "type", app: "Mail", window: 78, workspace: nil, agentWorkspace: nil), "agent workspace off")
+        let router = try Repo.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        XCTAssertTrue(router.contains("let typing: HandsEngine.Check? = kind == .typeText ? { [self] in typingRefusal(w, verb: name) } : nil"))
+        XCTAssertTrue(router.contains("delivery: .headlessAX, session: session, also: typing))"), "checked again at dispatch")
+        let facts = try Repo.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
+        XCTAssertTrue(facts.contains("onAgentWorkspace: agent != nil && live.workspace == agent)"))
     }
 
     func testAWindowOutsideTheAgentWorkspaceAndNotLentIsRefusedFirst() {
