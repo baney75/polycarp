@@ -164,7 +164,7 @@ enum SettingsSidebar {
 
     static let allGroups: [Group] = [
         Group(header: nil, tabs: [.general, .keys, .dock, .appearance, .launcher]),
-        Group(header: "Your tools", tabs: [.voice, .browser, .agents]),
+        Group(header: "Your tools", tabs: [.browser, .agents]),
         Group(header: "System", tabs: [.permissions, .automation, .updates]),
     ]
     static var order: [SettingsTab] { groups.flatMap(\.tabs) }
@@ -212,12 +212,8 @@ struct SettingsSidebarView: View {
         let on = selection == tab
         return Button { selection = tab } label: {
             HStack(spacing: 8) {
-                Group {
-                    // Silas's mark is its own pen, tinted like the symbols beside it.
-                    if let symbol = tab.symbol { Image(systemName: symbol).font(Chrome.font(13)) }
-                    else { Image(nsImage: SilasMark.templateImage(size: 18)).renderingMode(.template) }
-                }
-                .frame(width: 20)
+                Image(systemName: tab.symbol).font(Chrome.font(13))
+                    .frame(width: 20)
                 Text(tab.rawValue).font(Chrome.font(13, on ? .semibold : .regular))
                 Spacer(minLength: 0)
             }

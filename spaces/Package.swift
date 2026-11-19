@@ -23,23 +23,15 @@ let package = Package(
         .target(name: "BaneySpacesCore"),
         // agent-desktop's C header (see the note at the top).
         .systemLibrary(name: "CAgentDesktop", path: "Sources/CAgentDesktop"),
-        // The voice core's C header (core/ffi). The library, scripts/build-core.sh's core-lib/libpolycarp_core.a,
-        // is linked into the BaneySpaces target, so dictation runs inside the app's own process.
-        .target(name: "CPolycarpCore"),
         // The menu bar app: hotkeys, Accessibility and moving real windows.
         // The engine's library sits in Contents/Frameworks in the bundle; `engine/lib` is where a
         // `swift build` finds it.
         .executableTarget(
             name: "BaneySpaces",
-            dependencies: ["BaneySpacesCore", "CAgentDesktop", "CPolycarpCore"],
+            dependencies: ["BaneySpacesCore", "CAgentDesktop"],
             linkerSettings: [
                 .unsafeFlags([
                     "-L\(root)/engine/lib", "-lagent_desktop_ffi",
-                    // The voice core is a static library; these are the system pieces its Rust dependencies use.
-                    "-L\(root)/core-lib", "-lpolycarp_core", "-lc++", "-liconv",
-                    "-framework", "CoreML", "-framework", "Metal", "-framework", "IOKit",
-                    "-framework", "AudioToolbox", "-framework", "CoreAudio", "-framework", "AVFoundation",
-                    "-framework", "ApplicationServices", "-framework", "CoreGraphics", "-framework", "CoreFoundation",
                     "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
                     "-Xlinker", "-rpath", "-Xlinker", "\(root)/engine/lib",
                 ]),

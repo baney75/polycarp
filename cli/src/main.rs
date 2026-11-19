@@ -82,24 +82,12 @@ const BROWSER: Tool = Tool {
     install: "https://github.com/baney75/polycarp",
 };
 
-const VOICE: Tool = Tool {
-    sub: "voice",
-    product: "Silas",
-    exe: "silas",
-    old_exes: &[],
-    env: "POLYCARP_VOICE_BIN",
-    bundled: &[],
-    spots: &["/Applications/Silas.app/Contents/MacOS/silas"],
-    install: "https://github.com/baney75/silas",
-};
-
 const USAGE: &str = "\
-polycarp: one command for Polycarp Spaces, the Polycarp browser helper and Silas
+polycarp: one command for Polycarp Spaces and the Polycarp browser helper
 
 Usage:
   polycarp spaces [args...]    run the Spaces command
   polycarp browser [args...]   run the browser helper (polycarp-browser)
-  polycarp voice               open Silas's settings in Polycarp (the Silas app only if Polycarp isn't installed)
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
   polycarp features            show or change which parts run (polycarp features --help)
   polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
@@ -110,7 +98,7 @@ Usage:
   polycarp --help
 
 The apps must already be installed. Each tool can be set with
-POLYCARP_SPACES_BIN, POLYCARP_BROWSER_BIN or POLYCARP_VOICE_BIN.
+POLYCARP_SPACES_BIN or POLYCARP_BROWSER_BIN.
 
 The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 ";
@@ -128,7 +116,7 @@ fn main() {
     let code = match first.to_str() {
         Some("spaces") => handoff(&SPACES, &rest),
         Some("browser") => handoff(&BROWSER, &rest),
-        Some("voice") => voice(&rest),
+        Some("voice") => voice(),
         Some("theme") => theme::run(&rest),
         Some("features") => features::run(&rest),
         Some("mcp") => mcp::run(&rest),
@@ -550,31 +538,7 @@ fn handoff(tool: &Tool, args: &[OsString]) -> i32 {
     run(cmd)
 }
 
-/// On a Mac the Silas app is one fixed place: `/Applications/Silas.app`, else
-/// `~/Applications/Silas.app`. `voice` and `doctor` both use it, so they cannot disagree.
-#[cfg(target_os = "macos")]
-fn silas_app() -> Result<PathBuf, Miss> {
-    let mut spots = Vec::new();
-    // Tests set this so the machine's real installs are never reached.
-    if env::var_os("POLYCARP_NO_SYSTEM_SPOTS").is_none() {
-        spots.push(PathBuf::from("/Applications/Silas.app"));
-    }
-    if let Some(h) = home() {
-        spots.push(h.join("Applications/Silas.app"));
-    }
-    let mut miss = Miss::Nothing;
-    for app in spots.into_iter().filter(|a| a.is_dir()) {
-        match against_cwd(&app) {
-            Ok(()) => return Ok(app),
-            Err(m) if miss == Miss::Nothing => miss = m,
-            Err(_) => {}
-        }
-    }
-    Err(miss)
-}
-
-/// The Polycarp app, where voice lives now: `/Applications/Polycarp.app`, else `~/Applications/Polycarp.app`.
-/// Same rules as `silas_app`. Only the Mac has the integrated voice.
+/// The Polycarp app: `/Applications/Polycarp.app`, else `~/Applications/Polycarp.app`, never one in the current folder.
 #[cfg(target_os = "macos")]
 fn polycarp_app() -> Option<PathBuf> {
     let mut spots = Vec::new();
@@ -622,121 +586,14 @@ fn polycarp_app() -> Option<PathBuf> {
     None
 }
 
-/// Voice is inside Polycarp when the app is installed and no explicit POLYCARP_VOICE_BIN says otherwise.
-fn integrated_voice() -> Option<PathBuf> {
-    if env::var_os(VOICE.env).is_some_and(|v| !v.is_empty()) {
-        return None;
-    }
-    polycarp_app()
+/// `polycarp voice` is only a pointer now: dictation is not part of Polycarp.
+fn voice() -> i32 {
+    eprintln!("{VOICE_MOVED}");
+    1
 }
 
-/// Where a tool is, by the one rule for it.
-fn locate(tool: &Tool) -> Result<PathBuf, Miss> {
-    #[cfg(target_os = "macos")]
-    if tool.sub == "voice" && env::var_os(tool.env).is_none_or(|v| v.is_empty()) {
-        return silas_app();
-    }
-    find(tool)
-}
-
-/// Opens the Voice settings in Polycarp through its own `polycarp://voice` address.
-#[cfg(target_os = "macos")]
-fn open_polycarp_voice(app: &Path) -> i32 {
-    // POLYCARP_OPEN_BIN lets a test stand in for `open`, so no app is launched.
-    let open = match env::var_os("POLYCARP_OPEN_BIN").filter(|v| !v.is_empty()) {
-        Some(v) => {
-            let v = PathBuf::from(v);
-            if check(&v).is_err() {
-                eprintln!(
-                    "polycarp: POLYCARP_OPEN_BIN {} was refused: it must be an absolute path to a program outside the current folder.",
-                    v.display()
-                );
-                return 127;
-            }
-            v
-        }
-        None => PathBuf::from("/usr/bin/open"),
-    };
-    match Command::new(open)
-        .arg("-a")
-        .arg(app)
-        .arg("polycarp://voice")
-        .status()
-    {
-        Ok(s) => s.code().unwrap_or(1),
-        Err(e) => {
-            eprintln!("polycarp: could not run open: {e}");
-            126
-        }
-    }
-}
-
-fn voice(args: &[OsString]) -> i32 {
-    if !args.is_empty() {
-        eprintln!(
-            "polycarp: voice has no commands yet. Run `polycarp voice` alone to open Silas's settings in Polycarp."
-        );
-        return 2;
-    }
-    // Dictation is inside Polycarp. Silas is only the fallback for a Mac that doesn't have Polycarp installed.
-    #[cfg(target_os = "macos")]
-    if let Some(app) = integrated_voice() {
-        return open_polycarp_voice(&app);
-    }
-    let path = match locate(&VOICE) {
-        Ok(p) => p,
-        Err(why) => return not_found(&VOICE, &why),
-    };
-    #[cfg(target_os = "macos")]
-    if path.is_dir() {
-        // The app bundle: open it without taking focus.
-        // POLYCARP_OPEN_BIN lets a test stand in for `open`, so no app is launched.
-        // It passes the same gate as every other program, so it can't be a file in the project.
-        let open = match env::var_os("POLYCARP_OPEN_BIN").filter(|v| !v.is_empty()) {
-            Some(v) => {
-                let v = PathBuf::from(v);
-                if check(&v).is_err() {
-                    eprintln!(
-                        "polycarp: POLYCARP_OPEN_BIN {} was refused: it must be an absolute path to a program outside the current folder.",
-                        v.display()
-                    );
-                    return 127;
-                }
-                v
-            }
-            None => PathBuf::from("/usr/bin/open"),
-        };
-        return match Command::new(open).arg("-g").arg(&path).status() {
-            Ok(s) => s.code().unwrap_or(1),
-            Err(e) => {
-                eprintln!("polycarp: could not run open: {e}");
-                126
-            }
-        };
-    }
-    let mut cmd = Command::new(path);
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-        cmd.creation_flags(0x0000_0008 | 0x0000_0200);
-    }
-    match cmd.spawn() {
-        Ok(_) => 0,
-        Err(e) => {
-            eprintln!("polycarp: could not start Silas: {e}");
-            126
-        }
-    }
-}
+const VOICE_MOVED: &str =
+    "polycarp: Silas is its own app now. Open Silas, or get it at https://github.com/baney75/silas.";
 
 /// How long `doctor` waits for a tool's `--version`, reading included. Tests shorten it.
 fn doctor_limit() -> Duration {
@@ -751,16 +608,8 @@ fn doctor() -> i32 {
     let mut out = std::io::stdout().lock();
     let mut printing = true;
     let mut ok = true;
-    for tool in [&SPACES, &BROWSER, &VOICE] {
-        let integrated = if tool.sub == "voice" {
-            integrated_voice()
-        } else {
-            None
-        };
-        let line = match integrated.map(Ok).unwrap_or_else(|| locate(tool)) {
-            Ok(p) if tool.sub == "voice" && integrated_voice().as_ref() == Some(&p) => {
-                format!("voice: inside Polycarp ({})", p.display())
-            }
+    for tool in [&SPACES, &BROWSER] {
+        let line = match find(tool) {
             Ok(p) => {
                 let mut line = format!("{}: {}", tool.sub, p.display());
                 if tool.sub == "browser" {
@@ -775,7 +624,7 @@ fn doctor() -> i32 {
                 line
             }
             Err(Miss::Script(p)) => {
-                ok = tool.sub == "voice" && ok;
+                ok = false;
                 format!(
                     "{}: present but not runnable. {}",
                     tool.sub,
@@ -783,7 +632,7 @@ fn doctor() -> i32 {
                 )
             }
             Err(Miss::InCwd(p)) => {
-                ok = tool.sub == "voice" && ok;
+                ok = false;
                 format!(
                     "{}: {} is in the current folder, so it is not used. Run doctor from another folder",
                     tool.sub,
@@ -791,16 +640,14 @@ fn doctor() -> i32 {
                 )
             }
             Err(Miss::NoCwd) => {
-                ok = tool.sub == "voice" && ok;
+                ok = false;
                 format!(
                     "{}: not checked, because the current folder can't be resolved",
                     tool.sub
                 )
             }
             Err(Miss::Nothing) => {
-                if tool.sub != "voice" {
-                    ok = false;
-                }
+                ok = false;
                 format!("{}: not found", tool.sub)
             }
         };
@@ -827,8 +674,8 @@ fn doctor() -> i32 {
     }
 }
 
-/// What `polycarp version`, `doctor` and `update` look at. Nothing here runs the spaces command or
-/// the voice app: their builds are read from files.
+/// What `polycarp version`, `doctor` and `update` look at. Nothing here runs the spaces command:
+/// its build is read from files.
 fn version_device(ask: &dyn Fn(&Path, &[&str]) -> version::Answer) -> version::Device<'_> {
     version::Device {
         exe: env::current_exe().ok(),

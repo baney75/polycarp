@@ -1,6 +1,5 @@
 import AppKit
 import ApplicationServices
-import AVFoundation
 import BaneySpacesCore
 import ServiceManagement
 import SwiftUI
@@ -29,7 +28,6 @@ final class WelcomeModel: ObservableObject {
     static func read() -> Set<PermissionKind> {
         var s = Set<PermissionKind>()
         if AXIsProcessTrusted() { s.insert(.accessibility) }
-        if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized { s.insert(.microphone) }
         return s
     }
 
@@ -91,7 +89,7 @@ final class WelcomeModel: ObservableObject {
         Self.request(kind)
     }
 
-    /// The request itself, shared with Settings > Silas's permission lines. One path for every pane.
+    /// The request itself, shared with Settings > Permissions. One path for every pane.
     static func request(_ kind: PermissionKind) {
         guard let id = PermissionID(kind) else { return }
         PermissionsModel.shared.perform(id)

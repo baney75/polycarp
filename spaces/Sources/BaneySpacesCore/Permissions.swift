@@ -4,14 +4,13 @@ import Foundation
 /// state with no AppKit, so the words and the "what to show" rules are tested without macOS. The app reads the live
 /// answers (`PermissionsModel`) and hands them here.
 ///
-/// Each entry has to be true of the code: Accessibility is `AXIsProcessTrusted` (windows, Silas's key and typing), the
-/// microphone is Silas, Automation is the launcher's scripts (`Scripts.swift`) and Notifications are the hand-over notes
-/// (`LegacyWatcher`, `VoiceEngine.notifyIfDue`).
+/// Each entry has to be true of the code: Accessibility is `AXIsProcessTrusted` (windows), Automation is the launcher's
+/// scripts (`Scripts.swift`) and Notifications are the hand-over note (`LegacyWatcher`).
 public enum PermissionID: String, CaseIterable, Sendable, Identifiable {
-    case accessibility, microphone, automation, notifications
+    case accessibility, automation, notifications
     public var id: Self { self }
 
-    /// The welcome window's own name for the four it walks through.
+    /// The welcome window's own name for the one it walks through.
     public init?(_ kind: PermissionKind) { self.init(rawValue: kind.rawValue) }
 }
 
@@ -75,19 +74,11 @@ public enum Permissions {
     public static let all: [PermissionEntry] = [
         PermissionEntry(
             id: .accessibility, title: "Accessibility",
-            purpose: "Lets Polycarp show, hide and move windows, and type for Silas.",
+            purpose: "Lets Polycarp show, hide and move windows.",
             never: "It never reads what you type.",
-            uses: [PermissionUse(.workspaces, "Workspaces, the dock and the overview"),
-                   PermissionUse(.voice, "Silas's key and typing")],
+            uses: [PermissionUse(.workspaces, "Workspaces, the dock and the overview")],
             kind: .list, settingsName: "Accessibility", settingsURL: pane + "Privacy_Accessibility",
             blocksStart: true, niceToHave: false),
-        PermissionEntry(
-            id: .microphone, title: "Microphone",
-            purpose: "Silas listens from when you press its key until you let go, and turns speech into text on this Mac.",
-            never: "The audio is never saved or sent anywhere.",
-            uses: [PermissionUse(.voice, "Silas dictation")],
-            kind: .prompt, settingsName: "Microphone", settingsURL: pane + "Privacy_Microphone",
-            blocksStart: false, niceToHave: false),
         PermissionEntry(
             id: .automation, title: "Automation",
             purpose: "Lets the launcher list your terminal and browser tabs and bring forward the one you pick.",
@@ -97,10 +88,9 @@ public enum Permissions {
             blocksStart: false, niceToHave: false),
         PermissionEntry(
             id: .notifications, title: "Notifications",
-            purpose: "One note when Polycarp takes over from Silas or the older workspaces app, so you know the old app can go.",
+            purpose: "One note when Polycarp takes over from the older workspaces app, so you know the old app can go.",
             never: "No other alerts, sounds or badges.",
-            uses: [PermissionUse(.voice, "The note that Silas can go"),
-                   PermissionUse(.workspaces, "The note when the older workspaces app hands over")],
+            uses: [PermissionUse(.workspaces, "The note when the older workspaces app hands over")],
             kind: .prompt, settingsName: "Notifications",
             settingsURL: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.baney.polycarp",
             blocksStart: false, niceToHave: true),
@@ -114,16 +104,6 @@ public enum Permissions {
     /// is "off" once Polycarp has sent you to the list, and "not set up" before that.
     public static func listState(granted: Bool, asked: Bool) -> PermissionState {
         granted ? .granted : asked ? .denied : .notAsked
-    }
-
-    /// `AVCaptureDevice.authorizationStatus(for: .audio).rawValue`: 0 not determined, 1 restricted, 2 denied, 3 authorized.
-    public static func microphoneState(_ raw: Int) -> PermissionState {
-        switch raw {
-        case 0: .notAsked
-        case 1, 2: .denied
-        case 3: .granted
-        default: .unknown
-        }
     }
 
     /// `UNAuthorizationStatus.rawValue`: 0 not determined, 1 denied, 2 authorized, 3 provisional, 4 ephemeral.

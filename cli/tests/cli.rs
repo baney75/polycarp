@@ -152,12 +152,29 @@ fn override_pointing_nowhere_is_not_found() {
     assert_eq!(code(&o), 127);
 }
 
+/// Dictation is its own app now. `polycarp voice`, with or without arguments, only says where it went.
 #[test]
-fn voice_with_args_gives_2() {
+fn voice_points_to_the_silas_app_and_exits_1() {
     let s = Sandbox::new();
-    let o = s.run(&["voice", "dictate"]);
-    assert_eq!(code(&o), 2);
-    assert!(err(&o).contains("has no commands yet"));
+    for args in [&["voice"][..], &["voice", "dictate"][..]] {
+        let o = s.run(args);
+        assert_eq!(code(&o), 1, "{args:?}");
+        assert_eq!(
+            err(&o),
+            "polycarp: Silas is its own app now. Open Silas, or get it at https://github.com/baney75/silas.\n"
+        );
+        assert_eq!(out(&o), "", "{args:?}");
+    }
+}
+
+#[test]
+fn the_usage_text_has_no_voice_command() {
+    let s = Sandbox::new();
+    let o = s.run(&["--help"]);
+    let t = format!("{}{}", out(&o), err(&o));
+    assert!(t.contains("polycarp spaces"), "{t}");
+    assert!(!t.contains("polycarp voice"), "{t}");
+    assert!(!t.contains("POLYCARP_VOICE_BIN"), "{t}");
 }
 
 #[test]
@@ -168,7 +185,7 @@ fn doctor_not_found_exits_1() {
     let t = out(&o);
     assert!(t.contains("spaces: not found"), "{t}");
     assert!(t.contains("browser: not found"), "{t}");
-    assert!(t.contains("voice: not found"), "{t}");
+    assert!(!t.contains("voice"), "{t}");
 }
 
 // ---- Unix tests with stub executables ----
@@ -362,52 +379,6 @@ fn fixed_spot_under_home_is_used() {
 
 #[cfg(unix)]
 #[test]
-fn voice_with_args_launches_nothing() {
-    let s = Sandbox::new();
-    let marker = s.dir("launched");
-    let p = stub(
-        &s.dir("bin"),
-        "silas",
-        &format!("echo x > '{}'", marker.display()),
-    );
-    let o = s
-        .cmd(&["voice", "--flag"])
-        .env("PATH", s.dir("bin"))
-        .env("POLYCARP_VOICE_BIN", &p)
-        .output()
-        .unwrap();
-    assert_eq!(code(&o), 2);
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    assert!(!marker.exists());
-}
-
-#[cfg(unix)]
-#[test]
-fn voice_without_args_launches_the_stub() {
-    let s = Sandbox::new();
-    let marker = s.dir("launched");
-    let p = stub(
-        &s.dir("bin"),
-        "silas",
-        &format!("echo x > '{}'", marker.display()),
-    );
-    let o = s
-        .cmd(&["voice"])
-        .env("POLYCARP_VOICE_BIN", &p)
-        .output()
-        .unwrap();
-    assert_eq!(code(&o), 0);
-    for _ in 0..50 {
-        if marker.exists() {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    panic!("the stub was not launched");
-}
-
-#[cfg(unix)]
-#[test]
 fn doctor_found_exits_0_and_shows_browser_version_only() {
     let s = Sandbox::new();
     let log = s.dir("calls");
@@ -420,11 +391,6 @@ fn doctor_found_exits_0_and_shows_browser_version_only() {
         &s.dir("bin"),
         "tabkyra",
         "echo 'tabkyra 9.9.9'; echo second-line",
-    );
-    stub(
-        &s.dir("bin"),
-        "silas",
-        &format!("echo called >> '{}'", log.display()),
     );
     let o = s
         .cmd(&["doctor"])
@@ -440,8 +406,8 @@ fn doctor_found_exits_0_and_shows_browser_version_only() {
     assert!(t.contains("(tabkyra 9.9.9)"), "{t}");
     assert!(!t.contains("second-line"));
     assert!(!t.contains("SPACES-VERSION"));
-    assert!(t.contains("voice: "));
-    assert!(!log.exists(), "doctor ran spaces or voice");
+    assert!(!t.contains("voice"), "{t}");
+    assert!(!log.exists(), "doctor ran spaces");
 }
 
 #[cfg(unix)]
@@ -905,24 +871,6 @@ fn doctor_reports_a_cmd_shim_as_present_but_not_runnable_with_advice() {
     assert!(err(&o).contains("Node"), "{}", err(&o));
 }
 
-/// On a Mac, `doctor` and `voice` look at the same fixed app path.
-#[cfg(target_os = "macos")]
-#[test]
-fn voice_and_doctor_use_the_same_app_path_on_a_mac() {
-    let s = Sandbox::new();
-    let o = s.run(&["voice"]);
-    assert_eq!(code(&o), 127, "{}", err(&o));
-    assert!(err(&o).contains("not found"), "{}", err(&o));
-    let app = s.dir("home").join("Applications/Silas.app");
-    fs::create_dir_all(app.join("Contents")).unwrap();
-    let o = s.run(&["doctor"]);
-    assert!(
-        out(&o).contains(&format!("voice: {}", app.display())),
-        "{}",
-        out(&o)
-    );
-}
-
 // ---- Issue #17: the lookup from the home folder ----
 
 /// From `~`, normal per-user installs run: nvm, cargo, bun, volta, asdf, mise, ~/.local, and the
@@ -1166,111 +1114,6 @@ fn a_home_under_a_system_folder_still_refuses_its_project_folders() {
     assert_eq!(out(&o), "system\n", "{}", err(&o));
 }
 
-/// POLYCARP_OPEN_BIN passes the same gate as every other program.
-#[cfg(target_os = "macos")]
-#[test]
-fn the_open_override_cannot_be_a_file_in_the_project_or_a_bare_name() {
-    let s = Sandbox::new();
-    let home = s.dir("home");
-    fs::create_dir_all(home.join("Applications/Silas.app/Contents")).unwrap();
-    let marker = s.dir("ran");
-    let proj = home.join("proj");
-    fs::create_dir_all(&proj).unwrap();
-    let evil = stub(&proj, "evil", &format!("echo x > '{}'", marker.display()));
-    for open in [evil.as_os_str().to_owned(), "evil".into(), "./evil".into()] {
-        let o = s
-            .cmd(&["voice"])
-            .env("POLYCARP_OPEN_BIN", &open)
-            .current_dir(&home)
-            .output()
-            .unwrap();
-        assert_eq!(code(&o), 127, "{open:?}: {}", err(&o));
-        assert!(err(&o).contains("POLYCARP_OPEN_BIN"), "{}", err(&o));
-    }
-    assert!(!marker.exists());
-}
-
-/// A link named like an app, leading to a folder elsewhere, is not an app bundle.
-#[cfg(target_os = "macos")]
-#[test]
-fn a_linked_app_bundle_is_refused() {
-    let s = Sandbox::new();
-    let home = s.dir("home");
-    fs::create_dir_all(home.join("Applications")).unwrap();
-    let elsewhere = s.dir("elsewhere/Silas.app");
-    fs::create_dir_all(elsewhere.join("Contents")).unwrap();
-    std::os::unix::fs::symlink(&elsewhere, home.join("Applications/Silas.app")).unwrap();
-    let log = s.dir("open-args");
-    let open = stub(
-        &s.dir("bin"),
-        "fake-open",
-        &format!("echo \"$@\" > '{}'", log.display()),
-    );
-    let o = s
-        .cmd(&["voice"])
-        .env("POLYCARP_OPEN_BIN", &open)
-        .current_dir(&home)
-        .output()
-        .unwrap();
-    assert_eq!(code(&o), 127, "{}", err(&o));
-    assert!(!log.exists(), "open was called");
-}
-
-/// `voice` and `doctor` from `~`, with the app only in `~/Applications`. `open` is a stub, so
-/// no app is launched.
-#[cfg(target_os = "macos")]
-#[test]
-fn from_home_voice_and_doctor_find_an_app_only_in_home_applications() {
-    let s = Sandbox::new();
-    let home = s.dir("home");
-    let app = home.join("Applications/Silas.app");
-    fs::create_dir_all(app.join("Contents")).unwrap();
-    let log = s.dir("open-args");
-    let open = stub(
-        &s.dir("bin"),
-        "fake-open",
-        &format!("echo \"$@\" > '{}'", log.display()),
-    );
-    let o = s.cmd(&["doctor"]).current_dir(&home).output().unwrap();
-    assert!(
-        out(&o).contains(&format!("voice: {}", app.display())),
-        "{}",
-        out(&o)
-    );
-    let o = s
-        .cmd(&["voice"])
-        .env("POLYCARP_OPEN_BIN", &open)
-        .current_dir(&home)
-        .output()
-        .unwrap();
-    assert_eq!(code(&o), 0, "{}", err(&o));
-    let args = fs::read_to_string(&log).unwrap();
-    assert!(args.contains(app.to_str().unwrap()), "{args}");
-}
-
-/// An optional tool (Silas) with only a script found must not fail `doctor`.
-#[cfg(unix)]
-#[test]
-fn a_voice_script_alone_does_not_fail_doctor() {
-    let s = Sandbox::new();
-    stub(&s.dir("bin"), "baneyspaces", "exit 0");
-    stub(&s.dir("bin"), "tabkyra", "echo tabkyra 1");
-    let shim = stub(&s.dir("bin"), "silas.cmd", "exit 0");
-    let o = s
-        .cmd(&["doctor"])
-        .env("PATH", s.dir("bin"))
-        .env("POLYCARP_SHIM_CHECK", "1")
-        .env("POLYCARP_VOICE_BIN", &shim)
-        .output()
-        .unwrap();
-    assert_eq!(code(&o), 0, "{}", out(&o));
-    assert!(
-        out(&o).contains("voice: present but not runnable"),
-        "{}",
-        out(&o)
-    );
-}
-
 #[cfg(unix)]
 #[test]
 fn browser_finds_the_copy_inside_the_app_before_path() {
@@ -1324,66 +1167,6 @@ fn doctor_shows_the_bundled_browser_helper_and_its_version() {
     assert!(t.contains("polycarp-browser (1.2.3)"), "{t}");
 }
 
-/// With Polycarp installed, voice is inside it: `polycarp voice` opens its Voice settings through `polycarp://voice`,
-/// even when a Silas is also there, and `doctor` says so. `open` is a stub, so nothing is launched.
-#[cfg(target_os = "macos")]
-#[test]
-fn voice_opens_polycarps_voice_settings_when_it_is_installed() {
-    let s = Sandbox::new();
-    let home = s.dir("home");
-    let polycarp = home.join("Applications/Polycarp.app");
-    let silas = home.join("Applications/Silas.app");
-    fs::create_dir_all(polycarp.join("Contents")).unwrap();
-    fs::create_dir_all(silas.join("Contents")).unwrap();
-    let log = s.dir("open-args");
-    let open = stub(
-        &s.dir("bin"),
-        "fake-open",
-        &format!("echo \"$@\" > '{}'", log.display()),
-    );
-    let o = s
-        .cmd(&["voice"])
-        .env("POLYCARP_OPEN_BIN", &open)
-        .current_dir(&home)
-        .output()
-        .unwrap();
-    assert_eq!(code(&o), 0, "{}", err(&o));
-    let args = fs::read_to_string(&log).unwrap();
-    assert!(args.contains("polycarp://voice"), "{args}");
-    assert!(args.contains(polycarp.to_str().unwrap()), "{args}");
-    assert!(!args.contains("Silas.app"), "Silas is not opened: {args}");
-    let o = s.cmd(&["doctor"]).current_dir(&home).output().unwrap();
-    assert!(out(&o).contains("voice: inside Polycarp"), "{}", out(&o));
-}
-
-/// Silas is only the fallback: no Polycarp, the old behavior.
-#[cfg(target_os = "macos")]
-#[test]
-fn voice_falls_back_to_silas_only_when_polycarp_is_not_installed() {
-    let s = Sandbox::new();
-    let home = s.dir("home");
-    let silas = home.join("Applications/Silas.app");
-    fs::create_dir_all(silas.join("Contents")).unwrap();
-    let log = s.dir("open-args");
-    let open = stub(
-        &s.dir("bin"),
-        "fake-open",
-        &format!("echo \"$@\" > '{}'", log.display()),
-    );
-    let o = s
-        .cmd(&["voice"])
-        .env("POLYCARP_OPEN_BIN", &open)
-        .current_dir(&home)
-        .output()
-        .unwrap();
-    assert_eq!(code(&o), 0, "{}", err(&o));
-    let args = fs::read_to_string(&log).unwrap();
-    assert!(
-        args.contains("Silas.app") && !args.contains("polycarp://"),
-        "{args}"
-    );
-}
-
 // ---- polycarp version and polycarp update ----
 
 #[cfg(unix)]
@@ -1421,13 +1204,14 @@ fn version_lists_the_command_and_says_what_is_not_installed() {
         "spaces command",
         "browser helper",
         "extension",
-        "voice core",
         "agent skill",
     ] {
         let p = part(&v, name);
         assert_eq!(p["installed"], false, "{name}");
         assert!(p["state"].as_str().is_some_and(|t| !t.is_empty()), "{name}");
     }
+    // Dictation is not a part of Polycarp, so `version` has no row for it.
+    assert!(!v.to_string().contains("voice"), "{v}");
     assert!(v["verdict"].as_str().unwrap().starts_with("versions: "));
     // The table says the same, and a missing part is not an error.
     let o = s.run(&["version"]);
@@ -1530,8 +1314,6 @@ fn version_reads_the_app_from_its_info_plist() {
     assert_eq!(p["version"], "0.9.1");
     assert_eq!(p["commit"], OTHER_COMMIT);
     assert_eq!(p["dirty"], true);
-    // The voice core is linked into the app, so it is the app's build.
-    assert_eq!(part(&v, "voice core")["commit"], OTHER_COMMIT);
 }
 
 /// A folder with git in it and nothing else, so `update` can ask git about a checkout.

@@ -12,23 +12,30 @@ final class FeaturesTests: XCTestCase {
     }
 
     func testTheFileRoundTrips() {
-        let set = FeatureSet([.voice, .browser])
+        let set = FeatureSet([.browser])
         XCTAssertEqual(FeatureSet.parse(set.text), set)
         XCTAssertTrue(set.text.contains("workspaces = false"))
-        XCTAssertTrue(set.text.contains("voice = true"))
+        XCTAssertTrue(set.text.contains("browser = true"))
+        XCTAssertEqual(set.text.split(separator: "\n").filter { !$0.hasPrefix("#") }.count, 2, "one line per part, no other")
     }
 
     func testOnlyAnExplicitFalseTurnsAPartOff() {
         XCTAssertEqual(FeatureSet.parse(""), .all)
-        XCTAssertEqual(FeatureSet.parse("voice = maybe\nnonsense\n[x]\nbrowser"), .all)
-        XCTAssertEqual(FeatureSet.parse("voice = false # not today\n"), FeatureSet([.workspaces, .browser]))
+        XCTAssertEqual(FeatureSet.parse("browser = maybe\nnonsense\n[x]\nbrowser"), .all)
+        XCTAssertEqual(FeatureSet.parse("browser = false # not today\n"), FeatureSet([.workspaces]))
+    }
+
+    /// A file written while dictation was a part of Polycarp still has its line. It is ignored, either way.
+    func testAnOldVoiceLineIsIgnored() {
+        XCTAssertEqual(FeatureSet.parse("workspaces = true\nvoice = false\nbrowser = true\n"), .all)
+        XCTAssertEqual(FeatureSet.parse("workspaces = false\nvoice = true\nbrowser = true\n"), FeatureSet([.browser]))
     }
 
     func testNoFileMeansNobodyHasChosen() throws {
         let path = try temp().appendingPathComponent("sub/features.toml").path
         XCTAssertNil(FeatureFile.load(path: path))
-        XCTAssertTrue(FeatureFile.save(FeatureSet([.voice]), path: path))
-        XCTAssertEqual(FeatureFile.load(path: path), FeatureSet([.voice]))
+        XCTAssertTrue(FeatureFile.save(FeatureSet([.browser]), path: path))
+        XCTAssertEqual(FeatureFile.load(path: path), FeatureSet([.browser]))
     }
 
     func testTheFileLivesBesideTheTheme() {
@@ -37,23 +44,22 @@ final class FeaturesTests: XCTestCase {
     }
 
     func testSettingsSectionsFollowTheirPart() {
-        let voiceOnly = FeatureSet([.voice])
-        for gone in ["Keys", "Dock", "Launcher", "Agents", "Automation", "Browser"] {
-            XCTAssertFalse(voiceOnly.showsSettingsTab(gone), gone)
+        let browserOnly = FeatureSet([.browser])
+        for gone in ["Keys", "Dock", "Launcher", "Agents", "Automation"] {
+            XCTAssertFalse(browserOnly.showsSettingsTab(gone), gone)
         }
-        for kept in ["General", "Appearance", "Updates", "Silas"] { XCTAssertTrue(voiceOnly.showsSettingsTab(kept), kept) }
+        for kept in ["General", "Appearance", "Updates", "Browser"] { XCTAssertTrue(browserOnly.showsSettingsTab(kept), kept) }
     }
 
     func testEveryPartHasAPlainNameAndLine() {
-        XCTAssertEqual(Feature.allCases.map(\.title), ["Workspaces", "Silas", "Browser"])
+        XCTAssertEqual(Feature.allCases.map(\.title), ["Workspaces", "Browser"])
         for f in Feature.allCases { XCTAssertTrue(f.summary.hasSuffix("."), f.title) }
     }
 
     // MARK: What each part asks of macOS
 
     func testAPartThatIsOffAsksForNothing() {
-        XCTAssertEqual(Welcome.steps(for: .all).map(\.kind), [.accessibility, .microphone])
-        XCTAssertEqual(Welcome.steps(for: FeatureSet([.voice])).map(\.kind), [.accessibility, .microphone])
+        XCTAssertEqual(Welcome.steps(for: .all).map(\.kind), [.accessibility])
         XCTAssertEqual(Welcome.steps(for: FeatureSet([.workspaces])).map(\.kind), [.accessibility])
         XCTAssertEqual(Welcome.steps(for: FeatureSet([.browser])).map(\.kind), [])
     }
@@ -64,15 +70,6 @@ final class FeaturesTests: XCTestCase {
         XCTAssertNil(Welcome.next(granted: [], skipped: [], features: browser))
         XCTAssertEqual(Welcome.defaultAction(granted: [], skipped: [], features: browser), .finish)
         XCTAssertFalse(Welcome.shouldShow(hasFinished: true, granted: [], forced: false, features: browser))
-    }
-
-    func testVoiceAloneStillNeedsAccessibilityAndSaysWhy() {
-        let voice = FeatureSet([.voice])
-        XCTAssertFalse(Welcome.canStart(granted: [], features: voice))
-        XCTAssertTrue(Welcome.canStart(granted: [.accessibility], features: voice))
-        let step = Welcome.steps(for: voice)[0]
-        XCTAssertFalse(step.title.contains("windows"), "Silas alone doesn't arrange windows")
-        XCTAssertTrue(step.why.contains("type"))
     }
 
     func testEveryoneElseSeesTheWalkAsBefore() {
@@ -161,30 +158,41 @@ final class FeaturesTests: XCTestCase {
 
     func testTheInstallerWritesTheChosenParts() throws {
         let dir = try temp()
-        let (code, output) = try installer("write_parts '\(dir.path)' 'voice,browser'")
+        let (code, output) = try installer("write_parts '\(dir.path)' 'workspaces,browser'")
         XCTAssertEqual(code, 0, output)
-        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.voice, .browser]))
+        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.workspaces, .browser]))
     }
 
     func testTheInstallerRefusesAnUnknownPartAndAnEmptyChoice() throws {
         let dir = try temp()
-        XCTAssertNotEqual(try installer("write_parts '\(dir.path)' 'voice,typo'").0, 0)
+        XCTAssertNotEqual(try installer("write_parts '\(dir.path)' 'browser,typo'").0, 0)
         XCTAssertNotEqual(try installer("write_parts '\(dir.path)' ''").0, 0)
         XCTAssertNil(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path))
     }
 
+    func testTheInstallerStillAcceptsVoiceButWritesNothingForIt() throws {
+        let dir = try temp()
+        let (code, output) = try installer("write_parts '\(dir.path)' 'voice,browser'")
+        XCTAssertEqual(code, 0, output)
+        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.browser]))
+        let alone = try temp()
+        XCTAssertEqual(try installer("write_parts '\(alone.path)' 'voice'").0, 0)
+        let written = try String(contentsOf: alone.appendingPathComponent("features.toml"), encoding: .utf8)
+        XCTAssertTrue(written.contains("workspaces = false"), "voice alone still writes workspaces off, so the old app is kept: \(written)")
+    }
+
     func testSpacesAroundThePartsAreFine() throws {
         let dir = try temp()
-        XCTAssertEqual(try installer("write_parts '\(dir.path)' 'voice, browser'").0, 0)
-        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.voice, .browser]))
+        XCTAssertEqual(try installer("write_parts '\(dir.path)' 'workspaces, browser'").0, 0)
+        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.workspaces, .browser]))
     }
 
     func testAReinstallKeepsTheChoice() throws {
         let dir = try temp()
         let file = dir.appendingPathComponent("features.toml")
-        FeatureFile.save(FeatureSet([.voice]), path: file.path)
+        FeatureFile.save(FeatureSet([.workspaces]), path: file.path)
         XCTAssertEqual(try installer("write_parts '\(dir.path)' 'browser'").0, 0)
-        XCTAssertEqual(FeatureFile.load(path: file.path), FeatureSet([.voice]))
+        XCTAssertEqual(FeatureFile.load(path: file.path), FeatureSet([.workspaces]))
     }
 
     func testTheOldAppIsRetiredOnlyForSomeoneTakingWorkspaces() throws {

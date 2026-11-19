@@ -14,18 +14,17 @@ public enum LegacyHandover {
     public static let notificationBody = "\(Product.name) replaces it, and the two can't run together."
     public static let quitTimeout: TimeInterval = 10
 
-    /// Every app Polycarp replaces, by the name the alert uses. BaneySpaces first; Silas is the dictation app whose
-    /// voice moved into Polycarp. Both want the same keys or the same files, so neither runs beside Polycarp.
+    /// Every app Polycarp replaces, by the name the alert uses. BaneySpaces wants the same keys and the same files,
+    /// so it doesn't run beside Polycarp.
     public static let replaced: [(name: String, bundleID: String)] = [
         (Product.Legacy.name, Product.Legacy.bundleID),
-        (Product.Silas.phrase, Product.Silas.bundleID),
     ]
     public static var replacedBundleIDs: [String] { replaced.map(\.bundleID) }
 
-    /// "the Silas app" at the start of a sentence.
+    /// A name at the start of a sentence.
     static func sentence(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
 
-    /// The one alert, for whichever of the old apps are running: "The Silas app is running. Polycarp replaces it."
+    /// The one alert, for whichever of the old apps are running: "BaneySpaces is running. Polycarp replaces it."
     public static func alertTitle(running names: [String]) -> String {
         switch names.count {
         case 0, 1: "\(sentence(names.first ?? Product.Legacy.name)) is running. \(Product.name) replaces it."
@@ -34,11 +33,7 @@ public enum LegacyHandover {
     }
     public static func alertDetail(running names: [String]) -> String {
         let both = names.count > 1 ? "None of them can run beside \(Product.name)." : "Both can't run at once."
-        var text = "\(both) \(Product.name) copies your settings and leaves \(names.joined(separator: " and ")) installed."
-        if names.contains(Product.Silas.phrase) {
-            text += " Silas in \(Product.name) takes over from here. \(sentence(Product.Silas.phrase)) stays installed (Settings > Silas offers to move it to the Trash once dictation works), and your dictionary, history and speech models are copied, never moved."
-        }
-        return text
+        return "\(both) \(Product.name) copies your settings and leaves \(names.joined(separator: " and ")) installed."
     }
     public static func continueButton(running names: [String]) -> String { "Quit \(names.joined(separator: " and ")) and Continue" }
     public static func didNotQuit(_ names: [String]) -> String {
@@ -73,15 +68,11 @@ public enum LegacyHandover {
         return .carryOn
     }
 
-    /// The notice after an old app is closed, worded for that app (Silas's is about the dictation key).
+    /// The notice after an old app is closed, worded for that app.
     public static func notificationTitle(forBundleID id: String?) -> String {
         "\(sentence(replaced.first { $0.bundleID == id }?.name ?? Product.Legacy.name)) was closed"
     }
-    public static func notificationBody(forBundleID id: String?) -> String {
-        id == Product.Silas.bundleID
-            ? "Silas in \(Product.name) is on, and the two can't share the dictation key. Turn Silas off in Settings > Silas to use \(Product.Silas.phrase) again."
-            : notificationBody
-    }
+    public static func notificationBody(forBundleID id: String?) -> String { notificationBody }
 
     /// While Polycarp runs: what to do when an app launches.
     public struct Watch: Equatable {
@@ -89,34 +80,15 @@ public enum LegacyHandover {
         public var notify: Bool
     }
 
-    /// BaneySpaces starting is asked to quit every time; the person is told once, so a repeat doesn't nag.
-    /// `takesOver` is whether Polycarp's own dictation is active (`VoiceGate.takesOver` is nil). Silas is asked to quit
-    /// only then: with voice off, or no model yet, Silas is the working dictation and is never touched.
-    public static func onLaunch(bundleID: String?, alreadyNotified: Bool, takesOver: Bool = true) -> Watch {
+    /// BaneySpaces starting is asked to quit every time; the person is told once, so a repeat doesn't nag. Any other app
+    /// is never touched.
+    public static func onLaunch(bundleID: String?, alreadyNotified: Bool) -> Watch {
         guard let bundleID, replacedBundleIDs.contains(bundleID) else { return Watch(quit: false, notify: false) }
-        if bundleID == Product.Silas.bundleID && !takesOver { return Watch(quit: false, notify: false) }
         return Watch(quit: true, notify: !alreadyNotified)
     }
 
-    /// The names to put in the launch alert: BaneySpaces if it runs; Silas if it runs and Polycarp's dictation takes over.
-    public static func namesToReplace(running bundleIDs: [String], takesOver: Bool) -> [String] {
-        replaced.filter { r in bundleIDs.contains(r.bundleID) && (r.bundleID != Product.Silas.bundleID || takesOver) }.map(\.name)
-    }
-
-    /// Whether Polycarp may take the dictation hotkey. Two apps reading the same key fight over it, and Silas keeps
-    /// its own copy of the model loaded, so while Silas runs Polycarp's voice stays off and says why.
-    public enum VoiceStart: Equatable {
-        case start
-        case refuse(reason: String)
-    }
-    public static let silasRunningReason = "\(sentence(Product.Silas.phrase)) is running and has the dictation key. Quit it and Silas in \(Product.name) takes over."
-    /// Pids of apps that are really still there: not terminated, and not the one that is quitting right now. A quit notification
-    /// arrives while the app still shows in the running list, which would make the engine think Silas is still in the way.
-    public static func livePids(_ apps: [(pid: Int32, terminated: Bool)], excluding quitting: Int32? = nil) -> [Int32] {
-        apps.filter { !$0.terminated && $0.pid != quitting }.map(\.pid)
-    }
-
-    public static func voiceStart(silasPids: [Int32]) -> VoiceStart {
-        silasPids.isEmpty ? .start : .refuse(reason: silasRunningReason)
+    /// The names to put in the launch alert: each replaced app that runs.
+    public static func namesToReplace(running bundleIDs: [String]) -> [String] {
+        replaced.filter { bundleIDs.contains($0.bundleID) }.map(\.name)
     }
 }

@@ -555,8 +555,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if parts.hasChosen { startParts() } else { restoreSystemControls(); updateIcon() }
         parts.watch()
         updater.onChange = { [weak self] in self?.updateIcon() }
-        // Not while a workspace switches, and not while dictation is recording, transcribing or typing.
-        updater.isBusy = { [weak self] in (self?.spaces.switching ?? false) || (VoiceEngine.shared.state?.status.isDictating ?? false) }
+        // Not while a workspace switches.
+        updater.isBusy = { [weak self] in self?.spaces.switching ?? false }
         updater.start()
         // The first launch walks through setup, and so does any launch without permission (an
         // update that macOS no longer trusts). Otherwise it's one click away in the menu.
@@ -584,33 +584,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private let legacyWatcher = LegacyWatcher()
 
-    // MARK: Voice (dictation, inside this process)
-
-    private let voiceOverlay = VoiceOverlay()
-
-    private var voiceStarted = false
-
-    private func startVoice() {
-        voiceStarted = true
-        let voice = VoiceEngine.shared
-        voice.onLevel = { [weak self] level in DispatchQueue.main.async { self?.voiceOverlay.level(level) } }
-        voice.onNotice = { [weak self] n in self?.voiceOverlay.notice(n) }
-        voice.onLearned = { [weak self] from, to in
-            // The pill's own switch covers this one too.
-            if voice.settings?.showOverlay ?? true { self?.voiceOverlay.learned(from: from, to: to) }
-        }
-        voice.onStateChange = { [weak self] in
-            guard let self, let st = voice.state else { return }
-            self.voiceOverlay.status(st.status, enabled: voice.settings?.showOverlay ?? true)
-            self.updateIcon()
-        }
-        legacyWatcher.onSilasQuit = { pid in voice.silasChanged(terminating: pid) }
-        voice.onSilasInTheWay = { [weak self] in self?.legacyWatcher.askSilasToQuit() }
-        legacyWatcher.onSilasStarted = { voice.silasChanged() }
-        legacyWatcher.takesOver = { voice.takesOver }
-        voice.start()
-    }
-
     /// Starts the parts that are on. The choice can change while the app is quit, so each part is put in the state it says
     /// here, not only when a change is seen.
     private func startParts() {
@@ -624,7 +597,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // ⌘Space goes back to Spotlight, as it does on a quit.
             SystemShortcuts.spotlightQueue.async { SystemShortcuts.restoreSpotlight() }
         }
-        if parts.contains(.voice) { startVoice() } else { VoiceEngine.shared.partIsOn = false }
         BrowserModel.shared.applyPart(on: parts.contains(.browser))
         updateIcon()
     }
@@ -641,10 +613,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// apply at once.
     private func partsChanged(from old: FeatureSet, to new: FeatureSet) {
         if old.contains(.workspaces) != new.contains(.workspaces) { return relaunch() }
-        if old.contains(.voice) != new.contains(.voice) {
-            VoiceEngine.shared.partIsOn = new.contains(.voice)
-            if new.contains(.voice), !voiceStarted { startVoice() }
-        }
         if old.contains(.browser) != new.contains(.browser) {
             BrowserModel.shared.applyPart(on: new.contains(.browser))
         }
@@ -663,10 +631,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    func showVoiceSettings() {
-        setup.model.tab = PartsModel.shared.current.contains(.voice) ? .voice : .general
-        showSettings()
-    }
     @objc private func showWelcome() { welcome.show() }
     private lazy var welcome: WelcomeWindowController = {
         let c = WelcomeWindowController()
@@ -904,16 +868,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                 ?? MenuBarMark.polycarp(workspace: spaces.model.current, description: description)) : nil)
             ?? NSImage(systemSymbolName: name, accessibilityDescription: description)
         image?.isTemplate = true
-        // While Silas listens the pen and its dot join the workspace mark in one template image, so macOS tints all of it for the
-        // menu bar's appearance; the title below stays the system's own.
-        let listening = VoiceEngine.shared.state?.status.isLive == true
-        if listening, let base = image { statusItem.button?.image = SilasMenuBarImage.composite(base: base) } else { statusItem.button?.image = image }
+        statusItem.button?.image = image
         // Agents that finished while you were elsewhere, counted beside the workspace number.
         let n = started && session.started ? session.unseenCount : 0
         statusItem.button?.title = n > 0 ? " \(n)" : ""
         statusItem.button?.toolTip = nil
         statusItem.button?.imagePosition = .imageLeading
-        if listening { statusItem.button?.toolTip = "Silas is listening" }
     }
 
     private func startSession() {
@@ -941,18 +901,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// The menu's Start Dictation / Stop Dictation: the same as pressing the dictation key once in tap mode.
-    @objc func toggleDictation() { VoiceEngine.shared.toggleRecording() }
-
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         if !PartsModel.shared.hasChosen || !PartsModel.shared.current.contains(.workspaces) {
-            if VoiceEngine.shared.partIsOn, let st = VoiceEngine.shared.state {
-                let silasItem = menu.addItem(withTitle: SilasName.menuTitle(VoiceEngine.shared.statusLine), action: nil, keyEquivalent: "")
-                silasItem.image = SilasMark.templateImage(size: 14, recording: st.status.isLive)
-                if let t = VoiceOptions.menuToggle(status: st.status, enabled: st.enabled, listener: st.listener) { menu.addItem(item(t, #selector(toggleDictation))) }
-                menu.addItem(.separator())
-            }
             if let notice = updateNotice() { menu.addItem(menuItem(for: .update(notice))) }
             menu.addItem(item("Settings…", #selector(showSetup), key: ","))
             menu.addItem(.separator())
@@ -972,14 +923,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.separator())
             menu.addItem(item("Quit Polycarp", #selector(quit), key: "q"))
             return
-        }
-        // Silas's state, first: the same line the Silas tray showed ("Ready · hold Right ⌘ to speak").
-        if VoiceEngine.shared.partIsOn, let st = VoiceEngine.shared.state {
-            let line = VoiceEngine.shared.statusLine
-            let silasItem = menu.addItem(withTitle: SilasName.menuTitle(line), action: nil, keyEquivalent: "")
-            silasItem.image = SilasMark.templateImage(size: 14, recording: st.status.isLive)
-            if let t = VoiceOptions.menuToggle(status: st.status, enabled: st.enabled, listener: st.listener) { menu.addItem(item(t, #selector(toggleDictation))) }
-            menu.addItem(.separator())
         }
         spaces.refresh()
         var apps: [Int: [String]] = [:]
@@ -1211,8 +1154,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "move": run { $0.moveFocused(to: n) }
         case "restore": run { _ in bringBack() }
         case "viewer": run { _ in viewer.toggle() }
-        // `polycarp voice` opens the Voice settings. Showing a window changes nothing, so a web page may.
-        case "voice": showVoiceSettings()
         // Opening it changes nothing on its own, so a web page may: every action inside needs a key press.
         case "launcher": launcher.show(scope: LauncherModel.Scope(rawValue: url.lastPathComponent) ?? .root, takeKeys: false)
         case "dock":

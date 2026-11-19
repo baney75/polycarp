@@ -435,10 +435,10 @@ final class SetupModel: ObservableObject {
 /// The settings window's tabs. General comes first: it's where a new Mac starts.
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "General", keys = "Keys", dock = "Dock", appearance = "Appearance", launcher = "Launcher",
-         automation = "Automation", permissions = "Permissions", updates = "Updates", agents = "Agents", voice = "Silas", browser = "Browser"
+         automation = "Automation", permissions = "Permissions", updates = "Updates", agents = "Agents", browser = "Browser"
     var id: Self { self }
 
-    var symbol: String? {
+    var symbol: String {
         switch self {
         case .general: "gearshape"
         case .keys: "keyboard"
@@ -449,7 +449,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .permissions: "hand.raised"
         case .updates: "arrow.down.circle"
         case .agents: "cpu"
-        case .voice: nil   // Silas draws its own pen (`SilasMark`); every consumer must handle the missing symbol
         case .browser: "globe"
         }
     }
@@ -483,7 +482,6 @@ struct SetupView: View {
                                                        onAsk: { if $0 == .accessibility { model.askedForAccessibility() } })
                     case .updates: updates
                     case .agents: agents
-                    case .voice: VoiceSettingsView()
                     case .browser: BrowserSettingsView()
                     }
                 }
@@ -519,7 +517,7 @@ struct SetupView: View {
                             .font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                     }
                     Spacer()
-                    if parts.current.contains(.workspaces) || parts.current.contains(.voice) {
+                    if parts.current.contains(.workspaces) {
                         SettingsStatusLabel(text: model.trusted ? "Running" : "Needs a switch", done: model.trusted)
                     }
                 }
@@ -529,7 +527,7 @@ struct SetupView: View {
 
         PartsSection(parts: parts)
 
-        if parts.current.contains(.workspaces) || parts.current.contains(.voice) {
+        if parts.current.contains(.workspaces) {
         SettingsGroup("Permissions") {
             // Every permission, its state and its button live in the Permissions section.
             SettingsRow(model.trusted ? "Accessibility is on" : "Polycarp needs Accessibility",

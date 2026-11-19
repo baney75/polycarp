@@ -1,6 +1,5 @@
 import AppKit
 import ApplicationServices
-import AVFoundation
 import BaneySpacesCore
 import Carbon
 import UserNotifications
@@ -93,7 +92,6 @@ final class PermissionsModel: ObservableObject {
         if sample { return states[id] ?? .unknown }
         switch id {
         case .accessibility: return Permissions.listState(granted: AXIsProcessTrusted(), asked: asked(id))
-        case .microphone: return Permissions.microphoneState(AVCaptureDevice.authorizationStatus(for: .audio).rawValue)
         case .notifications: return notifications
         case .automation: return Permissions.automationState(targets.map(\.state))
         }
@@ -167,8 +165,6 @@ final class PermissionsModel: ObservableObject {
         case .accessibility:
             let prompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
             _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
-        case .microphone:
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in DispatchQueue.main.async { self?.wake(force: true) } }
         case .notifications:
             guard Self.isAppBundle else { return }
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { [weak self] _, _ in
@@ -200,7 +196,7 @@ final class PermissionsModel: ObservableObject {
     func useRenderSample() {
         sample = true
         timer?.invalidate(); timer = nil
-        states = [.accessibility: .granted, .microphone: .granted,
+        states = [.accessibility: .granted,
                   .automation: .notAsked, .notifications: .notAsked]
         let pick: [String: PermissionState] = ["com.mitchellh.ghostty": .granted, "net.imput.helium": .notAsked,
                                                "com.apple.Terminal": .unknown, "com.apple.systemevents": .denied]

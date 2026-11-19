@@ -3,7 +3,7 @@
 
     rust-licenses.py --out FILE --own DIR [--target TRIPLE ...] MANIFEST:PACKAGE ...
 
-Each MANIFEST:PACKAGE is a Cargo.toml and the package the app ships from it (the polycarp command, the voice core,
+Each MANIFEST:PACKAGE is a Cargo.toml and the package the app ships from it (the polycarp command and
 the hands engine). Only normal dependencies reach the binary. Path crates under --own are Polycarp's or the engine's,
 which NOTICE and LICENSES cover. Run it after the builds, so cargo has every crate's source on disk.
 """
@@ -64,7 +64,7 @@ def standard_texts(name, version, p):
     sys.exit(f"rust-licenses: {name} {version} has no licence file and no text here for {p.get('license')!r}: "
              f"add the licence's text to scripts/licence-texts and to TEXTS")
 
-parts = ["The Rust crates compiled into Polycarp (the polycarp command, the voice core and the hands engine), with their licences.", ""]
+parts = ["The Rust crates compiled into Polycarp (the polycarp command and the hands engine), with their licences.", ""]
 for (name, version), p in sorted(crates.items()):
     folder = os.path.dirname(p["manifest_path"])
     files = [os.path.join(folder, p["license_file"])] if p.get("license_file") else \

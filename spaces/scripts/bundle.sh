@@ -16,8 +16,6 @@ rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/
 
 # The hands engine (agent-desktop's library), built from the pinned commit; Polycarp links it.
 scripts/build-engine.sh
-# The voice core (dictation), a static library from ../core; Polycarp links it into its own binary.
-scripts/build-core.sh
 
 ARCHS=(--arch arm64)
 if xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 && [ "${BANEYSPACES_ARM64_ONLY:-}" != 1 ]; then ARCHS+=(--arch x86_64); fi
@@ -55,10 +53,10 @@ mkdir -p "$BROWSER_DIR"
 cp build/browser/polycarp-browser "$BROWSER_DIR/polycarp-browser"
 cp -R build/browser/extension "$BROWSER_DIR/extension"
 cp build/browser/licenses/* "$APP/Contents/Resources/licenses/"
-# The Rust crates the polycarp command, the voice core and the engine link, from cargo's own record of them.
+# The Rust crates the polycarp command and the engine link, from cargo's own record of them.
 RUST_TARGETS=(--target aarch64-apple-darwin); [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ] || RUST_TARGETS+=(--target x86_64-apple-darwin)
 python3 scripts/rust-licenses.py --out "$APP/Contents/Resources/licenses/polycarp-rust-crates.txt" --own "$PWD/.." "${RUST_TARGETS[@]}" \
-  ../cli/Cargo.toml:polycarp ../core/ffi/Cargo.toml:polycarp-core engine/.src/Cargo.toml:agent-desktop-ffi
+  ../cli/Cargo.toml:polycarp engine/.src/Cargo.toml:agent-desktop-ffi
 # Settings' Uninstall runs the same script as the README.
 cp uninstall.sh "$APP/Contents/Resources/uninstall.sh"
 # install.sh runs this copy on the prebuilt release, so the installer that fetched the app and the

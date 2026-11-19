@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs Polycarp on a Mac:
 #   curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
-# Mac: downloads the signed app, which holds workspaces, voice, browser agents and the `polycarp` command, and
+# Mac: downloads the signed app, which holds workspaces, browser agents and the `polycarp` command, and
 # opens it. No developer tools needed. POLYCARP_FROM_SOURCE=1 builds it on this Mac instead.
 # It asks macOS for nothing itself: Polycarp's welcome window walks you through each permission.
 # Run it again any time to update. POLYCARP_REF picks a branch or tag.
@@ -55,12 +55,12 @@ main() {
   say ""; say "${bold}Polycarp${reset}  ${dim}Bear much fruit.${reset}"; say ""
 
   local CFG="${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}"
-  # Which parts to run. POLYCARP_FEATURES=voice,browser answers without asking; with no terminal and no answer, the
+  # Which parts to run. POLYCARP_FEATURES=workspaces,browser answers without asking; with no terminal and no answer, the
   # welcome window asks instead. A reinstall keeps what was chosen.
   if [ ! -e "$CFG/$PARTS_FILE" ]; then
     REPLY="${POLYCARP_FEATURES:-}"
     [ -n "$REPLY" ] || choose_parts
-    if [ -n "$REPLY" ]; then write_parts "$CFG" "$REPLY" || fail "POLYCARP_FEATURES has a part Polycarp doesn't know. Use workspaces, voice and browser."; fi
+    if [ -n "$REPLY" ]; then write_parts "$CFG" "$REPLY" || fail "POLYCARP_FEATURES has a part Polycarp doesn't know. Use workspaces and browser."; fi
   fi
   [ "$(uname -s)" = Darwin ] || fail "This installer is for a Mac. The polycarp command runs elsewhere: cargo install --git $REPO polycarp"
   [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 13 ] || fail "Polycarp needs macOS 13 Ventura or later."
@@ -210,15 +210,18 @@ PARTS_FILE=features.toml
 # Writes the chosen parts, comma-separated. A file that's already there stays, and a name nobody knows is an error.
 write_parts() {
   local list=${2//[[:space:]]/,}
-  local dir=$1 chosen=",$list," part file="$1/$PARTS_FILE" known=",workspaces,voice,browser,"
+  # voice is still accepted so older scripted installs keep working. Silas is its own app now, so it gets no line;
+  # voice alone writes every part off, as before, so the old app is kept for someone who didn't take workspaces.
+  local dir=$1 chosen=",$list," part file="$1/$PARTS_FILE" known=",workspaces,browser,voice,"
   [ -e "$file" ] && return 0
   [ -n "${list//,/}" ] || return 2
   local rest=${list//,/ } name
   for name in $rest; do case "$known" in *",$name,"*) ;; *) return 2 ;; esac; done
+  case "$chosen" in *,voice,*) printf '  voice is Silas now, its own app: https://github.com/baney75/silas\n' >&2 ;; esac
   mkdir -p "$dir" || return 1
   {
     printf '# Which parts of Polycarp run. Change it in Settings > General or with `polycarp features`.\n'
-    for part in workspaces voice browser; do
+    for part in workspaces browser; do
       case "$chosen" in *",$part,"*) printf '%s = true\n' "$part" ;; *) printf '%s = false\n' "$part" ;; esac
     done
   } > "$file"
@@ -229,26 +232,25 @@ write_parts() {
 choose_parts() {
   REPLY=""
   { [ -t 1 ] && : </dev/tty; } 2>/dev/null || return 0
-  local on=(1 1 1) key i out
-  local names=(workspaces voice browser)
+  local on=(1 1) key i out
+  local names=(workspaces browser)
   local titles=("Workspaces  nine workspaces, the dock, the overview and the launcher"
-                "Silas       hold a key, speak and it types; speech stays on this Mac"
                 "Browser     lets AI agents work in your browser, in their own tab group")
-  printf '  What do you want? Press 1, 2 or 3 to change a box, then Return.\n  You can change this any time in Settings.\n\n'
+  printf '  What do you want? Press 1 or 2 to change a box, then Return.\n  You can change this any time in Settings.\n\n'
   while :; do
-    for i in 0 1 2; do
+    for i in 0 1; do
       if [ "${on[$i]}" = 1 ]; then printf '  [x] %s  %s\033[K\n' "$((i + 1))" "${titles[$i]}"
       else printf '  [ ] %s  %s\033[K\n' "$((i + 1))" "${titles[$i]}"; fi
     done
     IFS= read -rsn1 key </dev/tty || key=""
     case "$key" in
-      1|2|3) i=$((key - 1)); on[$i]=$((1 - on[$i])) ;;
-      "") if [ "${on[0]}${on[1]}${on[2]}" != 000 ]; then break; fi ;;
+      1|2) i=$((key - 1)); on[$i]=$((1 - on[$i])) ;;
+      "") if [ "${on[0]}${on[1]}" != 00 ]; then break; fi ;;
     esac
-    printf '\033[3A'
+    printf '\033[2A'
   done
   out=""
-  for i in 0 1 2; do [ "${on[$i]}" = 1 ] && out="$out,${names[$i]}"; done
+  for i in 0 1; do [ "${on[$i]}" = 1 ] && out="$out,${names[$i]}"; done
   REPLY=${out#,}
   printf '\n'
 }

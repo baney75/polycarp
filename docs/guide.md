@@ -6,10 +6,11 @@ description: Install Polycarp, use its one command, choose or build a theme, and
 
 ## Where things stand
 
-Polycarp is one app for your workspaces, your voice and the browser your agents use. It's early, and it's arriving one device at a time.
+Polycarp is one app for your workspaces and the browser your agents use. It's early, and it's arriving one device at a time.
 
-- **Mac, Apple silicon:** workspaces, dictation and browser agents are all inside `Polycarp.app`, with one Settings window and one set of permissions.
-- **Other devices:** the same Rust core is on its way to them. Until then, Silas offers nightly voice builds on Windows and Linux, and Tabkyra's installer for them is written but not yet tried live. Those repos stay up.
+- **Mac, Apple silicon:** workspaces and browser agents are inside `Polycarp.app`, with one Settings window and one set of permissions.
+- **Dictation** is not part of Polycarp. [Silas](https://github.com/baney75/silas) is its own app, on its own release schedule.
+- **Other devices:** Polycarp is on its way to them. Until then, Tabkyra's installer for them is written but not yet tried live. That repo stays up.
 - **Themes:** `polycarp theme` checks, writes, previews and undoes themes, and agents can do the same over MCP. The Mac app follows your theme live.
 - `polycarp theme off` removes the theme files. Apps that read them are expected to use their own look when they next check. `polycarp theme on` brings your theme back.
 
@@ -25,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | 
 
 This downloads the signed app for Apple silicon, puts `polycarp` in `~/.local/bin` and opens the app, with no developer tools needed. A welcome window walks you through the permissions. Accessibility is the only one Polycarp can't run without. Browser agents take one more step: Settings > Browser walks you through loading the extension in Chromium.
 
-If you have BaneySpaces, it goes to the Trash, because the two can't run together, and Polycarp copies its settings. Silas stays installed and Polycarp copies its dictionary and models. Once dictation works for you, **Move Silas to the Trash** in Settings > Voice finishes the job. With voice turned off, Silas keeps working as it always did. Your own `tabkyra` keeps working too, and `baneyspaces` keeps working as a name for `polycarp-spaces`.
+If you have BaneySpaces, it goes to the Trash, because the two can't run together, and Polycarp copies its settings. Your own `tabkyra` keeps working too, and `baneyspaces` keeps working as a name for `polycarp-spaces`.
 
 On an Intel Mac, or with `POLYCARP_FROM_SOURCE=1`, it builds on your Mac instead. That needs Apple's command line tools, [Rust](https://rustup.rs), [Bun](https://bun.sh) and [Node](https://nodejs.org).
 
@@ -54,8 +55,7 @@ polycarp doctor
 | --- | --- |
 | `polycarp spaces [args]` | Runs the workspace command with your arguments |
 | `polycarp browser [args]` | Runs the browser helper with your arguments |
-| `polycarp features [on\|off <part>]` | Shows or changes which parts run: `workspaces`, `voice`, `browser` |
-| `polycarp voice` | Opens the Voice settings in Polycarp, or Silas if Polycarp isn't installed |
+| `polycarp features [on\|off <part>]` | Shows or changes which parts run: `workspaces`, `browser` |
 | `polycarp theme <command>` | Chooses and checks the theme |
 | `polycarp mcp` | Serves the theme commands to an agent |
 | `polycarp doctor` | Shows which apps were found, and whether their builds match |
@@ -70,7 +70,7 @@ polycarp doctor
 
 It uses the first match:
 
-1. An override: `POLYCARP_SPACES_BIN`, `POLYCARP_BROWSER_BIN` or `POLYCARP_VOICE_BIN`.
+1. An override: `POLYCARP_SPACES_BIN` or `POLYCARP_BROWSER_BIN`.
 2. Your `PATH`.
 3. The usual install folders.
 
@@ -338,7 +338,7 @@ This hasn't been tried on a live Mac yet.
 
 ## Keys, motion and behavior
 
-Themes cover the look. On a Mac, keys, the dock, the launcher, dictation and browser access are all in Polycarp's Settings. On Windows and Linux, see the [Silas](/projects/silas/docs/) and [Tabkyra](/projects/tabkyra/docs/) docs.
+Themes cover the look. On a Mac, keys, the dock, the launcher and browser access are all in Polycarp's Settings. On Windows and Linux, see the [Tabkyra](/projects/tabkyra/docs/) docs. Dictation is the [Silas](/projects/silas/docs/) app's, with its own settings.
 
 One file for all of them, with undo and a recovery key, is on the plan. Its contract is [`spaces/spec/config.md`](https://github.com/baney75/polycarp/blob/main/spaces/spec/config.md).
 
@@ -346,7 +346,6 @@ One file for all of them, with undo and a recovery key, is on the plan. Its cont
 
 | Part | Mac | Windows | Linux | iPhone and iPad | Android |
 | --- | --- | --- | --- | --- | --- |
-| Voice | In the app | Nightly, as Silas | Nightly | In progress, iPad first | Planned |
 | Workspaces | In the app | In progress | Retired | Planned: control your computer's | Planned: control your computer's |
 | Browser agents | In the app | Not yet tried | Not yet tried | Planned: watch and steer your computer's | Planned: watch and steer your computer's |
 | Themes | In the app | Command works | Retired | Planned | Planned |
@@ -391,4 +390,4 @@ This always works.
 
 ## Credits and license
 
-The command, Spaces and Voice are MIT. Browser is AGPL-3.0, and builds on [0xSero's sitegeist](https://github.com/0xSero/sitegeist) and [Mario Zechner's Sitegeist](https://github.com/badlogic/sitegeist). The name and logo aren't covered by those licenses. Newsreader is under the SIL Open Font License.
+The command and Spaces are MIT. Browser is AGPL-3.0, and builds on [0xSero's sitegeist](https://github.com/0xSero/sitegeist) and [Mario Zechner's Sitegeist](https://github.com/badlogic/sitegeist). The name and logo aren't covered by those licenses. Newsreader is under the SIL Open Font License.

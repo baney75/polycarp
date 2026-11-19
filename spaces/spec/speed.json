@@ -1,16 +1,8 @@
 {
-  "about": "Voice fast-path baselines from spaces/scripts/bench-voice --write. A measurement more than 25% over its baseline fails core/ffi/tests/speed.rs (the startup number has a 10 ms floor). rtf is null until measured on a Mac with a speech model (POLYCARP_BENCH_MODELS).",
+  "about": "Speed baselines and budgets for Polycarp's parts. Each section names the script or test that writes or checks it.",
   "appLaunchToFirstFrame": {
     "baseline": null,
-    "how": "live check on the Mac; steps in the header of spaces/scripts/bench-voice"
-  },
-  "regressionLimit": 1.25,
-  "startToReadyMs": {
-    "baseline": 15.38,
-    "model": false
-  },
-  "transcribeRtf": {
-    "baseline": 0.047
+    "how": "live check on the Mac: log stream --predicate 'process == \"Polycarp\"' --style compact & open -a Polycarp, then read the time from the process start (ps -o lstart) to the first \"welcome\" or \"started\" line in Polycarp's trace.log"
   },
   "browser": {
     "versionMs": 53.2,
@@ -37,11 +29,6 @@
       "warmReadyWorstMs": 80
     },
     "measuredOn": "2026-11-07, Mac under load average 15, four alternating pairs"
-  },
-  "longDictation": {
-    "about": "One voice, 45 s and up, nine speakers: core/ffi/tests/speed.rs long_dictation_in_pieces. Wait after release.",
-    "allAtOnceMs": 2057,
-    "inPiecesMs": 81
   },
   "windowsSwitch": {
     "about": "Win+n on a windows-latest runner, timed from SendInput until DWM reads all 30 swatch windows right (9 workspaces, 3 or 4 shown, the rest cloaked): platforms/windows/tests/ci/switch-bench.ps1, CI job spaces-windows-speed. It fails over p90Ms times regressionLimit (or p90Ms plus floorMs, whichever is more, since runners vary), and on its own fixed limits (p90 100 ms, p99 250 ms, the max only reported, an outside uncloak undone at p90 under 100 ms).",
