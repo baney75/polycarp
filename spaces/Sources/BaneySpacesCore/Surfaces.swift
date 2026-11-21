@@ -217,7 +217,7 @@ public struct Surfaces: Equatable, Sendable {
         /// "HH:MM", 24 hour.
         public var wakeAt: String
         public var days: AlarmDays
-        /// On power, hold the Mac awake for the last hour before the alarm so it can ring.
+        /// On power, keep the Mac from idle sleep through the 12 hours before the alarm so it can ring.
         public var keepAwake: Bool
         /// The one-thing timer's default length.
         public var timerMinutes: Int
@@ -336,7 +336,7 @@ extension SurfaceField {
         SurfaceField("alarm.days", .choice(Surfaces.AlarmDays.allCases.map(\.rawValue)), .string("every"),
                      "Which days ring: every (all), weekdays (Monday to Friday) or not-sunday (all but Sunday)."),
         SurfaceField("alarm.keepAwake", .bool, .bool(true),
-                     "On power, hold the Mac awake for the last hour before the alarm so it can ring. A closed lid still sleeps."),
+                     "On power, keep the Mac from idle sleep through the 12 hours before the alarm so it can ring. The display still sleeps; a closed lid still sleeps the Mac."),
         SurfaceField("alarm.timerMinutes", .integer(1...240), .number(25), "The one-thing timer's default length in minutes, 1 to 240."),
 
         SurfaceField("text.translation", .choice(Surfaces.Translation.allCases.map(\.rawValue)), .string("BSB"),

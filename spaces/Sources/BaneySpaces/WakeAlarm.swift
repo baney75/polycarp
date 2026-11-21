@@ -6,13 +6,13 @@ import IOKit.pwr_mgt
 /// The wake alarm (`alarm.*` in surfaces.json, off by default). At `alarm.wakeAt` on the days `alarm.days` allows it
 /// lights the display, takes the idle screen down, plays Glass once a minute up to five times until any input, and opens
 /// the morning question if it hasn't been given today (`Alarm`). With `alarm.keepAwake` on and the Mac on power, it holds
-/// off idle sleep for the last hour so the ring can come. It re-arms at launch, on a change to surfaces.json, on wake
+/// off idle sleep for the 12 hours before it so the ring can come. It re-arms at launch, on a change to surfaces.json, on wake
 /// from sleep and when the time zone or the clock changes. It never writes a system setting. Main thread only.
 final class WakeAlarm {
     static let shared = WakeAlarm()
 
     private static let holdName = "Polycarp wake alarm" as CFString
-    /// How often the hold is looked at again (power plugged in or out, the last hour starting).
+    /// How often the hold is looked at again (power plugged in or out, the night before the ring starting).
     private static let holdLook: TimeInterval = 60
     /// How often input is looked for while it rings: the idle screen's pace.
     private static let ringLook: TimeInterval = IdleScreen.wakeInterval
@@ -53,6 +53,11 @@ final class WakeAlarm {
         ringTimer?.invalidate()
         ringTimer = nil
         let now = Date()
+        // Woken or re-armed just after the ring time, before its timer fired: ring it rather than pass over it.
+        if ringing == nil, let due = Alarm.due(armed: next, now: now) {
+            fire(scheduled: due)
+            return
+        }
         next = Alarm.nextRing(after: now, settings: SurfacesStore.shared.current.alarm, clock: DayClock())
         // One line each time the armed time changes; a change to another part of surfaces.json re-arms the same time.
         let line = next.map { "wake alarm: armed for \(Self.stamp($0))" } ?? "wake alarm: off"
@@ -88,7 +93,7 @@ final class WakeAlarm {
         RunLoop.main.add(t, forMode: .common)
         stepTimer = t
         let keeper = PurposeKeeper.shared
-        if Alarm.opensMorningCard(state: keeper.rhythm, today: keeper.ledger.dayClock.day(of: now)) {
+        if Alarm.opensMorningCard(at: now, state: keeper.rhythm, settings: keeper.settings, clock: keeper.ledger.dayClock) {
             RhythmSheet.shared.show(.morningQuestion)
         }
     }

@@ -3,8 +3,9 @@ import Foundation
 /// The wake alarm (`alarm.*` in surfaces.json): when it rings, when the Mac is held awake for it, and how a ring stops.
 /// Pure: a clock and the settings decide it, so tests pin it; `WakeAlarm` in the app plays it.
 public enum Alarm {
-    /// How long before the ring the Mac is held awake, on power, with `keepAwake` on.
-    public static let holdBefore: TimeInterval = 3600
+    /// How long before the ring the Mac is held awake, on power, with `keepAwake` on. A whole night: a hold has to be
+    /// taken while the Mac is still awake, since nothing runs once it sleeps, and only root can wake it.
+    public static let holdBefore: TimeInterval = 12 * 3600
     /// A ring time this far behind the clock was missed (the Mac slept through it) and doesn't ring late.
     public static let lateLimit: TimeInterval = 60
 
@@ -32,7 +33,7 @@ public enum Alarm {
         nextRing(after: date, settings: settings, calendar: clock.calendar)
     }
 
-    /// Whether to hold the Mac awake now: `keepAwake` on, on power, and the ring within the next hour.
+    /// Whether to hold the Mac awake now: `keepAwake` on, on power, and the ring within `holdBefore`.
     public static func shouldHoldAwake(now: Date, next: Date?, onPower: Bool, settings: Surfaces.Alarm) -> Bool {
         guard settings.keepAwake, onPower, let next else { return false }
         let left = next.timeIntervalSince(now)
@@ -43,9 +44,19 @@ public enum Alarm {
     /// is a missed alarm, not one to play.
     public static func ringsNow(scheduled: Date, now: Date) -> Bool { now.timeIntervalSince(scheduled) <= lateLimit }
 
-    /// Whether the ring opens the morning card: only while the morning question hasn't been given on `today`.
-    public static func opensMorningCard(state: RhythmState, today: PurposeDay) -> Bool {
-        state.morningAsked.map { $0 < today } ?? true
+    /// The armed ring to play now, when a re-arm (wake from sleep, a clock or settings change) comes after its time but
+    /// before its timer fired: re-arming from `now` alone would pass over it without a ring or a word.
+    public static func due(armed: Date?, now: Date) -> Date? {
+        guard let armed, armed <= now, ringsNow(scheduled: armed, now: now) else { return nil }
+        return armed
+    }
+
+    /// Whether a ring at `at` opens the morning card: the morning question on, not a resting Sunday, at or after the
+    /// day's 4 am start (an earlier ring belongs to yesterday's day, and 4 am asks on its own), and not given today.
+    public static func opensMorningCard(at: Date, state: RhythmState, settings: RhythmSettings, clock: DayClock) -> Bool {
+        guard settings.morningQuestion, !Rhythm.rests(now: at, settings: settings, clock: clock) else { return false }
+        guard clock.calendar.component(.hour, from: at) >= DayClock.startHour else { return false }
+        return state.morningAsked.map { $0 < clock.day(of: at) } ?? true
     }
 
     /// One alarm going off: a ring at once, then one each minute up to `limit` in all. Any input stops it, once `settle`

@@ -194,15 +194,18 @@ screen saver, lock or display sleep has the screen; those still come in their ti
 | `alarm.wake` | `false` | Ring at `alarm.wakeAt` and open the morning question. Off until you turn it on. |
 | `alarm.wakeAt` | `"06:30"` | When: `"HH:MM"` on the 24 hour clock, `00:00` to `23:59` (`"6:30"` is refused; write `"06:30"`). |
 | `alarm.days` | `"every"` | Which days ring: `every` (all), `weekdays` (Monday to Friday) or `not-sunday` (all but Sunday). |
-| `alarm.keepAwake` | `true` | On power, hold the Mac awake for the last hour before the alarm so it can ring. |
+| `alarm.keepAwake` | `true` | On power, keep the Mac from idle sleep through the 12 hours before the alarm so it can ring. |
 | `alarm.timerMinutes` | `25` | The one-thing timer's default length in minutes: 1 to 240. |
 
 At `wakeAt`, on a day `days` allows, Polycarp lights the display, takes the idle screen down and plays Glass (a macOS
 sound), then again each minute up to five rings in all; any key, click or move stops it. If the morning question hasn't
-been given today, its card opens. On a DST day the alarm keeps the clock time and rings once. With `keepAwake` on and
-the Mac on power, Polycarp holds off idle sleep ("Polycarp wake alarm" in `pmset -g assertions`) for the last hour so the
-ring can come; on battery, or with the lid closed, the Mac sleeps as it would and the alarm can't ring. An alarm the Mac
-slept through doesn't ring late. The one-thing timer is started from the status menu ("Start a timer (25 min)") or
+been given today, its card opens, unless the morning question is off, it is a resting Sunday, or the alarm is before
+4 am (that ring belongs to the night, and 4 am asks on its own). On a DST day the alarm keeps the clock time and rings
+once. Only a Mac that is awake can ring: nothing runs once it sleeps, and waking it takes root. So with `keepAwake` on
+and the Mac on power, Polycarp holds off idle sleep ("Polycarp wake alarm" in `pmset -g assertions`) through the 12
+hours before the alarm, which covers the night; the display still sleeps. On battery, or with the lid closed, the Mac
+sleeps as it would and the alarm can't ring. An alarm the Mac slept through doesn't ring late; one woken for within a
+minute of its time still rings. The one-thing timer is started from the status menu ("Start a timer (25 min)") or
 `polycarp-spaces timer [minutes]`; its time left shows after the one thing in the bar, and Glass plays once at its end.
 To try it: `polycarp-spaces surfaces set alarm '{"wake":true,"wakeAt":"07:00","days":"weekdays"}'`.
 

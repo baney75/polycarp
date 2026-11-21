@@ -247,6 +247,8 @@ case "purpose", "purposes", "one", "day":
     let words = rest.filter { $0 != "--json" }
     let sub = cmd == "one" || cmd == "day" ? cmd : (words.first ?? "list")
     let subArgs = cmd == "one" || cmd == "day" ? words : Array(words.dropFirst())
+    // The timer has its own command, which reads its reply.
+    if sub == "timer" { fail("usage: \(me) timer [minutes] | timer stop | timer status [--json]", code: 2) }
     if case .refused(let why) = PurposeAPI.ask(text: sub, args: subArgs) { fail(why, code: 2) }
     let reply = call(Wire.Request(op: .purpose, text: sub, args: subArgs))
     let enc = JSONEncoder()

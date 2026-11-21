@@ -465,8 +465,8 @@ each once a day, and Sunday is a day of rest. Each is a switch in the app's defa
 `~/Library/Application Support/Polycarp/Journal/`, with the day's time at the end. They stay on this Mac.
 
 Alarms belong to the rhythm. The wake alarm (`alarm.wake` in surfaces.json, off until you turn it on) rings at
-`alarm.wakeAt` and opens the morning question if it hasn't been given yet; on power it keeps the Mac awake for the last
-hour so it can ring. The one-thing timer gives the one thing a stretch of time: start it from the status menu, under
+`alarm.wakeAt` and opens the morning question if it hasn't been given yet; on power it keeps the Mac from idle sleep
+through the night before so it can ring (a sleeping Mac can't ring). The one-thing timer gives the one thing a stretch of time: start it from the status menu, under
 Set the One Thing, or with `polycarp-spaces timer`. Its time left shows after the one thing in the top bar, and it
 survives a relaunch. See the `alarm` section of [docs/surfaces.md](docs/surfaces.md).
 

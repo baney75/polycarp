@@ -73,14 +73,16 @@ final class AlarmTests: XCTestCase {
 
     // MARK: Holding the Mac awake
 
-    func testTheHoldCoversTheLastHourOnPowerOnly() {
+    func testTheHoldCoversTheNightBeforeOnPowerOnly() {
         let ring = at(2026, 11, 22, 6, 30)
         let a = alarm()
         func hold(_ before: TimeInterval, power: Bool = true, settings: Surfaces.Alarm? = nil) -> Bool {
             Alarm.shouldHoldAwake(now: ring.addingTimeInterval(-before), next: ring, onPower: power, settings: settings ?? a)
         }
-        XCTAssertTrue(hold(3600), "exactly an hour before")
-        XCTAssertFalse(hold(3601))
+        // Nothing runs once the Mac sleeps, so the hold must already be held when the owner walks away at night.
+        XCTAssertTrue(hold(7.5 * 3600), "23:00 the night before")
+        XCTAssertTrue(hold(12 * 3600), "exactly twelve hours before")
+        XCTAssertFalse(hold(12 * 3600 + 1))
         XCTAssertTrue(hold(1))
         XCTAssertFalse(hold(0), "at the ring the hold is the ring's own")
         XCTAssertFalse(hold(-5))
@@ -96,12 +98,33 @@ final class AlarmTests: XCTestCase {
         XCTAssertFalse(Alarm.ringsNow(scheduled: ring, now: ring.addingTimeInterval(61)), "the Mac slept through it")
     }
 
+    func testARearmJustAfterTheRingTimeStillRings() {
+        let ring = at(2026, 11, 23, 6, 30)
+        // The Mac woke at 06:30:15, or the clock was set, before the overdue timer fired.
+        XCTAssertEqual(Alarm.due(armed: ring, now: ring.addingTimeInterval(15)), ring)
+        XCTAssertEqual(Alarm.due(armed: ring, now: ring), ring)
+        XCTAssertNil(Alarm.due(armed: ring, now: ring.addingTimeInterval(61)), "missed, as the timer would say")
+        XCTAssertNil(Alarm.due(armed: ring, now: ring.addingTimeInterval(-1)), "not yet")
+        XCTAssertNil(Alarm.due(armed: nil, now: ring))
+    }
+
     func testTheRingOpensTheMorningCardOnlyWhenNotYetGiven() {
-        let today = PurposeFixture.day("2026-11-22")
-        XCTAssertTrue(Alarm.opensMorningCard(state: RhythmState(), today: today))
-        XCTAssertTrue(Alarm.opensMorningCard(state: RhythmState(morningAsked: PurposeFixture.day("2026-11-21")), today: today))
-        XCTAssertFalse(Alarm.opensMorningCard(state: RhythmState(morningAsked: today), today: today))
-        XCTAssertFalse(Alarm.opensMorningCard(state: RhythmState(morningAsked: PurposeFixture.day("2026-11-23")), today: today))
+        let monday = at(2026, 11, 23, 6, 30)
+        let today = PurposeFixture.day("2026-11-23")
+        func opens(_ when: Date = monday, asked: PurposeDay? = nil, _ s: RhythmSettings = RhythmSettings()) -> Bool {
+            Alarm.opensMorningCard(at: when, state: RhythmState(morningAsked: asked), settings: s, clock: chicago)
+        }
+        XCTAssertTrue(opens())
+        XCTAssertTrue(opens(asked: PurposeFixture.day("2026-11-22")))
+        XCTAssertFalse(opens(asked: today))
+        XCTAssertFalse(opens(asked: PurposeFixture.day("2026-11-24")))
+        XCTAssertFalse(opens(monday, RhythmSettings(morningQuestion: false)), "the morning question is off")
+        let sunday = at(2026, 11, 22, 6, 30)
+        XCTAssertFalse(opens(sunday), "the Lord's Day rests")
+        XCTAssertTrue(opens(sunday, RhythmSettings(restOnSunday: false)))
+        // 03:30 belongs to Sunday night's day; Monday's question comes at 4 am on its own, so the ring opens nothing.
+        XCTAssertFalse(opens(at(2026, 11, 23, 3, 30)))
+        XCTAssertTrue(opens(at(2026, 11, 23, 4, 0)))
     }
 
     // MARK: Ringing
