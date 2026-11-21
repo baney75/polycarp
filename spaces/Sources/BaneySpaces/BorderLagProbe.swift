@@ -49,8 +49,12 @@ enum BorderLagProbe {
         while BorderList.frames([id])[id] == nil, Date() < listed { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
         guard BorderList.frames([id])[id] != nil else { waitForTarget(); print("border lag: the target window \(id) never showed in the window list"); return 2 }
 
+        // Live moves are told on the thread that made them.
+        let lock = NSLock()
         var border: [BorderLag.Move] = []
-        WindowBorders.shared.probeMoved = { t, at in border.append(.init(t: t, at: CGPoint(x: at.x.rounded(), y: at.y.rounded()))) }
+        WindowBorders.shared.probeMoved = { t, at in
+            lock.lock(); border.append(.init(t: t, at: CGPoint(x: at.x.rounded(), y: at.y.rounded()))); lock.unlock()
+        }
         WindowBorders.shared.pin(id, style: WindowBorderStyle(Appearance.shared.look))
         let start = ProcessInfo.processInfo.systemUptime
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
@@ -58,19 +62,27 @@ enum BorderLagProbe {
         WindowBorders.shared.unpin()
         WindowBorders.shared.probeMoved = nil
         waitForTarget()
+        lock.lock(); let drawn = border; lock.unlock()
 
         let window = ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n").compactMap { l -> BorderLag.Move? in
             let f = l.split(separator: " ").compactMap { Double($0) }
             guard f.count == 3 else { return nil }
             return .init(t: f[0], at: CGPoint(x: f[1], y: f[2]))
         }.filter { $0.t >= start + 0.2 && $0.t <= end }   // from once the border has its first place
-        let lags = BorderLag.lags(window: window, border: border, end: end).map { $0 * 1000 }.sorted()
-        guard lags.count > 20 else { print("border lag: only \(lags.count) moves (\(window.count) window, \(border.count) border)"); return 2 }
+        // The fallback (`BANEYSPACES_BORDER_FALLBACK=1`) never moves a border: it must not draw one while the window moves.
+        if WindowBorders.shared.lastMode == .hideWhileMoving {
+            let during = drawn.filter { $0.t >= start + 0.2 && $0.t <= (window.last?.t ?? end) }
+            print(String(format: "border lag (fallback): %d window moves over %.0f s, %d borders drawn while it moved: %@",
+                         window.count, seconds, during.count, during.isEmpty && window.count > 20 ? "pass" : "FAIL"))
+            return during.isEmpty && window.count > 20 ? 0 : 1
+        }
+        let lags = BorderLag.lags(window: window, border: drawn, end: end).map { $0 * 1000 }.sorted()
+        guard lags.count > 20 else { print("border lag: only \(lags.count) moves (\(window.count) window, \(drawn.count) border)"); return 2 }
         func at(_ q: Double) -> Double { lags[min(lags.count - 1, Int(Double(lags.count) * q))] }
         let p99 = at(0.99)
         let pass = p99 <= frame120
         print(String(format: "border lag: %d window moves, %d border moves over %.0f s; median %.2f ms, p90 %.2f ms, p99 %.2f ms, "
-                     + "worst %.2f ms; p99 %.2f frames at 120 Hz: %@", lags.count, border.count, seconds, at(0.5), at(0.9), p99,
+                     + "worst %.2f ms; p99 %.2f frames at 120 Hz: %@", lags.count, drawn.count, seconds, at(0.5), at(0.9), p99,
                      lags.last!, p99 / frame120, pass ? "pass" : "FAIL"))
         return pass ? 0 : 1
     }
