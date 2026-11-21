@@ -14,6 +14,7 @@ usage: \(me) <command>
   ls [--json]                 everything the session engine wraps: terminals, agents, browser tabs
   focus <id | words>          bring it forward (an ID from ls, or a fuzzy search)
   open <url>                  open in your default browser
+  play <file>                 show a song, video or photo in Polycarp's player (its folder is the playlist)
   send <id | words> <text>    type text into a Ghostty terminal, as if pasted
   notify [message]            flag the terminal this runs in as needing you
   state                       the session engine's live state as JSON
@@ -145,6 +146,28 @@ case "focus", "go":
 case "open":
     guard let url = rest.first else { fail("usage: \(me) open <url>", code: 2) }
     _ = call(Wire.Request(op: .open, target: url))
+
+case "play":
+    // The built-in player (spec/player.md). The path is checked here, so the app never waits on the disk for it.
+    guard remoteHost == nil else { fail("play opens files on this machine only", code: 2) }
+    guard rest.count == 1 else { fail("usage: \(me) play <file>", code: 2) }
+    let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+    let file = URL(fileURLWithPath: (rest[0] as NSString).expandingTildeInPath, relativeTo: cwd).standardizedFileURL
+    var isDir: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: file.path, isDirectory: &isDir), !isDir.boolValue else { fail("no such file: \(file.path)") }
+    guard PlayerMedia.kind(of: file.path) != nil else { fail("the player opens \(PlayerMedia.extensionList) files", code: 2) }
+    let sent = Wire.send(Wire.Request(op: .play, target: file.path, caller: launchingApp.isEmpty ? "cli" : launchingApp), timeout: 2)
+    if let reply = sent.reply {
+        if !reply.ok { fail(reply.error ?? "the player didn't open it") }
+        break
+    }
+    if sent.connected { fail("Polycarp took the request but didn't answer; it may still open the file") }
+    // Not running, or a build without the player: let macOS hand the file to Polycarp, which starts it if need be.
+    let open = Process()
+    open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    open.arguments = ["-b", Product.bundleID, file.path]
+    do { try open.run(); open.waitUntilExit() } catch { fail("couldn't start Polycarp: \(error.localizedDescription)") }
+    if open.terminationStatus != 0 { fail("Polycarp isn't installed or couldn't open \(file.lastPathComponent)") }
 
 case "send":
     guard rest.count >= 2 else { fail("usage: \(me) send <id | words> <text>", code: 2) }

@@ -357,6 +357,8 @@ final class SessionController {
             guard r.caller?.hasPrefix("remote ") != true else { return .init(ok: false, error: "updates are started on each machine itself") }
             return updateHandler?(r.text ?? "status") ?? .init(ok: false, error: "the updater isn't ready")
         }
+        // The player needs no Accessibility either; another machine never gets here (`Remote.allows`).
+        if r.op == .play { return play(r) }
         guard started else { return .init(ok: false, error: "Polycarp hasn't finished starting (it needs Accessibility)") }
         switch r.op {
         case .ping:
@@ -396,6 +398,8 @@ final class SessionController {
         case .update:
             // Answered above, before the Accessibility check.
             return .init(ok: false, error: "the updater isn't ready")
+        case .play:
+            return play(r)
         case .remote:
             switch r.text ?? "status" {
             case "on":
@@ -414,6 +418,17 @@ final class SessionController {
             else if Self.remoteEnabled { info["listening"] = "waiting for Tailscale" }
             return .init(ok: true, info: info)
         }
+    }
+
+    /// `polycarp-spaces play <path>`: the command checked the path; this only hands it to the player, which reads the
+    /// disk off the main thread.
+    private func play(_ r: Wire.Request) -> Wire.Reply {
+        guard r.caller?.hasPrefix("remote ") != true else { return .init(ok: false, error: "the player opens files on this machine only") }
+        guard let path = r.target, path.hasPrefix("/"), let kind = PlayerMedia.kind(of: path) else {
+            return .init(ok: false, error: "the player opens \(PlayerMedia.extensionList) files, by absolute path")
+        }
+        Player.open(URL(fileURLWithPath: path))
+        return .init(ok: true, info: ["kind": kind.rawValue, "path": path])
     }
 
     private var notReady: Wire.Reply { .init(ok: false, error: "Polycarp isn't ready for settings yet; try again in a moment") }
