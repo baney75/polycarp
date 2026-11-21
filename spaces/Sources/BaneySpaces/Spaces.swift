@@ -12,6 +12,9 @@ final class Spaces {
     private var saved: SavedFrames
     private var windows: [WindowID: Window] = [:]
     private(set) var switching = false
+    /// Set with `switching` while a switch (or a key press held in order with switches) waits on a background scan
+    /// before anything moves: a scan landing then is applied, since nothing it saw has moved yet.
+    private var holding = false
     /// False after `suspend()`: nothing moves until `start()` runs again.
     private(set) var active = false
     /// Timing of the switch in progress, for timing.log.
@@ -36,6 +39,30 @@ final class Spaces {
     /// `offscreen` is the known windows of shown apps that weren't on screen: one joining them
     /// may have been closed (see `closedWindows`), so it's worth a scan.
     private var lastScan: (windows: Set<WindowID>, pids: Set<pid_t>, unsure: Set<pid_t>, offscreen: Set<WindowID>)?
+    /// Each app window the window server listed at the last scan, with its app: the next scan asks only the apps whose
+    /// windows changed (`ScanPlan`).
+    private var lastScanWindows: [WindowID: pid_t]?
+    /// Each app's last answer to a scan. An app a scan didn't ask keeps its answer; one with no window now has none.
+    private var answers: [pid_t: Windows.Answer] = [:]
+    /// Each window's title and minimized state from the last background read, for the dock, the overview and the
+    /// launcher, which never ask an app on the main thread.
+    private var details: [WindowID: WindowDetails] = [:]
+    /// Scans asked for and the code waiting on them (`whenFresh`). One runs at a time, on `scanQueue`.
+    private var scans = ScanRequests<() -> Void>()
+    /// Numbers each scan as it starts. One that lands after a newer one was applied (`refreshNow`) only runs its waiters.
+    private var scanSerial = 0
+    private var appliedSerial = 0
+    /// The scan running on `scanQueue` now, if any.
+    private var scanning: ScanStart?
+    /// Accessibility scans run here, never on the main thread (2026-11-21, `ScanPlan`).
+    private static let scanQueue = DispatchQueue(label: "com.baney.polycarp.scan", qos: .userInitiated)
+    /// Short Accessibility questions (which window has focus, has a new window appeared), asked off the main thread.
+    static let axQueue = DispatchQueue(label: "com.baney.polycarp.ax", qos: .userInitiated, attributes: .concurrent)
+    /// When titles were last read for the dock, and whether a read runs now (`refreshDetails`).
+    private var detailsReadAt = Date.distantPast
+    private var readingDetails = false
+    /// When hidden apps were last asked for their windows (`refreshHidden`).
+    private var hiddenAskedAt = Date.distantPast
     /// What the last scan listed that isn't a standard window, so a skipped refresh can tell a
     /// window the scan missed (see `ScanCheck`) from a sheet or panel; and the on-screen windows
     /// scans couldn't place, each with its next look.
@@ -110,7 +137,7 @@ final class Spaces {
     func start() {
         active = true
         for pid in saved.hiddenApps { NSRunningApplication(processIdentifier: pid)?.unhide() }
-        refresh(full: true)
+        refreshNow()
         let screens = Windows.screens()
         var unreached: [WindowID: CGRect] = [:]
         let server = Windows.serverWindows()
@@ -155,43 +182,200 @@ final class Spaces {
         queued.removeAll()
         followPending = false
         generation += 1
+        scans.reset()
+        scanning = nil
         watcher.removeAll()
         emptyHolder.orderOut(nil)
     }
 
-    /// Brings the window list up to date. Unless `full`, the Accessibility scan (one round trip
-    /// per app, the slowest part of a switch) is skipped when no app window opened or closed
-    /// and no app launched or quit since the last scan.
-    func refresh(full: Bool = false) {
+    /// Brings the window list up to date without waiting on any app. When the window server's list of app windows is
+    /// what it was at the last scan and no app launched or quit, nothing needs asking. Otherwise windows the server
+    /// says are gone leave now, and a background scan asks the apps whose windows changed (`ScanPlan`); its answer
+    /// lands a moment later and calls `onChange`. Code that must act on the new list uses `whenFresh`.
+    /// Until 2026-11-21 this asked every app on the main thread: a scan nearly always paid one app's 0.25 s timeout
+    /// (p50 255 ms), and the dock, the launcher and each key press waited behind it.
+    func refresh(full: Bool = false) { refresh(full: full, asking: [], then: nil) }
+
+    /// Runs `body` on the main thread once the window list is at least as new as this call: at once when nothing
+    /// changed, else when a background scan that started after this call lands. Mid-switch it waits for the switch.
+    /// `asking` are apps to ask even if their windows look unchanged (a hidden app's window closing changes nothing
+    /// the window server shows).
+    func whenFresh(full: Bool = false, asking: Set<pid_t> = [], _ body: @escaping () -> Void) {
+        if switching { return enqueue { [weak self] in self?.whenFresh(full: full, asking: asking, body) } }
+        // A switch that started while the scan ran: wait for it, then look again, since windows moved meanwhile.
+        refresh(full: full, asking: asking, then: { [weak self] in
+            guard let self else { return }
+            if self.switching { self.enqueue { [weak self] in self?.whenFresh(full: full, asking: asking, body) } } else { body() }
+        })
+    }
+
+    private func refresh(full: Bool, asking: Set<pid_t>, then body: (() -> Void)?) {
         let pids = RunningApps.regular
         let snap = Windows.snapshot(apps: pids)
         clock.mark(.snap)
         let offKnown = offscreenKnown(snap.offscreen)
         let stray = ScanCheck.unplaced(onScreen: snap.onScreen, placed: Set(model.home.keys),
                                        notWindows: notWindows, unsure: lastScan?.unsure ?? [])
-        if !full, let last = lastScan, last.windows == snap.appWindows, last.pids == pids,
-           last.offscreen == offKnown, !unplaced.due(stray, now: Date()) {
+        let now = Date()
+        if !full, asking.isEmpty, let last = lastScan, last.windows == snap.appWindows, last.pids == pids,
+           last.offscreen == offKnown, !unplaced.due(stray, now: now) {
             prune(alive: snap.alive)
             unplaced.keep(stray)
             scheduleHeal()
             clock.scan = "skip"
             updateAttention()
+            body?()
             return
         }
-        let firstScan = lastScan == nil
-        clock.scan = firstScan ? "first" : full ? "full" : last(lastScan!, snap.appWindows, pids, offKnown)
+        clock.scan = lastScan.map { full ? "full" : last($0, snap.appWindows, pids, offKnown, asked: !asking.isEmpty) } ?? "first"
+        // A window the window server no longer has is gone: no app needs asking for that.
+        prune(alive: snap.alive)
+        let due = Set(stray.filter { unplaced.due([$0], now: now) }.compactMap { snap.onScreen[$0] })
+        // The scan running now started from this same window list: its answer is as new as this call needs.
+        if let body, !full, asking.isEmpty, let running = scanning, running.snap.appWindows == snap.appWindows,
+           running.pids == pids, Set(running.snap.offscreen.keys) == Set(snap.offscreen.keys), scans.join(body) {
+            if !due.isEmpty { scans.request(full: false, pids: due) }
+            return
+        }
+        scans.request(full: full, pids: asking.union(due), waiter: body)
+        startScan()
+    }
+
+    /// What a scan starts from, read on the main thread from the window server (never an app): its list of windows,
+    /// the regular apps, and the apps to ask.
+    private struct ScanStart {
+        let serial: Int
+        let snap: (alive: Set<WindowID>, appWindows: Set<WindowID>, owners: Set<pid_t>, offscreen: [WindowID: pid_t], onScreen: [WindowID: pid_t])
+        let pids: Set<pid_t>
+        let owners: Set<pid_t>
+        let ask: Set<pid_t>
+    }
+
+    private func scanStart(full: Bool, extra: Set<pid_t>) -> ScanStart {
         RunningApps.invalidate()
         let pidsNow = RunningApps.regular
         Windows.keepBench(pidsNow)
-        let scanStart = ProcessInfo.processInfo.systemUptime
-        let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)
-        let missed = unsure.map { NSRunningApplication(processIdentifier: $0)?.localizedName ?? "pid \($0)" }
-        if let line = ScanCheck.slowScanLine(seconds: ProcessInfo.processInfo.systemUptime - scanStart, kind: clock.scan,
-                                              switching: switching, missed: missed) { Trace.log(line) }
-        notWindows = nonStandard
-        asking = asks
-        // A window the app closed but kept isn't one any more, though the window server says it's alive.
-        let answered = pidsNow.intersection(snap.owners).subtracting(unsure).subtracting(partial)
+        let snap = Windows.snapshot(apps: pidsNow)
+        // Only apps that own a window are asked. A running app with no windows is often frozen by
+        // macOS and never answers, which would cost a full timeout on every scan.
+        let owners = pidsNow.intersection(snap.owners)
+        let complete = Set(answers.filter { $0.value.answered && !$0.value.partial }.keys)
+        let ask = ScanPlan.appsToAsk(full: full, owners: owners, now: snap.offscreen.merging(snap.onScreen) { a, _ in a },
+                                     before: lastScanWindows, offscreenNow: offscreenKnown(snap.offscreen),
+                                     offscreenBefore: lastScan?.offscreen ?? [], complete: complete, extra: extra)
+        scanSerial += 1
+        return ScanStart(serial: scanSerial, snap: snap, pids: pidsNow, owners: owners, ask: ask)
+    }
+
+    /// Starts the next scan asked for, on `scanQueue`, unless one runs. Mid-switch only one the switch waits on starts:
+    /// windows are on the move, so any other answer would be thrown away.
+    private func startScan() {
+        guard active, let (ticket, ask) = scans.start(onlyIfWaitedOn: switching) else { return }
+        let plan = scanStart(full: ask.full, extra: ask.pids)
+        scanning = plan
+        let kind = clock.scan, mid = switching
+        Spaces.scanQueue.async { [weak self] in
+            let started = ProcessInfo.processInfo.systemUptime
+            let fresh = Windows.all(asking: plan.ask)
+            let missed = plan.ask.filter { fresh[$0]?.answered != true }.map { NSRunningApplication(processIdentifier: $0)?.localizedName ?? "pid \($0)" }
+            if let line = ScanCheck.slowScanLine(seconds: ProcessInfo.processInfo.systemUptime - started, kind: kind,
+                                                  switching: mid, missed: missed, onMain: false) { Trace.log(line) }
+            DispatchQueue.main.async { self?.scanLanded(ticket: ticket, plan: plan, fresh: fresh) }
+        }
+    }
+
+    /// A background scan's answer, on the main thread: applied, then the code that waited on it runs.
+    private func scanLanded(ticket: Int, plan: ScanStart, fresh: [pid_t: Windows.Answer]) {
+        let waiters = scans.landed(ticket)
+        if scanning?.serial == plan.serial { scanning = nil }
+        guard active else { return }
+        // Mid-switch, windows are on the move and what this scan saw of them is already old: its apps are asked again
+        // once the switch is done (`finish`). A scan the switch itself waits on started before anything moved.
+        // Its waiters (`whenFresh`) see the switch and wait for it.
+        if switching, !holding {
+            scans.request(full: false, pids: plan.ask)
+            for run in waiters { run() }
+            return startScan()
+        }
+        let before = model, titles = details
+        if plan.serial > appliedSerial { applyScan(plan, fresh: fresh) }
+        for run in waiters { run() }
+        startScan()
+        // A window that came or went, or a title that changed, shows in the dock and the menu bar.
+        if !switching, model != before || details != titles {
+            persist()
+            onChange?()
+        }
+    }
+
+    /// Launch, quit and lost permission only: every app asked, with the main thread waiting. `start` places every
+    /// window before the first switch, and `restoreAll` must reach every parked window before Polycarp lets go.
+    private func refreshNow() {
+        let plan = scanStart(full: true, extra: [])
+        let started = ProcessInfo.processInfo.systemUptime
+        let fresh = Windows.all(asking: plan.ask)
+        let missed = plan.ask.filter { fresh[$0]?.answered != true }.map { NSRunningApplication(processIdentifier: $0)?.localizedName ?? "pid \($0)" }
+        if let line = ScanCheck.slowScanLine(seconds: ProcessInfo.processInfo.systemUptime - started, kind: lastScan == nil ? "first" : "full",
+                                              switching: switching, missed: missed, onMain: true) { Trace.log(line) }
+        applyScan(plan, fresh: fresh)
+    }
+
+    /// Titles change with every tab and never show in the window server's list, so the dock and the overview read
+    /// them again in the background when they open; a change reloads them. At most one read runs, and not more often
+    /// than every half second.
+    /// `pid` reads only that app's windows, unthrottled: the app in front, whose tab or window just changed.
+    func refreshDetails(of pid: pid_t? = nil) {
+        guard active else { return }
+        if pid == nil {
+            guard !readingDetails, Date().timeIntervalSince(detailsReadAt) > 0.5 else { return }
+            readingDetails = true
+            detailsReadAt = Date()
+        }
+        let list = windows.values.filter { pid == nil || $0.pid == pid }
+        Spaces.axQueue.async { [weak self] in
+            let read = Windows.details(of: list)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if pid == nil { self.readingDetails = false }
+                let merged = self.details.merging(read) { _, new in new }.filter { self.windows[$0.key] != nil }
+                guard merged != self.details else { return }
+                self.details = merged
+                if !self.switching { self.onChange?() }
+            }
+        }
+    }
+
+    /// A hidden app's window closing changes nothing the window server shows, so no scan notices it: the dock asks
+    /// hidden apps again, in the background, when it opens. At most every two seconds.
+    func refreshHidden() {
+        guard active, !switching, Date().timeIntervalSince(hiddenAskedAt) > 2 else { return }
+        let hidden = Set(windows.values.map(\.pid)).filter { NSRunningApplication(processIdentifier: $0)?.isHidden == true }
+        guard !hidden.isEmpty else { return }
+        hiddenAskedAt = Date()
+        refresh(full: false, asking: hidden, then: nil)
+    }
+
+    /// One scan's answer, applied to the model. Main thread; it asks no app (frames come from the window server, titles
+    /// and minimized state from the scan).
+    private func applyScan(_ plan: ScanStart, fresh: [pid_t: Windows.Answer]) {
+        appliedSerial = plan.serial
+        let snap = plan.snap, pidsNow = plan.pids
+        let firstScan = lastScan == nil
+        // Each app asked has its new answer; the rest keep their last one. An app with no window now has none.
+        for (pid, a) in fresh { answers[pid] = a }
+        answers = answers.filter { plan.owners.contains($0.key) }
+        for a in fresh.values { details.merge(a.details) { _, new in new } }
+        let list = answers.values.flatMap(\.windows)
+        let unsure = plan.owners.filter { answers[$0]?.answered != true }
+        let listed = Set(answers.values.flatMap(\.listed))
+        let server = Windows.serverWindows()
+        func bounds(_ id: WindowID) -> CGRect? { server[id]?.bounds }
+        func minimized(_ id: WindowID) -> Bool { details[id]?.minimized ?? false }
+        notWindows = Set(answers.values.flatMap(\.notWindows))
+        asking = answers.values.flatMap(\.asking)
+        // A window the app closed but kept isn't one any more, though the window server says it's alive. Only an app
+        // asked just now, that answered in full, can say a window it didn't list is closed.
+        let answered = Set(fresh.filter { $0.value.answered && !$0.value.partial }.keys)
         let closed = closedWindows(listed: listed, answered: answered, offscreen: snap.offscreen)
         for id in closed {
             guard let ws = model.workspace(of: id), let pid = snap.offscreen[id] else { continue }
@@ -213,15 +397,19 @@ final class Spaces {
         var appeared: [WindowID: DisplayKey] = [:]
         if model.shown.count > 1 {
             for w in list where model.workspace(of: w.id) == nil {
-                if let f = w.frame, let d = Geometry.display(of: f, in: frames) { appeared[w.id] = d }
+                if let f = bounds(w.id), let d = Geometry.display(of: f, in: frames) { appeared[w.id] = d }
             }
         }
         let added = model.sync(seen: list.map(\.id), alive: alive, on: appeared)
-        if model.shown.count > 1, !switching { noteMovedAcrossDisplays(list, frames: frames, act: Date() > displaysSettleUntil) }
+        if model.shown.count > 1, !switching || holding {
+            noteMovedAcrossDisplays(list, frames: frames, act: Date() > displaysSettleUntil, bounds: bounds, minimized: minimized)
+        }
         prune(alive: alive)
         // A scan that skipped a busy app can't vouch for that app's windows. It's remembered, and
         // the next refresh scans again as soon as that app is willing to answer.
         lastScan = (snap.appWindows, pidsNow, unsure, offscreenKnown(snap.offscreen))
+        lastScanWindows = snap.offscreen.merging(snap.onScreen) { a, _ in a }
+        details = details.filter { windows[$0.key] != nil }
         watcher.sync(snap.owners)
         if !unsure.isEmpty || watcher.missing { scheduleRetry() }
         let screens = Windows.screens()
@@ -230,7 +418,7 @@ final class Spaces {
         var fromLayout = Set<WindowID>()
         for id in added {
             if let d = dormant.removeValue(forKey: id), windows[id]?.pid == d.pid,
-               snap.offscreen[id] != nil || windows[id]?.frame.map({ Geometry.isStranded($0, screens: screens) }) == true {
+               snap.offscreen[id] != nil || bounds(id).map({ Geometry.isStranded($0, screens: screens) }) == true {
                 // A tab came back because the tab in front of it just closed: that one knows where
                 // the window lives now (it may have been moved since) and holds its parked frame.
                 let sibling = closed.compactMap { dormant[$0] }.first { $0.pid == d.pid }
@@ -254,17 +442,19 @@ final class Spaces {
             returned = placeClaimed(fresh) || returned
             adoptBackgroundWindows(fresh)
         }
-        if returned, !switching {
-            DispatchQueue.main.async { [weak self] in
+        if returned {
+            let again: () -> Void = { [weak self] in
                 guard let self, self.active, !self.switching else { return }
                 self.switchTo(self.model.current, takeFocus: false, announce: false)
             }
+            // Mid-switch (its own scan) the window goes out of sight once the switch is done.
+            if switching { enqueue(again) } else { DispatchQueue.main.async(execute: again) }
         }
         // An app that autosaves its window position can reopen a window at the hiding spot.
         // One that belongs on another workspace isn't moved into sight here: it's recorded as
         // parked, to come back to the middle of the screen when you go there.
         for id in added {
-            guard let w = windows[id], !w.isMinimized, let f = w.frame, Geometry.isStranded(f, screens: screens) else { continue }
+            guard let w = windows[id], !minimized(id), let f = bounds(id), Geometry.isStranded(f, screens: screens) else { continue }
             let to = Geometry.restoreFrame(saved: nil, size: f.size, screens: screens)
             if model.workspace(of: id).map(model.isShown) == true { w.setFrame(to) } else if saved.frames[id] == nil { saved.frames[id] = to }
         }
@@ -272,7 +462,7 @@ final class Spaces {
         // (an app that applied our move late), is simply shown. Its old record would otherwise
         // send it back to a stale spot later.
         for id in saved.frames.keys where model.workspace(of: id).map(model.isShown) == true {
-            if let f = windows[id]?.frame, !Geometry.isStranded(f, screens: screens) { saved.frames[id] = nil }
+            if windows[id] != nil, let f = bounds(id), !Geometry.isStranded(f, screens: screens) { saved.frames[id] = nil }
         }
         unplaced.scanned(unplaced: ScanCheck.unplaced(onScreen: snap.onScreen, placed: Set(model.home.keys),
                                                       notWindows: notWindows, unsure: unsure),
@@ -442,13 +632,14 @@ final class Spaces {
                   // A brand-new window may not have its title yet.
                   let c = claims[w.pid]?.first(where: { c in
                       (c.newProcess || w.pid != front)
-                          && (c.title.map { w.title.isEmpty || w.title.localizedCaseInsensitiveContains($0) } ?? true)
+                          && (c.title.map { t in title(of: id).isEmpty || title(of: id).localizedCaseInsensitiveContains(t) } ?? true)
                   }) else { continue }
             // A modal window (a standard window that blocks its app) waits on you: it stays with its
             // app's windows, never sent off alone by a claim (`WaitingWindow.claimTakes`). A process
             // the agent started is the agent's whole: its modal goes with the claim, not onto your
             // workspace (`WaitingWindow.claimKeeps`).
-            let modal = (w.element.value(kAXModalAttribute) as NSNumber?)?.boolValue
+            // Read by the scan: a standard window it found modal is among `asking`.
+            let modal = asking.contains { $0.id == id && $0.modal == true }
             guard WaitingWindow.claimKeeps(agentStartedProcess: c.newProcess, subrole: kAXStandardWindowSubrole as String, modal: modal) else {
                 let parents = Set(windows.values.filter { $0.pid == w.pid && $0.id != id }.compactMap { model.workspace(of: $0.id) })
                 switch WaitingWindow.place(asks: true, parents: parents, shown: Set(Workspaces.range.filter(model.isShown)), recent: recent) {
@@ -497,10 +688,9 @@ final class Spaces {
     }
 
     /// Why a full scan ran, for timing.log.
-    private func last(_ l: (windows: Set<WindowID>, pids: Set<pid_t>, unsure: Set<pid_t>, offscreen: Set<WindowID>), _ w: Set<WindowID>, _ p: Set<pid_t>, _ off: Set<WindowID>) -> String {
-        if l.pids != p { return "apps" }
-        if l.windows == w { return l.offscreen == off ? "unplaced" : "offscreen" }
-        return "windows+\(w.subtracting(l.windows).count)-\(l.windows.subtracting(w).count)"
+    private func last(_ l: (windows: Set<WindowID>, pids: Set<pid_t>, unsure: Set<pid_t>, offscreen: Set<WindowID>), _ w: Set<WindowID>, _ p: Set<pid_t>, _ off: Set<WindowID>, asked: Bool) -> String {
+        ScanPlan.reason(pidsChanged: l.pids != p, added: w.subtracting(l.windows).count, removed: l.windows.subtracting(w).count,
+                        offscreenChanged: l.offscreen != off, asked: asked)
     }
 
     /// Known windows (and saved-layout ones still waiting) that their app closed but keeps:
@@ -548,8 +738,8 @@ final class Spaces {
                 return
             }
             if self.switching { return self.scheduleRetry() }
-            self.refresh(full: true)
-            self.persist()
+            // Only the apps that didn't answer are asked; the scan runs in the background and saves what it changes.
+            self.refresh(full: false, asking: unsure.filter(Windows.isResponsive), then: nil)
         }
         retry = (work, due)
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
@@ -564,12 +754,8 @@ final class Spaces {
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.active else { return }
             if self.switching { return self.scheduleHeal() }
-            let before = self.model
+            // The scan lands in the background, saves and reloads the dock if anything moved, and sets the next look.
             self.refresh()
-            if self.model != before {
-                self.persist()
-                self.onChange?()
-            }
             self.scheduleHeal()
         }
         heal = work
@@ -614,17 +800,31 @@ final class Spaces {
         }
         generation += 1
         clock = SwitchClock(target: n)
-        refresh()
+        // From here every other request queues behind this switch. It plans from the last scan when the window server
+        // says nothing changed since; otherwise from a background scan of the apps whose windows changed, waited for
+        // without holding the main thread (`whenFresh`).
+        switching = true
+        holding = true
+        let gen = generation
+        refresh(full: false, asking: [], then: { [self] in
+            guard gen == generation, active else { return }
+            holding = false
+            plan(n, moveFocus: moveFocus)
+        })
+    }
+
+    /// The switch, once the window list is fresh.
+    private func plan(_ n: Int, moveFocus: Bool) {
         clock.mark(.scanned)
-        let focused = Windows.focused(in: Array(windows.values))
+        // The window in front, from the window server's stacking order: asking its app could wait on it.
+        let focused = Windows.front(in: windows) { [self] id in saved.frames[id] == nil }
         if let f = focused, model.workspace(of: f.id) == model.current { noteFocus(f.id) }
         let leaving = model.current
         clock.from = leaving
         let plan = model.switchTo(n)
         recent.removeAll { $0 == n }
         recent.insert(n, at: 0)
-        switching = true
-        // The menu bar number changes the moment the key is pressed, not when the work is done.
+        // The menu bar number changes the moment the plan is made, not when the work is done.
         onChange?()
 
         // Full screen lives on a macOS desktop of its own, which BaneySpaces can't hide. Any window
@@ -646,10 +846,15 @@ final class Spaces {
             clock.mark(.fullscreen)
             for w in refused { model.assign(w.id, to: n, focus: false) }
             // Back on the regular desktop, Accessibility can list windows it couldn't see from the
-            // full-screen one. Those opened while you were on the workspace you just left.
-            refresh(full: true)
-            for id in Set(model.home.keys).subtracting(known) { model.assign(id, to: leaving, focus: false) }
-            apply(model.switchTo(n), moveFocus: moveFocus)
+            // full-screen one. Those opened while you were on the workspace you just left. Every app is asked, in the
+            // background; nothing moves until it lands.
+            holding = true
+            refresh(full: true, asking: [], then: { [self] in
+                holding = false
+                guard gen == generation, active else { return }
+                for id in Set(model.home.keys).subtracting(known) { model.assign(id, to: leaving, focus: false) }
+                apply(model.switchTo(n), moveFocus: moveFocus)
+            })
         }
     }
 
@@ -688,7 +893,8 @@ final class Spaces {
             AXUIElementGetPid(target, &pid)
             w = windows[id] ?? Window(id: id, element: target, pid: pid, appName: NSRunningApplication(processIdentifier: pid)?.localizedName ?? "")
         } else {
-            w = Windows.focused(in: Array(windows.values))
+            // The front window by the window server's order, not by asking the app.
+            w = Windows.front(in: windows)
         }
         guard let w, let current = w.frame else { return NSSound.beep() }
         let fill = Windows.visibleArea(near: current)
@@ -774,17 +980,32 @@ final class Spaces {
     func flattenFullScreen() {
         guard active else { return }
         if switching { return enqueue { [weak self] in self?.flattenFullScreen() } }
-        refresh(full: true)
-        let fullScreen = windows.values.filter { !refusedFullScreen.contains($0.id) && $0.isFullScreen }
-        guard !fullScreen.isEmpty else { return }
+        whenFresh(full: true) { [self] in
+            // Each window's full-screen flag is asked of its app off the main thread.
+            let list = windows.values.filter { !refusedFullScreen.contains($0.id) }
+            Spaces.axQueue.async { [weak self] in
+                let fullScreen = list.filter(\.isFullScreen)
+                DispatchQueue.main.async {
+                    guard let self, self.active, !fullScreen.isEmpty else { return }
+                    if self.switching { return self.enqueue { [weak self] in self?.flattenFullScreen() } }
+                    self.flatten(fullScreen)
+                }
+            }
+        }
+    }
+
+    private func flatten(_ fullScreen: [Window]) {
         switching = true
         generation += 1
         let gen = generation
         leaveFullScreen(fullScreen, fill: true) { [self] _ in
             guard gen == generation, active else { return }
-            refresh(full: true)
-            persist()
-            finish()
+            holding = true
+            refresh(full: true, asking: [], then: { [self] in
+                holding = false
+                persist()
+                finish()
+            })
         }
     }
 
@@ -818,13 +1039,45 @@ final class Spaces {
     func moveFocused(to n: Int) {
         guard active, Workspaces.range.contains(n) else { return }
         if switching { return enqueue { [weak self] in self?.moveFocused(to: n) } }
-        refresh()
-        guard let w = Windows.focused(in: Array(windows.values)) else {
-            NSLog("Polycarp: no window to move (focused app pid %d)", Windows.focusedPid() ?? -1)
-            return NSSound.beep()
+        // A window opened a moment ago is scanned first; the window in front comes from the window server.
+        holdUntilFresh { [self] in
+            guard let w = Windows.front(in: windows) else {
+                NSLog("Polycarp: no window to move (focused app pid %d)", NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1)
+                return NSSound.beep()
+            }
+            model.assign(w.id, to: n)
+            switchTo(n)
         }
-        model.assign(w.id, to: n)
-        switchTo(n)
+    }
+
+    /// Runs `body` once the window list is fresh, holding every other request meanwhile (they queue as during a
+    /// switch), so key presses keep their order though the scan runs in the background. Whatever queued runs after
+    /// `body`, or after the switch it starts.
+    private func holdUntilFresh(full: Bool = false, asking: Set<pid_t> = [], _ body: @escaping () -> Void) {
+        switching = true
+        holding = true
+        let gen = generation
+        refresh(full: full, asking: asking, then: { [weak self] in
+            guard let self, gen == self.generation, self.active else { return }
+            self.holding = false
+            self.switching = false
+            body()
+            if !self.switching { self.finish() }
+        })
+    }
+
+    /// Asks apps something through Accessibility off the main thread; `then` gets the answer on the main thread,
+    /// unless Polycarp stopped or a switch started meanwhile (the answer is about a desktop that's gone): then `dropped`.
+    private func ask<T>(_ question: @escaping () -> T, then: @escaping (T) -> Void, dropped: (() -> Void)? = nil) {
+        let gen = generation
+        Spaces.axQueue.async { [weak self] in
+            let answer = question()
+            DispatchQueue.main.async {
+                guard let self, self.active else { return }
+                guard gen == self.generation else { dropped?(); return }
+                then(answer)
+            }
+        }
     }
 
     /// Clicking a Dock icon or using ⌘Tab can focus a window on another workspace. Go there,
@@ -834,6 +1087,8 @@ final class Spaces {
         guard active, pid != getpid() else { return }
         defer { frontPid = pid }
         Windows.markResponsive(pid)
+        // Its title may have changed while it was in back (a tab switch): the switcher and the dock show the new one.
+        refreshDetails(of: pid)
         // Asked for by `openWindowHere`: its window is on the way, here.
         if let o = opening, o.pid == pid, Date() < o.until { return }
         activatedAt = Date()
@@ -854,12 +1109,14 @@ final class Spaces {
 
     /// The app's window on this workspace that should take focus, if it has one: the one used
     /// last here, or any visible one.
-    private func windowHere(of pid: pid_t) -> Window? {
+    /// `minimized` defaults to asking each window; the focus paths pass what they asked off the main thread.
+    private func windowHere(of pid: pid_t, minimized: ((WindowID) -> Bool)? = nil) -> Window? {
+        let minimized = minimized ?? { [windows] id in windows[id]?.isMinimized ?? false }
         // This display's workspace first, then the other displays'.
         let order = [model.current] + model.shown.values.sorted().filter { $0 != model.current }
         for n in order {
             let here = model.windows(on: n).compactMap { windows[$0] }
-                .filter { $0.pid == pid && !$0.isMinimized && saved.frames[$0.id] == nil }
+                .filter { $0.pid == pid && !minimized($0.id) && saved.frames[$0.id] == nil }
             if let last = model.lastFocused[n], let w = here.first(where: { $0.id == last }) { return w }
             if let w = here.first { return w }
         }
@@ -900,12 +1157,31 @@ final class Spaces {
     private func followFocus() {
         guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else { return }
         // A newly activated app may have just become a regular app: re-read the app list, which
-        // forces a full scan only if it changed.
+        // forces a scan only if it changed.
         RunningApps.invalidate()
-        refresh()
         let pid = app.processIdentifier
-        guard let w = Windows.focused(of: pid, in: Array(windows.values)),
-              let n = model.workspace(of: w.id) else { return }
+        // Its focused window and standard windows are asked of the app off the main thread, once a window it opened a
+        // moment ago is scanned.
+        whenFresh { [self] in
+            let mine = windows.values.filter { $0.pid == pid }
+            ask({ Windows.look(at: pid, windows: mine) }) { [self] look in
+                // A switch that started meanwhile looks again when it's done.
+                if switching { followPending = true; return }
+                guard let w = look.focused.flatMap({ windows[$0] }), let n = model.workspace(of: w.id) else { return }
+                followed(w, on: n, pid: pid, look: look)
+            } dropped: { [self] in
+                // A switch overtook the look (one `applyScan` queued, say): follow once it's done, as `finish` does.
+                followPending = true
+                if !switching { followIfPending() }
+            }
+        }
+    }
+
+    /// The rest of `followFocus`, with the app's focused window `w` on workspace `n` and what the app said about its
+    /// windows (`look`), asked off the main thread. Nothing here asks the app again.
+    private func followed(_ w: Window, on n: Int, pid: pid_t, look: Windows.FocusLook) {
+        let known = look.standard
+        let minimized: (WindowID) -> Bool = { look.minimized[$0] ?? false }
         // An agent action on this very window (for its whole run and a moment after), or an app the agent
         // launched, caused this: it is not you picking the app. Your own windows of the same app are never
         // ignored: only the window the action works on.
@@ -927,16 +1203,16 @@ final class Spaces {
             noteFocus(w.id)
             // An app BaneySpaces hid, opening a window here: macOS unhid all of it, so its windows
             // from other workspaces are in sight too. They go back out of view.
-            if strayed(pid) { return switchTo(model.current, announce: false) }
+            if strayed(pid, minimized: minimized) { return switchTo(model.current, announce: false) }
             return persist()
         }
         // A window its own app had put away, shown again now: a screenshot tool's result, say. It comes here, and you stay.
         let away = ReappearedWindow.isAway(hasRecord: saved.frames[w.id] != nil,
-                                           atHidingSpot: w.frame.map { Geometry.isStranded($0, screens: Windows.screens()) } ?? true,
+                                           atHidingSpot: look.frame.map { Geometry.isStranded($0, screens: Windows.screens()) } ?? true,
                                            justSwitched: activatedAt.timeIntervalSince(max(leftAt, handedOffAt)) < 0.5)
         if ReappearedWindow.belongsHere(workspaceShown: model.isShown(n), onAgentWorkspace: n == Self.agentWorkspace,
                                         parked: away, appHiddenByUs: saved.hiddenApps.contains(pid),
-                                        minimized: w.isMinimized, fullScreen: w.isFullScreen,
+                                        minimized: minimized(w.id), fullScreen: look.fullScreen,
                                         onScreen: !Windows.allOffscreen([w.id])) {
             Trace.log("followFocus stayed: \(w.appName) showed a window it had put away; it comes here")
             saved.frames[w.id] = nil
@@ -945,8 +1221,7 @@ final class Spaces {
             noteFocus(w.id)
             return switchTo(model.current, announce: false)
         }
-        if let here = windowHere(of: pid) { return stay(on: here) }
-        let known = Windows.standardIDs(of: pid)
+        if let here = windowHere(of: pid, minimized: minimized) { return stay(on: here) }
         // When the app in front closes its last window here, quits or hides (a switch hiding it
         // too), macOS hands focus to the next app in line on its own: often one BaneySpaces just
         // put away, parked or hidden. That isn't you picking it: stay here, and an app the
@@ -965,9 +1240,9 @@ final class Spaces {
             if saved.hiddenApps.contains(pid) { hideOnceBehind(pid) }
             // Unless it came forward to open a window here after all (its New Window key, pressed
             // right after the switch): that window shows.
-            waitUntil(timeout: 0.5, interval: 0.02, { !Windows.standardIDs(of: pid).subtracting(known).isEmpty }) { [self] in
+            waitOffMain(timeout: 0.5, interval: 0.02, { !Windows.standardIDs(of: pid).subtracting(known).isEmpty }) { [self] in
                 guard active, !switching else { return }
-                _ = showNewWindow(of: pid, besides: known)
+                showNewWindow(of: pid, besides: known) { _ in }
             }
             return
         }
@@ -978,31 +1253,37 @@ final class Spaces {
         let gen = generation
         following += 1
         let ticket = following
-        waitUntil(timeout: Self.newWindowGrace, interval: 0.02, {
+        waitOffMain(timeout: Self.newWindowGrace, interval: 0.02, {
             !Windows.standardIDs(of: pid).subtracting(known).isEmpty
         }) { [self] in
             guard following == ticket, gen == generation, active, !switching,
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
-            if showNewWindow(of: pid, besides: known) {
-                return Trace.log("followFocus stayed: \(w.appName) opened a window here")
+            showNewWindow(of: pid, besides: known) { [self] shown in
+                guard !shown else { return Trace.log("followFocus stayed: \(w.appName) opened a window here") }
+                guard following == ticket, active, !switching else { return }
+                followAway(w, to: n, pid: pid)
             }
-            // Something on the agent workspace came forward on its own (an agent's click fell
-            // back to the foreground, an app took focus): you stay where you are, and so does your
-            // typing, which must never go into a window out of sight.
-            if !AgentWorkspace.mayFollow(to: n, current: model.current, agent: Self.agentWorkspace) {
-                Trace.log("followFocus stayed: \(w.appName) is on the agent workspace")
-                if let id = model.lastFocused[model.current], let t = windows[id], saved.frames[id] == nil, t.pid != pid {
-                    stay(on: t)
-                } else {
-                    takeFocus()
-                }
-                return
-            }
-            Trace.log("followFocus \(w.appName) to \(n)")
-            lastKey[pid] = w.id
-            noteFocus(w.id)
-            switchTo(n, announce: true)
         }
+    }
+
+    /// `followFocus`'s last step: the app came forward with nothing of it here and opened no window here.
+    private func followAway(_ w: Window, to n: Int, pid: pid_t) {
+        // Something on the agent workspace came forward on its own (an agent's click fell
+        // back to the foreground, an app took focus): you stay where you are, and so does your
+        // typing, which must never go into a window out of sight.
+        if !AgentWorkspace.mayFollow(to: n, current: model.current, agent: Self.agentWorkspace) {
+            Trace.log("followFocus stayed: \(w.appName) is on the agent workspace")
+            if let id = model.lastFocused[model.current], let t = windows[id], saved.frames[id] == nil, t.pid != pid {
+                stay(on: t)
+            } else {
+                takeFocus()
+            }
+            return
+        }
+        Trace.log("followFocus \(w.appName) to \(n)")
+        lastKey[pid] = w.id
+        noteFocus(w.id)
+        switchTo(n, announce: true)
     }
 
     /// Hides an app BaneySpaces put away that came forward on its own, once it's out of the front:
@@ -1032,10 +1313,10 @@ final class Spaces {
     private var following = 0
 
     /// The app has windows on other workspaces that aren't out of view: it was unhidden.
-    private func strayed(_ pid: pid_t) -> Bool {
+    private func strayed(_ pid: pid_t, minimized: (WindowID) -> Bool) -> Bool {
         guard NSRunningApplication(processIdentifier: pid)?.isHidden == false else { return false }
         return windows.values.contains { $0.pid == pid && model.workspace(of: $0.id).map { !model.isShown($0) } == true
-            && saved.frames[$0.id] == nil && !$0.isMinimized }
+            && saved.frames[$0.id] == nil && !minimized($0.id) }
     }
 
     /// When the app in front last closed a window here, quit or hid. An activation right after
@@ -1065,10 +1346,26 @@ final class Spaces {
     /// chose a window yourself (the Window menu, ⌘`). A closed window keeps you on this workspace,
     /// so typing never lands in a hidden window. A window you chose takes you to its workspace.
     private func focusMovedWithin(_ pid: pid_t) {
-        guard active, !switching, Date() > settleUntil,
+        guard active else { return }
+        // Another window or tab in front has another title.
+        refreshDetails(of: pid)
+        guard !switching, Date() > settleUntil,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
-        refresh()
-        guard let w = Windows.focused(of: pid, in: Array(windows.values)), let n = model.workspace(of: w.id) else { return }
+        // Which window has focus, and which the app still lists, are asked off the main thread, once a window it opened
+        // a moment ago is scanned.
+        whenFresh { [self] in
+            let mine = windows.values.filter { $0.pid == pid }
+            ask({ Windows.look(at: pid, windows: mine) }) { [self] look in
+                guard !switching, NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
+                movedWithin(pid, look: look)
+            }
+        }
+    }
+
+    /// The rest of `focusMovedWithin`, with what the app said (`look`). Nothing here asks the app again.
+    private func movedWithin(_ pid: pid_t, look: Windows.FocusLook) {
+        guard let w = look.focused.flatMap({ windows[$0] }), let n = model.workspace(of: w.id) else { return }
+        let minimized: (WindowID) -> Bool = { look.minimized[$0] ?? false }
         if let i = intended[pid], Date() < i.until, i.id != w.id, model.workspace(of: i.id).map(model.isShown) == true,
            !model.isShown(n) || saved.frames[w.id] != nil, let target = windows[i.id] {
             return stay(on: target)
@@ -1080,11 +1377,11 @@ final class Spaces {
             return noteFocusAndReload(w.id)
         }
         // A window minimized or closed (even one an app only hid) is one you left, not chose from.
-        let chosen = previous.map { $0 != w.id && windows[$0].map { !$0.isMinimized } == true && Windows.lists($0, pid: pid) } ?? false
+        let chosen = previous.map { $0 != w.id && windows[$0].map { !minimized($0.id) } == true && look.listed?.contains($0) == true } ?? false
         if chosen {
             noteFocus(w.id)
             switchTo(n, announce: true)
-        } else if let here = windowHere(of: pid) {
+        } else if let here = windowHere(of: pid, minimized: minimized) {
             stay(on: here)
         } else {
             switchTo(model.current, announce: false)
@@ -1121,7 +1418,10 @@ final class Spaces {
     func gatherOnOne() {
         guard active else { return }
         if switching { return enqueue { [weak self] in self?.gatherOnOne() } }
-        refresh(full: true)
+        holdUntilFresh(full: true) { [weak self] in self?.gather() }
+    }
+
+    private func gather() {
         let screens = Windows.screens()
         for w in windows.values where saved.frames[w.id] == nil && !w.isMinimized {
             guard let f = w.frame, Geometry.isStranded(f, screens: screens) else { continue }
@@ -1134,7 +1434,8 @@ final class Spaces {
     /// Puts every hidden window back on screen. Runs on quit, so BaneySpaces never strands a
     /// window. A window it can't reach right now keeps its saved frame for the next launch.
     func restoreAll() {
-        refresh(full: true)
+        // Quitting or losing permission: every parked window must be reached before Polycarp lets go.
+        refreshNow()
         let screens = Windows.screens()
         for (id, frame) in saved.frames {
             guard let w = windows[id], restore(w, to: frame, screens: screens) else { continue }
@@ -1184,10 +1485,14 @@ final class Spaces {
         let title: String
     }
 
-    /// The windows on workspace `n`, for the viewer.
+    /// A window's title as the last background read found it (`details`); "" before the first.
+    private func title(of id: WindowID) -> String { details[id]?.title ?? "" }
+
+    /// The windows on workspace `n`, for the viewer, the dock and the switcher. Titles are the last background read's
+    /// (`refreshDetails`): nothing here asks an app.
     func entries(on n: Int) -> [Entry] {
         model.windows(on: n).compactMap { id in
-            windows[id].map { Entry(id: id, pid: $0.pid, app: $0.appName, title: $0.title) }
+            windows[id].map { Entry(id: id, pid: $0.pid, app: $0.appName, title: title(of: id)) }
         }
     }
 
@@ -1203,13 +1508,14 @@ final class Spaces {
             // A hidden app's window closing doesn't prompt a scan, so its record can outlive it and
             // keep a windowless app off the list. Ask the app, as `focusApp` does; one on another
             // macOS desktop is never listed from here, so it still counts.
-            if NSRunningApplication(processIdentifier: pid)?.isHidden == true, let listed = Windows.listedIDs(of: pid) {
-                list = list.filter { listed.contains($0.id) || !Windows.onNoOtherDesktop($0.id) }
+            // The listing is the app's last scan answer (`refreshHidden` asks hidden apps again when the dock opens).
+            if NSRunningApplication(processIdentifier: pid)?.isHidden == true, let a = answers[pid], a.answered, !a.partial {
+                list = list.filter { a.listed.contains($0.id) || !Windows.onNoOtherDesktop($0.id) }
             }
-            // One window that isn't minimized settles it, so the rest aren't asked (each is an
-            // Accessibility call and this runs on every dock reload).
+            // One window that isn't minimized settles it. Minimized state is the scan's (`details`): this runs on every
+            // dock reload, on the main thread, and asks no app.
             for w in list {
-                let minimized = w.isMinimized
+                let minimized = details[w.id]?.minimized ?? false
                 tracked.append(.init(pid: pid, isMinimized: minimized))
                 if !minimized { break }
             }
@@ -1311,21 +1617,40 @@ final class Spaces {
     /// can't say (busy, not answering) or its window isn't scanned yet, it is reopened like a Dock
     /// click, which shows the window it has rather than making another.
     private func showWindowless(_ pid: pid_t, settled: Bool) {
-        let listed = Windows.listedIDs(of: pid)
-        let standard = Windows.standardIDs(of: pid)
-        if !standard.isEmpty {
-            refresh(full: true)
-            let n = model.current
-            // One on another macOS desktop (full screen) stays there; only this desktop's join.
-            let here = standard.filter { Windows.onNoOtherDesktop($0) }
-            let adopt = here.filter { windows[$0] != nil && model.workspace(of: $0) == nil }
-            for id in adopt { model.assign(id, to: n) }
-            if let pick = adopt.max() ?? here.filter({ model.workspace(of: $0) == n }).max() {
-                return focus(pick, on: n, announce: false)
+        // What the app lists is asked off the main thread.
+        Spaces.axQueue.async { [weak self] in
+            let listed = Windows.listedIDs(of: pid)
+            let standard = Windows.standardIDs(of: pid)
+            DispatchQueue.main.async {
+                guard let self, self.active else { return }
+                let go: () -> Void = { [weak self] in self?.windowless(pid, settled: settled, listed: listed, standard: standard) }
+                if self.switching { return self.enqueue(go) }
+                go()
             }
-        } else if settled, listed?.isEmpty == true, openWindowHere(pid) {
-            return
         }
+    }
+
+    private func windowless(_ pid: pid_t, settled: Bool, listed: Set<WindowID>?, standard: Set<WindowID>) {
+        if !standard.isEmpty {
+            // The app is scanned (in the background) so its windows are known before one joins this workspace.
+            return whenFresh(asking: [pid]) { [self] in
+                let n = model.current
+                // One on another macOS desktop (full screen) stays there; only this desktop's join.
+                let here = standard.filter { Windows.onNoOtherDesktop($0) }
+                let adopt = here.filter { windows[$0] != nil && model.workspace(of: $0) == nil }
+                for id in adopt { model.assign(id, to: n) }
+                if let pick = adopt.max() ?? here.filter({ model.workspace(of: $0) == n }).max() {
+                    return focus(pick, on: n, announce: false)
+                }
+                reopen(pid)
+            }
+        }
+        if settled, listed?.isEmpty == true { return openWindowHere(pid) { [weak self] in self?.reopen(pid) } }
+        reopen(pid)
+    }
+
+    /// Opens the app again, like a Dock click, which shows the window it has rather than making another.
+    private func reopen(_ pid: pid_t) {
         guard let url = NSRunningApplication(processIdentifier: pid)?.bundleURL else { return focusApp(pid, announce: false) }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
@@ -1339,7 +1664,7 @@ final class Spaces {
     func entry(for id: WindowID) -> (Entry, Int)? {
         refresh()
         guard let w = windows[id], let n = model.workspace(of: id) else { return nil }
-        return (Entry(id: id, pid: w.pid, app: w.appName, title: w.title), n)
+        return (Entry(id: id, pid: w.pid, app: w.appName, title: title(of: id)), n)
     }
 
     /// A window dragged to the top of the screen and let go over another workspace in the
@@ -1392,7 +1717,8 @@ final class Spaces {
     /// Records the window in front, so closing the viewer (or any switch back here) returns to it.
     func rememberFocus() {
         refresh()
-        if let f = Windows.focused(in: Array(windows.values)), model.workspace(of: f.id) == model.current {
+        // The window in front by the window server's stacking order: the overview opens without asking any app.
+        if let f = Windows.front(in: windows, preferring: { [saved] id in saved.frames[id] == nil }), model.workspace(of: f.id) == model.current {
             noteFocus(f.id)
         }
         persist()
@@ -1429,28 +1755,28 @@ final class Spaces {
     /// the app's next window there when one of its windows on that workspace is already in front.
     func focusApp(_ pid: pid_t, on only: Int? = nil, cycle: Bool = false, announce: Bool = true) {
         guard active else { NSRunningApplication(processIdentifier: pid)?.activate(options: []); return }
-        refresh()
-        var mine = windows.values.filter { $0.pid == pid && model.workspace(of: $0.id) != nil }
-        // A hidden app's window closing doesn't prompt a scan (its windows are off screen anyway),
-        // so ask the app which windows it has: going to one it closed would bring nothing forward.
-        // One on another macOS desktop is never listed from here; it doesn't count.
-        let offscreen = Windows.snapshot(apps: [pid]).offscreen
-        if let listed = Windows.listedIDs(of: pid),
-           mine.contains(where: { !listed.contains($0.id) && offscreen[$0.id] != nil && Windows.onNoOtherDesktop($0.id) }) {
-            refresh(full: true)
-            mine = windows.values.filter { $0.pid == pid && model.workspace(of: $0.id) != nil }
-        }
+        if switching { return enqueue { [weak self] in self?.focusApp(pid, on: only, cycle: cycle, announce: announce) } }
+        // A hidden app's window closing doesn't prompt a scan (its windows are off screen anyway), so a hidden app is
+        // asked which windows it has before one is picked: going to one it closed would bring nothing forward. Any
+        // other app's closed window left the screen, which a scan notices. The scan runs in the background; other
+        // requests wait their turn meanwhile.
+        let hidden = NSRunningApplication(processIdentifier: pid)?.isHidden == true
+        holdUntilFresh(asking: hidden ? [pid] : []) { [self] in pickApp(pid, on: only, cycle: cycle, announce: announce) }
+    }
+
+    private func pickApp(_ pid: pid_t, on only: Int?, cycle: Bool, announce: Bool) {
+        let mine = windows.values.filter { $0.pid == pid && model.workspace(of: $0.id) != nil }
         let order = only.map { [$0] } ?? ([model.current] + recent.filter { $0 != model.current } + Array(Workspaces.range))
         for n in order {
             let here = mine.filter { model.workspace(of: $0.id) == n }
             guard !here.isEmpty else { continue }
-            if cycle, n == model.current, let front = Windows.focused(in: Array(windows.values)),
+            if cycle, n == model.current, let front = Windows.front(in: windows),
                here.contains(where: { $0.id == front.id }), here.count > 1,
                let next = WindowCycle.next(here.map(\.id).sorted(), after: front.id) {
                 return focus(next, on: n, announce: announce)
             }
             let last = model.lastFocused[n].flatMap { id in here.first { $0.id == id } }
-            let pick = last ?? here.first { !$0.isMinimized } ?? here[0]
+            let pick = last ?? here.first { !(details[$0.id]?.minimized ?? false) } ?? here[0]
             return focus(pick.id, on: n, announce: announce)
         }
         if let only { return switchTo(only, announce: announce) }
@@ -1459,40 +1785,51 @@ final class Spaces {
 
     /// Opens a new window of a running app here, with the app's own New Window command, and
     /// focuses it once it exists. The app stays hidden until then, and its windows on other
-    /// workspaces stay where they are. False when the app has no New Window command; an app
-    /// that makes no window in time is gone to instead.
-    func openWindowHere(_ pid: pid_t) -> Bool {
-        guard active, let item = Windows.newWindowItem(pid) else { return false }
-        let known = Windows.standardIDs(of: pid)
-        guard AXUIElementPerformAction(item, kAXPressAction as CFString) == .success else { return false }
-        // An app that comes forward for it isn't asking to be followed to its workspace.
+    /// workspaces stay where they are. `orElse` runs when the app has no New Window command; an app that makes no
+    /// window in time is gone to instead. The app's menus are read, and the command pressed, off the main thread.
+    func openWindowHere(_ pid: pid_t, orElse: @escaping () -> Void) {
+        guard active else { return orElse() }
+        // An app that comes forward for it isn't asking to be followed to its workspace. Set before the press, which
+        // lands off the main thread, so an activation it causes can't arrive first.
         opening = (pid, Date().addingTimeInterval(1.5))
-        waitUntil(timeout: 1.5, interval: 0.02, { !Windows.standardIDs(of: pid).subtracting(known).isEmpty }) { [weak self] in
-            guard let self, self.active else { return }
-            if self.switching { return self.enqueue { [weak self] in self?.finishOpening(pid, besides: known) } }
-            self.finishOpening(pid, besides: known)
+        Spaces.axQueue.async { [weak self] in
+            let item = Windows.newWindowItem(pid)
+            let known = Windows.standardIDs(of: pid)
+            let pressed = item.map { AXUIElementPerformAction($0, kAXPressAction as CFString) == .success } ?? false
+            DispatchQueue.main.async {
+                guard let self, self.active else { return }
+                guard pressed else {
+                    if self.opening?.pid == pid { self.opening = nil }
+                    return orElse()
+                }
+                self.waitOffMain(timeout: 1.5, interval: 0.02, { !Windows.standardIDs(of: pid).subtracting(known).isEmpty }) { [weak self] in
+                    guard let self, self.active else { return }
+                    if self.switching { return self.enqueue { [weak self] in self?.finishOpening(pid, besides: known) } }
+                    self.finishOpening(pid, besides: known)
+                }
+            }
         }
-        return true
     }
 
     private func finishOpening(_ pid: pid_t, besides known: Set<WindowID>) {
         opening = nil
-        if !showNewWindow(of: pid, besides: known) { focusApp(pid) }
+        showNewWindow(of: pid, besides: known) { [weak self] shown in if !shown { self?.focusApp(pid) } }
     }
 
     /// Shows a window the app just opened, which joined the workspace you're on: the app's others
-    /// are parked before it shows, and it takes focus. False when there's no such window.
-    private func showNewWindow(of pid: pid_t, besides known: Set<WindowID>) -> Bool {
-        // A full scan: the window server may already have counted the window before
+    /// are parked before it shows, and it takes focus. `done(false)` when there's no such window.
+    private func showNewWindow(of pid: pid_t, besides known: Set<WindowID>, _ done: @escaping (Bool) -> Void) {
+        // The app is asked even if the window server shows no change: it may already have counted the window before
         // Accessibility listed it, and a quick refresh would then never look again.
-        refresh(full: true)
-        guard let new = windows.values.first(where: { $0.pid == pid && !known.contains($0.id) && model.workspace(of: $0.id).map(model.isShown) == true }) else {
-            return false
+        whenFresh(asking: [pid]) { [self] in
+            guard let new = windows.values.first(where: { $0.pid == pid && !known.contains($0.id) && model.workspace(of: $0.id).map(model.isShown) == true }) else {
+                return done(false)
+            }
+            lastKey[pid] = new.id
+            noteFocus(new.id)
+            switchTo(model.current, announce: false)
+            done(true)
         }
-        lastKey[pid] = new.id
-        noteFocus(new.id)
-        switchTo(model.current, announce: false)
-        return true
     }
 
     /// Sends one window to workspace `n` without going there.
@@ -1666,18 +2003,25 @@ final class Spaces {
     /// activation BaneySpaces didn't cause.
     private func finish() {
         switching = false
+        holding = false
         updateAttention()
         onChange?()
+        // A scan asked for during the switch runs now that nothing is moving.
+        startScan()
         while !switching, !queued.isEmpty {
             switch queued.removeFirst() {
             case let .switchTo(n, focus, announce): switchTo(n, takeFocus: focus, announce: announce)
             case let .action(run): run()
             }
         }
-        if !switching, followPending {
-            followPending = false
-            if NSWorkspace.shared.frontmostApplication?.processIdentifier != expectedFront { followFocus() }
-        }
+        followIfPending()
+    }
+
+    /// One check of an activation BaneySpaces didn't cause, once no switch runs.
+    private func followIfPending() {
+        guard !switching, followPending else { return }
+        followPending = false
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != expectedFront { followFocus() }
     }
 
     private func conceal(_ how: Concealment, apps: Set<pid_t>, screens: [CGRect]) {
@@ -2039,12 +2383,15 @@ final class Spaces {
     /// now on another. One that turns up on the wrong display without being seen leave its own (a
     /// carry that didn't land while its app was hidden) goes back to its display instead of
     /// changing workspace. With `act` false (right after displays changed) it only takes note.
-    private func noteMovedAcrossDisplays(_ list: [Window], frames: [DisplayKey: CGRect], act: Bool) {
+    /// `bounds` and `minimized` come from the window server and the scan, so nothing here asks an app until a window
+    /// really has to move back.
+    private func noteMovedAcrossDisplays(_ list: [Window], frames: [DisplayKey: CGRect], act: Bool,
+                                         bounds: (WindowID) -> CGRect?, minimized: (WindowID) -> Bool) {
         seenOn = seenOn.filter { windows[$0.key] != nil }
         var moved = false
         let displays = Windows.displays()
-        for w in list where saved.frames[w.id] == nil && !w.isMinimized {
-            guard let n = model.workspace(of: w.id), model.isShown(n), let f = w.frame,
+        for w in list where saved.frames[w.id] == nil && !minimized(w.id) {
+            guard let n = model.workspace(of: w.id), model.isShown(n), let f = bounds(w.id),
                   let d = Geometry.display(of: f, in: frames), let mine = model.display(showing: n) else { continue }
             let before = seenOn[w.id]
             seenOn[w.id] = d
@@ -2133,6 +2480,21 @@ final class Spaces {
 
     /// Blocks until queued disk writes are done, for quitting.
     func flushWrites() { Spaces.writer.sync {} }
+
+    /// `waitUntil` for a question that asks an app: each look runs off the main thread, one at a time, and `then` runs
+    /// on the main thread once it says yes or time is up.
+    private func waitOffMain(timeout: TimeInterval, interval: TimeInterval, _ done: @escaping () -> Bool, then: @escaping () -> Void) {
+        let deadline = Date().addingTimeInterval(timeout)
+        func look() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + interval) {
+                Spaces.axQueue.async {
+                    let yes = done()
+                    DispatchQueue.main.async { if yes || Date() > deadline { then() } else { look() } }
+                }
+            }
+        }
+        look()
+    }
 
     private func waitUntil(timeout: TimeInterval, interval: TimeInterval, _ done: @escaping () -> Bool, then: @escaping () -> Void) {
         let deadline = Date().addingTimeInterval(timeout)

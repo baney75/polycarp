@@ -396,6 +396,8 @@ final class ViewerController {
         spaces.usePointerDisplay()
         spaces.rememberFocus()
         model.load(from: spaces)
+        // Titles are read again off the main thread; a change reloads the overview.
+        spaces.refreshDetails()
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
         guard let frame = screen?.frame else { return }
         let p = panel ?? makePanel()
