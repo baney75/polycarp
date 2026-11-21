@@ -157,8 +157,8 @@ Row ids: `workspaces`, `show-all`, `find`, `agents` (agents that finished while 
 
 | Path | Default | Takes |
 | --- | --- | --- |
-| `newtab.question` | `"What is the one thing today?"` | One line, not blank, up to 160 characters. |
-| `newtab.chips` | `true` | Shortcut chips under the question. |
+| `newtab.question` | `"What is this hour for?"` | One line, not blank, up to 160 characters. |
+| `newtab.chips` | `false` | Your workspaces by purpose under the field; a click switches to one. |
 | `newtab.verse` | `true` | A verse on the page. |
 | `newtab.searchURL` | `"https://duckduckgo.com/?q={query}"` | An `https://` URL with `{query}` once, where the search words go. |
 

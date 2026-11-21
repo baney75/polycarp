@@ -92,7 +92,9 @@ final class NewTabHostTests: XCTestCase {
         try purposes.setPurpose("Write the book", for: 3)
         try purposes.setPurpose("Pray", for: 2)
         try purposes.setOneThing("Finish chapter one", workspace: 2)
-        let r = try ask(#"{"op":"page"}"#, source())
+        var chipsOn = Surfaces.defaults
+        chipsOn.newtab.chips = true
+        let r = try ask(#"{"op":"page"}"#, source(chipsOn))
         XCTAssertEqual(r["ok"] as? Bool, true)
         XCTAssertEqual(r["question"] as? String, Surfaces.defaults.newtab.question)
         XCTAssertEqual(r["searchURL"] as? String, "https://duckduckgo.com/?q={query}")
@@ -163,10 +165,20 @@ final class NewTabHostTests: XCTestCase {
 
     // MARK: go, unknown, bad JSON
 
-    func testGoSaysItCannotSwitch() throws {
-        let r = try ask(#"{"op":"go","workspace":3}"#, source())
-        XCTAssertEqual(r["ok"] as? Bool, false)
-        XCTAssertEqual(r["error"] as? String, NewTabHost.noSwitch)
+    func testGoOpensTheSwitchLinkForThatWorkspace() throws {
+        var opened: [URL] = []
+        var s = source()
+        s.open = { opened.append($0); return true }
+        let r = try ask(#"{"op":"go","workspace":3}"#, s)
+        XCTAssertEqual(r["ok"] as? Bool, true)
+        XCTAssertEqual(r["workspace"] as? Int, 3)
+        XCTAssertEqual(opened.map(\.absoluteString), ["polycarp://switch/3"])
+        for bad in [#"{"op":"go","workspace":0}"#, #"{"op":"go","workspace":10}"#, #"{"op":"go"}"#] {
+            XCTAssertEqual(try ask(bad, s)["ok"] as? Bool, false, bad)
+        }
+        XCTAssertEqual(opened.count, 1, "a bad workspace opens nothing")
+        s.open = { _ in false }
+        XCTAssertEqual(try ask(#"{"op":"go","workspace":3}"#, s)["error"] as? String, NewTabHost.noSwitch)
     }
 
     func testUnknownOpAndBadJSON() throws {

@@ -82,10 +82,13 @@ public enum NewTabHost {
         public var purpose: (_ text: String, _ args: [String]) -> Wire.Reply?
         public var now: () -> Date
         public var timeZone: TimeZone
+        /// Opens a `polycarp://` link, which the app runs (`switch/N`); whether it was handed over.
+        public var open: (URL) -> Bool
 
         public init(surfaces: @escaping () -> Surfaces, purpose: @escaping (String, [String]) -> Wire.Reply?,
-                    now: @escaping () -> Date = Date.init, timeZone: TimeZone = .current) {
-            self.surfaces = surfaces; self.purpose = purpose; self.now = now; self.timeZone = timeZone
+                    now: @escaping () -> Date = Date.init, timeZone: TimeZone = .current,
+                    open: @escaping (URL) -> Bool = { _ in false }) {
+            self.surfaces = surfaces; self.purpose = purpose; self.now = now; self.timeZone = timeZone; self.open = open
         }
 
         /// The real one: surfaces.json from disk the way `polycarp-spaces surfaces get` reads it (the app need not be
@@ -96,12 +99,21 @@ public enum NewTabHost {
                 return Surfaces.defaults
             }, purpose: { text, args in
                 Wire.call(Wire.Request(op: .purpose, text: text, args: args, caller: "newtab"), timeout: timeout)
+            }, open: { url in
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                p.arguments = ["-g", url.absoluteString]
+                p.standardOutput = FileHandle.nullDevice
+                p.standardError = FileHandle.nullDevice
+                guard (try? p.run()) != nil else { return false }
+                p.waitUntilExit()
+                return p.terminationStatus == 0
             })
         }
     }
 
     public static let notRunning = "Polycarp isn't running, so it can't name this workspace"
-    public static let noSwitch = "Polycarp can't switch workspaces from a new tab yet"
+    public static let noSwitch = "Polycarp couldn't switch workspaces"
 
     /// The reply to one request, as the JSON bytes that go back to the page.
     public static func answer(_ request: Data, source: Source) -> Data {
@@ -114,9 +126,12 @@ public enum NewTabHost {
             guard let text = object["text"] as? String else { return failure("name needs text") }
             return name(text, source)
         case "go":
-            // The Wire protocol has no way to switch workspaces (only the baneyspaces://switch/N URL does), so the host
-            // doesn't pretend to.
-            return failure(noSwitch)
+            // The same link the shortcuts' scripts use (`AppDelegate.runURL`); the app does the switch.
+            guard let n = object["workspace"] as? Int, Workspaces.range.contains(n) else {
+                return failure("go needs a workspace from \(Workspaces.range.lowerBound) to \(Workspaces.range.upperBound)")
+            }
+            guard let url = switchURL(n), source.open(url) else { return failure(noSwitch) }
+            return json(["ok": true, "workspace": n])
         case let op?: return failure("there is no request called \(op)")
         case nil: return failure("the request has no op")
         }
@@ -149,6 +164,9 @@ public enum NewTabHost {
             ?? Purposes.clean(text, limit: .max) ?? text
         return json(["ok": true, "workspace": current, "purpose": purpose])
     }
+
+    /// The link that switches Polycarp to workspace `n`.
+    public static func switchURL(_ n: Int) -> URL? { URL(string: "polycarp://switch/\(n)") }
 
     public static func failure(_ error: String) -> Data { json(["ok": false, "error": error]) }
 

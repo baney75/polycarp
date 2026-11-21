@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New Tab</title>
+<link rel="stylesheet" href="newtab.css">
+</head>
+<body>
+<main>
+	<form id="ask" autocomplete="off">
+		<label class="hide" for="field">What is this hour for?</label>
+		<input id="field" name="q" type="text" spellcheck="false" placeholder="What is this hour for?" autofocus>
+		<p id="hint" class="hint" aria-live="polite"></p>
+	</form>
+	<nav id="chips" class="chips" hidden aria-label="Workspaces"></nav>
+	<figure id="verse" class="verse" hidden>
+		<blockquote id="verse-text"></blockquote>
+		<figcaption id="verse-ref"></figcaption>
+	</figure>
+</main>
+<script src="logic.js"></script>
+<script src="newtab.js"></script>
+</body>
+</html>

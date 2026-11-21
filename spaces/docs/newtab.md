@@ -4,6 +4,20 @@ Polycarp's new tab page is a small Chrome extension (`extension/newtab/`, ID `kd
 by the `key` in its manifest). It asks Polycarp what to show over Chrome native messaging. The host that answers is
 the bundled command, `polycarp-spaces`. The code is `NewTabHost` in `Sources/BaneySpacesCore/NewTabHost.swift`.
 
+## The page
+
+One field whose placeholder is `newtab.question` ("What is this hour for?"), and the day's verse (BSB) under it when
+`newtab.verse` is on. Return opens what you typed when it is an address (`https://...`, `example.com`, `localhost:3000`)
+and otherwise searches with `newtab.searchURL`. Cmd+Return (Ctrl+Return off a Mac) names the workspace you are on with
+the words instead. With `newtab.chips` on, your workspaces by purpose sit under the field, and a click switches to one.
+The page paints the last answer it had first, so it is never blank while the host answers, and with no host at all it
+still searches with DuckDuckGo. It loads nothing from the network. The field logic is `extension/newtab/logic.js`;
+`NewTabPageTests` runs it in JavaScriptCore.
+
+To load it in Helium (or Chrome): open `chrome://extensions`, turn on Developer mode, choose Load unpacked, and pick
+`/Applications/Polycarp.app/Contents/Resources/newtab-extension`. Polycarp writes the host manifest on its next launch.
+A new tab opens with the keyboard in the address bar, as Chrome does for every extension's new tab; click the field to type there.
+
 ## What the host does
 
 Chrome starts the host's `path` with the page's origin as the first argument
@@ -26,7 +40,7 @@ unsigned length, then that many bytes of UTF-8 JSON, on stdin and on stdout. A r
 ### `{"op":"page"}`
 
 ```json
-{"ok": true, "question": "What is the one thing today?",
+{"ok": true, "question": "What is this hour for?",
  "verse": {"text": "But only one thing is necessary.", "ref": "Luke 10:42"},
  "searchURL": "https://duckduckgo.com/?q={query}",
  "workspace": 2, "purpose": "Pray", "oneThing": "Finish chapter one",
@@ -50,8 +64,9 @@ over 60 characters (`that is 61 characters; keep it to 60`), blank text, or no a
 
 ### `{"op":"go","workspace":3}`
 
-Always `{"ok":false,"error":"Polycarp can't switch workspaces from a new tab yet"}`. The socket protocol has no request
-that switches workspaces; only the `baneyspaces://switch/N` URL does.
+Switches Polycarp to that workspace (1 to 9) by opening `polycarp://switch/N`, the link the shortcuts' scripts use, in
+the background. The reply is `{"ok":true,"workspace":3}`, or `{"ok":false,"error":...}` for a workspace outside 1 to 9
+or when the link couldn't be opened.
 
 ### Anything else
 
