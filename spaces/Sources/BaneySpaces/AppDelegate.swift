@@ -898,7 +898,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         spaces.refresh()
         var apps: [Int: [String]] = [:]
         for n in Workspaces.range { apps[n] = spaces.apps(on: n) }
-        let entries = MenuLayout.entries(rows: MenuLayout.rows(current: spaces.model.current, apps: apps),
+        let keeper = PurposeKeeper.shared
+        let named = keeper.purposes.snapshot
+        let here = spaces.model.current
+        let now = MenuNow.make(workspace: here, purpose: named.purpose(of: here), since: keeper.arrived)
+        let entries = MenuLayout.entries(now: now, oneThingSet: named.oneThing != nil,
+                                         rows: MenuLayout.rows(current: here, apps: apps, purposes: named.all),
                                          finished: session.started ? session.unseenCount : 0, update: updateNotice(),
                                          dockOn: WorkspaceDock.enabled)
         for entry in entries { menu.addItem(menuItem(for: entry)) }
@@ -908,6 +913,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// is built here or in `item(_:_:key:)`, which `MenuLayoutTests` counts.
     private func menuItem(for entry: MenuEntry) -> NSMenuItem {
         switch entry {
+        case .now(let now):
+            // Not a command: the purpose in serif italic, the workspace and time below it, both in the theme's colors.
+            let it = item(now.title, #selector(nameHour))
+            it.attributedTitle = MenuHead.title(now)
+            it.toolTip = "Click to name this hour"
+            return it
+        case .nameHour:
+            return item("Name This Hour…", #selector(nameHour))
+        case .oneThing(let set):
+            return item(set ? "Change the One Thing…" : "Set the One Thing…", #selector(setOneThing))
         case .workspace(let row):
             let it = item(row.title, #selector(pick(_:)), key: "\(row.workspace)")
             it.keyEquivalentModifierMask = Modifier.current.menuFlags
@@ -961,6 +976,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func offerUpdate() { if let r = updater.available { updater.offer(r) } }
 
     @objc private func pick(_ sender: NSMenuItem) { spaces.switchTo(sender.tag) }
+
+    /// "Name This Hour…": what the workspace you are on is for.
+    @objc private func nameHour() {
+        let n = spaces.model.current
+        let store = PurposeKeeper.shared.purposes
+        MenuHead.ask("What is this hour for?", info: "Workspace \(n). A few words, up to \(Purposes.purposeLimit) characters; leave it empty to clear it.",
+                     value: store.purpose(of: n) ?? "") { try store.setPurpose($0, for: n) }
+    }
+
+    /// "Set the One Thing…": the one thing for today, until 4 am.
+    @objc private func setOneThing() {
+        let n = spaces.model.current
+        let store = PurposeKeeper.shared.purposes
+        MenuHead.ask("What is the one thing today?", info: "Up to \(Purposes.oneThingLimit) characters. It clears at 4 am; leave it empty to clear it now.",
+                     value: store.oneThing?.text ?? "") { try store.setOneThing($0, workspace: n) }
+    }
 
     /// Apps whose windows are parked instead of hidden, so automation can still use them: Settings >
     /// Automation. Apps with windows, plus every app already on the list, so any of them can be unchecked.

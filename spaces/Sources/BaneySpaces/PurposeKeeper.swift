@@ -21,6 +21,8 @@ final class PurposeKeeper {
     /// The prompt due now, if any.
     private(set) var due: Rhythm.Prompt?
     private var workspace: Int?
+    /// When you came to the workspace you are on: the menu's "since 8:40".
+    private(set) var arrived: Date?
     private var timer: Timer?
     private var rollover: Timer?
     private var started = false
@@ -86,6 +88,7 @@ final class PurposeKeeper {
     func noteWorkspace(_ n: Int) {
         guard n != workspace else { return }
         workspace = n
+        arrived = Date()
         ledger.switched(to: n)
     }
 
