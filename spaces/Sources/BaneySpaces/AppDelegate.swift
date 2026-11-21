@@ -757,6 +757,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkeys.register(keyCode: kVK_ANSI_U, modifiers: controlKey | cmdKey) { [weak self] in
             if self?.session.started == true { self?.session.jumpToFinished() }
         }
+        // ⌃` drops the quick terminal down, from any app (only in builds with the terminal).
+        TerminalFeature.registerQuickKey(hotkeys)
         guard started else { return }
         let mods = Modifier.current.carbon
         for (i, code) in Hotkeys.digitKeyCodes.enumerated() {

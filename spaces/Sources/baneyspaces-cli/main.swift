@@ -15,6 +15,9 @@ usage: \(me) <command>
   focus <id | words>          bring it forward (an ID from ls, or a fuzzy search)
   open <url>                  open in your default browser
   send <id | words> <text>    type text into a Ghostty terminal, as if pasted
+  term [shell|claude|codex] [--cmd "<command>"] [--host <tailnet device>] [--quick]
+                              a terminal in Polycarp's own window (Ghostty's engine); --host opens a shell
+                              on that device over Tailscale, --quick the drop-down quick terminal
   notify [message]            flag the terminal this runs in as needing you
   state                       the session engine's live state as JSON
   agent status|on [N]|off     the agent workspace: a workspace of its own for agent apps, out of your way
@@ -149,6 +152,14 @@ case "open":
 case "send":
     guard rest.count >= 2 else { fail("usage: \(me) send <id | words> <text>", code: 2) }
     _ = call(Wire.Request(op: .send, target: rest[0], text: rest.dropFirst().joined(separator: " ")))
+
+case "term", "terminal":
+    // Polycarp's built-in terminal. Local only: another machine never opens a shell here (`Remote.allows`).
+    guard remoteHost == nil else { fail("term opens a terminal on this Mac; use --host <device> for a shell on another one", code: 2) }
+    switch TerminalLaunch.parse(rest) {
+    case .failure(let e): fail(e.description, code: 2)
+    case .success(let launch): _ = call(launch.request)
+    }
 
 case "notify":
     let tty = controllingTTY()

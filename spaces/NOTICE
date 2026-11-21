@@ -24,3 +24,13 @@ cua-driver (MIT License, Copyright (c) 2025 Cua AI, Inc.), trycua
   notice stays for the releases that carried it.
   The license text is in LICENSES/cua-driver-MIT.txt and in the app at
   Contents/Resources/licenses/cua-driver-MIT.txt.
+
+Ghostty (MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors)
+  https://github.com/ghostty-org/ghostty, v1.3.1, built from commit
+  332b2aefc6e72d363aa93ab6ecfc86eeeeb5ed28 (see ghostty/PIN) by scripts/build-ghostty.sh.
+  Used as a library: Polycarp's built-in terminal links libghostty statically in Apple silicon
+  builds, and carries Ghostty's themes, shell integration and terminfo in Contents/Resources.
+  Its C header is vendored unchanged at Sources/CGhostty/include/ghostty.h. Polycarp's terminal
+  windows (Sources/BaneySpaces/Terminal) follow Ghostty's macOS app in how they hand input, IME
+  and clipboard to libghostty. The license text is in LICENSES/ghostty-MIT.txt and in the app at
+  Contents/Resources/licenses/ghostty-MIT.txt.

@@ -79,11 +79,59 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check the install scripts
-        run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh
+        run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh && bash -n scripts/build-ghostty.sh && bash -n scripts/fetch-zig.sh
       - name: Build the hands engine
         run: BANEYSPACES_ARM64_ONLY=1 scripts/build-engine.sh
       - name: Test
         run: swift test
+
+  # The built-in terminal: libghostty from the pinned Ghostty (spaces/ghostty/PIN), built once per pin and cached,
+  # then Polycarp built, tested and bundled with it linked. The spaces job above builds and tests without it, as an
+  # Intel or universal build and a Mac without the Metal Toolchain do.
+  spaces-terminal:
+    needs: changes
+    if: needs.changes.outputs.spaces == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: spaces
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: ghostty
+        with:
+          path: spaces/ghostty/lib
+          key: ghostty-${{ runner.arch }}-${{ hashFiles('spaces/ghostty/PIN', 'spaces/scripts/build-ghostty.sh') }}
+      - name: Zig and the Metal Toolchain for the libghostty build
+        if: steps.ghostty.outputs.cache-hit != 'true'
+        run: |
+          scripts/fetch-zig.sh >> "$GITHUB_PATH"
+          xcrun -sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
+      - name: Build libghostty
+        run: scripts/build-ghostty.sh
+      - name: Build the hands engine
+        run: BANEYSPACES_ARM64_ONLY=1 scripts/build-engine.sh
+      - name: Build with the terminal linked
+        run: |
+          POLYCARP_TERMINAL=1 swift build
+          nm "$(POLYCARP_TERMINAL=1 swift build --show-bin-path)/BaneySpaces" | grep -q ' T _ghostty_app_new$'
+      - name: Test with the terminal linked
+        run: POLYCARP_TERMINAL=1 swift test
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: |
+            cli -> ../spaces/build/cli-target
+          key: spaces-terminal
+      - name: Bundle the app with the terminal
+        run: |
+          BANEYSPACES_ADHOC=1 BANEYSPACES_ARM64_ONLY=1 scripts/bundle.sh | tee "$RUNNER_TEMP/bundle.log"
+          grep -q 'terminal built)$' "$RUNNER_TEMP/bundle.log"
+          test -f build/Polycarp.app/Contents/Resources/terminfo/78/xterm-ghostty
+          test -d build/Polycarp.app/Contents/Resources/ghostty/shell-integration
+          test -s build/Polycarp.app/Contents/Resources/licenses/ghostty-MIT.txt
 
   # The spaces Rust workspace on Windows: the shared core, the conformance cases and the real Windows code
   # (issue #379, item 1). The Linux daemon that also built here is retired.
@@ -230,7 +278,7 @@ jobs:
           test ! -e build/Polycarp.app/Contents/Resources/browser
   ci-ok:
     if: always()
-    needs: [changes, cli, spaces, spaces-windows, spaces-windows-live, spaces-windows-speed, spaces-bundle]
+    needs: [changes, cli, spaces, spaces-terminal, spaces-windows, spaces-windows-live, spaces-windows-speed, spaces-bundle]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job passed or was skipped

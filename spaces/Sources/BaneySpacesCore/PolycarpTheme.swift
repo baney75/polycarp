@@ -29,6 +29,8 @@ public struct PolycarpTheme: Equatable, Sendable {
     public let indicator: ThemeIndicator
     // type
     public let ui: String
+    /// The monospace stack (`type.mono`), checked like `ui`. The built-in terminal draws with it (`GhosttyTheme`).
+    public private(set) var mono = "ui-monospace, monospace"
     public let fontSize: Double
     public let fontWeight: Double
     // motion
@@ -250,10 +252,11 @@ public struct PolycarpTheme: Equatable, Sendable {
         guard let reduced = motion["reduced"] as? NSNumber, CFGetTypeID(reduced) == CFBooleanGetTypeID() else {
             throw PolycarpThemeError("reduced is missing or not true or false")
         }
-        _ = try stack(type, "display"); _ = try stack(type, "mono")
+        _ = try stack(type, "display")
+        let mono = try stack(type, "mono")
         let name = printable(root["name"], limit: 48) ?? ""
         let title = printable(root["title"], limit: 48) ?? (name.isEmpty ? "Polycarp" : name)
-        let built = PolycarpTheme(
+        var built = PolycarpTheme(
             name: name, title: title, mode: mode, light: light, dark: dark,
             radiusSmall: try number(shape, "radius_small", 0, 64), radius: try number(shape, "radius", 0, 64),
             radiusLarge: try number(shape, "radius_large", 0, 64),
@@ -263,6 +266,7 @@ public struct PolycarpTheme: Equatable, Sendable {
             ui: try stack(type, "ui"), fontSize: try number(type, "size", 10, 24), fontWeight: try number(type, "weight", 300, 800),
             fast: try number(motion, "fast", 0, 1000), normal: try number(motion, "normal", 0, 1000), slow: try number(motion, "slow", 0, 1000),
             scaleFrom: try number(motion, "scale_from", 0.5, 1), reduced: reduced.boolValue)
+        built.mono = mono
         if checkContrast { try built.checkDrawnPairs() }
         return built
     }

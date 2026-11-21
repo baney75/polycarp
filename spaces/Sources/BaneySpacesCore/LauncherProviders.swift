@@ -9,6 +9,8 @@ public enum LauncherAction: Equatable, Sendable {
     /// Put the text on the pasteboard and close.
     case copy(String)
     case open(URL)
+    /// A terminal in Polycarp's own window (`TerminalLaunch`).
+    case terminal(TerminalLaunch)
     /// Nothing to do (a heading or a note).
     case none
 }
@@ -68,6 +70,6 @@ public enum LauncherProviders {
 
     /// The providers the launcher starts with, in the order their rows show.
     public static func standard() -> [LauncherProvider] {
-        [CalculatorProvider()]
+        [CalculatorProvider(), TerminalProvider()]
     }
 }

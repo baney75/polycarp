@@ -516,6 +516,7 @@ final class LauncherModel: ObservableObject {
             LauncherPasteboard.copy(text)
             Toast.show("Copied \(text.count > 40 ? String(text.prefix(40)) + "…" : text)", symbol: "doc.on.doc")
         case .open(let url): openWeb(url)
+        case .terminal(let launch): close(); TerminalFeature.open(launch)
         case .none: break
         }
     }
