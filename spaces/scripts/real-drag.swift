@@ -102,12 +102,16 @@ func path(_ to: String, from grab: CGPoint) -> [CGPoint]? {
     return stops.isEmpty || stops.contains { $0 == nil } ? nil : stops.compactMap { $0 }
 }
 
-/// Whether the host may take the pointer: idle 10 minutes, or the last input of any kind was the driver's own previous
-/// release (its events reset HIDIdleTime), so nobody has touched the Mac since a run that started on an idle Mac.
-func idleAllows(idle: Double, now: Double, lastRelease: Double?) -> Bool {
+/// The driver's previous host run: its first posted event and the moment it finished, epoch seconds.
+struct Run { let start: Double, end: Double }
+/// Whether the host may take the pointer: idle 10 minutes, or the last input of any kind fell inside the driver's own
+/// previous run, so nobody has touched the Mac since a run that started on an idle Mac. Only some of its events reset
+/// HIDIdleTime (the drag's motion did; the release and the move home didn't, measured 11-17), so any moment of the run counts.
+func idleAllows(idle: Double, now: Double, last: Run?) -> Bool {
     if idle >= 600 { return true }
-    guard let last = lastRelease else { return false }
-    return abs((now - idle) - last) < 2.5
+    guard let last else { return false }
+    let input = now - idle
+    return input >= last.start - 1 && input <= last.end + 1
 }
 
 func selfTest() -> Int32 {
@@ -145,10 +149,13 @@ func selfTest() -> Int32 {
     expect(path("top", from: CGPoint(x: 880, y: 64)) == [CGPoint(x: 880, y: 0)], "--to top is the top edge above the grab")
     expect(path("10,20;30,40", from: .zero) == [CGPoint(x: 10, y: 20), CGPoint(x: 30, y: 40)], "--to takes several stops")
     expect(path("10;x", from: .zero) == nil, "a bad stop is refused")
-    expect(idleAllows(idle: 700, now: 10_000, lastRelease: nil), "idle 10 minutes allows a host drag")
-    expect(!idleAllows(idle: 30, now: 10_000, lastRelease: nil), "30 s idle with no earlier run refuses")
-    expect(idleAllows(idle: 120, now: 10_000, lastRelease: 9_880.5), "the last input being the driver's own release allows the next run")
-    expect(!idleAllows(idle: 40, now: 10_000, lastRelease: 9_880.5), "a touch after the driver's release refuses")
+    let run = Run(start: 9_876, end: 9_884)
+    expect(idleAllows(idle: 700, now: 10_000, last: nil), "idle 10 minutes allows a host drag")
+    expect(!idleAllows(idle: 30, now: 10_000, last: nil), "30 s idle with no earlier run refuses")
+    expect(idleAllows(idle: 120.5, now: 10_000, last: run), "the last input being the driver's own release allows the next run")
+    expect(idleAllows(idle: 122, now: 10_000, last: run), "the last input being the driver's own drag, before its release, allows the next run (11-17)")
+    expect(!idleAllows(idle: 40, now: 10_000, last: run), "a touch after the driver's run refuses")
+    expect(!idleAllows(idle: 130, now: 10_000, last: run), "a touch just before the driver's run refuses")
     print(failed == 0 ? "real-drag self-test PASS" : "real-drag self-test FAIL (\(failed))")
     return failed == 0 ? 0 : 1
 }
@@ -171,10 +178,10 @@ func idleSeconds() -> Double {
 let guest = args.contains("--guest")
 // The driver's own events reset HIDIdleTime. A run may follow the driver's previous run when the last input of any kind
 // was that run's own release: nobody has touched the Mac since a run that itself started on a 10-minute-idle Mac.
-let lastRunURL = FileManager.default.temporaryDirectory.appendingPathComponent("real-drag-last-release")
+let lastRunURL = FileManager.default.temporaryDirectory.appendingPathComponent("real-drag-last-run")
 if args.contains("--self-test") == false, !guest {
-    let last = (try? String(contentsOf: lastRunURL, encoding: .utf8)).flatMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-    guard idleAllows(idle: idleSeconds(), now: Date().timeIntervalSince1970, lastRelease: last) else {
+    let n = ((try? String(contentsOf: lastRunURL, encoding: .utf8)) ?? "").split(separator: " ").compactMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    guard idleAllows(idle: idleSeconds(), now: Date().timeIntervalSince1970, last: n.count == 2 ? Run(start: n[0], end: n[1]) : nil) else {
         print("real-drag: untested live: the Mac has been idle \(Int(idleSeconds())) s, and a host drag needs 10 minutes (or run it in the guest with scripts/guest-drag.sh)")
         exit(3)
     }
@@ -184,9 +191,11 @@ guard AXIsProcessTrusted() else { fail("this process has no Accessibility permis
 // --launch: a throwaway copy of a Chromium browser on a fresh profile (never the person's own), quit and removed on
 // every way out. Chromium runs a second instance for a second --user-data-dir, so his own Helium is left alone.
 var launched: Process?
+var plainApp: NSRunningApplication?
 var profile: URL?
 func cleanup() {
     if let p = launched, p.isRunning { p.terminate(); usleep(800_000); if p.isRunning { kill(p.processIdentifier, SIGKILL) } }
+    if let a = plainApp, !a.isTerminated { a.terminate(); usleep(800_000); if !a.isTerminated { a.forceTerminate() } }
     if let profile { try? FileManager.default.removeItem(at: profile) }
 }
 atexit { cleanup() }
@@ -195,16 +204,27 @@ var appArg = value("--app")
 if !guest, appArg != nil {
     fail("on this Mac the driver drags only a copy it launched itself (--launch <app>), never an app already open")
 }
-if let bundle = value("--launch") {
+if let bundle = value("--launch"), args.contains("--plain") {
+    // --plain: a native app for the macOS-alone arm, started by LaunchServices (macOS kills a system app another process
+    // starts directly, status 9) with no saved windows and an untitled document. Never one already running: that copy is his.
+    guard let id = Bundle(path: bundle)?.bundleIdentifier else { fail("no app at \(bundle)") }
+    if !NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty { fail("\(bundle) is already running; the driver drags only a copy it starts", 3) }
+    let config = NSWorkspace.OpenConfiguration()
+    config.arguments = ["-ApplePersistenceIgnoreState", "YES", "-NSShowAppCentricOpenPanelInsteadOfUntitledFile", "NO"]
+    let done = DispatchSemaphore(value: 0)
+    NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: bundle), configuration: config) { app, _ in plainApp = app; done.signal() }
+    _ = done.wait(timeout: .now() + 20)
+    guard let app = plainApp else { fail("could not start \(bundle)") }
+    appArg = String(app.processIdentifier)
+    sleep(3)
+} else if let bundle = value("--launch") {
     guard let exe = Bundle(path: bundle)?.executableURL else { fail("no app at \(bundle)") }
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("real-drag-profile-\(getpid())")
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     profile = dir
     let p = Process()
     p.executableURL = exe
-    // --plain: a native app (Chess, TextEdit) for the macOS-alone arm; it takes no Chromium flags and keeps no profile.
-    p.arguments = args.contains("--plain") ? ["-ApplePersistenceIgnoreState", "YES", "-NSShowAppCentricOpenPanelInsteadOfUntitledFile", "NO"]
-        : ["--user-data-dir=\(dir.path)", "--no-first-run", "--no-default-browser-check", "--disable-sync", "about:blank"]
+    p.arguments = ["--user-data-dir=\(dir.path)", "--no-first-run", "--no-default-browser-check", "--disable-sync", "about:blank"]
     p.standardOutput = FileHandle.nullDevice
     p.standardError = FileHandle.nullDevice
     do { try p.run() } catch { fail("could not start \(bundle): \(error)") }
@@ -216,7 +236,9 @@ if let bundle = value("--launch") {
 guard let appArg else { fail("--app <name|pid> or --launch <app> is required") }
 
 let apps = NSWorkspace.shared.runningApplications
-guard let target = Int32(appArg).flatMap({ pid in apps.first { $0.processIdentifier == pid } })
+if let p = launched, !p.isRunning { fail("\(value("--launch") ?? appArg) exited at once (status \(p.terminationStatus))") }
+// By pid first: the shared runningApplications list is only refreshed by a run loop this tool doesn't run.
+guard let target = Int32(appArg).flatMap({ NSRunningApplication(processIdentifier: $0) })
         ?? apps.first(where: { $0.localizedName == appArg }) else { fail("no running app \(appArg)") }
 let pid = target.processIdentifier
 
@@ -247,7 +269,13 @@ let screen = NSScreen.screens[0]
 let visible = CGRect(x: screen.visibleFrame.minX, y: screen.frame.maxY - screen.visibleFrame.maxY,
                      width: screen.visibleFrame.width, height: screen.visibleFrame.height)
 
+// A tool in the background can't count on activate(); Accessibility brings the copy to the front and raises its window.
 target.activate()
+let axApp = AXUIElementCreateApplication(pid)
+AXUIElementSetAttributeValue(axApp, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+var axList: CFTypeRef?
+AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &axList)
+if let w = (axList as? [AXUIElement])?.first { AXUIElementPerformAction(w, kAXRaiseAction as CFString) }
 usleep(400_000)
 if let s = value("--start") {
     let n = s.split(separator: ",").compactMap { Double($0) }
@@ -270,7 +298,11 @@ let rest = Double(value("--rest") ?? "1") ?? 1
 let releaseAt: CGPoint = value("--release").flatMap { $0 == "here" ? nil : point(Substring($0)) } ?? stops.last!
 let watchFor = Double(value("--watch") ?? "3") ?? 3
 let expectArg = value("--expect")
-guard ownerAt(grab) == pid else { fail("the press point \(grab) is not \(target.localizedName ?? appArg)'s window: stopped before any click", 3) }
+let owner = ownerAt(grab)
+guard owner == pid else {
+    let whose = owner.map { NSRunningApplication(processIdentifier: $0)?.localizedName ?? "pid \($0)" }.map { "\($0)'s window" } ?? "no window"
+    fail("the press point \(grab) is \(whose), not \(target.localizedName ?? appArg)'s: stopped before any click", 3)
+}
 
 let support = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
 let traceURL = value("--trace").map { URL(fileURLWithPath: $0) }
@@ -297,6 +329,7 @@ func glide(_ a: CGPoint, _ b: CGPoint, speed: CGFloat = 1500) {
 // Where the pointer was before the drag; it goes back there after the watch, so a person finds it where they left it.
 let home = CGEvent(source: nil)?.location
 print("real-drag: \(target.localizedName ?? appArg) window \(id) at \(str(startFrame)), grab \(grabName) \(grab), to \(stops), rest \(rest) s, release \(releaseAt)\(guest ? ", in the guest" : "")")
+let pressed = Date()
 post(.mouseMoved, grab); usleep(150_000)
 post(.leftMouseDown, grab); usleep(150_000)
 // A person's drag starts with a small wobble before it travels; Chromium's tab strip waits for a few points of motion.
@@ -318,7 +351,7 @@ if touched {
 } else {
     if let home { post(.mouseMoved, home) }
     // The driver's last input, for the next run's idle gate (idleAllows).
-    if !guest { try? String(Date().timeIntervalSince1970).write(to: lastRunURL, atomically: true, encoding: .utf8) }
+    if !guest { try? "\(pressed.timeIntervalSince1970) \(Date().timeIntervalSince1970)".write(to: lastRunURL, atomically: true, encoding: .utf8) }
 }
 usleep(300_000) // the trace writer is asynchronous
 let rested = Int(up.timeIntervalSince(arrived) * 1000)
