@@ -1,76 +1,69 @@
 import Foundation
 
-/// Which builds an install follows. Stable is each tagged release; nightly is main, rebuilt each
-/// night it changed. Nightly also offers a stable release that is newer than the last nightly.
+/// Which builds an install follows (docs/releases.md). Stable is each promoted release, nightly is main once a day,
+/// dev is every main commit CI passed. Every channel is the same app with the same signature, so moving between
+/// them never asks for a macOS permission again.
 public enum UpdateChannel: String, CaseIterable, Sendable {
-    case stable, nightly
+    case stable, nightly, dev
+
+    /// "preview", the one channel before these, is nightly now: a choice saved as preview follows nightly.
+    public init?(rawValue: String) {
+        switch rawValue {
+        case "stable": self = .stable
+        case "nightly", "preview": self = .nightly
+        case "dev": self = .dev
+        default: return nil
+        }
+    }
+
+    /// The channel's latest.json. Stable's is the Latest release's, so it moves only when a release is published.
+    public var feedURL: URL {
+        let releases = "https://github.com/baney75/polycarp/releases"
+        switch self {
+        case .stable: return URL(string: "\(releases)/latest/download/latest.json")!
+        case .nightly, .dev: return URL(string: "\(releases)/download/\(rawValue)/latest.json")!
+        }
+    }
+
+    public var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
 }
 
-/// What this copy of BaneySpaces was built from, as stamped into Info.plist by the build.
+/// What this copy of Polycarp was built from, as stamped into Info.plist by the build.
 public struct BuildInfo: Equatable, Sendable {
+    /// The full version (`PolycarpVersion`): "0.4.0", "0.4.0-nightly.20261118070000+1a2b3c4".
     public let version: String
     public let commit: String?
     public let commitDate: Date?
+    /// The channel it was built for; nil for a local build.
+    public let channel: UpdateChannel?
 
-    public init(version: String, commit: String?, commitDate: Date?) {
+    public init(version: String, commit: String?, commitDate: Date?, channel: UpdateChannel? = nil) {
         self.version = version
         self.commit = commit
         self.commitDate = commitDate
+        self.channel = channel
     }
 }
 
-/// One GitHub release, reduced to what the updater needs.
+/// A build the updater can offer and install.
 public struct Release: Equatable, Sendable {
+    /// The release install.sh downloads it from: vX.Y.Z, nightly or dev.
     public let tag: String
     public let name: String
     public let notes: String
-    public let prerelease: Bool
-    public let url: String
-    /// From the marker line the release workflow writes into the notes.
     public let commit: String?
-    public let commitDate: Date?
 
-    public init(tag: String, name: String, notes: String, prerelease: Bool, url: String) {
+    public init(tag: String, name: String, notes: String, commit: String?) {
         self.tag = tag
         self.name = name
-        self.prerelease = prerelease
-        self.url = url
-        let marker = Release.marker(in: notes)
-        commit = marker.commit
-        commitDate = marker.date
-        // The marker is for BaneySpaces, not for people.
-        self.notes = notes.split(separator: "\n", omittingEmptySubsequences: false)
-            .filter { !$0.contains("<!-- baneyspaces ") }
-            .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        self.notes = notes
+        self.commit = commit
     }
 
-    /// Only tags BaneySpaces itself publishes, so nothing else ever reaches the installer.
-    public var isInstallable: Bool { tag == "nightly" || Version(tag) != nil }
+    /// Only tags Polycarp itself publishes, so nothing else ever reaches the installer.
+    public var isInstallable: Bool { tag == "nightly" || tag == "dev" || (tag.hasPrefix("v") && Version(tag) != nil) }
 
     public var isNightly: Bool { tag == "nightly" }
-
-    /// `<!-- baneyspaces commit=<sha> date=<ISO 8601> -->`
-    static func marker(in notes: String) -> (commit: String?, date: Date?) {
-        guard let line = notes.split(separator: "\n").first(where: { $0.contains("<!-- baneyspaces ") }) else { return (nil, nil) }
-        var commit: String?, date: Date?
-        for field in line.split(separator: " ") {
-            let pair = field.split(separator: "=", maxSplits: 1).map(String.init)
-            guard pair.count == 2 else { continue }
-            if pair[0] == "commit", pair[1].allSatisfy(\.isHexDigit), pair[1].count >= 7 { commit = pair[1] }
-            if pair[0] == "date" { date = ISO8601DateFormatter().date(from: pair[1]) }
-        }
-        return (commit, date)
-    }
-
-    /// Releases from the GitHub API's JSON list. Drafts and anything unparsable are skipped.
-    public static func list(fromGitHubJSON data: Data) -> [Release] {
-        guard let items = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return [] }
-        return items.compactMap { item in
-            guard item["draft"] as? Bool != true, let tag = item["tag_name"] as? String else { return nil }
-            return Release(tag: tag, name: item["name"] as? String ?? tag, notes: item["body"] as? String ?? "",
-                           prerelease: item["prerelease"] as? Bool ?? false, url: item["html_url"] as? String ?? "")
-        }
-    }
 }
 
 /// A release version like `v0.2.1` or `0.2.1`.
@@ -94,33 +87,125 @@ public struct Version: Comparable, Sendable {
     }
 }
 
-public enum Updates {
-    /// Whether installing `release` moves this build forward. Builds and releases that carry
-    /// their commit compare by commit date, so nightly and stable can be mixed without ever
-    /// offering an older build; otherwise version numbers decide.
-    public static func isNewer(_ release: Release, than build: BuildInfo) -> Bool {
-        if let commit = release.commit, let built = build.commit, commit.hasPrefix(built) || built.hasPrefix(commit) { return false }
-        if let date = release.commitDate, let built = build.commitDate { return date > built }
-        guard let v = Version(release.tag), let mine = Version(build.version) else { return false }
-        return v > mine
-    }
+/// A SemVer 2.0 version ordered by precedence: build metadata (after "+") is ignored, a pre-release sorts below
+/// its release, and numeric identifiers compare as numbers. So for one base, dev < nightly < stable.
+public struct SemVer: Comparable, Sendable, CustomStringConvertible {
+    public let major: Int, minor: Int, patch: Int
+    public let prerelease: [String]
+    public let description: String
 
-    /// The release to offer on `channel`, if any is newer than `build`.
-    public static func offer(from releases: [Release], channel: UpdateChannel, build: BuildInfo) -> Release? {
-        candidates(from: releases, channel: channel, build: build).first
-    }
-
-    /// Every release on `channel` that looks newer than `build`, newest first. The app confirms
-    /// each with GitHub (does it really contain this build?) before offering it.
-    public static func candidates(from releases: [Release], channel: UpdateChannel, build: BuildInfo) -> [Release] {
-        let stable = releases.filter { !$0.prerelease && Version($0.tag) != nil }
-            .max { Version($0.tag)! < Version($1.tag)! }
-        var candidates = [stable].compactMap { $0 }
-        if channel == .nightly, let nightly = releases.first(where: \.isNightly) { candidates.append(nightly) }
-        return candidates.filter { $0.isInstallable && isNewer($0, than: build) }.sorted { a, b in
-            if let x = a.commitDate, let y = b.commitDate { return x > y }
-            return a.isNightly && !b.isNightly
+    public init?(_ text: String) {
+        let halves = text.split(separator: "+", maxSplits: 1, omittingEmptySubsequences: false)
+        guard halves.count == 1 || SemVer.identifiers(halves[1]) != nil else { return nil }
+        let core = halves[0].split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        let numbers = core[0].split(separator: ".", omittingEmptySubsequences: false).map { part -> Int? in
+            guard SemVer.isNumber(part), part == "0" || !part.hasPrefix("0") else { return nil }
+            return Int(part)
         }
+        guard numbers.count == 3, let major = numbers[0], let minor = numbers[1], let patch = numbers[2] else { return nil }
+        var prerelease: [String] = []
+        if core.count == 2 {
+            guard let ids = SemVer.identifiers(core[1]),
+                  ids.allSatisfy({ !SemVer.isNumber($0) || $0 == "0" || !$0.hasPrefix("0") }) else { return nil }
+            prerelease = ids
+        }
+        self.major = major; self.minor = minor; self.patch = patch
+        self.prerelease = prerelease
+        description = text
+    }
+
+    /// The version without pre-release or build: "0.4.0".
+    public var base: String { "\(major).\(minor).\(patch)" }
+
+    private static func isNumber<S: StringProtocol>(_ s: S) -> Bool { !s.isEmpty && s.allSatisfy { $0.isASCII && $0.isNumber } }
+
+    private static func identifiers(_ s: Substring) -> [String]? {
+        let ids = s.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        return ids.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") } }) ? ids : nil
+    }
+
+    public static func < (a: SemVer, b: SemVer) -> Bool {
+        if (a.major, a.minor, a.patch) != (b.major, b.minor, b.patch) { return (a.major, a.minor, a.patch) < (b.major, b.minor, b.patch) }
+        if a.prerelease.isEmpty || b.prerelease.isEmpty { return !a.prerelease.isEmpty && b.prerelease.isEmpty }
+        for (x, y) in zip(a.prerelease, b.prerelease) where x != y {
+            switch (isNumber(x) ? Int(x) : nil, isNumber(y) ? Int(y) : nil) {
+            case let (i?, j?): return i < j
+            case (_?, nil): return true
+            case (nil, _?): return false
+            case (nil, nil): return Array(x.utf8).lexicographicallyPrecedes(Array(y.utf8))
+            }
+        }
+        return a.prerelease.count < b.prerelease.count
+    }
+
+    /// Equal precedence: two builds that differ only in build metadata are the same version.
+    public static func == (a: SemVer, b: SemVer) -> Bool { !(a < b) && !(b < a) }
+}
+
+/// A channel's latest.json (spaces/scripts/write-feed.sh): the one build the channel offers.
+public struct Feed: Equatable, Sendable {
+    public let channel: UpdateChannel
+    public let version: SemVer
+    public let commit: String
+    public let notes: String
+    /// The platform keys with a ready-made app: "darwin-aarch64", "darwin-x86_64".
+    public let platforms: Set<String>
+
+    /// Nil unless it is Polycarp's feed and its version belongs to its channel.
+    public init?(json: Data) {
+        guard let o = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any], o["product"] as? String == "polycarp",
+              let channel = (o["channel"] as? String).flatMap(UpdateChannel.init(rawValue:)),
+              let version = (o["version"] as? String).flatMap(SemVer.init),
+              let commit = o["commit"] as? String, commit.count == 40, commit.allSatisfy(\.isHexDigit),
+              let platforms = o["platforms"] as? [String: Any] else { return nil }
+        guard channel == .stable ? version.prerelease.isEmpty
+                : version.prerelease.count == 2 && version.prerelease[0] == channel.rawValue else { return nil }
+        self.channel = channel
+        self.version = version
+        self.commit = commit
+        notes = o["notes"] as? String ?? ""
+        self.platforms = Set(platforms.keys)
+    }
+
+    /// This Mac's platform key.
+    public static var thisMac: String {
+        #if arch(arm64)
+        return "darwin-aarch64"
+        #else
+        return "darwin-x86_64"
+        #endif
+    }
+
+    /// The build as the updater offers and installs it.
+    public var release: Release {
+        // nightly.20261118070000 -> 2026-11-18
+        let time = version.prerelease.last ?? ""
+        let day = time.count == 14 ? "\(time.prefix(4))-\(time.dropFirst(4).prefix(2))-\(time.dropFirst(6).prefix(2))" : time
+        switch channel {
+        case .stable: return Release(tag: "v\(version.base)", name: "Polycarp \(version.base)", notes: notes, commit: commit)
+        case .nightly: return Release(tag: "nightly", name: "Nightly \(day)", notes: notes, commit: commit)
+        case .dev: return Release(tag: "dev", name: "Dev build \(day)", notes: notes, commit: commit)
+        }
+    }
+}
+
+public enum Updates {
+    /// The build `feed` offers this Mac on `channel`, if any. Never the build you have, and never one without a
+    /// ready-made app for this Mac. On the channel this copy was built for, only a newer version; a copy from
+    /// another channel (or built here) is offered the channel's build, and the app then asks GitHub whether that
+    /// build contains this one (`isNewerVersion` decides when GitHub can't answer), so a change of channel never
+    /// goes back in time.
+    public static func offer(_ feed: Feed, channel: UpdateChannel, build: BuildInfo, platform: String = Feed.thisMac) -> Release? {
+        guard feed.channel == channel, feed.platforms.contains(platform) else { return nil }
+        if let mine = build.commit, feed.commit.hasPrefix(mine) || mine.hasPrefix(feed.commit) { return nil }
+        if build.channel == channel, !isNewerVersion(feed, than: build) { return nil }
+        return feed.release
+    }
+
+    /// Whether the feed's version sorts above this build's (SemVer precedence).
+    public static func isNewerVersion(_ feed: Feed, than build: BuildInfo) -> Bool {
+        guard let mine = SemVer(build.version) else { return true }
+        return feed.version > mine
     }
 }
 

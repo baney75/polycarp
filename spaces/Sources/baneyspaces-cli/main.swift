@@ -24,7 +24,8 @@ usage: \(me) <command>
   set <setting> <value>       appearance.theme omarchy|baneyspaces|minimal, appearance.palette auto|<name>,
                               dock.enabled true|false; applies at once, no restart
   get [setting]               read one setting, or all three
-  update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it
+  update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it;
+                              --channel stable|nightly|dev chooses the channel first (update --help)
   --version                   this command's version and the commit it was built from
   remote on|off|status|token  let your other machines (tailnet only) look at this one
   --on HOST <command>         run ls or agent status on another machine
@@ -262,14 +263,25 @@ case "hooks":
 case "update":
     // The app's own updater: the same check and the same signed installer as Settings > Updates.
     guard remoteHost == nil else { fail("update runs on each machine itself", code: 2) }
-    guard rest.count == 1, let what = rest.first, ["--check", "--now"].contains(what) else { fail("usage: \(me) update --check|--now", code: 2) }
+    // --channel chooses the channel first, as Settings > Updates does (docs/releases.md).
+    let usage = "usage: \(me) update --check|--now [--channel stable|nightly|dev]"
+    // `polycarp update --channel` reads this to tell a build that takes --channel from one that doesn't.
+    if rest == ["--help"] { out(usage); exit(0) }
+    guard let what = rest.first, ["--check", "--now"].contains(what) else { fail(usage, code: 2) }
+    var channel: UpdateChannel?
+    if rest.count == 3, rest[1] == "--channel" {
+        guard let chosen = UpdateChannel(rawValue: rest[2]) else { fail(usage, code: 2) }
+        channel = chosen
+    } else if rest.count != 1 { fail(usage, code: 2) }
     func ask(_ text: String) -> UpdateReport {
         guard let reply = Wire.call(Wire.Request(op: .update, text: text), timeout: 5) else { fail("Polycarp isn't running, so it can't check for updates. Open it and try again.") }
         guard let report = UpdateReport(info: reply.info) else { fail(reply.error ?? "this Polycarp is too old to be asked for updates; use Settings > Updates") }
         if !reply.ok, let error = reply.error, text == "now" { fail(error) }
         return report
     }
-    // Ask for a fresh check, then wait for it to finish: `checks` goes up when it has.
+    // Ask for a fresh check, then wait for it to finish: `checks` goes up when it has. Choosing a channel
+    // starts that check itself.
+    if let channel { _ = ask("channel \(channel.rawValue)") }
     let before = ask("check")
     var report = before
     let giveUp = Date().addingTimeInterval(60)

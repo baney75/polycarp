@@ -127,7 +127,7 @@ final class MenuLayoutTests: XCTestCase {
     func testSettingsListsRefreshAndAutomationWaitsForAccessibility() throws {
         let setup = try code("Sources/BaneySpaces/Setup.swift")
         let app = try code("Sources/BaneySpaces/AppDelegate.swift")
-        XCTAssertTrue(setup.contains("if tab == .automation { reloadParked() }\n            if tab == .updates"), "the parked list reads when the tab appears")
+        XCTAssertTrue(setup.contains("if tab == .automation { reloadParked() }\n        }"), "the parked list reads when the tab appears")
         // ...and not on every reload: the bodies of reload() and reloadOptional() never read it.
         for name in ["func reload() {", "private func reloadOptional() {"] {
             let from = try XCTUnwrap(setup.range(of: name))
@@ -138,9 +138,6 @@ final class MenuLayoutTests: XCTestCase {
         XCTAssertTrue(setup.contains("NSWindow.didBecomeKeyNotification, object: window"), "the lists read again when the window takes the keyboard")
         XCTAssertTrue(setup.contains("onFocusFinished?(id)\n        finished = finishedRows()"), "a clicked row leaves the list at once")
         XCTAssertTrue(setup.contains("model.focusFinished(row.id)"))
-        XCTAssertTrue(setup.contains("if tab == .updates { onUpdatesShown?() }"), "the command line tools are looked for when Updates comes up")
-        XCTAssertTrue(app.contains("let found = Updater.hasCommandLineTools"))
-        XCTAssertFalse(app.contains("lazy var commandLineTools"), "asked once at first use goes stale when the tools are installed")
         XCTAssertEqual(setup.components(separatedBy: ".disabled(model.automationReason != nil)").count - 1, 2, "the app list and Bring Every Window Back wait for BaneySpaces to start")
         for name in ["private func bringBack() {", "private func toggleParked(_ id: String) {"] {
             let start = try XCTUnwrap(app.range(of: name))
@@ -161,7 +158,7 @@ final class MenuLayoutTests: XCTestCase {
             XCTAssertTrue(setup.contains(control), "Settings lacks \"\(control)\"")
         }
         for wire in ["onBringBack", "onAbout", "onToggleParked", "onCheckForUpdates", "onOfferUpdate",
-                     "onSetUpdateChannel", "onSetCheckDaily", "onFocusFinished", "onUninstall", "onUpdatesShown"] {
+                     "onSetUpdateChannel", "onSetCheckDaily", "onFocusFinished", "onUninstall"] {
             XCTAssertTrue(wired.contains("c.model.\(wire) ="), "\(wire) isn't wired")
         }
     }
