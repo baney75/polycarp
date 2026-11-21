@@ -16,7 +16,8 @@ extension DockOpenPhases {
 /// `BANEYSPACES_RENDER_DOCK_OPEN=<rounds> Polycarp --render <folder>` times a Workspace Dock open the way
 /// `WorkspaceDock.show(on:)` does it, with the dock's real panel, model and SwiftUI view in a window that is never
 /// shown: 6 workspaces holding 25 apps (real icons from NSWorkspace), a 21-app Background tile, and this Mac's own
-/// window server and running apps for the reads an open makes. A frame is the main thread's whole share: the
+/// window server and running apps for the reads an open makes. Between opens the pointer rests on the edge for the
+/// dwell, as it does before every open from the edge. A frame is the main thread's whole share: the
 /// update, layout, display and the Core Animation commit. Prints the p50, p90 and worst open and each phase's p50
 /// and p90, and exits 1 when the p90 is over `BANEYSPACES_DOCK_OPEN_BUDGET` ms (default `DockOpenPhases.budgetMs`).
 /// `DockOpenSpeedTests` runs it.
@@ -78,8 +79,13 @@ enum DockOpenTiming {
         }
         func hide() {
             model.reset()
-            // The pointer away from the edge: whatever the last open left for later runs now, untimed.
-            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            // The pointer comes back to the edge and rests there for the dwell before the dock comes, as
+            // `WorkspaceDock.tick` sees it: whatever the last open left for later runs now, untimed.
+            let dwell = Date().addingTimeInterval(DockEdge.bottom.dwell)
+            while Date() < dwell {
+                RunningApps.prepare()
+                RunLoop.current.run(until: min(dwell, Date().addingTimeInterval(1.0 / 30)))
+            }
         }
 
         // The panel is built once, on the first reveal, and stays: the first opens aren't the ones that count.

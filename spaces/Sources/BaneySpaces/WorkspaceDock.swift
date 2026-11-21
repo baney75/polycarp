@@ -396,6 +396,9 @@ final class WorkspaceDock {
             carryUndroppable: { resolveCarry() == nil })
         // Before the actions: showing clears the dwell and away clocks itself.
         tickState = state
+        // The pointer rests on the edge: what the open reads of every running app is read now, off the main thread,
+        // during the dwell (`RunningApps.prepare`).
+        if !isShown, tickState.edgeSince != nil { RunningApps.prepare() }
         if isShown { noteHold(nearBar: nearBar, unmoved: unmoved, input: input, mouse: mouse, now: uptime) }
         for action in actions {
             switch action {
@@ -1343,6 +1346,8 @@ final class DockModel: ObservableObject {
 
     /// An app's icon by pid, as macOS has it (`NSRunningApplication.icon`). The dock bench gives sample apps theirs.
     var iconSource: (pid_t) -> NSImage? = { NSRunningApplication(processIdentifier: $0)?.icon }
+    /// Those icons, drawn once at the dock's size and kept (`DockIcons`).
+    private lazy var icons = DockIcons { [unowned self] in self.iconSource($0) }
 
     /// What the dock shows, read from `spaces`. `phases` marks `refresh`, `tiles` and `background` for the open trace.
     func load(from spaces: Spaces, phases: DockOpenPhases? = nil) {
@@ -1373,6 +1378,7 @@ final class DockModel: ObservableObject {
         let appsOn = entries.mapValues { $0.map { "\($0.pid)" } }
         // Join order, not focus: a tile that re-sorted after each switch moved the app you meant to click next.
         joinOrder.update(appsOn)
+        let iconPixels = DockIcons.pixels(dockScale: CGFloat(Appearance.shared.settings.dockSize.scale) * Chrome.tileScale)
         tiles = DockTiles.make(current: current, windows: appsOn, joined: joinOrder).map { t in
             let here = entries[t.workspace] ?? []
             let agents = placed[t.workspace] ?? []
@@ -1384,7 +1390,7 @@ final class DockModel: ObservableObject {
                     Window(id: $0.id, title: WindowTitle.clean($0.title, app: $0.app), isLast: $0.id == last[t.workspace], agent: byWindow[$0.id])
                 }
                 return App(id: a.key, pid: pid, name: byPid[a.key]?.app ?? "App",
-                           icon: iconSource(pid) ?? NSWorkspace.shared.icon(for: .application),
+                           icon: icons.icon(pid, pixels: iconPixels),
                            windows: a.windows, list: list,
                            agent: list.compactMap(\.agent).max { $0.state.urgency < $1.state.urgency })
             }
@@ -1402,6 +1408,7 @@ final class DockModel: ObservableObject {
             tile.unpinned = agents.filter { !windows.contains($0.window) }
             return tile
         }
+        icons.keep(only: Set(tiles.flatMap { $0.apps.map(\.pid) }))
     }
 
     /// The Background tile's apps (`Spaces.backgroundApps`), then what depends on the tiles and that list.
