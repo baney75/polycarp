@@ -160,7 +160,6 @@ public struct Surfaces: Equatable, Sendable {
     public struct Dock: Equatable, Sendable {
         public var tileLabel: TileLabel
         public var restTile: Bool
-        public var restAfterMinutes: Int
     }
 
     /// The status menu's rows, by id.
@@ -280,10 +279,9 @@ extension SurfaceField {
                                                       example: "fixed:Psalm 46:10"),
                      .string("daily"), "daily, hourly, or fixed:<reference> for one verse always."),
 
-        SurfaceField("dock.tileLabel", .choice(Surfaces.TileLabel.allCases.map(\.rawValue)), .string("number"),
-                     "What each workspace tile says: its purpose, its number, or only its apps' icons."),
-        SurfaceField("dock.restTile", .bool, .bool(true), "An \"At rest\" tile gathers apps that have sat idle in the background."),
-        SurfaceField("dock.restAfterMinutes", .integer(1...1_440), .number(30), "Minutes in the background, unused, before an app moves to the rest tile."),
+        SurfaceField("dock.tileLabel", .choice(Surfaces.TileLabel.allCases.map(\.rawValue)), .string("purpose"),
+                     "What each workspace tile says: its purpose (its number where it has none), its number, or only its apps' icons."),
+        SurfaceField("dock.restTile", .bool, .bool(true), "An \"At rest\" tile after the workspaces gathers apps running with no window."),
 
         SurfaceField("menu.order", .ids(known: Surfaces.MenuRow.allCases.map(\.rawValue), custom: false),
                      ids(Surfaces.MenuRow.allCases.map(\.rawValue)), "The rows in order. Rows left out follow in their default order."),
@@ -374,8 +372,7 @@ extension Surfaces {
         desktop = Desktop(scene: Scene(id: s("desktop.scene")), followDaylight: b("desktop.followDaylight"), verse: b("desktop.verse"),
                           versePosition: VersePosition(rawValue: s("desktop.versePosition")) ?? .bottomRight,
                           verseRotation: VerseRotation(id: s("desktop.verseRotation")))
-        dock = Dock(tileLabel: TileLabel(rawValue: s("dock.tileLabel")) ?? .number, restTile: b("dock.restTile"),
-                    restAfterMinutes: n("dock.restAfterMinutes"))
+        dock = Dock(tileLabel: TileLabel(rawValue: s("dock.tileLabel")) ?? .purpose, restTile: b("dock.restTile"))
         menu = Menu(order: list("menu.order").compactMap(MenuRow.init(rawValue:)), hidden: list("menu.hidden").compactMap(MenuRow.init(rawValue:)))
         newtab = NewTab(question: s("newtab.question"), chips: b("newtab.chips"), verse: b("newtab.verse"), searchURL: s("newtab.searchURL"))
         idle = Idle(style: IdleStyle(rawValue: s("idle.style")) ?? .martyrNight, effects: b("idle.effects"),
