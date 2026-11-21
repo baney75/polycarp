@@ -79,7 +79,7 @@ grep -qF '<!-- baneyspaces commit=$COMMIT date=$DATE -->' <<<"$bridge" || bad "t
 # This runs the real publish-channel.sh against a stand-in for gh and curl and checks the release it leaves.
 pub="$tmp/pub"; mkdir -p "$pub/scripts" "$pub/bin" "$pub/state" "$pub/build/Polycarp.app/Contents"
 cp scripts/publish-channel.sh scripts/semver-newer.py scripts/product.env scripts/write-feed.sh scripts/release-requirement.txt "$pub/scripts/"
-printf '#!/bin/bash\nexit 0\n' > "$pub/scripts/verify-release.sh"
+printf '#!/bin/bash\n[ -z "${STUB_VERIFY_FAIL:-}" ]\n' > "$pub/scripts/verify-release.sh"
 pv=$(scripts/channel-version.sh nightly); pdate=2026-11-21T12:00:00Z
 python3 -I -c 'import plistlib,sys; plistlib.dump({"PolycarpVersion": sys.argv[2], "PolycarpChannel": "nightly", "PolycarpCommit": sys.argv[3], "PolycarpCommitDate": sys.argv[4], "PolycarpCommitDirty": "0"}, open(sys.argv[1], "wb"))' \
   "$pub/build/Polycarp.app/Contents/Info.plist" "$pv" "$c" "$pdate"
@@ -119,7 +119,19 @@ case "$url" in
   *) echo "gh stand-in: $url" >&2; exit 1 ;;
 esac
 GH
-printf '#!/bin/bash\n[ -f "$STUB_STATE/nightly.json" ] && cat "$STUB_STATE/nightly.json" || exit 22\n' > "$pub/bin/curl"
+cat > "$pub/bin/curl" <<'CURL'
+#!/bin/bash
+# Honors -o and -w '%{http_code}' like curl -sSL. STUB_CURL: neterr (no answer), 500, badjson; otherwise the feed
+# when one was published, else 404.
+out=/dev/stdout
+while [ $# -gt 0 ]; do [ "$1" = -o ] && { out=$2; shift; }; shift; done
+case "${STUB_CURL:-}" in
+  neterr) exit 6 ;;
+  500) printf 'oops' > "$out"; printf 500 ;;
+  badjson) printf '{"channel": "nightly"}' > "$out"; printf 200 ;;
+  *) if [ -f "$STUB_STATE/nightly.json" ]; then cat "$STUB_STATE/nightly.json" > "$out"; [ "$out" = /dev/stdout ] || printf 200; else printf 404; fi ;;
+esac
+CURL
 chmod +x "$pub/bin/gh" "$pub/bin/curl" "$pub/scripts/"*.sh
 out=$(STUB_STATE="$pub/state" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" bash "$pub/scripts/publish-channel.sh" nightly 2>&1) \
   || bad "publish-channel.sh nightly failed against the stand-in: $out"
@@ -146,5 +158,37 @@ assert got.get("date") == datetime.datetime.strptime(date, "%Y-%m-%dT%H:%M:%SZ")
 assert got["date"] > datetime.datetime(2026, 11, 21, 4, 17, 31), "not newer than a 0.3.0 build from fdc42684"
 PY
 fi
+
+# A publish that can't confirm its checks publishes nothing. Each run starts from an empty stand-in.
+# sol-F1/first-F1: verify-release.sh failing on the downloaded draft. sol-F2: a feed that can't be read, so the
+# version guard can't run. Each must exit non-zero and leave no published release.
+refuses() { # <what> <env...>
+  local what=$1 st="$tmp/refuse-$RANDOM" o; shift; mkdir -p "$st"
+  if o=$(env "$@" STUB_STATE="$st" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" bash "$pub/scripts/publish-channel.sh" nightly 2>&1); then
+    bad "publish-channel.sh went ahead when $what: $o"
+  fi
+  for d in "$st"/r*; do [ "$(cat "$d/draft" 2>/dev/null)" != false ] || bad "$what, yet $(cat "$d/tag") was published"; done
+}
+refuses "verify-release.sh failed" STUB_VERIFY_FAIL=1
+refuses "the feed didn't answer" STUB_CURL=neterr
+refuses "the feed answered HTTP 500" STUB_CURL=500
+refuses "the feed named no version" STUB_CURL=badjson
+
+# sol-F3: release.sh --soak publishes only the build the receipt soaked, by binary sha256 and build stamp.
+sk="$tmp/soak"; mkdir -p "$sk/app/Polycarp.app/Contents/MacOS" "$sk/rel"
+printf 'build A' > "$sk/app/Polycarp.app/Contents/MacOS/Polycarp"
+python3 -I -c 'import plistlib,sys; plistlib.dump({"CFBundleVersion": "412"}, open(sys.argv[1], "wb"))' "$sk/app/Polycarp.app/Contents/Info.plist"
+ditto -c -k --keepParent "$sk/app/Polycarp.app" "$sk/rel/Polycarp.zip"
+shaA=$(shasum -a 256 "$sk/app/Polycarp.app/Contents/MacOS/Polycarp" | awk '{print $1}')
+printf 'candidate version=0.4.0 commit=%s sha256=%s build=412\nSOAK PASSED\n' "$c" "$shaA" > "$sk/a.receipt"
+scripts/soak-matches.sh "$sk/a.receipt" "$sk/rel" "$c" 2>/dev/null || bad "soak-matches.sh refused the build its receipt soaked"
+scripts/soak-matches.sh "$sk/a.receipt" "$sk/rel" 0000000 2>/dev/null && bad "soak-matches.sh took a receipt for another commit"
+printf 'candidate version=0.4.0 commit=%s sha256=%s build=411\nSOAK FAILED\n%s' "$c" "$shaA" "$(cat "$sk/a.receipt")" > "$sk/b.receipt"
+scripts/soak-matches.sh "$sk/b.receipt" "$sk/rel" "$c" 2>/dev/null || bad "soak-matches.sh should read the receipt's last soak"
+printf 'build B' > "$sk/app/Polycarp.app/Contents/MacOS/Polycarp"; rm "$sk/rel/Polycarp.zip"
+ditto -c -k --keepParent "$sk/app/Polycarp.app" "$sk/rel/Polycarp.zip"
+scripts/soak-matches.sh "$sk/a.receipt" "$sk/rel" "$c" 2>/dev/null && bad "soak-matches.sh took build A's receipt for build B (sol-F3)"
+grep -q 'scripts/soak-matches.sh "$SOAK" "$BACK" "$TAG_COMMIT"' scripts/release.sh || bad "release.sh --soak must run soak-matches.sh on the downloaded draft"
+
 [ $status = 0 ] && echo "channels-test: pass"
 exit $status

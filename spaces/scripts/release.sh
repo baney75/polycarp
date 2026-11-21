@@ -83,6 +83,7 @@ if [ -n "$SOAK" ]; then
   trap 'rm -rf "$BACK"' EXIT
   gh release download "$TAG" --dir "$BACK" --pattern 'Polycarp.zip' --pattern 'Polycarp.zip.sha256' --pattern 'Polycarp.dmg' --pattern latest.json
   scripts/verify-release.sh "$BACK"
+  scripts/soak-matches.sh "$SOAK" "$BACK" "$TAG_COMMIT" || fail "soak this draft's build. $TAG stays a draft."
   step "Publishing $TAG"
   gh release edit "$TAG" --draft=false --latest
   echo "published $TAG with Polycarp.zip, Polycarp.zip.sha256, Polycarp.dmg and latest.json"

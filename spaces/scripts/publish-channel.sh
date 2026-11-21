@@ -29,7 +29,16 @@ for f in "$PRODUCT_NAME.zip" "$PRODUCT_NAME.zip.sha256" "$PRODUCT_NAME.dmg"; do 
 # SemVer 2.0 precedence: exit 0 when $1 sorts above $2.
 newer() { python3 -I scripts/semver-newer.py "$1" "$2"; }
 FEED="https://github.com/$REPO/releases/download/$CHANNEL/latest.json"
-OLD=$(curl -fsSL "$FEED" 2>/dev/null | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)
+# Only a feed that is confirmed missing (404) means a first publish. Any other answer, a network error or a feed
+# that doesn't parse stops here, so a blip can never let an older build replace a newer one.
+FEED_BODY=$(mktemp); trap 'rm -f "$FEED_BODY"' EXIT
+CODE=$(curl -sSL -o "$FEED_BODY" -w '%{http_code}' "$FEED") || fail "couldn't fetch $FEED. Nothing was published."
+case "$CODE" in
+  404) OLD="" ;;
+  200) OLD=$(python3 -I -c 'import json,sys; v=json.load(open(sys.argv[1])).get("version"); assert isinstance(v,str) and v; print(v)' "$FEED_BODY") \
+         || fail "$FEED doesn't name a version. Nothing was published." ;;
+  *) fail "$FEED answered HTTP $CODE. Nothing was published." ;;
+esac
 if [ -n "$OLD" ]; then
   newer "$VERSION" "$OLD" || fail "$CHANNEL already offers $OLD, which is not older than $VERSION. Nothing was published."
 fi
@@ -41,9 +50,11 @@ BODY="$NOTES
 scripts/write-feed.sh "$CHANNEL" "$VERSION" "$COMMIT" "build/$PRODUCT_NAME.zip" build/latest.json "$NOTES"
 FILES=("$PRODUCT_NAME.zip" "$PRODUCT_NAME.zip.sha256" "$PRODUCT_NAME.dmg" latest.json)
 
-# draft <tag>: a draft prerelease holding every file, checked as downloaded. Prints its id.
+# draft <tag>: a draft prerelease holding every file, checked as downloaded. Sets DRAFT_ID. It never runs inside
+# $(...), where macOS bash 3.2 turns set -e off and a failed check would still publish.
 draft() {
   local id f back
+  DRAFT_ID=
   id=$(gh api "repos/$REPO/releases" -f tag_name="$1" -f target_commitish="$COMMIT" -f name="Polycarp $VERSION" \
     -f body="$BODY" -F draft=true -F prerelease=true -f make_latest=false --jq .id)
   for f in "${FILES[@]}"; do
@@ -55,20 +66,20 @@ draft() {
     gh api -H "Accept: application/octet-stream" "repos/$REPO/releases/assets/$aid" > "$back/$name"
   done < <(gh api "repos/$REPO/releases/$id/assets" --jq '.[] | [.id, .name] | @tsv')
   for f in "${FILES[@]}"; do cmp -s "build/$f" "$back/$f" || { rm -rf "$back"; fail "the uploaded $f differs from the one built; draft $id is left unpublished."; }; done
-  scripts/verify-release.sh "$back" >&2
+  scripts/verify-release.sh "$back" >&2 || { rm -rf "$back"; fail "draft $id failed verify-release.sh and is left unpublished."; }
   rm -rf "$back"
-  echo "$id"
+  DRAFT_ID=$id
 }
 
 TIME=$(printf '%s' "$VERSION" | sed -n "s/.*-$CHANNEL\.\([0-9]\{14\}\)+.*/\1/p")
 [ -n "$TIME" ] || fail "$VERSION carries no build time."
 if [ "$CHANNEL" = nightly ]; then
   step "Publishing the immutable prerelease nightly-$TIME"
-  id=$(draft "nightly-$TIME")
-  gh api -X PATCH "repos/$REPO/releases/$id" -F draft=false -f make_latest=false >/dev/null
+  draft "nightly-$TIME"
+  gh api -X PATCH "repos/$REPO/releases/$DRAFT_ID" -F draft=false -f make_latest=false >/dev/null
 fi
 step "Moving $CHANNEL to $VERSION"
-id=$(draft "$CHANNEL-next-$TIME")
+draft "$CHANNEL-next-$TIME"; id=$DRAFT_ID
 # The rolling release is replaced, never edited in place, so its files always belong to one build. Every
 # nightly it held is still kept as nightly-<time>.
 gh release delete "$CHANNEL" -R "$REPO" --cleanup-tag --yes 2>/dev/null || true
@@ -85,7 +96,7 @@ if [ "$BRIDGE" = 1 ]; then
     --notes "Preview is now Nightly: https://github.com/$REPO/releases/tag/nightly. This last preview build is Polycarp $VERSION, built from $COMMIT, and follows the Nightly channel by itself.
 <!-- baneyspaces commit=$COMMIT date=$DATE -->"
   [ "$(gh api "repos/$REPO/git/ref/tags/preview" --jq .object.sha)" = "$COMMIT" ] || fail "the preview tag isn't on $COMMIT."
-  back=$(mktemp -d); trap 'rm -rf "$back"' EXIT
+  back=$(mktemp -d); trap 'rm -rf "$back" "$FEED_BODY"' EXIT
   gh release download preview -R "$REPO" --dir "$back" --pattern '*'
   for f in "${FILES[@]}"; do cmp -s "build/$f" "$back/$f" || fail "the uploaded preview $f differs from the one built."; done
   scripts/verify-release.sh "$back"
