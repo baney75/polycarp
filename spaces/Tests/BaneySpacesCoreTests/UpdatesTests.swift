@@ -66,7 +66,7 @@ final class UpdatesTests: XCTestCase {
         XCTAssertNil(feed("nightly", "0.4.0"))
         XCTAssertNil(feed("dev", "0.4.0-nightly.20261118070000+1a2b3c4"))
         XCTAssertNil(feed("nightly", "0.4.0-nightly.20261118070000", commit: "abc1234"))
-        XCTAssertNil(Feed(json: Data(#"{"product":"silas","channel":"stable","version":"0.4.0","commit":"\#(commit)","platforms":{}}"#.utf8)))
+        XCTAssertNil(Feed(json: Data(#"{"product":"other","channel":"stable","version":"0.4.0","commit":"\#(commit)","platforms":{}}"#.utf8)))
         XCTAssertTrue(nightly.release.isInstallable)
     }
 
