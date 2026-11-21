@@ -63,7 +63,9 @@ sign only when the repository has the secrets
 `POLYCARP_SIGNING_P12` (base64 of a .p12 holding the key `release-requirement.txt` pins) and
 `POLYCARP_SIGNING_P12_PASSWORD` (letters and digits only, for example `openssl rand -hex 24`), which
 `spaces/scripts/ci-signing.sh` imports into a throwaway keychain. Without them the run warns, builds nothing and
-publishes nothing. The owner's Mac can still publish by hand:
+publishes nothing. The owner sets both from the Mac that holds the key with one command,
+`spaces/scripts/set-ci-signing.sh`: it exports only the pinned identity, sets the two secrets through `gh` and prints
+neither. The owner's Mac can still publish by hand:
 
 - Nightly and dev: `spaces/scripts/release.sh --channel nightly|dev` on a clean checkout of `main`. It builds,
   signs, packages and verifies, then `publish-channel.sh` uploads into a draft, downloads it back, checks it, and
