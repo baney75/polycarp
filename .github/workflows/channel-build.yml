@@ -1,6 +1,6 @@
 name: Channel build
 # Builds, signs and publishes one nightly or dev build of a main commit (docs/releases.md), called by nightly.yml
-# and dev.yml. The work is spaces/scripts/release.sh --channel, the same script the owner's Mac runs. A build is
+# and dev.yml, on GitHub's hosted macOS runner (never a self-hosted one: this repository is public). The work is spaces/scripts/release.sh --channel, the same script the owner's Mac runs. A build is
 # signed only with the release identity from the POLYCARP_SIGNING_P12 secrets; without them nothing is built or
 # published here, the run says so, and the Mac publishes instead. An ad-hoc build never ships (spaces/AGENTS.md).
 on:
@@ -9,6 +9,8 @@ on:
       channel: { type: string, required: true }
       commit: { type: string, required: true }
       build_time: { type: string, required: true }
+      # The first nightly only (docs/release-gate.md): also put this build on the old `preview` release.
+      bridge: { type: boolean, required: false, default: false }
     secrets:
       POLYCARP_SIGNING_P12: { required: false }
       POLYCARP_SIGNING_P12_PASSWORD: { required: false }
@@ -41,17 +43,11 @@ jobs:
           fi
           [ $code = 0 ] && echo "signed=true" >> "$GITHUB_OUTPUT"
           exit $code
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: steps.sign.outputs.signed == 'true'
-        with:
-          node-version: 22
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        if: steps.sign.outputs.signed == 'true'
-        with:
-          bun-version: 1.3.14
       - name: Build, sign, package, verify and publish
         if: steps.sign.outputs.signed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           POLYCARP_BUILD_TIME: ${{ inputs.build_time }}
-        run: scripts/release.sh --channel "${{ inputs.channel }}"
+          CHANNEL: ${{ inputs.channel }}
+          BRIDGE: ${{ inputs.bridge && '--bridge' || '' }}
+        run: scripts/release.sh --channel "$CHANNEL" $BRIDGE

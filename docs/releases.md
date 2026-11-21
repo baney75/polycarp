@@ -56,12 +56,14 @@ Every release is signed by the one release identity. Without it nothing ships: a
 | `promote.yml` | By hand only, with `nightly=nightly-<time>` or `hotfix=true` | Checks the nightly is 72 hours old, stable is behind it and no `regression` issue is open (a hotfix: VERSION is the last tag's patch + 1). Fast-forwards `stable`, tags `vX.Y.Z` on it, makes the draft release, then calls `stable-build.yml`. |
 | `stable-build.yml` | `promote.yml` only | Builds the universal app at the tag and uploads it into the draft. It never publishes. |
 
-`channel-build.yml` and `stable-build.yml` run the same scripts the Mac runs: `spaces/scripts/release.sh`
-(`--channel nightly|dev`, or the stable path). They sign only when the repository has the secrets
+Nightly and dev are built, signed and published on GitHub's hosted macOS runners (`macos-15`, free for this
+public repository). No workflow here uses a self-hosted runner. `channel-build.yml` and `stable-build.yml` run
+the same scripts the Mac runs: `spaces/scripts/release.sh` (`--channel nightly|dev`, or the stable path). They
+sign only when the repository has the secrets
 `POLYCARP_SIGNING_P12` (base64 of a .p12 holding the key `release-requirement.txt` pins) and
 `POLYCARP_SIGNING_P12_PASSWORD` (letters and digits only, for example `openssl rand -hex 24`), which
 `spaces/scripts/ci-signing.sh` imports into a throwaway keychain. Without them the run warns, builds nothing and
-publishes nothing, and the owner's Mac publishes instead, with the key that never leaves it:
+publishes nothing. The owner's Mac can still publish by hand:
 
 - Nightly and dev: `spaces/scripts/release.sh --channel nightly|dev` on a clean checkout of `main`. It builds,
   signs, packages and verifies, then `publish-channel.sh` uploads into a draft, downloads it back, checks it, and
@@ -84,7 +86,8 @@ which also checks that CI signing fails closed and that no workflow publishes a 
 
 Until November 2026 Polycarp shipped one rolling prerelease, `preview`, whose builds carried the plain base
 version (`0.3.0`). `nightly` sorts below a plain version of the same base, so `main` went to `0.4.0` at the
-rename. One bridge build (`release.sh --channel nightly --bridge`) is both the first nightly and the last
+rename. One bridge build (`gh workflow run nightly.yml -f bridge=true`, or `release.sh --channel nightly --bridge`
+on the Mac) is both the first nightly and the last
 preview: its updater follows nightly, and the `preview` release keeps serving it, with a `latest.json`, until
 every install has moved. Then `preview` is retired. Releases are never deleted to roll back: re-publish the last
 good `latest.json` and fix forward.

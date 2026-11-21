@@ -212,6 +212,11 @@ for wf in channel-build stable-build; do
     END { s = s "\n"; step(); exit !(n && !miss) }
   ' "$f" || bad "$wf.yml runs release.sh without the signing identity"
 done
+# This repository is public: no job runs on a self-hosted runner, and the builds run on GitHub's hosted macOS.
+if grep -nE 'runs-on:.*self-hosted|^ *- *self-hosted' ../.github/workflows/*.yml; then bad "a workflow uses a self-hosted runner"; fi
+for wf in channel-build stable-build; do
+  [ "$(grep -E '^ +runs-on:' "../.github/workflows/$wf.yml" | sed 's/^ *runs-on: *//' | sort -u)" = macos-15 ] || bad "$wf.yml doesn't build on macos-15"
+done
 # Comments and echoed advice may name the Mac's publish step; a command may not.
 if grep -nE -- '--soak|draft=false|--draft=false|make_latest=true|--latest( |$)' ../.github/workflows/*.yml \
   | grep -vE '^[^:]+:[0-9]+: *(#|echo )'; then bad "a workflow publishes a release by itself"; fi
