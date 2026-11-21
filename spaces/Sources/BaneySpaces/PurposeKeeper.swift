@@ -24,6 +24,7 @@ final class PurposeKeeper {
     private var timer: Timer?
     private var rollover: Timer?
     private var started = false
+    private var gate = PresenceGate()
 
     private init() {
         UserDefaults.standard.register(defaults: RhythmSettings.registered)
@@ -52,19 +53,23 @@ final class PurposeKeeper {
         timer = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in self?.tick() }
         timer?.tolerance = 5
         let ws = NSWorkspace.shared.notificationCenter
-        for name in [NSWorkspace.screensDidSleepNotification, NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
-            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.wentAway() }
-        }
-        for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
-            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.cameBack() }
+        let workspaceEvents: [(Notification.Name, PresenceGate.Event)] = [
+            (NSWorkspace.screensDidSleepNotification, .wentAway), (NSWorkspace.willSleepNotification, .wentAway),
+            (NSWorkspace.sessionDidResignActiveNotification, .wentAway), (NSWorkspace.screensDidWakeNotification, .woke),
+            (NSWorkspace.didWakeNotification, .woke), (NSWorkspace.sessionDidBecomeActiveNotification, .sessionActive),
+        ]
+        for (name, event) in workspaceEvents {
+            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.presence(event) }
         }
         // The lock screen and the screen saver say so only through the distributed center.
-        let dist = DistributedNotificationCenter.default()
-        for name in ["com.apple.screenIsLocked", "com.apple.screensaver.didstart"] {
-            dist.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in self?.wentAway() }
-        }
-        for name in ["com.apple.screenIsUnlocked", "com.apple.screensaver.didstop"] {
-            dist.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in self?.cameBack() }
+        let distEvents: [(String, PresenceGate.Event)] = [
+            ("com.apple.screenIsLocked", .locked), ("com.apple.screensaver.didstart", .wentAway),
+            ("com.apple.screenIsUnlocked", .unlocked), ("com.apple.screensaver.didstop", .woke),
+        ]
+        for (name, event) in distEvents {
+            DistributedNotificationCenter.default().addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in
+                self?.presence(event)
+            }
         }
         NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -87,7 +92,7 @@ final class PurposeKeeper {
     /// A view showed `prompt`: it isn't due again today.
     func given(_ prompt: Rhythm.Prompt) {
         rhythm = Rhythm.given(prompt, now: Date(), state: rhythm, clock: ledger.dayClock)
-        checkDue()
+        checkDue(idle: Self.idleSeconds())
     }
 
     /// Keeps tonight's examen in the journal, off the main thread, and counts the examen as given. `done` gets the file,
@@ -138,19 +143,26 @@ final class PurposeKeeper {
         let idle = Self.idleSeconds()
         ledger.tick(idle: idle)
         // Input since the last tick counts as being at the Mac.
-        if idle < Self.tickInterval { checkDue() }
+        if idle < Self.tickInterval { checkDue(idle: idle) }
     }
 
-    private func wentAway() { ledger.wentAway(idle: Self.idleSeconds()) }
-
-    private func cameBack() {
-        ledger.cameBack()
-        purposes.rollover()
-        scheduleRollover()
+    /// Sleep, the lock and the screen saver. The ledger starts again only when the person is back (`PresenceGate`): the
+    /// screen waking under the lock screen is not that.
+    private func presence(_ event: PresenceGate.Event) {
+        switch event {
+        case .locked, .wentAway: ledger.wentAway(idle: Self.idleSeconds())
+        case .unlocked, .woke, .sessionActive: break
+        }
+        if gate.back(after: event) { ledger.cameBack() }
+        if event != .locked, event != .wentAway {
+            purposes.rollover()
+            scheduleRollover()
+        }
     }
 
-    private func checkDue() {
-        let now = Rhythm.due(now: Date(), state: rhythm, settings: settings, clock: ledger.dayClock)
+    /// With `idle` seconds since the last input: a prompt comes due only with someone at the Mac (`Rhythm.recentInput`).
+    private func checkDue(idle: TimeInterval) {
+        let now = Rhythm.due(now: Date(), idle: idle, state: rhythm, settings: settings, clock: ledger.dayClock)
         guard now != due else { return }
         due = now
         NotificationCenter.default.post(name: Self.promptDue, object: self)
@@ -163,7 +175,8 @@ final class PurposeKeeper {
         let t = Timer(fire: at.addingTimeInterval(1), interval: 0, repeats: false) { [weak self] _ in
             guard let self else { return }
             purposes.rollover()
-            checkDue()
+            // At 4 am nobody is usually there: this clears last night's prompt, and the morning waits for input.
+            checkDue(idle: Self.idleSeconds())
             scheduleRollover()
         }
         t.tolerance = 30

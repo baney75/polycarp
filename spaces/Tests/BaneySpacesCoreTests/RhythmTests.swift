@@ -8,8 +8,19 @@ final class RhythmTests: XCTestCase {
     private func at(_ y: Int, _ m: Int, _ d: Int, _ h: Int, _ min: Int = 0, first: Bool = true) -> Date {
         PurposeFixture.at(y, m, d, h, min, first: first)
     }
-    private func due(_ now: Date, _ s: RhythmState = RhythmState(), _ settings: RhythmSettings? = nil, clock: DayClock? = nil) -> Rhythm.Prompt? {
-        Rhythm.due(now: now, state: s, settings: settings ?? on, clock: clock ?? c)
+    private func due(_ now: Date, _ s: RhythmState = RhythmState(), _ settings: RhythmSettings? = nil, clock: DayClock? = nil,
+                     idle: TimeInterval = 0) -> Rhythm.Prompt? {
+        Rhythm.due(now: now, idle: idle, state: s, settings: settings ?? on, clock: clock ?? c)
+    }
+
+    /// Review of #582 (first-F3): the 4 am rollover found the morning question due with nobody at the Mac.
+    func testNoPromptComesDueToAnEmptyRoom() {
+        let s = Rhythm.given(.eveningExamen, now: at(2026, 11, 20, 20), state: RhythmState(), clock: c)
+        XCTAssertNil(due(at(2026, 11, 21, 4), s, idle: 3 * 3600), "the rollover at 4 am, the Mac awake and nobody there")
+        XCTAssertNil(due(at(2026, 11, 21, 4), s, idle: Rhythm.recentInput), "two minutes idle is away")
+        XCTAssertEqual(due(at(2026, 11, 21, 6, 30), s, idle: 1), .morningQuestion, "the next real input brings it")
+        XCTAssertNil(due(at(2026, 11, 21, 19), s, idle: 600), "the evening waits for input too")
+        XCTAssertEqual(due(at(2026, 11, 21, 19), s, idle: 119), .eveningExamen)
     }
 
     func testTheMorningQuestionComesWithTheFirstInputAfterFour() {

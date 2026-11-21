@@ -120,6 +120,24 @@ public struct LedgerTracker: Equatable, Sendable {
     }
 }
 
+/// Whether the person is back at the Mac after sleep, the lock or the screen saver. The screen waking is not coming back
+/// while the lock screen is up (typing the password is input, and would count): only unlocking is.
+public struct PresenceGate: Equatable, Sendable {
+    public enum Event: Sendable { case locked, unlocked, wentAway, woke, sessionActive }
+    public private(set) var locked = false
+    public init() {}
+
+    /// Notes `e` and says whether it means the person is back.
+    public mutating func back(after e: Event) -> Bool {
+        switch e {
+        case .locked: locked = true; return false
+        case .wentAway: return false
+        case .unlocked, .sessionActive: locked = false; return true
+        case .woke: return !locked
+        }
+    }
+}
+
 /// The ledger in memory with its tracker, written to ledger.json off the caller's thread. Feed it from the main thread;
 /// read it from anywhere.
 public final class DayLedgerStore: @unchecked Sendable {

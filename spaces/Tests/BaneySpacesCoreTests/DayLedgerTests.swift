@@ -158,3 +158,37 @@ final class DayLedgerStoreTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: folder.path).contains { $0.hasPrefix("ledger.json.bad-") })
     }
 }
+
+/// Review of #582 (first-F2): the screen waking under the lock screen counted as being back, so typing the password
+/// started the ledger before the Mac was unlocked.
+final class PresenceGateTests: XCTestCase {
+    func testWakingUnderTheLockScreenIsNotBeingBack() {
+        var g = PresenceGate()
+        XCTAssertFalse(g.back(after: .locked))
+        XCTAssertFalse(g.back(after: .wentAway))
+        XCTAssertFalse(g.back(after: .woke), "the lock screen is still up")
+        XCTAssertTrue(g.back(after: .unlocked))
+        XCTAssertFalse(g.locked)
+    }
+
+    func testWakingWithNoLockIsBeingBack() {
+        var g = PresenceGate()
+        XCTAssertFalse(g.back(after: .wentAway))
+        XCTAssertTrue(g.back(after: .woke))
+    }
+
+    func testASessionComingBackClearsTheLock() {
+        var g = PresenceGate()
+        _ = g.back(after: .locked)
+        XCTAssertTrue(g.back(after: .sessionActive))
+        XCTAssertTrue(g.back(after: .woke))
+    }
+
+    func testTheKeeperFeedsTheLedgerThroughTheGate() throws {
+        let keeper = try SourceText.code("Sources/BaneySpaces/PurposeKeeper.swift")
+        XCTAssertTrue(keeper.contains("if gate.back(after: event) { ledger.cameBack() }"))
+        XCTAssertEqual(keeper.components(separatedBy: "ledger.cameBack(").count, 2, "no other way back")
+        XCTAssertTrue(keeper.contains("(\"com.apple.screenIsUnlocked\", .unlocked)"))
+        XCTAssertTrue(keeper.contains("(NSWorkspace.screensDidWakeNotification, .woke)"))
+    }
+}

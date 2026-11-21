@@ -73,9 +73,15 @@ public enum Rhythm {
         clock.time(on: day, hour: settings.examenHour)
     }
 
-    /// What to show now, if anything. The examen once the evening has started; the morning question before then. A day
-    /// whose first input comes after the evening starts gets the examen only: a morning question at 7 pm asks too late.
-    public static func due(now: Date, state: RhythmState, settings: RhythmSettings, clock: DayClock) -> Prompt? {
+    /// Input within this long means someone is at the Mac. A prompt never comes due to an empty room (the 4 am rollover,
+    /// a night with the Mac awake); it waits for the next real input.
+    public static let recentInput: TimeInterval = 120
+
+    /// What to show now, if anything, with `idle` seconds since the last input. The examen once the evening has started;
+    /// the morning question before then. A day whose first input comes after the evening starts gets the examen only: a
+    /// morning question at 7 pm asks too late.
+    public static func due(now: Date, idle: TimeInterval, state: RhythmState, settings: RhythmSettings, clock: DayClock) -> Prompt? {
+        guard idle < recentInput else { return nil }
         let today = clock.day(of: now)
         let evening = now >= eveningStart(of: today, settings: settings, clock: clock)
         if settings.eveningExamen, evening, notYet(state.examenOffered, today) { return .eveningExamen }
