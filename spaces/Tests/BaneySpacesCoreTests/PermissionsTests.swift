@@ -47,6 +47,9 @@ final class PermissionsTests: XCTestCase {
         XCTAssertFalse(plist.contains("NSMicrophoneUsageDescription"))
         let entitlements = try Repo.text("Resources/Polycarp.entitlements")
         XCTAssertFalse(entitlements.contains("com.apple.security.device.audio-input"))
+        // Under the Hardened Runtime, Contacts stays denied whatever TCC says unless the app holds this.
+        let parsed = try PropertyListSerialization.propertyList(from: Data(entitlements.utf8), format: nil) as? [String: Any]
+        XCTAssertEqual(parsed?["com.apple.security.personal-information.addressbook"] as? Bool, true)
     }
 
     func testEachPermissionNamesThePartsThatUseIt() {
