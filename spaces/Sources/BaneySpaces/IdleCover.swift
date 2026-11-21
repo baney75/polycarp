@@ -48,7 +48,8 @@ final class IdleCover {
 
     /// Puts the cover up now, whatever the time since the last input.
     func show(idle: TimeInterval = PurposeKeeper.idleSeconds()) {
-        guard !isUp else { return }
+        // With no screen there is no window to take away, so the hidden cursor and the monitor would stay.
+        guard !isUp, !NSScreen.screens.isEmpty else { return }
         let settings = SurfacesStore.shared.current.idle
         let name = Self.machineName()
         for screen in NSScreen.screens {
