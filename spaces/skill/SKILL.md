@@ -1,6 +1,6 @@
 ---
 name: baneyspaces
-description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on) and the agent workspace (list its windows, move a window there). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, or keep an agent's windows off his workspaces. Faster and safer than screenshots. It does not click or type into apps: computer use is Tychicus.
+description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on) and the agent workspace (list its windows, move a window there). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, or keep an agent's windows off his workspaces. Faster and safer than screenshots. Also use it to change what Polycarp's surfaces show (top bar, desktop scene and verse, dock tiles, status menu, new tab page, idle screen) through `surfaces get|set|reset`. It does not click or type into apps: computer use is Tychicus.
 ---
 
 # BaneySpaces
@@ -42,6 +42,27 @@ BaneySpaces workspace.
   fallback that raises windows or takes the pointer.
 - Claude Code sessions report their own state through hooks (`baneyspaces hooks status`). Don't
   call `notify` for an ordinary end of turn; the hook already marks it.
+
+## Surfaces: what the bar, desktop, dock, menu, new tab and idle screen show
+
+One file, `~/Library/Application Support/Polycarp/surfaces.json`, says what every Polycarp surface shows. Change it
+only when Donovan asks for a change to how a surface looks or behaves; a running Polycarp shows it within 150 ms.
+
+```sh
+baneyspaces surfaces schema                      # every field, its default and what it takes: read it first
+baneyspaces surfaces get bar --json              # what is in force now (the file over the defaults)
+baneyspaces surfaces set bar.style glass         # checked, then written whole; a refusal writes nothing
+baneyspaces surfaces set bar.modules '{"left":["mark","workspaces"],"center":["hour"],"right":["clock"]}'
+baneyspaces surfaces reset bar.style             # back to the default
+baneyspaces surfaces validate ./draft.json       # every error with its JSON path
+```
+
+Paths are keys joined with dots (`desktop.verseRotation`). Values are JSON (`30`, `true`, `"fixed:John 3:16"`,
+`["mark"]`). A refusal names each path and why (`--json`: `error.data.errors`). A bar module goes in one place across
+left, center and right, defaults included, so set `bar.modules` whole to move one. `settings` and `quit` can't be
+hidden from the menu. Note the old value with `get` before a `set`, so you can put it back. Over MCP, `polycarp mcp`
+serves the same as `surfaces_schema`, `surfaces_get` and `surfaces_set`. Colors and fonts are the theme's
+(`polycarp theme`), not this file's. Every field: spaces/docs/surfaces.md.
 
 ## The agent workspace
 

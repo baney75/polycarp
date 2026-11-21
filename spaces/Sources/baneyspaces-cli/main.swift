@@ -28,6 +28,9 @@ usage: \(me) <command>
   set <setting> <value>       appearance.theme omarchy|baneyspaces|minimal, appearance.palette auto|<name>,
                               dock.enabled true|false; applies at once, no restart
   get [setting]               read one setting, or all three
+  surfaces get|set|reset|schema|validate [--json]
+                              the one file every surface reads: bar, desktop, dock, menu,
+                              new tab, idle screen (surfaces help, docs/surfaces.md)
   update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it;
                               --channel stable|nightly|dev chooses the channel first (update --help)
   --version                   this command's version and the commit it was built from
@@ -232,6 +235,9 @@ case "sandbox":
 
 case "phone", "phones":
     PhoneCommand.run(rest)
+
+case "surfaces":
+    SurfacesCommand.run(rest, remote: remoteHost != nil)
 
 case "agent":
     // The agent workspace: agents work there while you work here.

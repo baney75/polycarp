@@ -46,8 +46,10 @@ impl Sandbox {
         c
     }
     fn server(&self) -> Server {
-        let mut child = self
-            .command()
+        Sandbox::spawn(self.command())
+    }
+    fn spawn(mut cmd: Command) -> Server {
+        let mut child = cmd
             .arg("mcp")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -130,7 +132,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 20] = [
+const TOOLS: [&str; 23] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -151,6 +153,9 @@ const TOOLS: [&str; 20] = [
     "theme_off",
     "theme_on",
     "theme_reset",
+    "surfaces_schema",
+    "surfaces_get",
+    "surfaces_set",
 ];
 
 #[test]
@@ -868,5 +873,181 @@ fn an_agent_cannot_delete_or_replace_a_theme_it_did_not_make_without_force() {
         code_of(&s.tool("theme_delete", json!({"name": "again"}))),
         "not_yours"
     );
+    assert_eq!(s.finish(), 0);
+}
+
+// ---- Surfaces: the tools run `polycarp-spaces surfaces ... --json` and pass its envelope on ----
+
+/// A stand-in for polycarp-spaces: writes its arguments, one a line, to `args`, prints `reply` on stdout and
+/// `stderr` on stderr, and exits with what `code` holds (0 when it is missing).
+#[cfg(unix)]
+fn spaces_stub(sb: &Sandbox) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = sb.root.join("spaces");
+    fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("polycarp-spaces");
+    let d = dir.display();
+    fs::write(
+        &p,
+        format!(
+            "#!/bin/sh\n: > '{d}/args'\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{d}/args'; done\n\
+             [ -f '{d}/reply' ] && cat '{d}/reply'\n[ -f '{d}/stderr' ] && cat '{d}/stderr' >&2\n\
+             exit $(cat '{d}/code' 2>/dev/null || echo 0)\n"
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+#[cfg(unix)]
+fn surfaces_server(sb: &Sandbox, bin: &Path) -> Server {
+    let mut c = sb.command();
+    // From `/`, so the stub under the target folder is outside the current folder's tree, as a real install is.
+    c.env("POLYCARP_SPACES_BIN", bin)
+        .env("POLYCARP_NO_SYSTEM_SPOTS", "1")
+        .current_dir("/");
+    Sandbox::spawn(c)
+}
+
+#[cfg(unix)]
+fn stub_args(sb: &Sandbox) -> Vec<String> {
+    fs::read_to_string(sb.root.join("spaces/args"))
+        .unwrap_or_default()
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn surfaces_tools_run_the_spaces_command_and_pass_its_envelope_on_as_is() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let reply = json!({"ok": true, "data": {"path": "bar.style", "value": "glass", "file": "~/x/surfaces.json"}});
+    fs::write(sb.root.join("spaces/reply"), reply.to_string()).unwrap();
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    let r = s.tool(
+        "surfaces_set",
+        json!({"path": "bar.style", "value": "glass"}),
+    );
+    assert_eq!(r["isError"], false);
+    assert_eq!(r["structuredContent"], reply);
+    // The value goes as JSON text, so a string stays a string and a list stays a list.
+    assert_eq!(
+        stub_args(&sb),
+        ["surfaces", "set", "bar.style", "\"glass\"", "--json"]
+    );
+    s.tool(
+        "surfaces_set",
+        json!({"path": "bar.modules.left", "value": ["mark", "clock"]}),
+    );
+    assert_eq!(
+        stub_args(&sb),
+        [
+            "surfaces",
+            "set",
+            "bar.modules.left",
+            "[\"mark\",\"clock\"]",
+            "--json"
+        ]
+    );
+    s.tool("surfaces_get", json!({"path": "bar"}));
+    assert_eq!(stub_args(&sb), ["surfaces", "get", "bar", "--json"]);
+    s.tool("surfaces_get", json!({}));
+    assert_eq!(stub_args(&sb), ["surfaces", "get", "--json"]);
+    s.tool("surfaces_schema", json!({}));
+    assert_eq!(stub_args(&sb), ["surfaces", "schema", "--json"]);
+
+    // A refusal from the command is a tool error with its envelope unchanged.
+    let refused = json!({"ok": false, "error": {"code": "invalid_value", "message": "bar.height: must be from 22 to 40, not 99",
+        "retry": "never", "suggestion": "run `surfaces schema` for what bar.height takes",
+        "data": {"errors": [{"path": "bar.height", "message": "must be from 22 to 40, not 99"}]}}});
+    fs::write(sb.root.join("spaces/reply"), refused.to_string()).unwrap();
+    fs::write(sb.root.join("spaces/code"), "1").unwrap();
+    let r = s.tool("surfaces_set", json!({"path": "bar.height", "value": 99}));
+    assert_eq!(r["isError"], true);
+    assert_eq!(r["structuredContent"], refused);
+    assert_eq!(s.finish(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn surfaces_tools_check_their_arguments_before_running_anything() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    for (tool, args) in [
+        ("surfaces_set", json!({"path": "bar.height"})),
+        ("surfaces_set", json!({"value": 30})),
+        ("surfaces_set", json!({"path": 3, "value": 30})),
+        ("surfaces_get", json!({"path": ["bar"]})),
+        ("surfaces_schema", json!({"path": "bar"})),
+    ] {
+        let r = s.tool(tool, args.clone());
+        assert_eq!(r["isError"], true, "{tool} {args}");
+        assert_eq!(
+            r["structuredContent"]["error"]["code"], "invalid_args",
+            "{tool} {args}"
+        );
+    }
+    assert!(
+        !sb.root.join("spaces/args").exists(),
+        "the command never ran"
+    );
+    assert_eq!(s.finish(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn surfaces_tools_say_when_the_spaces_command_is_missing_old_or_broken() {
+    let sb = Sandbox::new();
+    let mut s = surfaces_server(&sb, &sb.root.join("nowhere/polycarp-spaces"));
+    s.initialize("t");
+    let r = s.tool("surfaces_get", json!({}));
+    assert_eq!(r["isError"], true);
+    assert_eq!(r["structuredContent"]["error"]["code"], "spaces_not_found");
+    assert!(r["structuredContent"]["error"]["suggestion"]
+        .as_str()
+        .unwrap()
+        .contains("POLYCARP_SPACES_BIN"));
+    assert_eq!(s.finish(), 0);
+
+    // An app from before surfaces prints its usage and exits 2.
+    let bin = spaces_stub(&sb);
+    fs::write(
+        sb.root.join("spaces/stderr"),
+        "usage: polycarp-spaces <command>\n",
+    )
+    .unwrap();
+    fs::write(sb.root.join("spaces/code"), "2").unwrap();
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    let r = s.tool("surfaces_schema", json!({}));
+    assert_eq!(r["structuredContent"]["error"]["code"], "spaces_too_old");
+    // Anything else that isn't an envelope.
+    fs::write(sb.root.join("spaces/stderr"), "boom\n").unwrap();
+    fs::write(sb.root.join("spaces/reply"), "not json").unwrap();
+    let r = s.tool("surfaces_schema", json!({}));
+    let e = &r["structuredContent"]["error"];
+    assert_eq!(e["code"], "spaces_failed");
+    assert!(e["message"].as_str().unwrap().contains("boom"), "{e}");
+    assert_eq!(e["data"]["errors"][0]["path"], "$");
+    assert_eq!(s.finish(), 0);
+}
+
+#[test]
+fn the_instructions_send_surfaces_work_to_the_surfaces_tools() {
+    let sb = Sandbox::new();
+    let mut s = sb.server();
+    let v = s.initialize("t");
+    let ins = v["result"]["instructions"].as_str().unwrap();
+    let at = |w: &str| {
+        ins.find(w)
+            .unwrap_or_else(|| panic!("instructions lack {w}"))
+    };
+    assert!(at("surfaces_schema") < at("surfaces_get") && at("surfaces_get") < at("surfaces_set"));
     assert_eq!(s.finish(), 0);
 }
