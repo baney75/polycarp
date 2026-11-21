@@ -372,6 +372,8 @@ final class SessionController {
             guard r.caller?.hasPrefix("remote ") != true else { return .init(ok: false, error: "purposes are set on each machine itself") }
             return purposeHandler?(r) ?? .init(ok: false, error: "purposes aren't ready yet; try again in a moment")
         }
+        // People in Contacts need no Accessibility either; another machine never gets here (`Remote.allows`).
+        if r.op == .contacts { return ContactsLibrary.shared.handle(r) }
         guard started else { return .init(ok: false, error: "Polycarp hasn't finished starting (it needs Accessibility)") }
         switch r.op {
         case .ping:
@@ -419,6 +421,8 @@ final class SessionController {
         case .purpose:
             // Answered above, before the Accessibility check.
             return .init(ok: false, error: "purposes aren't ready yet")
+        case .contacts:
+            return ContactsLibrary.shared.handle(r)
         case .remote:
             switch r.text ?? "status" {
             case "on":

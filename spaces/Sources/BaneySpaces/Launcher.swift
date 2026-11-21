@@ -275,6 +275,9 @@ struct LauncherItem: Identifiable {
     var run: () -> Void
     /// ⌘↩: show in Finder, or a cask's web page.
     var reveal: URL?
+    /// ⌘↩ does this instead, when set (a person's second action), named in the footer.
+    var alternate: (() -> Void)?
+    var alternateTitle = ""
 }
 
 final class LauncherModel: ObservableObject {
@@ -376,7 +379,13 @@ final class LauncherModel: ObservableObject {
     /// Terminal agents found on this Mac: command to path.
     var agents: [String: String] = [:]
     /// Calculator and the other providers, asked on every keystroke of the main search.
-    var providers: [LauncherProvider] = LauncherProviders.standard(terminal: TerminalFeature.built)
+    var providers: [LauncherProvider] = LauncherProviders.standard(terminal: TerminalFeature.built) + [ContactsLibrary.shared.provider]
+    /// People's pictures, made once from their image data.
+    private let contactImages: NSCache<NSString, NSImage> = {
+        let c = NSCache<NSString, NSImage>()
+        c.countLimit = 100
+        return c
+    }()
 
     init(actions: LauncherActions) {
         self.actions = actions
@@ -400,6 +409,8 @@ final class LauncherModel: ObservableObject {
         appsLanded = true
         if fresh != apps {
             apps = fresh
+            // A query an app's name holds ("text edit") is that app, never a contact verb.
+            ContactsLibrary.shared.provider.useApps(fresh.map(\.name))
             if first, selected == 0 { rebuild() } else { rebuildKeepingSelection() }
         }
         if let reveal = pendingReturn { pendingReturn = nil; runSelected(reveal: reveal) }
@@ -429,6 +440,8 @@ final class LauncherModel: ObservableObject {
         storeResults = []
         fileResults = []
         bangs = Launcher.loadBangs()
+        // Contacts access turned on or off in System Settings counts at once. It reads macOS's answer; it never asks.
+        ContactsLibrary.shared.launcherOpened()
         rebuild()
         // Apps installed since the last look show up without a restart.
         rescanApps()
@@ -491,6 +504,7 @@ final class LauncherModel: ObservableObject {
         }
         guard items.indices.contains(selected) else { return }
         let item = items[selected]
+        if reveal, let alternate = item.alternate { return alternate() }
         if reveal, let url = item.reveal {
             close()
             if url.isFileURL { NSWorkspace.shared.activateFileViewerSelecting([url]) } else { NSWorkspace.shared.open(url) }
@@ -566,8 +580,21 @@ final class LauncherModel: ObservableObject {
 
     /// A provider's row as the launcher draws it; choosing it does what its action says.
     private func providedItem(_ r: LauncherResult) -> LauncherItem {
-        LauncherItem(id: "provider:\(r.id)", section: r.section, title: r.title, subtitle: r.subtitle, icon: .symbol(r.symbol),
-                     badge: r.badge, run: { [weak self] in self?.perform(r.action) })
+        var icon = LauncherItem.Icon.symbol(r.symbol)
+        if let data = r.image {
+            let key = r.id as NSString
+            if let img = contactImages.object(forKey: key) ?? NSImage(data: data) {
+                contactImages.setObject(img, forKey: key)
+                icon = .image(img)
+            }
+        }
+        var item = LauncherItem(id: "provider:\(r.id)", section: r.section, title: r.title, subtitle: r.subtitle, icon: icon,
+                                badge: r.badge, run: { [weak self] in self?.perform(r.action) })
+        if let second = r.second {
+            item.alternate = { [weak self] in self?.perform(second) }
+            item.alternateTitle = r.secondTitle
+        }
+        return item
     }
 
     private func perform(_ action: LauncherAction) {
@@ -578,6 +605,15 @@ final class LauncherModel: ObservableObject {
             Toast.show("Copied \(text.count > 40 ? String(text.prefix(40)) + "…" : text)", symbol: "doc.on.doc")
         case .open(let url): openWeb(url)
         case .terminal(let launch): close(); TerminalFeature.open(launch)
+        case .contact(let launch):
+            close()
+            ContactsLibrary.shared.open(launch, from: "launcher")
+            // Messages has the draft in its box; the owner presses Send.
+            if launch.verb == .message, !launch.text.isEmpty { Toast.show("Draft to \(launch.name) is in Messages. Press Send when ready.", symbol: "message") }
+        case .contactsAccess:
+            // macOS's own box the first time (with the Info.plist reason), the Contacts pane after a no.
+            close()
+            PermissionsModel.shared.perform(.contacts)
         case .none: break
         }
     }
@@ -1713,7 +1749,8 @@ struct LauncherView: View {
     private var footer: some View {
         HStack(spacing: 16) {
             hint("↩", "Open")
-            hint("⌘↩", "Show in Finder")
+            hint("⌘↩", model.items.indices.contains(model.selected) && !model.items[model.selected].alternateTitle.isEmpty
+                 ? model.items[model.selected].alternateTitle : "Show in Finder")
             hint("⇥", "Open menu")
             if model.scope != .root { hint("⌫", "Back") }
             Spacer()

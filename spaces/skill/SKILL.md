@@ -1,6 +1,6 @@
 ---
 name: baneyspaces
-description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on) and the agent workspace (list its windows, move a window there). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, or keep an agent's windows off his workspaces. Faster and safer than screenshots. Also use it to change what Polycarp's surfaces show (top bar, desktop scene and verse, dock tiles, status menu, new tab page, idle screen) through `surfaces get|set|reset`. It does not click or type into apps: computer use is Tychicus.
+description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on), the agent workspace (list its windows, move a window there) and his Contacts (find a person, open a call, FaceTime, a Messages draft or an email to them). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, keep an agent's windows off his workspaces, or set up a call or message he asked for. Faster and safer than screenshots. Also use it to change what Polycarp's surfaces show (top bar, desktop scene and verse, dock tiles, status menu, new tab page, idle screen) through `surfaces get|set|reset`. It does not click or type into apps: computer use is Tychicus.
 ---
 
 # BaneySpaces
@@ -74,6 +74,21 @@ baneyspaces day --json            # today's seconds on each workspace
 Read these to know what Donovan is about today and where his attention goes. Setting them (`purpose set <n> <text>`,
 `purpose clear <n>`, `one <text>`, `one --clear`) states what his workspaces and his day are for: do it only when he
 asks. Purposes hold up to 60 characters, the one thing up to 80; it clears at 4 am.
+
+## People in Contacts
+
+```sh
+baneyspaces contacts find anna                 # names and the kinds of handles: phone (mobile), email (work)
+baneyspaces contacts find anna --json          # add --full for the numbers and addresses
+baneyspaces contacts call "anna smith"         # also facetime and email
+baneyspaces contacts message "anna smith" --text "running late"
+```
+
+Polycarp never sends a message: `message` opens Messages with the draft in the box and Donovan presses Send; `email`
+opens Mail the same way. Each action opens an app on his screen, so use it only when he asked for that call or that
+message. It acts on one person only: when two match as well it refuses and names them, so say more of the name. It
+picks the number he used last, else a mobile, else the first. Without Contacts access it says so; a command never asks
+macOS for it (docs/contacts.md).
 
 ## The agent workspace
 

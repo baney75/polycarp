@@ -11,6 +11,10 @@ public enum LauncherAction: Equatable, Sendable {
     case open(URL)
     /// A terminal in Polycarp's own window (`TerminalLaunch`).
     case terminal(TerminalLaunch)
+    /// Call, FaceTime, message or email a person: open the link and note it in the recents (`ContactLaunch`).
+    case contact(ContactLaunch)
+    /// Contacts access: macOS's own box the first time, System Settings after a no.
+    case contactsAccess
     /// Nothing to do (a heading or a note).
     case none
 }
@@ -31,9 +35,15 @@ public struct LauncherResult: Equatable, Sendable {
     public var badge: String
     public var placement: Placement
     public var action: LauncherAction
+    /// What Command-Return does instead, and its name for the footer.
+    public var second: LauncherAction?
+    public var secondTitle: String
+    /// A picture drawn instead of the symbol (a person's photo), as image data.
+    public var image: Data?
 
     public init(id: String, section: String, title: String, subtitle: String = "", symbol: String,
-                badge: String = "", placement: Placement = .normal, action: LauncherAction) {
+                badge: String = "", placement: Placement = .normal, action: LauncherAction,
+                second: LauncherAction? = nil, secondTitle: String = "", image: Data? = nil) {
         self.id = id
         self.section = section
         self.title = title
@@ -42,6 +52,9 @@ public struct LauncherResult: Equatable, Sendable {
         self.badge = badge
         self.placement = placement
         self.action = action
+        self.second = second
+        self.secondTitle = secondTitle
+        self.image = image
     }
 }
 

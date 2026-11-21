@@ -32,8 +32,11 @@ let package = Package(
         // can build it as is. The rules it follows are written in spec/launcher.md. Optimized in
         // debug builds too, so `swift test` times the matcher as it ships (LatencyTests).
         .target(name: "LauncherMatch", swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]),
+        // The launcher's people matcher (docs/contacts.md): no Foundation, optimized in debug builds too, so
+        // `swift test` times it as it ships (ContactsSpeedTests).
+        .target(name: "ContactsMatch", swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]),
         // Which window lives where, and where hidden windows go: no AppKit, fully unit-tested.
-        .target(name: "BaneySpacesCore"),
+        .target(name: "BaneySpacesCore", dependencies: ["ContactsMatch"]),
         // agent-desktop's C header (see the note at the top).
         .systemLibrary(name: "CAgentDesktop", path: "Sources/CAgentDesktop"),
         // libghostty's C header, as upstream ships it at the pin (build-ghostty.sh checks it is the same).
