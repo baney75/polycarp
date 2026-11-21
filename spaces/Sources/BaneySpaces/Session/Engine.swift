@@ -409,19 +409,26 @@ final class Engine {
 
     /// Brings `item` forward. The window comes up right away through Accessibility; the tab or
     /// split inside it is selected through the app's script just after. A newer request wins.
-    func focus(_ item: Item) {
+    /// `bringForward: false` when BaneySpaces has already gone to the window (`SessionController.focus`):
+    /// only the tab or split is selected. A raise and `activate()` of their own here reached Spaces as an
+    /// activation it didn't ask for, of an app it had hidden, and it put you back where you were
+    /// (Donovan, 2026-11-20: a dock badge on T3 Code flashed the app and returned).
+    func focus(_ item: Item, bringForward: Bool = true) {
         seen(item.id)
         guard let t = trackedApp(for: item) else { return }
-        if let w = nativeWindow(for: item) {
-            w.ax.raise()
-            AXUIElementSetAttributeValue(w.ax, kAXMainAttribute as CFString, kCFBooleanTrue)
+        if bringForward {
+            if let w = nativeWindow(for: item) {
+                w.ax.raise()
+                AXUIElementSetAttributeValue(w.ax, kAXMainAttribute as CFString, kCFBooleanTrue)
+            }
+            t.app.activate()
         }
-        t.app.activate()
         focusToken += 1
         let token = focusToken
         // A tab or split selected after you've moved on would pull the app forward over your new
         // workspace: dropped if the workspace changed or it waited too long behind other scripts.
-        let ws = currentWorkspace()
+        // When BaneySpaces is taking you to the window, the workspace to stay on is the window's.
+        let ws = bringForward ? currentWorkspace() : (workspaceOf(item.windowNumber) ?? currentWorkspace())
         let deadline = Date().addingTimeInterval(1.5)
         guard let script = script(for: t.spec), Automation.allowed(t.spec.bundleID) else { merge(); return }
         let parts = item.id.split(separator: ":", maxSplits: 3).map(String.init)
