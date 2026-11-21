@@ -1,0 +1,2087 @@
+/**
+ * Page-level primitives addressed by tab id: navigation with load wait, in-page
+ * JavaScript through the userScripts API, and a compact interactive snapshot with
+ * stable element refs for click/fill by reference. Everything works on tabs that
+ * are not active.
+ */
+
+import { isGuardedUrl } from "../bridge/permissions.js";
+import { cdpSend, isRestrictedUrl } from "./cdp.js";
+import {
+	bounded,
+	crossOriginFrames,
+	evaluateInFrame,
+	FRAMES_CLOSED,
+	type FrameRule,
+	frameForRef,
+	frameHost,
+	framePainted,
+	frameShown,
+	frameShownNow,
+	frameState,
+	frameTakesPoint,
+	MAX_DEPTH,
+	MAX_FRAMES,
+	type PageFrame,
+	remeasure,
+	scrollFrameIntoView,
+	splitFrameRef,
+	web,
+} from "./frames.js";
+import { maskUrl } from "./mask-body.js";
+import { isUserScriptsGated, userScriptsApi } from "./userscripts-status.js";
+import { veilTag } from "./veil-shared.js";
+
+const SNAPSHOT_WORLD_ID = "tabkyra-snapshot";
+const SNAPSHOT_CSP = "script-src 'unsafe-eval' 'unsafe-inline'; default-src 'none';";
+
+// Navigation lives in its own module so the side panel, which only navigates, loads none of the page code
+// (test/panel-size.test.mjs). Callers keep importing it from here.
+export {
+	goBack,
+	goForward,
+	isPdfPageJump,
+	type NavigateOptions,
+	navigateTab,
+	navigateTabDetailed,
+	waitForLoad,
+} from "./navigation.js";
+
+const configuredWorlds = new Set<string>();
+
+/**
+ * Run code in a tab's USER_SCRIPT world and return its JSON-serialisable result.
+ * `code` must be an expression or an IIFE; promises are awaited.
+ */
+export async function runInPage<T = unknown>(
+	tabId: number,
+	code: string,
+	worldId = SNAPSHOT_WORLD_ID,
+	csp = SNAPSHOT_CSP,
+): Promise<T> {
+	const tab = await chrome.tabs.get(tabId);
+	if (tab.url && isRestrictedUrl(tab.url)) {
+		throw new Error(`Cannot run scripts on ${tab.url}: browser-internal pages are protected.`);
+	}
+	const wrapped = wrapCode(code);
+	// userScripts needs the "Allow user scripts" toggle; without it, evaluate through the
+	// debugger in the main world (CSP does not apply to Runtime.evaluate).
+	const api = userScriptsApi();
+	if (!api) return cdpEvaluate<T>(tabId, wrapped);
+	let results: Awaited<ReturnType<typeof api.execute>>;
+	try {
+		if (!configuredWorlds.has(worldId)) {
+			try {
+				await api.configureWorld({ worldId, messaging: true, csp });
+			} catch (err) {
+				if (isUserScriptsGated(err)) throw err;
+				/* already configured with the same settings */
+			}
+			configuredWorlds.add(worldId);
+		}
+		results = await api.execute({
+			js: [{ code: wrapped }],
+			target: { tabId, allFrames: false },
+			world: "USER_SCRIPT",
+			worldId,
+			injectImmediately: true,
+		});
+	} catch (err) {
+		// Present but refused (permission or toggle): the code never ran, so evaluate it through the debugger.
+		if (isUserScriptsGated(err)) return cdpEvaluate<T>(tabId, wrapped);
+		throw err;
+	}
+	const first = results[0];
+	if (!first) throw new Error("Script returned no result");
+	if (first.error) throw new Error(String((first.error as { message?: string }).message ?? first.error));
+	return unwrap<T>(first.result);
+}
+
+/** Page code as an expression that always resolves: its value, or the error it threw. */
+function wrapCode(code: string): string {
+	return `(async () => { try { const __v = await (${code}); return { ok: true, value: __v }; } catch (e) { return { ok: false, error: String(e && e.stack || e) }; } })()`;
+}
+
+/** Page code in a cross-origin frame's isolated world (src/browser/frames.ts), where its refs live. */
+export async function runInFrame<T = unknown>(tabId: number, frame: PageFrame, code: string): Promise<T> {
+	return unwrap<T>(await evaluateInFrame(tabId, frame, wrapCode(code)));
+}
+
+/**
+ * Run code where a ref's element lives: the top document, or the cross-origin frame the ref's
+ * tag names, with the ref as that frame knows it. An error names the ref the agent used. In a
+ * frame `inFrame` is true: a selector given with the ref is the top page's, never tried there.
+ */
+async function runForRef<T>(
+	tabId: number,
+	ref: string | undefined,
+	code: (ref: string | undefined, inFrame: boolean) => string,
+	rule: FrameRule = FRAMES_CLOSED,
+	found?: { frame: PageFrame; inner: string },
+): Promise<{ value: T; frame?: PageFrame }> {
+	const hit = found ?? (ref ? await frameForRef(tabId, ref, rule) : undefined);
+	if (!hit) return { value: await runInPage<T>(tabId, code(ref, false)) };
+	try {
+		return { value: await runInFrame<T>(tabId, hit.frame, code(hit.inner, true)), frame: hit.frame };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		throw new Error(message.split(`Ref ${hit.inner} `).join(`Ref ${ref} `));
+	}
+}
+
+function unwrap<T>(raw: unknown): T {
+	const outcome = raw as { ok: boolean; value?: T; error?: string } | undefined;
+	if (!outcome) throw new Error("Script returned no result");
+	if (!outcome.ok) throw new Error(outcome.error ?? "Script failed");
+	return outcome.value as T;
+}
+
+async function cdpEvaluate<T>(tabId: number, wrapped: string): Promise<T> {
+	const result = await cdpSend<{
+		result: { value?: unknown };
+		exceptionDetails?: { exception?: { description?: string }; text?: string };
+	}>(tabId, "Runtime.evaluate", { expression: wrapped, returnByValue: true, awaitPromise: true });
+	if (result.exceptionDetails) {
+		throw new Error(
+			result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? "Evaluation failed",
+		);
+	}
+	return unwrap<T>(result.result.value);
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot: compact list of interactive and text nodes with refs
+// ---------------------------------------------------------------------------
+
+export interface SnapshotNode {
+	ref: string;
+	role: string;
+	name: string;
+	value?: string;
+	href?: string;
+	/** Viewport-relative center, for CDP clicks. */
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	visible: boolean;
+}
+
+export interface Snapshot {
+	url: string;
+	title: string;
+	viewport: { width: number; height: number; scrollX: number; scrollY: number; pageHeight: number };
+	nodes: SnapshotNode[];
+	/** Readable text of the page (truncated). */
+	text: string;
+	/** A ranked read's counts: controls in each tier, covered ones left out, and where this slice starts. */
+	ranked?: {
+		total: number;
+		covered: number;
+		first: number;
+		inView: number;
+		near: number;
+		far: number;
+		offset: number;
+		/** Names this ranking: a later slice passes it with its offset, and one from another read is refused. */
+		snapshot: string;
+		/** The offset the next slice starts at: where this one's window of the ranking ended. */
+		next: number;
+		/** A later slice's: each listed control's place in the ranking, since one that left the page is skipped. */
+		positions?: number[];
+	};
+}
+
+/**
+ * Whether a ref's element is still part of the page: attached, and in a document that is
+ * still shown, through every same-origin frame up to the tab. A frame that navigated or was
+ * removed leaves its old document attached to itself, so isConnected alone says yes.
+ * Stringified and injected, so it must be self-contained.
+ */
+export function refLive(el: Element): boolean {
+	if (!el.isConnected) return false;
+	let doc: Document = el.ownerDocument;
+	for (let hops = 0; hops < 20; hops++) {
+		const win = doc.defaultView;
+		if (!win) return false;
+		if (win === win.parent) return true;
+		const frame = win.frameElement;
+		// The top of what this script sees: in a cross-origin frame, its own window (the
+		// document around it is another origin's, so it has no frameElement).
+		if (!frame && win === window) return true;
+		if (!frame || !frame.isConnected || (frame as HTMLIFrameElement).contentDocument !== doc) return false;
+		doc = frame.ownerDocument;
+	}
+	return false;
+}
+
+/**
+ * What an element is, for telling whether a ref still names the same control: tag, role,
+ * label attributes, link target and, for anything but a text field, its first 80 characters
+ * of text. A list that reuses a row's node for another row changes it. Self-contained.
+ */
+function refPrint(el: Element): string {
+	const tag = el.tagName.toLowerCase();
+	const a = (n: string) => el.getAttribute(n) ?? "";
+	const role = a("role");
+	const editable =
+		tag === "input" ||
+		tag === "textarea" ||
+		tag === "select" ||
+		(el as HTMLElement).isContentEditable ||
+		role === "textbox" ||
+		role === "searchbox" ||
+		role === "combobox";
+	const squash = (t: string | null) => (t ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+	// A pane that scrolls (a list, a feed, a virtual grid) changes its text every time it scrolls or
+	// re-renders its rows; it is the same pane, so its text is left out. Keyed on its overflow style,
+	// not its size, so the print stays the same as content grows.
+	let pane = false;
+	if (!editable) {
+		try {
+			const s = el.ownerDocument.defaultView?.getComputedStyle(el);
+			pane = !!s && /(auto|scroll|overlay)/.test(`${s.overflowY} ${s.overflowX}`);
+		} catch {
+			/* no style here: treat it as an ordinary element */
+		}
+	}
+	const text = editable || pane ? "" : squash(el.textContent);
+	// The row a control sits in: a virtualized list reuses a row's "Delete" button for another
+	// row, and only the row's text or key tells them apart. A grid cell is not the row; with no
+	// row element, the nearest ancestor that carries a row key stands in.
+	const KEYS = ["data-key", "data-id", "data-index", "aria-rowindex", "aria-posinset"];
+	const key = (n: Element | null | undefined) => (n ? KEYS.map((k) => n.getAttribute(k) ?? "").join(",") : "");
+	const row =
+		el.parentElement?.closest("tr,li,[role=row],[role=listitem],[role=option],[role=article]") ??
+		el.parentElement?.closest(KEYS.map((k) => `[${k}]`).join(","));
+	// The row's own text, not what is typed into it, so focus and typing leave it alone; all of
+	// it, hashed, so rows that share a long prefix still differ.
+	let rowHash = "";
+	if (row) {
+		const typed = (n: Node | null) => {
+			for (let p = n?.parentElement; p && p !== row; p = p.parentElement)
+				if ((p as HTMLElement).isContentEditable || p.getAttribute("role") === "textbox") return true;
+			return false;
+		};
+		const walk = el.ownerDocument.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+		let h = 0x811c9dc5;
+		for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+			if (typed(n)) continue;
+			const t = (n.nodeValue ?? "").replace(/\s+/g, " ").trim();
+			for (let k = 0; k < t.length; k++) h = Math.imul(h ^ t.charCodeAt(k), 0x01000193) >>> 0;
+			h = Math.imul(h ^ 32, 0x01000193) >>> 0;
+		}
+		rowHash = h.toString(36);
+	}
+	return [
+		tag,
+		role,
+		a("aria-label"),
+		a("title"),
+		a("name"),
+		a("placeholder"),
+		a("type"),
+		a("href"),
+		text,
+		key(el),
+		key(row),
+		rowHash,
+	].join("|");
+}
+
+/**
+ * Where to click an element so the click lands on it: the center of each line box it
+ * occupies, then its box's center and quarter points, taking the first point where the
+ * element (or its label) is on top. A link that wraps lines has its box center between the
+ * lines, over the paragraph or another link. An overlay link to the same address counts as
+ * reaching it. Returns what covers it instead when no point
+ * reaches it (a cookie banner, a modal, a closed menu left in the page, or nothing at all
+ * when it sits off screen). Coordinates are in the element's own document.
+ * Self-contained.
+ */
+export function refPoint(el: Element): { x: number; y: number } | { cover: string } | { offscreen: true } {
+	const root = el.getRootNode() as Document | ShadowRoot;
+	const hitAt = (x: number, y: number) =>
+		typeof root.elementFromPoint === "function"
+			? root.elementFromPoint(x, y)
+			: el.ownerDocument.elementFromPoint(x, y);
+	// Up the composed tree: slotted content goes to its slot, a shadow root to its host.
+	const up = (n: Node): Node | null => (n as Element).assignedSlot ?? n.parentNode ?? (n as ShadowRoot).host ?? null;
+	const inside = (node: Node | null, target: Node) => {
+		for (let n: Node | null = node; n; n = up(n)) if (n === target) return true;
+		return false;
+	};
+	// A control nested in the target (a row's Delete button, an option's checkbox) takes the
+	// click for itself, so a point on it doesn't reach the target.
+	const CONTROL =
+		"a[href],button,input,select,textarea,summary,[onclick],[role=button],[role=link],[role=checkbox],[role=radio],[role=switch],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=treeitem],[role=option]";
+	const nestedControl = (at: Element, stop: Node = el) => {
+		for (let n: Node | null = at; n && n !== stop && n !== el; n = up(n))
+			if (n.nodeType === 1 && (n as Element).matches(CONTROL)) return n as Element;
+		return null;
+	};
+	const labels = Array.from((el as HTMLInputElement).labels ?? []);
+	// A card whose whole area is one overlay link to the same address as the title link under
+	// it: the click goes where the agent meant.
+	// Only for a link that is itself the target and goes somewhere else: not "#", not
+	// javascript:, not this page, and not a button inside a card link.
+	const sameLink = (at: Element) => {
+		if (!el.matches("a[href]")) return false;
+		const mine = (el as HTMLAnchorElement).href;
+		const theirs = (at.closest("a[href]") as HTMLAnchorElement | null)?.href;
+		if (!theirs || theirs !== mine || /^javascript:/i.test(mine)) return false;
+		const here = el.ownerDocument.location.href.split("#")[0];
+		return mine.split("#")[0] !== here;
+	};
+	const reaches = (at: Element | null) =>
+		!!at &&
+		((inside(at, el) && !nestedControl(at)) ||
+			labels.some((l) => inside(at, l) && !nestedControl(at, l)) ||
+			sameLink(at));
+	const r = el.getBoundingClientRect();
+	const points: Array<[number, number]> = [];
+	for (const box of Array.from(el.getClientRects()).slice(0, 4))
+		if (box.width > 0 && box.height > 0) points.push([box.left + box.width / 2, box.top + box.height / 2]);
+	points.push([r.left + r.width / 2, r.top + r.height / 2]);
+	for (const [fx, fy] of [
+		[0.25, 0.25],
+		[0.75, 0.25],
+		[0.25, 0.75],
+		[0.75, 0.75],
+	])
+		points.push([r.left + r.width * fx, r.top + r.height * fy]);
+	let first: Element | null = null;
+	for (const [x, y] of points) {
+		const at = hitAt(x, y);
+		if (reaches(at)) return { x, y };
+		first ??= at;
+	}
+	// Every point outside the window: a control kept off screen for screen readers, or one
+	// positioned outside the page. A click can't reach it.
+	if (!first) return { offscreen: true };
+	const name = (first.getAttribute("aria-label") || (first.textContent ?? ""))
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 40);
+	const role = first.getAttribute("role");
+	return { cover: `${first.tagName.toLowerCase()}${role ? ` (${role})` : ""}${name ? ` "${name}"` : ""}` };
+}
+/**
+ * What covers a same-origin frame at the point a click inside it would use, in any page above
+ * it: a banner over the frame takes the click even when nothing covers the element inside.
+ * (x, y) is in the element's own document. Hit tests run in the frame's own tree, so a frame
+ * inside a shadow root is compared within that root. Null when every level is clear or can't
+ * be tested, or offscreen when the point falls outside a page's window. Self-contained.
+ */
+export function refFrameCover(el: Element, x: number, y: number): string | { offscreen: true } | null {
+	for (
+		let win: Window | null = el.ownerDocument.defaultView;
+		win && win !== win.parent && win.frameElement;
+		win = win.parent
+	) {
+		const fr = win.frameElement as HTMLElement;
+		const fr0 = fr.getBoundingClientRect();
+		const st = (fr.ownerDocument.defaultView || window).getComputedStyle(fr);
+		const kx = fr0.width / (fr.offsetWidth || fr0.width || 1);
+		const ky = fr0.height / (fr.offsetHeight || fr0.height || 1);
+		x = fr0.left + (fr.clientLeft + Number.parseFloat(st.paddingLeft || "0") + x) * kx;
+		y = fr0.top + (fr.clientTop + Number.parseFloat(st.paddingTop || "0") + y) * ky;
+		const root = fr.getRootNode() as Document | ShadowRoot;
+		const over =
+			typeof root.elementFromPoint === "function"
+				? root.elementFromPoint(x, y)
+				: fr.ownerDocument.elementFromPoint(x, y);
+		// The point is outside this page's window: the click would reach nothing.
+		if (!over) return { offscreen: true };
+		if (over !== fr && !fr.contains(over)) {
+			const name = (over.getAttribute("aria-label") || over.textContent || "")
+				.replace(/\s+/g, " ")
+				.trim()
+				.slice(0, 40);
+			return over.tagName.toLowerCase() + (name ? ` "${name}"` : "");
+		}
+	}
+	return null;
+}
+
+/**
+ * The element a ref names, or an error the agent can act on. Refuses a ref whose element left
+ * the page or now shows something else, rather than acting on whatever holds it now.
+ * Self-contained; refLive and refPrint come in as arguments.
+ */
+function resolveRef(ref: string, live: (el: Element) => boolean, print: (el: Element) => string): Element {
+	const w = window as unknown as {
+		__tabkyraRefs?: unknown;
+		__tabkyraRefPrints?: unknown;
+		__tabkyraRefOf?: unknown;
+		__tabkyraGonePrints?: unknown;
+		__tabkyraActed?: unknown;
+		__tabkyraTwins?: unknown;
+		__tabkyraRefStart?: unknown;
+		__tabkyraRefSeq?: unknown;
+	};
+	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : undefined;
+	const prints = w.__tabkyraRefPrints instanceof Map ? (w.__tabkyraRefPrints as Map<string, string>) : undefined;
+	const gone =
+		w.__tabkyraGonePrints instanceof Map
+			? (w.__tabkyraGonePrints as Map<string, { id: string; print: string; ctx: string }>)
+			: undefined;
+	// Refs an action went through (refActed, once its input reached the element). Its element gone, such a ref is never
+	// healed: the action likely removed it. Resolving alone marks nothing: an action refused after this (covered, off
+	// screen) did nothing, and the agent must not be told it may have happened.
+	const acted = w.__tabkyraActed instanceof Set ? (w.__tabkyraActed as Set<string>) : new Set<string>();
+	// Refs whose read listed another control with the same look in a row with the same text: nothing tells them apart.
+	const twins = w.__tabkyraTwins instanceof Set ? (w.__tabkyraTwins as Set<string>) : new Set<string>();
+	// What surrounds a control: the text of the nearest ancestor that shows more than the control does, the row a
+	// checkbox or a Remove sits in, past wrappers (<span class=actions>) that hold only the control.
+	const ctx = (x: Element) => {
+		const squash = (t: string | null) => (t ?? "").replace(/\s+/g, " ").trim();
+		const own = squash(x.textContent);
+		let up = x.parentElement;
+		for (let i = 0; up && i < 8; i++, up = up.parentElement) {
+			const t = squash(up.textContent);
+			if (t !== own) return t.slice(0, 200);
+		}
+		return own.slice(0, 200);
+	};
+	const el = refs?.get(ref);
+	if (el && live(el)) {
+		if (prints?.get(ref) === print(el)) return el;
+		// The same node, showing something else: never healed.
+		throw new Error(`Ref ${ref} now shows something else: the page reused it. Call read_page for fresh refs.`);
+	}
+	// The element left the page. Only the same control may take the ref back, and only when that is proven: the page put a
+	// control back under the same id attribute, it shows what the ref did, it sits in a row with the same text, and nothing
+	// else on the page looks the same. Ids that follow position (task-0, remove-1) move to another row when one is deleted,
+	// so the id alone proves nothing. A ref an action already went through is never healed.
+	const printed = prints?.get(ref);
+	const was =
+		gone?.get(ref) ??
+		(el && printed !== undefined && el.id ? { id: el.id, print: printed, ctx: ctx(el) } : undefined);
+	if (refs && was?.id && !acted.has(ref) && !twins.has(ref)) {
+		const found = document.getElementById(was.id);
+		if (found && found !== el && live(found) && print(found) === was.print && ctx(found) === was.ctx) {
+			const same = Array.from(document.getElementsByTagName(found.tagName));
+			const alike =
+				same.length <= 2000
+					? same.filter((x) => x !== found && print(x) === was.print && ctx(x) === was.ctx)
+					: same;
+			if (alike.length === 0) {
+				refs.set(ref, found);
+				prints?.set(ref, was.print);
+				gone?.delete(ref);
+				if (w.__tabkyraRefOf instanceof WeakMap) {
+					const refOf = w.__tabkyraRefOf as WeakMap<Element, string>;
+					if (!refOf.has(found)) refOf.set(found, ref);
+				}
+				return found;
+			}
+		}
+	}
+	if (acted.has(ref))
+		throw new Error(
+			`Ref ${ref} not found: the element it named is gone from the page, so the action may already have happened. Call read_page to see the page now, and use its refs.`,
+		);
+	// Whether this document ever gave the ref out: refs are numbered from a random start per document.
+	const n = /^e(\d+)$/.test(ref) ? Number(ref.slice(1)) : Number.NaN;
+	const start = typeof w.__tabkyraRefStart === "number" ? w.__tabkyraRefStart : undefined;
+	const seq = typeof w.__tabkyraRefSeq === "number" ? w.__tabkyraRefSeq : undefined;
+	const given =
+		el !== undefined || gone?.has(ref) || (start !== undefined && seq !== undefined && n > start && n <= seq);
+	if (given)
+		throw new Error(
+			`Ref ${ref} not found: the element it named left the page. Nothing was done. Call read_page for fresh refs.`,
+		);
+	throw new Error(
+		`Ref ${ref} not found: this page never gave it out (refs don't carry over from before the page loaded or changed). Nothing was done. Call read_page {"filter":"interactive"} for fresh refs.`,
+	);
+}
+
+/**
+ * Page side: mark a ref as one an action went through, once its input reached the element (locate's listener, fill
+ * before it writes). resolveRef never heals such a ref, and says the action may already have happened. Self-contained.
+ */
+function refActed(ref: string): void {
+	const w = window as unknown as { __tabkyraActed?: unknown };
+	const acted = w.__tabkyraActed instanceof Set ? (w.__tabkyraActed as Set<string>) : new Set<string>();
+	w.__tabkyraActed = acted;
+	acted.delete(ref);
+	acted.add(ref);
+	for (const old of acted) {
+		if (acted.size <= 500) break;
+		acted.delete(old);
+	}
+}
+
+/**
+ * Page-side snapshot function. Stringified and injected, so it must be
+ * self-contained. Stores element refs on window.__tabkyraRefs (same world),
+ * so a later click/fill by ref resolves without a second scan.
+ *
+ * A ref names one element for the life of the document: a second read_page, or the
+ * whole-page read find does, gives an element it already named the same ref, and a new
+ * element the next unused number. Restarting at e1 each read moved old refs onto other
+ * elements, so a click by a ref from an earlier read could land on the wrong control.
+ * Numbering starts at a random block per document, so a ref kept from the previous page
+ * is very unlikely to name anything on the next one.
+ */
+export function pageSnapshot(
+	maxNodes: number,
+	maxTextChars: number,
+	filter: string,
+	live: (el: Element) => boolean,
+	print: (el: Element) => string,
+	keepStale = false,
+	frameShown: (el: Element) => "shown" | "hidden" | "away",
+	frameNotes: Record<"shown" | "hidden" | "away", string>,
+	rank?: {
+		offset: number;
+		/** The ranked read this offset continues (its `ranked.snapshot`); omitted, the page's last one. */
+		snapshot?: string;
+		veil: string;
+		point: (el: Element) => { x: number; y: number } | { cover: string } | { offscreen: true };
+	},
+): unknown {
+	if (typeof frameShown !== "function" || !frameNotes)
+		throw new Error("pageSnapshot: its caller passed no frameShown and FRAME_STATES");
+	const w = window as unknown as {
+		__tabkyraRefs?: unknown;
+		__tabkyraRefPrints?: unknown;
+		__tabkyraRefOf?: unknown;
+		__tabkyraRefSeq?: unknown;
+		__tabkyraStale?: unknown;
+		__tabkyraGonePrints?: unknown;
+		__tabkyraRanked?: unknown;
+		__tabkyraRefStart?: unknown;
+		__tabkyraTwins?: unknown;
+	};
+	// Adopt earlier state only when it is what this function wrote.
+	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : new Map<string, Element>();
+	const prints =
+		w.__tabkyraRefPrints instanceof Map ? (w.__tabkyraRefPrints as Map<string, string>) : new Map<string, string>();
+	const refOf =
+		w.__tabkyraRefOf instanceof WeakMap
+			? (w.__tabkyraRefOf as WeakMap<Element, string>)
+			: new WeakMap<Element, string>();
+	w.__tabkyraRefs = refs;
+	w.__tabkyraRefPrints = prints;
+	w.__tabkyraRefOf = refOf;
+	// Refs a change report's look kept for an element that now shows something else (below). The
+	// agent's own read retires them all, as it retires the one it finds; until then at most 200 stay.
+	const stale = w.__tabkyraStale instanceof Set ? (w.__tabkyraStale as Set<string>) : new Set<string>();
+	w.__tabkyraStale = stale;
+	if (!keepStale) {
+		for (const ref of stale) {
+			refs.delete(ref);
+			prints.delete(ref);
+		}
+		stale.clear();
+	}
+	// Forget elements that left the page, so their refs fail instead of piling up. One with a stable id keeps that id and
+	// what it showed a while (at most 300), so its ref can follow the page putting the same control back (resolveRef).
+	const gone =
+		w.__tabkyraGonePrints instanceof Map
+			? (w.__tabkyraGonePrints as Map<string, { id: string; print: string; ctx: string }>)
+			: new Map<string, { id: string; print: string; ctx: string }>();
+	w.__tabkyraGonePrints = gone;
+	// The row a control sits in, as resolveRef reads it: the nearest ancestor that shows more than the control does.
+	const rowText = (x: Element) => {
+		const squash = (t: string | null) => (t ?? "").replace(/\s+/g, " ").trim();
+		const own = squash(x.textContent);
+		let up = x.parentElement;
+		for (let i = 0; up && i < 8; i++, up = up.parentElement) {
+			const t = squash(up.textContent);
+			if (t !== own) return t.slice(0, 200);
+		}
+		return own.slice(0, 200);
+	};
+	for (const [ref, el] of refs)
+		if (!live(el)) {
+			const p = prints.get(ref);
+			if (p !== undefined && el.id) gone.set(ref, { id: el.id, print: p, ctx: rowText(el) });
+			refs.delete(ref);
+			prints.delete(ref);
+		}
+	for (const old of gone.keys()) {
+		if (gone.size <= 300) break;
+		gone.delete(old);
+	}
+	// A random start among about a billion, so a ref kept from the last page almost never
+	// names something on this one.
+	let seq =
+		typeof w.__tabkyraRefSeq === "number" && Number.isSafeInteger(w.__tabkyraRefSeq) && w.__tabkyraRefSeq > 0
+			? w.__tabkyraRefSeq
+			: 1_000_000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900_000_000);
+	// Where this document's numbering began, so a ref it never gave out is told apart from one whose element left.
+	if (typeof w.__tabkyraRefStart !== "number") w.__tabkyraRefStart = seq;
+	const interactiveSel =
+		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1'])";
+	const headingSel = "h1,h2,h3,h4,h5,h6,label,[role=heading],[role=alert],[role=status],[role=dialog]";
+	const selector = filter === "interactive" ? interactiveSel : `${interactiveSel},${headingSel}`;
+	const tagOf = (el: Element) => el.tagName.toLowerCase();
+	// Elements from a frame belong to another realm, so `instanceof` against this window's
+	// classes is false for them: everything below goes by tag name instead.
+	const field = (el: Element) =>
+		el as unknown as {
+			type?: string;
+			value?: string;
+			checked?: boolean;
+			disabled?: boolean;
+			required?: boolean;
+			placeholder?: string;
+			href?: string;
+			selectedIndex?: number;
+			options?: ArrayLike<{ text: string }>;
+		};
+	const isVisible = (el: Element) => {
+		const r = el.getBoundingClientRect();
+		if (r.width === 0 || r.height === 0) return false;
+		const style = (el.ownerDocument.defaultView ?? window).getComputedStyle(el);
+		return style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
+	};
+	const roleOf = (el: Element): string => {
+		// The page writes this attribute: only a plain role token, so it can't break the line.
+		const role = (el.getAttribute("role") ?? "").trim().split(/\s+/)[0];
+		if (role) return /^[a-z-]{1,30}$/.test(role) ? role : "generic";
+		const tag = tagOf(el);
+		if (tag === "a") return "link";
+		if (tag === "input") {
+			const type = field(el).type;
+			if (type === "submit" || type === "button" || type === "reset") return "button";
+			if (type === "checkbox" || type === "radio") return type;
+			if (type === "range") return "slider";
+			return "textbox";
+		}
+		if (tag === "textarea") return "textbox";
+		if (tag === "select") return "combobox";
+		if (tag === "button" || tag === "summary") return "button";
+		if (/^h[1-6]$/.test(tag)) return "heading";
+		if (tag === "label") return "label";
+		if (tag === "iframe" || tag === "frame") return "iframe";
+		if (el.getAttribute("contenteditable") === "true") return "textbox";
+		return "generic";
+	};
+	const nameOf = (el: Element): string => {
+		const root = el.getRootNode() as Document | ShadowRoot;
+		const byId = (id: string) => root.getElementById?.(id) ?? el.ownerDocument.getElementById(id);
+		const aria = el.getAttribute("aria-label");
+		if (aria) return aria.trim();
+		const labelledBy = el.getAttribute("aria-labelledby");
+		if (labelledBy) {
+			const t = labelledBy
+				.split(/\s+/)
+				.map((id) => byId(id)?.textContent ?? "")
+				.join(" ")
+				.trim();
+			if (t) return t;
+		}
+		const tag = tagOf(el);
+		if (tag === "input" || tag === "textarea" || tag === "select") {
+			const f = field(el);
+			const id = el.id;
+			if (id) {
+				const label = root.querySelector(`label[for="${CSS.escape(id)}"]`);
+				if (label?.textContent?.trim()) return label.textContent.trim();
+			}
+			const parentLabel = el.closest("label");
+			if (parentLabel?.textContent?.trim()) return parentLabel.textContent.trim();
+			if (tag === "input" && (f.type === "checkbox" || f.type === "radio")) {
+				// No label of its own (TodoMVC's item toggle). Text a person would call its name, best first.
+				const clean = (t: string | null | undefined) => (t ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+				const isControl = (c: Element) =>
+					c.tagName === "INPUT" &&
+					((c as HTMLInputElement).type === "checkbox" || (c as HTMLInputElement).type === "radio");
+				const isPlainLabel = (c: Element | null): c is Element =>
+					!!c && c.tagName === "LABEL" && !c.hasAttribute("for");
+				// 1. The label beside it. A group lays out one way (label before each control, or after):
+				//    settle that from its first member, so a label is never taken by its neighbour.
+				const siblings = Array.from(el.parentElement?.children ?? []);
+				const firstMember = siblings.find((c) => isControl(c) || isPlainLabel(c));
+				const labelFirst = !!firstMember && isPlainLabel(firstMember);
+				const beside = labelFirst ? el.previousElementSibling : el.nextElementSibling;
+				if (isPlainLabel(beside) && clean(beside.textContent)) return clean(beside.textContent);
+				// 2. The text of its row, when the row is one control's: a real row container holding
+				//    this control alone, or its parent when nothing else there takes input and the
+				//    text is short. Links, other labels and buttons in the row are not its name.
+				const real = el.closest("li,tr,[role=row],[role=listitem],[role=option],[role=menuitemcheckbox]");
+				const parent = el.parentElement;
+				const row =
+					real && real.querySelectorAll("input[type=checkbox],input[type=radio]").length === 1
+						? real
+						: !real && parent && parent.querySelectorAll("input,select,textarea,button").length === 1
+							? parent
+							: null;
+				if (row) {
+					const walker = row.ownerDocument.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+					const parts: string[] = [];
+					for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+						if (
+							n.parentElement?.closest(
+								"a,label[for],[role=link],button,select,textarea,[role=button],script,style",
+							)
+						)
+							continue;
+						const t = (n.textContent ?? "").replace(/\s+/g, " ").trim();
+						if (t) parts.push(t);
+					}
+					const text = parts.join(" ");
+					// A parent that is not a real row must be short: long text is the page's, not the label's.
+					if (text && (real || text.length <= 80)) return clean(text);
+				}
+				// 3. A value that means something ("on" is what a checkbox without one reports), a title, a name.
+				if (f.value && f.value !== "on") return clean(f.value);
+				return el.getAttribute("title") ?? el.getAttribute("name") ?? "";
+			}
+			if (tag === "input" && (f.placeholder || f.value) && f.type !== "password")
+				return (f.placeholder || f.value) ?? "";
+			if (tag === "textarea" && f.placeholder) return f.placeholder;
+			return el.getAttribute("name") ?? el.getAttribute("title") ?? "";
+		}
+		if (tag === "iframe" || tag === "frame") return el.getAttribute("title") ?? el.getAttribute("name") ?? "";
+		const img = el.querySelector("img[alt]");
+		if (img && !el.textContent?.trim()) return img.getAttribute("alt") ?? "";
+		return (el.textContent ?? "").replace(/\s+/g, " ").trim() || (el.getAttribute("title") ?? "");
+	};
+	/** What a control is doing right now: open, on, picked, unavailable. */
+	const statesOf = (el: Element): string[] => {
+		const at = (n: string) => el.getAttribute(n);
+		const out: string[] = [];
+		const expanded =
+			at("aria-expanded") ??
+			(tagOf(el) === "summary" ? String(!!(el.parentElement as { open?: boolean } | null)?.open) : null);
+		if (expanded === "true") out.push("expanded");
+		else if (expanded === "false") out.push("collapsed");
+		if (at("aria-pressed") === "true") out.push("pressed");
+		if (at("aria-selected") === "true") out.push("selected");
+		if (at("aria-checked") === "true") out.push("checked");
+		else if (at("aria-checked") === "mixed") out.push("mixed");
+		if (at("aria-current") && at("aria-current") !== "false") out.push("current");
+		if (el.matches(":disabled") || at("aria-disabled") === "true") out.push("disabled");
+		if (field(el).required || at("aria-required") === "true") out.push("required");
+		if (at("aria-invalid") === "true") out.push("invalid");
+		return out;
+	};
+
+	// Every place elements live: the document, each open shadow root (web components), and
+	// each same-origin frame. A frame's own transform (scale), border and padding map its
+	// coordinates to the tab's: x_tab = dx + sx * x_frame.
+	type Root = { root: Document | ShadowRoot; dx: number; dy: number; sx: number; sy: number; frame?: string };
+	const roots: Root[] = [];
+	const crossFrames: Array<{ el: Element; at: Root }> = [];
+	const isShadow = (root: Node) => root.nodeType === 11;
+	// A frame's address without its query or fragment, which can carry a token (?secret=...).
+	const frameUrl = (el: Element) =>
+		String((el as HTMLIFrameElement).src || el.getAttribute("src") || "").split(/[?#]/)[0];
+	const inner = (fr: Element, at: Root) => {
+		const r = fr.getBoundingClientRect();
+		const style = (fr.ownerDocument.defaultView ?? window).getComputedStyle(fr);
+		const layoutW = (fr as HTMLElement).offsetWidth || r.width || 1;
+		const layoutH = (fr as HTMLElement).offsetHeight || r.height || 1;
+		const kx = r.width / layoutW;
+		const ky = r.height / layoutH;
+		return {
+			dx: at.dx + at.sx * (r.left + (fr.clientLeft + Number.parseFloat(style.paddingLeft || "0")) * kx),
+			dy: at.dy + at.sy * (r.top + (fr.clientTop + Number.parseFloat(style.paddingTop || "0")) * ky),
+			sx: at.sx * kx,
+			sy: at.sy * ky,
+		};
+	};
+	const visit = (at: Root, depth: number) => {
+		roots.push(at);
+		if (depth > 12) return;
+		for (const el of Array.from(at.root.querySelectorAll("*"))) {
+			const shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+			// A web component with display:none adds nothing a user sees. Any other host is entered,
+			// even one with no box (display:contents, a zero-size fixed overlay): each element inside
+			// is checked on its own, and text is kept only where it renders.
+			if (shadow && (el.ownerDocument.defaultView ?? window).getComputedStyle(el).display !== "none")
+				visit({ ...at, root: shadow }, depth + 1);
+			const tag = tagOf(el);
+			if (tag !== "iframe" && tag !== "frame") continue;
+			let doc: Document | null = null;
+			try {
+				doc = (el as HTMLIFrameElement).contentDocument;
+			} catch {
+				doc = null;
+			}
+			if (doc?.documentElement) {
+				if (isVisible(el))
+					visit({ root: doc, ...inner(el, at), frame: frameUrl(el) || "(inline frame)" }, depth + 1);
+			} else crossFrames.push({ el, at });
+		}
+	};
+	visit({ root: document, dx: 0, dy: 0, sx: 1, sy: 1 }, 0);
+	const cross = new Set(crossFrames.map((c) => c.el));
+	// A cross-origin frame is read (D46) only when a person can see it: drawn (not hidden or see-through, here or
+	// above it), bigger than a tracking pixel, not kept off the page, and not under something that covers all of it.
+	const nodes: unknown[] = [];
+	// Listed controls with an id, by tag and look: two in rows with the same text are twins (below).
+	const looks = new Map<string, Array<[string, Element]>>();
+	// Elements in the viewport first, then the rest in document order: on long pages the
+	// cap used to be spent on navigation chrome above the fold and the content was cut.
+	const inView: Array<{ el: Element; at: Root }> = [];
+	const offView: Array<{ el: Element; at: Root }> = [];
+	const box = (el: Element, at: Root) => {
+		const r = el.getBoundingClientRect();
+		const left = at.dx + at.sx * r.left;
+		const top = at.dy + at.sy * r.top;
+		const width = r.width * at.sx;
+		const height = r.height * at.sy;
+		const onScreen = top + height > 0 && top < window.innerHeight && left + width > 0 && left < window.innerWidth;
+		return { left, top, width, height, onScreen };
+	};
+	const place = (el: Element, at: Root) => {
+		if (!isVisible(el)) return;
+		(box(el, at).onScreen ? inView : offView).push({ el, at });
+	};
+	for (const at of roots)
+		for (const el of Array.from(at.root.querySelectorAll(selector))) if (!cross.has(el)) place(el, at);
+	// A frame Polycarp can't look into (another site) is still listed, so the agent knows it's there.
+	for (const { el, at } of crossFrames) place(el, at);
+	let order = [...inView, ...offView];
+	// Ranked (read_page's interactive look): what the agent can act on now comes first. The focused
+	// control and an open dialog's, then the viewport's, then within a screen of it, then the rest;
+	// a control something else covers is left out (a click on it would land on the cover) and counted.
+	let ranked: Record<string, number | string | number[]> | undefined;
+	// Where each listed control sits in the ranking, when that is not just its place in this list (a later slice).
+	let positions: number[] | undefined;
+	// A slice past the first continues the read it came from: the order is that read's, kept in the page, so a click
+	// that scrolled or moved focus in between doesn't reshuffle the slices (repeating some controls, skipping others).
+	// Held weakly: a list the page threw away is not kept alive by a read the agent may never continue.
+	type Kept = { id: string; order: Array<WeakRef<Element>>; counts: Record<string, number> };
+	const kept = (w.__tabkyraRanked && typeof w.__tabkyraRanked === "object" ? w.__tabkyraRanked : undefined) as
+		| Kept
+		| undefined;
+	const offset = rank ? Math.max(0, Math.floor(rank.offset) || 0) : 0;
+	if (rank && (offset > 0 || rank.snapshot)) {
+		if (!kept || !Array.isArray(kept.order) || (rank.snapshot !== undefined && kept.id !== rank.snapshot))
+			throw new Error(
+				`Offset ${offset} is from ${rank.snapshot ? `read ${rank.snapshot}` : "a read"} this page no longer has: call read_page {"filter":"interactive"} again from the top.`,
+			);
+		ranked = { ...kept.counts, offset, snapshot: kept.id };
+		// The slice is positions offset to offset + maxNodes of the kept read. A control that left the page since is
+		// skipped, never replaced by the one after the window, and `next` is where the window ended: the next slice
+		// starts there whatever was skipped, so no control comes twice and none is missed.
+		const rootOf = new Map(roots.map((at) => [at.root as Node, at]));
+		const span = kept.order.slice(offset, offset + maxNodes);
+		order = [];
+		positions = [];
+		span.forEach((held, i) => {
+			const el = held instanceof WeakRef ? held.deref() : undefined;
+			const at = el && rootOf.get(el.getRootNode());
+			if (el && at && live(el)) {
+				order.push({ el, at });
+				positions?.push(offset + i);
+			}
+		});
+		ranked.next = offset + span.length;
+	} else if (rank) {
+		const vh = window.innerHeight;
+		let focus: Element | null = document.activeElement;
+		for (let i = 0; i < 20 && focus; i++) {
+			let deeper: Element | null =
+				(focus as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot?.activeElement ?? null;
+			if (!deeper && /^i?frame$/i.test(focus.tagName)) {
+				try {
+					deeper = (focus as HTMLIFrameElement).contentDocument?.activeElement ?? null;
+				} catch {
+					deeper = null;
+				}
+			}
+			if (!deeper || deeper === focus) break;
+			focus = deeper;
+		}
+		const DIALOG = "[role=dialog],[role=alertdialog],dialog[open],[aria-modal=true]";
+		const tiers: Array<Array<{ el: Element; at: Root }>> = [[], [], [], []];
+		let covered = 0;
+		for (const item of order) {
+			const b = box(item.el, item.at);
+			const tier =
+				item.el === focus || item.el.closest(DIALOG)
+					? 0
+					: b.onScreen
+						? 1
+						: b.top + b.height > -vh && b.top < 2 * vh
+							? 2
+							: 3;
+			if (b.onScreen && item.el !== focus && !cross.has(item.el)) {
+				const p = rank.point(item.el);
+				// Polycarp's own in-use veil is not the page's: it doesn't hide a control from the agent.
+				if ("cover" in p && !(rank.veil && p.cover.split(/[ (]/)[0] === rank.veil)) {
+					covered++;
+					continue;
+				}
+			}
+			tiers[tier].push(item);
+		}
+		order = tiers.flat();
+		const counts = {
+			total: order.length,
+			covered,
+			first: tiers[0].length,
+			inView: tiers[1].length,
+			near: tiers[2].length,
+			far: tiers[3].length,
+		};
+		const id = `r${Math.random().toString(36).slice(2, 7)}`;
+		w.__tabkyraRanked = { id, order: order.map((item) => new WeakRef(item.el)), counts } satisfies Kept;
+		ranked = { ...counts, offset: 0, snapshot: id };
+	}
+	for (const { el, at } of order) {
+		if (nodes.length >= maxNodes) break;
+		const b = box(el, at);
+		// The same element keeps its ref; one that now shows something else (a reused list
+		// row) gets a new one, and its old ref stops resolving.
+		const fp = print(el);
+		let ref = refOf.get(el);
+		if (ref && prints.get(ref) !== fp) {
+			// A change report's look (keepStale) is not the agent reading the page: the old ref
+			// goes on saying the row was reused, as it would have without the look.
+			if (!keepStale) {
+				refs.delete(ref);
+				prints.delete(ref);
+			} else {
+				stale.add(ref);
+				// A control whose name keeps changing (a live counter) gets a new ref each look: bounded.
+				for (const old of stale) {
+					if (stale.size <= 200) break;
+					stale.delete(old);
+					refs.delete(old);
+					prints.delete(old);
+				}
+			}
+			ref = undefined;
+		}
+		if (!ref) {
+			do ref = `e${++seq}`;
+			while (refs.has(ref));
+			refOf.set(el, ref);
+		}
+		refs.set(ref, el);
+		prints.set(ref, fp);
+		// Only a control with an id can be healed (resolveRef): those are the ones a twin could be mistaken for.
+		if (el.id) {
+			const key = `${el.tagName}\u0000${fp}`;
+			const group = looks.get(key);
+			if (group) group.push([ref, el]);
+			else looks.set(key, [[ref, el]]);
+		}
+		const tag = tagOf(el);
+		const f = field(el);
+		const node: Record<string, unknown> = {
+			ref,
+			role: roleOf(el),
+			name: nameOf(el).slice(0, 120),
+			x: Math.round(b.left + b.width / 2),
+			y: Math.round(b.top + b.height / 2),
+			width: Math.round(b.width),
+			height: Math.round(b.height),
+			visible: b.onScreen,
+		};
+		if (tag === "a" && f.href) node.href = String(f.href).slice(0, 200);
+		if (cross.has(el)) {
+			node.href = frameUrl(el).slice(0, 200);
+			node.states = [frameNotes[frameShown(el)]];
+		}
+		if (tag === "input") {
+			if (f.type === "checkbox" || f.type === "radio") node.value = f.checked ? "checked" : "unchecked";
+			else if (f.type !== "password" && f.value) node.value = String(f.value).slice(0, 120);
+		} else if (tag === "textarea" && f.value) node.value = String(f.value).slice(0, 120);
+		else if (tag === "select" && f.options && f.selectedIndex !== undefined)
+			node.value = f.options[f.selectedIndex]?.text ?? "";
+		const states = statesOf(el);
+		// Said where the model decides, not only in the rules it read long ago: a small model typed a password the user
+		// had given it when nothing at the field said otherwise (evals/weak-model, signup-validation). It names the
+		// handoff too: one left the field empty and only said so, and the user never saw the tab (r4 rerun, t1). In a session
+		// without tabs_show the MCP server rewrites it in every result, change reports too (cli/src/mcp.ts).
+		if (tag === "input" && f.type === "password")
+			states.push("password: never type one, call tabs_show and ask the person to type it");
+		if (states.length && !node.states) node.states = states;
+		if (at.frame) node.frame = at.frame.slice(0, 120);
+		nodes.push(node);
+	}
+	w.__tabkyraRefSeq = seq;
+	// Twins: the same look in a row with the same text. If the page later puts one back under the other's id, nothing
+	// proves which it is, so neither ref heals (resolveRef). Kept for the document, at most 500.
+	const twins = w.__tabkyraTwins instanceof Set ? (w.__tabkyraTwins as Set<string>) : new Set<string>();
+	w.__tabkyraTwins = twins;
+	for (const group of looks.values()) {
+		if (group.length < 2) continue;
+		const rows = new Map<string, string[]>();
+		for (const [ref, el] of group) {
+			const r = rowText(el);
+			const same = rows.get(r);
+			if (same) same.push(ref);
+			else rows.set(r, [ref]);
+		}
+		for (const same of rows.values()) if (same.length > 1) for (const ref of same) twins.add(ref);
+	}
+	for (const old of twins) {
+		if (twins.size <= 500) break;
+		twins.delete(old);
+	}
+	if (ranked) {
+		if (positions) ranked.positions = positions.slice(0, nodes.length);
+		else ranked.next = offset + nodes.length;
+	}
+
+	// Text: the document, then what shadow roots and same-origin frames render, which
+	// document.body.innerText leaves out. Rendered text only: nothing hidden reaches the agent.
+	// Hidden includes visibility:hidden and opacity:0; display:contents has no box of its own,
+	// so the nearest ancestor with one decides.
+	const rendered = (c: Element): boolean => {
+		const view = c.ownerDocument.defaultView ?? window;
+		const style = view.getComputedStyle(c);
+		if (style.display === "contents") {
+			// No box, but its visibility still applies to what it holds.
+			if (style.visibility !== "visible") return false;
+			const up = c.parentElement ?? ((c.getRootNode() as ShadowRoot).host as Element | undefined);
+			return up ? rendered(up) : true;
+		}
+		const check = (c as Element & { checkVisibility?: (o?: Record<string, boolean>) => boolean }).checkVisibility;
+		return check ? check.call(c, { visibilityProperty: true, opacityProperty: true }) : isVisible(c);
+	};
+	// A shadow root's own text: element children that render, and text written straight into it
+	// when the host renders.
+	const shadowText = (root: Document | ShadowRoot) =>
+		Array.from(root.childNodes)
+			.map((c) =>
+				c.nodeType === 3
+					? isShadow(root) && rendered((root as ShadowRoot).host)
+						? (c.textContent ?? "").trim()
+						: ""
+					: c.nodeType === 1 &&
+							tagOf(c as Element) !== "style" &&
+							tagOf(c as Element) !== "script" &&
+							rendered(c as Element)
+						? ((c as HTMLElement).innerText ?? "")
+						: "",
+			)
+			.filter(Boolean)
+			.join("\n");
+	const parts = [document.body?.innerText ?? ""];
+	for (const at of roots.slice(1)) {
+		const own = isShadow(at.root) ? shadowText(at.root) : ((at.root as Document).body?.innerText ?? "");
+		if (own.trim()) parts.push(at.frame && !isShadow(at.root) ? `[frame ${at.frame}]\n${own}` : own);
+	}
+	const text = parts
+		.join("\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.slice(0, maxTextChars);
+	return {
+		url: location.href,
+		title: document.title,
+		viewport: {
+			width: window.innerWidth,
+			height: window.innerHeight,
+			scrollX: Math.round(window.scrollX),
+			scrollY: Math.round(window.scrollY),
+			pageHeight: document.documentElement.scrollHeight,
+		},
+		nodes,
+		text,
+		...(ranked ? { ranked } : {}),
+		...(crossFrames.length ? { crossFrames: crossFrames.length } : {}),
+	};
+}
+
+/**
+ * A map of how the page is built, for an agent working out where its data comes from: the
+ * framework, embedded JSON (names and top-level keys, not contents), forms (field names, never
+ * values), frames, web components, script hosts and storage key names (never values).
+ * Self-contained: it runs in the page.
+ */
+function pageInspect(veil: string): unknown {
+	// The in-use veil (veil.ts) is Polycarp's, not the page's: it is not counted.
+	const all = Array.from(document.querySelectorAll("*")).filter((el) => !veil || el.localName !== veil);
+	const has = (sel: string) => !!document.querySelector(sel);
+	const scripts = Array.from(document.scripts);
+	const srcs = scripts.map((x) => x.src).filter(Boolean);
+	const anySrc = (re: RegExp) => srcs.some((u) => re.test(u));
+	const frameworks: string[] = [];
+	if (has("#__next") || has("script#__NEXT_DATA__") || anySrc(/\/_next\//)) frameworks.push("Next.js");
+	if (has("#__nuxt") || anySrc(/\/_nuxt\//)) frameworks.push("Nuxt");
+	// Modern React leaves no markup; the bridge checks its expando properties in the page's own world.
+	if (has("[data-reactroot]")) frameworks.push("React");
+	if (has("[ng-version]"))
+		frameworks.push(`Angular ${document.querySelector("[ng-version]")?.getAttribute("ng-version") ?? ""}`.trim());
+	if (has("[data-v-app]") || all.some((el) => Array.from(el.attributes).some((a) => a.name.startsWith("data-v-"))))
+		frameworks.push("Vue");
+	if (all.some((el) => /\bsvelte-/.test(el.getAttribute("class") ?? ""))) frameworks.push("Svelte");
+	if (anySrc(/wp-content|wp-includes/)) frameworks.push("WordPress");
+	if (anySrc(/cdn\.shopify\.com/)) frameworks.push("Shopify");
+	const generator = document.querySelector('meta[name="generator"]')?.getAttribute("content");
+	if (generator) frameworks.push(`generator: ${generator.slice(0, 60)}`);
+
+	const keysOf = (text: string): string => {
+		try {
+			const v = JSON.parse(text);
+			if (Array.isArray(v)) return `array of ${v.length}`;
+			if (v && typeof v === "object") {
+				// A schema.org type name (Product, Recipe) says what the blob is; any other value stays out.
+				const type = (v as Record<string, unknown>)["@type"];
+				const schemaType = typeof type === "string" && /^[A-Z][A-Za-z]{1,40}$/.test(type) ? type : undefined;
+				const keys = Object.keys(v).slice(0, 12).join(", ");
+				return schemaType ? `@type ${schemaType}; keys ${keys}` : `keys ${keys}`;
+			}
+			return typeof v;
+		} catch {
+			return "not JSON";
+		}
+	};
+	const data = scripts
+		.filter((x) => /json/i.test(x.type))
+		.slice(0, 20)
+		.map((x) => ({ id: x.id || undefined, type: x.type, chars: x.text.length, shape: keysOf(x.text) }));
+
+	const forms = Array.from(document.forms)
+		.slice(0, 15)
+		.map((f) => ({
+			action: f.getAttribute("action") ?? "",
+			method: (f.getAttribute("method") ?? "get").toLowerCase(),
+			fields: Array.from(f.elements)
+				.map((e) => {
+					const name = e.getAttribute("name") ?? e.id;
+					const type = e.getAttribute("type") ?? e.tagName.toLowerCase();
+					return name ? `${name}:${type}` : "";
+				})
+				.filter(Boolean)
+				.slice(0, 25),
+		}));
+
+	const frames = Array.from(document.querySelectorAll("iframe,frame"))
+		.slice(0, 15)
+		.map((f) => {
+			let sameOrigin = false;
+			try {
+				sameOrigin = !!(f as HTMLIFrameElement).contentDocument;
+			} catch {
+				sameOrigin = false;
+			}
+			return { src: f.getAttribute("src") ?? "", sameOrigin };
+		});
+
+	const hosts = all.filter((el) => (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot);
+	const shadowTags = [...new Set(hosts.map((el) => el.tagName.toLowerCase()))].slice(0, 12);
+	const customTags = [...new Set(all.map((el) => el.tagName.toLowerCase()).filter((t) => t.includes("-")))].slice(
+		0,
+		15,
+	);
+
+	const scriptHosts: Record<string, number> = {};
+	for (const u of srcs) {
+		try {
+			const h = new URL(u).host;
+			scriptHosts[h] = (scriptHosts[h] ?? 0) + 1;
+		} catch {
+			/* not a URL */
+		}
+	}
+	// Names only, and a name's account-specific parts (an email, a UUID, a long id) become [id]:
+	// some sites put the signed-in user in key names.
+	const anonymous = (name: string) =>
+		name
+			.replace(/[^\s.:/|]*@[^\s.:/|]+(?:\.[^\s.:/|]+)*/g, "[id]")
+			.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "[id]")
+			.replace(/\b(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{16,}\b/g, "[id]")
+			.slice(0, 120);
+	// Reading window.localStorage itself throws on some pages (sandboxed, storage blocked).
+	const storageKeys = (get: () => Storage | undefined) => {
+		try {
+			const st = get();
+			return st
+				? Array.from({ length: Math.min(st.length, 30) }, (_, i) => anonymous(st.key(i) ?? "")).filter(Boolean)
+				: [];
+		} catch {
+			return [];
+		}
+	};
+	let cookieNames: string[] = [];
+	try {
+		cookieNames = document.cookie
+			.split(";")
+			.map((c) => anonymous(c.split("=")[0]?.trim() ?? ""))
+			.filter(Boolean)
+			.slice(0, 30);
+	} catch {
+		cookieNames = [];
+	}
+	return {
+		url: location.href,
+		title: document.title,
+		frameworks,
+		data,
+		forms,
+		frames,
+		shadowRoots: hosts.length,
+		shadowTags,
+		customTags,
+		scripts: { inline: scripts.filter((x) => !x.src).length, hosts: scriptHosts },
+		storage: {
+			local: storageKeys(() => window.localStorage),
+			session: storageKeys(() => window.sessionStorage),
+			cookies: cookieNames,
+		},
+		serviceWorker: !!navigator.serviceWorker?.controller,
+		elements: all.length,
+	};
+}
+
+export async function inspectPage(tabId: number): Promise<Record<string, unknown>> {
+	const map = await runInPage<Record<string, unknown>>(
+		tabId,
+		`(${pageInspect.toString()})(${JSON.stringify((await veilTag(tabId)) ?? "")})`,
+	);
+	// Addresses can carry tokens (/reset?token=..., an embed's ?secret=...).
+	if (typeof map.url === "string") map.url = maskUrl(map.url);
+	for (const f of (map.forms ?? []) as Array<{ action: string }>) f.action = maskUrl(f.action);
+	for (const f of (map.frames ?? []) as Array<{ src: string }>) f.src = maskUrl(f.src).slice(0, 160);
+	return map;
+}
+
+export async function snapshot(
+	tabId: number,
+	options: {
+		maxNodes?: number;
+		maxTextChars?: number;
+		filter?: "interactive" | "all";
+		rank?: boolean;
+		offset?: number;
+		snapshot?: string;
+		/** Bars a frame by URL (the approval page, a host not allowed for agents): see frames.ts FrameRule. */
+		skip?: FrameRule;
+	} = {},
+): Promise<Snapshot> {
+	const { maxNodes = 300, maxTextChars = 20000, filter = "all" } = options;
+	// Frames get a small share past a page that used up the default budget, never past one the caller set.
+	const floor = options.maxNodes === undefined && options.maxTextChars === undefined;
+	// Only the page's own read is ranked; a frame's controls follow the frame's line and hold no ranked position.
+	const rank = options.rank
+		? `, { offset: ${Math.max(0, Math.floor(options.offset ?? 0)) || 0}, snapshot: ${options.snapshot === undefined ? "undefined" : JSON.stringify(options.snapshot)}, veil: ${JSON.stringify((await veilTag(tabId)) ?? "")}, point: ${refPoint.toString()} }`
+		: "";
+	const code = (n: number, t: number, r = "") =>
+		`(${pageSnapshot.toString()})(${n}, ${t}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()}, false, ${frameShown.toString()}, ${JSON.stringify(FRAME_STATES)}${r})`;
+	const snap = await runInPage<Snapshot & { crossFrames?: number }>(tabId, code(maxNodes, maxTextChars, rank));
+	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
+	if (snap?.crossFrames) {
+		delete snap.crossFrames;
+		await readFrames(tabId, snap, { maxNodes, maxTextChars, floor }, code, options.skip ?? FRAMES_CLOSED);
+	}
+	return snap;
+}
+
+/** What the change report compares, one side of an action (src/browser/changes.ts). */
+export interface ChangeLook {
+	url: string;
+	title: string;
+	nodes: Array<SnapshotNode & { states?: string[] }>;
+	/** The focused element's ref, or "" (nothing focused, or focus on something unlisted). */
+	focus: string;
+	/** Stands for the document: a new one means a new page, whatever the URL says. */
+	doc: string;
+	/** Of `before`, the refs not listed now whose element left the page or is hidden. */
+	gone: string[];
+	/**
+	 * Of `gone`, the refs whose element is still the page's, listed now under a new ref because what it
+	 * shows changed (a live counter, "Save" -> "Saved"): old ref to new. A node put in its place is not.
+	 */
+	same?: Record<string, string>;
+	/** The page's rendered text, as read_page gives it (capped). */
+	text: string;
+}
+
+/**
+ * Page side of a change look: what has focus, through open shadow roots and same-origin frames,
+ * and an id for this document. Self-contained.
+ */
+function focusProbe(): { focus: string; doc: string } {
+	const w = window as unknown as { __tabkyraRefOf?: unknown; __tabkyraDocId?: unknown };
+	if (typeof w.__tabkyraDocId !== "string") w.__tabkyraDocId = Math.random().toString(36).slice(2);
+	let el: Element | null = document.activeElement;
+	for (let i = 0; i < 20 && el; i++) {
+		let inner: Element | null =
+			(el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot?.activeElement ?? null;
+		if (!inner && /^i?frame$/i.test(el.tagName)) {
+			try {
+				inner = (el as HTMLIFrameElement).contentDocument?.activeElement ?? null;
+			} catch {
+				inner = null;
+			}
+		}
+		if (!inner || inner === el) break;
+		el = inner;
+	}
+	const refOf = w.__tabkyraRefOf instanceof WeakMap ? (w.__tabkyraRefOf as WeakMap<Element, string>) : undefined;
+	const blank = !el || el.tagName === "BODY" || el.tagName === "HTML";
+	return { focus: blank ? "" : (refOf?.get(el as Element) ?? ""), doc: w.__tabkyraDocId as string };
+}
+
+/** Page side: which of `refs` left the page or are hidden now. Self-contained. */
+export function refsGone(refs: string[], live: (el: Element) => boolean, print: (el: Element) => string): string[] {
+	const w = window as unknown as { __tabkyraRefs?: unknown; __tabkyraRefPrints?: unknown };
+	const map = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : undefined;
+	const prints = w.__tabkyraRefPrints instanceof Map ? (w.__tabkyraRefPrints as Map<string, string>) : undefined;
+	return refs.filter((r) => {
+		const el = map?.get(r);
+		if (!el || !live(el)) return true;
+		// Reused for something else (a list row with new content): the old ref fails now, so it is gone.
+		if (prints?.get(r) !== print(el)) return true;
+		const b = el.getBoundingClientRect();
+		if (b.width === 0 || b.height === 0) return true;
+		const st = (el.ownerDocument.defaultView ?? window).getComputedStyle(el);
+		return st.visibility === "hidden" || st.display === "none" || st.opacity === "0";
+	});
+}
+
+/**
+ * Of the refs gone, those whose element is the same one, listed now under a new ref (the snapshot gave
+ * it one because what it shows changed): old ref to new. Runs in the page, after the look's snapshot.
+ */
+export function refsRenewed(gone: string[], listed: Set<string>): Record<string, string> {
+	const w = window as unknown as { __tabkyraRefs?: unknown; __tabkyraRefOf?: unknown };
+	const map = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : undefined;
+	const refOf = w.__tabkyraRefOf instanceof WeakMap ? (w.__tabkyraRefOf as WeakMap<Element, string>) : undefined;
+	const out: Record<string, string> = {};
+	for (const r of gone) {
+		const el = map?.get(r);
+		const now = el && refOf?.get(el);
+		if (now && now !== r && listed.has(now)) out[r] = now;
+	}
+	return out;
+}
+
+/**
+ * One side of the change report, in one round trip: the interactive elements with their refs (the
+ * same refs read_page gives, so they stay valid), focus, the document, and which of `before` went.
+ * An action on a ref in a cross-origin frame looks in that frame too (D46), at the same time: its
+ * controls and text join the page's, under the frame's tag.
+ */
+export async function changeLook(
+	tabId: number,
+	maxNodes: number,
+	before: string[] = [],
+	guardedHosts: readonly string[] = [],
+	frame?: FrameLook,
+): Promise<ChangeLook | "guarded" | "large"> {
+	// The approval page (#94) can commit between the URL check and this script: the script checks
+	// again before it touches anything. A page this big is not read twice per action (D43).
+	const code = (refs: string[]) => `(() => {
+		if ((${isGuardedUrl.toString()})(location.href, ${JSON.stringify(guardedHosts)})) return "guarded";
+		if (document.getElementsByTagName("*").length > ${LARGE_PAGE}) return "large";
+		const s = (${pageSnapshot.toString()})(${maxNodes}, 20000, "interactive", ${refLive.toString()}, ${refPrint.toString()}, true, ${frameShown.toString()}, ${JSON.stringify(FRAME_STATES)});
+		const listed = new Set(s.nodes.map((n) => n.ref));
+		const gone = (${refsGone.toString()})(${JSON.stringify(refs)}.filter((r) => !listed.has(r)), ${refLive.toString()}, ${refPrint.toString()});
+		const same = (${refsRenewed.toString()})(gone, listed);
+		return { url: s.url, title: s.title, nodes: s.nodes, gone, same, text: s.text, ...(${focusProbe.toString()})() };
+	})()`;
+	const split = frame?.ref ? splitFrameRef(frame.ref) : undefined;
+	const mine = split ? before.filter((r) => r.startsWith(split.tag)).map((r) => r.slice(split.tag.length)) : [];
+	const inFrame = async (): Promise<ChangeLook | "gone" | undefined> => {
+		if (!split || !frame?.ref) return undefined;
+		const ref = frame.ref;
+		// Gone only on a definite answer: not found by a search that saw every frame, or barred. Else unknown.
+		const find = () =>
+			frameForRef(tabId, ref, frame.rule ?? FRAMES_CLOSED).then(
+				(h) => h ?? null,
+				(e) => ((e as { gone?: boolean } | undefined)?.gone ? null : undefined),
+			);
+		// Its look, and whether a person sees the frame now: an action can hide it (#73). The test keeps
+		// to the look's budget, one deadline for the frame found once and again.
+		const end = Date.now() + FRAME_SHOWN_MS;
+		const left = () => Math.max(0, end - Date.now());
+		const run = (hit: { frame: PageFrame }, again = false) => {
+			const look = runInFrame<ChangeLook | "guarded" | "large">(tabId, hit.frame, code(mine));
+			return Promise.all([
+				again ? bounded(look, left()) : look.catch(() => undefined),
+				frameState(tabId, hit.frame, end).catch(() => undefined),
+			]);
+		};
+		// The frame found once for the action serves every look; it is looked for again only when it stops answering.
+		const known = frame.hit;
+		let [got, state] = known ? await run(known) : [undefined, undefined];
+		if (!got) {
+			// Found again within what is left of the deadline; with none left, or none in time, it is unknown.
+			if (!left()) return undefined;
+			const hit = await bounded(find(), left());
+			if (hit === undefined) return undefined;
+			if (!hit) return "gone";
+			frame.hit = hit;
+			[got, state] = await run(hit, true);
+		}
+		// The approval page (#94) is the strictest bar: the frame's refs are gone.
+		if (got === "guarded") return "gone";
+		if (typeof got !== "object" || !got) return undefined;
+		// The action can take the frame to a host the person never allowed, or to an error page, keeping its id
+		// and session (D46): the document the look read is checked as the first look checked it. A hidden frame
+		// is not read and its refs are gone; one the debugger gave no answer for is not read, and its refs are
+		// left as they were, since it may well still be there; one only out of view is read.
+		if (!web(got.url) || (await (frame.rule ?? FRAMES_CLOSED)(got.url))) return "gone";
+		if (state === "hidden") return "gone";
+		if (state === undefined) return undefined;
+		return got;
+	};
+	const [look, inner] = await Promise.all([
+		runInPage<ChangeLook | "guarded" | "large">(tabId, code(before.filter((r) => !splitFrameRef(r)))),
+		inFrame(),
+	]);
+	if (typeof look === "string") return look;
+	if (typeof look?.url === "string") look.url = maskUrl(look.url);
+	if (!split || !look) return look;
+	// The frame closed or navigated: every ref it had is gone.
+	if (inner === "gone") look.gone.push(...mine.map((r) => split.tag + r));
+	else if (inner) {
+		const tagged = (r: string) => split.tag + r;
+		look.nodes.push(...inner.nodes.map((n) => ({ ...n, ref: tagged(n.ref) })));
+		look.gone.push(...inner.gone.map(tagged));
+		look.same = {
+			...look.same,
+			...Object.fromEntries(Object.entries(inner.same ?? {}).map(([a, b]) => [tagged(a), tagged(b)])),
+		};
+		if (inner.focus) look.focus = tagged(inner.focus);
+		// A new document in the frame reads as new controls in it, not as a new page.
+		if (inner.text) look.text = `${look.text}\n\n[frame ${frameHost(inner.url)}]\n${inner.text}`;
+	}
+	return look;
+}
+
+/** The frame an action's change report also looks in (D46): its ref, the rule, and the frame once found. */
+export interface FrameLook {
+	ref?: string;
+	rule?: FrameRule;
+	hit?: { frame: PageFrame; inner: string };
+}
+
+/** Elements in a document past which a change report does not look (each look reads the whole page). */
+export const LARGE_PAGE = 15000;
+
+/** Every state pageSnapshot gives a cross-origin frame's line, by what frameShown says of it. */
+export const FRAME_STATES = {
+	shown: "cross-origin: read it with navigate to its URL",
+	hidden: "cross-origin frame, not shown, so not read",
+	away: "cross-origin frame out of view: scroll to it, then read_page",
+} as const;
+const CROSS_NOTE = FRAME_STATES.shown;
+const NOT_SHOWN_NOTE = FRAME_STATES.hidden;
+const FRAME_NOTES = Object.values(FRAME_STATES);
+
+/** The most the change look's test of a frame may take: the look's own budget (LOOK_MS in changes.ts). */
+export const FRAME_SHOWN_MS = 750;
+
+/** The most a frame's own snapshot may take: one that doesn't answer keeps its plain line. */
+const FRAME_READ_MS = 3000;
+/** The most reading all frames may take, past finding them (FRAMES_MS): what hasn't answered is left out. */
+const FRAMES_READ_MS = 4000;
+
+type Line = SnapshotNode & { states?: string[] };
+
+/** Whether two URLs are on one origin. */
+function sameOrigin(a: string, b: string): boolean {
+	try {
+		return new URL(a).origin === new URL(b).origin;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * The listed cross-origin frame line that is this frame's own <iframe>: the same box, center and
+ * size, as drawn. A frame overlapping another's box, or a pixel at its corner, matches none.
+ */
+function lineOf(
+	nodes: SnapshotNode[],
+	f: PageFrame,
+	taken: Set<SnapshotNode>,
+	states: readonly string[] = [CROSS_NOTE],
+	exact = false,
+	frames: readonly PageFrame[] = [],
+): Line | undefined {
+	const near = (a: number, b: number) => Math.abs(a - b) <= 2;
+	const fits = nodes.filter(
+		(n) =>
+			!taken.has(n) &&
+			states.includes((n as Line).states?.[0] ?? "") &&
+			near(n.x, f.box.x) &&
+			near(n.y, f.box.y) &&
+			near(n.width, f.box.width) &&
+			near(n.height, f.box.height),
+	);
+	// Two frames of one box: the line that names this frame's URL is its own. `exact` takes no other, but a
+	// frame that redirected or navigated within its origin still owns the line its <iframe> names.
+	// The snapshot writes a frame's href with no query or fragment: both sides are compared so.
+	const bare = (u = "") => u.split(/[?#]/)[0].slice(0, 200);
+	const named = fits.find((n) => !!n.href && bare(n.href) === bare(f.url));
+	if (!exact) return named ?? fits[0];
+	// Exact: not when another frame of this box has the same URL, as stacked ad slots of one path do.
+	// One elsewhere on the page has its own line and can't take this one.
+	const others = frames.filter(
+		(o) => o !== f && (["x", "y", "width", "height"] as const).every((k) => near(o.box[k], f.box[k])),
+	);
+	if (named && !others.some((o) => bare(o.url) === bare(f.url))) return named;
+	// Only when it is plain: one line on its origin, naming no other frame's URL.
+	const kin = fits.filter((n) => !!n.href && sameOrigin(n.href, f.url));
+	const own = kin.length === 1 ? kin[0] : undefined;
+	return own && !others.some((o) => bare(o.url) === bare(own.href)) ? own : undefined;
+}
+
+/**
+ * Add each cross-origin frame's elements and text to a snapshot (D46): the elements right after
+ * the frame's own element, with the frame's tag on their refs and the tab's coordinates, the text
+ * under the frame's host. A frame is read only when its own line is listed as shown, by the
+ * document around it, and frameState finds it shown too, so no other frame can stand in for
+ * it. A frame on a host not allowed for agents keeps its line, which names the host, and nothing
+ * of it is read. Frames of one level are read at once, all under one time limit.
+ */
+async function readFrames(
+	tabId: number,
+	snap: Snapshot,
+	budget: { maxNodes: number; maxTextChars: number; floor: boolean },
+	code: (n: number, t: number) => string,
+	rule: FrameRule,
+): Promise<void> {
+	const frames = await crossOriginFrames(tabId, rule).catch(() => [] as PageFrame[]);
+	const end = Date.now() + FRAMES_READ_MS;
+	const { maxNodes, maxTextChars, floor } = budget;
+	let room = Math.max(maxNodes - snap.nodes.length, floor ? 60 : 0);
+	let textRoom = maxTextChars > 0 ? Math.max(maxTextChars - snap.text.length, floor ? 2000 : 0) : 0;
+	const { width, height } = snap.viewport;
+	const taken = new Set<SnapshotNode>();
+	let read = 0;
+	// Outermost first: a frame's line is in the snapshot only once the frame around it is read.
+	for (let depth = 1; depth <= MAX_DEPTH; depth++) {
+		const level = frames.filter((f) => f.chain.length === depth);
+		// Each frame is tested as itself first: only a shown one may claim a line, so a hidden frame
+		// of the same box can't take a shown frame's line and leave it unread.
+		const shown = await Promise.all(level.map((f) => frameState(tabId, f, end)));
+		const picks: Array<{ f: PageFrame; own: Line }> = [];
+		const bind = (f: PageFrame, states: readonly string[], exact = false) => {
+			const own = lineOf(snap.nodes, f, taken, states, exact, frames);
+			if (own) taken.add(own);
+			return own;
+		};
+		const bound = new Set<PageFrame>();
+		level.forEach((f, i) => {
+			if (shown[i] !== "shown") return;
+			const own = bind(f, [CROSS_NOTE]);
+			if (!own) return;
+			bound.add(f);
+			if (f.blocked) own.states = [`not allowed for agents: ${frameHost(f.url)}`];
+			else picks.push({ f, own });
+		});
+		// Lines no shown frame claimed say why nothing of theirs is read: a barred host whatever the page
+		// says of it, and "not shown" where the page called it shown and the tab found it hidden. A frame the
+		// debugger gave no answer for keeps its line, and only the line naming the frame's own URL or origin is relabeled.
+		level.forEach((f, i) => {
+			if (bound.has(f)) return;
+			if (f.blocked) {
+				const own = bind(f, FRAME_NOTES, true);
+				if (own) own.states = [`not allowed for agents: ${frameHost(f.url)}`];
+			} else if (shown[i] === "hidden") {
+				const own = bind(f, [CROSS_NOTE], true);
+				if (own) own.states = [NOT_SHOWN_NOTE];
+			}
+		});
+		const wanted = room > 0 ? picks.slice(0, Math.max(0, MAX_FRAMES - read)) : [];
+		const got = await Promise.all(
+			wanted.map(({ f }) =>
+				bounded(
+					runInFrame<Snapshot>(tabId, f, code(room, textRoom)),
+					Math.max(0, Math.min(FRAME_READ_MS, end - Date.now())),
+				),
+			),
+		);
+		wanted.forEach(({ f, own }, i) => {
+			const s = got[i];
+			if (!s?.nodes || room <= 0) return;
+			read++;
+			const label = frameHost(f.url);
+			const nodes = s.nodes.slice(0, room).map((n) => {
+				const x = Math.round(f.offset.x + f.scale * n.x);
+				const y = Math.round(f.offset.y + f.scale * n.y);
+				const inner = (n as SnapshotNode & { frame?: string }).frame;
+				return {
+					...n,
+					ref: f.tag + n.ref,
+					x,
+					y,
+					width: Math.round(n.width * f.scale),
+					height: Math.round(n.height * f.scale),
+					visible: n.visible && x >= 0 && y >= 0 && x < width && y < height,
+					...(n.href ? { href: maskUrl(n.href) } : {}),
+					frame: inner ? `${label} > ${inner}` : label,
+				};
+			});
+			own.states = ["cross-origin frame, its elements follow"];
+			snap.nodes.splice(snap.nodes.indexOf(own) + 1, 0, ...nodes);
+			room -= nodes.length;
+			if (textRoom > 0 && s.text) {
+				const t = `[frame ${label}]\n${s.text}`.slice(0, textRoom);
+				snap.text = snap.text ? `${snap.text}\n\n${t}` : t;
+				textRoom -= t.length;
+			}
+		});
+	}
+}
+
+/**
+ * Page-side statements that leave the element a ref or selector names in `el`, with the errors
+ * locate gives. For code that runs in the snapshot world (the default of runInPage), where refs live.
+ */
+export function elementCode(target: { ref?: string; selector?: string }): string {
+	return `let el = null;
+		const ref = ${JSON.stringify(target.ref ?? "")};
+		const sel = ${JSON.stringify(target.selector ?? "")};
+		if (ref) {
+			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); }
+			catch (e) { if (!sel) throw e; }
+		}
+		if (!el && sel) el = document.querySelector(sel);
+		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
+		if (!el.isConnected) throw new Error("Element is no longer in the page. Call read_page for fresh refs.");`;
+}
+
+/** Resolve a ref (from a snapshot) or CSS selector to its viewport center. */
+export async function locate(
+	tabId: number,
+	target: { ref?: string; selector?: string },
+	rule: FrameRule = FRAMES_CLOSED,
+	act: "click" | "hover" | "fill" | "type" = "click",
+	/** The ref's frame, when the action already found it (its change report's first look). */
+	found?: { frame: PageFrame; inner: string },
+): Promise<{ x: number; y: number; width: number; height: number }> {
+	// What the errors call the action: "a click can't reach it", "which would take the click".
+	const aAct = act === "type" ? "typing" : `a ${act}`;
+	const theAct = act === "type" ? "the typing" : `the ${act}`;
+	const code = (r: string | undefined, inFrame: boolean) => `(async () => {
+		let el = null;
+		let viaRef = false;
+		const ref = ${JSON.stringify(r ?? "")};
+		const sel = ${JSON.stringify(inFrame ? "" : (target.selector ?? ""))};
+		// A ref that no longer resolves falls back to a selector given with it, as before.
+		if (ref) {
+			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); viaRef = true; }
+			catch (e) { if (!sel) throw e; }
+		}
+		if (!el && sel) el = document.querySelector(sel);
+		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
+		if (!el.isConnected) throw new Error("Element is no longer in the page. Call read_page for fresh refs.");
+		// An element in a same-origin frame: bring the frame into view, then the element, and
+		// add each frame's offset so the point is in the tab's coordinates.
+		const frames = [];
+		for (let win = el.ownerDocument.defaultView; win && win !== window && win.frameElement; win = win.parent) frames.push(win.frameElement);
+		for (const fr of frames.slice().reverse()) fr.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+		el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+		// Let the page react to the scroll (a header that slides in, a banner, content that moves)
+		// before testing what is on top. A tab in the background draws no frames; don't wait there.
+		if (document.visibilityState === "visible")
+			await Promise.race([new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))), new Promise((ok) => setTimeout(ok, 200))]);
+		// Innermost frame outward: each frame scales the point by its transform, then adds its own
+		// position, border and padding (the same mapping read_page uses).
+		const r = el.getBoundingClientRect();
+		const st0 = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+		if ((r.width === 0 && r.height === 0) || st0.visibility === "hidden")
+			throw new Error((ref ? "Ref " + ref : "That element") + " isn't shown now (hidden or closed). Call read_page for fresh refs.");
+		const spot = (${refPoint.toString()})(el);
+		const who = ref ? "Ref " + ref : "That element";
+		const covered = (by) => new Error(who + " is covered by " + by + ", which would take ${theAct}. Close or dismiss it, or click that instead, then call read_page.");
+		if (spot.offscreen) throw new Error(who + " is outside the visible page (kept off screen), so ${aAct} can't reach it.");
+		if (spot.cover) throw covered(spot.cover);
+		const frameCover = (${refFrameCover.toString()})(el, spot.x, spot.y);
+		if (frameCover && typeof frameCover === "object") throw new Error(who + " is outside the visible page (kept off screen), so ${aAct} can't reach it.");
+		if (frameCover) throw covered(frameCover);
+		// The ref counts as acted on only once the input reaches its element: a click that lands on something else, or
+		// never goes out, leaves it as it was (resolveRef).
+		if (viaRef && ${JSON.stringify(act === "click" || act === "type")}) {
+			const win = el.ownerDocument.defaultView || window;
+			const types = ["pointerdown", "mousedown", "click"];
+			const off = () => { for (const t of types) win.removeEventListener(t, on, true); clearTimeout(timer); };
+			const on = (e) => { if (e.composedPath().includes(el)) { (${refActed.toString()})(ref); off(); } };
+			for (const t of types) win.addEventListener(t, on, true);
+			const timer = setTimeout(off, 10000);
+		}
+		let x = spot.x;
+		let y = spot.y;
+		let w = r.width;
+		let h = r.height;
+		for (const fr of frames) {
+			const fr0 = fr.getBoundingClientRect();
+			const st = (fr.ownerDocument.defaultView || window).getComputedStyle(fr);
+			const kx = fr0.width / (fr.offsetWidth || fr0.width || 1);
+			const ky = fr0.height / (fr.offsetHeight || fr0.height || 1);
+			x = fr0.left + (fr.clientLeft + parseFloat(st.paddingLeft || "0") + x) * kx;
+			y = fr0.top + (fr.clientTop + parseFloat(st.paddingTop || "0") + y) * ky;
+			w *= kx;
+			h *= ky;
+		}
+		return { x, y, width: w, height: h };
+	})()`;
+	const framed = found ?? (target.ref ? await frameForRef(tabId, target.ref, rule) : undefined);
+	if (framed) await scrollFrameIntoView(tabId, framed.frame);
+	const { value: p, frame } = await runForRef<{ x: number; y: number; width: number; height: number }>(
+		tabId,
+		target.ref,
+		code,
+		rule,
+		framed,
+	);
+	if (!frame) return p;
+	// The point in the frame, in the tab's viewport: it must be on screen and land in the frame.
+	// Measured again, once drawn: bringing the element into view can scroll the page around the frame too.
+	await framePainted(tabId);
+	const now = (await remeasure(tabId, frame)) ?? frame;
+	const at = {
+		x: now.offset.x + now.scale * p.x,
+		y: now.offset.y + now.scale * p.y,
+		width: p.width * now.scale,
+		height: p.height * now.scale,
+	};
+	const view = await cdpSend<{ cssLayoutViewport?: { clientWidth: number; clientHeight: number } }>(
+		tabId,
+		"Page.getLayoutMetrics",
+	).catch(() => undefined);
+	const vw = view?.cssLayoutViewport?.clientWidth ?? Number.POSITIVE_INFINITY;
+	const vh = view?.cssLayoutViewport?.clientHeight ?? Number.POSITIVE_INFINITY;
+	if (at.x < 0 || at.y < 0 || at.x >= vw || at.y >= vh)
+		throw new Error(
+			`Ref ${target.ref} is outside the visible page (its frame is cut off), so ${aAct} can't reach it.`,
+		);
+	// The page can hide a frame after it was read: one a person can't see is never acted in.
+	if (!(await frameShownNow(tabId, now)))
+		throw new Error(
+			`Ref ${target.ref} isn't shown now: its frame is hidden, see-through, too small or covered. Call read_page for fresh refs.`,
+		);
+	if (!(await frameTakesPoint(tabId, now, at.x, at.y)))
+		throw new Error(
+			`Ref ${target.ref} is covered by something over its frame, which would take ${theAct}. Close or dismiss it, then call read_page.`,
+		);
+	return at;
+}
+
+/** Set a form control's value the way frameworks expect (native setter + input/change). */
+export async function fillElement(
+	tabId: number,
+	target: { ref?: string; selector?: string },
+	value: string,
+	rule: FrameRule = FRAMES_CLOSED,
+	found?: { frame: PageFrame; inner: string },
+): Promise<void> {
+	const code = (r: string | undefined, inFrame: boolean) => `(async () => {
+		let el = null;
+		let byRef = false;
+		const ref = ${JSON.stringify(r ?? "")};
+		const sel = ${JSON.stringify(inFrame ? "" : (target.selector ?? ""))};
+		// A ref that no longer resolves falls back to a selector given with it, as before.
+		if (ref) {
+			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); byRef = true; }
+			catch (e) { if (!sel) throw e; }
+		}
+		if (!el && sel) el = document.querySelector(sel);
+		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
+		if (byRef) {
+			// Bring the field into view and let the page react, then make sure the ref still names
+			// it: a list that re-renders on scroll can hand the node to another row meanwhile.
+			el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+			if (document.visibilityState === "visible")
+				await Promise.race([new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))), new Promise((ok) => setTimeout(ok, 200))]);
+			let again = null;
+			try { again = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); }
+			catch (e) {
+				// Only a ref that no longer resolves left the page; any other error (the node now shows something else) is its own.
+				if (!/ not found: /.test(String(e && e.message))) throw e;
+				throw new Error("Ref " + ref + " not found: the element it named left the page as Polycarp scrolled to it (the page rebuilt it). Nothing was entered. Call read_page for fresh refs.");
+			}
+			if (again !== el) throw new Error("Ref " + ref + " now shows something else: the page reused it. Call read_page for fresh refs.");
+			// A field in a dialog that closed keeps its ref; writing into it would put a value
+			// the user can't see into the next submit.
+			const r0 = el.getBoundingClientRect();
+			const st0 = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+			if ((r0.width === 0 && r0.height === 0) || st0.visibility === "hidden")
+				throw new Error("Ref " + ref + " isn't shown now (hidden or closed). Call read_page for fresh refs.");
+			// A field under a modal, or one a dialog slid off screen as it closed.
+			const spot = (${refPoint.toString()})(el);
+			const frame = spot.offscreen || spot.cover ? null : (${refFrameCover.toString()})(el, spot.x, spot.y);
+			if (spot.offscreen || (frame && typeof frame === "object"))
+				throw new Error("Ref " + ref + " is outside the visible page, so it can't be filled. Call read_page for fresh refs.");
+			const cover = spot.cover || frame;
+			if (cover) throw new Error("Ref " + ref + " is covered by " + cover + ". Close or dismiss it, then call read_page.");
+		}
+		// Every check passed and the value goes in now: from here the ref is one an action went through (resolveRef).
+		if (byRef) (${refActed.toString()})(ref);
+		const value = ${JSON.stringify(value)};
+		// The element's own window: one in a frame belongs to another realm, where this
+		// window's HTMLInputElement and its value setter don't apply.
+		const W = el.ownerDocument.defaultView || window;
+		el.focus();
+		if (el instanceof W.HTMLSelectElement) {
+			const opt = Array.from(el.options).find(o => o.value === value || o.text.trim() === value);
+			if (!opt) throw new Error("No option matches " + value + ". read_page lists the options (value=...).");
+			el.value = opt.value;
+			el.dispatchEvent(new W.Event("input", { bubbles: true, composed: true }));
+			el.dispatchEvent(new W.Event("change", { bubbles: true }));
+			return true;
+		}
+		if (el instanceof W.HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
+			const want = value === "true" || value === "checked" || value === "1";
+			if (el.checked !== want) el.click();
+			return true;
+		}
+		if (el instanceof W.HTMLInputElement || el instanceof W.HTMLTextAreaElement) {
+			const proto = el instanceof W.HTMLTextAreaElement ? W.HTMLTextAreaElement.prototype : W.HTMLInputElement.prototype;
+			const setter = Object.getOwnPropertyDescriptor(proto, "value");
+			if (setter && setter.set) setter.set.call(el, value); else el.value = value;
+			el.dispatchEvent(new W.InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: value }));
+			el.dispatchEvent(new W.Event("change", { bubbles: true }));
+			return true;
+		}
+		if (el.isContentEditable) {
+			el.textContent = value;
+			el.dispatchEvent(new W.InputEvent("input", { bubbles: true, composed: true }));
+			return true;
+		}
+		throw new Error("Element is not a form control: use click or type on it instead of fill.");
+	})()`;
+	// A field in a frame: the frame's own document can't see a banner over the frame, so the page
+	// around it is checked as a click would be, before anything is written.
+	const framed =
+		found ?? (target.ref && splitFrameRef(target.ref) ? await frameForRef(tabId, target.ref, rule) : undefined);
+	if (framed) await locate(tabId, { ref: target.ref }, rule, "fill", framed);
+	await runForRef(tabId, target.ref, code, rule, framed);
+}
+
+/**
+ * Hands the focused element a paste of `text`, as a page sees one: a cancelable `paste` event whose clipboardData
+ * holds it, so an editor that handles paste itself (rich text, sheets, code editors) gets the text it expects. The
+ * system clipboard is never read or written. "page" means a handler took it (preventDefault); "unhandled" means
+ * nothing did, and the caller inserts the text. Runs in the frame that holds `ref`, where its field has focus.
+ */
+export async function pasteInto(
+	tabId: number,
+	ref: string | undefined,
+	text: string,
+	rule: FrameRule = FRAMES_CLOSED,
+	found?: { frame: PageFrame; inner: string },
+): Promise<"page" | "unhandled"> {
+	const code = () => `(() => {
+		let el = document.activeElement;
+		// Focus inside an open shadow root or a same-origin frame is that element's; a cross-origin frame's isn't reachable here.
+		for (let depth = 0; el && depth < 12; depth++) {
+			if (el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+			else if (/^(IFRAME|FRAME)$/.test(el.tagName)) {
+				let doc = null;
+				try { doc = el.contentDocument; } catch {}
+				if (!doc) return "unhandled";
+				el = doc.activeElement;
+			} else break;
+		}
+		if (!el) return "unhandled";
+		const W = el.ownerDocument.defaultView || window;
+		const data = new W.DataTransfer();
+		data.setData("text/plain", ${JSON.stringify(text)});
+		const ev = new W.ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true, composed: true });
+		el.dispatchEvent(ev);
+		return ev.defaultPrevented ? "page" : "unhandled";
+	})()`;
+	return (await runForRef<"page" | "unhandled">(tabId, ref, code, rule, found)).value;
+}
+
+/** Characters get_page_text returns by default. */
+export const PAGE_TEXT_CHARS = 50000;
+/** Characters get_page_html returns by default. */
+export const PAGE_HTML_CHARS = 50000;
+
+/** Whole, non-negative numbers for the slice, whatever the caller passed (they go into page code). */
+function sliceBounds(offset: unknown, maxChars: unknown, fallback: number): [number, number] {
+	const from = Math.max(0, Math.floor(Number(offset) || 0));
+	const max = Math.max(1, Math.floor(Number(maxChars) || fallback));
+	return [from, from + max];
+}
+
+/** A slice of a page's text or HTML: `text` from character `offset`, of `total` in all. */
+export interface PageSlice {
+	text: string;
+	offset: number;
+	total: number;
+}
+
+export async function pageText(
+	tabId: number,
+	selector?: string,
+	maxChars = PAGE_TEXT_CHARS,
+	offset = 0,
+): Promise<PageSlice> {
+	const [from, to] = sliceBounds(offset, maxChars, PAGE_TEXT_CHARS);
+	const code = `(() => {
+		const sel = ${JSON.stringify(selector ?? "")};
+		const el = sel ? document.querySelector(sel) : document.body;
+		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
+		// Text inside web components (open shadow roots) and same-origin frames, which innerText
+		// leaves out, follows the element's own text. Rendered text only: nothing hidden.
+		// Hidden includes visibility:hidden and opacity:0; display:contents has no box, so the
+		// nearest ancestor with one decides.
+		const shown = (c) => {
+			const view = c.ownerDocument && c.ownerDocument.defaultView;
+			const style = view && view.getComputedStyle(c);
+			if (style && style.display === "contents") {
+				if (style.visibility !== "visible") return false;
+				const up = c.parentElement || (c.getRootNode && c.getRootNode().host);
+				return up ? shown(up) : true;
+			}
+			return c.checkVisibility ? c.checkVisibility({ visibilityProperty: true, opacityProperty: true }) : !!(c.getClientRects && c.getClientRects().length);
+		};
+		const parts = [el.innerText || ""];
+		const own = (root) => Array.from(root.childNodes).map((c) => c.nodeType === 3 ? (c.textContent || "").trim() : c.nodeType === 1 && !/^(style|script)$/i.test(c.tagName) && shown(c) ? (c.innerText ?? "") : "").filter(Boolean).join("\\n");
+		const visit = (root, depth) => {
+			if (depth > 12) return;
+			const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll("*")) : [];
+			// The selected element itself can be the host or the frame.
+			if (depth === 0 && root.nodeType === 1) nodes.unshift(root);
+			for (const node of nodes) {
+				if (node.shadowRoot && shown(node)) {
+					const t = own(node.shadowRoot);
+					if (t.trim()) parts.push(t);
+					visit(node.shadowRoot, depth + 1);
+				}
+				if (/^i?frame$/i.test(node.tagName) && shown(node)) {
+					let doc = null;
+					try { doc = node.contentDocument; } catch { doc = null; }
+					if (doc && doc.body) {
+						parts.push("[frame " + (String(node.src || node.getAttribute("src") || "inline").split(/[?#]/)[0]) + "]\\n" + (doc.body.innerText || ""));
+						visit(doc, depth + 1);
+					}
+				}
+			}
+		};
+		visit(el, 0);
+		const all = parts.join("\\n");
+		return { text: all.slice(${from}, ${to}), offset: ${from}, total: all.length };
+	})()`;
+	return runInPage<PageSlice>(tabId, code);
+}
+
+export async function pageHtml(
+	tabId: number,
+	selector?: string,
+	maxChars = PAGE_HTML_CHARS,
+	offset = 0,
+): Promise<PageSlice> {
+	const [from, to] = sliceBounds(offset, maxChars, PAGE_HTML_CHARS);
+	// The in-use veil (veil.ts) is Polycarp's own element, not the page's: it is cut out.
+	const veil = (await veilTag(tabId)) ?? "";
+	const code = `(() => {
+		const sel = ${JSON.stringify(selector ?? "")};
+		const el = sel ? document.querySelector(sel) : document.documentElement;
+		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
+		const veil = ${JSON.stringify(veil)} ? document.querySelector(${JSON.stringify(veil || "x")}) : null;
+		let out = el.outerHTML;
+		if (veil && el !== veil && el.contains(veil)) out = out.replace(veil.outerHTML, "");
+		return { text: out.slice(${from}, ${to}), offset: ${from}, total: out.length };
+	})()`;
+	return runInPage<PageSlice>(tabId, code);
+}
+
+/** Scroll the page or an element; returns the new scroll position. */
+export async function scrollPage(
+	tabId: number,
+	options: { dx?: number; dy?: number; selector?: string; ref?: string; to?: "top" | "bottom" },
+	rule: FrameRule = FRAMES_CLOSED,
+): Promise<{
+	scrollX: number;
+	scrollY: number;
+	pageHeight: number;
+	scrolled?: "element";
+	scrollTop?: number;
+	scrollLeft?: number;
+	scrollHeight?: number;
+	clientHeight?: number;
+	atEnd?: boolean;
+}> {
+	const code = (r: string | undefined, inFrame: boolean) => `(async () => {
+		const o = ${JSON.stringify({ ...options, ref: r, ...(inFrame ? { selector: undefined } : {}) })};
+		let target = null;
+		// A ref that no longer resolves falls back to a selector given with it, as click and fill do.
+		if (o.ref) {
+			try { target = (${resolveRef.toString()})(o.ref, ${refLive.toString()}, ${refPrint.toString()}); }
+			catch (e) { if (!o.selector) throw e; }
+		}
+		if (!target && o.selector) target = document.querySelector(o.selector);
+		if (!target && o.selector) throw new Error("Selector not found: " + o.selector + ". read_page or find gives refs.");
+		// A ref with an amount or an end scrolls the box that holds it (a list, a pane, a virtual grid), not the page.
+		if (target && (o.dx || o.dy || o.to)) {
+			const page = (el) => !el || el === document.body || el === document.documentElement;
+			const scrolls = (el) => {
+				const s = getComputedStyle(el);
+				return (/(auto|scroll|overlay)/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 1) ||
+					(/(auto|scroll|overlay)/.test(s.overflowX) && el.scrollWidth > el.clientWidth + 1);
+			};
+			let box = target;
+			while (!page(box) && !scrolls(box)) {
+				const root = box.getRootNode();
+				box = box.parentElement || (root instanceof ShadowRoot ? root.host : null);
+			}
+			if (!page(box)) {
+				if (o.to === "top") box.scrollTo(box.scrollLeft, 0);
+				else if (o.to === "bottom") box.scrollTo(box.scrollLeft, box.scrollHeight);
+				else box.scrollBy(o.dx || 0, o.dy || 0);
+				// Agent tabs sit in the background, where the frame that fires "scroll" comes late, and a list
+				// that draws its rows on scroll would still show the old ones to the next read. Fire it now,
+				// then give the page one frame (at most 150 ms) to draw.
+				box.dispatchEvent(new Event("scroll"));
+				await new Promise((done) => { requestAnimationFrame(() => setTimeout(done, 0)); setTimeout(done, 150); });
+				return { scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY), pageHeight: document.documentElement.scrollHeight,
+					scrolled: "element", scrollTop: Math.round(box.scrollTop), scrollLeft: Math.round(box.scrollLeft),
+					scrollHeight: box.scrollHeight, clientHeight: box.clientHeight, atEnd: box.scrollTop + box.clientHeight >= box.scrollHeight - 2 };
+			}
+			target = null;
+		}
+		if (target) target.scrollIntoView({ block: "center", behavior: "instant" });
+		else if (o.to === "top") window.scrollTo(0, 0);
+		else if (o.to === "bottom") window.scrollTo(0, document.documentElement.scrollHeight);
+		else window.scrollBy(o.dx || 0, o.dy || 0);
+		return { scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY), pageHeight: document.documentElement.scrollHeight };
+	})()`;
+	const framed = options.ref ? await frameForRef(tabId, options.ref, rule) : undefined;
+	if (framed) {
+		await scrollFrameIntoView(tabId, framed.frame);
+		// As with click and fill: a frame the page hid after it was read is not scrolled in.
+		if (!(await frameShownNow(tabId, framed.frame)))
+			throw new Error(
+				`Ref ${options.ref} isn't shown now: its frame is hidden, see-through, too small or covered. Call read_page for fresh refs.`,
+			);
+	}
+	const { value } = await runForRef<Awaited<ReturnType<typeof scrollPage>>>(tabId, options.ref, code, rule, framed);
+	if (!framed) return value;
+	// In a frame the window is the frame's: the page's own position is what the result names.
+	const page = await runInPage<{ scrollX: number; scrollY: number; pageHeight: number }>(
+		tabId,
+		"({ scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY), pageHeight: document.documentElement.scrollHeight })",
+	);
+	return { ...value, ...page };
+}
+
+/** Wait until a selector appears, text is present, or the URL matches. */
+export async function waitFor(
+	tabId: number,
+	condition: { selector?: string; text?: string; urlIncludes?: string },
+	timeoutMs = 10000,
+): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		try {
+			const tab = await chrome.tabs.get(tabId);
+			if (condition.urlIncludes && (tab.url ?? "").includes(condition.urlIncludes)) return true;
+			if (condition.selector || condition.text) {
+				const found = await runInPage<boolean>(
+					tabId,
+					`(() => { const s = ${JSON.stringify(condition.selector ?? "")}; const t = ${JSON.stringify(condition.text ?? "")};
+					if (s && document.querySelector(s)) return true;
+					if (t && (document.body?.innerText || "").includes(t)) return true;
+					return false; })()`,
+				);
+				if (found) return true;
+			}
+		} catch {
+			/* page is navigating; try again */
+		}
+		await new Promise((r) => setTimeout(r, 250));
+	}
+	return false;
+}

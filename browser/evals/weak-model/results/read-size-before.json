@@ -1,0 +1,53 @@
+{
+	"label": "before",
+	"pages": [
+		{
+			"page": "example",
+			"interactive": 282,
+			"all": 282
+		},
+		{
+			"page": "hn",
+			"interactive": 4591,
+			"all": 4591
+		},
+		{
+			"page": "wikipedia",
+			"interactive": 6797,
+			"all": 6510
+		},
+		{
+			"page": "github_repo",
+			"interactive": 7434,
+			"all": 7206
+		},
+		{
+			"page": "mdn_shadow",
+			"interactive": 6108,
+			"all": 6380
+		},
+		{
+			"page": "form",
+			"interactive": 225,
+			"all": 317
+		},
+		{
+			"page": "react_spa",
+			"interactive": 2303,
+			"all": 2483
+		},
+		{
+			"page": "iframe_demo",
+			"interactive": 297,
+			"all": 342
+		}
+	],
+	"tools": {
+		"count": 67,
+		"tokens": 12064
+	},
+	"interactive": {
+		"median": 3447,
+		"max": 7434
+	}
+}

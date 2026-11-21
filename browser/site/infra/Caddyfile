@@ -1,0 +1,29 @@
+:80 {
+	# Enable compression for all responses
+	encode {
+		zstd
+		gzip
+		minimum_length 256
+	}
+
+	# API proxy to backend
+	handle /api/* {
+		reverse_proxy backend:3000
+	}
+
+	# Serve uploads from separate directory
+	handle /uploads/* {
+		root * /
+		# Prevent aggressive caching of zip files - always revalidate
+		header Cache-Control "no-cache, must-revalidate"
+		file_server
+	}
+
+	# Handle everything else with file serving from /srv
+	handle {
+		root * /srv
+		# Try: exact path, path with .html added, fallback to index.html
+		try_files {path} {path}.html {path}/index.html /index.html
+		file_server
+	}
+}

@@ -1,0 +1,49 @@
+{
+	"recordedAt": "2026-10-26T01:48:01.272Z",
+	"matches": [
+		{
+			"task": "Find peer-reviewed studies on spaced repetition and cite them",
+			"expected": "academic-research",
+			"shown": "tabkyra skill match \"Find peer-reviewed studies on spaced repetition and cite them\"",
+			"code": 0,
+			"ms": 115,
+			"out": "academic-research     11.73  Find, read and verify scholarly sources (Google Scholar, Crossref, OpenAlex, arXiv, PubMed), check each one is real, unretracted and says what you claim, then save it to the Tabkyra library and export it as BibTeX, RIS or CSL-JSON (Zotero, Word, LaTeX) or as Obsidian notes."
+		},
+		{
+			"task": "Run a background check on my new landlord",
+			"expected": "osint",
+			"shown": "tabkyra skill match \"Run a background check on my new landlord\"",
+			"code": 0,
+			"ms": 114,
+			"out": "osint                  9.86  Research a person, company, domain or online account from public, lawful sources (official registries, court records, filings, archives, WHOIS/RDAP, certificate logs, public profiles), link identifiers carefully, grade confidence, and report with evidence."
+		},
+		{
+			"task": "Don't use the osint skill, just search the news",
+			"expected": "none",
+			"shown": "tabkyra skill match \"Don't use the osint skill, just search the news\"",
+			"code": 0,
+			"ms": 117,
+			"out": "· none: no skill fits this task."
+		},
+		{
+			"task": "/rsi",
+			"expected": "rsi",
+			"shown": "tabkyra skill match /rsi",
+			"code": 0,
+			"ms": 114,
+			"out": "rsi                       6  Recursive self-improvement for skills - after real work, turn what went wrong or what was learned into a small, tested edit to a skill (or a new skill), pass it through `tabkyra skill lint`, the user's yes or an optional adversarial review by an equal or stronger model, apply it with `tabkyra skill apply` (backed up, reversible), and offer it upstream to the Tabkyra skill library."
+		}
+	],
+	"eval": {
+		"skills": 13,
+		"cases": 280,
+		"top1": 0.9167,
+		"speed": {
+			"p50Ms": 0.0351,
+			"p95Ms": 0.0627,
+			"maxMs": 8.056,
+			"buildMs": 6.062,
+			"matches": 1645
+		}
+	}
+}

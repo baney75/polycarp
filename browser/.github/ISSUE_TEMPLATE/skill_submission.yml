@@ -1,0 +1,61 @@
+name: Skill proposal
+description: Propose a new bundled skill, or a change to one, before or alongside a pull request.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Bundled skills run with the user's sign-in in every agent that loads them, so they get the strictest review here. The rules are in [CONTRIBUTING.md](https://github.com/baney75/tabkyra/blob/main/CONTRIBUTING.md#contributing-a-skill) and [docs/skill-security.md](https://github.com/baney75/tabkyra/blob/main/docs/skill-security.md).
+
+        **Never submit a personal skill**: one with your emails, phone numbers, addresses, account or student IDs, home paths, private names, or data from your signed-in sites. Keep those local with `tabkyra skill apply`.
+  - type: input
+    id: name
+    attributes:
+      label: Skill name
+      description: lowercase-kebab-case, the same as its folder under skills/.
+      placeholder: news-research
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: New skill or change
+      options:
+        - New skill
+        - Change to an existing skill
+    validations:
+      required: true
+  - type: textarea
+    id: job
+    attributes:
+      label: The job, in one sentence
+      description: What a user asks for when this skill should load. "Find and verify academic sources for a claim" is a job. "Research" is not.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: What goes wrong without it
+      description: A real task where an agent failed or did worse without this skill or change. Scrub it first.
+    validations:
+      required: true
+  - type: textarea
+    id: test
+    attributes:
+      label: Small-model test
+      description: Which model ran the skill on which tasks, and what it got right and wrong.
+  - type: input
+    id: pr
+    attributes:
+      label: Pull request
+      description: Link it if you've opened one.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: "`node cli/dist/index.js skill lint skills/<name>` reports no findings."
+        - label: The folder holds only SKILL.md and an optional license, and the skill is under 150 lines.
+        - label: The text is original, or its source's license is compatible with AGPL-3.0.
+        - label: It contains no personal data, and it isn't a personal skill.
+          required: true

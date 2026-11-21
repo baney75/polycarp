@@ -1,0 +1,37 @@
+{
+  "name": "tabkyra-demo-video",
+  "version": "1.0.0",
+  "description": "The Tabkyra demo video (media/demo.mp4), composed in Remotion from a real recorded run",
+  "license": "AGPL-3.0",
+  "engines": {
+    "node": "^22.13.0 || >=24"
+  },
+  "private": true,
+  "dependencies": {
+    "@remotion/cli": "4.0.538",
+    "@remotion/fonts": "4.0.538",
+    "@remotion/transitions": "4.0.538",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.538"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "check": "tsc",
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
+    "render": "remotion render Demo out/demo.mp4 --codec=h264 --crf=20 && remotion still Poster out/demo-poster.jpg --image-format=jpeg --jpeg-quality=90",
+    "publish-media": "cp out/demo.mp4 ../demo.mp4 && cp out/demo-poster.jpg ../demo-poster.jpg",
+    "render:hero": "remotion render Hero out/hero.mp4 --codec=h264 --crf=20 --audio-codec=aac --audio-bitrate=192k && remotion render HeroVertical out/hero-vertical.mp4 --codec=h264 --crf=20 --audio-codec=aac --audio-bitrate=192k && remotion still HeroPoster out/hero-poster.jpg --image-format=jpeg --jpeg-quality=90",
+    "publish-hero": "cp out/hero.mp4 ../hero.mp4 && cp out/hero-vertical.mp4 ../hero-vertical.mp4 && cp out/hero-poster.jpg ../hero-poster.jpg",
+    "render:agents": "remotion render Agents out/agents.mp4 --codec=h264 --crf=20 --audio-codec=aac --audio-bitrate=192k && remotion render AgentsVertical out/agents-vertical.mp4 --codec=h264 --crf=20 --audio-codec=aac --audio-bitrate=192k && remotion still AgentsPoster out/agents-poster.jpg --image-format=jpeg --jpeg-quality=90",
+    "publish-agents": "cp out/agents.mp4 ../agents.mp4 && cp out/agents-vertical.mp4 ../agents-vertical.mp4 && cp out/agents-poster.jpg ../agents-poster.jpg"
+  },
+  "allowScripts": {
+    "esbuild": false
+  }
+}

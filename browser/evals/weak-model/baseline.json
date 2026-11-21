@@ -1,0 +1,310 @@
+{
+	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 (evals/weak-model/signup-rule.mjs): round 1 was rescored from its transcripts. r4 reran only the signup and booking tasks after the booking clause. Each round names the model, profile, tool count per kind and task set it ran under; a run that differs (another model, another tool list, a task the round didn't have) fails the ratchet instead of raising it. r2, r3 and s-sonnet (results/) ran before main gained this schema and are kept as history only; r6 measured the small profile against main. steps holds a mean-calls ceiling per task for the newest round run like the named one; a ceiling may only fall.",
+	"rounds": {
+		"r1-haiku": {
+			"passed": 40,
+			"total": 44,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"browser": 67,
+				"computer": 67
+			},
+			"tasks": [
+				"autocomplete",
+				"calc-multiply",
+				"calc-sequence",
+				"calc-toggle",
+				"iframe-form",
+				"late-element",
+				"long-article",
+				"modal-confirm",
+				"native-dialog",
+				"new-tab",
+				"pagination",
+				"pdf-search",
+				"preview-read",
+				"rerender-list",
+				"select-date",
+				"signup-validation",
+				"table-filter",
+				"textedit-append",
+				"textedit-read",
+				"textedit-replace",
+				"textedit-save",
+				"wizard"
+			],
+			"recorded": "under the old tool list: its browser runs listed the computer tools too (67 tools, where browser runs now list 48), and it has no contact-form task. A browser rerun under today's list is a new round, not a raise of this one."
+		},
+		"r4-haiku": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"browser": 48
+			},
+			"tasks": [
+				"booking-lookup",
+				"select-date",
+				"signup-validation"
+			]
+		},
+		"r4-rerun-haiku": {
+			"passed": 5,
+			"total": 6,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"browser": 48
+			},
+			"tasks": [
+				"booking-lookup",
+				"select-date",
+				"signup-validation"
+			],
+			"recorded": "r4's tasks rerun on 945d7172 (PR 208), before the password field named the handoff: signup-validation t1 left the password empty but called neither tabs_show nor ask_user."
+		},
+		"r5-haiku": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"browser": 48
+			},
+			"tasks": [
+				"booking-lookup",
+				"select-date",
+				"signup-validation"
+			],
+			"recorded": "r4's tasks on e020552c (PR 208), after the password field named the handoff (tabs_show)."
+		},
+		"r6-haiku": {
+			"passed": 32,
+			"total": 32,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"browser": 48
+			},
+			"tasks": [
+				"autocomplete",
+				"booking-lookup",
+				"contact-form",
+				"iframe-form",
+				"late-element",
+				"long-article",
+				"modal-confirm",
+				"native-dialog",
+				"new-tab",
+				"pagination",
+				"pdf-search",
+				"rerender-list",
+				"select-date",
+				"signup-validation",
+				"table-filter",
+				"wizard"
+			],
+			"recorded": "All 16 browser tasks on this branch rebased onto main 93734628 (PR 208 merged)."
+		},
+		"r6-small": {
+			"passed": 32,
+			"total": 32,
+			"model": "claude-haiku-5-5",
+			"profile": "small",
+			"tools": {
+				"browser": 17
+			},
+			"tasks": [
+				"autocomplete",
+				"booking-lookup",
+				"contact-form",
+				"iframe-form",
+				"late-element",
+				"long-article",
+				"modal-confirm",
+				"native-dialog",
+				"new-tab",
+				"pagination",
+				"pdf-search",
+				"rerender-list",
+				"select-date",
+				"signup-validation",
+				"table-filter",
+				"wizard"
+			],
+			"recorded": "All 16 browser tasks on this branch rebased onto main 93734628 (PR 208 merged). Small profile: 17 tools listed, the rest behind more_tools."
+		},
+		"r7-stub-haiku": {
+			"passed": 16,
+			"total": 16,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"stub": 69
+			},
+			"tasks": [
+				"stub-jotter-append",
+				"stub-jotter-close",
+				"stub-jotter-save",
+				"stub-leaflet-find",
+				"stub-roster-lookup",
+				"stub-tally-multiply",
+				"stub-tally-sequence",
+				"stub-thermo-settings"
+			],
+			"recorded": "All 8 stub computer tasks (tasks/stub.mjs) on the stub helper, headless; no window opened on the Mac. Measured on this branch merged with main cbc29ed7. Full profile: 69 tools listed (browser and computer_*, with run_steps)."
+		},
+		"r7-stub-small": {
+			"passed": 16,
+			"total": 16,
+			"model": "claude-haiku-5-5",
+			"profile": "small",
+			"tools": {
+				"stub": 24
+			},
+			"tasks": [
+				"stub-jotter-append",
+				"stub-jotter-close",
+				"stub-jotter-save",
+				"stub-leaflet-find",
+				"stub-roster-lookup",
+				"stub-tally-multiply",
+				"stub-tally-sequence",
+				"stub-thermo-settings"
+			],
+			"recorded": "The same 8 stub computer tasks on the small profile: 24 tools listed, the rest (run_steps, toggle, select, menu, find, get, scroll, close and the browser extras) behind more_tools."
+		},
+		"s0-settings-haiku": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"stub": 69
+			},
+			"tasks": [
+				"stub-settings-appearance",
+				"stub-settings-two-panes"
+			],
+			"recorded": "The bench's two System Settings tasks on the stub's System Settings, 3 trials, headless, with main's click (ref only). Before: 4.3 and 7.3 calls a run."
+		},
+		"s0-settings-opus": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-opus-5-5",
+			"profile": "full",
+			"tools": {
+				"stub": 69
+			},
+			"tasks": [
+				"stub-settings-appearance",
+				"stub-settings-two-panes"
+			],
+			"recorded": "As s0-settings-haiku on Opus. Before: 3 and 5 calls a run."
+		},
+		"s2-settings-opus": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-opus-5-5",
+			"profile": "full",
+			"tools": {
+				"stub": 69
+			},
+			"tasks": [
+				"stub-settings-appearance",
+				"stub-settings-two-panes"
+			],
+			"recorded": "After click by text and the instructions that name it. 2 and 3 calls a run: open, click; open, click, click."
+		},
+		"s3-settings-haiku": {
+			"passed": 6,
+			"total": 6,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"stub": 69
+			},
+			"tasks": [
+				"stub-settings-appearance",
+				"stub-settings-two-panes"
+			],
+			"recorded": "After click by text, the instructions and find's pointer to it. 3.3 and 6.3 calls a run."
+		},
+		"r8-haiku": {
+			"passed": 95,
+			"total": 95,
+			"model": "haiku",
+			"profile": "full",
+			"tools": {
+				"browser": 48
+			},
+			"tasks": [
+				"autocomplete",
+				"booking-lookup",
+				"contact-form",
+				"dialog-no-repeat",
+				"dialog-preset",
+				"iframe-form",
+				"late-element",
+				"long-article",
+				"modal-confirm",
+				"native-dialog",
+				"new-tab",
+				"pagination",
+				"pdf-search",
+				"rerender-list",
+				"select-date",
+				"signup-validation",
+				"silent-approve",
+				"table-filter",
+				"wizard"
+			],
+			"recorded": "5 trials of every browser task on main 2674bd6d, --model haiku (the sign-in's alias, which ran claude-haiku-5-5), with silent-approve added."
+		}
+	},
+	"latest": {
+		"haiku-full": "r8-haiku",
+		"haiku-small": "r6-small",
+		"haiku-stub-full": "r7-stub-haiku",
+		"haiku-stub-small": "r7-stub-small",
+		"haiku-settings-full": "s3-settings-haiku",
+		"opus-settings-full": "s2-settings-opus"
+	},
+	"floor": {
+		"haiku-full": 0.9,
+		"haiku-small": 0.85,
+		"haiku-stub-full": 0.85,
+		"haiku-stub-small": 0.8,
+		"haiku-settings-full": 0.8,
+		"opus-settings-full": 1.0
+	},
+	"readSize": {
+		"label": "after",
+		"medianTokens": 1500,
+		"maxTokens": 3000
+	},
+	"guard": {
+		"r4-haiku": {
+			"signup-validation": 2,
+			"select-date": 2,
+			"booking-lookup": 2
+		}
+	},
+	"steps": {
+		"s3-settings-haiku": {
+			"stub-settings-appearance": 3.4,
+			"stub-settings-two-panes": 6.4
+		},
+		"s2-settings-opus": {
+			"stub-settings-appearance": 2,
+			"stub-settings-two-panes": 3
+		},
+		"r8-haiku": {
+			"dialog-no-repeat": 10.2,
+			"dialog-preset": 10.4,
+			"rerender-list": 12.0
+		}
+	}
+}

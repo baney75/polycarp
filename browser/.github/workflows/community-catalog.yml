@@ -1,0 +1,157 @@
+# Publishes the community skill catalog (docs/decisions.md D27): every skill merged into
+# community/skills on main, built into one JSON file, signed with the release key, and
+# attached to the `community-catalog` release, where clients fetch it about once a day and
+# refuse it unless the signature verifies against keys/tabkyra-release.pub.
+#
+# Two jobs, as in release.yml, so the signing key never shares a runner with npm or repo code:
+#   build:   read-only token, no secrets. Builds the CLI and the catalog. The catalog build
+#            refuses any skill that fails the lint or the community rules.
+#   publish: no npm and no repo code. Signs with minisign in the release environment, checks
+#            the signature against the committed public key, and uploads both files.
+# It runs on main only, with no schedule (each run needs a signing approval, and clients accept
+# a catalog of any age as long as its serial never goes down), when a merge touches anything the
+# catalog is built or signed from: community/ (adding, changing or pulling a skill), the lint and
+# community rules that can drop a skill, and the release key. community-catalog-check.yml rebuilds
+# the catalog daily, verifies the published one and opens an issue if they differ, which covers a
+# rejected or failed publish and any input these paths miss. A takedown still needs a person to
+# approve the publish; the check makes a missed one visible within a day. By hand:
+#   gh workflow run community-catalog.yml --repo baney75/tabkyra
+name: Community catalog
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "community/**"
+      - "cli/src/skill-lint.ts"
+      - "cli/src/skill-community.ts"
+      - "cli/src/community-catalog.ts"
+      - "keys/**"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: community-catalog
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Install the CLI without install scripts
+        working-directory: cli
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node node_modules/esbuild/install.js
+
+      - name: Build the CLI
+        working-directory: cli
+        run: npm run build
+
+      # The serial is the build time: it only grows, and clients refuse a lower one.
+      - name: Build the catalog
+        run: |
+          mkdir -p catalog
+          serial=$(date -u +%s)
+          node cli/dist/index.js skill catalog . --out catalog/community-catalog.json --serial "$serial" --source "$GITHUB_SHA"
+          echo "$serial" > catalog/serial
+
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: community-catalog
+          path: catalog/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    # The signing key is an environment secret that only main and v* tags can reach.
+    environment: release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: community-catalog
+          path: catalog
+
+      # A re-run of an old run (for example after a rejection) rebuilds an old commit with a fresh
+      # serial, and could bring back a skill pulled since. Refuse unless this catalog's source still
+      # matches main for every catalog input, and unless its serial is newer than the published one.
+      # Any error reading GitHub refuses too.
+      - name: Refuse a stale or older catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          serial=$(cat catalog/serial)
+          source=$(jq -r .source catalog/community-catalog.json)
+          if ! [[ "$source" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::The catalog has no valid source commit."; exit 1; fi
+          compare=$(gh api "repos/$GITHUB_REPOSITORY/compare/$source...main")
+          if [ "$(jq '.files | length' <<<"$compare")" -ge 300 ]; then echo "::error::Too many changes since $source to check; start a new run."; exit 1; fi
+          changed=$(jq -r '.files[].filename' <<<"$compare" | grep -E '^(community/|keys/|cli/src/(skill-lint|skill-community|community-catalog)\.ts$)' || true)
+          if [ -n "$changed" ]; then echo "::error::main has changed catalog inputs since $source; start a new run instead:"; echo "$changed"; exit 1; fi
+          if ! assets=$(gh release view community-catalog --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name]' 2> "$RUNNER_TEMP/view.err"); then
+            if grep -qi "release not found" "$RUNNER_TEMP/view.err"; then assets='[]'; else cat "$RUNNER_TEMP/view.err"; exit 1; fi
+          fi
+          if jq -e 'index("community-catalog.json")' <<<"$assets" >/dev/null; then
+            current=$(gh release download community-catalog --repo "$GITHUB_REPOSITORY" -p community-catalog.json -O - | jq -r .serial)
+            if ! [[ "$current" =~ ^[0-9]{1,15}$ ]]; then echo "::error::The published catalog's serial ($current) is unreadable."; exit 1; fi
+            if [ "$serial" -le "$current" ]; then echo "::error::This catalog's serial $serial is not newer than the published $current."; exit 1; fi
+          fi
+
+      - name: Install minisign
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+
+      - name: Sign
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::error::The release environment's MINISIGN_SECRET_KEY secret is not set (docs/updates.md)"; exit 1
+          fi
+          serial=$(cat catalog/serial)
+          if ! [[ "$serial" =~ ^[0-9]{1,15}$ ]]; then echo "::error::bad serial"; exit 1; fi
+          umask 077
+          key="$RUNNER_TEMP/minisign.key"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
+          # The trusted comment is signed; clients refuse a signature that names another serial.
+          minisign -S -s "$key" -m catalog/community-catalog.json -t "tabkyra community-catalog $serial" < /dev/null
+
+      - name: Verify against the committed public key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/contents/keys/tabkyra-release.pub?ref=$GITHUB_SHA" --jq .content | base64 -d > "$RUNNER_TEMP/release.pub"
+          minisign -V -p "$RUNNER_TEMP/release.pub" -m catalog/community-catalog.json
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view community-catalog --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create community-catalog --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
+              --title "Community skill catalog" \
+              --notes "The signed catalog of community skills (community/skills on main). Tabkyra fetches it about once a day and verifies it with the release key. Not a release of Tabkyra."
+          fi
+          gh release upload community-catalog catalog/community-catalog.json catalog/community-catalog.json.minisig --repo "$GITHUB_REPOSITORY" --clobber

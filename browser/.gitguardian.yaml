@@ -1,0 +1,9 @@
+# Narrow ignores only. Never blanket test/** or auth paths.
+# Fake credentials in tests are assembled at runtime; do not add ignored_detectors.
+version: 2
+secret:
+  ignored_paths:
+    # Cached OpenRouter listings and release-note fixtures (no credentials).
+    - test/fixtures/openrouter-*.json
+    - test/fixtures/release-notes-*.md
+    - cli/test/fixtures/community/**
