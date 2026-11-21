@@ -487,9 +487,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
 
         spaces.onChange = { [weak self] in
-            self?.updateIcon()
-            self?.dock.reload()
+            guard let self else { return }
+            self.updateIcon()
+            self.dock.reload()
+            // The day ledger counts time from each switch; a change that keeps the workspace adds nothing.
+            PurposeKeeper.shared.noteWorkspace(self.spaces.model.current)
         }
+        // The purpose layer (purposes, the one thing, the day ledger, the rhythm) answers from launch on: none of it
+        // needs Accessibility. It draws nothing itself; the surfaces read it.
+        session.purposeHandler = { [weak self] r in PurposeKeeper.shared.answer(r, current: self?.spaces.model.current ?? 1) }
+        PurposeKeeper.shared.start()
         // A new theme redraws the menu bar indicator as well as the panels.
         NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.updateIcon()
@@ -606,6 +613,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let forInstall = InstallHandoff.isCurrent(markedAt: (UserDefaults.standard.object(forKey: InstallHandoff.key) as? NSNumber)?.doubleValue, now: Date().timeIntervalSince1970)
         UserDefaults.standard.removeObject(forKey: InstallHandoff.key)
         DockRestart.isQuitting = true
+        // A purpose set a moment ago is on disk before the app is gone.
+        PurposeKeeper.flushIfStarted()
         // The macOS Dock comes back with everything else; the next launch tucks it away again.
         dock.stop(restoreSystemDock: !forInstall)
         topDrag.stop()

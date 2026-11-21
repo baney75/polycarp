@@ -31,6 +31,11 @@ usage: \(me) <command>
   surfaces get|set|reset|schema|validate [--json]
                               the one file every surface reads: bar, desktop, dock, menu,
                               new tab, idle screen (surfaces help, docs/surfaces.md)
+  purpose list|set <n> <text>|clear <n> [--json]
+                              what each workspace is for (up to 60 characters; empty clears it)
+  one <text>|--clear [--json] today's one thing, set on the workspace you're on (up to 80 characters;
+                              it clears at 4 am)
+  day [--json]                today's time on each workspace (not asleep, locked or idle over 5 minutes)
   update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it;
                               --channel stable|nightly|dev chooses the channel first (update --help)
   --version                   this command's version and the commit it was built from
@@ -219,6 +224,25 @@ case "set", "get":
     let info = reply.info ?? [:]
     if rest.count == 1 && cmd == "get" { out(info[SettingKey(name: rest[0])?.rawValue ?? ""] ?? "") }
     else { for k in info.keys.sorted() { out("\(k) \(info[k] ?? "")") } }
+case "purpose", "purposes", "one", "day":
+    // The purpose layer (PurposeAPI): what each workspace is for, today's one thing, and today's time. Local only.
+    guard remoteHost == nil else { fail("purposes are set and read on each machine itself", code: 2) }
+    let json = rest.contains("--json")
+    let words = rest.filter { $0 != "--json" }
+    let sub = cmd == "one" || cmd == "day" ? cmd : (words.first ?? "list")
+    let subArgs = cmd == "one" || cmd == "day" ? words : Array(words.dropFirst())
+    if case .refused(let why) = PurposeAPI.ask(text: sub, args: subArgs) { fail(why, code: 2) }
+    let reply = call(Wire.Request(op: .purpose, text: sub, args: subArgs))
+    let enc = JSONEncoder()
+    enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+    if sub == "day" {
+        guard let d = PurposeAPI.decodeDay(reply) else { fail("Polycarp answered without a day; is it an older build?") }
+        out(json ? String(data: try! enc.encode(d), encoding: .utf8)! : PurposeAPI.lines(d).joined(separator: "\n"))
+    } else {
+        guard let l = PurposeAPI.decodeListing(reply) else { fail("Polycarp answered without purposes; is it an older build?") }
+        out(json ? String(data: try! enc.encode(l), encoding: .utf8)! : PurposeAPI.lines(l).joined(separator: "\n"))
+    }
+
 case "remote":
     // Local only: whether other machines on your tailnet can send work here.
     guard remoteHost == nil else { fail("remote is set on each machine itself", code: 2) }

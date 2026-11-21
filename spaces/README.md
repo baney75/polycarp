@@ -436,6 +436,35 @@ polycarp-spaces doctor                 # what's working and what isn't
 
 `polycarp-spaces skill install` teaches Claude Code the same commands.
 
+## What each workspace is for
+
+Purity of heart is to will one thing. Each workspace can say what it is for, and one thing can stay in front for the
+day. This is the data the top bar, the dock tiles, the status menu, the new tab page and the idle screen will read;
+those views are still to come.
+
+```sh
+polycarp-spaces purpose set 1 "Prayer and Scripture"   # up to 60 characters; empty text clears it
+polycarp-spaces purpose clear 1
+polycarp-spaces purpose list --json                    # all nine, unnamed ones with no purpose
+polycarp-spaces one "Finish the chapter"               # today's one thing, set on the workspace you're on
+polycarp-spaces one --clear
+polycarp-spaces day                                    # today's time on each workspace
+```
+
+A day runs from 4 am to 4 am, so a late night counts for the day it began in. Purposes carry over until you change
+them; the one thing clears at 4 am. The day's time counts only while you are there: not while the screen sleeps or is
+locked, and not a stretch of over 5 minutes with no input. Ninety days are kept.
+
+The morning question comes with your first input after 4 am, the evening examen with your first input after 6 pm,
+each once a day, and Sunday is a day of rest. Each is a switch in the app's defaults:
+`defaults write com.baney.polycarp morningQuestion -bool false`, `eveningExamen`, `restOnSunday`, and
+`examenHour -int 20` for a later evening. Examen answers are kept as Markdown, one file a day, in
+`~/Library/Application Support/Polycarp/Journal/`, with the day's time at the end. They stay on this Mac.
+
+Files: `purposes.json` and `ledger.json` in the same folder. A file that can't be read is renamed to
+`<name>.bad-<time>`, logged in `trace.log`, and Polycarp starts that part empty. These commands work on this Mac only:
+another machine can't read or set them.
+
 ## A workspace for agents
 
 Turn on the agent workspace and agents' apps get a workspace of their own (9 unless you pick

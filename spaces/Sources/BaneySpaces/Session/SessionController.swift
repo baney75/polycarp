@@ -51,6 +51,8 @@ final class SessionController {
     var agentHost = AgentHost()
     /// Answers `polycarp-spaces update status|check|now` with the app's updater (the app delegate sets it).
     var updateHandler: ((String) -> Wire.Reply)?
+    /// Answers `polycarp-spaces purpose|one|day` from the purpose layer (`PurposeKeeper`; the app delegate sets it).
+    var purposeHandler: ((Wire.Request) -> Wire.Reply)?
 
     /// Set by the app delegate: the menu bar badge shows how many agents finished unseen.
     var onUnseenChange: (Int) -> Void = { _ in }
@@ -365,6 +367,11 @@ final class SessionController {
         }
         // The player needs no Accessibility either; another machine never gets here (`Remote.allows`).
         if r.op == .play { return play(r) }
+        // Purposes and the day ledger need no Accessibility. Another machine never gets here (`Remote.allows`).
+        if r.op == .purpose {
+            guard r.caller?.hasPrefix("remote ") != true else { return .init(ok: false, error: "purposes are set on each machine itself") }
+            return purposeHandler?(r) ?? .init(ok: false, error: "purposes aren't ready yet; try again in a moment")
+        }
         guard started else { return .init(ok: false, error: "Polycarp hasn't finished starting (it needs Accessibility)") }
         switch r.op {
         case .ping:
@@ -409,6 +416,9 @@ final class SessionController {
             return .init(ok: false, error: "the terminal isn't ready")
         case .play:
             return play(r)
+        case .purpose:
+            // Answered above, before the Accessibility check.
+            return .init(ok: false, error: "purposes aren't ready yet")
         case .remote:
             switch r.text ?? "status" {
             case "on":
