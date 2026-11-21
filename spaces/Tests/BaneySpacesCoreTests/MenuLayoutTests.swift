@@ -50,11 +50,13 @@ final class MenuLayoutTests: XCTestCase {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "America/New_York")!
         let at = cal.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 8, minute: 40))!
-        XCTAssertEqual(MenuNow.make(workspace: 2, purpose: "Gannon letter", since: at, calendar: cal),
+        XCTAssertEqual(MenuNow.make(workspace: 2, purpose: "Gannon letter", since: at.addingTimeInterval(12 * 3600), twentyFourHour: true, calendar: cal).detail,
+                       "Workspace 2  ·  since 20:40", "a 24-hour Mac reads 20:40, not 8:40")
+        XCTAssertEqual(MenuNow.make(workspace: 2, purpose: "Gannon letter", since: at, twentyFourHour: false, calendar: cal),
                        MenuNow(title: "Gannon letter", detail: "Workspace 2  ·  since 8:40"))
-        XCTAssertEqual(MenuNow.make(workspace: 5, purpose: nil, since: nil, calendar: cal),
+        XCTAssertEqual(MenuNow.make(workspace: 5, purpose: nil, since: nil, twentyFourHour: false, calendar: cal),
                        MenuNow(title: "Workspace 5", detail: "No purpose named"))
-        XCTAssertEqual(MenuNow.make(workspace: 5, purpose: "", since: at.addingTimeInterval(4 * 3600), calendar: cal).detail,
+        XCTAssertEqual(MenuNow.make(workspace: 5, purpose: "", since: at.addingTimeInterval(4 * 3600), twentyFourHour: false, calendar: cal).detail,
                        "No purpose named  ·  since 12:40")
     }
 

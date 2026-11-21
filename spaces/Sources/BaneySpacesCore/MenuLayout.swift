@@ -78,16 +78,25 @@ public struct MenuNow: Equatable, Sendable {
 
     public init(title: String, detail: String) { self.title = title; self.detail = detail }
 
-    /// `since` is when you came to this workspace, if known. The time has no AM or PM, as on the bar.
-    public static func make(workspace n: Int, purpose: String?, since: Date?, calendar: Calendar = .current) -> MenuNow {
+    /// `since` is when you came to this workspace, if known. The time has no AM or PM; `twentyFourHour` follows the
+    /// Mac's clock setting (`usesTwentyFourHourClock`).
+    public static func make(workspace n: Int, purpose: String?, since: Date?, twentyFourHour: Bool = usesTwentyFourHourClock,
+                            calendar: Calendar = .current) -> MenuNow {
         let named = purpose.flatMap { $0.isEmpty ? nil : $0 }
         var detail = named == nil ? "No purpose named" : "Workspace \(n)"
         if let since {
             let c = calendar.dateComponents([.hour, .minute], from: since)
             let h = c.hour ?? 0
-            detail += "  ·  since " + String(format: "%d:%02d", h % 12 == 0 ? 12 : h % 12, c.minute ?? 0)
+            let shown = twentyFourHour ? h : (h % 12 == 0 ? 12 : h % 12)
+            detail += "  ·  since " + String(format: "%d:%02d", shown, c.minute ?? 0)
         }
         return MenuNow(title: named ?? "Workspace \(n)", detail: detail)
+    }
+
+    /// Whether the Mac shows a 24-hour clock: its short time format has an hour from 0 to 23.
+    public static var usesTwentyFourHourClock: Bool {
+        let f = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current) ?? ""
+        return f.contains("H") || f.contains("k")
     }
 }
 

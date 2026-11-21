@@ -914,7 +914,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func menuItem(for entry: MenuEntry) -> NSMenuItem {
         switch entry {
         case .now(let now):
-            // Not a command: the purpose in serif italic, the workspace and time below it, both in the theme's colors.
+            // The purpose in serif italic, the workspace and time below it; clicking it opens Name This Hour.
             let it = item(now.title, #selector(nameHour))
             it.attributedTitle = MenuHead.title(now)
             it.toolTip = "Click to name this hour"
@@ -982,7 +982,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let n = spaces.model.current
         let store = PurposeKeeper.shared.purposes
         MenuHead.ask("What is this hour for?", info: "Workspace \(n). A few words, up to \(Purposes.purposeLimit) characters; leave it empty to clear it.",
-                     value: store.purpose(of: n) ?? "") { try store.setPurpose($0, for: n) }
+                     value: store.purpose(of: n) ?? "") { try store.setPurpose($0, for: n); Trace.log("purpose: workspace \(n) purpose set by menu") }
     }
 
     /// "Set the One Thing…": the one thing for today, until 4 am.
@@ -990,7 +990,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let n = spaces.model.current
         let store = PurposeKeeper.shared.purposes
         MenuHead.ask("What is the one thing today?", info: "Up to \(Purposes.oneThingLimit) characters. It clears at 4 am; leave it empty to clear it now.",
-                     value: store.oneThing?.text ?? "") { try store.setOneThing($0, workspace: n) }
+                     value: store.oneThing?.text ?? "") { try store.setOneThing($0, workspace: n); Trace.log("purpose: one thing set by menu") }
     }
 
     /// Apps whose windows are parked instead of hidden, so automation can still use them: Settings >
