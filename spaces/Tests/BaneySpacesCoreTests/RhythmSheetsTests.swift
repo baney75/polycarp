@@ -48,15 +48,33 @@ final class RhythmSheetsTests: XCTestCase {
         XCTAssertEqual(S.step(due: .eveningExamen, showing: .eveningExamen, shownOn: today, today: today), .stay)
     }
 
-    func testBothPromptsDueAtOnceShowOneAfterTheOther() {
-        // The Mac opened at 7 pm: the morning comes first; once it is given, the examen is what is due.
+    func testAMorningCardLeftOpenGivesWayToTheExamenAtEvening() throws {
+        // Through the keeper's own `due`: at 8 am the morning is due; left alone until 7 pm, the examen is.
+        let clock = DayClock(timeZone: TimeZone(identifier: "America/New_York")!)
         let today = PurposeDay(year: 2026, month: 11, day: 21)
+        let settings = RhythmSettings()
+        let at = { (h: Int) in clock.time(on: today, hour: h) }
+        let morning = Rhythm.due(now: at(8), idle: 0, state: RhythmState(), settings: settings, clock: clock)
+        XCTAssertEqual(morning, .morningQuestion)
         var showing: Rhythm.Prompt?
-        for due in [Rhythm.Prompt.morningQuestion, .eveningExamen] {
-            if case .show(let p) = RhythmSheets.step(due: due, showing: showing, shownOn: today, today: today) { showing = p }
-            XCTAssertEqual(showing, due)
-            showing = nil // given and closed
-        }
+        if case .show(let p) = RhythmSheets.step(due: morning, showing: nil, shownOn: nil, today: today) { showing = p }
+        let evening = Rhythm.due(now: at(19), idle: 0, state: RhythmState(), settings: settings, clock: clock)
+        XCTAssertEqual(evening, .eveningExamen, "the morning isn't owed once the evening starts")
+        XCTAssertEqual(RhythmSheets.step(due: evening, showing: showing, shownOn: today, today: today), .show(.eveningExamen))
+        // Unless you clicked into the morning card: what you are writing stays until you keep it or put it off.
+        XCTAssertEqual(RhythmSheets.step(due: evening, showing: showing, shownOn: today, today: today, held: true), .stay)
+        let tomorrow = PurposeDay(year: 2026, month: 11, day: 22)
+        XCTAssertEqual(RhythmSheets.step(due: nil, showing: showing, shownOn: today, today: tomorrow, held: true), .close, "but not past its day")
+    }
+
+    func testAReopenedExamenStartsFromWhatWasKept() {
+        let today = PurposeDay(year: 2026, month: 11, day: 21)
+        let kept = RhythmSheets.KeptExamen(day: today, answers: ["The light", "", "Patience", "Paul"])
+        XCTAssertEqual(RhythmSheets.prefill(kept, today: today), ["The light", "", "Patience", "Paul"])
+        XCTAssertEqual(RhythmSheets.prefill(kept, today: PurposeDay(year: 2026, month: 11, day: 22)), ["", "", "", ""], "not another day's")
+        XCTAssertEqual(RhythmSheets.prefill(nil, today: today).count, Rhythm.examenQuestions.count)
+        let short = RhythmSheets.KeptExamen(day: today, answers: ["Only one"])
+        XCTAssertEqual(RhythmSheets.prefill(short, today: today), ["Only one", "", "", ""], "fits the questions there are")
     }
 
     func testReturnNeverKeepsACard() throws {

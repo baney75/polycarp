@@ -13,6 +13,9 @@ final class RhythmSheet {
     private var panel: NSPanel?
     private var showing: Rhythm.Prompt?
     private var shownOn: PurposeDay?
+    /// Opened from the menu or clicked into: it stays until kept or put off (`RhythmSheets.step`).
+    private var held = false
+    private static let keptKey = "rhythmExamenKept"
     /// The workspaces in use and the one you are on, from the app.
     var workspaces: () -> (inUse: Set<Int>, current: Int) = { ([], 1) }
 
@@ -25,13 +28,14 @@ final class RhythmSheet {
 
     /// Shows `prompt` now, due or not: the menu's "Evening Examen…".
     func show(_ prompt: Rhythm.Prompt) {
-        if showing == prompt, let panel { panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
+        if showing == prompt, let panel { panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); held = true; return }
         present(prompt, takeKeyboard: true)
+        held = true
     }
 
     private func dueChanged() {
         let keeper = PurposeKeeper.shared
-        switch RhythmSheets.step(due: keeper.due, showing: showing, shownOn: shownOn, today: keeper.ledger.dayClock.day(of: Date())) {
+        switch RhythmSheets.step(due: keeper.due, showing: showing, shownOn: shownOn, today: today, held: held) {
         case .stay: break
         case .show(let prompt): present(prompt, takeKeyboard: false)
         case .close: close()
@@ -54,13 +58,15 @@ final class RhythmSheet {
             root = AnyView(MorningView(model: model, done: { [weak self] keep in self?.finishMorning(model, keep: keep) }))
         case .eveningExamen:
             let rows = RhythmSheets.timeRows(seconds: keeper.ledger.today(), named: named.all)
-            let model = ExamenModel(rows: rows, tomorrow: keeper.purposes.tomorrow?.text ?? "")
+            let model = ExamenModel(rows: rows, answers: RhythmSheets.prefill(Self.kept, today: today),
+                                    tomorrow: keeper.purposes.tomorrow?.text ?? "")
             root = AnyView(ExamenView(model: model, done: { [weak self] keep in self?.finishExamen(model, keep: keep) }))
         }
         let host = NSHostingView(rootView: root.environment(\.colorScheme, Chrome.scheme))
         let size = host.fittingSize
         let p = SheetPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel],
                            backing: .buffered, defer: false)
+        p.onKey = { [weak self] in self?.held = true }
         p.level = .floating
         p.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         p.isOpaque = false
@@ -118,6 +124,7 @@ final class RhythmSheet {
             return
         }
         close()
+        Self.kept = RhythmSheets.KeptExamen(day: today, answers: m.answers)
         keeper.keepExamen(RhythmSheets.answers(m.answers, tomorrow: m.tomorrow))
         dueChanged()
     }
@@ -127,12 +134,21 @@ final class RhythmSheet {
         panel = nil
         showing = nil
         shownOn = nil
+        held = false
+    }
+
+    /// Tonight's kept answers, so the examen opened again from the menu starts from them; the journal is written whole.
+    private static var kept: RhythmSheets.KeptExamen? {
+        get { UserDefaults.standard.data(forKey: keptKey).flatMap { try? JSONDecoder().decode(RhythmSheets.KeptExamen.self, from: $0) } }
+        set { UserDefaults.standard.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: keptKey) }
     }
 }
 
 /// A borderless panel that can still take the keyboard once you click into it.
 private final class SheetPanel: NSPanel {
+    var onKey: (() -> Void)?
     override var canBecomeKey: Bool { true }
+    override func becomeKey() { super.becomeKey(); onKey?() }
 }
 
 // MARK: Morning
@@ -181,10 +197,12 @@ enum RhythmKeys {
 
 final class ExamenModel: ObservableObject {
     let rows: [RhythmSheets.TimeRow]
-    @Published var answers: [String] = Rhythm.examenQuestions.map { _ in "" }
+    @Published var answers: [String]
     @Published var tomorrow: String
     @Published var problem: String?
-    init(rows: [RhythmSheets.TimeRow], tomorrow: String) { self.rows = rows; self.tomorrow = tomorrow }
+    init(rows: [RhythmSheets.TimeRow], answers: [String] = Rhythm.examenQuestions.map { _ in "" }, tomorrow: String) {
+        self.rows = rows; self.answers = answers; self.tomorrow = tomorrow
+    }
 }
 
 struct ExamenView: View {
