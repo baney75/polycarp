@@ -170,8 +170,6 @@ final class SurfacesTests: XCTestCase {
             (#"{"bar":{"modules":{"left":["custom:Bad Name"]}}}"#, "bar.modules.left[0]", "custom:<name>"),
             (#"{"bar":{"modules":{"left":["mark","mark"]}}}"#, "bar.modules.left[1]", #""mark" is listed twice"#),
             (#"{"bar":{"modules":{"left":["mark"],"center":["mark"]}}}"#, "bar.modules.center[0]", #""mark" is already in bar.modules.left; a module goes in one place"#),
-            (#"{"bar":{"modules":{"center":["clock"]}}}"#, "bar.modules.center[0]", "is also in bar.modules.right (its default; set bar.modules.right too)"),
-            (#"{"bar":{"modules":{"right":["mark"]}}}"#, "bar.modules.right[0]", "already in bar.modules.left (its default; set bar.modules.left too)"),
             (#"{"desktop":{"scene":"forest"}}"#, "desktop.scene", #"must be one of "field", "olive", "water", "parchment", "solid" or image:<...>"#),
             (#"{"desktop":{"scene":"image:../etc/x.png"}}"#, "desktop.scene", #""../etc/x.png" is not a valid image value"#),
             (#"{"desktop":{"scene":"image:Dawn.PNG"}}"#, "desktop.scene", "is not a valid image value"),
@@ -434,6 +432,22 @@ final class SurfacesTests: XCTestCase {
             XCTAssertTrue(doc.contains("`\(f.defaultValue.json(pretty: false))`"), "docs/surfaces.md lacks \(f.path)'s default \(f.defaultValue.json(pretty: false))")
         }
         XCTAssertFalse(doc.contains("\u{2014}") || doc.contains("\u{2013}"), "no em or en dashes")
+    }
+
+    /// Review of #587: a file that set one place under the old defaults (`center: ["hour"]`, the docs' own example)
+    /// must still read. A place the file sets takes its modules from the places left at their default.
+    func testAPlaceTheFileSetsTakesItsModulesFromTheDefaults() throws {
+        func bar(_ json: String) throws -> Surfaces.Bar {
+            guard case .success(let c) = Surfaces.check(tree(json)) else { XCTFail("\(json) must read"); return Surfaces.defaults.bar }
+            return c.surfaces.bar
+        }
+        let a = try bar(#"{"bar":{"modules":{"center":["hour"]}}}"#)
+        XCTAssertEqual(a.center, [.hour])
+        XCTAssertEqual(a.right, [.clock], "hour left the default right")
+        let b = try bar(#"{"bar":{"modules":{"right":["mark","clock"]}}}"#)
+        XCTAssertEqual(b.left, [.workspaces, .purpose])
+        XCTAssertEqual(b.right, [.mark, .clock])
+        XCTAssertEqual(b.center, [.oneThing])
     }
 }
 

@@ -82,6 +82,13 @@ public enum BarLayout {
         }
     }
 
+    /// The bar's window level, from the normal window level: one under it, so any window covers the bar (review of
+    /// #587: over windows, the bar hid the traffic lights of a window zoomed to the top of the screen).
+    public static let levelBelowWindows = -1
+
+    /// The middle place's share of a screen without a notch; the left and right share the rest.
+    public static let middleShare = 0.44
+
     /// The workspace dots: every workspace with windows, and the one you're on, in number order.
     public static func dots(occupied: Set<Int>, current: Int) -> [Int] {
         Array(occupied.union([current])).filter { Workspaces.range.contains($0) }.sorted()

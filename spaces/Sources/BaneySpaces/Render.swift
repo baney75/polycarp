@@ -180,6 +180,10 @@ enum Render {
             topBar.current[id] = 2
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar.png", CGSize(width: 1512, height: 24)) else { return 1 }
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: (left: 656, right: 656)).background(Color(white: 0.35)), "topbar-notch.png", CGSize(width: 1512, height: 37)) else { return 1 }
+            // The longest purpose and one thing the store takes, on a 1280-point screen: each shortens in its place.
+            topBar.purposes[2] = String(repeating: "Write the long letter ", count: 3).prefix(60).description
+            topBar.oneThing = String(repeating: "Send the second paragraph ", count: 4).prefix(80).description
+            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar-long.png", CGSize(width: 1280, height: 24)) else { return 1 }
         }
 
         // Every agent badge: working on 1, asking on 2, an error on 3, a finish on 4.

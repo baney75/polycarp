@@ -86,4 +86,33 @@ final class TopBarTests: XCTestCase {
         XCTAssertTrue(BarLayout.systemBarShown(frameMaxY: 1117, visibleMaxY: 1080, notch: true, hideMenuBar: false))
         XCTAssertFalse(BarLayout.systemBarShown(frameMaxY: 1117, visibleMaxY: 1080, notch: true, hideMenuBar: true))
     }
+
+    /// The app target can't be imported by tests, so these read its source.
+    private func app(_ name: String) throws -> String {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/BaneySpaces/\(name)")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// Review of #587 (high): over windows, the bar hid the traffic lights of a window zoomed to the top. It sits under
+    /// every window instead.
+    func testTheBarSitsUnderWindows() throws {
+        XCTAssertLessThan(BarLayout.levelBelowWindows, 0)
+        let code = try app("TopBar.swift")
+        XCTAssertTrue(code.contains("CGWindowLevelForKey(.normalWindow)) + BarLayout.levelBelowWindows"))
+        XCTAssertFalse(code.contains(".mainMenuWindow"), "never over windows")
+    }
+
+    /// Review of #587: System Settings opens once each time `hideSystemMenuBar` turns on, not on every launch.
+    func testTheMenuBarPaneOpensOncePerTurnOn() throws {
+        let code = try app("TopBar.swift")
+        XCTAssertTrue(code.contains("if wantsHidden && !UserDefaults.standard.bool(forKey: Self.askedKey) { askToHideMenuBar() }"))
+        XCTAssertTrue(code.contains("UserDefaults.standard.set(wantsHidden, forKey: Self.askedKey)"))
+    }
+
+    func testTheMiddleLeavesRoomForTheSides() {
+        let width = 1280.0, gap = 12.0
+        let side = (width - width * BarLayout.middleShare) / 2 - gap
+        XCTAssertGreaterThan(side, 300, "the mark, the dots and a purpose fit beside the middle on a 1280-point screen")
+    }
 }

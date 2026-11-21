@@ -5,10 +5,11 @@ import Network
 import SwiftUI
 
 /// Polycarp's top bar (`bar.*` in surfaces.json): one strip per screen with the workspace you're on, what it is for,
-/// today's one thing and the hour in words. It sits one level under the macOS menu bar, so pointing at the top edge
-/// still brings that bar and the app's menus down over it, and it shows only where the macOS bar is set to hide
-/// (`BarLayout.systemBarShown`). It never takes focus, stays off full-screen apps, and reads; the one thing it does is
-/// switch workspaces when you click a dot. Main thread only.
+/// today's one thing and the hour in words. It shows only where the macOS bar is set to hide
+/// (`BarLayout.systemBarShown`), so pointing at the top edge still brings that bar and the app's menus down over it.
+/// It sits just under your windows (`BarLayout.levelBelowWindows`): a window that reaches the top of the screen covers
+/// it, so the bar never hides a window's buttons or title. It never takes focus, stays off full-screen apps, and
+/// reads; the one thing it does is switch workspaces when you click a dot. Main thread only.
 final class TopBar {
     let model = TopBarModel()
     private let spaces: Spaces
@@ -16,8 +17,9 @@ final class TopBar {
     private var tick: Timer?
     private let network = NWPathMonitor()
     private var powerSource: CFRunLoopSource?
-    /// The `hideSystemMenuBar` last seen, so System Settings opens once when it turns on, not on every change.
-    private var askedToHide = false
+    /// Set once System Settings was opened for `hideSystemMenuBar`, kept across launches, cleared when it turns off:
+    /// the pane opens once each time you turn the setting on.
+    private static let askedKey = "topBarAskedToHideMenuBar"
     private var loggedCovered = false
 
     init(spaces: Spaces) {
@@ -66,8 +68,9 @@ final class TopBar {
     func reload() {
         let bar = SurfacesStore.shared.current.bar
         model.bar = bar
-        if bar.hideSystemMenuBar && bar.enabled && !askedToHide { askToHideMenuBar() }
-        askedToHide = bar.hideSystemMenuBar && bar.enabled
+        let wantsHidden = bar.hideSystemMenuBar && bar.enabled
+        if wantsHidden && !UserDefaults.standard.bool(forKey: Self.askedKey) { askToHideMenuBar() }
+        UserDefaults.standard.set(wantsHidden, forKey: Self.askedKey)
         guard bar.enabled else { removeAll(); return }
 
         let hidden = UserDefaults.standard.bool(forKey: "_HIHideMenuBar")
@@ -106,7 +109,7 @@ final class TopBar {
             return
         }
         let p = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        p.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) - 1)
+        p.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.normalWindow)) + BarLayout.levelBelowWindows)
         p.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         p.isOpaque = false
         p.backgroundColor = .clear
@@ -224,12 +227,21 @@ struct TopBarView: View {
                     row(places.right).frame(width: max(0, sides.right - gap), alignment: .trailing)
                 }
             } else {
-                HStack(spacing: 0) {
-                    row(places.left)
-                    Spacer(minLength: gap)
-                    row(places.right)
+                // Each place gets its share of the width, so a long purpose or one thing shortens instead of running
+                // into the next: the middle up to half, the sides what is left either side of it.
+                GeometryReader { g in
+                    let middle = places.center.isEmpty ? 0 : g.size.width * BarLayout.middleShare
+                    let side = max(0, (g.size.width - middle) / 2 - gap)
+                    ZStack {
+                        HStack(spacing: 0) {
+                            row(places.left).frame(maxWidth: side, alignment: .leading)
+                            Spacer(minLength: 0)
+                            row(places.right).frame(maxWidth: side, alignment: .trailing)
+                        }
+                        row(places.center).frame(maxWidth: middle)
+                    }
+                    .frame(width: g.size.width, height: g.size.height)
                 }
-                row(places.center)
             }
         }
         .padding(.horizontal, gap)
@@ -269,7 +281,7 @@ struct TopBarView: View {
         case .oneThing:
             if let one = model.oneThing, !one.isEmpty {
                 HStack(spacing: 6) {
-                    Text("One thing").font(Chrome.font(11, .medium)).foregroundStyle(Chrome.gold)
+                    Text("One thing").font(Chrome.font(11, .medium)).foregroundStyle(Chrome.gold).fixedSize()
                     Text(one).font(Chrome.font(11, .medium)).foregroundStyle(Chrome.wash()).truncationMode(.tail)
                 }
                 .accessibilityElement(children: .combine)
