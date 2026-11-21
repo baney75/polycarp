@@ -6,11 +6,11 @@ description: Install Polycarp, use its one command, choose or build a theme, and
 
 ## Where things stand
 
-Polycarp is one app for your workspaces and the browser your agents use. It's early, and it's arriving one device at a time.
+Polycarp is Spaces and themes for macOS and Windows. The browser extension, its CLI helper, MCP server and computer-use tools moved to Tychicus: https://github.com/baney75/tychicus. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
-- **Mac, Apple silicon:** workspaces and browser agents are inside `Polycarp.app`, with one Settings window and one set of permissions.
+- **Mac, Apple silicon:** workspaces are inside `Polycarp.app`, with one Settings window and one set of permissions.
 - **Dictation** is not part of Polycarp. [Silas](https://github.com/baney75/silas) is its own app, on its own release schedule.
-- **Other devices:** Polycarp is on its way to them. Until then, Tabkyra's installer for them is written but not yet tried live. That repo stays up.
+- **Windows:** the same Rust core is on its way.
 - **Themes:** `polycarp theme` checks, writes, previews and undoes themes, and agents can do the same over MCP. The Mac app follows your theme live.
 - `polycarp theme off` removes the theme files. Apps that read them are expected to use their own look when they next check. `polycarp theme on` brings your theme back.
 
@@ -24,11 +24,11 @@ The [plan](https://github.com/baney75/polycarp/blob/main/PLAN.md) lists every st
 curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
 ```
 
-This downloads the signed app for Apple silicon, puts `polycarp` in `~/.local/bin` and opens the app, with no developer tools needed. A welcome window walks you through the permissions. Accessibility is the only one Polycarp can't run without. Browser agents take one more step: Settings > Browser walks you through loading the extension in Chromium.
+This downloads the signed app for Apple silicon, puts `polycarp` in `~/.local/bin` and opens the app, with no developer tools needed. A welcome window walks you through the permissions. Accessibility is the only one Polycarp can't run without. For the browser extension, install [Tychicus](https://github.com/baney75/tychicus).
 
-If you have BaneySpaces, it goes to the Trash, because the two can't run together, and Polycarp copies its settings. Your own `tabkyra` keeps working too, and `baneyspaces` keeps working as a name for `polycarp-spaces`.
+If you have BaneySpaces, it goes to the Trash, because the two can't run together, and Polycarp copies its settings. `baneyspaces` keeps working as a name for `polycarp-spaces`.
 
-On an Intel Mac, or with `POLYCARP_FROM_SOURCE=1`, it builds on your Mac instead. That needs Apple's command line tools, [Rust](https://rustup.rs), [Bun](https://bun.sh) and [Node](https://nodejs.org).
+On an Intel Mac, or with `POLYCARP_FROM_SOURCE=1`, it builds on your Mac instead. That needs Apple's command line tools, and [Rust](https://rustup.rs).
 
 ### On Linux
 
@@ -54,8 +54,6 @@ polycarp doctor
 | Command | What it does |
 | --- | --- |
 | `polycarp spaces [args]` | Runs the workspace command with your arguments |
-| `polycarp browser [args]` | Runs the browser helper with your arguments |
-| `polycarp features [on\|off <part>]` | Shows or changes which parts run: `workspaces`, `browser` |
 | `polycarp theme <command>` | Chooses and checks the theme |
 | `polycarp mcp` | Serves the theme commands to an agent |
 | `polycarp doctor` | Shows which apps were found, and whether their builds match |
@@ -64,13 +62,13 @@ polycarp doctor
 | `polycarp --version` | Prints the version |
 | `polycarp --help` | Prints the usage |
 
-`polycarp spaces` and `polycarp browser` pass your arguments, input, output and exit code straight through.
+`polycarp spaces` passes your arguments, input, output and exit code straight through. `polycarp browser` only says where the browser went, Tychicus, and exits with code 2. `polycarp voice` only says Silas is its own app, and exits with code 1.
 
 ### How it finds an app
 
 It uses the first match:
 
-1. An override: `POLYCARP_SPACES_BIN` or `POLYCARP_BROWSER_BIN`.
+1. An override: `POLYCARP_SPACES_BIN`.
 2. Your `PATH`.
 3. The usual install folders.
 
@@ -328,17 +326,11 @@ The [`polycarp-theme` skill](https://github.com/baney75/polycarp/blob/main/skill
 
 ## Use your browser from Claude, ChatGPT and Grok
 
-Settings > Browser has a section called "Use your browser from Claude, ChatGPT and Grok". It lets the assistants you use on the web work in the browser on your Mac. It's off until you click Turn on, and it takes one step at a time: get Tailscale, sign in, then Turn on. If Tailscale needs you to allow Funnel for your computer, Polycarp asks you to after you click Turn on, and you try again.
-
-You need your own free Tailscale account. Polycarp runs no service for this. Tailscale's Funnel setting is what makes the address reachable from the internet. When it's on, Polycarp shows the address to add in each assistant and a passcode, once. An assistant has to be approved with that passcode before it can use your browser.
-
-Your computer must stay on and signed in. Agents you approve can use your signed-in browser, so only approve ones you trust. Turn off closes it. If Tailscale doesn't suit you, the [remote access guide](https://github.com/baney75/polycarp/blob/main/browser/docs/remote.md) has other ways, such as a free Cloudflare address of your own.
-
-This hasn't been tried on a live Mac yet.
+This moved to Tychicus with the browser extension: https://github.com/baney75/tychicus.
 
 ## Keys, motion and behavior
 
-Themes cover the look. On a Mac, keys, the dock, the launcher and browser access are all in Polycarp's Settings. On Windows and Linux, see the [Tabkyra](/projects/tabkyra/docs/) docs. Dictation is the [Silas](/projects/silas/docs/) app's, with its own settings.
+Themes cover the look. On a Mac, keys, the dock and the launcher are all in Polycarp's Settings. Browser access is [Tychicus](https://github.com/baney75/tychicus)'s, and dictation is the [Silas](/projects/silas/docs/) app's, each with its own settings.
 
 One file for all of them, with undo and a recovery key, is on the plan. Its contract is [`spaces/spec/config.md`](https://github.com/baney75/polycarp/blob/main/spaces/spec/config.md).
 
@@ -347,7 +339,6 @@ One file for all of them, with undo and a recovery key, is on the plan. Its cont
 | Part | Mac | Windows | Linux | iPhone and iPad | Android |
 | --- | --- | --- | --- | --- | --- |
 | Workspaces | In the app | In progress | Retired | Planned: control your computer's | Planned: control your computer's |
-| Browser agents | In the app | Not yet tried | Not yet tried | Planned: watch and steer your computer's | Planned: watch and steer your computer's |
 | Themes | In the app | Command works | Retired | Planned | Planned |
 
 ### The top bar
@@ -366,13 +357,13 @@ export POLYCARP_SPACES_BIN="$HOME/tools/baneyspaces"
 
 ### Not found, but the app is right here
 
-Polycarp won't run a tool inside your current folder, including `node_modules/.bin` below it, because a project could plant one there. Move to another folder. The exceptions are `/`, and, when you are in your home folder or above it, normal per-user installs: `~/.local/bin`, `~/.local/lib/node_modules`, `~/.local/share/mise/shims` and `installs`, `~/.local/share/pnpm`, `~/.local/share/pipx/venvs`, `~/.local/share/uv/tools`, `~/.cargo/bin`, `~/.bun/bin`, `~/.bun/install/global`, `~/.volta/bin`, `~/.nvm/versions`, `~/.asdf/shims`, `~/.asdf/installs`, `~/.npm-global/bin` and `lib/node_modules`, `~/Library/pnpm`, `~/.config/tabkyra`, on Windows `~\AppData\Local\Programs` and `~\scoop\shims` and `apps`, and a real app bundle in `~/Applications` (only under its `Contents`). `/opt` and `/usr` are allowed for tools outside your home folder. A project folder, `~/node_modules/.bin` and a file directly in `~` stay refused, and a link is judged by where it sits and where it leads. If the app still isn't on your `PATH` or in a usual install folder, set its override to the full path, as above.
+Polycarp won't run a tool inside your current folder, including `node_modules/.bin` below it, because a project could plant one there. Move to another folder. The exceptions are `/`, and, when you are in your home folder or above it, normal per-user installs: `~/.local/bin`, `~/.local/lib/node_modules`, `~/.local/share/mise/shims` and `installs`, `~/.local/share/pnpm`, `~/.local/share/pipx/venvs`, `~/.local/share/uv/tools`, `~/.cargo/bin`, `~/.bun/bin`, `~/.bun/install/global`, `~/.volta/bin`, `~/.nvm/versions`, `~/.asdf/shims`, `~/.asdf/installs`, `~/.npm-global/bin` and `lib/node_modules`, `~/Library/pnpm`, on Windows `~\AppData\Local\Programs` and `~\scoop\shims` and `apps`, and a real app bundle in `~/Applications` (only under its `Contents`). `/opt` and `/usr` are allowed for tools outside your home folder. A project folder, `~/node_modules/.bin` and a file directly in `~` stay refused, and a link is judged by where it sits and where it leads. If the app still isn't on your `PATH` or in a usual install folder, set its override to the full path, as above.
 
 ### My theme changed nothing in the apps
 
-On a Mac, Polycarp follows your theme live. On other devices the Silas and Tabkyra apps may not read theme files yet.
+On a Mac, Polycarp follows your theme live. On other devices the Silas app may not read theme files yet.
 
-In the browser, the side panel takes a new theme within 5 seconds while it is open. An approval or hub page that is already open keeps the colors it opened with; reload it to see the new ones. It doesn't reload on its own, so a passcode you are typing isn't lost.
+The browser extension, now [Tychicus](https://github.com/baney75/tychicus), reads the same theme. Its side panel takes a new theme within 5 seconds while it is open. An approval or hub page that is already open keeps the colors it opened with; reload it to see the new ones. It doesn't reload on its own, so a passcode you are typing isn't lost.
 
 If you want apps to show their own look, run `polycarp theme off`. It removes the theme files; an app that reads them is expected to use its own look when it next checks. If a file can't be removed, `off` fails and names it.
 
@@ -390,4 +381,4 @@ This always works.
 
 ## Credits and license
 
-The command and Spaces are MIT. Browser is AGPL-3.0, and builds on [0xSero's sitegeist](https://github.com/0xSero/sitegeist) and [Mario Zechner's Sitegeist](https://github.com/badlogic/sitegeist). The name and logo aren't covered by those licenses. Newsreader is under the SIL Open Font License.
+The command and Spaces are MIT. The browser extension, with its AGPL-3.0 license and credits, is in [Tychicus](https://github.com/baney75/tychicus). The name and logo aren't covered by those licenses. Newsreader is under the SIL Open Font License.

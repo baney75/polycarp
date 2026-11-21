@@ -28,7 +28,7 @@ final class SettingsSidebarTests: XCTestCase {
 
     private func sidebarTabs() throws -> [String] {
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
-        let start = try XCTUnwrap(kit.range(of: "static let allGroups: [Group] = ["))
+        let start = try XCTUnwrap(kit.range(of: "static let groups: [Group] = ["))
         let end = try XCTUnwrap(kit[start.upperBound...].range(of: "static var order"))
         return captures(#"\.(\w+)(?=[,\]])"#, in: String(kit[start.upperBound..<end.lowerBound]))
     }
@@ -43,7 +43,7 @@ final class SettingsSidebarTests: XCTestCase {
     func testSectionsAreGroupedAsDesigned() throws {
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
         XCTAssertTrue(kit.contains(#"tabs: [.general, .keys, .dock, .appearance, .launcher]"#))
-        XCTAssertTrue(kit.contains(#"header: "Your tools", tabs: [.browser, .agents]"#))
+        XCTAssertTrue(kit.contains(#"header: "Your tools", tabs: [.agents]"#))
         XCTAssertTrue(kit.contains(#"header: "System", tabs: [.permissions, .automation, .updates]"#))
     }
 
@@ -64,15 +64,6 @@ final class SettingsSidebarTests: XCTestCase {
         let setup = try read("Sources/BaneySpaces/Setup.swift")
         for literal in ["Color.green", ".foregroundStyle(.green)", "Color.orange", ".foregroundStyle(.orange)"] {
             XCTAssertFalse(setup.contains(literal), "Setup.swift still draws \(literal)")
-        }
-        let browser = try read("Sources/BaneySpaces/BrowserSetup.swift")
-        let browserView = String(browser[try XCTUnwrap(browser.range(of: "struct BrowserSettingsView")).lowerBound...])
-        for (name, text) in [("BrowserSettingsView", browserView),
-                                  ("BrowserRemoteView", try read("Sources/BaneySpaces/BrowserRemoteView.swift"))] {
-            for literal in ["Color.green", ".foregroundStyle(.green)", "Color.orange", ".foregroundStyle(.orange)", ".foregroundStyle(.red)", ".foregroundStyle(.secondary)"] {
-                XCTAssertFalse(text.contains(literal), "\(name) still draws \(literal)")
-            }
-            XCTAssertTrue(text.contains("SettingsGroup"), "\(name) is built from the shared components")
         }
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
         for role in ["done", "working", "urgent"] { XCTAssertTrue(kit.contains("role(\"\(role)\")")) }

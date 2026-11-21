@@ -111,24 +111,11 @@ fn unknown_subcommand_gives_2() {
 #[test]
 fn not_found_gives_127_and_names_the_tool() {
     let s = Sandbox::new();
-    for (sub, name, var) in [
-        ("spaces", "polycarp-spaces", "POLYCARP_SPACES_BIN"),
-        ("browser", "polycarp-browser", "POLYCARP_BROWSER_BIN"),
-    ] {
-        let o = s.run(&[sub, "x"]);
-        assert_eq!(code(&o), 127, "{sub}");
-        assert!(err(&o).contains(name), "{sub}: {}", err(&o));
-        assert!(err(&o).contains(var), "{sub}: {}", err(&o));
-        assert!(err(&o).contains("Install"), "{sub}: {}", err(&o));
-    }
-    // The browser helper is named as Polycarp's, never by its old name.
-    let o = s.run(&["browser", "x"]);
-    assert!(
-        err(&o).contains("Install the Polycarp browser helper from"),
-        "{}",
-        err(&o)
-    );
-    assert!(!err(&o).contains("Tabkyra"), "{}", err(&o));
+    let o = s.run(&["spaces", "x"]);
+    assert_eq!(code(&o), 127);
+    assert!(err(&o).contains("polycarp-spaces"), "{}", err(&o));
+    assert!(err(&o).contains("POLYCARP_SPACES_BIN"), "{}", err(&o));
+    assert!(err(&o).contains("Install"), "{}", err(&o));
     let help = s.run(&["--help"]);
     assert!(!out(&help).contains("Tabkyra") && !err(&help).contains("Tabkyra"));
     // The hint for Spaces points at the Polycarp repo, not at the old BaneySpaces one.
@@ -175,6 +162,7 @@ fn the_usage_text_has_no_voice_command() {
     assert!(t.contains("polycarp spaces"), "{t}");
     assert!(!t.contains("polycarp voice"), "{t}");
     assert!(!t.contains("POLYCARP_VOICE_BIN"), "{t}");
+    assert!(!t.contains("polycarp browser"), "{t}");
 }
 
 #[test]
@@ -184,8 +172,8 @@ fn doctor_not_found_exits_1() {
     assert_eq!(code(&o), 1);
     let t = out(&o);
     assert!(t.contains("spaces: not found"), "{t}");
-    assert!(t.contains("browser: not found"), "{t}");
     assert!(!t.contains("voice"), "{t}");
+    assert!(!t.contains("browser"), "the browser is Tychicus now: {t}");
 }
 
 // ---- Unix tests with stub executables ----
@@ -208,9 +196,9 @@ fn args_pass_byte_for_byte() {
 #[test]
 fn child_exit_code_comes_back() {
     let s = Sandbox::new();
-    stub(&s.dir("bin"), "tabkyra", &echo_body(37));
+    stub(&s.dir("bin"), "baneyspaces", &echo_body(37));
     let o = s
-        .cmd(&["browser", "--version"])
+        .cmd(&["spaces", "--version"])
         .env("PATH", s.dir("bin"))
         .output()
         .unwrap();
@@ -219,27 +207,85 @@ fn child_exit_code_comes_back() {
 }
 
 #[cfg(unix)]
+const TYCHICUS_LINE: &str =
+    "The browser helper is now Tychicus: https://github.com/baney75/tychicus\n";
+
+/// The browser moved to Tychicus. `polycarp browser`, with any arguments, says so on stderr and exits 2, and never runs an
+/// old helper still on the machine, nor `features on|off browser`, which writes nothing.
+#[cfg(unix)]
 #[test]
-fn the_browser_helper_runs_as_polycarp_browser_and_an_old_tabkyra_is_still_found() {
+fn browser_points_at_tychicus_runs_nothing_and_exits_2() {
     let s = Sandbox::new();
-    let (old, new) = (s.dir("old"), s.dir("new"));
-    fs::create_dir_all(&old).unwrap();
-    fs::create_dir_all(&new).unwrap();
-    // A script never sees its arg0 (the kernel puts the script path there), so the stub is bash itself: `bash -c` prints the
-    // name it was run under, which is what `ps` shows. It must be polycarp-browser, never tabkyra.
-    std::os::unix::fs::symlink("/bin/bash", old.join("tabkyra")).unwrap();
-    let o = s
-        .cmd(&["browser", "-c", "echo \"$0\""])
-        .env("PATH", &old)
-        .output()
-        .unwrap();
-    assert_eq!(code(&o), 0, "{}", err(&o));
-    assert_eq!(out(&o), "polycarp-browser\n");
-    // With both on PATH, the new name wins.
-    stub(&new, "polycarp-browser", "echo new");
-    let both = std::env::join_paths([old, new]).unwrap();
-    let o = s.cmd(&["browser"]).env("PATH", both).output().unwrap();
-    assert_eq!(out(&o), "new\n");
+    let marker = s.dir("ran");
+    let ran = format!("echo x > '{}'", marker.display());
+    for name in ["polycarp-browser", "tabkyra"] {
+        stub(&s.dir("bin"), name, &ran);
+    }
+    let local = s.dir("home").join(".local/bin");
+    fs::create_dir_all(&local).unwrap();
+    stub(&local, "polycarp-browser", &ran);
+    for args in [
+        &["browser"][..],
+        &["browser", "mcp"],
+        &["browser", "--version"],
+        &["features", "on", "browser"],
+        &["features", "off", "browser"],
+    ] {
+        let o = s
+            .cmd(args)
+            .env("PATH", s.dir("bin"))
+            .env(
+                "POLYCARP_BROWSER_BIN",
+                s.dir("bin").join("polycarp-browser"),
+            )
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 2, "{args:?}: {}", err(&o));
+        assert_eq!(err(&o), TYCHICUS_LINE, "{args:?}");
+        assert_eq!(out(&o), "", "{args:?}");
+    }
+    assert!(!marker.exists(), "an old browser helper ran");
+    assert!(!s
+        .dir("home")
+        .join(".config/polycarp/features.toml")
+        .exists());
+    let list = s.run(&["features"]);
+    assert!(!out(&list).contains("browser"), "{}", out(&list));
+    let help = s.run(&["--help"]);
+    assert!(out(&help).contains(TYCHICUS_LINE), "{}", out(&help));
+    assert!(!out(&help).contains("polycarp browser ["), "{}", out(&help));
+}
+
+/// Polycarp has no parts to choose now: `polycarp features` says so in one line and never writes `features.toml`, and
+/// it is gone from `--help`.
+#[cfg(unix)]
+#[test]
+fn features_only_says_workspaces_always_run() {
+    let s = Sandbox::new();
+    const LINE: &str = "Polycarp has no parts to turn on or off: workspaces always run.\n";
+    for args in [
+        &["features"][..],
+        &["features", "list"],
+        &["features", "--help"],
+    ] {
+        let o = s.cmd(args).output().unwrap();
+        assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
+        assert_eq!(out(&o), LINE, "{args:?}");
+    }
+    for args in [
+        &["features", "off", "workspaces"][..],
+        &["features", "on", "voice"],
+    ] {
+        let o = s.cmd(args).output().unwrap();
+        assert_eq!(code(&o), 2, "{args:?}");
+        assert_eq!(err(&o), format!("polycarp: {LINE}"), "{args:?}");
+        assert_eq!(out(&o), "", "{args:?}");
+    }
+    assert!(!s
+        .dir("home")
+        .join(".config/polycarp/features.toml")
+        .exists());
+    assert!(!out(&s.run(&["--help"])).contains("polycarp features"));
 }
 
 #[cfg(unix)]
@@ -312,13 +358,13 @@ fn path_order_first_wins() {
     let b = s.dir("b");
     fs::create_dir_all(&a).unwrap();
     fs::create_dir_all(&b).unwrap();
-    stub(&a, "tabkyra", "echo A");
-    stub(&b, "tabkyra", "echo B");
+    stub(&a, "baneyspaces", "echo A");
+    stub(&b, "baneyspaces", "echo B");
     let path = std::env::join_paths([&b, &a]).unwrap();
-    let o = s.cmd(&["browser"]).env("PATH", path).output().unwrap();
+    let o = s.cmd(&["spaces"]).env("PATH", path).output().unwrap();
     assert_eq!(out(&o), "B\n");
     let path = std::env::join_paths([&a, &b]).unwrap();
-    let o = s.cmd(&["browser"]).env("PATH", path).output().unwrap();
+    let o = s.cmd(&["spaces"]).env("PATH", path).output().unwrap();
     assert_eq!(out(&o), "A\n");
 }
 
@@ -327,15 +373,15 @@ fn path_order_first_wins() {
 fn path_skips_non_executable_files_and_directories() {
     let s = Sandbox::new();
     let a = s.dir("a");
-    fs::create_dir_all(a.join("tabkyra")).unwrap(); // a directory with the tool's name
+    fs::create_dir_all(a.join("baneyspaces")).unwrap(); // a directory with the tool's name
     let b = s.dir("b");
     fs::create_dir_all(&b).unwrap();
-    fs::write(b.join("tabkyra"), "#!/bin/sh\necho plain\n").unwrap(); // mode 644
+    fs::write(b.join("baneyspaces"), "#!/bin/sh\necho plain\n").unwrap(); // mode 644
     let c = s.dir("c");
     fs::create_dir_all(&c).unwrap();
-    stub(&c, "tabkyra", "echo good");
+    stub(&c, "baneyspaces", "echo good");
     let path = std::env::join_paths([&a, &b, &c]).unwrap();
-    let o = s.cmd(&["browser"]).env("PATH", path).output().unwrap();
+    let o = s.cmd(&["spaces"]).env("PATH", path).output().unwrap();
     assert_eq!(out(&o), "good\n");
 }
 
@@ -344,8 +390,8 @@ fn path_skips_non_executable_files_and_directories() {
 fn current_folder_is_never_run() {
     let s = Sandbox::new();
     let marker = s.dir("ran");
-    // Planted in the current folder, for both tools.
-    for name in ["baneyspaces", "tabkyra"] {
+    // Planted in the current folder, under both names.
+    for name in ["baneyspaces", "polycarp-spaces"] {
         stub(
             &s.dir("cwd"),
             name,
@@ -354,11 +400,9 @@ fn current_folder_is_never_run() {
     }
     // PATH has ".", an empty entry, a relative entry and then an empty folder.
     let path = format!(".::cwd:{}", s.dir("empty").display());
-    for sub in ["spaces", "browser"] {
-        let o = s.cmd(&[sub]).env("PATH", &path).output().unwrap();
-        assert_eq!(code(&o), 127, "{sub}");
-        assert!(!out(&o).contains("planted"));
-    }
+    let o = s.cmd(&["spaces"]).env("PATH", &path).output().unwrap();
+    assert_eq!(code(&o), 127);
+    assert!(!out(&o).contains("planted"));
     assert!(!marker.exists());
     // A leading empty entry too.
     let path = format!(":{}", s.dir("empty").display());
@@ -379,7 +423,7 @@ fn fixed_spot_under_home_is_used() {
 
 #[cfg(unix)]
 #[test]
-fn doctor_found_exits_0_and_shows_browser_version_only() {
+fn doctor_found_exits_0_and_runs_no_tool() {
     let s = Sandbox::new();
     let log = s.dir("calls");
     stub(
@@ -390,7 +434,7 @@ fn doctor_found_exits_0_and_shows_browser_version_only() {
     stub(
         &s.dir("bin"),
         "tabkyra",
-        "echo 'tabkyra 9.9.9'; echo second-line",
+        &format!("echo called >> '{}'", log.display()),
     );
     let o = s
         .cmd(&["doctor"])
@@ -403,8 +447,6 @@ fn doctor_found_exits_0_and_shows_browser_version_only() {
         "spaces: {}",
         s.dir("bin").join("baneyspaces").display()
     )));
-    assert!(t.contains("(tabkyra 9.9.9)"), "{t}");
-    assert!(!t.contains("second-line"));
     assert!(!t.contains("SPACES-VERSION"));
     assert!(!t.contains("voice"), "{t}");
     assert!(!log.exists(), "doctor ran spaces");
@@ -414,6 +456,7 @@ fn doctor_found_exits_0_and_shows_browser_version_only() {
 #[test]
 fn doctor_exits_1_when_one_required_tool_is_missing() {
     let s = Sandbox::new();
+    // An old browser helper is no tool of Polycarp's now: the spaces command is still missing.
     stub(&s.dir("bin"), "tabkyra", "echo v1");
     let o = s
         .cmd(&["doctor"])
@@ -529,22 +572,6 @@ fn the_child_sees_its_own_name_as_argv0() {
 
 #[cfg(unix)]
 #[test]
-fn doctor_says_when_the_browser_tool_is_broken() {
-    let s = Sandbox::new();
-    stub(&s.dir("bin"), "baneyspaces", "exit 0");
-    stub(&s.dir("bin"), "tabkyra", "echo oops; exit 3");
-    let o = s
-        .cmd(&["doctor"])
-        .env("PATH", s.dir("bin"))
-        .output()
-        .unwrap();
-    assert_eq!(code(&o), 1, "{}", out(&o));
-    assert!(out(&o).contains("did not work"), "{}", out(&o));
-    assert!(!out(&o).contains("oops"), "{}", out(&o));
-}
-
-#[cfg(unix)]
-#[test]
 fn spaces_prefers_the_new_command_name_and_falls_back_to_the_old() {
     let s = Sandbox::new();
     stub(&s.dir("bin"), "baneyspaces", "echo old");
@@ -583,8 +610,14 @@ fn windows_finds_the_exe_on_path_passes_args_and_returns_its_exit_code() {
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert_eq!(out(&o).trim_end(), "hello");
     assert_eq!(code(&run(&["spaces", "/c", "exit", "7"])), 7);
+    // The browser moved to Tychicus: a pointer on stderr, exit 2, on Windows too.
     let o = run(&["browser", "--version"]);
-    assert_ne!(code(&o), 0, "no polycarp-browser.exe on PATH: {}", out(&o));
+    assert_eq!(code(&o), 2, "{}", err(&o));
+    assert!(
+        err(&o).contains("https://github.com/baney75/tychicus"),
+        "{}",
+        err(&o)
+    );
 }
 
 /// #379 item 3: the old names still work alone on Windows, and the new name wins when both are on PATH.
@@ -598,22 +631,22 @@ fn windows_prefers_the_new_exe_name_and_falls_back_to_the_old() {
     // %CMDCMDLINE% is the command line cmd was started with: it names the file that ran.
     let ran = |path: &std::ffi::OsStr| {
         let o = s
-            .cmd(&["browser", "/c", "echo", "%CMDCMDLINE%"])
+            .cmd(&["spaces", "/c", "echo", "%CMDCMDLINE%"])
             .env("PATH", path)
             .output()
             .unwrap();
         assert_eq!(code(&o), 0, "{}", err(&o));
         out(&o).to_lowercase()
     };
-    cmd_stub(&old, "tabkyra");
+    cmd_stub(&old, "baneyspaces");
     assert!(
-        ran(old.as_os_str()).contains("tabkyra.exe"),
+        ran(old.as_os_str()).contains("baneyspaces.exe"),
         "the old name alone"
     );
-    cmd_stub(&new, "polycarp-browser");
+    cmd_stub(&new, "polycarp-spaces");
     let both = std::env::join_paths([&old, &new]).unwrap();
     assert!(
-        ran(&both).contains("polycarp-browser.exe"),
+        ran(&both).contains("polycarp-spaces.exe"),
         "the new name wins"
     );
 }
@@ -761,31 +794,9 @@ fn an_unresolvable_current_folder_fails_closed() {
 /// `sleep 60 &` leaves a process holding stdout; doctor must still end within its limit.
 #[cfg(unix)]
 #[test]
-fn doctor_time_limit_covers_reading() {
-    let s = Sandbox::new();
-    stub(&s.dir("bin"), "baneyspaces", "exit 0");
-    stub(&s.dir("bin"), "tabkyra", "/bin/sleep 60 &\necho tabkyra 1");
-    let started = std::time::Instant::now();
-    let o = s
-        .cmd(&["doctor"])
-        .env("PATH", s.dir("bin"))
-        .env("POLYCARP_DOCTOR_LIMIT_MS", "500")
-        .stdin(Stdio::null())
-        .output();
-    // output() waits on the stub's background process only if doctor leaks it; doctor itself
-    // must be back long before the 60 seconds are up.
-    assert!(started.elapsed() < std::time::Duration::from_secs(20));
-    let o = o.unwrap();
-    assert_eq!(code(&o), 1);
-    assert!(out(&o).contains("did not work"), "{}", out(&o));
-}
-
-#[cfg(unix)]
-#[test]
 fn doctor_piped_to_a_closed_reader_ends_quietly() {
     let s = Sandbox::new();
     stub(&s.dir("bin"), "baneyspaces", "exit 0");
-    stub(&s.dir("bin"), "tabkyra", "/bin/sleep 1\necho tabkyra 1");
     let mut child = s
         .cmd(&["doctor"])
         .env("PATH", s.dir("bin"))
@@ -793,7 +804,7 @@ fn doctor_piped_to_a_closed_reader_ends_quietly() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    // Close the reading end at once, as `| head -1` does. Doctor writes after the 1 s wait.
+    // Close the reading end at once, as `| head -1` does.
     drop(child.stdout.take());
     let o = child.wait_with_output().unwrap();
     assert!(!err(&o).contains("panicked"), "{}", err(&o));
@@ -805,7 +816,8 @@ fn doctor_piped_to_a_closed_reader_ends_quietly() {
 #[test]
 fn doctor_with_a_closed_reader_still_reports_a_missing_tool_in_its_exit_code() {
     let s = Sandbox::new();
-    stub(&s.dir("bin"), "baneyspaces", "exit 0");
+    // Only an old browser helper: the spaces command is missing.
+    stub(&s.dir("bin"), "tabkyra", "exit 0");
     let mut child = s
         .cmd(&["doctor"])
         .env("PATH", s.dir("bin"))
@@ -823,19 +835,19 @@ fn doctor_with_a_closed_reader_still_reports_a_missing_tool_in_its_exit_code() {
 #[test]
 fn an_override_to_a_cmd_or_bat_file_is_refused_with_the_reason() {
     let s = Sandbox::new();
-    for name in ["tabkyra.cmd", "tabkyra.BAT"] {
+    for name in ["baneyspaces.cmd", "baneyspaces.BAT"] {
         let p = stub(&s.dir("bin"), name, "echo ran");
         let o = s
-            .cmd(&["browser"])
+            .cmd(&["spaces"])
             .env("POLYCARP_SHIM_CHECK", "1")
-            .env("POLYCARP_BROWSER_BIN", &p)
+            .env("POLYCARP_SPACES_BIN", &p)
             .output()
             .unwrap();
         assert_eq!(code(&o), 127, "{name}");
         assert!(!out(&o).contains("ran"));
         let e = err(&o);
         assert!(
-            e.contains("shell") && e.contains("POLYCARP_BROWSER_BIN"),
+            e.contains("shell") && e.contains("POLYCARP_SPACES_BIN"),
             "{e}"
         );
     }
@@ -845,8 +857,7 @@ fn an_override_to_a_cmd_or_bat_file_is_refused_with_the_reason() {
 #[test]
 fn doctor_reports_a_cmd_shim_as_present_but_not_runnable_with_advice() {
     let s = Sandbox::new();
-    stub(&s.dir("bin"), "baneyspaces", "exit 0");
-    stub(&s.dir("bin"), "tabkyra.cmd", "echo ran");
+    stub(&s.dir("bin"), "polycarp-spaces.cmd", "echo ran");
     let o = s
         .cmd(&["doctor"])
         .env("POLYCARP_SHIM_CHECK", "1")
@@ -857,18 +868,18 @@ fn doctor_reports_a_cmd_shim_as_present_but_not_runnable_with_advice() {
     let t = out(&o);
     assert!(t.contains("present but not runnable"), "{t}");
     assert!(
-        t.contains("Node") && t.contains("POLYCARP_BROWSER_BIN"),
+        t.contains("real executable") && t.contains("POLYCARP_SPACES_BIN"),
         "{t}"
     );
-    assert!(!t.contains("browser: not found"), "{t}");
+    assert!(!t.contains("spaces: not found"), "{t}");
     let o = s
-        .cmd(&["browser"])
+        .cmd(&["spaces"])
         .env("POLYCARP_SHIM_CHECK", "1")
         .env("PATH", s.dir("bin"))
         .output()
         .unwrap();
     assert_eq!(code(&o), 127);
-    assert!(err(&o).contains("Node"), "{}", err(&o));
+    assert!(err(&o).contains("real executable"), "{}", err(&o));
 }
 
 // ---- Issue #17: the lookup from the home folder ----
@@ -915,21 +926,21 @@ fn from_home_pnpm_pipx_and_uv_run_but_mise_plugins_do_not() {
     fs::create_dir_all(&bin).unwrap();
     for (rel, linked) in [
         (".local/share/pnpm", false),
-        (".local/share/pipx/venvs/tabkyra/bin", true),
-        (".local/share/uv/tools/tabkyra/bin", true),
+        (".local/share/pipx/venvs/polycarp/bin", true),
+        (".local/share/uv/tools/polycarp/bin", true),
         (".local/share/mise/plugins/evil/bin", false),
     ] {
         let d = home.join(rel);
         fs::create_dir_all(&d).unwrap();
-        stub(&d, "tabkyra", &format!("echo from {rel}"));
+        stub(&d, "baneyspaces", &format!("echo from {rel}"));
         let on_path = if linked {
-            std::os::unix::fs::symlink(d.join("tabkyra"), bin.join("tabkyra")).unwrap();
+            std::os::unix::fs::symlink(d.join("baneyspaces"), bin.join("baneyspaces")).unwrap();
             bin.clone()
         } else {
             d.clone()
         };
         let o = s
-            .cmd(&["browser"])
+            .cmd(&["spaces"])
             .env("PATH", &on_path)
             .current_dir(&home)
             .output()
@@ -939,8 +950,8 @@ fn from_home_pnpm_pipx_and_uv_run_but_mise_plugins_do_not() {
         } else {
             assert_eq!(out(&o), format!("from {rel}\n"), "{rel}: {}", err(&o));
         }
-        let _ = fs::remove_file(bin.join("tabkyra"));
-        fs::remove_file(d.join("tabkyra")).unwrap();
+        let _ = fs::remove_file(bin.join("baneyspaces"));
+        fs::remove_file(d.join("baneyspaces")).unwrap();
     }
 }
 
@@ -950,14 +961,14 @@ fn from_home_pnpm_pipx_and_uv_run_but_mise_plugins_do_not() {
 fn from_home_an_npm_prefix_link_inside_local_runs() {
     let s = Sandbox::new();
     let home = s.dir("home");
-    let real = home.join(".local/lib/node_modules/tabkyra/bin");
+    let real = home.join(".local/lib/node_modules/polycarp/bin");
     let bin = home.join(".local/bin");
     fs::create_dir_all(&real).unwrap();
     fs::create_dir_all(&bin).unwrap();
-    stub(&real, "tabkyra", "echo npm-prefix");
-    std::os::unix::fs::symlink(real.join("tabkyra"), bin.join("tabkyra")).unwrap();
+    stub(&real, "baneyspaces", "echo npm-prefix");
+    std::os::unix::fs::symlink(real.join("baneyspaces"), bin.join("baneyspaces")).unwrap();
     let o = s
-        .cmd(&["browser"])
+        .cmd(&["spaces"])
         .env("PATH", &bin)
         .current_dir(&home)
         .output()
@@ -987,15 +998,16 @@ fn from_home_a_link_cannot_carry_a_project_tool_in_or_an_allowed_one_out() {
         .output()
         .unwrap();
     assert_eq!(code(&o), 127);
+    fs::remove_file(bin.join("baneyspaces")).unwrap();
     // Project folder, allowed target.
     let cargo = home.join(".cargo/bin");
     let tools = home.join("proj/bin");
     fs::create_dir_all(&cargo).unwrap();
     fs::create_dir_all(&tools).unwrap();
-    stub(&cargo, "tabkyra", &body);
-    std::os::unix::fs::symlink(cargo.join("tabkyra"), tools.join("tabkyra")).unwrap();
+    stub(&cargo, "baneyspaces", &body);
+    std::os::unix::fs::symlink(cargo.join("baneyspaces"), tools.join("baneyspaces")).unwrap();
     let o = s
-        .cmd(&["browser"])
+        .cmd(&["spaces"])
         .env("PATH", &tools)
         .current_dir(&home)
         .output()
@@ -1049,14 +1061,14 @@ fn from_home_project_folders_are_still_refused() {
 fn from_home_a_bun_global_link_runs_and_so_do_npm_global_and_pnpm() {
     let s = Sandbox::new();
     let home = s.dir("home");
-    let real = home.join(".bun/install/global/node_modules/tabkyra/bin");
+    let real = home.join(".bun/install/global/node_modules/polycarp/bin");
     let bin = home.join(".bun/bin");
     fs::create_dir_all(&real).unwrap();
     fs::create_dir_all(&bin).unwrap();
-    stub(&real, "tabkyra", "echo bun");
-    std::os::unix::fs::symlink(real.join("tabkyra"), bin.join("tabkyra")).unwrap();
+    stub(&real, "baneyspaces", "echo bun");
+    std::os::unix::fs::symlink(real.join("baneyspaces"), bin.join("baneyspaces")).unwrap();
     let o = s
-        .cmd(&["browser"])
+        .cmd(&["spaces"])
         .env("PATH", &bin)
         .current_dir(&home)
         .output()
@@ -1116,55 +1128,30 @@ fn a_home_under_a_system_folder_still_refuses_its_project_folders() {
 
 #[cfg(unix)]
 #[test]
-fn browser_finds_the_copy_inside_the_app_before_path() {
+fn spaces_finds_the_copy_inside_the_app_before_path() {
     let s = Sandbox::new();
     let app = s
         .dir("home")
-        .join("Applications/Polycarp.app/Contents/Resources/browser");
+        .join("Applications/Polycarp.app/Contents/Resources/bin");
     fs::create_dir_all(&app).unwrap();
-    stub(&app, "polycarp-browser", "echo bundled \"$@\"");
+    stub(&app, "polycarp-spaces", "echo bundled \"$@\"");
     let on_path = s.dir("a");
     fs::create_dir_all(&on_path).unwrap();
-    stub(&on_path, "tabkyra", "echo from-path");
+    stub(&on_path, "baneyspaces", "echo from-path");
     let o = s
-        .cmd(&["browser", "mcp"])
+        .cmd(&["spaces", "agent"])
         .env("PATH", &on_path)
         .output()
         .unwrap();
-    assert_eq!(out(&o), "bundled mcp\n");
+    assert_eq!(out(&o), "bundled agent\n");
     // The override still wins over the app's copy.
     let mine = stub(&on_path, "mine", "echo override");
     let o = s
-        .cmd(&["browser"])
-        .env("POLYCARP_BROWSER_BIN", &mine)
+        .cmd(&["spaces"])
+        .env("POLYCARP_SPACES_BIN", &mine)
         .output()
         .unwrap();
     assert_eq!(out(&o), "override\n");
-}
-
-#[cfg(unix)]
-#[test]
-fn browser_falls_back_to_path_without_the_app() {
-    let s = Sandbox::new();
-    let on_path = s.dir("a");
-    fs::create_dir_all(&on_path).unwrap();
-    stub(&on_path, "tabkyra", "echo from-path");
-    let o = s.cmd(&["browser"]).env("PATH", &on_path).output().unwrap();
-    assert_eq!(out(&o), "from-path\n");
-}
-
-#[cfg(unix)]
-#[test]
-fn doctor_shows_the_bundled_browser_helper_and_its_version() {
-    let s = Sandbox::new();
-    let app = s
-        .dir("home")
-        .join("Applications/Polycarp.app/Contents/Resources/browser");
-    fs::create_dir_all(&app).unwrap();
-    stub(&app, "polycarp-browser", "echo 1.2.3");
-    let o = s.run(&["doctor"]);
-    let t = out(&o);
-    assert!(t.contains("polycarp-browser (1.2.3)"), "{t}");
 }
 
 // ---- polycarp version and polycarp update ----
@@ -1200,12 +1187,7 @@ fn version_lists_the_command_and_says_what_is_not_installed() {
         assert_eq!(commit.len(), 40, "{commit}");
         assert!(line.contains(&commit[..7]), "{line}");
     }
-    for name in [
-        "spaces command",
-        "browser helper",
-        "extension",
-        "agent skill",
-    ] {
+    for name in ["spaces command", "agent skill"] {
         let p = part(&v, name);
         assert_eq!(p["installed"], false, "{name}");
         assert!(p["state"].as_str().is_some_and(|t| !t.is_empty()), "{name}");
@@ -1218,7 +1200,13 @@ fn version_lists_the_command_and_says_what_is_not_installed() {
     assert_eq!(code(&o), 0);
     let t = out(&o);
     assert!(
-        t.contains("browser helper") && t.contains("not installed"),
+        t.contains("spaces command") && t.contains("not installed"),
+        "{t}"
+    );
+    // Part names begin each row; a path in the table may say anything.
+    assert!(
+        !t.lines()
+            .any(|l| l.starts_with("browser") || l.starts_with("extension")),
         "{t}"
     );
     assert!(t.lines().last().unwrap().starts_with("versions: "), "{t}");
@@ -1239,16 +1227,6 @@ fn version_check_names_the_part_from_another_commit_and_never_runs_spaces() {
             log.display()
         ),
     );
-    stub(
-        &s.dir("bin"),
-        "polycarp-browser",
-        &format!(
-            "case \"$1\" in\n\
-             version) echo '{{\"version\":\"1.2.3\",\"commit\":\"{OTHER_COMMIT}\",\"commitDate\":\"2026-11-01T00:00:00Z\",\"dirty\":false}}';;\n\
-             status) echo '{{\"connected\":true,\"extensions\":[{{\"browser\":\"Helium\",\"version\":\"1.2.3\",\"commit\":\"{OTHER_COMMIT}\",\"commitDate\":\"\",\"dirty\":false}},{{\"browser\":\"Chrome\",\"version\":\"1.2.2\",\"commit\":\"\",\"dirty\":false}}]}}';;\n\
-             esac"
-        ),
-    );
     let o = s
         .cmd(&["version", "--json", "--check"])
         .env("PATH", s.dir("bin"))
@@ -1258,17 +1236,7 @@ fn version_check_names_the_part_from_another_commit_and_never_runs_spaces() {
     assert_eq!(code(&o), 1, "{v}");
     assert_eq!(v["match"], false);
     assert_eq!(part(&v, "spaces command")["commit"], OTHER_COMMIT);
-    assert_eq!(part(&v, "browser helper")["version"], "1.2.3");
-    assert_eq!(part(&v, "extension (Helium)")["commit"], OTHER_COMMIT);
-    assert_eq!(part(&v, "extension (Chrome)")["installed"], true);
-    // Chrome's extension reports no commit at all: it is always named.
-    let odd: Vec<&str> = v["odd"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|o| o["name"].as_str().unwrap())
-        .collect();
-    assert!(odd.contains(&"extension (Chrome)"), "{odd:?}");
+    assert!(!v["odd"].as_array().unwrap().is_empty(), "{v}");
     let verdict = v["verdict"].as_str().unwrap();
     assert!(
         verdict.contains("do not all match") && verdict.contains("polycarp update"),
@@ -1804,14 +1772,22 @@ fn a_build_in_a_checkout_judges_the_installed_command_not_itself() {
     assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
     assert!(out(&o).starts_with("up to date: "), "{}", out(&o));
     // A part this update installs is not there yet: the update runs.
-    let o = run(&[&gate[..], &["polycarp command,browser helper"]].concat());
+    let o = run(&[&gate[..], &["polycarp command,spaces command"]].concat());
     assert_eq!(code(&o), 100, "{}", out(&o));
     assert!(
         out(&o).contains("update available")
-            && out(&o).contains("not installed yet: browser helper"),
+            && out(&o).contains("not installed yet: spaces command"),
         "{}",
         out(&o)
     );
+    // The gate an older polycarp's plan runs still names the browser helper, which moved to Tychicus and
+    // nothing here installs: it is skipped, so the update is not held back for it, before or after the install.
+    for extra in [&[][..], &["--after-install"]] {
+        let old = [&gate[..], &["polycarp command,browser helper"], extra].concat();
+        let o = run(&old);
+        assert_eq!(code(&o), 0, "{extra:?}: {}{}", out(&o), err(&o));
+        assert!(!out(&o).contains("browser"), "{}", out(&o));
+    }
 
     // The installed command is from another commit: an update is waiting, and after an install
     // that same state is a failure with the list.
@@ -1829,121 +1805,388 @@ fn a_build_in_a_checkout_judges_the_installed_command_not_itself() {
     assert_eq!(code(&run(&[&gate[..], &["x", "--bogus"]].concat())), 2);
 }
 
-/// A `polycarp-browser` from an old `npm link`, earlier on PATH, does not answer for the helper the
-/// update placed: `polycarp browser`, `version` and the update's checks use the placed one.
-#[cfg(unix)]
-#[test]
-fn the_placed_browser_helper_wins_over_an_older_one_on_path() {
-    let s = Sandbox::new();
-    let local = s.dir("home").join(".local/bin");
-    fs::create_dir_all(&local).unwrap();
-    stub(&s.dir("bin"), "polycarp-browser", "echo old");
-    let placed = stub(&local, "polycarp-browser", "echo new");
-    let run = |args: &[&str]| s.cmd(args).env("PATH", s.dir("bin")).output().unwrap();
-    assert_eq!(out(&run(&["browser"])), "new\n");
-    let v = json(&run(&["version", "--json"]));
-    assert_eq!(part(&v, "browser helper")["path"], placed.to_str().unwrap());
+/// What `polycarp update --retire-old-browser` prints, once, while a remote connector job waits for Tychicus.
+#[cfg(target_os = "macos")]
+const CONNECTOR_STAYS: &str = "Your remote connector still runs on Polycarp's helper; run `tychicus remote import-polycarp` to move it to Tychicus.\n";
+
+/// A LaunchAgents plist in the form the old helper wrote.
+#[cfg(target_os = "macos")]
+fn launch_agent(dir: &Path, label: &str, program: &str) -> PathBuf {
+    let path = dir.join(format!("{label}.plist"));
+    fs::create_dir_all(dir).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n\t<key>Label</key>\n\t<string>{label}</string>\n\t<key>ProgramArguments</key>\n\t<array>\n\t\t<string>{program}</string>\n\t\t<string>serve</string>\n\t</array>\n\t<key>KeepAlive</key>\n\t<true/>\n</dict>\n</plist>\n"
+        ),
+    )
+    .unwrap();
+    path
 }
 
-/// A browser that is connected but slow. The helper is stopped at its limit, the extension is
-/// reported as "no answer in time", `version --check` says so with its own exit code, and the
-/// update's final check does not fail on it.
+#[cfg(target_os = "macos")]
+fn this_uid() -> String {
+    let o = Command::new("/usr/bin/id").arg("-u").output().unwrap();
+    String::from_utf8(o.stdout).unwrap().trim().to_string()
+}
+
+/// A stub `launchctl` that logs each call. `print` of a label in `loaded` exits 0, of anything else 113 (not loaded);
+/// `bootout` exits `bootout`.
+#[cfg(target_os = "macos")]
+fn launchctl(s: &Sandbox, loaded: &[&str], bootout: i32) -> (PathBuf, PathBuf) {
+    let log = s.dir("launchctl.log");
+    let mut body = format!("echo \"$*\" >> {}\ncase \"$*\" in\n", log.display());
+    for label in loaded {
+        body += &format!("  \"print gui/\"*\"/{label}\") exit 0 ;;\n");
+    }
+    body += &format!("  print*) exit 113 ;;\n  bootout*) exit {bootout} ;;\nesac\nexit 1");
+    (stub(&s.dir("bin"), "launchctl", &body), log)
+}
+
+/// The remote connector as it runs on Donovan's Mac (2026-11-17): `com.polycarp.serve` runs the helper's launcher and
+/// `com.polycarp.cloudflared` runs `~/.config/tabkyra/tabkyra`, a link to `~/.config/tabkyra/polycarp`. Both are sh
+/// shims that exec node on a working tree outside the app, so neither points into Polycarp.app. Next to them are the
+/// app's own job and Tychicus's serve job.
+#[cfg(target_os = "macos")]
+struct Connector {
+    home: PathBuf,
+    agents: PathBuf,
+    serve: (PathBuf, String),
+    cloudflared: (PathBuf, String),
+    /// Plists that must never change: `com.tychicus.serve` and `com.baney.polycarp`.
+    untouched: Vec<(PathBuf, String)>,
+}
+
+#[cfg(target_os = "macos")]
+impl Connector {
+    fn new(s: &Sandbox) -> Connector {
+        let home = s.dir("home");
+        let agents = home.join("Library/LaunchAgents");
+        let shim = "#!/bin/sh\nexec \"/opt/homebrew/bin/node\" \"/Users/d/Projects/polycarp/browser/cli/dist/index.js\" \"$@\"\n";
+        let launcher = home.join(".config/polycarp/browser/polycarp");
+        let tabkyra = home.join(".config/tabkyra");
+        for (path, text) in [
+            (&launcher, shim),
+            (&tabkyra.join("polycarp"), shim),
+            (&home.join(".config/polycarp/browser/settings.json"), "{}"),
+        ] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        std::os::unix::fs::symlink(tabkyra.join("polycarp"), tabkyra.join("tabkyra")).unwrap();
+        let keep = |p: PathBuf| {
+            let t = fs::read_to_string(&p).unwrap();
+            (p, t)
+        };
+        let serve = keep(launch_agent(
+            &agents,
+            "com.polycarp.serve",
+            &launcher.to_string_lossy(),
+        ));
+        let cloudflared = keep(launch_agent(
+            &agents,
+            "com.polycarp.cloudflared",
+            &tabkyra.join("tabkyra").to_string_lossy(),
+        ));
+        let untouched = vec![
+            keep(launch_agent(
+                &agents,
+                "com.tychicus.serve",
+                &home
+                    .join(".local/share/tychicus/release/tychicus")
+                    .to_string_lossy(),
+            )),
+            keep(launch_agent(
+                &agents,
+                "com.baney.polycarp",
+                "/Applications/Polycarp.app/Contents/MacOS/Polycarp",
+            )),
+        ];
+        Connector {
+            home,
+            agents,
+            serve,
+            cloudflared,
+            untouched,
+        }
+    }
+
+    /// Tychicus has taken the connector over: it wrote its remote settings.
+    fn tychicus_remote(&self) {
+        let p = self.home.join(".config/tychicus/remote.json");
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, "{}").unwrap();
+    }
+
+    /// The things no run may touch, whatever the gate said.
+    fn assert_kept(&self, calls: &str) {
+        for (p, text) in &self.untouched {
+            assert_eq!(&fs::read_to_string(p).unwrap(), text, "{}", p.display());
+        }
+        assert!(self.home.join(".config/polycarp/browser/polycarp").exists());
+        assert!(self
+            .home
+            .join(".config/polycarp/browser/settings.json")
+            .exists());
+        assert!(self.home.join(".config/tabkyra/polycarp").exists());
+        assert!(self.home.join(".config/tabkyra/tabkyra").is_symlink());
+        for line in calls.lines() {
+            assert!(
+                !line.contains("com.tychicus.") || line.starts_with("print "),
+                "a Tychicus job was touched: {calls}"
+            );
+            assert!(!line.contains("com.baney.polycarp"), "{calls}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn retire_old_browser(s: &Sandbox, launchctl: &Path) -> Output {
+    s.cmd(&["update", "--retire-old-browser"])
+        .env("POLYCARP_LAUNCHCTL", launchctl)
+        .output()
+        .unwrap()
+}
+
+/// The gate met: Tychicus's serve job is loaded and `~/.config/tychicus/remote.json` exists, so the connector's
+/// serve and cloudflared jobs are booted out and their plists removed, though neither points into Polycarp.app.
+/// On main, `--retire-old-browser` is not a flag, so both stay.
 /// macOS only: on Linux `update` answers only that the desktop is retired.
 #[cfg(target_os = "macos")]
 #[test]
-fn a_slow_browser_is_no_answer_in_time_and_never_fails_the_update() {
+fn the_connector_jobs_go_once_tychicus_runs_the_connector() {
     let s = Sandbox::new();
-    let Some(path) = git_only_path(&s) else {
-        return;
-    };
-    let (repo, head) = repo_with_a_commit(&s, "target-repo", &path);
-    install_stamped(&s, &head);
-    let log = s.dir("budget");
-    let helper = |status: &str| {
-        stub(
-            &s.dir("bin"),
-            "polycarp-browser",
-            &format!(
-                "case \"$1\" in\n\
-                 version) echo '{{\"version\":\"1.2.3\",\"commit\":\"{head}\",\"dirty\":false}}';;\n\
-                 status) printf '%s' \"$POLYCARP_BROWSER_QUERY_MS\" > '{}'; {status};;\n\
-                 esac",
-                log.display()
-            ),
-        )
-    };
-    let bin = helper("exec /bin/sleep 20");
-    let run = |args: &[&str]| {
-        s.cmd(args)
-            .env("PATH", &path)
-            .env("POLYCARP_BROWSER_BIN", &bin)
-            .env("POLYCARP_DOCTOR_LIMIT_MS", "400")
-            .output()
-            .unwrap()
-    };
-    let started = std::time::Instant::now();
-    let o = run(&["version", "--json", "--check"]);
-    assert!(
-        started.elapsed().as_secs() < 10,
-        "the slow helper was waited for"
+    let c = Connector::new(&s);
+    c.tychicus_remote();
+    let (launchctl, log) = launchctl(&s, &["com.tychicus.serve"], 0);
+
+    let o = retire_old_browser(&s, &launchctl);
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert!(!c.serve.0.exists(), "{}", out(&o));
+    assert!(!c.cloudflared.0.exists(), "{}", out(&o));
+    let calls = fs::read_to_string(&log).unwrap();
+    let uid = this_uid();
+    let mut bootouts: Vec<&str> = calls.lines().filter(|l| l.starts_with("bootout")).collect();
+    bootouts.sort();
+    assert_eq!(
+        bootouts,
+        [
+            format!("bootout gui/{uid}/com.polycarp.cloudflared"),
+            format!("bootout gui/{uid}/com.polycarp.serve"),
+        ]
     );
-    let v = json(&o);
-    assert_eq!(code(&o), 75, "{v}");
-    assert_eq!(v["match"], true, "{v}");
-    assert_eq!(part(&v, "browser helper")["commit"], head.as_str());
-    let ext = part(&v, "extension");
-    assert_eq!(ext["installed"], serde_json::Value::Null, "{ext}");
-    assert_eq!(ext["answered"], false);
-    assert_eq!(ext["state"], "no answer in time");
-    assert_eq!(v["unanswered"], serde_json::json!(["extension"]));
-    assert!(v["odd"].as_array().unwrap().is_empty(), "{v}");
-    // Each browser was given most of the limit, and the helper half a limit more.
-    assert_eq!(fs::read_to_string(&log).unwrap(), "320");
-    let o = run(&["version"]);
-    assert_eq!(code(&o), 0);
+    c.assert_kept(&calls);
     assert!(
-        out(&o).contains("no answer in time") && out(&o).contains("Not compared"),
+        out(&o).contains("retired com.polycarp.serve"),
         "{}",
         out(&o)
     );
+    assert!(
+        !out(&o).contains("tychicus remote import-polycarp"),
+        "{}",
+        out(&o)
+    );
+}
 
-    // The final check of an update, and the gate before one: a quiet browser is named, not failed.
-    let dir = repo.to_str().unwrap();
-    for extra in [&["--after-install"][..], &[]] {
-        let mut args = vec![
-            "update",
-            "--is-current",
-            dir,
-            "HEAD",
-            "--needs",
-            "polycarp command,browser helper",
-        ];
-        args.extend_from_slice(extra);
-        let o = run(&args);
-        assert_eq!(code(&o), 0, "{extra:?}: {}{}", out(&o), err(&o));
-        assert!(
-            out(&o).contains("note: extension gave no answer in time")
-                && out(&o).contains(&format!("`polycarp browser` runs {}", bin.display()))
-                && out(&o).contains("up to date"),
-            "{}",
-            out(&o)
-        );
+/// The gate unmet (Tychicus's serve job not loaded, or no `~/.config/tychicus/remote.json`): the connector keeps
+/// running on Polycarp's helper. Both jobs are untouched, nothing is booted out, and the step prints exactly one line.
+/// macOS only: on Linux `update` answers only that the desktop is retired.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_connector_jobs_keep_running_until_tychicus_runs_the_connector() {
+    for (remote, loaded) in [(false, true), (true, false), (false, false)] {
+        let s = Sandbox::new();
+        let c = Connector::new(&s);
+        if remote {
+            c.tychicus_remote();
+        }
+        let loaded: &[&str] = if loaded { &["com.tychicus.serve"] } else { &[] };
+        let (launchctl, log) = launchctl(&s, loaded, 0);
+
+        let o = retire_old_browser(&s, &launchctl);
+        let case = format!("remote.json {remote}, loaded {loaded:?}");
+        assert_eq!(code(&o), 0, "{case}: {}{}", out(&o), err(&o));
+        assert_eq!(out(&o), CONNECTOR_STAYS, "{case}");
+        assert_eq!(err(&o), "", "{case}");
+        for (p, text) in [&c.serve, &c.cloudflared] {
+            assert_eq!(&fs::read_to_string(p).unwrap(), text, "{case}");
+        }
+        let calls = fs::read_to_string(&log).unwrap_or_default();
+        assert!(!calls.contains("bootout"), "{case}: {calls}");
+        c.assert_kept(&calls);
     }
+}
 
-    // The helper answers in time but one browser did not: the same state, for that browser only.
-    helper(&format!(
-        "echo '{{\"connected\":true,\"extensions\":[{{\"browser\":\"Helium\",\"answered\":true,\"version\":\"1.2.3\",\"commit\":\"{head}\"}},{{\"browser\":\"Chrome\",\"answered\":false}}]}}'"
-    ));
-    let o = run(&["version", "--json", "--check"]);
-    let v = json(&o);
-    assert_eq!(code(&o), 75, "{v}");
-    assert_eq!(part(&v, "extension (Helium)")["commit"], head.as_str());
-    assert_eq!(part(&v, "extension (Chrome)")["state"], "no answer in time");
-    // A browser that answers with an older build is still a difference.
-    helper(&format!(
-        "echo '{{\"connected\":true,\"extensions\":[{{\"browser\":\"Helium\",\"answered\":true,\"version\":\"1.2.2\",\"commit\":\"{OTHER_COMMIT}\"}}]}}'"
-    ));
-    assert_eq!(code(&run(&["version", "--check"])), 1);
+/// The hub and the link wait for their own Tychicus jobs: with `com.tychicus.hub` loaded and `com.tychicus.link` not,
+/// the hub goes and the link stays, and the one line is printed.
+/// macOS only: on Linux `update` answers only that the desktop is retired.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_hub_and_link_wait_for_their_own_tychicus_jobs() {
+    let s = Sandbox::new();
+    let c = Connector::new(&s);
+    c.tychicus_remote();
+    let launcher = c.home.join(".config/polycarp/browser/polycarp");
+    let hub = launch_agent(&c.agents, "com.polycarp.hub", &launcher.to_string_lossy());
+    let link = launch_agent(&c.agents, "com.polycarp.link", &launcher.to_string_lossy());
+    let (launchctl, log) = launchctl(&s, &["com.tychicus.serve", "com.tychicus.hub"], 0);
+
+    let o = retire_old_browser(&s, &launchctl);
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert!(!hub.exists() && !c.serve.0.exists() && !c.cloudflared.0.exists());
+    assert!(link.exists());
+    assert_eq!(out(&o).matches(CONNECTOR_STAYS).count(), 1, "{}", out(&o));
+    c.assert_kept(&fs::read_to_string(&log).unwrap());
+}
+
+/// The step passes when a job is already gone or its plist was moved: a job launchd no longer has (bootout fails,
+/// `print` finds nothing) loses only its plist; a plist moved to `LaunchAgents/retired-tabkyra/` stays there untouched.
+/// macOS only: on Linux `update` answers only that the desktop is retired.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_retire_step_passes_when_a_job_is_already_gone_or_moved() {
+    let s = Sandbox::new();
+    let c = Connector::new(&s);
+    c.tychicus_remote();
+    let retired = c.agents.join("retired-tabkyra");
+    let moved: Vec<(PathBuf, String)> = ["com.polycarp.cloudflared", "com.tabkyra.serve"]
+        .iter()
+        .map(|label| {
+            let to = retired.join(format!("{label}.plist"));
+            fs::create_dir_all(&retired).unwrap();
+            if *label == "com.polycarp.cloudflared" {
+                fs::rename(&c.cloudflared.0, &to).unwrap();
+            } else {
+                launch_agent(
+                    &retired,
+                    label,
+                    "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
+                );
+            }
+            let text = fs::read_to_string(&to).unwrap();
+            (to, text)
+        })
+        .collect();
+    let browser = launch_agent(
+        &c.agents,
+        "com.polycarp.browser",
+        "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
+    );
+    // Every Polycarp job is already booted out: bootout fails and print finds nothing.
+    let (launchctl, log) = launchctl(&s, &["com.tychicus.serve"], 3);
+
+    let o = retire_old_browser(&s, &launchctl);
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert!(!c.serve.0.exists(), "{}", out(&o));
+    assert!(!browser.exists(), "{}", out(&o));
+    for (p, text) in &moved {
+        assert_eq!(&fs::read_to_string(p).unwrap(), text, "{}", p.display());
+    }
+    let calls = fs::read_to_string(&log).unwrap();
+    assert!(
+        !calls.contains("cloudflared") && !calls.contains("com.tabkyra.serve"),
+        "{calls}"
+    );
+    c.assert_kept(&calls);
+}
+
+/// Every other label of the helper's (`com.polycarp.browser`, `com.tabkyra.*`) goes only when its program is inside
+/// Polycarp.app or a folder this move removed, directly or through a launcher that execs it. A launcher that execs
+/// anything else, or is gone, keeps its job, and so does a job under any other label.
+/// macOS only: on Linux `update` answers only that the desktop is retired.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_update_retires_the_old_browser_jobs_and_leaves_everyone_elses() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let agents = home.join("Library/LaunchAgents");
+    let app = "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser";
+    let into_app = home.join(".config/tabkyra/old");
+    let into_node = home.join(".config/tabkyra/polycarp");
+    fs::create_dir_all(into_app.parent().unwrap()).unwrap();
+    fs::write(&into_app, format!("#!/bin/sh\nexec \"{app}\" \"$@\"\n")).unwrap();
+    fs::write(
+        &into_node,
+        "#!/bin/sh\nexec \"/opt/homebrew/bin/node\" \"/Users/d/tree/index.js\" \"$@\"\n",
+    )
+    .unwrap();
+    let browser = launch_agent(&agents, "com.polycarp.browser", app);
+    let link = launch_agent(&agents, "com.tabkyra.link", &into_app.to_string_lossy());
+    let kept: Vec<(PathBuf, String)> = [
+        launch_agent(&agents, "com.tabkyra.hub", &into_node.to_string_lossy()),
+        launch_agent(
+            &agents,
+            "com.tabkyra.serve",
+            &home.join(".config/tabkyra/gone").to_string_lossy(),
+        ),
+        launch_agent(&agents, "com.example.thing", app),
+    ]
+    .into_iter()
+    .map(|p| {
+        let t = fs::read_to_string(&p).unwrap();
+        (p, t)
+    })
+    .collect();
+    let (launchctl, log) = launchctl(&s, &[], 0);
+
+    let o = retire_old_browser(&s, &launchctl);
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert!(!browser.exists() && !link.exists(), "{}", out(&o));
+    for (p, text) in &kept {
+        assert_eq!(&fs::read_to_string(p).unwrap(), text, "{}", p.display());
+    }
+    assert!(into_app.exists() && into_node.exists());
+    let uid = this_uid();
+    let mut calls: Vec<String> = fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(String::from)
+        .collect();
+    calls.sort();
+    assert_eq!(
+        calls,
+        [
+            format!("bootout gui/{uid}/com.polycarp.browser"),
+            format!("bootout gui/{uid}/com.tabkyra.link"),
+        ],
+        "only the dead jobs are booted out"
+    );
+    let said = out(&o);
+    assert!(said.contains("retired com.polycarp.browser"), "{said}");
+    assert!(said.contains("left com.tabkyra.hub alone"), "{said}");
+    assert!(!said.contains("tychicus remote import-polycarp"), "{said}");
+    // The installer runs it on every install, after the commands are linked.
+    let installer = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../spaces/scripts/install-app.sh"),
+    )
+    .unwrap();
+    assert!(
+        installer.contains("bin/polycarp\" update --retire-old-browser"),
+        "install-app.sh does not retire the old jobs"
+    );
+}
+
+/// A job of Polycarp's that launchd still lists after the bootout keeps its plist, and the step says so.
+/// macOS only: on Linux `update` answers only that the desktop is retired.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_job_launchd_will_not_let_go_keeps_its_plist() {
+    let s = Sandbox::new();
+    let agents = s.dir("home").join("Library/LaunchAgents");
+    let p = launch_agent(
+        &agents,
+        "com.polycarp.browser",
+        "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
+    );
+    let launchctl = stub(
+        &s.dir("bin"),
+        "launchctl",
+        "[ \"$1\" = print ] && exit 0; exit 5",
+    );
+    let o = retire_old_browser(&s, &launchctl);
+    assert_eq!(code(&o), 1);
+    assert!(p.exists());
+    assert!(err(&o).contains("did not stop it"), "{}", err(&o));
 }
 
 /// Review of #529 r2, first-F1: `update --channel stable` on a source install whose origin/stable predates release

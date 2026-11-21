@@ -302,7 +302,8 @@ for link in "$HOME/.local/bin/polycarp-spaces" "$HOME/.local/bin/baneyspaces" "$
     case "$(readlink "$link")" in *Polycarp.app/*) rm -f "$link" ;; esac
   fi
 done
-# The browser command, only if it links into Polycarp's helper.
+# The browser helper moved to Tychicus. What an older Polycarp made for it still goes, and only what points into a
+# Polycarp.app: the browser command, only if it links into Polycarp's helper.
 browser_link="$HOME/.local/bin/polycarp-browser"
 if [ -L "$browser_link" ]; then
   case "$(readlink "$browser_link")" in *Polycarp.app/Contents/Resources/browser/polycarp-browser) rm -f "$browser_link" ;; esac
@@ -320,8 +321,8 @@ if [ -L "$tabkyra_link" ]; then
   esac
 fi
 # BEGIN restore-browser-previous
-# What Settings > Browser > Connect found before `install --force` wrote its manifests and launchers (BrowserPrevious): put
-# back, or removed where there was nothing. Only a file that still points into Polycarp.app is touched.
+# What an older Polycarp's Settings > Browser > Connect found before it wrote its manifests and launchers: put back, or
+# removed where there was nothing. Only a file that still points into Polycarp.app is touched.
 STORE="${STORE:-$HOME/Library/Application Support/Polycarp/browser-previous}"
 if [ -s "$STORE/index.tsv" ]; then
   while IFS=$'\t' read -r target saved; do
@@ -347,7 +348,7 @@ if [ -s "$retired" ]; then
     fi
   done < "$retired"
 fi
-# The MCP entries Settings > Browser > Add wrote with `claude mcp add` and `codex mcp add` (also under the old name).
+# The MCP entries an older Polycarp's Settings > Browser > Add wrote with `claude mcp add` and `codex mcp add` (also under the old name).
 # Only an entry whose command is Polycarp's helper goes; one the person pointed elsewhere stays. Each call is capped at
 # 15 seconds, since an agent's CLI can stall checking its servers.
 for agent in claude codex; do
@@ -431,7 +432,7 @@ if [ ${#problems[@]} -eq 0 ]; then
   printf '%sPolycarp is removed.%s\n' "$bold" "$reset"
   echo "Your windows, Dock, shortcuts and agent settings are back as they were."
   echo "Its permission, settings and login item are gone too."
-  echo "The polycarp command and your theme files stay on purpose: Voice and Browser use them too."
+  echo "The polycarp command and your theme files stay on purpose: other apps, such as Silas, can read your theme."
   echo "To remove the command as well: cargo uninstall --root ~/.local polycarp"
   exit 0
 fi

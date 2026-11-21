@@ -1,146 +1,64 @@
 @testable import BaneySpacesCore
 import XCTest
 
-/// Which parts of Polycarp run: the file both the app and `polycarp features` use, what each part owns, what it asks of
-/// macOS, and the installer's checkboxes.
+/// Polycarp has no parts to choose. Workspaces always run: no chooser in Settings or the welcome window, and an old
+/// `features.toml` (from when the browser and dictation were parts) is never read, so `workspaces = false` in it can't
+/// leave the app doing nothing. The installer writes no such file and ignores one that's there.
 final class FeaturesTests: XCTestCase {
-    private func temp() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
-        return dir
+    func testWorkspacesIsTheOnlyPartAndItIsAlwaysOn() {
+        XCTAssertEqual(Feature.allCases, [.workspaces])
+        XCTAssertTrue(FeatureSet.all.contains(.workspaces))
     }
 
-    func testTheFileRoundTrips() {
-        let set = FeatureSet([.browser])
-        XCTAssertEqual(FeatureSet.parse(set.text), set)
-        XCTAssertTrue(set.text.contains("workspaces = false"))
-        XCTAssertTrue(set.text.contains("browser = true"))
-        XCTAssertEqual(set.text.split(separator: "\n").filter { !$0.hasPrefix("#") }.count, 2, "one line per part, no other")
-    }
-
-    func testOnlyAnExplicitFalseTurnsAPartOff() {
-        XCTAssertEqual(FeatureSet.parse(""), .all)
-        XCTAssertEqual(FeatureSet.parse("browser = maybe\nnonsense\n[x]\nbrowser"), .all)
-        XCTAssertEqual(FeatureSet.parse("browser = false # not today\n"), FeatureSet([.workspaces]))
-    }
-
-    /// A file written while dictation was a part of Polycarp still has its line. It is ignored, either way.
-    func testAnOldVoiceLineIsIgnored() {
-        XCTAssertEqual(FeatureSet.parse("workspaces = true\nvoice = false\nbrowser = true\n"), .all)
-        XCTAssertEqual(FeatureSet.parse("workspaces = false\nvoice = true\nbrowser = true\n"), FeatureSet([.browser]))
-    }
-
-    func testNoFileMeansNobodyHasChosen() throws {
-        let path = try temp().appendingPathComponent("sub/features.toml").path
-        XCTAssertNil(FeatureFile.load(path: path))
-        XCTAssertTrue(FeatureFile.save(FeatureSet([.browser]), path: path))
-        XCTAssertEqual(FeatureFile.load(path: path), FeatureSet([.browser]))
-    }
-
-    func testTheFileLivesBesideTheTheme() {
-        XCTAssertEqual(FeatureFile.path(env: ["POLYCARP_CONFIG_DIR": "/tmp/pc"], home: "/Users/a"), "/tmp/pc/features.toml")
-        XCTAssertEqual(FeatureFile.path(env: ["HOME": "/Users/a"], home: nil), "/Users/a/.config/polycarp/features.toml")
-    }
-
-    func testSettingsSectionsFollowTheirPart() {
-        let browserOnly = FeatureSet([.browser])
-        for gone in ["Keys", "Dock", "Launcher", "Agents", "Automation"] {
-            XCTAssertFalse(browserOnly.showsSettingsTab(gone), gone)
-        }
-        for kept in ["General", "Appearance", "Updates", "Browser"] { XCTAssertTrue(browserOnly.showsSettingsTab(kept), kept) }
-    }
-
-    func testEveryPartHasAPlainNameAndLine() {
-        XCTAssertEqual(Feature.allCases.map(\.title), ["Workspaces", "Browser"])
-        for f in Feature.allCases { XCTAssertTrue(f.summary.hasSuffix("."), f.title) }
-    }
-
-    // MARK: What each part asks of macOS
-
-    func testAPartThatIsOffAsksForNothing() {
-        XCTAssertEqual(Welcome.steps(for: .all).map(\.kind), [.accessibility])
-        XCTAssertEqual(Welcome.steps(for: FeatureSet([.workspaces])).map(\.kind), [.accessibility])
-        XCTAssertEqual(Welcome.steps(for: FeatureSet([.browser])).map(\.kind), [])
-    }
-
-    func testBrowserAloneStartsWithNoPermissions() {
-        let browser = FeatureSet([.browser])
-        XCTAssertTrue(Welcome.canStart(granted: [], features: browser))
-        XCTAssertNil(Welcome.next(granted: [], skipped: [], features: browser))
-        XCTAssertEqual(Welcome.defaultAction(granted: [], skipped: [], features: browser), .finish)
-        XCTAssertFalse(Welcome.shouldShow(hasFinished: true, granted: [], forced: false, features: browser))
-    }
-
-    func testEveryoneElseSeesTheWalkAsBefore() {
-        XCTAssertEqual(Welcome.steps(for: .all), Welcome.steps)
+    func testTheWelcomeWalkIsThePermissionsWithNoChooserFirst() throws {
         XCTAssertFalse(Welcome.canStart(granted: []))
         XCTAssertEqual(Welcome.next(granted: [], skipped: []), .accessibility)
+        let window = try Repo.code("Sources/BaneySpaces/WelcomeWindow.swift")
+        XCTAssertFalse(window.contains("WelcomePartsChooser"))
+        XCTAssertFalse(window.contains("Both come with the app"))
+        XCTAssertFalse(window.contains("Pick what you want"))
+        XCTAssertTrue(window.contains("            walk\n"), "the window opens on the permission walk")
     }
 
-    // MARK: Turning Browser off
-
-    private func manifest(_ home: URL, browser: String, helper: String) throws -> URL {
-        let url = home.appendingPathComponent("Library/Application Support/\(browser)/NativeMessagingHosts/\(BrowserPrevious.hostName).json")
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("{\"path\":\"\(helper)\"}".utf8).write(to: url)
-        return url
+    func testSettingsHasNoPartsGroup() throws {
+        let setup = try Repo.code("Sources/BaneySpaces/Setup.swift")
+        XCTAssertFalse(setup.contains("PartsSection"))
+        XCTAssertFalse(setup.contains("Parts of Polycarp"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: Repo.root.appendingPathComponent("Sources/BaneySpaces/Parts.swift").path))
     }
 
-    func testBrowserOffParksOnlyPolycarpsOwnManifests() throws {
-        let home = try temp()
-        let fm = FileManager.default
-        let ours = try manifest(home, browser: "net.imput.helium", helper: "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser")
-        let theirs = try manifest(home, browser: "Google/Chrome", helper: "/opt/homebrew/bin/tabkyra")
-
-        XCTAssertEqual(BrowserHosts.setEnabled(false, home: home), 1)
-        XCTAssertFalse(fm.fileExists(atPath: ours.path), "the browser can't find it now")
-        XCTAssertTrue(fm.fileExists(atPath: ours.path + BrowserHosts.offSuffix))
-        XCTAssertTrue(fm.fileExists(atPath: theirs.path), "a separate Tabkyra keeps working")
-
-        XCTAssertEqual(BrowserHosts.setEnabled(true, home: home), 1)
-        XCTAssertTrue(fm.fileExists(atPath: ours.path), "turning it on brings it straight back")
-        XCTAssertFalse(fm.fileExists(atPath: ours.path + BrowserHosts.offSuffix))
+    /// The app starts the workspaces at launch whatever an old file says: nothing in it reads the file or gates on a part.
+    func testTheAppNeverReadsTheOldFile() throws {
+        let sources = Repo.root.appendingPathComponent("Sources")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+        for case let url as URL in files where url.pathExtension == "swift" {
+            let code = try Repo.code(String(url.path.dropFirst(Repo.root.path.count + 1)))
+            for gone in ["PartsModel", "FeatureFile", "features.toml", "hasChosen"] {
+                XCTAssertFalse(code.contains(gone), "\(url.lastPathComponent) still has \(gone)")
+            }
+        }
+        let app = try Repo.code("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertTrue(app.contains("        legacyWatcher.start()\n        startWorkspaces()\n"), "the workspaces start at launch, unconditionally")
     }
 
-    func testTurningOnNeverOverwritesAManifestWrittenWhileItWasOff() throws {
-        let home = try temp()
-        let ours = try manifest(home, browser: "net.imput.helium", helper: "/Applications/Polycarp.app/x")
-        BrowserHosts.setEnabled(false, home: home)
-        try Data("{\"path\":\"/Applications/Polycarp.app/newer\"}".utf8).write(to: ours)
-        XCTAssertEqual(BrowserHosts.setEnabled(true, home: home), 0)
-        XCTAssertTrue(String(decoding: FileManager.default.contents(atPath: ours.path)!, as: UTF8.self).contains("newer"))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: ours.path + BrowserHosts.offSuffix), "the older parked copy goes")
+    // MARK: The installer
+
+    private func installerText() throws -> String {
+        try String(contentsOf: Repo.root.deletingLastPathComponent().appendingPathComponent("install.sh"), encoding: .utf8)
     }
 
-    func testRemovingBrowserDeletesOnlyParkedManifests() throws {
-        let home = try temp()
-        let fm = FileManager.default
-        let ours = try manifest(home, browser: "net.imput.helium", helper: "/Applications/Polycarp.app/x")
-        BrowserHosts.setEnabled(false, home: home)
-        let theirs = try manifest(home, browser: "Google/Chrome", helper: "/opt/homebrew/bin/tabkyra")
-        XCTAssertEqual(BrowserHosts.removeParked(home: home), 1)
-        XCTAssertFalse(fm.fileExists(atPath: ours.path + BrowserHosts.offSuffix))
-        XCTAssertTrue(fm.fileExists(atPath: theirs.path))
+    func testTheInstallerWritesNoPartsFile() throws {
+        let t = try installerText()
+        for gone in ["write_parts", "PARTS_FILE", "choose_parts"] { XCTAssertFalse(t.contains(gone), gone) }
     }
 
-    func testOnlyBrowserStartedHostsAreStopped() {
-        let helper = "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser"
-        let ps = """
-          101 \(helper) chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/ --parent-window=0
-          102 \(helper) serve --port 8787
-          106 \(helper) doctor --json
-          103 /opt/homebrew/bin/tabkyra chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/
-         1004 \(helper) chrome-extension://abcdefghijklmnopabcdefghijklmnop/
-          105 /bin/zsh -c grep \(helper) chrome-extension://
-        garbage line
-        """
-        XCTAssertEqual(BrowserHosts.hostPids(ps: ps, helper: helper), [101, 102, 1004], "remote access goes too; doctor doesn't")
+    /// The old app and Polycarp can't run together, and Polycarp always runs workspaces now, so an old
+    /// `workspaces = false` no longer keeps BaneySpaces.
+    func testAnOldFileNoLongerKeepsTheOldApp() throws {
+        XCTAssertFalse(try installerText().contains("workspaces = false"))
     }
 
-    // MARK: The installer's checkboxes
-
-    /// Runs one of install.sh's functions in bash, the way the installer does.
+    /// Runs install.sh's functions in bash, the way the installer does. Nothing is installed.
     private func installer(_ script: String) throws -> (Int32, String) {
         let root = Repo.root.deletingLastPathComponent()
         let p = Process()
@@ -156,58 +74,12 @@ final class FeaturesTests: XCTestCase {
         return (p.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 
-    func testTheInstallerWritesTheChosenParts() throws {
-        let dir = try temp()
-        let (code, output) = try installer("write_parts '\(dir.path)' 'workspaces,browser'")
-        XCTAssertEqual(code, 0, output)
-        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.workspaces, .browser]))
-    }
-
-    func testTheInstallerRefusesAnUnknownPartAndAnEmptyChoice() throws {
-        let dir = try temp()
-        XCTAssertNotEqual(try installer("write_parts '\(dir.path)' 'browser,typo'").0, 0)
-        XCTAssertNotEqual(try installer("write_parts '\(dir.path)' ''").0, 0)
-        XCTAssertNil(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path))
-    }
-
-    func testTheInstallerStillAcceptsVoiceButWritesNothingForIt() throws {
-        let dir = try temp()
-        let (code, output) = try installer("write_parts '\(dir.path)' 'voice,browser'")
-        XCTAssertEqual(code, 0, output)
-        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.browser]))
-        let alone = try temp()
-        XCTAssertEqual(try installer("write_parts '\(alone.path)' 'voice'").0, 0)
-        let written = try String(contentsOf: alone.appendingPathComponent("features.toml"), encoding: .utf8)
-        XCTAssertTrue(written.contains("workspaces = false"), "voice alone still writes workspaces off, so the old app is kept: \(written)")
-    }
-
-    func testSpacesAroundThePartsAreFine() throws {
-        let dir = try temp()
-        XCTAssertEqual(try installer("write_parts '\(dir.path)' 'workspaces, browser'").0, 0)
-        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.workspaces, .browser]))
-    }
-
-    func testAReinstallKeepsTheChoice() throws {
-        let dir = try temp()
-        let file = dir.appendingPathComponent("features.toml")
-        FeatureFile.save(FeatureSet([.workspaces]), path: file.path)
-        XCTAssertEqual(try installer("write_parts '\(dir.path)' 'browser'").0, 0)
-        XCTAssertEqual(FeatureFile.load(path: file.path), FeatureSet([.workspaces]))
-    }
-
-    func testTheOldAppIsRetiredOnlyForSomeoneTakingWorkspaces() throws {
-        let installer = try String(contentsOf: Repo.root.deletingLastPathComponent().appendingPathComponent("install.sh"), encoding: .utf8)
-        let keep = try XCTUnwrap(installer.range(of: "grep -q '^workspaces = false'"))
-        let retire = try XCTUnwrap(installer.range(of: "if [ ${#OLD_APPS[@]} -gt 0 ]; then"))
-        XCTAssertLessThan(keep.lowerBound, retire.lowerBound, "the list is emptied before anything acts on it")
-        let choose = try XCTUnwrap(installer.range(of: "[ -n \"$REPLY\" ] || choose_parts"))
-        let download = try XCTUnwrap(installer.range(of: "# 1. Get the app."))
-        XCTAssertLessThan(choose.lowerBound, download.lowerBound, "the boxes come before the wait")
-    }
-
-    func testTheInstallerNeverPromptsWithoutATerminal() throws {
-        let (code, output) = try installer("choose_parts; echo \"chose=[$REPLY]\"")
-        XCTAssertEqual(code, 0, output)
-        XCTAssertTrue(output.contains("chose=[]"), output)
+    /// An older scripted install that still sets POLYCARP_FEATURES carries on: workspaces, a typo or nothing say nothing.
+    func testAnOldFeaturesListIsHarmless() throws {
+        for list in ["workspaces", " workspaces , ", "workspaces,typo", ""] {
+            let (code, output) = try installer("moved_notes '\(list)'")
+            XCTAssertEqual(code, 0, list)
+            XCTAssertEqual(output, "", list)
+        }
     }
 }

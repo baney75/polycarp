@@ -8,20 +8,6 @@ final class OneAppFollowupTests: XCTestCase {
         try String(contentsOf: Repo.root.deletingLastPathComponent().appendingPathComponent(path), encoding: .utf8)
     }
 
-    func testAHelperFailureOnStderrIsTheMessage() {
-        let err = Data("error: no agent found\n".utf8), out = Data("checking agents\n".utf8)
-        XCTAssertEqual(BrowserBundle.resultText(out: Data(), err: err, failed: true), "error: no agent found")
-        XCTAssertEqual(BrowserBundle.resultText(out: out, err: err, failed: true), "error: no agent found")
-        XCTAssertEqual(BrowserBundle.resultText(out: out, err: Data(), failed: true), "checking agents", "nothing on stderr: stdout")
-        XCTAssertEqual(BrowserBundle.resultText(out: out, err: err, failed: false), "checking agents", "success reads stdout")
-    }
-
-    func testTheAppReadsTheHelpersStderr() throws {
-        let app = try Repo.text("Sources/BaneySpaces/BrowserSetup.swift")
-        XCTAssertFalse(app.contains("p.standardError = Pipe()"), "a stderr nobody reads loses the failure")
-        XCTAssertTrue(app.contains("BrowserBundle.resultText(out: data, err: err"))
-    }
-
     func testCIRunsTheSpacesTestsForTheRootInstaller() throws {
         let ci = try text(".github/workflows/ci.yml")
         let paths = ci.split(separator: "\n").filter { $0.contains("paths: [") }

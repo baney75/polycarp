@@ -31,12 +31,6 @@ step() { printf '%s==>%s %s\n' "$bold" "$reset" "$*"; }
 fail() { echo "release.sh: $*" >&2; exit 1; }
 
 [ -z "$(git status --porcelain)" ] || fail "the working tree isn't clean. Commit or stash first, so the app matches a commit."
-# The app holds the browser helper, built with Bun from the pinned sibling repos: a release is built with everything.
-command -v bun >/dev/null || fail "Bun isn't installed (https://bun.sh); the browser helper can't be built without it."
-if [ ! -d ../mini-lit ] || [ ! -d ../pi-mono ] || [ ! -d ../browser/node_modules ]; then
-  step "Checking out the browser's sibling repos"
-  ../browser/scripts/setup-siblings.sh
-fi
 if [ "$PREVIEW" = 1 ]; then
   # Apple silicon only, and still the stable signing identity (never ad-hoc).
   export BANEYSPACES_ARM64_ONLY=1

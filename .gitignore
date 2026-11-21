@@ -1,7 +1,3 @@
-# Siblings that browser/scripts/setup-siblings.sh clones here
-/mini-lit/
-/pi-mono/
-
 # Build output (subdirectories ignore their own)
 node_modules/
 .build/
@@ -10,3 +6,6 @@ dist/
 dist-chrome/
 .DS_Store
 core/*/target/
+# Sibling clones an older release.sh made at the root; ignored so release.sh still sees a clean tree.
+/mini-lit/
+/pi-mono/

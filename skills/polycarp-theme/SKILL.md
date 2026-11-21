@@ -80,7 +80,7 @@ polycarp theme change type.display 'ui-monospace, "SF Mono", Menlo, Consolas, mo
 
 ## Example: "only the browser panel greener"
 
-Only Tabkyra changes; Spaces, Voice and the site keep their accent.
+Only the browser extension (Tychicus) changes; Spaces, Voice and the site keep their accent.
 
 ```sh
 polycarp theme change surface.browser.light.accent '#2f6b3a'

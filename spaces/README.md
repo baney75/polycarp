@@ -338,7 +338,7 @@ make install
 ```
 
 <p align="center">
-  <img src="docs/shots/setup.jpg" alt="Polycarp Settings on General: the parts of Polycarp, permissions and startup" width="420">
+  <img src="docs/shots/setup.jpg" alt="Polycarp Settings on General: permissions and startup" width="420">
 </p>
 
 Then a setup window opens. There is one thing you have to do:

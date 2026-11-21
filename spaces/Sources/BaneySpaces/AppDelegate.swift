@@ -449,14 +449,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             exit((try? app.unregister()) != nil ? 0 : 1)
         }
         linkCommandIfNeeded()
-        // A new app brings a new extension: refresh the copy the browser loads now, off the main thread, before anyone is told to reload.
         // A person who came by the disk image never ran install.sh: BaneySpaces, if there, goes to the Trash once Polycarp runs.
         let welcomeFinishedAtLaunch = UserDefaults.standard.bool(forKey: Welcome.finishedKey)
         // Tried at 5 s, and again every 10 s (for up to two minutes) while only the settings import is unfinished.
         func tryRetirement(_ attempt: Int) {
             DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 5 : 10)) {
-                // Someone who left Workspaces unticked may still want BaneySpaces, so it stays.
-                guard PartsModel.shared.hasChosen, PartsModel.shared.current.contains(.workspaces) else { return }
                 let finished = LegacyRetirement.welcomeFinished(atLaunch: welcomeFinishedAtLaunch, now: UserDefaults.standard.bool(forKey: Welcome.finishedKey))
                 if !LegacyRetirementRunner.runIfDue(welcomeFinished: finished), attempt < 12 { tryRetirement(attempt + 1) }
             }
@@ -547,13 +544,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         session.onSearch = { [weak self] in self?.launcher.toggle() }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
         DockRestart.isSwitching = { [weak self] in self?.spaces.switching ?? false }
-        let parts = PartsModel.shared
         legacyWatcher.start()
-        parts.onChange = { [weak self] old, new in self?.partsChanged(from: old, to: new) }
-        parts.onChosen = { [weak self] in self?.startParts() }
-        // Nobody has picked yet: nothing starts, and the welcome window asks first.
-        if parts.hasChosen { startParts() } else { restoreSystemControls(); updateIcon() }
-        parts.watch()
+        startWorkspaces()
         updater.onChange = { [weak self] in self?.updateIcon() }
         // Not while a workspace switches.
         updater.isBusy = { [weak self] in self?.spaces.switching ?? false }
@@ -563,7 +555,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         UserDefaults.standard.set(true, forKey: "setupShown")
         if CommandLine.arguments.contains("--setup") {
             showSetup()
-        } else if Welcome.shouldShow(hasFinished: UserDefaults.standard.bool(forKey: Welcome.finishedKey), granted: WelcomeModel.read(), forced: false, features: PartsModel.shared.current) {
+        } else if Welcome.shouldShow(hasFinished: UserDefaults.standard.bool(forKey: Welcome.finishedKey), granted: WelcomeModel.read(), forced: false) {
             showWelcome()
         }
     }
@@ -584,51 +576,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private let legacyWatcher = LegacyWatcher()
 
-    /// Starts the parts that are on. The choice can change while the app is quit, so each part is put in the state it says
-    /// here, not only when a change is seen.
-    private func startParts() {
-        let parts = PartsModel.shared.current
-        if parts.contains(.workspaces) {
-            startWhenTrusted()
-            // ⌘Space works with or without Accessibility; Spotlight hands it over first.
-            if Launcher.onCmdSpace { setLauncherOnCmdSpace(true) } else { registerShortcuts() }
-        } else {
-            restoreSystemControls()
-            // ⌘Space goes back to Spotlight, as it does on a quit.
-            SystemShortcuts.spotlightQueue.async { SystemShortcuts.restoreSpotlight() }
-        }
-        BrowserModel.shared.applyPart(on: parts.contains(.browser))
+    /// Starts the workspaces. They are always on: an old `features.toml` that says `workspaces = false` is not read.
+    private func startWorkspaces() {
+        startWhenTrusted()
+        // ⌘Space works with or without Accessibility; Spotlight hands it over first.
+        if Launcher.onCmdSpace { setLauncherOnCmdSpace(true) } else { registerShortcuts() }
         updateIcon()
-    }
-
-    /// Whatever an earlier run took over goes back: without Workspaces, nothing here takes it again.
-    private func restoreSystemControls() {
-        SystemDock.restore()
-        SystemTopDrag.restore()
-        SystemMissionControl.restore()
-    }
-
-    /// A part changed, from Settings or `polycarp features`. Workspaces restart the app, because a clean quit is the tested
-    /// way to put every window, the Dock and Mission Control back, and a clean start the way to take them. The others
-    /// apply at once.
-    private func partsChanged(from old: FeatureSet, to new: FeatureSet) {
-        if old.contains(.workspaces) != new.contains(.workspaces) { return relaunch() }
-        if old.contains(.browser) != new.contains(.browser) {
-            BrowserModel.shared.applyPart(on: new.contains(.browser))
-        }
-        if !new.showsSettingsTab(setup.model.tab.rawValue) { setup.model.tab = .general }
-        updateIcon()
-    }
-
-    /// Opens this app again once this copy has finished quitting, and quits. The shell waits on the pid, so the new copy
-    /// can't start beside the old one.
-    private func relaunch() {
-        let wait = Process()
-        wait.executableURL = URL(fileURLWithPath: "/bin/sh")
-        wait.arguments = ["-c", "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"", "relaunch",
-                          "\(ProcessInfo.processInfo.processIdentifier)", Bundle.main.bundlePath]
-        do { try wait.run() } catch { Trace.log("relaunch: \(error)") }
-        NSApp.terminate(nil)
     }
 
     @objc private func showWelcome() { welcome.show() }
@@ -809,7 +762,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// apps until then. Picking a different modifier in setup re-registers them.
     private func registerShortcuts() {
         hotkeys.removeAll()
-        guard PartsModel.shared.current.contains(.workspaces) else { return }
         if Launcher.onCmdSpace, !SystemShortcuts.spotlightOwnsCmdSpace {
             hotkeys.register(keyCode: kVK_Space, modifiers: cmdKey) { [weak self] in self?.launcher.toggle() }
         }
@@ -859,10 +811,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Menu bar
 
     private func updateIcon() {
-        // Without Workspaces there's no number to show and no waiting on Accessibility to warn about: just the branch.
-        let plain = !PartsModel.shared.hasChosen || !PartsModel.shared.current.contains(.workspaces)
-        let name = plain ? "leaf" : started ? "\(spaces.model.current).square.fill" : "exclamationmark.triangle"
-        let description = plain ? "Polycarp" : started ? "Polycarp, workspace \(spaces.model.current)" : "Polycarp needs Accessibility access"
+        let name = started ? "\(spaces.model.current).square.fill" : "exclamationmark.triangle"
+        let description = started ? "Polycarp, workspace \(spaces.model.current)" : "Polycarp needs Accessibility access"
         // The Polycarp theme shows the olive branch with the workspace number; the others draw their own indicator.
         let image = (started ? (MenuBarMark.image(workspace: spaces.model.current, description: description)
                                 ?? MenuBarMark.polycarp(workspace: spaces.model.current, description: description)) : nil)
@@ -908,13 +858,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        if !PartsModel.shared.hasChosen || !PartsModel.shared.current.contains(.workspaces) {
-            if let notice = updateNotice() { menu.addItem(menuItem(for: .update(notice))) }
-            menu.addItem(item("Settings…", #selector(showSetup), key: ","))
-            menu.addItem(.separator())
-            menu.addItem(item("Quit Polycarp", #selector(quit), key: "q"))
-            return
-        }
         guard started else {
             if aeroSpaceRunning {
                 menu.addItem(withTitle: "Waiting for AeroSpace to quit", action: nil, keyEquivalent: "")

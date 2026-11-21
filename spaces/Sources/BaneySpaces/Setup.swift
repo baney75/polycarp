@@ -435,7 +435,7 @@ final class SetupModel: ObservableObject {
 /// The settings window's tabs. General comes first: it's where a new Mac starts.
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "General", keys = "Keys", dock = "Dock", appearance = "Appearance", launcher = "Launcher",
-         automation = "Automation", permissions = "Permissions", updates = "Updates", agents = "Agents", browser = "Browser"
+         automation = "Automation", permissions = "Permissions", updates = "Updates", agents = "Agents"
     var id: Self { self }
 
     var symbol: String {
@@ -449,7 +449,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .permissions: "hand.raised"
         case .updates: "arrow.down.circle"
         case .agents: "cpu"
-        case .browser: "globe"
         }
     }
 }
@@ -459,7 +458,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 struct SetupView: View {
     @ObservedObject var model: SetupModel
     @ObservedObject private var appearance = Appearance.shared
-    @ObservedObject private var parts = PartsModel.shared
     @StateObject private var themes = ThemePicker()
     var close: () -> Void
     /// The window's height. Offscreen checks pass more, so the lazy pane builds every group at once.
@@ -482,7 +480,6 @@ struct SetupView: View {
                                                        onAsk: { if $0 == .accessibility { model.askedForAccessibility() } })
                     case .updates: updates
                     case .agents: agents
-                    case .browser: BrowserSettingsView()
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -513,21 +510,16 @@ struct SetupView: View {
                     Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 44, height: 44)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Polycarp").font(Chrome.font(15, .bold))
-                        Text(parts.current.contains(.workspaces) ? "Nine workspaces. One row of keys." : "Bear much fruit.")
+                        Text("Nine workspaces. One row of keys.")
                             .font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                     }
                     Spacer()
-                    if parts.current.contains(.workspaces) {
-                        SettingsStatusLabel(text: model.trusted ? "Running" : "Needs a switch", done: model.trusted)
-                    }
+                    SettingsStatusLabel(text: model.trusted ? "Running" : "Needs a switch", done: model.trusted)
                 }
             }
             if model.justEnabled && model.ready { SettingsNote("Polycarp is on. Try \(model.modifier.symbol)2.", tone: .done) }
         }
 
-        PartsSection(parts: parts)
-
-        if parts.current.contains(.workspaces) {
         SettingsGroup("Permissions") {
             // Every permission, its state and its button live in the Permissions section.
             SettingsRow(model.trusted ? "Accessibility is on" : "Polycarp needs Accessibility",
@@ -549,8 +541,6 @@ struct SetupView: View {
                     ? "Polycarp's overview has replaced Mission Control. To close the extra desktops, turn off \"Use Polycarp's overview instead of Mission Control\" under Keys, open Mission Control, hover each extra desktop at the top and click its close button, then turn the switch back on."
                     : "Open Mission Control, hover each extra desktop at the top, and click its close button.")
             }
-        }
-
         }
 
         SettingsGroup("Startup") {
@@ -788,24 +778,7 @@ struct SetupView: View {
 
     // MARK: Agents
 
-    @ObservedObject private var browserModel = BrowserModel.shared
-
     @ViewBuilder private var agents: some View {
-        SettingsGroup("Always allow") {
-            SettingsRow("Agents open any site without asking", help: browserModel.status?.anySite == nil ? "Open your browser to change this." : "Otherwise they ask you before each new site.") {
-                Toggle("Any site", isOn: binding({ browserModel.status?.anySite ?? false }, { browserModel.setAnySite($0) }))
-                    .labelsHidden().toggleStyle(.switch)
-                    .disabled(browserModel.busy || browserModel.status?.anySite == nil)
-            }
-            SettingsRow("Claude Code uses Polycarp without asking", help: browserModel.status?.claudeReady == true ? "Stops its prompt for Polycarp's tools. Its other tools still ask." : "Add Polycarp to Claude Code first, in Settings > Browser.") {
-                Toggle("Claude Code", isOn: binding({ browserModel.status?.claudeAllowed ?? false }, { browserModel.setClaudeAllowed($0) }))
-                    .labelsHidden().toggleStyle(.switch)
-                    .disabled(browserModel.busy || browserModel.status?.claudeReady != true)
-            }
-            SettingsNote("Page scripts run without asking. For the fastest ones, turn on Allow user scripts at chrome://extensions > Polycarp > Details.")
-            if let message = browserModel.message { SettingsNote(message, tone: .urgent) }
-        }
-
         SettingsGroup("Sandbox") {
             SettingsRow("Allow the sandbox", help: "A throwaway macOS VM for agent work.") {
                 Toggle("Sandbox", isOn: binding({ model.sandbox.enabled }, { var s = model.sandbox; s.enabled = $0; model.setSandbox(s) })).labelsHidden()
@@ -1212,8 +1185,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ n: Notification) {
         model.stopWatching()
-        // The remote section's passcode and connect code are shown once: closing Settings forgets them, a tab switch doesn't.
-        BrowserRemoteModel.shared.clearSecrets()
         model.finish()
     }
 }

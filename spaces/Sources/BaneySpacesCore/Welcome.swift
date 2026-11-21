@@ -31,15 +31,6 @@ public enum Welcome {
             after: "Turn on Polycarp in the list. This window updates by itself."),
     ]
 
-    /// The walk for the parts that are on. Workspaces asks for all it uses, and Browser needs nothing from macOS at all.
-    public static func steps(for features: FeatureSet) -> [PermissionStep] {
-        steps.filter { step in
-            switch step.kind {
-            case .accessibility: features.contains(.workspaces)
-            }
-        }
-    }
-
     /// The last row: not a permission, so it never blocks starting and is never "current". On by default.
     public enum StartAtLogin {
         public static let title = "Start with your Mac"
@@ -56,21 +47,21 @@ public enum Welcome {
     /// The button that is the default action (Return) now: the current permission's Allow button while one is left, so
     /// the walk is press, flip, press, flip; the finish button only when nothing is left to ask. Nil when neither shows.
     public enum DefaultAction: Equatable { case allow(PermissionKind), finish }
-    public static func defaultAction(granted: Set<PermissionKind>, skipped: Set<PermissionKind>, features: FeatureSet = .all) -> DefaultAction? {
-        if let k = next(granted: granted, skipped: skipped, features: features) { return .allow(k) }
-        return canStart(granted: granted, features: features) ? .finish : nil
+    public static func defaultAction(granted: Set<PermissionKind>, skipped: Set<PermissionKind>) -> DefaultAction? {
+        if let k = next(granted: granted, skipped: skipped) { return .allow(k) }
+        return canStart(granted: granted) ? .finish : nil
     }
 
     public static func step(_ kind: PermissionKind) -> PermissionStep { steps.first { $0.kind == kind }! }
 
     /// The permission to ask for now: the first one not granted and not skipped. Nil when none is left.
-    public static func next(granted: Set<PermissionKind>, skipped: Set<PermissionKind>, features: FeatureSet = .all) -> PermissionKind? {
-        steps(for: features).first { !granted.contains($0.kind) && !skipped.contains($0.kind) }?.kind
+    public static func next(granted: Set<PermissionKind>, skipped: Set<PermissionKind>) -> PermissionKind? {
+        steps.first { !granted.contains($0.kind) && !skipped.contains($0.kind) }?.kind
     }
 
     /// Polycarp can start once everything required is granted. A required permission can't be skipped.
-    public static func canStart(granted: Set<PermissionKind>, features: FeatureSet = .all) -> Bool {
-        steps(for: features).allSatisfy { !$0.isRequired || granted.contains($0.kind) }
+    public static func canStart(granted: Set<PermissionKind>) -> Bool {
+        steps.allSatisfy { !$0.isRequired || granted.contains($0.kind) }
     }
 
     /// Whether a person may pass on this one for now.
@@ -78,8 +69,8 @@ public enum Welcome {
 
     /// The welcome window shows on first run, and whenever the one required permission is missing (macOS forgot it after
     /// an update, say). Optional ones never bring it back: a person who skipped them isn't asked twice.
-    public static func shouldShow(hasFinished: Bool, granted: Set<PermissionKind>, forced: Bool, features: FeatureSet = .all) -> Bool {
-        forced || !hasFinished || !canStart(granted: granted, features: features)
+    public static func shouldShow(hasFinished: Bool, granted: Set<PermissionKind>, forced: Bool) -> Bool {
+        forced || !hasFinished || !canStart(granted: granted)
     }
 
     public static let finishedKey = "welcomeFinished"
