@@ -2108,7 +2108,7 @@ struct DockView: View {
                     .font(Chrome.font(8.5, .bold, rounded: true))
                     .foregroundStyle(tile.isCurrent ? tint : Chrome.muted)
                 Text(text)
-                    .font(.system(size: 11, weight: tile.isCurrent ? .medium : .regular, design: .serif).italic())
+                    .font(Chrome.voice(11, tile.isCurrent ? .medium : .regular))
                     .foregroundStyle(tile.isCurrent ? Chrome.wash() : hovered ? Chrome.wash(0.85) : Chrome.muted)
                     .lineLimit(1).truncationMode(.tail)
             }
@@ -2396,7 +2396,7 @@ struct DockView: View {
                 .frame(width: vertical ? tileSize : tileSize * 0.75, height: vertical ? tileSize * 0.75 : tileSize)
                 .modifier(CenterReport(key: DockView.backgroundKey))
             // In the number row under the tiles.
-            Text("At rest").font(.system(size: 10.5, design: .serif).italic()).foregroundStyle(Chrome.wash(open ? 0.8 : 0.45))
+            Text("At rest").font(Chrome.voice(10.5)).foregroundStyle(Chrome.wash(open ? 0.8 : 0.45))
                 .lineLimit(1).minimumScaleFactor(0.7).frame(width: vertical ? tileSize : tileSize * 0.75, height: 15)
         }
         .contentShape(Rectangle())

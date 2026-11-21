@@ -178,6 +178,13 @@ enum Chrome {
     }
 
     /// Text at a size written for the 12 pt base, in the theme's family and weight.
+    /// The voice for words you gave Polycarp (a workspace's purpose, the one thing): serif italic, at the theme's scale
+    /// and weights, so it reads as yours beside the interface's own labels.
+    static func voice(_ size: Double, _ weight: TextWeight = .regular) -> Font {
+        let f = look.spec.font
+        return .system(size: CGFloat(f.size(size)), weight: f.weight(weight).swiftUI, design: .serif).italic()
+    }
+
     static func font(_ size: Double, _ weight: TextWeight = .regular, rounded: Bool = false) -> Font {
         let f = look.spec.font
         if f.family == "system-sans" {
