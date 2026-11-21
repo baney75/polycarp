@@ -515,3 +515,71 @@ fn a_folder_taken_out_of_files_toml_is_no_longer_found() {
         1
     );
 }
+
+fn roots_toml(sb: &Sandbox, roots: &[&Path]) {
+    let list: Vec<String> = roots
+        .iter()
+        .map(|r| format!("{:?}", r.to_str().unwrap()))
+        .collect();
+    fs::write(
+        sb.dir("cfg").join("files.toml"),
+        format!("roots = [{}]\n", list.join(", ")),
+    )
+    .unwrap();
+}
+
+fn hits(sb: &Sandbox, word: &str) -> usize {
+    sb.search(&[word])["data"]["results"]
+        .as_array()
+        .unwrap()
+        .len()
+}
+
+#[test]
+fn a_root_inside_a_folder_its_outer_root_skips_keeps_its_own_rules() {
+    // ~/Library/CloudStorage/Dropbox listed beside ~: Library is skipped under ~, but not under its own root.
+    let sb = Sandbox::new();
+    sb.write("Library/CloudStorage/Dropbox/plan.md", "zephyr");
+    let docs = sb.dir("docs");
+    let dropbox = docs.join("Library/CloudStorage/Dropbox");
+    roots_toml(&sb, &[&docs, &dropbox]);
+    sb.index();
+    assert_eq!(hits(&sb, "zephyr"), 1);
+    sb.write("Library/CloudStorage/Dropbox/later/notes.md", "quokka");
+    let o = sb.run(&[
+        "files",
+        "index",
+        "--json",
+        "--root",
+        dropbox.join("later").to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert_eq!(hits(&sb, "quokka"), 1);
+    assert_eq!(hits(&sb, "zephyr"), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_root_through_a_symlink_takes_a_root_inside_it() {
+    // macOS temp folders live under /var, which is /private/var. files.toml's roots are resolved like --root is, so a
+    // folder inside one matches.
+    let sb = Sandbox::new();
+    sb.write("real/a.md", "walrus");
+    let link = sb.dir("home").join("linked");
+    std::os::unix::fs::symlink(sb.dir("docs").join("real"), &link).unwrap();
+    roots_toml(&sb, &[&link]);
+    sb.index();
+    assert_eq!(hits(&sb, "walrus"), 1);
+    sb.write("real/sub/b.md", "narwhal");
+    let o = sb.run(&[
+        "files",
+        "index",
+        "--json",
+        "--root",
+        link.join("sub").to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    // Found, so the rows went in under the root's own spelling, the one search keeps.
+    assert_eq!(hits(&sb, "narwhal"), 1);
+    assert_eq!(hits(&sb, "walrus"), 1);
+}

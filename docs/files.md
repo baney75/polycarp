@@ -51,7 +51,9 @@ always be built again. A second `index` run reads only files whose size or time 
 It holds only the roots in `files.toml`: take a folder out of `roots` and the next `index` drops its files, and search
 (here and from other devices) shows only files under a current root even before that. `index --root <dir>` updates
 just one folder inside a root, under that root's rules; a folder outside every root is refused, so it never leaves
-files behind.
+files behind. A root listed in `roots` that is missing (an unplugged drive) keeps its files. A cloud folder that only
+the defaults found drops out when you sign out of that drive, and its files go until it is back; list it in
+`extra_roots` to keep them. A root inside another (`~/Library/CloudStorage/Dropbox` beside `~`) keeps its own rules.
 `index --watch` keeps it current as files change, and does a full pass again every 12 hours. It watches only the
 folders the index walks (on Linux one by one, so hidden, build and secret folders use no watch). If watching can't
 start or stops, it rescans every 10 minutes instead, and `doctor` says why.

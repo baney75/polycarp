@@ -713,7 +713,7 @@ fn cmd_index(f: &Flags) -> i32 {
         } else {
             fs::canonicalize(&p).unwrap_or(p)
         };
-        let Some(within) = configured.iter().find(|c| p.starts_with(&c.path)) else {
+        let Some(within) = index::owner(&configured, &p) else {
             return report(
                 Err(Fail::usage(format!(
                     "{} is not inside a folder in files.toml; add it to roots or extra_roots first",

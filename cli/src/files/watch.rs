@@ -59,7 +59,7 @@ pub fn watch_plan(
 
 /// An event worth indexing: inside a root and not inside a folder the walk skips.
 pub fn relevant(roots: &[Root], extra: &[String], p: &Path) -> bool {
-    let Some(root) = roots.iter().find(|r| p.starts_with(&r.path)) else {
+    let Some(root) = index::owner(roots, p) else {
         return false;
     };
     let rel = p.strip_prefix(&root.path).unwrap_or(p);

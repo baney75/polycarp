@@ -237,8 +237,9 @@ impl Index {
     }
 
     /// Walks every root and brings the index up to date. Rows under a root that was walked and no longer exist go,
-    /// and so do rows under no root at all (a folder taken out of files.toml). A root that is missing (an unplugged
-    /// drive, a cloud folder signed out) keeps its rows.
+    /// and so do rows under no root at all (a folder taken out of files.toml). A root files.toml lists that is
+    /// missing (an unplugged drive) keeps its rows; a cloud folder only the default roots found leaves the roots when
+    /// it is signed out, and its rows go with it.
     pub fn update(&mut self, roots: &[Root], extra: &[String]) -> Result<Stats, String> {
         self.update_within(roots, roots, extra)
     }
@@ -260,10 +261,7 @@ impl Index {
                 continue;
             }
             stats.roots += 1;
-            let owner = keep
-                .iter()
-                .find(|k| root.path.starts_with(&k.path))
-                .unwrap_or(root);
+            let owner = owner(keep, &root.path).unwrap_or(root);
             walk(&tx, owner, &root.path, extra, run, &mut stats)?;
             sweep(&tx, &root.path, run, &mut stats)?;
         }
@@ -289,7 +287,7 @@ impl Index {
         let mut stats = Stats::default();
         let tx = self.conn.transaction().map_err(db_err)?;
         for p in paths {
-            let Some(root) = roots.iter().find(|r| p.starts_with(&r.path)) else {
+            let Some(root) = owner(roots, p) else {
                 continue;
             };
             let Ok(rel) = p.strip_prefix(&root.path) else {
@@ -431,6 +429,15 @@ impl Index {
     pub fn set_watch(&self, mode: &str) -> Result<(), String> {
         self.set_meta("watch", mode)
     }
+}
+
+/// The root `p` is in. With one root inside another, the deepest, so a root under a folder the outer one skips
+/// (`~/Library/CloudStorage/Dropbox` inside `~`) keeps its own rules.
+pub fn owner<'a>(roots: &'a [Root], p: &Path) -> Option<&'a Root> {
+    roots
+        .iter()
+        .filter(|r| p.starts_with(&r.path))
+        .max_by_key(|r| r.path.components().count())
 }
 
 /// A folder inside a root that the walk would go into.
