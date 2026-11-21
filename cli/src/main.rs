@@ -68,7 +68,7 @@ polycarp: one command for Polycarp Spaces and themes
 Usage:
   polycarp spaces [args...]    run the Spaces command
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
-  polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
+  polycarp mcp                 serve the theme and surfaces commands to an agent over MCP (stdio)
   polycarp files <command>     search, open and send your files across your devices (polycarp files --help)
   polycarp doctor              show which tools were found
   polycarp --version
@@ -499,6 +499,12 @@ fn run(mut cmd: Command) -> i32 {
             126
         }
     }
+}
+
+/// The spaces command for `polycarp mcp`'s surfaces tools, which run it unasked: found as `handoff` finds it, and only
+/// from a trusted folder, as `update` and `version` require.
+pub(crate) fn spaces_command() -> Option<PathBuf> {
+    find(&SPACES).ok().filter(|p| trusted_tool(p))
 }
 
 fn handoff(tool: &Tool, args: &[OsString]) -> i32 {

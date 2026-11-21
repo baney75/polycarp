@@ -1,13 +1,18 @@
-//! `polycarp mcp`: the theme commands as MCP tools over stdio.
+//! `polycarp mcp`: the theme commands, and the surfaces commands, as MCP tools over stdio.
 //!
-//! JSON-RPC 2.0, one message per line. Each tool calls the same `op_*` function the command line
-//! calls and returns the same envelope, so the two cannot drift.
+//! JSON-RPC 2.0, one message per line. Each theme tool calls the same `op_*` function the command line
+//! calls and returns the same envelope, so the two cannot drift. Each surfaces tool runs
+//! `polycarp-spaces surfaces ... --json` and passes its envelope on as is, for the same reason
+//! (spaces/docs/surfaces.md).
 
 use crate::theme::{self, ApiErr, Ctx};
 use serde_json::{json, Map, Value as Json};
 use std::collections::BTreeSet;
 use std::ffi::OsString;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
 pub(crate) const LATEST: &str = "2025-06-18";
 pub(crate) const KNOWN: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -36,6 +41,9 @@ then theme_set it.
 Themes you did not make in this session belong to the person: theme_delete and a theme_apply that would replace \
 one are refused unless you pass force true, which you do only after the person agrees. theme_delete removes \
 a theme you made and no longer need.
+Surfaces (what the top bar, desktop scene, dock tiles, status menu, new tab page and idle screen show) are one \
+file of their own, not the theme: read surfaces_schema, then surfaces_get the path, then surfaces_set it. A refused \
+set wrote nothing; error.data.errors gives each path and why. To undo, surfaces_set the value surfaces_get gave before.
 Every result is {ok, data} or {ok:false, error:{code, message, suggestion, data:{errors}}}.";
 
 fn obj(props: Json, required: &[&str]) -> Json {
@@ -267,6 +275,39 @@ fn tools() -> Vec<Tool> {
             destructive: true,
             idempotent: true,
         },
+        Tool {
+            name: "surfaces_schema",
+            description: "Read this before surfaces_get or surfaces_set. Returns the JSON Schema (draft 2020-12) for surfaces.json, the one file that says what each Polycarp surface shows: the top bar (bar), the desktop scene and its verse (desktop), the dock's tiles (dock), the status menu (menu), the browser's new tab page (newtab), the idle screen (idle) and where verses come from (text). Every field has its default, range or choices, and its path.",
+            schema: obj(json!({}), &[]),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "surfaces_get",
+            description: "The value in force at a path (the file over the compiled-in defaults), whether the file itself sets it, and the file. Leave path out for every surface at once. Use it to see what is there before you change it, and to remember a value you may want to put back.",
+            schema: obj(
+                json!({"path": {"type":"string","description":"Keys joined with dots, as bar.height, bar.modules.left or desktop.scene; a group (bar) gives all its fields. Leave out for everything."}}),
+                &[],
+            ),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "surfaces_set",
+            description: "Set one field or one group of surfaces.json. The whole file is checked with the change in it; a refusal writes nothing and lists each error with its path in error.data.errors. A running Polycarp shows the change within 150 ms. Setting a group (bar, bar.modules) replaces that group with the object you give. Each bar module id may appear once across left, center and right.",
+            schema: obj(
+                json!({
+                    "path": {"type":"string","description":"A field or group path from surfaces_schema, as bar.style or bar.modules."},
+                    "value": {"description":"Any JSON value of the type the schema gives for that path: true, 30, \"glass\", [\"mark\",\"clock\"] or an object for a group."}
+                }),
+                &["path", "value"],
+            ),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+        },
     ]
 }
 
@@ -416,6 +457,12 @@ fn call(
     session: &mut Session,
 ) -> Option<theme::Envelope> {
     let tool = tools().into_iter().find(|t| t.name == name)?;
+    if name.starts_with("surfaces_") {
+        return Some(match Args::new(&tool, args) {
+            Err(e) => theme::envelope(&Err(e)),
+            Ok(a) => surfaces_call(name, &a),
+        });
+    }
     let run = || -> theme::Res {
         let a = Args::new(&tool, args)?;
         if name == "theme_schema" {
@@ -506,6 +553,131 @@ fn call(
     Some(theme::envelope(&result))
 }
 
+/// How long one surfaces command may take. It reads and writes one small file; this only keeps a stuck one from
+/// holding the server.
+const SURFACES_LIMIT: Duration = Duration::from_secs(10);
+
+/// Runs one surfaces tool through `polycarp-spaces surfaces ... --json` (no shell) and passes its envelope on.
+fn surfaces_call(name: &str, a: &Args) -> theme::Envelope {
+    let mut argv: Vec<String> = vec!["surfaces".into()];
+    match name {
+        "surfaces_schema" => argv.push("schema".into()),
+        "surfaces_get" => {
+            argv.push("get".into());
+            match a.text("path") {
+                Ok(Some(p)) => argv.push(p.into()),
+                Ok(None) => {}
+                Err(e) => return theme::envelope(&Err(e)),
+            }
+        }
+        _ => {
+            let path = match a.need("path") {
+                Ok(p) => p.to_string(),
+                Err(e) => return theme::envelope(&Err(e)),
+            };
+            let value = a.map.get("value").cloned().unwrap_or(Json::Null);
+            argv.extend(["set".into(), path, value.to_string()]);
+        }
+    }
+    argv.push("--json".into());
+    let Some(spaces) = crate::spaces_command() else {
+        return surfaces_refusal(
+            "spaces_not_found",
+            "polycarp-spaces was not found, so surfaces can't be read or changed here",
+            "Install Polycarp (the Mac app carries polycarp-spaces), or set POLYCARP_SPACES_BIN to its path.",
+        );
+    };
+    let (out, err) = match run_limited(&spaces, &argv) {
+        Some(o) => o,
+        None => {
+            return surfaces_refusal(
+                "spaces_failed",
+                "polycarp-spaces didn't answer within 10 seconds",
+                "Try again; if it keeps happening, run `polycarp-spaces surfaces get` in a terminal to see why.",
+            )
+        }
+    };
+    match serde_json::from_slice::<Json>(&out) {
+        Ok(env) if env.get("ok").and_then(Json::as_bool).is_some() => {
+            let ok = env["ok"] == json!(true);
+            (env, ok)
+        }
+        _ => {
+            let text = String::from_utf8_lossy(&err);
+            if text.contains("usage:") {
+                surfaces_refusal(
+                    "spaces_too_old",
+                    "this Polycarp has no surfaces command",
+                    "Update Polycarp (polycarp update), then try again.",
+                )
+            } else {
+                let first = text.lines().next().unwrap_or("no answer").trim();
+                surfaces_refusal(
+                    "spaces_failed",
+                    &format!("polycarp-spaces surfaces failed: {first}"),
+                    "Run the same command in a terminal to see why.",
+                )
+            }
+        }
+    }
+}
+
+/// A refusal made here, in the envelope the spaces command and the theme tools use.
+fn surfaces_refusal(code: &str, message: &str, suggestion: &str) -> theme::Envelope {
+    (
+        json!({"ok": false, "error": {
+            "code": code,
+            "message": message,
+            "retry": "never",
+            "suggestion": suggestion,
+            "data": {"errors": [{"path": "$", "message": message}]},
+        }}),
+        false,
+    )
+}
+
+/// Runs `exe` with `args` and gives back stdout and stderr, or None when it couldn't start or ran past the limit.
+fn run_limited(exe: &std::path::Path, args: &[String]) -> Option<(Vec<u8>, Vec<u8>)> {
+    let mut child = Command::new(exe)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    fn read_into<R: Read + Send + 'static>(
+        stream: Option<R>,
+        tx: mpsc::Sender<(bool, Vec<u8>)>,
+        is_out: bool,
+    ) {
+        if let Some(stream) = stream {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let _ = stream.take(4 * 1024 * 1024).read_to_end(&mut buf);
+                let _ = tx.send((is_out, buf));
+            });
+        }
+    }
+    let (tx, rx) = mpsc::channel();
+    read_into(child.stdout.take(), tx.clone(), true);
+    read_into(child.stderr.take(), tx, false);
+    let deadline = std::time::Instant::now() + SURFACES_LIMIT;
+    let (mut out, mut err) = (None, None);
+    while out.is_none() || err.is_none() {
+        match rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+            Ok((true, b)) => out = Some(b),
+            Ok((false, b)) => err = Some(b),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let _ = child.wait();
+    Some((out.unwrap_or_default(), err.unwrap_or_default()))
+}
+
 pub(crate) fn reply(id: &Json, result: Json) -> Json {
     json!({"jsonrpc": "2.0", "id": id, "result": result})
 }
@@ -574,7 +746,7 @@ impl Server {
                     json!({
                         "protocolVersion": version,
                         "capabilities": {"tools": {"listChanged": false}},
-                        "serverInfo": {"name": "polycarp", "title": "Polycarp themes", "version": env!("CARGO_PKG_VERSION")},
+                        "serverInfo": {"name": "polycarp", "title": "Polycarp themes and surfaces", "version": env!("CARGO_PKG_VERSION")},
                         "instructions": INSTRUCTIONS,
                     }),
                 )
