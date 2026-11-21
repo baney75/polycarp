@@ -19,6 +19,8 @@ final class IdleCover {
     private var monitor: Any?
     private var cursorHidden = false
     private var screenSaverRunning = false
+    /// Set by `hideUntilInput`: the idle time at the last look, until there is input (`IdleScreen.hold`).
+    private var held: TimeInterval?
 
     var isUp: Bool { !windows.isEmpty }
 
@@ -41,7 +43,8 @@ final class IdleCover {
         let settings = SurfacesStore.shared.current.idle
         guard !isUp, settings.enabled else { return }
         let idle = PurposeKeeper.idleSeconds()
-        guard IdleScreen.shouldStart(idle: idle, settings: settings, displayHeldAwake: Self.displayHeldAwake(),
+        held = IdleScreen.hold(held, idle: idle)
+        guard held == nil, IdleScreen.shouldStart(idle: idle, settings: settings, displayHeldAwake: Self.displayHeldAwake(),
                                      systemHasScreen: screenSaverRunning || Self.locked() || Self.displaysAsleep()) else { return }
         show(idle: idle)
     }
@@ -94,6 +97,13 @@ final class IdleCover {
         let idle = PurposeKeeper.idleSeconds()
         if IdleScreen.inputSince(lastIdle: lastIdle, idle: idle) { hide(); return }
         lastIdle = idle
+    }
+
+    /// Takes the cover down and keeps it down until the next key, click or move: the wake alarm rings over a Mac
+    /// that has had no input all night.
+    func hideUntilInput() {
+        held = PurposeKeeper.idleSeconds()
+        hide()
     }
 
     func hide() {

@@ -236,6 +236,15 @@ final class AlarmTests: XCTestCase {
             XCTAssertNotEqual(BarText.timer(remaining: r), BarText.timer(remaining: r - wait - 0.001), "\(r)")
         }
     }
+
+    /// A run-loop timer held over a sleep may not fire on wake, so the timer's end is set again whenever the Mac
+    /// wakes or the session comes back, as the day's rollover is (review r2 first-F2).
+    func testTheTimersEndIsSetAgainOnWake() throws {
+        let code = try SourceText.code("Sources/BaneySpaces/PurposeKeeper.swift")
+        let body = try XCTUnwrap(SourceText.block(after: "private func presence(", in: code))
+        XCTAssertTrue(body.contains("scheduleRollover()"))
+        XCTAssertTrue(body.contains("scheduleTimerEnd()"))
+    }
 }
 
 private final class Said: @unchecked Sendable {

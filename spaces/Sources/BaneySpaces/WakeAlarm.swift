@@ -85,7 +85,7 @@ final class WakeAlarm {
     private func ring(at now: Date) {
         var id: IOPMAssertionID = 0
         if IOPMAssertionDeclareUserActivity(Self.holdName, kIOPMUserActiveLocal, &id) == kIOReturnSuccess { activity = id }
-        if IdleCover.shared.isUp { IdleCover.shared.hide() }
+        IdleCover.shared.hideUntilInput()
         ringing = Alarm.Ringing(startedAt: now)
         lastIdle = PurposeKeeper.idleSeconds()
         step()

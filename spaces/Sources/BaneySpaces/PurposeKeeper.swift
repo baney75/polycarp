@@ -236,6 +236,8 @@ final class PurposeKeeper {
         if event != .locked, event != .wentAway {
             purposes.rollover()
             scheduleRollover()
+            // A run-loop timer held over a sleep may not fire on wake; this one ends the timer, or clears it quietly.
+            scheduleTimerEnd()
         }
     }
 
