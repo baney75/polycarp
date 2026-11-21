@@ -68,8 +68,9 @@ Error codes: `invalid_value` (the value fails its check), `unknown_path` (no suc
   `set` and `reset`, and listed as a warning. `set` refuses an unknown path, so a typo can't land; `get` and `reset`
   reach a key the file holds even when this build doesn't know it.
 - **Unknown values are errors.** A choice not in the list, a number out of range or an id this build doesn't know.
-- **A bar module goes in one place.** Each id appears once in `left`, `center` and `right` together, defaults included:
-  to move `clock` to the left, set `bar.modules` whole, or set `bar.modules.right` without it first.
+- **A bar module goes in one place.** Each id appears once in the places the file sets. A place the file sets takes
+  its modules from the places left at their default: `{"bar":{"modules":{"left":["mark","clock"]}}}` moves `clock`
+  out of the default right.
 - **`settings` and `quit` can't be hidden** from the status menu.
 - `version` is the file's format. This build writes 1, and never lowers a higher one it finds.
 
@@ -82,15 +83,37 @@ Error codes: `invalid_value` (the value fails its check), `unknown_path` (no suc
 | `bar.enabled` | `false` | `true` or `false`. Show Polycarp's top bar. Off until you turn it on. |
 | `bar.height` | `28` | A whole number of points, 22 to 40. |
 | `bar.style` | `"solid"` | `solid` (the theme's surface color), `glass` (blurred, see-through) or `hairline` (the desktop shows through, with a thin line under it). |
-| `bar.modules.left` | `["mark","workspaces","app-menus"]` | Module ids, in order. |
+| `bar.modules.left` | `["mark","workspaces","purpose"]` | Module ids, in order. |
 | `bar.modules.center` | `["one-thing"]` | Module ids, in order. |
-| `bar.modules.right` | `["status","network","battery","date","clock"]` | Module ids, in order. |
+| `bar.modules.right` | `["hour","clock"]` | Module ids, in order. |
 | `bar.clockFormat` | `"12h"` | `12h` (3:05) or `24h` (15:05). |
-| `bar.hourNames` | `true` | The hour module names the hour of prayer (Lauds, Terce, Sext, None, Vespers, Compline). |
-| `bar.hideSystemMenuBar` | `false` | Hide the macOS menu bar while Polycarp's bar is on. Off: the two share the top of the screen. |
+| `bar.hourNames` | `true` | The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning). |
+| `bar.hideSystemMenuBar` | `false` | Ask for the macOS menu bar to hide: Polycarp opens System Settings > Menu Bar for you to choose Always. It never changes the setting itself. |
 
 Module ids: `mark`, `workspaces`, `purpose`, `one-thing`, `app-menus`, `status`, `hour`, `clock`, `date`, `verse`,
 `battery`, `network`, and `custom:<name>` (lowercase letters, digits and hyphens, up to 32) for a module of your own.
+
+What each one draws:
+
+| Module | Shows |
+| --- | --- |
+| `mark` | Polycarp's vine mark. |
+| `workspaces` | A dot for each workspace with windows, the one you're on drawn long; click one to go there. |
+| `purpose` | What the workspace you're on is for (`polycarp-spaces purpose set`), in serif italic. Nothing when it has none. |
+| `one-thing` | Today's one thing (`polycarp-spaces one`), in gold. Nothing when there is none. |
+| `hour` | The day and the hour in words: "Saturday, Terce". Sunday is the Lord's Day. |
+| `clock` | 3:05, or 15:05 with `clockFormat` 24h. |
+| `date` | November 21. |
+| `verse` | The desktop's verse for now, with its reference. |
+| `battery` | The charge, only off power or while charging. Nothing on a desktop Mac. |
+| `network` | "Offline" when there is no connection; nothing when there is. |
+| `app-menus`, `status`, `custom:<name>` | Kept in the file, not drawn yet. The app's menus still come down from the top edge; macOS 27 lets no app copy the status icons. |
+
+**The macOS menu bar.** No app can remove it, so Polycarp's bar shows only where the macOS bar is hidden: System
+Settings > Menu Bar > "Automatically hide and show the menu bar" set to Always. Pointing at the top edge still brings the
+macOS bar and the app's menus down. Where the macOS bar stays, Polycarp's bar steps aside, and on a full-screen app it
+stays away. The bar sits just under your windows, so a window that reaches the top of the screen covers it rather than
+losing its buttons under it.
 
 ### `desktop`: the scene behind every window, and its verse
 

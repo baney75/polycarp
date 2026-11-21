@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var watchdog: Timer?
     private var signalSources: [DispatchSourceSignal] = []
     private lazy var viewer = ViewerController(spaces: spaces)
+    /// The top bar (`bar.*` in surfaces.json); draws nothing until `bar.enabled`.
+    private lazy var topBar = TopBar(spaces: spaces)
     private lazy var dock: WorkspaceDock = {
         let d = WorkspaceDock(spaces: spaces)
         d.onShowOverview = { [weak self] in self?.viewer.open() }
@@ -490,6 +492,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             self.updateIcon()
             self.dock.reload()
+            self.topBar.workspacesChanged()
             // The day ledger counts time from each switch; a change that keeps the workspace adds nothing.
             PurposeKeeper.shared.noteWorkspace(self.spaces.model.current)
         }
@@ -497,6 +500,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // needs Accessibility. It draws nothing itself; the surfaces read it.
         session.purposeHandler = { [weak self] r in PurposeKeeper.shared.answer(r, current: self?.spaces.model.current ?? 1) }
         PurposeKeeper.shared.start()
+        // After the purposes, which it shows; it reads surfaces.json and stays away while `bar.enabled` is off.
+        topBar.start()
         // A new theme redraws the menu bar indicator as well as the panels.
         NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.updateIcon()

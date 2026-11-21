@@ -257,16 +257,16 @@ extension SurfaceField {
         SurfaceField("bar.style", .choice(Surfaces.BarStyle.allCases.map(\.rawValue)), .string("solid"),
                      "solid: the theme's surface color. glass: blurred and see-through. hairline: the desktop shows through, with a thin line under it."),
         SurfaceField("bar.modules.left", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
-                     ids(["mark", "workspaces", "app-menus"]), "Modules at the left, in order."),
+                     ids(["mark", "workspaces", "purpose"]), "Modules at the left, in order."),
         SurfaceField("bar.modules.center", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
                      ids(["one-thing"]), "Modules in the middle, in order."),
         SurfaceField("bar.modules.right", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
-                     ids(["status", "network", "battery", "date", "clock"]), "Modules at the right, in order."),
+                     ids(["hour", "clock"]), "Modules at the right, in order."),
         SurfaceField("bar.clockFormat", .choice(Surfaces.ClockFormat.allCases.map(\.rawValue)), .string("12h"),
                      "The clock module: 12h (3:05) or 24h (15:05)."),
-        SurfaceField("bar.hourNames", .bool, .bool(true), "The hour module names the hour of prayer (Lauds, Terce, Sext, None, Vespers, Compline)."),
+        SurfaceField("bar.hourNames", .bool, .bool(true), "The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning)."),
         SurfaceField("bar.hideSystemMenuBar", .bool, .bool(false),
-                     "Hide the macOS menu bar while Polycarp's bar is on. Off: the two share the top of the screen."),
+                     "Ask for the macOS menu bar to hide while Polycarp's bar is on: Polycarp opens System Settings > Menu Bar for you to choose Always. It never changes the setting itself. Polycarp's bar shows only where the macOS bar is hidden."),
 
         SurfaceField("desktop.scene", .tagged(choices: Surfaces.Scene.named, prefix: "image", pattern: SurfaceCheck.picturePattern,
                                               example: "image:dawn.png"),
@@ -349,7 +349,14 @@ extension Surfaces {
         SurfaceCheck.crossChecks(doc, errors: &errors)
         guard errors.isEmpty else { return .failure(SurfacesErrors(errors.sorted { $0.path < $1.path })) }
         let resolved = SurfaceField.defaultTree.merged(with: doc)
-        return .success(Checked(surfaces: Surfaces(resolved: resolved), warnings: warnings.sorted { $0.path < $1.path }))
+        var surfaces = Surfaces(resolved: resolved)
+        // The modules a place in the file holds leave the places still at their default (see `crossChecks`).
+        let own = ["left", "center", "right"].filter { doc.at(["bar", "modules", $0]) != nil }
+        let taken = Set(own.flatMap { (doc.at(["bar", "modules", $0])?.array ?? []).compactMap(\.string) })
+        if !own.contains("left") { surfaces.bar.left.removeAll { taken.contains($0.id) } }
+        if !own.contains("center") { surfaces.bar.center.removeAll { taken.contains($0.id) } }
+        if !own.contains("right") { surfaces.bar.right.removeAll { taken.contains($0.id) } }
+        return .success(Checked(surfaces: surfaces, warnings: warnings.sorted { $0.path < $1.path }))
     }
 
     /// The model from a tree already checked (defaults merged in). A value that is somehow wrong takes the default.
@@ -490,14 +497,14 @@ enum SurfaceCheck {
             let path = "bar.modules." + place
             let own = list(path).flatMap { doc.at(["bar", "modules", place]) != nil ? $0 : nil }
             let ids = own ?? (SurfaceField.byPath[path]!.defaultValue.array ?? []).compactMap(\.string)
+            // A place the file sets takes its modules from the default places, so a file written for other defaults
+            // still reads; only the file naming one module in two places is a mistake.
             for (j, id) in ids.enumerated() {
                 guard let other = placed[id] else { placed[id] = (place, j, own != nil); continue }
-                if own != nil {
-                    let note = other.fromFile ? "" : " (its default; set bar.modules.\(other.place) too)"
-                    errors.append(SurfacesIssue("\(path)[\(j)]", "\"\(id)\" is already in bar.modules.\(other.place)\(note); a module goes in one place"))
-                } else {
-                    errors.append(SurfacesIssue("bar.modules.\(other.place)[\(other.index)]",
-                                                "\"\(id)\" is also in \(path) (its default; set \(path) too); a module goes in one place"))
+                if own != nil && other.fromFile {
+                    errors.append(SurfacesIssue("\(path)[\(j)]", "\"\(id)\" is already in bar.modules.\(other.place); a module goes in one place"))
+                } else if own != nil {
+                    placed[id] = (place, j, true)
                 }
             }
         }
