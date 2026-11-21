@@ -54,7 +54,6 @@ polycarp doctor
 | Command | What it does |
 | --- | --- |
 | `polycarp spaces [args]` | Runs the workspace command with your arguments |
-| `polycarp features [on\|off <part>]` | Shows or changes which parts run: `workspaces` |
 | `polycarp theme <command>` | Chooses and checks the theme |
 | `polycarp mcp` | Serves the theme commands to an agent |
 | `polycarp doctor` | Shows which apps were found, and whether their builds match |
@@ -63,7 +62,7 @@ polycarp doctor
 | `polycarp --version` | Prints the version |
 | `polycarp --help` | Prints the usage |
 
-`polycarp spaces` passes your arguments, input, output and exit code straight through. `polycarp browser` and `polycarp voice` only say where those went, Tychicus and Silas, and exit with code 2. Dictation stays in Settings > Voice.
+`polycarp spaces` passes your arguments, input, output and exit code straight through. `polycarp browser` only says where the browser went, Tychicus, and exits with code 2. `polycarp voice` only says Silas is its own app, and exits with code 1.
 
 ### How it finds an app
 

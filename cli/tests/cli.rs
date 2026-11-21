@@ -256,6 +256,38 @@ fn browser_points_at_tychicus_runs_nothing_and_exits_2() {
     assert!(!out(&help).contains("polycarp browser ["), "{}", out(&help));
 }
 
+/// Polycarp has no parts to choose now: `polycarp features` says so in one line and never writes `features.toml`, and
+/// it is gone from `--help`.
+#[cfg(unix)]
+#[test]
+fn features_only_says_workspaces_always_run() {
+    let s = Sandbox::new();
+    const LINE: &str = "Polycarp has no parts to turn on or off: workspaces always run.\n";
+    for args in [
+        &["features"][..],
+        &["features", "list"],
+        &["features", "--help"],
+    ] {
+        let o = s.cmd(args).output().unwrap();
+        assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
+        assert_eq!(out(&o), LINE, "{args:?}");
+    }
+    for args in [
+        &["features", "off", "workspaces"][..],
+        &["features", "on", "voice"],
+    ] {
+        let o = s.cmd(args).output().unwrap();
+        assert_eq!(code(&o), 2, "{args:?}");
+        assert_eq!(err(&o), format!("polycarp: {LINE}"), "{args:?}");
+        assert_eq!(out(&o), "", "{args:?}");
+    }
+    assert!(!s
+        .dir("home")
+        .join(".config/polycarp/features.toml")
+        .exists());
+    assert!(!out(&s.run(&["--help"])).contains("polycarp features"));
+}
+
 #[cfg(unix)]
 #[test]
 fn stdin_reaches_the_stub_and_stdout_returns() {

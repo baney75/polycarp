@@ -14,7 +14,6 @@ struct PermissionsPane: View {
     }
 
     @ObservedObject private var model = PermissionsModel.shared
-    @ObservedObject private var parts = PartsModel.shared
     @ObservedObject private var appearance = Appearance.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var fix: StaleFix?
@@ -29,7 +28,7 @@ struct PermissionsPane: View {
     }
 
     var body: some View {
-        let plan = Permissions.plan(states: model.states, features: parts.current)
+        let plan = Permissions.plan(states: model.states, features: .all)
         VStack(alignment: .leading, spacing: 18) {
             SettingsGroup {
                 SettingsBlock {

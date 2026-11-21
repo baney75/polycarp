@@ -67,7 +67,6 @@ polycarp: one command for Polycarp Spaces and themes
 Usage:
   polycarp spaces [args...]    run the Spaces command
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
-  polycarp features            show or change which parts run (polycarp features --help)
   polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
   polycarp doctor              show which tools were found
   polycarp --version

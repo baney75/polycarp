@@ -258,7 +258,6 @@ final class PermissionsSourceTests: XCTestCase {
         XCTAssertTrue(setup.contains("case .permissions: PermissionsPane("))
         let kit = try Repo.code("Sources/BaneySpaces/SettingsKit.swift")
         XCTAssertTrue(kit.contains("tabs: [.permissions, .automation, .updates]"))
-        XCTAssertTrue(FeatureSet(Set()).showsSettingsTab("Permissions"), "every part, and none, shows Permissions")
     }
 
     func testGeneralNoLongerHasItsOwnAllowButton() throws {

@@ -31,8 +31,8 @@ final class WelcomeModel: ObservableObject {
         return s
     }
 
-    var current: PermissionKind? { Welcome.next(granted: granted, skipped: skipped, features: PartsModel.shared.current) }
-    var canStart: Bool { Welcome.canStart(granted: granted, features: PartsModel.shared.current) }
+    var current: PermissionKind? { Welcome.next(granted: granted, skipped: skipped) }
+    var canStart: Bool { Welcome.canStart(granted: granted) }
     /// macOS keeps an old grant for an earlier copy: the switch is on and nothing happens.
     var looksStale: Bool {
         guard !granted.contains(.accessibility), let at = askedAccessibilityAt else { return false }
@@ -129,7 +129,6 @@ final class WelcomeModel: ObservableObject {
 
 struct WelcomeView: View {
     @ObservedObject var model: WelcomeModel
-    @ObservedObject private var parts = PartsModel.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -137,14 +136,13 @@ struct WelcomeView: View {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 60, height: 60)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Welcome to Polycarp").font(Chrome.font(21, .bold))
-                    Text(parts.hasChosen ? (model.canStart ? "You're ready. The rest is optional." : "One switch and you're working.")
-                        : "Pick what you want. You can change this any time.")
+                    Text(model.canStart ? "You're ready. The rest is optional." : "One switch and you're working.")
                         .foregroundStyle(Chrome.muted)
                 }
             }
             .padding(.horizontal, 28).padding(.top, 26).padding(.bottom, 20)
 
-            if parts.hasChosen { walk } else { WelcomePartsChooser(parts: parts) }
+            walk
         }
         .frame(width: 560)
         .foregroundStyle(Chrome.wash())
@@ -153,16 +151,15 @@ struct WelcomeView: View {
         .environment(\.colorScheme, Chrome.scheme)
         .animation(Chrome.ease(0.2), value: model.granted)
         .animation(Chrome.ease(0.2), value: model.skipped)
-        .animation(Chrome.ease(0.2), value: parts.hasChosen)
     }
 
-    /// The permissions the chosen parts need, then the way in.
+    /// The permissions Polycarp needs, then the way in.
     @ViewBuilder private var walk: some View {
             VStack(spacing: 8) {
                 allowAllRow
-                ForEach(Welcome.steps(for: parts.current).filter(\.isRequired), id: \.kind) { row($0) }
+                ForEach(Welcome.steps.filter(\.isRequired), id: \.kind) { row($0) }
                 tryIt
-                ForEach(Welcome.steps(for: parts.current).filter { !$0.isRequired }, id: \.kind) { row($0) }
+                ForEach(Welcome.steps.filter { !$0.isRequired }, id: \.kind) { row($0) }
                 loginRow
             }
             .padding(.horizontal, 20)
@@ -177,7 +174,7 @@ struct WelcomeView: View {
                 Spacer()
                 Button(model.canStart ? "Start using Polycarp" : "Waiting for Accessibility") { UserDefaults.standard.set(false, forKey: LegacyRetirement.noteKey); model.onFinish() }
                     // Return presses the current permission's button while one is left; this only when none is.
-                    .keyboardShortcut(Welcome.defaultAction(granted: model.granted, skipped: model.skipped, features: parts.current) == .finish ? KeyboardShortcut.defaultAction : nil)
+                    .keyboardShortcut(Welcome.defaultAction(granted: model.granted, skipped: model.skipped) == .finish ? KeyboardShortcut.defaultAction : nil)
                     .disabled(!model.canStart)
                     .buttonStyle(WelcomeButtonStyle(large: true))
             }
@@ -186,7 +183,7 @@ struct WelcomeView: View {
 
     /// Everything left at once. Shown only while there are at least two, because one is the button already on its row.
     @ViewBuilder private var allowAllRow: some View {
-        let left = Welcome.steps(for: parts.current).filter { !model.granted.contains($0.kind) && !model.skipped.contains($0.kind) }.count
+        let left = Welcome.steps.filter { !model.granted.contains($0.kind) && !model.skipped.contains($0.kind) }.count
         if left >= 2 {
             HStack(spacing: 10) {
                 Text(model.walking ? "Turn on Polycarp in each list, and the next one opens." : "Want all of it? macOS asks for each, one after another.")
@@ -200,7 +197,7 @@ struct WelcomeView: View {
 
     /// Right under what makes it possible, not below the optional steps.
     @ViewBuilder private var tryIt: some View {
-            if model.canStart, parts.current.contains(.workspaces) {
+            if model.canStart {
                 HStack(spacing: 10) {
                     Image(systemName: "leaf.fill").foregroundStyle(Chrome.accent)
                     Text("Try it: press \(model.modifierSymbol())2. Add ⇧ to bring the window along.")

@@ -7,8 +7,9 @@
 # Run it again any time to update. POLYCARP_REF picks a branch or tag.
 # POLYCARP_SOURCE=/path/to/checkout builds that checkout instead of downloading.
 # Linux: the Linux and Omarchy desktop is retired. Run there, this prints one line saying so and installs nothing.
-# The browser helper moved to Tychicus: POLYCARP_FEATURES that names browser prints where to get it (BROWSER_MOVED
-# below) and installs nothing.
+# Polycarp has no parts to choose: workspaces always run. POLYCARP_FEATURES is read only for the parts that left. One that
+# names browser prints where the helper went (BROWSER_MOVED below) and installs nothing; one that names voice prints where
+# Silas is and carries on. Anything else in it is ignored, and so is an old features.toml.
 # Everything is inside main(), called on the last line: run through a pipe (curl | bash), a download that
 # stops halfway runs nothing, and no step can read the script's own text from stdin.
 set -euo pipefail
@@ -58,12 +59,6 @@ main() {
   say ""; say "${bold}Polycarp${reset}  ${dim}Bear much fruit.${reset}"; say ""
 
   local CFG="${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}"
-  # Which parts to run. POLYCARP_FEATURES=workspaces answers without asking; with no answer, the
-  # welcome window asks instead. A reinstall keeps what was chosen.
-  if [ ! -e "$CFG/$PARTS_FILE" ]; then
-    REPLY="${POLYCARP_FEATURES:-}"
-    if [ -n "$REPLY" ]; then write_parts "$CFG" "$REPLY" || fail "POLYCARP_FEATURES has a part Polycarp doesn't know. Use workspaces."; fi
-  fi
   [ "$(uname -s)" = Darwin ] || fail "This installer is for a Mac. The polycarp command runs elsewhere: cargo install --git $REPO polycarp"
   [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 13 ] || fail "Polycarp needs macOS 13 Ventura or later."
   local BIN="$HOME/.local/bin"
@@ -129,8 +124,6 @@ main() {
   if [ -z "$test_mode" ] || [ "$HOME" != "$(eval echo "~$(id -un)")" ]; then
     while IFS= read -r a; do [ -d "$a" ] && OLD_APPS+=("$a"); done < <(old_app_paths "$test_mode")
   fi
-  # Someone who left Workspaces unticked may still want BaneySpaces, so it stays where it is.
-  if grep -q '^workspaces = false' "$CFG/$PARTS_FILE" 2>/dev/null; then OLD_APPS=(); fi
   # 2. Quit it (it puts every window and the Dock back first). The two can't run together, so the install
   # step quits any running BaneySpaces too. Never in test mode.
   local running=""
@@ -204,10 +197,11 @@ TYCHICUS_ASSET="tychicus-<version>-<platform>"
 TYCHICUS_INSTALL='tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .'
 BROWSER_MOVED="The browser helper is now Tychicus: download $TYCHICUS_ASSET from $TYCHICUS_RELEASES, then \`$TYCHICUS_INSTALL\`"
 
-# The browser, if POLYCARP_FEATURES ($1) names it: one line saying where it went. Returns 1 when the install must stop
-# there (the browser is all Tychicus now), 0 to carry on.
+# The parts POLYCARP_FEATURES ($1) names that left: one line each saying where they went. Returns 1 when the install must
+# stop there (the browser is all Tychicus now), 0 to carry on.
 moved_notes() {
   if names_part browser "$1"; then printf '%s\n' "$BROWSER_MOVED"; fi
+  if names_part voice "$1"; then printf '  voice is Silas now, its own app: https://github.com/baney75/silas\n' >&2; fi
   ! names_part browser "$1"
 }
 
@@ -230,28 +224,6 @@ old_app_paths() {
 }
 
 # Stops BaneySpaces' launch agent, which would otherwise start puts-things-back runs for an app that is gone.
-PARTS_FILE=features.toml
-
-# Writes the chosen parts, comma-separated. A file that's already there stays, and a name nobody knows is an error.
-write_parts() {
-  local list=${2//[[:space:]]/,}
-  # voice is still accepted so older scripted installs keep working. Silas is its own app now, so it gets no line;
-  # voice alone writes every part off, as before, so the old app is kept for someone who didn't take workspaces.
-  local dir=$1 chosen=",$list," part file="$1/$PARTS_FILE" known=",workspaces,voice,"
-  [ -e "$file" ] && return 0
-  [ -n "${list//,/}" ] || return 2
-  local rest=${list//,/ } name
-  for name in $rest; do case "$known" in *",$name,"*) ;; *) return 2 ;; esac; done
-  case "$chosen" in *,voice,*) printf '  voice is Silas now, its own app: https://github.com/baney75/silas\n' >&2 ;; esac
-  mkdir -p "$dir" || return 1
-  {
-    printf '# Which parts of Polycarp run. Change it in Settings > General or with `polycarp features`.\n'
-    for part in workspaces; do
-      case "$chosen" in *",$part,"*) printf '%s = true\n' "$part" ;; *) printf '%s = false\n' "$part" ;; esac
-    done
-  } > "$file"
-}
-
 retire_watchdog() {
   local label="com.baney.baneyspaces.mc-watchdog" plist="$HOME/Library/LaunchAgents/com.baney.baneyspaces.mc-watchdog.plist"
   if [ -f "$plist" ]; then

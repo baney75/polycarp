@@ -458,7 +458,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 struct SetupView: View {
     @ObservedObject var model: SetupModel
     @ObservedObject private var appearance = Appearance.shared
-    @ObservedObject private var parts = PartsModel.shared
     @StateObject private var themes = ThemePicker()
     var close: () -> Void
     /// The window's height. Offscreen checks pass more, so the lazy pane builds every group at once.
@@ -511,21 +510,16 @@ struct SetupView: View {
                     Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 44, height: 44)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Polycarp").font(Chrome.font(15, .bold))
-                        Text(parts.current.contains(.workspaces) ? "Nine workspaces. One row of keys." : "Bear much fruit.")
+                        Text("Nine workspaces. One row of keys.")
                             .font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                     }
                     Spacer()
-                    if parts.current.contains(.workspaces) {
-                        SettingsStatusLabel(text: model.trusted ? "Running" : "Needs a switch", done: model.trusted)
-                    }
+                    SettingsStatusLabel(text: model.trusted ? "Running" : "Needs a switch", done: model.trusted)
                 }
             }
             if model.justEnabled && model.ready { SettingsNote("Polycarp is on. Try \(model.modifier.symbol)2.", tone: .done) }
         }
 
-        PartsSection(parts: parts)
-
-        if parts.current.contains(.workspaces) {
         SettingsGroup("Permissions") {
             // Every permission, its state and its button live in the Permissions section.
             SettingsRow(model.trusted ? "Accessibility is on" : "Polycarp needs Accessibility",
@@ -547,8 +541,6 @@ struct SetupView: View {
                     ? "Polycarp's overview has replaced Mission Control. To close the extra desktops, turn off \"Use Polycarp's overview instead of Mission Control\" under Keys, open Mission Control, hover each extra desktop at the top and click its close button, then turn the switch back on."
                     : "Open Mission Control, hover each extra desktop at the top, and click its close button.")
             }
-        }
-
         }
 
         SettingsGroup("Startup") {
