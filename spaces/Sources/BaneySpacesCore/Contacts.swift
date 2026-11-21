@@ -25,40 +25,56 @@ public struct ContactHandle: Codable, Equatable, Hashable, Sendable {
     /// The number as a URL takes it: a leading plus and the digits, nothing else. Email is the address, trimmed.
     ///
     /// The number stops at an extension or a pause: the words `x`, `ext`, `extn` or `extension`, or `#`, `*`, `,` or
-    /// `;`, so "555-010-2000 ext. 123" dials 5550102000 and never 5550102000123. Letters in a vanity number map to the
-    /// keypad (ITU E.161: "1-800-FLOWERS" is 18003569377). A plus counts only before the first digit.
+    /// `;`, so "555-010-2000 ext. 123" dials 5550102000 and never 5550102000123. Letters map to the keypad (ITU E.161)
+    /// only inside a token that holds digits, letters joined to them by hyphens or nothing: "1-800-FLOWERS" is
+    /// 18003569377. A separate word or a label in parentheses is a note and dials nothing, so "555-0100 (cell)",
+    /// "555-0100 Mom" and "Tel +1 555 0100" keep only their numbers. A plus counts only before the first digit.
     public var dialable: String {
         guard kind == .phone else { return value.trimmingCharacters(in: .whitespaces) }
         var out = ""
         var digits = 0
-        var letters = ""
-        /// A run of letters ended: a marker cuts the number, any other word is spelled on the keypad.
-        func endLetters() -> Bool {
-            defer { letters = "" }
-            guard !letters.isEmpty else { return false }
-            if Self.extensionWords.contains(letters.lowercased()) { return true }
-            for ch in letters.uppercased().unicodeScalars {
-                guard let d = Self.keypad[ch] else { continue }
-                out.unicodeScalars.append(d)
-                digits += 1
+        var token: [Unicode.Scalar] = []
+        /// A token ended. Returns true when it held an extension word, which cuts the number there.
+        func endToken() -> Bool {
+            defer { token = [] }
+            let spells = token.contains { ("0"..."9").contains($0) }
+            var letters = ""
+            func endLetters() -> Bool {
+                defer { letters = "" }
+                guard !letters.isEmpty else { return false }
+                if Self.extensionWords.contains(letters.lowercased()) { return true }
+                guard spells else { return false }
+                for ch in letters.uppercased().unicodeScalars {
+                    guard let d = Self.keypad[ch] else { continue }
+                    out.unicodeScalars.append(d)
+                    digits += 1
+                }
+                return false
             }
-            return false
+            for ch in token {
+                if Self.isLetter(ch) { letters.unicodeScalars.append(ch); continue }
+                if endLetters() { return true }
+                if ("0"..."9").contains(ch) {
+                    out.unicodeScalars.append(ch)
+                    digits += 1
+                }
+            }
+            return endLetters()
         }
         for ch in value.unicodeScalars {
-            if ("a"..."z").contains(ch) || ("A"..."Z").contains(ch) { letters.unicodeScalars.append(ch); continue }
-            if endLetters() { break }
-            if ("0"..."9").contains(ch) {
-                out.unicodeScalars.append(ch)
-                digits += 1
-            } else if ch == "+", out.isEmpty {
+            if Self.isLetter(ch) || ("0"..."9").contains(ch) || ch == "-" { token.append(ch); continue }
+            if endToken() { return digits == 0 ? "" : out }
+            if ch == "+", out.isEmpty {
                 out.append("+")
             } else if "#*,;".unicodeScalars.contains(ch) {
                 break
             }
         }
-        _ = endLetters()
+        _ = endToken()
         return digits == 0 ? "" : out
     }
+
+    private static func isLetter(_ ch: Unicode.Scalar) -> Bool { ("a"..."z").contains(ch) || ("A"..."Z").contains(ch) }
 
     /// The words that start an extension.
     static let extensionWords: Set<String> = ["x", "ext", "extn", "extension"]

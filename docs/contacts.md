@@ -35,8 +35,10 @@ below the apps, and letters found inside a name (`edit` in Meredith) don't show 
 else the first one. A call goes to a phone number when the person has one.
 
 **Extensions and letters:** a number stops at an extension or a pause (`x`, `ext`, `extension`, `#`, `*`, `,` or
-`;`), so `555-010-2000 ext. 123` dials 5550102000 and you enter the extension yourself. Letters in a vanity number
-are spelled on the keypad: `1-800-FLOWERS` dials 18003569377.
+`;`), so `555-010-2000 ext. 123` dials 5550102000 and you enter the extension yourself. Letters joined to the digits
+(by a hyphen or nothing) are spelled on the keypad: `1-800-FLOWERS` dials 18003569377. A separate word or a label in
+parentheses is a note and dials nothing, so `555-0100 (cell)`, `555-0100 Mom` and `Tel +1 555 0100` keep only the
+number.
 
 **Order:** a name that is the whole name or starts it comes first, then a word of the name, nickname or company
 (`an sm` finds Anna Smith, `acme` finds people at Acme), then initials, then letters inside a name. Among the good
