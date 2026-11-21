@@ -31,6 +31,7 @@ final class TopBar {
     private var statusDirty = false
     /// Polycarp's own menu (the status item's), opened from the mark.
     var ownMenu: () -> NSMenu? = { nil }
+    private var menuOwner: NSKeyValueObservation?
 
     init(spaces: Spaces) {
         self.spaces = spaces
@@ -60,10 +61,13 @@ final class TopBar {
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.reload()
         }
-        // Some apps fill their menu bar a moment after they come forward, so it is read again half a second on.
-        workspace.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.readMenus()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.readMenus() }
+        // The menus are the menu bar owner's, which an accessory app coming forward (Raycast, a launcher) doesn't take.
+        // Some apps fill their menu bar a moment after they take it, so it is read again half a second on.
+        menuOwner = NSWorkspace.shared.observe(\.menuBarOwningApplication) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                self?.readMenus()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.readMenus() }
+            }
         }
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -121,7 +125,7 @@ final class TopBar {
             Trace.log("top bar: on, but the macOS menu bar is shown on every screen; set System Settings > Menu Bar > Automatically hide and show the menu bar to Always")
         }
         loggedCovered = covered > 0 && keep.isEmpty
-        guard !panels.isEmpty else { stopTicking(); return }
+        guard !panels.isEmpty else { stopTicking(); forgetReads(); return }
         readPurposes()
         readWorkspaces()
         readBattery()
@@ -160,6 +164,16 @@ final class TopBar {
         for p in panels.values { p.orderOut(nil) }
         panels = [:]
         stopTicking()
+        forgetReads()
+    }
+
+    /// No bar is drawn: let go of every app's elements and stop the status timer.
+    private func forgetReads() {
+        statusTimer?.invalidate(); statusTimer = nil
+        statusElements = []
+        if !model.status.isEmpty { model.status = [] }
+        menuPid = 0
+        show(BarReader.Menus())
     }
 
     private func wants(_ m: Surfaces.BarModule) -> Bool {
@@ -167,9 +181,9 @@ final class TopBar {
         return bar.enabled && !panels.isEmpty && (bar.left + bar.center + bar.right).contains(m)
     }
 
-    /// The front app's menus for `app-menus`.
+    /// The menu bar owner's menus for `app-menus`, read when it changes and each minute; a click reads them again.
     private func readMenus() {
-        guard wants(.appMenus), let app = NSWorkspace.shared.frontmostApplication else {
+        guard wants(.appMenus), let app = NSWorkspace.shared.menuBarOwningApplication else {
             if !model.menus.isEmpty { model.menus = [] }
             menuPress = { _ in }
             menuPid = 0
@@ -278,6 +292,8 @@ final class TopBar {
         let now = Date()
         model.now = now
         model.verse = Verses.pick(SurfacesStore.shared.current.desktop.verseRotation, at: now)
+        // An app can change its menus without coming forward again (Electron apps do on a window change).
+        readMenus()
         tick?.invalidate()
         let t = Timer(fire: BarText.nextMinute(after: now), interval: 0, repeats: false) { [weak self] _ in self?.refreshTime() }
         t.tolerance = 1

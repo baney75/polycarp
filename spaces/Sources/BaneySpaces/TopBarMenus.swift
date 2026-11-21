@@ -35,14 +35,22 @@ enum BarReader {
 
     /// Another app's menus through Accessibility. On `queue`.
     static func menus(of pid: pid_t) -> Menus {
-        let ax = AX.app(pid)
-        let bar: AXUIElement? = ax.value(kAXMenuBarAttribute)
-        let children: [AXUIElement] = bar?.value(kAXChildrenAttribute) ?? []
-        let titles = children.map { $0.string(kAXTitleAttribute) ?? "" }
+        let titles = menuBar(of: pid).map { $0.string(kAXTitleAttribute) ?? "" }
         return Menus(items: BarMenus.items(titles)) { i in
-            guard children.indices.contains(i) else { return }
-            press(children[i])
+            guard titles.indices.contains(i) else { return }
+            // Read again on the click: an app that rebuilt its menus since would otherwise get the wrong one pressed.
+            queue.async {
+                let now = menuBar(of: pid)
+                let fresh = now.map { $0.string(kAXTitleAttribute) ?? "" }
+                guard let at = BarMenus.place(of: i, titles: titles, in: fresh) else { return }
+                AXUIElementPerformAction(now[at], kAXPressAction as CFString)
+            }
         }
+    }
+
+    private static func menuBar(of pid: pid_t) -> [AXUIElement] {
+        let bar: AXUIElement? = AX.app(pid).value(kAXMenuBarAttribute)
+        return bar?.value(kAXChildrenAttribute) ?? []
     }
 
     /// One status item, with the element a click presses.

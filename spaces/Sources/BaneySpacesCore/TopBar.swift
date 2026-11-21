@@ -152,6 +152,16 @@ public enum BarMenus {
             }
         }
     }
+
+    /// Where the menu drawn at `index` (read as `titles`) is now (`fresh`): the same place when its title is still
+    /// there, else the first menu with its title, else nil. The Apple menu is always first.
+    public static func place(of index: Int, titles: [String], in fresh: [String]) -> Int? {
+        guard titles.indices.contains(index) else { return nil }
+        if index == 0 { return fresh.isEmpty ? nil : 0 }
+        let title = titles[index]
+        if fresh.indices.contains(index), fresh[index] == title { return index }
+        return fresh.firstIndex(of: title)
+    }
 }
 
 /// What the `status` module draws: every app's status items as Accessibility reads them (`AXExtrasMenuBar`), the
@@ -180,7 +190,7 @@ public enum BarStatus {
         public var name: String {
             if let label, !label.isEmpty { return label }
             if let id = identifier, let last = id.split(separator: ".").last { return String(last) }
-            return owner
+            return owner.isEmpty ? "Status item" : owner
         }
     }
 
@@ -213,12 +223,12 @@ public enum BarStatus {
         return symbols.first { words.contains($0.0) }?.1 ?? "circle.fill"
     }
 
-    /// The battery symbol for a charge, in quarters, with the bolt while charging.
+    /// The battery symbol for a charge, in quarters. The bolt comes only with a full one (SF Symbols has no other), so a
+    /// low battery charging still reads as low.
     public static func battery(percent: Int?, charging: Bool) -> String {
-        if charging { return "battery.100percent.bolt" }
-        guard let percent else { return "battery.100percent" }
+        guard let percent else { return charging ? "battery.100percent.bolt" : "battery.100percent" }
         let quarter = min(100, max(0, Int((Double(percent) / 25).rounded()) * 25))
-        return "battery.\(quarter)percent"
+        return quarter == 100 && charging ? "battery.100percent.bolt" : "battery.\(quarter)percent"
     }
 
     /// The items the bar draws, left to right: in the order macOS puts them when every place is known, else as read;

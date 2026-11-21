@@ -144,6 +144,16 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(BarMenus.items(["Apple", ""]).map(\.role), [.apple], "no name, no app menu to draw")
     }
 
+    /// A click reads the menus again and presses the one drawn, wherever it is now.
+    func testAClickFindsItsMenuAfterTheAppRebuiltThem() {
+        let drawn = ["Apple", "Code", "File", "Edit", "View"]
+        XCTAssertEqual(BarMenus.place(of: 3, titles: drawn, in: drawn), 3)
+        XCTAssertEqual(BarMenus.place(of: 3, titles: drawn, in: ["Apple", "Code", "File", "Selection", "Edit"]), 4)
+        XCTAssertNil(BarMenus.place(of: 4, titles: drawn, in: ["Apple", "Code", "File"]), "a menu that's gone presses nothing")
+        XCTAssertEqual(BarMenus.place(of: 0, titles: drawn, in: ["Apple"]), 0)
+        XCTAssertNil(BarMenus.place(of: 9, titles: drawn, in: drawn))
+    }
+
     /// Titles past the room are left out whole, from the end, so none is cut in half.
     func testARowKeepsTheTitlesThatFitWhole() {
         XCTAssertEqual(BarLayout.fit([40, 30, 50], spacing: 10, room: 200), 3)
@@ -166,6 +176,7 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(BarStatus.Item(owner: "com.apple.x", label: "Wi-Fi").name, "Wi-Fi")
         XCTAssertEqual(odd.name, "somethingnew")
         XCTAssertEqual(BarStatus.Item(owner: "notion.id").name, "notion.id")
+        XCTAssertEqual(BarStatus.Item(owner: "").name, "Status item", "VoiceOver never meets an unnamed button")
     }
 
     func testTheBatterySymbolShowsTheChargeInQuarters() {
@@ -174,7 +185,9 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(BarStatus.symbol(battery, percent: 63, charging: false), "battery.75percent")
         XCTAssertEqual(BarStatus.battery(percent: 4, charging: false), "battery.0percent")
         XCTAssertEqual(BarStatus.battery(percent: 100, charging: false), "battery.100percent")
-        XCTAssertEqual(BarStatus.battery(percent: 30, charging: true), "battery.100percent.bolt")
+        XCTAssertEqual(BarStatus.battery(percent: 15, charging: true), "battery.25percent", "low and charging reads as low")
+        XCTAssertEqual(BarStatus.battery(percent: 95, charging: true), "battery.100percent.bolt")
+        XCTAssertEqual(BarStatus.battery(percent: nil, charging: true), "battery.100percent.bolt")
         XCTAssertEqual(BarStatus.battery(percent: nil, charging: false), "battery.100percent")
     }
 
