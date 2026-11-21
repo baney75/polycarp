@@ -61,7 +61,8 @@ public struct ContactQuery: Equatable, Sendable {
     }
 
     /// A verb first takes the rest as the person. For a message or an email the name is the longest run of words
-    /// (up to four) whose every word starts a word of someone's name, and the rest, as typed, is the draft. `matches` says whether a name
+    /// (up to four) whose every word starts a word of someone's name, and the rest, as typed, is the draft. The run
+    /// never ends on a one-letter word with more typed after it: that letter starts the draft. `matches` says whether a name
     /// answers; without it (no people yet) the whole rest is the name.
     public static func parse(_ typed: String, matches: ((String) -> Bool)? = nil) -> ContactQuery {
         let words = Self.words(typed)
@@ -75,6 +76,10 @@ public struct ContactQuery: Equatable, Sendable {
         let whole = String(typed[start.lowerBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
         guard verb.takesText, rest.count > 1, let matches else { return ContactQuery(verb: verb, name: whole) }
         for n in stride(from: min(rest.count, 4), through: 1, by: -1) {
+            // A one-letter word counts as an initial only when the word after it matched the same person, and the
+            // longer run that held it already failed: "message anna a bit late" sends "a bit late" to Anna Smith at
+            // Acme, not "bit late". A letter typed last is still the name being typed.
+            if n < rest.count, typed[rest[n - 1]].count == 1 { continue }
             let name = String(typed[start.lowerBound..<rest[n - 1].upperBound])
             if matches(name) {
                 let text = String(typed[rest[n - 1].upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)

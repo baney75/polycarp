@@ -200,6 +200,14 @@ final class ContactsTests: XCTestCase {
         XCTAssertEqual(ContactQuery.parse("call anna smith now", matches: matches), ContactQuery(verb: .call, name: "anna smith now"),
                        "a call takes no draft")
         XCTAssertEqual(ContactQuery.parse("mail jose see you", matches: matches), ContactQuery(verb: .email, name: "jose", text: "see you"))
+        // A one-letter word is an initial only when the next word matches the same person; otherwise it starts the draft.
+        XCTAssertTrue(matches("anna a"), "the letter alone would match Anna Smith at Acme")
+        XCTAssertEqual(ContactQuery.parse("message anna a bit late", matches: matches),
+                       ContactQuery(verb: .message, name: "anna", text: "a bit late"))
+        XCTAssertEqual(ContactQuery.parse("message anna a smith hi", matches: matches),
+                       ContactQuery(verb: .message, name: "anna a smith", text: "hi"), "an initial the next word backs up")
+        XCTAssertEqual(ContactQuery.parse("message anna a", matches: matches), ContactQuery(verb: .message, name: "anna a"),
+                       "still typing the name")
     }
 
     // MARK: Launcher rows

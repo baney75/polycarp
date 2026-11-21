@@ -22,7 +22,9 @@ two letters. The footer says what Command-Return does for the row you're on.
 A verb never takes an app's launch. When an app's name holds what you typed, spaces aside (`text edit` is TextEdit,
 `phone mirroring` is iPhone Mirroring), the words are read as a plain name and wait below the apps. After a verb, a
 person goes above the apps only when every typed word starts a word of their name, nickname or company; initials show
-below the apps, and letters found inside a name (`edit` in Meredith) don't show at all.
+below the apps, and letters found inside a name (`edit` in Meredith) don't show at all. A one-letter word after the
+name starts the draft unless the next word also names that person: `message anna a bit late` sends "a bit late",
+while `message anna j smith hi` reads Anna J Smith.
 
 - **Call** opens `tel:` with the number, which goes to the Phone app (or a FaceTime audio call through your iPhone).
   Someone with only an email address gets a FaceTime audio call.
