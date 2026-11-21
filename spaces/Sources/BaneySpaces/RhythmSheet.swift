@@ -13,8 +13,11 @@ final class RhythmSheet {
     private var panel: NSPanel?
     private var showing: Rhythm.Prompt?
     private var shownOn: PurposeDay?
-    /// Opened from the menu or clicked into: it stays until kept or put off (`RhythmSheets.step`).
-    private var held = false
+    /// Opened from the menu, or written in: it stays until kept or put off (`RhythmSheets.step`). Moving a card aside
+    /// or clicking into it without writing doesn't hold it.
+    private var byHand = false
+    private var edited: () -> Bool = { false }
+    private var held: Bool { byHand || edited() }
     private static let keptKey = "rhythmExamenKept"
     /// The workspaces in use and the one you are on, from the app.
     var workspaces: () -> (inUse: Set<Int>, current: Int) = { ([], 1) }
@@ -28,9 +31,9 @@ final class RhythmSheet {
 
     /// Shows `prompt` now, due or not: the menu's "Evening Examen…".
     func show(_ prompt: Rhythm.Prompt) {
-        if showing == prompt, let panel { panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); held = true; return }
+        if showing == prompt, let panel { panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); byHand = true; return }
         present(prompt, takeKeyboard: true)
-        held = true
+        byHand = true
     }
 
     private func dueChanged() {
@@ -56,17 +59,18 @@ final class RhythmSheet {
             let model = MorningModel(oneThing: named.oneThing?.text ?? "",
                                      rows: rows.map { .init(workspace: $0, text: named.purpose(of: $0) ?? "") })
             root = AnyView(MorningView(model: model, done: { [weak self] keep in self?.finishMorning(model, keep: keep) }))
+            edited = { [weak model] in model.map { $0.oneThing != $0.oneThingBefore || $0.rows.contains { $0.text != $0.before } } ?? false }
         case .eveningExamen:
             let rows = RhythmSheets.timeRows(seconds: keeper.ledger.today(), named: named.all)
             let model = ExamenModel(rows: rows, answers: RhythmSheets.prefill(Self.kept, today: today),
                                     tomorrow: keeper.purposes.tomorrow?.text ?? "")
             root = AnyView(ExamenView(model: model, done: { [weak self] keep in self?.finishExamen(model, keep: keep) }))
+            edited = { [weak model] in model?.edited ?? false }
         }
         let host = NSHostingView(rootView: root.environment(\.colorScheme, Chrome.scheme))
         let size = host.fittingSize
         let p = SheetPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel],
                            backing: .buffered, defer: false)
-        p.onKey = { [weak self] in self?.held = true }
         p.level = .floating
         p.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         p.isOpaque = false
@@ -134,7 +138,8 @@ final class RhythmSheet {
         panel = nil
         showing = nil
         shownOn = nil
-        held = false
+        byHand = false
+        edited = { false }
     }
 
     /// Tonight's kept answers, so the examen opened again from the menu starts from them; the journal is written whole.
@@ -146,9 +151,7 @@ final class RhythmSheet {
 
 /// A borderless panel that can still take the keyboard once you click into it.
 private final class SheetPanel: NSPanel {
-    var onKey: (() -> Void)?
     override var canBecomeKey: Bool { true }
-    override func becomeKey() { super.becomeKey(); onKey?() }
 }
 
 // MARK: Morning
@@ -200,8 +203,13 @@ final class ExamenModel: ObservableObject {
     @Published var answers: [String]
     @Published var tomorrow: String
     @Published var problem: String?
+    /// What the card opened with, so a card only moved aside isn't taken for one being written in.
+    let answersBefore: [String]
+    let tomorrowBefore: String
+    var edited: Bool { answers != answersBefore || tomorrow != tomorrowBefore }
     init(rows: [RhythmSheets.TimeRow], answers: [String] = Rhythm.examenQuestions.map { _ in "" }, tomorrow: String) {
         self.rows = rows; self.answers = answers; self.tomorrow = tomorrow
+        answersBefore = answers; tomorrowBefore = tomorrow
     }
 }
 
