@@ -472,17 +472,18 @@ public struct DesktopScene: Equatable, Sendable {
         var a = align
         var lineHeight = size * 1.42
         var spacing = size * 0.45
-        let style = withUnsafeBytes(of: &a) { ab in
+        // The style is made inside the closures: the pointers are good only there.
+        let paragraph = withUnsafeBytes(of: &a) { ab in
             withUnsafeBytes(of: &lineHeight) { lb in
                 withUnsafeBytes(of: &spacing) { sb in
-                    [CTParagraphStyleSetting(spec: .alignment, valueSize: ab.count, value: ab.baseAddress!),
-                     CTParagraphStyleSetting(spec: .minimumLineHeight, valueSize: lb.count, value: lb.baseAddress!),
-                     CTParagraphStyleSetting(spec: .maximumLineHeight, valueSize: lb.count, value: lb.baseAddress!),
-                     CTParagraphStyleSetting(spec: .paragraphSpacingBefore, valueSize: sb.count, value: sb.baseAddress!)]
+                    let style = [CTParagraphStyleSetting(spec: .alignment, valueSize: ab.count, value: ab.baseAddress!),
+                                 CTParagraphStyleSetting(spec: .minimumLineHeight, valueSize: lb.count, value: lb.baseAddress!),
+                                 CTParagraphStyleSetting(spec: .maximumLineHeight, valueSize: lb.count, value: lb.baseAddress!),
+                                 CTParagraphStyleSetting(spec: .paragraphSpacingBefore, valueSize: sb.count, value: sb.baseAddress!)]
+                    return CTParagraphStyleCreate(style, style.count)
                 }
             }
         }
-        let paragraph = CTParagraphStyleCreate(style, style.count)
 
         let body = NSMutableAttributedString()
         let textColor = color(p.text, 1)
