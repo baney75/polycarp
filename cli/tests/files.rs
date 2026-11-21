@@ -456,9 +456,21 @@ fn a_broken_files_toml_is_reported_and_fix_touches_nothing() {
     assert!(all.contains("files.toml: "), "{all}");
     let o = sb.run(&["files", "fix"]);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    // Wherever this platform keeps the default index (HOME is in the sandbox), fix made none.
+    fn any_index(d: &Path) -> Option<PathBuf> {
+        fs::read_dir(d).ok()?.flatten().find_map(|e| {
+            let p = e.path();
+            if p.is_dir() {
+                any_index(&p)
+            } else {
+                (p.file_name()? == "index.sqlite").then_some(p)
+            }
+        })
+    }
+    let made = any_index(&sb.root);
     assert!(
-        !sb.dir("cfg").join("files/index.sqlite").exists(),
-        "fix indexed the default roots: {}",
+        made.is_none(),
+        "fix indexed the default roots into {made:?}: {}",
         text(&o)
     );
 }

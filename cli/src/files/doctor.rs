@@ -87,14 +87,16 @@ pub fn fixes(f: &Facts) -> Vec<String> {
             }
         ));
     }
-    if f.index_files.is_none() {
+    // While files.toml is broken, `index` and `fix` refuse to run, so no line sends the owner to them.
+    let roots_known = f.config_error.is_none();
+    if roots_known && f.index_files.is_none() {
         out.push(
             "There is no index yet: run `polycarp files index` (or `polycarp files fix`).".into(),
         );
-    } else if f.index_stale {
+    } else if roots_known && f.index_stale {
         out.push("The index is stale: run `polycarp files fix` to update it.".into());
     }
-    if let Some(first) = f.unreadable.first() {
+    if let Some(first) = f.unreadable.first().filter(|_| roots_known) {
         let more = match f.unreadable.len() {
             1 => String::new(),
             n => format!(" and {} more", n - 1),
@@ -122,6 +124,9 @@ pub fn fixes(f: &Facts) -> Vec<String> {
         match (&f.service_unit, f.service_loaded) {
             (None, _) => out.push(
                 "Other devices can't reach this one: run `polycarp files service install`, then the start command it prints.".into(),
+            ),
+            (Some(_), Some(true)) if !roots_known => out.push(
+                "The files service is loaded but stops on the files.toml error above.".into(),
             ),
             (Some(_), Some(true)) => out.push(
                 "The files service is loaded but not answering: run `polycarp files fix` to restart it.".into(),
@@ -329,6 +334,29 @@ mod tests {
             vec![Action::Reindex],
             "Tailscale down: serve can't bind"
         );
+    }
+
+    #[test]
+    fn a_broken_files_toml_plans_nothing_and_sends_no_one_to_fix() {
+        let mut f = up();
+        f.config_error = Some("unknown field `alow_save`".into());
+        f.index_files = None;
+        f.serve_running = false;
+        f.service_unit = Some("/h/Library/LaunchAgents/com.polycarp.files.plist".into());
+        f.service_loaded = Some(true);
+        assert!(fix_plan(&f).is_empty());
+        let lines = fixes(&f);
+        assert!(lines[0].starts_with("files.toml: "), "{lines:?}");
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.contains("files fix") || l.contains("files index")),
+            "{lines:?}"
+        );
+        f.index_files = Some(3);
+        f.index_stale = true;
+        assert!(fix_plan(&f).is_empty());
+        assert!(!fixes(&f).iter().any(|l| l.contains("files fix")));
     }
 
     #[test]
