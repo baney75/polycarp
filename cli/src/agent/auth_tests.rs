@@ -632,3 +632,63 @@ fn only_an_assistant_host_or_loopback_counts_as_verified() {
     .unwrap();
     assert_eq!(c.origin, Origin::Tunnel);
 }
+
+/// One approval for this client, with the scopes the owner names, through to tokens.
+fn approved_tokens(st: &mut State, c: &str, scopes: &[&str], now: i64) -> Json {
+    let (request, p) = st
+        .authorize(&authorize_query(c, &[]), RESOURCE, Origin::Tunnel, now)
+        .unwrap();
+    let grant = scopes.iter().map(|s| s.to_string()).collect();
+    st.approve(&p.approval, Some(grant), false, now).unwrap();
+    let Poll::Redirect(url) = st.poll(&request, ISSUER, now) else {
+        panic!("approved");
+    };
+    let code = param(&url, "code").unwrap();
+    exchange(st, c, &code, VERIFIER, now + 1).unwrap()
+}
+
+#[test]
+fn approving_again_with_fewer_scopes_ends_the_wider_grant() {
+    let mut st = State::default();
+    let c = register(&mut st);
+    let wide = approved_tokens(&mut st, &c, &["read", "files", "act"], T0);
+    assert_eq!(wide["scope"], "read files act");
+    // A narrower grant that already exists, and a wide code not yet exchanged, for the same client.
+    let small = approved_tokens(&mut st, &c, &["read"], T0 + 10);
+    let (request, p) = st
+        .authorize(&authorize_query(&c, &[]), RESOURCE, Origin::Tunnel, T0 + 20)
+        .unwrap();
+    st.approve(
+        &p.approval,
+        Some(vec!["read".into(), "act".into()]),
+        false,
+        T0 + 20,
+    )
+    .unwrap();
+    let Poll::Redirect(url) = st.poll(&request, ISSUER, T0 + 20) else {
+        panic!("approved");
+    };
+    let wide_code = param(&url, "code").unwrap();
+
+    // The owner approves it again with read only.
+    let narrow = approved_tokens(&mut st, &c, &["read"], T0 + 30);
+    assert_eq!(narrow["scope"], "read");
+    assert_eq!(st.clients[&c].scopes, vec!["read"]);
+    let now = T0 + 40;
+    // The wider access token and refresh token are dead; the wider code never becomes a token.
+    assert!(st
+        .verify(Some(&bearer(&wide, "access_token")), RESOURCE, true, now)
+        .is_none());
+    let e = refresh(&mut st, &c, wide["refresh_token"].as_str().unwrap(), now).unwrap_err();
+    assert_eq!(e.error, "invalid_grant");
+    assert!(exchange(&mut st, &c, &wide_code, VERIFIER, now).is_err());
+    // What fits inside the new grant keeps working.
+    for tok in [&small, &narrow] {
+        let who = st
+            .verify(Some(&bearer(tok, "access_token")), RESOURCE, true, now)
+            .unwrap();
+        assert!(who.may("read") && !who.may("files") && !who.may("act"));
+    }
+    let again = refresh(&mut st, &c, narrow["refresh_token"].as_str().unwrap(), now).unwrap();
+    assert_eq!(again["scope"], "read");
+}

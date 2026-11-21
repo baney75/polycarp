@@ -702,6 +702,20 @@ Claude, ChatGPT or Grok. The name \"{name}\" is whatever the visitor typed. If y
         }
         p.decision = Some(Decision::Approved(grant.clone()));
         let p = p.clone();
+        // A new approval is the owner's current word on this client: any grant or unused code it already holds that
+        // goes beyond it ends now, so approving again with fewer scopes narrows what the client can do.
+        let wider = |scopes: &[String]| scopes.iter().any(|s| !grant.contains(s));
+        let families: Vec<String> = self
+            .tokens
+            .values()
+            .filter(|t| t.client == p.client && wider(&t.scopes))
+            .map(|t| t.family.clone())
+            .collect();
+        for f in families {
+            self.end_family(&f);
+        }
+        self.codes
+            .retain(|_, c| !(c.client == p.client && wider(&c.scopes)));
         if let Some(c) = self.clients.get_mut(&p.client) {
             c.approved = Some(now);
             c.scopes = grant;
