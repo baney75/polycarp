@@ -2096,18 +2096,23 @@ struct DockView: View {
         }
     }
 
-    /// Under the tile: its purpose in serif italic (the word you gave it, so the dock reads as what each place is for),
-    /// its number lit for the workspace you're on like the key that gets there, or nothing.
+    /// Under the tile: its purpose in serif italic after its number kept small (the word you gave it, so the dock reads
+    /// as what each place is for, and the key that gets there), its number lit for the workspace you're on, or nothing.
     @ViewBuilder private func tileCaption(_ caption: DockLabel.Caption, tile: DockModel.Tile, tint: Color, hovered: Bool) -> some View {
         switch caption {
         case .number:
             TileNumber(n: tile.id, tint: tint, current: tile.isCurrent, hovered: hovered)
         case .purpose(let text):
-            Text(text)
-                .font(.system(size: 11, weight: tile.isCurrent ? .medium : .regular, design: .serif).italic())
-                .foregroundStyle(tile.isCurrent ? Chrome.wash() : hovered ? Chrome.wash(0.85) : Chrome.muted)
-                .lineLimit(1).truncationMode(.tail)
-                .frame(width: tileSize + gap * 0.8, height: 15)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text("\(tile.id)")
+                    .font(Chrome.font(8.5, .bold, rounded: true))
+                    .foregroundStyle(tile.isCurrent ? tint : Chrome.muted)
+                Text(text)
+                    .font(.system(size: 11, weight: tile.isCurrent ? .medium : .regular, design: .serif).italic())
+                    .foregroundStyle(tile.isCurrent ? Chrome.wash() : hovered ? Chrome.wash(0.85) : Chrome.muted)
+                    .lineLimit(1).truncationMode(.tail)
+            }
+            .frame(maxWidth: tileSize + gap, minHeight: 15, maxHeight: 15)
         case .none:
             Color.clear.frame(width: 18, height: 15)
         }
@@ -2133,14 +2138,6 @@ struct DockView: View {
                     .onTapGesture { if let waiting { model.onFocusWaiting(waiting) } else { model.onPick(tile.id) } }
                 icons(tile).frame(width: tileSize, height: tileSize)
                 agentBadge(tile).frame(width: tileSize, height: tileSize, alignment: .topTrailing)
-                // With its purpose under it, the tile keeps its number small in the corner: the key that gets there.
-                if case .purpose = caption {
-                    Text("\(tile.id)")
-                        .font(Chrome.font(8.5, .bold, rounded: true))
-                        .foregroundStyle(tile.isCurrent ? Chrome.wash(0.9) : Chrome.muted)
-                        .padding(.leading, 5).padding(.top, 3)
-                        .allowsHitTesting(false)
-                }
             }
             .frame(width: tileSize, height: tileSize)
             .modifier(CenterReport(key: "tile:\(tile.id)"))

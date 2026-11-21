@@ -166,6 +166,10 @@ enum Render {
         ]
         dock.hover = .app(1, "1Terminal")
         guard save(DockView(model: dock).padding(.vertical, 20).background(Color(white: 0.35)), "dock.png", CGSize(width: 820, height: 0)) else { return 1 }
+        // The same dock with a purpose on four workspaces: each says what it is for, its number in the corner.
+        dock.purposes = [1: "Write", 2: "Study", 3: "Mail and people", 4: "Build Polycarp"]
+        guard save(DockView(model: dock).padding(.vertical, 20).background(Color(white: 0.35)), "dock-purpose.png", CGSize(width: 820, height: 0)) else { return 1 }
+        dock.purposes = [:]
 
         // Every agent badge: working on 1, asking on 2, an error on 3, a finish on 4.
         let agentDock = DockModel()
