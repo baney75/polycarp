@@ -349,7 +349,7 @@ final class Spaces {
     /// hidden apps again, in the background, when it opens. At most every two seconds.
     func refreshHidden() {
         guard active, !switching, Date().timeIntervalSince(hiddenAskedAt) > 2 else { return }
-        let hidden = Set(windows.values.map(\.pid)).filter { NSRunningApplication(processIdentifier: $0)?.isHidden == true }
+        let hidden = RunningApps.hidden(among: Set(windows.values.map(\.pid)))
         guard !hidden.isEmpty else { return }
         hiddenAskedAt = Date()
         refresh(full: false, asking: hidden, then: nil)
@@ -1504,12 +1504,13 @@ final class Spaces {
         var byPid: [pid_t: [Window]] = [:]
         for (id, w) in windows where model.workspace(of: id) != nil { byPid[w.pid, default: []].append(w) }
         var tracked: [BackgroundApps.TrackedWindow] = []
+        let hiddenApps = RunningApps.hidden(among: Set(byPid.keys))
         for (pid, var list) in byPid {
             // A hidden app's window closing doesn't prompt a scan, so its record can outlive it and
             // keep a windowless app off the list. Ask the app, as `focusApp` does; one on another
             // macOS desktop is never listed from here, so it still counts.
             // The listing is the app's last scan answer (`refreshHidden` asks hidden apps again when the dock opens).
-            if NSRunningApplication(processIdentifier: pid)?.isHidden == true, let a = answers[pid], a.answered, !a.partial {
+            if hiddenApps.contains(pid), let a = answers[pid], a.answered, !a.partial {
                 list = list.filter { a.listed.contains($0.id) || !Windows.onNoOtherDesktop($0.id) }
             }
             // One window that isn't minimized settles it. Minimized state is the scan's (`details`): this runs on every
@@ -1550,17 +1551,11 @@ final class Spaces {
             }
             return out
         }()
-        let running = NSWorkspace.shared.runningApplications.map { app in
-            let pid = app.processIdentifier
-            // Only a candidate is asked about windows on other macOS desktops (full screen): an
-            // Accessibility call each, so not for apps already settled.
-            let candidate = app.activationPolicy == .regular && !trackedPids.contains(pid)
-            let elsewhere = candidate && !showing.contains(pid)
-                && (serverWindows[pid]?.contains { model.workspace(of: $0) == nil && !Windows.onNoOtherDesktop($0) } ?? false)
-            return BackgroundApps.Running(pid: pid, name: app.localizedName ?? app.bundleIdentifier ?? "App",
-                                          bundleID: app.bundleIdentifier, isRegular: app.activationPolicy == .regular,
-                                          isTerminated: app.isTerminated, isHidden: app.isHidden, launchedAt: app.launchDate,
-                                          hasUntrackedWindow: candidate && (showing.contains(pid) || elsewhere))
+        // Only a candidate (a regular app with no tracked window) is asked about windows on other macOS desktops
+        // (full screen): an Accessibility call each, so not for apps already settled.
+        let running = RunningApps.forBackground(tracked: trackedPids) { pid in
+            showing.contains(pid)
+                || (serverWindows[pid]?.contains { model.workspace(of: $0) == nil && !Windows.onNoOtherDesktop($0) } ?? false)
         }
         return BackgroundApps.list(running: running, trackedWindows: tracked, selfPID: getpid())
     }

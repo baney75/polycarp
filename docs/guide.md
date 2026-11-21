@@ -57,6 +57,7 @@ polycarp doctor
 | `polycarp theme <command>` | Chooses and checks the theme |
 | `polycarp mcp` | Serves the theme commands to an agent |
 | `polycarp files <command>` | Searches, opens and sends your files across your own devices, over Tailscale only. See [Files](https://github.com/baney75/polycarp/blob/main/docs/files.md) |
+| `polycarp agent <command>` | One MCP gateway for Grok Bot, Claude Code, Codex and web assistants, local, over your tailnet or through a tunnel. See [Agents](https://github.com/baney75/polycarp/blob/main/docs/agents.md) |
 | `polycarp doctor` | Shows which apps were found, and whether their builds match |
 | `polycarp version [--json] [--check]` | Lists every part with its version and commit, and says whether they all match |
 | `polycarp update [--check] [--dry-run] [--yes]` | Brings every part on this device to the newest commit together. See [Updating](https://github.com/baney75/polycarp#updating) |
@@ -304,6 +305,9 @@ Any other MCP client can start the same command.
 | `theme_create`, `theme_delete` | Start a new theme file, or clean up one you made. A theme the agent didn't make in that session is refused unless it passes `force` |
 | `theme_off`, `theme_on` | Remove the theme files so apps that read them use their own look, or bring the theme back |
 | `theme_history`, `theme_undo`, `theme_reset` | See changes and go back |
+| `surfaces_schema` | Read every surfaces field (top bar, desktop scene, dock tiles, status menu, new tab page, idle screen) with its default and rules. Start here for those |
+| `surfaces_get` | See what a surface shows now: the file over the defaults |
+| `surfaces_set` | Change one field or group; it's checked whole and a refusal writes nothing. Every field: [spaces/docs/surfaces.md](../spaces/docs/surfaces.md) |
 
 ### The workflow
 
@@ -341,6 +345,17 @@ claude mcp add polycarp-files -- polycarp files mcp
 | `files_doctor` | See what works and the fix for what doesn't |
 
 How it indexes, what it never reads, the port and the trust rule are in [docs/files.md](https://github.com/baney75/polycarp/blob/main/docs/files.md).
+
+### One gateway for every assistant
+
+`polycarp agent` puts the theme tools, the files tools and the running app (its items, settings, the agent workspace, the launcher) behind one MCP server, with scopes. Claude Code, Codex and Grok Bot on this Mac use it over stdio; Grok Bot on your other devices reaches it over your tailnet; claude.ai, ChatGPT and grok.com reach it through a tunnel and connect with OAuth, and you approve each one on this Mac.
+
+```sh
+polycarp agent connect claude-code    # or codex, grokbot, claude.ai, chatgpt, grok.com
+polycarp agent clients                # what is connected, with last use
+```
+
+The routes, the release channel rules, the scopes and the threat model are in [docs/agents.md](https://github.com/baney75/polycarp/blob/main/docs/agents.md).
 
 ## Use your browser from Claude, ChatGPT and Grok
 

@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod agent;
 mod channel;
 mod features;
 mod files;
@@ -68,8 +69,9 @@ polycarp: one command for Polycarp Spaces and themes
 Usage:
   polycarp spaces [args...]    run the Spaces command
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
-  polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
+  polycarp mcp                 serve the theme and surfaces commands to an agent over MCP (stdio)
   polycarp files <command>     search, open and send your files across your devices (polycarp files --help)
+  polycarp agent <command>     one MCP gateway for Claude, Codex, Grok Bot and web assistants (polycarp agent --help)
   polycarp doctor              show which tools were found
   polycarp --version
   polycarp version [--json] [--check]   every part, its commit, and whether they match
@@ -104,6 +106,7 @@ fn main() {
         Some("features") => features::run(&rest),
         Some("mcp") => mcp::run(&rest),
         Some("files") => files::run(&rest),
+        Some("agent") => agent::run(&rest),
         Some("doctor") => doctor(),
         Some("version") => version::run(&rest, &version_device()),
         Some("update") => update::run(
@@ -499,6 +502,12 @@ fn run(mut cmd: Command) -> i32 {
             126
         }
     }
+}
+
+/// The spaces command for `polycarp mcp`'s surfaces tools, which run it unasked: found as `handoff` finds it, and only
+/// from a trusted folder, as `update` and `version` require.
+pub(crate) fn spaces_command() -> Option<PathBuf> {
+    find(&SPACES).ok().filter(|p| trusted_tool(p))
 }
 
 fn handoff(tool: &Tool, args: &[OsString]) -> i32 {

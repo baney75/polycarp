@@ -5,9 +5,10 @@ import Foundation
 /// answers (`PermissionsModel`) and hands them here.
 ///
 /// Each entry has to be true of the code: Accessibility is `AXIsProcessTrusted` (windows), Automation is the launcher's
-/// scripts (`Scripts.swift`) and Notifications are the hand-over note (`LegacyWatcher`).
+/// scripts (`Scripts.swift`), Notifications are the hand-over note (`LegacyWatcher`) and Contacts are the launcher's people
+/// (`ContactsLibrary`).
 public enum PermissionID: String, CaseIterable, Sendable, Identifiable {
-    case accessibility, automation, notifications
+    case accessibility, automation, notifications, contacts
     public var id: Self { self }
 
     /// The welcome window's own name for the one it walks through.
@@ -94,6 +95,13 @@ public enum Permissions {
             kind: .prompt, settingsName: "Notifications",
             settingsURL: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.baney.polycarp",
             blocksStart: false, niceToHave: true),
+        PermissionEntry(
+            id: .contacts, title: "Contacts",
+            purpose: "Lets you call, FaceTime, message and email people from the launcher.",
+            never: "It never sends a message or changes a contact, and your contacts stay on this Mac.",
+            uses: [PermissionUse(.workspaces, "Calling and messaging people from the launcher")],
+            kind: .prompt, settingsName: "Contacts", settingsURL: pane + "Privacy_Contacts",
+            blocksStart: false, niceToHave: true),
     ]
 
     public static func entry(_ id: PermissionID) -> PermissionEntry { all.first { $0.id == id }! }
@@ -112,6 +120,16 @@ public enum Permissions {
         case 0: .notAsked
         case 1: .denied
         case 2, 3, 4: .granted
+        default: .unknown
+        }
+    }
+
+    /// `CNAuthorizationStatus.rawValue`: 0 not determined, 1 restricted, 2 denied, 3 authorized, 4 limited.
+    public static func contactsState(_ raw: Int) -> PermissionState {
+        switch raw {
+        case 0: .notAsked
+        case 1, 2: .denied
+        case 3, 4: .granted
         default: .unknown
         }
     }

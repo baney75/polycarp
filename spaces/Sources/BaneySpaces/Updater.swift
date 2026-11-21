@@ -164,6 +164,8 @@ final class Updater: NSObject {
         case "check": check(manual: false)
         case "now":
             guard let release = available else { return Wire.Reply(ok: false, error: "no update is on offer; run update --check first", info: report.info) }
+            // Often unattended: a question could wait forever, so a terminal running a program stops it instead.
+            if let why = TerminalQuit.updateRefusal(busy: TerminalFeature.busyCount()) { return Wire.Reply(ok: false, error: why, info: report.info) }
             install(release)
         default: return Wire.Reply(ok: false, error: "update takes status, check or now")
         }
@@ -201,6 +203,18 @@ final class Updater: NSObject {
         alert.accessoryView = Self.notesView(release.notes)
         alert.addButton(withTitle: "Update Now")
         alert.addButton(withTitle: "Later")
+        present(alert) { [weak self] button in if button == 0 { self?.installAskingTerminals(release) } }
+    }
+
+    /// Updating restarts Polycarp, which ends the programs in its terminals: Update Now says so first while one runs.
+    /// The installer's own quit then doesn't ask again (`TerminalFeature.shouldTerminate`).
+    private func installAskingTerminals(_ release: Release) {
+        guard let question = TerminalQuit.updateQuestion(busy: TerminalFeature.busyCount()) else { return install(release) }
+        let alert = NSAlert()
+        alert.messageText = question
+        alert.informativeText = TerminalQuit.detail
+        alert.addButton(withTitle: "Update Anyway")
+        alert.addButton(withTitle: "Cancel")
         present(alert) { [weak self] button in if button == 0 { self?.install(release) } }
     }
 

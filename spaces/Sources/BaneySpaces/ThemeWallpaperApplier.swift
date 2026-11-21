@@ -27,19 +27,31 @@ final class ThemeWallpaperApplier {
             self?.sync(force: true)
         })
         observers.append(NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in self?.sync(force: false) })
+        observers.append(NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.sync(force: false) })
+        // A Mac asleep through dawn wakes to the old light: look again.
+        observers.append(ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.sync(force: false) })
         sync(force: true)
     }
 
-    /// What should show now: the theme's picture while the switch is on and a Polycarp theme is in force, else nothing.
+    /// Fires at the scene's next phase edge or verse change, so the desktop turns with the day.
+    private var turn: Timer?
+
+    /// What should show now, while the switch is on and a Polycarp theme is in force (else nothing): the desktop scene
+    /// surfaces.json names (`desktop.scene`), drawn in the hour's light with its verse; for `solid`, the theme's own
+    /// picture; for `image:<file>`, that picture from the app's Wallpapers.
     var wanted: ThemeWallpaper? {
         let a = Appearance.shared
         guard a.settings.themeWallpaper, let t = a.polycarp else { return nil }
+        let desktop = SurfacesStore.shared.current.desktop
+        if let scene = DesktopScene.of(desktop, at: Date(), systemDark: Appearance.systemDark) { return .scene(scene) }
+        if case .image(let file) = desktop.scene { return .image(file) }
         return ThemeWallpaper.of(t, json: PolycarpThemeFile.path().flatMap(ThemeWallpaper.themeJSON(atPath:)), systemDark: Appearance.systemDark)
     }
 
     /// `force` looks even if what should show hasn't changed (a Space or a display did).
     func sync(force: Bool) {
         let want = wanted
+        schedule(want)
         if !force, let last, last == want { return }
         // Never asked and never covered anything: nothing to put back.
         if want == nil, last == nil || last == .some(nil), keeper.saved.isEmpty { last = .some(nil); return }
@@ -48,6 +60,17 @@ final class ThemeWallpaperApplier {
         if !out.set.isEmpty { Trace.log("theme wallpaper: set on \(out.set.count) display(s)") }
         if !out.restored.isEmpty { Trace.log("theme wallpaper: your own picture back on \(out.restored.count) display(s)") }
         for (d, why) in out.skipped.sorted(by: { $0.key < $1.key }) { Trace.log("theme wallpaper: left display \(d) alone: \(why)") }
+    }
+
+    /// One timer, for the next moment a scene may look different; none when no scene shows.
+    private func schedule(_ want: ThemeWallpaper?) {
+        turn?.invalidate()
+        turn = nil
+        guard case .scene = want, let next = DesktopScene.nextChange(SurfacesStore.shared.current.desktop, after: Date()) else { return }
+        let t = Timer(fire: next.addingTimeInterval(1), interval: 0, repeats: false) { [weak self] _ in self?.sync(force: false) }
+        t.tolerance = 30
+        RunLoop.main.add(t, forMode: .common)
+        turn = t
     }
 }
 

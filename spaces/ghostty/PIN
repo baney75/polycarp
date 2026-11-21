@@ -1,0 +1,20 @@
+# The terminal engine Polycarp links: libghostty, Ghostty's embedding library (MIT), built from this commit's
+# source by scripts/build-ghostty.sh. It fetches the tarball, refuses anything whose sha256 or embedded commit id
+# differs from what is written here, and builds GhosttyKit with Ghostty's own zig build (nothing patched).
+# To move the pin: change GHOSTTY_TAG, GHOSTTY_COMMIT, GHOSTTY_SHA256 (and GHOSTTY_ZIG if the tag's
+# build.zig.zon asks for a newer zig), run scripts/build-ghostty.sh, copy include/ghostty.h over
+# Sources/CGhostty/include/ghostty.h if it says so, commit.
+GHOSTTY_REPO=ghostty-org/ghostty
+# v1.3.1 is the newest tag whose minimum_zig_version (0.15.2) the build Macs have; v1.4.0 needs zig 0.17.0.
+GHOSTTY_TAG=v1.3.1
+GHOSTTY_COMMIT=332b2aefc6e72d363aa93ab6ecfc86eeeeb5ed28
+# sha256 of https://codeload.github.com/ghostty-org/ghostty/tar.gz/$GHOSTTY_COMMIT,
+# recorded 2026-11-21 (two fetches gave the same bytes)
+GHOSTTY_SHA256=49db8f7db265f53833e781d6084318b4cfab65f1ea6b6832b8a93df829481165
+# The one upstream file the license text in LICENSES/ is copied from.
+GHOSTTY_LICENSE_SHA256=386211873e5b7a02f663ae4d7adf96285999f91608f8f9f31fecfd0f4095e6f1
+# The zig the tag's build.zig.zon names as its minimum_zig_version.
+GHOSTTY_ZIG=0.15.2
+# sha256 of https://ziglang.org/download/$GHOSTTY_ZIG/zig-aarch64-macos-$GHOSTTY_ZIG.tar.xz, from ziglang.org's
+# download index; scripts/fetch-zig.sh (CI) refuses any other bytes.
+GHOSTTY_ZIG_SHA256=3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b

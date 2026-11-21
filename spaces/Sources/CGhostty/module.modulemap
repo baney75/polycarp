@@ -1,0 +1,4 @@
+module CGhostty [system] {
+    header "include/ghostty.h"
+    export *
+}

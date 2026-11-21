@@ -16,6 +16,8 @@ public enum ThemeWallpaper: Equatable, Sendable {
     case gradient(RGB, RGB)
     /// A picture that ships with Polycarp, by file name (`Wallpapers/<name>` in the app's resources).
     case image(String)
+    /// A painted scene from surfaces.json: field, olive, water or parchment, in the hour's light, with a verse.
+    case scene(DesktopScene)
 
     /// The theme's own colors when it names none: its `background` at the top fading to `sunken` at the bottom. A theme
     /// always has both (`PolycarpTheme.parse` refuses one without); black stands in for either if not.
@@ -73,6 +75,7 @@ public enum ThemeWallpaper: Equatable, Sendable {
         case .solid(let c): return "solid-\(hex(c))-\(width)x\(height).png"
         case .gradient(let a, let b): return "gradient-\(hex(a))-\(hex(b))-\(width)x\(height).png"
         case .image: return nil
+        case .scene(let s): return s.fileName(width: width, height: height)
         }
     }
 
@@ -83,6 +86,7 @@ public enum ThemeWallpaper: Equatable, Sendable {
         case .solid(let c): (top, bottom) = (c, c)
         case .gradient(let a, let b): (top, bottom) = (a, b)
         case .image: return nil
+        case .scene(let s): return s.png(width: width, height: height)
         }
         guard width > 0, height > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
               let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
@@ -240,6 +244,19 @@ public final class WallpaperKeeper {
             try FileManager.default.createDirectory(at: pictures, withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
         } catch { return nil }
+        if case .scene = w { pruneScenes(keeping: url) }
         return url
+    }
+
+    /// Scenes change with the hour and the verse, so old ones pile up. A scene not drawn for a day goes; a newer one may
+    /// still show on another Space or display, so it stays.
+    func pruneScenes(keeping url: URL, now: Date = Date()) {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: pictures.path) else { return }
+        for n in names where n.hasPrefix("scene-") && n != url.lastPathComponent {
+            let f = pictures.appendingPathComponent(n)
+            guard let m = (try? fm.attributesOfItem(atPath: f.path))?[.modificationDate] as? Date, now.timeIntervalSince(m) > 26 * 3600 else { continue }
+            try? fm.removeItem(at: f)
+        }
     }
 }

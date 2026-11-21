@@ -28,7 +28,7 @@ impl Request {
     }
 }
 
-fn read_line(r: &mut impl BufRead) -> io::Result<String> {
+pub(crate) fn read_line(r: &mut impl BufRead) -> io::Result<String> {
     let mut buf = Vec::new();
     let n = r.take(MAX_LINE as u64 + 1).read_until(b'\n', &mut buf)?;
     if n == 0 {

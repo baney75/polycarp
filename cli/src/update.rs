@@ -879,7 +879,7 @@ fn recorded_source(config: &Path) -> Option<PathBuf> {
 
 /// The channel recorded by an earlier `polycarp update --channel` on a source install. A file from before
 /// channels has none, which is dev.
-fn recorded_channel(config: &Path) -> Option<Channel> {
+pub(crate) fn recorded_channel(config: &Path) -> Option<Channel> {
     source_table(config)?
         .get("channel")
         .and_then(|v| v.as_str())

@@ -53,6 +53,8 @@ The use of information received from Google APIs will adhere to the [Chrome Web 
 - **Workspaces** reads window titles and positions to arrange your windows. These stay on your Mac.
 - **The launcher** looks up apps when you ask. It sends what you typed to Apple's App Store search, and it downloads Homebrew's public list of apps.
 - **Updates.** The app asks GitHub about new releases.
+- **Purposes and the journal.** What you say each workspace is for, the day's time on each workspace and your evening examen answers are files in `~/Library/Application Support/Polycarp` (`purposes.json`, `ledger.json`, `Journal/`). They are never sent anywhere.
+- **Contacts**, only after you allow it: the launcher reads names, nicknames, companies, numbers, email addresses and contact pictures to call and message people. They stay on your Mac. A small file there lists who you reached from Polycarp and when, with no numbers and no message text ([contacts](contacts.md)).
 
 ## Deleting your data
 

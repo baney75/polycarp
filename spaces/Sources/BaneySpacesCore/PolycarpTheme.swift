@@ -29,6 +29,8 @@ public struct PolycarpTheme: Equatable, Sendable {
     public let indicator: ThemeIndicator
     // type
     public let ui: String
+    /// The monospace stack (`type.mono`), checked like `ui`. The built-in terminal draws with it (`GhosttyTheme`).
+    public private(set) var mono = "ui-monospace, monospace"
     public let fontSize: Double
     public let fontWeight: Double
     // motion
@@ -250,10 +252,11 @@ public struct PolycarpTheme: Equatable, Sendable {
         guard let reduced = motion["reduced"] as? NSNumber, CFGetTypeID(reduced) == CFBooleanGetTypeID() else {
             throw PolycarpThemeError("reduced is missing or not true or false")
         }
-        _ = try stack(type, "display"); _ = try stack(type, "mono")
+        _ = try stack(type, "display")
+        let mono = try stack(type, "mono")
         let name = printable(root["name"], limit: 48) ?? ""
         let title = printable(root["title"], limit: 48) ?? (name.isEmpty ? "Polycarp" : name)
-        let built = PolycarpTheme(
+        var built = PolycarpTheme(
             name: name, title: title, mode: mode, light: light, dark: dark,
             radiusSmall: try number(shape, "radius_small", 0, 64), radius: try number(shape, "radius", 0, 64),
             radiusLarge: try number(shape, "radius_large", 0, 64),
@@ -263,6 +266,7 @@ public struct PolycarpTheme: Equatable, Sendable {
             ui: try stack(type, "ui"), fontSize: try number(type, "size", 10, 24), fontWeight: try number(type, "weight", 300, 800),
             fast: try number(motion, "fast", 0, 1000), normal: try number(motion, "normal", 0, 1000), slow: try number(motion, "slow", 0, 1000),
             scaleFrom: try number(motion, "scale_from", 0.5, 1), reduced: reduced.boolValue)
+        built.mono = mono
         if checkContrast { try built.checkDrawnPairs() }
         return built
     }
@@ -367,6 +371,29 @@ public enum PolycarpThemeFile {
     /// checked with `fstat` (a regular file under the size limit), then read up to the limit plus one byte.
     /// The check and the read are the same file, so it cannot be swapped between them.
     public static func load(path: String, read: ReadCall = { fd, buf, n in Darwin.read(fd, buf, n) }) -> Loaded {
+        switch bytes(path: path, limit: PolycarpTheme.maxBytes, read: read) {
+        case .missing: return .missing
+        case .rejected(let why): return .rejected(why)
+        case .failed(let why): return .failed(why)
+        case .data(let data):
+            switch PolycarpTheme.parse(data) {
+            case .success(let t): return .theme(t)
+            case .failure(let e): return .rejected(e.description)
+            }
+        }
+    }
+
+    /// A small file's bytes, as `load` reads them. `surfaces.json` is read the same way (`SurfacesFile`).
+    public enum Bytes: Equatable, Sendable {
+        case missing
+        case data(Data)
+        /// Not a regular file, too big, or not allowed: the same until something changes.
+        case rejected(String)
+        /// May pass on the next try (out of file handles, an I/O error).
+        case failed(String)
+    }
+
+    public static func bytes(path: String, limit: Int, read: ReadCall = { fd, buf, n in Darwin.read(fd, buf, n) }) -> Bytes {
         var fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
         while fd < 0 && errno == EINTR { fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC) }
         if fd < 0 {
@@ -380,19 +407,18 @@ public enum PolycarpThemeFile {
         var st = stat()
         guard fstat(fd, &st) == 0 else { return .failed("unreadable: \(String(cString: strerror(errno)))") }
         guard (st.st_mode & S_IFMT) == S_IFREG else { return .rejected("not a regular file") }
-        guard st.st_size <= off_t(PolycarpTheme.maxBytes) else { return .rejected("over \(PolycarpTheme.maxBytes) bytes") }
+        guard st.st_size <= off_t(limit) else { return .rejected("over \(limit) bytes") }
         var data = Data()
         var buf = [UInt8](repeating: 0, count: 16 * 1024)
-        while data.count <= PolycarpTheme.maxBytes {
+        while data.count <= limit {
             let n = read(fd, &buf, buf.count)
             if n < 0 { if errno == EINTR { continue }; return .failed("unreadable: \(String(cString: strerror(errno)))") }
             if n == 0 { break }
             data.append(buf, count: n)
         }
-        switch PolycarpTheme.parse(data) {
-        case .success(let t): return .theme(t)
-        case .failure(let e): return .rejected(e.description)
-        }
+        // The file grew past the limit between the fstat and the read.
+        if data.count > limit { return .rejected("over \(limit) bytes") }
+        return .data(data)
     }
 
     /// What one stat says about the file: when it changed, how big, which file, and its mode and status-change

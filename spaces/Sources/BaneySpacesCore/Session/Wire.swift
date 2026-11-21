@@ -63,9 +63,20 @@ public enum Wire {
             /// check (ask GitHub again) or now (install the release on offer). The reply's `info` is an
             /// `UpdateReport`. Local callers only (`Remote.allows` never lets it through).
             case update
+            /// A terminal in Polycarp's own window (libghostty): `args` is the preset (shell, claude, codex) and
+            /// `--quick`, `text` a command, `target` a tailnet device (`TerminalLaunch`). Local callers only: a shell is
+            /// never opened for another machine (`Remote.allows`).
+            case terminal
             /// Show `target` (an absolute file path) in the built-in player (`polycarp-spaces play`, spec/player.md).
             /// Local callers only (`Remote.allows` never lets it through).
             case play
+            /// The purpose layer (`PurposeAPI`): `text` is list, set, clear, one or day, `args` the rest. Local callers
+            /// only (`Remote.allows` never lets it through).
+            case purpose
+            /// People in Contacts (`polycarp-spaces contacts`, docs/contacts.md): `text` is find, call, facetime, message
+            /// or email, `target` the query, `args` the flags (`--full`, `--text` and the draft). Never sends a message.
+            /// Local callers only (`Remote.allows` never lets it through).
+            case contacts
         }
         public var op: Op
         public var target: String?
@@ -90,9 +101,12 @@ public enum Wire {
         public var error: String?
         public var items: [Item]?
         public var info: [String: String]?
+        /// The people `contacts find` found.
+        public var contacts: [ContactSummary]?
 
-        public init(ok: Bool, error: String? = nil, items: [Item]? = nil, info: [String: String]? = nil) {
-            self.ok = ok; self.error = error; self.items = items; self.info = info
+        public init(ok: Bool, error: String? = nil, items: [Item]? = nil, info: [String: String]? = nil,
+                    contacts: [ContactSummary]? = nil) {
+            self.ok = ok; self.error = error; self.items = items; self.info = info; self.contacts = contacts
         }
     }
 

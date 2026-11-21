@@ -190,6 +190,11 @@ final class WorkspaceDock {
         appearanceObserver = NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] note in
             if note.userInfo?[Appearance.dockSizeChangedKey] as? Bool == true { self?.scheduleResize() }
         }
+        // What each tile says (`dock.tileLabel`), the purposes it shows, and whether the "At rest" tile shows.
+        readSurfaces()
+        for name in [SurfacesStore.didChange, PurposeStore.didChange] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.readSurfaces() }
+        }
         model.onShowOverview = { [weak self] in self?.hide(); self?.onShowOverview() }
         model.onShowLauncher = { [weak self] in self?.hide(); self?.onShowLauncher() }
         model.onTurnOff = { [weak self] in self?.onTurnOff() }
@@ -218,6 +223,21 @@ final class WorkspaceDock {
     }
 
     func start() { dockSwitch.set(true) }
+
+    /// Takes `dock.*` from surfaces.json and the purposes from the purpose store; publishes only what changed.
+    private func readSurfaces() {
+        let d = SurfacesStore.shared.current.dock
+        let purposes = PurposeKeeper.shared.purposes.snapshot.all
+        var changed = false
+        if model.tileLabel != d.tileLabel { model.tileLabel = d.tileLabel; changed = true }
+        if model.purposes != purposes { model.purposes = purposes; changed = true }
+        if model.restTile != d.restTile {
+            model.restTile = d.restTile
+            if !d.restTile { model.backgroundOpen = false }
+            changed = true
+        }
+        if changed { model.onLayoutChange() }
+    }
 
     /// The edge watcher: a timer that looks at the pointer 30 times a second. `DockSwitch` starts it.
     private func beginWatching() {
@@ -396,6 +416,9 @@ final class WorkspaceDock {
             carryUndroppable: { resolveCarry() == nil })
         // Before the actions: showing clears the dwell and away clocks itself.
         tickState = state
+        // The pointer rests on the edge: what the open reads of every running app is read now, off the main thread,
+        // during the dwell (`RunningApps.prepare`).
+        if !isShown, tickState.edgeSince != nil { RunningApps.prepare() }
         if isShown { noteHold(nearBar: nearBar, unmoved: unmoved, input: input, mouse: mouse, now: uptime) }
         for action in actions {
             switch action {
@@ -698,6 +721,8 @@ final class WorkspaceDock {
     private func show(on screen: NSScreen, retried: Bool = false) {
         let clock = OpenClock("dock")
         defer { clock.shown() }
+        // Each phase of the open, to the first frame drawn; one over budget says which in trace.log (`DockOpenPhases`).
+        let phases = DockOpenPhases()
         tickState.edgeSince = nil
         tickState.awaySince = nil
         dismissSide()
@@ -706,16 +731,29 @@ final class WorkspaceDock {
         model.shown = true
         let edge = WorkspaceDock.edge
         model.maxLength = (edge.isVertical ? screen.visibleFrame.height : screen.frame.width) - 32
-        model.load(from: spaces)
+        phases.mark("reset")
+        model.load(from: spaces, phases: phases)
         // The dock shows what Polycarp last knew. Titles and hidden apps' windows are read again off the main thread;
         // a change reloads it.
         spaces.refreshDetails()
+        phases.mark("details")
         spaces.refreshHidden()
+        phases.mark("hidden")
         // Off, the dock has no panel and a reveal builds none; the model mustn't think it's up.
         guard let p = dockSwitch.panelForReveal() else { model.shown = false; return }
+        phases.mark("panel")
         isShown = true
         p.contentView?.layoutSubtreeIfNeeded()
+        phases.mark("layout")
         let size = p.contentView?.fittingSize ?? .zero
+        phases.mark("fit")
+        defer {
+            phases.mark("order")
+            DockOpenPhases.afterNextFrame {
+                phases.mark("draw")
+                if let line = phases.line() { Trace.log(line) }
+            }
+        }
         let up = edge.frame(size: size, screen: screen.frame, visible: screen.visibleFrame)
         shownOn = screen
         spanLength = edge.isVertical ? size.height : size.width
@@ -1038,6 +1076,11 @@ final class WorkspaceDock {
     }
 
     private func makePanel() -> DockPanel {
+        WorkspaceDock.makePanel(model: model) { [weak self] in self?.scheduleResize() }
+    }
+
+    /// The dock's panel and its SwiftUI view, as the dock and its bench (`DockOpenTiming`) both build it.
+    static func makePanel(model: DockModel, onSizeChange: @escaping () -> Void) -> DockPanel {
         let p = DockPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         p.level = .statusBar
         p.isOpaque = false
@@ -1057,7 +1100,7 @@ final class WorkspaceDock {
         // while the label and strip measured themselves, AppKit ran out of passes and threw
         // (two crashes, 2026-10-14). SwiftUI now only reports its size, and the dock follows it.
         host.sizingOptions = [.intrinsicContentSize]
-        host.onSizeChange = { [weak self] in self?.scheduleResize() }
+        host.onSizeChange = onSizeChange
         p.contentView = host
         return p
     }
@@ -1208,8 +1251,14 @@ final class DockModel: ObservableObject {
             if more != oldValue { onLayoutChange() }
         }
     }
-    /// The running apps with no window anywhere (`BackgroundApps`), for the "Background" tile.
+    /// The running apps with no window anywhere (`BackgroundApps`), for the "At rest" tile.
     @Published var backgroundApps: [BackgroundApps.Entry] = []
+    /// `dock.tileLabel` and each workspace's purpose, by number: what goes under each tile.
+    @Published var tileLabel: Surfaces.TileLabel = .purpose
+    @Published var purposes: [Int: String] = [:]
+    /// `dock.restTile`: the "At rest" tile shows.
+    @Published var restTile = true
+    func caption(_ n: Int) -> DockLabel.Caption { DockLabel.caption(purpose: purposes[n], mode: tileLabel) }
     /// The Background list: opened by resting on, or clicking, the "Background" tile.
     @Published var backgroundOpen = false {
         didSet {
@@ -1321,25 +1370,41 @@ final class DockModel: ObservableObject {
     /// The first workspace with nothing on it, for the "new workspace" button.
     var firstEmpty: Int? { Workspaces.range.first { n in !tiles.contains { $0.id == n && !$0.apps.isEmpty } } }
 
-    func load(from spaces: Spaces) {
+    /// An app's icon by pid, as macOS has it (`NSRunningApplication.icon`). The dock bench gives sample apps theirs.
+    var iconSource: (pid_t) -> NSImage? = { NSRunningApplication(processIdentifier: $0)?.icon }
+    /// Those icons, drawn once at the dock's size and kept (`DockIcons`).
+    private lazy var icons = DockIcons { [unowned self] in self.iconSource($0) }
+
+    /// What the dock shows, read from `spaces`. `phases` marks `refresh`, `tiles` and `background` for the open trace.
+    func load(from spaces: Spaces, phases: DockOpenPhases? = nil) {
         spaces.refresh()
-        if attention != spaces.attention { attention = spaces.attention }
+        phases?.mark("refresh")
+        var entries: [Int: [Spaces.Entry]] = [:]
+        for n in Workspaces.range { entries[n] = spaces.entries(on: n) }
+        loadTiles(entries: entries, attention: spaces.attention, current: spaces.model.current, last: spaces.model.lastFocused)
+        phases?.mark("tiles")
+        let fresh = spaces.backgroundApps()
+        phases?.mark("background")
+        loadBackground(fresh)
+    }
+
+    /// The tiles from each workspace's windows. `current` is the model's, used when the dock's own display has none.
+    func loadTiles(entries: [Int: [Spaces.Entry]], attention marks: [DockAttention.Mark], current modelCurrent: Int, last: [Int: WindowID]) {
+        if attention != marks { attention = marks }
         replayOwedOn = []
         var byPid: [String: Spaces.Entry] = [:]
-        var entries: [Int: [Spaces.Entry]] = [:]
         for n in Workspaces.range {
-            entries[n] = spaces.entries(on: n)
-            for e in entries[n]! { byPid["\(e.pid)"] = e }
+            for e in entries[n] ?? [] { byPid["\(e.pid)"] = e }
         }
         // The dock's own display's workspace (set up by the controller), else the current one.
         let live = liveCurrent()
-        let current = live > 0 ? live : spaces.model.current
+        let current = live > 0 ? live : modelCurrent
         // Each agent sits on the tile that holds its window, so its badge marks the app it runs in.
         let placed = !agentStatus ? [:] : DockTiles.place(agents(), windows: entries.mapValues { $0.map(\.id) }, current: current)
-        let last = spaces.model.lastFocused
         let appsOn = entries.mapValues { $0.map { "\($0.pid)" } }
         // Join order, not focus: a tile that re-sorted after each switch moved the app you meant to click next.
         joinOrder.update(appsOn)
+        let iconPixels = DockIcons.pixels(dockScale: CGFloat(Appearance.shared.settings.dockSize.scale) * Chrome.tileScale)
         tiles = DockTiles.make(current: current, windows: appsOn, joined: joinOrder).map { t in
             let here = entries[t.workspace] ?? []
             let agents = placed[t.workspace] ?? []
@@ -1351,7 +1416,7 @@ final class DockModel: ObservableObject {
                     Window(id: $0.id, title: WindowTitle.clean($0.title, app: $0.app), isLast: $0.id == last[t.workspace], agent: byWindow[$0.id])
                 }
                 return App(id: a.key, pid: pid, name: byPid[a.key]?.app ?? "App",
-                           icon: NSRunningApplication(processIdentifier: pid)?.icon ?? NSWorkspace.shared.icon(for: .application),
+                           icon: icons.icon(pid, pixels: iconPixels),
                            windows: a.windows, list: list,
                            agent: list.compactMap(\.agent).max { $0.state.urgency < $1.state.urgency })
             }
@@ -1369,8 +1434,12 @@ final class DockModel: ObservableObject {
             tile.unpinned = agents.filter { !windows.contains($0.window) }
             return tile
         }
+        icons.keep(only: Set(tiles.flatMap { $0.apps.map(\.pid) }))
+    }
+
+    /// The Background tile's apps (`Spaces.backgroundApps`), then what depends on the tiles and that list.
+    func loadBackground(_ fresh: [BackgroundApps.Entry]) {
         // Rows keep their places under the pointer, so a click lands on the app it was aimed at.
-        let fresh = spaces.backgroundApps()
         let background = backgroundOpen && onStrip ? BackgroundApps.held(backgroundApps, now: fresh) : fresh
         if background != backgroundApps {
             if background.isEmpty != backgroundApps.isEmpty {
@@ -1766,7 +1835,7 @@ struct DockView: View {
         return layout {
             ForEach(model.tiles) { tile in tileView(tile) }
             if let n = model.firstEmpty, !model.tiles.contains(where: { $0.id == n }) { newWorkspaceButton(n) }
-            if !model.backgroundApps.isEmpty { backgroundButton }
+            if model.restTile, !model.backgroundApps.isEmpty { backgroundButton }
             Chrome.pill().fill(Chrome.edge(0.14))
                 .frame(width: vertical ? 44 * k : 1, height: vertical ? 1 : 44 * k)
                 .padding(vertical ? .vertical : .horizontal, 4).padding(.bottom, vertical ? 0 : 14)
@@ -1947,7 +2016,7 @@ struct DockView: View {
     private func backgroundList(_ apps: [BackgroundApps.Entry]) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 7) {
-                Text("\(apps.count) in the background").font(Chrome.font(12, .semibold)).foregroundStyle(Chrome.wash())
+                Text("\(apps.count) at rest").font(Chrome.font(12, .semibold)).foregroundStyle(Chrome.wash())
                 Spacer(minLength: 8)
             }
             .padding(.horizontal, 8).padding(.bottom, 4)
@@ -2017,13 +2086,35 @@ struct DockView: View {
     private func title(_ tile: DockModel.Tile, shown: Int = DockModel.iconsShown) -> String {
         let apps = tile.apps.map { $0.windows > 1 ? "\($0.name) (\($0.windows))" : $0.name }
         let agent = tile.agents.max { $0.state.urgency < $1.state.urgency }
-        return DockLabel.tileTitle(workspace: tile.id, apps: apps, agent: agent?.summary, shown: shown)
+        return DockLabel.tileTitle(workspace: tile.id, purpose: model.purposes[tile.id], apps: apps, agent: agent?.summary, shown: shown)
     }
 
     private func isHovered(_ tile: DockModel.Tile) -> Bool {
         switch model.hover {
         case .tile(let n), .app(let n, _), .more(let n): return n == tile.id
         default: return false
+        }
+    }
+
+    /// Under the tile: its purpose in serif italic after its number kept small (the word you gave it, so the dock reads
+    /// as what each place is for, and the key that gets there), its number lit for the workspace you're on, or nothing.
+    @ViewBuilder private func tileCaption(_ caption: DockLabel.Caption, tile: DockModel.Tile, tint: Color, hovered: Bool) -> some View {
+        switch caption {
+        case .number:
+            TileNumber(n: tile.id, tint: tint, current: tile.isCurrent, hovered: hovered)
+        case .purpose(let text):
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text("\(tile.id)")
+                    .font(Chrome.font(8.5, .bold, rounded: true))
+                    .foregroundStyle(tile.isCurrent ? tint : Chrome.muted)
+                Text(text)
+                    .font(Chrome.voice(11, tile.isCurrent ? .medium : .regular))
+                    .foregroundStyle(tile.isCurrent ? Chrome.wash() : hovered ? Chrome.wash(0.85) : Chrome.muted)
+                    .lineLimit(1).truncationMode(.tail)
+            }
+            .frame(maxWidth: tileSize + gap, minHeight: 15, maxHeight: 15)
+        case .none:
+            Color.clear.frame(width: 18, height: 15)
         }
     }
 
@@ -2037,6 +2128,7 @@ struct DockView: View {
         // A window waiting on you there: a quiet dot by the number, no motion, no sound; the tile's
         // click goes to that window. Not on the workspace you're on, where it is already in sight.
         let waiting = tile.isCurrent ? nil : model.attention(on: tile.id)
+        let caption = model.caption(tile.id)
         return VStack(spacing: 5) {
             ZStack(alignment: .topLeading) {
                 shape.fill(tile.isCurrent ? Chrome.lit(tint, hovered ? 0.34 : 0.26) : Chrome.cell(hovered ? 0.13 : 0.06))
@@ -2049,8 +2141,7 @@ struct DockView: View {
             }
             .frame(width: tileSize, height: tileSize)
             .modifier(CenterReport(key: "tile:\(tile.id)"))
-            // The number under the tile, lit for the workspace you're on, like the key that gets there.
-            TileNumber(n: tile.id, tint: tint, current: tile.isCurrent, hovered: hovered)
+            tileCaption(caption, tile: tile, tint: tint, hovered: hovered)
                 .overlay(alignment: .topTrailing) { if waiting != nil { AttentionDot().offset(x: 5, y: -2) } }
                 .allowsHitTesting(false)
         }
@@ -2305,14 +2396,14 @@ struct DockView: View {
                 .frame(width: vertical ? tileSize : tileSize * 0.75, height: vertical ? tileSize * 0.75 : tileSize)
                 .modifier(CenterReport(key: DockView.backgroundKey))
             // In the number row under the tiles.
-            Text("Background").font(Chrome.font(9, .medium)).foregroundStyle(Chrome.wash(open ? 0.8 : 0.45))
+            Text("At rest").font(Chrome.voice(10.5)).foregroundStyle(Chrome.wash(open ? 0.8 : 0.45))
                 .lineLimit(1).minimumScaleFactor(0.7).frame(width: vertical ? tileSize : tileSize * 0.75, height: 15)
         }
         .contentShape(Rectangle())
         .onHover { model.setHover(.background, $0) }
         .onTapGesture { model.backgroundOpen = true }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Background: \(model.backgroundApps.count) apps running with no window")
+        .accessibilityLabel("At rest: \(model.backgroundApps.count) apps running with no window")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { model.backgroundOpen = true }
     }

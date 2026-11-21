@@ -139,6 +139,101 @@ enum RunningApps {
         cached = set
         return set
     }
+
+    /// Which of `pids` are hidden (⌘H). Main thread.
+    static func hidden(among pids: Set<pid_t>) -> Set<pid_t> {
+        let facts = facts()
+        return pids.filter { (facts[$0]?.hidden ?? (NSRunningApplication(processIdentifier: $0)?.isHidden == true)) }
+    }
+
+    /// Every running app as the Background tile reads it (`BackgroundApps.list`). `untracked` is asked only for a
+    /// regular app with no window in `tracked`: whether it shows a window Polycarp doesn't track. Main thread.
+    static func forBackground(tracked: Set<pid_t>, untracked: (pid_t) -> Bool) -> [BackgroundApps.Running] {
+        facts().values.map { f in
+            BackgroundApps.Running(pid: f.pid, name: f.name, bundleID: f.bundleID, isRegular: f.regular,
+                                   isTerminated: f.terminated, isHidden: f.hidden, launchedAt: f.launchedAt,
+                                   hasUntrackedWindow: f.regular && !tracked.contains(f.pid) && untracked(f.pid))
+        }
+    }
+
+    /// What a dock open reads of one running app.
+    struct Facts {
+        let pid: pid_t
+        let regular: Bool
+        let terminated: Bool
+        let hidden: Bool
+        let name: String
+        let bundleID: String?
+        let launchedAt: Date?
+    }
+
+    /// Reading those for every running app (about 130) costs 25 to 30 ms: each `NSRunningApplication` fetches its
+    /// state on first read, and name and launch date on every read. Until 2026-11-21 every dock open paid that on the
+    /// main thread. Now the dock asks for it while the pointer rests on the edge (`prepare`, during the 120 ms dwell),
+    /// it is read off the main thread, and the open uses it. It is used for `freshFor` seconds, and never after an app
+    /// launched, quit, hid or unhid; an open without one (a script's `dock/show`) reads it on the spot, as before.
+    static let freshFor: TimeInterval = 0.5
+    private static var prepared: (facts: [pid_t: Facts], at: TimeInterval, seed: Int)?
+    private static var preparing = false
+    /// Bumped by every launch, quit, hide and unhide: a read from before one is stale.
+    private static var seed = 0
+    private static var watchingFacts = false
+    private static let factsQueue = DispatchQueue(label: "com.baney.polycarp.running-apps", qos: .userInteractive)
+
+    /// Starts reading the facts off the main thread, unless a fresh read is at hand or one is running. Main thread.
+    static func prepare() {
+        watchFacts()
+        let now = ProcessInfo.processInfo.systemUptime
+        if let p = prepared, p.seed == seed, now - p.at < freshFor / 2 { return }
+        guard !preparing else { return }
+        preparing = true
+        let started = seed
+        factsQueue.async {
+            let facts = readFacts()
+            DispatchQueue.main.async {
+                preparing = false
+                guard seed == started else { return }
+                prepared = (facts, ProcessInfo.processInfo.systemUptime, started)
+            }
+        }
+    }
+
+    /// The fresh read if there is one, else a read now. Main thread.
+    static func facts() -> [pid_t: Facts] {
+        watchFacts()
+        let now = ProcessInfo.processInfo.systemUptime
+        if let p = prepared, p.seed == seed, now - p.at < freshFor { return p.facts }
+        let facts = readFacts()
+        prepared = (facts, now, seed)
+        return facts
+    }
+
+    /// Whether `facts()` would answer without reading (for the dock bench).
+    static var factsPrepared: Bool {
+        guard let p = prepared else { return false }
+        return p.seed == seed && ProcessInfo.processInfo.systemUptime - p.at < freshFor
+    }
+
+    /// NSRunningApplication's properties are safe to read from any thread (AppKit returns them atomically).
+    private static func readFacts() -> [pid_t: Facts] {
+        var out: [pid_t: Facts] = [:]
+        for a in NSWorkspace.shared.runningApplications {
+            out[a.processIdentifier] = Facts(pid: a.processIdentifier, regular: a.activationPolicy == .regular, terminated: a.isTerminated,
+                                             hidden: a.isHidden, name: a.localizedName ?? a.bundleIdentifier ?? "App",
+                                             bundleID: a.bundleIdentifier, launchedAt: a.launchDate)
+        }
+        return out
+    }
+
+    private static func watchFacts() {
+        guard !watchingFacts else { return }
+        watchingFacts = true
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification,
+                     NSWorkspace.didHideApplicationNotification, NSWorkspace.didUnhideApplicationNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in seed += 1 }
+        }
+    }
 }
 
 enum Windows {

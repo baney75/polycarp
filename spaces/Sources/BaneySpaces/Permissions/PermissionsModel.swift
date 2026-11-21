@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import BaneySpacesCore
 import Carbon
+import Contacts
 import UserNotifications
 
 /// macOS's live answers for every permission in `Permissions.all`, for Settings > Permissions, the welcome window and the
@@ -94,6 +95,7 @@ final class PermissionsModel: ObservableObject {
         case .accessibility: return Permissions.listState(granted: AXIsProcessTrusted(), asked: asked(id))
         case .notifications: return notifications
         case .automation: return Permissions.automationState(targets.map(\.state))
+        case .contacts: return Permissions.contactsState(CNContactStore.authorizationStatus(for: .contacts).rawValue)
         }
     }
 
@@ -170,6 +172,14 @@ final class PermissionsModel: ObservableObject {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { [weak self] _, _ in
                 DispatchQueue.main.async { self?.wake(force: true) }
             }
+        case .contacts:
+            // The box shows the Info.plist reason (NSContactsUsageDescription). A yes loads the people for the launcher.
+            CNContactStore().requestAccess(for: .contacts) { [weak self] _, _ in
+                DispatchQueue.main.async {
+                    self?.wake(force: true)
+                    ContactsLibrary.shared.refreshAccess()
+                }
+            }
         case .automation: break
         }
     }
@@ -197,7 +207,7 @@ final class PermissionsModel: ObservableObject {
         sample = true
         timer?.invalidate(); timer = nil
         states = [.accessibility: .granted,
-                  .automation: .notAsked, .notifications: .notAsked]
+                  .automation: .notAsked, .notifications: .notAsked, .contacts: .notAsked]
         let pick: [String: PermissionState] = ["com.mitchellh.ghostty": .granted, "net.imput.helium": .notAsked,
                                                "com.apple.Terminal": .unknown, "com.apple.systemevents": .denied]
         targets = Permissions.automationTargets().compactMap { t in

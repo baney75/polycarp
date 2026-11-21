@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var watchdog: Timer?
     private var signalSources: [DispatchSourceSignal] = []
     private lazy var viewer = ViewerController(spaces: spaces)
+    /// The top bar (`bar.*` in surfaces.json); draws nothing until `bar.enabled`.
+    private lazy var topBar = TopBar(spaces: spaces)
     private lazy var dock: WorkspaceDock = {
         let d = WorkspaceDock(spaces: spaces)
         d.onShowOverview = { [weak self] in self?.viewer.open() }
@@ -254,6 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setupBuilt = true
         let c = SetupWindowController()
         c.model.onModifierChange = { [weak self] _ in self?.registerShortcuts() }
+        c.model.onQuickTerminalKeyChange = { [weak self] _ in self?.registerShortcuts() }
         c.model.onUninstall = { [weak self] in self?.uninstall() }
         c.model.onBringBack = { [weak self] in self?.bringBack() }
         c.model.onAbout = { [weak self] in self?.about() }
@@ -475,17 +478,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Wait a moment for the first look (a stat and a small read) so a theme file that is already there
         // draws from the first panel on; a slow disk costs 0.15 s at most and the theme then arrives as any change does.
         if case .theme(let t) = watcher.start(firstLookWithin: 0.15) { Appearance.shared.usePolycarp(t) }
+        // surfaces.json (`polycarp-spaces surfaces set ...`, docs/surfaces.md): every surface reads
+        // `SurfacesStore.shared.current` and listens for `SurfacesStore.didChange`. Same watch as the theme's, off main.
+        SurfacesStore.shared.start(log: { Trace.log($0) })
         // Settings › Appearance › "Theme sets the desktop picture" (off by default): looks once now, then on each change.
         ThemeWallpaperApplier.shared.start()
+        // `idle.enabled` (off by default): looks every 15 s for the minutes without input it waits for.
+        IdleCover.shared.start()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
 
         spaces.onChange = { [weak self] in
-            self?.updateIcon()
-            self?.dock.reload()
+            guard let self else { return }
+            self.updateIcon()
+            self.dock.reload()
+            self.topBar.workspacesChanged()
+            // The day ledger counts time from each switch; a change that keeps the workspace adds nothing.
+            PurposeKeeper.shared.noteWorkspace(self.spaces.model.current)
         }
+        // The purpose layer (purposes, the one thing, the day ledger, the rhythm) answers from launch on: none of it
+        // needs Accessibility. It draws nothing itself; the surfaces read it.
+        session.purposeHandler = { [weak self] r in PurposeKeeper.shared.answer(r, current: self?.spaces.model.current ?? 1) }
+        PurposeKeeper.shared.start()
+        // After the purposes, which it shows; it reads surfaces.json and stays away while `bar.enabled` is off.
+        topBar.start()
+        RhythmSheet.shared.workspaces = { [weak self] in
+            guard let self else { return ([], 1) }
+            return (Set(Workspaces.range.filter { !self.spaces.apps(on: $0).isEmpty }), self.spaces.model.current)
+        }
+        RhythmSheet.shared.start()
         // A new theme redraws the menu bar indicator as well as the panels.
         NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.updateIcon()
@@ -541,6 +564,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // ⌃⌘K (registered in `registerShortcuts`) opens the launcher, which searches the session rows.
         session.onSearch = { [weak self] in self?.launcher.toggle() }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
+        // People for the launcher: read now only when Contacts access is already on. Nothing asks for it here.
+        ContactsLibrary.shared.onChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
+        ContactsLibrary.shared.start()
+        // The new tab page's host manifest for each Chromium browser here (docs/newtab.md), off the main thread.
+        NewTabRegistration.start()
         DispatchQueue.main.async { [weak self] in _ = self?.launcher }
         DockRestart.isSwitching = { [weak self] in self?.spaces.switching ?? false }
         legacyWatcher.start()
@@ -591,12 +619,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return c
     }()
 
+    /// Programs in the built-in terminal end with Polycarp: it asks first while one runs (`TerminalFeature`).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        TerminalFeature.shouldTerminate()
+    }
+
     func applicationWillTerminate(_ n: Notification) {
         // An install swaps the app in place: the Dock and Mission Control stay as they are, since
         // restoring them here and taking them back at the launch would restart the Dock twice in seconds.
         let forInstall = InstallHandoff.isCurrent(markedAt: (UserDefaults.standard.object(forKey: InstallHandoff.key) as? NSNumber)?.doubleValue, now: Date().timeIntervalSince1970)
         UserDefaults.standard.removeObject(forKey: InstallHandoff.key)
         DockRestart.isQuitting = true
+        // A purpose set a moment ago is on disk before the app is gone.
+        PurposeKeeper.flushIfStarted()
         // The macOS Dock comes back with everything else; the next launch tucks it away again.
         dock.stop(restoreSystemDock: !forInstall)
         topDrag.stop()
@@ -770,6 +805,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if self?.session.started == true { self?.session.jumpToFinished() }
         }
         guard started else { return }
+        // ⌃` drops the quick terminal down, from any app (in builds with the terminal, while Settings has it on).
+        TerminalFeature.registerQuickKey(hotkeys)
         let mods = Modifier.current.carbon
         for (i, code) in Hotkeys.digitKeyCodes.enumerated() {
             let n = i + 1
@@ -870,7 +907,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         spaces.refresh()
         var apps: [Int: [String]] = [:]
         for n in Workspaces.range { apps[n] = spaces.apps(on: n) }
-        let entries = MenuLayout.entries(rows: MenuLayout.rows(current: spaces.model.current, apps: apps),
+        let keeper = PurposeKeeper.shared
+        let named = keeper.purposes.snapshot
+        let here = spaces.model.current
+        let now = MenuNow.make(workspace: here, purpose: named.purpose(of: here), since: keeper.arrived)
+        let settings = keeper.settings, clock = keeper.ledger.dayClock, at = Date()
+        let evening = settings.eveningExamen && at >= Rhythm.eveningStart(of: clock.day(of: at), settings: settings, clock: clock)
+        let entries = MenuLayout.entries(now: now, oneThingSet: named.oneThing != nil, evening: evening,
+                                         rows: MenuLayout.rows(current: here, apps: apps, purposes: named.all),
                                          finished: session.started ? session.unseenCount : 0, update: updateNotice(),
                                          dockOn: WorkspaceDock.enabled)
         for entry in entries { menu.addItem(menuItem(for: entry)) }
@@ -880,6 +924,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// is built here or in `item(_:_:key:)`, which `MenuLayoutTests` counts.
     private func menuItem(for entry: MenuEntry) -> NSMenuItem {
         switch entry {
+        case .now(let now):
+            // The purpose in serif italic, the workspace and time below it; clicking it opens Name This Hour.
+            let it = item(now.title, #selector(nameHour))
+            it.attributedTitle = MenuHead.title(now)
+            it.toolTip = "Click to name this hour"
+            return it
+        case .nameHour:
+            return item("Name This Hour…", #selector(nameHour))
+        case .oneThing(let set):
+            return item(set ? "Change the One Thing…" : "Set the One Thing…", #selector(setOneThing))
+        case .examen:
+            return item("Evening Examen…", #selector(eveningExamen))
         case .workspace(let row):
             let it = item(row.title, #selector(pick(_:)), key: "\(row.workspace)")
             it.keyEquivalentModifierMask = Modifier.current.menuFlags
@@ -933,6 +989,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func offerUpdate() { if let r = updater.available { updater.offer(r) } }
 
     @objc private func pick(_ sender: NSMenuItem) { spaces.switchTo(sender.tag) }
+
+    /// "Evening Examen…": the examen card now, given tonight or not.
+    @objc private func eveningExamen() {
+        RhythmSheet.shared.show(.eveningExamen)
+    }
+
+    /// "Name This Hour…": what the workspace you are on is for.
+    @objc private func nameHour() {
+        let n = spaces.model.current
+        let store = PurposeKeeper.shared.purposes
+        MenuHead.ask("What is this hour for?", info: "Workspace \(n). A few words, up to \(Purposes.purposeLimit) characters; leave it empty to clear it.",
+                     value: store.purpose(of: n) ?? "") { try store.setPurpose($0, for: n); Trace.log("purpose: workspace \(n) purpose set by menu") }
+    }
+
+    /// "Set the One Thing…": the one thing for today, until 4 am.
+    @objc private func setOneThing() {
+        let n = spaces.model.current
+        let store = PurposeKeeper.shared.purposes
+        MenuHead.ask("What is the one thing today?", info: "Up to \(Purposes.oneThingLimit) characters. It clears at 4 am; leave it empty to clear it now.",
+                     value: store.oneThing?.text ?? "") { try store.setOneThing($0, workspace: n); Trace.log("purpose: one thing set by menu") }
+    }
 
     /// Apps whose windows are parked instead of hidden, so automation can still use them: Settings >
     /// Automation. Apps with windows, plus every app already on the list, so any of them can be unchecked.

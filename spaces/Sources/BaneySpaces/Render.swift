@@ -65,6 +65,9 @@ enum Render {
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SETTINGS_TIMING"].flatMap(Int.init) {
             return SettingsTiming.run(rounds: r)
         }
+        if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_DOCK_OPEN"].flatMap(Int.init) {
+            return DockOpenTiming.run(rounds: r)
+        }
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME_RELOAD"].flatMap(Int.init) {
             return ThemeReloadTiming.run(rounds: r)
         }
@@ -163,6 +166,34 @@ enum Render {
         ]
         dock.hover = .app(1, "1Terminal")
         guard save(DockView(model: dock).padding(.vertical, 20).background(Color(white: 0.35)), "dock.png", CGSize(width: 820, height: 0)) else { return 1 }
+        // The same dock with a purpose on four workspaces: each says what it is for, its number in the corner.
+        dock.purposes = [1: "Write", 2: "Study", 3: "Mail and people", 4: "Build Polycarp"]
+        guard save(DockView(model: dock).padding(.vertical, 20).background(Color(white: 0.35)), "dock-purpose.png", CGSize(width: 820, height: 0)) else { return 1 }
+        dock.purposes = [:]
+        // The Ledger top bar, on a screen without a notch and on one with it (the middle folds left).
+        let topBar = TopBarModel()
+        topBar.purposes = [1: "Write", 2: "Build Polycarp", 4: "Study"]
+        topBar.oneThing = "Send the second paragraph to Paul"
+        topBar.occupied = [1, 2, 4]
+        topBar.now = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 9, minute: 12)) ?? Date()
+        if let screen = NSScreen.main, let id = screen.displayID {
+            topBar.current[id] = 2
+            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar.png", CGSize(width: 1512, height: 24)) else { return 1 }
+            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: (left: 656, right: 656)).background(Color(white: 0.35)), "topbar-notch.png", CGSize(width: 1512, height: 37)) else { return 1 }
+            // The longest purpose and one thing the store takes, on a 1280-point screen: each shortens in its place.
+            topBar.purposes[2] = String(repeating: "Write the long letter ", count: 3).prefix(60).description
+            topBar.oneThing = String(repeating: "Send the second paragraph ", count: 4).prefix(80).description
+            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar-long.png", CGSize(width: 1280, height: 24)) else { return 1 }
+        }
+        // The morning sheet and the evening examen, as they first appear.
+        let morning = MorningModel(oneThing: "Write to Paul", rows: [.init(workspace: 1, text: "Morning reading"),
+                                                                     .init(workspace: 2, text: "The Gannon letter"),
+                                                                     .init(workspace: 4, text: "")])
+        guard save(MorningView(model: morning, done: { _ in }).padding(30).background(Color(white: 0.35)), "rhythm-morning.png", CGSize(width: 440, height: 0)) else { return 1 }
+        let examen = ExamenModel(rows: RhythmSheets.timeRows(seconds: [2: 7500, 3: 3480, 4: 2220], named: [2: "Gannon letter", 3: "Polycarp", 4: "Class"]),
+                                 tomorrow: "")
+        examen.answers[0] = "The light on the field this morning"
+        guard save(ExamenView(model: examen, done: { _ in }).padding(30).background(Color(white: 0.35)), "rhythm-examen.png", CGSize(width: 440, height: 0)) else { return 1 }
 
         // Every agent badge: working on 1, asking on 2, an error on 3, a finish on 4.
         let agentDock = DockModel()
@@ -297,6 +328,14 @@ enum Render {
         let welcome = WelcomeModel()
         welcome.granted = [.accessibility]
         guard save(WelcomeView(model: welcome), "welcome.png", CGSize(width: 560, height: 0)) else { return 1 }
+
+        // The idle screen at 9:41 on a 1512-point laptop screen: Martyr Night with embers, and one verse on black.
+        let idleAt = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 21, minute: 41)) ?? Date()
+        let idleSize = CGSize(width: 1512, height: 982)
+        var idle = Surfaces.defaults.idle
+        guard save(IdleView(settings: idle, machine: "Rectory1", size: idleSize, backdrop: nil, at: idleAt), "idle-night.png", idleSize) else { return 1 }
+        idle.style = .verse
+        guard save(IdleView(settings: idle, machine: "Rectory1", size: idleSize, backdrop: nil, at: idleAt), "idle-verse.png", idleSize) else { return 1 }
         return 0
     }
 }

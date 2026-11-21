@@ -8,6 +8,9 @@ description: Use when the user wants Polycarp (Spaces, Voice, Browser or the web
 One theme file drives every Polycarp product. Change it with the `polycarp theme` command, or with the
 `theme_*` tools if `polycarp mcp` is connected. Both give the same JSON result (`--json` on the command).
 
+What a surface shows (the top bar's modules, the desktop scene and verse, dock tiles, the status menu, the new tab
+page, the idle screen) is not the theme: it is `polycarp-spaces surfaces` (MCP `surfaces_*`, spaces/docs/surfaces.md).
+
 ## Steps
 
 1. **Ask or infer.** What should change, and where: everywhere, or one product (spaces, voice, browser, site)?

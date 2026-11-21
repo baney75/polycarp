@@ -36,6 +36,40 @@ final class MenuLayoutTests: XCTestCase {
         XCTAssertFalse(rows.contains { $0.title.hasPrefix("Empty") })
     }
 
+    /// "Now first" (Donovan's pick, 2026-11-21): a named workspace is listed by its purpose, even with no windows, and
+    /// is never offered as the empty one.
+    func testNamedWorkspacesAreListedByPurpose() {
+        let rows = MenuLayout.rows(current: 2, apps: [1: ["Helium"], 2: ["Pages", "Mail"]], purposes: [2: "Gannon letter", 3: "Class"])
+        XCTAssertEqual(rows.map(\.title), ["Workspace 1  ·  Helium", "2  Gannon letter", "3  Class", "Empty Workspace 4"])
+        XCTAssertEqual(rows[1].fullList, "Pages, Mail", "the apps go to the tooltip")
+        XCTAssertNil(rows[2].fullList)
+        XCTAssertEqual(rows.map(\.isCurrent), [false, true, false, false])
+    }
+
+    func testTheHeadSaysWhatYouAreDoingAndSinceWhen() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/New_York")!
+        let at = cal.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 8, minute: 40))!
+        XCTAssertEqual(MenuNow.make(workspace: 2, purpose: "Gannon letter", since: at.addingTimeInterval(12 * 3600), twentyFourHour: true, calendar: cal).detail,
+                       "Workspace 2  ·  since 20:40", "a 24-hour Mac reads 20:40, not 8:40")
+        XCTAssertEqual(MenuNow.make(workspace: 2, purpose: "Gannon letter", since: at, twentyFourHour: false, calendar: cal),
+                       MenuNow(title: "Gannon letter", detail: "Workspace 2  ·  since 8:40"))
+        XCTAssertEqual(MenuNow.make(workspace: 5, purpose: nil, since: nil, twentyFourHour: false, calendar: cal),
+                       MenuNow(title: "Workspace 5", detail: "No purpose named"))
+        XCTAssertEqual(MenuNow.make(workspace: 5, purpose: "", since: at.addingTimeInterval(4 * 3600), twentyFourHour: false, calendar: cal).detail,
+                       "No purpose named  ·  since 12:40")
+    }
+
+    func testTheMenuOpensOnNowThenTheWorkspaces() {
+        let rows = MenuLayout.rows(current: 1, apps: [1: ["Ghostty"]], purposes: [1: "Write"])
+        let now = MenuNow(title: "Write", detail: "Workspace 1")
+        XCTAssertEqual(MenuLayout.entries(now: now, oneThingSet: true, rows: rows, finished: 0, update: nil),
+                       [.now(now), .nameHour, .oneThing(set: true), .separator] + rows.map(MenuEntry.workspace)
+                       + [.separator, .showAll, .find, .separator, .settings, .quit])
+        XCTAssertEqual(MenuLayout.entries(now: now, oneThingSet: false, evening: true, rows: rows, finished: 0, update: nil).prefix(5),
+                       [.now(now), .nameHour, .oneThing(set: false), .examen, .separator], "the examen joins the head in the evening")
+    }
+
     /// The app target can't be imported by tests, so these read its source (code only, comments stripped).
     private func code(_ path: String) throws -> String {
         let url = URL(fileURLWithPath: #filePath)
@@ -111,7 +145,7 @@ final class MenuLayoutTests: XCTestCase {
             }
         }
         // `item(` also matches "menuItem(for:" and "updateItem(": only quoted titles are captured.
-        XCTAssertEqual(titles, ["Show All Workspaces", "Find or Install an App…", "Settings…", "Quit Polycarp",
+        XCTAssertEqual(titles, ["Show All Workspaces", "Find or Install an App…", "Settings…", "Quit Polycarp", "Name This Hour…", "Evening Examen…",
                                 "Waiting for AeroSpace to quit", "Polycarp needs permission to arrange windows", "Allow Polycarp…"])
         XCTAssertEqual(text.components(separatedBy: "NSMenuItem(").count - 1, 1, "only the item(_:_:key:) helper builds one")
         XCTAssertEqual(text.components(separatedBy: ".addItem(withTitle:").count - 1, 2, "the not-started notices")

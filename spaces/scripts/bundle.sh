@@ -12,6 +12,20 @@ rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/
 # The hands engine (agent-desktop's library), built from the pinned commit; Polycarp links it.
 scripts/build-engine.sh
 
+# The built-in terminal (libghostty, from scripts/build-ghostty.sh) links only into an Apple silicon build that has the
+# library. Any other build compiles the terminal out and says so once. SwiftPM caches the manifest on its environment,
+# not on files, so Package.swift is told outright (docs/terminal.md).
+TERMINAL_NOT_BUILT="terminal not built: needs the Metal Toolchain (xcodebuild -downloadComponent MetalToolchain)"
+if [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ] && [ -f ghostty/lib/libghostty.a ]; then
+  export POLYCARP_TERMINAL=1
+elif [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ]; then
+  export POLYCARP_TERMINAL=0
+  echo "$TERMINAL_NOT_BUILT" >&2
+else
+  export POLYCARP_TERMINAL=0
+  echo "terminal not built: universal and Intel builds leave it out (libghostty is built for Apple silicon only)" >&2
+fi
+
 ARCHS=(--arch arm64)
 if xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 && [ "${BANEYSPACES_ARM64_ONLY:-}" != 1 ]; then ARCHS+=(--arch x86_64); fi
 swift build -c release "${ARCHS[@]}"
@@ -38,9 +52,18 @@ else
     -output "$APP/Contents/Resources/bin/polycarp"
 fi
 cp skill/SKILL.md "$APP/Contents/Resources/skill/SKILL.md"
+# The new tab page (a small Chrome extension, docs/newtab.md); its host is the bundled command.
+if [ -d extension/newtab ]; then
+  cp -R extension/newtab "$APP/Contents/Resources/newtab-extension"
+fi
 cp engine/lib/libagent_desktop_ffi.dylib "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
 cp NOTICE "$APP/Contents/Resources/NOTICE"
 cp LICENSES/* "$APP/Contents/Resources/licenses/"
+# libghostty finds its themes, shell integration and terminfo in Contents/Resources.
+if [ "$POLYCARP_TERMINAL" = 1 ]; then
+  cp -R ghostty/lib/share/ghostty "$APP/Contents/Resources/ghostty"
+  cp -R ghostty/lib/share/terminfo "$APP/Contents/Resources/terminfo"
+fi
 # The Rust crates the polycarp command and the engine link, from cargo's own record of them.
 RUST_TARGETS=(--target aarch64-apple-darwin); [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ] || RUST_TARGETS+=(--target x86_64-apple-darwin)
 python3 scripts/rust-licenses.py --out "$APP/Contents/Resources/licenses/polycarp-rust-crates.txt" --own "$PWD/.." "${RUST_TARGETS[@]}" \
@@ -105,7 +128,11 @@ otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q '@execu
 ! otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q '/engine/lib ' || { echo "bundle: the build folder's engine/lib rpath is still in the app" >&2; exit 1; }
 [ "$(otool -D "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib" | grep -c '^@rpath/libagent_desktop_ffi.dylib$')" -ge 1 ] || { echo "bundle: the engine's install name isn't @rpath" >&2; exit 1; }
 if otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q "$PWD/engine/lib"; then echo "bundle: the app still points at the build folder" >&2; exit 1; fi
-echo "built $APP ($FULL_VERSION, $(lipo -archs "$APP/Contents/MacOS/$EXECUTABLE"))"
+if [ "$POLYCARP_TERMINAL" = 1 ]; then
+  [ -s "$APP/Contents/Resources/licenses/ghostty-MIT.txt" ] || { echo "bundle: Ghostty's licence is missing from the bundle" >&2; exit 1; }
+  [ -f "$APP/Contents/Resources/terminfo/78/xterm-ghostty" ] || { echo "bundle: the terminal's terminfo is missing from the bundle" >&2; exit 1; }
+fi
+echo "built $APP ($FULL_VERSION, $(lipo -archs "$APP/Contents/MacOS/$EXECUTABLE"), terminal $([ "$POLYCARP_TERMINAL" = 1 ] && echo built || echo "not built"))"
 
 if [ "${1:-}" = "--install" ]; then
   scripts/install-app.sh "$APP"

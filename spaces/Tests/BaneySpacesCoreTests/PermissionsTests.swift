@@ -16,6 +16,7 @@ final class PermissionsTests: XCTestCase {
             .accessibility: (.list, "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"),
             .automation: (.perApp, "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"),
             .notifications: (.prompt, "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.baney.polycarp"),
+            .contacts: (.prompt, "x-apple.systempreferences:com.apple.preference.security?Privacy_Contacts"),
         ]
         for e in Permissions.all {
             XCTAssertEqual(e.kind, want[e.id]?.0, "\(e.id)")
@@ -41,10 +42,14 @@ final class PermissionsTests: XCTestCase {
         let plist = try Repo.text("Resources/Info.plist")
         // macOS shows these strings in its own box; without them the request fails.
         XCTAssertTrue(plist.contains("NSAppleEventsUsageDescription"))
+        XCTAssertTrue(plist.contains("NSContactsUsageDescription"))
         // Nothing in the app listens: no microphone string and no audio-input entitlement.
         XCTAssertFalse(plist.contains("NSMicrophoneUsageDescription"))
         let entitlements = try Repo.text("Resources/Polycarp.entitlements")
         XCTAssertFalse(entitlements.contains("com.apple.security.device.audio-input"))
+        // Under the Hardened Runtime, Contacts stays denied whatever TCC says unless the app holds this.
+        let parsed = try PropertyListSerialization.propertyList(from: Data(entitlements.utf8), format: nil) as? [String: Any]
+        XCTAssertEqual(parsed?["com.apple.security.personal-information.addressbook"] as? Bool, true)
     }
 
     func testEachPermissionNamesThePartsThatUseIt() {
@@ -101,7 +106,7 @@ final class PermissionsTests: XCTestCase {
         s[.automation] = .granted
         let all = Permissions.plan(states: s, features: .all)
         XCTAssertEqual(all.needed.map(\.id), [.accessibility, .automation])
-        XCTAssertEqual(all.optional.map(\.id), [.notifications], "nice to have waits with the optional ones")
+        XCTAssertEqual(all.optional.map(\.id), [.notifications, .contacts], "nice to have waits with the optional ones")
         XCTAssertEqual(all.next, .accessibility)
         XCTAssertFalse(all.canStart)
         XCTAssertEqual(all.needed.first?.stops, ["Workspaces, the dock and the overview"])
