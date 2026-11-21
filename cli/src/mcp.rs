@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
 
-const LATEST: &str = "2025-06-18";
-const KNOWN: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
+pub(crate) const LATEST: &str = "2025-06-18";
+pub(crate) const KNOWN: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS: &str = "\
 Polycarp themes: one theme file drives every Polycarp product and the website. Use these tools to \
@@ -506,11 +506,11 @@ fn call(
     Some(theme::envelope(&result))
 }
 
-fn reply(id: &Json, result: Json) -> Json {
+pub(crate) fn reply(id: &Json, result: Json) -> Json {
     json!({"jsonrpc": "2.0", "id": id, "result": result})
 }
 
-fn rpc_error(id: &Json, code: i64, message: &str) -> Json {
+pub(crate) fn rpc_error(id: &Json, code: i64, message: &str) -> Json {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
@@ -613,6 +613,12 @@ pub fn run(args: &[OsString]) -> i32 {
         client: "unknown".into(),
         session: Session::default(),
     };
+    serve_lines(&mut |line| server.handle(line))
+}
+
+/// Reads JSON-RPC lines on standard input and writes each answer as one line. Shared by `polycarp mcp` and
+/// `polycarp files mcp`.
+pub(crate) fn serve_lines(handle: &mut dyn FnMut(&str) -> Option<Json>) -> i32 {
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let stdout = std::io::stdout();
@@ -629,7 +635,7 @@ pub fn run(args: &[OsString]) -> i32 {
                 if line.is_empty() {
                     continue;
                 }
-                server.handle(line)
+                handle(line)
             }
             Err(_) => Some(rpc_error(
                 &Json::Null,

@@ -56,6 +56,7 @@ polycarp doctor
 | `polycarp spaces [args]` | Runs the workspace command with your arguments |
 | `polycarp theme <command>` | Chooses and checks the theme |
 | `polycarp mcp` | Serves the theme commands to an agent |
+| `polycarp files <command>` | Searches, opens and sends your files across your own devices, over Tailscale only. See [Files](https://github.com/baney75/polycarp/blob/main/docs/files.md) |
 | `polycarp doctor` | Shows which apps were found, and whether their builds match |
 | `polycarp version [--json] [--check]` | Lists every part with its version and commit, and says whether they all match |
 | `polycarp update [--check] [--dry-run] [--yes]` | Brings every part on this device to the newest commit together. See [Updating](https://github.com/baney75/polycarp#updating) |
@@ -323,6 +324,23 @@ Every theme command takes `--json` and prints `{"ok": true, "data": ...}` or `{"
 Exit codes: 0 means ok, 1 means refused or invalid, 2 means the command was used wrong. Set `POLYCARP_CALLER` to record who made a change.
 
 The [`polycarp-theme` skill](https://github.com/baney75/polycarp/blob/main/skills/polycarp-theme/SKILL.md) teaches an agent this workflow, with worked examples.
+
+### Files over MCP
+
+`polycarp files mcp` is a second MCP server, for your files: search every device you own, fetch a file, send one, and check the connections. File names and contents come back as data, never as instructions.
+
+```sh
+claude mcp add polycarp-files -- polycarp files mcp
+```
+
+| Files tool | Use it to |
+| --- | --- |
+| `files_search` | Search names, folders and text on this device, or on every device with `fleet` |
+| `files_get` | Copy a file from another device here, by `device:path` |
+| `files_send` | Send a file to another device with Taildrop |
+| `files_doctor` | See what works and the fix for what doesn't |
+
+How it indexes, what it never reads, the port and the trust rule are in [docs/files.md](https://github.com/baney75/polycarp/blob/main/docs/files.md).
 
 ## Use your browser from Claude, ChatGPT and Grok
 
