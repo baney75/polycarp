@@ -155,6 +155,7 @@ That last rule does not stop a visitor to a public tunnel from starting a connec
 - Another user on this Mac can't read the state: the folder is 0700. A process running as you can; that is outside what Polycarp can defend.
 - Another person's device on your tailnet, a tagged device, or one outside `allow_devices` is refused by whois before the request is read. Your own device still needs a token.
 - Through a public tunnel, anyone can reach the sign-in pages and register a client. Registration is rate-limited and capped, and a registered client gets nothing until you approve it here.
+- A tunnel connects to the gateway from this machine, so the gateway never treats a request as local because of its Host header or its peer address alone. A request carrying a tunnel's forwarding headers (`Cf-Connecting-Ip`, `Cf-Ray`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-Ip`, `Forwarded`, `Tailscale-Funnel-Request`, `Tailscale-User-Login`) is the tunnel's even when it names `127.0.0.1`: a local token is refused there, and with no tunnel set up, or on a channel that refuses it, the request is refused.
 
 ### Not built yet
 

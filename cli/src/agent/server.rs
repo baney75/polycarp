@@ -512,18 +512,28 @@ impl Ctx {
         false
     }
 
-    /// The tunnel a request came through, when its Host names one. Err when it names a tunnel this channel refuses.
-    fn via(&self, host: &str) -> Result<Option<Via>, Resp> {
-        if loopback_host(host) {
+    /// How a request reached the loopback listener. Every peer there is on this machine (`serve_conn` drops any
+    /// other), but a tunnel connects from this machine too, so the peer alone doesn't make a request local. A tunnel
+    /// marks what it forwards (cloudflared with Cf-Connecting-Ip and X-Forwarded-For, Tailscale Serve and Funnel
+    /// with Tailscale-* and X-Forwarded-For), and such a request is the tunnel's whatever Host it names: a tunnel
+    /// set to send `Host: 127.0.0.1` can't make a public request look local. Without those marks, a request is
+    /// local when Host is a loopback name and the tunnel's when Host names the tunnel. Err when it is the tunnel's
+    /// and this channel refuses that tunnel.
+    fn via(&self, req: &Req) -> Result<Option<Via>, Resp> {
+        let host = req.header("host").unwrap_or_default();
+        let forwarded = forwarded(req);
+        if loopback_host(host) && !forwarded {
             return Ok(Some(Via::Local));
         }
         let Some(t) = Tunnel::load(&self.dir) else {
             return Ok(None);
         };
-        let (Some((name, _)), Some((want, _))) = (split_host(host), split_host(&t.host)) else {
-            return Ok(None);
+        let names_tunnel = match (split_host(host), split_host(&t.host)) {
+            (Some((name, _)), Some((want, _))) => name == want,
+            _ => false,
         };
-        if name != want {
+        let tunnels = names_tunnel || (forwarded && loopback_host(host));
+        if !tunnels {
             return Ok(None);
         }
         let Some(route) = t.route() else {
@@ -622,6 +632,23 @@ fn health() -> Resp {
     )
 }
 
+/// Headers a tunnel adds to what it forwards. A client on this machine sends none of them.
+const FORWARDING_HEADERS: [&str; 8] = [
+    "cf-connecting-ip",
+    "cf-ray",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-real-ip",
+    "forwarded",
+    "tailscale-funnel-request",
+    "tailscale-user-login",
+];
+
+/// A tunnel forwarded this request.
+fn forwarded(req: &Req) -> bool {
+    FORWARDING_HEADERS.iter().any(|h| req.header(h).is_some())
+}
+
 /// Paths a web page may load: the public metadata and the approval page, all GET.
 fn browser_may(req: &Req) -> bool {
     req.method == "GET"
@@ -634,7 +661,7 @@ fn browser_may(req: &Req) -> bool {
 /// Everything on the loopback listener (and so everything a tunnel forwards).
 pub fn route_local(ctx: &Ctx, req: &Req) -> Resp {
     let host = req.header("host").unwrap_or_default();
-    let via = match ctx.via(host) {
+    let via = match ctx.via(req) {
         Ok(Some(v)) => v,
         Ok(None) => {
             return Resp::fail(

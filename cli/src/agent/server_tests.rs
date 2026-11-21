@@ -1102,3 +1102,95 @@ fn a_tunnel_visitor_named_like_an_assistant_cant_be_approved_by_a_plain_approve(
         .unwrap()
         .unwrap();
 }
+
+/// A tunnel that forwards `Host: 127.0.0.1` still marks what it forwards. Such a request is the tunnel's: a local token
+/// is refused, metadata names the public URL, a registration counts as the tunnel's, and with no tunnel set up (or a
+/// channel that refuses it) the request is refused outright.
+#[test]
+fn a_forwarded_request_naming_loopback_is_still_the_tunnels() {
+    let dir = temp("fwd");
+    write_tunnel(&dir, "cloudflare");
+    let ctx = ctx_in(&dir, Channel::Dev);
+    let (_, local) = ctx
+        .with_state(|s| s.create_bearer("codex", vec!["read".into()], false, store::now()))
+        .unwrap()
+        .unwrap();
+    let ping = json!({"jsonrpc": "2.0", "id": 1, "method": "ping"});
+    let post = |extra: (&str, &str)| {
+        let auth = format!("Bearer {local}");
+        route_local(
+            &ctx,
+            &req(
+                "POST",
+                "/mcp",
+                &[
+                    ("Host", LOCAL),
+                    ("Content-Type", "application/json"),
+                    ("Authorization", auth.as_str()),
+                    ("Accept", BOTH),
+                    extra,
+                ],
+                ping.to_string().as_bytes(),
+            ),
+        )
+    };
+    // The same token, the same Host: only the forwarding marks differ.
+    assert_eq!(post(("X-Request-Id", "1")).status, 200);
+    for mark in [
+        ("Cf-Connecting-Ip", "203.0.113.9"),
+        ("X-Forwarded-For", "203.0.113.9"),
+        ("Tailscale-Funnel-Request", "?1"),
+        ("Tailscale-User-Login", "someone@example.com"),
+        ("Forwarded", "for=203.0.113.9"),
+    ] {
+        assert_eq!(post(mark).status, 401, "{mark:?}");
+    }
+    let meta = route_local(
+        &ctx,
+        &req(
+            "GET",
+            "/.well-known/oauth-protected-resource",
+            &[("Host", "127.0.0.1"), ("Cf-Connecting-Ip", "203.0.113.9")],
+            b"",
+        ),
+    );
+    assert_eq!(
+        body_json(&meta)["resource"],
+        "https://agent.example.com/mcp"
+    );
+    let r = route_local(
+        &ctx,
+        &req(
+            "POST",
+            "/register",
+            &[
+                ("Host", "localhost"),
+                ("Content-Type", "application/json"),
+                ("X-Forwarded-For", "203.0.113.9"),
+            ],
+            json!({"redirect_uris": [CLAUDE]}).to_string().as_bytes(),
+        ),
+    );
+    assert_eq!(r.status, 201);
+    let id = body_json(&r)["client_id"].as_str().unwrap().to_string();
+    let st: State = store::read_json(&dir.join(AUTH_FILE)).unwrap();
+    assert_eq!(st.clients[&id].origin, Origin::Tunnel);
+
+    // Stable refuses its own tunnel, forwarded loopback Host included.
+    let stable = ctx_in(&dir, Channel::Stable);
+    let h = [("Host", LOCAL), ("Cf-Connecting-Ip", "203.0.113.9")];
+    assert_eq!(
+        route_local(&stable, &req("GET", "/health", &h, b"")).status,
+        403
+    );
+    // With no tunnel set up, a forwarded request has nothing to belong to.
+    let bare = ctx_in(&temp("fwd-none"), Channel::Dev);
+    assert_eq!(
+        route_local(&bare, &req("GET", "/health", &h, b"")).status,
+        403
+    );
+    assert_eq!(
+        route_local(&bare, &req("GET", "/health", &[("Host", LOCAL)], b"")).status,
+        200
+    );
+}
