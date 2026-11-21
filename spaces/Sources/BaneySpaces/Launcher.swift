@@ -1510,6 +1510,7 @@ struct LauncherView: View {
                 .background(Capsule().fill(Chrome.accent.opacity(0.85)))
                 .onTapGesture { model.back() }
                 .accessibilityLabel("\(model.scope.title) menu. Press Delete to go back.")
+                .accessibilityAddTraits(.isButton)
             }
             SearchField(model: model, placeholder: model.scope.placeholder)
                 .frame(height: 30)

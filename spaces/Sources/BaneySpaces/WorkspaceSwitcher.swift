@@ -485,6 +485,8 @@ struct SwitcherView: View {
             Text(SwitcherTileText.caption(count: tile.count, isCurrent: tile.isCurrent))
                 .font(Chrome.font(10, tile.isCurrent ? .semibold : .regular))
                 .foregroundStyle(Chrome.wash(tile.isCurrent ? 0.9 : 0.65))
+                // A theme's largest text (1.5x) cut "Here · 3 windows" short; it shrinks a little before it cuts.
+                .lineLimit(1).minimumScaleFactor(0.75)
         }
         .frame(width: SwitcherLayout.tileWidth, height: SwitcherLayout.tileHeight)
         .background(Chrome.shape(.switcherTile).fill(on ? Chrome.cell(0.16) : Chrome.cell(0.05)))

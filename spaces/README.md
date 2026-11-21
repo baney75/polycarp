@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/shots/overview.jpg" alt="The Polycarp overview: nine workspace tiles in a 3×3 grid, each listing its windows by app and title" width="860">
+  <img src="docs/shots/overview.jpg" alt="The Polycarp overview: each workspace with windows is a tile of window cards by app and title; the empty ones, 6 and 8, are small buttons below" width="860">
 </p>
 
 ```sh
@@ -338,7 +338,7 @@ make install
 ```
 
 <p align="center">
-  <img src="docs/shots/setup.jpg" alt="The Polycarp setup window" width="420">
+  <img src="docs/shots/setup.jpg" alt="Polycarp Settings on General: the parts of Polycarp, permissions and startup" width="420">
 </p>
 
 Then a setup window opens. There is one thing you have to do:

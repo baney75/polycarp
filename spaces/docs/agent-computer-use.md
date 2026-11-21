@@ -397,7 +397,7 @@ nightly builds ship for every platform; it gets tested on every platform before 
 | Workspace Dock, launcher, ⌘Tab bar, overview | SwiftUI/AppKit | Omarchy shell (Quickshell) plugins, so they match Omarchy's look | Native overlay windows (Rust, `windows` crate) |
 | Agent hands | agent-desktop engine through its C library | agent-desktop's Linux adapter (AT-SPI), built from the pinned source and run by the daemon as a child process (headless, after the scope guard) | agent-desktop's Windows adapter (UI Automation) linked as a Rust crate |
 | Sandbox | Tart macOS VM | A KVM VM (libvirt) | Hyper-V or Windows Sandbox |
-| Keys | ⌘1–9, ⌘⇧1–9 | Super+1–9, Super+Shift+1–9 (Omarchy's own bindings are rebound to Polycarp) | Win+1–9 is taken by the taskbar; Alt+1–9 and Alt+Shift+1–9 by default, changeable |
+| Keys | ⌘1-9, ⌘⇧1-9 | Super+1-9, Super+Shift+1-9 (Omarchy's own bindings are rebound to Polycarp) | Win+1-9 is taken by the taskbar; Alt+1-9 and Alt+Shift+1-9 by default, changeable |
 
 The agent workspace verbs (`workspaces`, `open` with `new_window` and `wait`, `arrange`, `move --window`,
 `close`, child windows), per platform:
