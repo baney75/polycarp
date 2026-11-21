@@ -66,6 +66,9 @@ enum Chrome {
     static func wash(_ opacity: Double = 1) -> Color { Appearance.color(look.color("foreground")).opacity(opacity) }
 
     /// Plain white at `opacity`: text on a workspace's own tint in the BaneySpaces theme, which dims the tints for it.
+    /// The theme's warm color (its "working" role; gold in the Polycarp theme): the one thing, a verse's reference.
+    static var gold: Color { Appearance.color(look.color("working")) }
+
     static func light(_ opacity: Double = 1) -> Color { Appearance.color(look.color("light")).opacity(opacity) }
 
     /// Plain black at `opacity`, in every palette: the overview's dim and the strokes that outline a mark.
