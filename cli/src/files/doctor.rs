@@ -120,13 +120,11 @@ pub fn fixes(f: &Facts) -> Vec<String> {
             "Watching for changes failed ({why}), so the index is rescanned every 10 minutes instead.{linux}"
         ));
     }
-    if f.logged_in && !f.serve_running {
+    // The service stops on the same files.toml error, and doctor can't tell which port it was given.
+    if roots_known && f.logged_in && !f.serve_running {
         match (&f.service_unit, f.service_loaded) {
             (None, _) => out.push(
                 "Other devices can't reach this one: run `polycarp files service install`, then the start command it prints.".into(),
-            ),
-            (Some(_), Some(true)) if !roots_known => out.push(
-                "The files service is loaded but stops on the files.toml error above.".into(),
             ),
             (Some(_), Some(true)) => out.push(
                 "The files service is loaded but not answering: run `polycarp files fix` to restart it.".into(),
@@ -347,12 +345,13 @@ mod tests {
         assert!(fix_plan(&f).is_empty());
         let lines = fixes(&f);
         assert!(lines[0].starts_with("files.toml: "), "{lines:?}");
-        assert!(
-            !lines
-                .iter()
-                .any(|l| l.contains("files fix") || l.contains("files index")),
-            "{lines:?}"
-        );
+        // Only the files.toml line: no index, fix or service steps, whatever state the service is in.
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        for (unit, loaded) in [(None, None), (f.service_unit.clone(), Some(false))] {
+            f.service_unit = unit;
+            f.service_loaded = loaded;
+            assert_eq!(fixes(&f).len(), 1, "{:?}", fixes(&f));
+        }
         f.index_files = Some(3);
         f.index_stale = true;
         assert!(fix_plan(&f).is_empty());

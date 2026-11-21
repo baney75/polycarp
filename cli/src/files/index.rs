@@ -269,6 +269,8 @@ impl Index {
         for root in folders {
             if !root.path.is_dir() || rules::never(&root.path.join("x")) {
                 stats.missing_roots.push(root.path.display().to_string());
+                // Seen, so an outer root's sweep leaves a missing inner root's rows alone.
+                self::keep(&tx, &root.path, run)?;
                 continue;
             }
             stats.roots += 1;
@@ -722,6 +724,14 @@ mod tests {
         let id = idx.lookup(None, Some(&plan)).unwrap().unwrap().id;
         let again = idx.update(&roots, &[]).unwrap();
         assert_eq!((again.added, again.removed), (0, 0), "{again:?}");
+        assert_eq!(idx.lookup(None, Some(&plan)).unwrap().unwrap().id, id);
+        // The inner root signed out: its rows wait for it under the outer root's sweep.
+        let away = d.join("away");
+        fs::rename(&inner, &away).unwrap();
+        let gone = idx.update(&roots, &[]).unwrap();
+        assert_eq!(gone.removed, 0, "{gone:?}");
+        fs::rename(&away, &inner).unwrap();
+        idx.update(&roots, &[]).unwrap();
         assert_eq!(idx.lookup(None, Some(&plan)).unwrap().unwrap().id, id);
         let _ = fs::remove_dir_all(&d);
     }
