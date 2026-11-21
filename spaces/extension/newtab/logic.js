@@ -18,7 +18,8 @@
 		if (!text) return { kind: "none" };
 		if (nameIt) return { kind: "name", text: text };
 		if (withScheme.test(text)) {
-			return /^(https?|file|chrome|about):/i.test(text) ? { kind: "open", url: text } : search(text, template);
+			// A page may only send itself to the web; file:, chrome: and the rest would fail without a word.
+			return /^https?:/i.test(text) ? { kind: "open", url: text } : search(text, template);
 		}
 		if (local.test(text) || ip.test(text)) return { kind: "open", url: "http://" + text };
 		if (host.test(text)) return { kind: "open", url: "https://" + text };

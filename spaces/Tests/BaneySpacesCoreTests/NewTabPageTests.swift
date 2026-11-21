@@ -42,6 +42,8 @@ final class NewTabPageTests: XCTestCase {
         XCTAssertEqual(act(ctx, "javascript:alert(1)").kind, "search")
         XCTAssertEqual(act(ctx, "data:text/html,hi").kind, "search")
         XCTAssertEqual(act(ctx, "ftp://example.com").kind, "search")
+        XCTAssertEqual(act(ctx, "chrome://settings").kind, "search", "a page can't open browser pages")
+        XCTAssertEqual(act(ctx, "file:///Users/me/notes.pdf").kind, "search", "nor files")
     }
 
     func testTheSearchUsesTheConfiguredTemplateOrFallsBack() throws {
