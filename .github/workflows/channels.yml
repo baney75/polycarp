@@ -24,3 +24,5 @@ jobs:
         run: bash scripts/check-channels.sh && bash scripts/tests/check-channels-test.sh
       - name: Version strings, the feed and the Info.plist template
         run: bash spaces/scripts/channels-test.sh && bash spaces/scripts/tests/channel-gates-test.sh
+      - name: Setting the signing secrets from the owner's Mac
+        run: bash spaces/scripts/tests/set-ci-signing-test.sh
