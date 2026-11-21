@@ -56,17 +56,25 @@ public enum BarText {
         calendar.nextDate(after: date, matching: DateComponents(second: 0), matchingPolicy: .nextTime) ?? date.addingTimeInterval(60)
     }
 
-    /// The battery as the bar shows it: nothing without a battery, and nothing while it is charged and on power, so a
-    /// healthy machine shows no meter.
+    /// The battery as the bar shows it: only off power or while charging. On power and not charging shows nothing,
+    /// whatever the charge, so a Mac held at a charge limit (80%, say) shows no meter all day.
     public static func battery(percent: Int?, charging: Bool, onPower: Bool) -> String? {
         guard let percent else { return nil }
-        if onPower && !charging && percent >= 95 { return nil }
+        if onPower && !charging { return nil }
         return charging ? "\(percent)% charging" : "\(percent)%"
     }
 }
 
 /// Where the top bar puts its modules.
 public enum BarLayout {
+    /// Whether to open System Settings for `hideSystemMenuBar`, and the latch to keep across launches. The pane opens
+    /// once each time the setting turns on. Only a change read from surfaces.json clears the latch (`fromFile`): the
+    /// defaults the bar starts with before the file is read never do, so the pane doesn't open again at every launch.
+    public static func menuBarAsk(wantsHidden: Bool, asked: Bool, fromFile: Bool) -> (open: Bool, asked: Bool) {
+        if wantsHidden { return (!asked, true) }
+        return (false, fromFile ? false : asked)
+    }
+
     /// The three places on a screen. A screen with a notch has no middle: the middle's modules follow the left's,
     /// before the camera housing.
     public static func places(_ bar: Surfaces.Bar, notch: Bool) -> (left: [Surfaces.BarModule], center: [Surfaces.BarModule], right: [Surfaces.BarModule]) {

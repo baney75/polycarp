@@ -50,6 +50,7 @@ final class TopBarTests: XCTestCase {
     func testBatteryShowsOnlyWhenItMatters() {
         XCTAssertNil(BarText.battery(percent: nil, charging: false, onPower: true), "no battery")
         XCTAssertNil(BarText.battery(percent: 100, charging: false, onPower: true), "full and on power")
+        XCTAssertNil(BarText.battery(percent: 80, charging: false, onPower: true), "held at a charge limit on power")
         XCTAssertEqual(BarText.battery(percent: 82, charging: false, onPower: false), "82%")
         XCTAssertEqual(BarText.battery(percent: 40, charging: true, onPower: true), "40% charging")
     }
@@ -105,9 +106,24 @@ final class TopBarTests: XCTestCase {
 
     /// Review of #587: System Settings opens once each time `hideSystemMenuBar` turns on, not on every launch.
     func testTheMenuBarPaneOpensOncePerTurnOn() throws {
+        // Two launches with the setting on: each starts on the defaults, then the file arrives a moment later.
+        var asked = false, opened = 0
+        func reload(wants: Bool, fromFile: Bool) {
+            let r = BarLayout.menuBarAsk(wantsHidden: wants, asked: asked, fromFile: fromFile)
+            asked = r.asked
+            if r.open { opened += 1 }
+        }
+        for _ in 1...2 {
+            reload(wants: false, fromFile: false)
+            reload(wants: true, fromFile: true)
+        }
+        XCTAssertEqual(opened, 1, "the late read at the second launch doesn't open the pane again")
+        reload(wants: false, fromFile: true)
+        reload(wants: true, fromFile: true)
+        XCTAssertEqual(opened, 2, "turning it off in the file and on again asks again")
         let code = try app("TopBar.swift")
-        XCTAssertTrue(code.contains("if wantsHidden && !UserDefaults.standard.bool(forKey: Self.askedKey) { askToHideMenuBar() }"))
-        XCTAssertTrue(code.contains("UserDefaults.standard.set(wantsHidden, forKey: Self.askedKey)"))
+        XCTAssertTrue(code.contains("forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload(fromFile: true) }"))
+        XCTAssertEqual(code.components(separatedBy: "fromFile: true").count, 2, "only the surfaces change counts as the file")
     }
 
     func testTheMiddleLeavesRoomForTheSides() {

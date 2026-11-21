@@ -17,8 +17,8 @@ final class TopBar {
     private var tick: Timer?
     private let network = NWPathMonitor()
     private var powerSource: CFRunLoopSource?
-    /// Set once System Settings was opened for `hideSystemMenuBar`, kept across launches, cleared when it turns off:
-    /// the pane opens once each time you turn the setting on.
+    /// Set once System Settings was opened for `hideSystemMenuBar`, kept across launches, cleared when surfaces.json
+    /// turns it off (`BarLayout.menuBarAsk`): the pane opens once each time you turn the setting on.
     private static let askedKey = "topBarAskedToHideMenuBar"
     private var loggedCovered = false
 
@@ -33,7 +33,8 @@ final class TopBar {
 
     func start() {
         let center = NotificationCenter.default
-        for name in [SurfacesStore.didChange, PurposeStore.didChange, NSApplication.didChangeScreenParametersNotification] {
+        center.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload(fromFile: true) }
+        for name in [PurposeStore.didChange, NSApplication.didChangeScreenParametersNotification] {
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.reload() }
         }
         // Set in System Settings, the menu bar's hiding changes the visible frame (and posts this, undocumented).
@@ -65,12 +66,14 @@ final class TopBar {
     }
 
     /// Reads surfaces.json, the purposes and the screens, and puts a bar on each screen where the macOS bar is hidden.
-    func reload() {
+    /// `fromFile` is a change the store read from surfaces.json, the only kind that may clear the menu bar latch.
+    func reload(fromFile: Bool = false) {
         let bar = SurfacesStore.shared.current.bar
         model.bar = bar
-        let wantsHidden = bar.hideSystemMenuBar && bar.enabled
-        if wantsHidden && !UserDefaults.standard.bool(forKey: Self.askedKey) { askToHideMenuBar() }
-        UserDefaults.standard.set(wantsHidden, forKey: Self.askedKey)
+        let ask = BarLayout.menuBarAsk(wantsHidden: bar.hideSystemMenuBar && bar.enabled,
+                                       asked: UserDefaults.standard.bool(forKey: Self.askedKey), fromFile: fromFile)
+        UserDefaults.standard.set(ask.asked, forKey: Self.askedKey)
+        if ask.open { askToHideMenuBar() }
         guard bar.enabled else { removeAll(); return }
 
         let hidden = UserDefaults.standard.bool(forKey: "_HIHideMenuBar")
