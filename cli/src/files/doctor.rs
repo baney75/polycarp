@@ -22,6 +22,8 @@ pub struct Peer {
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct Facts {
+    /// files.toml could not be read. Nothing else is trusted, and `fix` does nothing, until it is fixed.
+    pub config_error: Option<String>,
     /// The `tailscale` command, if found.
     pub tailscale: Option<String>,
     pub backend: String,
@@ -57,13 +59,22 @@ pub enum Action {
 
 impl Facts {
     pub fn healthy(&self) -> bool {
-        self.logged_in && self.serve_running && !self.index_stale && self.index_files.is_some()
+        self.config_error.is_none()
+            && self.logged_in
+            && self.serve_running
+            && !self.index_stale
+            && self.index_files.is_some()
     }
 }
 
 /// One line per problem: what is wrong, then the step that fixes it.
 pub fn fixes(f: &Facts) -> Vec<String> {
     let mut out = Vec::new();
+    if let Some(e) = &f.config_error {
+        out.push(format!(
+            "files.toml: {e}; fix it, then run `polycarp files doctor` again."
+        ));
+    }
     if f.tailscale.is_none() {
         out.push("Tailscale is not installed: install it from https://tailscale.com/download and sign in.".into());
     } else if !f.logged_in {
@@ -140,6 +151,10 @@ pub fn fixes(f: &Facts) -> Vec<String> {
 /// What `fix` does on its own: only safe steps. Installing a service or starting Tailscale stays a hint.
 pub fn fix_plan(f: &Facts) -> Vec<Action> {
     let mut plan = Vec::new();
+    // With files.toml broken the roots are unknown: indexing the defaults could pull in folders the owner left out.
+    if f.config_error.is_some() {
+        return plan;
+    }
     if f.index_files.is_none() || f.index_stale {
         plan.push(Action::Reindex);
     }

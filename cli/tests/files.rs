@@ -428,3 +428,40 @@ fn the_files_mcp_server_lists_its_tools_and_searches() {
         "invalid_args"
     );
 }
+
+#[test]
+fn a_broken_files_toml_is_reported_and_fix_touches_nothing() {
+    let sb = Sandbox::new();
+    sb.write("notes.md", "grace");
+    // A typo'd key next to roots the owner narrowed on purpose.
+    fs::write(
+        sb.dir("cfg").join("files.toml"),
+        format!(
+            "alow_save = true\nroots = [{:?}]\n",
+            sb.dir("docs").to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let o = sb.run(&["files", "doctor", "--json"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let d = &v["data"];
+    let err = d["config_error"]
+        .as_str()
+        .unwrap_or_else(|| panic!("config_error: {}", d["config_error"]));
+    assert!(err.contains("alow_save"), "{err}");
+    let all: String = d["fixes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f.as_str().unwrap())
+        .collect();
+    assert!(all.contains("files.toml: "), "{all}");
+    let o = sb.run(&["files", "fix"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(
+        !sb.dir("cfg").join("files/index.sqlite").exists(),
+        "fix indexed the default roots: {}",
+        text(&o)
+    );
+}

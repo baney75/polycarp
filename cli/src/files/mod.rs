@@ -397,12 +397,21 @@ pub fn op_send(path: &Path, device: &str) -> Res {
 }
 
 pub fn op_doctor() -> doctor::Facts {
-    let c = cfg().unwrap_or_default();
     let tn = Cli::find().ok().map(|cli| {
         let p = cli.bin.display().to_string();
         (p, Arc::new(cli) as Arc<dyn Tailnet>)
     });
-    doctor::gather(&c, tn)
+    match cfg() {
+        Ok(c) => doctor::gather(&c, tn),
+        Err(e) => {
+            // Tailscale and the service are still worth reporting; the roots are not known.
+            let mut f = doctor::gather(&Config::default(), tn);
+            f.roots.clear();
+            f.missing_roots.clear();
+            f.config_error = Some(e.message);
+            f
+        }
+    }
 }
 
 pub fn doctor_json(f: &doctor::Facts) -> Json {
@@ -953,11 +962,11 @@ fn cmd_fix() -> i32 {
     for step in &plan {
         match step {
             doctor::Action::Reindex => {
-                let c = cfg().unwrap_or_default();
-                let r = c
-                    .index_path()
-                    .and_then(|db| Index::open(&db))
-                    .and_then(|mut i| i.update(&c.roots(), &c.skip));
+                let r = cfg().map_err(|e| e.message).and_then(|c| {
+                    c.index_path()
+                        .and_then(|db| Index::open(&db))
+                        .and_then(|mut i| i.update(&c.roots(), &c.skip))
+                });
                 match r {
                     Ok(s) => println!(
                         "Updated the index: {} files ({} new, {} changed, {} removed).",
