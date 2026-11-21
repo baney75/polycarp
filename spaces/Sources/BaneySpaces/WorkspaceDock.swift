@@ -698,6 +698,8 @@ final class WorkspaceDock {
     private func show(on screen: NSScreen, retried: Bool = false) {
         let clock = OpenClock("dock")
         defer { clock.shown() }
+        // Each phase of the open, to the first frame drawn; one over budget says which in trace.log (`DockOpenPhases`).
+        let phases = DockOpenPhases()
         tickState.edgeSince = nil
         tickState.awaySince = nil
         dismissSide()
@@ -706,16 +708,29 @@ final class WorkspaceDock {
         model.shown = true
         let edge = WorkspaceDock.edge
         model.maxLength = (edge.isVertical ? screen.visibleFrame.height : screen.frame.width) - 32
-        model.load(from: spaces)
+        phases.mark("reset")
+        model.load(from: spaces, phases: phases)
         // The dock shows what Polycarp last knew. Titles and hidden apps' windows are read again off the main thread;
         // a change reloads it.
         spaces.refreshDetails()
+        phases.mark("details")
         spaces.refreshHidden()
+        phases.mark("hidden")
         // Off, the dock has no panel and a reveal builds none; the model mustn't think it's up.
         guard let p = dockSwitch.panelForReveal() else { model.shown = false; return }
+        phases.mark("panel")
         isShown = true
         p.contentView?.layoutSubtreeIfNeeded()
+        phases.mark("layout")
         let size = p.contentView?.fittingSize ?? .zero
+        phases.mark("fit")
+        defer {
+            phases.mark("order")
+            DockOpenPhases.afterNextFrame {
+                phases.mark("draw")
+                if let line = phases.line() { Trace.log(line) }
+            }
+        }
         let up = edge.frame(size: size, screen: screen.frame, visible: screen.visibleFrame)
         shownOn = screen
         spanLength = edge.isVertical ? size.height : size.width
@@ -1038,6 +1053,11 @@ final class WorkspaceDock {
     }
 
     private func makePanel() -> DockPanel {
+        WorkspaceDock.makePanel(model: model) { [weak self] in self?.scheduleResize() }
+    }
+
+    /// The dock's panel and its SwiftUI view, as the dock and its bench (`DockOpenTiming`) both build it.
+    static func makePanel(model: DockModel, onSizeChange: @escaping () -> Void) -> DockPanel {
         let p = DockPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         p.level = .statusBar
         p.isOpaque = false
@@ -1057,7 +1077,7 @@ final class WorkspaceDock {
         // while the label and strip measured themselves, AppKit ran out of passes and threw
         // (two crashes, 2026-10-14). SwiftUI now only reports its size, and the dock follows it.
         host.sizingOptions = [.intrinsicContentSize]
-        host.onSizeChange = { [weak self] in self?.scheduleResize() }
+        host.onSizeChange = onSizeChange
         p.contentView = host
         return p
     }
@@ -1321,22 +1341,35 @@ final class DockModel: ObservableObject {
     /// The first workspace with nothing on it, for the "new workspace" button.
     var firstEmpty: Int? { Workspaces.range.first { n in !tiles.contains { $0.id == n && !$0.apps.isEmpty } } }
 
-    func load(from spaces: Spaces) {
+    /// An app's icon by pid, as macOS has it (`NSRunningApplication.icon`). The dock bench gives sample apps theirs.
+    var iconSource: (pid_t) -> NSImage? = { NSRunningApplication(processIdentifier: $0)?.icon }
+
+    /// What the dock shows, read from `spaces`. `phases` marks `refresh`, `tiles` and `background` for the open trace.
+    func load(from spaces: Spaces, phases: DockOpenPhases? = nil) {
         spaces.refresh()
-        if attention != spaces.attention { attention = spaces.attention }
+        phases?.mark("refresh")
+        var entries: [Int: [Spaces.Entry]] = [:]
+        for n in Workspaces.range { entries[n] = spaces.entries(on: n) }
+        loadTiles(entries: entries, attention: spaces.attention, current: spaces.model.current, last: spaces.model.lastFocused)
+        phases?.mark("tiles")
+        let fresh = spaces.backgroundApps()
+        phases?.mark("background")
+        loadBackground(fresh)
+    }
+
+    /// The tiles from each workspace's windows. `current` is the model's, used when the dock's own display has none.
+    func loadTiles(entries: [Int: [Spaces.Entry]], attention marks: [DockAttention.Mark], current modelCurrent: Int, last: [Int: WindowID]) {
+        if attention != marks { attention = marks }
         replayOwedOn = []
         var byPid: [String: Spaces.Entry] = [:]
-        var entries: [Int: [Spaces.Entry]] = [:]
         for n in Workspaces.range {
-            entries[n] = spaces.entries(on: n)
-            for e in entries[n]! { byPid["\(e.pid)"] = e }
+            for e in entries[n] ?? [] { byPid["\(e.pid)"] = e }
         }
         // The dock's own display's workspace (set up by the controller), else the current one.
         let live = liveCurrent()
-        let current = live > 0 ? live : spaces.model.current
+        let current = live > 0 ? live : modelCurrent
         // Each agent sits on the tile that holds its window, so its badge marks the app it runs in.
         let placed = !agentStatus ? [:] : DockTiles.place(agents(), windows: entries.mapValues { $0.map(\.id) }, current: current)
-        let last = spaces.model.lastFocused
         let appsOn = entries.mapValues { $0.map { "\($0.pid)" } }
         // Join order, not focus: a tile that re-sorted after each switch moved the app you meant to click next.
         joinOrder.update(appsOn)
@@ -1351,7 +1384,7 @@ final class DockModel: ObservableObject {
                     Window(id: $0.id, title: WindowTitle.clean($0.title, app: $0.app), isLast: $0.id == last[t.workspace], agent: byWindow[$0.id])
                 }
                 return App(id: a.key, pid: pid, name: byPid[a.key]?.app ?? "App",
-                           icon: NSRunningApplication(processIdentifier: pid)?.icon ?? NSWorkspace.shared.icon(for: .application),
+                           icon: iconSource(pid) ?? NSWorkspace.shared.icon(for: .application),
                            windows: a.windows, list: list,
                            agent: list.compactMap(\.agent).max { $0.state.urgency < $1.state.urgency })
             }
@@ -1369,8 +1402,11 @@ final class DockModel: ObservableObject {
             tile.unpinned = agents.filter { !windows.contains($0.window) }
             return tile
         }
+    }
+
+    /// The Background tile's apps (`Spaces.backgroundApps`), then what depends on the tiles and that list.
+    func loadBackground(_ fresh: [BackgroundApps.Entry]) {
         // Rows keep their places under the pointer, so a click lands on the app it was aimed at.
-        let fresh = spaces.backgroundApps()
         let background = backgroundOpen && onStrip ? BackgroundApps.held(backgroundApps, now: fresh) : fresh
         if background != backgroundApps {
             if background.isEmpty != backgroundApps.isEmpty {

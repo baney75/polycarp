@@ -139,6 +139,24 @@ enum RunningApps {
         cached = set
         return set
     }
+
+    /// Which of `pids` are hidden (⌘H).
+    static func hidden(among pids: Set<pid_t>) -> Set<pid_t> {
+        pids.filter { NSRunningApplication(processIdentifier: $0)?.isHidden == true }
+    }
+
+    /// Every running app as the Background tile reads it (`BackgroundApps.list`). `untracked` is asked only for a
+    /// regular app with no window in `tracked`: whether it shows a window Polycarp doesn't track.
+    static func forBackground(tracked: Set<pid_t>, untracked: (pid_t) -> Bool) -> [BackgroundApps.Running] {
+        NSWorkspace.shared.runningApplications.map { app in
+            let pid = app.processIdentifier
+            let candidate = app.activationPolicy == .regular && !tracked.contains(pid)
+            return BackgroundApps.Running(pid: pid, name: app.localizedName ?? app.bundleIdentifier ?? "App",
+                                          bundleID: app.bundleIdentifier, isRegular: app.activationPolicy == .regular,
+                                          isTerminated: app.isTerminated, isHidden: app.isHidden, launchedAt: app.launchDate,
+                                          hasUntrackedWindow: candidate && untracked(pid))
+        }
+    }
 }
 
 enum Windows {

@@ -65,6 +65,9 @@ enum Render {
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SETTINGS_TIMING"].flatMap(Int.init) {
             return SettingsTiming.run(rounds: r)
         }
+        if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_DOCK_OPEN"].flatMap(Int.init) {
+            return DockOpenTiming.run(rounds: r)
+        }
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME_RELOAD"].flatMap(Int.init) {
             return ThemeReloadTiming.run(rounds: r)
         }
