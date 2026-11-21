@@ -349,3 +349,68 @@ final class PhotoDecodeSpeedTests: XCTestCase {
         XCTAssertNil(PhotoDecode.pixelSize(at: URL(fileURLWithPath: "/nonexistent/a.jpg")))
     }
 }
+
+/// Review of #576: the three ways the player broke what it claims.
+final class PlayerReviewFixTests: XCTestCase {
+    let player = "Sources/BaneySpaces/Player.swift"
+
+    /// first-F1: watching video A to 900 s, then opening B with a saved place, noted B at 0 before its seek finished,
+    /// which deleted B's place; Esc before the next tick lost it for good.
+    func testANewVideoKeepsItsSavedPlaceWhileTheSeekToItRuns() throws {
+        var store = PlayerResume()
+        store.note("/v/B.mp4", kind: .video, position: 1234, duration: 3600, now: 1)
+        var clock = PlayerResumeClock()
+        XCTAssertTrue(clock.tick(900), "A noted at 900")
+        clock.newItem()
+        clock.seekStarted()
+        // B is ready; the seek to 1234 hasn't finished, so its time still reads 0.
+        if clock.tick(0) { store.note("/v/B.mp4", kind: .video, position: 0, duration: 3600, now: 2) }
+        // Esc before the seek finishes.
+        if clock.mayNote { store.note("/v/B.mp4", kind: .video, position: 0, duration: 3600, now: 3) }
+        XCTAssertEqual(store.position(for: "/v/B.mp4", duration: 3600), 1234)
+        clock.seekEnded(at: 1234)
+        XCTAssertTrue(clock.mayNote)
+        XCTAssertFalse(clock.tick(1240), "not 15 s since the place it landed on")
+        XCTAssertTrue(clock.tick(1250))
+
+        let code = try Repo.code(player)
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "private func showTimed(", in: code)).contains("resumeClock.newItem()"))
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "private func noteResume(", in: code)).contains("resumeClock.mayNote"))
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "private func statusChanged(", in: code)).contains("resumeClock.seekStarted()"))
+    }
+
+    /// second-F5: a held arrow queued a full decode per photo passed, and every one ran before the photo landed on.
+    func testDecodesForPhotosAlreadyPassedAreSkipped() throws {
+        let wants = PhotoWants()
+        let queue = DispatchQueue(label: "test.decode")
+        queue.suspend()
+        var ran: [Int] = []
+        for i in 0..<60 {
+            wants.set([String(i), String(i + 1), String(i - 1)])
+            queue.async { if wants.contains(String(i)) { ran.append(i) } }
+        }
+        queue.resume()
+        queue.sync {}
+        XCTAssertEqual(ran, [58, 59], "only the photo landed on and the neighbor still wanted are decoded, not 60")
+
+        // The app checks before it decodes, not after.
+        let decode = try XCTUnwrap(SourceText.block(after: "private func decode(", in: try Repo.code(player)))
+        let check = try XCTUnwrap(decode.range(of: "wants.contains(k)"))
+        let work = try XCTUnwrap(decode.range(of: "PhotoDecode.image("))
+        XCTAssertLessThan(check.lowerBound, work.lowerBound)
+    }
+
+    /// second-F6: a polycarp:// link that launched the app reached `application(_:open:)`, which dropped it.
+    func testALinkThatLaunchesPolycarpIsRunNotDropped() throws {
+        let urls = [URL(string: "polycarp://switch/2")!, URL(fileURLWithPath: "/p/a.txt"), URL(fileURLWithPath: "/p/b.jpg"),
+                    URL(string: "https://example.com")!, URL(string: "baneyspaces://restore")!]
+        let r = PlayerOpen.route(urls)
+        XCTAssertEqual(r.media?.path, "/p/b.jpg")
+        XCTAssertEqual(r.links.map(\.absoluteString), ["polycarp://switch/2", "baneyspaces://restore"])
+
+        let open = try XCTUnwrap(SourceText.block(after: "func application(_ sender: NSApplication, open urls: [URL])", in: try Repo.code(player)))
+        XCTAssertTrue(open.contains("runURL("), "links go to the code the app's link handler runs")
+        let handler = try XCTUnwrap(SourceText.block(after: "@objc private func handleURL(", in: try Repo.code("Sources/BaneySpaces/AppDelegate.swift")))
+        XCTAssertTrue(handler.contains("runURL("))
+    }
+}

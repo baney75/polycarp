@@ -23,10 +23,13 @@ extension AppDelegate {
     /// Finder's Open With, a file dropped on Polycarp, `open -b com.baney.polycarp <file>`. Polycarp is only ever an
     /// alternate handler (Info.plist), so it opens what you send it and never claims a type for itself. The first file
     /// it opens wins; the player's playlist is that file's folder.
+    /// A `polycarp://` link that starts Polycarp lands here too, before `handleURL` is installed; it runs once launch
+    /// has finished.
     @objc(application:openURLs:)
     func application(_ sender: NSApplication, open urls: [URL]) {
-        guard let url = urls.first(where: Player.canOpen) else { return }
-        Player.open(url)
+        let route = PlayerOpen.route(urls)
+        if let media = route.media { Player.open(media) }
+        for link in route.links { DispatchQueue.main.async { self.runURL(link) } }
     }
 }
 
@@ -51,6 +54,8 @@ final class PlayerController: NSObject, NSWindowDelegate {
     private var cache: [String: CGImage] = [:]
     private var cacheOrder: [String] = []
     private var pending: Set<String> = []
+    /// The current photo and its neighbors, read by the decode queues: a decode for a photo already passed is skipped.
+    private let wants = PhotoWants()
     private var wanted: String?
     private var animating = 0
 
@@ -60,7 +65,7 @@ final class PlayerController: NSObject, NSWindowDelegate {
     private var timeWatch: Any?
     private var endWatch: NSObjectProtocol?
     private var waitingToSeek: Double?
-    private var lastResumeNote = 0.0
+    private var resumeClock = PlayerResumeClock()
     private var metadata = NowPlaying.Info()
 
     // Long videos pick up where you left them.
@@ -140,6 +145,7 @@ final class PlayerController: NSObject, NSWindowDelegate {
     private func show(_ path: String, kind k: MediaKind) {
         kind = k
         stage.message = nil
+        updateWants()
         // Not drawn (the title bar is hidden), but window lists and the Accessibility tree name the file.
         window?.title = (path as NSString).lastPathComponent
         stage.chrome.configure(title: (path as NSString).lastPathComponent, kind: k, position: playlist.position)
@@ -180,7 +186,11 @@ final class PlayerController: NSObject, NSWindowDelegate {
     private func decode(_ path: String, on queue: DispatchQueue) {
         let k = key(path), screen = screenPixels
         pending.insert(k)
-        queue.async { [weak self] in
+        queue.async { [weak self, wants] in
+            guard wants.contains(k) else {
+                DispatchQueue.main.async { self?.skipped(k, path: path) }
+                return
+            }
             let image = PhotoDecode.image(at: URL(fileURLWithPath: path), screen: screen)
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -195,7 +205,19 @@ final class PlayerController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// A queued decode found its photo passed. If it is wanted again by now, it goes back on a queue.
+    private func skipped(_ k: String, path: String) {
+        pending.remove(k)
+        if wanted == k, playlist.current == path { decode(path, on: decodeQueue) }
+        else if playlist.prefetch.contains(path), cache[k] == nil, window?.isVisible == true { decode(path, on: prefetchQueue) }
+    }
+
+    private func updateWants() {
+        wants.set(Set(([playlist.current] + playlist.prefetch).filter { PlayerMedia.kind(of: $0) == .photo }.map(key)))
+    }
+
     private func prefetchNeighbors() {
+        updateWants()
         guard window?.isVisible == true else { return }
         for path in playlist.prefetch where cache[key(path)] == nil && !pending.contains(key(path)) {
             decode(path, on: prefetchQueue)
@@ -253,6 +275,7 @@ final class PlayerController: NSObject, NSWindowDelegate {
     private func showTimed(_ path: String, kind k: MediaKind) {
         stage.mode = k == .video ? .video : .audio
         stage.photo.contents = nil
+        resumeClock.newItem()
         let url = URL(fileURLWithPath: path)
         let item = AVPlayerItem(asset: AVURLAsset(url: url))
         let gen = generation
@@ -307,15 +330,24 @@ final class PlayerController: NSObject, NSWindowDelegate {
             if waitingToSeek != nil {
                 waitingToSeek = nil
                 if let at = resume.position(for: path, duration: duration) {
+                    resumeClock.seekStarted()
                     item.seek(to: CMTime(seconds: at, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-                        DispatchQueue.main.async { if self?.generation == gen { self?.player.play(); self?.tick() } }
+                        DispatchQueue.main.async {
+                            guard let self, self.generation == gen else { return }
+                            self.resumeClock.seekEnded(at: at)
+                            self.player.play()
+                            self.tick()
+                        }
                     }
                 } else {
                     player.play()
                 }
             } else if let at = resume.position(for: path, duration: duration), player.currentTime().seconds < 5 {
                 // The saved places were still loading when this opened: jump now.
-                item.seek(to: CMTime(seconds: at, preferredTimescale: 600), completionHandler: nil)
+                resumeClock.seekStarted()
+                item.seek(to: CMTime(seconds: at, preferredTimescale: 600)) { [weak self] _ in
+                    DispatchQueue.main.async { if self?.generation == gen { self?.resumeClock.seekEnded(at: at) } }
+                }
             }
             stage.chrome.playing = player.rate != 0 || player.timeControlStatus == .waitingToPlayAtSpecifiedRate
             metadata.duration = duration
@@ -362,10 +394,7 @@ final class PlayerController: NSObject, NSWindowDelegate {
         guard kind.timed, let item = player.currentItem else { return }
         let now = player.currentTime().seconds, total = item.duration.seconds
         stage.chrome.time(now, of: total)
-        if now - lastResumeNote > 15 || now < lastResumeNote {
-            lastResumeNote = now
-            noteResume(save: true)
-        }
+        if resumeClock.tick(now) { noteResume(save: true) }
     }
 
     // MARK: Commands
@@ -499,6 +528,7 @@ final class PlayerController: NSObject, NSWindowDelegate {
         infoShown = false
         cache.removeAll()
         cacheOrder.removeAll()
+        wants.set([])
         w.orderOut(nil)
         trace("closed")
     }
@@ -530,7 +560,7 @@ final class PlayerController: NSObject, NSWindowDelegate {
     private var resumeLoading = false
 
     private func noteResume(save: Bool) {
-        guard kind == .video, let item = player.currentItem, item.status == .readyToPlay else { return }
+        guard resumeClock.mayNote, kind == .video, let item = player.currentItem, item.status == .readyToPlay else { return }
         let path = playlist.current
         let before = resume
         resume.note(path, kind: .video, position: player.currentTime().seconds, duration: item.duration.seconds,

@@ -1061,8 +1061,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// `open baneyspaces://switch/2`, `baneyspaces://move/3`, `baneyspaces://restore`.
     /// The same actions as the shortcuts, for scripts and checks.
     @objc private func handleURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
-        guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
-              let url = URL(string: text), url.scheme == "polycarp" || url.scheme == "baneyspaces" else { return }
+        guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue, let url = URL(string: text) else { return }
+        runURL(url)
+    }
+
+    /// Also run for a link that started Polycarp (`application(_:open:)` in Player.swift), which arrives before
+    /// `handleURL` is installed.
+    func runURL(_ url: URL) {
+        guard url.scheme == "polycarp" || url.scheme == "baneyspaces" else { return }
+        let text = url.absoluteString
         let n = Int(url.lastPathComponent) ?? 0
         switch url.host {
         case "switch": run { $0.switchTo(n) }

@@ -108,3 +108,23 @@ public enum NameOrder {
         return a < b
     }
 }
+
+/// The photos still worth decoding (R-P4), read by the decode queues before each decode. A held arrow key queues a
+/// decode for every photo it passes; the ones already passed are skipped instead of decoded into 48 MB each.
+public final class PhotoWants: @unchecked Sendable {
+    private let lock = NSLock()
+    private var keys: Set<String> = []
+    public init() {}
+    public func set(_ new: Set<String>) { lock.lock(); keys = new; lock.unlock() }
+    public func contains(_ key: String) -> Bool { lock.lock(); defer { lock.unlock() }; return keys.contains(key) }
+}
+
+/// What `application(_:open:)` was handed: the first file the player opens, and any Polycarp link. A link that starts
+/// Polycarp arrives there, before the app's own link handler is installed, so it must not be dropped.
+public enum PlayerOpen {
+    public static let schemes: Set<String> = ["polycarp", "baneyspaces"]
+    public static func route(_ urls: [URL]) -> (media: URL?, links: [URL]) {
+        (urls.first { $0.isFileURL && PlayerMedia.kind(of: $0.path) != nil },
+         urls.filter { !$0.isFileURL && schemes.contains($0.scheme ?? "") })
+    }
+}

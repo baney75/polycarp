@@ -69,3 +69,23 @@ public struct PlayerResume: Codable, Equatable, Sendable {
         try encoded().write(to: url, options: .atomic)
     }
 }
+
+/// When the player notes a video's place (R-P5): every 15 s of play or after a jump back, per file, and never while the
+/// seek to a saved place runs (until it lands, the time reads 0, and noting 0 would delete the place).
+public struct PlayerResumeClock: Equatable, Sendable {
+    public private(set) var last = 0.0
+    public private(set) var seeking = false
+    public init() {}
+    /// A new file starts its own clock.
+    public mutating func newItem() { last = 0; seeking = false }
+    public mutating func seekStarted() { seeking = true }
+    public mutating func seekEnded(at position: Double) { seeking = false; last = position }
+    /// Whether a place may be noted at all (on a pause, a close, a step to another file).
+    public var mayNote: Bool { !seeking }
+    /// The periodic tick at `now`: true when it is time to note.
+    public mutating func tick(_ now: Double) -> Bool {
+        guard !seeking, now - last > 15 || now < last else { return false }
+        last = now
+        return true
+    }
+}
