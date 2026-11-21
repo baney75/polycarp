@@ -485,6 +485,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ThemeWallpaperApplier.shared.start()
         // `idle.enabled` (off by default): looks every 15 s for the minutes without input it waits for.
         IdleCover.shared.start()
+        // `alarm.wake` (off by default): rings at `alarm.wakeAt` and opens the morning question; re-arms on each change.
+        WakeAlarm.shared.start()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self
@@ -914,7 +916,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let now = MenuNow.make(workspace: here, purpose: named.purpose(of: here), since: keeper.arrived)
         let settings = keeper.settings, clock = keeper.ledger.dayClock, at = Date()
         let evening = settings.eveningExamen && at >= Rhythm.eveningStart(of: clock.day(of: at), settings: settings, clock: clock)
-        let entries = MenuLayout.entries(now: now, oneThingSet: named.oneThing != nil, evening: evening,
+        let running = keeper.timer.flatMap { $0.done(now: at) ? nil : $0 }
+        let timer = MenuTimer(minutes: SurfacesStore.shared.current.alarm.timerMinutes, left: running?.remaining(now: at))
+        let entries = MenuLayout.entries(now: now, oneThingSet: named.oneThing != nil, timer: timer, evening: evening,
                                          rows: MenuLayout.rows(current: here, apps: apps, purposes: named.all),
                                          finished: session.started ? session.unseenCount : 0, update: updateNotice(),
                                          dockOn: WorkspaceDock.enabled)
@@ -935,6 +939,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return item("Name This Hour…", #selector(nameHour))
         case .oneThing(let set):
             return item(set ? "Change the One Thing…" : "Set the One Thing…", #selector(setOneThing))
+        case .timer(let timer):
+            return item(timer.title, #selector(toggleTimer))
         case .examen:
             return item("Evening Examen…", #selector(eveningExamen))
         case .workspace(let row):
@@ -994,6 +1000,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// "Evening Examen…": the examen card now, given tonight or not.
     @objc private func eveningExamen() {
         RhythmSheet.shared.show(.eveningExamen)
+    }
+
+    /// "Start a timer (25 min)" / "Stop the timer (12 min left)": the one-thing timer.
+    @objc private func toggleTimer() {
+        let keeper = PurposeKeeper.shared
+        if let t = keeper.timer, !t.done(now: Date()) { keeper.stopTimer(by: "menu") } else { keeper.startTimer(by: "menu") }
     }
 
     /// "Name This Hour…": what the workspace you are on is for.

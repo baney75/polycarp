@@ -79,14 +79,80 @@ final class PurposeAPITests: XCTestCase {
         XCTAssertEqual(PurposeAPI.lines(d), ["2026-11-21: 4 min", "  3  3 min  Mail", "  1  1 min"])
     }
 
+    func testTimerAsks() {
+        XCTAssertEqual(PurposeAPI.ask(text: "timer", args: []), .startTimer(nil))
+        XCTAssertEqual(PurposeAPI.ask(text: "timer", args: ["50"]), .startTimer(50))
+        XCTAssertEqual(PurposeAPI.ask(text: "timer", args: ["stop"]), .stopTimer)
+        XCTAssertEqual(PurposeAPI.ask(text: "timer", args: ["status", "--json"]), .timerStatus)
+        for args in [["0"], ["241"], ["ten"], ["stop", "now"], ["25", "50"], ["-5"]] {
+            XCTAssertEqual(PurposeAPI.ask(text: "timer", args: args), .refused(PurposeAPI.timerUsage), "\(args)")
+        }
+    }
+
+    func testTheTimerStartsStopsAndSaysWhatIsLeft() throws {
+        let suite = "polycarp-purposeapi-timer-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let timer = OneThingTimerStore(defaults: defaults, center: NotificationCenter())
+        let t0 = now.date
+        func ask(_ a: PurposeAPI.Ask, at: Date = t0, minutes: Int = 25) -> Wire.Reply {
+            PurposeAPI.answer(a, purposes: purposes, ledger: ledger, current: 2, now: at, timer: timer, timerMinutes: minutes)
+        }
+        var t = try XCTUnwrap(PurposeAPI.decodeTimer(ask(.timerStatus)))
+        XCTAssertFalse(t.running)
+        XCTAssertEqual(PurposeAPI.lines(t), ["no timer running (polycarp-spaces timer [minutes]; 25 min by default)"])
+
+        // A bare start takes alarm.timerMinutes and keeps the one thing's words; it runs without one too.
+        try purposes.setOneThing("Ship the core", workspace: 2)
+        t = try XCTUnwrap(PurposeAPI.decodeTimer(ask(.startTimer(nil), minutes: 30)))
+        XCTAssertTrue(t.running)
+        XCTAssertEqual(t.minutes, 30)
+        XCTAssertEqual(t.remaining, 1800)
+        XCTAssertEqual(t.oneThing, "Ship the core")
+        XCTAssertEqual(t.defaultMinutes, 30)
+        XCTAssertEqual(t.startedAt, ISO8601DateFormatter().string(from: t0))
+        XCTAssertEqual(t.endsAt, ISO8601DateFormatter().string(from: t0.addingTimeInterval(1800)))
+        t = try XCTUnwrap(PurposeAPI.decodeTimer(ask(.timerStatus, at: t0.addingTimeInterval(18 * 60 + 20))))
+        XCTAssertEqual(t.remaining, 700)
+        XCTAssertEqual(PurposeAPI.lines(t), ["timer: 11 min left of 30 min, on: Ship the core"])
+        XCTAssertEqual(PurposeAPI.lines(try XCTUnwrap(PurposeAPI.decodeTimer(ask(.timerStatus, at: t0.addingTimeInterval(1758))))),
+                       ["timer: 0:42 left of 30 min, on: Ship the core"])
+        XCTAssertFalse(try XCTUnwrap(PurposeAPI.decodeTimer(ask(.timerStatus, at: t0.addingTimeInterval(1800)))).running, "done is not running")
+
+        t = try XCTUnwrap(PurposeAPI.decodeTimer(ask(.stopTimer)))
+        XCTAssertFalse(t.running)
+        XCTAssertNil(timer.timer)
+        try purposes.setOneThing(nil, workspace: nil)
+        t = try XCTUnwrap(PurposeAPI.decodeTimer(ask(.startTimer(5))))
+        XCTAssertEqual(t.minutes, 5)
+        XCTAssertNil(t.oneThing)
+        XCTAssertEqual(PurposeAPI.lines(t), ["timer: 5 min left of 5 min"])
+    }
+
+    func testTimerMistakesComeBackAsErrors() {
+        let noStore = PurposeAPI.answer(.startTimer(nil), purposes: purposes, ledger: ledger, current: 1)
+        XCTAssertFalse(noStore.ok)
+        XCTAssertEqual(noStore.error, "the timer isn't ready yet; try again in a moment")
+        let suite = "polycarp-purposeapi-timer-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let timer = OneThingTimerStore(defaults: defaults, center: NotificationCenter())
+        let r = PurposeAPI.answer(.startTimer(500), purposes: purposes, ledger: ledger, current: 1, timer: timer)
+        XCTAssertEqual(r.error, "a timer runs 1 to 240 minutes, not 500")
+        XCTAssertNil(timer.timer)
+    }
+
     func testAnotherMachineIsNeverLetIn() {
-        for sub in ["list", "set", "one", "day"] { XCTAssertFalse(Remote.allows(Wire.Request(op: .purpose, text: sub))) }
+        for sub in ["list", "set", "one", "day", "timer"] { XCTAssertFalse(Remote.allows(Wire.Request(op: .purpose, text: sub))) }
     }
 
     func testTheCommandAndTheAppCarryIt() throws {
         let cli = try SourceText.code("Sources/baneyspaces-cli/main.swift")
         XCTAssertTrue(cli.contains("case \"purpose\", \"purposes\", \"one\", \"day\":"))
         XCTAssertTrue(cli.contains("op: .purpose"))
+        XCTAssertTrue(cli.contains("case \"timer\":"))
+        XCTAssertTrue(cli.contains("Wire.Request(op: .purpose, text: \"timer\", args: words)"))
+        XCTAssertTrue(try SourceText.code("Sources/BaneySpaces/PurposeKeeper.swift").contains("timer: timers,"), "the app answers with its one store")
         let session = try SourceText.code("Sources/BaneySpaces/Session/SessionController.swift")
         // Answered before the Accessibility check: none of it needs Accessibility.
         let early = try XCTUnwrap(SourceText.between("func handle(_ r: Wire.Request)", "guard started else", in: session))

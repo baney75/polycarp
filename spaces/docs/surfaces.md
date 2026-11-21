@@ -1,7 +1,8 @@
 # Surfaces: one file for every Polycarp surface
 
 `surfaces.json` says how each Polycarp surface looks and behaves: the top bar, the desktop scene and its verse, the
-Workspace Dock's tiles, the status menu, the browser's new tab page and the idle screen. Agents and the owner edit it
+Workspace Dock's tiles, the status menu, the browser's new tab page, the idle screen, and the wake alarm and one-thing
+timer. Agents and the owner edit it
 with `polycarp-spaces surfaces`, or over MCP with `polycarp mcp`. A running Polycarp picks up a change within 150 ms;
 nothing restarts.
 
@@ -186,6 +187,25 @@ app under it. It doesn't come up while an app keeps the display awake (a video p
 screen saver, lock or display sleep has the screen; those still come in their time, over it. To see it soon: `polycarp-spaces surfaces set idle
 '{"enabled":true,"startAfterMinutes":1}'`.
 
+### `alarm`: the wake alarm and the one-thing timer
+
+| Path | Default | Takes |
+| --- | --- | --- |
+| `alarm.wake` | `false` | Ring at `alarm.wakeAt` and open the morning question. Off until you turn it on. |
+| `alarm.wakeAt` | `"06:30"` | When: `"HH:MM"` on the 24 hour clock, `00:00` to `23:59` (`"6:30"` is refused; write `"06:30"`). |
+| `alarm.days` | `"every"` | Which days ring: `every` (all), `weekdays` (Monday to Friday) or `not-sunday` (all but Sunday). |
+| `alarm.keepAwake` | `true` | On power, hold the Mac awake for the last hour before the alarm so it can ring. |
+| `alarm.timerMinutes` | `25` | The one-thing timer's default length in minutes: 1 to 240. |
+
+At `wakeAt`, on a day `days` allows, Polycarp lights the display, takes the idle screen down and plays Glass (a macOS
+sound), then again each minute up to five rings in all; any key, click or move stops it. If the morning question hasn't
+been given today, its card opens. On a DST day the alarm keeps the clock time and rings once. With `keepAwake` on and
+the Mac on power, Polycarp holds off idle sleep ("Polycarp wake alarm" in `pmset -g assertions`) for the last hour so the
+ring can come; on battery, or with the lid closed, the Mac sleeps as it would and the alarm can't ring. An alarm the Mac
+slept through doesn't ring late. The one-thing timer is started from the status menu ("Start a timer (25 min)") or
+`polycarp-spaces timer [minutes]`; its time left shows after the one thing in the bar, and Glass plays once at its end.
+To try it: `polycarp-spaces surfaces set alarm '{"wake":true,"wakeAt":"07:00","days":"weekdays"}'`.
+
 ### `text`: where verses come from
 
 | Path | Default | Takes |
@@ -268,7 +288,7 @@ The model is `Surfaces` in BaneySpacesCore: `bar` (`Bar`: `enabled`, `height`, `
 `[BarModule]`, `clockFormat`, `hourNames`, `hideSystemMenuBar`), `desktop` (`scene`, `followDaylight`, `verse`,
 `versePosition`, `verseRotation`), `dock` (`tileLabel`, `restTile`), `menu` (`order`, `hidden`, and
 `rows`, the rows to show in order), `newtab` (`question`, `chips`, `verse`, `searchURL`, and `searchURL(for:)`), `idle`
-(`enabled`, `style`, `effects`, `showMachineName`, `showVerse`, `showKierkegaard`, `startAfterMinutes`) and `text` (`translation`,
-`verseSource`). `SurfaceField.all` is the one list of fields: validation, defaults, the model and the schema all read it.
+(`enabled`, `style`, `effects`, `showMachineName`, `showVerse`, `showKierkegaard`, `startAfterMinutes`), `alarm` (`wake`,
+`wakeAt`, `days`, `keepAwake`, `timerMinutes`, and `time`, the hour and minute) and `text` (`translation`, `verseSource`). `SurfaceField.all` is the one list of fields: validation, defaults, the model and the schema all read it.
 
 Test hook: `POLYCARP_SURFACES_FILE` (an absolute path) points the command at another file. Never set in real use.

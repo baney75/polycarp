@@ -1,10 +1,13 @@
 import AppKit
 import BaneySpacesCore
 import IOKit
+import UserNotifications
 
 /// The purpose layer's place in the app: one `PurposeStore` and one `DayLedgerStore` for every surface to read, fed from
 /// workspace switches, input, sleep and the lock. It draws nothing; the views read `purposes`, `ledger` and `due` and
-/// listen for `PurposeStore.didChange`, `DayLedgerStore.didChange` and `PurposeKeeper.promptDue`. Main thread only.
+/// listen for `PurposeStore.didChange`, `DayLedgerStore.didChange` and `PurposeKeeper.promptDue`. It also keeps the
+/// one-thing timer (`timer`), saved in the app's defaults so a relaunch keeps it; `OneThingTimerStore.didChange` says
+/// when it starts, stops or ends. Main thread only.
 final class PurposeKeeper {
     static let shared = PurposeKeeper()
 
@@ -18,12 +21,18 @@ final class PurposeKeeper {
 
     let purposes: PurposeStore
     let ledger: DayLedgerStore
+    /// The one-thing timer's store: `polycarp-spaces timer`, the menu and the bar all go through it.
+    let timers = OneThingTimerStore()
+    /// The one-thing timer, running or not yet ended; nil when none was started.
+    var timer: OneThingTimer? { timers.timer }
+    /// Fires when the running timer comes to its end.
+    private var timerEnd: Timer?
     /// The prompt due now, if any.
     private(set) var due: Rhythm.Prompt?
     private var workspace: Int?
     /// When you came to the workspace you are on, or came back to the Mac: the menu's "since 8:40".
     private(set) var arrived: Date?
-    private var timer: Timer?
+    private var ticker: Timer?
     private var rollover: Timer?
     private var started = false
     private var gate = PresenceGate()
@@ -52,8 +61,8 @@ final class PurposeKeeper {
         guard !started else { return }
         started = true
         Self.isRunning = true
-        timer = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in self?.tick() }
-        timer?.tolerance = 5
+        ticker = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in self?.tick() }
+        ticker?.tolerance = 5
         let ws = NSWorkspace.shared.notificationCenter
         let workspaceEvents: [(Notification.Name, PresenceGate.Event)] = [
             (NSWorkspace.screensDidSleepNotification, .wentAway), (NSWorkspace.willSleepNotification, .wentAway),
@@ -81,7 +90,67 @@ final class PurposeKeeper {
         }
         purposes.rollover()
         scheduleRollover()
+        NotificationCenter.default.addObserver(forName: OneThingTimerStore.didChange, object: timers, queue: nil) { [weak self] _ in
+            self?.scheduleTimerEnd()
+        }
+        // A timer that ran out while Polycarp wasn't running ends now, quietly (`timerEnded`).
+        scheduleTimerEnd()
         tick()
+    }
+
+    /// Starts the one-thing timer for `minutes` (`alarm.timerMinutes` when nil), with today's one thing, if any.
+    func startTimer(minutes: Int? = nil, by who: String) {
+        let m = minutes ?? SurfacesStore.shared.current.alarm.timerMinutes
+        do {
+            try timers.start(minutes: m, oneThing: purposes.oneThing?.text)
+            Trace.log("timer: started, \(m) min, by \(who)")
+        } catch {
+            Trace.log("timer: not started by \(who): \(error)")
+        }
+    }
+
+    /// Stops the running timer before its end.
+    func stopTimer(by who: String) {
+        if timers.stop() != nil { Trace.log("timer: stopped by \(who)") }
+    }
+
+    /// Sets a run loop timer for the running one-thing timer's end, or ends it now when it is already done.
+    private func scheduleTimerEnd() {
+        timerEnd?.invalidate()
+        timerEnd = nil
+        guard let t = timers.timer else { return }
+        if t.done(now: Date()) { return timerEnded() }
+        let fire = Timer(fire: t.endsAt, interval: 0, repeats: false) { [weak self] _ in self?.timerEnded() }
+        fire.tolerance = 0.5
+        RunLoop.main.add(fire, forMode: .common)
+        timerEnd = fire
+    }
+
+    /// The one-thing timer came to its end: Glass once and a notification, unless it ended long ago (the Mac slept
+    /// through it, or Polycarp wasn't running), when it only clears.
+    private func timerEnded() {
+        let now = Date()
+        guard let t = timers.end(now: now) else { return scheduleTimerEnd() }
+        let onTime = Alarm.ringsNow(scheduled: t.endsAt, now: now)
+        Trace.log("timer: ended, \(t.minutes) min\(onTime ? "" : ", late, quietly")")
+        guard onTime else { return }
+        NSSound(named: "Glass")?.play()
+        Self.announceEnd(t)
+    }
+
+    /// A notification that the time is up, only where Polycarp may already post them (`LegacyWatcher` asks for that).
+    /// It never asks for the permission itself.
+    private static func announceEnd(_ t: OneThingTimer) {
+        // UNUserNotificationCenter stops the process when there's no app bundle.
+        guard PermissionsModel.isAppBundle else { return }
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Time is up"
+            content.body = t.oneThing.map { "\(t.minutes) min on: \($0)" } ?? "\(t.minutes) min"
+            center.add(UNNotificationRequest(identifier: "one-thing-timer", content: content, trigger: nil))
+        }
     }
 
     /// The workspace you are on, from every model change. Only a real change reaches the ledger.
@@ -117,10 +186,12 @@ final class PurposeKeeper {
         }
     }
 
-    /// `polycarp-spaces purpose|one|day`.
+    /// `polycarp-spaces purpose|one|day|timer`.
     func answer(_ r: Wire.Request, current: Int) -> Wire.Reply {
         let ask = PurposeAPI.ask(text: r.text, args: r.args ?? [])
-        let reply = PurposeAPI.answer(ask, purposes: purposes, ledger: ledger, current: current)
+        let wasRunning = timers.timer != nil
+        let reply = PurposeAPI.answer(ask, purposes: purposes, ledger: ledger, current: current, timer: timers,
+                                      timerMinutes: SurfacesStore.shared.current.alarm.timerMinutes)
         // The trace says what changed and who asked, never the words: they are the user's own.
         let what: String? = switch ask {
         case .set(let n, _): "workspace \(n) purpose set"
@@ -130,6 +201,11 @@ final class PurposeKeeper {
         default: nil
         }
         if let what, reply.ok { Trace.log("purpose: \(what) by \(r.caller ?? "cli")") }
+        switch ask {
+        case .startTimer where reply.ok: Trace.log("timer: started, \(timers.timer?.minutes ?? 0) min, by \(r.caller ?? "cli")")
+        case .stopTimer where reply.ok && wasRunning: Trace.log("timer: stopped by \(r.caller ?? "cli")")
+        default: break
+        }
         return reply
     }
 
