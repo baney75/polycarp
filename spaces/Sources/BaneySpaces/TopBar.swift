@@ -8,8 +8,8 @@ import SwiftUI
 /// today's one thing and the hour in words. It shows only where the macOS bar is set to hide
 /// (`BarLayout.systemBarShown`), so pointing at the top edge still brings that bar and the app's menus down over it.
 /// It sits just under your windows (`BarLayout.levelBelowWindows`): a window that reaches the top of the screen covers
-/// it, so the bar never hides a window's buttons or title. It never takes focus, stays off full-screen apps, and
-/// reads; the one thing it does is switch workspaces when you click a dot. Main thread only.
+/// it, so the bar never hides a window's buttons or title. It never takes focus and stays off full-screen apps. A click
+/// switches workspaces (a dot) or opens what the macOS bar would (an app's menu, a status item). Main thread only.
 final class TopBar {
     let model = TopBarModel()
     private let spaces: Spaces
@@ -21,6 +21,17 @@ final class TopBar {
     /// turns it off (`BarLayout.menuBarAsk`): the pane opens once each time you turn the setting on.
     private static let askedKey = "topBarAskedToHideMenuBar"
     private var loggedCovered = false
+    private var menuPress: (Int) -> Void = { _ in }
+    /// The app whose menus are being read or shown.
+    private var menuPid: pid_t = 0
+    private var statusElements: [AXUIElement] = []
+    private var statusTimer: Timer?
+    private var readingStatus = false
+    /// An app started or quit during a read: read again when it lands.
+    private var statusDirty = false
+    /// Polycarp's own menu (the status item's), opened from the mark.
+    var ownMenu: () -> NSMenu? = { nil }
+    private var menuOwner: NSKeyValueObservation?
 
     init(spaces: Spaces) {
         self.spaces = spaces
@@ -28,6 +39,12 @@ final class TopBar {
             guard let self else { return }
             self.spaces.useDisplay(of: screen)
             self.spaces.switchTo(n, announce: false)
+        }
+        model.onMenu = { [weak self] i in self?.menuPress(i) }
+        model.onMark = { [weak self] in self?.ownMenu()?.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil) }
+        model.onStatus = { [weak self] i in
+            guard let self, self.statusElements.indices.contains(i) else { return }
+            BarReader.press(self.statusElements[i])
         }
     }
 
@@ -40,8 +57,22 @@ final class TopBar {
         // Set in System Settings, the menu bar's hiding changes the visible frame (and posts this, undocumented).
         DistributedNotificationCenter.default().addObserver(forName: .init("AppleInterfaceMenuBarHidingChangedNotification"),
                                                             object: nil, queue: .main) { [weak self] _ in self?.reload() }
-        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.reload()
+        }
+        // The menus are the menu bar owner's, which an accessory app coming forward (Raycast, a launcher) doesn't take.
+        // Some apps fill their menu bar a moment after they take it, so it is read again half a second on.
+        menuOwner = NSWorkspace.shared.observe(\.menuBarOwningApplication) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                self?.readMenus()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.readMenus() }
+            }
+        }
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.readStatus() }
+            }
         }
         network.pathUpdateHandler = { [weak self] path in
             let offline = path.status != .satisfied
@@ -94,10 +125,12 @@ final class TopBar {
             Trace.log("top bar: on, but the macOS menu bar is shown on every screen; set System Settings > Menu Bar > Automatically hide and show the menu bar to Always")
         }
         loggedCovered = covered > 0 && keep.isEmpty
-        guard !panels.isEmpty else { stopTicking(); return }
+        guard !panels.isEmpty else { stopTicking(); forgetReads(); return }
         readPurposes()
         readWorkspaces()
         readBattery()
+        readMenus()
+        readStatus()
         refreshTime()
     }
 
@@ -131,6 +164,93 @@ final class TopBar {
         for p in panels.values { p.orderOut(nil) }
         panels = [:]
         stopTicking()
+        forgetReads()
+    }
+
+    /// No bar is drawn: let go of every app's elements and stop the status timer.
+    private func forgetReads() {
+        statusTimer?.invalidate(); statusTimer = nil
+        statusElements = []
+        if !model.status.isEmpty { model.status = [] }
+        menuPid = 0
+        show(BarReader.Menus())
+    }
+
+    private func wants(_ m: Surfaces.BarModule) -> Bool {
+        let bar = model.bar
+        return bar.enabled && !panels.isEmpty && (bar.left + bar.center + bar.right).contains(m)
+    }
+
+    /// The menu bar owner's menus for `app-menus`, read when it changes and each minute; a click reads them again.
+    private func readMenus() {
+        guard wants(.appMenus), let app = NSWorkspace.shared.menuBarOwningApplication else {
+            if !model.menus.isEmpty { model.menus = [] }
+            menuPress = { _ in }
+            menuPid = 0
+            return
+        }
+        let pid = app.processIdentifier
+        // Another app came forward: nothing may press the last one's menus while this one's are read.
+        if pid != menuPid { show(BarReader.Menus()) }
+        menuPid = pid
+        BarReader.want(pid)
+        guard pid != getpid() else { show(BarReader.ownMenus(name: app.localizedName ?? "Polycarp")); return }
+        BarReader.queue.async { [weak self] in
+            // A read queued behind a hung app is skipped once another app is in front.
+            guard BarReader.wanted == pid else { return }
+            let read = BarReader.menus(of: pid)
+            DispatchQueue.main.async {
+                // An app that came forward while this one was read wins.
+                guard let self, self.menuPid == pid else { return }
+                self.show(read)
+            }
+        }
+    }
+
+    private func show(_ read: BarReader.Menus) {
+        menuPress = read.press
+        if model.menus != read.items { model.menus = read.items }
+    }
+
+    /// Every app's status items for `status`, read off the main thread every 15 seconds and when an app starts or quits.
+    private func readStatus() {
+        guard wants(.status) else {
+            statusTimer?.invalidate(); statusTimer = nil
+            if !model.status.isEmpty { model.status = [] }
+            statusElements = []
+            return
+        }
+        if statusTimer == nil {
+            let t = Timer(timeInterval: 15, repeats: true) { [weak self] _ in self?.readStatus() }
+            t.tolerance = 3
+            RunLoop.main.add(t, forMode: .common)
+            statusTimer = t
+        }
+        guard !readingStatus else { statusDirty = true; return }
+        readingStatus = true
+        let me = getpid()
+        let apps = NSWorkspace.shared.runningApplications.filter { $0.processIdentifier != me }
+        let targets = apps.map { (pid: $0.processIdentifier, bundle: $0.bundleIdentifier ?? "") }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let read = BarReader.status(of: targets)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.readingStatus = false
+                if self.statusDirty { self.statusDirty = false; self.readStatus() }
+                // The module went off while this was read.
+                guard self.wants(.status) else { return }
+                let bar = self.model.bar
+                let kept = BarStatus.shown(read, \.item, modules: bar.left + bar.center + bar.right)
+                self.statusElements = kept.map(\.element)
+                let items = kept.map(\.item)
+                // Icons only for owners not seen yet; an app without a bundle id draws the plain dot.
+                for item in items where !item.isSystem && !item.owner.isEmpty && self.model.icons[item.owner] == nil {
+                    let app = NSRunningApplication.runningApplications(withBundleIdentifier: item.owner).first
+                    if let icon = app?.icon { self.model.icons[item.owner] = icon }
+                }
+                if self.model.status != items { self.model.status = items }
+            }
+        }
     }
 
     private func readPurposes() {
@@ -158,9 +278,11 @@ final class TopBar {
             guard let d = IOPSGetPowerSourceDescription(info, src)?.takeUnretainedValue() as? [String: Any],
                   d[kIOPSTypeKey] as? String == kIOPSInternalBatteryType,
                   let cur = d[kIOPSCurrentCapacityKey] as? Int, let max = d[kIOPSMaxCapacityKey] as? Int, max > 0 else { continue }
-            text = BarText.battery(percent: Int((Double(cur) / Double(max) * 100).rounded()),
-                                   charging: d[kIOPSIsChargingKey] as? Bool ?? false,
+            let percent = Int((Double(cur) / Double(max) * 100).rounded())
+            let charging = d[kIOPSIsChargingKey] as? Bool ?? false
+            text = BarText.battery(percent: percent, charging: charging,
                                    onPower: d[kIOPSPowerSourceStateKey] as? String == kIOPSACPowerValue)
+            if model.charge?.percent != percent || model.charge?.charging != charging { model.charge = (percent, charging) }
         }
         if model.battery != text { model.battery = text }
     }
@@ -170,6 +292,8 @@ final class TopBar {
         let now = Date()
         model.now = now
         model.verse = Verses.pick(SurfacesStore.shared.current.desktop.verseRotation, at: now)
+        // An app can change its menus without coming forward again (Electron apps do on a window change).
+        readMenus()
         tick?.invalidate()
         let t = Timer(fire: BarText.nextMinute(after: now), interval: 0, repeats: false) { [weak self] _ in self?.refreshTime() }
         t.tolerance = 1
@@ -205,7 +329,19 @@ final class TopBarModel: ObservableObject {
     @Published var battery: String?
     @Published var offline = false
     @Published var verse: Verse?
+    @Published var menus: [BarMenus.Item] = []
+    @Published var status: [BarStatus.Item] = []
+    /// An app's icon by bundle id, drawn for its status items.
+    @Published var icons: [String: NSImage] = [:]
+    /// The battery's charge for the macOS battery item in `status`.
+    @Published var charge: (percent: Int, charging: Bool)?
     var onPick: (Int, NSScreen) -> Void = { _, _ in }
+    /// Presses the front app's menu at a `BarMenus.Item.index`.
+    var onMenu: (Int) -> Void = { _ in }
+    /// Opens Polycarp's own menu, the one its status item holds.
+    var onMark: () -> Void = {}
+    /// Presses the status item at an index of `status`.
+    var onStatus: (Int) -> Void = { _ in }
 }
 
 /// One screen's bar. `sides` is the width beside the notch on each side, or nil on a screen without one.
@@ -273,7 +409,12 @@ struct TopBarView: View {
     @ViewBuilder private func module(_ m: Surfaces.BarModule) -> some View {
         switch m {
         case .mark:
-            VineMark().frame(width: 12, height: 12).accessibilityLabel("Polycarp")
+            VineMark().frame(width: 12, height: 12)
+                .padding(.vertical, 4).contentShape(Rectangle())
+                .onTapGesture { model.onMark() }
+                .help("Polycarp")
+                .accessibilityLabel("Polycarp menu")
+                .accessibilityAddTraits(.isButton)
         case .workspaces:
             dots
         case .purpose:
@@ -308,8 +449,58 @@ struct TopBarView: View {
             if let b = model.battery { Text(b).font(Chrome.font(11, .medium)).monospacedDigit().foregroundStyle(Chrome.wash(0.85)) }
         case .network:
             if model.offline { Text("Offline").font(Chrome.font(11, .semibold)).foregroundStyle(Chrome.urgent) }
-        case .appMenus, .status, .custom:
+        case .appMenus:
+            menus
+        case .status:
+            statusItems
+        case .custom:
             EmptyView()
+        }
+    }
+
+    /// The front app's menus: the Apple logo, its name in bold, then its menus, as many as fit. Click one to open it.
+    private var menus: some View {
+        FitRow(spacing: 14) {
+            ForEach(model.menus, id: \.index) { item in
+                Group {
+                    switch item.role {
+                    case .apple: Image(systemName: "apple.logo").font(.system(size: 12, weight: .medium))
+                    case .app: Text(item.title).font(Chrome.font(12, .bold))
+                    case .menu: Text(item.title).font(Chrome.font(12))
+                    }
+                }
+                .foregroundStyle(Chrome.wash(0.92))
+                .fixedSize()
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+                .onTapGesture { model.onMenu(item.index) }
+                .accessibilityLabel(item.title)
+                .accessibilityAddTraits(.isButton)
+            }
+        }
+    }
+
+    /// Every app's status items, as many as fit from the right: macOS's as symbols, an app's own as its icon.
+    private var statusItems: some View {
+        FitRow(spacing: 10, fromEnd: true) {
+            ForEach(Array(model.status.enumerated()), id: \.offset) { i, item in
+                Group {
+                    if let symbol = BarStatus.symbol(item, percent: model.charge?.percent, charging: model.charge?.charging ?? false) {
+                        Image(systemName: symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(Chrome.wash(0.85))
+                    } else if let icon = model.icons[item.owner] {
+                        Image(nsImage: icon).resizable().interpolation(.high).frame(width: 15, height: 15)
+                    } else {
+                        Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(Chrome.wash(0.6))
+                    }
+                }
+                .frame(minWidth: 16, minHeight: 16)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+                .onTapGesture { model.onStatus(i) }
+                .help(item.name)
+                .accessibilityLabel(item.name)
+                .accessibilityAddTraits(.isButton)
+            }
         }
     }
 

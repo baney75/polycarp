@@ -67,11 +67,12 @@ final class TopBarTests: XCTestCase {
 
     func testTheLedgerDefaults() {
         let bar = Surfaces.defaults.bar
-        XCTAssertEqual(bar.left, [.mark, .workspaces, .purpose])
+        XCTAssertEqual(bar.left, [.mark, .workspaces, .appMenus, .purpose])
         XCTAssertEqual(bar.center, [.oneThing])
-        XCTAssertEqual(bar.right, [.hour, .clock])
+        XCTAssertEqual(bar.right, [.status, .hour, .clock])
         XCTAssertTrue((bar.left + bar.center + bar.right).allSatisfy(BarLayout.drawn))
-        XCTAssertFalse(BarLayout.drawn(.appMenus))
+        XCTAssertTrue(BarLayout.drawn(.appMenus))
+        XCTAssertTrue(BarLayout.drawn(.status))
         XCTAssertFalse(BarLayout.drawn(.custom("x")))
     }
 
@@ -130,5 +131,80 @@ final class TopBarTests: XCTestCase {
         let width = 1280.0, gap = 12.0
         let side = (width - width * BarLayout.middleShare) / 2 - gap
         XCTAssertGreaterThan(side, 300, "the mark, the dots and a purpose fit beside the middle on a 1280-point screen")
+    }
+
+    /// The front app's menu bar as the bar draws it: the Apple menu as the logo, the app's menu in bold, an icon-only
+    /// menu left out, each keeping its place to press.
+    func testAppMenusKeepTheirPlacesAndLeaveOutIconOnlyMenus() {
+        let items = BarMenus.items(["Apple", "Helium", "File", "", "Edit", "  Help "])
+        XCTAssertEqual(items.map(\.role), [.apple, .app, .menu, .menu, .menu])
+        XCTAssertEqual(items.map(\.title), ["Apple", "Helium", "File", "Edit", "Help"])
+        XCTAssertEqual(items.map(\.index), [0, 1, 2, 4, 5], "a click presses the menu at its own place")
+        XCTAssertEqual(BarMenus.items([]), [])
+        XCTAssertEqual(BarMenus.items(["Apple", ""]).map(\.role), [.apple], "no name, no app menu to draw")
+    }
+
+    /// A click reads the menus again and presses the one drawn, wherever it is now.
+    func testAClickFindsItsMenuAfterTheAppRebuiltThem() {
+        let drawn = ["Apple", "Code", "File", "Edit", "View"]
+        XCTAssertEqual(BarMenus.place(of: 3, titles: drawn, in: drawn), 3)
+        XCTAssertEqual(BarMenus.place(of: 3, titles: drawn, in: ["Apple", "Code", "File", "Selection", "Edit"]), 4)
+        XCTAssertNil(BarMenus.place(of: 4, titles: drawn, in: ["Apple", "Code", "File"]), "a menu that's gone presses nothing")
+        XCTAssertEqual(BarMenus.place(of: 0, titles: drawn, in: ["Apple"]), 0)
+        XCTAssertNil(BarMenus.place(of: 9, titles: drawn, in: drawn))
+    }
+
+    /// Titles past the room are left out whole, from the end, so none is cut in half.
+    func testARowKeepsTheTitlesThatFitWhole() {
+        XCTAssertEqual(BarLayout.fit([40, 30, 50], spacing: 10, room: 200), 3)
+        XCTAssertEqual(BarLayout.fit([40, 30, 50], spacing: 10, room: 80), 2, "40 + 10 + 30 = 80 fits")
+        XCTAssertEqual(BarLayout.fit([40, 30, 50], spacing: 10, room: 79), 1)
+        XCTAssertEqual(BarLayout.fit([40], spacing: 10, room: 20), 0)
+        XCTAssertEqual(BarLayout.fit([], spacing: 10, room: 20), 0)
+    }
+
+    /// macOS's own status items are drawn as symbols, an app's as its icon (nil here).
+    func testStatusItemsAreSymbolsForMacOSAndIconsForApps() {
+        let wifi = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.wifi", label: "Wi-Fi")
+        let cc = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.controlcenter")
+        let notion = BarStatus.Item(owner: "notion.id", label: "Notion")
+        let odd = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.somethingnew")
+        XCTAssertEqual(BarStatus.symbol(wifi), "wifi")
+        XCTAssertEqual(BarStatus.symbol(cc), "switch.2")
+        XCTAssertNil(BarStatus.symbol(notion))
+        XCTAssertEqual(BarStatus.symbol(odd), "circle.fill", "an unknown macOS item can still be clicked")
+        XCTAssertEqual(BarStatus.Item(owner: "com.apple.x", label: "Wi-Fi").name, "Wi-Fi")
+        XCTAssertEqual(odd.name, "somethingnew")
+        XCTAssertEqual(BarStatus.Item(owner: "notion.id").name, "notion.id")
+        XCTAssertEqual(BarStatus.Item(owner: "").name, "Status item", "VoiceOver never meets an unnamed button")
+    }
+
+    func testTheBatterySymbolShowsTheChargeInQuarters() {
+        let battery = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.battery")
+        XCTAssertEqual(BarStatus.symbol(battery, percent: 62, charging: false), "battery.50percent")
+        XCTAssertEqual(BarStatus.symbol(battery, percent: 63, charging: false), "battery.75percent")
+        XCTAssertEqual(BarStatus.battery(percent: 4, charging: false), "battery.0percent")
+        XCTAssertEqual(BarStatus.battery(percent: 100, charging: false), "battery.100percent")
+        XCTAssertEqual(BarStatus.battery(percent: 15, charging: true), "battery.25percent", "low and charging reads as low")
+        XCTAssertEqual(BarStatus.battery(percent: 95, charging: true), "battery.100percent.bolt")
+        XCTAssertEqual(BarStatus.battery(percent: nil, charging: true), "battery.100percent.bolt")
+        XCTAssertEqual(BarStatus.battery(percent: nil, charging: false), "battery.100percent")
+    }
+
+    /// In macOS's order when every place is known, and without what a module already shows.
+    func testStatusItemsFollowTheMacOSOrderAndSkipWhatAModuleShows() {
+        let clock = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.clock", x: 900)
+        let battery = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.battery", x: 800)
+        let wifi = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.wifi", x: 700)
+        let notion = BarStatus.Item(owner: "notion.id", label: "Notion", x: 500)
+        let read = [clock, battery, wifi, notion]
+        XCTAssertEqual(BarStatus.shown(read, modules: [.hour]), [notion, wifi, battery, clock])
+        XCTAssertEqual(BarStatus.shown(read, modules: [.clock]), [notion, wifi, battery], "the clock module shows the time")
+        XCTAssertEqual(BarStatus.shown(read, modules: [.date, .battery]), [notion, wifi])
+        var unplaced = notion
+        unplaced.x = nil
+        XCTAssertEqual(BarStatus.shown([clock, unplaced, wifi], modules: []), [clock, unplaced, wifi], "as read when a place is missing")
+        let clockApp = BarStatus.Item(owner: "com.example.clockapp", label: "World clock", x: 1)
+        XCTAssertEqual(BarStatus.shown([clockApp], modules: [.clock]), [clockApp], "an app's own clock stays")
     }
 }

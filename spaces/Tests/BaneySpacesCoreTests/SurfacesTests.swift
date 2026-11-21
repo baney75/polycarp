@@ -31,9 +31,9 @@ final class SurfacesTests: XCTestCase {
         XCTAssertEqual(d.bar.enabled, false)
         XCTAssertEqual(d.bar.height, 28)
         XCTAssertEqual(d.bar.style, .solid)
-        XCTAssertEqual(d.bar.left, [.mark, .workspaces, .purpose])
+        XCTAssertEqual(d.bar.left, [.mark, .workspaces, .appMenus, .purpose])
         XCTAssertEqual(d.bar.center, [.oneThing])
-        XCTAssertEqual(d.bar.right, [.hour, .clock])
+        XCTAssertEqual(d.bar.right, [.status, .hour, .clock])
         XCTAssertEqual(d.bar.clockFormat, .twelveHour)
         XCTAssertTrue(d.bar.hourNames)
         XCTAssertFalse(d.bar.hideSystemMenuBar)
@@ -444,9 +444,9 @@ final class SurfacesTests: XCTestCase {
         }
         let a = try bar(#"{"bar":{"modules":{"center":["hour"]}}}"#)
         XCTAssertEqual(a.center, [.hour])
-        XCTAssertEqual(a.right, [.clock], "hour left the default right")
+        XCTAssertEqual(a.right, [.status, .clock], "hour left the default right")
         let b = try bar(#"{"bar":{"modules":{"right":["mark","clock"]}}}"#)
-        XCTAssertEqual(b.left, [.workspaces, .purpose])
+        XCTAssertEqual(b.left, [.workspaces, .appMenus, .purpose])
         XCTAssertEqual(b.right, [.mark, .clock])
         XCTAssertEqual(b.center, [.oneThing])
     }

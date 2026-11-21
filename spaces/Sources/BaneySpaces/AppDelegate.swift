@@ -489,6 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        topBar.ownMenu = { [weak self] in self?.statusItem.menu }
 
         spaces.onChange = { [weak self] in
             guard let self else { return }
