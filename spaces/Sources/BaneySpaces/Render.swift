@@ -328,6 +328,14 @@ enum Render {
         let welcome = WelcomeModel()
         welcome.granted = [.accessibility]
         guard save(WelcomeView(model: welcome), "welcome.png", CGSize(width: 560, height: 0)) else { return 1 }
+
+        // The idle screen at 9:41 on a 1512-point laptop screen: Martyr Night with embers, and one verse on black.
+        let idleAt = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 21, minute: 41)) ?? Date()
+        let idleSize = CGSize(width: 1512, height: 982)
+        var idle = Surfaces.defaults.idle
+        guard save(IdleView(settings: idle, machine: "Rectory1", size: idleSize, backdrop: nil, at: idleAt), "idle-night.png", idleSize) else { return 1 }
+        idle.style = .verse
+        guard save(IdleView(settings: idle, machine: "Rectory1", size: idleSize, backdrop: nil, at: idleAt), "idle-verse.png", idleSize) else { return 1 }
         return 0
     }
 }

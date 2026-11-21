@@ -483,6 +483,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         SurfacesStore.shared.start(log: { Trace.log($0) })
         // Settings › Appearance › "Theme sets the desktop picture" (off by default): looks once now, then on each change.
         ThemeWallpaperApplier.shared.start()
+        // `idle.enabled` (off by default): looks every 15 s for the minutes without input it waits for.
+        IdleCover.shared.start()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self

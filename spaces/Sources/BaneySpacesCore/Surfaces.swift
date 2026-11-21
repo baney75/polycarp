@@ -196,6 +196,8 @@ public struct Surfaces: Equatable, Sendable {
     public enum IdleStyle: String, CaseIterable, Sendable { case martyrNight = "martyr-night", field, verse }
 
     public struct Idle: Equatable, Sendable {
+        /// Off until you turn it on, like the bar: it covers every screen.
+        public var enabled: Bool
         public var style: IdleStyle
         public var effects: Bool
         public var showMachineName: Bool
@@ -294,6 +296,7 @@ extension SurfaceField {
         SurfaceField("newtab.searchURL", .searchTemplate, .string("https://duckduckgo.com/?q={query}"),
                      "The search engine: an https URL with {query} where the words go."),
 
+        SurfaceField("idle.enabled", .bool, .bool(false), "Show Polycarp's idle screen. Off until you turn it on."),
         SurfaceField("idle.style", .choice(Surfaces.IdleStyle.allCases.map(\.rawValue)), .string("martyr-night"),
                      "martyr-night (night sky and embers), field (the desktop scene, dimmed) or verse (one verse on black)."),
         SurfaceField("idle.effects", .bool, .bool(true), "Motion on the idle screen. Reduce Motion turns it off regardless."),
@@ -382,7 +385,7 @@ extension Surfaces {
         dock = Dock(tileLabel: TileLabel(rawValue: s("dock.tileLabel")) ?? .purpose, restTile: b("dock.restTile"))
         menu = Menu(order: list("menu.order").compactMap(MenuRow.init(rawValue:)), hidden: list("menu.hidden").compactMap(MenuRow.init(rawValue:)))
         newtab = NewTab(question: s("newtab.question"), chips: b("newtab.chips"), verse: b("newtab.verse"), searchURL: s("newtab.searchURL"))
-        idle = Idle(style: IdleStyle(rawValue: s("idle.style")) ?? .martyrNight, effects: b("idle.effects"),
+        idle = Idle(enabled: b("idle.enabled"), style: IdleStyle(rawValue: s("idle.style")) ?? .martyrNight, effects: b("idle.effects"),
                     showMachineName: b("idle.showMachineName"), showVerse: b("idle.showVerse"),
                     showKierkegaard: b("idle.showKierkegaard"), startAfterMinutes: n("idle.startAfterMinutes"))
         text = Text(translation: Translation(rawValue: s("text.translation")) ?? .bsb, verseSource: VerseSource(id: s("text.verseSource")))
