@@ -8,7 +8,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let spaces = Spaces()
     /// Terminal splits, browser tabs and agents for the launcher and the dock's badges, plus the `baneyspaces` command.
     private let session = SessionController()
-    private lazy var sandbox = AppSandbox(spaces: { [weak self] in self?.spaces })
     private let hotkeys = Hotkeys()
     private let updater = Updater()
     private var statusItem: NSStatusItem!
@@ -280,17 +279,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return HookSettings.installed(settings).count == HookSettings.events.count ? .on : .off
         }
         c.model.onInstallHooks = { [weak self] in self?.session.installHooks() }
-        c.model.sandboxSummary = { [weak self] in self?.sandbox.summary() }
-        c.model.onSandboxDisabled = { [weak self] in self?.sandbox.disable() }
-        c.model.onSandboxReset = { [weak self] done in self?.sandbox.resetNow(done: done) }
-        c.model.onSandboxDeleteImages = { [weak self] done in
-            let a = NSAlert()
-            a.messageText = "Delete the sandbox's images?"
-            a.informativeText = "This deletes its VMs and the downloaded macOS image (about 24 GB). The next sandbox downloads it again."
-            a.addButton(withTitle: "Delete"); a.addButton(withTitle: "Cancel")
-            guard a.runModal() == .alertFirstButtonReturn else { done(nil); return }
-            self?.sandbox.deleteImages(done: done)
-        }
         c.model.onLauncherChange = { [weak self] on in self?.setLauncherOnCmdSpace(on) }
         c.model.onCmdTabChange = { [weak self] mode in
             MissionControlKeys.cmdTabMode = mode
@@ -599,7 +587,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         UserDefaults.standard.removeObject(forKey: InstallHandoff.key)
         DockRestart.isQuitting = true
         // The macOS Dock comes back with everything else; the next launch tucks it away again.
-        sandbox.shutdown()
         dock.stop(restoreSystemDock: !forInstall)
         topDrag.stop()
         DragFrameTrace.stopAll()
@@ -838,9 +825,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         h.occupied = { [weak self] n in self?.spaces.isOccupied(n) ?? false }
         session.agentHost = h
         session.updateHandler = { [weak self] what in self?.updater.answer(what) ?? Wire.Reply(ok: false, error: "the updater isn't ready") }
-        session.sandboxHandler = { [weak self] r in self?.sandbox.service.handle(r) ?? Wire.Reply(ok: false, error: "not ready") }
-        sandbox.start()
-        sandbox.cleanupAtLaunch()
         session.onWorkingChange = { [weak self] in self?.dock.reload() }
         // A moment after launch: setting up an observer per app costs the main thread a few
         // hundred milliseconds, which would otherwise land on your first workspace switch.

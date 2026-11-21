@@ -59,10 +59,6 @@ public enum Wire {
             /// token may too; every change is logged with its caller (`caller`). Workspace and window
             /// ops stay user-only (`Remote.allows`).
             case setting
-            /// The sandbox VM: `text` is up, down, reset, status, view, guest or images; `args` the rest.
-            /// Local callers only (Remote.allows never lets it through), and slow: the app answers it
-            /// off the main thread.
-            case sandbox
             /// The app's own updater, for `polycarp-spaces update` and `polycarp update`: `text` is status,
             /// check (ask GitHub again) or now (install the release on offer). The reply's `info` is an
             /// `UpdateReport`. Local callers only (`Remote.allows` never lets it through).

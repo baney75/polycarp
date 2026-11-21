@@ -73,7 +73,7 @@ final class Spaces {
     /// When each app last had the focus on each workspace, by process id: the dock's tiles and
     /// ⌘Tab's cards put the one used last first.
     private(set) var activations = AppActivations()
-    /// Windows claimed for a workspace (the sandbox's display window): the next window each
+    /// Windows claimed for a workspace: the next window each
     /// process opens goes to that workspace, until the time runs out.
     private var claims: [pid_t: [Claim]] = [:]
     private struct Claim {
@@ -358,7 +358,7 @@ final class Spaces {
     }
 
     /// The next window `pid` opens goes to workspace `n` instead of the one you're on, for a
-    /// process Polycarp is about to start there (the sandbox's display window). Unclaimed after `within` seconds, the claim lapses.
+    /// process Polycarp is about to start there. Unclaimed after `within` seconds, the claim lapses.
     /// `newProcess`: Polycarp just started this process, so every window it already has goes
     /// too (it may have opened one before its pid reached us). Never for an app you were
     /// already using: that would take your windows.
@@ -471,12 +471,6 @@ final class Spaces {
 
     /// Whether workspace `n` holds any window: `agent on N` refuses a workspace someone is using.
     func isOccupied(_ n: Int) -> Bool { !model.windows(on: n).isEmpty }
-
-    /// Every window of `pid` and the workspace each is on, for the sandbox's display window.
-    func windowsOf(pid: pid_t) -> [SandboxWindows.Window] {
-        refresh()
-        return windows.values.filter { $0.pid == pid }.map { SandboxWindows.Window(id: $0.id, pid: pid, title: $0.title, workspace: model.workspace(of: $0.id)) }
-    }
 
     /// Windows on the agent workspace, for the agent workspace API's `windows` (docs/agent-workspace-api.md).
     func agentWindows() -> [AgentAPI.Window] {
