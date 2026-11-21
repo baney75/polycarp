@@ -1,0 +1,53 @@
+name: Channel build
+# Builds, signs and publishes one nightly or dev build of a main commit (docs/releases.md), called by nightly.yml
+# and dev.yml, on GitHub's hosted macOS runner (never a self-hosted one: this repository is public). The work is spaces/scripts/release.sh --channel, the same script the owner's Mac runs. A build is
+# signed only with the release identity from the POLYCARP_SIGNING_P12 secrets; without them nothing is built or
+# published here, the run says so, and the Mac publishes instead. An ad-hoc build never ships (spaces/AGENTS.md).
+on:
+  workflow_call:
+    inputs:
+      channel: { type: string, required: true }
+      commit: { type: string, required: true }
+      build_time: { type: string, required: true }
+      # The first nightly only (docs/release-gate.md): also put this build on the old `preview` release.
+      bridge: { type: boolean, required: false, default: false }
+    secrets:
+      POLYCARP_SIGNING_P12: { required: false }
+      POLYCARP_SIGNING_P12_PASSWORD: { required: false }
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: spaces
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+      - name: The signing identity
+        id: sign
+        env:
+          POLYCARP_SIGNING_P12: ${{ secrets.POLYCARP_SIGNING_P12 }}
+          POLYCARP_SIGNING_P12_PASSWORD: ${{ secrets.POLYCARP_SIGNING_P12_PASSWORD }}
+        run: |
+          set +e
+          scripts/ci-signing.sh; code=$?
+          set -e
+          if [ $code = 3 ]; then
+            echo "::warning title=${{ inputs.channel }} not published::The signing secrets are not set, so nothing is built or published here. Publish from the owner's Mac: spaces/scripts/release.sh --channel ${{ inputs.channel }} (docs/releases.md)."
+            echo "signed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          [ $code = 0 ] && echo "signed=true" >> "$GITHUB_OUTPUT"
+          exit $code
+      - name: Build, sign, package, verify and publish
+        if: steps.sign.outputs.signed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLYCARP_BUILD_TIME: ${{ inputs.build_time }}
+          CHANNEL: ${{ inputs.channel }}
+          BRIDGE: ${{ inputs.bridge && '--bridge' || '' }}
+        run: scripts/release.sh --channel "$CHANNEL" $BRIDGE

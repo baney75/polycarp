@@ -1,0 +1,67 @@
+name: Dev
+# A dev build of every main commit CI passed (docs/releases.md); channel-build.yml builds and publishes it. A run
+# that is publishing is never cancelled (the rolling release would be left half moved): a newer commit waits, and
+# GitHub keeps only the newest waiting one.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: dev
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  gate:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      go: ${{ steps.decide.outputs.go }}
+      commit: ${{ steps.decide.outputs.commit }}
+      time: ${{ steps.decide.outputs.time }}
+    steps:
+      - name: Decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          stop() { echo "::notice title=No dev build::$1"; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          if [ -n "$RUN_SHA" ]; then SHA=$RUN_SHA; else
+            [ "$REF" = refs/heads/main ] || { echo "dev is built from main only, not $REF" >&2; exit 1; }
+            # Started by hand: the newest main commit with a green CI run of its own, never an untested head.
+            SHA=$(gh run list -R "$REPO" --workflow ci.yml --branch main --event push --status success --limit 1 \
+              --json headSha --jq '.[0].headSha // empty')
+            [ -n "$SHA" ] || stop "no CI run on main has passed."
+          fi
+          # CI runs can finish out of order, and an old one can be re-run. Only a commit ahead of the one dev already
+          # offers moves it, so dev never goes back to older code.
+          if LAST=$(gh api "repos/$REPO/git/ref/tags/dev" --jq .object.sha 2>"$RUNNER_TEMP/last.err"); then
+            REL=$(gh api "repos/$REPO/compare/$LAST...$SHA" --jq .status)
+            [ "$REL" = ahead ] || stop "$SHA is $REL of $LAST, the commit dev already offers."
+          else
+            grep -q 'HTTP 404' "$RUNNER_TEMP/last.err" || { cat "$RUNNER_TEMP/last.err" >&2; exit 1; }
+          fi
+          { echo "go=true"; echo "commit=$SHA"; echo "time=$(date -u +%Y%m%d%H%M%S)"; } >> "$GITHUB_OUTPUT"
+  build:
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/channel-build.yml
+    with:
+      channel: dev
+      commit: ${{ needs.gate.outputs.commit }}
+      build_time: ${{ needs.gate.outputs.time }}
+    secrets:
+      POLYCARP_SIGNING_P12: ${{ secrets.POLYCARP_SIGNING_P12 }}
+      POLYCARP_SIGNING_P12_PASSWORD: ${{ secrets.POLYCARP_SIGNING_P12_PASSWORD }}

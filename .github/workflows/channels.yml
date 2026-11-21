@@ -23,4 +23,4 @@ jobs:
       - name: The channel rules (copied from baney75/local-studio)
         run: bash scripts/check-channels.sh && bash scripts/tests/check-channels-test.sh
       - name: Version strings, the feed and the Info.plist template
-        run: bash spaces/scripts/channels-test.sh
+        run: bash spaces/scripts/channels-test.sh && bash spaces/scripts/tests/channel-gates-test.sh
