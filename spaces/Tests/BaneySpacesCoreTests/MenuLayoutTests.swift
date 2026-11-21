@@ -66,6 +66,8 @@ final class MenuLayoutTests: XCTestCase {
         XCTAssertEqual(MenuLayout.entries(now: now, oneThingSet: true, rows: rows, finished: 0, update: nil),
                        [.now(now), .nameHour, .oneThing(set: true), .separator] + rows.map(MenuEntry.workspace)
                        + [.separator, .showAll, .find, .separator, .settings, .quit])
+        XCTAssertEqual(MenuLayout.entries(now: now, oneThingSet: false, evening: true, rows: rows, finished: 0, update: nil).prefix(5),
+                       [.now(now), .nameHour, .oneThing(set: false), .examen, .separator], "the examen joins the head in the evening")
     }
 
     /// The app target can't be imported by tests, so these read its source (code only, comments stripped).
@@ -143,7 +145,7 @@ final class MenuLayoutTests: XCTestCase {
             }
         }
         // `item(` also matches "menuItem(for:" and "updateItem(": only quoted titles are captured.
-        XCTAssertEqual(titles, ["Show All Workspaces", "Find or Install an App…", "Settings…", "Quit Polycarp", "Name This Hour…",
+        XCTAssertEqual(titles, ["Show All Workspaces", "Find or Install an App…", "Settings…", "Quit Polycarp", "Name This Hour…", "Evening Examen…",
                                 "Waiting for AeroSpace to quit", "Polycarp needs permission to arrange windows", "Allow Polycarp…"])
         XCTAssertEqual(text.components(separatedBy: "NSMenuItem(").count - 1, 1, "only the item(_:_:key:) helper builds one")
         XCTAssertEqual(text.components(separatedBy: ".addItem(withTitle:").count - 1, 2, "the not-started notices")
