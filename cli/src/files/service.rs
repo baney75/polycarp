@@ -24,7 +24,7 @@ pub fn unit_path(os: Os, home: &Path, local_app_data: Option<&Path>) -> PathBuf 
     }
 }
 
-fn xml_escape(s: &str) -> String {
+pub(crate) fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -32,7 +32,7 @@ fn xml_escape(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn systemd_quote(s: &str) -> String {
+pub(crate) fn systemd_quote(s: &str) -> String {
     format!(
         "\"{}\"",
         s.replace('\\', "\\\\")
