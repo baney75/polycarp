@@ -145,8 +145,8 @@ struct LauncherActions {
     /// A new window of a running app on the workspace you're on; calls the second argument when it can't make one.
     /// It reads the app's menus off the main thread, so it answers later.
     var openWindowHere: (pid_t, @escaping () -> Void) -> Void = { _, orElse in orElse() }
-    /// Whether a running app has a New Window command.
-    var canOpenWindow: (pid_t) -> Bool = { _ in false }
+    /// Whether a running app has a New Window command, answered on the main thread after a look off it.
+    var canOpenWindow: (pid_t, @escaping (Bool) -> Void) -> Void = { _, done in done(false) }
     var current: () -> Int = { 1 }
     var switchTo: (Int) -> Void = { _ in }
     var appsOn: (Int) -> [String] = { _ in [] }
@@ -344,8 +344,11 @@ final class LauncherModel: ObservableObject {
     var alertOpen = false
 
     private let actions: LauncherActions
+    /// Every app, with its search key folded once, so a keystroke scores names without folding them again.
     private var apps: [AppEntry] = []
     private var running: [String: [Int]] = [:]
+    /// Running apps by bundle path, read when the launcher opens, so rows don't walk the running apps on every keystroke.
+    private var runningPids: [String: pid_t] = [:]
     private var recents = Recents(UserDefaults.standard.stringArray(forKey: "launcherRecents") ?? [])
     private var iconCache: [String: NSImage] = [:]
     private let catalog = CaskCatalog()
@@ -365,7 +368,26 @@ final class LauncherModel: ObservableObject {
 
     init(actions: LauncherActions) {
         self.actions = actions
-        apps = AppEntry.scan()
+        // The disk scan runs off the main thread; `prepare` keeps the list fresh after that.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let fresh = AppEntry.scan()
+            DispatchQueue.main.async { self?.took(fresh) }
+        }
+    }
+
+    /// A new app list from a scan off the main thread: rows rebuild only when it changed.
+    private func took(_ fresh: [AppEntry]) {
+        guard fresh != apps else { return }
+        apps = fresh
+        rebuildKeepingSelection()
+    }
+
+    /// The same scan, after Homebrew installed or removed an app.
+    private func rescanApps() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let fresh = AppEntry.scan()
+            DispatchQueue.main.async { self?.took(fresh) }
+        }
     }
 
     func prepare(scope: Scope) {
@@ -375,15 +397,17 @@ final class LauncherModel: ObservableObject {
         field?.stringValue = ""
         selected = 0
         running = actions.workspacesByApp()
+        runningPids = [:]
+        for app in NSWorkspace.shared.runningApplications {
+            guard let path = app.bundleURL?.path, runningPids[path] == nil else { continue }
+            runningPids[path] = app.processIdentifier
+        }
         storeResults = []
         fileResults = []
         bangs = Launcher.loadBangs()
         rebuild()
         // Apps installed since the last look show up without a restart.
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let fresh = AppEntry.scan()
-            DispatchQueue.main.async { self?.apps = fresh; self?.rebuild() }
-        }
+        rescanApps()
         Terminals.installedAgents { [weak self] found in
             guard let self, found != self.agents else { return }
             self.agents = found
@@ -645,8 +669,9 @@ final class LauncherModel: ObservableObject {
         if q.isEmpty {
             matches = apps
         } else {
+            let folded = Fuzzy.fold(q)
             matches = apps.compactMap { a -> (AppEntry, Int)? in
-                guard let s = Fuzzy.score(q, a.name) else { return nil }
+                guard let s = Fuzzy.score(folded: folded, key: a.key) else { return nil }
                 return (a, s + recents.boost(a.path) + (running[a.path] != nil ? 15 : 0))
             }
             .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.name < $1.0.name }
@@ -699,20 +724,30 @@ final class LauncherModel: ObservableObject {
     /// Apps found to have a New Window command, by path. Only a yes is kept: a no can be an app
     /// that was busy, still building its menus, or showing a sheet.
     private var newWindowCommand: Set<String> = []
+    /// Apps whose menus are being read now, so a keystroke doesn't ask twice.
+    private var lookingForNewWindow: Set<String> = []
 
     /// An app open only on other workspaces that can open a window here: opening it does that,
     /// as opening an app on a Mac desktop where it has no window would. `look` reads the app's
-    /// menus, 15–130 ms an app, so rows only look for the few best matches of a search.
+    /// menus, 15 to 130 ms an app (more when it doesn't answer), so rows only look for the few best
+    /// matches of a search, and the look runs off the main thread: the row says so once it answers.
     private func opensHere(_ a: AppEntry, look: Bool = true) -> Bool {
-        guard let on = running[a.path], !on.contains(actions.current()), let app = runningApp(a) else { return false }
+        guard let on = running[a.path], !on.contains(actions.current()), let pid = runningPids[a.path] else { return false }
         if newWindowCommand.contains(a.path) { return true }
-        guard look, actions.canOpenWindow(app.processIdentifier) else { return false }
-        newWindowCommand.insert(a.path)
-        return true
+        guard look, lookingForNewWindow.insert(a.path).inserted else { return false }
+        let path = a.path
+        actions.canOpenWindow(pid) { [weak self] yes in
+            guard let self else { return }
+            self.lookingForNewWindow.remove(path)
+            guard yes, self.newWindowCommand.insert(path).inserted else { return }
+            self.rebuildKeepingSelection()
+        }
+        return false
     }
 
     private func runningApp(_ a: AppEntry) -> NSRunningApplication? {
-        NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == a.path }
+        if let pid = runningPids[a.path], let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated { return app }
+        return NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == a.path }
     }
 
     /// A running app opens a new window here when it's open only elsewhere and can; otherwise
@@ -912,7 +947,7 @@ final class LauncherModel: ObservableObject {
             guard let self else { return }
             if ok {
                 self.jobs[c.token] = nil
-                self.apps = AppEntry.scan()
+                self.rescanApps()
                 Toast.show("\(c.name) is installed", symbol: "checkmark.circle.fill")
             } else {
                 self.jobs[c.token] = .failed(tail.isEmpty ? "Homebrew stopped." : "Homebrew: \(tail).")
@@ -953,7 +988,7 @@ final class LauncherModel: ObservableObject {
         Brew.run(["uninstall", "--cask", c.token]) { [weak self] ok, tail in
             guard let self else { return }
             self.jobs[c.token] = nil
-            self.apps = AppEntry.scan()
+            self.rescanApps()
             Toast.show(ok ? "\(c.name) is removed" : "\(c.name) wasn’t removed: \(tail)",
                        symbol: ok ? "trash.fill" : "exclamationmark.triangle.fill")
             self.rebuild()
@@ -1125,6 +1160,15 @@ struct AppEntry: Equatable {
     let path: String
     /// Where it lives, for the subtitle: "Applications", "Utilities", "System".
     let folder: String
+    /// The name folded for search once, when the list is read, not on every keystroke.
+    let key: SearchKey
+
+    init(name: String, path: String, folder: String) {
+        self.name = name
+        self.path = path
+        self.folder = folder
+        key = SearchKey(name)
+    }
 
     private static var roots: [(String, String)] {
         let home = FileManager.default.homeDirectoryForCurrentUser.path

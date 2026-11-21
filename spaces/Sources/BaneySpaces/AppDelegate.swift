@@ -176,7 +176,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self, self.started else { return orElse() }
             self.spaces.openWindowHere(pid, orElse: orElse)
         }
-        a.canOpenWindow = { pid in Windows.newWindowItem(pid) != nil }
+        a.canOpenWindow = { pid, done in
+            // Reading an app's menus waits on the app, so it never runs on the main thread.
+            Spaces.axQueue.async {
+                let yes = Windows.newWindowItem(pid) != nil
+                DispatchQueue.main.async { done(yes) }
+            }
+        }
         a.current = { [weak self] in self?.spaces.model.current ?? 1 }
         a.switchTo = { [weak self] n in self?.run { $0.switchTo(n) } }
         a.appsOn = { [weak self] n in self?.spaces.apps(on: n) ?? [] }
