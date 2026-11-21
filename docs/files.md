@@ -90,8 +90,9 @@ port = 41771
 start when Tailscale has no address for it.
 
 Every connection is let in only after the local Tailscale daemon says which node it comes from (`tailscale whois`),
-and only when that node belongs to the same Tailscale user as this one. `allow_devices` narrows that further to the
-devices you list; it never lets anyone else in. A refused caller gets a 403 before anything it sent is read.
+and only when that node belongs to the same Tailscale user as this one. Tagged devices are never let in, since every
+tagged node shares one user id, and a tagged device refuses to run `serve` at all. `allow_devices` narrows that
+further to the devices you list; it never lets anyone else in. A refused caller gets a 403 before anything it sent is read.
 
 What a device answers:
 
@@ -106,8 +107,9 @@ What a device answers:
 WireGuard encrypts and authenticates the link. Logs name the endpoint, the calling device and the status, never a
 search or a path.
 
-`send` and `inbox` use Taildrop (`tailscale file cp` and `tailscale file get`). Received files go to
-`Downloads/Polycarp Inbox`.
+`send` and `inbox` use Taildrop (`tailscale file cp` and `tailscale file get`). `send` sends only a file another
+device could fetch: inside a root and past every rule above. Received files go to `Downloads/Polycarp Inbox`. `get`
+never writes into a hidden folder or a place the rules above refuse.
 
 ## The service
 
@@ -131,7 +133,7 @@ loaded but not answering. Installing the service or starting Tailscale stays a s
 | Tool | Use it to |
 | --- | --- |
 | `files_search` | Search names, folders and text, on this device or with `fleet` on every device |
-| `files_get` | Copy a file from another device here, by `device:path` |
+| `files_get` | Copy a file from another device into the inbox, by `device:path`. An agent can't choose where it lands |
 | `files_send` | Send a file to another device with Taildrop |
 | `files_doctor` | See what works, and the fix for what doesn't |
 

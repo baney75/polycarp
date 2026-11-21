@@ -192,7 +192,7 @@ fn probe_peers(status: &Status, cfg: &Config) -> Vec<Peer> {
     let mine: Vec<_> = status
         .peers
         .iter()
-        .filter(|p| p.user == me.user)
+        .filter(|p| p.same_owner(me))
         .filter(|p| cfg.allow_devices.is_empty() || cfg.allow_devices.iter().any(|d| p.is_named(d)))
         .collect();
     let targets: Vec<Target> = mine

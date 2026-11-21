@@ -104,6 +104,18 @@ pub fn bind_addrs(ips: &[IpAddr], port: u16) -> Result<Vec<SocketAddr>, String> 
     Ok(out)
 }
 
+/// A tagged node serves no one: its user id is shared by every tagged node, so it has no owner to match.
+pub fn may_serve(me: &Node) -> Result<(), String> {
+    if me.personal() {
+        Ok(())
+    } else {
+        Err(format!(
+            "this device is tagged ({}), so it has no owner to share files with. Run serve on a device signed in as you.",
+            me.tags.join(", ")
+        ))
+    }
+}
+
 /// Lets a caller in only when Tailscale says its node belongs to the same user as this one, and, when the owner
 /// listed devices, only one of those.
 pub fn authorize(
@@ -112,7 +124,14 @@ pub fn authorize(
     allow_devices: &[String],
 ) -> Result<Node, String> {
     let node = who.map_err(|e| format!("Tailscale could not say who is calling: {e}"))?;
-    if node.user < 0 || node.user != me.user {
+    may_serve(me)?;
+    if !node.tags.is_empty() {
+        return Err(format!(
+            "{} is a tagged device, not one of the owner's",
+            node.name
+        ));
+    }
+    if !node.same_owner(me) {
         return Err(format!(
             "{} belongs to another Tailscale user",
             if node.name.is_empty() {
@@ -528,7 +547,30 @@ mod tests {
             user,
             online: true,
             os: "macOS".into(),
+            tags: Vec::new(),
         }
+    }
+
+    #[test]
+    fn tagged_nodes_are_never_let_in_and_a_tagged_node_serves_no_one() {
+        use super::super::tailnet::{parse_status, parse_whois};
+        // Every tagged node has the same tagged-devices user id, so the user check alone would let them in.
+        let tagged = |name: &str| {
+            parse_whois(&format!(r#"{{"Node":{{"Name":"{name}.t.ts.net.","User":42,"Tags":["tag:server"],"Addresses":["100.64.0.9/32"]}},"UserProfile":{{"ID":42}}}}"#)).unwrap()
+        };
+        let owner = node("mac", 42, "100.64.0.1");
+        assert!(
+            authorize(Ok(tagged("ci-runner")), &owner, &[]).is_err(),
+            "tagged caller"
+        );
+        let s = parse_status(r#"{"BackendState":"Running","Self":{"DNSName":"srv.t.ts.net.","TailscaleIPs":["100.64.0.2"],"UserID":42,"Online":true,"Tags":["tag:server"]}}"#).unwrap();
+        let me = s.me.unwrap();
+        let laptop = node("laptop", 42, "100.64.0.3");
+        assert!(authorize(Ok(laptop), &me, &[]).is_err(), "tagged me");
+        assert!(
+            authorize(Ok(tagged("other")), &me, &[]).is_err(),
+            "tagged me, tagged caller"
+        );
     }
 
     #[test]

@@ -23,7 +23,7 @@ pub fn targets(status: &Status, allow: &[String], port: u16) -> Vec<Target> {
     status
         .peers
         .iter()
-        .filter(|p| p.online && p.user == me.user && p.user >= 0 && p.name != me.name)
+        .filter(|p| p.online && p.same_owner(me) && p.name != me.name)
         .filter(|p| allow.is_empty() || allow.iter().any(|d| p.is_named(d)))
         .filter_map(|p| target_of(p, port))
         .collect()
@@ -49,7 +49,13 @@ pub fn find_peer<'a>(status: &'a Status, name: &str) -> Result<&'a Node, String>
         .iter()
         .find(|p| p.is_named(name))
         .ok_or_else(|| format!("no device named {name} in your tailnet"))?;
-    if p.user != me.user {
+    if !me.personal() {
+        return Err("this device is tagged, so it has no owner's devices to reach".into());
+    }
+    if !p.tags.is_empty() {
+        return Err(format!("{} is a tagged device, not one of yours", p.name));
+    }
+    if !p.same_owner(me) {
         return Err(format!("{} belongs to another Tailscale user", p.name));
     }
     if !p.online {
@@ -233,5 +239,20 @@ mod tests {
         assert!(find_peer(&s, "friend").unwrap_err().contains("another"));
         assert!(find_peer(&s, "chapel1").unwrap_err().contains("offline"));
         assert!(find_peer(&s, "PARISH1").is_ok());
+    }
+
+    #[test]
+    fn tagged_peers_and_a_tagged_self_ask_no_one() {
+        use super::super::tailnet::parse_status;
+        let s = parse_status(r#"{"BackendState":"Running",
+            "Self":{"DNSName":"mac.t.ts.net.","TailscaleIPs":["100.64.0.1"],"UserID":7,"Online":true},
+            "Peer":{"a":{"DNSName":"ci.t.ts.net.","TailscaleIPs":["100.64.0.2"],"UserID":7,"Online":true,"Tags":["tag:ci"]}}}"#).unwrap();
+        assert!(targets(&s, &[], 41771).is_empty(), "tagged peer");
+        assert!(find_peer(&s, "ci").is_err());
+        let s = parse_status(r#"{"BackendState":"Running",
+            "Self":{"DNSName":"srv.t.ts.net.","TailscaleIPs":["100.64.0.1"],"UserID":42,"Online":true,"Tags":["tag:server"]},
+            "Peer":{"a":{"DNSName":"box.t.ts.net.","TailscaleIPs":["100.64.0.2"],"UserID":42,"Online":true}}}"#).unwrap();
+        assert!(targets(&s, &[], 41771).is_empty(), "tagged self");
+        assert!(find_peer(&s, "box").is_err());
     }
 }

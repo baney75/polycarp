@@ -21,9 +21,21 @@ pub struct Node {
     pub user: i64,
     pub online: bool,
     pub os: String,
+    /// ACL tags. A tagged node belongs to its tags, not a person: every tagged node shares one user id.
+    pub tags: Vec<String>,
 }
 
 impl Node {
+    /// Owned by a person, not by tags.
+    pub fn personal(&self) -> bool {
+        self.user >= 0 && self.tags.is_empty()
+    }
+
+    /// Both nodes belong to the same person. A tagged node never counts, on either side.
+    pub fn same_owner(&self, other: &Node) -> bool {
+        self.personal() && other.personal() && self.user == other.user
+    }
+
     /// True when `wanted` names this node: its short name or full MagicDNS name, without case.
     pub fn is_named(&self, wanted: &str) -> bool {
         let w = wanted.trim().trim_end_matches('.').to_lowercase();
@@ -57,6 +69,14 @@ fn short_name(dns: &str, host: &str) -> String {
     if first.is_empty() { host } else { first }.to_lowercase()
 }
 
+fn tags(v: &Json) -> Vec<String> {
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t.as_str().map(str::to_string))
+        .collect()
+}
+
 fn ips(v: &Json) -> Vec<IpAddr> {
     v.as_array()
         .into_iter()
@@ -79,6 +99,7 @@ fn node_of_status(v: &Json) -> Node {
         user: v["UserID"].as_i64().unwrap_or(-1),
         online: v["Online"].as_bool().unwrap_or(false),
         os: v["OS"].as_str().unwrap_or_default().to_string(),
+        tags: tags(&v["Tags"]),
     }
 }
 
@@ -126,6 +147,7 @@ pub fn parse_whois(text: &str) -> Result<Node, String> {
         user,
         online: true,
         os: n["Hostinfo"]["OS"].as_str().unwrap_or_default().to_string(),
+        tags: tags(&n["Tags"]),
     })
 }
 

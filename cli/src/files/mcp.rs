@@ -46,10 +46,9 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "files_get",
-            description: "Copy a file from one of the owner's devices to this one, by \"<device>:<path>\" as files_search returned it. It lands in the inbox folder (Downloads/Polycarp Inbox) under a name that never replaces an existing file, unless dest is given. Returns the local path.",
+            description: "Copy a file from one of the owner's devices to this one, by \"<device>:<path>\" as files_search returned it. It always lands in the inbox folder (Downloads/Polycarp Inbox), under a name that never replaces an existing file. Returns the local path.",
             schema: obj(json!({
                 "source": {"type": "string", "description": "<device>:<absolute path>, for example parish1:/home/d/notes.md."},
-                "dest": {"type": "string", "description": "A local folder or a new file path. Leave out for the inbox folder."},
             }), &["source"]),
             read_only: false,
         },
@@ -126,10 +125,8 @@ fn call(name: &str, args: Option<&Json>) -> Option<Json> {
                 a.get("limit").and_then(Json::as_u64).unwrap_or(20) as usize,
                 a.get("fleet").and_then(Json::as_bool).unwrap_or(false),
             ),
-            "files_get" => super::op_get(
-                text("source").unwrap_or_default(),
-                text("dest").map(Path::new),
-            ),
+            // No dest from an agent: text in a file it read must not choose where a file is written.
+            "files_get" => super::op_get(text("source").unwrap_or_default(), None),
             "files_send" => super::op_send(
                 Path::new(text("path").unwrap_or_default()),
                 text("device").unwrap_or_default(),

@@ -39,6 +39,15 @@ impl Sandbox {
         fs::write(&p, text).unwrap();
         p
     }
+    /// files.toml with the docs folder as the only root.
+    fn roots_are_docs(&self) {
+        let docs = self.dir("docs");
+        fs::write(
+            self.dir("cfg").join("files.toml"),
+            format!("roots = [{:?}]\n", docs.to_str().unwrap()),
+        )
+        .unwrap();
+    }
     fn cmd(&self, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_polycarp"));
         c.env_clear()
@@ -211,6 +220,7 @@ fn doctor_says_what_is_missing_and_how_to_fix_it() {
 #[test]
 fn send_refuses_a_secret_before_asking_tailscale() {
     let sb = Sandbox::new();
+    sb.roots_are_docs();
     let key = sb.write("deploy-key.pem", "x");
     let o = sb.run(&["files", "send", "--json", key.to_str().unwrap(), "parish1"]);
     assert_eq!(o.status.code(), Some(1));
@@ -220,6 +230,44 @@ fn send_refuses_a_secret_before_asking_tailscale() {
     let o = sb.run(&["files", "send", "--json", ok.to_str().unwrap(), "parish1"]);
     let v: Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(v["error"]["code"], "no_tailscale");
+}
+
+#[test]
+fn send_sends_only_what_serve_would_share() {
+    let sb = Sandbox::new();
+    sb.roots_are_docs();
+    let npmrc = sb.write(".npmrc", "//registry.npmjs.org/:_authToken=x");
+    let hidden = sb.write(".hidden/notes.md", "x");
+    let chat = sb.dir("home").join("Library/Messages/chat.db");
+    fs::create_dir_all(chat.parent().unwrap()).unwrap();
+    fs::write(&chat, "x").unwrap();
+    for p in [&npmrc, &hidden, &chat] {
+        let o = sb.run(&["files", "send", "--json", p.to_str().unwrap(), "parish1"]);
+        let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+        assert_eq!(v["error"]["code"], "not_shared", "{}: {v}", p.display());
+    }
+}
+
+#[test]
+fn get_never_writes_into_a_hidden_or_secret_place() {
+    let sb = Sandbox::new();
+    let home = sb.dir("home");
+    for dest in [
+        home.join(".ssh/authorized_keys"),
+        home.join("Documents/.config/x"),
+        home.join("Documents/server.pem"),
+    ] {
+        let o = sb.run(&[
+            "files",
+            "get",
+            "--json",
+            "parish1:/h/a.md",
+            dest.to_str().unwrap(),
+        ]);
+        let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+        assert_eq!(v["error"]["code"], "unsafe_dest", "{}: {v}", dest.display());
+        assert!(!dest.exists());
+    }
 }
 
 #[test]
@@ -266,9 +314,16 @@ fn the_files_mcp_server_lists_its_tools_and_searches() {
             json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
             json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"files_search","arguments":{"query":"harvest"}}}),
             json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"files_search","arguments":{"query":"x","nope":1}}}),
+            json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"files_get","arguments":{"source":"mac:/h/x.txt","dest":"~/.ssh/authorized_keys"}}}),
         ],
     );
-    assert_eq!(got.len(), 4, "{got:?}");
+    assert_eq!(got.len(), 5, "{got:?}");
+    // An agent can't choose where a fetched file lands: it always goes to the inbox.
+    assert!(got[1]["result"]["tools"][1]["inputSchema"]["properties"]["dest"].is_null());
+    assert_eq!(
+        got[4]["result"]["structuredContent"]["error"]["code"],
+        "invalid_args"
+    );
     assert!(got[0]["result"]["instructions"]
         .as_str()
         .unwrap()

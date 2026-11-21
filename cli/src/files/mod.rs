@@ -230,12 +230,36 @@ fn file_name_of(remote: &str) -> String {
         .to_string()
 }
 
+/// A place `get` may write: no hidden folder or file anywhere in it, and nothing the index would never read.
+fn safe_dest(d: &Path) -> Result<(), Fail> {
+    let abs = std::env::current_dir()
+        .map(|cwd| cwd.join(d))
+        .unwrap_or_else(|_| d.to_path_buf());
+    let hidden = abs.components().any(
+        |c| matches!(c, std::path::Component::Normal(s) if s.to_string_lossy().starts_with('.')),
+    );
+    if hidden || rules::never(&abs) {
+        return Err(Fail::new(
+            "unsafe_dest",
+            format!(
+                "{} is a hidden or private place, so nothing is saved there",
+                d.display()
+            ),
+            "Leave dest out to save into the inbox, or pick a plain folder.",
+        ));
+    }
+    Ok(())
+}
+
 pub fn op_get(source: &str, dest: Option<&Path>) -> Res {
     let Some((device, remote)) = split_source(source) else {
         return Err(Fail::usage(
             "name the file as <device>:<path>, for example parish1:/home/d/notes.md",
         ));
     };
+    if let Some(d) = dest {
+        safe_dest(d)?;
+    }
     let c = cfg()?;
     let cli = tailscale()?;
     let s = status(&cli)?;
@@ -339,6 +363,16 @@ pub fn op_send(path: &Path, device: &str) -> Res {
             "Send it by hand if you mean to.",
         ));
     }
+    // The same gate as serve: only a file another device could fetch is sent.
+    let c = cfg()?;
+    let abs =
+        serve::shareable(&c.roots(), &c.skip, &abs.to_string_lossy()).map_err(|(_, code, m)| {
+            Fail::new(
+                code,
+                format!("{}: {m}, so it is not sent", path.display()),
+                "Only files in your indexed folders are sent. Send it by hand if you mean to.",
+            )
+        })?;
     let cli = tailscale()?;
     let s = status(&cli)?;
     let peer = fleet::find_peer(&s, device).map_err(|e| {
@@ -803,6 +837,7 @@ fn cmd_serve(with_watch: bool) -> i32 {
         let me =
             s.me.clone()
                 .ok_or_else(|| Fail::new("tailscale_down", "no node", ""))?;
+        serve::may_serve(&me).map_err(|e| Fail::new("tagged", e, ""))?;
         let addrs =
             serve::bind_addrs(&me.ips, c.port()).map_err(|e| Fail::new("tailscale_down", e, ""))?;
         let db = c
