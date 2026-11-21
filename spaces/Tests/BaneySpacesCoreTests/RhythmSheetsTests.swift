@@ -32,4 +32,38 @@ final class RhythmSheetsTests: XCTestCase {
         XCTAssertEqual(a.map(\.text), ["The light", "", "", "Patience", "Write to Paul"])
         XCTAssertEqual(RhythmSheets.answers(["", "", "", ""], tomorrow: "").count, 4)
     }
+
+    func testACardBelongsToItsPromptAndDay() {
+        let today = PurposeDay(year: 2026, month: 11, day: 21), yesterday = PurposeDay(year: 2026, month: 11, day: 20)
+        typealias S = RhythmSheets
+        XCTAssertEqual(S.step(due: .morningQuestion, showing: nil, shownOn: nil, today: today), .show(.morningQuestion))
+        XCTAssertEqual(S.step(due: nil, showing: nil, shownOn: nil, today: today), .stay)
+        // The morning card left alone all day gives way to the examen.
+        XCTAssertEqual(S.step(due: .eveningExamen, showing: .morningQuestion, shownOn: today, today: today), .show(.eveningExamen))
+        // Last night's examen goes at the new day, and the morning takes its place once it is due.
+        XCTAssertEqual(S.step(due: nil, showing: .eveningExamen, shownOn: yesterday, today: today), .close)
+        XCTAssertEqual(S.step(due: .morningQuestion, showing: .eveningExamen, shownOn: yesterday, today: today), .show(.morningQuestion))
+        // One opened from the menu stays while nothing else is due.
+        XCTAssertEqual(S.step(due: nil, showing: .eveningExamen, shownOn: today, today: today), .stay)
+        XCTAssertEqual(S.step(due: .eveningExamen, showing: .eveningExamen, shownOn: today, today: today), .stay)
+    }
+
+    func testBothPromptsDueAtOnceShowOneAfterTheOther() {
+        // The Mac opened at 7 pm: the morning comes first; once it is given, the examen is what is due.
+        let today = PurposeDay(year: 2026, month: 11, day: 21)
+        var showing: Rhythm.Prompt?
+        for due in [Rhythm.Prompt.morningQuestion, .eveningExamen] {
+            if case .show(let p) = RhythmSheets.step(due: due, showing: showing, shownOn: today, today: today) { showing = p }
+            XCTAssertEqual(showing, due)
+            showing = nil // given and closed
+        }
+    }
+
+    func testReturnNeverKeepsACard() throws {
+        let sheet = try SourceText.code("Sources/BaneySpaces/RhythmSheet.swift")
+        XCTAssertFalse(sheet.contains(".defaultAction"), "Return moves down the card; the main button takes ⌘Return")
+        XCTAssertEqual(sheet.components(separatedBy: ".keyboardShortcut(RhythmKeys.keep)").count, 3, "Begin and Keep")
+        XCTAssertEqual(sheet.components(separatedBy: "close()\n        PurposeKeeper.shared.given(.morningQuestion)").count, 2,
+                       "the card closes before `given` posts the next one")
+    }
 }

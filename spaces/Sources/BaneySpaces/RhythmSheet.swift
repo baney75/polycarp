@@ -4,13 +4,15 @@ import SwiftUI
 
 /// The two prompts of the day: the morning sheet ("What is this day for?") and the evening examen. Each shows when
 /// `PurposeKeeper` says it is due, once a day, as one card in the middle of the screen. It appears without taking the
-/// keyboard, so nothing you are typing lands in it; click into it to answer. Esc (Not today, Later) or the main button
-/// counts it as given. Main thread only.
+/// keyboard, so nothing you are typing lands in it; click into it to answer. Return moves to the next line; ⌘Return
+/// keeps the card, and Esc (Not today, Later) puts it off; either counts it as given. A card belongs to its day and
+/// prompt (`RhythmSheets.step`). Main thread only.
 final class RhythmSheet {
     static let shared = RhythmSheet()
 
     private var panel: NSPanel?
     private var showing: Rhythm.Prompt?
+    private var shownOn: PurposeDay?
     /// The workspaces in use and the one you are on, from the app.
     var workspaces: () -> (inUse: Set<Int>, current: Int) = { ([], 1) }
 
@@ -28,9 +30,15 @@ final class RhythmSheet {
     }
 
     private func dueChanged() {
-        guard let due = PurposeKeeper.shared.due, showing == nil else { return }
-        present(due, takeKeyboard: false)
+        let keeper = PurposeKeeper.shared
+        switch RhythmSheets.step(due: keeper.due, showing: showing, shownOn: shownOn, today: keeper.ledger.dayClock.day(of: Date())) {
+        case .stay: break
+        case .show(let prompt): present(prompt, takeKeyboard: false)
+        case .close: close()
+        }
     }
+
+    private var today: PurposeDay { PurposeKeeper.shared.ledger.dayClock.day(of: Date()) }
 
     private func present(_ prompt: Rhythm.Prompt, takeKeyboard: Bool) {
         close()
@@ -43,7 +51,7 @@ final class RhythmSheet {
             let rows = RhythmSheets.morningRows(inUse: w.inUse, named: named.all, current: w.current)
             let model = MorningModel(oneThing: named.oneThing?.text ?? "",
                                      rows: rows.map { .init(workspace: $0, text: named.purpose(of: $0) ?? "") })
-            root = AnyView(MorningView(model: model, done: { [weak self] keep in self?.finishMorning(model, keep: keep, current: w.current) }))
+            root = AnyView(MorningView(model: model, done: { [weak self] keep in self?.finishMorning(model, keep: keep) }))
         case .eveningExamen:
             let rows = RhythmSheets.timeRows(seconds: keeper.ledger.today(), named: named.all)
             let model = ExamenModel(rows: rows, tomorrow: keeper.purposes.tomorrow?.text ?? "")
@@ -70,45 +78,55 @@ final class RhythmSheet {
         if takeKeyboard { p.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) } else { p.orderFrontRegardless() }
         panel = p
         showing = prompt
+        shownOn = today
         Trace.log("rhythm: \(prompt.rawValue) shown")
     }
 
-    private func finishMorning(_ m: MorningModel, keep: Bool, current: Int) {
+    /// Writes only what you changed on the card, so an edit made elsewhere since it opened stands.
+    private func finishMorning(_ m: MorningModel, keep: Bool) {
+        guard shownOn == today else { close(); dueChanged(); return }
         let store = PurposeKeeper.shared.purposes
         if keep {
             do {
-                try store.setOneThing(m.oneThing, workspace: current)
-                for row in m.rows { try store.setPurpose(row.text, for: row.workspace) }
+                if m.oneThing != m.oneThingBefore { try store.setOneThing(m.oneThing, workspace: workspaces().current) }
+                for row in m.rows where row.text != row.before { try store.setPurpose(row.text, for: row.workspace) }
             } catch {
                 m.problem = (error as? Purposes.Problem)?.description ?? error.localizedDescription
                 return
             }
         }
+        // Closed first: `given` posts the next due prompt at once, and its card must not be the one closed.
+        close()
         PurposeKeeper.shared.given(.morningQuestion)
         Trace.log("rhythm: morning \(keep ? "kept" : "skipped")")
-        close()
+        dueChanged()
     }
 
+    /// An examen left open past the day's start is dropped: its time and its tomorrow belong to a day that is over.
     private func finishExamen(_ m: ExamenModel, keep: Bool) {
+        guard shownOn == today else { close(); dueChanged(); return }
         let keeper = PurposeKeeper.shared
         guard keep else {
+            close()
             keeper.given(.eveningExamen)
             Trace.log("rhythm: examen put off")
-            close()
+            dueChanged()
             return
         }
         do { try keeper.purposes.setTomorrow(m.tomorrow) } catch {
             m.problem = (error as? Purposes.Problem)?.description ?? error.localizedDescription
             return
         }
-        keeper.keepExamen(RhythmSheets.answers(m.answers, tomorrow: m.tomorrow))
         close()
+        keeper.keepExamen(RhythmSheets.answers(m.answers, tomorrow: m.tomorrow))
+        dueChanged()
     }
 
     private func close() {
         panel?.orderOut(nil)
         panel = nil
         showing = nil
+        shownOn = nil
     }
 }
 
@@ -120,28 +138,43 @@ private final class SheetPanel: NSPanel {
 // MARK: Morning
 
 final class MorningModel: ObservableObject {
-    struct Row: Identifiable { let workspace: Int; var text: String; var id: Int { workspace } }
+    struct Row: Identifiable {
+        let workspace: Int
+        var text: String
+        let before: String
+        var id: Int { workspace }
+        init(workspace: Int, text: String) { self.workspace = workspace; self.text = text; before = text }
+    }
     @Published var oneThing: String
+    let oneThingBefore: String
     @Published var rows: [Row]
     @Published var problem: String?
-    init(oneThing: String, rows: [Row]) { self.oneThing = oneThing; self.rows = rows }
+    init(oneThing: String, rows: [Row]) { self.oneThing = oneThing; oneThingBefore = oneThing; self.rows = rows }
 }
 
 struct MorningView: View {
     @ObservedObject var model: MorningModel
     let done: (Bool) -> Void
+    @FocusState private var focus: Int?
 
     var body: some View {
         SheetCard(title: RhythmSheets.morningTitle, line: RhythmSheets.morningLine, problem: model.problem) {
             Line(label: "One", placeholder: "The one thing today", text: $model.oneThing, limit: Purposes.oneThingLimit)
-            ForEach($model.rows) { $row in
+                .focused($focus, equals: 0).onSubmit { focus = model.rows.isEmpty ? nil : 1 }
+            ForEach(Array($model.rows.enumerated()), id: \.element.id) { i, $row in
                 Line(label: "\(row.workspace)", placeholder: "Name it, or leave it free", text: $row.text, limit: Purposes.purposeLimit)
+                    .focused($focus, equals: i + 1).onSubmit { focus = i + 1 < model.rows.count ? i + 2 : nil }
             }
         } buttons: {
             SheetButton(title: "Not today", primary: false) { done(false) }.keyboardShortcut(.cancelAction)
-            SheetButton(title: "Begin", primary: true) { done(true) }.keyboardShortcut(.defaultAction)
+            SheetButton(title: "Begin", primary: true) { done(true) }.keyboardShortcut(RhythmKeys.keep)
         }
     }
+}
+
+/// Return moves down the card; the main button takes ⌘Return, so Return never keeps a card half written.
+enum RhythmKeys {
+    static let keep = KeyboardShortcut(.return, modifiers: .command)
 }
 
 // MARK: Evening
@@ -157,6 +190,7 @@ final class ExamenModel: ObservableObject {
 struct ExamenView: View {
     @ObservedObject var model: ExamenModel
     let done: (Bool) -> Void
+    @FocusState private var focus: Int?
 
     var body: some View {
         SheetCard(title: RhythmSheets.examenTitle, line: RhythmSheets.examenLine, problem: model.problem) {
@@ -170,11 +204,13 @@ struct ExamenView: View {
             }
             ForEach(Rhythm.examenQuestions.indices, id: \.self) { i in
                 Line(label: "\(i + 1)", placeholder: Rhythm.examenQuestions[i], text: $model.answers[i], limit: nil)
+                    .focused($focus, equals: i).onSubmit { focus = i + 1 }
             }
             Line(label: "→", placeholder: RhythmSheets.tomorrowQuestion, text: $model.tomorrow, limit: Purposes.oneThingLimit)
+                .focused($focus, equals: Rhythm.examenQuestions.count).onSubmit { focus = nil }
         } buttons: {
             SheetButton(title: "Later", primary: false) { done(false) }.keyboardShortcut(.cancelAction)
-            SheetButton(title: "Keep", primary: true) { done(true) }.keyboardShortcut(.defaultAction)
+            SheetButton(title: "Keep", primary: true) { done(true) }.keyboardShortcut(RhythmKeys.keep)
         }
     }
 }

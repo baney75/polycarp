@@ -41,6 +41,23 @@ public enum RhythmSheets {
         }
     }
 
+    /// What the card on screen does when the due prompt changes or a card closes.
+    public enum Step: Equatable, Sendable {
+        case stay
+        case show(Rhythm.Prompt)
+        case close
+    }
+
+    /// A card belongs to its prompt and its day. With none showing, a due prompt shows. One from an earlier day goes,
+    /// and a different due prompt takes its place; neither counts as given. A card opened from the menu stays while
+    /// nothing else is due.
+    public static func step(due: Rhythm.Prompt?, showing: Rhythm.Prompt?, shownOn: PurposeDay?, today: PurposeDay) -> Step {
+        guard let showing else { return due.map { .show($0) } ?? .stay }
+        if let due, due != showing { return .show(due) }
+        if shownOn != today { return due.map { .show($0) } ?? .close }
+        return .stay
+    }
+
     /// The examen as the journal keeps it: every question in order (a blank one reads "No answer" there), and tomorrow's
     /// one thing last when one was named.
     public static func answers(_ texts: [String], tomorrow: String, questions: [String] = Rhythm.examenQuestions) -> [Journal.Answer] {
