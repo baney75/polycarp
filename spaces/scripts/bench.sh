@@ -12,15 +12,24 @@
 set -euo pipefail
 BUDGET_MS="${BUDGET_MS:-40}"
 REAL_P90_MS="${REAL_P90_MS:-250}"
-DIR="$HOME/Library/Application Support/Polycarp"
+# The app, its process and its folder are named in product.env, so this times Polycarp and not an older name.
+source "$(dirname "${BASH_SOURCE[0]}")/product.env"
+DIR="$HOME/Library/Application Support/$SUPPORT_FOLDER"
 LOG="$DIR/timing.log"
-pgrep -f "Polycarp.app/Contents/MacOS/Polycarp" >/dev/null || { echo "Polycarp isn't running." >&2; exit 2; }
+PROC="$PRODUCT_NAME.app/Contents/MacOS/$EXECUTABLE"
+# Each missing piece fails loudly by name: a bench that reads nothing must not look like a pass.
+app=""
+for d in "$HOME/Applications" /Applications; do [ -d "$d/$PRODUCT_NAME.app" ] && { app="$d/$PRODUCT_NAME.app"; break; }; done
+[ -n "$app" ] || { echo "bench: $PRODUCT_NAME.app isn't installed in ~/Applications or /Applications." >&2; exit 2; }
+pgrep -f "$PROC" >/dev/null || { echo "bench: $PRODUCT_NAME isn't running ($app)." >&2; exit 2; }
+[ -f "$DIR/state.json" ] || { echo "bench: no $DIR/state.json; is $PRODUCT_NAME managing windows?" >&2; exit 2; }
+[ -f "$LOG" ] || { echo "bench: no $LOG; $PRODUCT_NAME hasn't logged a switch." >&2; exit 2; }
 current=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['current'])" "$DIR/state.json")
 start=$(date +%s)
 noop=0
 real=0
 # When the running build started: only its switches count toward the real-use budget.
-lstart=$(LC_ALL=C ps -o lstart= -p "$(pgrep -f "Polycarp.app/Contents/MacOS/Polycarp" | head -1)" | tr -s ' ' | sed 's/^ //; s/ $//')
+lstart=$(LC_ALL=C ps -o lstart= -p "$(pgrep -f "$PROC" | head -1)" | tr -s ' ' | sed 's/^ //; s/ $//')
 launched=$(LC_ALL=C date -j -f "%a %b %d %T %Y" "$lstart" +%s)
 for _ in $(seq 1 10); do open -g "polycarp://switch/$current"; sleep 0.8; done
 sleep 0.5
