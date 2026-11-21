@@ -52,6 +52,10 @@ else
     -output "$APP/Contents/Resources/bin/polycarp"
 fi
 cp skill/SKILL.md "$APP/Contents/Resources/skill/SKILL.md"
+# The new tab page (a small Chrome extension, docs/newtab.md); its host is the bundled command.
+if [ -d extension/newtab ]; then
+  cp -R extension/newtab "$APP/Contents/Resources/newtab-extension"
+fi
 cp engine/lib/libagent_desktop_ffi.dylib "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
 cp NOTICE "$APP/Contents/Resources/NOTICE"
 cp LICENSES/* "$APP/Contents/Resources/licenses/"
