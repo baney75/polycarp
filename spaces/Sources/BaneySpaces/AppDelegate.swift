@@ -502,6 +502,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         PurposeKeeper.shared.start()
         // After the purposes, which it shows; it reads surfaces.json and stays away while `bar.enabled` is off.
         topBar.start()
+        RhythmSheet.shared.workspaces = { [weak self] in
+            guard let self else { return ([], 1) }
+            return (Set(Workspaces.range.filter { !self.spaces.apps(on: $0).isEmpty }), self.spaces.model.current)
+        }
+        RhythmSheet.shared.start()
         // A new theme redraws the menu bar indicator as well as the panels.
         NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.updateIcon()

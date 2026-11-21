@@ -85,6 +85,51 @@ final class PurposeStoreTests: XCTestCase {
         XCTAssertTrue(text.contains("\"day\" : \"2026-11-22\""), text)
     }
 
+    /// The examen names tomorrow's one thing: today's stays on the bar until 4 am, then tomorrow's takes its place and
+    /// is written to the file once.
+    func testTomorrowsOneThingWaitsForItsDay() throws {
+        let now = PurposeFixture.Now(PurposeFixture.at(2026, 11, 21, 21))
+        let s = store(now)
+        try s.setOneThing("Finish the core", workspace: 1)
+        try s.setTomorrow("Write to Paul")
+        XCTAssertEqual(s.oneThing?.text, "Finish the core", "today's stays")
+        XCTAssertEqual(s.tomorrow?.text, "Write to Paul")
+        XCTAssertEqual(s.tomorrow?.day, PurposeFixture.day("2026-11-22"))
+        XCTAssertThrowsError(try s.setTomorrow(String(repeating: "a", count: 81)))
+        now.date = PurposeFixture.at(2026, 11, 22, 4, 0)
+        XCTAssertEqual(s.oneThing?.text, "Write to Paul", "the morning has it even before rollover runs")
+        XCTAssertNil(s.tomorrow)
+        XCTAssertTrue(s.rollover())
+        XCTAssertFalse(s.rollover(), "only once")
+        XCTAssertEqual(s.snapshot.oneThing?.text, "Write to Paul")
+        XCTAssertNil(s.snapshot.next)
+        s.flush()
+        let again = store(now)
+        XCTAssertEqual(again.oneThing?.text, "Write to Paul", "kept on disk")
+    }
+
+    func testAOneThingSetByHandOnTheNewDayWins() throws {
+        let now = PurposeFixture.Now(PurposeFixture.at(2026, 11, 21, 21))
+        let s = store(now)
+        try s.setTomorrow("Write to Paul")
+        now.date = PurposeFixture.at(2026, 11, 22, 4, 30)
+        try s.setOneThing("Call Mom", workspace: 2)
+        XCTAssertEqual(s.oneThing?.text, "Call Mom")
+        s.rollover()
+        XCTAssertEqual(s.oneThing?.text, "Call Mom")
+        XCTAssertNil(s.snapshot.next)
+    }
+
+    func testTomorrowsOneThingLeftTooLongIsDropped() throws {
+        let now = PurposeFixture.Now(PurposeFixture.at(2026, 11, 21, 21))
+        let s = store(now)
+        try s.setTomorrow("Write to Paul")
+        now.date = PurposeFixture.at(2026, 11, 24, 9)
+        XCTAssertNil(s.oneThing, "its day passed while the Mac was off")
+        XCTAssertTrue(s.rollover())
+        XCTAssertNil(s.snapshot.next)
+    }
+
     func testTheNextRolloverIsTheNextDayStart() {
         let now = PurposeFixture.Now(PurposeFixture.at(2026, 10, 31, 22))
         XCTAssertEqual(store(now).nextRollover, PurposeFixture.at(2026, 11, 1, 4), "4 am CST, after the clocks went back")
