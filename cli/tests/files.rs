@@ -66,9 +66,12 @@ impl Sandbox {
     fn run(&self, args: &[&str]) -> Output {
         self.cmd(args).output().unwrap()
     }
+    /// Indexes the docs folder, made the only root unless files.toml already says otherwise.
     fn index(&self) -> Value {
-        let docs = self.dir("docs");
-        let o = self.run(&["files", "index", "--json", "--root", docs.to_str().unwrap()]);
+        if !self.dir("cfg").join("files.toml").exists() {
+            self.roots_are_docs();
+        }
+        let o = self.run(&["files", "index", "--json"]);
         assert_eq!(o.status.code(), Some(0), "{}", text(&o));
         serde_json::from_slice::<Value>(&o.stdout).unwrap()["data"]["stats"].clone()
     }
@@ -311,15 +314,9 @@ fn a_folder_that_cannot_be_read_keeps_its_rows_and_doctor_says_so() {
 fn when_watching_fails_the_index_falls_back_to_a_rescan_and_doctor_says_so() {
     let sb = Sandbox::new();
     sb.write("a.md", "alpha");
-    let docs = sb.dir("docs");
+    sb.roots_are_docs();
     let mut child = sb
-        .cmd(&[
-            "files",
-            "index",
-            "--watch",
-            "--root",
-            docs.to_str().unwrap(),
-        ])
+        .cmd(&["files", "index", "--watch"])
         .env("POLYCARP_TEST_WATCH_FAIL", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -463,5 +460,58 @@ fn a_broken_files_toml_is_reported_and_fix_touches_nothing() {
         !sb.dir("cfg").join("files/index.sqlite").exists(),
         "fix indexed the default roots: {}",
         text(&o)
+    );
+}
+
+#[test]
+fn a_folder_taken_out_of_files_toml_is_no_longer_found() {
+    let sb = Sandbox::new();
+    sb.write("kept/a.md", "alpha");
+    sb.write("gone/b.md", "bravo");
+    let (kept, gone) = (sb.dir("docs").join("kept"), sb.dir("docs").join("gone"));
+    let toml = |roots: &[&Path]| {
+        let list: Vec<String> = roots
+            .iter()
+            .map(|r| format!("{:?}", r.to_str().unwrap()))
+            .collect();
+        fs::write(
+            sb.dir("cfg").join("files.toml"),
+            format!("roots = [{}]\n", list.join(", ")),
+        )
+        .unwrap();
+    };
+    toml(&[&kept, &gone]);
+    sb.index();
+    assert_eq!(
+        sb.search(&["bravo"])["data"]["results"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    toml(&[&kept]);
+    sb.index();
+    let v = sb.search(&["bravo"]);
+    assert_eq!(v["data"]["results"], json!([]), "{v}");
+    assert_eq!(
+        sb.search(&["alpha"])["data"]["results"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // A one-off --root may only refresh a folder inside a configured root, so it never leaves rows behind.
+    let o = sb.run(&["files", "index", "--json", "--root", gone.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(2), "{}", text(&o));
+    let v = sb.search(&["bravo"]);
+    assert_eq!(v["data"]["results"], json!([]), "{v}");
+    let o = sb.run(&["files", "index", "--json", "--root", kept.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert_eq!(
+        sb.search(&["alpha"])["data"]["results"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
     );
 }

@@ -30,7 +30,7 @@ pub const USAGE: &str = "\
 polycarp files: search, open and send your files across your devices, over Tailscale only
 
 Usage:
-  polycarp files index [--watch] [--root <dir>]...   build or update this device's index
+  polycarp files index [--watch | --root <dir>...]  build or update this device's index
   polycarp files search <words...> [--fleet] [--json] [--kind <kind>] [--limit N]
   polycarp files open <id|path|device:path> [--with default|word|editor|reveal]
   polycarp files get <device>:<path> [dest]          copy a file from another of your devices
@@ -156,7 +156,7 @@ pub fn op_search(q: &str, kind: Option<&str>, limit: usize, fleet_wide: bool) ->
         .index_path()
         .map_err(|e| Fail::new("config_error", e, ""))?;
     let local = Index::open_read(&db)
-        .and_then(|i| i.search(q, kind, limit))
+        .and_then(|i| i.search(q, kind, limit, &c.roots()))
         .map_err(|e| Fail::new("no_index", e, "Run `polycarp files index`."));
     if !fleet_wide {
         let hits = local?;
@@ -688,30 +688,60 @@ fn cmd_index(f: &Flags) -> i32 {
         Ok(c) => c,
         Err(e) => return report(Err(e), f.json, |_| {}),
     };
-    let roots = if f.roots.is_empty() {
-        c.roots()
-    } else {
-        let home = config::home();
-        f.roots
-            .iter()
-            .map(|r| {
-                let p = config::expand(r, home.as_deref());
-                let p = if p.is_absolute() {
-                    p
-                } else {
-                    std::env::current_dir().map(|d| d.join(&p)).unwrap_or(p)
-                };
-                config::Root {
-                    path: if cfg!(windows) {
-                        p
-                    } else {
-                        fs::canonicalize(&p).unwrap_or(p)
-                    },
-                    text: true,
-                }
-            })
-            .collect()
-    };
+    // The index holds the roots in files.toml and nothing else. `--root` refreshes just a folder inside one of them.
+    let configured = c.roots();
+    if f.watch && !f.roots.is_empty() {
+        return report(
+            Err(Fail::usage(
+                "--watch follows the roots in files.toml; drop --root",
+            )),
+            f.json,
+            |_| {},
+        );
+    }
+    let mut roots = Vec::new();
+    let home = config::home();
+    for r in &f.roots {
+        let p = config::expand(r, home.as_deref());
+        let p = if p.is_absolute() {
+            p
+        } else {
+            std::env::current_dir().map(|d| d.join(&p)).unwrap_or(p)
+        };
+        let p = if cfg!(windows) {
+            p
+        } else {
+            fs::canonicalize(&p).unwrap_or(p)
+        };
+        let Some(within) = configured.iter().find(|c| p.starts_with(&c.path)) else {
+            return report(
+                Err(Fail::usage(format!(
+                    "{} is not inside a folder in files.toml; add it to roots or extra_roots first",
+                    p.display()
+                ))),
+                f.json,
+                |_| {},
+            );
+        };
+        let rel = p.strip_prefix(&within.path).unwrap_or(Path::new(""));
+        if !index::dir_allowed(within, rel, &c.skip) {
+            return report(
+                Err(Fail::usage(format!(
+                    "{} is a folder the index always skips",
+                    p.display()
+                ))),
+                f.json,
+                |_| {},
+            );
+        }
+        roots.push(config::Root {
+            path: p,
+            text: within.text,
+        });
+    }
+    if roots.is_empty() {
+        roots = configured.clone();
+    }
     let db = match c.index_path() {
         Ok(p) => p,
         Err(e) => return report(Err(Fail::new("config_error", e, "")), f.json, |_| {}),
@@ -728,7 +758,7 @@ fn cmd_index(f: &Flags) -> i32 {
     }
     let started = std::time::Instant::now();
     let r = Index::open(&db)
-        .and_then(|mut i| i.update(&roots, &c.skip))
+        .and_then(|mut i| i.update_within(&roots, &configured, &c.skip))
         .map(|s| json!({"index": db.display().to_string(), "seconds": started.elapsed().as_secs_f64(), "stats": s}))
         .map_err(|e| Fail::new("io_error", e, ""));
     report(r, f.json, |d| {

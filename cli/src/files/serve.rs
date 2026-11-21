@@ -271,7 +271,7 @@ pub fn route(ctx: &Ctx, req: &Request) -> Reply {
                 .and_then(|l| l.parse::<usize>().ok())
                 .unwrap_or(20)
                 .clamp(1, 200);
-            match Index::open_read(&ctx.index).and_then(|i| i.search(q, kind, limit)) {
+            match Index::open_read(&ctx.index).and_then(|i| i.search(q, kind, limit, &ctx.roots)) {
                 Ok(mut hits) => {
                     for h in &mut hits {
                         h.device = Some(ctx.me.name.clone());
@@ -852,6 +852,40 @@ mod tests {
         let r = http::download(addr, &target, t, &mut got).unwrap();
         assert_eq!(r.status, 200);
         assert_eq!(got, b"grace and peace");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn serve_search_shows_only_rows_under_a_configured_root() {
+        let d = tmp("pruned");
+        let c = ctx_with(&d, false);
+        fs::write(c.roots[0].path.join("alpha.md"), "x").unwrap();
+        let other = d.join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("bravo.md"), "x").unwrap();
+        // Rows from a folder that was a root once, and is not any more.
+        let both = [
+            c.roots[0].clone(),
+            Root {
+                path: other,
+                text: true,
+            },
+        ];
+        Index::open(&c.index).unwrap().update(&both, &[]).unwrap();
+        let get = |q: &str| Request {
+            method: "GET".into(),
+            path: "/v1/search".into(),
+            query: vec![("q".into(), q.into())],
+            ..Request::default()
+        };
+        match route(&c, &get("bravo")) {
+            Reply::Json(200, v) => assert_eq!(v["data"]["results"], json!([]), "{v}"),
+            other => panic!("{other:?}"),
+        }
+        match route(&c, &get("alpha")) {
+            Reply::Json(200, v) => assert_eq!(v["data"]["results"].as_array().unwrap().len(), 1),
+            other => panic!("{other:?}"),
+        }
         let _ = fs::remove_dir_all(&d);
     }
 
