@@ -247,7 +247,9 @@ final class PlayerWiringTests: XCTestCase {
 /// (`CGImageSourceCreateThumbnailAtIndex` at 3024 px) took 195 to 590 ms at best on the same Mac, so going back to it fails
 /// by a wide margin even on a loaded machine. The median is printed for the record.
 final class PhotoDecodeSpeedTests: XCTestCase {
-    static let budgetMs = 45.0
+    /// 45 ms on a Mac. GitHub's shared macOS runners measured 60 ms for the same decode, so CI gets 120 ms:
+    /// still well under the 195 ms the thumbnail route took, which is the regression this test exists to catch.
+    static let budgetMs = ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true" ? 120.0 : 45.0
     static let screen = CGSize(width: 3024, height: 1964)
 
     static func pixels(_ width: Int, _ height: Int, _ fill: (Int, Int, UnsafeMutablePointer<UInt8>) -> Void) throws -> CGImage {
