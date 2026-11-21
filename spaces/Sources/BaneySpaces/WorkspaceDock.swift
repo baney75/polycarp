@@ -688,6 +688,18 @@ final class WorkspaceDock {
     /// A list a check opened stays until the check closes it.
     private var sideHeldForCheck = false
 
+    /// Where the last open spent its time before the panel was ordered in (`PanelBench`, trace.log).
+    private(set) var lastOpen: DockOpenPhases?
+
+    /// The bench's cold open: the panel goes, as when the dock is switched off, and the next show builds it.
+    func dropPanelForBench() {
+        pinned = false
+        hide(animated: false)
+        guard let p = dockSwitch.panel else { return }
+        dockSwitch.forgetPanel()
+        release(p)
+    }
+
     /// `baneyspaces://dock/show`: for scripts and checks. It stays until `dock/hide`.
     func pin(_ on: Bool) {
         guard isRunning else { return }
@@ -706,12 +718,17 @@ final class WorkspaceDock {
         model.shown = true
         let edge = WorkspaceDock.edge
         model.maxLength = (edge.isVertical ? screen.visibleFrame.height : screen.frame.width) - 32
+        let began = CFAbsoluteTimeGetCurrent()
         model.load(from: spaces)
+        let loaded = CFAbsoluteTimeGetCurrent()
+        let cold = panel == nil
         // Off, the dock has no panel and a reveal builds none; the model mustn't think it's up.
         guard let p = dockSwitch.panelForReveal() else { model.shown = false; return }
         isShown = true
         p.contentView?.layoutSubtreeIfNeeded()
         let size = p.contentView?.fittingSize ?? .zero
+        lastOpen = DockOpenPhases(load: (loaded - began) * 1000, layout: (CFAbsoluteTimeGetCurrent() - loaded) * 1000, cold: cold)
+        if let line = lastOpen?.slowLine { Trace.log(line) }
         let up = edge.frame(size: size, screen: screen.frame, visible: screen.visibleFrame)
         shownOn = screen
         spanLength = edge.isVertical ? size.height : size.width
@@ -1072,6 +1089,21 @@ final class WorkspaceDock {
     }
 }
 
+/// One dock open up to the panel being ordered in, in ms: building the tiles (with the window list
+/// read again first) and SwiftUI's layout of them. The commit to the screen comes after.
+struct DockOpenPhases {
+    let load: Double
+    let layout: Double
+    let cold: Bool
+
+    /// A trace line when the two together miss the dock's p50 budget (spec/speed.json), so a slow
+    /// open in real use says which part was slow.
+    var slowLine: String? {
+        guard load + layout >= 60 else { return nil }
+        return "dock open slow: load \(Int(load)) ms, layout \(Int(layout)) ms" + (cold ? " (panel built)" : "")
+    }
+}
+
 /// Never takes the keyboard: clicking a tile leaves your app in front.
 final class DockPanel: NSPanel {
     override var canBecomeKey: Bool { false }
@@ -1317,8 +1349,12 @@ final class DockModel: ObservableObject {
     /// The first workspace with nothing on it, for the "new workspace" button.
     var firstEmpty: Int? { Workspaces.range.first { n in !tiles.contains { $0.id == n && !$0.apps.isEmpty } } }
 
+    /// Re-reads the window list before the tiles are built. The bench (`PanelBench`) stands a busy
+    /// app's Accessibility timeout in here.
+    var rescan: (Spaces) -> Void = { $0.refresh() }
+
     func load(from spaces: Spaces) {
-        spaces.refresh()
+        rescan(spaces)
         if attention != spaces.attention { attention = spaces.attention }
         replayOwedOn = []
         var byPid: [String: Spaces.Entry] = [:]

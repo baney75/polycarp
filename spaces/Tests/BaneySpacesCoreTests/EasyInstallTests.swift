@@ -33,7 +33,7 @@ final class MoveToApplicationsTests: XCTestCase {
         let dmg = app("/Volumes/Polycarp/Polycarp.app")
         func ask(_ args: [String]) -> Bool { MoveToApplications.shouldAsk(arguments: ["Polycarp"] + args, bundle: dmg, home: home) }
         XCTAssertTrue(ask([]))
-        for flag in ["--version", "--help", "--restore-shortcuts", "--restore-dock", "--check-settings", "--unregister-login", "--render", "--bangs"] {
+        for flag in ["--version", "--help", "--restore-shortcuts", "--restore-dock", "--check-settings", "--unregister-login", "--bench-panels", "--render", "--bangs"] {
             XCTAssertFalse(ask([flag]), flag)
         }
         XCTAssertFalse(ask([MoveToApplications.movedFlag]), "the relaunched copy can't ask again, even if its path still looks odd")

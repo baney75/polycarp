@@ -41,7 +41,7 @@ public enum MoveToApplications {
     /// Ask only for a normal start from the disk image, Downloads or a translocated path. Never for `--version`, `--help`
     /// and the one-shots (`EntryPoint.needsExclusiveCopy` is false for them), and never the copy that was just moved.
     /// Runs that do one thing and exit (the uninstaller's calls): they must never open an alert.
-    public static let oneShots: Set<String> = ["--restore-shortcuts", "--restore-dock", "--check-settings", "--unregister-login", "--version", "--help", "-v", "-h"]
+    public static let oneShots: Set<String> = ["--restore-shortcuts", "--restore-dock", "--check-settings", "--unregister-login", "--bench-panels", "--version", "--help", "-v", "-h"]
 
     public static func shouldAsk(arguments: [String], bundle: URL, home: URL) -> Bool {
         guard EntryPoint.needsExclusiveCopy(arguments: arguments), !arguments.contains(movedFlag),

@@ -442,6 +442,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             exit(ok ? 0 : 1)
         }
+        // `Polycarp --bench-panels <folder>`: times the dock opening, on CI only (`PanelBench`, scripts/panel-bench.sh).
+        if let i = CommandLine.arguments.firstIndex(of: "--bench-panels") {
+            let args = CommandLine.arguments
+            let folder = i + 1 < args.count ? args[i + 1] : NSTemporaryDirectory() + "panel-bench"
+            PanelBench.run(dock: dock, spaces: spaces, folder: URL(fileURLWithPath: folder, isDirectory: true))
+        }
         // `BaneySpaces --unregister-login`: the uninstaller's way to take it out of Login Items.
         if CommandLine.arguments.contains("--unregister-login") {
             // Never registered is as good as removed.

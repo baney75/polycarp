@@ -5,7 +5,7 @@ import BaneySpacesCore
 // start do (`CrashLoopGuard`): any other `--` flag used to skip the guard and leave a crash loop
 // uncounted.
 let crashLoopOneShots: Set<String> = [
-    "--restore-shortcuts", "--restore-dock", "--check-settings", "--unregister-login",
+    "--restore-shortcuts", "--restore-dock", "--check-settings", "--unregister-login", "--bench-panels",
 ]
 
 // An older build, replaced while it ran, asking for the helper it used to be. The app must not start for that; whatever it owed,

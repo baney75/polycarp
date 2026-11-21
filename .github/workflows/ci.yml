@@ -213,6 +213,10 @@ jobs:
           codesign --verify --strict $B/polycarp-browser
           H=$(mktemp -d)
           HOME=$H POLYCARP_CONFIG_DIR=$H/pc TABKYRA_SOCKET_DIR=$H/s $B/polycarp-browser --version
+      # The dock's open, cold and warm, alone and beside hw.ncpu background spinners, against spec/speed.json. It
+      # opens panels, so it runs here and nowhere else (it refuses without CI=true).
+      - name: The dock opens within its spacesTiming budget (scripts/panel-bench.sh)
+        run: scripts/panel-bench.sh build/Polycarp.app
       # Recorded on the owner's Mac; a shared runner is slower, so this reports and does not block. The test that gates is test/speed.test.mjs.
       - name: The helper's cold start against spec/speed.json (25%)
         continue-on-error: true
