@@ -41,6 +41,10 @@ pub struct Facts {
     pub index_stale: bool,
     pub roots: Vec<String>,
     pub missing_roots: Vec<String>,
+    /// Folders the last full index run could not read; their old rows are kept.
+    pub unreadable: Vec<String>,
+    /// How the watching index keeps up: `events`, or `rescan: <why watching failed>`.
+    pub watch: Option<String>,
     pub allow_save: bool,
     pub peers: Vec<Peer>,
 }
@@ -78,6 +82,30 @@ pub fn fixes(f: &Facts) -> Vec<String> {
         );
     } else if f.index_stale {
         out.push("The index is stale: run `polycarp files fix` to update it.".into());
+    }
+    if let Some(first) = f.unreadable.first() {
+        let more = match f.unreadable.len() {
+            1 => String::new(),
+            n => format!(" and {} more", n - 1),
+        };
+        let how = if Os::current() == Os::Mac {
+            "If the files service runs it, allow polycarp in System Settings > Privacy & Security > Files and Folders (or Full Disk Access), then run `polycarp files index`."
+        } else {
+            "Check that folder's permissions, or reconnect its drive, then run `polycarp files index`."
+        };
+        out.push(format!(
+            "polycarp can't read {first}{more}; what was indexed there is kept. {how}"
+        ));
+    }
+    if let Some(why) = f.watch.as_deref().and_then(|w| w.strip_prefix("rescan: ")) {
+        let linux = if Os::current() == Os::Linux {
+            " Raising fs.inotify.max_user_watches lets watching work again."
+        } else {
+            ""
+        };
+        out.push(format!(
+            "Watching for changes failed ({why}), so the index is rescanned every 10 minutes instead.{linux}"
+        ));
     }
     if f.logged_in && !f.serve_running {
         match (&f.service_unit, f.service_loaded) {
@@ -141,6 +169,8 @@ pub fn gather(cfg: &Config, tailscale: Option<(String, Arc<dyn Tailnet>)>) -> Fa
         f.index_path = p.display().to_string();
         if let Ok(info) = Index::open_read(&p).and_then(|i| i.info()) {
             f.index_files = Some(info.files);
+            f.unreadable = info.unreadable;
+            f.watch = info.watch;
             f.index_bytes = Some(info.bytes);
             f.index_age_secs = info.last_full.map(|t| index::now_secs() - t);
             f.index_stale = f.index_age_secs.is_none_or(|a| a > cfg.stale_secs() as i64);

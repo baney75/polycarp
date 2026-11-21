@@ -48,7 +48,12 @@ Windows files that recall on open).
 The index is one SQLite file with full-text search: `~/Library/Caches/Polycarp/files/index.sqlite` on a Mac,
 `%LOCALAPPDATA%\Polycarp\files\index.sqlite` on Windows, `~/.cache/polycarp/files/index.sqlite` on Linux. It can
 always be built again. A second `index` run reads only files whose size or time changed and drops files that are gone.
-`index --watch` keeps it current as files change, and does a full pass again every 12 hours.
+`index --watch` keeps it current as files change, and does a full pass again every 12 hours. It watches only the
+folders the index walks (on Linux one by one, so hidden, build and secret folders use no watch). If watching can't
+start or stops, it rescans every 10 minutes instead, and `doctor` says why.
+
+A folder that can't be read (the service lacks macOS permission for it, a drive dropped) is not treated as empty:
+what was indexed there is kept, and `index` and `doctor` name the folder and how to give access.
 
 ## What it never reads
 

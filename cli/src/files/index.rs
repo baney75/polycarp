@@ -54,6 +54,8 @@ pub struct Stats {
     pub with_text: usize,
     pub skipped: usize,
     pub missing_roots: Vec<String>,
+    /// Folders that could not be read, with the reason. Their rows were kept as they were.
+    pub unreadable: Vec<String>,
 }
 
 /// The index at a glance, for `doctor`.
@@ -65,6 +67,10 @@ pub struct Info {
     pub bytes: u64,
     /// Seconds since 1970 of the last full run, if any.
     pub last_full: Option<i64>,
+    /// Folders the last full run could not read.
+    pub unreadable: Vec<String>,
+    /// How `--watch` keeps the index current: `events`, or `rescan: <why watching failed>`.
+    pub watch: Option<String>,
 }
 
 pub struct Index {
@@ -245,6 +251,8 @@ impl Index {
             sweep(&tx, &root.path, run, &mut stats)?;
         }
         tx.commit().map_err(db_err)?;
+        let unreadable = serde_json::to_string(&stats.unreadable).unwrap_or_default();
+        self.set_meta("unreadable", &unreadable)?;
         let now = now_secs().to_string();
         self.set_meta("last_full", &now)?;
         self.set_meta("last_update", &now)?;
@@ -367,12 +375,22 @@ impl Index {
             with_text: count("SELECT count(*) FROM files WHERE has_text = 1")?,
             bytes,
             last_full: self.meta("last_full").and_then(|v| v.parse().ok()),
+            unreadable: self
+                .meta("unreadable")
+                .and_then(|v| serde_json::from_str(&v).ok())
+                .unwrap_or_default(),
+            watch: self.meta("watch"),
         })
+    }
+
+    /// Records how `--watch` keeps the index current, for `doctor`.
+    pub fn set_watch(&self, mode: &str) -> Result<(), String> {
+        self.set_meta("watch", mode)
     }
 }
 
 /// A folder inside a root that the walk would go into.
-fn dir_allowed(root: &Root, rel: &Path, extra: &[String]) -> bool {
+pub fn dir_allowed(root: &Root, rel: &Path, extra: &[String]) -> bool {
     !rules::never(&root.path.join(rel).join("x"))
         && rel.components().all(|c| match c {
             std::path::Component::Normal(s) => {
@@ -393,8 +411,15 @@ fn walk(
 ) -> Result<(), String> {
     let mut stack = vec![start.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = fs::read_dir(&dir) else {
-            continue;
+        let rd = match fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(e) => {
+                // Not the same as empty (a permission the service lacks, a volume that dropped): keep what the
+                // index knew about it, and say so.
+                keep(tx, &dir, run)?;
+                stats.unreadable.push(format!("{}: {e}", dir.display()));
+                continue;
+            }
         };
         for entry in rd.filter_map(Result::ok) {
             let Ok(ft) = entry.file_type() else {
@@ -506,6 +531,18 @@ fn upsert(
         .and_then(|mut s| s.execute(params![id, name, folder_of(path), text.unwrap_or_default()]))
         .map_err(db_err)?;
     Ok(())
+}
+
+/// Marks every row under `dir` as seen, so the sweep leaves them.
+fn keep(tx: &Connection, dir: &Path, run: i64) -> Result<(), String> {
+    let lo = under(dir);
+    let hi = prefix_end(&lo);
+    tx.execute(
+        "UPDATE files SET seen = ?1 WHERE path >= ?2 AND path < ?3",
+        params![run, lo, hi],
+    )
+    .map(|_| ())
+    .map_err(db_err)
 }
 
 /// Removes rows under `dir` that this run did not see.

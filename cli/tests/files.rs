@@ -270,6 +270,87 @@ fn get_never_writes_into_a_hidden_or_secret_place() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn a_folder_that_cannot_be_read_keeps_its_rows_and_doctor_says_so() {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    sb.write("private/psalm.md", "shepherd");
+    sb.write("open.md", "shepherd");
+    sb.index();
+    let locked = sb.dir("docs").join("private");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_dir(&locked).is_ok() {
+        // Running as root: permissions don't stop it, so there is nothing to test.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let s = sb.index();
+    let doctor = sb.run(&["files", "doctor", "--json"]);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(s["removed"], 0, "{s}");
+    let unreadable = s["unreadable"].as_array().unwrap_or_else(|| panic!("{s}"));
+    assert_eq!(unreadable.len(), 1, "{s}");
+    assert!(unreadable[0].as_str().unwrap().contains("private"), "{s}");
+    let mut got = names(&sb.search(&["shepherd"]));
+    got.sort();
+    assert_eq!(got, ["open.md", "psalm.md"]);
+    let v: Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    assert!(
+        v["data"]["unreadable"][0]
+            .as_str()
+            .unwrap_or_default()
+            .contains("private"),
+        "{v}"
+    );
+    let fixes = v["data"]["fixes"].to_string();
+    assert!(fixes.contains("can't read"), "{fixes}");
+}
+
+#[test]
+fn when_watching_fails_the_index_falls_back_to_a_rescan_and_doctor_says_so() {
+    let sb = Sandbox::new();
+    sb.write("a.md", "alpha");
+    let docs = sb.dir("docs");
+    let mut child = sb
+        .cmd(&[
+            "files",
+            "index",
+            "--watch",
+            "--root",
+            docs.to_str().unwrap(),
+        ])
+        .env("POLYCARP_TEST_WATCH_FAIL", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut mode = Value::Null;
+    for _ in 0..60 {
+        std::thread::sleep(Duration::from_millis(250));
+        let o = sb.run(&["files", "doctor", "--json"]);
+        let v: Value = serde_json::from_slice(&o.stdout).unwrap_or(Value::Null);
+        mode = v["data"]["watch"].clone();
+        if mode.as_str().is_some_and(|m| m.starts_with("rescan")) {
+            break;
+        }
+    }
+    let alive = child.try_wait().unwrap().is_none();
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        mode.as_str().is_some_and(|m| m.starts_with("rescan")),
+        "watch mode: {mode}"
+    );
+    assert!(
+        alive,
+        "the index stopped instead of falling back to a rescan"
+    );
+    let o = sb.run(&["files", "doctor", "--json"]);
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(v["data"]["fixes"].to_string().contains("rescanned"), "{v}");
+}
+
 #[test]
 fn service_commands_are_not_run_here_but_usage_is_checked() {
     let sb = Sandbox::new();

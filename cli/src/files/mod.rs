@@ -728,6 +728,12 @@ fn cmd_index(f: &Flags) -> i32 {
             "Indexed {} files under {} folders in {:.1}s: {} new, {} changed, {} removed, {} read for text.",
             s["files"], s["roots"], d["seconds"].as_f64().unwrap_or(0.0), s["added"], s["updated"], s["removed"], s["with_text"]
         );
+        for u in s["unreadable"].as_array().into_iter().flatten() {
+            println!(
+                "  could not read, kept as it was: {}",
+                u.as_str().unwrap_or_default()
+            );
+        }
         for m in s["missing_roots"].as_array().into_iter().flatten() {
             println!(
                 "  not there, kept as it was: {}",
