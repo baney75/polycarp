@@ -21,6 +21,7 @@ fn register(st: &mut State) -> String {
         .register(
             &json!({"redirect_uris": [CLAUDE], "client_name": "Claude <b>"}),
             &[],
+            Origin::Tunnel,
             T0,
         )
         .unwrap();
@@ -62,13 +63,13 @@ fn param(url: &str, k: &str) -> Option<String> {
 /// Register, authorize, approve here, collect the code from the waiting page.
 fn code_for(st: &mut State, client: &str) -> String {
     let (request, p) = st
-        .authorize(&authorize_query(client, &[]), RESOURCE, T0)
+        .authorize(&authorize_query(client, &[]), RESOURCE, Origin::Tunnel, T0)
         .unwrap();
     assert!(matches!(
         st.poll(&request, ISSUER, T0 + 1),
         Poll::Waiting(_)
     ));
-    st.approve(&p.approval.to_lowercase(), None, T0 + 2)
+    st.approve(&p.approval.to_lowercase(), None, false, T0 + 2)
         .unwrap();
     let Poll::Redirect(url) = st.poll(&request, ISSUER, T0 + 3) else {
         panic!("approved, so the page redirects");
@@ -167,11 +168,16 @@ fn the_owner_narrows_or_widens_scopes_here_and_can_say_no() {
     let mut st = State::default();
     let c = register(&mut st);
     let (request, p) = st
-        .authorize(&authorize_query(&c, &[]), RESOURCE, T0)
+        .authorize(&authorize_query(&c, &[]), RESOURCE, Origin::Tunnel, T0)
         .unwrap();
     assert_eq!(p.scopes, vec!["read", "files"]);
     let got = st
-        .approve(&p.approval, Some(vec!["read".into(), "act".into()]), T0 + 1)
+        .approve(
+            &p.approval,
+            Some(vec!["read".into(), "act".into()]),
+            false,
+            T0 + 1,
+        )
         .unwrap();
     assert_eq!(
         got.decision,
@@ -186,12 +192,17 @@ fn the_owner_narrows_or_widens_scopes_here_and_can_say_no() {
     assert_eq!(tok["scope"], "read act");
     // No scope asked: read only, until the owner grants more.
     let (_, p) = st
-        .authorize(&authorize_query(&c, &[("scope", "")]), RESOURCE, T0)
+        .authorize(
+            &authorize_query(&c, &[("scope", "")]),
+            RESOURCE,
+            Origin::Tunnel,
+            T0,
+        )
         .unwrap();
     assert_eq!(p.scopes, vec!["read"]);
     // A no.
     let (request, p) = st
-        .authorize(&authorize_query(&c, &[]), RESOURCE, T0)
+        .authorize(&authorize_query(&c, &[]), RESOURCE, Origin::Tunnel, T0)
         .unwrap();
     st.deny(&p.approval, T0 + 1).unwrap();
     let Poll::Redirect(url) = st.poll(&request, ISSUER, T0 + 2) else {
@@ -201,11 +212,13 @@ fn the_owner_narrows_or_widens_scopes_here_and_can_say_no() {
     assert_eq!(param(&url, "state").as_deref(), Some("st-123"));
     assert!(param(&url, "code").is_none());
     // An approval code works once, and not after it expires.
-    assert!(st.approve(&p.approval, None, T0 + 3).is_err());
+    assert!(st.approve(&p.approval, None, false, T0 + 3).is_err());
     let (_, p) = st
-        .authorize(&authorize_query(&c, &[]), RESOURCE, T0)
+        .authorize(&authorize_query(&c, &[]), RESOURCE, Origin::Tunnel, T0)
         .unwrap();
-    assert!(st.approve(&p.approval, None, T0 + PENDING_TTL + 1).is_err());
+    assert!(st
+        .approve(&p.approval, None, false, T0 + PENDING_TTL + 1)
+        .is_err());
 }
 
 #[test]
@@ -226,6 +239,7 @@ fn a_wrong_pkce_verifier_is_refused_and_burns_the_code() {
         .authorize(
             &authorize_query(&c, &[("code_challenge_method", "plain")]),
             RESOURCE,
+            Origin::Tunnel,
             T0,
         )
         .unwrap_err();
@@ -237,6 +251,7 @@ fn a_wrong_pkce_verifier_is_refused_and_burns_the_code() {
         .authorize(
             &authorize_query(&c, &[("code_challenge", "short")]),
             RESOURCE,
+            Origin::Tunnel,
             T0
         )
         .is_err());
@@ -256,6 +271,7 @@ fn a_redirect_uri_that_does_not_match_exactly_never_gets_a_code() {
             .authorize(
                 &authorize_query(&c, &[("redirect_uri", other)]),
                 RESOURCE,
+                Origin::Tunnel,
                 T0,
             )
             .unwrap_err();
@@ -290,7 +306,7 @@ fn a_redirect_uri_that_does_not_match_exactly_never_gets_a_code() {
     ] {
         assert!(!redirect_allowed(bad, &[]), "{bad}");
         let e = st
-            .register(&json!({"redirect_uris": [bad]}), &[], T0)
+            .register(&json!({"redirect_uris": [bad]}), &[], Origin::Tunnel, T0)
             .unwrap_err();
         assert_eq!(e.error, "invalid_redirect_uri", "{bad}");
     }
@@ -317,7 +333,12 @@ fn state_is_required_and_comes_back_unchanged() {
     let mut st = State::default();
     let c = register(&mut st);
     let e = st
-        .authorize(&authorize_query(&c, &[("state", "")]), RESOURCE, T0)
+        .authorize(
+            &authorize_query(&c, &[("state", "")]),
+            RESOURCE,
+            Origin::Tunnel,
+            T0,
+        )
         .unwrap_err();
     let AuthzErr::Redirect(url) = e else { panic!() };
     assert_eq!(param(&url, "error").as_deref(), Some("invalid_request"));
@@ -326,10 +347,11 @@ fn state_is_required_and_comes_back_unchanged() {
         .authorize(
             &authorize_query(&c, &[("state", odd), ("nonce", "n-1")]),
             RESOURCE,
+            Origin::Tunnel,
             T0,
         )
         .unwrap();
-    st.approve(&p.approval, None, T0).unwrap();
+    st.approve(&p.approval, None, false, T0).unwrap();
     let Poll::Redirect(url) = st.poll(&request, ISSUER, T0) else {
         panic!()
     };
@@ -454,7 +476,7 @@ fn a_revoked_client_loses_every_grant_and_must_register_again() {
     let code = code_for(&mut st, &c);
     let t = exchange(&mut st, &c, &code, VERIFIER, T0 + 5).unwrap();
     let (_, waiting) = st
-        .authorize(&authorize_query(&c, &[]), RESOURCE, T0)
+        .authorize(&authorize_query(&c, &[]), RESOURCE, Origin::Tunnel, T0)
         .unwrap();
     assert_eq!(st.revoke(&c, T0 + 6), Ok("client"));
     assert!(st
@@ -463,11 +485,11 @@ fn a_revoked_client_loses_every_grant_and_must_register_again() {
     let e = refresh(&mut st, &c, t["refresh_token"].as_str().unwrap(), T0 + 8).unwrap_err();
     assert_eq!((e.status, e.error), (401, "invalid_client"));
     assert!(
-        st.approve(&waiting.approval, None, T0 + 9).is_err(),
+        st.approve(&waiting.approval, None, false, T0 + 9).is_err(),
         "its waiting request went too"
     );
     assert!(matches!(
-        st.authorize(&authorize_query(&c, &[]), RESOURCE, T0 + 10),
+        st.authorize(&authorize_query(&c, &[]), RESOURCE, Origin::Tunnel, T0 + 10),
         Err(AuthzErr::Page(_))
     ));
     assert!(st.revoke(&c, T0 + 11).is_err(), "already gone");
@@ -480,6 +502,7 @@ fn a_confidential_client_must_present_its_key() {
         .register(
             &json!({"redirect_uris": [CLAUDE], "token_endpoint_auth_method": "client_secret_basic"}),
             &[],
+            Origin::Tunnel,
             T0,
         )
         .unwrap();
@@ -582,4 +605,30 @@ fn same_resource_treats_loopback_names_alike() {
         RESOURCE,
         "https://agent.example.com.evil/mcp"
     ));
+}
+
+#[test]
+fn only_an_assistant_host_or_loopback_counts_as_verified() {
+    for ok in [
+        "https://claude.ai/api/mcp/auth_callback",
+        "https://chatgpt.com/connector_platform_oauth_redirect",
+        "https://grok.com/cb",
+        "http://127.0.0.1:5555/cb",
+        "http://localhost/cb",
+    ] {
+        assert!(assistant_redirect(ok), "{ok}");
+    }
+    for no in [
+        "https://evil.example/cb",
+        "https://claude.ai.evil.example/cb",
+        "http://claude.ai/api/mcp/auth_callback",
+        "https://localhost/cb",
+    ] {
+        assert!(!assistant_redirect(no), "{no}");
+    }
+    // A record from before origins were kept reads as the tunnel, the stricter reading.
+    let c: Client = serde_json::from_value(json!({"id": "pcl_x", "name": "n", "redirect_uris": [],
+        "auth_method": "none", "created": 0}))
+    .unwrap();
+    assert_eq!(c.origin, Origin::Tunnel);
 }

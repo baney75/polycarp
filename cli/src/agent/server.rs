@@ -11,7 +11,7 @@
 //! 3. /mcp needs a bearer token: an OAuth access token for this endpoint, or a local token from `token create`
 //!    (refused through a public tunnel unless it was made with --remote).
 
-use super::auth::{AuthzErr, Caller, Poll, State};
+use super::auth::{redirect_host, AuthzErr, Caller, Origin, Poll, State};
 use super::gateway::{Gateway, Session};
 use super::policy;
 use super::store::{self, Settings, Tunnel, APPROVALS_FILE, AUTH_FILE};
@@ -578,7 +578,9 @@ pub fn change_state<T>(
     Ok(out)
 }
 
-/// What the app may show: the connections waiting for the owner (codes, names and scopes; no secrets).
+/// What the app may show: the connections waiting for the owner (client, where codes go, how it came, scopes). Never
+/// the approval code: the owner reads that off the page in the browser that started the connection, so a request
+/// someone else started can't be approved from a list.
 pub fn publish_approvals(dir: &std::path::Path, st: &mut State, now: i64) {
     let waiting: Vec<Json> = st
         .waiting(now)
@@ -590,13 +592,14 @@ pub fn publish_approvals(dir: &std::path::Path, st: &mut State, now: i64) {
                 .map(|c| c.name.clone())
                 .unwrap_or_default();
             json!({
-                "approval": p.approval,
                 "client": p.client,
                 "name": name,
                 "scopes": p.scopes,
                 "redirect_host": redirect_host(&p.redirect_uri),
+                "origin": p.origin,
+                "unverified": st.unverified(p),
+                "created": p.created,
                 "expires": p.expires,
-                "command": format!("polycarp agent approve {}", p.approval),
             })
         })
         .collect();
@@ -604,14 +607,6 @@ pub fn publish_approvals(dir: &std::path::Path, st: &mut State, now: i64) {
         &dir.join(APPROVALS_FILE),
         &json!({"updated": now, "waiting": waiting}),
     );
-}
-
-fn redirect_host(uri: &str) -> String {
-    uri.split("://")
-        .nth(1)
-        .and_then(|r| r.split('/').next())
-        .unwrap_or_default()
-        .to_string()
 }
 
 fn log(line: &str) {
@@ -664,6 +659,11 @@ pub fn route_local(ctx: &Ctx, req: &Req) -> Resp {
         Via::Tunnel(t) => t.public_url.trim_end_matches('/').to_string(),
     };
     let via_tunnel = matches!(via, Via::Tunnel(_));
+    let origin = if via_tunnel {
+        Origin::Tunnel
+    } else {
+        Origin::Local
+    };
     let now = store::now();
     let p = req.path.as_str();
     match (req.method.as_str(), p) {
@@ -694,8 +694,8 @@ pub fn route_local(ctx: &Ctx, req: &Req) -> Resp {
         {
             Resp::json(200, &as_metadata(&base))
         }
-        ("POST", "/register") => register(ctx, req, now),
-        ("GET", "/authorize") => authorize(ctx, req, &base, now),
+        ("POST", "/register") => register(ctx, req, origin, now),
+        ("GET", "/authorize") => authorize(ctx, req, &base, origin, now),
         ("GET", "/authorize/wait") => wait(ctx, req, &base, now),
         ("POST", "/token") => token(ctx, req, now),
         ("POST", "/revoke") => revoke(ctx, req),
@@ -741,7 +741,7 @@ fn content_type_is(req: &Req, want: &str) -> bool {
         .is_some_and(|c| c.trim().eq_ignore_ascii_case(want))
 }
 
-fn register(ctx: &Ctx, req: &Req, now: i64) -> Resp {
+fn register(ctx: &Ctx, req: &Req, origin: Origin, now: i64) -> Resp {
     if ctx.limited("register", 20) {
         return oauth_fail(429, "slow_down", "too many registrations; wait a minute");
     }
@@ -756,11 +756,13 @@ fn register(ctx: &Ctx, req: &Req, now: i64) -> Resp {
         return oauth_fail(400, "invalid_client_metadata", "the body is not JSON");
     };
     let extra = ctx.settings.extra_redirects.clone();
-    match ctx.with_state(|s| s.register(&body, &extra, now)) {
+    match ctx.with_state(|s| s.register(&body, &extra, origin, now)) {
         Ok(Ok(j)) => {
             log(&format!(
-                "registered a connector: {}",
-                j["client_name"].as_str().unwrap_or("?")
+                "registered a connector through {}: {} ({})",
+                origin.name(),
+                j["client_name"].as_str().unwrap_or("?"),
+                j["client_id"].as_str().unwrap_or("?")
             ));
             Resp::json(201, &j)
         }
@@ -798,7 +800,7 @@ and run the deny command.</p>",
     )
 }
 
-fn authorize(ctx: &Ctx, req: &Req, base: &str, now: i64) -> Resp {
+fn authorize(ctx: &Ctx, req: &Req, base: &str, origin: Origin, now: i64) -> Resp {
     if ctx.limited("authorize", 30) {
         return page(
             429,
@@ -817,21 +819,27 @@ fn authorize(ctx: &Ctx, req: &Req, base: &str, now: i64) -> Resp {
     }
     let resource = format!("{base}/mcp");
     let out = ctx.with_state(|s| {
-        s.authorize(&req.query, &resource, now).map(|(id, p)| {
-            let name = s
-                .clients
-                .get(&p.client)
-                .map(|c| c.name.clone())
-                .unwrap_or_default();
-            (id, p, name)
-        })
+        s.authorize(&req.query, &resource, origin, now)
+            .map(|(id, p)| {
+                let name = s
+                    .clients
+                    .get(&p.client)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_default();
+                let unverified = s.unverified(&p);
+                (id, p, name, unverified)
+            })
     });
     match out {
-        Ok(Ok((id, p, name))) => {
+        Ok(Ok((id, p, name, unverified))) => {
+            // No code here: the owner approves with the code on the page in the browser that started this.
             log(&format!(
-                "{name} is waiting for your approval (scopes {}). Run: polycarp agent approve {}",
+                "{name} ({}) is waiting for approval through {}, scopes {}, codes to {}{}",
+                p.client,
+                origin.name(),
                 p.scopes.join(","),
-                p.approval
+                redirect_host(&p.redirect_uri),
+                if unverified { " (unverified)" } else { "" }
             ));
             waiting_page(&name, &p.approval, &p.scopes, &id)
         }

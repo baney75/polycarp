@@ -70,10 +70,10 @@ There is no wildcard. stdio has every scope, because it is your own process.
 
 1. The assistant registers itself (dynamic client registration) and opens Polycarp's sign-in page in your browser.
 2. The page shows a code like `ABCD-EFGH`, the assistant's name and the scopes it asks for (read when it asks for none). It never asks you to click Allow: a web page can't approve anything.
-3. On this Mac, run `polycarp agent approve ABCD-EFGH`. Add `--scopes read,files,act` to grant more or less than it asked for. `polycarp agent deny ABCD-EFGH` says no. `polycarp agent approve` with no code lists what is waiting.
+3. On this Mac, run `polycarp agent approve ABCD-EFGH` with the code from that page. Add `--scopes read,files,act` to grant more or less than it asked for. `polycarp agent deny ABCD-EFGH` says no. `approve` prints the client id, how the request came (this machine or the public tunnel) and the host its code goes to; check them.
 4. The page goes on by itself and returns the assistant to its own site with a one-time code.
 
-The waiting connections are also written to `agent/approvals.json` (codes, names and scopes; no secrets) for the app to show. The request expires in ten minutes. Every authorization needs your approval, including a returning assistant whose refresh token ran out.
+Approve only a code you read on a page in your own browser, for a connection you started. The code is shown nowhere else: `polycarp agent approve` with no code, `polycarp agent doctor`, the `serve` log and `agent/approvals.json` (for the app to show) list each waiting connection by client id, registration time, the host its code goes to and how it came, never by code. A connection that came through the public tunnel and sends its code anywhere but claude.ai, claude.com, chatgpt.com, grok.com, x.ai or loopback is marked unverified, and approving it takes `polycarp agent approve <code> --unverified`. The name a connector registers is whatever it typed, so it proves nothing. The request expires in ten minutes. Every authorization needs your approval, including a returning assistant whose refresh token ran out.
 
 The OAuth server takes PKCE S256 only, an exact match of a registered redirect address, and a `state` it sends back unchanged; a `nonce` comes back in the token response. Redirect addresses must be one of claude.ai's, claude.com's, ChatGPT's or grok.com's callbacks, a loopback address, or one you add to `extra_redirects` in `agent/agent.toml`. Codes last five minutes and work once. Access tokens last an hour. Refresh tokens last 30 days and rotate on every use.
 
@@ -146,7 +146,9 @@ Purposes, surfaces and contacts add their tools by implementing `Provider` in `c
 - **Rebind DNS.** Every request must name this server in its Host header: a loopback name, the host of a tunnel this channel allows, or (on the tailnet) this device's own name or address. A page on `evil.example` that rebinds its name to 127.0.0.1 still sends `Host: evil.example` and is refused.
 - **Forge a request.** Browsers mark a cross-site post with `Origin`, so a form a page submits to `/token` or `/mcp` is refused before it is read. `/mcp` also takes only `application/json` and a bearer header, which a page can't send cross-site without a CORS preflight, and none is ever answered. No cookie is ever set, so there is nothing for a page to ride on.
 - **Approve itself.** Approval happens only on this Mac, at the command line. The approval page has no buttons, no forms and no scripts (`Content-Security-Policy: default-src 'none'`), and it can't be framed.
-- **Steal a code by redirect.** A code goes only to a redirect address the client registered, matched exactly, and registration accepts only the known assistants' callbacks, loopback, or ones you added.
+- **Divert a code to an address it didn't register.** A code goes only to a redirect address the client registered, matched exactly, and registration accepts only the known assistants' callbacks, loopback, or ones you added.
+
+That last rule does not stop a visitor to a public tunnel from starting a connection of their own under an assistant's name, from their own browser, and waiting for you to approve it by mistake. What stops it is that you approve with a code only that visitor's page shows: no list, log or file here carries the code. A request that came through the tunnel and sends its code to a host that isn't an assistant's own also needs `--unverified`. A visitor who uses a real assistant's callback (their own claude.ai account, say) is still only one approval away, so never approve a code you didn't read on your own screen.
 
 ### Other users and devices
 
@@ -157,4 +159,4 @@ Purposes, surfaces and contacts add their tools by implementing `Provider` in `c
 ### Not built yet
 
 - The hosted tunnel and its relay. Stable only joins the waitlist and stores an invite.
-- An approval prompt in the app itself. Until then the app can read `agent/approvals.json`, and `serve` logs each waiting connection with its approve command.
+- An approval prompt in the app itself. Until then the app can read `agent/approvals.json`, and `serve` logs each waiting connection by client id and redirect host, without its code.

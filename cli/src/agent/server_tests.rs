@@ -301,6 +301,15 @@ fn mcp_post(
 
 const BOTH: &str = "application/json, text/event-stream";
 
+/// The approval code the waiting page shows.
+fn code_on_page(page: &str) -> String {
+    page.split("polycarp agent approve ")
+        .nth(1)
+        .and_then(|r| r.split('<').next())
+        .unwrap()
+        .to_string()
+}
+
 /// Register, authorize, approve on this machine, exchange: an access token with the scopes asked for.
 fn oauth_token(ctx: &Ctx, host: &str, scope: &str) -> (String, String) {
     let r = route_local(
@@ -330,15 +339,23 @@ fn oauth_token(ctx: &Ctx, host: &str, scope: &str) -> (String, String) {
         .starts_with("default-src 'none'"));
     assert_eq!(r.header("X-Frame-Options"), Some("DENY"));
     let page = String::from_utf8(r.body.clone()).unwrap();
-    // The notice the app shows: the code, the name and the scopes, and nothing secret.
+    // The code is on the page, in the browser that started this, and only there.
+    let approval = code_on_page(&page);
+    // The notice the app shows: the client, its name, where codes go and the scopes, and nothing secret.
     let notice: Json = store::read_json(&ctx.dir.join(APPROVALS_FILE)).unwrap();
     let w = &notice["waiting"][0];
-    let approval = w["approval"].as_str().unwrap().to_string();
-    assert!(page.contains(&format!("polycarp agent approve {approval}")));
     assert_eq!(w["name"], "Claude");
     assert_eq!(w["redirect_host"], "claude.ai");
+    assert_eq!(w["client"], client.as_str());
     let raw = std::fs::read_to_string(ctx.dir.join(APPROVALS_FILE)).unwrap();
-    for secret in ["pca_", "pcr_", "pcc_", "challenge", "state\""] {
+    for secret in [
+        "pca_",
+        "pcr_",
+        "pcc_",
+        "challenge",
+        "state\"",
+        approval.as_str(),
+    ] {
         assert!(!raw.contains(secret), "{secret} in approvals.json");
     }
     let wait = page
@@ -362,7 +379,7 @@ fn oauth_token(ctx: &Ctx, host: &str, scope: &str) -> (String, String) {
         .status,
         200
     );
-    ctx.with_state(|s| s.approve(&approval, None, store::now()))
+    ctx.with_state(|s| s.approve(&approval, None, false, store::now()))
         .unwrap()
         .unwrap();
     let r = route_local(
@@ -427,12 +444,9 @@ fn oauth_token(ctx: &Ctx, host: &str, scope: &str) -> (String, String) {
     // So connect once more for a token that works.
     let r = route_local(ctx, &req("GET", &q, &[("Host", host)], b""));
     assert_eq!(r.status, 200);
-    let notice: Json = store::read_json(&ctx.dir.join(APPROVALS_FILE)).unwrap();
-    let approval = notice["waiting"][0]["approval"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    ctx.with_state(|s| s.approve(&approval, None, store::now()))
+    let page = String::from_utf8(r.body.clone()).unwrap();
+    let approval = code_on_page(&page);
+    ctx.with_state(|s| s.approve(&approval, None, false, store::now()))
         .unwrap()
         .unwrap();
     let page = String::from_utf8(r.body).unwrap();
@@ -992,4 +1006,99 @@ fn a_dropped_slot_gives_its_count_back_even_through_a_panic() {
     })
     .join();
     assert_eq!(n.load(Ordering::SeqCst), 0);
+}
+
+/// A tunnel visitor registers as "Claude" with its own callback and starts connecting. Plain `approve <code>` refuses
+/// it, and no published surface (approvals.json, doctor, the serve log's inputs) carries the code to approve it by.
+#[test]
+fn a_tunnel_visitor_named_like_an_assistant_cant_be_approved_by_a_plain_approve() {
+    let dir = temp("spoof");
+    write_tunnel(&dir, "cloudflare");
+    let settings = Settings {
+        extra_redirects: vec!["https://evil.example/cb".into()],
+        ..Settings::default()
+    };
+    let ctx = Ctx::new(
+        dir.clone(),
+        Gateway::new(Arc::new(Fake::new(true))),
+        Channel::Nightly,
+        settings,
+    );
+    let tunnel = "agent.example.com";
+    let start = |redirect: &str, host: &str| -> (String, String) {
+        let r = route_local(
+            &ctx,
+            &req(
+                "POST",
+                "/register",
+                &[("Host", host), ("Content-Type", "application/json")],
+                json!({"redirect_uris": [redirect], "client_name": "Claude"})
+                    .to_string()
+                    .as_bytes(),
+            ),
+        );
+        assert_eq!(r.status, 201, "{}", String::from_utf8_lossy(&r.body));
+        let client = body_json(&r)["client_id"].as_str().unwrap().to_string();
+        let q = format!(
+            "/authorize?response_type=code&client_id={client}&redirect_uri={}&code_challenge={CHALLENGE}&code_challenge_method=S256&state=s&scope=read",
+            crate::files::http::percent_encode(redirect)
+        );
+        let r = route_local(&ctx, &req("GET", &q, &[("Host", host)], b""));
+        assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+        (client, code_on_page(&String::from_utf8(r.body).unwrap()))
+    };
+
+    let (client, code) = start("https://evil.example/cb", tunnel);
+    // What the owner can see without the page: the client id, where codes go, how it came. Never the code.
+    let raw = std::fs::read_to_string(dir.join(APPROVALS_FILE)).unwrap();
+    assert!(!raw.contains(&code), "the code is in approvals.json: {raw}");
+    assert!(!raw.contains(&code.replace('-', "")), "{raw}");
+    let notice: Json = serde_json::from_str(&raw).unwrap();
+    let w = &notice["waiting"][0];
+    assert_eq!(w["client"], client.as_str());
+    assert_eq!(w["redirect_host"], "evil.example");
+    assert_eq!(w["origin"], "tunnel");
+    assert_eq!(w["unverified"], true);
+    assert!(w.get("approval").is_none() && w.get("command").is_none());
+    let facts = crate::agent::doctor::gather(&dir, Channel::Nightly, false, None);
+    let advice = crate::agent::doctor::fixes(&facts).join("\n");
+    assert!(
+        !advice.contains(&code),
+        "the code is in doctor's advice: {advice}"
+    );
+    assert!(
+        advice.contains(&client)
+            && advice.contains("evil.example")
+            && advice.contains("unverified"),
+        "{advice}"
+    );
+    let as_json = serde_json::to_string(&facts).unwrap();
+    assert!(!as_json.contains(&code), "the code is in doctor --json");
+
+    // Plain approve refuses, says where the code would go, and leaves the request waiting.
+    let e = ctx
+        .with_state(|s| s.approve(&code, None, false, store::now()))
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        e.contains("evil.example") && e.contains("--unverified"),
+        "{e}"
+    );
+    let st: State = store::read_json(&dir.join(AUTH_FILE)).unwrap();
+    assert!(st.clients[&client].approved.is_none());
+    // The owner who started it on purpose says so.
+    ctx.with_state(|s| s.approve(&code, None, true, store::now()))
+        .unwrap()
+        .unwrap();
+
+    // A tunnel request whose code goes to the assistant's own host is approved plainly.
+    let (_, code) = start(CLAUDE, tunnel);
+    ctx.with_state(|s| s.approve(&code, None, false, store::now()))
+        .unwrap()
+        .unwrap();
+    // So is the owner's own extra callback, started on this machine.
+    let (_, code) = start("https://evil.example/cb", "127.0.0.1:41772");
+    ctx.with_state(|s| s.approve(&code, None, false, store::now()))
+        .unwrap()
+        .unwrap();
 }

@@ -54,6 +54,46 @@ const CHATGPT_CALLBACK_PREFIX: &str = "https://chatgpt.com/connector/oauth/";
 /// Hosts whose callback path isn't documented (grok.com): any path on exactly these hosts.
 const REDIRECT_HOSTS: [&str; 2] = ["grok.com", "x.ai"];
 
+/// Where a connection that came through a public tunnel may send its code and still count as an assistant's: the
+/// assistants' own hosts over https, and loopback for a native client. Anything else is marked unverified.
+const ASSISTANT_HOSTS: [&str; 5] = ["claude.ai", "claude.com", "chatgpt.com", "grok.com", "x.ai"];
+
+/// How a registration or an authorization request reached this server. The tailnet listener serves no OAuth
+/// endpoints, so a connector only ever arrives on loopback or through a tunnel.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Origin {
+    Local,
+    /// The default for a record that predates the field: the stricter reading.
+    #[default]
+    Tunnel,
+}
+
+impl Origin {
+    pub fn name(self) -> &'static str {
+        match self {
+            Origin::Local => "this machine",
+            Origin::Tunnel => "the public tunnel",
+        }
+    }
+}
+
+/// The host a redirect URI sends codes to, as `approve` shows it.
+pub fn redirect_host(uri: &str) -> String {
+    scheme_and_host(uri)
+        .map(|(_, h)| h)
+        .unwrap_or_else(|| "an unreadable address".into())
+}
+
+/// A redirect to an assistant's own host over https, or to loopback over http.
+pub fn assistant_redirect(uri: &str) -> bool {
+    match scheme_and_host(uri) {
+        Some(("https", h)) => ASSISTANT_HOSTS.contains(&h.as_str()),
+        Some(("http", h)) => matches!(h.as_str(), "127.0.0.1" | "localhost" | "[::1]"),
+        _ => false,
+    }
+}
+
 /// The letters an approval code is made of: no 0/O, 1/I/L, so it reads back without mistakes.
 const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
@@ -76,6 +116,9 @@ pub struct Client {
     /// What the owner granted it last.
     #[serde(default)]
     pub scopes: Vec<String>,
+    /// Where it registered. A visitor to a public tunnel can register any name, so this, not the name, is shown.
+    #[serde(default)]
+    pub origin: Origin,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -138,6 +181,9 @@ pub struct Pending {
     pub expires: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<Decision>,
+    /// Where the authorization request came from.
+    #[serde(default)]
+    pub origin: Origin,
 }
 
 /// A local client's bearer token.
@@ -375,7 +421,13 @@ impl State {
     // Registration (RFC 7591)
     // ------------------------------------------------------------------------------------------
 
-    pub fn register(&mut self, body: &Json, extra: &[String], now: i64) -> Result<Json, OAuthErr> {
+    pub fn register(
+        &mut self,
+        body: &Json,
+        extra: &[String],
+        origin: Origin,
+        now: i64,
+    ) -> Result<Json, OAuthErr> {
         let bad = |m: &str| OAuthErr::new(400, "invalid_client_metadata", m);
         let uris: Vec<String> = match body.get("redirect_uris").and_then(Json::as_array) {
             Some(list) if (1..=5).contains(&list.len()) => list
@@ -460,6 +512,7 @@ grok.com, x.ai, the owner's extra_redirects, or http on localhost"
                 approved: None,
                 last_used: None,
                 scopes: Vec::new(),
+                origin,
             },
         );
         let mut out = json!({
@@ -488,6 +541,7 @@ grok.com, x.ai, the owner's extra_redirects, or http on localhost"
         &mut self,
         q: &Form,
         resource: &str,
+        origin: Origin,
         now: i64,
     ) -> Result<(String, Pending), AuthzErr> {
         let client_id = field(q, "client_id").unwrap_or_default();
@@ -582,6 +636,7 @@ grok.com, x.ai, the owner's extra_redirects, or http on localhost"
             created: now,
             expires: now + PENDING_TTL,
             decision: None,
+            origin,
         };
         self.pending.insert(store::sha256_hex(&request), p.clone());
         Ok((request, p))
@@ -605,13 +660,41 @@ Start connecting again in the assistant."
             })
     }
 
-    /// The owner's yes, on this machine. `scopes` None grants what the client asked for.
+    /// A waiting request that came through the public tunnel (or from a client registered there) and sends its code
+    /// somewhere other than an assistant's own host. Its name proves nothing, so approving it takes `--unverified`.
+    pub fn unverified(&self, p: &Pending) -> bool {
+        let tunnel = p.origin == Origin::Tunnel
+            || self
+                .clients
+                .get(&p.client)
+                .is_none_or(|c| c.origin == Origin::Tunnel);
+        tunnel && !assistant_redirect(&p.redirect_uri)
+    }
+
+    /// The owner's yes, on this machine. `scopes` None grants what the client asked for. An unverified request needs
+    /// `unverified_ok`, the owner's `--unverified`.
     pub fn approve(
         &mut self,
         approval: &str,
         scopes: Option<Vec<String>>,
+        unverified_ok: bool,
         now: i64,
     ) -> Result<Pending, String> {
+        let p = self.pending_by_code(approval, now)?.clone();
+        if self.unverified(&p) && !unverified_ok {
+            let name = self
+                .clients
+                .get(&p.client)
+                .map(|c| c.name.as_str())
+                .unwrap_or("a client");
+            return Err(format!(
+                "not approved: this request came through your public tunnel, and its code goes to {}, which is not \
+Claude, ChatGPT or Grok. The name \"{name}\" is whatever the visitor typed. If you didn't start this, run \
+`polycarp agent deny {approval}`. If you did and you trust {}, run `polycarp agent approve {approval} --unverified`.",
+                redirect_host(&p.redirect_uri),
+                redirect_host(&p.redirect_uri),
+            ));
+        }
         let p = self.pending_by_code(approval, now)?;
         let grant = scopes.unwrap_or_else(|| p.scopes.clone());
         if grant.is_empty() || grant.iter().any(|s| !SCOPES.contains(&s.as_str())) {

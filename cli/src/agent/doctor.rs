@@ -36,12 +36,24 @@ pub struct Facts {
     pub invite: bool,
     pub clients: usize,
     pub tokens: usize,
-    pub waiting: Vec<String>,
+    pub waiting: Vec<Waiting>,
     pub cloudflared: Option<String>,
     pub cloudflared_signed_in: bool,
     pub tailscale: Option<String>,
     pub tailnet: bool,
     pub app_running: Option<bool>,
+}
+
+/// A connection waiting for the owner, as doctor shows it: never its approval code, which the owner reads off the page
+/// in the browser that started it.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct Waiting {
+    pub client: String,
+    pub name: String,
+    pub redirect_host: String,
+    pub origin: String,
+    pub unverified: bool,
+    pub created: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -128,9 +140,21 @@ pub fn fixes(f: &Facts) -> Vec<String> {
             );
         }
     }
-    for code in &f.waiting {
+    for w in &f.waiting {
         out.push(format!(
-            "A connector is waiting for your approval: `polycarp agent approve {code}` (or `deny {code}`)."
+            "\"{}\" ({}) is waiting for approval: it came through {} and its code goes to {}{}. If you started it, \
+approve it with the code on its page: `polycarp agent approve <code>`. If you didn't, let it expire or run \
+`polycarp agent revoke {}`.",
+            w.name,
+            w.client,
+            w.origin,
+            w.redirect_host,
+            if w.unverified {
+                ", which is not an assistant's own host (unverified)"
+            } else {
+                ""
+            },
+            w.client,
         ));
     }
     if f.app_running == Some(false) {
@@ -233,7 +257,22 @@ pub fn gather(
             let now = store::now();
             f.clients = st.clients.len();
             f.tokens = st.bearers.iter().filter(|b| b.revoked.is_none()).count();
-            f.waiting = st.waiting(now).into_iter().map(|p| p.approval).collect();
+            f.waiting = st
+                .waiting(now)
+                .iter()
+                .map(|p| Waiting {
+                    client: p.client.clone(),
+                    name: st
+                        .clients
+                        .get(&p.client)
+                        .map(|c| c.name.clone())
+                        .unwrap_or_default(),
+                    redirect_host: super::auth::redirect_host(&p.redirect_uri),
+                    origin: p.origin.name().into(),
+                    unverified: st.unverified(p),
+                    created: p.created,
+                })
+                .collect();
         }
         Err(e) => f.auth_error = Some(e),
     }
@@ -353,10 +392,18 @@ mod tests {
     }
 
     #[test]
-    fn waiting_connectors_are_listed_with_their_command() {
+    fn waiting_connectors_are_listed_by_client_and_redirect_host() {
         let mut f = up();
-        f.waiting = vec!["ABCD-EFGH".into()];
-        assert!(fixes(&f)[0].contains("polycarp agent approve ABCD-EFGH"));
+        f.waiting = vec![Waiting {
+            client: "pcl_abc".into(),
+            name: "Claude".into(),
+            redirect_host: "claude.ai".into(),
+            origin: "the public tunnel".into(),
+            unverified: false,
+            created: 0,
+        }];
+        let h = fixes(&f)[0].clone();
+        assert!(h.contains("pcl_abc") && h.contains("claude.ai"), "{h}");
     }
 
     #[test]

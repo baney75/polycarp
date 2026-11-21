@@ -35,7 +35,7 @@ polycarp agent: one MCP gateway for Grok Bot, Claude Code, Codex and web assista
 Usage:
   polycarp agent serve [--stdio] [--tailnet] [--port <n>] [--bind <loopback address>]
   polycarp agent connect <claude-code|codex|grokbot|claude.ai|chatgpt|grok.com> [--run] [--write] [--tailnet]
-  polycarp agent approve [<code>] [--scopes read,files,act,contacts]
+  polycarp agent approve [<code>] [--scopes read,files,act,contacts] [--unverified]
   polycarp agent deny <code>
   polycarp agent clients [--json]
   polycarp agent revoke <id>
@@ -325,13 +325,16 @@ fn serve(a: &Args) -> i32 {
 // ------------------------------------------------------------------------------------------------
 
 fn approve(a: &Args) -> Result<(), Exit> {
-    need_only(a, &["--scopes"])?;
+    need_only(a, &["--scopes", "--unverified"])?;
     let dir = dir()?;
     let now = store::now();
     let Some(code) = a.words.first() else {
-        if a.flag("--scopes") {
-            return Err(Exit::Usage("--scopes goes with a code".into()));
+        if a.flag("--scopes") || a.flag("--unverified") {
+            return Err(Exit::Usage(
+                "--scopes and --unverified go with a code".into(),
+            ));
         }
+        // No codes in this list: approve only the code on the page in the browser you started the connection from.
         let waiting = server::change_state(&dir, |s| {
             let w = s.waiting(now);
             w.into_iter()
@@ -341,19 +344,27 @@ fn approve(a: &Args) -> Result<(), Exit> {
                         .get(&p.client)
                         .map(|c| c.name.clone())
                         .unwrap_or_default();
-                    (p, name)
+                    let unverified = s.unverified(&p);
+                    (p, name, unverified)
                 })
                 .collect::<Vec<_>>()
         })?;
         if waiting.is_empty() {
             println!("No connection is waiting for approval.");
-        }
-        for (p, name) in waiting {
+        } else {
             println!(
-                "{}  {name} asks for {} (to {}), {} minutes left",
-                p.approval,
+                "Waiting for approval. Approve one with the code its page shows, in the browser you started it from:"
+            );
+        }
+        for (p, name, unverified) in waiting {
+            println!(
+                "  {}  \"{name}\" through {}, codes to {}{}, asks for {}, since {}, {} minutes left",
+                p.client,
+                p.origin.name(),
+                auth::redirect_host(&p.redirect_uri),
+                if unverified { " (unverified)" } else { "" },
                 p.scopes.join(","),
-                p.redirect_uri.split('/').nth(2).unwrap_or_default(),
+                crate::files::date(p.created),
                 ((p.expires - now) / 60).max(0)
             );
         }
@@ -366,8 +377,9 @@ fn approve(a: &Args) -> Result<(), Exit> {
         Some(s) => Some(auth::parse_scopes(s).map_err(Exit::Usage)?),
         None => None,
     };
+    let unverified_ok = a.flag("--unverified");
     let (p, name) = server::change_state(&dir, |s| {
-        s.approve(code, scopes, now).map(|p| {
+        s.approve(code, scopes, unverified_ok, now).map(|p| {
             let name = s
                 .clients
                 .get(&p.client)
@@ -381,7 +393,11 @@ fn approve(a: &Args) -> Result<(), Exit> {
         _ => String::new(),
     };
     println!(
-        "Approved {name} with {granted}. Its page goes on by itself. `polycarp agent clients` lists it; `polycarp agent revoke {}` ends it.",
+        "Approved \"{name}\" ({}), which came through {} and sends its code to {}, with {granted}. Its page goes on \
+by itself. `polycarp agent clients` lists it; `polycarp agent revoke {}` ends it.",
+        p.client,
+        p.origin.name(),
+        auth::redirect_host(&p.redirect_uri),
         p.client
     );
     Ok(())
