@@ -13,7 +13,7 @@ final class Spaces {
     private var windows: [WindowID: Window] = [:]
     private(set) var switching = false
     /// False after `suspend()`: nothing moves until `start()` runs again.
-    private var active = false
+    private(set) var active = false
     /// Timing of the switch in progress, for timing.log.
     private var clock = SwitchClock()
     /// Work requested mid-switch runs in order once it finishes. Workspace switches collapse to

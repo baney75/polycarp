@@ -896,6 +896,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // hundred milliseconds, which would otherwise land on your first workspace switch.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self, self.started else { return }
+            self.session.focusWindow = { [weak self] id, n in
+                guard let self, self.spaces.active else { return false }
+                self.spaces.focus(id, on: n)
+                return true
+            }
             self.session.start(workspaceOf: { [weak self] in self?.spaces.model.workspace(of: $0) },
                             currentWorkspace: { [weak self] in self?.spaces.model.current ?? 1 })
         }

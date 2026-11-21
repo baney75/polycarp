@@ -200,15 +200,27 @@ final class SessionController {
 
     // MARK: actions
 
-    /// Goes to a row picked in the launcher, a toast or a dock badge. A phone opens as its app.
+    /// Goes to a row picked in the launcher, a toast, ⌘⇧U or a dock badge. A phone opens as its app.
+    /// A row whose window BaneySpaces has on a workspace goes there through `focusWindow` (the same
+    /// path as a dock icon click), and the engine only selects the tab or split inside it. Activating
+    /// the app from here instead reached Spaces as an activation it didn't ask for, of an app it had
+    /// hidden on another workspace, so it re-applied the workspace you were on: the app flashed up
+    /// and you were put back (Donovan, 2026-11-20, T3 Code's "?" and the tile's finished count).
     func focus(_ item: Item) {
         if item.kind == .device {
             engine.seen(item.id)
             if let p = phones.phone(item.id) { phones.open(p) }
             return
         }
+        if item.windowNumber != 0, let n = engine.workspaceOf(item.windowNumber), focusWindow(item.windowNumber, n) {
+            return engine.focus(item, bringForward: false)
+        }
         engine.focus(item)
     }
+
+    /// Goes to window `id` on workspace `n` through BaneySpaces, so the switch and the activation are its own.
+    /// False when it can't (not wired, or BaneySpaces is off): the engine brings the app forward itself.
+    var focusWindow: (UInt32, Int) -> Bool = { _, _ in false }
 
     func jumpToFinished() {
         guard let id = engine.attention.unseen.first, let item = engine.item(id) else { NSSound.beep(); return }
