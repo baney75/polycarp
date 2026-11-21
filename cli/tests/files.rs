@@ -66,9 +66,12 @@ impl Sandbox {
     fn run(&self, args: &[&str]) -> Output {
         self.cmd(args).output().unwrap()
     }
+    /// Indexes the docs folder, made the only root unless files.toml already says otherwise.
     fn index(&self) -> Value {
-        let docs = self.dir("docs");
-        let o = self.run(&["files", "index", "--json", "--root", docs.to_str().unwrap()]);
+        if !self.dir("cfg").join("files.toml").exists() {
+            self.roots_are_docs();
+        }
+        let o = self.run(&["files", "index", "--json"]);
         assert_eq!(o.status.code(), Some(0), "{}", text(&o));
         serde_json::from_slice::<Value>(&o.stdout).unwrap()["data"]["stats"].clone()
     }
@@ -311,15 +314,9 @@ fn a_folder_that_cannot_be_read_keeps_its_rows_and_doctor_says_so() {
 fn when_watching_fails_the_index_falls_back_to_a_rescan_and_doctor_says_so() {
     let sb = Sandbox::new();
     sb.write("a.md", "alpha");
-    let docs = sb.dir("docs");
+    sb.roots_are_docs();
     let mut child = sb
-        .cmd(&[
-            "files",
-            "index",
-            "--watch",
-            "--root",
-            docs.to_str().unwrap(),
-        ])
+        .cmd(&["files", "index", "--watch"])
         .env("POLYCARP_TEST_WATCH_FAIL", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -427,4 +424,162 @@ fn the_files_mcp_server_lists_its_tools_and_searches() {
         got[3]["result"]["structuredContent"]["error"]["code"],
         "invalid_args"
     );
+}
+
+#[test]
+fn a_broken_files_toml_is_reported_and_fix_touches_nothing() {
+    let sb = Sandbox::new();
+    sb.write("notes.md", "grace");
+    // A typo'd key next to roots the owner narrowed on purpose.
+    fs::write(
+        sb.dir("cfg").join("files.toml"),
+        format!(
+            "alow_save = true\nroots = [{:?}]\n",
+            sb.dir("docs").to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let o = sb.run(&["files", "doctor", "--json"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let d = &v["data"];
+    let err = d["config_error"]
+        .as_str()
+        .unwrap_or_else(|| panic!("config_error: {}", d["config_error"]));
+    assert!(err.contains("alow_save"), "{err}");
+    let all: String = d["fixes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f.as_str().unwrap())
+        .collect();
+    assert!(all.contains("files.toml: "), "{all}");
+    let o = sb.run(&["files", "fix"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(
+        !sb.dir("cfg").join("files/index.sqlite").exists(),
+        "fix indexed the default roots: {}",
+        text(&o)
+    );
+}
+
+#[test]
+fn a_folder_taken_out_of_files_toml_is_no_longer_found() {
+    let sb = Sandbox::new();
+    sb.write("kept/a.md", "alpha");
+    sb.write("gone/b.md", "bravo");
+    let (kept, gone) = (sb.dir("docs").join("kept"), sb.dir("docs").join("gone"));
+    let toml = |roots: &[&Path]| {
+        let list: Vec<String> = roots
+            .iter()
+            .map(|r| format!("{:?}", r.to_str().unwrap()))
+            .collect();
+        fs::write(
+            sb.dir("cfg").join("files.toml"),
+            format!("roots = [{}]\n", list.join(", ")),
+        )
+        .unwrap();
+    };
+    toml(&[&kept, &gone]);
+    sb.index();
+    assert_eq!(
+        sb.search(&["bravo"])["data"]["results"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    toml(&[&kept]);
+    sb.index();
+    let v = sb.search(&["bravo"]);
+    assert_eq!(v["data"]["results"], json!([]), "{v}");
+    assert_eq!(
+        sb.search(&["alpha"])["data"]["results"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // A one-off --root may only refresh a folder inside a configured root, so it never leaves rows behind.
+    let o = sb.run(&["files", "index", "--json", "--root", gone.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(2), "{}", text(&o));
+    let v = sb.search(&["bravo"]);
+    assert_eq!(v["data"]["results"], json!([]), "{v}");
+    let o = sb.run(&["files", "index", "--json", "--root", kept.to_str().unwrap()]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert_eq!(
+        sb.search(&["alpha"])["data"]["results"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+fn roots_toml(sb: &Sandbox, roots: &[&Path]) {
+    let list: Vec<String> = roots
+        .iter()
+        .map(|r| format!("{:?}", r.to_str().unwrap()))
+        .collect();
+    fs::write(
+        sb.dir("cfg").join("files.toml"),
+        format!("roots = [{}]\n", list.join(", ")),
+    )
+    .unwrap();
+}
+
+fn hits(sb: &Sandbox, word: &str) -> usize {
+    sb.search(&[word])["data"]["results"]
+        .as_array()
+        .unwrap()
+        .len()
+}
+
+#[test]
+fn a_root_inside_a_folder_its_outer_root_skips_keeps_its_own_rules() {
+    // ~/Library/CloudStorage/Dropbox listed beside ~: Library is skipped under ~, but not under its own root.
+    let sb = Sandbox::new();
+    sb.write("Library/CloudStorage/Dropbox/plan.md", "zephyr");
+    let docs = sb.dir("docs");
+    let dropbox = docs.join("Library/CloudStorage/Dropbox");
+    roots_toml(&sb, &[&docs, &dropbox]);
+    sb.index();
+    assert_eq!(hits(&sb, "zephyr"), 1);
+    sb.write("Library/CloudStorage/Dropbox/later/notes.md", "quokka");
+    let o = sb.run(&[
+        "files",
+        "index",
+        "--json",
+        "--root",
+        dropbox.join("later").to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert_eq!(hits(&sb, "quokka"), 1);
+    assert_eq!(hits(&sb, "zephyr"), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_root_through_a_symlink_takes_a_root_inside_it() {
+    // macOS temp folders live under /var, which is /private/var. files.toml's roots are resolved like --root is, so a
+    // folder inside one matches.
+    let sb = Sandbox::new();
+    sb.write("real/a.md", "walrus");
+    let link = sb.dir("home").join("linked");
+    std::os::unix::fs::symlink(sb.dir("docs").join("real"), &link).unwrap();
+    roots_toml(&sb, &[&link]);
+    sb.index();
+    assert_eq!(hits(&sb, "walrus"), 1);
+    sb.write("real/sub/b.md", "narwhal");
+    let o = sb.run(&[
+        "files",
+        "index",
+        "--json",
+        "--root",
+        link.join("sub").to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    // Found, so the rows went in under the root's own spelling, the one search keeps.
+    assert_eq!(hits(&sb, "narwhal"), 1);
+    assert_eq!(hits(&sb, "walrus"), 1);
 }

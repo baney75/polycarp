@@ -48,6 +48,12 @@ Windows files that recall on open).
 The index is one SQLite file with full-text search: `~/Library/Caches/Polycarp/files/index.sqlite` on a Mac,
 `%LOCALAPPDATA%\Polycarp\files\index.sqlite` on Windows, `~/.cache/polycarp/files/index.sqlite` on Linux. It can
 always be built again. A second `index` run reads only files whose size or time changed and drops files that are gone.
+It holds only the roots in `files.toml`: take a folder out of `roots` and the next `index` drops its files, and search
+(here and from other devices) shows only files under a current root even before that. `index --root <dir>` updates
+just one folder inside a root, under that root's rules; a folder outside every root is refused, so it never leaves
+files behind. A root listed in `roots` that is missing (an unplugged drive) keeps its files. A cloud folder that only
+the defaults found drops out when you sign out of that drive, and its files go until it is back; list it in
+`extra_roots` to keep them. A root inside another (`~/Library/CloudStorage/Dropbox` beside `~`) keeps its own rules.
 `index --watch` keeps it current as files change, and does a full pass again every 12 hours. It watches only the
 folders the index walks (on Linux one by one, so hidden, build and secret folders use no watch). If watching can't
 start or stops, it rescans every 10 minutes instead, and `doctor` says why.
@@ -99,9 +105,11 @@ and only when that node belongs to the same Tailscale user as this one. Tagged d
 tagged node shares one user id, and a tagged device refuses to run `serve` at all. `allow_devices` narrows that
 further to the devices you list; it never lets anyone else in. A refused caller gets a 403 before anything it sent is read.
 
-Requests from a web page are refused with a 403: any request with an `Origin` header, a `Sec-Fetch-Site` other than
-`none`, or a `Host` that is not this device's Tailscale address or MagicDNS name. That stops a page that points its own
-domain at this device's address (DNS rebinding). The polycarp command sends none of those headers.
+This device itself may ask only `/v1/health`, so `doctor` can check the server: another account or program on the same
+machine dialing its own Tailscale address looks like this device to `tailscale whois`. Requests from a web page are
+refused with a 403: any request with an `Origin` header, a `Sec-Fetch-Site` other than `none`, or a `Host` that is not
+this device's Tailscale address or MagicDNS name. That stops a page that points its own domain at this device's
+address (DNS rebinding). The polycarp command sends none of those headers.
 
 What a device answers:
 
@@ -132,7 +140,9 @@ and prints the command that stops it. `status` says whether it is installed and 
 
 `polycarp files doctor --json` reports Tailscale (installed, running, signed in), this device's name and addresses,
 whether serve answers on its port, the service, the index size and age, and each of your devices' reachability and
-version, with `fixes`: one concrete step per problem. It exits 0 when everything works and 1 otherwise.
+version, with `fixes`: one concrete step per problem. It exits 0 when everything works and 1 otherwise. When
+`files.toml` has an error, `config_error` says what it is, the roots are left empty, and `fix` does nothing until the
+file is fixed.
 
 `polycarp files fix` does the safe steps itself: it updates a missing or stale index and restarts a service that is
 loaded but not answering. Installing the service or starting Tailscale stays a step it prints for you.

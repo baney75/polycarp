@@ -3,6 +3,7 @@
 
 use super::config::Root;
 use super::rules;
+use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -235,21 +236,36 @@ impl Index {
         Ok(run)
     }
 
-    /// Walks every root and brings the index up to date. Rows under a root that was walked and no longer exist go.
-    /// A root that is missing (an unplugged drive, a cloud folder signed out) keeps its rows.
+    /// Walks every root and brings the index up to date. Rows under a root that was walked and no longer exist go,
+    /// and so do rows under no root at all (a folder taken out of files.toml). A root files.toml lists that is
+    /// missing (an unplugged drive) keeps its rows; a cloud folder only the default roots found leaves the roots when
+    /// it is signed out, and its rows go with it.
     pub fn update(&mut self, roots: &[Root], extra: &[String]) -> Result<Stats, String> {
+        self.update_within(roots, roots, extra)
+    }
+
+    /// Walks only `folders` (each under the rules of the `keep` root it is in), then drops every row under none
+    /// of `keep` (the configured roots).
+    pub fn update_within(
+        &mut self,
+        folders: &[Root],
+        keep: &[Root],
+        extra: &[String],
+    ) -> Result<Stats, String> {
         let run = self.next_run()?;
         let mut stats = Stats::default();
         let tx = self.conn.transaction().map_err(db_err)?;
-        for root in roots {
+        for root in folders {
             if !root.path.is_dir() || rules::never(&root.path.join("x")) {
                 stats.missing_roots.push(root.path.display().to_string());
                 continue;
             }
             stats.roots += 1;
-            walk(&tx, root, &root.path, extra, run, &mut stats)?;
+            let owner = owner(keep, &root.path).unwrap_or(root);
+            walk(&tx, owner, &root.path, extra, run, &mut stats)?;
             sweep(&tx, &root.path, run, &mut stats)?;
         }
+        prune(&tx, keep, &mut stats)?;
         tx.commit().map_err(db_err)?;
         let unreadable = serde_json::to_string(&stats.unreadable).unwrap_or_default();
         self.set_meta("unreadable", &unreadable)?;
@@ -271,7 +287,7 @@ impl Index {
         let mut stats = Stats::default();
         let tx = self.conn.transaction().map_err(db_err)?;
         for p in paths {
-            let Some(root) = roots.iter().find(|r| p.starts_with(&r.path)) else {
+            let Some(root) = owner(roots, p) else {
                 continue;
             };
             let Ok(rel) = p.strip_prefix(&root.path) else {
@@ -301,22 +317,48 @@ impl Index {
         Ok(stats)
     }
 
-    pub fn search(&self, q: &str, kind: Option<&str>, limit: usize) -> Result<Vec<Hit>, String> {
+    /// Matches under `within` only (the configured roots), so a row a removed root left behind is never shown.
+    pub fn search(
+        &self,
+        q: &str,
+        kind: Option<&str>,
+        limit: usize,
+        within: &[Root],
+    ) -> Result<Vec<Hit>, String> {
         let Some(m) = fts_query(q) else {
             return Ok(Vec::new());
         };
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT f.id, f.path, f.name, f.kind, f.size, f.mtime,
-                        snippet(fts, -1, '[', ']', '...', 12), bm25(fts, 10.0, 4.0, 1.0) AS score
-                 FROM fts JOIN files f ON f.id = fts.rowid
-                 WHERE fts MATCH ?1 AND (?2 IS NULL OR f.kind = ?2)
-                 ORDER BY score, f.mtime DESC LIMIT ?3",
-            )
-            .map_err(db_err)?;
+        if within.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut args: Vec<SqlValue> = vec![
+            m.into(),
+            kind.map(str::to_string).into(),
+            (limit as i64).into(),
+        ];
+        let mut ranges = Vec::new();
+        for r in within {
+            let lo = under(&r.path);
+            let hi = prefix_end(&lo);
+            ranges.push(format!(
+                "(f.path >= ?{} AND f.path < ?{})",
+                args.len() + 1,
+                args.len() + 2
+            ));
+            args.push(lo.into());
+            args.push(hi.into());
+        }
+        let sql = format!(
+            "SELECT f.id, f.path, f.name, f.kind, f.size, f.mtime,
+                    snippet(fts, -1, '[', ']', '...', 12), bm25(fts, 10.0, 4.0, 1.0) AS score
+             FROM fts JOIN files f ON f.id = fts.rowid
+             WHERE fts MATCH ?1 AND (?2 IS NULL OR f.kind = ?2) AND ({})
+             ORDER BY score, f.mtime DESC LIMIT ?3",
+            ranges.join(" OR ")
+        );
+        let mut stmt = self.conn.prepare(&sql).map_err(db_err)?;
         let rows = stmt
-            .query_map(params![m, kind, limit as i64], |r| {
+            .query_map(rusqlite::params_from_iter(args), |r| {
                 Ok(Hit {
                     device: None,
                     id: r.get(0)?,
@@ -387,6 +429,15 @@ impl Index {
     pub fn set_watch(&self, mode: &str) -> Result<(), String> {
         self.set_meta("watch", mode)
     }
+}
+
+/// The root `p` is in. With one root inside another, the deepest, so a root under a folder the outer one skips
+/// (`~/Library/CloudStorage/Dropbox` inside `~`) keeps its own rules.
+pub fn owner<'a>(roots: &'a [Root], p: &Path) -> Option<&'a Root> {
+    roots
+        .iter()
+        .filter(|r| p.starts_with(&r.path))
+        .max_by_key(|r| r.path.components().count())
 }
 
 /// A folder inside a root that the walk would go into.
@@ -556,6 +607,23 @@ fn sweep(tx: &Connection, dir: &Path, run: i64, stats: &mut Stats) -> Result<(),
                 .collect::<Result<Vec<i64>, _>>()
         })
         .map_err(db_err)?;
+    delete_ids(tx, &ids, stats)
+}
+
+/// Removes every row under none of `keep`.
+fn prune(tx: &Connection, keep: &[Root], stats: &mut Stats) -> Result<(), String> {
+    let prefixes: Vec<String> = keep.iter().map(|r| under(&r.path)).collect();
+    let ids: Vec<i64> = tx
+        .prepare("SELECT id, path FROM files")
+        .and_then(|mut s| {
+            s.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(db_err)?
+        .into_iter()
+        .filter(|(_, p)| !prefixes.iter().any(|pre| p.starts_with(pre.as_str())))
+        .map(|(id, _)| id)
+        .collect();
     delete_ids(tx, &ids, stats)
 }
 

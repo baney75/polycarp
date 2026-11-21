@@ -871,7 +871,13 @@ fn over_tailnet(peer: Option<Node>, allow: &[&str], raw: &dyn Fn(u16) -> String)
     let dir = temp(&format!("tn-{}", store::b64url(&store::random(4))));
     let mut ctx = ctx_in(&dir, Channel::Stable);
     ctx.settings.allow_devices = allow.iter().map(|s| s.to_string()).collect();
-    ctx.tailnet = Some(TailCtx::new(Arc::new(Stub { peer }), node("mac", 7, &[])));
+    // The peers all dial from 127.0.0.1; this device has its own address, so a peer reads as itself only when
+    // it names that address.
+    let me = Node {
+        ips: vec!["100.64.0.1".parse().unwrap()],
+        ..node("mac", 7, &[])
+    };
+    ctx.tailnet = Some(TailCtx::new(Arc::new(Stub { peer }), me));
     let (_, tok) = ctx
         .with_state(|s| s.create_bearer("grokbot", vec!["read".into()], false, store::now()))
         .unwrap()
@@ -920,6 +926,17 @@ fn the_tailnet_lets_in_the_owners_devices_and_no_one_else() {
     }
     let (s, _) = over_tailnet(Some(node("laptop", 7, &[])), &["laptop"], &mcp_ping);
     assert_eq!(s, 200);
+    // This device dialing its own Tailscale address gets what loopback gets, allow_devices or not: /mcp with a token.
+    let itself = || Node {
+        ips: vec!["100.64.0.1".parse().unwrap()],
+        ..node("mac", 7, &[])
+    };
+    let (s, out) = over_tailnet(Some(itself()), &["phone"], &mcp_ping);
+    assert_eq!(s, 200, "{out}");
+    let (s, _) = over_tailnet(Some(itself()), &["phone"], &|p| {
+        mcp_ping(p).replace("Bearer TOKEN", "Bearer nope")
+    });
+    assert_eq!(s, 401);
     // A web page on the owner's device, a rebinding Host, and the OAuth pages: all refused on the tailnet.
     let (s, _) = over_tailnet(Some(node("laptop", 7, &[])), &[], &|p| {
         mcp_ping(p).replace(

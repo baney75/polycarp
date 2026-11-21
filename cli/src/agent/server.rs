@@ -1279,7 +1279,7 @@ fn serve_conn(ctx: &Ctx, stream: TcpStream, peer: SocketAddr, kind: Listener) {
             return;
         };
         match whois_authorize(tc.whois(peer), &tc.me, &ctx.settings.allow_devices) {
-            Ok(n) => who = n.name,
+            Ok(c) => who = c.node.name,
             Err(why) => {
                 log(&format!("refused a tailnet connection: {why}"));
                 let _ = write_resp(
