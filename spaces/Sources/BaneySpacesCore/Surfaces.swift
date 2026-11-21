@@ -133,7 +133,7 @@ public struct Surfaces: Equatable, Sendable {
 
     public enum VerseRotation: Equatable, Sendable {
         case daily, hourly
-        /// One verse always, by reference ("John 3:16").
+        /// One verse always, by reference ("Psalm 46:10"). One outside `Verses.desktop` turns daily.
         case fixed(String)
         public var id: String {
             switch self {
@@ -277,7 +277,7 @@ extension SurfaceField {
         SurfaceField("desktop.versePosition", .choice(Surfaces.VersePosition.allCases.map(\.rawValue)), .string("bottom-right"),
                      "Where the verse sits."),
         SurfaceField("desktop.verseRotation", .tagged(choices: ["daily", "hourly"], prefix: "fixed", pattern: SurfaceCheck.referencePattern,
-                                                      example: "fixed:John 3:16"),
+                                                      example: "fixed:Psalm 46:10"),
                      .string("daily"), "daily, hourly, or fixed:<reference> for one verse always."),
 
         SurfaceField("dock.tileLabel", .choice(Surfaces.TileLabel.allCases.map(\.rawValue)), .string("number"),

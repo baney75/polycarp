@@ -57,7 +57,7 @@ baneyspaces surfaces reset bar.style             # back to the default
 baneyspaces surfaces validate ./draft.json       # every error with its JSON path
 ```
 
-Paths are keys joined with dots (`desktop.verseRotation`). Values are JSON (`30`, `true`, `"fixed:John 3:16"`,
+Paths are keys joined with dots (`desktop.verseRotation`). Values are JSON (`30`, `true`, `"fixed:Psalm 46:10"`,
 `["mark"]`). A refusal names each path and why (`--json`: `error.data.errors`). A bar module goes in one place across
 left, center and right, defaults included, so set `bar.modules` whole to move one. `settings` and `quit` can't be
 hidden from the menu. Note the old value with `get` before a `set`, so you can put it back. Over MCP, `polycarp mcp`

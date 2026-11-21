@@ -100,7 +100,18 @@ Module ids: `mark`, `workspaces`, `purpose`, `one-thing`, `app-menus`, `status`,
 | `desktop.followDaylight` | `true` | The scene's light follows the day: dawn, noon, dusk and night. |
 | `desktop.verse` | `true` | A small verse on the desktop. |
 | `desktop.versePosition` | `"bottom-right"` | `bottom-left`, `bottom-center`, `bottom-right`, `top-left`, `top-center`, `top-right` or `center`. |
-| `desktop.verseRotation` | `"daily"` | `daily`, `hourly`, or `fixed:<reference>` for one verse always, as `fixed:John 3:16` or `fixed:1 Corinthians 13:4-7`. |
+| `desktop.verseRotation` | `"daily"` | `daily`, `hourly`, or `fixed:<reference>` for one verse always, as `fixed:Psalm 46:10` or `fixed:Lamentations 3:22-23`. |
+
+The desktop shows a scene while Settings › Appearance › "Theme sets the desktop picture" is on and a Polycarp theme is in
+force; off, each display gets its own picture back. `field`, `olive`, `water` and `parchment` are drawn by Polycarp at each
+display's size. With `followDaylight` on, the light is dawn, day, dusk or night by the clock: sunrise and sunset are
+worked out for the time zone, so Polycarp never asks where you are. Off, the scene stays in day light, or night while macOS
+is dark. The picture changes on its own at each edge of the light and when the verse turns (midnight, or each hour).
+
+The verses are a set of 31 from the Berean Standard Bible (`Verses.desktop` in `DesktopScene.swift`), each the BSB's own
+words. A `fixed:` reference outside that set turns daily instead, so the desktop never goes without one. The verse sits
+low on the left, right or center, clear of the Dock; with the verse on the right the land is drawn mirrored, so the
+lilies stand opposite it.
 
 ### `dock`: the Workspace Dock's tiles
 
