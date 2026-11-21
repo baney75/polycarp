@@ -221,6 +221,51 @@ done
 if grep -nE -- '--soak|draft=false|--draft=false|make_latest=true|--latest( |$)' ../.github/workflows/*.yml \
   | grep -vE '^[^:]+:[0-9]+: *(#|echo )'; then bad "a workflow publishes a release by itself"; fi
 
+# The root install.sh downloads from stable, else nightly, else preview (the old channel, which keeps serving the
+# bridge build), or from POLYCARP_CHANNEL only; the checksum comes from the same release.
+rel="$tmp/releases"
+pick() {
+  env -u POLYCARP_CHANNEL "$@" POLYCARP_INSTALL_FUNCTIONS_ONLY=1 RELEASES="file://$rel/download" LOG=/dev/null \
+    bash -c 'source ../install.sh && fetch_app "$1" && cat "$1"' _ "$tmp/got.zip" 2>/dev/null | tr '\n' ' '
+}
+put() { mkdir -p "$rel/$1"; printf '%s' "$2" > "$rel/$1/Polycarp.zip"; }
+expect "install: nothing published" "$(pick)" ""
+put download/preview preview-zip
+expect "install: preview only" "$(pick)" "preview file://$rel/download/preview preview-zip"
+put download/nightly nightly-zip
+expect "install: nightly over preview" "$(pick)" "nightly file://$rel/download/nightly nightly-zip"
+put latest/download stable-zip
+expect "install: stable first" "$(pick)" "stable file://$rel/latest/download stable-zip"
+expect "install: POLYCARP_CHANNEL=nightly" "$(pick POLYCARP_CHANNEL=nightly)" "nightly file://$rel/download/nightly nightly-zip"
+expect "install: POLYCARP_CHANNEL=dev, none published" "$(pick POLYCARP_CHANNEL=dev)" ""
+grep -qF 'want=$(curl -fsSL "$FROM/Polycarp.zip.sha256"' ../install.sh || bad "install.sh takes the checksum from another release than the zip"
+grep -qF 'env -u POLYCARP_CHANNEL scripts/bundle.sh' ../install.sh || bad "a source build in install.sh takes POLYCARP_CHANNEL as its build channel"
+# A stable fetch that fails for any reason but a missing file (a blip, a 5xx) stops; it never drops to Nightly.
+ib="$tmp/install-bin"; mkdir -p "$ib"
+real_curl=$(command -v curl)
+cat > "$ib/curl" <<EOF
+#!/bin/bash
+for a in "\$@"; do case \$a in */latest/download/*) echo "curl: (56) Recv failure" >&2; exit 56 ;; esac; done
+exec "$real_curl" "\$@"
+EOF
+gb="$tmp/git-bin"; mkdir -p "$gb"
+printf '#!/bin/sh\necho "git $*" >> "%s/git-ran"\nexit 1\n' "$tmp" > "$gb/git"
+chmod +x "$ib/curl" "$gb/git"
+rc=0; env -u POLYCARP_CHANNEL PATH="$ib:$PATH" POLYCARP_INSTALL_FUNCTIONS_ONLY=1 RELEASES="file://$rel/download" LOG=/dev/null \
+  bash -c 'source ../install.sh && fetch_app "$1"' _ "$tmp/got.zip" >/dev/null 2>&1 || rc=$?
+expect "install: a stable blip isn't 'no stable'" "$rc" 2
+# main() itself, in test mode against stand-in releases: what it says and that it never builds main instead.
+run_install() {
+  local h="$tmp/home-$1" bins=$2; shift 2; mkdir -p "$h/dest"; rm -f "$tmp/git-ran"
+  env -u POLYCARP_CHANNEL HOME="$h" BANEYSPACES_DEST_DIR="$h/dest" PATH="$bins:$PATH" "$@" bash ../install.sh </dev/null 2>&1
+}
+empty="$tmp/empty-releases"; mkdir -p "$empty/download"
+out=$(run_install named "$gb" POLYCARP_RELEASES="file://$empty/download" POLYCARP_CHANNEL=stable) && bad "install: POLYCARP_CHANNEL=stable with none published succeeded"
+case $out in *"There's no stable build to download yet"*) ;; *) bad "install: POLYCARP_CHANNEL=stable with none published didn't say so: $out" ;; esac
+[ ! -e "$tmp/git-ran" ] || bad "install: POLYCARP_CHANNEL=stable fell back to building main"
+out=$(run_install blip "$gb:$ib" POLYCARP_RELEASES="file://$rel/download") && bad "install: a stable blip still installed something"
+case $out in *"Couldn't reach the Polycarp release"*) ;; *) bad "install: a stable blip didn't stop the install: $out" ;; esac
+[ ! -e "$tmp/git-ran" ] || bad "install: a stable blip fell back to building main"
 
 [ $status = 0 ] && echo "channels-test: pass"
 exit $status
