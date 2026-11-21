@@ -1194,3 +1194,42 @@ fn a_forwarded_request_naming_loopback_is_still_the_tunnels() {
         200
     );
 }
+
+/// A client that sends its headers a byte at a time, each well inside the per-read timeout, is cut off when the
+/// header deadline passes, and the slot it held is free again.
+#[test]
+fn a_slow_writer_is_cut_off_at_the_header_deadline() {
+    let mut ctx = ctx_in(&temp("slow"), Channel::Dev);
+    ctx.header_deadline = Duration::from_millis(800);
+    let addr = listen(ctx);
+    let mut s = TcpStream::connect(addr).unwrap();
+    s.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+    let start = Instant::now();
+    let head = format!(
+        "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nX-Slow: ",
+        addr.port()
+    );
+    s.write_all(head.as_bytes()).unwrap();
+    let mut out = Vec::new();
+    // One byte every 100 ms, never finishing the headers, for up to 10 seconds.
+    while start.elapsed() < Duration::from_secs(10) {
+        if s.write_all(b"a").is_err() {
+            break;
+        }
+        let mut buf = [0u8; 512];
+        match s.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                out.extend_from_slice(&buf[..n]);
+                break;
+            }
+            Err(_) => {}
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let took = start.elapsed();
+    assert!(took < Duration::from_secs(5), "held for {took:?}");
+    let out = String::from_utf8_lossy(&out);
+    assert!(out.is_empty() || out.starts_with("HTTP/1.1 408"), "{out}");
+    assert!(health_ok(addr));
+}

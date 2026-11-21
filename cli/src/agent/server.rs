@@ -37,6 +37,10 @@ const MAX_SESSIONS: usize = 200;
 const SESSION_IDLE: Duration = Duration::from_secs(3600);
 const STREAM_LIFE: Duration = Duration::from_secs(600);
 const WHOIS_TTL: Duration = Duration::from_secs(30);
+/// The request line and every header must arrive within this, however slowly each byte comes.
+const HEADER_DEADLINE: Duration = Duration::from_secs(10);
+/// And the body within this after them.
+const BODY_DEADLINE: Duration = Duration::from_secs(30);
 
 // ------------------------------------------------------------------------------------------------
 // HTTP
@@ -73,9 +77,27 @@ fn bad(m: &str) -> (u16, String) {
     (400, m.to_string())
 }
 
+/// A read that failed: 408 when the client ran out of time, else 400.
+fn io_fail(e: io::Error) -> (u16, String) {
+    match e.kind() {
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock => {
+            (408, "the request took too long to arrive".into())
+        }
+        _ => bad(&e.to_string()),
+    }
+}
+
 /// One request, body included. Errors are (status, why).
+#[cfg(test)]
 pub fn read_req(r: &mut impl BufRead) -> Result<Req, (u16, String)> {
-    let line = read_line(r).map_err(|e| bad(&e.to_string()))?;
+    let mut req = read_head(r)?;
+    read_body(r, &mut req)?;
+    Ok(req)
+}
+
+/// The request line and headers.
+pub fn read_head(r: &mut impl BufRead) -> Result<Req, (u16, String)> {
+    let line = read_line(r).map_err(io_fail)?;
     let mut parts = line.split(' ');
     let (Some(method), Some(target), Some(version), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
@@ -90,7 +112,7 @@ pub fn read_req(r: &mut impl BufRead) -> Result<Req, (u16, String)> {
         if headers.len() > MAX_HEADERS {
             return Err(bad("too many headers"));
         }
-        let h = read_line(r).map_err(|e| bad(&e.to_string()))?;
+        let h = read_line(r).map_err(io_fail)?;
         if h.is_empty() {
             break;
         }
@@ -126,13 +148,17 @@ pub fn read_req(r: &mut impl BufRead) -> Result<Req, (u16, String)> {
             (percent_decode(k), percent_decode(v))
         })
         .collect();
-    let mut req = Req {
+    Ok(Req {
         method: method.to_string(),
         path: path.to_string(),
         query,
         headers,
         body: Vec::new(),
-    };
+    })
+}
+
+/// The body the headers announce, chunked or by Content-Length.
+pub fn read_body(r: &mut impl BufRead, req: &mut Req) -> Result<(), (u16, String)> {
     let te = req.header("transfer-encoding").map(str::to_ascii_lowercase);
     let cl = req.header("content-length").map(str::to_string);
     match (te, cl) {
@@ -151,13 +177,13 @@ pub fn read_req(r: &mut impl BufRead) -> Result<Req, (u16, String)> {
         }
         (None, None) => {}
     }
-    Ok(req)
+    Ok(())
 }
 
 fn read_chunked(r: &mut impl BufRead) -> Result<Vec<u8>, (u16, String)> {
     let mut body = Vec::new();
     loop {
-        let line = read_line(r).map_err(|e| bad(&e.to_string()))?;
+        let line = read_line(r).map_err(io_fail)?;
         let size = line.split(';').next().unwrap_or_default().trim();
         // At most 16 hex digits and nothing else (no sign), so the number fits before it is checked.
         if size.is_empty() || size.len() > 16 || !size.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -167,7 +193,7 @@ fn read_chunked(r: &mut impl BufRead) -> Result<Vec<u8>, (u16, String)> {
         if n == 0 {
             // Trailers, then the empty line.
             for _ in 0..=MAX_HEADERS {
-                if read_line(r).map_err(|e| bad(&e.to_string()))?.is_empty() {
+                if read_line(r).map_err(io_fail)?.is_empty() {
                     return Ok(body);
                 }
             }
@@ -184,7 +210,7 @@ fn read_chunked(r: &mut impl BufRead) -> Result<Vec<u8>, (u16, String)> {
         body.resize(total, 0);
         r.read_exact(&mut body[start..])
             .map_err(|_| bad("a chunk was cut short"))?;
-        if !read_line(r).map_err(|e| bad(&e.to_string()))?.is_empty() {
+        if !read_line(r).map_err(io_fail)?.is_empty() {
             return Err(bad("a chunk ran long"));
         }
     }
@@ -465,6 +491,7 @@ pub struct Ctx {
     limits: Mutex<HashMap<&'static str, Vec<Instant>>>,
     conns: AtomicUsize,
     streams: AtomicUsize,
+    header_deadline: Duration,
 }
 
 /// How a request reached the loopback listener.
@@ -486,6 +513,7 @@ impl Ctx {
             limits: Mutex::new(HashMap::new()),
             conns: AtomicUsize::new(0),
             streams: AtomicUsize::new(0),
+            header_deadline: HEADER_DEADLINE,
         }
     }
 
@@ -1210,6 +1238,23 @@ fn stream_events(ctx: &Ctx, out: &mut TcpStream, r: &Resp, id: &str) {
     }
 }
 
+/// A socket whose reads all end by `until`: a client trickling a byte at a time can't hold a connection open past it.
+struct Deadline {
+    s: TcpStream,
+    until: Instant,
+}
+
+impl Read for Deadline {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let left = self.until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "out of time"));
+        }
+        self.s.set_read_timeout(Some(left))?;
+        self.s.read(buf)
+    }
+}
+
 /// One taken slot of a counter; dropping it gives the slot back, even when a panic unwinds.
 struct Slot<'a>(&'a AtomicUsize);
 
@@ -1254,8 +1299,15 @@ fn serve_conn(ctx: &Ctx, stream: TcpStream, peer: SocketAddr, kind: Listener) {
         close_gently(keep);
         return;
     }
-    let mut reader = BufReader::new(read_half);
-    let resp = match read_req(&mut reader) {
+    let mut reader = BufReader::new(Deadline {
+        s: read_half,
+        until: Instant::now() + ctx.header_deadline,
+    });
+    let read = read_head(&mut reader).and_then(|mut req| {
+        reader.get_mut().until = Instant::now() + BODY_DEADLINE;
+        read_body(&mut reader, &mut req).map(|()| req)
+    });
+    let resp = match read {
         Ok(req) => {
             let r = match (kind, &ctx.tailnet) {
                 (Listener::Tailnet, Some(tc)) => route_tailnet(ctx, &req, &tc.me, local),
