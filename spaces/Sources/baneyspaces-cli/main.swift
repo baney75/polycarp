@@ -25,6 +25,11 @@ usage: \(me) <command>
   agent windows [--json]      the windows on the agent workspace (docs/agent-workspace-api.md)
   agent move <window number>  send a window Polycarp places to the agent workspace
   phone ls|ui|shot|tap|swipe|type|key|shell|mirror   phones for agents (phone help)
+  contacts find <query> [--json] [--full]
+                              people in Contacts: names and the kinds of handles (--full adds numbers)
+  contacts call|facetime|message|email <query> [--text TEXT]
+                              open the Phone app, FaceTime, Messages with a draft, or Mail for one person;
+                              Polycarp never sends a message: the owner presses Send (docs/contacts.md)
   set <setting> <value>       appearance.theme omarchy|baneyspaces|minimal, appearance.palette auto|<name>,
                               dock.enabled true|false; applies at once, no restart
   get [setting]               read one setting, or all three
@@ -262,6 +267,37 @@ case "phone", "phones":
 
 case "surfaces":
     SurfacesCommand.run(rest, remote: remoteHost != nil)
+case "contacts", "contact":
+    // Asked of the running app, which holds the Contacts permission and the index the launcher uses. Local only.
+    guard remoteHost == nil else { fail("contacts are read on this Mac only", code: 2) }
+    switch ContactsCommand.request(rest) {
+    case .failure(let problem): fail(problem.message, code: 2)
+    case .success(var request):
+        request.caller = ProcessInfo.processInfo.environment["BANEYSPACES_AGENT"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? (launchingApp.isEmpty ? "cli" : launchingApp)
+        let reply = call(request)
+        if request.text == "find" {
+            let people = reply.contacts ?? []
+            if rest.contains("--json") {
+                let enc = JSONEncoder()
+                enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+                out(String(data: try! enc.encode(people), encoding: .utf8)!)
+            } else {
+                out(people.isEmpty ? "no one in Contacts matches" : people.map(\.line).joined(separator: "\n"))
+            }
+        } else {
+            let info = reply.info ?? [:]
+            if rest.contains("--json") {
+                let enc = JSONEncoder()
+                enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+                out(String(data: try! enc.encode(info), encoding: .utf8)!)
+            } else {
+                let value = info["value"].map { " \($0)" } ?? ""
+                out("opened \(info["verb"] ?? "?") for \(info["name"] ?? "?") (\(info["handle"] ?? "?")\(value))")
+                if let note = info["note"] { out(note) }
+            }
+        }
+    }
 
 case "agent":
     // The agent workspace: agents work there while you work here.

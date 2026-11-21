@@ -552,6 +552,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // ⌃⌘K (registered in `registerShortcuts`) opens the launcher, which searches the session rows.
         session.onSearch = { [weak self] in self?.launcher.toggle() }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
+        // People for the launcher: read now only when Contacts access is already on. Nothing asks for it here.
+        ContactsLibrary.shared.onChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
+        ContactsLibrary.shared.start()
         DispatchQueue.main.async { [weak self] in _ = self?.launcher }
         DockRestart.isSwitching = { [weak self] in self?.spaces.switching ?? false }
         legacyWatcher.start()

@@ -16,6 +16,7 @@ window id, or a pid.
 | `agent-workspace show|hide|toggle` | the key | yes | yes |
 | `agent status` | yes | yes | yes |
 | `play <file>` ([player.md](player.md), R-P8) | yes | retired | not supported yet |
+| `contacts find <query> [--json] [--full]`, `contacts call\|facetime\|message\|email <query> [--text T]` ([contacts.md](../../docs/contacts.md)): opens the app with a draft, never sends | yes | retired | not supported yet |
 | `agent windows` | yes | yes | yes |
 | `purpose list\|set <n> <text>\|clear <n>`, `one <text>\|--clear`, `day` (`--json` on each; local callers only) | yes | retired | not supported yet |
 | `agent open <app> [file...]` | removed: computer use is Tychicus | yes: an allowlisted app by name, files from the handoff folder only | yes |
