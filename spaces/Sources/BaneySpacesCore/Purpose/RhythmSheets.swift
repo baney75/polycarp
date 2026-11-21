@@ -49,13 +49,28 @@ public enum RhythmSheets {
     }
 
     /// A card belongs to its prompt and its day. With none showing, a due prompt shows. One from an earlier day goes,
-    /// and a different due prompt takes its place; neither counts as given. A card opened from the menu stays while
-    /// nothing else is due.
-    public static func step(due: Rhythm.Prompt?, showing: Rhythm.Prompt?, shownOn: PurposeDay?, today: PurposeDay) -> Step {
+    /// and a different due prompt takes its place; neither counts as given. A `held` card (opened from the menu, or
+    /// clicked into) stays on its day until you keep it or put it off, so nothing you are writing is taken away.
+    public static func step(due: Rhythm.Prompt?, showing: Rhythm.Prompt?, shownOn: PurposeDay?, today: PurposeDay,
+                            held: Bool = false) -> Step {
         guard let showing else { return due.map { .show($0) } ?? .stay }
-        if let due, due != showing { return .show(due) }
         if shownOn != today { return due.map { .show($0) } ?? .close }
+        if held { return .stay }
+        if let due, due != showing { return .show(due) }
         return .stay
+    }
+
+    /// The examen answers kept on a day, so a card opened again that evening starts from them.
+    public struct KeptExamen: Codable, Equatable, Sendable {
+        public let day: PurposeDay
+        public let answers: [String]
+        public init(day: PurposeDay, answers: [String]) { self.day = day; self.answers = answers }
+    }
+
+    /// The answers an examen card opens with: those kept today, one per question, else blank lines.
+    public static func prefill(_ kept: KeptExamen?, today: PurposeDay, questions: Int = Rhythm.examenQuestions.count) -> [String] {
+        let from = kept?.day == today ? kept?.answers ?? [] : []
+        return (0..<questions).map { $0 < from.count ? from[$0] : "" }
     }
 
     /// The examen as the journal keeps it: every question in order (a blank one reads "No answer" there), and tomorrow's

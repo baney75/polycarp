@@ -108,6 +108,18 @@ final class PurposeStoreTests: XCTestCase {
         XCTAssertEqual(again.oneThing?.text, "Write to Paul", "kept on disk")
     }
 
+    func testAOneThingClearedByHandBeforeTheRolloverStaysCleared() throws {
+        let now = PurposeFixture.Now(PurposeFixture.at(2026, 11, 21, 21))
+        let s = store(now)
+        try s.setTomorrow("Write to Paul")
+        now.date = PurposeFixture.at(2026, 11, 22, 7, 0)
+        XCTAssertEqual(s.oneThing?.text, "Write to Paul")
+        try s.setOneThing("", workspace: nil)
+        XCTAssertNil(s.oneThing, "the clear holds before the rollover")
+        s.rollover()
+        XCTAssertNil(s.oneThing, "and after it")
+    }
+
     func testAOneThingSetByHandOnTheNewDayWins() throws {
         let now = PurposeFixture.Now(PurposeFixture.at(2026, 11, 21, 21))
         let s = store(now)

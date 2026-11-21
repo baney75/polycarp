@@ -95,10 +95,17 @@ public struct Purposes: Codable, Equatable, Sendable {
     }
 
     /// Sets or clears today's one thing.
+    /// A one thing set or cleared by hand on `day` also uses up a `next` named for that day, so the rollover can't bring
+    /// it back over what you just did.
     public mutating func setOneThing(_ text: String?, workspace: Int?, day: PurposeDay) throws {
-        guard let text, let clean = Self.clean(text, limit: .max) else { oneThing = nil; return }
+        guard let text, let clean = Self.clean(text, limit: .max) else { oneThing = nil; dropNext(through: day); return }
         guard clean.count <= Self.oneThingLimit else { throw Problem.tooLong(clean.count, limit: Self.oneThingLimit) }
         oneThing = OneThing(text: clean, workspace: workspace.flatMap { Workspaces.range.contains($0) ? $0 : nil }, day: day)
+        dropNext(through: day)
+    }
+
+    private mutating func dropNext(through day: PurposeDay) {
+        if let n = next, n.day <= day { next = nil }
     }
 
     /// One line, trimmed: newlines and tabs become spaces, runs of spaces become one. Nil when nothing is left. Text over

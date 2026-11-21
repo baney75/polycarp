@@ -13,6 +13,12 @@ final class RhythmSheet {
     private var panel: NSPanel?
     private var showing: Rhythm.Prompt?
     private var shownOn: PurposeDay?
+    /// Opened from the menu, or written in: it stays until kept or put off (`RhythmSheets.step`). Moving a card aside
+    /// or clicking into it without writing doesn't hold it.
+    private var byHand = false
+    private var edited: () -> Bool = { false }
+    private var held: Bool { byHand || edited() }
+    private static let keptKey = "rhythmExamenKept"
     /// The workspaces in use and the one you are on, from the app.
     var workspaces: () -> (inUse: Set<Int>, current: Int) = { ([], 1) }
 
@@ -25,13 +31,14 @@ final class RhythmSheet {
 
     /// Shows `prompt` now, due or not: the menu's "Evening Examen…".
     func show(_ prompt: Rhythm.Prompt) {
-        if showing == prompt, let panel { panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
+        if showing == prompt, let panel { panel.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); byHand = true; return }
         present(prompt, takeKeyboard: true)
+        byHand = true
     }
 
     private func dueChanged() {
         let keeper = PurposeKeeper.shared
-        switch RhythmSheets.step(due: keeper.due, showing: showing, shownOn: shownOn, today: keeper.ledger.dayClock.day(of: Date())) {
+        switch RhythmSheets.step(due: keeper.due, showing: showing, shownOn: shownOn, today: today, held: held) {
         case .stay: break
         case .show(let prompt): present(prompt, takeKeyboard: false)
         case .close: close()
@@ -52,10 +59,13 @@ final class RhythmSheet {
             let model = MorningModel(oneThing: named.oneThing?.text ?? "",
                                      rows: rows.map { .init(workspace: $0, text: named.purpose(of: $0) ?? "") })
             root = AnyView(MorningView(model: model, done: { [weak self] keep in self?.finishMorning(model, keep: keep) }))
+            edited = { [weak model] in model.map { $0.oneThing != $0.oneThingBefore || $0.rows.contains { $0.text != $0.before } } ?? false }
         case .eveningExamen:
             let rows = RhythmSheets.timeRows(seconds: keeper.ledger.today(), named: named.all)
-            let model = ExamenModel(rows: rows, tomorrow: keeper.purposes.tomorrow?.text ?? "")
+            let model = ExamenModel(rows: rows, answers: RhythmSheets.prefill(Self.kept, today: today),
+                                    tomorrow: keeper.purposes.tomorrow?.text ?? "")
             root = AnyView(ExamenView(model: model, done: { [weak self] keep in self?.finishExamen(model, keep: keep) }))
+            edited = { [weak model] in model?.edited ?? false }
         }
         let host = NSHostingView(rootView: root.environment(\.colorScheme, Chrome.scheme))
         let size = host.fittingSize
@@ -118,6 +128,7 @@ final class RhythmSheet {
             return
         }
         close()
+        Self.kept = RhythmSheets.KeptExamen(day: today, answers: m.answers)
         keeper.keepExamen(RhythmSheets.answers(m.answers, tomorrow: m.tomorrow))
         dueChanged()
     }
@@ -127,6 +138,14 @@ final class RhythmSheet {
         panel = nil
         showing = nil
         shownOn = nil
+        byHand = false
+        edited = { false }
+    }
+
+    /// Tonight's kept answers, so the examen opened again from the menu starts from them; the journal is written whole.
+    private static var kept: RhythmSheets.KeptExamen? {
+        get { UserDefaults.standard.data(forKey: keptKey).flatMap { try? JSONDecoder().decode(RhythmSheets.KeptExamen.self, from: $0) } }
+        set { UserDefaults.standard.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: keptKey) }
     }
 }
 
@@ -181,10 +200,17 @@ enum RhythmKeys {
 
 final class ExamenModel: ObservableObject {
     let rows: [RhythmSheets.TimeRow]
-    @Published var answers: [String] = Rhythm.examenQuestions.map { _ in "" }
+    @Published var answers: [String]
     @Published var tomorrow: String
     @Published var problem: String?
-    init(rows: [RhythmSheets.TimeRow], tomorrow: String) { self.rows = rows; self.tomorrow = tomorrow }
+    /// What the card opened with, so a card only moved aside isn't taken for one being written in.
+    let answersBefore: [String]
+    let tomorrowBefore: String
+    var edited: Bool { answers != answersBefore || tomorrow != tomorrowBefore }
+    init(rows: [RhythmSheets.TimeRow], answers: [String] = Rhythm.examenQuestions.map { _ in "" }, tomorrow: String) {
+        self.rows = rows; self.answers = answers; self.tomorrow = tomorrow
+        answersBefore = answers; tomorrowBefore = tomorrow
+    }
 }
 
 struct ExamenView: View {
