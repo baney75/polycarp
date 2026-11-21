@@ -3,7 +3,7 @@
 use super::*;
 
 /// Serves `c` on loopback, where whois says the caller is `caller`.
-fn serve_as(mut c: Ctx, caller: Node) -> SocketAddr {
+pub(super) fn serve_as(mut c: Ctx, caller: Node) -> SocketAddr {
     Index::open(&c.index)
         .unwrap()
         .update(&c.roots, &[])

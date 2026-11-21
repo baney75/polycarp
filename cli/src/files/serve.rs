@@ -116,13 +116,21 @@ pub fn may_serve(me: &Node) -> Result<(), String> {
     }
 }
 
+/// A caller that was let in. `itself` is this node: another account or a sandboxed process on this machine dialing
+/// its own Tailscale address looks the same to whois, so it may only ask `/v1/health` (which doctor uses).
+#[derive(Debug)]
+pub struct Caller {
+    pub node: Node,
+    pub itself: bool,
+}
+
 /// Lets a caller in only when Tailscale says its node belongs to the same user as this one, and, when the owner
-/// listed devices, only one of those.
+/// listed devices, only one of those. This node itself always gets in, but only as far as `/v1/health`.
 pub fn authorize(
     who: Result<Node, String>,
     me: &Node,
     allow_devices: &[String],
-) -> Result<Node, String> {
+) -> Result<Caller, String> {
     let node = who.map_err(|e| format!("Tailscale could not say who is calling: {e}"))?;
     may_serve(me)?;
     if !node.tags.is_empty() {
@@ -141,10 +149,16 @@ pub fn authorize(
             }
         ));
     }
+    if node.ips.iter().any(|ip| me.ips.contains(ip)) {
+        return Ok(Caller { node, itself: true });
+    }
     if !allow_devices.is_empty() && !allow_devices.iter().any(|d| node.is_named(d)) {
         return Err(format!("{} is not in allow_devices", node.name));
     }
-    Ok(node)
+    Ok(Caller {
+        node,
+        itself: false,
+    })
 }
 
 /// A Host header that names this node: one of its Tailscale addresses (or the one the connection came in on), its
@@ -257,7 +271,7 @@ pub fn route(ctx: &Ctx, req: &Request) -> Reply {
                 .and_then(|l| l.parse::<usize>().ok())
                 .unwrap_or(20)
                 .clamp(1, 200);
-            match Index::open_read(&ctx.index).and_then(|i| i.search(q, kind, limit)) {
+            match Index::open_read(&ctx.index).and_then(|i| i.search(q, kind, limit, &ctx.roots)) {
                 Ok(mut hits) => {
                     for h in &mut hits {
                         h.device = Some(ctx.me.name.clone());
@@ -444,11 +458,17 @@ fn serve_one(ctx: &Ctx, stream: TcpStream, peer: SocketAddr) {
             return;
         }
     };
-    if req.from_browser || !host_ok(req.host.as_deref(), &ctx.me, local) {
-        let why = "web pages may not use this server: the request named another host or came from a browser";
+    let refused = if req.from_browser || !host_ok(req.host.as_deref(), &ctx.me, local) {
+        Some("web pages may not use this server: the request named another host or came from a browser")
+    } else if caller.itself && req.path != "/v1/health" {
+        Some("this device may only check its own health here")
+    } else {
+        None
+    };
+    if let Some(why) = refused {
         log(&format!(
             "refused {} {} from {}: {why}",
-            req.method, req.path, caller.name
+            req.method, req.path, caller.node.name
         ));
         let _ = http::write_json(
             &mut out,
@@ -503,7 +523,7 @@ fn serve_one(ctx: &Ctx, stream: TcpStream, peer: SocketAddr) {
     // Never the query: a search or a path can say more than it should in a log.
     log(&format!(
         "{} {} from {} -> {status}",
-        req.method, req.path, caller.name
+        req.method, req.path, caller.node.name
     ));
 }
 
@@ -835,5 +855,84 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
     }
 
+    #[test]
+    fn serve_search_shows_only_rows_under_a_configured_root() {
+        let d = tmp("pruned");
+        let c = ctx_with(&d, false);
+        fs::write(c.roots[0].path.join("alpha.md"), "x").unwrap();
+        let other = d.join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("bravo.md"), "x").unwrap();
+        // Rows from a folder that was a root once, and is not any more.
+        let both = [
+            c.roots[0].clone(),
+            Root {
+                path: other,
+                text: true,
+            },
+        ];
+        Index::open(&c.index).unwrap().update(&both, &[]).unwrap();
+        let get = |q: &str| Request {
+            method: "GET".into(),
+            path: "/v1/search".into(),
+            query: vec![("q".into(), q.into())],
+            ..Request::default()
+        };
+        match route(&c, &get("bravo")) {
+            Reply::Json(200, v) => assert_eq!(v["data"]["results"], json!([]), "{v}"),
+            other => panic!("{other:?}"),
+        }
+        match route(&c, &get("alpha")) {
+            Reply::Json(200, v) => assert_eq!(v["data"]["results"].as_array().unwrap().len(), 1),
+            other => panic!("{other:?}"),
+        }
+        let _ = fs::remove_dir_all(&d);
+    }
+
     mod rebind_test;
+    use rebind_test::serve_as;
+
+    #[test]
+    fn this_device_itself_may_check_health_and_nothing_else() {
+        // Another account on this machine dialing its own Tailscale IP looks like this node to whois.
+        let d = tmp("self");
+        let c = ctx_with(&d, false);
+        let me = c.me.clone();
+        let addr = serve_as(c, me);
+        let t = Duration::from_secs(5);
+        let r = http::request(addr, "GET", "/v1/search?q=x", None, t).unwrap();
+        assert_eq!(r.status, 403, "search from this node");
+        let r = http::request(addr, "GET", "/v1/meta?path=/x", None, t).unwrap();
+        assert_eq!(r.status, 403, "meta from this node");
+        let r = http::request(addr, "GET", "/v1/health", None, t).unwrap();
+        assert_eq!(r.status, 200, "health from this node");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn doctor_sees_its_own_service_when_allow_devices_leaves_this_device_out() {
+        let d = tmp("doctor-allow");
+        let mut c = ctx_with(&d, false);
+        c.cfg.allow_devices = vec!["parish1".into()];
+        // Doctor dials this node's own address; here that is the loopback listener.
+        c.me.ips = vec![IpAddr::V4(Ipv4Addr::LOCALHOST)];
+        let me = c.me.clone();
+        let addr = serve_as(c, me.clone());
+        let cfg = Config {
+            allow_devices: vec!["parish1".into()],
+            port: Some(addr.port()),
+            index_path: Some(d.join("index.sqlite").to_string_lossy().into_owned()),
+            roots: Some(vec![d.join("root").to_string_lossy().into_owned()]),
+            ..Config::default()
+        };
+        let stub: Arc<dyn Tailnet> = Arc::new(Stub {
+            me,
+            by_ip: HashMap::new(),
+        });
+        let f = super::super::doctor::gather(&cfg, Some(("tailscale".into(), stub)));
+        assert!(f.serve_running, "serve_error: {:?}", f.serve_error);
+        assert!(!super::super::doctor::fix_plan(&f)
+            .contains(&super::super::doctor::Action::RestartService));
+        let _ = fs::remove_dir_all(&d);
+    }
 }
