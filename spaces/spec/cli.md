@@ -15,6 +15,7 @@ window id, or a pid.
 | `agent on|off` | yes | not needed (the agent workspace always exists) | not needed (the agent workspace always exists) |
 | `agent-workspace show|hide|toggle` | the key | yes | yes |
 | `agent status` | yes | yes | yes |
+| `play <file>` ([player.md](player.md), R-P8) | yes | retired | not supported yet |
 | `agent windows` | yes | yes | yes |
 | `agent open <app> [file...]` | removed: computer use is Tychicus | yes: an allowlisted app by name, files from the handoff folder only | yes |
 | `agent run [--dir D] -- CMD` | removed: computer use is Tychicus | yes | yes |

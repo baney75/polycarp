@@ -164,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.spaces.moveCarried(id, to: n, from: grab.frame) { [weak self] in self?.dropGeneration[id, default: 0] == gen }
         }
     }
-    /// Building the launcher scans every app, so the session engine's updates don't build it early.
+    /// The launcher is built just after launch (its app scan runs off the main thread), so the first open finds the apps.
     private var launcherBuilt = false
     /// The focused terminal's folder when the launcher opened, for New Terminal.
     private var terminalFolder: String?
@@ -172,8 +172,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         launcherBuilt = true
         var a = LauncherActions()
         a.focusApp = { [weak self] pid, n in self?.spaces.focusApp(pid, on: n) }
-        a.openWindowHere = { [weak self] pid in self?.started == true && self?.spaces.openWindowHere(pid) == true }
-        a.canOpenWindow = { pid in Windows.newWindowItem(pid) != nil }
+        a.openWindowHere = { [weak self] pid, orElse in
+            guard let self, self.started else { return orElse() }
+            self.spaces.openWindowHere(pid, orElse: orElse)
+        }
+        a.canOpenWindow = { pid, done in
+            // Reading an app's menus waits on the app, so it never runs on the main thread.
+            Spaces.axQueue.async {
+                let yes = Windows.newWindowItem(pid) != nil
+                DispatchQueue.main.async { done(yes) }
+            }
+        }
         a.current = { [weak self] in self?.spaces.model.current ?? 1 }
         a.switchTo = { [weak self] n in self?.run { $0.switchTo(n) } }
         a.appsOn = { [weak self] n in self?.spaces.apps(on: n) ?? [] }
@@ -229,6 +238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 MissionControlKeys.inGesture = false
                 return
             }
+            // Titles change with every tab: read them again in the background, ready for the window bar the hold opens.
+            if !isRepeat { self.spaces.refreshDetails() }
             self.switcher.step(forward: forward, isRepeat: isRepeat, at: time)
         }
         keys.onTabUp = { [weak self] in self?.switcher.tabReleased() }
@@ -531,6 +542,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // ⌃⌘K (registered in `registerShortcuts`) opens the launcher, which searches the session rows.
         session.onSearch = { [weak self] in self?.launcher.toggle() }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
+        DispatchQueue.main.async { [weak self] in _ = self?.launcher }
         DockRestart.isSwitching = { [weak self] in self?.spaces.switching ?? false }
         legacyWatcher.start()
         startWorkspaces()
@@ -1069,8 +1081,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// `open baneyspaces://switch/2`, `baneyspaces://move/3`, `baneyspaces://restore`.
     /// The same actions as the shortcuts, for scripts and checks.
     @objc private func handleURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
-        guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
-              let url = URL(string: text), url.scheme == "polycarp" || url.scheme == "baneyspaces" else { return }
+        guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue, let url = URL(string: text) else { return }
+        runURL(url)
+    }
+
+    /// Also run for a link that started Polycarp (`application(_:open:)` in Player.swift), which arrives before
+    /// `handleURL` is installed.
+    func runURL(_ url: URL) {
+        guard url.scheme == "polycarp" || url.scheme == "baneyspaces" else { return }
+        let text = url.absoluteString
         let n = Int(url.lastPathComponent) ?? 0
         switch url.host {
         case "switch": run { $0.switchTo(n) }

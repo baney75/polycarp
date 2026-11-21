@@ -67,6 +67,9 @@ public enum Wire {
             /// `--quick`, `text` a command, `target` a tailnet device (`TerminalLaunch`). Local callers only: a shell is
             /// never opened for another machine (`Remote.allows`).
             case terminal
+            /// Show `target` (an absolute file path) in the built-in player (`polycarp-spaces play`, spec/player.md).
+            /// Local callers only (`Remote.allows` never lets it through).
+            case play
         }
         public var op: Op
         public var target: String?

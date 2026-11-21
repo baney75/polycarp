@@ -5,16 +5,19 @@ import Foundation
 /// "Visual Studio Code"), which beats initials ("vsc"), which beats letters found in order.
 public enum Fuzzy {
     public static func score(_ query: String, _ name: String) -> Int? {
-        let q = fold(query)
+        score(folded: fold(query), key: SearchKey(name))
+    }
+
+    /// The same score against a name folded once, ahead of time (`SearchKey`): the launcher scores every app on each key
+    /// press, and folding each name again cost more than the match.
+    public static func score(folded q: String, key: SearchKey) -> Int? {
         guard !q.isEmpty else { return 0 }
-        let n = fold(name)
+        let n = key.folded
         if n == q { return 1000 }
-        if n.hasPrefix(q) { return 900 - min(n.count, 99) }
-        let words = n.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
-        if words.contains(where: { $0.hasPrefix(q) }) { return 700 - min(n.count, 99) }
-        let initials = String(words.compactMap(\.first))
-        if initials.hasPrefix(q) { return 600 - min(n.count, 99) }
-        if n.contains(q) { return 500 - min(n.count, 99) }
+        if n.hasPrefix(q) { return 900 - min(key.count, 99) }
+        if key.words.contains(where: { $0.hasPrefix(q) }) { return 700 - min(key.count, 99) }
+        if key.initials.hasPrefix(q) { return 600 - min(key.count, 99) }
+        if n.contains(q) { return 500 - min(key.count, 99) }
         // Every letter in order: "sfr" finds Safari. Letters close together score higher.
         var gaps = 0
         var i = n.startIndex
@@ -25,12 +28,42 @@ public enum Fuzzy {
             last = at
             i = n.index(after: at)
         }
-        return max(1, 300 - gaps * 10 - min(n.count, 99))
+        return max(1, 300 - gaps * 10 - min(key.count, 99))
     }
 
     /// Lowercased, accents dropped: "Café" matches "cafe".
     public static func fold(_ s: String) -> String {
         s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil).trimmingCharacters(in: .whitespaces)
+    }
+}
+
+/// A launcher key press must draw its rows inside one frame. One that doesn't is written to trace.log, without what
+/// was typed, so a slow search can be found after the fact (2026-11-21: search "glitchy and slow").
+public enum KeyPressCheck {
+    public static let budget: TimeInterval = 0.016
+
+    /// The trace line for a key press that took `seconds` to rebuild `rows` rows for `typed` characters, or nil
+    /// inside the budget.
+    public static func slowLine(seconds: TimeInterval, typed: Int, rows: Int) -> String? {
+        guard seconds >= budget else { return nil }
+        return "launcher key: \(Int((seconds * 1000).rounded())) ms (budget 16), \(typed) characters, \(rows) rows"
+    }
+}
+
+/// A name as `Fuzzy` matches it, folded and split once: the launcher keeps one per app, built off the main thread when
+/// the app list is read, so a key press only compares.
+public struct SearchKey: Equatable {
+    public let folded: String
+    public let words: [String]
+    public let initials: String
+    /// Characters in `folded`, counted once.
+    public let count: Int
+
+    public init(_ name: String) {
+        folded = Fuzzy.fold(name)
+        words = folded.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        initials = String(words.compactMap(\.first))
+        count = folded.count
     }
 }
 
