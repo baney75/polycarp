@@ -1,3 +1,4 @@
+import ContactsMatch
 import Foundation
 
 /// Whether Polycarp may read Contacts, as the launcher and the command need to know it.
@@ -9,6 +10,8 @@ public enum ContactsAccess: Equatable, Sendable {
     /// Allowed, and the people are being read.
     case loading
     case allowed
+    /// Allowed, but reading Contacts failed after every retry (`ContactsReadRetry`). The next launcher open tries again.
+    case failed
 
     public init(_ state: PermissionState, loaded: Bool) {
         switch state {
@@ -20,6 +23,28 @@ public enum ContactsAccess: Equatable, Sendable {
 
     /// The one plain sentence that says why, on the launcher's row that asks.
     public static let why = "Polycarp reads your contacts on this Mac so you can call, FaceTime, message and email people from the launcher. It never sends a message for you."
+}
+
+/// When to read Contacts again after a read failed: after 1, 5, then 30 seconds, and after that not until the launcher
+/// opens again, so a damaged store never keeps the contacts queue busy or fills trace.log.
+public struct ContactsReadRetry: Equatable, Sendable {
+    public static let delays: [Double] = [1, 5, 30]
+    /// Failed reads since the last good one or the last launcher open.
+    public private(set) var failures = 0
+
+    public init() {}
+
+    /// A read failed: how long to wait before the next one, or nil to stop.
+    public mutating func failed() -> Double? {
+        failures += 1
+        return failures <= Self.delays.count ? Self.delays[failures - 1] : nil
+    }
+
+    /// Every retry failed: nothing reads again until `reset`.
+    public var gaveUp: Bool { failures > Self.delays.count }
+
+    /// A good read, or the launcher opened: start over.
+    public mutating func reset() { failures = 0 }
 }
 
 /// What was typed, read as a contact query: "anna", "call anna", "message anna running late".
@@ -81,6 +106,7 @@ public final class ContactsProvider: LauncherProvider {
     public private(set) var recents = ContactRecents()
     public var access: ContactsAccess = .notAsked
     private var ranks: [UInt16] = []
+    private var apps = SquashedNames([])
 
     public init() {}
 
@@ -88,6 +114,11 @@ public final class ContactsProvider: LauncherProvider {
     public func use(_ index: ContactsIndex) {
         self.index = index
         ranks = index.ranks(recents)
+    }
+
+    /// The launcher's app names, when its list is read. A query an app's name holds is never a contact verb.
+    public func useApps(_ names: [String]) {
+        apps = SquashedNames(names.map(Fuzzy.fold))
     }
 
     /// The recents changed (a use, or the file read at start).
@@ -98,11 +129,16 @@ public final class ContactsProvider: LauncherProvider {
 
     public func results(for query: String) -> [LauncherResult] {
         let typed = query.trimmingCharacters(in: .whitespaces)
-        let q = ContactQuery.parse(query, matches: access == .allowed ? { [index] in index.hasWordMatch($0) } : nil)
+        var q = ContactQuery.parse(query, matches: access == .allowed ? { [index] in index.hasWordMatch($0) } : nil)
+        // "text edit" is TextEdit and "phone mirroring" iPhone Mirroring, not a message or a call: a verb never claims
+        // a query an app's name holds. The words are then a plain name, which waits below the apps.
+        if q.verb != nil, apps.holds(Fuzzy.fold(typed)) { q = ContactQuery(verb: nil, name: typed) }
         let asked = q.verb != nil || ["contacts", "contact", "people"].contains(Fuzzy.fold(typed))
+        // Without the people, no row claims the top: these wait below whatever else matched.
         switch access {
         case .notAsked: return asked ? [Self.askRow] : []
         case .denied: return asked ? [Self.deniedRow] : []
+        case .failed: return asked ? [Self.failedRow] : []
         case .loading: return []
         case .allowed: break
         }
@@ -112,8 +148,12 @@ public final class ContactsProvider: LauncherProvider {
         if q.name.isEmpty {
             // "call " with no name yet: the people called lately.
             found = recents.order.prefix(5).compactMap { id in index.index(of: id).map { ContactMatch(index: $0, tier: 3, recent: true) } }
+        } else if q.verb != nil {
+            // After a verb only real name matches count: letters found inside or scattered through a name ("edit" in
+            // Meredith) never turn a word into a call.
+            found = index.search(q.name, ranks: ranks, limit: 6).filter { $0.tier >= 2 }
         } else {
-            found = index.search(q.name, ranks: ranks, limit: q.verb == nil ? 3 : 6)
+            found = index.search(q.name, ranks: ranks, limit: 3)
         }
         return found.compactMap { row($0, q) }
     }
@@ -135,20 +175,28 @@ public final class ContactsProvider: LauncherProvider {
         if let second { sub += " · ⌘↩ \(second.verb.title)" }
         return LauncherResult(id: "contacts:\(person.id)", section: "People", title: person.name, subtitle: sub,
                               symbol: first.verb.symbol, badge: first.verb.title,
-                              placement: q.verb != nil ? .top : .normal, action: .contact(first),
+                              placement: Self.claims(m, q) ? .top : .normal, action: .contact(first),
                               second: second.map { .contact($0) }, secondTitle: second?.verb.title ?? "",
                               image: person.thumbnail)
     }
 
+    /// A row goes above apps only for a verb whose name answers well: every typed word starts a word of the person's.
+    static func claims(_ m: ContactMatch, _ q: ContactQuery) -> Bool { q.verb != nil && m.tier >= 3 }
+
     public static let askRow = LauncherResult(
         id: "contacts:ask", section: "People", title: "Allow Contacts to call and message people",
         subtitle: ContactsAccess.why, symbol: "person.crop.circle.badge.questionmark", badge: "Allow",
-        placement: .top, action: .contactsAccess)
+        action: .contactsAccess)
 
     public static let deniedRow = LauncherResult(
         id: "contacts:denied", section: "People", title: "Contacts access is off",
         subtitle: "Turn on Polycarp in System Settings, Privacy & Security, Contacts, to call and message people from here.",
-        symbol: "person.crop.circle.badge.xmark", badge: "Open Settings", placement: .top, action: .contactsAccess)
+        symbol: "person.crop.circle.badge.xmark", badge: "Open Settings", action: .contactsAccess)
+
+    public static let failedRow = LauncherResult(
+        id: "contacts:failed", section: "People", title: "Couldn't read Contacts",
+        subtitle: "Polycarp tried three more times and stopped. It reads them again the next time the launcher opens.",
+        symbol: "person.crop.circle.badge.exclamationmark", action: .none)
 }
 
 // MARK: The command
@@ -196,6 +244,8 @@ public enum ContactsCommand {
             return (.init(ok: false, error: "Contacts access is off. Turn on Polycarp in System Settings > Privacy & Security > Contacts."), nil)
         case .loading:
             return (.init(ok: false, error: "Polycarp is still reading your contacts; try again in a moment."), nil)
+        case .failed:
+            return (.init(ok: false, error: "Couldn't read Contacts. Polycarp stopped retrying; it reads them again the next time the launcher opens."), nil)
         case .allowed: break
         }
         let query = (r.target ?? "").trimmingCharacters(in: .whitespaces)

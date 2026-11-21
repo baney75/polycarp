@@ -21,6 +21,9 @@ final class ContactsLibrary {
     private var again = false
     private var observer: NSObjectProtocol?
     private var debounce: DispatchWorkItem?
+    /// Failed reads back off and then stop until the launcher opens (`ContactsReadRetry`).
+    private var retry = ContactsReadRetry()
+    private var retryWork: DispatchWorkItem?
     static let recentsURL = Spaces.folder.appendingPathComponent(ContactRecents.fileName)
 
     private init() {}
@@ -42,18 +45,32 @@ final class ContactsLibrary {
     /// Reads macOS's answer (no prompt) and loads the people the first time it is yes. The launcher calls it each time
     /// it opens, so a switch turned on in System Settings counts at once.
     func refreshAccess() {
-        let now = ContactsAccess(state, loaded: loaded)
+        var now = ContactsAccess(state, loaded: loaded)
+        if now == .loading, retry.gaveUp { now = .failed }
         if now != provider.access { provider.access = now; onChange() }
-        if now == .loading { load() }
-        if now == .denied || now == .notAsked, loaded {
-            loaded = false
-            provider.use(ContactsIndex([]))
+        // A retry already waiting keeps its back-off: this never reads sooner.
+        if now == .loading, retryWork == nil { load() }
+        if now == .denied || now == .notAsked {
+            retry.reset()
+            retryWork?.cancel()
+            retryWork = nil
+            if loaded {
+                loaded = false
+                provider.use(ContactsIndex([]))
+            }
         }
+    }
+
+    /// The launcher opened: after reads that all failed, try once more from the start.
+    func launcherOpened() {
+        if retry.gaveUp { retry.reset() }
+        refreshAccess()
     }
 
     /// Contacts changed: read again once it has been quiet for a second.
     private func changed() {
-        guard state == .granted else { return refreshAccess() }
+        // A failed read waits out its back-off, or the next launcher open once it stopped.
+        guard state == .granted, !retry.gaveUp, retryWork == nil else { return refreshAccess() }
         debounce?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.load(force: true) }
         debounce = work
@@ -74,15 +91,32 @@ final class ContactsLibrary {
                 self.loading = false
                 if let people {
                     self.loaded = true
+                    self.retry.reset()
                     self.provider.use(index)
                     // Counts only: never a name.
                     Trace.log("contacts: read \(people.count) people in \(ms) ms")
+                } else if !self.loaded {
+                    self.scheduleRetry()
                 }
                 if self.again { self.again = false; self.load(force: true); return }
                 self.refreshAccess()
                 self.onChange()
             }
         }
+    }
+
+    /// A read failed: try again after the next back-off, or stop and say so until the launcher opens.
+    private func scheduleRetry() {
+        guard let delay = retry.failed() else {
+            Trace.log("contacts: read failed \(retry.failures) times; stopped until the launcher opens")
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            self?.retryWork = nil
+            self?.load(force: true)
+        }
+        retryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     /// Every person, off the main thread. Nil when Contacts refused.

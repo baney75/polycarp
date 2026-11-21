@@ -246,3 +246,45 @@ public final class ContactTable: @unchecked Sendable {
         }
     }
 }
+
+/// App names with spaces and punctuation taken out, to tell "text edit" (TextEdit) and "phone mirroring" (iPhone
+/// Mirroring) from a contact verb and a name: a query whose letters appear together in an app's name is that app.
+public struct SquashedNames: Sendable {
+    private let bytes: [UInt8]
+    /// Name `i` is `bytes[starts[i]..<starts[i + 1]]`.
+    private let starts: [Int32]
+
+    /// `folded` are the names, already folded.
+    public init(_ folded: [String]) {
+        var bytes: [UInt8] = [], starts: [Int32] = []
+        for name in folded {
+            starts.append(Int32(bytes.count))
+            for b in name.utf8 where ContactTable.isWord(b) { bytes.append(b) }
+        }
+        starts.append(Int32(bytes.count))
+        self.bytes = bytes
+        self.starts = starts
+    }
+
+    /// Whether some name holds every letter of `folded`, in a row, ignoring spaces and punctuation in both.
+    public func holds(_ folded: String) -> Bool {
+        let q = Array(folded.utf8.filter(ContactTable.isWord))
+        guard !q.isEmpty, starts.count > 1 else { return false }
+        return bytes.withUnsafeBufferPointer { b in
+            q.withUnsafeBufferPointer { q in
+                for i in 0..<(starts.count - 1) {
+                    let s = Int(starts[i]), e = Int(starts[i + 1])
+                    guard e - s >= q.count else { continue }
+                    var at = s
+                    while at <= e - q.count {
+                        var k = 0
+                        while k < q.count, b[at + k] == q[k] { k += 1 }
+                        if k == q.count { return true }
+                        at += 1
+                    }
+                }
+                return false
+            }
+        }
+    }
+}

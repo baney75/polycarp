@@ -23,14 +23,54 @@ public struct ContactHandle: Codable, Equatable, Hashable, Sendable {
     public var isMobile: Bool { kind == .phone && ["mobile", "iphone", "cell"].contains(label.lowercased()) }
 
     /// The number as a URL takes it: a leading plus and the digits, nothing else. Email is the address, trimmed.
+    ///
+    /// The number stops at an extension or a pause: the words `x`, `ext`, `extn` or `extension`, or `#`, `*`, `,` or
+    /// `;`, so "555-010-2000 ext. 123" dials 5550102000 and never 5550102000123. Letters in a vanity number map to the
+    /// keypad (ITU E.161: "1-800-FLOWERS" is 18003569377). A plus counts only before the first digit.
     public var dialable: String {
         guard kind == .phone else { return value.trimmingCharacters(in: .whitespaces) }
         var out = ""
-        for ch in value.unicodeScalars {
-            if ch == "+" && out.isEmpty { out.append("+") } else if ("0"..."9").contains(ch) { out.unicodeScalars.append(ch) }
+        var digits = 0
+        var letters = ""
+        /// A run of letters ended: a marker cuts the number, any other word is spelled on the keypad.
+        func endLetters() -> Bool {
+            defer { letters = "" }
+            guard !letters.isEmpty else { return false }
+            if Self.extensionWords.contains(letters.lowercased()) { return true }
+            for ch in letters.uppercased().unicodeScalars {
+                guard let d = Self.keypad[ch] else { continue }
+                out.unicodeScalars.append(d)
+                digits += 1
+            }
+            return false
         }
-        return out == "+" ? "" : out
+        for ch in value.unicodeScalars {
+            if ("a"..."z").contains(ch) || ("A"..."Z").contains(ch) { letters.unicodeScalars.append(ch); continue }
+            if endLetters() { break }
+            if ("0"..."9").contains(ch) {
+                out.unicodeScalars.append(ch)
+                digits += 1
+            } else if ch == "+", out.isEmpty {
+                out.append("+")
+            } else if "#*,;".unicodeScalars.contains(ch) {
+                break
+            }
+        }
+        _ = endLetters()
+        return digits == 0 ? "" : out
     }
+
+    /// The words that start an extension.
+    static let extensionWords: Set<String> = ["x", "ext", "extn", "extension"]
+
+    /// ITU E.161 letters to keypad digits.
+    static let keypad: [Unicode.Scalar: Unicode.Scalar] = {
+        var map: [Unicode.Scalar: Unicode.Scalar] = [:]
+        for (digit, group) in ["2": "ABC", "3": "DEF", "4": "GHI", "5": "JKL", "6": "MNO", "7": "PQRS", "8": "TUV", "9": "WXYZ"] {
+            for l in group.unicodeScalars { map[l] = digit.unicodeScalars.first! }
+        }
+        return map
+    }()
 
     /// A short stamp for the recents file, so it never holds a number or an address: FNV-1a over the kind and the
     /// dialable value, as hex.

@@ -409,6 +409,8 @@ final class LauncherModel: ObservableObject {
         appsLanded = true
         if fresh != apps {
             apps = fresh
+            // A query an app's name holds ("text edit") is that app, never a contact verb.
+            ContactsLibrary.shared.provider.useApps(fresh.map(\.name))
             if first, selected == 0 { rebuild() } else { rebuildKeepingSelection() }
         }
         if let reveal = pendingReturn { pendingReturn = nil; runSelected(reveal: reveal) }
@@ -439,7 +441,7 @@ final class LauncherModel: ObservableObject {
         fileResults = []
         bangs = Launcher.loadBangs()
         // Contacts access turned on or off in System Settings counts at once. It reads macOS's answer; it never asks.
-        ContactsLibrary.shared.refreshAccess()
+        ContactsLibrary.shared.launcherOpened()
         rebuild()
         // Apps installed since the last look show up without a restart.
         rescanApps()

@@ -104,6 +104,36 @@ final class ContactsTests: XCTestCase {
 
     // MARK: Links
 
+    func testANumberStopsAtItsExtensionOrPauseAndSpellsVanityLetters() throws {
+        let cases: [(String, String)] = [
+            ("555-010-2000 ext. 123", "5550102000"),
+            ("+1 (555) 010-2000 x123", "+15550102000"),
+            ("+1 (555) 010-2000 X 123", "+15550102000"),
+            ("555-0100 ext. 23", "5550100"),
+            ("555-0100 extn 23", "5550100"),
+            ("+44 20 7946 0958 extension 7", "+442079460958"),
+            ("555 0100,,4", "5550100"),
+            ("555 0100;4", "5550100"),
+            ("555 0100#4", "5550100"),
+            ("555 0100*4", "5550100"),
+            ("1-800-FLOWERS", "18003569377"),
+            ("1-800-XBOX", "18009269"),
+            ("1 800 my apple", "18006927753"),
+            ("+1+555", "+1555"),
+            ("ext. 123", ""),
+            ("x", ""),
+        ]
+        for (raw, want) in cases {
+            XCTAssertEqual(ContactHandle(.phone, raw).dialable, want, raw)
+        }
+        let ext = ContactHandle(.phone, "555-010-2000 ext. 123", label: "work")
+        XCTAssertEqual(ContactLinks.url(.call, ext)?.absoluteString, "tel:5550102000")
+        XCTAssertEqual(ContactLinks.url(.facetime, ext)?.absoluteString, "facetime:5550102000")
+        XCTAssertEqual(ContactLinks.url(.message, ext)?.absoluteString, "sms://open?addresses=5550102000")
+        XCTAssertEqual(ContactLinks.url(.call, ContactHandle(.phone, "1-800-FLOWERS"))?.absoluteString, "tel:18003569377")
+        XCTAssertEqual(ext.fingerprint, ContactHandle(.phone, "555 010 2000").fingerprint, "the extension isn't part of who was called")
+    }
+
     func testEachVerbBuildsItsLink() throws {
         let mobile = Self.anna.phones[1]
         XCTAssertEqual(mobile.dialable, "+15550103000")
@@ -204,6 +234,63 @@ final class ContactsTests: XCTestCase {
         recents.note(try XCTUnwrap(ContactLaunch(Self.joanna, .call)), at: 1)
         p.use(recents)
         XCTAssertEqual(p.results(for: "call ").map(\.title), ["Joanna Lee"])
+    }
+
+    // MARK: A verb never takes an app's launch (review of #580, second-F4)
+
+    static let apps = ["TextEdit", "Mail", "iPhone Mirroring", "FaceTime", "System Settings", "Phone", "Messages", "Contacts"]
+    static let edith = ContactRecord(id: "edith", name: "Edith Park", phones: [ContactHandle(.phone, "555 010 8000", label: "mobile")])
+    static let meredith = ContactRecord(id: "meredith", name: "Meredith Grey", phones: [ContactHandle(.phone, "555 010 9000")])
+
+    private func provider(_ access: ContactsAccess, apps: [String] = ContactsTests.apps) -> ContactsProvider {
+        let p = ContactsProvider()
+        p.use(ContactsIndex(Self.people + [Self.edith, Self.meredith]))
+        p.useApps(apps)
+        p.access = access
+        return p
+    }
+
+    func testAppNamesTypedWithAVerbWordStillOpenTheApp() {
+        // The launcher draws provider rows placed `top` above apps, so no top row means the app's row comes first.
+        for access in [ContactsAccess.notAsked, .denied, .failed, .loading, .allowed] {
+            let p = provider(access)
+            for typed in ["text edit", "text ed", "mail settings", "phone mirroring", "facetime", "facetime ", "phone ", "messages"] {
+                let rows = LauncherProviders.results([p], for: typed)
+                XCTAssertTrue(rows.top.isEmpty, "\(access) \"\(typed)\" put \(rows.top.map(\.title)) above the apps")
+                XCTAssertFalse(rows.normal.contains { if case .contact(let l) = $0.action { return l.verb == .message || l.verb == .email } else { return false } },
+                               "\(access) \"\(typed)\" offered a message or an email")
+            }
+        }
+        XCTAssertTrue(provider(.allowed).results(for: "text edit").isEmpty, "Edith is not TextEdit")
+        XCTAssertTrue(provider(.notAsked).results(for: "text edit").isEmpty, "TextEdit never asks for Contacts")
+    }
+
+    func testAVerbAndARealNameStillFindThePerson() throws {
+        let p = provider(.allowed)
+        let anna = try XCTUnwrap(LauncherProviders.results([p], for: "text anna").top.first)
+        XCTAssertEqual(anna.title, "Anna Smith", "two Annas of one length: Contacts' own order")
+        guard case .contact(let msg) = anna.action else { return XCTFail("a message") }
+        XCTAssertEqual(msg.verb, .message)
+        XCTAssertEqual(LauncherProviders.results([p], for: "text anna smith").top.first?.title, "Anna Smith")
+        XCTAssertEqual(LauncherProviders.results([p], for: "call edith").top.map(\.title), ["Edith Park"])
+        XCTAssertEqual(LauncherProviders.results([p], for: "mail jose see you").top.first?.title, "José Álvarez")
+    }
+
+    func testAfterAVerbOnlyRealNameMatchesShowAndOnlyStrongOnesLead() {
+        // No TextEdit on this Mac: "text edit" is a message to Edith, never to Meredith, whose name only holds "edit".
+        let p = provider(.allowed, apps: [])
+        let rows = LauncherProviders.results([p], for: "text edit")
+        XCTAssertEqual(rows.top.map(\.title), ["Edith Park"])
+        XCTAssertFalse((rows.top + rows.normal).contains { $0.title == "Meredith Grey" })
+        // Initials (tier 2) show but wait below the apps; letters scattered through a name never show after a verb.
+        let initials = LauncherProviders.results([p], for: "call ep")
+        XCTAssertTrue(initials.top.isEmpty)
+        XCTAssertEqual(initials.normal.map(\.title), ["Edith Park"])
+        XCTAssertTrue(LauncherProviders.results([p], for: "call eprk").normal.isEmpty)
+        // Without access the ask and off rows never claim the top either.
+        for row in [ContactsProvider.askRow, ContactsProvider.deniedRow, ContactsProvider.failedRow] {
+            XCTAssertEqual(row.placement, .normal, row.id)
+        }
     }
 
     // MARK: Without access
@@ -318,6 +405,45 @@ final class ContactsTests: XCTestCase {
         XCTAssertEqual(ContactRecents.decode(nil), ContactRecents())
         for n in 0..<(ContactRecents.limit + 20) { recents.note(try XCTUnwrap(ContactLaunch(Self.annaJ, .call)), at: Double(n)) }
         XCTAssertEqual(recents.uses.count, ContactRecents.limit, "a small file")
+    }
+}
+
+/// A read of Contacts that fails backs off and then stops until the launcher opens (review of #580, sol-F2 and first-F1).
+final class ContactsReadRetryTests: XCTestCase {
+    func testAFailingReadBacksOffThenStops() {
+        var retry = ContactsReadRetry()
+        XCTAssertFalse(retry.gaveUp)
+        XCTAssertEqual(retry.failed(), 1)
+        XCTAssertEqual(retry.failed(), 5)
+        XCTAssertEqual(retry.failed(), 30)
+        XCTAssertFalse(retry.gaveUp, "the third retry is still to come")
+        XCTAssertNil(retry.failed(), "after three retries it stops")
+        XCTAssertTrue(retry.gaveUp)
+        XCTAssertNil(retry.failed(), "and stays stopped")
+        retry.reset()
+        XCTAssertFalse(retry.gaveUp)
+        XCTAssertEqual(retry.failed(), 1, "the launcher opening starts over")
+    }
+
+    func testAfterItStopsTheLauncherAndTheCommandSaySo() throws {
+        let p = ContactsProvider()
+        p.access = .failed
+        XCTAssertEqual(p.results(for: "call anna"), [ContactsProvider.failedRow])
+        XCTAssertTrue(p.results(for: "anna").isEmpty)
+        XCTAssertEqual(ContactsProvider.failedRow.title, "Couldn't read Contacts")
+        let r = ContactsCommand.answer(Wire.Request(op: .contacts, target: "anna", text: "find"), access: .failed,
+                                       index: ContactsIndex([]), recents: ContactRecents())
+        XCTAssertTrue(r.reply.error?.hasPrefix("Couldn't read Contacts") == true)
+    }
+
+    func testTheLibraryRetriesOnlyThroughThePolicy() throws {
+        let lib = try Repo.code("Sources/BaneySpaces/ContactsLibrary.swift")
+        XCTAssertTrue(lib.contains("retry.failed()"), "a failed read asks the policy for its back-off")
+        XCTAssertTrue(lib.contains("retryWork == nil { load() }"), "a waiting retry is never read sooner")
+        XCTAssertTrue(lib.contains("if now == .loading, retry.gaveUp { now = .failed }"))
+        let launcher = try Repo.code("Sources/BaneySpaces/Launcher.swift")
+        XCTAssertTrue(launcher.contains("ContactsLibrary.shared.launcherOpened()"))
+        XCTAssertTrue(launcher.contains("ContactsLibrary.shared.provider.useApps("))
     }
 }
 
