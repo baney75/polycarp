@@ -661,14 +661,18 @@ Start connecting again in the assistant."
     }
 
     /// A waiting request that came through the public tunnel (or from a client registered there) and sends its code
-    /// somewhere other than an assistant's own host. Its name proves nothing, so approving it takes `--unverified`.
+    /// somewhere other than an assistant's own host over https. Its name proves nothing, so approving it takes
+    /// `--unverified`. Loopback counts only from this machine: a native client never arrives through the tunnel, and a
+    /// visitor's own 127.0.0.1 is the visitor's machine, not this one.
     pub fn unverified(&self, p: &Pending) -> bool {
         let tunnel = p.origin == Origin::Tunnel
             || self
                 .clients
                 .get(&p.client)
                 .is_none_or(|c| c.origin == Origin::Tunnel);
-        tunnel && !assistant_redirect(&p.redirect_uri)
+        let assistant_host = matches!(scheme_and_host(&p.redirect_uri), Some(("https", _)))
+            && assistant_redirect(&p.redirect_uri);
+        tunnel && !assistant_host
     }
 
     /// The owner's yes, on this machine. `scopes` None grants what the client asked for. An unverified request needs
@@ -761,6 +765,24 @@ Claude, ChatGPT or Grok. The name \"{name}\" is whatever the visitor typed. If y
             }
             Some(Decision::Approved(scopes)) => {
                 self.pending.remove(&key);
+                // The owner's latest approval of this client is the ceiling: a yes given earlier and polled late
+                // never brings back scopes a later, narrower yes took away.
+                let current = self
+                    .clients
+                    .get(&p.client)
+                    .map(|c| c.scopes.clone())
+                    .unwrap_or_default();
+                let scopes: Vec<String> = scopes
+                    .iter()
+                    .filter(|s| current.contains(s))
+                    .cloned()
+                    .collect();
+                if scopes.is_empty() {
+                    return Poll::Gone(
+                        "The owner has since changed what this connection may do. Start connecting again in the assistant."
+                            .into(),
+                    );
+                }
                 let code = store::secret("pcc_");
                 self.codes.insert(
                     store::sha256_hex(&code),

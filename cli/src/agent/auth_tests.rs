@@ -692,3 +692,71 @@ fn approving_again_with_fewer_scopes_ends_the_wider_grant() {
     let again = refresh(&mut st, &c, narrow["refresh_token"].as_str().unwrap(), now).unwrap();
     assert_eq!(again["scope"], "read");
 }
+
+#[test]
+fn a_yes_polled_after_a_narrower_yes_gets_only_the_narrower_scopes() {
+    let mut st = State::default();
+    let c = register(&mut st);
+    // Request A approved wide but not yet polled; request B approved with read only.
+    let (a, pa) = st
+        .authorize(&authorize_query(&c, &[]), RESOURCE, Origin::Tunnel, T0)
+        .unwrap();
+    st.approve(
+        &pa.approval,
+        Some(vec!["read".into(), "files".into(), "act".into()]),
+        false,
+        T0,
+    )
+    .unwrap();
+    let narrow = approved_tokens(&mut st, &c, &["read"], T0 + 10);
+    assert_eq!(narrow["scope"], "read");
+    let Poll::Redirect(url) = st.poll(&a, ISSUER, T0 + 20) else {
+        panic!("approved");
+    };
+    let late = exchange(
+        &mut st,
+        &c,
+        &param(&url, "code").unwrap(),
+        VERIFIER,
+        T0 + 21,
+    )
+    .unwrap();
+    assert_eq!(
+        late["scope"], "read",
+        "the late code holds only what the latest yes allows"
+    );
+}
+
+#[test]
+fn a_tunnel_client_sending_its_code_to_loopback_needs_unverified() {
+    let loopback = "http://127.0.0.1:9999/cb";
+    for (origin, plain_ok) in [(Origin::Tunnel, false), (Origin::Local, true)] {
+        let mut st = State::default();
+        let r = st
+            .register(
+                &json!({"redirect_uris": [loopback], "client_name": "Claude"}),
+                &[],
+                origin,
+                T0,
+            )
+            .unwrap();
+        let c = r["client_id"].as_str().unwrap().to_string();
+        let (_, p) = st
+            .authorize(
+                &authorize_query(&c, &[("redirect_uri", loopback)]),
+                RESOURCE,
+                origin,
+                T0,
+            )
+            .unwrap();
+        assert_eq!(st.unverified(&p), !plain_ok, "{origin:?}");
+        assert_eq!(
+            st.approve(&p.approval, None, false, T0).is_ok(),
+            plain_ok,
+            "{origin:?}"
+        );
+        if !plain_ok {
+            assert!(st.approve(&p.approval, None, true, T0).is_ok());
+        }
+    }
+}
