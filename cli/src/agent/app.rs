@@ -83,7 +83,8 @@ impl AppLink for Local {
         }
         #[cfg(not(unix))]
         {
-            let _ = req;
+            // The sockets and the not-running text are the Mac's; named here so a Windows build has no dead code.
+            let _ = (req, &self.sockets, NOT_RUNNING);
             Err("The Polycarp app's control channel is on the Mac only so far.".into())
         }
     }
