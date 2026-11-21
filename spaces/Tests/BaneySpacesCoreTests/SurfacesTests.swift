@@ -42,9 +42,8 @@ final class SurfacesTests: XCTestCase {
         XCTAssertTrue(d.desktop.verse)
         XCTAssertEqual(d.desktop.versePosition, .bottomRight)
         XCTAssertEqual(d.desktop.verseRotation, .daily)
-        XCTAssertEqual(d.dock.tileLabel, .number)
+        XCTAssertEqual(d.dock.tileLabel, .purpose)
         XCTAssertTrue(d.dock.restTile)
-        XCTAssertEqual(d.dock.restAfterMinutes, 30)
         XCTAssertEqual(d.menu.rows, Surfaces.MenuRow.allCases)
         XCTAssertEqual(d.menu.hidden, [])
         XCTAssertEqual(d.newtab.question, "What is the one thing today?")
@@ -93,7 +92,7 @@ final class SurfacesTests: XCTestCase {
             ("bar.clockFormat", "\"24h\""), ("bar.hourNames", "false"), ("bar.hideSystemMenuBar", "true"),
             ("desktop.scene", "\"image:dawn-field.heic\""), ("desktop.followDaylight", "false"), ("desktop.verse", "false"),
             ("desktop.versePosition", "\"top-center\""), ("desktop.verseRotation", "\"fixed:1 Corinthians 13:4-7\""),
-            ("dock.tileLabel", "\"purpose\""), ("dock.restTile", "false"), ("dock.restAfterMinutes", "90"),
+            ("dock.tileLabel", "\"number\""), ("dock.restTile", "false"),
             ("menu.order", #"["quit","settings"]"#), ("menu.hidden", #"["update","agents"]"#),
             ("newtab.question", "\"Will one thing.\""), ("newtab.chips", "false"), ("newtab.verse", "false"),
             ("newtab.searchURL", "\"https://search.brave.com/search?q={query}&source=web\""),
@@ -110,7 +109,7 @@ final class SurfacesTests: XCTestCase {
                                     right: [.clock], clockFormat: .twentyFourHour, hourNames: false, hideSystemMenuBar: true))
         XCTAssertEqual(s.desktop, .init(scene: .image("dawn-field.heic"), followDaylight: false, verse: false, versePosition: .topCenter,
                                         verseRotation: .fixed("1 Corinthians 13:4-7")))
-        XCTAssertEqual(s.dock, .init(tileLabel: .purpose, restTile: false, restAfterMinutes: 90))
+        XCTAssertEqual(s.dock, .init(tileLabel: .number, restTile: false))
         XCTAssertEqual(s.menu.rows, [.quit, .settings, .workspaces, .showAll, .find, .dock], "left-out rows follow; hidden ones go")
         XCTAssertEqual(s.newtab, .init(question: "Will one thing.", chips: false, verse: false, searchURL: "https://search.brave.com/search?q={query}&source=web"))
         XCTAssertEqual(s.idle, .init(style: .verse, effects: false, showMachineName: false, showVerse: false, showKierkegaard: false, startAfterMinutes: 5))
@@ -119,8 +118,8 @@ final class SurfacesTests: XCTestCase {
         XCTAssertEqual(tree(d.tree.json()), d.tree)
         XCTAssertEqual(d.tree.at(["version"]), .number(1), "a set stamps the format")
         // get answers the value in force and whether the file sets it.
-        XCTAssertEqual(try SurfacesOps.get("dock.restAfterMinutes", file: file).get().object?["value"], .number(90))
-        XCTAssertEqual(try SurfacesOps.get("dock.restAfterMinutes", file: file).get().object?["set"], .bool(true))
+        XCTAssertEqual(try SurfacesOps.get("idle.startAfterMinutes", file: file).get().object?["value"], .number(5))
+        XCTAssertEqual(try SurfacesOps.get("idle.startAfterMinutes", file: file).get().object?["set"], .bool(true))
     }
 
     func testGetMergesTheFileOverTheDefaults() throws {
@@ -180,7 +179,7 @@ final class SurfacesTests: XCTestCase {
             (#"{"desktop":{"verseRotation":"weekly"}}"#, "desktop.verseRotation", "fixed:<...>"),
             (#"{"desktop":{"verseRotation":"fixed:3:16"}}"#, "desktop.verseRotation", #""3:16" is not a valid fixed value"#),
             (#"{"dock":{"tileLabel":"name"}}"#, "dock.tileLabel", #"not "name""#),
-            (#"{"dock":{"restAfterMinutes":0}}"#, "dock.restAfterMinutes", "must be from 1 to 1440, not 0"),
+            (#"{"idle":{"startAfterMinutes":0}}"#, "idle.startAfterMinutes", "not 0"),
             (#"{"menu":{"order":["workspaces","help"]}}"#, "menu.order[1]", #""help" is not a known id"#),
             (#"{"menu":{"order":["custom:x"]}}"#, "menu.order[0]", "is not a known id"),
             (#"{"menu":{"hidden":["find","find"]}}"#, "menu.hidden[1]", "listed twice"),
@@ -285,13 +284,13 @@ final class SurfacesTests: XCTestCase {
     }
 
     func testASetOnAFileWithOtherErrorsNamesThemAndWritesNothing() throws {
-        try #"{"version":1,"dock":{"restAfterMinutes":0}}"#.write(toFile: file, atomically: true, encoding: .utf8)
+        try #"{"version":1,"idle":{"startAfterMinutes":0}}"#.write(toFile: file, atomically: true, encoding: .utf8)
         guard case .failure(let f) = SurfacesOps.set("bar.height", .number(30), file: file) else { return XCTFail() }
         XCTAssertEqual(f.code, "invalid_value")
         XCTAssertTrue(f.message.contains("the file has other errors"), f.message)
-        XCTAssertEqual(f.issues.map(\.path), ["dock.restAfterMinutes"])
+        XCTAssertEqual(f.issues.map(\.path), ["idle.startAfterMinutes"])
         // Fixing the error is a set of its own path.
-        XCTAssertNoThrow(try SurfacesOps.set("dock.restAfterMinutes", .number(15), file: file).get())
+        XCTAssertNoThrow(try SurfacesOps.set("idle.startAfterMinutes", .number(15), file: file).get())
     }
 
     func testTheEnvelopeIsTheOneTheThemeCommandUses() {

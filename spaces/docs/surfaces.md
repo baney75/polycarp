@@ -117,9 +117,8 @@ lilies stand opposite it.
 
 | Path | Default | Takes |
 | --- | --- | --- |
-| `dock.tileLabel` | `"number"` | What each workspace tile says: `purpose`, `number`, or `icons` (only its apps' icons). |
-| `dock.restTile` | `true` | An "At rest" tile gathers apps that have sat idle in the background. |
-| `dock.restAfterMinutes` | `30` | Minutes in the background, unused, before an app moves to the rest tile: 1 to 1440. |
+| `dock.tileLabel` | `"purpose"` | What each workspace tile says: `purpose` (the workspace's purpose in italic under the tile, with its number in the tile's corner; the number alone where it has no purpose), `number`, or `icons` (only its apps' icons). |
+| `dock.restTile` | `true` | An "At rest" tile after the workspaces gathers apps running with no window. Off, they don't show on the dock. |
 
 ### `menu`: the status menu (Polycarp's menu bar icon)
 
@@ -174,7 +173,7 @@ polycarp-spaces surfaces set desktop.versePosition top-right
 
 # Dock tiles by purpose; rest after an hour.
 polycarp-spaces surfaces set dock.tileLabel purpose
-polycarp-spaces surfaces set dock.restAfterMinutes 60
+polycarp-spaces surfaces set dock.restTile false
 
 # A quieter menu.
 polycarp-spaces surfaces set menu.hidden '["find","agents"]'
@@ -231,7 +230,7 @@ NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object:
 
 The model is `Surfaces` in BaneySpacesCore: `bar` (`Bar`: `enabled`, `height`, `style`, `left`, `center`, `right` as
 `[BarModule]`, `clockFormat`, `hourNames`, `hideSystemMenuBar`), `desktop` (`scene`, `followDaylight`, `verse`,
-`versePosition`, `verseRotation`), `dock` (`tileLabel`, `restTile`, `restAfterMinutes`), `menu` (`order`, `hidden`, and
+`versePosition`, `verseRotation`), `dock` (`tileLabel`, `restTile`), `menu` (`order`, `hidden`, and
 `rows`, the rows to show in order), `newtab` (`question`, `chips`, `verse`, `searchURL`, and `searchURL(for:)`), `idle`
 (`style`, `effects`, `showMachineName`, `showVerse`, `showKierkegaard`, `startAfterMinutes`) and `text` (`translation`,
 `verseSource`). `SurfaceField.all` is the one list of fields: validation, defaults, the model and the schema all read it.
