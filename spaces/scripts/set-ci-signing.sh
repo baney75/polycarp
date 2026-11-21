@@ -12,11 +12,16 @@ PIN=$(sed -n 's/.*certificate leaf = H"\([0-9a-fA-F]\{40\}\)".*/\1/p' "$HERE/rel
 [ -n "$PIN" ] || { echo "set-ci-signing.sh: release-requirement.txt pins no certificate" >&2; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "set-ci-signing.sh: sign in to GitHub first: gh auth login" >&2; exit 1; }
 
+# `security -i` reads commands from stdin, so the passwords never reach `ps`. Both are hex: nothing to quote.
+keychain() { printf '%s\n' "$1" | security -i >/dev/null; }
+
 # The two places signing-identity.sh keeps the key: Polycarp's, then BaneySpaces' (the key every release is pinned to).
+# Each is unlocked with its own password before it is read, so one locked since a restart is still found.
 KC=""
 for dir in "$HOME/Library/Application Support/Polycarp/Signing" "$HOME/Library/Application Support/BaneySpaces/Signing"; do
   for f in "$dir"/*-signing.keychain-db; do
     [ -f "$f" ] && [ -s "$dir/keychain-password" ] || continue
+    keychain "unlock-keychain -p $(cat "$dir/keychain-password") \"$f\""
     # One identity, and it is the pinned one: find-identity lists each by its certificate's SHA-1.
     ids=$(security find-identity "$f" 2>/dev/null | sed -n 's/^ *[0-9][0-9]*) \([0-9A-F]\{40\}\) .*/\1/p' | sort -u)
     if [ "$ids" = "$PIN" ]; then KC=$f; break 2; fi
@@ -26,9 +31,6 @@ done
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 umask 077
-# `security -i` reads commands from stdin, so the passwords never reach `ps`. Both are hex: nothing to quote.
-keychain() { printf '%s\n' "$1" | security -i >/dev/null; }
-keychain "unlock-keychain -p $(cat "$(dirname "$KC")/keychain-password") \"$KC\""
 openssl rand -hex 24 | tr -d '\n' > "$TMP/p12pass"   # no newline: gh stores stdin as it is
 keychain "export -k \"$KC\" -t identities -f pkcs12 -P $(cat "$TMP/p12pass") -o \"$TMP/id.p12\""
 [ -s "$TMP/id.p12" ] || { echo "set-ci-signing.sh: the export came back empty; nothing was set" >&2; exit 1; }

@@ -9,11 +9,13 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 PIN=$(sed -n 's/.*certificate leaf = H"\([0-9a-fA-F]\{40\}\)".*/\1/p' scripts/release-requirement.txt | tr a-f A-F)
 OTHER=0123456789ABCDEF0123456789ABCDEF01234567
 mkdir -p "$tmp/bin"
-# STUB_IDS: the certificate hashes find-identity lists. `security -i` logs each command and writes a stand-in .p12.
+# STUB_IDS: the certificate hashes find-identity lists, only once the keychain is unlocked (a locked one lists none
+# here, as it may on the Mac after a restart). `security -i` logs each command and writes a stand-in .p12.
 cat > "$tmp/bin/security" <<'SH'
 #!/bin/bash
 case "$1" in
   find-identity)
+    grep -q "^unlock-keychain " "$STUB_DIR/security.log" 2>/dev/null || STUB_IDS=""
     echo "Policy: X.509 Basic"; echo "  Matching identities"
     n=0; for h in $STUB_IDS; do n=$((n + 1)); echo "  $n) $h \"Some Signing\""; done
     echo "     $n identities found"; echo ""; echo "  Valid identities only"
