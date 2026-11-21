@@ -31,7 +31,7 @@ public enum Welcome {
             after: "Turn on Polycarp in the list. This window updates by itself."),
     ]
 
-    /// The walk for the parts that are on. Workspaces asks for all it uses, and Browser needs nothing from macOS at all.
+    /// The walk for the parts that are on. Workspaces asks for all it uses.
     public static func steps(for features: FeatureSet) -> [PermissionStep] {
         steps.filter { step in
             switch step.kind {

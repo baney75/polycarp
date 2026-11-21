@@ -1,12 +1,14 @@
 #!/bin/bash
 # Installs Polycarp on a Mac:
 #   curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
-# Mac: downloads the signed app, which holds workspaces, browser agents and the `polycarp` command, and
-# opens it. No developer tools needed. POLYCARP_FROM_SOURCE=1 builds it on this Mac instead.
+# Mac: downloads the signed app, which holds workspaces and the `polycarp` command, and opens it. No developer
+# tools needed. POLYCARP_FROM_SOURCE=1 builds it on this Mac instead.
 # It asks macOS for nothing itself: Polycarp's welcome window walks you through each permission.
 # Run it again any time to update. POLYCARP_REF picks a branch or tag.
 # POLYCARP_SOURCE=/path/to/checkout builds that checkout instead of downloading.
 # Linux: the Linux and Omarchy desktop is retired. Run there, this prints one line saying so and installs nothing.
+# The browser helper moved to Tychicus: POLYCARP_FEATURES that names browser prints where to get it (BROWSER_MOVED
+# below) and installs nothing.
 # Everything is inside main(), called on the last line: run through a pipe (curl | bash), a download that
 # stops halfway runs nothing, and no step can read the script's own text from stdin.
 set -euo pipefail
@@ -19,6 +21,7 @@ main() {
     printf '%s\n' "$LINUX_MOVED"
     return 0
   fi
+  moved_notes "${POLYCARP_FEATURES:-}" || return 0
   local REPO="https://github.com/baney75/polycarp.git"
   local REF="${POLYCARP_REF:-main}"
   # Where the ready-made app comes from, and the signature every release has to carry.
@@ -55,12 +58,11 @@ main() {
   say ""; say "${bold}Polycarp${reset}  ${dim}Bear much fruit.${reset}"; say ""
 
   local CFG="${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}"
-  # Which parts to run. POLYCARP_FEATURES=workspaces,browser answers without asking; with no terminal and no answer, the
+  # Which parts to run. POLYCARP_FEATURES=workspaces answers without asking; with no answer, the
   # welcome window asks instead. A reinstall keeps what was chosen.
   if [ ! -e "$CFG/$PARTS_FILE" ]; then
     REPLY="${POLYCARP_FEATURES:-}"
-    [ -n "$REPLY" ] || choose_parts
-    if [ -n "$REPLY" ]; then write_parts "$CFG" "$REPLY" || fail "POLYCARP_FEATURES has a part Polycarp doesn't know. Use workspaces and browser."; fi
+    if [ -n "$REPLY" ]; then write_parts "$CFG" "$REPLY" || fail "POLYCARP_FEATURES has a part Polycarp doesn't know. Use workspaces."; fi
   fi
   [ "$(uname -s)" = Darwin ] || fail "This installer is for a Mac. The polycarp command runs elsewhere: cargo install --git $REPO polycarp"
   [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 13 ] || fail "Polycarp needs macOS 13 Ventura or later."
@@ -106,8 +108,6 @@ main() {
     # rustup's default spot, for a shell that hasn't picked it up yet.
     [ -x "$HOME/.cargo/bin/cargo" ] && PATH="$HOME/.cargo/bin:$PATH"
     command -v cargo >/dev/null || fail "Building it needs Rust. Install it from https://rustup.rs, then run this again."
-    command -v bun >/dev/null || fail "Building it needs Bun. Install it from https://bun.sh, then run this again."
-    command -v node >/dev/null || fail "Building it needs Node. Install it from https://nodejs.org, then run this again."
     local SRC
     if [ -n "${POLYCARP_SOURCE:-}" ]; then
       SRC=$(cd "$POLYCARP_SOURCE" && pwd)
@@ -117,7 +117,6 @@ main() {
     fi
     # Apple silicon builds for itself, which is much quicker than a universal app.
     if [ "$(uname -m)" = arm64 ]; then export BANEYSPACES_ARM64_ONLY=1; fi
-    step "Getting what the extension builds against" "$SRC/browser/scripts/setup-siblings.sh"
     cd "$SRC/spaces"
     step "Building the hands engine" scripts/build-engine.sh
     step "Building Polycarp (a few minutes the first time)" scripts/bundle.sh
@@ -155,6 +154,7 @@ main() {
   local install_failed="If Polycarp is running, quit it from its menu, then run this again."
   [ ${#OLD_APPS[@]} -eq 0 ] || install_failed="BaneySpaces is still installed; open it again from Applications."
   STEP_FAIL="$install_failed" step "Installing Polycarp" "$NEW_APP/Contents/Resources/install-app.sh" "$NEW_APP"
+  connector_notice "$LOG"
   HEADING="Polycarp is installed, but one step didn't finish."
 
   # 4. Only now retire the old app: stop its watchdog and move it to the Trash, where you can put it back.
@@ -197,6 +197,31 @@ main() {
 
 # The one line a Linux run prints (LINUX_MOVED in cli/src/update.rs says the same).
 LINUX_MOVED="Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus"
+# Where the browser helper is now, and the line it prints. The release asset names aren't final yet:
+# change them here and nowhere else.
+TYCHICUS_RELEASES="https://github.com/baney75/tychicus/releases/latest"
+TYCHICUS_ASSET="tychicus-<version>-<platform>"
+TYCHICUS_INSTALL='tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .'
+BROWSER_MOVED="The browser helper is now Tychicus: download $TYCHICUS_ASSET from $TYCHICUS_RELEASES, then \`$TYCHICUS_INSTALL\`"
+
+# The browser, if POLYCARP_FEATURES ($1) names it: one line saying where it went. Returns 1 when the install must stop
+# there (the browser is all Tychicus now), 0 to carry on.
+moved_notes() {
+  if names_part browser "$1"; then printf '%s\n' "$BROWSER_MOVED"; fi
+  ! names_part browser "$1"
+}
+
+# The lines `polycarp update --retire-old-browser` writes about the remote connector (CONNECTOR_OFF and CONNECTOR_STAYS
+# in cli/src/retire.rs), from the install log ($1) to the terminal: the step that ran it only shows a check mark.
+connector_notice() {
+  { grep -E '^Your remote connector ' "$1" 2>/dev/null || true; } | while IFS= read -r line; do printf '  %s\n' "$line"; done
+  return 0
+}
+
+# True when a comma- or space-separated list of parts ($2) names the part $1.
+names_part() {
+  case ",${2//[[:space:]]/,}," in *",$1,"*) return 0 ;; *) return 1 ;; esac
+}
 
 # Where an old copy can be. Test mode leaves out /Applications, which a temporary home doesn't hide.
 old_app_paths() {
@@ -212,7 +237,7 @@ write_parts() {
   local list=${2//[[:space:]]/,}
   # voice is still accepted so older scripted installs keep working. Silas is its own app now, so it gets no line;
   # voice alone writes every part off, as before, so the old app is kept for someone who didn't take workspaces.
-  local dir=$1 chosen=",$list," part file="$1/$PARTS_FILE" known=",workspaces,browser,voice,"
+  local dir=$1 chosen=",$list," part file="$1/$PARTS_FILE" known=",workspaces,voice,"
   [ -e "$file" ] && return 0
   [ -n "${list//,/}" ] || return 2
   local rest=${list//,/ } name
@@ -221,38 +246,10 @@ write_parts() {
   mkdir -p "$dir" || return 1
   {
     printf '# Which parts of Polycarp run. Change it in Settings > General or with `polycarp features`.\n'
-    for part in workspaces browser; do
+    for part in workspaces; do
       case "$chosen" in *",$part,"*) printf '%s = true\n' "$part" ;; *) printf '%s = false\n' "$part" ;; esac
     done
   } > "$file"
-}
-
-# The checkboxes, in the terminal. Sets REPLY to the choice, or leaves it empty with no terminal to ask on: the script
-# often arrives through a pipe, so it asks on /dev/tty, and the welcome window asks when it can't.
-choose_parts() {
-  REPLY=""
-  { [ -t 1 ] && : </dev/tty; } 2>/dev/null || return 0
-  local on=(1 1) key i out
-  local names=(workspaces browser)
-  local titles=("Workspaces  nine workspaces, the dock, the overview and the launcher"
-                "Browser     lets AI agents work in your browser, in their own tab group")
-  printf '  What do you want? Press 1 or 2 to change a box, then Return.\n  You can change this any time in Settings.\n\n'
-  while :; do
-    for i in 0 1; do
-      if [ "${on[$i]}" = 1 ]; then printf '  [x] %s  %s\033[K\n' "$((i + 1))" "${titles[$i]}"
-      else printf '  [ ] %s  %s\033[K\n' "$((i + 1))" "${titles[$i]}"; fi
-    done
-    IFS= read -rsn1 key </dev/tty || key=""
-    case "$key" in
-      1|2) i=$((key - 1)); on[$i]=$((1 - on[$i])) ;;
-      "") if [ "${on[0]}${on[1]}" != 00 ]; then break; fi ;;
-    esac
-    printf '\033[2A'
-  done
-  out=""
-  for i in 0 1; do [ "${on[$i]}" = 1 ] && out="$out,${names[$i]}"; done
-  REPLY=${out#,}
-  printf '\n'
 }
 
 retire_watchdog() {

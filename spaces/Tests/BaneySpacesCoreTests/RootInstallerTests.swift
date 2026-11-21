@@ -90,6 +90,84 @@ final class RootInstallerTests: XCTestCase {
         XCTAssertFalse(try installer().contains("theme follow omarchy"), "the Omarchy theme follow left with Linux")
     }
 
+    /// The browser helper left Polycarp for Tychicus: asked for by name, the installer prints one line saying where to
+    /// get it, exits 0 and writes nothing, not even its log or the parts file, whatever else is named with it. A `uname`
+    /// that answers Darwin stands in for a Mac.
+    func testAskingForTheBrowserNamesWhereItWentAndInstallsNothing() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("root-installer-\(UUID().uuidString)")
+        let home = dir.appendingPathComponent("home"), bin = dir.appendingPathComponent("bin")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let uname = bin.appendingPathComponent("uname")
+        try "#!/bin/sh\necho Darwin\n".write(to: uname, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uname.path)
+        let tychicus = "The browser helper is now Tychicus: download tychicus-<version>-<platform> from https://github.com/baney75/tychicus/releases/latest, then `tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .`\n"
+        for (features, line) in [("browser", tychicus), ("workspaces, browser", tychicus), ("browser,voice", tychicus)] {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/bash")
+            p.arguments = [Repo.root.deletingLastPathComponent().appendingPathComponent("install.sh").path]
+            p.environment = ["HOME": home.path, "PATH": "\(bin.path):/usr/bin:/bin", "POLYCARP_FEATURES": features]
+            let out = Pipe(), err = Pipe()
+            p.standardOutput = out
+            p.standardError = err
+            p.standardInput = FileHandle.nullDevice
+            try p.run()
+            let said = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let errors = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            p.waitUntilExit()
+            XCTAssertEqual(p.terminationStatus, 0, errors)
+            XCTAssertEqual(said, line, features)
+            XCTAssertEqual(errors, "")
+            XCTAssertEqual(try fm.contentsOfDirectory(atPath: home.path), [], "asking for \(features) wrote into HOME")
+        }
+        let t = try installer()
+        XCTAssertFalse(t.contains("setup-siblings") || t.contains("command -v bun"), "a source build needs no browser siblings or Bun")
+    }
+
+    /// Only the browser stops the install: naming workspaces or voice carries on, and moved_notes says nothing for them
+    /// (voice gets its Silas line from write_parts). Sourced for its functions, so nothing is installed.
+    func testOnlyTheBrowserStopsTheInstall() throws {
+        let (said, code) = try functions("moved_notes 'workspaces,voice'; echo \"rc=$?\"; moved_notes browser || echo stop")
+        XCTAssertEqual(code, 0, said)
+        XCTAssertEqual(said, "rc=0\nThe browser helper is now Tychicus: download tychicus-<version>-<platform> from https://github.com/baney75/tychicus/releases/latest, then `tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .`\nstop\n")
+        let main = try installer()
+        XCTAssertTrue(main.contains("  moved_notes \"${POLYCARP_FEATURES:-}\" || return 0\n"), "main stops only when moved_notes says so")
+    }
+
+    /// The step that runs install-app.sh shows only a check mark and keeps its output in the log, so the retire step's
+    /// lines about the remote connector are printed from the log right after it. A log without them prints nothing.
+    func testTheConnectorLinesReachTheTerminal() throws {
+        let fm = FileManager.default
+        let log = fm.temporaryDirectory.appendingPathComponent("install-log-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: log) }
+        let off = "Your remote connector ran on the browser helper that left Polycarp, so it is off now; install Tychicus."
+        try "building\nretired com.polycarp.serve: it ran x\n\(off)\ndone\n".write(to: log, atomically: true, encoding: .utf8)
+        let (said, code) = try functions("connector_notice '\(log.path)'; echo; connector_notice /nonexistent; echo end")
+        XCTAssertEqual(code, 0, said)
+        XCTAssertEqual(said, "  \(off)\n\nend\n")
+        let main = try installer()
+        let step = try XCTUnwrap(main.range(of: "step \"Installing Polycarp\""))
+        XCTAssertTrue(main[step.upperBound...].contains("\n  connector_notice \"$LOG\"\n"), "the notice comes after the install step")
+    }
+
+    /// Runs `script` in bash with install.sh sourced for its functions only, under the script's own `set -euo pipefail`.
+    private func functions(_ script: String) throws -> (String, Int32) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        let path = Repo.root.deletingLastPathComponent().appendingPathComponent("install.sh").path
+        p.arguments = ["-c", "POLYCARP_INSTALL_FUNCTIONS_ONLY=1 source \"\(path)\"; \(script)"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = out
+        p.standardInput = FileHandle.nullDevice
+        try p.run()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return (String(decoding: data, as: UTF8.self), p.terminationStatus)
+    }
+
     func testTestModeNeverQuitsOrOpensAnything() throws {
         let t = try installer()
         XCTAssertTrue(t.contains(#"if [ -z "$test_mode" ]; then"#))

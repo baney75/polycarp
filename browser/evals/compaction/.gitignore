@@ -1,2 +1,0 @@
-# Per-run records stay local: a round is committed as runs.jsonl and summary.json.
-results/*/*-t[0-9]*.json

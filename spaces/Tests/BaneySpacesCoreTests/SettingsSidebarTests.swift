@@ -43,7 +43,7 @@ final class SettingsSidebarTests: XCTestCase {
     func testSectionsAreGroupedAsDesigned() throws {
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
         XCTAssertTrue(kit.contains(#"tabs: [.general, .keys, .dock, .appearance, .launcher]"#))
-        XCTAssertTrue(kit.contains(#"header: "Your tools", tabs: [.browser, .agents]"#))
+        XCTAssertTrue(kit.contains(#"header: "Your tools", tabs: [.agents]"#))
         XCTAssertTrue(kit.contains(#"header: "System", tabs: [.permissions, .automation, .updates]"#))
     }
 
@@ -64,15 +64,6 @@ final class SettingsSidebarTests: XCTestCase {
         let setup = try read("Sources/BaneySpaces/Setup.swift")
         for literal in ["Color.green", ".foregroundStyle(.green)", "Color.orange", ".foregroundStyle(.orange)"] {
             XCTAssertFalse(setup.contains(literal), "Setup.swift still draws \(literal)")
-        }
-        let browser = try read("Sources/BaneySpaces/BrowserSetup.swift")
-        let browserView = String(browser[try XCTUnwrap(browser.range(of: "struct BrowserSettingsView")).lowerBound...])
-        for (name, text) in [("BrowserSettingsView", browserView),
-                                  ("BrowserRemoteView", try read("Sources/BaneySpaces/BrowserRemoteView.swift"))] {
-            for literal in ["Color.green", ".foregroundStyle(.green)", "Color.orange", ".foregroundStyle(.orange)", ".foregroundStyle(.red)", ".foregroundStyle(.secondary)"] {
-                XCTAssertFalse(text.contains(literal), "\(name) still draws \(literal)")
-            }
-            XCTAssertTrue(text.contains("SettingsGroup"), "\(name) is built from the shared components")
         }
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
         for role in ["done", "working", "urgent"] { XCTAssertTrue(kit.contains("role(\"\(role)\")")) }

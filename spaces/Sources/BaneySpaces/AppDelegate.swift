@@ -449,7 +449,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             exit((try? app.unregister()) != nil ? 0 : 1)
         }
         linkCommandIfNeeded()
-        // A new app brings a new extension: refresh the copy the browser loads now, off the main thread, before anyone is told to reload.
         // A person who came by the disk image never ran install.sh: BaneySpaces, if there, goes to the Trash once Polycarp runs.
         let welcomeFinishedAtLaunch = UserDefaults.standard.bool(forKey: Welcome.finishedKey)
         // Tried at 5 s, and again every 10 s (for up to two minutes) while only the settings import is unfinished.
@@ -597,7 +596,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // ⌘Space goes back to Spotlight, as it does on a quit.
             SystemShortcuts.spotlightQueue.async { SystemShortcuts.restoreSpotlight() }
         }
-        BrowserModel.shared.applyPart(on: parts.contains(.browser))
         updateIcon()
     }
 
@@ -609,13 +607,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// A part changed, from Settings or `polycarp features`. Workspaces restart the app, because a clean quit is the tested
-    /// way to put every window, the Dock and Mission Control back, and a clean start the way to take them. The others
-    /// apply at once.
+    /// way to put every window, the Dock and Mission Control back, and a clean start the way to take them.
     private func partsChanged(from old: FeatureSet, to new: FeatureSet) {
         if old.contains(.workspaces) != new.contains(.workspaces) { return relaunch() }
-        if old.contains(.browser) != new.contains(.browser) {
-            BrowserModel.shared.applyPart(on: new.contains(.browser))
-        }
         if !new.showsSettingsTab(setup.model.tab.rawValue) { setup.model.tab = .general }
         updateIcon()
     }

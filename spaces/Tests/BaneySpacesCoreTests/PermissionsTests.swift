@@ -50,7 +50,7 @@ final class PermissionsTests: XCTestCase {
     func testEachPermissionNamesThePartsThatUseIt() {
         XCTAssertEqual(Permissions.entry(.accessibility).features, [.workspaces])
         XCTAssertEqual(Permissions.entry(.automation).features, [.workspaces])
-        XCTAssertEqual(Permissions.entry(.accessibility).stops(with: FeatureSet([.browser])), [])
+        XCTAssertEqual(Permissions.entry(.accessibility).stops(with: FeatureSet([])), [])
     }
 
     // MARK: macOS's answers
@@ -105,10 +105,6 @@ final class PermissionsTests: XCTestCase {
         XCTAssertEqual(all.next, .accessibility)
         XCTAssertFalse(all.canStart)
         XCTAssertEqual(all.needed.first?.stops, ["Workspaces, the dock and the overview"])
-
-        let browser = Permissions.plan(states: s, features: FeatureSet([.browser]))
-        XCTAssertEqual(browser.needed, [], "the browser part needs nothing from macOS")
-        XCTAssertTrue(browser.canStart)
     }
 
     func testTheSummaryAndNextFollowTheAnswers() {

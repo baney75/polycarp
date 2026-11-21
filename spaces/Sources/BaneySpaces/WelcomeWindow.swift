@@ -130,7 +130,6 @@ final class WelcomeModel: ObservableObject {
 struct WelcomeView: View {
     @ObservedObject var model: WelcomeModel
     @ObservedObject private var parts = PartsModel.shared
-    @ObservedObject private var browser = BrowserModel.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -165,7 +164,6 @@ struct WelcomeView: View {
                 tryIt
                 ForEach(Welcome.steps(for: parts.current).filter { !$0.isRequired }, id: \.kind) { row($0) }
                 loginRow
-                if parts.current.contains(.browser) { BrowserWelcomeRow() }
             }
             .padding(.horizontal, 20)
 
@@ -343,42 +341,4 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) { model.stop() }
-}
-
-
-/// Optional, like the login item: it never blocks starting. The Browser tab in Settings does the work.
-private struct BrowserWelcomeRow: View {
-    @ObservedObject var model = BrowserModel.shared
-    var body: some View {
-        if model.available {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: model.status?.extensionConnected == true ? "checkmark.circle.fill" : "globe")
-                    .font(Chrome.font(16))
-                    .foregroundStyle(model.status?.extensionConnected == true ? Chrome.accent : Color.secondary)
-                    .frame(width: 22)
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack {
-                        Text("Browser agents").font(Chrome.font(13, .bold))
-                        WelcomeTag(text: "Optional")
-                    }
-                    Text("Let Claude Code and Codex use your browser, in their own tab group. Set it up now or later in Settings > Browser.")
-                        .font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
-                    if model.status?.unattributed == true {
-                        Label("Connected", systemImage: "checkmark.circle.fill").font(Chrome.font(12, .medium)).foregroundStyle(Chrome.accent)
-                    }
-                    ForEach(model.rows) { row in
-                        if row.state == .connected {
-                            Label("\(row.name) is connected", systemImage: "checkmark.circle.fill").font(Chrome.font(12, .medium)).foregroundStyle(Chrome.accent)
-                        } else {
-                            Button("Connect \(row.name)") { model.connect(row.name) }.disabled(model.busy)
-                        }
-                    }
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .onAppear { model.startWatching() }
-            .onDisappear { model.stopWatching() }
-        }
-    }
 }

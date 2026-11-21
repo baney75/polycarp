@@ -12,30 +12,29 @@ final class FeaturesTests: XCTestCase {
     }
 
     func testTheFileRoundTrips() {
-        let set = FeatureSet([.browser])
+        let set = FeatureSet([])
         XCTAssertEqual(FeatureSet.parse(set.text), set)
         XCTAssertTrue(set.text.contains("workspaces = false"))
-        XCTAssertTrue(set.text.contains("browser = true"))
-        XCTAssertEqual(set.text.split(separator: "\n").filter { !$0.hasPrefix("#") }.count, 2, "one line per part, no other")
+        XCTAssertEqual(set.text.split(separator: "\n").filter { !$0.hasPrefix("#") }.count, 1, "one line per part, no other")
     }
 
     func testOnlyAnExplicitFalseTurnsAPartOff() {
         XCTAssertEqual(FeatureSet.parse(""), .all)
-        XCTAssertEqual(FeatureSet.parse("browser = maybe\nnonsense\n[x]\nbrowser"), .all)
-        XCTAssertEqual(FeatureSet.parse("browser = false # not today\n"), FeatureSet([.workspaces]))
+        XCTAssertEqual(FeatureSet.parse("workspaces = maybe\nnonsense\n[x]\nworkspaces"), .all)
+        XCTAssertEqual(FeatureSet.parse("workspaces = false # not today\n"), FeatureSet([]))
     }
 
-    /// A file written while dictation was a part of Polycarp still has its line. It is ignored, either way.
-    func testAnOldVoiceLineIsIgnored() {
-        XCTAssertEqual(FeatureSet.parse("workspaces = true\nvoice = false\nbrowser = true\n"), .all)
-        XCTAssertEqual(FeatureSet.parse("workspaces = false\nvoice = true\nbrowser = true\n"), FeatureSet([.browser]))
+    /// A file written while dictation or the browser was a part of Polycarp still has its line. It is ignored, either way.
+    func testOldVoiceAndBrowserLinesAreIgnored() {
+        XCTAssertEqual(FeatureSet.parse("workspaces = true\nvoice = false\nbrowser = false\n"), .all)
+        XCTAssertEqual(FeatureSet.parse("workspaces = false\nvoice = true\nbrowser = true\n"), FeatureSet([]))
     }
 
     func testNoFileMeansNobodyHasChosen() throws {
         let path = try temp().appendingPathComponent("sub/features.toml").path
         XCTAssertNil(FeatureFile.load(path: path))
-        XCTAssertTrue(FeatureFile.save(FeatureSet([.browser]), path: path))
-        XCTAssertEqual(FeatureFile.load(path: path), FeatureSet([.browser]))
+        XCTAssertTrue(FeatureFile.save(FeatureSet([]), path: path))
+        XCTAssertEqual(FeatureFile.load(path: path), FeatureSet([]))
     }
 
     func testTheFileLivesBesideTheTheme() {
@@ -44,15 +43,15 @@ final class FeaturesTests: XCTestCase {
     }
 
     func testSettingsSectionsFollowTheirPart() {
-        let browserOnly = FeatureSet([.browser])
+        let none = FeatureSet([])
         for gone in ["Keys", "Dock", "Launcher", "Agents", "Automation"] {
-            XCTAssertFalse(browserOnly.showsSettingsTab(gone), gone)
+            XCTAssertFalse(none.showsSettingsTab(gone), gone)
         }
-        for kept in ["General", "Appearance", "Updates", "Browser"] { XCTAssertTrue(browserOnly.showsSettingsTab(kept), kept) }
+        for kept in ["General", "Appearance", "Updates"] { XCTAssertTrue(none.showsSettingsTab(kept), kept) }
     }
 
     func testEveryPartHasAPlainNameAndLine() {
-        XCTAssertEqual(Feature.allCases.map(\.title), ["Workspaces", "Browser"])
+        XCTAssertEqual(Feature.allCases.map(\.title), ["Workspaces"])
         for f in Feature.allCases { XCTAssertTrue(f.summary.hasSuffix("."), f.title) }
     }
 
@@ -61,15 +60,7 @@ final class FeaturesTests: XCTestCase {
     func testAPartThatIsOffAsksForNothing() {
         XCTAssertEqual(Welcome.steps(for: .all).map(\.kind), [.accessibility])
         XCTAssertEqual(Welcome.steps(for: FeatureSet([.workspaces])).map(\.kind), [.accessibility])
-        XCTAssertEqual(Welcome.steps(for: FeatureSet([.browser])).map(\.kind), [])
-    }
-
-    func testBrowserAloneStartsWithNoPermissions() {
-        let browser = FeatureSet([.browser])
-        XCTAssertTrue(Welcome.canStart(granted: [], features: browser))
-        XCTAssertNil(Welcome.next(granted: [], skipped: [], features: browser))
-        XCTAssertEqual(Welcome.defaultAction(granted: [], skipped: [], features: browser), .finish)
-        XCTAssertFalse(Welcome.shouldShow(hasFinished: true, granted: [], forced: false, features: browser))
+        XCTAssertEqual(Welcome.steps(for: FeatureSet([])).map(\.kind), [])
     }
 
     func testEveryoneElseSeesTheWalkAsBefore() {
@@ -78,67 +69,7 @@ final class FeaturesTests: XCTestCase {
         XCTAssertEqual(Welcome.next(granted: [], skipped: []), .accessibility)
     }
 
-    // MARK: Turning Browser off
-
-    private func manifest(_ home: URL, browser: String, helper: String) throws -> URL {
-        let url = home.appendingPathComponent("Library/Application Support/\(browser)/NativeMessagingHosts/\(BrowserPrevious.hostName).json")
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("{\"path\":\"\(helper)\"}".utf8).write(to: url)
-        return url
-    }
-
-    func testBrowserOffParksOnlyPolycarpsOwnManifests() throws {
-        let home = try temp()
-        let fm = FileManager.default
-        let ours = try manifest(home, browser: "net.imput.helium", helper: "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser")
-        let theirs = try manifest(home, browser: "Google/Chrome", helper: "/opt/homebrew/bin/tabkyra")
-
-        XCTAssertEqual(BrowserHosts.setEnabled(false, home: home), 1)
-        XCTAssertFalse(fm.fileExists(atPath: ours.path), "the browser can't find it now")
-        XCTAssertTrue(fm.fileExists(atPath: ours.path + BrowserHosts.offSuffix))
-        XCTAssertTrue(fm.fileExists(atPath: theirs.path), "a separate Tabkyra keeps working")
-
-        XCTAssertEqual(BrowserHosts.setEnabled(true, home: home), 1)
-        XCTAssertTrue(fm.fileExists(atPath: ours.path), "turning it on brings it straight back")
-        XCTAssertFalse(fm.fileExists(atPath: ours.path + BrowserHosts.offSuffix))
-    }
-
-    func testTurningOnNeverOverwritesAManifestWrittenWhileItWasOff() throws {
-        let home = try temp()
-        let ours = try manifest(home, browser: "net.imput.helium", helper: "/Applications/Polycarp.app/x")
-        BrowserHosts.setEnabled(false, home: home)
-        try Data("{\"path\":\"/Applications/Polycarp.app/newer\"}".utf8).write(to: ours)
-        XCTAssertEqual(BrowserHosts.setEnabled(true, home: home), 0)
-        XCTAssertTrue(String(decoding: FileManager.default.contents(atPath: ours.path)!, as: UTF8.self).contains("newer"))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: ours.path + BrowserHosts.offSuffix), "the older parked copy goes")
-    }
-
-    func testRemovingBrowserDeletesOnlyParkedManifests() throws {
-        let home = try temp()
-        let fm = FileManager.default
-        let ours = try manifest(home, browser: "net.imput.helium", helper: "/Applications/Polycarp.app/x")
-        BrowserHosts.setEnabled(false, home: home)
-        let theirs = try manifest(home, browser: "Google/Chrome", helper: "/opt/homebrew/bin/tabkyra")
-        XCTAssertEqual(BrowserHosts.removeParked(home: home), 1)
-        XCTAssertFalse(fm.fileExists(atPath: ours.path + BrowserHosts.offSuffix))
-        XCTAssertTrue(fm.fileExists(atPath: theirs.path))
-    }
-
-    func testOnlyBrowserStartedHostsAreStopped() {
-        let helper = "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser"
-        let ps = """
-          101 \(helper) chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/ --parent-window=0
-          102 \(helper) serve --port 8787
-          106 \(helper) doctor --json
-          103 /opt/homebrew/bin/tabkyra chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/
-         1004 \(helper) chrome-extension://abcdefghijklmnopabcdefghijklmnop/
-          105 /bin/zsh -c grep \(helper) chrome-extension://
-        garbage line
-        """
-        XCTAssertEqual(BrowserHosts.hostPids(ps: ps, helper: helper), [101, 102, 1004], "remote access goes too; doctor doesn't")
-    }
-
-    // MARK: The installer's checkboxes
+    // MARK: The installer's parts
 
     /// Runs one of install.sh's functions in bash, the way the installer does.
     private func installer(_ script: String) throws -> (Int32, String) {
@@ -158,23 +89,24 @@ final class FeaturesTests: XCTestCase {
 
     func testTheInstallerWritesTheChosenParts() throws {
         let dir = try temp()
-        let (code, output) = try installer("write_parts '\(dir.path)' 'workspaces,browser'")
+        let (code, output) = try installer("write_parts '\(dir.path)' 'workspaces'")
         XCTAssertEqual(code, 0, output)
-        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.workspaces, .browser]))
+        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.workspaces]))
     }
 
     func testTheInstallerRefusesAnUnknownPartAndAnEmptyChoice() throws {
         let dir = try temp()
-        XCTAssertNotEqual(try installer("write_parts '\(dir.path)' 'browser,typo'").0, 0)
+        XCTAssertNotEqual(try installer("write_parts '\(dir.path)' 'workspaces,typo'").0, 0)
+        XCTAssertNotEqual(try installer("write_parts '\(dir.path)' 'browser'").0, 0, "the browser is Tychicus's now")
         XCTAssertNotEqual(try installer("write_parts '\(dir.path)' ''").0, 0)
         XCTAssertNil(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path))
     }
 
     func testTheInstallerStillAcceptsVoiceButWritesNothingForIt() throws {
         let dir = try temp()
-        let (code, output) = try installer("write_parts '\(dir.path)' 'voice,browser'")
+        let (code, output) = try installer("write_parts '\(dir.path)' 'voice,workspaces'")
         XCTAssertEqual(code, 0, output)
-        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.browser]))
+        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.workspaces]))
         let alone = try temp()
         XCTAssertEqual(try installer("write_parts '\(alone.path)' 'voice'").0, 0)
         let written = try String(contentsOf: alone.appendingPathComponent("features.toml"), encoding: .utf8)
@@ -183,16 +115,16 @@ final class FeaturesTests: XCTestCase {
 
     func testSpacesAroundThePartsAreFine() throws {
         let dir = try temp()
-        XCTAssertEqual(try installer("write_parts '\(dir.path)' 'workspaces, browser'").0, 0)
-        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.workspaces, .browser]))
+        XCTAssertEqual(try installer("write_parts '\(dir.path)' ' workspaces , '").0, 0)
+        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.workspaces]))
     }
 
     func testAReinstallKeepsTheChoice() throws {
         let dir = try temp()
         let file = dir.appendingPathComponent("features.toml")
-        FeatureFile.save(FeatureSet([.workspaces]), path: file.path)
-        XCTAssertEqual(try installer("write_parts '\(dir.path)' 'browser'").0, 0)
-        XCTAssertEqual(FeatureFile.load(path: file.path), FeatureSet([.workspaces]))
+        FeatureFile.save(FeatureSet([]), path: file.path)
+        XCTAssertEqual(try installer("write_parts '\(dir.path)' 'workspaces'").0, 0)
+        XCTAssertEqual(FeatureFile.load(path: file.path), FeatureSet([]))
     }
 
     func testTheOldAppIsRetiredOnlyForSomeoneTakingWorkspaces() throws {
@@ -200,14 +132,5 @@ final class FeaturesTests: XCTestCase {
         let keep = try XCTUnwrap(installer.range(of: "grep -q '^workspaces = false'"))
         let retire = try XCTUnwrap(installer.range(of: "if [ ${#OLD_APPS[@]} -gt 0 ]; then"))
         XCTAssertLessThan(keep.lowerBound, retire.lowerBound, "the list is emptied before anything acts on it")
-        let choose = try XCTUnwrap(installer.range(of: "[ -n \"$REPLY\" ] || choose_parts"))
-        let download = try XCTUnwrap(installer.range(of: "# 1. Get the app."))
-        XCTAssertLessThan(choose.lowerBound, download.lowerBound, "the boxes come before the wait")
-    }
-
-    func testTheInstallerNeverPromptsWithoutATerminal() throws {
-        let (code, output) = try installer("choose_parts; echo \"chose=[$REPLY]\"")
-        XCTAssertEqual(code, 0, output)
-        XCTAssertTrue(output.contains("chose=[]"), output)
     }
 }

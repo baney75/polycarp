@@ -24,7 +24,7 @@ final class SettingsReadsTests: XCTestCase {
     func testOnlyOpeningOnTheAutomationPaneReadsEveryWindow() {
         XCTAssertTrue(SettingsReads.readsWindows(pane: "Automation", opening: true))
         XCTAssertFalse(SettingsReads.readsWindows(pane: "Automation", opening: false), "coming forward scanned every app")
-        for pane in ["General", "Keys", "Dock", "Appearance", "Launcher", "Permissions", "Updates", "Agents", "Browser"] {
+        for pane in ["General", "Keys", "Dock", "Appearance", "Launcher", "Permissions", "Updates", "Agents"] {
             XCTAssertFalse(SettingsReads.readsWindows(pane: pane, opening: true), pane)
         }
         let reads = SettingsWindowReads(ask: { 0 }, land: { _ in })

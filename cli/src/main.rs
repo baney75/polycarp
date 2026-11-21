@@ -4,16 +4,14 @@
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::process::Command;
 
-mod browsers;
 mod channel;
 mod features;
 mod mcp;
+mod retire;
 mod theme;
 mod update;
 mod version;
@@ -59,35 +57,15 @@ const SPACES: Tool = Tool {
     install: "https://github.com/baney75/polycarp",
 };
 
-const BROWSER: Tool = Tool {
-    sub: "browser",
-    product: "the Polycarp browser helper",
-    // Also the name the helper runs under (arg0), so `ps` shows `polycarp-browser mcp`.
-    exe: "polycarp-browser",
-    // The npm command's name before the rename: installs made then still have only it.
-    old_exes: &["tabkyra"],
-    env: "POLYCARP_BROWSER_BIN",
-    // The helper inside Polycarp.app is one executable with no Node needed; `polycarp-browser` on PATH is the same program.
-    bundled: &[
-        "~/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
-        "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
-        // Where an earlier `polycarp update` linked the helper on Linux: before PATH, so an older `npm link` never answers for it.
-        "~/.local/bin/polycarp-browser",
-    ],
-    spots: &[
-        "~/.config/tabkyra/tabkyra",
-        "/opt/homebrew/bin/tabkyra",
-        "/usr/local/bin/tabkyra",
-    ],
-    install: "https://github.com/baney75/polycarp",
-};
+/// What `polycarp browser` (and `polycarp features on|off browser`) prints now, on stderr with exit 2: the helper moved out.
+const BROWSER_MOVED: &str =
+    "The browser helper is now Tychicus: https://github.com/baney75/tychicus";
 
 const USAGE: &str = "\
-polycarp: one command for Polycarp Spaces and the Polycarp browser helper
+polycarp: one command for Polycarp Spaces and themes
 
 Usage:
   polycarp spaces [args...]    run the Spaces command
-  polycarp browser [args...]   run the browser helper (polycarp-browser)
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
   polycarp features            show or change which parts run (polycarp features --help)
   polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
@@ -97,9 +75,9 @@ Usage:
   polycarp update [--check] [--dry-run] [--yes] [--channel <c>] [--source <checkout>]
   polycarp --help
 
-The apps must already be installed. Each tool can be set with
-POLYCARP_SPACES_BIN or POLYCARP_BROWSER_BIN.
+The app must already be installed. POLYCARP_SPACES_BIN sets the spaces command.
 
+The browser helper is now Tychicus: https://github.com/baney75/tychicus
 The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 ";
 
@@ -115,13 +93,17 @@ fn main() {
     let rest: Vec<OsString> = args.collect();
     let code = match first.to_str() {
         Some("spaces") => handoff(&SPACES, &rest),
-        Some("browser") => handoff(&BROWSER, &rest),
+        // Gone from Polycarp: say where it went, with the exit code for a command used wrong.
+        Some("browser") => {
+            eprintln!("{BROWSER_MOVED}");
+            2
+        }
         Some("voice") => voice(),
         Some("theme") => theme::run(&rest),
         Some("features") => features::run(&rest),
         Some("mcp") => mcp::run(&rest),
         Some("doctor") => doctor(),
-        Some("version") => version::run(&rest, &version_device(&ask_helper)),
+        Some("version") => version::run(&rest, &version_device()),
         Some("update") => update::run(
             &rest,
             &update::Device {
@@ -129,8 +111,7 @@ fn main() {
                 app: polycarp_app(),
                 spaces: find(&SPACES).ok().filter(|p| trusted_tool(p)),
                 config: theme::config_dir(),
-                parts: &|| version::gather(&version_device(&ask_helper)),
-                running: &|| home().map_or_else(Vec::new, |h| browsers::with_extension(&h)),
+                parts: &|| version::gather(&version_device()),
             },
         ),
         Some("--version") | Some("-V") => {
@@ -209,12 +190,9 @@ fn is_script(p: &Path) -> bool {
 /// of it: where per-user installers put tools and the folders their links lead to. Relative to
 /// the home folder. Whole trees such as `~/.local` are not listed, since a cloned repo can sit
 /// in them.
-const HOME_ALLOWED: [&str; 22] = [
+const HOME_ALLOWED: [&str; 20] = [
     ".local/bin",
     ".local/lib/node_modules",
-    // Polycarp's own browser folder: where `polycarp update` puts the helper on Linux, and where
-    // the standalone browser's releases live.
-    ".local/share/polycarp/browser",
     // mise's shims and tools, not its plugins/ folder of git clones.
     ".local/share/mise/shims",
     ".local/share/mise/installs",
@@ -231,7 +209,6 @@ const HOME_ALLOWED: [&str; 22] = [
     ".asdf/installs",
     ".npm-global/bin",
     ".npm-global/lib/node_modules",
-    ".config/tabkyra",
     "Library/pnpm",
     // Windows per-user installs.
     "AppData/Local/Programs",
@@ -433,7 +410,7 @@ fn find(tool: &Tool) -> Result<PathBuf, Miss> {
             r => note(r),
         }
     }
-    // npm gives polycarp-browser.cmd, not polycarp-browser.exe. Say so instead of "not found".
+    // An npm-style install gives a .cmd or .bat shim, not an .exe. Say so instead of "not found".
     if shims_matter() {
         if let Some(path) = &path {
             for dir in env::split_paths(path).filter(|d| d.is_absolute()) {
@@ -453,7 +430,7 @@ fn find(tool: &Tool) -> Result<PathBuf, Miss> {
 
 fn script_advice(tool: &Tool, p: &Path) -> String {
     format!(
-        "{} ({}) is a .cmd or .bat file at {}. Those only run through a shell, and polycarp never uses one. Run Node on the tool's entry point, or set {} to a real executable.",
+        "{} ({}) is a .cmd or .bat file at {}. Those only run through a shell, and polycarp never uses one. Set {} to a real executable.",
         tool.exe,
         tool.sub,
         p.display(),
@@ -595,72 +572,48 @@ fn voice() -> i32 {
 const VOICE_MOVED: &str =
     "polycarp: Silas is its own app now. Open Silas, or get it at https://github.com/baney75/silas.";
 
-/// How long `doctor` waits for a tool's `--version`, reading included. Tests shorten it.
-fn doctor_limit() -> Duration {
-    env::var("POLYCARP_DOCTOR_LIMIT_MS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .map_or(Duration::from_secs(10), Duration::from_millis)
-}
-
 fn doctor() -> i32 {
     // A locked handle, and a closed pipe (`polycarp doctor | head -1`) is a quiet end, not a panic.
     let mut out = std::io::stdout().lock();
-    let mut printing = true;
     let mut ok = true;
-    for tool in [&SPACES, &BROWSER] {
-        let line = match find(tool) {
-            Ok(p) => {
-                let mut line = format!("{}: {}", tool.sub, p.display());
-                if tool.sub == "browser" {
-                    match first_version_line(&p) {
-                        Some(v) => line.push_str(&format!(" ({v})")),
-                        None => {
-                            line.push_str(" (found, but --version did not work)");
-                            ok = false;
-                        }
-                    }
-                }
-                line
-            }
-            Err(Miss::Script(p)) => {
-                ok = false;
-                format!(
-                    "{}: present but not runnable. {}",
-                    tool.sub,
-                    script_advice(tool, &p)
-                )
-            }
-            Err(Miss::InCwd(p)) => {
-                ok = false;
-                format!(
-                    "{}: {} is in the current folder, so it is not used. Run doctor from another folder",
-                    tool.sub,
-                    p.display()
-                )
-            }
-            Err(Miss::NoCwd) => {
-                ok = false;
-                format!(
-                    "{}: not checked, because the current folder can't be resolved",
-                    tool.sub
-                )
-            }
-            Err(Miss::Nothing) => {
-                ok = false;
-                format!("{}: not found", tool.sub)
-            }
-        };
-        // Stop printing after a write error, but finish the checks, so the exit code stays true.
-        if printing && writeln!(out, "{line}").is_err() {
-            printing = false;
+    let tool = &SPACES;
+    let line = match find(tool) {
+        Ok(p) => format!("{}: {}", tool.sub, p.display()),
+        Err(Miss::Script(p)) => {
+            ok = false;
+            format!(
+                "{}: present but not runnable. {}",
+                tool.sub,
+                script_advice(tool, &p)
+            )
         }
-    }
+        Err(Miss::InCwd(p)) => {
+            ok = false;
+            format!(
+                "{}: {} is in the current folder, so it is not used. Run doctor from another folder",
+                tool.sub,
+                p.display()
+            )
+        }
+        Err(Miss::NoCwd) => {
+            ok = false;
+            format!(
+                "{}: not checked, because the current folder can't be resolved",
+                tool.sub
+            )
+        }
+        Err(Miss::Nothing) => {
+            ok = false;
+            format!("{}: not found", tool.sub)
+        }
+    };
+    // Stop printing after a write error, but keep the check's answer, so the exit code stays true.
+    let printing = writeln!(out, "{line}").is_ok();
     // The same one line `polycarp version` ends with. It informs; it does not change the exit code.
     if printing {
-        let parts = version::gather(&version_device(&ask_helper));
+        let parts = version::gather(&version_device());
         let verdict = version::compare(&parts);
-        let _ = writeln!(out, "{}", version::summary(&parts, &verdict));
+        let _ = writeln!(out, "{}", verdict.line());
         // Under it, the one command that fixes each part that is missing or does not match.
         for line in version::fixes(&parts, &verdict, version::Os::current()) {
             let _ = writeln!(out, "{line}");
@@ -676,15 +629,13 @@ fn doctor() -> i32 {
 
 /// What `polycarp version`, `doctor` and `update` look at. Nothing here runs the spaces command:
 /// its build is read from files.
-fn version_device(ask: &dyn Fn(&Path, &[&str]) -> version::Answer) -> version::Device<'_> {
+fn version_device() -> version::Device {
     version::Device {
         exe: env::current_exe().ok(),
         installed: installed_polycarp(),
         home: home(),
         app: polycarp_app(),
         spaces: find(&SPACES).ok().filter(|p| trusted_tool(p)),
-        browser: find(&BROWSER).ok().filter(|p| trusted_tool(p)),
-        ask,
     }
 }
 
@@ -696,91 +647,6 @@ fn installed_polycarp() -> Option<PathBuf> {
         return None;
     }
     spot_path("~/.local/bin/polycarp").filter(|p| is_executable_file(p))
-}
-
-/// Asks the browser helper. `status` asks every connected browser, so it gets its own budget: each
-/// browser has most of the limit to answer (the helper asks them all at once and reads
-/// POLYCARP_BROWSER_QUERY_MS), and the helper has half a limit more to gather and print. A helper too
-/// old to know the budget is stopped at that point and reported as "no answer in time".
-fn ask_helper(p: &Path, args: &[&str]) -> version::Answer {
-    let limit = doctor_limit();
-    if args.first() == Some(&"status") {
-        let each = limit.mul_f32(0.8).as_millis().max(100).to_string();
-        return ask(
-            p,
-            args,
-            limit + limit / 2,
-            &[("POLYCARP_BROWSER_QUERY_MS", each.as_str())],
-        );
-    }
-    ask(p, args, limit, &[])
-}
-
-/// The tool's version, or None if it can't start, fails, prints nothing or takes past the limit.
-pub(crate) fn first_version_line(p: &Path) -> Option<String> {
-    match ask(p, &["--version"], doctor_limit(), &[]) {
-        version::Answer::Said(text) => text
-            .lines()
-            .next()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty()),
-        _ => None,
-    }
-}
-
-/// What a tool prints for `args` and how it ended: it could not start, it failed, or it took past
-/// `limit` and was stopped. The limit covers reading too: a tool that leaves a background process
-/// holding its output open can't stall `doctor`.
-fn ask(p: &Path, args: &[&str], limit: Duration, vars: &[(&str, &str)]) -> version::Answer {
-    use version::Answer;
-    let mut cmd = Command::new(p);
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    for (k, v) in vars {
-        cmd.env(k, v);
-    }
-    let Ok(mut child) = cmd.spawn() else {
-        return Answer::NotRun;
-    };
-    let Some(stdout) = child.stdout.take() else {
-        return Answer::NotRun;
-    };
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut text = String::new();
-        let read = stdout.take(64 * 1024).read_to_string(&mut text);
-        let _ = tx.send(read.ok().map(|_| text));
-    });
-    let started = Instant::now();
-    let stop = |child: &mut std::process::Child| {
-        let _ = child.kill();
-        let _ = child.wait();
-    };
-    let text = match rx.recv_timeout(limit) {
-        Ok(Some(text)) => text,
-        Ok(None) => {
-            stop(&mut child);
-            return Answer::Failed(String::new());
-        }
-        Err(_) => {
-            stop(&mut child);
-            return Answer::Late;
-        }
-    };
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => return Answer::Said(text),
-            Ok(Some(_)) => return Answer::Failed(text),
-            Ok(None) if started.elapsed() > limit => {
-                stop(&mut child);
-                return Answer::Late;
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(_) => return Answer::Failed(text),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -801,8 +667,8 @@ mod tests {
             pick_app(&both, Some(Path::new("/opt/polycarp"))),
             Some(sys.clone())
         );
-        // The helper and the spaces command come from that same app, though ~/Applications is listed first.
-        let helper = |app: &Path| app.join("Contents/Resources/browser/polycarp-browser");
+        // The spaces command comes from that same app, though ~/Applications is listed first.
+        let helper = |app: &Path| app.join("Contents/Resources/bin/polycarp-spaces");
         let order = app_first(vec![helper(&mine), helper(&sys)], Some(&sys));
         assert_eq!(order, vec![helper(&sys), helper(&mine)]);
         assert_eq!(

@@ -5,31 +5,25 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 
-pub const PARTS: [(&str, &str, &str); 2] = [
-    (
-        "workspaces",
-        "Workspaces",
-        "Nine workspaces, the dock, the overview and the launcher.",
-    ),
-    (
-        "browser",
-        "Browser",
-        "Lets AI agents work in your browser, in their own tab group.",
-    ),
-];
+/// The browser was a part until it moved to Tychicus; a `browser` line in an older file is ignored.
+pub const PARTS: [(&str, &str, &str); 1] = [(
+    "workspaces",
+    "Workspaces",
+    "Nine workspaces, the dock, the overview and the launcher.",
+)];
 
 const USAGE: &str = "\
 usage: polycarp features                 show which parts are on
        polycarp features on <part>       turn a part on
        polycarp features off <part>      turn a part off
 
-Parts: workspaces, browser. Both ship in the one app. A part that's off doesn't run,
-asks macOS for nothing and downloads nothing. To remove what a part downloaded, use Settings > General.
+Parts: workspaces.
+The browser helper is now Tychicus: https://github.com/baney75/tychicus
 ";
 
 /// Anything missing counts as on, so a damaged line can't take away something that worked.
-pub fn parse(text: &str) -> [bool; 2] {
-    let mut on = [true; 2];
+pub fn parse(text: &str) -> [bool; 1] {
+    let mut on = [true; 1];
     for line in text.lines() {
         let line = line.split('#').next().unwrap_or("");
         if let Some((key, value)) = line.split_once('=') {
@@ -43,7 +37,7 @@ pub fn parse(text: &str) -> [bool; 2] {
     on
 }
 
-pub fn render(on: [bool; 2]) -> String {
+pub fn render(on: [bool; 1]) -> String {
     let mut out =
         String::from("# Which parts of Polycarp run. Change it in Settings > General or with `polycarp features`.\n");
     for (i, part) in PARTS.iter().enumerate() {
@@ -53,13 +47,13 @@ pub fn render(on: [bool; 2]) -> String {
 }
 
 /// Applies `on`/`off` to a state. Err when the name is unknown, or when it would turn off the last part.
-pub fn change(state: [bool; 2], verb: &str, part: &str) -> Result<[bool; 2], String> {
+pub fn change(state: [bool; 1], verb: &str, part: &str) -> Result<[bool; 1], String> {
     let Some(i) = PARTS.iter().position(|p| p.0 == part) else {
-        return Err(format!("no part called {part}. Parts: workspaces, browser"));
+        return Err(format!("no part called {part}. Parts: workspaces"));
     };
     let mut next = state;
     next[i] = verb == "on";
-    if next == [false; 2] {
+    if next == [false; 1] {
         return Err("that would turn off all of Polycarp. To stop it, quit the app.".into());
     }
     Ok(next)
@@ -100,6 +94,11 @@ pub fn run(args: &[OsString]) -> i32 {
             print!("{USAGE}");
             0
         }
+        // The browser was a part before it moved; turning it on or off here only says where it went.
+        ["on" | "off", "browser"] => {
+            eprintln!("{}", crate::BROWSER_MOVED);
+            2
+        }
         [verb @ ("on" | "off"), part] => match change(state, verb, part) {
             Ok(next) => {
                 if let Some(parent) = path.parent() {
@@ -135,43 +134,48 @@ mod tests {
 
     #[test]
     fn the_text_round_trips() {
-        let state = [false, true];
+        let state = [false];
         assert_eq!(parse(&render(state)), state);
         assert!(render(state).contains("workspaces = false\n"));
         assert!(!render(state).contains("voice"));
+        assert!(
+            !render(state).contains("browser"),
+            "the browser is Tychicus now"
+        );
     }
 
     #[test]
     fn only_an_explicit_false_turns_a_part_off() {
-        assert_eq!(parse(""), [true; 2]);
-        assert_eq!(parse("browser = maybe\nnonsense\nbrowser"), [true; 2]);
-        assert_eq!(parse("browser = false # not today\n"), [true, false]);
+        assert_eq!(parse(""), [true]);
+        assert_eq!(parse("workspaces = maybe\nnonsense\nworkspaces"), [true]);
+        assert_eq!(parse("workspaces = false # not today\n"), [false]);
     }
 
-    /// A file written while dictation was a part of Polycarp still has its line. It is ignored, either way.
+    /// A file written while dictation or the browser was a part of Polycarp still has its line. It is ignored.
     #[test]
-    fn an_old_voice_line_is_ignored() {
+    fn old_voice_and_browser_lines_are_ignored() {
         assert_eq!(
-            parse("workspaces = true\nvoice = false\nbrowser = true\n"),
-            [true; 2]
+            parse("workspaces = true\nvoice = false\nbrowser = false\n"),
+            [true]
         );
         assert_eq!(
             parse("workspaces = false\nvoice = true\nbrowser = true\n"),
-            [false, true]
+            [false]
         );
     }
 
     #[test]
     fn a_change_names_a_real_part() {
-        assert_eq!(change([true; 2], "off", "browser"), Ok([true, false]));
-        assert_eq!(change([true, false], "on", "browser"), Ok([true; 2]));
-        assert!(change([true; 2], "off", "voice")
-            .unwrap_err()
-            .contains("no part called voice"));
+        assert_eq!(change([false], "on", "workspaces"), Ok([true]));
+        for gone in ["voice", "browser", "typo"] {
+            assert!(change([true], "off", gone)
+                .unwrap_err()
+                .contains(&format!("no part called {gone}")));
+        }
     }
 
     #[test]
     fn the_last_part_cannot_be_turned_off() {
-        assert!(change([false, true], "off", "browser").is_err());
+        assert!(change([true], "off", "workspaces").is_err());
     }
 }
