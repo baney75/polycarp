@@ -8,6 +8,8 @@ import SwiftUI
 /// Live state for the setup window. While the window is open it re-reads permission four times a
 /// second, so flipping the switch in System Settings shows up here almost at once.
 final class SetupModel: ObservableObject {
+    /// The theme the Appearance pane is switching to; one for the window and all its panes.
+    let themes = ThemePicker()
     @Published var trusted = AXIsProcessTrusted()
     @Published var modifier = Modifier.current
     @Published var conflicts: [String] = SystemShortcuts.conflicts(for: Modifier.current)
@@ -483,50 +485,72 @@ struct SetupView: View {
     @ObservedObject private var appearance = Appearance.shared
     @ObservedObject private var cursor = CursorController.shared
     @ObservedObject private var parts = PartsModel.shared
-    @StateObject private var themes = ThemePicker()
+    /// The model's, so every pane's host shows the same pick.
+    @ObservedObject private var themes: ThemePicker
     var close: () -> Void
     /// The window's height. Offscreen checks pass more, so the lazy pane builds every group at once.
-    var height = SettingsSidebar.windowSize.height
+    var height: CGFloat
+    /// Set on a pane's own host in the deck (`SettingsDeck`): this view draws that pane alone.
+    var pane: SettingsTab?
+
+    init(model: SetupModel, close: @escaping () -> Void, height: CGFloat = SettingsSidebar.windowSize.height, pane: SettingsTab? = nil) {
+        self.model = model
+        _themes = ObservedObject(wrappedValue: model.themes)
+        self.close = close
+        self.height = height
+        self.pane = pane
+    }
 
     var body: some View {
-        HStack(spacing: 0) {
-            SettingsSidebarView(selection: $model.tab)
-            ScrollView {
-                // Lazy: a pane builds the groups in view, not all of them, so opening or switching to a long one (Appearance,
-                // Silas) costs about what a short one does (#350). Each group is its own row; nothing here wraps them.
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    Text(model.tab.rawValue).font(Chrome.font(20, .bold)).accessibilityAddTraits(.isHeader)
-                    switch model.tab {
-                    case .general: general
-                    case .keys: keys
-                    case .dock: dock
-                    case .appearance: appearanceSections
-                    case .launcher: launcher
-                    case .automation: automation
-                    case .permissions: PermissionsPane(fix: .init(shown: model.staleGrant, busy: model.fixing, run: model.fixPermission),
-                                                       onAsk: { if $0 == .accessibility { model.askedForAccessibility() } })
-                    case .updates: updates
-                    case .agents: agents
-                    case .voice: VoiceSettingsView()
-                    case .browser: BrowserSettingsView()
-                    }
+        if let pane {
+            content(pane).frame(maxWidth: .infinity, maxHeight: .infinity).modifier(SettingsLook())
+        } else {
+            HStack(spacing: 0) {
+                SettingsSidebarView(selection: $model.tab)
+                // Every pane stays built while the window is open; a switch shows one and hides the other (#350).
+                SettingsPanes(tab: model.tab) { [model, close, height] tab in
+                    let host = NSHostingView(rootView: SetupView(model: model, close: close, height: height, pane: tab))
+                    host.sizingOptions = []
+                    return host
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(.horizontal, 28).padding(.top, 40).padding(.bottom, 28)
             }
-            .id(model.tab)   // each section opens at its top
-            // Theme files and pictures can be dropped anywhere on Appearance.
-            .themeDrop(current: appearance.polycarp?.name, on: model.tab == .appearance)
+            .frame(width: SettingsSidebar.windowSize.width, height: height)
+            .modifier(SettingsLook())
+            .background(Chrome.panel())
+            // ⌘W closes the window, as in any Mac app; so does its close button.
+            .background(Button("", action: close).keyboardShortcut("w", modifiers: .command).opacity(0).accessibilityHidden(true))
+            // The content runs under the title bar; without this the title bar's inset pushes the fixed frame down and clips its bottom.
+            .ignoresSafeArea()
         }
-        .frame(width: SettingsSidebar.windowSize.width, height: height)
-        .foregroundStyle(Chrome.wash())
-        .tint(Chrome.accent)
-        .toggleStyle(.switch)   // every on-or-off setting is the same control
-        .background(Chrome.panel())
-        .environment(\.colorScheme, Chrome.scheme)
-        // ⌘W closes the window, as in any Mac app; so does its close button.
-        .background(Button("", action: close).keyboardShortcut("w", modifiers: .command).opacity(0).accessibilityHidden(true))
-        // The content runs under the title bar; without this the title bar's inset pushes the fixed frame down and clips its bottom.
+    }
+
+    /// One pane, scrolling inside the window's fixed size.
+    private func content(_ tab: SettingsTab) -> some View {
+        ScrollView {
+            // Lazy: a pane builds the groups in view, not all of them, so opening or switching to a long one (Appearance,
+            // Silas) costs about what a short one does (#350). Each group is its own row; nothing here wraps them.
+            LazyVStack(alignment: .leading, spacing: 18) {
+                Text(tab.rawValue).font(Chrome.font(20, .bold)).accessibilityAddTraits(.isHeader)
+                switch tab {
+                case .general: general
+                case .keys: keys
+                case .dock: dock
+                case .appearance: appearanceSections
+                case .launcher: launcher
+                case .automation: automation
+                case .permissions: PermissionsPane(fix: .init(shown: model.staleGrant, busy: model.fixing, run: model.fixPermission),
+                                                   onAsk: { if $0 == .accessibility { model.askedForAccessibility() } })
+                case .updates: updates
+                case .agents: agents
+                case .voice: VoiceSettingsView()
+                case .browser: BrowserSettingsView()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 28).padding(.top, 40).padding(.bottom, 28)
+        }
+        // Theme files and pictures can be dropped anywhere on Appearance.
+        .themeDrop(current: appearance.polycarp?.name, on: tab == .appearance)
         .ignoresSafeArea()
     }
 
@@ -1143,6 +1167,17 @@ struct SetupView: View {
 /// Runs the bundled `polycarp theme` command for a pick in Settings, one at a time and in order, so the last pick is the one that
 /// stays. The theme's file changes and the app's watcher redraws within about a second, so a pick shows at once and lets go after
 /// that. Only the latest pick may clear what's shown or report a failure.
+/// What the window and each pane's own host share: a host doesn't take its parent's environment.
+struct SettingsLook: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(Chrome.wash())
+            .tint(Chrome.accent)
+            .toggleStyle(.switch)   // every on-or-off setting is the same control
+            .environment(\.colorScheme, Chrome.scheme)
+    }
+}
+
 final class ThemePicker: ObservableObject {
     @Published private(set) var pendingName: String?
     @Published private(set) var pendingMode: PolycarpTheme.Mode?

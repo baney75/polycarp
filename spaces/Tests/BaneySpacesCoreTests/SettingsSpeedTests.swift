@@ -8,12 +8,21 @@ import XCTest
 /// times and keeps `before`, the times this work started from.
 final class SettingsSpeedTests: XCTestCase {
     private struct Pane: Decodable { let cpuOpenMs: Double; let cpuSwitchMs: Double }
+    private struct Built: Decodable { let cpuBuiltMs: Double; let cpuStepMs: Double }
     private struct Record: Decodable {
         struct Before: Decodable { let panes: [String: Pane] }
         let goalMs: Double
         let panes: [String: Pane]
         let before: Before
     }
+    /// What the deck (`SettingsDeck`) adds to the record: a switch to a pane already built, each pane's hidden build,
+    /// how much the app grew with every pane built, and how long the first click after opening can wait.
+    private struct DeckRecord: Decodable {
+        let panes: [String: Built]
+        let memoryMB: Double
+        let firstInputMs: Double
+    }
+    private func recordData() throws -> Data { try Data(contentsOf: Repo.root.appendingPathComponent("scripts/settings-speed.json")) }
 
     /// The panes `SettingsTab` lists, read from its declaration.
     private func panes() throws -> Set<String> {
@@ -26,8 +35,7 @@ final class SettingsSpeedTests: XCTestCase {
     }
 
     func testEveryPaneIsRecordedAndTheLongOnesGotFaster() throws {
-        let data = try Data(contentsOf: Repo.root.appendingPathComponent("scripts/settings-speed.json"))
-        let record = try JSONDecoder().decode(Record.self, from: data)
+        let record = try JSONDecoder().decode(Record.self, from: recordData())
         XCTAssertEqual(record.goalMs, 16, "one frame at 60 Hz")
         let names = try panes()
         XCTAssertEqual(names.count, 11, "SettingsTab read from Setup.swift")
@@ -45,6 +53,35 @@ final class SettingsSpeedTests: XCTestCase {
             XCTAssertLessThanOrEqual(p.cpuOpenMs, was.cpuOpenMs * 0.8, "\(name) opens in \(p.cpuOpenMs) ms, was \(was.cpuOpenMs)")
             XCTAssertLessThanOrEqual(p.cpuSwitchMs, was.cpuSwitchMs * 0.8, "\(name) switches in \(p.cpuSwitchMs) ms, was \(was.cpuSwitchMs)")
         }
+    }
+
+    /// Settings keeps every pane built while open: a switch to one it holds fits in one frame, holding them all costs
+    /// at most 30 MB, and the first click after opening waits no longer than the first-open budget.
+    func testABuiltPaneSwitchesInOneFrame() throws {
+        let goal = try JSONDecoder().decode(Record.self, from: recordData()).goalMs
+        let deck = try JSONDecoder().decode(DeckRecord.self, from: recordData())
+        XCTAssertEqual(Set(deck.panes.keys), try panes(), "every pane's switch to it built is timed")
+        for (name, p) in deck.panes.sorted(by: { $0.key < $1.key }) {
+            XCTAssertLessThanOrEqual(p.cpuBuiltMs, goal, "\(name): a switch to it built takes \(p.cpuBuiltMs) ms")
+            XCTAssertGreaterThan(p.cpuStepMs, 0, "\(name) was built hidden")
+        }
+        XCTAssertGreaterThan(deck.memoryMB, 0, "measured")
+        XCTAssertLessThanOrEqual(deck.memoryMB, 30, "every pane built grows the app \(deck.memoryMB) MB")
+        XCTAssertLessThanOrEqual(deck.firstInputMs, 150, "the settings-first budget (spec/speed.json)")
+    }
+
+    /// The deck's rules: the window builds the pane in view; the rest are built one a turn, never while you type or click
+    /// or while something tracks; closing lets go of all but the pane on screen.
+    func testTheDeckBuildsOneAQuietTurnAndLetsGoOnClose() throws {
+        let deck = try Repo.code("Sources/BaneySpaces/SettingsDeck.swift")
+        XCTAssertTrue(deck.contains("RunLoop.main.add(t, forMode: .default)"), "no build while a menu, scroll or drag tracks")
+        XCTAssertTrue(deck.contains("guard let self, Self.quiet() else { return }"), "no build within quietFor of an input")
+        XCTAssertTrue(deck.contains("static let quietFor: TimeInterval = 0.2"))
+        XCTAssertTrue(deck.contains("forName: NSWindow.willCloseNotification, object: window"), "closing lets go")
+        XCTAssertTrue(deck.contains("for (t, v) in built where t != shown { v.removeFromSuperview(); built[t] = nil }"))
+        let setup = try Repo.code("Sources/BaneySpaces/Setup.swift")
+        XCTAssertTrue(setup.contains("SettingsPanes(tab: model.tab)"), "the window holds its panes in the deck")
+        XCTAssertFalse(setup.contains(".id(model.tab)"), "a switch never rebuilds the pane")
     }
 
     /// A pane builds only the groups in view: its groups are rows of a lazy stack, never children of an eager one or one
