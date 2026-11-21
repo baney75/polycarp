@@ -74,16 +74,22 @@ main() {
   if [ "$from_source" != 1 ]; then
     if [ -z "$ZIP" ]; then
       ZIP="$WORK/Polycarp.zip"
-      if got=$(fetch_app "$ZIP"); then
-        FROM=${got#* }
-        case ${got%% *} in
-          nightly) say "  ${dim}There's no stable release yet, so this installs the newest Nightly build.${reset}" ;;
-          preview) say "  ${dim}There's no stable or Nightly build yet, so this installs the Preview build.${reset}" ;;
-        esac
-      else
-        say "  ${dim}No ready-made app to download right now, so this builds it here.${reset}"
-        ZIP=""; from_source=1
-      fi
+      local fetched=0
+      got=$(fetch_app "$ZIP") || fetched=$?
+      case $fetched in
+        0)
+          FROM=${got#* }
+          case ${got%% *} in
+            nightly) [ -n "${POLYCARP_CHANNEL:-}" ] || say "  ${dim}There's no stable release yet, so this installs the newest Nightly build.${reset}" ;;
+            preview) [ -n "${POLYCARP_CHANNEL:-}" ] || say "  ${dim}There's no stable or Nightly build yet, so this installs the Preview build.${reset}" ;;
+          esac ;;
+        2) fail "Couldn't reach the Polycarp release (see $LOG). Nothing was changed; try again in a minute." ;;
+        *)
+          # A channel asked for by name is that channel or nothing: never an unreleased build of main.
+          [ -z "${POLYCARP_CHANNEL:-}" ] || fail "There's no ${POLYCARP_CHANNEL} build to download yet. Nothing was changed."
+          say "  ${dim}No ready-made app to download right now, so this builds it here.${reset}"
+          ZIP=""; from_source=1 ;;
+      esac
     fi
   fi
   if [ "$from_source" != 1 ]; then
@@ -226,18 +232,22 @@ connector_notice() {
 # fetch_app <zip>: downloads the ready-made app to <zip> from the first channel that has one, and prints
 # "<channel> <release folder>" so the checksum comes from the same release. POLYCARP_CHANNEL asks for one channel;
 # otherwise stable, then nightly, then preview (docs/releases.md). Preview is the old channel: it keeps serving the
-# bridge build until every install has moved to nightly. Fails when no channel has the app.
+# bridge build until every install has moved to nightly. Only a missing file (HTTP 404, or no file at a file://
+# stand-in) moves on to the next channel. Returns 1 when no channel has the app, 2 when a channel couldn't be read
+# (a network error, a 5xx), so a stable install never drops to Nightly because of a blip.
 fetch_app() {
-  local zip=$1 c url
+  local zip=$1 c url code rc
   for c in ${POLYCARP_CHANNEL:-stable nightly preview}; do
     case $c in
       stable) url="${RELEASES%/download}/latest/download" ;;
       *) url="$RELEASES/$c" ;;
     esac
-    if curl -fsSL -o "$zip" "$url/Polycarp.zip" </dev/null 2>>"$LOG"; then
-      printf '%s %s\n' "$c" "$url"
-      return 0
-    fi
+    rc=0; code=$(curl -sSL -o "$zip" -w '%{http_code}' "$url/Polycarp.zip" </dev/null 2>>"$LOG") || rc=$?
+    case "$rc:$code" in
+      0:200|0:000) printf '%s %s\n' "$c" "$url"; return 0 ;;
+      0:404|37:*) rm -f "$zip" ;;
+      *) rm -f "$zip"; printf 'fetch_app: %s answered %s (curl exit %s)\n' "$url" "$code" "$rc" >>"$LOG"; return 2 ;;
+    esac
   done
   return 1
 }
