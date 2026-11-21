@@ -9,6 +9,12 @@ import SwiftUI
 enum BarReader {
     /// Where the front app's menus are read, one at a time, so the last app to come forward is the last one read.
     static let queue = DispatchQueue(label: "polycarp.bar.menus", qos: .userInitiated)
+    private static let lock = NSLock()
+    private static var latest: pid_t = 0
+
+    /// The app whose menus the bar wants now. Any thread.
+    static var wanted: pid_t { lock.lock(); defer { lock.unlock() }; return latest }
+    static func want(_ pid: pid_t) { lock.lock(); latest = pid; lock.unlock() }
 
     /// The front app's menu bar: what the bar draws and, by `BarMenus.Item.index`, what a click presses.
     struct Menus {
@@ -17,11 +23,11 @@ enum BarReader {
     }
 
     /// Polycarp's own menus, from AppKit: asking itself through Accessibility would wait on its own main thread.
-    /// Main thread only.
+    /// The Apple menu isn't Polycarp's to open, so it is left out. Main thread only.
     static func ownMenus(name: String) -> Menus {
         let main = NSApp.mainMenu?.items ?? []
         let titles = [""] + [name] + main.dropFirst().map(\.title)
-        return Menus(items: BarMenus.items(titles)) { i in
+        return Menus(items: BarMenus.items(titles).filter { $0.role != .apple }) { i in
             guard i >= 1, i - 1 < main.count, let menu = main[i - 1].submenu else { return }
             menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
         }

@@ -97,7 +97,7 @@ What each one draws:
 
 | Module | Shows |
 | --- | --- |
-| `mark` | Polycarp's vine mark. |
+| `mark` | Polycarp's vine mark. Click it for Polycarp's menu (Settings, Quit and the rest), which `status` leaves out. |
 | `workspaces` | A dot for each workspace with windows, the one you're on drawn long; click one to go there. |
 | `purpose` | What the workspace you're on is for (`polycarp-spaces purpose set`), in serif italic. Nothing when it has none. |
 | `one-thing` | Today's one thing (`polycarp-spaces one`), in gold. Nothing when there is none. |
@@ -108,7 +108,7 @@ What each one draws:
 | `battery` | The charge, only off power or while charging. Nothing on a desktop Mac. |
 | `network` | "Offline" when there is no connection; nothing when there is. |
 | `app-menus` | The front app's menus: the Apple logo, the app's name in bold, then File, Edit and the rest. Click one to open it, as from the macOS bar. Titles past the room are left out whole, from the end. |
-| `status` | The status items of macOS and your apps, in the macOS bar's order: Wi-Fi, the battery, Control Center and the like as symbols, an app's own as its icon. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`. |
+| `status` | The status items of macOS and your apps, in the macOS bar's order: Wi-Fi, the battery, Control Center and the like as symbols, an app's own as its icon. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark. |
 | `custom:<name>` | Kept in the file, not drawn yet. |
 
 `app-menus` and `status` read through the Accessibility permission Polycarp already has; no pixels are copied, so

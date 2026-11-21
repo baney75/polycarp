@@ -27,6 +27,10 @@ final class TopBar {
     private var statusElements: [AXUIElement] = []
     private var statusTimer: Timer?
     private var readingStatus = false
+    /// An app started or quit during a read: read again when it lands.
+    private var statusDirty = false
+    /// Polycarp's own menu (the status item's), opened from the mark.
+    var ownMenu: () -> NSMenu? = { nil }
 
     init(spaces: Spaces) {
         self.spaces = spaces
@@ -36,6 +40,7 @@ final class TopBar {
             self.spaces.switchTo(n, announce: false)
         }
         model.onMenu = { [weak self] i in self?.menuPress(i) }
+        model.onMark = { [weak self] in self?.ownMenu()?.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil) }
         model.onStatus = { [weak self] i in
             guard let self, self.statusElements.indices.contains(i) else { return }
             BarReader.press(self.statusElements[i])
@@ -171,9 +176,14 @@ final class TopBar {
             return
         }
         let pid = app.processIdentifier
+        // Another app came forward: nothing may press the last one's menus while this one's are read.
+        if pid != menuPid { show(BarReader.Menus()) }
         menuPid = pid
+        BarReader.want(pid)
         guard pid != getpid() else { show(BarReader.ownMenus(name: app.localizedName ?? "Polycarp")); return }
         BarReader.queue.async { [weak self] in
+            // A read queued behind a hung app is skipped once another app is in front.
+            guard BarReader.wanted == pid else { return }
             let read = BarReader.menus(of: pid)
             DispatchQueue.main.async {
                 // An app that came forward while this one was read wins.
@@ -202,23 +212,27 @@ final class TopBar {
             RunLoop.main.add(t, forMode: .common)
             statusTimer = t
         }
-        guard !readingStatus else { return }
+        guard !readingStatus else { statusDirty = true; return }
         readingStatus = true
         let me = getpid()
         let apps = NSWorkspace.shared.runningApplications.filter { $0.processIdentifier != me }
-        let icons = Dictionary(apps.map { ($0.bundleIdentifier ?? "", $0.icon) }, uniquingKeysWith: { a, _ in a })
         let targets = apps.map { (pid: $0.processIdentifier, bundle: $0.bundleIdentifier ?? "") }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let read = BarReader.status(of: targets)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.readingStatus = false
+                if self.statusDirty { self.statusDirty = false; self.readStatus() }
+                // The module went off while this was read.
+                guard self.wants(.status) else { return }
                 let bar = self.model.bar
                 let kept = BarStatus.shown(read, \.item, modules: bar.left + bar.center + bar.right)
                 self.statusElements = kept.map(\.element)
                 let items = kept.map(\.item)
-                for item in items where !item.isSystem && self.model.icons[item.owner] == nil {
-                    self.model.icons[item.owner] = icons[item.owner] ?? nil
+                // Icons only for owners not seen yet; an app without a bundle id draws the plain dot.
+                for item in items where !item.isSystem && !item.owner.isEmpty && self.model.icons[item.owner] == nil {
+                    let app = NSRunningApplication.runningApplications(withBundleIdentifier: item.owner).first
+                    if let icon = app?.icon { self.model.icons[item.owner] = icon }
                 }
                 if self.model.status != items { self.model.status = items }
             }
@@ -308,6 +322,8 @@ final class TopBarModel: ObservableObject {
     var onPick: (Int, NSScreen) -> Void = { _, _ in }
     /// Presses the front app's menu at a `BarMenus.Item.index`.
     var onMenu: (Int) -> Void = { _ in }
+    /// Opens Polycarp's own menu, the one its status item holds.
+    var onMark: () -> Void = {}
     /// Presses the status item at an index of `status`.
     var onStatus: (Int) -> Void = { _ in }
 }
@@ -377,7 +393,12 @@ struct TopBarView: View {
     @ViewBuilder private func module(_ m: Surfaces.BarModule) -> some View {
         switch m {
         case .mark:
-            VineMark().frame(width: 12, height: 12).accessibilityLabel("Polycarp")
+            VineMark().frame(width: 12, height: 12)
+                .padding(.vertical, 4).contentShape(Rectangle())
+                .onTapGesture { model.onMark() }
+                .help("Polycarp")
+                .accessibilityLabel("Polycarp menu")
+                .accessibilityAddTraits(.isButton)
         case .workspaces:
             dots
         case .purpose:

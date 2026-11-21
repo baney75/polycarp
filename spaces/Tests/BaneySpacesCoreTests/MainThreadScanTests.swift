@@ -177,6 +177,8 @@ final class MainThreadScanTests: XCTestCase {
         let queued = try XCTUnwrap(SourceText.block(after: "BarReader.queue.async", in: menus), "menus are read on main")
         XCTAssertTrue(queued.contains("BarReader.menus(of: pid)"))
         XCTAssertEqual(count("BarReader.menus(of:", in: s), 1, "menus are read outside the queue")
+        XCTAssertTrue(menus.contains("if pid != menuPid { show(BarReader.Menus()) }"),
+                      "a click during a switch presses the last app's menu")
         let status = try XCTUnwrap(SourceText.block(after: "private func readStatus(", in: s))
         let background = try XCTUnwrap(SourceText.block(after: "DispatchQueue.global(qos: .utility).async", in: status),
                                        "status items are read on main")
