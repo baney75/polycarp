@@ -80,9 +80,11 @@ cp "${LIBS[0]}" "$OUT/libghostty.a"
 cp -R "$SRC/zig-out/share/ghostty" "$OUT/share/ghostty"
 cp -R "$SRC/zig-out/share/terminfo" "$OUT/share/terminfo"
 [ -f "$OUT/share/terminfo/78/xterm-ghostty" ] || { echo "ghostty: the build made no terminfo/78/xterm-ghostty" >&2; exit 1; }
-# A symbol Polycarp calls but the library lacks would fail at link, far from here.
+# A symbol Polycarp calls but the library lacks would fail at link, far from here. nm's output goes into a variable
+# first: piped straight to grep -q, nm dies of SIGPIPE when grep stops early, and pipefail calls that a miss.
+SYMS=$(nm -gU "$OUT/libghostty.a" 2>/dev/null || true)
 for sym in ghostty_init ghostty_app_new ghostty_surface_new ghostty_config_load_file ghostty_surface_key; do
-  nm -gU "$OUT/libghostty.a" 2>/dev/null | grep -q " _$sym\$" || { echo "ghostty: the library has no $sym" >&2; exit 1; }
+  grep -q " _$sym\$" <<<"$SYMS" || { echo "ghostty: the library has no $sym" >&2; exit 1; }
 done
 echo "$STAMP" > "$OUT/STAMP"
 echo "ghostty: built $OUT/libghostty.a ($GHOSTTY_TAG, ${GHOSTTY_COMMIT:0:9}, $(du -h "$OUT/libghostty.a" | cut -f1))"

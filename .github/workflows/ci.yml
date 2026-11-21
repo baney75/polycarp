@@ -117,7 +117,9 @@ jobs:
       - name: Build with the terminal linked
         run: |
           POLYCARP_TERMINAL=1 swift build
-          nm "$(POLYCARP_TERMINAL=1 swift build --show-bin-path)/BaneySpaces" | grep -q ' T _ghostty_app_new$'
+          # Into a file first: with pipefail, grep -q quitting early kills nm with SIGPIPE and fails the step.
+          nm "$(POLYCARP_TERMINAL=1 swift build --show-bin-path)/BaneySpaces" > "$RUNNER_TEMP/symbols.txt"
+          grep -q ' T _ghostty_app_new$' "$RUNNER_TEMP/symbols.txt"
       - name: Test with the terminal linked
         run: POLYCARP_TERMINAL=1 swift test
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
