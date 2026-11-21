@@ -9,7 +9,9 @@
   <key>CFBundleIconFile</key><string>Polycarp</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>@VERSION@</string>
-  <key>CFBundleVersion</key><string>@VERSION@</string>
+  <key>CFBundleVersion</key><string>@BUILD_NUMBER@</string>
+  <key>PolycarpVersion</key><string>@FULL_VERSION@</string>
+  <key>PolycarpChannel</key><string>@CHANNEL@</string>
   <key>PolycarpCommit</key><string>@COMMIT@</string>
   <key>PolycarpCommitDate</key><string>@COMMIT_DATE@</string>
   <key>PolycarpCommitDirty</key><string>@DIRTY@</string>

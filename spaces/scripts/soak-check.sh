@@ -230,6 +230,7 @@ if [ ! -x "$BIN" ]; then echo "BaneySpaces binary missing at $BIN" >&2; exit 1; 
 VER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo unknown)
 COMMIT=$(/usr/libexec/PlistBuddy -c 'Print :PolycarpCommit' "$APP/Contents/Info.plist" 2>/dev/null || echo unknown)
 HASH=$(shasum -a 256 "$BIN" 2>/dev/null | awk '{print $1}')
+BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist" 2>/dev/null || echo unknown)
 PID=$(pgrep -x Polycarp | head -1 || true)
 REAL_BIN=$(realpath "$BIN" 2>/dev/null || echo "$BIN")
 DISK_INO=$(disk_dev_ino "$BIN" 2>/dev/null || echo "")
@@ -269,7 +270,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps({
   exit 0
 fi
 
-echo "candidate version=$VER commit=$COMMIT sha256=$HASH" | tee -a "$RECEIPT"
+echo "candidate version=$VER commit=$COMMIT sha256=$HASH build=$BUILD" | tee -a "$RECEIPT"
 if [ -n "$EXPECT_COMMIT" ]; then
   case "$COMMIT" in
     "$EXPECT_COMMIT"|$EXPECT_COMMIT*) pass "commit matches BANEYSPACES_EXPECT_COMMIT=$EXPECT_COMMIT" ;;

@@ -37,6 +37,18 @@ check_app() {
 mkdir "$TMP/zip"
 ditto -x -k "$DIR/Polycarp.zip" "$TMP/zip"
 check_app "$TMP/zip/Polycarp.app" "Polycarp.zip"
+# A channel's feed must name this zip's checksum and the version and commit the app inside carries.
+if [ -f "$DIR/latest.json" ]; then
+  python3 -I - "$DIR/latest.json" "$(shasum -a 256 "$DIR/Polycarp.zip" | awk '{print $1}')" \
+    "$(plutil -extract PolycarpVersion raw -o - "$TMP/zip/Polycarp.app/Contents/Info.plist" 2>/dev/null || true)" \
+    "$(plutil -extract PolycarpCommit raw -o - "$TMP/zip/Polycarp.app/Contents/Info.plist")" <<'PY' || fail "latest.json doesn't describe Polycarp.zip."
+import json, sys
+feed, sha, version, commit = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3], sys.argv[4]
+ok = feed.get("product") == "polycarp" and feed.get("version") == version and feed.get("commit") == commit \
+    and feed.get("platforms") and all(p.get("sha256") == sha for p in feed["platforms"].values())
+sys.exit(0 if ok else 1)
+PY
+fi
 if [ "$NO_DMG" = 1 ]; then
   echo "verified $DIR: zip signature, release key, version $VERSION, checksum (no disk image)"
   exit 0

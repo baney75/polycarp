@@ -1,0 +1,7 @@
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  r:
+    runs-on: ubuntu-latest
+    steps: [{run: "true"}]

@@ -65,11 +65,17 @@ swift scripts/make-icon.swift --menu-bar "$APP/Contents/Resources" ../brand
 
 # The commit and its date tell the updater exactly which build this is.
 COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+# The channel and its version string (docs/releases.md): POLYCARP_CHANNEL is stable, nightly or dev for a release
+# and unset for a build made here, which is "local". CFBundleShortVersionString stays X.Y.Z, as macOS wants.
+CHANNEL="${POLYCARP_CHANNEL:-local}"
+export POLYCARP_BUILD_TIME="${POLYCARP_BUILD_TIME:-$(date -u +%Y%m%d%H%M%S)}"
+if [ "$COMMIT" = unknown ]; then FULL_VERSION="$VERSION-dev.0+local.unknown"; else FULL_VERSION=$(POLYCARP_COMMIT=$COMMIT scripts/channel-version.sh "$CHANNEL"); fi
+BUILD_NUMBER=$(scripts/channel-version.sh --bundle-version)
 COMMIT_DATE=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
 # 1 when tracked files had changes, so the commit does not say everything (`polycarp version` shows it).
 DIRTY=0
 [ -z "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] || DIRTY=1
-sed -e "s/@VERSION@/$VERSION/g" -e "s/@COMMIT@/$COMMIT/g" -e "s/@COMMIT_DATE@/$COMMIT_DATE/g" -e "s/@DIRTY@/$DIRTY/g" Resources/Info.plist > "$APP/Contents/Info.plist"
+sed -e "s/@VERSION@/$VERSION/g" -e "s/@FULL_VERSION@/$FULL_VERSION/g" -e "s/@CHANNEL@/$CHANNEL/g" -e "s/@BUILD_NUMBER@/$BUILD_NUMBER/g" -e "s/@COMMIT@/$COMMIT/g" -e "s/@COMMIT_DATE@/$COMMIT_DATE/g" -e "s/@DIRTY@/$DIRTY/g" Resources/Info.plist > "$APP/Contents/Info.plist"
 # A stable local identity keeps the Accessibility permission across rebuilds; ad-hoc is the fallback.
 # Ad-hoc is for local builds and CI checks only and never ships as an update: install-app.sh refuses
 # it over an installed copy, and release.sh and install.sh require scripts/release-requirement.txt.
@@ -97,7 +103,7 @@ otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q '@execu
 ! otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q '/engine/lib ' || { echo "bundle: the build folder's engine/lib rpath is still in the app" >&2; exit 1; }
 [ "$(otool -D "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib" | grep -c '^@rpath/libagent_desktop_ffi.dylib$')" -ge 1 ] || { echo "bundle: the engine's install name isn't @rpath" >&2; exit 1; }
 if otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q "$PWD/engine/lib"; then echo "bundle: the app still points at the build folder" >&2; exit 1; fi
-echo "built $APP ($VERSION, $(lipo -archs "$APP/Contents/MacOS/$EXECUTABLE"))"
+echo "built $APP ($FULL_VERSION, $(lipo -archs "$APP/Contents/MacOS/$EXECUTABLE"))"
 
 if [ "${1:-}" = "--install" ]; then
   scripts/install-app.sh "$APP"

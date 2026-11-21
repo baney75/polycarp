@@ -1,0 +1,10 @@
+on:
+  workflow_call:
+  push:
+    branches: [stable]
+jobs:
+  b:
+    runs-on: ubuntu-latest
+    environment:
+      name: stable
+    steps: [{run: "true"}]
