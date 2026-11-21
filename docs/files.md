@@ -99,6 +99,10 @@ and only when that node belongs to the same Tailscale user as this one. Tagged d
 tagged node shares one user id, and a tagged device refuses to run `serve` at all. `allow_devices` narrows that
 further to the devices you list; it never lets anyone else in. A refused caller gets a 403 before anything it sent is read.
 
+Requests from a web page are refused with a 403: any request with an `Origin` header, a `Sec-Fetch-Site` other than
+`none`, or a `Host` that is not this device's Tailscale address or MagicDNS name. That stops a page that points its own
+domain at this device's address (DNS rebinding). The polycarp command sends none of those headers.
+
 What a device answers:
 
 | Endpoint | What it gives |

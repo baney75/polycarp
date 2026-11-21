@@ -8,12 +8,15 @@ use std::time::Duration;
 const MAX_LINE: usize = 8 * 1024;
 const MAX_HEADERS: usize = 64;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Request {
     pub method: String,
     pub path: String,
     pub query: Vec<(String, String)>,
     pub content_length: Option<u64>,
+    pub host: Option<String>,
+    /// True when the request carries `Origin`, or `Sec-Fetch-Site` other than `none`: a web page sent it.
+    pub from_browser: bool,
 }
 
 impl Request {
@@ -102,6 +105,8 @@ pub fn read_request(r: &mut impl BufRead) -> io::Result<Request> {
         ));
     }
     let mut content_length = None;
+    let mut host = None;
+    let mut from_browser = false;
     for _ in 0..=MAX_HEADERS {
         let h = read_line(r)?;
         if h.is_empty() {
@@ -119,6 +124,8 @@ pub fn read_request(r: &mut impl BufRead) -> io::Result<Request> {
                 path: path.to_string(),
                 query,
                 content_length,
+                host,
+                from_browser,
             });
         }
         if let Some((k, v)) = h.split_once(':') {
@@ -127,6 +134,18 @@ pub fn read_request(r: &mut impl BufRead) -> io::Result<Request> {
                 content_length = Some(v.trim().parse().map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidData, "bad content-length")
                 })?);
+            } else if k == "host" {
+                if host.is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "two Host headers",
+                    ));
+                }
+                host = Some(v.trim().to_string());
+            } else if k == "origin"
+                || (k == "sec-fetch-site" && !v.trim().eq_ignore_ascii_case("none"))
+            {
+                from_browser = true;
             } else if k == "transfer-encoding" {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,

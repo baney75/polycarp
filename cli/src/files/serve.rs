@@ -147,6 +147,35 @@ pub fn authorize(
     Ok(node)
 }
 
+/// A Host header that names this node: one of its Tailscale addresses (or the one the connection came in on), its
+/// short or full MagicDNS name, with or without a port. Anything else is a DNS rebinding page in a browser.
+pub fn host_ok(host: Option<&str>, me: &Node, local: SocketAddr) -> bool {
+    let Some(h) = host.map(str::trim) else {
+        return false;
+    };
+    let (name, port) = match h.strip_prefix('[') {
+        Some(rest) => match rest.split_once(']') {
+            Some((ip, "")) => (ip, None),
+            Some((ip, p)) => match p.strip_prefix(':') {
+                Some(p) => (ip, Some(p)),
+                None => return false,
+            },
+            None => return false,
+        },
+        None => match h.rsplit_once(':') {
+            Some((n, p)) => (n, Some(p)),
+            None => (h, None),
+        },
+    };
+    if port.is_some_and(|p| p.parse::<u16>().is_err()) {
+        return false;
+    }
+    match name.parse::<IpAddr>() {
+        Ok(ip) => ip == local.ip() || me.ips.contains(&ip),
+        Err(_) => me.is_named(name),
+    }
+}
+
 /// What a request gets back.
 #[derive(Debug, PartialEq)]
 pub enum Reply {
@@ -383,6 +412,9 @@ fn serve_one(ctx: &Ctx, stream: TcpStream, peer: SocketAddr) {
     let Ok(read_half) = stream.try_clone() else {
         return;
     };
+    let Ok(local) = stream.local_addr() else {
+        return;
+    };
     let mut out = stream;
     let caller = match authorize(ctx.whois(peer), &ctx.me, &ctx.cfg.allow_devices) {
         Ok(n) => n,
@@ -412,6 +444,23 @@ fn serve_one(ctx: &Ctx, stream: TcpStream, peer: SocketAddr) {
             return;
         }
     };
+    if req.from_browser || !host_ok(req.host.as_deref(), &ctx.me, local) {
+        let why = "web pages may not use this server: the request named another host or came from a browser";
+        log(&format!(
+            "refused {} {} from {}: {why}",
+            req.method, req.path, caller.name
+        ));
+        let _ = http::write_json(
+            &mut out,
+            403,
+            &fail_json(
+                "not_allowed",
+                why,
+                "Use the polycarp command from another of your devices.",
+            ),
+        );
+        return;
+    }
     let status = match route(ctx, &req) {
         Reply::Json(s, body) => {
             let _ = http::write_json(&mut out, s, &body);
@@ -655,6 +704,7 @@ mod tests {
             path: "/v1/inbox".into(),
             query: vec![("name".into(), name.into())],
             content_length: Some(len),
+            ..Request::default()
         }
     }
 
@@ -784,4 +834,6 @@ mod tests {
         assert_eq!(got, b"grace and peace");
         let _ = fs::remove_dir_all(&d);
     }
+
+    mod rebind_test;
 }
