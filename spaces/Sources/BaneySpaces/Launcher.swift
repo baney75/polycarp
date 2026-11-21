@@ -376,7 +376,7 @@ final class LauncherModel: ObservableObject {
     /// Terminal agents found on this Mac: command to path.
     var agents: [String: String] = [:]
     /// Calculator and the other providers, asked on every keystroke of the main search.
-    var providers: [LauncherProvider] = LauncherProviders.standard()
+    var providers: [LauncherProvider] = LauncherProviders.standard(terminal: TerminalFeature.built)
 
     init(actions: LauncherActions) {
         self.actions = actions
@@ -577,6 +577,7 @@ final class LauncherModel: ObservableObject {
             LauncherPasteboard.copy(text)
             Toast.show("Copied \(text.count > 40 ? String(text.prefix(40)) + "…" : text)", symbol: "doc.on.doc")
         case .open(let url): openWeb(url)
+        case .terminal(let launch): close(); TerminalFeature.open(launch)
         case .none: break
         }
     }

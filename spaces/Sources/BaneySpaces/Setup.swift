@@ -111,6 +111,9 @@ final class SetupModel: ObservableObject {
     @Published var newIsAgent = false
     @Published var bangProblem: String?
     var onLauncherChange: ((Bool) -> Void)?
+    /// ⌃` for the quick terminal (builds with the terminal only).
+    @Published var quickTerminalKey = TerminalFeature.quickKeyOn
+    var onQuickTerminalKeyChange: ((Bool) -> Void)?
     @Published var aeroSpaceRunning = SetupModel.isAeroSpaceRunning
     @Published var loginNeedsApproval = SetupModel.firstLoginStatus == .requiresApproval
     @Published var screenshotsFreed = SystemShortcuts.hasFreed
@@ -342,6 +345,12 @@ final class SetupModel: ObservableObject {
     func setLauncher(_ on: Bool) {
         launcherOnCmdSpace = on
         onLauncherChange?(on)
+    }
+
+    func setQuickTerminalKey(_ on: Bool) {
+        quickTerminalKey = on
+        TerminalFeature.quickKeyOn = on
+        onQuickTerminalKeyChange?(on)
     }
 
     func addBang() {
@@ -921,6 +930,11 @@ struct SetupView: View {
                 Toggle("Launcher on ⌘Space", isOn: binding({ model.launcherOnCmdSpace }, { model.setLauncher($0) })).labelsHidden()
             }
             LearnMore("Open apps, install and remove them, find files, terminal tabs and splits, browser tabs and agent windows, search the web and ask an agent, from one box. Off gives ⌘Space back to Spotlight; the launcher stays in the menu bar, the Workspace Dock and ⌃⌘K.")
+            if TerminalFeature.built {
+                SettingsRow("⌃` drops down the quick terminal", help: "From any app. Off leaves ⌃` to other apps, such as VS Code's terminal; polycarp-spaces term --quick still opens it.") {
+                    Toggle("Quick terminal on ⌃`", isOn: binding({ model.quickTerminalKey }, { model.setQuickTerminalKey($0) })).labelsHidden()
+                }
+            }
             SettingsRow("Search the web with") {
                 Picker("Search the web with", selection: $model.searchEngine) { ForEach(Bangs.engines, id: \.trigger) { Text($0.name).tag($0.trigger) } }
                     .labelsHidden()

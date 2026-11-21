@@ -16,6 +16,9 @@ usage: \(me) <command>
   open <url>                  open in your default browser
   play <file>                 show a song, video or photo in Polycarp's player (its folder is the playlist)
   send <id | words> <text>    type text into a Ghostty terminal, as if pasted
+  term [shell|claude|codex] [--cmd "<command>"] [--host <tailnet device>] [--quick]
+                              a terminal in Polycarp's own window (Ghostty's engine); --host opens a shell
+                              on that device over Tailscale, --quick the drop-down quick terminal
   notify [message]            flag the terminal this runs in as needing you
   state                       the session engine's live state as JSON
   agent status|on [N]|off     the agent workspace: a workspace of its own for agent apps, out of your way
@@ -172,6 +175,23 @@ case "play":
 case "send":
     guard rest.count >= 2 else { fail("usage: \(me) send <id | words> <text>", code: 2) }
     _ = call(Wire.Request(op: .send, target: rest[0], text: rest.dropFirst().joined(separator: " ")))
+
+case "term", "terminal":
+    // Polycarp's built-in terminal. Local only: another machine never opens a shell here (`Remote.allows`).
+    guard remoteHost == nil else { fail("term opens a terminal on this Mac; use --host <device> for a shell on another one", code: 2) }
+    switch TerminalLaunch.parse(rest) {
+    case .failure(let e): fail(e.description, code: 2)
+    case .success(let launch):
+        // The first `term` of a run starts libghostty and loads your Ghostty config on Polycarp's main thread, so it
+        // gets longer than the usual 2 s. A late reply was still delivered: say so, so nobody opens a second one.
+        let (reply, connected) = Wire.send(launch.request, timeout: 10)
+        guard let reply else {
+            fail(connected ? "Polycarp got the request but didn't answer within 10 s; the terminal may still open, so look before running this again."
+                           : "Polycarp isn't running, or hasn't finished starting (it needs Accessibility).")
+        }
+        if !reply.ok { fail(reply.error ?? "failed") }
+        if let note = reply.info?["note"] { print(note) }
+    }
 
 case "notify":
     let tty = controllingTTY()

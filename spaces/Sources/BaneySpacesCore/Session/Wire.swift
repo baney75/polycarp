@@ -63,6 +63,10 @@ public enum Wire {
             /// check (ask GitHub again) or now (install the release on offer). The reply's `info` is an
             /// `UpdateReport`. Local callers only (`Remote.allows` never lets it through).
             case update
+            /// A terminal in Polycarp's own window (libghostty): `args` is the preset (shell, claude, codex) and
+            /// `--quick`, `text` a command, `target` a tailnet device (`TerminalLaunch`). Local callers only: a shell is
+            /// never opened for another machine (`Remote.allows`).
+            case terminal
             /// Show `target` (an absolute file path) in the built-in player (`polycarp-spaces play`, spec/player.md).
             /// Local callers only (`Remote.allows` never lets it through).
             case play

@@ -43,6 +43,38 @@ jobs:
           fi
           [ $code = 0 ] && echo "signed=true" >> "$GITHUB_OUTPUT"
           exit $code
+      # The built-in terminal (libghostty, spaces/ghostty/PIN), built once per pin. Channel builds are Apple silicon
+      # only, so bundle.sh links it when it is there. A runner that can't build it (exit 3) ships without the
+      # terminal and says so; a bad checksum or a failed build (exit 1) stops the run.
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: steps.sign.outputs.signed == 'true'
+        id: ghostty
+        with:
+          path: spaces/ghostty/lib
+          key: ghostty-${{ runner.arch }}-${{ hashFiles('spaces/ghostty/PIN', 'spaces/scripts/build-ghostty.sh') }}
+      - name: Build libghostty
+        if: steps.sign.outputs.signed == 'true'
+        env:
+          CACHED: ${{ steps.ghostty.outputs.cache-hit }}
+        run: |
+          set +e
+          if [ "$CACHED" != true ]; then
+            zig=$(scripts/fetch-zig.sh); code=$?
+            if [ $code = 0 ]; then
+              PATH="$zig:$PATH"
+              xcrun -sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
+            fi
+          else
+            code=0
+          fi
+          # fetch-zig.sh: 3 is a download that failed (ship without the terminal), 1 a checksum that didn't match.
+          [ $code = 0 ] && { scripts/build-ghostty.sh; code=$?; }
+          set -e
+          if [ $code = 3 ]; then
+            echo "::warning title=terminal not built::This ${{ inputs.channel }} build ships without the built-in terminal (see the log above)."
+            exit 0
+          fi
+          exit $code
       - name: Build, sign, package, verify and publish
         if: steps.sign.outputs.signed == 'true'
         env:
