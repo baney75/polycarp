@@ -12,7 +12,7 @@ use std::io::{BufRead, Write};
 pub(crate) const LATEST: &str = "2025-06-18";
 pub(crate) const KNOWN: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
-const INSTRUCTIONS: &str = "\
+pub(crate) const INSTRUCTIONS: &str = "\
 Polycarp themes: one theme file drives every Polycarp product and the website. Use these tools to \
 customize them for the person you are helping.
 
@@ -47,18 +47,18 @@ fn obj(props: Json, required: &[&str]) -> Json {
     })
 }
 
-struct Tool {
-    name: &'static str,
-    description: &'static str,
-    schema: Json,
-    read_only: bool,
+pub(crate) struct Tool {
+    pub(crate) name: &'static str,
+    pub(crate) description: &'static str,
+    pub(crate) schema: Json,
+    pub(crate) read_only: bool,
     /// For a tool that is not read-only: does it replace or remove something that was there?
     destructive: bool,
     /// Does calling it again with the same input change nothing more?
     idempotent: bool,
 }
 
-fn tools() -> Vec<Tool> {
+pub(crate) fn tools() -> Vec<Tool> {
     let name = json!({"type":"string","description":"A theme name from theme_list. Leave out for the current theme."});
     let surface = json!({"type":"string","enum":["spaces","voice","browser","site"],
         "description":"One product: spaces (Polycarp Spaces), voice (Silas), browser (the browser extension, now Tychicus, which reads this theme) or site. Leave out for the theme without product overrides."});
@@ -272,7 +272,7 @@ fn tools() -> Vec<Tool> {
 
 /// MCP annotations. The destructive and idempotent hints only mean something for a tool that
 /// writes, so a read-only tool leaves them out.
-fn annotations(t: &Tool) -> Json {
+pub(crate) fn annotations(t: &Tool) -> Json {
     if t.read_only {
         return json!({"readOnlyHint": true, "openWorldHint": false});
     }
@@ -386,7 +386,7 @@ impl Args {
 /// What one connection has done: the user themes it made, which it may replace or delete.
 /// Everything else on disk is the person's. It lasts as long as the connection.
 #[derive(Default)]
-struct Session {
+pub(crate) struct Session {
     made: BTreeSet<String>,
 }
 
@@ -409,7 +409,7 @@ impl Session {
 }
 
 /// Runs one tool. None means there is no such tool.
-fn call(
+pub(crate) fn call(
     name: &str,
     args: Option<&Json>,
     caller: &str,

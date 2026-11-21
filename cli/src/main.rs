@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod agent;
 mod channel;
 mod features;
 mod files;
@@ -70,6 +71,7 @@ Usage:
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
   polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
   polycarp files <command>     search, open and send your files across your devices (polycarp files --help)
+  polycarp agent <command>     one MCP gateway for Claude, Codex, Grok Bot and web assistants (polycarp agent --help)
   polycarp doctor              show which tools were found
   polycarp --version
   polycarp version [--json] [--check]   every part, its commit, and whether they match
@@ -104,6 +106,7 @@ fn main() {
         Some("features") => features::run(&rest),
         Some("mcp") => mcp::run(&rest),
         Some("files") => files::run(&rest),
+        Some("agent") => agent::run(&rest),
         Some("doctor") => doctor(),
         Some("version") => version::run(&rest, &version_device()),
         Some("update") => update::run(
