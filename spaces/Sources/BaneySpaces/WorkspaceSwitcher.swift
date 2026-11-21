@@ -532,7 +532,11 @@ extension NSWindow {
 enum Trace {
     private static let unified = Logger(subsystem: "com.baney.polycarp", category: "trace")
 
+    /// Benches (`--render`) run beside the installed app and must not write to its trace.log.
+    static var muted = false
+
     static func log(_ line: String) {
+        guard !muted else { return }
         unified.notice("\(line, privacy: .public)")
         let stamped = "\(Date().timeIntervalSince1970) \(line)"
         try? FileTrace.append(stamped, directory: Spaces.folder, maxBytes: FileTrace.defaultMaxBytes, maxFiles: FileTrace.defaultMaxFiles)

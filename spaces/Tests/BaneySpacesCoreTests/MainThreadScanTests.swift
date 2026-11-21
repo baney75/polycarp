@@ -31,7 +31,8 @@ final class MainThreadScanTests: XCTestCase {
     }
 
     func testDockAndOverviewOpenAskNoAppOnMain() throws {
-        try assertAsksNoApp("Sources/BaneySpaces/WorkspaceDock.swift", ["private func show(on screen: NSScreen", "func load(from spaces: Spaces)"])
+        try assertAsksNoApp("Sources/BaneySpaces/WorkspaceDock.swift", ["private func show(on screen: NSScreen", "func load(from spaces: Spaces,",
+                                                                        "func loadTiles(", "func loadBackground("])
         try assertAsksNoApp("Sources/BaneySpaces/Viewer.swift", ["func open()", "func load(from spaces: Spaces)"])
         try assertAsksNoApp("Sources/BaneySpaces/Spaces.swift", ["func entries(on n: Int)", "func entry(for id: WindowID)",
                                                                  "func backgroundApps()", "func rememberFocus()"])
