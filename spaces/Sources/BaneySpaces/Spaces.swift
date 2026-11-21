@@ -202,7 +202,11 @@ final class Spaces {
     /// the window server shows).
     func whenFresh(full: Bool = false, asking: Set<pid_t> = [], _ body: @escaping () -> Void) {
         if switching { return enqueue { [weak self] in self?.whenFresh(full: full, asking: asking, body) } }
-        refresh(full: full, asking: asking, then: body)
+        // A switch that started while the scan ran: wait for it, then look again, since windows moved meanwhile.
+        refresh(full: full, asking: asking, then: { [weak self] in
+            guard let self else { return }
+            if self.switching { self.enqueue { [weak self] in self?.whenFresh(full: full, asking: asking, body) } } else { body() }
+        })
     }
 
     private func refresh(full: Bool, asking: Set<pid_t>, then body: (() -> Void)?) {
@@ -287,8 +291,10 @@ final class Spaces {
         guard active else { return }
         // Mid-switch, windows are on the move and what this scan saw of them is already old: its apps are asked again
         // once the switch is done (`finish`). A scan the switch itself waits on started before anything moved.
-        if switching, !holding, waiters.isEmpty {
+        // Its waiters (`whenFresh`) see the switch and wait for it.
+        if switching, !holding {
             scans.request(full: false, pids: plan.ask)
+            for run in waiters { run() }
             return startScan()
         }
         let before = model, titles = details
@@ -317,16 +323,20 @@ final class Spaces {
     /// Titles change with every tab and never show in the window server's list, so the dock and the overview read
     /// them again in the background when they open; a change reloads them. At most one read runs, and not more often
     /// than every half second.
-    func refreshDetails() {
-        guard active, !readingDetails, Date().timeIntervalSince(detailsReadAt) > 0.5 else { return }
-        readingDetails = true
-        detailsReadAt = Date()
-        let list = Array(windows.values)
+    /// `pid` reads only that app's windows, unthrottled: the app in front, whose tab or window just changed.
+    func refreshDetails(of pid: pid_t? = nil) {
+        guard active else { return }
+        if pid == nil {
+            guard !readingDetails, Date().timeIntervalSince(detailsReadAt) > 0.5 else { return }
+            readingDetails = true
+            detailsReadAt = Date()
+        }
+        let list = windows.values.filter { pid == nil || $0.pid == pid }
         Spaces.axQueue.async { [weak self] in
             let read = Windows.details(of: list)
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.readingDetails = false
+                if pid == nil { self.readingDetails = false }
                 let merged = self.details.merging(read) { _, new in new }.filter { self.windows[$0.key] != nil }
                 guard merged != self.details else { return }
                 self.details = merged
@@ -1057,13 +1067,14 @@ final class Spaces {
     }
 
     /// Asks apps something through Accessibility off the main thread; `then` gets the answer on the main thread,
-    /// unless Polycarp stopped or a switch started meanwhile (the answer is about a desktop that's gone).
-    private func ask<T>(_ question: @escaping () -> T, then: @escaping (T) -> Void) {
+    /// unless Polycarp stopped or a switch started meanwhile (the answer is about a desktop that's gone): then `dropped`.
+    private func ask<T>(_ question: @escaping () -> T, then: @escaping (T) -> Void, dropped: (() -> Void)? = nil) {
         let gen = generation
         Spaces.axQueue.async { [weak self] in
             let answer = question()
             DispatchQueue.main.async {
-                guard let self, self.active, gen == self.generation else { return }
+                guard let self, self.active else { return }
+                guard gen == self.generation else { dropped?(); return }
                 then(answer)
             }
         }
@@ -1076,6 +1087,8 @@ final class Spaces {
         guard active, pid != getpid() else { return }
         defer { frontPid = pid }
         Windows.markResponsive(pid)
+        // Its title may have changed while it was in back (a tab switch): the switcher and the dock show the new one.
+        refreshDetails(of: pid)
         // Asked for by `openWindowHere`: its window is on the way, here.
         if let o = opening, o.pid == pid, Date() < o.until { return }
         activatedAt = Date()
@@ -1156,6 +1169,10 @@ final class Spaces {
                 if switching { followPending = true; return }
                 guard let w = look.focused.flatMap({ windows[$0] }), let n = model.workspace(of: w.id) else { return }
                 followed(w, on: n, pid: pid, look: look)
+            } dropped: { [self] in
+                // A switch overtook the look (one `applyScan` queued, say): follow once it's done, as `finish` does.
+                followPending = true
+                if !switching { followIfPending() }
             }
         }
     }
@@ -1329,7 +1346,10 @@ final class Spaces {
     /// chose a window yourself (the Window menu, ⌘`). A closed window keeps you on this workspace,
     /// so typing never lands in a hidden window. A window you chose takes you to its workspace.
     private func focusMovedWithin(_ pid: pid_t) {
-        guard active, !switching, Date() > settleUntil,
+        guard active else { return }
+        // Another window or tab in front has another title.
+        refreshDetails(of: pid)
+        guard !switching, Date() > settleUntil,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
         // Which window has focus, and which the app still lists, are asked off the main thread, once a window it opened
         // a moment ago is scanned.
@@ -1994,10 +2014,14 @@ final class Spaces {
             case let .action(run): run()
             }
         }
-        if !switching, followPending {
-            followPending = false
-            if NSWorkspace.shared.frontmostApplication?.processIdentifier != expectedFront { followFocus() }
-        }
+        followIfPending()
+    }
+
+    /// One check of an activation BaneySpaces didn't cause, once no switch runs.
+    private func followIfPending() {
+        guard !switching, followPending else { return }
+        followPending = false
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != expectedFront { followFocus() }
     }
 
     private func conceal(_ how: Concealment, apps: Set<pid_t>, screens: [CGRect]) {

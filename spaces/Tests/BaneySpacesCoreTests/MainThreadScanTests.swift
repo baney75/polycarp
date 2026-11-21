@@ -110,4 +110,61 @@ final class MainThreadScanTests: XCTestCase {
         XCTAssertTrue(now.contains("ScanCheck.slowScanLine(seconds: ProcessInfo.processInfo.systemUptime - started"))
         XCTAssertTrue(now.contains("onMain: true"))
     }
+
+    // Review of PR #574 (2026-11-21): four ways the background scan could drop or misplace work.
+
+    /// first-F1: a follow whose look a switch overtook (one `applyScan` queued, say) is looked at again, never lost.
+    func testAFollowASwitchOvertookIsNotLost() throws {
+        let s = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
+        let ask = try XCTUnwrap(SourceText.block(after: "private func ask<T>(", in: s))
+        XCTAssertTrue(ask.contains("guard gen == self.generation else { dropped?(); return }"), "ask drops an answer silently")
+        let follow = try XCTUnwrap(SourceText.block(after: "private func followFocus()", in: s))
+        let dropped = try XCTUnwrap(SourceText.block(after: "} dropped:", in: follow), "followFocus loses a dropped look")
+        XCTAssertTrue(dropped.contains("followPending = true"))
+        XCTAssertTrue(dropped.contains("if !switching { followIfPending() }"), "a switch already done never looks again")
+    }
+
+    /// first-F2: the launcher is built at launch, so its app list is read before the first open, and Return waits for
+    /// that list rather than run a web search or file row an app would have topped.
+    func testReturnWaitsForTheFirstAppList() throws {
+        let d = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
+        let launch = try XCTUnwrap(SourceText.block(after: "func applicationDidFinishLaunching(", in: d))
+        XCTAssertTrue(launch.contains("DispatchQueue.main.async { [weak self] in _ = self?.launcher }"), "the launcher waits for its first open")
+        let s = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        let run = try XCTUnwrap(SourceText.block(after: "func runSelected(reveal", in: s))
+        let wait = try XCTUnwrap(SourceText.block(after: "guard appsLanded else", in: run), "Return runs before the apps are in")
+        XCTAssertTrue(wait.contains("pendingReturn = reveal"))
+        XCTAssertTrue(wait.contains("asyncAfter(deadline: .now() + 1)"), "Return can wait forever")
+        let took = try XCTUnwrap(SourceText.block(after: "private func took(", in: s))
+        XCTAssertTrue(took.contains("appsLanded = true"))
+        XCTAssertTrue(took.contains("runSelected(reveal: reveal)"))
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "    func hide()", in: s)).contains("model.pendingReturn = nil"))
+    }
+
+    /// first-F3: titles change with every tab, so the ⌘Tab switcher and the app in front read them again, off main.
+    func testTheSwitcherAndTheFrontAppReadTitlesAgain() throws {
+        let d = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
+        let tab = try XCTUnwrap(SourceText.block(after: "keys.onCmdTab =", in: d))
+        XCTAssertTrue(tab.contains("if !isRepeat { self.spaces.refreshDetails() }"), "⌘Tab shows stale titles")
+        let s = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
+        for m in ["func appActivated(", "private func focusMovedWithin("] {
+            XCTAssertTrue(try XCTUnwrap(SourceText.block(after: m, in: s)).contains("refreshDetails(of: pid)"), "\(m) keeps a stale title")
+        }
+        let read = try XCTUnwrap(SourceText.block(after: "func refreshDetails(of pid", in: s))
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "Spaces.axQueue.async", in: read)).contains("Windows.details(of: list)"))
+    }
+
+    /// second-F7: a scan landing mid-move is never applied, waiters or not, and a `whenFresh` body it answers waits for
+    /// the switch and looks again.
+    func testAScanLandingMidSwitchWaitsForIt() throws {
+        let s = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
+        let landed = try XCTUnwrap(SourceText.block(after: "private func scanLanded(", in: s))
+        let skip = try XCTUnwrap(SourceText.block(after: "if switching, !holding", in: landed), "a waited-on scan is applied mid-move")
+        XCTAssertFalse(landed.contains("waiters.isEmpty"), "a waited-on scan is applied mid-move")
+        XCTAssertTrue(skip.contains("for run in waiters { run() }"))
+        XCTAssertTrue(skip.contains("return startScan()"))
+        let fresh = try XCTUnwrap(SourceText.block(after: "func whenFresh(", in: s))
+        let then = try XCTUnwrap(SourceText.block(after: "asking: asking, then:", in: fresh), "whenFresh runs its body mid-switch")
+        XCTAssertTrue(then.contains("if self.switching { self.enqueue"))
+    }
 }

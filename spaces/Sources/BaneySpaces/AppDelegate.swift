@@ -164,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.spaces.moveCarried(id, to: n, from: grab.frame) { [weak self] in self?.dropGeneration[id, default: 0] == gen }
         }
     }
-    /// Building the launcher scans every app, so the session engine's updates don't build it early.
+    /// The launcher is built just after launch (its app scan runs off the main thread), so the first open finds the apps.
     private var launcherBuilt = false
     /// The focused terminal's folder when the launcher opened, for New Terminal.
     private var terminalFolder: String?
@@ -238,6 +238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 MissionControlKeys.inGesture = false
                 return
             }
+            // Titles change with every tab: read them again in the background, ready for the window bar the hold opens.
+            if !isRepeat { self.spaces.refreshDetails() }
             self.switcher.step(forward: forward, isRepeat: isRepeat, at: time)
         }
         keys.onTabUp = { [weak self] in self?.switcher.tabReleased() }
@@ -539,6 +541,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // ⌃⌘K (registered in `registerShortcuts`) opens the launcher, which searches the session rows.
         session.onSearch = { [weak self] in self?.launcher.toggle() }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
+        DispatchQueue.main.async { [weak self] in _ = self?.launcher }
         DockRestart.isSwitching = { [weak self] in self?.spaces.switching ?? false }
         legacyWatcher.start()
         startWorkspaces()

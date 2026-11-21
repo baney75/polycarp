@@ -209,6 +209,7 @@ final class LauncherController: NSObject, NSWindowDelegate {
     }
 
     func hide() {
+        model.pendingReturn = nil
         if let m = clickMonitor { NSEvent.removeMonitor(m); clickMonitor = nil }
         guard let p = panel, p.isVisible else { return }
         p.orderOut(nil)
@@ -386,11 +387,22 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    /// A new app list from a scan off the main thread: rows rebuild only when it changed.
+    /// False until the first app list lands. Until then Return waits for it (at most a second), so it never runs a web
+    /// search or a file row the app you typed would have topped.
+    private var appsLanded = false
+    /// A Return pressed before the first app list landed (its reveal flag).
+    var pendingReturn: Bool?
+
+    /// A new app list from a scan off the main thread: rows rebuild only when it changed. The first list keeps the top
+    /// row selected unless you moved off it.
     private func took(_ fresh: [AppEntry]) {
-        guard fresh != apps else { return }
-        apps = fresh
-        rebuildKeepingSelection()
+        let first = !appsLanded
+        appsLanded = true
+        if fresh != apps {
+            apps = fresh
+            if first, selected == 0 { rebuild() } else { rebuildKeepingSelection() }
+        }
+        if let reveal = pendingReturn { pendingReturn = nil; runSelected(reveal: reveal) }
     }
 
     /// The same scan, after Homebrew installed or removed an app.
@@ -407,6 +419,7 @@ final class LauncherModel: ObservableObject {
         query = ""
         field?.stringValue = ""
         selected = 0
+        pendingReturn = nil
         running = actions.workspacesByApp()
         runningPids = [:]
         for app in NSWorkspace.shared.runningApplications {
@@ -464,6 +477,18 @@ final class LauncherModel: ObservableObject {
     }
 
     func runSelected(reveal: Bool = false) {
+        guard appsLanded else {
+            if pendingReturn == nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    guard let self, let reveal = self.pendingReturn else { return }
+                    self.pendingReturn = nil
+                    self.appsLanded = true
+                    self.runSelected(reveal: reveal)
+                }
+            }
+            pendingReturn = reveal
+            return
+        }
         guard items.indices.contains(selected) else { return }
         let item = items[selected]
         if reveal, let url = item.reveal {
