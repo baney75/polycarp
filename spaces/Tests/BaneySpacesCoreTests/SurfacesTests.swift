@@ -46,8 +46,8 @@ final class SurfacesTests: XCTestCase {
         XCTAssertTrue(d.dock.restTile)
         XCTAssertEqual(d.menu.rows, Surfaces.MenuRow.allCases)
         XCTAssertEqual(d.menu.hidden, [])
-        XCTAssertEqual(d.newtab.question, "What is the one thing today?")
-        XCTAssertTrue(d.newtab.chips)
+        XCTAssertEqual(d.newtab.question, "What is this hour for?")
+        XCTAssertFalse(d.newtab.chips, "one field: the bar already shows the purposes")
         XCTAssertTrue(d.newtab.verse)
         XCTAssertEqual(d.newtab.searchURL(for: "purity of heart")?.absoluteString, "https://duckduckgo.com/?q=purity%20of%20heart")
         XCTAssertFalse(d.idle.enabled, "the idle screen waits until you turn it on")
@@ -95,7 +95,7 @@ final class SurfacesTests: XCTestCase {
             ("desktop.versePosition", "\"top-center\""), ("desktop.verseRotation", "\"fixed:1 Corinthians 13:4-7\""),
             ("dock.tileLabel", "\"number\""), ("dock.restTile", "false"),
             ("menu.order", #"["quit","settings"]"#), ("menu.hidden", #"["update","agents"]"#),
-            ("newtab.question", "\"Will one thing.\""), ("newtab.chips", "false"), ("newtab.verse", "false"),
+            ("newtab.question", "\"Will one thing.\""), ("newtab.chips", "true"), ("newtab.verse", "false"),
             ("newtab.searchURL", "\"https://search.brave.com/search?q={query}&source=web\""),
             ("idle.enabled", "true"), ("idle.style", "\"verse\""), ("idle.effects", "false"), ("idle.showMachineName", "false"), ("idle.showVerse", "false"),
             ("idle.showKierkegaard", "false"), ("idle.startAfterMinutes", "5"),
@@ -112,7 +112,7 @@ final class SurfacesTests: XCTestCase {
                                         verseRotation: .fixed("1 Corinthians 13:4-7")))
         XCTAssertEqual(s.dock, .init(tileLabel: .number, restTile: false))
         XCTAssertEqual(s.menu.rows, [.quit, .settings, .workspaces, .showAll, .find, .dock], "left-out rows follow; hidden ones go")
-        XCTAssertEqual(s.newtab, .init(question: "Will one thing.", chips: false, verse: false, searchURL: "https://search.brave.com/search?q={query}&source=web"))
+        XCTAssertEqual(s.newtab, .init(question: "Will one thing.", chips: true, verse: false, searchURL: "https://search.brave.com/search?q={query}&source=web"))
         XCTAssertEqual(s.idle, .init(enabled: true, style: .verse, effects: false, showMachineName: false, showVerse: false, showKierkegaard: false, startAfterMinutes: 5))
         XCTAssertEqual(s.text, .init(translation: .bsb, verseSource: .file("psalms.json")))
         // Reading the tree's text again gives the same tree: nothing is lost or reordered into something else.

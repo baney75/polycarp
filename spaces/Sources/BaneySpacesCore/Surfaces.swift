@@ -290,8 +290,8 @@ extension SurfaceField {
         SurfaceField("menu.hidden", .ids(known: Surfaces.MenuRow.allCases.map(\.rawValue), custom: false), ids([]),
                      "Rows not shown. settings and quit can't be hidden."),
 
-        SurfaceField("newtab.question", .text(max: 160), .string("What is the one thing today?"), "The question at the top of a new tab."),
-        SurfaceField("newtab.chips", .bool, .bool(true), "Shortcut chips under the question."),
+        SurfaceField("newtab.question", .text(max: 160), .string("What is this hour for?"), "The question in the new tab's one field."),
+        SurfaceField("newtab.chips", .bool, .bool(false), "Your workspaces by purpose under the field; a click switches to one."),
         SurfaceField("newtab.verse", .bool, .bool(true), "A verse on the new tab page."),
         SurfaceField("newtab.searchURL", .searchTemplate, .string("https://duckduckgo.com/?q={query}"),
                      "The search engine: an https URL with {query} where the words go."),

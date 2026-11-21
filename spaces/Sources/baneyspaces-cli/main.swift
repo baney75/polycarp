@@ -55,6 +55,8 @@ usage: \(me) <command>
   hooks install|uninstall|status   Claude Code and Grok hooks
   skill install               the agent skill into ~/.claude/skills/baneyspaces
   doctor                      what's working and what isn't
+  newtab-host                 the new tab page's native messaging host: one framed request on stdin,
+                              one framed reply on stdout (docs/newtab.md)
 """
 
 func fail(_ msg: String, code: Int32 = 1) -> Never {
@@ -120,6 +122,12 @@ func hasSwitch(_ name: String, in args: [String], valued: Set<String>) -> Bool {
         i += 1
     }
     return false
+}
+
+// The new tab page's native messaging host (docs/newtab.md): Chrome starts this with the page's origin as the first
+// argument. One framed request on stdin, one framed reply on stdout, nothing else written there, then exit.
+if NewTabHost.startedByBrowser(CommandLine.arguments) {
+    exit(NewTabHost.serve(input: STDIN_FILENO, output: STDOUT_FILENO, source: .live()) ? 0 : 1)
 }
 
 // A quit left this behind to restart the Dock once that's safe. See `DockRestartHelper`.
@@ -417,6 +425,10 @@ case "doctor":
     for (k, v) in (reply?.info ?? [:]).sorted(by: { $0.key < $1.key }) where k != "version" { out("  \(k): \(v)") }
     out("hooks:  " + Hooks.status())
     out("skill:  " + (FileManager.default.fileExists(atPath: Skill.dest.path) ? "installed at \(Skill.dest.path)" : "not installed (\(me) skill install)"))
+
+case NewTabHost.command:
+    // The same host Chrome starts, by name, for trying it by hand: printf a framed request into it.
+    exit(NewTabHost.serve(input: STDIN_FILENO, output: STDOUT_FILENO, source: .live()) ? 0 : 1)
 
 case "-h", "--help", "help": out(usage)
 default: fail(usage, code: 2)
