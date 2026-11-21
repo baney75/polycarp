@@ -758,7 +758,13 @@ fn cmd_index(f: &Flags) -> i32 {
     }
     let started = std::time::Instant::now();
     let r = Index::open(&db)
-        .and_then(|mut i| i.update_within(&roots, &configured, &c.skip))
+        .and_then(|mut i| {
+            if f.roots.is_empty() {
+                i.update(&configured, &c.skip)
+            } else {
+                i.update_within(&roots, &configured, &c.skip)
+            }
+        })
         .map(|s| json!({"index": db.display().to_string(), "seconds": started.elapsed().as_secs_f64(), "stats": s}))
         .map_err(|e| Fail::new("io_error", e, ""));
     report(r, f.json, |d| {

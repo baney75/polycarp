@@ -241,36 +241,56 @@ impl Index {
     /// missing (an unplugged drive) keeps its rows; a cloud folder only the default roots found leaves the roots when
     /// it is signed out, and its rows go with it.
     pub fn update(&mut self, roots: &[Root], extra: &[String]) -> Result<Stats, String> {
-        self.update_within(roots, roots, extra)
+        self.walk_roots(roots, roots, extra, true)
     }
 
     /// Walks only `folders` (each under the rules of the `keep` root it is in), then drops every row under none
-    /// of `keep` (the configured roots).
+    /// of `keep` (the configured roots). Not a full run: doctor still goes by the last `update`.
     pub fn update_within(
         &mut self,
         folders: &[Root],
         keep: &[Root],
         extra: &[String],
     ) -> Result<Stats, String> {
+        self.walk_roots(folders, keep, extra, false)
+    }
+
+    fn walk_roots(
+        &mut self,
+        folders: &[Root],
+        keep: &[Root],
+        extra: &[String],
+        full: bool,
+    ) -> Result<Stats, String> {
         let run = self.next_run()?;
         let mut stats = Stats::default();
         let tx = self.conn.transaction().map_err(db_err)?;
+        let mut walked = Vec::new();
         for root in folders {
             if !root.path.is_dir() || rules::never(&root.path.join("x")) {
                 stats.missing_roots.push(root.path.display().to_string());
+                // Seen, so an outer root's sweep leaves a missing inner root's rows alone.
+                self::keep(&tx, &root.path, run)?;
                 continue;
             }
             stats.roots += 1;
             let owner = owner(keep, &root.path).unwrap_or(root);
             walk(&tx, owner, &root.path, extra, run, &mut stats)?;
-            sweep(&tx, &root.path, run, &mut stats)?;
+            walked.push(&root.path);
+        }
+        // Every walk before any sweep: a root inside a folder an outer root skips has its rows marked seen by its own
+        // walk before the outer root's sweep looks, so they keep their ids.
+        for dir in walked {
+            sweep(&tx, dir, run, &mut stats)?;
         }
         prune(&tx, keep, &mut stats)?;
         tx.commit().map_err(db_err)?;
-        let unreadable = serde_json::to_string(&stats.unreadable).unwrap_or_default();
-        self.set_meta("unreadable", &unreadable)?;
         let now = now_secs().to_string();
-        self.set_meta("last_full", &now)?;
+        if full {
+            let unreadable = serde_json::to_string(&stats.unreadable).unwrap_or_default();
+            self.set_meta("unreadable", &unreadable)?;
+            self.set_meta("last_full", &now)?;
+        }
         self.set_meta("last_update", &now)?;
         Ok(stats)
     }
@@ -672,5 +692,65 @@ mod tests {
         let hi = prefix_end(&lo);
         assert!("/a/b/c" >= lo.as_str() && "/a/b/c" < hi.as_str());
         assert!("/a/bc" < lo.as_str() || "/a/bc" >= hi.as_str());
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        // Not the system temp folder: on Windows it sits under AppData, which `never` refuses to index.
+        let d = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/tmp")
+            .join(format!("polycarp-index-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn root(path: &Path) -> Root {
+        Root {
+            path: path.to_path_buf(),
+            text: true,
+        }
+    }
+
+    #[test]
+    fn a_root_inside_a_skipped_folder_keeps_its_rows_and_ids_run_after_run() {
+        let d = scratch("nested");
+        let outer = d.join("home");
+        let inner = outer.join("Library/CloudStorage/Dropbox");
+        fs::create_dir_all(&inner).unwrap();
+        fs::write(inner.join("plan.md"), "zephyr").unwrap();
+        fs::write(outer.join("top.md"), "quokka").unwrap();
+        let roots = [root(&outer), root(&inner)];
+        let mut idx = Index::open(&d.join("index.sqlite")).unwrap();
+        let first = idx.update(&roots, &[]).unwrap();
+        assert_eq!(first.added, 2, "{first:?}");
+        let plan = inner.join("plan.md").to_string_lossy().into_owned();
+        let id = idx.lookup(None, Some(&plan)).unwrap().unwrap().id;
+        let again = idx.update(&roots, &[]).unwrap();
+        assert_eq!((again.added, again.removed), (0, 0), "{again:?}");
+        assert_eq!(idx.lookup(None, Some(&plan)).unwrap().unwrap().id, id);
+        // The inner root signed out: its rows wait for it under the outer root's sweep.
+        let away = d.join("away");
+        fs::rename(&inner, &away).unwrap();
+        let gone = idx.update(&roots, &[]).unwrap();
+        assert_eq!(gone.removed, 0, "{gone:?}");
+        fs::rename(&away, &inner).unwrap();
+        idx.update(&roots, &[]).unwrap();
+        assert_eq!(idx.lookup(None, Some(&plan)).unwrap().unwrap().id, id);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_one_folder_refresh_is_not_a_full_run() {
+        let d = scratch("partial");
+        let top = d.join("docs");
+        fs::create_dir_all(top.join("sub")).unwrap();
+        fs::write(top.join("sub/a.md"), "walrus").unwrap();
+        let mut idx = Index::open(&d.join("index.sqlite")).unwrap();
+        idx.update_within(&[root(&top.join("sub"))], &[root(&top)], &[])
+            .unwrap();
+        assert_eq!(idx.info().unwrap().last_full, None);
+        idx.update(&[root(&top)], &[]).unwrap();
+        assert!(idx.info().unwrap().last_full.is_some());
+        let _ = fs::remove_dir_all(&d);
     }
 }
