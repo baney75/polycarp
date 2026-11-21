@@ -70,6 +70,9 @@ public enum Wire {
             /// Show `target` (an absolute file path) in the built-in player (`polycarp-spaces play`, spec/player.md).
             /// Local callers only (`Remote.allows` never lets it through).
             case play
+            /// The purpose layer (`PurposeAPI`): `text` is list, set, clear, one or day, `args` the rest. Local callers
+            /// only (`Remote.allows` never lets it through).
+            case purpose
         }
         public var op: Op
         public var target: String?
