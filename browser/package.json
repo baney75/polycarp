@@ -1,6 +1,6 @@
 {
 	"name": "tabkyra",
-	"version": "1.1.8",
+	"version": "1.2.1",
 	"private": true,
 	"description": "Tabkyra browser extension",
 	"type": "module",
