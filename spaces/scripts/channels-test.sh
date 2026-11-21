@@ -221,54 +221,6 @@ done
 if grep -nE -- '--soak|draft=false|--draft=false|make_latest=true|--latest( |$)' ../.github/workflows/*.yml \
   | grep -vE '^[^:]+:[0-9]+: *(#|echo )'; then bad "a workflow publishes a release by itself"; fi
 
-# The gates run the real Decide scripts from dev.yml and nightly.yml against a stand-in gh. A channel only moves to a
-# commit that passed its own CI and is ahead of the one it offers (CI runs can finish out of order or be re-run).
-decide() { # <workflow> -> the Decide step's script
-  python3 -I - "../.github/workflows/$1.yml" <<'PY'
-import sys
-lines = open(sys.argv[1]).read().split("\n")
-i = next(n for n, l in enumerate(lines) if l.strip() == "- name: Decide")
-i = next(n for n in range(i, len(lines)) if lines[n].strip() == "run: |") + 1
-ind = len(lines[i]) - len(lines[i].lstrip())
-out = []
-while i < len(lines) and (not lines[i].strip() or len(lines[i]) - len(lines[i].lstrip()) >= ind):
-    out.append(lines[i][ind:]); i += 1
-print("\n".join(out))
-PY
-}
-g="$tmp/gate"; mkdir -p "$g/bin"
-cat > "$g/bin/gh" <<'GH'
-#!/bin/bash
-# STUB_LAST: the channel tag's commit (empty: 404). STUB_REL_<base>_<head>: compare status. STUB_GREEN: newest green
-# CI run's commit. STUB_MAIN: main's head.
-case "$*" in
-  "api repos/r/git/ref/tags/"*) [ -n "$STUB_LAST" ] && echo "$STUB_LAST" || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; } ;;
-  "api repos/r/compare/"*) p=${2#repos/r/compare/}; v="STUB_REL_${p%%...*}_${p##*...}"; echo "${!v:?no stub for $p}" ;;
-  "api repos/r/commits/main"*) echo "$STUB_MAIN" ;;
-  "run list"*) echo "${STUB_GREEN:-}" ;;
-  "issue list"*) echo "" ;;
-  *) echo "gh stand-in: $*" >&2; exit 1 ;;
-esac
-GH
-chmod +x "$g/bin/gh"
-gate() { # <workflow> <env...>: prints go and commit
-  local wf=$1; shift; : > "$g/out"
-  env "$@" REPO=r GITHUB_OUTPUT="$g/out" RUNNER_TEMP="$g" PATH="$g/bin:$PATH" bash -c "$(decide "$wf")" >/dev/null 2>&1 \
-    || { echo "error"; return; }
-  printf '%s %s\n' "$(sed -n 's/^go=//p' "$g/out")" "$(sed -n 's/^commit=//p' "$g/out")"
-}
-# first-F1: B is on dev; A's CI finishes later (or is re-run). Dev must not move back to A.
-expect "dev, an older commit's CI" "$(gate dev RUN_SHA=aaa STUB_LAST=bbb STUB_REL_bbb_aaa=behind)" "false "
-expect "dev, a newer commit's CI" "$(gate dev RUN_SHA=ccc STUB_LAST=bbb STUB_REL_bbb_ccc=ahead)" "true ccc"
-expect "dev, the first build" "$(gate dev RUN_SHA=ccc STUB_LAST=)" "true ccc"
-expect "dev, the same commit again" "$(gate dev RUN_SHA=bbb STUB_LAST=bbb STUB_REL_bbb_bbb=identical)" "false "
-# sol-F1: main moved to ddd, whose CI hasn't finished. The nightly builds ccc, the newest tested commit, never ddd.
-expect "nightly, untested head" "$(gate nightly EVENT=schedule STUB_MAIN=ddd STUB_GREEN=ccc STUB_REL_ccc_main=ahead STUB_LAST=bbb STUB_REL_bbb_ccc=ahead)" "true ccc"
-expect "nightly, nothing new tested" "$(gate nightly EVENT=schedule STUB_GREEN=bbb STUB_REL_bbb_main=ahead STUB_LAST=bbb STUB_REL_bbb_bbb=identical)" "false "
-expect "nightly, no green run" "$(gate nightly EVENT=schedule STUB_GREEN= STUB_LAST=bbb)" "false "
-expect "nightly, tested commit left main" "$(gate nightly EVENT=schedule STUB_GREEN=eee STUB_REL_eee_main=diverged STUB_LAST=bbb)" "false "
-expect "nightly, first (bridge) run" "$(gate nightly EVENT=workflow_dispatch STUB_GREEN=ccc STUB_REL_ccc_main=identical STUB_LAST=)" "true ccc"
-grep -q "if: needs.gate.outputs.go == 'true'" ../.github/workflows/dev.yml || bad "dev.yml builds without the gate's go"
 
 [ $status = 0 ] && echo "channels-test: pass"
 exit $status

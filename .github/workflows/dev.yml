@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     outputs:
       go: ${{ steps.decide.outputs.go }}
       commit: ${{ steps.decide.outputs.commit }}
@@ -37,7 +38,10 @@ jobs:
           stop() { echo "::notice title=No dev build::$1"; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; }
           if [ -n "$RUN_SHA" ]; then SHA=$RUN_SHA; else
             [ "$REF" = refs/heads/main ] || { echo "dev is built from main only, not $REF" >&2; exit 1; }
-            SHA=$(gh api "repos/$REPO/commits/main" --jq .sha)
+            # Started by hand: the newest main commit with a green CI run of its own, never an untested head.
+            SHA=$(gh run list -R "$REPO" --workflow ci.yml --branch main --event push --status success --limit 1 \
+              --json headSha --jq '.[0].headSha // empty')
+            [ -n "$SHA" ] || stop "no CI run on main has passed."
           fi
           # CI runs can finish out of order, and an old one can be re-run. Only a commit ahead of the one dev already
           # offers moves it, so dev never goes back to older code.

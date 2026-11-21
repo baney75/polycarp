@@ -28,6 +28,7 @@ jobs:
     environment: stable
     permissions:
       contents: write
+      issues: read
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
