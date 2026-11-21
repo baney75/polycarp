@@ -54,6 +54,8 @@ final class SurfacesTests: XCTestCase {
         XCTAssertEqual(d.idle.style, .martyrNight)
         XCTAssertTrue(d.idle.effects && d.idle.showMachineName && d.idle.showVerse && d.idle.showKierkegaard)
         XCTAssertEqual(d.idle.startAfterMinutes, 10)
+        XCTAssertEqual(d.alarm, .init(wake: false, wakeAt: "06:30", days: .every, keepAwake: true, timerMinutes: 25),
+                       "the wake alarm waits until you turn it on")
         XCTAssertEqual(d.text.translation, .bsb)
         XCTAssertEqual(d.text.verseSource, .builtIn)
 
@@ -99,6 +101,8 @@ final class SurfacesTests: XCTestCase {
             ("newtab.searchURL", "\"https://search.brave.com/search?q={query}&source=web\""),
             ("idle.enabled", "true"), ("idle.style", "\"verse\""), ("idle.effects", "false"), ("idle.showMachineName", "false"), ("idle.showVerse", "false"),
             ("idle.showKierkegaard", "false"), ("idle.startAfterMinutes", "5"),
+            ("alarm.wake", "true"), ("alarm.wakeAt", "\"05:45\""), ("alarm.days", "\"weekdays\""), ("alarm.keepAwake", "false"),
+            ("alarm.timerMinutes", "50"),
             ("text.translation", "\"BSB\""), ("text.verseSource", "\"file:psalms.json\""),
         ]
         for (p, v) in sets {
@@ -114,6 +118,7 @@ final class SurfacesTests: XCTestCase {
         XCTAssertEqual(s.menu.rows, [.quit, .settings, .workspaces, .showAll, .find, .dock], "left-out rows follow; hidden ones go")
         XCTAssertEqual(s.newtab, .init(question: "Will one thing.", chips: false, verse: false, searchURL: "https://search.brave.com/search?q={query}&source=web"))
         XCTAssertEqual(s.idle, .init(enabled: true, style: .verse, effects: false, showMachineName: false, showVerse: false, showKierkegaard: false, startAfterMinutes: 5))
+        XCTAssertEqual(s.alarm, .init(wake: true, wakeAt: "05:45", days: .weekdays, keepAwake: false, timerMinutes: 50))
         XCTAssertEqual(s.text, .init(translation: .bsb, verseSource: .file("psalms.json")))
         // Reading the tree's text again gives the same tree: nothing is lost or reordered into something else.
         XCTAssertEqual(tree(d.tree.json()), d.tree)
@@ -194,6 +199,14 @@ final class SurfacesTests: XCTestCase {
             (#"{"idle":{"style":"martyr"}}"#, "idle.style", #"not "martyr""#),
             (#"{"idle":{"startAfterMinutes":241}}"#, "idle.startAfterMinutes", "must be from 1 to 240, not 241"),
             (#"{"idle":{"effects":1}}"#, "idle.effects", "must be true or false, not a number"),
+            (#"{"alarm":{"wakeAt":"25:00"}}"#, "alarm.wakeAt", #"must be a time "HH:MM" from 00:00 to 23:59 (as "06:30"), not "25:00""#),
+            (#"{"alarm":{"wakeAt":"6:3"}}"#, "alarm.wakeAt", #"not "6:3""#),
+            (#"{"alarm":{"wakeAt":"06:60"}}"#, "alarm.wakeAt", #"not "06:60""#),
+            (#"{"alarm":{"wakeAt":630}}"#, "alarm.wakeAt", "must be a time \"HH:MM\" (24 hour, as \"06:30\"), not a number"),
+            (#"{"alarm":{"timerMinutes":0}}"#, "alarm.timerMinutes", "must be from 1 to 240, not 0"),
+            (#"{"alarm":{"timerMinutes":241}}"#, "alarm.timerMinutes", "must be from 1 to 240, not 241"),
+            (#"{"alarm":{"days":"sundays"}}"#, "alarm.days", #"must be one of "every", "weekdays", "not-sunday", not "sundays""#),
+            (#"{"alarm":{"wake":"on"}}"#, "alarm.wake", "must be true or false, not a string"),
             (#"{"text":{"translation":"KJV"}}"#, "text.translation", #"must be one of "BSB", not "KJV""#),
             (#"{"text":{"verseSource":"file:psalms.txt"}}"#, "text.verseSource", "is not a valid file value"),
         ]
@@ -421,6 +434,8 @@ final class SurfacesTests: XCTestCase {
         XCTAssertEqual(s.at(["properties", "bar", "properties", "height", "minimum"]), .number(22))
         XCTAssertEqual(s.at(["properties", "bar", "properties", "height", "maximum"]), .number(40))
         XCTAssertEqual(s.at(["properties", "bar", "properties", "style", "enum"]), .array([.string("solid"), .string("glass"), .string("hairline")]))
+        XCTAssertEqual(s.at(["properties", "alarm", "properties", "wakeAt", "pattern"]), .string("^([01][0-9]|2[0-3]):[0-5][0-9]$"))
+        XCTAssertEqual(s.at(["properties", "alarm", "properties", "timerMinutes", "maximum"]), .number(240))
         // The text is JSON a schema tool can read.
         XCTAssertEqual(tree(s.json()), s)
     }
@@ -433,6 +448,21 @@ final class SurfacesTests: XCTestCase {
             XCTAssertTrue(doc.contains("`\(f.defaultValue.json(pretty: false))`"), "docs/surfaces.md lacks \(f.path)'s default \(f.defaultValue.json(pretty: false))")
         }
         XCTAssertFalse(doc.contains("\u{2014}") || doc.contains("\u{2013}"), "no em or en dashes")
+    }
+
+    /// `alarm.wakeAt` takes every minute of the day as "HH:MM" and nothing else; a set of a bare word reads as text.
+    func testTheWakeTimeIsHoursAndMinutesOnTheTwentyFourHourClock() throws {
+        for good in ["00:00", "06:30", "12:05", "23:59"] { XCTAssertNil(SurfaceCheck.problem(.string(good), kind: .time), good) }
+        for bad in ["24:00", "25:00", "6:3", "6:30", "06:3", "0630", "06:30 ", "", "ab:cd"] {
+            XCTAssertNotNil(SurfaceCheck.problem(.string(bad), kind: .time), bad)
+        }
+        XCTAssertEqual(Surfaces.defaults.alarm.time?.hour, 6)
+        XCTAssertEqual(Surfaces.defaults.alarm.time?.minute, 30)
+        XCTAssertNoThrow(try SurfacesOps.set("alarm", tree(#"{"wake":true,"wakeAt":"07:15","days":"not-sunday"}"#), file: file).get())
+        guard case .document(let d) = SurfacesFile.load(path: file) else { return XCTFail("the file reads back") }
+        XCTAssertEqual(d.surfaces.alarm, .init(wake: true, wakeAt: "07:15", days: .notSunday, keepAwake: true, timerMinutes: 25))
+        guard case .failure(let f) = SurfacesOps.set("alarm.wakeAt", .string("7:15"), file: file) else { return XCTFail("7:15 is refused") }
+        XCTAssertEqual(f.issues.first?.path, "alarm.wakeAt")
     }
 
     /// Review of #587: a file that set one place under the old defaults (`center: ["hour"]`, the docs' own example)

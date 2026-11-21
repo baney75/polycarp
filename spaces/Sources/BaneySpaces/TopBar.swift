@@ -34,7 +34,7 @@ final class TopBar {
     func start() {
         let center = NotificationCenter.default
         center.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload(fromFile: true) }
-        for name in [PurposeStore.didChange, NSApplication.didChangeScreenParametersNotification] {
+        for name in [PurposeStore.didChange, OneThingTimerStore.didChange, NSApplication.didChangeScreenParametersNotification] {
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.reload() }
         }
         // Set in System Settings, the menu bar's hiding changes the visible frame (and posts this, undocumented).
@@ -165,13 +165,18 @@ final class TopBar {
         if model.battery != text { model.battery = text }
     }
 
-    /// The clock and the hour change on the minute; the timer is set for the next one, not every second.
+    /// The clock and the hour change on the minute; the timer is set for the next one, not every second. While the
+    /// one-thing timer runs, also when its time left reads differently (`BarText.timerNextChange`).
     private func refreshTime() {
         let now = Date()
         model.now = now
         model.verse = Verses.pick(SurfacesStore.shared.current.desktop.verseRotation, at: now)
+        let left = PurposeKeeper.shared.timer.flatMap { $0.done(now: now) ? nil : $0.remaining(now: now) }
+        if model.timerLeft.map(BarText.timer(remaining:)) != left.map(BarText.timer(remaining:)) { model.timerLeft = left }
+        var fire = BarText.nextMinute(after: now)
+        if let left { fire = min(fire, now.addingTimeInterval(BarText.timerNextChange(remaining: left))) }
         tick?.invalidate()
-        let t = Timer(fire: BarText.nextMinute(after: now), interval: 0, repeats: false) { [weak self] _ in self?.refreshTime() }
+        let t = Timer(fire: fire, interval: 0, repeats: false) { [weak self] _ in self?.refreshTime() }
         t.tolerance = 1
         RunLoop.main.add(t, forMode: .common)
         tick = t
@@ -202,6 +207,8 @@ final class TopBarModel: ObservableObject {
     @Published var occupied: Set<Int> = []
     @Published var purposes: [Int: String] = [:]
     @Published var oneThing: String?
+    /// Seconds left on the one-thing timer while it runs.
+    @Published var timerLeft: TimeInterval?
     @Published var battery: String?
     @Published var offline = false
     @Published var verse: Verse?
@@ -282,10 +289,19 @@ struct TopBarView: View {
                     .help("Workspace \(here) is for: \(p)")
             }
         case .oneThing:
-            if let one = model.oneThing, !one.isEmpty {
+            let one = model.oneThing.flatMap { $0.isEmpty ? nil : $0 }
+            if one != nil || model.timerLeft != nil {
                 HStack(spacing: 6) {
-                    Text("One thing").font(Chrome.font(11, .medium)).foregroundStyle(Chrome.gold).fixedSize()
-                    Text(one).font(Chrome.font(11, .medium)).foregroundStyle(Chrome.wash()).truncationMode(.tail)
+                    if let one {
+                        Text("One thing").font(Chrome.font(11, .medium)).foregroundStyle(Chrome.gold).fixedSize()
+                        Text(one).font(Chrome.font(11, .medium)).foregroundStyle(Chrome.wash()).truncationMode(.tail)
+                    }
+                    // The one-thing timer's time left, muted, after the one thing.
+                    if let left = model.timerLeft {
+                        Text(BarText.timer(remaining: left)).font(Chrome.font(11, .medium)).monospacedDigit()
+                            .foregroundStyle(Chrome.wash(0.85)).fixedSize()
+                            .help("The one-thing timer: \(BarText.timer(remaining: left)) left")
+                    }
                 }
                 .accessibilityElement(children: .combine)
             }

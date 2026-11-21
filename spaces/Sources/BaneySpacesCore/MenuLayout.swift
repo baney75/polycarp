@@ -110,6 +110,8 @@ public enum MenuEntry: Equatable, Sendable {
     case nameHour
     /// "Set the One Thing…", or "Change the One Thing…" once it is set.
     case oneThing(set: Bool)
+    /// "Start a timer (25 min)", or "Stop the timer (12 min left)" while one runs: the one-thing timer.
+    case timer(MenuTimer)
     /// "Evening Examen…", once the evening has started (`evening`).
     case examen
     case workspace(MenuLayout.Row)
@@ -122,13 +124,33 @@ public enum MenuEntry: Equatable, Sendable {
     case separator
 }
 
+/// The menu's one-thing timer row: start one of `minutes` (`alarm.timerMinutes`), or stop the one running with `left`
+/// seconds to go.
+public struct MenuTimer: Equatable, Sendable {
+    public let minutes: Int
+    public let left: TimeInterval?
+
+    public init(minutes: Int, left: TimeInterval?) { self.minutes = minutes; self.left = left }
+
+    public var running: Bool { left != nil }
+
+    /// "Start a timer (25 min)" or "Stop the timer (12 min left)".
+    public var title: String {
+        guard let left else { return "Start a timer (\(minutes) min)" }
+        return "Stop the timer (\(BarText.timer(remaining: left)) left)"
+    }
+}
+
 extension MenuLayout {
-    /// With `now`, the menu opens on what you are doing and the two ways to name it (and in the `evening`, the examen),
-    /// then the workspaces.
-    public static func entries(now: MenuNow? = nil, oneThingSet: Bool = false, evening: Bool = false, rows: [Row], finished: Int,
-                               update: UpdateNotice?, dockOn: Bool? = nil) -> [MenuEntry] {
+    /// With `now`, the menu opens on what you are doing and the two ways to name it, the one-thing `timer` under them
+    /// (and in the `evening`, the examen), then the workspaces.
+    public static func entries(now: MenuNow? = nil, oneThingSet: Bool = false, timer: MenuTimer? = nil, evening: Bool = false, rows: [Row],
+                               finished: Int, update: UpdateNotice?, dockOn: Bool? = nil) -> [MenuEntry] {
         var out: [MenuEntry] = []
-        if let now { out += [.now(now), .nameHour, .oneThing(set: oneThingSet)] + (evening ? [.examen] : []) + [.separator] }
+        if let now {
+            out += [.now(now), .nameHour, .oneThing(set: oneThingSet)] + (timer.map { [.timer($0)] } ?? [])
+                + (evening ? [.examen] : []) + [.separator]
+        }
         out += rows.map(MenuEntry.workspace)
         out += [.separator, .showAll, .find]
         if let dockOn { out.append(.dock(on: dockOn)) }
