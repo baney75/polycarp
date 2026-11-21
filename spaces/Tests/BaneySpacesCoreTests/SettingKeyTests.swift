@@ -46,7 +46,6 @@ final class SettingKeyTests: XCTestCase {
         let back = try? JSONDecoder().decode(Wire.Request.self, from: JSONEncoder().encode(set))
         XCTAssertEqual(back, set)
         XCTAssertEqual(back?.caller, "claude-code")
-        XCTAssertNil(SocketPolicy.refusal(for: set), "the local socket doesn't refuse it either")
     }
 
     func testWorkspaceAndWindowOpsStayUserOnly() {

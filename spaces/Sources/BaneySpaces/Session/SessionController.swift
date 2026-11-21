@@ -49,8 +49,6 @@ final class SessionController {
     private(set) var started = false
 
     var agentHost = AgentHost()
-    /// Answers `baneyspaces sandbox …` (the app delegate sets it); called off the main thread.
-    var sandboxHandler: ((Wire.Request) -> Wire.Reply)?
     /// Answers `polycarp-spaces update status|check|now` with the app's updater (the app delegate sets it).
     var updateHandler: ((String) -> Wire.Reply)?
 
@@ -104,7 +102,6 @@ final class SessionController {
         engine.start()
         phones.start()
         server.handle = { [weak self] in self?.handle($0) ?? Wire.Reply(ok: false) }
-        server.handleSandbox = { [weak self] in self?.sandboxHandler?($0) ?? Wire.Reply(ok: false, error: "the sandbox isn't ready") }
         server.start()
         remote.handle = { [weak self] in self?.handle($0) ?? Wire.Reply(ok: false) }
         if Self.remoteEnabled { startRemote() }
@@ -399,10 +396,6 @@ final class SessionController {
         case .update:
             // Answered above, before the Accessibility check.
             return .init(ok: false, error: "the updater isn't ready")
-        case .sandbox:
-            // Answered by the server off the main thread (`handleSandbox`); a sandbox request that
-            // reaches here came through a path that doesn't know how.
-            return .init(ok: false, error: "sandbox requests are not answered on the main thread")
         case .remote:
             switch r.text ?? "status" {
             case "on":

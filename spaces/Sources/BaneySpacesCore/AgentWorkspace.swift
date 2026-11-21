@@ -10,6 +10,10 @@ import Foundation
 ///    tile, or a row in the launcher.
 /// 3. A window an agent opens in the background joins the agent workspace, not yours.
 public enum AgentWorkspace {
+    /// What `polycarp-spaces sandbox ...` prints (on stderr, exit 2): the throwaway macOS VM for agent work is Tychicus's now
+    /// (Donovan, 2026-11-21). Nothing runs and nothing is written.
+    public static let sandboxMoved = "The sandbox is now Tychicus: https://github.com/baney75/tychicus"
+
     /// The workspace number, or nil when it's off.
     public static func number(setting: Int) -> Int? { Workspaces.range.contains(setting) ? setting : nil }
 

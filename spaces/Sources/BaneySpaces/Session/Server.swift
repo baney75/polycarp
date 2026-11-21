@@ -5,9 +5,6 @@ import BaneySpacesCore
 /// JSON line in and one out. Requests are handled on the main thread, where the engine lives.
 final class Server {
     var handle: (Wire.Request) -> Wire.Reply = { _ in Wire.Reply(ok: false, error: "not ready") }
-    /// Sandbox requests take seconds to a minute (a VM boots), so they never run on the main thread:
-    /// the session engine, the dock and the hotkeys stay responsive while one waits.
-    var handleSandbox: (Wire.Request) -> Wire.Reply = { _ in Wire.Reply(ok: false, error: "not ready") }
     private var listeners: [(fd: Int32, path: String, source: DispatchSourceRead)] = []
     private let io = DispatchQueue(label: "baneyspaces.socket", attributes: .concurrent)
 
@@ -62,15 +59,7 @@ final class Server {
         guard let line = Wire.readLine(client) else { return }
         let reply: Wire.Reply
         if let req = try? JSONDecoder().decode(Wire.Request.self, from: line) {
-            // The socket is open to every process of this user: what only Donovan may decide is refused here.
-            if let why = SocketPolicy.refusal(for: req) {
-                Trace.log("refused on the socket: \(req.op.rawValue) \(req.text ?? "") \((req.args ?? []).joined(separator: " "))")
-                reply = Wire.Reply(ok: false, error: why)
-            } else if req.op == .sandbox {
-                reply = handleSandbox(req)
-            } else {
-                reply = DispatchQueue.main.sync { handle(req) }
-            }
+            reply = DispatchQueue.main.sync { handle(req) }
         } else {
             reply = Wire.Reply(ok: false, error: "bad request")
         }

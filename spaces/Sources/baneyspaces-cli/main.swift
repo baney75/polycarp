@@ -20,7 +20,6 @@ usage: \(me) <command>
   agent status|on [N]|off     the agent workspace: a workspace of its own for agent apps, out of your way
   agent windows [--json]      the windows on the agent workspace (docs/agent-workspace-api.md)
   agent move <window number>  send a window Polycarp places to the agent workspace
-  sandbox up|down|reset|status|view|guest   a throwaway macOS VM for agent work (sandbox help)
   phone ls|ui|shot|tap|swipe|type|key|shell|mirror   phones for agents (phone help)
   set <setting> <value>       appearance.theme omarchy|baneyspaces|minimal, appearance.palette auto|<name>,
                               dock.enabled true|false; applies at once, no restart
@@ -184,7 +183,8 @@ case "remote":
     out("remote: \(info["remote"] ?? "?")" + (info["listening"].map { " (\($0))" } ?? ""))
 
 case "sandbox":
-    SandboxCommand.run(rest)
+    // The throwaway macOS VM left Polycarp for Tychicus (Donovan, 2026-11-21): one line, nothing runs.
+    fail(AgentWorkspace.sandboxMoved, code: 2)
 
 case "phone", "phones":
     PhoneCommand.run(rest)

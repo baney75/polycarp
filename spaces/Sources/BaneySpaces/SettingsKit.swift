@@ -156,7 +156,6 @@ enum SettingsSidebar {
     struct Group { var header: String?; var tabs: [SettingsTab] }
     static let groups: [Group] = [
         Group(header: nil, tabs: [.general, .keys, .dock, .appearance, .launcher]),
-        Group(header: "Your tools", tabs: [.agents]),
         Group(header: "System", tabs: [.permissions, .automation, .updates]),
     ]
     static var order: [SettingsTab] { groups.flatMap(\.tabs) }
