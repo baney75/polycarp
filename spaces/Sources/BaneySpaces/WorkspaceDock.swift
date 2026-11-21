@@ -707,6 +707,10 @@ final class WorkspaceDock {
         let edge = WorkspaceDock.edge
         model.maxLength = (edge.isVertical ? screen.visibleFrame.height : screen.frame.width) - 32
         model.load(from: spaces)
+        // The dock shows what Polycarp last knew. Titles and hidden apps' windows are read again off the main thread;
+        // a change reloads it.
+        spaces.refreshDetails()
+        spaces.refreshHidden()
         // Off, the dock has no panel and a reveal builds none; the model mustn't think it's up.
         guard let p = dockSwitch.panelForReveal() else { model.shown = false; return }
         isShown = true

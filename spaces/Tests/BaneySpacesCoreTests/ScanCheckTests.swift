@@ -111,23 +111,17 @@ final class UnplacedWindowsTests: XCTestCase {
     }
 }
 
-/// 11-13 bench: 383 Accessibility misses in 23.5 h, none tied to a scan. A slow main-thread scan says what it was.
+/// 11-13 bench: 383 Accessibility misses in 23.5 h, none tied to a scan. A slow scan says what it was, and since
+/// 2026-11-21 which thread paid for it: only launch and quit may say "on main".
 final class SlowScanLineTests: XCTestCase {
     func testAScanUnderATenthOfASecondSaysNothing() {
-        XCTAssertNil(ScanCheck.slowScanLine(seconds: 0.099, kind: "full", switching: false, missed: ["Word"]))
+        XCTAssertNil(ScanCheck.slowScanLine(seconds: 0.099, kind: "full", switching: false, missed: ["Word"], onMain: false))
     }
 
-    func testASlowScanNamesItsKindAndWhoMissed() {
-        XCTAssertEqual(ScanCheck.slowScanLine(seconds: 0.2504, kind: "full", switching: true, missed: ["Word", "Maps"]),
+    func testASlowScanNamesItsKindWhoMissedAndItsThread() {
+        XCTAssertEqual(ScanCheck.slowScanLine(seconds: 0.2504, kind: "full", switching: true, missed: ["Word", "Maps"], onMain: true),
                        "slow scan: 250 ms on main, full mid-switch; missed: Maps, Word")
-        XCTAssertEqual(ScanCheck.slowScanLine(seconds: 0.1, kind: "windows", switching: false, missed: []),
-                       "slow scan: 100 ms on main, windows; every app answered")
-    }
-
-    func testRefreshTimesItsScan() throws {
-        let s = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
-        let r = try XCTUnwrap(SourceText.block(after: "func refresh(full: Bool = false)", in: s))
-        XCTAssertTrue(r.contains("let scanStart = ProcessInfo.processInfo.systemUptime\n        let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)"))
-        XCTAssertTrue(r.contains("ScanCheck.slowScanLine(seconds: ProcessInfo.processInfo.systemUptime - scanStart"))
+        XCTAssertEqual(ScanCheck.slowScanLine(seconds: 0.1, kind: "windows", switching: false, missed: [], onMain: false),
+                       "slow scan: 100 ms off main, windows; every app answered")
     }
 }

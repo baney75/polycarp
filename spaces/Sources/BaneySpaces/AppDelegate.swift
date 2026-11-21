@@ -172,7 +172,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         launcherBuilt = true
         var a = LauncherActions()
         a.focusApp = { [weak self] pid, n in self?.spaces.focusApp(pid, on: n) }
-        a.openWindowHere = { [weak self] pid in self?.started == true && self?.spaces.openWindowHere(pid) == true }
+        a.openWindowHere = { [weak self] pid, orElse in
+            guard let self, self.started else { return orElse() }
+            self.spaces.openWindowHere(pid, orElse: orElse)
+        }
         a.canOpenWindow = { pid in Windows.newWindowItem(pid) != nil }
         a.current = { [weak self] in self?.spaces.model.current ?? 1 }
         a.switchTo = { [weak self] n in self?.run { $0.switchTo(n) } }

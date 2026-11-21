@@ -191,69 +191,150 @@ enum Windows {
         return bench.retryDelay(now: Date())
     }
 
-    /// Every standard window of every regular app except BaneySpaces itself. Dialogs, panels,
-    /// popovers and windows on other macOS desktops are left alone. Apps are asked in parallel:
-    /// Accessibility answers each app separately, so a slow app no longer delays the rest.
-    /// `unsure` lists the apps that were skipped or didn't answer in time; their windows may be
-    /// missing from the result. `listed` is every window number the apps gave, of any kind, and
-    /// `partial` the apps that gave an element whose number couldn't be read: only an app that
+    /// One app's answer to a scan. `answered` is false when it didn't list its windows (timed out, refused, or skipped
+    /// because it is benched); `partial` when it gave an element whose number couldn't be read: only an app that
     /// answered in full can say a window it didn't list is closed.
-    /// `notWindows` are listed elements whose subrole was read and isn't a standard window's
-    /// (sheets, panels). One whose subrole couldn't be read is neither: it stays unplaced, so
-    /// `UnplacedWindows` looks at it again.
-    /// `asking` are the listed elements that wait on you (`WaitingWindow.asks`: a dialog, an alert,
-    /// anything modal), which stay with their app's windows and may mark a tile in the dock.
-    static func all(owners: Set<pid_t>? = nil) -> (windows: [Window], unsure: Set<pid_t>, listed: Set<WindowID>, partial: Set<pid_t>, notWindows: Set<WindowID>, asking: [WaitingWindow.Seen]) {
-        // Only apps that own a window are asked. A running app with no windows is often frozen by
-        // macOS and never answers, which would cost a full timeout on every scan.
-        let candidates = owners.map { RunningApps.regular.intersection($0) } ?? RunningApps.regular
-        var unsure = Set(candidates.filter { !isResponsive($0) })
-        let apps = candidates.compactMap { pid -> (pid_t, String)? in
+    struct Answer {
+        var windows: [Window] = []
+        var listed: Set<WindowID> = []
+        var partial = false
+        var notWindows: Set<WindowID> = []
+        var asking: [WaitingWindow.Seen] = []
+        var details: [WindowID: WindowDetails] = [:]
+        var answered = false
+    }
+
+    /// Every standard window of the apps in `apps` (regular apps, never Polycarp itself), each app asked in parallel.
+    /// Dialogs, panels, popovers and windows on other macOS desktops are left alone. Safe off the main thread, and only
+    /// ever called there except at launch and quit (`Spaces.refreshNow`): an app that doesn't answer costs its 0.25 s
+    /// timeout, and the main thread must never wait on another app (2026-11-21).
+    /// `listed` is every window number the app gave, of any kind. `notWindows` are listed elements whose subrole was
+    /// read and isn't a standard window's (sheets, panels). One whose subrole couldn't be read is neither: it stays
+    /// unplaced, so `UnplacedWindows` looks at it again. `asking` are the listed elements that wait on you
+    /// (`WaitingWindow.asks`: a dialog, an alert, anything modal). `details` holds each standard window's title and
+    /// minimized state, so the dock and the launcher never ask for them on the main thread.
+    static func all(asking apps: Set<pid_t>) -> [pid_t: Answer] {
+        let named = apps.compactMap { pid -> (pid_t, String)? in
             guard isResponsive(pid), let app = NSRunningApplication(processIdentifier: pid) else { return nil }
             return (pid, app.localizedName ?? "App")
         }
-        var results = [[Window]](repeating: [], count: apps.count)
-        var listedIDs = Set<WindowID>(), partial = Set<pid_t>(), notWindows = Set<WindowID>(), asking: [WaitingWindow.Seen] = []
+        var out = Dictionary(uniqueKeysWithValues: apps.map { ($0, Answer()) })
         let lock = NSLock()
-        DispatchQueue.concurrentPerform(iterations: apps.count) { i in
-            let (pid, name) = apps[i]
+        DispatchQueue.concurrentPerform(iterations: named.count) { i in
+            let (pid, name) = named[i]
             let ax = AXUIElementCreateApplication(pid)
-            // A hung app must not hang every workspace switch.
+            // A hung app must not hold up the scan for long.
             AXUIElementSetMessagingTimeout(ax, 0.25)
             var raw: CFTypeRef?
             let error = AXUIElementCopyAttributeValue(ax, kAXWindowsAttribute as CFString, &raw)
             let listed = error == .success ? raw as? [AXUIElement] : nil
             // Any failure, not just a timeout, counts: otherwise an app that answers with an error
             // would be retried at full speed forever instead of backing off.
-            if listed == nil {
-                lock.lock(); unsure.insert(pid); lock.unlock()
-                markUnresponsive(pid, call: kAXWindowsAttribute, error: error)
-            } else { markResponsive(pid) }
+            if listed == nil { markUnresponsive(pid, call: kAXWindowsAttribute, error: error) } else { markResponsive(pid) }
+            var a = Answer()
+            a.answered = listed != nil
             let elements = listed ?? []
             let ids = elements.map(\.windowID)
-            var found: [Window] = [], other: [WindowID] = [], asks: [WaitingWindow.Seen] = []
+            var asks: [WaitingWindow.Seen] = []
             for (el, id) in zip(elements, ids) {
+                AXUIElementSetMessagingTimeout(el, 0.25)
                 guard let id, let subrole = el.string(kAXSubroleAttribute) else { continue }
                 let modal = (el.value(kAXModalAttribute) as NSNumber?)?.boolValue
                 if subrole == kAXStandardWindowSubrole as String {
-                    found.append(Window(id: id, element: el, pid: pid, appName: name))
+                    a.windows.append(Window(id: id, element: el, pid: pid, appName: name))
+                    a.details[id] = WindowDetails(title: el.string(kAXTitleAttribute) ?? "", minimized: el.bool(kAXMinimizedAttribute))
                     // A standard window that blocks its app (a lent app's modal) waits on you too:
                     // placed like any window, and marked when it is out of sight.
                     if modal == true { asks.append(.init(id: id, pid: pid, subrole: subrole, modal: true)) }
                     continue
                 }
-                other.append(id)
+                a.notWindows.insert(id)
                 if WaitingWindow.asks(subrole: subrole, modal: modal) { asks.append(.init(id: id, pid: pid, subrole: subrole, modal: modal)) }
             }
+            a.asking = asks
+            a.listed = Set(ids.compactMap { $0 })
+            a.partial = ids.contains(nil)
             lock.lock()
-            results[i] = found
-            listedIDs.formUnion(ids.compactMap { $0 })
-            notWindows.formUnion(other)
-            asking.append(contentsOf: asks)
-            if ids.contains(nil) { partial.insert(pid) }
+            out[pid] = a
             lock.unlock()
         }
-        return (results.flatMap { $0 }, unsure, listedIDs, partial, notWindows, asking)
+        return out
+    }
+
+    /// Titles and minimized state of `windows`, read again (titles change with every tab). Off the main thread only;
+    /// an app that is benched or doesn't answer keeps what it had.
+    static func details(of windows: [Window]) -> [WindowID: WindowDetails] {
+        let byApp = Dictionary(grouping: windows.filter { isResponsive($0.pid) }, by: \.pid).map(\.value)
+        var out: [WindowID: WindowDetails] = [:]
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: byApp.count) { i in
+            var mine: [WindowID: WindowDetails] = [:]
+            for w in byApp[i] {
+                guard isResponsive(w.pid) else { break }
+                AXUIElementSetMessagingTimeout(w.element, 0.25)
+                var raw: CFTypeRef?
+                let error = AXUIElementCopyAttributeValue(w.element, kAXTitleAttribute as CFString, &raw)
+                guard w.element.checked(error, call: kAXTitleAttribute) else { continue }
+                mine[w.id] = WindowDetails(title: raw as? String ?? "", minimized: w.element.bool(kAXMinimizedAttribute))
+            }
+            lock.lock(); out.merge(mine) { a, _ in a }; lock.unlock()
+        }
+        return out
+    }
+
+    /// What `Spaces` needs to know about one app when it comes forward or moves focus between its windows, asked in one
+    /// go off the main thread: its focused window (number, frame, full screen), whether each of `windows` is
+    /// minimized, and the window numbers it lists (all kinds, and standard ones). `listed` is nil when it didn't answer.
+    struct FocusLook {
+        var focused: WindowID?
+        var frame: CGRect?
+        var fullScreen = false
+        var minimized: [WindowID: Bool] = [:]
+        var listed: Set<WindowID>?
+        var standard: Set<WindowID> = []
+    }
+
+    static func look(at pid: pid_t, windows: [Window]) -> FocusLook {
+        var look = FocusLook()
+        guard isResponsive(pid) else { return look }
+        let ax = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(ax, 0.25)
+        if let el: AXUIElement = ax.value(kAXFocusedWindowAttribute) {
+            AXUIElementSetMessagingTimeout(el, 0.25)
+            look.focused = el.windowID
+            if let p: CGPoint = el.value(kAXPositionAttribute, .cgPoint), let size: CGSize = el.value(kAXSizeAttribute, .cgSize) {
+                look.frame = CGRect(origin: p, size: size)
+            }
+            look.fullScreen = el.bool("AXFullScreen")
+        }
+        for w in windows where w.pid == pid && isResponsive(pid) {
+            AXUIElementSetMessagingTimeout(w.element, 0.25)
+            look.minimized[w.id] = w.element.bool(kAXMinimizedAttribute)
+        }
+        if let elements: [AXUIElement] = ax.value(kAXWindowsAttribute) {
+            look.listed = Set(elements.compactMap(\.windowID))
+            look.standard = Set(elements.compactMap { el in
+                el.string(kAXSubroleAttribute) == kAXStandardWindowSubrole as String ? el.windowID : nil
+            })
+        }
+        return look
+    }
+
+    /// The app in front's frontmost window among `windows`, from the window server's stacking order, which answers
+    /// without asking the app: an app's focused window is its frontmost one. `preferring` wins over the rest when
+    /// both are listed (windows not parked at the hiding spot). For the main thread.
+    static func front(in windows: [WindowID: Window], preferring keep: (WindowID) -> Bool = { _ in true }) -> Window? {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        var fallback: Window?
+        for w in info {
+            guard (w[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+                  (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+                  let id = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value, let win = windows[id] else { continue }
+            if keep(id) { return win }
+            if fallback == nil { fallback = win }
+        }
+        return fallback
     }
 
     static func alive() -> Set<WindowID> { snapshot(apps: RunningApps.regular).alive }
@@ -291,12 +372,6 @@ enum Windows {
         guard let displays = CGSCopyManagedDisplaySpaces(cid) as? [[String: Any]] else { return false }
         let shown = Set(displays.compactMap { ($0["Current Space"] as? [String: Any])?["ManagedSpaceID"] as? Int })
         return !shown.isEmpty && spaces.isSubset(of: shown)
-    }
-
-    /// The window that has keyboard focus, if it is one we manage.
-    static func focused(in windows: [Window]) -> Window? {
-        guard let pid = focusedPid() else { return nil }
-        return focused(of: pid, in: windows)
     }
 
     /// The app that receives keystrokes. Accessibility's system-wide answer often fails or goes
@@ -374,13 +449,6 @@ enum Windows {
         AXUIElementSetMessagingTimeout(ax, 0.25)
         guard let el: AXUIElement = ax.value(kAXFocusedWindowAttribute) else { return false }
         return el.bool("AXFullScreen")
-    }
-
-    static func focused(of pid: pid_t, in windows: [Window]) -> Window? {
-        let ax = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(ax, 0.25)
-        guard let el: AXUIElement = ax.value(kAXFocusedWindowAttribute), let id = el.windowID else { return nil }
-        return windows.first { $0.id == id }
     }
 
     /// The frames a full-screen window can have, in Accessibility coordinates: the whole screen,

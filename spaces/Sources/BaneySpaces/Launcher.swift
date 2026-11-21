@@ -142,8 +142,9 @@ enum Launcher {
 /// What the launcher can do in the rest of BaneySpaces.
 struct LauncherActions {
     var focusApp: (pid_t, Int?) -> Void = { _, _ in }
-    /// A new window of a running app on the workspace you're on; false when it can't make one.
-    var openWindowHere: (pid_t) -> Bool = { _ in false }
+    /// A new window of a running app on the workspace you're on; calls the second argument when it can't make one.
+    /// It reads the app's menus off the main thread, so it answers later.
+    var openWindowHere: (pid_t, @escaping () -> Void) -> Void = { _, orElse in orElse() }
     /// Whether a running app has a New Window command.
     var canOpenWindow: (pid_t) -> Bool = { _ in false }
     var current: () -> Int = { 1 }
@@ -722,8 +723,14 @@ final class LauncherModel: ObservableObject {
         UserDefaults.standard.set(recents.paths, forKey: "launcherRecents")
         let url = URL(fileURLWithPath: a.path)
         if let app = runningApp(a), running[a.path] != nil {
-            if opensHere(a), actions.openWindowHere(app.processIdentifier) { return }
-            actions.focusApp(app.processIdentifier, nil)
+            let pid = app.processIdentifier
+            // Open only on other workspaces: try a new window here. The menus are read off the main thread, and an app
+            // without a New Window command is gone to instead, as before.
+            if let on = running[a.path], !on.contains(actions.current()) {
+                actions.openWindowHere(pid) { [actions] in actions.focusApp(pid, nil) }
+                return
+            }
+            actions.focusApp(pid, nil)
             return
         }
         let config = NSWorkspace.OpenConfiguration()
