@@ -213,13 +213,54 @@ Then connect an assistant to {}/mcp (`polycarp agent connect claude.ai`).",
     Ok(done)
 }
 
-/// The proxy Tailscale Serve has on this host and port, from `tailscale serve status --json`.
-fn serve_proxy(status: &str, dns: &str) -> Option<String> {
-    let v: Json = serde_json::from_str(status).ok()?;
-    let key = format!("{dns}:{TS_PORT}");
-    v["Web"][&key]["Handlers"]["/"]["Proxy"]
-        .as_str()
+/// Whether Polycarp may set up Tailscale Serve on port 8443, from `tailscale serve status --json`: yes when nothing
+/// serves there, or when the one thing there is this gateway's proxy. Anything else there (another proxy, a folder,
+/// a text handler, a raw TCP forward) is someone else's, and a status that can't be read or parsed is a no too,
+/// because what it would hide can't be known.
+fn port_free_or_ours(status: Result<String, String>, dns: &str, ours: &str) -> Result<(), String> {
+    let status = status.map_err(|e| {
+        format!("couldn't read `tailscale serve status`, so Polycarp won't change what Tailscale serves: {e}")
+    })?;
+    let v: Json = if status.trim().is_empty() {
+        Json::Object(Default::default())
+    } else {
+        serde_json::from_str(&status).map_err(|_| {
+            "couldn't read `tailscale serve status --json`, so Polycarp won't change what Tailscale serves."
+                .to_string()
+        })?
+    };
+    let web = &v["Web"][format!("{dns}:{TS_PORT}")];
+    let tcp = &v["TCP"][TS_PORT.to_string()];
+    if web.is_null() && tcp.is_null() {
+        return Ok(());
+    }
+    let handlers = web["Handlers"].as_object();
+    let only_ours = handlers.is_some_and(|h| {
+        h.len() == 1
+            && h.get("/").is_some_and(|x| {
+                x.as_object().is_some_and(|o| o.len() == 1)
+                    && x["Proxy"]
+                        .as_str()
+                        .is_some_and(|p| p.trim_end_matches('/') == ours)
+            })
+    });
+    // Serving HTTPS on the port is the only TCP entry Serve makes for a web handler.
+    let tcp_ok = tcp.is_null()
+        || tcp
+            .as_object()
+            .is_some_and(|o| o.len() == 1 && o.get("HTTPS") == Some(&Json::Bool(true)));
+    if only_ours && tcp_ok {
+        return Ok(());
+    }
+    let what = handlers
+        .and_then(|h| h.get("/"))
+        .and_then(|x| x["Proxy"].as_str())
         .map(str::to_string)
+        .unwrap_or_else(|| "something else".into());
+    Err(format!(
+        "Tailscale already serves {what} on port {TS_PORT} of this device. Polycarp won't replace it; free the port \
+(`tailscale serve --https={TS_PORT} off`) and run this again."
+    ))
 }
 
 pub const FUNNEL_WARNING: &str = "Funnel puts the gateway on the public internet. Anyone can reach its sign-in pages; \
@@ -251,17 +292,11 @@ pub fn tailscale(env: &Env, public: bool) -> Result<Done, String> {
         return Err("this device has no MagicDNS name: turn on MagicDNS and HTTPS in the Tailscale admin console.".into());
     }
     let ours = format!("http://127.0.0.1:{}", env.port);
-    if let Ok(s) = env.runner.run(ts, &["serve", "status", "--json"]) {
-        match serve_proxy(&s, &me.dns) {
-            Some(p) if p.trim_end_matches('/') != ours => {
-                return Err(format!(
-                    "Tailscale already serves {p} on port {TS_PORT} of this device. Polycarp won't replace it; free \
-the port (`tailscale serve --https={TS_PORT} off`) and run this again."
-                ))
-            }
-            _ => {}
-        }
-    }
+    port_free_or_ours(
+        env.runner.run(ts, &["serve", "status", "--json"]),
+        &me.dns,
+        &ours,
+    )?;
     let verb = if public { "funnel" } else { "serve" };
     let https = format!("--https={TS_PORT}");
     env.exec(&mut done, ts, &[verb, "--bg", &https, &ours]).map_err(|e| {
@@ -414,6 +449,10 @@ pub fn find_cloudflared() -> Option<PathBuf> {
     }
     cands.into_iter().find(|c| crate::check(c).is_ok())
 }
+
+#[cfg(test)]
+#[path = "tunnel_port_tests.rs"]
+mod port_tests;
 
 #[cfg(test)]
 mod tests {
