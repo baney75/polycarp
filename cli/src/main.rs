@@ -10,6 +10,7 @@ use std::process::Command;
 
 mod channel;
 mod features;
+mod files;
 mod mcp;
 mod retire;
 mod theme;
@@ -68,6 +69,7 @@ Usage:
   polycarp spaces [args...]    run the Spaces command
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
   polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
+  polycarp files <command>     search, open and send your files across your devices (polycarp files --help)
   polycarp doctor              show which tools were found
   polycarp --version
   polycarp version [--json] [--check]   every part, its commit, and whether they match
@@ -101,6 +103,7 @@ fn main() {
         Some("theme") => theme::run(&rest),
         Some("features") => features::run(&rest),
         Some("mcp") => mcp::run(&rest),
+        Some("files") => files::run(&rest),
         Some("doctor") => doctor(),
         Some("version") => version::run(&rest, &version_device()),
         Some("update") => update::run(
