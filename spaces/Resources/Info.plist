@@ -26,5 +26,63 @@
     <key>CFBundleURLName</key><string>com.baney.polycarp</string>
     <key>CFBundleURLSchemes</key><array><string>polycarp</string><string>baneyspaces</string></array>
   </dict></array>
+  <!-- The player (spec/player.md): Polycarp is an Alternate handler only, so it shows up in Open With and never takes a default from the app you chose. -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Audio</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.mp3</string>
+        <string>com.apple.m4a-audio</string>
+        <string>org.xiph.flac</string>
+        <string>com.microsoft.waveform-audio</string>
+        <string>public.aac-audio</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Video</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.mpeg-4</string>
+        <string>com.apple.quicktime-movie</string>
+        <string>com.apple.m4v-video</string>
+        <string>org.matroska.mkv</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Photo</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.jpeg</string>
+        <string>public.png</string>
+        <string>public.heic</string>
+        <string>public.heif</string>
+        <string>com.compuserve.gif</string>
+        <string>org.webmproject.webp</string>
+        <string>public.camera-raw-image</string>
+      </array>
+    </dict>
+  </array>
+  <!-- Matroska has no system declaration on every macOS; imported, so an app that exports it wins. -->
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>org.matroska.mkv</string>
+      <key>UTTypeDescription</key><string>Matroska video</string>
+      <key>UTTypeConformsTo</key><array><string>public.movie</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>mkv</string></array>
+        <key>public.mime-type</key><array><string>video/x-matroska</string></array>
+      </dict>
+    </dict>
+  </array>
 </dict>
 </plist>
