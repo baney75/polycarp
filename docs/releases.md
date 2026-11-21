@@ -68,3 +68,11 @@ rename. One bridge build (`release.sh --channel nightly --bridge`) is both the f
 preview: its updater follows nightly, and the `preview` release keeps serving it, with a `latest.json`, until
 every install has moved. Then `preview` is retired. Releases are never deleted to roll back: re-publish the last
 good `latest.json` and fix forward.
+
+A copy from before the channels (0.3.0 and older) doesn't read `latest.json`. On the Nightly channel it reads
+GitHub's release list, takes the release tagged exactly `nightly`, and reads the commit and date from the
+`<!-- baneyspaces commit=<sha> date=<ISO> -->` line of its notes. `publish-channel.sh` writes that line into every
+nightly's notes, so such a copy is offered the newest nightly, installs it with the `install.sh` of that commit
+(the ready-made `Polycarp.zip` when it is signed with the release identity, else a build on the Mac). The build it lands on follows `latest.json` once
+it has the updater that reads it. `channels-test.sh` runs the publisher against a stand-in for GitHub and checks
+the release it leaves the way that updater reads it.
