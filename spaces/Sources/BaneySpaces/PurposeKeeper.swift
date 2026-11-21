@@ -21,6 +21,8 @@ final class PurposeKeeper {
     /// The prompt due now, if any.
     private(set) var due: Rhythm.Prompt?
     private var workspace: Int?
+    /// When you came to the workspace you are on, or came back to the Mac: the menu's "since 8:40".
+    private(set) var arrived: Date?
     private var timer: Timer?
     private var rollover: Timer?
     private var started = false
@@ -86,6 +88,7 @@ final class PurposeKeeper {
     func noteWorkspace(_ n: Int) {
         guard n != workspace else { return }
         workspace = n
+        arrived = Date()
         ledger.switched(to: n)
     }
 
@@ -153,7 +156,7 @@ final class PurposeKeeper {
         case .locked, .wentAway: ledger.wentAway(idle: Self.idleSeconds())
         case .unlocked, .woke, .sessionActive: break
         }
-        if gate.back(after: event) { ledger.cameBack() }
+        if gate.back(after: event) { ledger.cameBack(); arrived = Date() }
         if event != .locked, event != .wentAway {
             purposes.rollover()
             scheduleRollover()

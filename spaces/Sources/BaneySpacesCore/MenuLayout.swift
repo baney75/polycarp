@@ -1,3 +1,5 @@
+import Foundation
+
 /// Which workspaces the menu bar menu lists, and how. Nine rows, most of them empty, buried the
 /// rest of the menu (Donovan, 2026-10-14), so it lists the workspaces in use, the one you're on,
 /// and one empty workspace to start fresh on. ⌘1–⌘9 still reach every one of them.
@@ -10,19 +12,27 @@ public enum MenuLayout {
         public let isCurrent: Bool
     }
 
-    /// `apps` is each workspace's app names in order; a workspace missing from it is empty.
-    public static func rows(current: Int, apps: [Int: [String]], range: ClosedRange<Int> = 1...9) -> [Row] {
+    /// `apps` is each workspace's app names in order; a workspace missing from it is empty. A workspace with a purpose
+    /// is listed by it ("2  Gannon letter"), even with no windows, since you named it for something; its apps go to
+    /// the tooltip.
+    public static func rows(current: Int, apps: [Int: [String]], purposes: [Int: String] = [:], range: ClosedRange<Int> = 1...9) -> [Row] {
         var out: [Row] = []
         for n in range {
             let names = apps[n] ?? []
-            guard !names.isEmpty || n == current else { continue }
+            let purpose = purposes[n].flatMap { $0.isEmpty ? nil : $0 }
+            guard !names.isEmpty || n == current || purpose != nil else { continue }
+            if let purpose {
+                out.append(Row(workspace: n, title: "\(n)  \(purpose)", fullList: names.isEmpty ? nil : names.joined(separator: ", "),
+                               isCurrent: n == current))
+                continue
+            }
             let short = summary(names)
             out.append(Row(workspace: n,
                            title: names.isEmpty ? "Workspace \(n)" : "Workspace \(n)  ·  \(short)",
                            fullList: names.count > shownApps ? names.joined(separator: ", ") : nil,
                            isCurrent: n == current))
         }
-        if let empty = range.first(where: { (apps[$0] ?? []).isEmpty && $0 != current }) {
+        if let empty = range.first(where: { (apps[$0] ?? []).isEmpty && $0 != current && (purposes[$0] ?? "").isEmpty }) {
             out.append(Row(workspace: empty, title: "Empty Workspace \(empty)", fullList: nil, isCurrent: false))
         }
         return out
@@ -60,10 +70,46 @@ public struct UpdateNotice: Equatable, Sendable {
     }
 }
 
+/// The head of the menu bar menu: what you are doing now. "Gannon letter" over "Workspace 2  ·  since 8:40"; a
+/// workspace with no purpose reads "Workspace 2" over "No purpose named  ·  since 8:40".
+public struct MenuNow: Equatable, Sendable {
+    public let title: String
+    public let detail: String
+
+    public init(title: String, detail: String) { self.title = title; self.detail = detail }
+
+    /// `since` is when you came to this workspace, if known. The time has no AM or PM; `twentyFourHour` follows the
+    /// Mac's clock setting (`usesTwentyFourHourClock`).
+    public static func make(workspace n: Int, purpose: String?, since: Date?, twentyFourHour: Bool = usesTwentyFourHourClock,
+                            calendar: Calendar = .current) -> MenuNow {
+        let named = purpose.flatMap { $0.isEmpty ? nil : $0 }
+        var detail = named == nil ? "No purpose named" : "Workspace \(n)"
+        if let since {
+            let c = calendar.dateComponents([.hour, .minute], from: since)
+            let h = c.hour ?? 0
+            let shown = twentyFourHour ? h : (h % 12 == 0 ? 12 : h % 12)
+            detail += "  ·  since " + String(format: "%d:%02d", shown, c.minute ?? 0)
+        }
+        return MenuNow(title: named ?? "Workspace \(n)", detail: detail)
+    }
+
+    /// Whether the Mac shows a 24-hour clock: its short time format has an hour from 0 to 23.
+    public static var usesTwentyFourHourClock: Bool {
+        let f = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current) ?? ""
+        return f.contains("H") || f.contains("k")
+    }
+}
+
 /// The menu bar menu, as a list of what it holds. The app builds exactly these and nothing else, so
 /// a test can read what a person would see (Donovan, 2026-10-31: five kinds of rows). A row for
 /// finished agents or a waiting update is there only while there is something to act on.
 public enum MenuEntry: Equatable, Sendable {
+    /// What you are doing now, at the top ("Now first", Donovan's pick, 2026-11-21).
+    case now(MenuNow)
+    /// "Name This Hour…": the current workspace's purpose.
+    case nameHour
+    /// "Set the One Thing…", or "Change the One Thing…" once it is set.
+    case oneThing(set: Bool)
     case workspace(MenuLayout.Row)
     case showAll, find, settings, quit
     /// "Turn Off Workspace Dock" / "Turn On Workspace Dock": the dock switch (`dock.enabled`).
@@ -75,8 +121,12 @@ public enum MenuEntry: Equatable, Sendable {
 }
 
 extension MenuLayout {
-    public static func entries(rows: [Row], finished: Int, update: UpdateNotice?, dockOn: Bool? = nil) -> [MenuEntry] {
-        var out = rows.map(MenuEntry.workspace)
+    /// With `now`, the menu opens on what you are doing and the two ways to name it, then the workspaces.
+    public static func entries(now: MenuNow? = nil, oneThingSet: Bool = false, rows: [Row], finished: Int, update: UpdateNotice?,
+                               dockOn: Bool? = nil) -> [MenuEntry] {
+        var out: [MenuEntry] = []
+        if let now { out += [.now(now), .nameHour, .oneThing(set: oneThingSet), .separator] }
+        out += rows.map(MenuEntry.workspace)
         out += [.separator, .showAll, .find]
         if let dockOn { out.append(.dock(on: dockOn)) }
         var pending: [MenuEntry] = []
