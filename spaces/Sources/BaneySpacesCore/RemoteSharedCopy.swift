@@ -1,8 +1,8 @@
 import Foundation
 
 /// The words "Use Polycarp from Claude, ChatGPT and Grok" shares with the side panel and the helper. Each literal below is
-/// the same as browser/src/connect/remote-copy.ts (`STEP_COPY`, `ASSISTANT_STEPS`, `APPROVAL_STEP`, `RESULT_COPY`,
-/// `CHECK_LABELS`); browser/test/remote-copy.test.mjs fails when either side changes alone, so edit both together.
+/// the same as src/connect/remote-copy.ts in baney75/tychicus (`STEP_COPY`, `ASSISTANT_STEPS`, `APPROVAL_STEP`, `RESULT_COPY`,
+/// `CHECK_LABELS`), so edit both together.
 public struct RemoteStepCopy: Equatable {
     public let title: String
     /// Nil only for `unknown`, whose body is the helper's own message.

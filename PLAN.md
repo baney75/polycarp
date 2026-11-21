@@ -1,23 +1,24 @@
 # Polycarp plan
 
-BaneySpaces, Tabkyra and Silas become one product on Mac, Windows, iPhone, iPad and Android. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces. Old apps keep
-working, and their repos stay up. A box is checked only when its check has passed.
+Polycarp is Spaces and themes for macOS and Windows. The browser extension, its CLI helper, MCP server and computer-use tools moved to Tychicus: https://github.com/baney75/tychicus. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
+
+The rest of this plan is Spaces and themes, on Mac and Windows first. Old apps keep working, and their repos stay up. A box is checked only when its check has passed.
 
 ## 1. Bring the code together
-- [x] Full history of all three in `spaces/`, `voice/`, `browser/`
+- [x] Full history of all three in `spaces/`, `voice/`, `browser/` (the browser and voice trees moved out on 2026-11-17)
 - [x] Brand files in `brand/`
 - [x] Every suite in `./check.sh` passes on a Mac and in CI
 
 ## 2. One name, one command
-- [x] `polycarp spaces`, `polycarp browser`. Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
+- [x] `polycarp spaces`, `polycarp browser` (now a pointer to Tychicus). Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
 - Moved to Silas (baney75/silas), 2026-11-18: `polycarp voice` only says Silas is its own app and where to get it
 - [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
 
 ## 3. One core, a native app on each device
 - [ ] Shared Rust core for workspaces and sync, growing from `spaces/crates/baneyspaces-core`. Check: `spaces/spec/conformance` passes on every platform
 - Moved to Silas (baney75/silas), 2026-11-18: dictation on every device, the Mac's included, is the Silas app, not part of Polycarp
-- [ ] Windows: workspaces and browser agents in one app. Check: run on a Windows VM
-- [ ] iPhone, iPad, Android: control of your computer's workspaces and browser. Check: Simulator, emulator and a real device
+- [ ] Windows: workspaces in one app. Check: run on a Windows VM
+- [ ] iPhone, iPad, Android: control of your computer's workspaces. Check: Simulator, emulator and a real device
 - [ ] Dictionary and settings sync directly between your own devices, with no Polycarp cloud. Check: an edit on one device appears on another with no third-party server in the path
 - [ ] Each app follows its platform's conventions. Check: screenshots from the real target, plus keyboard, touch, focus, reduced motion and text size
 
@@ -59,14 +60,14 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 ## 6. The old apps
 Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos stay up, so people can keep using the independent apps. They are not archived.
 - [ ] Land or move open PRs that belong in Polycarp. Check: `gh pr list` in each old repo shows none that belong here
-- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Browser. Silas stays: it is its own app. Check: agents' browser work through Polycarp before Tabkyra goes
+- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash). The browser is Tychicus now, and Silas is its own app. Check: workspaces work through Polycarp before BaneySpaces goes
 
 ## One app, everywhere
 Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.
 - Moved to Silas (baney75/silas), 2026-11-18: the voice engine and its C interface. `core/` left this repo with them
-- [x] Mac: browser agents inside `Polycarp.app` with the workspaces, with one Settings window, one welcome window and one install. Check: tests and renders; live check below
-- [ ] Live on a real Mac: the agents' browser connects. Check: Donovan's install
-- [ ] Windows: one Tauri app with workspaces and browser agents. Check: a Windows VM
+- Moved to Tychicus (baney75/tychicus): the browser agents, the extension and its helper
+- [x] Mac: workspaces inside `Polycarp.app`, with one Settings window, one welcome window and one install. Check: tests and renders
+- [ ] Windows: one Tauri app with workspaces. Check: a Windows VM
 - [ ] iPhone, iPad, Android: one app with control of your computer. Check: Simulator, emulator and a real device
 - [ ] Speed: launch, workspace switch and agent tools each have a target in `spaces/spec/speed.json`, and a regression fails. Check: the ratchets, including the two still unmeasured
 
@@ -76,7 +77,6 @@ Asked for by Donovan, 2026-11-05: installation and permissions need to be excell
 - [x] One first-run window explains each permission in plain words, with live status. Check: `WelcomeTests`, and renders of the real view in light and dark
 - [ ] First run on a real Mac: each switch updates the window, and Polycarp starts without a restart. Check: Donovan's first install
 - [ ] A ready-made download that needs no developer tools, from a Polycarp release. Check: installs on a Mac with no command line tools
-- Moved to Silas and Tychicus: Voice and Browser install from the same command, and share the welcome window. Check: `install.sh` against a temporary home installs both, and the welcome window lists both
 
 ## Omarchy
 Retired with the Linux desktop, 2026-11-17. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
