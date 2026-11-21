@@ -434,8 +434,16 @@ final class Engine {
         let parts = item.id.split(separator: ":", maxSplits: 3).map(String.init)
         let ref = t.scripted?.tabs.first { parts.count == 4 && $0.windowID == parts[2] && $0.id == parts[3] }
         OSA.queue.async { [weak self] in
-            guard Date() < deadline,
-                  DispatchQueue.main.sync(execute: { self?.focusToken == token && self?.currentWorkspace() == ws }) else { return }
+            // When BaneySpaces is taking you there, a click mid-switch waits in its queue: the tab is
+            // selected once you arrive, within the deadline. Otherwise a changed workspace means you moved on.
+            while true {
+                guard Date() < deadline else { return }
+                let (latest, there) = DispatchQueue.main.sync { (self?.focusToken == token, self?.currentWorkspace() == ws) }
+                guard latest else { return }
+                if there { break }
+                guard !bringForward else { return }
+                Thread.sleep(forTimeInterval: 0.03)
+            }
             switch t.spec.adapter {
             case .ghostty: _ = script.call("focusTerm", [String(item.id.dropFirst("ghostty:".count))])
             case .chromium, .terminalApp: if let ref { _ = script.call("focusTab", [ref.windowID, String(ref.index)]) }
