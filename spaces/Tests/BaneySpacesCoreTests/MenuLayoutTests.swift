@@ -70,6 +70,33 @@ final class MenuLayoutTests: XCTestCase {
                        [.now(now), .nameHour, .oneThing(set: false), .examen, .separator], "the examen joins the head in the evening")
     }
 
+    /// The one-thing timer sits under "Set the One Thing…": a start with `alarm.timerMinutes`, a stop with the time left.
+    func testTheTimerRowSitsUnderTheOneThing() {
+        let rows = MenuLayout.rows(current: 1, apps: [1: ["Ghostty"]])
+        let now = MenuNow(title: "Write", detail: "Workspace 1")
+        let idle = MenuTimer(minutes: 25, left: nil)
+        XCTAssertEqual(MenuLayout.entries(now: now, oneThingSet: true, timer: idle, rows: rows, finished: 0, update: nil).prefix(5),
+                       [.now(now), .nameHour, .oneThing(set: true), .timer(idle), .separator])
+        XCTAssertEqual(MenuLayout.entries(now: now, timer: idle, evening: true, rows: rows, finished: 0, update: nil).prefix(6),
+                       [.now(now), .nameHour, .oneThing(set: false), .timer(idle), .examen, .separator], "the examen comes after it")
+        XCTAssertFalse(MenuLayout.entries(timer: idle, rows: rows, finished: 0, update: nil).contains(.timer(idle)),
+                       "no head, no timer row")
+        XCTAssertEqual(idle.title, "Start a timer (25 min)")
+        XCTAssertFalse(idle.running)
+        XCTAssertEqual(MenuTimer(minutes: 50, left: nil).title, "Start a timer (50 min)")
+        let running = MenuTimer(minutes: 25, left: 12 * 60 + 30)
+        XCTAssertTrue(running.running)
+        XCTAssertEqual(running.title, "Stop the timer (12 min left)")
+        XCTAssertEqual(MenuTimer(minutes: 25, left: 42).title, "Stop the timer (0:42 left)")
+    }
+
+    func testTheAppBuildsTheTimerRowFromTheSettingAndTheKeeper() throws {
+        let text = try code("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertTrue(text.contains("MenuTimer(minutes: SurfacesStore.shared.current.alarm.timerMinutes, left: running?.remaining(now: at))"))
+        XCTAssertTrue(text.contains("return item(timer.title, #selector(toggleTimer))"))
+        XCTAssertTrue(text.contains("WakeAlarm.shared.start()"))
+    }
+
     /// The app target can't be imported by tests, so these read its source (code only, comments stripped).
     private func code(_ path: String) throws -> String {
         let url = URL(fileURLWithPath: #filePath)

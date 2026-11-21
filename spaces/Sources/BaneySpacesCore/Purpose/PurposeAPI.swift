@@ -1,6 +1,6 @@
 import Foundation
 
-/// `polycarp-spaces purpose|one|day`: the purpose layer on the session socket (`Wire.Request.Op.purpose`), for agents
+/// `polycarp-spaces purpose|one|day|timer`: the purpose layer on the session socket (`Wire.Request.Op.purpose`), for agents
 /// and scripts. Pure: the app answers with these replies, and the command and the tests decode them the same way. Local
 /// callers only (`Remote.allows` never lets it through): what a workspace is for is yours to say.
 public enum PurposeAPI {
@@ -14,10 +14,15 @@ public enum PurposeAPI {
         case one(String)
         case clearOne
         case day
+        /// Starts the one-thing timer: these minutes, or `alarm.timerMinutes` when nil.
+        case startTimer(Int?)
+        case stopTimer
+        case timerStatus
         case refused(String)
     }
 
-    public static let usage = "usage: polycarp-spaces purpose list|set <n> <text>|clear <n>, one <text>|--clear, day [--json]"
+    public static let usage = "usage: polycarp-spaces purpose list|set <n> <text>|clear <n>, one <text>|--clear, day [--json], timer [minutes]|stop|status [--json]"
+    public static let timerUsage = "usage: polycarp-spaces timer [minutes]|stop|status [--json] (minutes from 1 to 240)"
 
     public static func ask(text: String?, args: [String]) -> Ask {
         let args = args.filter { $0 != "--json" }
@@ -36,6 +41,15 @@ public enum PurposeAPI {
             let words = args.joined(separator: " ")
             return Purposes.clean(words, limit: .max) == nil ? .clearOne : .one(words)
         case "day" where args.isEmpty: return .day
+        case "timer":
+            switch args {
+            case []: return .startTimer(nil)
+            case ["stop"]: return .stopTimer
+            case ["status"]: return .timerStatus
+            default:
+                guard args.count == 1, let m = Int(args[0]), OneThingTimer.minutes.contains(m) else { return .refused(timerUsage) }
+                return .startTimer(m)
+            }
         default: return .refused(usage)
         }
     }
@@ -84,11 +98,46 @@ public enum PurposeAPI {
         }
     }
 
-    /// Answers `ask` from the stores. `current` is the workspace you are on, where `one` is set. Call on the main thread
-    /// so the change is announced before the reply goes out.
-    public static func answer(_ ask: Ask, purposes: PurposeStore, ledger: DayLedgerStore, current: Int, now: Date = Date()) -> Wire.Reply {
+    /// `timer`, `timer stop`, `timer status`: the one-thing timer as it is after the ask.
+    public struct TimerReport: Codable, Equatable, Sendable {
+        public var version = PurposeAPI.version
+        public var running: Bool
+        public var minutes: Int?
+        /// ISO 8601, UTC.
+        public var startedAt: String?
+        public var endsAt: String?
+        /// Whole seconds left.
+        public var remaining: Int?
+        /// The one thing when the timer started.
+        public var oneThing: String?
+        /// The length a bare `timer` starts (`alarm.timerMinutes`).
+        public var defaultMinutes: Int
+
+        public init(_ timer: OneThingTimer?, now: Date, defaultMinutes: Int) {
+            let live = timer.flatMap { $0.done(now: now) ? nil : $0 }
+            let iso = ISO8601DateFormatter()
+            running = live != nil
+            minutes = live?.minutes
+            startedAt = live.map { iso.string(from: $0.startedAt) }
+            endsAt = live.map { iso.string(from: $0.endsAt) }
+            remaining = live.map { Int($0.remaining(now: now).rounded(.down)) }
+            oneThing = live?.oneThing
+            self.defaultMinutes = defaultMinutes
+        }
+    }
+
+    /// Answers `ask` from the stores. `current` is the workspace you are on, where `one` is set. `timer` is the one-thing
+    /// timer and `timerMinutes` the length a bare `timer` starts. Call on the main thread so the change is announced
+    /// before the reply goes out.
+    public static func answer(_ ask: Ask, purposes: PurposeStore, ledger: DayLedgerStore, current: Int, now: Date = Date(),
+                              timer: OneThingTimerStore? = nil, timerMinutes: Int = Surfaces.defaults.alarm.timerMinutes) -> Wire.Reply {
         do {
             switch ask {
+            case .startTimer, .stopTimer, .timerStatus:
+                guard let timer else { return .init(ok: false, error: "the timer isn't ready yet; try again in a moment") }
+                if case .startTimer(let m) = ask { try timer.start(minutes: m ?? timerMinutes, oneThing: purposes.oneThing?.text, now: now) }
+                if case .stopTimer = ask { timer.stop() }
+                return reply(TimerReport(timer.timer, now: now, defaultMinutes: timerMinutes), key: "timer")
             case .refused(let why): return .init(ok: false, error: why)
             case .list: break
             case .set(let n, let text): try purposes.setPurpose(text, for: n)
@@ -100,6 +149,8 @@ public enum PurposeAPI {
                 return reply(DayReport(day: day, seconds: ledger.seconds(on: day), purposes: purposes.snapshot), key: "day")
             }
         } catch let p as Purposes.Problem {
+            return .init(ok: false, error: p.description)
+        } catch let p as OneThingTimer.Problem {
             return .init(ok: false, error: p.description)
         } catch {
             return .init(ok: false, error: "\(error)")
@@ -116,6 +167,7 @@ public enum PurposeAPI {
 
     public static func decodeListing(_ reply: Wire.Reply) -> Listing? { decode(reply, key: "purposes") }
     public static func decodeDay(_ reply: Wire.Reply) -> DayReport? { decode(reply, key: "day") }
+    public static func decodeTimer(_ reply: Wire.Reply) -> TimerReport? { decode(reply, key: "timer") }
 
     private static func decode<T: Decodable>(_ reply: Wire.Reply, key: String) -> T? {
         guard reply.ok, let text = reply.info?[key] else { return nil }
@@ -140,5 +192,13 @@ public enum PurposeAPI {
         guard !d.workspaces.isEmpty else { return ["\(d.day): no time recorded yet"] }
         return ["\(d.day): \(Journal.duration(d.total))"]
             + d.workspaces.map { "  \($0.workspace)  \(Journal.duration($0.seconds))" + ($0.purpose.map { "  \($0)" } ?? "") }
+    }
+
+    /// The command's plain line for the timer.
+    public static func lines(_ t: TimerReport) -> [String] {
+        guard t.running, let left = t.remaining, let minutes = t.minutes else {
+            return ["no timer running (polycarp-spaces timer [minutes]; \(t.defaultMinutes) min by default)"]
+        }
+        return ["timer: \(BarText.timer(remaining: Double(left))) left of \(minutes) min" + (t.oneThing.map { ", on: \($0)" } ?? "")]
     }
 }

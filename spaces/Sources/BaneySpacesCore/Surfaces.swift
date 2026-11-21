@@ -29,6 +29,8 @@ public enum SurfaceKind: Equatable, Sendable {
     case searchTemplate
     /// An ordered list of ids, each once: one of `known`, or `custom:<name>` when `custom`.
     case ids(known: [String], custom: Bool)
+    /// A time of day, "HH:MM" on the 24 hour clock, from "00:00" to "23:59".
+    case time
 }
 
 /// One field of surfaces.json.
@@ -206,6 +208,28 @@ public struct Surfaces: Equatable, Sendable {
         public var startAfterMinutes: Int
     }
 
+    /// Which days the wake alarm rings: all, Monday to Friday, or all but Sunday.
+    public enum AlarmDays: String, CaseIterable, Sendable { case every, weekdays, notSunday = "not-sunday" }
+
+    public struct Alarm: Equatable, Sendable {
+        /// Ring at `wakeAt`. Off until you turn it on.
+        public var wake: Bool
+        /// "HH:MM", 24 hour.
+        public var wakeAt: String
+        public var days: AlarmDays
+        /// On power, keep the Mac from idle sleep through the 12 hours before the alarm so it can ring.
+        public var keepAwake: Bool
+        /// The one-thing timer's default length.
+        public var timerMinutes: Int
+
+        public init(wake: Bool, wakeAt: String, days: AlarmDays, keepAwake: Bool, timerMinutes: Int) {
+            self.wake = wake; self.wakeAt = wakeAt; self.days = days; self.keepAwake = keepAwake; self.timerMinutes = timerMinutes
+        }
+
+        /// `wakeAt` as an hour and a minute; nil when it isn't "HH:MM".
+        public var time: (hour: Int, minute: Int)? { SurfaceCheck.time(wakeAt) }
+    }
+
     public enum Translation: String, CaseIterable, Sendable { case bsb = "BSB" }
 
     public enum VerseSource: Equatable, Sendable {
@@ -227,6 +251,7 @@ public struct Surfaces: Equatable, Sendable {
     public var menu: Menu
     public var newtab: NewTab
     public var idle: Idle
+    public var alarm: Alarm
     public var text: Text
 
     /// Every default, as compiled in.
@@ -247,6 +272,7 @@ extension SurfaceField {
         ("menu", "The status menu (Polycarp's menu bar icon)."),
         ("newtab", "The browser's new tab page."),
         ("idle", "The idle screen (Martyr Night)."),
+        ("alarm", "The wake alarm and the one-thing timer."),
         ("text", "Where verses come from."),
     ]
 
@@ -304,6 +330,14 @@ extension SurfaceField {
         SurfaceField("idle.showVerse", .bool, .bool(true), "A verse on the idle screen."),
         SurfaceField("idle.showKierkegaard", .bool, .bool(true), "A line from Kierkegaard on the idle screen."),
         SurfaceField("idle.startAfterMinutes", .integer(1...240), .number(10), "Minutes without input before the idle screen comes up."),
+
+        SurfaceField("alarm.wake", .bool, .bool(false), "Ring at alarm.wakeAt and open the morning question. Off until you turn it on."),
+        SurfaceField("alarm.wakeAt", .time, .string("06:30"), "When the wake alarm rings: \"HH:MM\" on the 24 hour clock, 00:00 to 23:59."),
+        SurfaceField("alarm.days", .choice(Surfaces.AlarmDays.allCases.map(\.rawValue)), .string("every"),
+                     "Which days ring: every (all), weekdays (Monday to Friday) or not-sunday (all but Sunday)."),
+        SurfaceField("alarm.keepAwake", .bool, .bool(true),
+                     "On power, keep the Mac from idle sleep through the 12 hours before the alarm so it can ring. The display still sleeps; a closed lid still sleeps the Mac."),
+        SurfaceField("alarm.timerMinutes", .integer(1...240), .number(25), "The one-thing timer's default length in minutes, 1 to 240."),
 
         SurfaceField("text.translation", .choice(Surfaces.Translation.allCases.map(\.rawValue)), .string("BSB"),
                      "The Bible translation. Only BSB (the Berean Standard Bible, public domain) for now."),
@@ -388,6 +422,8 @@ extension Surfaces {
         idle = Idle(enabled: b("idle.enabled"), style: IdleStyle(rawValue: s("idle.style")) ?? .martyrNight, effects: b("idle.effects"),
                     showMachineName: b("idle.showMachineName"), showVerse: b("idle.showVerse"),
                     showKierkegaard: b("idle.showKierkegaard"), startAfterMinutes: n("idle.startAfterMinutes"))
+        alarm = Alarm(wake: b("alarm.wake"), wakeAt: s("alarm.wakeAt"), days: AlarmDays(rawValue: s("alarm.days")) ?? .every,
+                      keepAwake: b("alarm.keepAwake"), timerMinutes: n("alarm.timerMinutes"))
         text = Text(translation: Translation(rawValue: s("text.translation")) ?? .bsb, verseSource: VerseSource(id: s("text.verseSource")))
     }
 }
@@ -412,6 +448,14 @@ enum SurfaceCheck {
     /// A Bible reference: an optional book number, the book's name, a chapter, optionally a verse or a range.
     static let referencePattern = "^([1-3] )?[A-Za-z]+( [A-Za-z]+){0,3} [0-9]{1,3}(:[0-9]{1,3}(-[0-9]{1,3})?)?$"
     static let maxTemplate = 512
+    /// "HH:MM" on the 24 hour clock.
+    static let timePattern = "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+
+    /// "06:30" as (6, 30); nil for anything that isn't "HH:MM" from 00:00 to 23:59.
+    static func time(_ s: String) -> (hour: Int, minute: Int)? {
+        guard matches(s, timePattern), let h = Int(s.prefix(2)), let m = Int(s.suffix(2)) else { return nil }
+        return (h, m)
+    }
 
     static func matches(_ s: String, _ pattern: String) -> Bool { s.range(of: pattern, options: .regularExpression) != nil }
 
@@ -483,6 +527,9 @@ enum SurfaceCheck {
                 if !seen.insert(id).inserted { return ("[\(i)]", "\"\(id)\" is listed twice") }
             }
             return nil
+        case .time:
+            guard let s = v.string else { return (nil, "must be a time \"HH:MM\" (24 hour, as \"06:30\"), not \(v.kind)") }
+            return time(s) == nil ? (nil, "must be a time \"HH:MM\" from 00:00 to 23:59 (as \"06:30\"), not \"\(s)\"") : nil
         }
     }
 
@@ -569,6 +616,8 @@ extension Surfaces {
                     item["enum"] = .array(known.map { .string($0) })
                 }
                 o["type"] = .string("array"); o["items"] = .object(item); o["uniqueItems"] = .bool(true)
+            case .time:
+                o["type"] = .string("string"); o["pattern"] = .string(SurfaceCheck.timePattern); o["examples"] = .array([.string("06:30")])
             }
             return .object(o)
         }

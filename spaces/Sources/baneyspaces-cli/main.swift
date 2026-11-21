@@ -35,12 +35,15 @@ usage: \(me) <command>
   get [setting]               read one setting, or all three
   surfaces get|set|reset|schema|validate [--json]
                               the one file every surface reads: bar, desktop, dock, menu,
-                              new tab, idle screen (surfaces help, docs/surfaces.md)
+                              new tab, idle screen, alarm (surfaces help, docs/surfaces.md)
   purpose list|set <n> <text>|clear <n> [--json]
                               what each workspace is for (up to 60 characters; empty clears it)
   one <text>|--clear [--json] today's one thing, set on the workspace you're on (up to 80 characters;
                               it clears at 4 am)
   day [--json]                today's time on each workspace (not asleep, locked or idle over 5 minutes)
+  timer [minutes]|stop|status [--json]
+                              the one-thing timer: start one (alarm.timerMinutes, 25 by default; 1 to 240),
+                              stop it, or say how long is left; Glass plays at its end
   update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it;
                               --channel stable|nightly|dev chooses the channel first (update --help)
   --version                   this command's version and the commit it was built from
@@ -244,6 +247,8 @@ case "purpose", "purposes", "one", "day":
     let words = rest.filter { $0 != "--json" }
     let sub = cmd == "one" || cmd == "day" ? cmd : (words.first ?? "list")
     let subArgs = cmd == "one" || cmd == "day" ? words : Array(words.dropFirst())
+    // The timer has its own command, which reads its reply.
+    if sub == "timer" { fail("usage: \(me) timer [minutes] | timer stop | timer status [--json]", code: 2) }
     if case .refused(let why) = PurposeAPI.ask(text: sub, args: subArgs) { fail(why, code: 2) }
     let reply = call(Wire.Request(op: .purpose, text: sub, args: subArgs))
     let enc = JSONEncoder()
@@ -255,6 +260,18 @@ case "purpose", "purposes", "one", "day":
         guard let l = PurposeAPI.decodeListing(reply) else { fail("Polycarp answered without purposes; is it an older build?") }
         out(json ? String(data: try! enc.encode(l), encoding: .utf8)! : PurposeAPI.lines(l).joined(separator: "\n"))
     }
+
+case "timer":
+    // The one-thing timer (PurposeAPI): start, stop or read it. Local only, like the purposes.
+    guard remoteHost == nil else { fail("the timer is set and read on each machine itself", code: 2) }
+    let json = rest.contains("--json")
+    let words = rest.filter { $0 != "--json" }
+    if case .refused(let why) = PurposeAPI.ask(text: "timer", args: words) { fail(why, code: 2) }
+    let reply = call(Wire.Request(op: .purpose, text: "timer", args: words))
+    guard let t = PurposeAPI.decodeTimer(reply) else { fail("Polycarp answered without a timer; is it an older build?") }
+    let enc = JSONEncoder()
+    enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+    out(json ? String(data: try! enc.encode(t), encoding: .utf8)! : PurposeAPI.lines(t).joined(separator: "\n"))
 
 case "remote":
     // Local only: whether other machines on your tailnet can send work here.

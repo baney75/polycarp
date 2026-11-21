@@ -449,6 +449,9 @@ polycarp-spaces purpose list --json                    # all nine, unnamed ones 
 polycarp-spaces one "Finish the chapter"               # today's one thing, set on the workspace you're on
 polycarp-spaces one --clear
 polycarp-spaces day                                    # today's time on each workspace
+polycarp-spaces timer                                  # a one-thing timer, alarm.timerMinutes long (25 by default)
+polycarp-spaces timer 50                               # or 1 to 240 minutes
+polycarp-spaces timer status --json                    # how long is left; timer stop ends it early
 ```
 
 A day runs from 4 am to 4 am, so a late night counts for the day it began in. Purposes carry over until you change
@@ -460,6 +463,12 @@ each once a day, and Sunday is a day of rest. Each is a switch in the app's defa
 `defaults write com.baney.polycarp morningQuestion -bool false`, `eveningExamen`, `restOnSunday`, and
 `examenHour -int 20` for a later evening. Examen answers are kept as Markdown, one file a day, in
 `~/Library/Application Support/Polycarp/Journal/`, with the day's time at the end. They stay on this Mac.
+
+Alarms belong to the rhythm. The wake alarm (`alarm.wake` in surfaces.json, off until you turn it on) rings at
+`alarm.wakeAt` and opens the morning question if it hasn't been given yet; on power it keeps the Mac from idle sleep
+through the night before so it can ring (a sleeping Mac can't ring). The one-thing timer gives the one thing a stretch of time: start it from the status menu, under
+Set the One Thing, or with `polycarp-spaces timer`. Its time left shows after the one thing in the top bar, and it
+survives a relaunch. See the `alarm` section of [docs/surfaces.md](docs/surfaces.md).
 
 Files: `purposes.json` and `ledger.json` in the same folder. A file that can't be read is renamed to
 `<name>.bad-<time>`, logged in `trace.log`, and Polycarp starts that part empty. These commands work on this Mac only:

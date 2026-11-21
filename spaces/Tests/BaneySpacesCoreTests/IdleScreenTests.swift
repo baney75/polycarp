@@ -42,6 +42,23 @@ final class IdleScreenTests: XCTestCase {
         XCTAssertFalse(IdleScreen.inputSince(lastIdle: 700, idle: 699.9), "a read a little off is no input")
     }
 
+    /// The alarm takes the cover down at an idle time far past the start; without a hold the next look puts it back
+    /// over the ringing alarm (review r2 first-F3).
+    func testACoverTakenDownForTheAlarmStaysDownUntilInput() {
+        XCTAssertNil(IdleScreen.hold(nil, idle: 9000), "no hold, nothing held")
+        XCTAssertEqual(IdleScreen.hold(9000, idle: 9015), 9015, "no input: still held")
+        XCTAssertEqual(IdleScreen.hold(9015, idle: 9030), 9030)
+        XCTAssertNil(IdleScreen.hold(9030, idle: 1), "a key or a move ends it")
+    }
+
+    func testOnlyTheAlarmHoldsTheCoverDown() throws {
+        let alarm = try Repo.code("Sources/BaneySpaces/WakeAlarm.swift")
+        XCTAssertTrue(alarm.contains("IdleCover.shared.hideUntilInput()"))
+        let cover = try Repo.code("Sources/BaneySpaces/IdleCover.swift")
+        XCTAssertTrue(cover.contains("held = IdleScreen.hold(held, idle: idle)"))
+        XCTAssertTrue(cover.contains("guard held == nil, IdleScreen.shouldStart("))
+    }
+
     func testMartyrNightShowsTheNameTheTimeAVerseAndALine() {
         let c = IdleScreen.content(on, at: at(21, 41), machine: "Rectory1", twentyFourHour: false, timeZone: tz)
         XCTAssertEqual(c.name, "R E C T O R Y 1")
