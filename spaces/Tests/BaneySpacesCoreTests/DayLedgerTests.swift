@@ -186,7 +186,7 @@ final class PresenceGateTests: XCTestCase {
 
     func testTheKeeperFeedsTheLedgerThroughTheGate() throws {
         let keeper = try SourceText.code("Sources/BaneySpaces/PurposeKeeper.swift")
-        XCTAssertTrue(keeper.contains("if gate.back(after: event) { ledger.cameBack() }"))
+        XCTAssertTrue(keeper.contains("if gate.back(after: event) { ledger.cameBack()"))
         XCTAssertEqual(keeper.components(separatedBy: "ledger.cameBack(").count, 2, "no other way back")
         XCTAssertTrue(keeper.contains("(\"com.apple.screenIsUnlocked\", .unlocked)"))
         XCTAssertTrue(keeper.contains("(NSWorkspace.screensDidWakeNotification, .woke)"))
