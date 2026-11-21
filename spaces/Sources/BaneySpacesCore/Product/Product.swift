@@ -37,8 +37,9 @@ public enum Product {
         public static let phrase = "the Silas app"
     }
 
+    /// Where this run keeps its files: the person's own folder, or the one `RunFolder` set for a `--render` run.
     public static func supportDir(home: URL) -> URL {
-        home.appendingPathComponent("Library/Application Support/" + supportFolder, isDirectory: true)
+        RunFolder.current ?? home.appendingPathComponent("Library/Application Support/" + supportFolder, isDirectory: true)
     }
 
     /// Where the voice engine keeps its settings, dictionary, history and models.

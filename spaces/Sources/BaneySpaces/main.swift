@@ -1,6 +1,11 @@
 import AppKit
 import BaneySpacesCore
 
+// A `--render` run keeps its files out of the person's own Application Support folder: its crash ledger, trace.log and the
+// rest go to POLYCARP_SUPPORT_DIR or a new temporary folder (`RunFolder`). Before anything reads a path.
+RunFolder.current = RunFolder.resolve(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment,
+                                      home: FileManager.default.homeDirectoryForCurrentUser, temp: { RunFolder.newTemp() })
+
 // One-shots the delegate answers and exits on don't count as a launch. `--setup` and a plain
 // start do (`CrashLoopGuard`): any other `--` flag used to skip the guard and leave a crash loop
 // uncounted.
@@ -107,6 +112,8 @@ if let i = CommandLine.arguments.firstIndex(of: "--render"), i + 1 < CommandLine
     CrashLoop.checkRender()
     let code = MainActor.assumeIsolated { Render.run(into: URL(fileURLWithPath: CommandLine.arguments[i + 1])) }
     CrashLoop.renderEnded()
+    // A temporary folder goes with a run that finished; a failed one keeps it, with its trace.log, for a look.
+    if code == 0, let folder = RunFolder.current, RunFolder.isTemporary(folder) { try? FileManager.default.removeItem(at: folder) }
     exit(code)
 }
 

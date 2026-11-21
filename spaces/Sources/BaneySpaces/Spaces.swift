@@ -96,8 +96,8 @@ final class Spaces {
     private var screensWork: DispatchWorkItem?
     var onChange: (() -> Void)?
 
-    static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Polycarp")
+    /// ~/Library/Application Support/Polycarp, or a `--render` run's own folder (`RunFolder`).
+    static let folder = Product.supportDir(home: FileManager.default.homeDirectoryForCurrentUser)
     static let framesURL = folder.appendingPathComponent("frames.json")
     static let stateURL = folder.appendingPathComponent("state.json")
     static let layoutURL = folder.appendingPathComponent("layout.json")

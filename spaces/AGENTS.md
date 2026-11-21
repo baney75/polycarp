@@ -82,7 +82,7 @@ Crash-loop guard (`CrashLoopGuard`, checked in `main.swift` before the delegate 
 whose run is still in `~/Library/Application Support/BaneySpaces/crash-ledger.json` (no clean quit)
 counts as a crash. After 3 within 5 minutes the next launch puts Mission Control, the macOS Dock and
 the drag to the top back, says so in an alert (Quit, or Start Anyway, which clears the crashes) and
-doesn't start. `--render` keeps its own `crash-ledger-render.json` and exits 75 instead. Knobs:
+doesn't start. `--render` keeps its own `crash-ledger-render.json` and exits 75 instead; a render run never writes to that folder: its ledger, `trace.log` and every other file go to `POLYCARP_SUPPORT_DIR` (absolute, outside the real folder) or a new temporary folder per run (`RunFolder`), so builders' renders never block each other. Knobs:
 `defaults write com.baney.polycarp crashLoopLimit -int N` (0 never stops) and
 `crashLoopWindowMinutes -float M`.
 
