@@ -50,6 +50,7 @@ final class SurfacesTests: XCTestCase {
         XCTAssertTrue(d.newtab.chips)
         XCTAssertTrue(d.newtab.verse)
         XCTAssertEqual(d.newtab.searchURL(for: "purity of heart")?.absoluteString, "https://duckduckgo.com/?q=purity%20of%20heart")
+        XCTAssertFalse(d.idle.enabled, "the idle screen waits until you turn it on")
         XCTAssertEqual(d.idle.style, .martyrNight)
         XCTAssertTrue(d.idle.effects && d.idle.showMachineName && d.idle.showVerse && d.idle.showKierkegaard)
         XCTAssertEqual(d.idle.startAfterMinutes, 10)
@@ -96,7 +97,7 @@ final class SurfacesTests: XCTestCase {
             ("menu.order", #"["quit","settings"]"#), ("menu.hidden", #"["update","agents"]"#),
             ("newtab.question", "\"Will one thing.\""), ("newtab.chips", "false"), ("newtab.verse", "false"),
             ("newtab.searchURL", "\"https://search.brave.com/search?q={query}&source=web\""),
-            ("idle.style", "\"verse\""), ("idle.effects", "false"), ("idle.showMachineName", "false"), ("idle.showVerse", "false"),
+            ("idle.enabled", "true"), ("idle.style", "\"verse\""), ("idle.effects", "false"), ("idle.showMachineName", "false"), ("idle.showVerse", "false"),
             ("idle.showKierkegaard", "false"), ("idle.startAfterMinutes", "5"),
             ("text.translation", "\"BSB\""), ("text.verseSource", "\"file:psalms.json\""),
         ]
@@ -112,7 +113,7 @@ final class SurfacesTests: XCTestCase {
         XCTAssertEqual(s.dock, .init(tileLabel: .number, restTile: false))
         XCTAssertEqual(s.menu.rows, [.quit, .settings, .workspaces, .showAll, .find, .dock], "left-out rows follow; hidden ones go")
         XCTAssertEqual(s.newtab, .init(question: "Will one thing.", chips: false, verse: false, searchURL: "https://search.brave.com/search?q={query}&source=web"))
-        XCTAssertEqual(s.idle, .init(style: .verse, effects: false, showMachineName: false, showVerse: false, showKierkegaard: false, startAfterMinutes: 5))
+        XCTAssertEqual(s.idle, .init(enabled: true, style: .verse, effects: false, showMachineName: false, showVerse: false, showKierkegaard: false, startAfterMinutes: 5))
         XCTAssertEqual(s.text, .init(translation: .bsb, verseSource: .file("psalms.json")))
         // Reading the tree's text again gives the same tree: nothing is lost or reordered into something else.
         XCTAssertEqual(tree(d.tree.json()), d.tree)

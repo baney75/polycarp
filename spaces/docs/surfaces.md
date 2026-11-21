@@ -166,12 +166,20 @@ Row ids: `workspaces`, `show-all`, `find`, `agents` (agents that finished while 
 
 | Path | Default | Takes |
 | --- | --- | --- |
+| `idle.enabled` | `false` | Show Polycarp's idle screen. Off until you turn it on. |
 | `idle.style` | `"martyr-night"` | `martyr-night` (night sky and embers), `field` (the desktop scene, dimmed) or `verse` (one verse on black). |
 | `idle.effects` | `true` | Motion on the idle screen. Reduce Motion turns it off regardless. |
 | `idle.showMachineName` | `true` | The Mac's name. |
 | `idle.showVerse` | `true` | A verse. |
 | `idle.showKierkegaard` | `true` | A line from Kierkegaard. |
 | `idle.startAfterMinutes` | `10` | Minutes without input before it comes up: 1 to 240. |
+
+The idle screen covers every screen after `startAfterMinutes` without input: the Mac's name, the time, a verse (BSB,
+a new one each hour) and a line of Kierkegaard (a new one each day). The words drift a few points a minute so nothing
+sits on the same pixels all night. Any key, click or move takes it away, and the key that wakes it doesn't reach the
+app under it. It doesn't come up while an app keeps the display awake (a video playing, a call), and macOS's own
+screen saver, display sleep and lock still come in their time. To see it soon: `polycarp-spaces surfaces set idle
+'{"enabled":true,"startAfterMinutes":1}'`.
 
 ### `text`: where verses come from
 

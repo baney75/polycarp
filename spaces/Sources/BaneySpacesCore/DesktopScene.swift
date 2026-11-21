@@ -265,7 +265,7 @@ public struct DesktopScene: Equatable, Sendable {
         return CGImageDestinationFinalize(dest) ? out as Data : nil
     }
 
-    func image(width: Int, height: Int) -> CGImage? {
+    public func image(width: Int, height: Int) -> CGImage? {
         guard width > 0, height > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
               let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                                   bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
