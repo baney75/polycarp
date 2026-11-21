@@ -168,4 +168,22 @@ final class MainThreadScanTests: XCTestCase {
         let then = try XCTUnwrap(SourceText.block(after: "asking: asking, then:", in: fresh), "whenFresh runs its body mid-switch")
         XCTAssertTrue(then.contains("if self.switching { self.enqueue"))
     }
+
+    /// The top bar's `app-menus` and `status` ask other apps for their menus and status items each time an app comes
+    /// forward and every 15 seconds: both off the main thread.
+    func testTheTopBarReadsMenusAndStatusOffMain() throws {
+        let s = try SourceText.code("Sources/BaneySpaces/TopBar.swift")
+        let menus = try XCTUnwrap(SourceText.block(after: "private func readMenus(", in: s))
+        let queued = try XCTUnwrap(SourceText.block(after: "BarReader.queue.async", in: menus), "menus are read on main")
+        XCTAssertTrue(queued.contains("BarReader.menus(of: pid)"))
+        XCTAssertEqual(count("BarReader.menus(of:", in: s), 1, "menus are read outside the queue")
+        let status = try XCTUnwrap(SourceText.block(after: "private func readStatus(", in: s))
+        let background = try XCTUnwrap(SourceText.block(after: "DispatchQueue.global(qos: .utility).async", in: status),
+                                       "status items are read on main")
+        XCTAssertTrue(background.contains("BarReader.status(of: targets)"))
+        XCTAssertEqual(count("BarReader.status(of:", in: s), 1, "status items are read outside the background queue")
+        let r = try SourceText.code("Sources/BaneySpaces/TopBarMenus.swift")
+        let press = try XCTUnwrap(SourceText.block(after: "static func press(", in: r))
+        XCTAssertTrue(press.contains("DispatchQueue.global"), "a press waits on its app on main")
+    }
 }

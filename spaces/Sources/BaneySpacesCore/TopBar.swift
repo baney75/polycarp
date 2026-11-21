@@ -81,13 +81,20 @@ public enum BarLayout {
         notch ? (bar.left + bar.center, [], bar.right) : (bar.left, bar.center, bar.right)
     }
 
-    /// The modules the bar draws today. App menus, status icons and custom modules are kept in the file but not drawn:
-    /// macOS 27 lets no app mirror the status icons, and app menus still come down from the top edge.
+    /// The modules the bar draws today. Custom modules are kept in the file but not drawn.
     public static func drawn(_ m: Surfaces.BarModule) -> Bool {
-        switch m {
-        case .appMenus, .status, .custom: false
-        default: true
+        if case .custom = m { return false }
+        return true
+    }
+
+    /// How many of a row's items fit in `room`, from the first: a title is left out whole, never cut.
+    public static func fit(_ widths: [Double], spacing: Double, room: Double) -> Int {
+        var used = 0.0
+        for (i, w) in widths.enumerated() {
+            used += (i == 0 ? 0 : spacing) + w
+            if used > room + 0.5 { return i }
         }
+        return widths.count
     }
 
     /// The bar's window level, from the normal window level: one under it, so any window covers the bar (review of
@@ -110,3 +117,133 @@ public enum BarLayout {
         return notch || frameMaxY - visibleMaxY > 1
     }
 }
+
+/// What the `app-menus` module draws: the front app's menu bar as Accessibility reads it (`AXMenuBar`), worked out apart
+/// from the reading. Clicking a title presses that menu, which macOS opens as it would from its own bar.
+public enum BarMenus {
+    public enum Role: Equatable, Sendable {
+        /// The Apple menu, drawn as the logo.
+        case apple
+        /// The app's own menu, in its name, drawn in bold.
+        case app
+        case menu
+    }
+
+    public struct Item: Equatable, Sendable {
+        /// Its place among the menu bar's children, the one pressed on a click.
+        public var index: Int
+        public var title: String
+        public var role: Role
+
+        public init(index: Int, title: String, role: Role) {
+            self.index = index; self.title = title; self.role = role
+        }
+    }
+
+    /// The menu bar's titles in order: the Apple menu first, the app's menu second, then its menus. A menu with no
+    /// title (an icon only) is left out, since there is nothing to draw for it.
+    public static func items(_ titles: [String]) -> [Item] {
+        titles.enumerated().compactMap { i, raw in
+            let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            switch i {
+            case 0: return Item(index: 0, title: "Apple", role: .apple)
+            case 1: return t.isEmpty ? nil : Item(index: 1, title: t, role: .app)
+            default: return t.isEmpty ? nil : Item(index: i, title: t, role: .menu)
+            }
+        }
+    }
+}
+
+/// What the `status` module draws: every app's status items as Accessibility reads them (`AXExtrasMenuBar`), the
+/// macOS ones as symbols and an app's own as that app's icon. No pixels are copied, so it needs no Screen Recording.
+public enum BarStatus {
+    public struct Item: Equatable, Sendable {
+        /// The owning app's bundle id, "" when it has none.
+        public var owner: String
+        /// `AXIdentifier`: macOS names its own `com.apple.menuextra.<name>`; most apps set none.
+        public var identifier: String?
+        /// `AXDescription`, else `AXTitle`, else `AXHelp`: what it says it is.
+        public var label: String?
+        /// Its place along the macOS bar, when Accessibility gives one.
+        public var x: Double?
+
+        public init(owner: String, identifier: String? = nil, label: String? = nil, x: Double? = nil) {
+            self.owner = owner; self.identifier = identifier; self.label = label; self.x = x
+        }
+
+        /// One of macOS's own: Wi-Fi, the battery, Control Center and the rest.
+        public var isSystem: Bool {
+            (identifier ?? "").hasPrefix("com.apple.") || owner.hasPrefix("com.apple.")
+        }
+
+        /// What it is called in a tooltip and to VoiceOver.
+        public var name: String {
+            if let label, !label.isEmpty { return label }
+            if let id = identifier, let last = id.split(separator: ".").last { return String(last) }
+            return owner
+        }
+    }
+
+    /// macOS's own items by a word in their identifier or label, first match wins, with the symbol each is drawn as.
+    static let symbols: [(String, String)] = [
+        ("wifi", "wifi"), ("wi-fi", "wifi"),
+        ("controlcenter", "switch.2"), ("control center", "switch.2"),
+        ("clock", "clock"),
+        ("sound", "speaker.wave.2"), ("volume", "speaker.wave.2"),
+        ("focus", "moon"), ("donotdisturb", "moon"),
+        ("bluetooth", "wave.3.right"),
+        ("spotlight", "magnifyingglass"),
+        ("screenmirroring", "rectangle.on.rectangle"), ("display", "display"),
+        ("timemachine", "clock.arrow.circlepath"), ("time machine", "clock.arrow.circlepath"),
+        ("vpn", "lock.shield"),
+        ("textinput", "keyboard"), ("keyboard", "keyboard"),
+        ("nowplaying", "play.circle"), ("now playing", "play.circle"),
+        ("userswitcher", "person.crop.circle"),
+        ("accessibility", "accessibility"),
+        ("siri", "mic"),
+        ("airdrop", "dot.radiowaves.up.forward"),
+    ]
+
+    /// The symbol a macOS item is drawn as; nil for an app's own, drawn as its app's icon. The battery shows its charge
+    /// (`battery(percent:charging:)`); a macOS item the list doesn't know is a plain dot, so it can still be clicked.
+    public static func symbol(_ item: Item, percent: Int? = nil, charging: Bool = false) -> String? {
+        guard item.isSystem else { return nil }
+        let words = ((item.identifier ?? "") + " " + (item.label ?? "")).lowercased()
+        if words.contains("battery") { return battery(percent: percent, charging: charging) }
+        return symbols.first { words.contains($0.0) }?.1 ?? "circle.fill"
+    }
+
+    /// The battery symbol for a charge, in quarters, with the bolt while charging.
+    public static func battery(percent: Int?, charging: Bool) -> String {
+        if charging { return "battery.100percent.bolt" }
+        guard let percent else { return "battery.100percent" }
+        let quarter = min(100, max(0, Int((Double(percent) / 25).rounded()) * 25))
+        return "battery.\(quarter)percent"
+    }
+
+    /// The items the bar draws, left to right: in the order macOS puts them when every place is known, else as read;
+    /// without the ones a module of the bar already shows (the clock beside `clock` or `date`, the battery beside
+    /// `battery`).
+    public static func shown(_ items: [Item], modules: [Surfaces.BarModule]) -> [Item] {
+        shown(items, \.self, modules: modules)
+    }
+
+    /// `shown` for anything that carries an item, such as the app's read of one with what to press.
+    public static func shown<T>(_ list: [T], _ item: (T) -> Item, modules: [Surfaces.BarModule]) -> [T] {
+        let clock = modules.contains(.clock) || modules.contains(.date)
+        let battery = modules.contains(.battery)
+        let kept = list.filter { entry in
+            let it = item(entry)
+            guard it.isSystem else { return true }
+            let words = ((it.identifier ?? "") + " " + (it.label ?? "")).lowercased()
+            if clock, words.contains("clock") { return false }
+            if battery, words.contains("battery") { return false }
+            return true
+        }
+        let places = kept.map { item($0).x }
+        guard !places.contains(where: { $0 == nil }) else { return kept }
+        // A stable sort: two items at one place keep the order they were read in.
+        return kept.indices.sorted { (places[$0]!, $0) < (places[$1]!, $1) }.map { kept[$0] }
+    }
+}
+

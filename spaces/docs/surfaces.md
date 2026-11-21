@@ -83,9 +83,9 @@ Error codes: `invalid_value` (the value fails its check), `unknown_path` (no suc
 | `bar.enabled` | `false` | `true` or `false`. Show Polycarp's top bar. Off until you turn it on. |
 | `bar.height` | `28` | A whole number of points, 22 to 40. |
 | `bar.style` | `"solid"` | `solid` (the theme's surface color), `glass` (blurred, see-through) or `hairline` (the desktop shows through, with a thin line under it). |
-| `bar.modules.left` | `["mark","workspaces","purpose"]` | Module ids, in order. |
+| `bar.modules.left` | `["mark","workspaces","app-menus","purpose"]` | Module ids, in order. |
 | `bar.modules.center` | `["one-thing"]` | Module ids, in order. |
-| `bar.modules.right` | `["hour","clock"]` | Module ids, in order. |
+| `bar.modules.right` | `["status","hour","clock"]` | Module ids, in order. |
 | `bar.clockFormat` | `"12h"` | `12h` (3:05) or `24h` (15:05). |
 | `bar.hourNames` | `true` | The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning). |
 | `bar.hideSystemMenuBar` | `false` | Ask for the macOS menu bar to hide: Polycarp opens System Settings > Menu Bar for you to choose Always. It never changes the setting itself. |
@@ -107,7 +107,12 @@ What each one draws:
 | `verse` | The desktop's verse for now, with its reference. |
 | `battery` | The charge, only off power or while charging. Nothing on a desktop Mac. |
 | `network` | "Offline" when there is no connection; nothing when there is. |
-| `app-menus`, `status`, `custom:<name>` | Kept in the file, not drawn yet. The app's menus still come down from the top edge; macOS 27 lets no app copy the status icons. |
+| `app-menus` | The front app's menus: the Apple logo, the app's name in bold, then File, Edit and the rest. Click one to open it, as from the macOS bar. Titles past the room are left out whole, from the end. |
+| `status` | The status items of macOS and your apps, in the macOS bar's order: Wi-Fi, the battery, Control Center and the like as symbols, an app's own as its icon. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`. |
+| `custom:<name>` | Kept in the file, not drawn yet. |
+
+`app-menus` and `status` read through the Accessibility permission Polycarp already has; no pixels are copied, so
+they need no Screen Recording. A status item that macOS or its app doesn't show to Accessibility isn't drawn.
 
 **The macOS menu bar.** No app can remove it, so Polycarp's bar shows only where the macOS bar is hidden: System
 Settings > Menu Bar > "Automatically hide and show the menu bar" set to Always. Pointing at the top edge still brings the
