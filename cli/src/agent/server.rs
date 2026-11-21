@@ -159,7 +159,11 @@ fn read_chunked(r: &mut impl BufRead) -> Result<Vec<u8>, (u16, String)> {
     loop {
         let line = read_line(r).map_err(|e| bad(&e.to_string()))?;
         let size = line.split(';').next().unwrap_or_default().trim();
-        let n = usize::from_str_radix(size, 16).map_err(|_| bad("bad chunk size"))?;
+        // At most 16 hex digits and nothing else (no sign), so the number fits before it is checked.
+        if size.is_empty() || size.len() > 16 || !size.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(bad("bad chunk size"));
+        }
+        let n = u64::from_str_radix(size, 16).map_err(|_| bad("bad chunk size"))?;
         if n == 0 {
             // Trailers, then the empty line.
             for _ in 0..=MAX_HEADERS {
@@ -169,11 +173,15 @@ fn read_chunked(r: &mut impl BufRead) -> Result<Vec<u8>, (u16, String)> {
             }
             return Err(bad("too many trailers"));
         }
-        if body.len() + n > MAX_BODY {
+        let total = usize::try_from(n)
+            .ok()
+            .and_then(|n| body.len().checked_add(n))
+            .filter(|t| *t <= MAX_BODY);
+        let Some(total) = total else {
             return Err((413, "the body is too large".into()));
-        }
+        };
         let start = body.len();
-        body.resize(start + n, 0);
+        body.resize(total, 0);
         r.read_exact(&mut body[start..])
             .map_err(|_| bad("a chunk was cut short"))?;
         if !read_line(r).map_err(|e| bad(&e.to_string()))?.is_empty() {
@@ -1148,6 +1156,7 @@ fn stream_events(ctx: &Ctx, out: &mut TcpStream, r: &Resp, id: &str) {
         let _ = write_resp(out, &rpc_resp(429, -32000, "too many open event streams"));
         return;
     }
+    let _slot = Slot(&ctx.streams);
     let started = Instant::now();
     let mut ok = write_head(out, r, None)
         .and_then(|_| out.write_all(b": ready\n\n"))
@@ -1164,7 +1173,15 @@ fn stream_events(ctx: &Ctx, out: &mut TcpStream, r: &Resp, id: &str) {
                 .is_ok();
         }
     }
-    ctx.streams.fetch_sub(1, Ordering::SeqCst);
+}
+
+/// One taken slot of a counter; dropping it gives the slot back, even when a panic unwinds.
+struct Slot<'a>(&'a AtomicUsize);
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 fn serve_conn(ctx: &Ctx, stream: TcpStream, peer: SocketAddr, kind: Listener) {
@@ -1251,8 +1268,9 @@ fn accept_loop(ctx: Arc<Ctx>, l: TcpListener, kind: Listener) {
         }
         let c = Arc::clone(&ctx);
         std::thread::spawn(move || {
+            // Released on any exit, a panic included, so a slot never leaks.
+            let _slot = Slot(&c.conns);
             serve_conn(&c, stream, peer, kind);
-            c.conns.fetch_sub(1, Ordering::SeqCst);
         });
     }
 }

@@ -923,3 +923,73 @@ fn the_tailnet_lets_in_the_owners_devices_and_no_one_else() {
     });
     assert_eq!(s, 404);
 }
+
+/// A real loopback listener on a free port, for wire-level tests.
+fn listen(ctx: Ctx) -> SocketAddr {
+    let ctx = Arc::new(ctx);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = serve(ctx, &["127.0.0.1:0".parse().unwrap()], &[], &|a| {
+            let _ = tx.send(a[0]);
+        });
+    });
+    rx.recv_timeout(Duration::from_secs(5)).unwrap()
+}
+
+/// Sends raw bytes and reads the whole answer.
+fn exchange(addr: SocketAddr, raw: &[u8]) -> String {
+    let mut s = TcpStream::connect(addr).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+    s.write_all(raw).unwrap();
+    let mut out = Vec::new();
+    let _ = s.read_to_end(&mut out);
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn health_ok(addr: SocketAddr) -> bool {
+    let raw = format!(
+        "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+        addr.port()
+    );
+    exchange(addr, raw.as_bytes()).starts_with("HTTP/1.1 200")
+}
+
+#[test]
+fn a_chunk_size_that_would_overflow_is_refused_and_the_server_keeps_serving() {
+    let addr = listen(ctx_in(&temp("overflow"), Channel::Dev));
+    let host = format!("127.0.0.1:{}", addr.port());
+    for size in [
+        "ffffffffffffffff",
+        "fffffffffffffffff",
+        "10000000000000000",
+        "+1",
+        "400001",
+    ] {
+        let raw = format!(
+            "POST /register HTTP/1.1\r\nHost: {host}\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n{size}\r\n"
+        );
+        let out = exchange(addr, raw.as_bytes());
+        assert!(
+            out.starts_with("HTTP/1.1 400") || out.starts_with("HTTP/1.1 413"),
+            "{size}: {out}"
+        );
+        assert!(health_ok(addr), "the server stopped after {size}");
+    }
+    // The parser alone: the huge size never reaches an addition.
+    let raw =
+        b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\nffffffffffffffff\r\n";
+    let e = read_req(&mut Cursor::new(raw.to_vec())).unwrap_err().0;
+    assert!(e == 400 || e == 413, "{e}");
+}
+
+#[test]
+fn a_dropped_slot_gives_its_count_back_even_through_a_panic() {
+    let n = Arc::new(AtomicUsize::new(1));
+    let m = Arc::clone(&n);
+    let _ = std::thread::spawn(move || {
+        let _slot = Slot(&m);
+        panic!("a handler fell over");
+    })
+    .join();
+    assert_eq!(n.load(Ordering::SeqCst), 0);
+}
