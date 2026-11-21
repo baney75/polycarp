@@ -695,7 +695,10 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("polycarp-index-{name}-{}", std::process::id()));
+        // Not the system temp folder: on Windows it sits under AppData, which `never` refuses to index.
+        let d = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/tmp")
+            .join(format!("polycarp-index-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
