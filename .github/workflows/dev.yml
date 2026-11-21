@@ -18,7 +18,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
+      go: ${{ steps.decide.outputs.go }}
       commit: ${{ steps.decide.outputs.commit }}
       time: ${{ steps.decide.outputs.time }}
     steps:
@@ -31,13 +34,23 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           set -euo pipefail
+          stop() { echo "::notice title=No dev build::$1"; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; }
           if [ -n "$RUN_SHA" ]; then SHA=$RUN_SHA; else
             [ "$REF" = refs/heads/main ] || { echo "dev is built from main only, not $REF" >&2; exit 1; }
             SHA=$(gh api "repos/$REPO/commits/main" --jq .sha)
           fi
-          { echo "commit=$SHA"; echo "time=$(date -u +%Y%m%d%H%M%S)"; } >> "$GITHUB_OUTPUT"
+          # CI runs can finish out of order, and an old one can be re-run. Only a commit ahead of the one dev already
+          # offers moves it, so dev never goes back to older code.
+          if LAST=$(gh api "repos/$REPO/git/ref/tags/dev" --jq .object.sha 2>"$RUNNER_TEMP/last.err"); then
+            REL=$(gh api "repos/$REPO/compare/$LAST...$SHA" --jq .status)
+            [ "$REL" = ahead ] || stop "$SHA is $REL of $LAST, the commit dev already offers."
+          else
+            grep -q 'HTTP 404' "$RUNNER_TEMP/last.err" || { cat "$RUNNER_TEMP/last.err" >&2; exit 1; }
+          fi
+          { echo "go=true"; echo "commit=$SHA"; echo "time=$(date -u +%Y%m%d%H%M%S)"; } >> "$GITHUB_OUTPUT"
   build:
     needs: gate
+    if: needs.gate.outputs.go == 'true'
     permissions:
       contents: write
     uses: ./.github/workflows/channel-build.yml

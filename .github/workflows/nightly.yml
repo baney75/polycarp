@@ -20,6 +20,10 @@ jobs:
   gate:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      actions: read
     outputs:
       go: ${{ steps.decide.outputs.go }}
       commit: ${{ steps.decide.outputs.commit }}
@@ -34,15 +38,19 @@ jobs:
         run: |
           set -euo pipefail
           stop() { echo "::notice title=No nightly::$1"; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; }
-          SHA=$(gh api "repos/$REPO/commits/main" --jq .sha)
-          LAST=$(gh api "repos/$REPO/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
-          [ "$LAST" != "$SHA" ] || [ "$EVENT" = workflow_dispatch ] || stop "main is still $SHA, the commit of the last nightly."
-          # CI on this commit, or, when its paths didn't start CI, the newest finished CI run on main.
-          STATE=$(gh run list -R "$REPO" --workflow ci.yml --branch main --event push --limit 50 --json headSha,status,conclusion \
-            --jq "[.[] | select(.headSha == \"$SHA\")][0] // empty | .status + \"/\" + (.conclusion // \"\")")
-          [ -n "$STATE" ] || STATE=$(gh run list -R "$REPO" --workflow ci.yml --branch main --event push --status completed \
-            --limit 1 --json status,conclusion --jq '.[0] | .status + "/" + .conclusion')
-          [ "$STATE" = completed/success ] || stop "CI on main is ${STATE:-missing}, not green."
+          # The newest main commit with a green CI run of its own. CI skips commits that touch no app or CLI path, so
+          # main's head may have no run; building the newest tested commit never ships an untested one.
+          SHA=$(gh run list -R "$REPO" --workflow ci.yml --branch main --event push --status success --limit 1 \
+            --json headSha --jq '.[0].headSha // empty')
+          [ -n "$SHA" ] || stop "no CI run on main has passed."
+          [ "$(gh api "repos/$REPO/compare/$SHA...main" --jq .status)" != diverged ] || stop "$SHA isn't on main any more."
+          if LAST=$(gh api "repos/$REPO/git/ref/tags/nightly" --jq .object.sha 2>"$RUNNER_TEMP/last.err"); then
+            REL=$(gh api "repos/$REPO/compare/$LAST...$SHA" --jq .status)
+            [ "$REL" = ahead ] || { [ "$REL" = identical ] && [ "$EVENT" = workflow_dispatch ]; } \
+              || stop "the newest tested commit, $SHA, is $REL of $LAST, the commit of the last nightly."
+          else
+            grep -q 'HTTP 404' "$RUNNER_TEMP/last.err" || { cat "$RUNNER_TEMP/last.err" >&2; exit 1; }
+          fi
           OPEN=$(gh issue list -R "$REPO" --state open --label regression --label blocks-nightly --json number --jq 'map("#\(.number)") | join(" ")')
           [ -z "$OPEN" ] || stop "open regressions block it: $OPEN"
           { echo "go=true"; echo "commit=$SHA"; echo "time=$(date -u +%Y%m%d%H%M%S)"; } >> "$GITHUB_OUTPUT"
