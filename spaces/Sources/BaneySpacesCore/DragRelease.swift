@@ -31,36 +31,29 @@ public enum ReleaseOrder {
 }
 
 /// Waits, a look every 20 ms, for a window to hold still after a drag: `stillLooks` unchanged looks in a row (three by
-/// default), and at least five in all, so the window server, the app and a tile animation have finished. Gives up after
-/// `giveUpAfter` looks (25, 0.5 s) of motion: an app animating its own frame is left alone, since moving it then would
-/// fight the animation. With `leaveIfMoved`, any move from the frame it was let go at (beyond `moveSlack`) ends the wait
-/// as `movedOnItsOwn`: something other than the person moved it, so Polycarp leaves it alone.
-/// `DragRelease.settleWatch` picks the watch for a release.
+/// default), and at least five in all, so the window server, the app and a tile animation have finished. Every change
+/// starts the stillness over, so an app setting its own frame just after the release, or macOS animating a tile, is
+/// waited out and the decision comes from where the window rests. Gives up after `giveUpAfter` looks in all (25, 0.5 s)
+/// without that much stillness: an app animating its own frame is left alone, since moving it then would fight the
+/// animation. `DragRelease.settleWatch` picks the watch for a release; `waitsForTile` marks the long side-edge wait.
 public struct SettleWatch: Sendable {
-    public enum Verdict: Equatable, Sendable { case wait, still, gaveUp, movedOnItsOwn }
-    public static let moveSlack: CGFloat = 4
+    public enum Verdict: Equatable, Sendable { case wait, still, gaveUp }
     public private(set) var looks = 0
     public let stillLooks: Int
     public let giveUpAfter: Int
-    public let leaveIfMoved: Bool
+    public let waitsForTile: Bool
     private var still = 0
     private var last: CGRect?
-    private let letGoAt: CGRect?
 
-    public init(from frame: CGRect?, stillLooks: Int = 3, giveUpAfter: Int = 25, leaveIfMoved: Bool = false) {
+    public init(from frame: CGRect?, stillLooks: Int = 3, giveUpAfter: Int = 25, waitsForTile: Bool = false) {
         last = frame
-        letGoAt = frame
         self.stillLooks = stillLooks
         self.giveUpAfter = giveUpAfter
-        self.leaveIfMoved = leaveIfMoved
+        self.waitsForTile = waitsForTile
     }
 
     public mutating func look(_ frame: CGRect?) -> Verdict {
         looks += 1
-        if leaveIfMoved {
-            guard let frame, let from = letGoAt, abs(frame.minX - from.minX) <= Self.moveSlack, abs(frame.minY - from.minY) <= Self.moveSlack,
-                  abs(frame.width - from.width) <= Self.moveSlack, abs(frame.height - from.height) <= Self.moveSlack else { return .movedOnItsOwn }
-        }
         still = frame == last ? still + 1 : 0
         last = frame
         if looks >= 5 && still >= stillLooks { return .still }
@@ -69,9 +62,10 @@ public struct SettleWatch: Sendable {
 }
 
 /// Windows waiting to hold still after a drag before Polycarp may correct them, each with its watch and how its drag
-/// ended. A press or a new drag of the window cancels its wait, since the old release no longer says where the person
-/// wants it (review of #155). So does any button going down before it settles: unsure what the person is doing, Polycarp
-/// leaves the window alone.
+/// ended. Only a press on the window or a new drag of it cancels its wait (`cancel`), since then the old release no
+/// longer says where the person wants it (review of #155). A click anywhere else leaves the wait alone: a blind drop must
+/// still come back though the person clicks the Dock in that second (review of #158). While a button is down the
+/// correction holds off, in case the press was on the window and Polycarp missed it, and runs once the button is up.
 public struct PendingSettles: Sendable {
     public enum Outcome: Equatable, Sendable {
         case wait
@@ -84,25 +78,26 @@ public struct PendingSettles: Sendable {
 
     public init() {}
 
-    public var waiting: Set<WindowID> { Set(pending.keys) }
-
     public mutating func start(_ id: WindowID, watch: SettleWatch, end: DragEnd) { pending[id] = (watch, end) }
 
-    /// Cancels the wait for `id`; true when one was waiting.
-    @discardableResult
-    public mutating func cancel(_ id: WindowID) -> Bool { pending.removeValue(forKey: id) != nil }
+    /// The window was pressed or dragged again: its wait ends with nothing done.
+    public mutating func cancel(_ id: WindowID) { pending[id] = nil }
 
     /// One look, 20 ms after the last, at `id`'s frame. `buttonDown` is whether any mouse button is down now.
     public mutating func look(_ id: WindowID, frame: CGRect?, buttonDown: Bool) -> Outcome {
         guard var p = pending.removeValue(forKey: id) else { return .none }
-        if buttonDown { return .leftAlone("a button went down before it held still") }
         switch p.watch.look(frame) {
         case .wait:
             pending[id] = p
             return .wait
-        case .still: return frame == nil ? .leftAlone("its frame can't be read") : .correct(p.end)
-        case .gaveUp: return .leftAlone("still moving after \(p.watch.looks * 20) ms")
-        case .movedOnItsOwn: return .leftAlone("moved on its own \(p.watch.looks * 20) ms after the release")
+        case .still:
+            guard let _ = frame else { return .leftAlone("its frame can't be read") }
+            guard buttonDown else { return .correct(p.end) }
+            // Held off while a button is down, as long as the watch would have waited anyway.
+            if p.watch.looks >= p.watch.giveUpAfter { return .leftAlone("a button stayed down \(p.watch.looks * 20) ms after the release") }
+            pending[id] = p
+            return .wait
+        case .gaveUp: return .leftAlone("still moving: no \(p.watch.stillLooks * 20) ms rest within \(p.watch.looks * 20) ms")
         }
     }
 }
@@ -136,8 +131,9 @@ public enum DragRelease {
     }
 
     /// macOS can pause before it animates a window let go at a side edge into a half, and that pause hasn't been measured
-    /// yet (`fill-drag-probe.swift` case 6 records it). Until it is, a covered release there waits a generous 1 s of
-    /// stillness, and any move in that time leaves the window alone (review of #155): unsure, Polycarp does nothing.
+    /// yet (`fill-drag-probe.swift --no-polycarp`, case 6, prints it). Until it is, a covered release there must rest a
+    /// generous 1 s before Polycarp decides; each move, macOS's tile or the app's own, starts that second over, and the
+    /// window is judged where it rests (review of #158). Past 2 s without such a rest it is left alone.
     public static let sideTileStillLooks = 50
     public static let sideTileGiveUpAfter = 100
 
@@ -175,7 +171,7 @@ public enum DragRelease {
         guard end.coveredFrom != nil, !end.dropped, let d = display(of: end.pointer, in: displays) else { return SettleWatch(from: frame) }
         let p = CGPoint(x: min(max(end.pointer.x, d.frame.minX), d.frame.maxX - 1), y: min(max(end.pointer.y, d.frame.minY), d.frame.maxY - 1))
         guard tileEdge(p, on: d.frame, displays: displays.map(\.frame), edges: [.left, .right]) != nil else { return SettleWatch(from: frame) }
-        return SettleWatch(from: frame, stillLooks: sideTileStillLooks, giveUpAfter: sideTileGiveUpAfter, leaveIfMoved: true)
+        return SettleWatch(from: frame, stillLooks: sideTileStillLooks, giveUpAfter: sideTileGiveUpAfter, waitsForTile: true)
     }
 
     /// The display a release belongs to: the one under the pointer, or else the nearest, for a pointer past every edge.

@@ -149,21 +149,23 @@ final class DragReleaseTests: XCTestCase {
         XCTAssertNil(DragRelease.correction(for: CGRect(x: 0, y: 10, width: 1300, height: 900), after: top, displays: [mac, ext]))
     }
 
-    /// Every look a pending correction of window 7 takes over `frames`, until it decides: the outcome and how many looks.
-    func settle(_ watch: SettleWatch, _ end: DragEnd, _ frames: [CGRect?], buttonDownAt: Int? = nil) -> (PendingSettles.Outcome, Int) {
+    /// Every look a pending correction of window 7 takes over `frames`, until it decides: the outcome, how many looks, and
+    /// the frame it rested at then. `buttonDown` holds the looks (from 1) when a button is down.
+    func settle(_ watch: SettleWatch, _ end: DragEnd, _ frames: [CGRect?], buttonDown: Set<Int> = []) -> (PendingSettles.Outcome, Int, CGRect?) {
         var p = PendingSettles()
         p.start(7, watch: watch, end: end)
         for (i, f) in frames.enumerated() {
-            let o = p.look(7, frame: f, buttonDown: i + 1 == buttonDownAt)
-            if o != .wait { return (o, i + 1) }
+            let o = p.look(7, frame: f, buttonDown: buttonDown.contains(i + 1))
+            if o != .wait { return (o, i + 1, f) }
         }
-        return (.wait, frames.count)
+        return (.wait, frames.count, frames.last ?? nil)
     }
 
-    func testACoveredReleaseAtASideEdgeLeavesMacOSsTileAlone() {
-        // Review of #154, first-F2, and #155, first-F3: let go blind at the left edge, macOS may hold the window where it
-        // was let go for a beat it hasn't been measured at, then animate it into the left half. Polycarp must not send it
-        // back mid-tile, however long the beat.
+    func testACoveredReleaseAtASideEdgeIsJudgedWhereItRests() {
+        // Reviews of #154 (first-F2), #155 (first-F3) and #158 (first-F1): let go blind at the left edge, the window may
+        // be moved again after the release, by macOS's half tile after a pause or by the app itself (Helium is Chromium,
+        // which sets its own frame a tick or two after a tab-strip drag). Polycarp waits until it rests 1 s and judges it
+        // there: back if it rests off screen, alone if it rests tiled.
         let before = CGRect(x: 65, y: 35, width: 1492, height: 928)
         let blind = CGRect(x: -608, y: 478, width: 1492, height: 928)
         let leftHalf = CGRect(x: 0, y: 35, width: 756, height: 947)
@@ -179,23 +181,38 @@ final class DragReleaseTests: XCTestCase {
         // The plain watch calls it still in the pause, off screen, and the correction would fight macOS's tile.
         XCTAssertEqual(settle(SettleWatch(from: blind), end, tiled(afterPause: 8)).0, .correct(end))
         XCTAssertEqual(DragRelease.correction(for: blind, after: end, displays: [mac]), .backToBeforeOverview(before))
-        // The watch a covered side release gets leaves it alone once macOS moves it, after a short pause or a long one.
-        for pause in [8, 25, 45] {
-            let (outcome, looks) = settle(watch(), end, tiled(afterPause: pause))
-            XCTAssertEqual(outcome, .leftAlone("moved on its own \((pause + 1) * 20) ms after the release"), "pause of \(pause * 20) ms")
-            XCTAssertEqual(looks, pause + 1)
+        // The side watch waits the tile out, after a short pause or a long one, and finds it resting in the left half.
+        for pause in [8, 25] {
+            let (outcome, looks, rest) = settle(watch(), end, tiled(afterPause: pause))
+            XCTAssertEqual(outcome, .correct(end), "pause of \(pause * 20) ms")
+            XCTAssertEqual(looks, pause + 10 + DragRelease.sideTileStillLooks)
+            XCTAssertEqual(rest, leftHalf)
+            XCTAssertNil(DragRelease.correction(for: leftHalf, after: end, displays: [mac]), "tiled: left alone")
         }
-        // macOS doesn't tile it: it goes back, once it has held still the whole wait, 1 s.
+        // A tile that starts late can't rest a full second inside the 2 s limit: left alone, still tiled.
+        XCTAssertEqual(settle(watch(), end, tiled(afterPause: 45)).0, .leftAlone("still moving: no 1000 ms rest within 2000 ms"))
+        // Chromium's own last move lands one and two ticks after mouse-up, then it rests off screen: it goes back.
+        let trailing: [CGRect?] = [blind.offsetBy(dx: 30, dy: -6), blind.offsetBy(dx: 10, dy: -2)] + Array(repeating: blind, count: 80)
+        let (outcome, looks, rest) = settle(DragRelease.settleWatch(from: blind.offsetBy(dx: 60, dy: -12), after: end, displays: [mac]), end, trailing)
+        XCTAssertEqual(outcome, .correct(end))
+        XCTAssertEqual(looks, 3 + DragRelease.sideTileStillLooks, "the release frame, then two moves, then the rest")
+        XCTAssertEqual(rest.flatMap { DragRelease.correction(for: $0, after: end, displays: [mac]) }, .backToBeforeOverview(before))
+        // macOS doesn't tile it: it goes back once it has rested the whole second.
         XCTAssertEqual(settle(watch(), end, Array(repeating: blind, count: 80)).0, .correct(end))
         XCTAssertEqual(settle(watch(), end, Array(repeating: blind, count: 80)).1, DragRelease.sideTileStillLooks)
+        // Moved again and again, it never rests a second within 2 s: left alone.
+        let restless: [CGRect?] = (1...120).map { blind.offsetBy(dx: CGFloat($0 / 30) * 20, dy: 0) }
+        XCTAssertEqual(settle(watch(), end, restless).0, .leftAlone("still moving: no 1000 ms rest within 2000 ms"))
+        // The limit until case 6 measures macOS's pause: one longer than the 1 s wait is corrected before the tile.
+        XCTAssertEqual(settle(watch(), end, tiled(afterPause: 60)).2, blind)
         // Only a covered release in a side band waits that way: a plain one, the top, the middle and a seam don't.
         let side = { (e: DragEnd, d: [(frame: CGRect, visible: CGRect)]) in DragRelease.settleWatch(from: blind, after: e, displays: d) }
-        XCTAssertTrue(side(end, [mac]).leaveIfMoved)
-        XCTAssertTrue(side(DragEnd(pointer: CGPoint(x: 1511, y: 498), coveredFrom: before, dropped: false), [mac]).leaveIfMoved)
-        XCTAssertFalse(side(plain(CGPoint(x: 0, y: 498)), [mac]).leaveIfMoved)
-        XCTAssertFalse(side(DragEnd(pointer: CGPoint(x: 400, y: 0), coveredFrom: before, dropped: false), [mac]).leaveIfMoved)
-        XCTAssertFalse(side(DragEnd(pointer: CGPoint(x: 700, y: 498), coveredFrom: before, dropped: false), [mac]).leaveIfMoved)
-        XCTAssertFalse(side(DragEnd(pointer: CGPoint(x: 1510, y: 498), coveredFrom: before, dropped: false), [mac, right]).leaveIfMoved)
+        XCTAssertTrue(side(end, [mac]).waitsForTile)
+        XCTAssertTrue(side(DragEnd(pointer: CGPoint(x: 1511, y: 498), coveredFrom: before, dropped: false), [mac]).waitsForTile)
+        XCTAssertFalse(side(plain(CGPoint(x: 0, y: 498)), [mac]).waitsForTile)
+        XCTAssertFalse(side(DragEnd(pointer: CGPoint(x: 400, y: 0), coveredFrom: before, dropped: false), [mac]).waitsForTile)
+        XCTAssertFalse(side(DragEnd(pointer: CGPoint(x: 700, y: 498), coveredFrom: before, dropped: false), [mac]).waitsForTile)
+        XCTAssertFalse(side(DragEnd(pointer: CGPoint(x: 1510, y: 498), coveredFrom: before, dropped: false), [mac, right]).waitsForTile)
         XCTAssertEqual(side(plain(CGPoint(x: 0, y: 498)), [mac]).stillLooks, 3)
     }
 
@@ -205,42 +222,48 @@ final class DragReleaseTests: XCTestCase {
         let before = CGRect(x: 65, y: 35, width: 1492, height: 928)
         let pastTheEdge = DragEnd(pointer: CGPoint(x: -130, y: 498), coveredFrom: before, dropped: false)
         let watch = DragRelease.settleWatch(from: before, after: pastTheEdge, displays: [mac])
-        XCTAssertTrue(watch.leaveIfMoved)
+        XCTAssertTrue(watch.waitsForTile)
         XCTAssertEqual(watch.stillLooks, DragRelease.sideTileStillLooks)
         // Past the outer right edge of the second display, its visible area decides, not the first display's.
         let pastRight = DragEnd(pointer: CGPoint(x: 3200, y: 498), coveredFrom: before, dropped: false)
         let tiledRight = CGRect(x: 2268, y: 0, width: 756, height: 982)
         XCTAssertNil(DragRelease.correction(for: tiledRight, after: pastRight, displays: [mac, right]))
-        XCTAssertTrue(DragRelease.settleWatch(from: before, after: pastRight, displays: [mac, right]).leaveIfMoved)
+        XCTAssertTrue(DragRelease.settleWatch(from: before, after: pastRight, displays: [mac, right]).waitsForTile)
         XCTAssertEqual(DragRelease.display(of: CGPoint(x: 3200, y: 498), in: [mac, right])?.frame, right.frame)
         XCTAssertEqual(DragRelease.display(of: CGPoint(x: -130, y: 498), in: [mac, right])?.frame, mac.frame)
         XCTAssertNil(DragRelease.display(of: .zero, in: []))
     }
 
-    func testANewDragOfTheWindowCancelsItsPendingCorrection() {
+    func testOnlyThatWindowCancelsItsPendingCorrection() {
         // Review of #155, first-F1: let go blind, then grabbed again within the wait and held still part off screen. The
-        // stale release must not snap it back while it's held.
+        // stale release must not snap it back while it's held. Review of #158, second-second-F1: a click anywhere else in
+        // that second must not cost the blind drop its correction.
         let before = CGRect(x: 65, y: 35, width: 1492, height: 928)
         let blind = CGRect(x: -608, y: 478, width: 1492, height: 928)
         let end = DragEnd(pointer: CGPoint(x: 0, y: 498), coveredFrom: before, dropped: false)
         var p = PendingSettles()
         p.start(7, watch: DragRelease.settleWatch(from: blind, after: end, displays: [mac]), end: end)
-        p.start(8, watch: SettleWatch(from: blind), end: end)
+        p.start(8, watch: DragRelease.settleWatch(from: blind, after: end, displays: [mac]), end: end)
         XCTAssertEqual(p.look(7, frame: blind, buttonDown: false), .wait)
-        XCTAssertTrue(p.cancel(7), "pressed again")
+        p.cancel(7)  // pressed again
         XCTAssertEqual(p.look(7, frame: blind, buttonDown: false), .none)
-        XCTAssertFalse(p.cancel(7))
-        XCTAssertEqual(p.waiting, [8], "another window's wait goes on")
-        // A button held down before it settles, even one Polycarp didn't see pressed on the window: left alone.
-        let held = settle(DragRelease.settleWatch(from: blind, after: end, displays: [mac]), end, Array(repeating: blind, count: 80), buttonDownAt: 20)
-        XCTAssertEqual(held.0, .leftAlone("a button went down before it held still"))
-        XCTAssertEqual(held.1, 20)
-        let plainHeld = settle(SettleWatch(from: blind), end, [blind, blind, blind, blind, blind], buttonDownAt: 3)
-        XCTAssertEqual(plainHeld.0, .leftAlone("a button went down before it held still"))
+        XCTAssertEqual(p.look(8, frame: blind, buttonDown: false), .wait, "another window's wait goes on")
+        // A click on the Dock in the middle of the wait, down for 120 ms and up again: still goes back, on time.
+        let side = { DragRelease.settleWatch(from: blind, after: end, displays: [self.mac]) }
+        let clicked = settle(side(), end, Array(repeating: blind, count: 80), buttonDown: Set(20...25))
+        XCTAssertEqual(clicked.0, .correct(end))
+        XCTAssertEqual(clicked.1, DragRelease.sideTileStillLooks)
+        // A button down just as it comes to rest holds the correction off until the button is up.
+        let held = settle(SettleWatch(from: blind), end, Array(repeating: blind, count: 20), buttonDown: Set(4...8))
+        XCTAssertEqual(held.0, .correct(end))
+        XCTAssertEqual(held.1, 9)
+        // Held down past the wait's own limit, unsure what the person is doing: left alone.
+        let forever = settle(SettleWatch(from: blind), end, Array(repeating: blind, count: 40), buttonDown: Set(1...40))
+        XCTAssertEqual(forever.0, .leftAlone("a button stayed down 500 ms after the release"))
         // Undisturbed, the same wait corrects with the release it started from.
         XCTAssertEqual(settle(SettleWatch(from: blind), end, Array(repeating: blind, count: 5)).0, .correct(end))
         XCTAssertEqual(settle(SettleWatch(from: blind), end, Array(repeating: nil, count: 30)).0, .leftAlone("its frame can't be read"))
-        XCTAssertEqual(settle(SettleWatch(from: blind), end, (1...30).map { blind.offsetBy(dx: CGFloat($0), dy: 0) }).0, .leftAlone("still moving after 500 ms"))
+        XCTAssertEqual(settle(SettleWatch(from: blind), end, (1...30).map { blind.offsetBy(dx: CGFloat($0), dy: 0) }).0, .leftAlone("still moving: no 60 ms rest within 500 ms"))
     }
 
     func testAWindowIsCorrectedOnlyOnceItHoldsStill() {

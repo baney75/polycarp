@@ -47,14 +47,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Waits for the window server, the app and any tile animation to finish the drop, then lets Spaces correct a blind
     /// drop or an unreachable title bar. `DragRelease.settleWatch` sets how long and what ends the wait early;
-    /// `PendingSettles` cancels it when the window is pressed or dragged again, or any button goes down. A window dropped
-    /// on a workspace is the drop's.
+    /// `PendingSettles` cancels it only when that window is pressed or dragged again, and holds the correction off while a
+    /// button is down. A window dropped on a workspace is the drop's.
     private func correctOnceStill(_ id: WindowID, after end: DragEnd) {
         guard !end.dropped else { return }
         cancelCorrection(id)
         let watch = DragRelease.settleWatch(from: TopDragWatcher.bounds(of: id), after: end, displays: Spaces.dragDisplays())
-        if watch.leaveIfMoved {
-            Trace.log("drag end window=\(id) let go blind at a side edge: waits \(watch.stillLooks * 20) ms still, left alone if it moves")
+        if watch.waitsForTile {
+            Trace.log("drag end window=\(id) let go blind at a side edge: waits for \(watch.stillLooks * 20) ms of stillness")
         }
         pendingSettles.start(id, watch: watch, end: end)
         settleTimers[id] = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] timer in

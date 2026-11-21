@@ -21,8 +21,10 @@
 // to tell a move Polycarp made from the jump.
 //
 // Case 6 measures the pause macOS takes before it half-tiles a window let go blind at the left edge, the number behind
-// `DragRelease.sideTileStillLooks`, and prints it. With Polycarp running it also checks that Polycarp moved the window
-// only if macOS left it alone for the whole wait.
+// `DragRelease.sideTileStillLooks`; only the --no-polycarp run prints it as the number to set. With Polycarp running it
+// fails unless the trace shows a covered side-edge release and Polycarp's wait, and it tells Polycarp's put-back (which
+// lands at the frame before the overview) from macOS's move: Polycarp may move it only if macOS left it alone the
+// whole wait, and it must stay put after.
 //
 // It takes the pointer, so it refuses to run unless the Mac has been idle 10 minutes. Before every press it checks that the
 // window under the press point is the one it means to drag, and stops if not, so no click can land in another app. It
@@ -137,6 +139,36 @@ func sidePause(_ watched: [Watch], slack: CGFloat = 4) -> (moved: Double?, settl
     return (moved, lastAway.map { watched[min($0 + 1, watched.count - 1)].t } ?? watched.first?.t, final)
 }
 
+/// The trace lines that show case 6 tested the wait: the overview opened over `id`, let it go over no workspace, and
+/// Polycarp started the side-edge wait (review of #158, first-F3). Without them the case tested nothing.
+func sideEdgeSeen(_ id: UInt32) -> [[String]] {
+    Array(overviewPutBack(id).prefix(2)) + [["drag end window=\(id) let go blind at a side edge"]]
+}
+/// Case 6 with Polycarp running, from the watch and whether the trace has Polycarp moving the window. Polycarp's move
+/// lands at `covered`, the frame the overview opened over; a move anywhere else is macOS's (or the app's), so Polycarp's
+/// own move is never read as macOS's pause (review of #158, first-F2). `macOSPause` is when macOS first moved it, if it
+/// did before any move of Polycarp's.
+func sideEdgeVerdict(_ watched: [Watch], covered: CGRect?, polycarpMovedIt: Bool, wait: Double) -> (ok: Bool, macOSPause: Double?, why: String) {
+    guard let start = watched.first?.frame else { return (false, nil, "the window's frame couldn't be read at mouse-up") }
+    let ms = { (t: Double) in "\(Int(t * 1000)) ms" }
+    let back = covered.flatMap { c in watched.firstIndex { !backNear($0.frame, start, within: 4) && backNear($0.frame, c, within: 40) } }
+    guard polycarpMovedIt else {
+        let m = sidePause(watched)
+        guard let moved = m.moved else { return (false, nil, "neither macOS nor Polycarp moved it in 3 s: the blind drop stayed off screen") }
+        return (true, moved, "macOS moved it \(ms(moved)) after mouse-up and Polycarp left it alone")
+    }
+    guard let k = back, let c = covered else { return (false, nil, "Polycarp logged a move the watch never saw land at the frame before the overview") }
+    let before = Array(watched[..<k])
+    if let macOS = before.first(where: { !backNear($0.frame, start, within: 4) }) {
+        return (false, macOS.t, "macOS moved it \(ms(macOS.t)) after mouse-up, and Polycarp moved it anyway at \(ms(watched[k].t)): it fought macOS")
+    }
+    if watched[k].t < wait - 0.05 { return (false, nil, "Polycarp moved it \(ms(watched[k].t)) after mouse-up, before its \(ms(wait)) wait was over") }
+    if let again = watched[k...].first(where: { !backNear($0.frame, c, within: 40) }) {
+        return (false, nil, "it moved again \(ms(again.t)) after mouse-up, after Polycarp put it back at \(ms(watched[k].t)): macOS's tile came after the wait")
+    }
+    return (true, nil, "macOS left it alone for \(ms(watched[k].t)); Polycarp put it back then")
+}
+
 /// `DragRelease.sideTileStillLooks` read from its source, so case 6 checks the wait Polycarp ships. Nil if not found.
 func sideTileStillLooks(in source: String) -> Int? {
     guard let r = source.range(of: #"static let sideTileStillLooks = (\d+)"#, options: .regularExpression) else { return nil }
@@ -145,11 +177,16 @@ func sideTileStillLooks(in source: String) -> Int? {
 let dragReleaseSource = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../Sources/BaneySpacesCore/DragRelease.swift")
 
 /// Undone on every way out of the probe: a normal exit, a stop before a click, an error, or a signal.
+/// The lock is held until every cleanup has finished, so a second way out (a signal during the first) waits for Chrome
+/// to quit and its profile to go before it exits (review of #158, first-F5).
 var cleanups: [() -> Void] = []
-let cleanupLock = NSLock()
+let cleanupLock = NSRecursiveLock()
 func addCleanup(_ c: @escaping () -> Void) { cleanupLock.lock(); cleanups.append(c); cleanupLock.unlock() }
 func runCleanups() {
-    cleanupLock.lock(); let c = cleanups; cleanups = []; cleanupLock.unlock()
+    cleanupLock.lock()
+    defer { cleanupLock.unlock() }
+    let c = cleanups
+    cleanups = []
     c.reversed().forEach { $0() }
 }
 /// The newest of several Chrome for Testing apps, by the build number in their paths.
@@ -283,6 +320,39 @@ if CommandLine.arguments.contains("--self-test") {
     addCleanup { ran += 1 }
     runCleanups(); runCleanups()
     expect(ran == 1, "cleanups run exactly once (\(ran))")
+    // A second way out while the first is still cleaning up waits for it.
+    var finished = false
+    addCleanup { usleep(200_000); finished = true }
+    let first = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async { runCleanups(); first.signal() }
+    usleep(50_000)
+    runCleanups()
+    expect(finished, "a second way out waits for the cleanups already running")
+    first.wait()
+    // Review of #158, first-F3: case 6 with Polycarp fails when it tested nothing.
+    let sideSeen = ["10:40:01.1 topDrag overview open after 410 ms window=7", "10:40:02.3 topDrag release at=0,491 target=none",
+                    "10:40:02.3 drag end window=7 let go blind at a side edge: waits for 1000 ms of stillness"]
+    expect(missing(sideSeen, sideEdgeSeen(7)).isEmpty, "case 6 passes on the lines of a covered side-edge release")
+    expect(missing([], sideEdgeSeen(7)).count == 3, "case 6 fails on an empty trace")
+    expect(missing(Array(sideSeen.prefix(2)), sideEdgeSeen(7)).count == 1, "case 6 fails when the side wait never started")
+    expect(missing([sideSeen[2]], sideEdgeSeen(7)).count == 2, "case 6 fails when the overview never covered the release")
+    // Review of #158, first-F2: Polycarp's own move is never macOS's pause.
+    let coveredAt = CGRect(x: 312, y: 0, width: 1492, height: 928)
+    let putBackLate = watch { $0 < 1.04 ? blindLeft : coveredAt }
+    let pb = sideEdgeVerdict(putBackLate, covered: coveredAt, polycarpMovedIt: true, wait: 1)
+    expect(pb.ok && pb.macOSPause == nil, "macOS left it alone and Polycarp put it back after the wait: passes, no macOS pause (\(pb.why))")
+    let tileLate = sideEdgeVerdict(watch { $0 < 1.04 ? blindLeft : $0 < 1.2 ? coveredAt : leftHalf }, covered: coveredAt, polycarpMovedIt: true, wait: 1)
+    expect(!tileLate.ok && tileLate.why.contains("after the wait"), "a tile after Polycarp's put-back fails: the wait was too short (\(tileLate.why))")
+    let fought = sideEdgeVerdict(watch { $0 < 0.4 ? blindLeft : $0 < 1.5 ? leftHalf : coveredAt }, covered: coveredAt, polycarpMovedIt: true, wait: 1)
+    expect(!fought.ok && fought.macOSPause.map { abs($0 - 0.4) < 0.02 } == true, "Polycarp moving it after macOS tiled it fails (\(fought.why))")
+    let early = sideEdgeVerdict(watch { $0 < 0.3 ? blindLeft : coveredAt }, covered: coveredAt, polycarpMovedIt: true, wait: 1)
+    expect(!early.ok && early.why.contains("before its"), "Polycarp moving it before the wait is over fails (\(early.why))")
+    let tiledAlone = sideEdgeVerdict(paused, covered: coveredAt, polycarpMovedIt: false, wait: 1)
+    expect(tiledAlone.ok && tiledAlone.macOSPause.map { abs($0 - 0.432) < 0.02 } == true, "macOS tiled it and Polycarp left it alone: passes (\(tiledAlone.why))")
+    let lost = sideEdgeVerdict(watch { _ in blindLeft }, covered: coveredAt, polycarpMovedIt: false, wait: 1)
+    expect(!lost.ok && lost.why.contains("stayed off screen"), "a blind drop nobody moved fails (\(lost.why))")
+    let unseen = sideEdgeVerdict(watch { _ in blindLeft }, covered: coveredAt, polycarpMovedIt: true, wait: 1)
+    expect(!unseen.ok, "a move in the trace the watch never saw fails (\(unseen.why))")
     // Review of #154, second-F4: the newest Chrome for Testing by build number, not by spelling.
     let cft = "chrome-mac-arm64/Google Chrome for Testing.app"
     expect(newest(["/c/ms-playwright/chromium-999/\(cft)", "/c/ms-playwright/chromium-1248/\(cft)", "/c/ms-playwright/chromium-1200/\(cft)"]) == "/c/ms-playwright/chromium-1248/\(cft)",
@@ -536,17 +606,21 @@ func sideEdgePause(_ id: CGWindowID, _ name: String) {
     writeWatch(d.watched, name)
     let letGo = d.samples.last(where: { $0.down })?.frame
     expect(letGo.map { $0.minX < -50 } == true, "\(name): precondition, let go with part of it past the left edge (\(String(describing: letGo)))")
-    let m = sidePause(d.watched)
     let ms = { (t: Double?) in t.map { "\(Int($0 * 1000)) ms" } ?? "never" }
-    print("  side-edge pause: first moved \(ms(m.moved)) after mouse-up, at rest from \(ms(m.settled)), ended at \(String(describing: m.final))")
-    guard !noPolycarp else { return print("  Polycarp was not running: macOS alone") }
-    let moved = polycarpMoved(traceSince(before), id)
+    guard !noPolycarp else {
+        let m = sidePause(d.watched)
+        return print("  macOS's pause, Polycarp not running (set DragRelease.sideTileStillLooks from this): first moved \(ms(m.moved)) after mouse-up, at rest from \(ms(m.settled)), ended at \(String(describing: m.final))")
+    }
+    let trace = traceSince(before)
+    expect(missing(trace, sideEdgeSeen(id)).isEmpty, "\(name): precondition, the overview covered a release at the side edge and Polycarp started its wait \(missing(trace, sideEdgeSeen(id)))")
     guard let looks = sideTileStillLooks(in: (try? String(contentsOf: dragReleaseSource, encoding: .utf8)) ?? "") else {
         return expect(false, "\(name): DragRelease.sideTileStillLooks read from \(dragReleaseSource.path)")
     }
-    let wait = Double(looks) * 0.02
-    expect(moved.isEmpty || (m.moved ?? 9) >= wait - 0.05,
-           "\(name): Polycarp moved it only after macOS left it alone for the whole \(Int(wait * 1000)) ms wait (\(moved))")
+    // The frame while it waited at the top, which is the frame the overview opened over.
+    let covered = d.samples.last(where: { $0.down && $0.pointer.y <= 2 })?.frame
+    let v = sideEdgeVerdict(d.watched, covered: covered, polycarpMovedIt: !polycarpMoved(trace, id).isEmpty, wait: Double(looks) * 0.02)
+    expect(v.ok, "\(name): \(v.why)")
+    print("  macOS's pause with Polycarp running (not for the constant; use --no-polycarp): \(ms(v.macOSPause))")
 }
 
 /// Case 5 on a Chrome for Testing window with a profile of its own, the stand-in for Helium.
