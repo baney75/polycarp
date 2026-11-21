@@ -24,10 +24,13 @@ public struct Purposes: Codable, Equatable, Sendable {
     /// Workspace number to purpose, as JSON object keys ("1" to "9"). An unnamed workspace has no entry.
     private var byWorkspace: [String: String] = [:]
     public var oneThing: OneThing?
+    /// Tomorrow's one thing, named at the evening examen. It becomes the one thing when its day starts and leaves today's
+    /// alone until then.
+    public var next: OneThing?
 
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case version, day, byWorkspace = "purposes", oneThing = "one" }
+    private enum CodingKeys: String, CodingKey { case version, day, byWorkspace = "purposes", oneThing = "one", next }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -44,6 +47,11 @@ public struct Purposes: Codable, Equatable, Sendable {
             if let n = one.workspace, !Workspaces.range.contains(n) { one.workspace = nil }
             oneThing = one
         }
+        if var n = try c.decodeIfPresent(OneThing.self, forKey: .next), let text = Self.clean(n.text, limit: Self.oneThingLimit) {
+            n.text = text
+            n.workspace = nil
+            next = n
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -52,6 +60,7 @@ public struct Purposes: Codable, Equatable, Sendable {
         try c.encodeIfPresent(day, forKey: .day)
         try c.encode(byWorkspace, forKey: .byWorkspace)
         try c.encodeIfPresent(oneThing, forKey: .oneThing)
+        try c.encodeIfPresent(next, forKey: .next)
     }
 
     /// Workspace `n`'s purpose, or nil when it is unnamed.
@@ -63,7 +72,18 @@ public struct Purposes: Codable, Equatable, Sendable {
     }
 
     /// The one thing if it belongs to `today`, else nil: yesterday's is gone even before the file says so.
-    public func oneThing(on today: PurposeDay) -> OneThing? { oneThing.flatMap { $0.day == today ? $0 : nil } }
+    public func oneThing(on today: PurposeDay) -> OneThing? {
+        if let one = oneThing, one.day == today { return one }
+        if let n = next, n.day == today { return n }
+        return nil
+    }
+
+    /// Sets or clears the one thing for `day` (tomorrow, from the examen).
+    public mutating func setNext(_ text: String?, day: PurposeDay) throws {
+        guard let text, let clean = Self.clean(text, limit: .max) else { next = nil; return }
+        guard clean.count <= Self.oneThingLimit else { throw Problem.tooLong(clean.count, limit: Self.oneThingLimit) }
+        next = OneThing(text: clean, workspace: nil, day: day)
+    }
 
     /// Sets or clears (nil, or text that is empty once trimmed) workspace `n`'s purpose. Text over the limit is refused,
     /// never cut, so the caller can say so.
@@ -176,14 +196,35 @@ public final class PurposeStore: @unchecked Sendable {
         try change(["what": "oneThing"]) { v, day in try v.setOneThing(text, workspace: workspace, day: day) }
     }
 
+    /// Tomorrow's one thing, if one was named.
+    public var tomorrow: Purposes.OneThing? {
+        lock.lock(); defer { lock.unlock() }
+        let day = currentDay()
+        return value.next.flatMap { $0.day > day ? $0 : nil }
+    }
+
+    /// Sets tomorrow's one thing (the examen's last answer); empty text clears it. Today's stays until the day ends.
+    public func setTomorrow(_ text: String?) throws {
+        try change(["what": "oneThing"]) { v, day in try v.setNext(text, day: self.clock.adding(1, to: day)) }
+    }
+
     /// Call at the day's start, on wake and when the time zone changes: a one thing left from an earlier day is dropped
     /// from the file and `didChange` says so. Returns whether it did.
     @discardableResult
     public func rollover() -> Bool {
         lock.lock()
         refreshDay()
-        guard let one = value.oneThing, one.day != today else { lock.unlock(); return false }
-        value.oneThing = nil
+        var v = value
+        if let n = v.next, n.day <= today {
+            // Tomorrow came: the examen's answer is today's one thing, or is dropped once its day has passed.
+            // A one thing set by hand on the new day before this ran wins.
+            v.oneThing = v.oneThing?.day == today ? v.oneThing : (n.day == today ? n : nil)
+            v.next = nil
+        } else if let one = v.oneThing, one.day != today {
+            v.oneThing = nil
+        }
+        guard v != value else { lock.unlock(); return false }
+        value = v
         value.day = today
         let saved = value
         lock.unlock()

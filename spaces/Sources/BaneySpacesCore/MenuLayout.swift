@@ -110,6 +110,8 @@ public enum MenuEntry: Equatable, Sendable {
     case nameHour
     /// "Set the One Thing…", or "Change the One Thing…" once it is set.
     case oneThing(set: Bool)
+    /// "Evening Examen…", once the evening has started (`evening`).
+    case examen
     case workspace(MenuLayout.Row)
     case showAll, find, settings, quit
     /// "Turn Off Workspace Dock" / "Turn On Workspace Dock": the dock switch (`dock.enabled`).
@@ -121,11 +123,12 @@ public enum MenuEntry: Equatable, Sendable {
 }
 
 extension MenuLayout {
-    /// With `now`, the menu opens on what you are doing and the two ways to name it, then the workspaces.
-    public static func entries(now: MenuNow? = nil, oneThingSet: Bool = false, rows: [Row], finished: Int, update: UpdateNotice?,
-                               dockOn: Bool? = nil) -> [MenuEntry] {
+    /// With `now`, the menu opens on what you are doing and the two ways to name it (and in the `evening`, the examen),
+    /// then the workspaces.
+    public static func entries(now: MenuNow? = nil, oneThingSet: Bool = false, evening: Bool = false, rows: [Row], finished: Int,
+                               update: UpdateNotice?, dockOn: Bool? = nil) -> [MenuEntry] {
         var out: [MenuEntry] = []
-        if let now { out += [.now(now), .nameHour, .oneThing(set: oneThingSet), .separator] }
+        if let now { out += [.now(now), .nameHour, .oneThing(set: oneThingSet)] + (evening ? [.examen] : []) + [.separator] }
         out += rows.map(MenuEntry.workspace)
         out += [.separator, .showAll, .find]
         if let dockOn { out.append(.dock(on: dockOn)) }

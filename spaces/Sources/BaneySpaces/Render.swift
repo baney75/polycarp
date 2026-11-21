@@ -185,6 +185,15 @@ enum Render {
             topBar.oneThing = String(repeating: "Send the second paragraph ", count: 4).prefix(80).description
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar-long.png", CGSize(width: 1280, height: 24)) else { return 1 }
         }
+        // The morning sheet and the evening examen, as they first appear.
+        let morning = MorningModel(oneThing: "Write to Paul", rows: [.init(workspace: 1, text: "Morning reading"),
+                                                                     .init(workspace: 2, text: "The Gannon letter"),
+                                                                     .init(workspace: 4, text: "")])
+        guard save(MorningView(model: morning, done: { _ in }).padding(30).background(Color(white: 0.35)), "rhythm-morning.png", CGSize(width: 440, height: 0)) else { return 1 }
+        let examen = ExamenModel(rows: RhythmSheets.timeRows(seconds: [2: 7500, 3: 3480, 4: 2220], named: [2: "Gannon letter", 3: "Polycarp", 4: "Class"]),
+                                 tomorrow: "")
+        examen.answers[0] = "The light on the field this morning"
+        guard save(ExamenView(model: examen, done: { _ in }).padding(30).background(Color(white: 0.35)), "rhythm-examen.png", CGSize(width: 440, height: 0)) else { return 1 }
 
         // Every agent badge: working on 1, asking on 2, an error on 3, a finish on 4.
         let agentDock = DockModel()

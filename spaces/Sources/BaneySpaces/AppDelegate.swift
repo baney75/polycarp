@@ -502,6 +502,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         PurposeKeeper.shared.start()
         // After the purposes, which it shows; it reads surfaces.json and stays away while `bar.enabled` is off.
         topBar.start()
+        RhythmSheet.shared.workspaces = { [weak self] in
+            guard let self else { return ([], 1) }
+            return (Set(Workspaces.range.filter { !self.spaces.apps(on: $0).isEmpty }), self.spaces.model.current)
+        }
+        RhythmSheet.shared.start()
         // A new theme redraws the menu bar indicator as well as the panels.
         NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.updateIcon()
@@ -902,7 +907,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let named = keeper.purposes.snapshot
         let here = spaces.model.current
         let now = MenuNow.make(workspace: here, purpose: named.purpose(of: here), since: keeper.arrived)
-        let entries = MenuLayout.entries(now: now, oneThingSet: named.oneThing != nil,
+        let settings = keeper.settings, clock = keeper.ledger.dayClock, at = Date()
+        let evening = settings.eveningExamen && at >= Rhythm.eveningStart(of: clock.day(of: at), settings: settings, clock: clock)
+        let entries = MenuLayout.entries(now: now, oneThingSet: named.oneThing != nil, evening: evening,
                                          rows: MenuLayout.rows(current: here, apps: apps, purposes: named.all),
                                          finished: session.started ? session.unseenCount : 0, update: updateNotice(),
                                          dockOn: WorkspaceDock.enabled)
@@ -923,6 +930,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return item("Name This Hour…", #selector(nameHour))
         case .oneThing(let set):
             return item(set ? "Change the One Thing…" : "Set the One Thing…", #selector(setOneThing))
+        case .examen:
+            return item("Evening Examen…", #selector(eveningExamen))
         case .workspace(let row):
             let it = item(row.title, #selector(pick(_:)), key: "\(row.workspace)")
             it.keyEquivalentModifierMask = Modifier.current.menuFlags
@@ -976,6 +985,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func offerUpdate() { if let r = updater.available { updater.offer(r) } }
 
     @objc private func pick(_ sender: NSMenuItem) { spaces.switchTo(sender.tag) }
+
+    /// "Evening Examen…": the examen card now, given tonight or not.
+    @objc private func eveningExamen() {
+        RhythmSheet.shared.show(.eveningExamen)
+    }
 
     /// "Name This Hour…": what the workspace you are on is for.
     @objc private func nameHour() {
