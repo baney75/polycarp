@@ -37,6 +37,19 @@ public enum Fuzzy {
     }
 }
 
+/// A launcher key press must draw its rows inside one frame. One that doesn't is written to trace.log, without what
+/// was typed, so a slow search can be found after the fact (2026-11-21: search "glitchy and slow").
+public enum KeyPressCheck {
+    public static let budget: TimeInterval = 0.016
+
+    /// The trace line for a key press that took `seconds` to rebuild `rows` rows for `typed` characters, or nil
+    /// inside the budget.
+    public static func slowLine(seconds: TimeInterval, typed: Int, rows: Int) -> String? {
+        guard seconds >= budget else { return nil }
+        return "launcher key: \(Int((seconds * 1000).rounded())) ms (budget 16), \(typed) characters, \(rows) rows"
+    }
+}
+
 /// A name as `Fuzzy` matches it, folded and split once: the launcher keeps one per app, built off the main thread when
 /// the app list is read, so a key press only compares.
 public struct SearchKey: Equatable {

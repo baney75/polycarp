@@ -67,3 +67,21 @@ final class SearchKeyTests: XCTestCase {
         XCTAssertLessThan(indexed * 3, folding, "indexed \(Int(indexed * 1000)) ms, folding \(Int(folding * 1000)) ms")
     }
 }
+
+final class KeyPressCheckTests: XCTestCase {
+    func testAKeyPressInsideAFrameSaysNothing() {
+        XCTAssertNil(KeyPressCheck.slowLine(seconds: 0.0159, typed: 3, rows: 20))
+    }
+
+    func testASlowKeyPressSaysHowSlowWithoutWhatWasTyped() {
+        XCTAssertEqual(KeyPressCheck.slowLine(seconds: 0.0234, typed: 4, rows: 37),
+                       "launcher key: 23 ms (budget 16), 4 characters, 37 rows")
+    }
+
+    func testTheLauncherTimesEachKeyPress() throws {
+        let s = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        let q = try XCTUnwrap(SourceText.block(after: "@Published var query = \"\"", in: s))
+        XCTAssertTrue(q.contains("rebuild()"))
+        XCTAssertTrue(q.contains("KeyPressCheck.slowLine(seconds: ProcessInfo.processInfo.systemUptime - started"))
+    }
+}

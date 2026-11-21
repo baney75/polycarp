@@ -332,7 +332,18 @@ final class LauncherModel: ObservableObject {
 
     enum Job: Equatable { case installing, removing, failed(String) }
 
-    @Published var query = "" { didSet { if query != oldValue { selected = 0; rebuild(); searchStore(); searchFiles() } } }
+    @Published var query = "" {
+        didSet {
+            guard query != oldValue else { return }
+            let started = ProcessInfo.processInfo.systemUptime
+            selected = 0
+            rebuild()
+            searchStore()
+            searchFiles()
+            if let line = KeyPressCheck.slowLine(seconds: ProcessInfo.processInfo.systemUptime - started,
+                                                 typed: query.count, rows: items.count) { Trace.log(line) }
+        }
+    }
     @Published private(set) var scope = Scope.root
     @Published private(set) var items: [LauncherItem] = []
     @Published var selected = 0
