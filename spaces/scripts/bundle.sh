@@ -23,7 +23,7 @@ elif [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ]; then
   echo "$TERMINAL_NOT_BUILT" >&2
 else
   export POLYCARP_TERMINAL=0
-  echo "$TERMINAL_NOT_BUILT, and an Apple silicon only build (BANEYSPACES_ARM64_ONLY=1)" >&2
+  echo "terminal not built: universal and Intel builds leave it out (libghostty is built for Apple silicon only)" >&2
 fi
 
 ARCHS=(--arch arm64)

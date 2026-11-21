@@ -68,8 +68,9 @@ public enum LauncherProviders {
         return (top, normal)
     }
 
-    /// The providers the launcher starts with, in the order their rows show.
-    public static func standard() -> [LauncherProvider] {
-        [CalculatorProvider(), TerminalProvider()]
+    /// The providers the launcher starts with, in the order their rows show. The terminal's rows only in a build that
+    /// has the terminal (`TerminalFeature.built`): elsewhere every one of them would end in "not built".
+    public static func standard(terminal: Bool = false) -> [LauncherProvider] {
+        terminal ? [CalculatorProvider(), TerminalProvider()] : [CalculatorProvider()]
     }
 }

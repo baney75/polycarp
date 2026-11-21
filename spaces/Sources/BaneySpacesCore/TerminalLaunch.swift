@@ -8,6 +8,37 @@ public enum TerminalBuild {
     /// What a build without libghostty says, once, when asked for a terminal (`polycarp-spaces term`, the launcher,
     /// bundle.sh). Universal and Intel builds and any Mac without the library compile the terminal out.
     public static let notBuilt = "terminal not built: needs the Metal Toolchain (xcodebuild -downloadComponent MetalToolchain)"
+    /// What a universal or Intel build says instead: no toolchain would help there.
+    public static let notBuiltUniversal = "terminal not built: universal and Intel builds leave it out (libghostty is built for Apple silicon only)"
+}
+
+/// What quitting does to the terminals' programs. They run inside Polycarp, so they end with it (SIGHUP): an agent's
+/// session, an unsaved editor, an ssh session. Quitting asks while any runs; an update asks before it starts (Update
+/// Now) or refuses (`update --now`, often run unattended, where a question could wait forever), and the installer's own
+/// quit then doesn't ask again. docs/terminal.md.
+public enum TerminalQuit {
+    /// The question for a quit, or nil to quit at once: nothing runs, or it is an install's quit (`InstallHandoff`),
+    /// whose update already asked.
+    public static func question(busy: Int, forInstall: Bool) -> String? {
+        guard busy > 0, !forInstall else { return nil }
+        return "Quit Polycarp and end what's running in \(windows(busy))?"
+    }
+
+    /// The question Update Now asks first, or nil to go ahead.
+    public static func updateQuestion(busy: Int) -> String? {
+        busy > 0 ? "Updating restarts Polycarp, which ends what's running in \(windows(busy))." : nil
+    }
+
+    /// Why `polycarp-spaces update --now` doesn't start, or nil when it may.
+    public static func updateRefusal(busy: Int) -> String? {
+        guard busy > 0 else { return nil }
+        return "not updating: a program is running in \(windows(busy)), and updating restarts Polycarp, which would end it. "
+            + "Close it, or choose Update Now in Polycarp's menu to be asked."
+    }
+
+    public static let detail = "Programs in Polycarp's terminals (an agent, an editor, an ssh session) end when it quits."
+
+    private static func windows(_ n: Int) -> String { n == 1 ? "a terminal window" : "\(n) terminal windows" }
 }
 
 /// One request for a terminal: a window or the quick terminal, running a shell, a preset agent, your command, or a shell
@@ -36,6 +67,20 @@ public struct TerminalLaunch: Equatable, Sendable {
 
     public init(preset: Preset = .shell, command: String? = nil, host: String? = nil, quick: Bool = false) {
         self.preset = preset; self.command = command; self.host = host; self.quick = quick
+    }
+
+    /// Whether this launch names a program to run (a preset other than the shell, a command, a device), rather than a
+    /// plain shell.
+    public var runsProgram: Bool { preset != .shell || command != nil || host != nil }
+
+    public enum Placement: String, Sendable { case quick, window }
+
+    /// Where it opens. The quick terminal keeps the session it was made with, so a quick launch that names a program
+    /// while one is already open runs that program in a window rather than dropping it; a plain one shows the quick
+    /// terminal as it is.
+    public func placement(quickOpen: Bool) -> Placement {
+        guard quick else { return .window }
+        return quickOpen && runsProgram ? .window : .quick
     }
 
     public static let usage = "usage: polycarp-spaces term [shell|claude|codex] [--cmd \"<command>\"] [--host <tailnet device>] [--quick]"

@@ -149,9 +149,12 @@ final class GhosttyRuntime {
         return view(ghostty_surface_userdata(s))
     }
 
-    /// Runs `body` on the main thread: now if this is it, else soon.
+    /// Runs `body` on the main thread's next turn, never inside the callback that asked. libghostty calls back from
+    /// inside `ghostty_app_tick` (a shell's `exit` closes its surface from there), so work done at once could free a
+    /// surface under its own callback, or run a question's loop that ticks the app again. Ghostty's own app defers the
+    /// same way. A view a callback names is resolved before the hop and held by the closure.
     private static func onMain(_ body: @escaping () -> Void) {
-        if Thread.isMainThread { body() } else { DispatchQueue.main.async(execute: body) }
+        DispatchQueue.main.async(execute: body)
     }
 
     /// The actions Polycarp answers. Anything else returns false, and libghostty does its own default (or nothing):
@@ -161,7 +164,7 @@ final class GhosttyRuntime {
         case GHOSTTY_ACTION_SET_TITLE:
             guard let v = view(of: target), let p = action.action.set_title.title else { return false }
             let title = String(cString: p)
-            onMain { v.setTitle(title) }
+            onMain { if v.surface != nil { v.setTitle(title) } }
             return true
         case GHOSTTY_ACTION_CELL_SIZE:
             guard let v = view(of: target) else { return false }
@@ -181,7 +184,7 @@ final class GhosttyRuntime {
             return true
         case GHOSTTY_ACTION_CLOSE_WINDOW:
             guard let v = view(of: target) else { return false }
-            onMain { v.window?.performClose(nil) }
+            onMain { if v.surface != nil { v.window?.performClose(nil) } }
             return true
         case GHOSTTY_ACTION_NEW_WINDOW:
             onMain { _ = TerminalWindows.shared.open(TerminalLaunch()) }
@@ -227,11 +230,15 @@ final class GhosttyRuntime {
                             _ request: ghostty_clipboard_request_e) {
         let text = str.map { String(cString: $0) } ?? ""
         let reading = request == GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ
+        let v = view(ud)
         onMain {
-            guard let surface = view(ud)?.surface else { return }
-            let ok = ask(reading ? "A program in the terminal wants to read your clipboard." : "Paste text that runs a command?",
-                         detail: String(text.prefix(400)), allow: reading ? "Allow" : "Paste")
-            (ok ? text : "").withCString { ghostty_surface_complete_clipboard_request(surface, $0, state, true) }
+            guard let v, v.surface != nil else { return }
+            ask(reading ? "A program in the terminal wants to read your clipboard." : "Paste text that runs a command?",
+                detail: String(text.prefix(400)), allow: reading ? "Allow" : "Paste", over: v.window) { ok in
+                // The window may have closed while the question was up.
+                guard let surface = v.surface else { return }
+                (ok ? text : "").withCString { ghostty_surface_complete_clipboard_request(surface, $0, state, true) }
+            }
         }
     }
 
@@ -245,31 +252,48 @@ final class GhosttyRuntime {
             text = String(cString: data)
         }
         guard let text else { return }
+        let v = view(ud)
         onMain {
-            if confirm, !ask("A program in the terminal wants to set your clipboard.", detail: String(text.prefix(400)), allow: "Allow") { return }
-            let pb = pasteboard(loc)
-            pb.clearContents()
-            pb.setString(text, forType: .string)
+            func write() {
+                let pb = pasteboard(loc)
+                pb.clearContents()
+                pb.setString(text, forType: .string)
+            }
+            guard confirm else { return write() }
+            guard let v, v.surface != nil else { return }
+            ask("A program in the terminal wants to set your clipboard.", detail: String(text.prefix(400)), allow: "Allow",
+                over: v.window) { if $0 { write() } }
         }
     }
 
     /// The program in a surface ended (or Ghostty asked to close it): its window goes, after asking if one still runs.
+    /// Called from inside `ghostty_app_tick` (a plain shell's `exit` lands here), so the window closes on the next turn,
+    /// never while libghostty is still handling this surface.
     static func closeSurface(_ ud: UnsafeMutableRawPointer?, processAlive: Bool) {
+        let v = view(ud)
         onMain {
-            guard let v = view(ud) else { return }
-            if processAlive, !ask("Close this terminal?", detail: "A program in it is still running.", allow: "Close") { return }
-            v.closeHost()
+            guard let v, v.surface != nil else { return }
+            guard processAlive else { return v.closeHost() }
+            ask("Close this terminal?", detail: "A program in it is still running.", allow: "Close", over: v.window) { ok in
+                if ok, v.surface != nil { v.closeHost() }
+            }
         }
     }
 
-    static func ask(_ message: String, detail: String, allow: String) -> Bool {
+    /// Asks on a sheet over the terminal's own window and answers in `done`; no modal loop, so nothing ticks libghostty
+    /// while a callback is on the stack. Without a window to hang it on, the answer is no.
+    static func ask(_ message: String, detail: String, allow: String, over window: NSWindow?, _ done: @escaping (Bool) -> Void) {
+        guard let window, window.isVisible, window.attachedSheet == nil else { return done(false) }
         let a = NSAlert()
         a.messageText = message
         a.informativeText = detail
         a.addButton(withTitle: allow)
         a.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
-        return a.runModal() == .alertFirstButtonReturn
+        a.beginSheetModal(for: window) { done($0 == .alertFirstButtonReturn) }
     }
+
+    /// Whether quitting now would end a program in any terminal (Ghostty's own rule, its `confirm-close-surface` included).
+    var needsConfirmQuit: Bool { ghostty_app_needs_confirm_quit(app) }
 }
 #endif

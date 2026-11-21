@@ -16,7 +16,9 @@ final class TerminalWindows: NSObject, NSWindowDelegate {
     /// The app that was in front before the quick terminal came down, given back when it goes up.
     private var quickReturnTo: NSRunningApplication?
 
-    /// Opens what was asked, on the main thread. The reply's `info` says what opened and how long it took.
+    /// Opens what was asked, on the main thread. The reply's `info` says what opened and how long it took, and only
+    /// what really opened: a failed surface is an error, and a program meant for a quick terminal that is already open
+    /// runs in a window, which the reply says.
     func open(_ launch: TerminalLaunch) -> Result<[String: String], TerminalLaunchError> {
         precondition(Thread.isMainThread)
         let t0 = DispatchTime.now().uptimeNanoseconds
@@ -27,19 +29,24 @@ final class TerminalWindows: NSObject, NSWindowDelegate {
         }
         let env = ProcessInfo.processInfo.environment
         let line = launch.commandLine(shell: TerminalLaunch.loginShell(env: env), tailscale: Self.tailscale())
-        let kind: String
-        if launch.quick {
-            showQuick(runtime, commandLine: line)
-            kind = "quick"
-        } else {
-            openWindow(runtime, launch: launch, commandLine: line)
-            kind = "window"
-        }
+        let placement = launch.placement(quickOpen: quick != nil)
+        let opened = placement == .quick ? showQuick(runtime, commandLine: line) : openWindow(runtime, launch: launch, commandLine: line)
+        if case .failure(let e) = opened { return .failure(e) }
         let ms = (DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000
         // Kind and timing only: never the command or the host, which can say what someone is working on.
-        Trace.log("term: opened \(kind) (\(launch.host != nil ? "host" : launch.command != nil ? "command" : launch.preset.rawValue)) in \(ms) ms")
-        return .success(["opened": kind, "title": launch.title, "ms": String(ms)])
+        Trace.log("term: opened \(placement.rawValue) (\(launch.host != nil ? "host" : launch.command != nil ? "command" : launch.preset.rawValue)) in \(ms) ms")
+        var info = ["opened": placement.rawValue, "title": launch.title, "ms": String(ms)]
+        if launch.quick, placement == .window { info["note"] = "the quick terminal is already open, so this opened in a window" }
+        return .success(info)
     }
+
+    /// Terminal windows (the quick terminal too) whose program would end if they closed now.
+    var busyCount: Int {
+        let views = windows.compactMap { $0.contentView as? TerminalSurfaceView } + [quick?.contentView as? TerminalSurfaceView].compactMap { $0 }
+        return views.filter(\.needsConfirmClose).count
+    }
+
+    private static let noSurface = TerminalLaunchError("libghostty couldn't make a terminal (ghostty_surface_new failed); see trace.log")
 
     /// The Tailscale command: on PATH as Homebrew and the standalone app put it, or inside the Mac App Store app.
     static func tailscale() -> String? {
@@ -50,9 +57,11 @@ final class TerminalWindows: NSObject, NSWindowDelegate {
 
     // MARK: Windows
 
-    private func openWindow(_ runtime: GhosttyRuntime, launch: TerminalLaunch, commandLine: String?) {
-        let view = TerminalSurfaceView(app: runtime.app, commandLine: commandLine,
-                                       workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
+    private func openWindow(_ runtime: GhosttyRuntime, launch: TerminalLaunch, commandLine: String?) -> Result<Void, TerminalLaunchError> {
+        guard let view = TerminalSurfaceView(app: runtime.app, commandLine: commandLine,
+                                             workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path) else {
+            return .failure(Self.noSurface)
+        }
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 520),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
@@ -67,11 +76,16 @@ final class TerminalWindows: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
         w.makeFirstResponder(view)
+        return .success(())
     }
 
+    /// A window whose program still runs asks on a sheet first; Close then closes it (`close()` doesn't ask again).
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard let view = sender.contentView as? TerminalSurfaceView, view.needsConfirmClose else { return true }
-        return GhosttyRuntime.ask("Close this terminal?", detail: "A program in it is still running.", allow: "Close")
+        GhosttyRuntime.ask("Close this terminal?", detail: "A program in it is still running.", allow: "Close", over: sender) { [weak sender] ok in
+            if ok { sender?.close() }
+        }
+        return false
     }
 
     func windowWillClose(_ n: Notification) {
@@ -86,15 +100,21 @@ final class TerminalWindows: NSObject, NSWindowDelegate {
 
     // MARK: Quick terminal
 
+    /// ⌃`: up if it's down, else down, through the same door as the launcher, so a terminal that can't start says why.
     func toggleQuick() {
-        if quickShown { hideQuick() } else if case .success(let r) = GhosttyRuntime.get() { showQuick(r, commandLine: nil) }
+        if quickShown { hideQuick() } else { TerminalFeature.open(TerminalLaunch(quick: true)) }
     }
 
-    /// Drops the quick terminal down. A command is used only when the panel is made; an open one is shown as it is.
-    private func showQuick(_ runtime: GhosttyRuntime, commandLine: String?) {
-        let panel = quick ?? makeQuick(runtime, commandLine: commandLine)
+    /// Drops the quick terminal down, made with `commandLine` if there is none yet; an open one is shown as it is
+    /// (`TerminalLaunch.placement` sends a launch with a program elsewhere then).
+    private func showQuick(_ runtime: GhosttyRuntime, commandLine: String?) -> Result<Void, TerminalLaunchError> {
+        let panel: QuickTerminalPanel
+        if let quick { panel = quick } else {
+            guard let made = makeQuick(runtime, commandLine: commandLine) else { return .failure(Self.noSurface) }
+            panel = made
+        }
         quick = panel
-        guard !quickShown else { panel.makeKeyAndOrderFront(nil); return }
+        guard !quickShown else { panel.makeKeyAndOrderFront(nil); return .success(()) }
         quickShown = true
         let front = NSWorkspace.shared.frontmostApplication
         quickReturnTo = front?.processIdentifier == getpid() ? nil : front
@@ -106,6 +126,7 @@ final class TerminalWindows: NSObject, NSWindowDelegate {
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(panel.contentView)
         animate(panel, to: down) {}
+        return .success(())
     }
 
     func hideQuick() {
@@ -124,9 +145,9 @@ final class TerminalWindows: NSObject, NSWindowDelegate {
         }
     }
 
-    private func makeQuick(_ runtime: GhosttyRuntime, commandLine: String?) -> QuickTerminalPanel {
-        let view = TerminalSurfaceView(app: runtime.app, commandLine: commandLine,
-                                       workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
+    private func makeQuick(_ runtime: GhosttyRuntime, commandLine: String?) -> QuickTerminalPanel? {
+        guard let view = TerminalSurfaceView(app: runtime.app, commandLine: commandLine,
+                                             workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path) else { return nil }
         let panel = QuickTerminalPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 400),
                                        styleMask: [.borderless, .nonactivatingPanel, .resizable], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
@@ -134,7 +155,8 @@ final class TerminalWindows: NSObject, NSWindowDelegate {
         panel.delegate = self
         view.onTitle = { _ in }
         view.onClose = { [weak panel] in panel?.close() }
-        panel.onResignKey = { [weak self] in self?.hideQuick() }
+        // Its own question (a paste or close sheet, the quit alert) takes key: the panel stays down until it's answered.
+        panel.onResignKey = { [weak self, weak panel] in if panel?.attachedSheet == nil, NSApp.modalWindow == nil { self?.hideQuick() } }
         return panel
     }
 

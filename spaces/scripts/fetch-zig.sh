@@ -2,6 +2,10 @@
 # For CI runners: fetches the zig that ghostty/PIN names (Apple silicon), checks its sha256 against the pin, unpacks
 # it into ghostty/.zig and prints that folder, for PATH. It installs nothing system-wide. A Mac that builds the
 # terminal itself brings its own zig at the pinned version (scripts/build-ghostty.sh checks it).
+#
+# Exit 3: zig couldn't be downloaded (the network, ziglang.org), so this runner can't build the terminal; a channel
+# build then ships without it. Exit 1: the bytes aren't the pinned ones, which stops everything.
+# GHOSTTY_PIN, GHOSTTY_DIR and GHOSTTY_ZIG_URL point it elsewhere (the tests use them).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PIN=${GHOSTTY_PIN:-ghostty/PIN}
@@ -9,11 +13,16 @@ PIN=${GHOSTTY_PIN:-ghostty/PIN}
 . "$PIN"
 [ "$(uname -m)" = arm64 ] || { echo "fetch-zig: libghostty builds on Apple silicon only" >&2; exit 1; }
 NAME=zig-aarch64-macos-$GHOSTTY_ZIG
-DEST=ghostty/.zig
+DEST=${GHOSTTY_DIR:-ghostty}/.zig
+URL=${GHOSTTY_ZIG_URL:-https://ziglang.org/download/$GHOSTTY_ZIG/$NAME.tar.xz}
 TAR=$DEST/$NAME.tar.xz
 mkdir -p "$DEST"
 if [ ! -f "$TAR" ]; then
-  curl -fsSL -o "$TAR.part" "https://ziglang.org/download/$GHOSTTY_ZIG/$NAME.tar.xz"
+  if ! curl -fsSL --retry 3 -o "$TAR.part" "$URL"; then
+    rm -f "$TAR.part"
+    echo "terminal not built: zig $GHOSTTY_ZIG couldn't be downloaded from $URL" >&2
+    exit 3
+  fi
   mv "$TAR.part" "$TAR"
 fi
 GOT=$(shasum -a 256 "$TAR" | cut -d' ' -f1)

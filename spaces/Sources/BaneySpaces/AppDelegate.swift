@@ -243,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setupBuilt = true
         let c = SetupWindowController()
         c.model.onModifierChange = { [weak self] _ in self?.registerShortcuts() }
+        c.model.onQuickTerminalKeyChange = { [weak self] _ in self?.registerShortcuts() }
         c.model.onUninstall = { [weak self] in self?.uninstall() }
         c.model.onBringBack = { [weak self] in self?.bringBack() }
         c.model.onAbout = { [weak self] in self?.about() }
@@ -579,6 +580,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return c
     }()
 
+    /// Programs in the built-in terminal end with Polycarp: it asks first while one runs (`TerminalFeature`).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        TerminalFeature.shouldTerminate()
+    }
+
     func applicationWillTerminate(_ n: Notification) {
         // An install swaps the app in place: the Dock and Mission Control stay as they are, since
         // restoring them here and taking them back at the launch would restart the Dock twice in seconds.
@@ -757,9 +763,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkeys.register(keyCode: kVK_ANSI_U, modifiers: controlKey | cmdKey) { [weak self] in
             if self?.session.started == true { self?.session.jumpToFinished() }
         }
-        // ⌃` drops the quick terminal down, from any app (only in builds with the terminal).
-        TerminalFeature.registerQuickKey(hotkeys)
         guard started else { return }
+        // ⌃` drops the quick terminal down, from any app (in builds with the terminal, while Settings has it on).
+        TerminalFeature.registerQuickKey(hotkeys)
         let mods = Modifier.current.carbon
         for (i, code) in Hotkeys.digitKeyCodes.enumerated() {
             let n = i + 1

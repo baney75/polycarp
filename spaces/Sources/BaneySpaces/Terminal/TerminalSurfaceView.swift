@@ -21,7 +21,8 @@ final class TerminalSurfaceView: NSView, NSTextInputClient {
     private var contentSize = NSSize.zero
     private var cursor = NSCursor.iBeam
 
-    init(app: ghostty_app_t, commandLine: String?, workingDirectory: String) {
+    /// Nil when libghostty can't make the surface: the caller shows no window and fails the open.
+    init?(app: ghostty_app_t, commandLine: String?, workingDirectory: String) {
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
         var cfg = ghostty_surface_config_new()
         cfg.userdata = Unmanaged.passUnretained(self).toOpaque()
@@ -42,6 +43,10 @@ final class TerminalSurfaceView: NSView, NSTextInputClient {
                 }
             }
             return ghostty_surface_new(app, &cfg)
+        }
+        guard surface != nil else {
+            Trace.log("term: ghostty_surface_new failed")
+            return nil
         }
         updateTrackingAreas()
     }

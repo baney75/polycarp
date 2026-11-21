@@ -57,12 +57,18 @@ jobs:
         env:
           CACHED: ${{ steps.ghostty.outputs.cache-hit }}
         run: |
-          if [ "$CACHED" != true ]; then
-            PATH="$(scripts/fetch-zig.sh):$PATH"
-            xcrun -sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain || true
-          fi
           set +e
-          scripts/build-ghostty.sh; code=$?
+          if [ "$CACHED" != true ]; then
+            zig=$(scripts/fetch-zig.sh); code=$?
+            if [ $code = 0 ]; then
+              PATH="$zig:$PATH"
+              xcrun -sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
+            fi
+          else
+            code=0
+          fi
+          # fetch-zig.sh: 3 is a download that failed (ship without the terminal), 1 a checksum that didn't match.
+          [ $code = 0 ] && { scripts/build-ghostty.sh; code=$?; }
           set -e
           if [ $code = 3 ]; then
             echo "::warning title=terminal not built::This ${{ inputs.channel }} build ships without the built-in terminal (see the log above)."

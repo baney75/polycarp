@@ -158,7 +158,16 @@ case "term", "terminal":
     guard remoteHost == nil else { fail("term opens a terminal on this Mac; use --host <device> for a shell on another one", code: 2) }
     switch TerminalLaunch.parse(rest) {
     case .failure(let e): fail(e.description, code: 2)
-    case .success(let launch): _ = call(launch.request)
+    case .success(let launch):
+        // The first `term` of a run starts libghostty and loads your Ghostty config on Polycarp's main thread, so it
+        // gets longer than the usual 2 s. A late reply was still delivered: say so, so nobody opens a second one.
+        let (reply, connected) = Wire.send(launch.request, timeout: 10)
+        guard let reply else {
+            fail(connected ? "Polycarp got the request but didn't answer within 10 s; the terminal may still open, so look before running this again."
+                           : "Polycarp isn't running, or hasn't finished starting (it needs Accessibility).")
+        }
+        if !reply.ok { fail(reply.error ?? "failed") }
+        if let note = reply.info?["note"] { print(note) }
     }
 
 case "notify":

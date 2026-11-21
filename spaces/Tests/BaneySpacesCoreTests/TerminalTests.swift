@@ -190,7 +190,7 @@ final class TerminalLaunchTests: XCTestCase {
         XCTAssertEqual(p.results(for: "claude").map(\.action), [.terminal(TerminalLaunch(preset: .claude))])
         XCTAssertEqual(Set(p.results(for: "term").map(\.id)), ["terminal:shell", "terminal:quick"])
         XCTAssertEqual(p.results(for: "t"), [])
-        XCTAssertTrue(LauncherProviders.standard().contains { $0.name == "terminal" })
+        XCTAssertTrue(LauncherProviders.standard(terminal: true).contains { $0.name == "terminal" })
     }
 }
 
@@ -324,5 +324,6 @@ final class GhosttyBuildTests: XCTestCase {
         let bundle = try String(contentsOf: Self.spaces.appendingPathComponent("scripts/bundle.sh"), encoding: .utf8)
         XCTAssertTrue(script.contains(TerminalBuild.notBuilt))
         XCTAssertTrue(bundle.contains(TerminalBuild.notBuilt))
+        XCTAssertTrue(bundle.contains(TerminalBuild.notBuiltUniversal))
     }
 }

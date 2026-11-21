@@ -28,12 +28,47 @@ enum TerminalFeature {
         if case .failure(let e) = openNow(launch) { Toast.show(e.description, symbol: "terminal") }
     }
 
-    /// ⌃` toggles the quick terminal from any app. Not registered without the terminal, so the key keeps its meaning
-    /// in other apps (VS Code's terminal, for one).
+    /// ⌃` toggles the quick terminal from any app. Registered after Polycarp has started (`registerShortcuts`), only
+    /// in a build with the terminal, and only while Settings > Launcher's switch is on, so the key can be left to other
+    /// apps (VS Code's terminal, for one).
     static func registerQuickKey(_ hotkeys: Hotkeys) {
         #if POLYCARP_TERMINAL
+        guard quickKeyOn else { return }
         hotkeys.register(keyCode: kVK_ANSI_Grave, modifiers: controlKey) { TerminalWindows.shared.toggleQuick() }
         #endif
+    }
+
+    /// Settings > Launcher's "⌃` opens the quick terminal". On unless turned off.
+    static var quickKeyOn: Bool {
+        get { UserDefaults.standard.object(forKey: "terminalQuickKey") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "terminalQuickKey") }
+    }
+
+    /// Terminal windows whose program would end if Polycarp quit now.
+    static func busyCount() -> Int {
+        #if POLYCARP_TERMINAL
+        guard let r = GhosttyRuntime.shared else { return 0 }
+        // Ghostty's app-wide rule first; the count only words the question.
+        return r.needsConfirmQuit ? max(1, TerminalWindows.shared.busyCount) : 0
+        #else
+        return 0
+        #endif
+    }
+
+    /// `applicationShouldTerminate`: the terminals' programs end with Polycarp, so a quit asks while any runs. An
+    /// install's own quit (`InstallHandoff`) doesn't ask again: its update asked before it started, or refused.
+    static func shouldTerminate() -> NSApplication.TerminateReply {
+        let marked = (UserDefaults.standard.object(forKey: InstallHandoff.key) as? NSNumber)?.doubleValue
+        let forInstall = InstallHandoff.isCurrent(markedAt: marked, now: Date().timeIntervalSince1970)
+        guard let question = TerminalQuit.question(busy: busyCount(), forInstall: forInstall) else { return .terminateNow }
+        let a = NSAlert()
+        a.messageText = question
+        a.informativeText = TerminalQuit.detail
+        a.addButton(withTitle: "Quit")
+        a.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        // Not inside any libghostty callback: a quit comes from the menu, a signal or an Apple event.
+        return a.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
     }
 
     private static func openNow(_ launch: TerminalLaunch) -> Result<[String: String], TerminalLaunchError> {
