@@ -6,9 +6,9 @@ import SystemConfiguration
 
 /// Polycarp's idle screen (`idle.*` in surfaces.json): after `startAfterMinutes` without input, one cover on each
 /// screen with the machine's name, the time, a verse and a line of Kierkegaard (`IdleScreen`). Any key, click or move
-/// takes it away. It takes the keyboard while up, so the key that wakes it never lands in the app under it, and gives it
-/// back to that app after. It stays away while an app keeps the display awake (a video, a call). macOS's own screen
-/// saver, display sleep and lock still come in their time, over it. Main thread only.
+/// takes it away. It takes the keyboard while up without activating Polycarp, so the key that wakes it never lands in
+/// the app under it, which keeps its place. It stays away while an app keeps the display awake (a video, a call) and
+/// once macOS's screen saver, lock or display sleep has the screen; those still come in their time, over it. Main thread only.
 final class IdleCover {
     static let shared = IdleCover()
 
@@ -16,14 +16,17 @@ final class IdleCover {
     private var wake: Timer?
     private var windows: [NSWindow] = []
     private var lastIdle: TimeInterval = 0
-    private var previous: NSRunningApplication?
     private var monitor: Any?
     private var cursorHidden = false
+    private var screenSaverRunning = false
 
     var isUp: Bool { !windows.isEmpty }
 
     func start() {
         guard watch == nil else { return }
+        let d = DistributedNotificationCenter.default()
+        d.addObserver(forName: .init("com.apple.screensaver.didstart"), object: nil, queue: .main) { [weak self] _ in self?.screenSaverRunning = true }
+        d.addObserver(forName: .init("com.apple.screensaver.didstop"), object: nil, queue: .main) { [weak self] _ in self?.screenSaverRunning = false }
         let t = Timer(timeInterval: IdleScreen.watchInterval, repeats: true) { [weak self] _ in self?.look() }
         t.tolerance = 3
         RunLoop.main.add(t, forMode: .common)
@@ -35,9 +38,11 @@ final class IdleCover {
 
     /// Comes up when the time has come and nothing is keeping the display awake.
     private func look() {
-        guard !isUp else { return }
+        let settings = SurfacesStore.shared.current.idle
+        guard !isUp, settings.enabled else { return }
         let idle = PurposeKeeper.idleSeconds()
-        guard IdleScreen.shouldStart(idle: idle, settings: SurfacesStore.shared.current.idle, displayHeldAwake: Self.displayHeldAwake()) else { return }
+        guard IdleScreen.shouldStart(idle: idle, settings: settings, displayHeldAwake: Self.displayHeldAwake(),
+                                     systemHasScreen: screenSaverRunning || Self.locked() || Self.displaysAsleep()) else { return }
         show(idle: idle)
     }
 
@@ -45,11 +50,10 @@ final class IdleCover {
     func show(idle: TimeInterval = PurposeKeeper.idleSeconds()) {
         guard !isUp else { return }
         let settings = SurfacesStore.shared.current.idle
-        let front = NSWorkspace.shared.frontmostApplication
-        previous = front?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : front
         let name = Self.machineName()
         for screen in NSScreen.screens {
-            let w = CoverWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            let w = CoverWindow(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            w.becomesKeyOnlyIfNeeded = false
             w.level = .screenSaver
             w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
             w.isOpaque = true
@@ -64,7 +68,8 @@ final class IdleCover {
             w.orderFrontRegardless()
             windows.append(w)
         }
-        NSApp.activate(ignoringOtherApps: true)
+        // A non-activating panel takes the keyboard without Polycarp becoming the active app, which a timer can't
+        // count on from behind another app, so the waking key reaches the monitor below.
         windows.first?.makeKey()
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = Chrome.duration(1.2, .panelIn)
@@ -99,8 +104,6 @@ final class IdleCover {
         for w in windows { w.orderOut(nil) }
         windows = []
         if cursorHidden { NSCursor.unhide(); cursorHidden = false }
-        previous?.activate()
-        previous = nil
         Trace.log("idle: down")
     }
 
@@ -109,6 +112,17 @@ final class IdleCover {
         var status: Unmanaged<CFDictionary>?
         guard IOPMCopyAssertionsStatus(&status) == kIOReturnSuccess, let dict = status?.takeRetainedValue() as? [String: Any] else { return false }
         return (dict[kIOPMAssertPreventUserIdleDisplaySleep as String] as? Int ?? 0) > 0
+    }
+
+    /// Whether the session's screen is locked.
+    static func locked() -> Bool {
+        (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
+    }
+
+    /// Whether every display is asleep.
+    static func displaysAsleep() -> Bool {
+        let ids = NSScreen.screens.compactMap { $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID }
+        return !ids.isEmpty && ids.allSatisfy { CGDisplayIsAsleep($0) != 0 }
     }
 
     /// The name in Sharing settings, read without the network lookup `Host` can make.
@@ -125,10 +139,10 @@ final class IdleCover {
     }
 }
 
-/// Takes the keyboard while the cover is up, so a key that wakes it is swallowed here.
-private final class CoverWindow: NSWindow {
+/// Takes the keyboard while the cover is up, without activating Polycarp, so a key that wakes it is swallowed here
+/// and the app in front keeps its place.
+private final class CoverWindow: NSPanel {
     override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
 }
 
 private func color(_ hex: UInt32, _ opacity: Double = 1) -> Color {

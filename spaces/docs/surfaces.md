@@ -177,8 +177,8 @@ Row ids: `workspaces`, `show-all`, `find`, `agents` (agents that finished while 
 The idle screen covers every screen after `startAfterMinutes` without input: the Mac's name, the time, a verse (BSB,
 a new one each hour) and a line of Kierkegaard (a new one each day). The words drift a few points a minute so nothing
 sits on the same pixels all night. Any key, click or move takes it away, and the key that wakes it doesn't reach the
-app under it. It doesn't come up while an app keeps the display awake (a video playing, a call), and macOS's own
-screen saver, display sleep and lock still come in their time. To see it soon: `polycarp-spaces surfaces set idle
+app under it. It doesn't come up while an app keeps the display awake (a video playing, a call), or once macOS's
+screen saver, lock or display sleep has the screen; those still come in their time, over it. To see it soon: `polycarp-spaces surfaces set idle
 '{"enabled":true,"startAfterMinutes":1}'`.
 
 ### `text`: where verses come from
@@ -263,7 +263,7 @@ The model is `Surfaces` in BaneySpacesCore: `bar` (`Bar`: `enabled`, `height`, `
 `[BarModule]`, `clockFormat`, `hourNames`, `hideSystemMenuBar`), `desktop` (`scene`, `followDaylight`, `verse`,
 `versePosition`, `verseRotation`), `dock` (`tileLabel`, `restTile`), `menu` (`order`, `hidden`, and
 `rows`, the rows to show in order), `newtab` (`question`, `chips`, `verse`, `searchURL`, and `searchURL(for:)`), `idle`
-(`style`, `effects`, `showMachineName`, `showVerse`, `showKierkegaard`, `startAfterMinutes`) and `text` (`translation`,
+(`enabled`, `style`, `effects`, `showMachineName`, `showVerse`, `showKierkegaard`, `startAfterMinutes`) and `text` (`translation`,
 `verseSource`). `SurfaceField.all` is the one list of fields: validation, defaults, the model and the schema all read it.
 
 Test hook: `POLYCARP_SURFACES_FILE` (an absolute path) points the command at another file. Never set in real use.

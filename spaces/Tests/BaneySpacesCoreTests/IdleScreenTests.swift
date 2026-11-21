@@ -20,9 +20,20 @@ final class IdleScreenTests: XCTestCase {
         XCTAssertFalse(IdleScreen.shouldStart(idle: 599, settings: on, displayHeldAwake: false))
         XCTAssertTrue(IdleScreen.shouldStart(idle: 600, settings: on, displayHeldAwake: false), "ten minutes by default")
         XCTAssertFalse(IdleScreen.shouldStart(idle: 3600, settings: on, displayHeldAwake: true), "never over a video or a call")
+        XCTAssertFalse(IdleScreen.shouldStart(idle: 3600, settings: on, displayHeldAwake: false, systemHasScreen: true),
+                       "not behind the screen saver, the lock or a sleeping display")
         var soon = on
         soon.startAfterMinutes = 1
         XCTAssertTrue(IdleScreen.shouldStart(idle: 61, settings: soon, displayHeldAwake: false))
+    }
+
+    /// From a timer behind another app, activating Polycarp can fail, and then the waking key would land in that app.
+    /// The cover takes the keyboard as a non-activating panel instead (review first-F1).
+    func testTheCoverTakesTheKeyboardWithoutActivatingTheApp() throws {
+        let code = try Repo.code("Sources/BaneySpaces/IdleCover.swift")
+        XCTAssertTrue(code.contains(".nonactivatingPanel"))
+        XCTAssertTrue(code.contains("class CoverWindow: NSPanel"))
+        XCTAssertFalse(code.contains("NSApp.activate"), "the key must not depend on activation")
     }
 
     func testInputIsTheIdleTimeGoingDown() {

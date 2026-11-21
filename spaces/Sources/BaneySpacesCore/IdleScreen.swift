@@ -53,9 +53,12 @@ public enum IdleScreen {
     }
 
     /// Whether to come up now, with `idle` seconds since the last input. Never while an app keeps the display awake (a
-    /// video playing, a call), which is how those apps say someone is watching without touching anything.
-    public static func shouldStart(idle: TimeInterval, settings: Surfaces.Idle, displayHeldAwake: Bool) -> Bool {
-        settings.enabled && !displayHeldAwake && idle >= Double(settings.startAfterMinutes) * 60
+    /// video playing, a call), which is how those apps say someone is watching without touching anything, and never
+    /// once macOS has the screen (`systemHasScreen`: its screen saver running, the session locked, every display
+    /// asleep), so the cover isn't waiting behind them when someone comes back.
+    public static func shouldStart(idle: TimeInterval, settings: Surfaces.Idle, displayHeldAwake: Bool,
+                                   systemHasScreen: Bool = false) -> Bool {
+        settings.enabled && !displayHeldAwake && !systemHasScreen && idle >= Double(settings.startAfterMinutes) * 60
     }
 
     /// Whether there was input between two looks: the time since the last input went down. A little slack, because
