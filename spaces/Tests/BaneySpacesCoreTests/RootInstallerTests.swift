@@ -105,7 +105,7 @@ final class RootInstallerTests: XCTestCase {
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uname.path)
         let tychicus = "The browser helper is now Tychicus: download tychicus-<version>-<platform> from https://github.com/baney75/tychicus/releases/latest, then `tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .`\n"
         let silas = "  voice is Silas now, its own app: https://github.com/baney75/silas\n"
-        for (features, line, note) in [("browser", tychicus, ""), ("workspaces, browser", tychicus, ""), ("browser,voice", tychicus, silas)] {
+        for (features, line, note) in [("browser", tychicus, ""), ("browser,voice", tychicus, silas)] {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/bash")
             p.arguments = [Repo.root.deletingLastPathComponent().appendingPathComponent("install.sh").path]
@@ -130,6 +130,13 @@ final class RootInstallerTests: XCTestCase {
     /// Only the browser stops the install: naming workspaces or voice carries on, voice with one line saying where Silas
     /// is. Sourced for its functions, so nothing is installed.
     func testOnlyTheBrowserStopsTheInstall() throws {
+        // `workspaces,browser` was the old documented non-interactive answer: it gets the Tychicus line and still installs.
+        let tychicus = "The browser helper is now Tychicus: download tychicus-<version>-<platform> from https://github.com/baney75/tychicus/releases/latest, then `tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .`\n"
+        for both in ["workspaces,browser", "workspaces, browser", "browser workspaces"] {
+            let (out, rc) = try functions("moved_notes '\(both)'; echo \"rc=$?\"")
+            XCTAssertEqual(rc, 0, out)
+            XCTAssertEqual(out, tychicus + "rc=0\n", both)
+        }
         let (said, code) = try functions("moved_notes 'workspaces,voice'; echo \"rc=$?\"; moved_notes browser || echo stop")
         XCTAssertEqual(code, 0, said)
         XCTAssertEqual(said, "  voice is Silas now, its own app: https://github.com/baney75/silas\nrc=0\nThe browser helper is now Tychicus: download tychicus-<version>-<platform> from https://github.com/baney75/tychicus/releases/latest, then `tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .`\nstop\n")

@@ -198,11 +198,12 @@ TYCHICUS_INSTALL='tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --
 BROWSER_MOVED="The browser helper is now Tychicus: download $TYCHICUS_ASSET from $TYCHICUS_RELEASES, then \`$TYCHICUS_INSTALL\`"
 
 # The parts POLYCARP_FEATURES ($1) names that left: one line each saying where they went. Returns 1 when the install must
-# stop there (the browser is all Tychicus now), 0 to carry on.
+# stop there (only the browser was asked for, and it is all Tychicus now), 0 to carry on. `workspaces,browser`, the old
+# non-interactive answer, still installs.
 moved_notes() {
   if names_part browser "$1"; then printf '%s\n' "$BROWSER_MOVED"; fi
   if names_part voice "$1"; then printf '  voice is Silas now, its own app: https://github.com/baney75/silas\n' >&2; fi
-  ! names_part browser "$1"
+  ! { names_part browser "$1" && ! names_part workspaces "$1"; }
 }
 
 # The lines `polycarp update --retire-old-browser` writes about the remote connector (CONNECTOR_OFF and CONNECTOR_STAYS
