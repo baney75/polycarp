@@ -1163,6 +1163,11 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
                     let peer = req["_peer_pid"].as_u64().map(|p| p as u32).filter(|p| *p != 0);
                     let env = Envelope::ok(json!({}));
                     c.paths.append_action(&ActionRecord::from_result(now(), &agent, "set", peer, None, None, &format!("settings:{k}"), &env).to_line(), now(), &c.last_prune);
+                    if k == "bar.enabled" {
+                        let on = val == json!(true);
+                        crate::bar::set_enabled(on);
+                        return Envelope::ok(json!({ k: val, "note": if on { "the top bar is coming up on every display" } else { "the top bar is going; the work area comes back" } }));
+                    }
                     Envelope::ok(json!({ k: val, "note": "stored; the themed UI and the dock arrive in Windows part 2" }))
                 }
             }
@@ -1174,6 +1179,7 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
             v["platform"] = json!("windows");
             v["hidden"] = c.hidden.to_json();
             v["keys"] = c.keys_json();
+            v["bar"] = crate::bar::status();
             Envelope::ok(v)
         }
         "ls" => Envelope::ok(ls(&lock(shared))),
@@ -1780,6 +1786,7 @@ fn on_end_session(e: EndSession) {
             drop(c);
             say(&format!("baneyspaces daemon: {e:?}: {} window(s) put back, {} agent window(s) stay, {} not restored", r.0, r.1, r.2));
             if e == EndSession::Ending {
+                crate::bar::remove_all();
                 std::process::exit(0);
             }
         }
@@ -1920,6 +1927,10 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         feed: Some({
             let tx = crate::feed::spawn::<Pipe>();
             Arc::new(move |m| {
+                // The top bar draws the same state the shell hears; handing it over never blocks.
+                if let crate::feed::FeedMsg::Publish(line) = &m {
+                    crate::bar::publish(line);
+                }
                 let _ = tx.send(m);
             })
         }),
@@ -1953,6 +1964,7 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
             });
             let _ = restore_from_file(&paths, true);
             drop(guard);
+            crate::bar::remove_all();
             std::process::exit(101);
         }));
     }
@@ -1987,6 +1999,7 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         }
         c.problems.extend(problems);
         let _ = c.persist();
+        crate::bar::start(tx.clone(), c.settings.get("bar.enabled") == Some(&json!(true)));
     }
     // The control pipe: two listeners, so there is always a free instance.
     {
@@ -2051,7 +2064,9 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         }
     }
     // Shutting down: stop the hooks, then, under the lock with STOPPING set (requests that arrive meanwhile are
-    // refused, and a poll in flight has finished), write the record and put your windows back.
+    // refused, and a poll in flight has finished), write the record and put your windows back. The bar goes first, so
+    // the work area is whole again before any window is shown.
+    crate::bar::stop();
     hook::stop();
     let (shown, kept, failed) = {
         let c = lock(&shared);

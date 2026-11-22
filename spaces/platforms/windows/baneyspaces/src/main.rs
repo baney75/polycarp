@@ -24,6 +24,8 @@ mod settings;
 #[cfg(windows)]
 mod agent;
 #[cfg(windows)]
+mod bar;
+#[cfg(windows)]
 mod cloak;
 #[cfg(windows)]
 mod daemon;
@@ -51,7 +53,7 @@ const HELP: &str = "baneyspaces (Windows)
   focus-monitor <name>           go to a monitor (\\\\.\\DISPLAY1 ...)
   ls                             windows by workspace, and the agent workspace
   state                          the whole model as JSON
-  get [key] | set <key> <value>  the shared settings: appearance.theme, appearance.palette, dock.enabled
+  get [key] | set <key> <value>  the shared settings: appearance.theme, appearance.palette, dock.enabled, bar.enabled
   overview                       show or hide the overview (recorded; drawn in part 2)
   agent-workspace show|hide|toggle   show the agent workspace (you only; agents never do)
   agent status|windows           what is on the agent workspace

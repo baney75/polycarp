@@ -141,6 +141,38 @@ public static class Desk {
 
     public static int Displays() { return GetSystemMetrics(80); }
 
+    // The top bar (spec/bar.md): its windows by class, the work area the shell gives everyone else, and what a
+    // maximized window does under it.
+    [DllImport("user32.dll")] static extern bool SystemParametersInfoW(uint a, uint b, out RECT r, uint c);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
+    [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out RECT v, int sz);
+    [DllImport("user32.dll", EntryPoint = "SendInput")] static extern uint SendMouse(uint n, MINPUT[] i, int sz);
+    [StructLayout(LayoutKind.Sequential)] struct MI { public int dx, dy; public uint data, flags, time; public UIntPtr extra; }
+    [StructLayout(LayoutKind.Explicit, Size = 40)] struct MINPUT { [FieldOffset(0)] public uint type; [FieldOffset(8)] public MI mi; }
+    public static List<Win> Bars() {
+        var r = new List<Win>();
+        EnumWindows((h, l) => { if (ClassOf(h) == "PolycarpBar") r.Add(Read(h.ToInt64())); return true; }, IntPtr.Zero);
+        return r;
+    }
+    public static int[] WorkArea() { RECT r; SystemParametersInfoW(0x30, 0, out r, 0); return new[] { r.L, r.T, r.R, r.B }; }
+    // The primary display: its top-left is always 0,0.
+    public static int[] Primary() { return new[] { 0, 0, GetSystemMetrics(0), GetSystemMetrics(1) }; }
+    // The frame DWM draws (DWMWA_EXTENDED_FRAME_BOUNDS), without the invisible resize borders GetWindowRect counts.
+    public static int[] Frame(long h) { RECT r; DwmGetWindowAttribute((IntPtr)h, 9, out r, 16); return new[] { r.L, r.T, r.R, r.B }; }
+    public static bool Maximize(long h) { return ShowWindowAsync((IntPtr)h, 3); }
+    public static bool Zoomed(long h) { return IsZoomed((IntPtr)h); }
+    public static bool Topmost(long h) { return (GetLong((IntPtr)h, -20).ToInt64() & 0x8) != 0; }
+    public static uint Dpi(long h) { return GetDpiForWindow((IntPtr)h); }
+    // A left click at a screen point, as a person (see Mark).
+    public static uint Click(int x, int y) {
+        SetCursorPos(x, y);
+        var l = new MINPUT[2];
+        for (int i = 0; i < 2; i++) { l[i].type = 0; l[i].mi.flags = i == 0 ? 2u : 4u; l[i].mi.extra = (UIntPtr)Mark; }
+        return SendMouse(2, l, Marshal.SizeOf(typeof(MINPUT)));
+    }
+
     // Watches, as fast as it can poll, for windows that were not there at the start, and counts the polls in which
     // each was seen. Start, do the thing, then Stop for one line per new window.
     class Track { public long First = -1, FirstSeen = -1, LastSeen = -1; public int Visible; public string Last, AtFirstSeen; }
