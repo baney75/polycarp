@@ -311,7 +311,7 @@ Any other MCP client can start the same command.
 | `style_example` | Read every style sheet selector and property for the top bar and the dock, with what each takes. Start here to restyle one part past the theme |
 | `style_get`, `style_check` | See the style sheet in use, or list its problems with line and column |
 | `style_set`, `style_unset` | Change or remove one declaration in place, keeping comments; a change that would add an error writes nothing. The grammar: [spaces/docs/style.md](../spaces/docs/style.md) |
-| `style_preset` | Replace the sheet with a whole look in one call (`omarchy`: a solid dark bar, monospace, numbered workspaces with an accent line); the old sheet moves to `style.css.bak` |
+| `style_preset` | Replace the sheet with a whole look in one call (`omarchy`: a solid dark bar, monospace, numbered workspaces with an accent line); the old sheet moves to a new numbered backup, never over an older one |
 
 ### The workflow
 

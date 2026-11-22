@@ -153,7 +153,7 @@ dock .label { font-variant-numeric: tabular-nums; }
 ## Presets
 
 `polycarp-spaces style preset <name>` writes a whole sheet in one command. The sheet that was there moves to
-`style.css.bak`, as `reset` moves it, and `polycarp-spaces style reset` puts the theme's own look back. With no name it
+a new backup (`style.css.bak`, then `.bak.1`, `.bak.2`; none is written over), as `reset` moves it, and `polycarp-spaces style reset` puts the theme's own look back. With no name it
 lists them.
 
 - `omarchy`: the top bar as Omarchy's Waybar draws it. A solid dark strip (`#1a1b26`) in both modes, one monospace face
@@ -172,7 +172,7 @@ polycarp-spaces style example [--json]                  # a starter sheet naming
 polycarp-spaces style preset [name] [--json]            # write a whole sheet (omarchy); no name lists them
 polycarp-spaces style set '<selector>' <property> <value> [--media dark|light] [--json]
 polycarp-spaces style unset '<selector>' [property] [--media dark|light] [--json]
-polycarp-spaces style reset [--json]                    # moves the sheet to style.css.bak
+polycarp-spaces style reset [--json]                    # moves the sheet to a new backup, never over one
 ```
 
 `set` edits the file in place: it changes the declaration if the rule has it, adds it to the rule if not, and adds the

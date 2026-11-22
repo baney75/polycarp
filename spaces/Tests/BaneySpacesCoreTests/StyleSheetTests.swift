@@ -538,6 +538,30 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertEqual(fresh.object?["backup"], .null)
     }
 
+    /// A sheet written by hand is never lost to `preset` and `reset`, in any order and however often they run (review
+    /// of #604: `reset` renamed the preset over the only backup, and a second preset did the same).
+    func testPresetAndResetNeverLoseAHandWrittenSheet() throws {
+        let mine = "/* mine */\nbar .clock { color: #d4af37; }\n"
+        for run in [["preset", "reset"], ["preset", "preset"], ["preset", "reset", "preset"]] {
+            for name in try FileManager.default.contentsOfDirectory(atPath: dir.path) { try FileManager.default.removeItem(atPath: dir.appendingPathComponent(name).path) }
+            try mine.write(toFile: file, atomically: true, encoding: .utf8)
+            for step in run {
+                let r = step == "preset" ? StyleOps.preset("omarchy", file: file, roles: Self.roles) : StyleOps.reset(file: file)
+                XCTAssertNoThrow(try r.get(), "\(run): \(step)")
+            }
+            let kept = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter {
+                (try? String(contentsOfFile: dir.appendingPathComponent($0).path, encoding: .utf8)) == mine
+            }
+            XCTAssertFalse(kept.isEmpty, "\(run.joined(separator: ", ")): the hand-written sheet is still on disk")
+        }
+        // The preset already in force is left alone: no write, no backup.
+        let backups = StyleOps.backups(file)
+        let again = try StyleOps.preset("omarchy", file: file, roles: Self.roles).get().object
+        XCTAssertEqual(again?["unchanged"], .bool(true))
+        XCTAssertEqual(again?["backup"], .null)
+        XCTAssertEqual(StyleOps.backups(file), backups)
+    }
+
     /// The app starts the store and both surfaces redraw on its notification (review of #604).
     func testTheAppStartsTheSheetAndTheBarAndTheDockFollowIt() throws {
         let app = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
@@ -828,11 +852,14 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertEqual(try StyleOps.path(file: file).get().object?["exists"], .bool(true))
         XCTAssertEqual(StyleOps.path(file: nil).failure?.code, "io_error")
         XCTAssertNotNil(try StyleOps.example().get().object?["text"]?.string)
-        // reset moves the sheet aside, replacing an older backup.
+        // reset moves the sheet aside to the next backup, never over an older one.
         try "old".write(toFile: file + ".bak", atomically: true, encoding: .utf8)
-        XCTAssertNoThrow(try StyleOps.reset(file: file).get())
+        try "older still".write(toFile: file + ".bak.07", atomically: true, encoding: .utf8)
+        XCTAssertEqual(try StyleOps.reset(file: file).get().object?["backup"]?.string.map { $0.hasSuffix("style.css.bak.1") }, true)
         XCTAssertFalse(FileManager.default.fileExists(atPath: file))
-        XCTAssertEqual(try String(contentsOfFile: file + ".bak", encoding: .utf8), "bar {\n  colr: red;\n  color: red;\n}\n")
+        XCTAssertEqual(try String(contentsOfFile: file + ".bak", encoding: .utf8), "old", "the older backup is kept")
+        XCTAssertEqual(try String(contentsOfFile: file + ".bak.1", encoding: .utf8), "bar {\n  colr: red;\n  color: red;\n}\n")
+        XCTAssertEqual(StyleOps.backups(file).map { ($0 as NSString).lastPathComponent }, ["style.css.bak", "style.css.bak.1"], "only names it writes count")
         XCTAssertEqual(try StyleOps.reset(file: file).get().object?["backup"], .null, "nothing to move is fine")
     }
 

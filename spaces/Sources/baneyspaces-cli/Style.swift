@@ -15,10 +15,10 @@ enum StyleCommand {
       show                                   the sheet's text and its rules
       check [file]                           every problem with its line and column (default: the sheet in use)
       example                                a starter sheet naming every selector and property, all commented out
-      preset [name]                          write a whole sheet (omarchy), the old one moved to style.css.bak
+      preset [name]                          write a whole sheet (omarchy), the old one kept as a new backup
       set '<selector>' <property> <value>    change or add one declaration; refused if it would add an error
       unset '<selector>' [property]          remove one declaration, or the whole rule
-      reset                                  move the sheet to style.css.bak
+      reset                                  move the sheet to a new backup (.bak, .bak.1, ...)
 
     set and unset take --media dark|light to edit the rules for that mode only. The file is <config>/style.css,
     the folder `polycarp theme current` prints. Docs: spaces/docs/style.md in the Polycarp repo.

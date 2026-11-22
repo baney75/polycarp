@@ -372,14 +372,14 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "style_preset",
-            description: "Replace style.css with a whole preset sheet in one call; the sheet that was there moves to style.css.bak. omarchy: a solid dark bar, one monospace face, numbered workspaces with an accent line under the current one, and a quiet right side. Leave name out for the list. A running Polycarp shows it within 200 ms; style_get shows the text, and the reset command (polycarp-spaces style reset) puts the theme's look back.",
+            description: "Replace style.css with a whole preset sheet in one call; the sheet that was there moves to a new numbered backup (style.css.bak, .bak.1, ...), never over an older one. omarchy: a solid dark bar, one monospace face, numbered workspaces with an accent line under the current one, and a quiet right side. Leave name out for the list. A running Polycarp shows it within 200 ms; style_get shows the text, and the reset command (polycarp-spaces style reset) puts the theme's look back.",
             schema: obj(
                 json!({"name": {"type":"string","enum":["omarchy"],"description":"The preset to write; leave out to list them."}}),
                 &[],
             ),
             read_only: false,
             destructive: true,
-            idempotent: true,
+            idempotent: false,
         },
     ]
 }

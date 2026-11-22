@@ -198,7 +198,8 @@ public enum StyleOps {
     }
 
     /// `preset` with no name: the presets there are. With one: writes it as the whole sheet, after moving the sheet
-    /// there was to `style.css.bak` (as `reset` does), so one command applies it and one more (`reset`) undoes it.
+    /// there was to a new backup (as `reset` does). The preset already in force is left as it is, so running it
+    /// again never moves it over the sheet it replaced.
     public static func preset(_ name: String?, file: String?, roles: Roles) -> Result {
         guard let name else {
             return .success(.object(["presets": .array(StyleSheet.presets.map { .object(["name": .string($0.name), "about": .string($0.about)]) })]))
@@ -209,6 +210,11 @@ public enum StyleOps {
         }
         guard let file else { return .failure(noFolder) }
         var backup: SurfaceValue = .null
+        if StyleSheetFile.load(path: file) == .text(preset.text) {
+            let found = problems(preset.text, roles: roles)
+            return .success(.object(["file": .string(StyleSheetFile.display(file)), "preset": .string(preset.name), "backup": .null, "unchanged": .bool(true),
+                                     "rules": .number(Double(found.sheet.ruleCount)), "warnings": problemsValue(found.problems.filter { !$0.isError })]))
+        }
         if !(StyleSheetFile.load(path: file) == .missing && PolycarpThemeFile.stamp(file) == nil) {
             switch reset(file: file) {
             case .failure(let f): return .failure(f)
@@ -221,20 +227,46 @@ public enum StyleOps {
                                  "rules": .number(Double(found.sheet.ruleCount)), "warnings": problemsValue(found.problems.filter { !$0.isError })]))
     }
 
-    /// `reset`: moves the sheet to `style.css.bak` (replacing an older one), so every surface draws as before.
+    /// `reset`: moves the sheet to a new backup, so every surface draws as before. Backups are `style.css.bak`, then
+    /// `.bak.1`, `.bak.2` and on; a new one takes the next number and none is ever written over (review of #604).
     public static func reset(file: String?) -> Result {
         guard let file else { return .failure(noFolder) }
-        let backup = file + ".bak"
+        let backup = nextBackup(file)
         var data: [String: SurfaceValue] = ["file": .string(StyleSheetFile.display(file))]
         if StyleSheetFile.load(path: file) == .missing && PolycarpThemeFile.stamp(file) == nil {
             data["backup"] = .null
             return .success(.object(data))
+        }
+        var st = stat()
+        guard lstat(backup, &st) != 0 else {
+            return .failure(StyleFailure("io_error", "\(StyleSheetFile.display(backup)) is already there; nothing was moved"))
         }
         guard rename(file, backup) == 0 else {
             return .failure(StyleFailure("io_error", "can't move \(StyleSheetFile.display(file)) to \(StyleSheetFile.display(backup)): \(String(cString: strerror(errno)))"))
         }
         data["backup"] = .string(StyleSheetFile.display(backup))
         return .success(.object(data))
+    }
+
+    /// The backups beside the sheet, oldest first: `style.css.bak`, then `style.css.bak.1`, `.bak.2` and on.
+    public static func backups(_ file: String) -> [String] { numberedBackups(file).map(\.path) }
+
+    static func numberedBackups(_ file: String) -> [(n: Int, path: String)] {
+        let dir = (file as NSString).deletingLastPathComponent
+        let base = (file as NSString).lastPathComponent + ".bak"
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.isEmpty ? "." : dir)) ?? []
+        let found: [(n: Int, path: String)] = names.compactMap { name in
+            if name == base { return (0, file + ".bak") }
+            guard name.hasPrefix(base + "."), let n = Int(name.dropFirst(base.count + 1)), n > 0, name == "\(base).\(n)" else { return nil }
+            return (n, "\(file).bak.\(n)")
+        }
+        return found.sorted { $0.n < $1.n }
+    }
+
+    /// Where the next backup goes: one number past the newest.
+    static func nextBackup(_ file: String) -> String {
+        guard let last = numberedBackups(file).last else { return file + ".bak" }
+        return "\(file).bak.\(last.n + 1)"
     }
 }
 
