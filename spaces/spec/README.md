@@ -34,7 +34,8 @@ checks:
 - `effects` is the exact, ordered list the platform must carry out: `show_workspace`,
   `focus_monitor`, `focus_window`, `move_window` (`to` is `"<n>"` or `"agent"`),
   `show_agent`, `hide_agent`, `refuse_follow`. Effects are idempotent; the compositor may already
-  be there.
+  be there. A `focus_monitor` with no `focus_window` in the same list leaves no window in front (Windows puts the
+  desktop in front).
 - `error` is the error code the step must fail with.
 - `expect` is a subset of the state view (below). An expected `[]` also matches a missing key.
 - A step with only `expect` checks state.

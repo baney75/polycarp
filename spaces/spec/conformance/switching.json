@@ -862,5 +862,113 @@
     }
    }
   ]
+ },
+ {
+  "name": "a switch asked from the other display while the agent workspace covers the workspace you are on puts its window back in front",
+  "rules": [
+   "R-S7",
+   "R-A4"
+  ],
+  "steps": [
+   {
+    "do": "monitor_added",
+    "monitor": "A"
+   },
+   {
+    "do": "monitor_added",
+    "monitor": "B"
+   },
+   {
+    "do": "open",
+    "window": "w1",
+    "pid": 1,
+    "app": "foot"
+   },
+   {
+    "do": "agent_show"
+   },
+   {
+    "do": "switch",
+    "n": 1,
+    "monitor": "B",
+    "effects": [
+     {
+      "do": "hide_agent"
+     },
+     {
+      "do": "focus_window",
+      "window": "w1"
+     }
+    ],
+    "expect": {
+     "agent": {
+      "shown": false
+     },
+     "focused_monitor": "A",
+     "active": "w1",
+     "monitors": {
+      "A": {
+       "current": 1
+      }
+     }
+    }
+   }
+  ]
+ },
+ {
+  "name": "a switch asked from the other display to a workspace with no window leaves nothing in front",
+  "rules": [
+   "R-S7"
+  ],
+  "steps": [
+   {
+    "do": "monitor_added",
+    "monitor": "A"
+   },
+   {
+    "do": "monitor_added",
+    "monitor": "B"
+   },
+   {
+    "do": "open",
+    "window": "w1",
+    "pid": 1,
+    "app": "foot"
+   },
+   {
+    "expect": {
+     "focused_monitor": "A",
+     "active": "w1"
+    }
+   },
+   {
+    "do": "switch",
+    "n": 5,
+    "monitor": "B",
+    "effects": [
+     {
+      "do": "focus_monitor",
+      "monitor": "B"
+     },
+     {
+      "do": "show_workspace",
+      "monitor": "B",
+      "workspace": 5
+     }
+    ],
+    "expect": {
+     "focused_monitor": "B",
+     "active": null,
+     "monitors": {
+      "A": {
+       "current": 1
+      },
+      "B": {
+       "current": 5
+      }
+     }
+    }
+   }
+  ]
  }
 ]

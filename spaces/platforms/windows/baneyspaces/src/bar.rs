@@ -373,9 +373,9 @@ impl Ui {
         self.report();
     }
 
-    /// A full-screen app opened or went (`ABN_FULLSCREENAPP`, sent to bar `h`). Whether the shell tells only the bar on
-    /// that display or every bar is not known, so the notice only says when to look: every bar's display is decided
-    /// again from the windows on it (`rule::full_screen_bars`), whichever bar was told and whatever it was told.
+    /// A full-screen app opened or went (`ABN_FULLSCREENAPP`, sent to bar `h`). The notice only says when to look: every
+    /// bar's display is decided again from the windows on it (`rule::full_screen_bars`), and which bar was told and what
+    /// it was told are not used.
     fn fullscreen(&mut self, h: HWND, open: bool) {
         let bars: Vec<(rule::Rect, bool)> = self.bars.iter().map(|b| (display_rect(b.hmon), b.hidden)).collect();
         let change = rule::full_screen_bars(&bars, &front_windows());
@@ -616,7 +616,7 @@ fn display_rect(m: HMONITOR) -> rule::Rect {
 /// shown, not minimized or cloaked, not click-through or a tool window, and none of the daemon's own (the bars) or the
 /// shell's (the desktop, the taskbars). A frame leaves out the invisible resize border, so a window on the next display
 /// never reaches onto this one.
-fn front_windows() -> Vec<rule::Rect> {
+fn front_windows() -> Vec<rule::Front> {
     use crate::winapi as w;
     let me = std::process::id();
     w::list_top_level()
@@ -626,7 +626,7 @@ fn front_windows() -> Vec<rule::Rect> {
             let tool = ex & WS_EX_TOOLWINDOW as i64 != 0 && ex & WS_EX_APPWINDOW as i64 == 0;
             w::is_visible(h) && !w::is_iconic(h) && w::cloaked(h) == 0 && !tool && ex & WS_EX_TRANSPARENT as i64 == 0 && w::pid_of(h) != me && !w::SHELL_CLASSES.contains(&w::class(h).as_str())
         })
-        .filter_map(w::visible_frame)
+        .filter_map(|h| w::visible_frame(h).map(|frame| rule::Front { frame, topmost: w::ex_style(h) & WS_EX_TOPMOST as i64 != 0 }))
         .collect()
 }
 
