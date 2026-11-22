@@ -401,6 +401,11 @@ extension Surfaces {
         if !own.contains("left") { surfaces.bar.left.removeAll { taken.contains($0.id) } }
         if !own.contains("center") { surfaces.bar.center.removeAll { taken.contains($0.id) } }
         if !own.contains("right") { surfaces.bar.right.removeAll { taken.contains($0.id) } }
+        // The clock's default place is the middle now; a file that sets the middle without it, written when the
+        // clock sat at the right, keeps it at the end of the default right instead of losing it.
+        if own.contains("center"), !own.contains("right"), !taken.contains(BarModule.clock.id) {
+            surfaces.bar.right.append(.clock)
+        }
         return .success(Checked(surfaces: surfaces, warnings: warnings.sorted { $0.path < $1.path }))
     }
 

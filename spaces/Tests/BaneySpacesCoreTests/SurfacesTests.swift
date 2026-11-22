@@ -475,7 +475,11 @@ final class SurfacesTests: XCTestCase {
         }
         let a = try bar(#"{"bar":{"modules":{"center":["hour"]}}}"#)
         XCTAssertEqual(a.center, [.hour])
-        XCTAssertEqual(a.right, [.oneThing, .status])
+        XCTAssertEqual(a.right, [.oneThing, .status, .clock], "a middle set without the clock keeps it at the right (review of #602)")
+        let c = try bar(#"{"bar":{"modules":{"center":["one-thing","clock"]}}}"#)
+        XCTAssertEqual(c.right, [.status], "a middle that holds the clock keeps it there")
+        let d = try bar(#"{"bar":{"modules":{"center":["hour"],"right":["status"]}}}"#)
+        XCTAssertEqual(d.right, [.status], "a right the file sets is left as written")
         let b = try bar(#"{"bar":{"modules":{"right":["mark","clock"]}}}"#)
         XCTAssertEqual(b.left, [.workspaces, .appMenus, .purpose])
         XCTAssertEqual(b.right, [.mark, .clock])
