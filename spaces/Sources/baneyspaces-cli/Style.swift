@@ -15,13 +15,15 @@ enum StyleCommand {
       show                                   the sheet's text and its rules
       check [file]                           every problem with its line and column (default: the sheet in use)
       example                                a starter sheet naming every selector and property, all commented out
-      preset [name]                          write a whole sheet (omarchy), the old one kept as a new backup
+      preset [name]                          write a whole sheet (omarchy), the old one kept as a backup
       set '<selector>' <property> <value>    change or add one declaration; refused if it would add an error
       unset '<selector>' [property]          remove one declaration, or the whole rule
-      reset                                  move the sheet to a new backup (.bak, .bak.1, ...)
+      reset                                  move the sheet to a backup, so the theme alone styles
+      restore                                put the newest backup back (the sheet there becomes one)
 
     set and unset take --media dark|light to edit the rules for that mode only. The file is <config>/style.css,
-    the folder `polycarp theme current` prints. Docs: spaces/docs/style.md in the Polycarp repo.
+    the folder `polycarp theme current` prints. Backups are style.css.bak, then .bak.1, .bak.2 and on; none is
+    ever written over. Docs: spaces/docs/style.md in the Polycarp repo.
     """
 
     static func run(_ args: [String], remote: Bool) -> Never {
@@ -79,8 +81,10 @@ enum StyleCommand {
                     return (list.compactMap { p in p.object.map { "\($0["name"]?.string ?? "")  \($0["about"]?.string ?? "")" } }
                         + ["polycarp-spaces style preset <name> writes one"]).joined(separator: "\n")
                 }
-                var out = ["wrote the \(d["preset"]?.string ?? "") preset to \(d["file"]?.string ?? StyleSheetFile.name)"]
-                if let b = d["backup"]?.string { out.append("the sheet that was there is in \(b)") }
+                let name = d["preset"]?.string ?? ""
+                var out = [d["unchanged"] == .bool(true) ? "the \(name) preset is already in \(d["file"]?.string ?? StyleSheetFile.name)"
+                    : "wrote the \(name) preset to \(d["file"]?.string ?? StyleSheetFile.name)"]
+                if let b = d["backup"]?.string { out.append("the sheet that was there is in \(b); `polycarp-spaces style restore` puts it back") }
                 out += lines(d["warnings"], StyleSheetFile.name)
                 out.append("`polycarp-spaces style reset` puts the theme's own look back")
                 return out.joined(separator: "\n")
@@ -108,13 +112,23 @@ enum StyleCommand {
         case "reset":
             guard rest.isEmpty else { usageFail("reset [--json]") }
             finish(StyleOps.reset(file: file), json: json) { d in
-                if let b = d["backup"]?.string { return "moved the style sheet to \(b); the theme alone styles the bar and the dock" }
-                return "no style sheet to reset"
+                let restore = d["restorable"]?.string.map { "; `polycarp-spaces style restore` puts \($0 == d["backup"]?.string ? "it" : $0) back" } ?? ""
+                if let b = d["backup"]?.string { return "moved the style sheet to \(b); the theme alone styles the bar and the dock" + restore }
+                if let p = d["preset"]?.string { return "removed the unedited \(p) preset (`style preset \(p)` writes it again)" + restore }
+                return "no style sheet to reset" + restore
+            }
+        case "restore":
+            guard rest.isEmpty else { usageFail("restore [--json]") }
+            finish(StyleOps.restore(file: file), json: json) { d in
+                let r = d["restored"]?.string ?? "the newest backup"
+                if d["unchanged"] == .bool(true) { return "the sheet in force already matches \(r)" }
+                let kept = d["backup"]?.string.map { "; the sheet that was there is in \($0), so `style restore` again undoes this" } ?? ""
+                return "put \(r) back as \(d["file"]?.string ?? StyleSheetFile.name)" + kept
             }
         case "help", "-h", "--help":
             print(usage); exit(0)
         default:
-            usageFail("path|show|check|example|preset|set|unset|reset (polycarp-spaces style help)")
+            usageFail("path|show|check|example|preset|set|unset|reset|restore (polycarp-spaces style help)")
         }
     }
 

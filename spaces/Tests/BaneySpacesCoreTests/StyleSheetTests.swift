@@ -532,17 +532,20 @@ final class StyleSheetTests: XCTestCase {
         guard case .failure(let f) = StyleOps.preset("waybar", file: file, roles: Self.roles) else { return XCTFail("unknown preset") }
         XCTAssertTrue(f.message.contains("`omarchy`"), f.message)
         XCTAssertEqual(f.exit, 2)
-        // Into an empty folder: nothing to keep.
+        // Into an empty folder: the backup is an empty sheet, so `restore` puts back no rules (review of #609).
         try FileManager.default.removeItem(atPath: file)
+        for b in StyleOps.backups(file) { try FileManager.default.removeItem(atPath: b) }
         guard case .success(let fresh) = StyleOps.preset("omarchy", file: file, roles: Self.roles) else { return XCTFail("fresh") }
-        XCTAssertEqual(fresh.object?["backup"], .null)
+        XCTAssertEqual(fresh.object?["backup"]?.string.map { $0.hasSuffix("style.css.bak") }, true)
+        XCTAssertEqual(try String(contentsOfFile: file + ".bak", encoding: .utf8), StyleOps.noSheet)
     }
 
     /// A sheet written by hand is never lost to `preset` and `reset`, in any order and however often they run (review
     /// of #604: `reset` renamed the preset over the only backup, and a second preset did the same).
     func testPresetAndResetNeverLoseAHandWrittenSheet() throws {
         let mine = "/* mine */\nbar .clock { color: #d4af37; }\n"
-        for run in [["preset", "reset"], ["preset", "preset"], ["preset", "reset", "preset"]] {
+        let steps: [[String]] = [["preset", "reset"], ["preset", "preset"], ["preset", "reset", "preset"]]
+        for run in steps {
             for name in try FileManager.default.contentsOfDirectory(atPath: dir.path) { try FileManager.default.removeItem(atPath: dir.appendingPathComponent(name).path) }
             try mine.write(toFile: file, atomically: true, encoding: .utf8)
             for step in run {
@@ -553,6 +556,19 @@ final class StyleSheetTests: XCTestCase {
                 (try? String(contentsOfFile: dir.appendingPathComponent($0).path, encoding: .utf8)) == mine
             }
             XCTAssertFalse(kept.isEmpty, "\(run.joined(separator: ", ")): the hand-written sheet is still on disk")
+            // One `restore` undoes the last change: it brings the hand-written sheet back, except after a reset, when
+            // the second preset went over no sheet and restore leaves none (review of #609). A second restore undoes
+            // the first.
+            let afterReset = run == ["preset", "reset", "preset"]
+            let before = try? String(contentsOfFile: file, encoding: .utf8)
+            XCTAssertNoThrow(try StyleOps.restore(file: file).get(), "\(run): restore")
+            XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), afterReset ? StyleOps.noSheet : mine, "\(run): restore undoes the last change")
+            if let before {
+                if !afterReset { XCTAssertEqual(try StyleOps.restore(file: file).get().object?["restored"]?.string?.hasSuffix(".bak.1"), true, "\(run)") }
+                else { XCTAssertNoThrow(try StyleOps.restore(file: file).get(), "\(run)") }
+                XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), before, "\(run): a second restore undoes the first")
+                XCTAssertTrue(StyleOps.backups(file).contains { (try? String(contentsOfFile: $0, encoding: .utf8)) == mine }, "\(run): still kept")
+            }
         }
         // The preset already in force is left alone: no write, no backup.
         let backups = StyleOps.backups(file)
@@ -560,6 +576,42 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertEqual(again?["unchanged"], .bool(true))
         XCTAssertEqual(again?["backup"], .null)
         XCTAssertEqual(StyleOps.backups(file), backups)
+        // Reset of an unedited preset only removes it; the backup before it stays the newest, for restore.
+        let reset = try StyleOps.reset(file: file).get().object
+        XCTAssertEqual(reset?["preset"]?.string, "omarchy")
+        XCTAssertEqual(reset?["backup"], .null)
+        XCTAssertEqual(StyleOps.backups(file), backups)
+        XCTAssertEqual(reset?["restorable"], StyleOps.backups(file).last.map { .string(StyleSheetFile.display($0)) })
+        // Restore with no backup at all says so.
+        for b in StyleOps.backups(file) { try FileManager.default.removeItem(atPath: b) }
+        XCTAssertEqual(StyleOps.restore(file: file).failure?.code, "no_backup")
+        XCTAssertEqual(StyleOps.restore(file: nil).failure?.code, "io_error")
+    }
+
+    /// A preset over no sheet is undone to no sheet: `restore` leaves no rules in force, and never brings back an older
+    /// backup that a `reset` put away (review of #609).
+    func testRestoreAfterAPresetOverNothingLeavesNoRules() throws {
+        func clear() throws {
+            for name in try FileManager.default.contentsOfDirectory(atPath: dir.path) { try FileManager.default.removeItem(atPath: dir.appendingPathComponent(name).path) }
+        }
+        func rulesInForce() -> Int {
+            guard case .text(let t) = StyleSheetFile.load(path: file) else { return 0 }
+            return StyleSheet.parse(t).sheet.ruleCount
+        }
+        try clear()
+        XCTAssertNoThrow(try StyleOps.preset("omarchy", file: file, roles: Self.roles).get())
+        XCTAssertGreaterThan(rulesInForce(), 0)
+        XCTAssertNoThrow(try StyleOps.restore(file: file).get(), "a preset over nothing can be undone")
+        XCTAssertEqual(rulesInForce(), 0, "restore puts back no sheet: the theme alone styles")
+        // A sheet put away by an earlier reset stays away.
+        try clear()
+        let old = "bar .clock { color: #ff0000; }\n"
+        try old.write(toFile: file, atomically: true, encoding: .utf8)
+        XCTAssertNoThrow(try StyleOps.reset(file: file).get())
+        XCTAssertNoThrow(try StyleOps.preset("omarchy", file: file, roles: Self.roles).get())
+        XCTAssertNoThrow(try StyleOps.restore(file: file).get())
+        XCTAssertEqual(rulesInForce(), 0, "the sheet reset away is not brought back")
+        XCTAssertTrue(StyleOps.backups(file).contains { (try? String(contentsOfFile: $0, encoding: .utf8)) == old }, "and it is still kept")
     }
 
     /// The app starts the store and both surfaces redraw on its notification (review of #604).
@@ -576,6 +628,18 @@ final class StyleSheetTests: XCTestCase {
         let dock = try SourceText.code("Sources/BaneySpaces/WorkspaceDock.swift")
         XCTAssertTrue(SourceText.block(after: "StyleSheetStore.didChange", in: dock)?.contains("scheduleResize()") ?? false,
                       "a sheet change that moves the dock's gap or padding re-frames the panel")
+        // A mode change can switch an `@media (prefers-color-scheme)` rule's gap, padding or border (reviews of #604 and
+        // #609): the dock rebuilds the book, then re-frames when its whole dock style differs from what it last framed.
+        let mode = SourceText.block(after: "Appearance.didChange", in: dock) ?? ""
+        XCTAssertTrue(mode.contains("Styles.shared.sync()"), "the dock's Appearance observer rebuilds the book first")
+        XCTAssertTrue(mode.contains("!= self.framedDock") && mode.contains("scheduleResize()"),
+                      "and re-frames the panel when the sheet's dock style changed with the mode")
+        if let sync = mode.range(of: "Styles.shared.sync()"), let check = mode.range(of: "framedDock") {
+            XCTAssertLessThan(sync.lowerBound, check.lowerBound, "the book is rebuilt before the dock style is compared")
+        }
+        XCTAssertTrue(dock.contains("let styled = Styles.shared.book.dock") && !dock.contains("DockSpacing"),
+                      "the style compared is the sheet's whole dock style, border included, not gap and padding alone")
+        XCTAssertTrue(top.contains("!= self.placedHeight"), "the bar re-places on a mode change that moves its height")
     }
 
     // MARK: The docs and the starter sheet can't drift from the table

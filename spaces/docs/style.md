@@ -152,9 +152,17 @@ dock .label { font-variant-numeric: tabular-nums; }
 
 ## Presets
 
-`polycarp-spaces style preset <name>` writes a whole sheet in one command. The sheet that was there moves to
-a new backup (`style.css.bak`, then `.bak.1`, `.bak.2`; none is written over), as `reset` moves it, and `polycarp-spaces style reset` puts the theme's own look back. With no name it
-lists them.
+`polycarp-spaces style preset <name>` writes a whole sheet in one command, and `polycarp-spaces style restore` undoes it.
+With no name it lists them. The sheet that was there is kept as a backup, as `reset` keeps it, and `polycarp-spaces
+style reset` puts the theme's own look back.
+
+Backups sit beside the sheet: `style.css.bak`, then `style.css.bak.1`, `.bak.2` and on. A new one always takes the next
+number, so none is ever written over. Three cases make no backup, since nothing would be lost: a preset already in force
+is left as it is, `reset` of an unedited preset only removes it (`preset` writes it again), and `reset` of text the newest
+backup already holds only removes the sheet. `restore` puts the newest backup back and keeps the sheet it replaces as the
+next backup, so a second `restore` undoes the first; with no backup it is refused with the code `no_backup`. A preset
+written where there was no sheet keeps an empty sheet as its backup, so `restore` goes back to no rules (the theme's
+own look) and never to an older backup a `reset` put away.
 
 - `omarchy`: the top bar as Omarchy's Waybar draws it. A solid dark strip (`#1a1b26`) in both modes, one monospace face
   (JetBrains Mono when it is installed, else the system's), the workspace numbers muted with a 2 pt accent line under
@@ -172,7 +180,8 @@ polycarp-spaces style example [--json]                  # a starter sheet naming
 polycarp-spaces style preset [name] [--json]            # write a whole sheet (omarchy); no name lists them
 polycarp-spaces style set '<selector>' <property> <value> [--media dark|light] [--json]
 polycarp-spaces style unset '<selector>' [property] [--media dark|light] [--json]
-polycarp-spaces style reset [--json]                    # moves the sheet to a new backup, never over one
+polycarp-spaces style reset [--json]                    # moves the sheet to the next backup
+polycarp-spaces style restore [--json]                  # puts the newest backup back (the sheet there becomes one)
 ```
 
 `set` edits the file in place: it changes the declaration if the rule has it, adds it to the rule if not, and adds the
@@ -181,9 +190,10 @@ it and writes nothing when the change would add an error. `--media dark` puts th
 removes one property, or the whole rule with no property; a rule or `@media` block left empty goes too. The value is
 the rest of the arguments, so `style set 'bar .clock' font-family '"SF Pro Text", system-ui'` works.
 
-Exit codes: 0 done, 1 refused (an error in the sheet, an invalid selector, property or value, a file that can't be
-read), 2 the command was used wrong. With `--json`, every subcommand prints the envelope `polycarp-spaces surfaces`
-uses; a refusal's `error.data.errors` lists each problem with `line`, `column`, `severity` and `message`.
+Exit codes: 0 done, 1 refused (an error in the sheet, an invalid selector, property or value, no backup to restore, a
+file that can't be read), 2 the command was used wrong. With `--json`, every subcommand prints the envelope
+`polycarp-spaces surfaces` uses; a refusal's `error.data.errors` lists each problem with `line`, `column`, `severity`
+and `message`.
 
 ## MCP
 
@@ -197,5 +207,7 @@ uses; a refusal's `error.data.errors` lists each problem with `line`, `column`, 
 | `style_set` | `polycarp-spaces style set <selector> <property> <value> [--media] --json` |
 | `style_unset` | `polycarp-spaces style unset <selector> [property] [--media] --json` |
 | `style_preset` | `polycarp-spaces style preset [name] --json` |
+| `style_restore` | `polycarp-spaces style restore --json` (undoes `style_preset`) |
 
 The usual loop for an agent: `style_example` to learn the names, `style_set` for each change, then `style_check`.
+To undo a `style_preset`, `style_restore`.

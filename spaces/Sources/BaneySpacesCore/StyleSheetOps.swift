@@ -198,8 +198,7 @@ public enum StyleOps {
     }
 
     /// `preset` with no name: the presets there are. With one: writes it as the whole sheet, after moving the sheet
-    /// there was to a new backup (as `reset` does). The preset already in force is left as it is, so running it
-    /// again never moves it over the sheet it replaced.
+    /// there was aside as `reset` does, so `restore` puts it back. The preset already in force is left as it is.
     public static func preset(_ name: String?, file: String?, roles: Roles) -> Result {
         guard let name else {
             return .success(.object(["presets": .array(StyleSheet.presets.map { .object(["name": .string($0.name), "about": .string($0.about)]) })]))
@@ -209,46 +208,83 @@ public enum StyleOps {
                                          suggestion: "Run `polycarp-spaces style preset` for the list.", exit: 2))
         }
         guard let file else { return .failure(noFolder) }
-        var backup: SurfaceValue = .null
+        var data: [String: SurfaceValue] = ["file": .string(StyleSheetFile.display(file)), "preset": .string(preset.name), "backup": .null]
         if StyleSheetFile.load(path: file) == .text(preset.text) {
-            let found = problems(preset.text, roles: roles)
-            return .success(.object(["file": .string(StyleSheetFile.display(file)), "preset": .string(preset.name), "backup": .null, "unchanged": .bool(true),
-                                     "rules": .number(Double(found.sheet.ruleCount)), "warnings": problemsValue(found.problems.filter { !$0.isError })]))
-        }
-        if !(StyleSheetFile.load(path: file) == .missing && PolycarpThemeFile.stamp(file) == nil) {
-            switch reset(file: file) {
+            data["unchanged"] = .bool(true)
+        } else {
+            let wasThere = present(file)
+            switch moveAside(file) {
             case .failure(let f): return .failure(f)
-            case .success(let d): backup = d.object?["backup"] ?? .null
+            case .success(let backup): data["backup"] = backup.map { .string(StyleSheetFile.display($0)) } ?? .null
             }
+            // Nothing was there: keep an empty sheet as the backup, so `restore` brings back no rules (the theme's own
+            // look) and never an older backup that a `reset` had put away (review of #609).
+            if !wasThere {
+                let slot = nextBackup(file)
+                do { try StyleSheetFile.write(Self.noSheet, to: slot) } catch { return .failure(StyleFailure("io_error", "\(error)")) }
+                data["backup"] = .string(StyleSheetFile.display(slot))
+            }
+            do { try StyleSheetFile.write(preset.text, to: file) } catch { return .failure(StyleFailure("io_error", "\(error)")) }
         }
-        do { try StyleSheetFile.write(preset.text, to: file) } catch { return .failure(StyleFailure("io_error", "\(error)")) }
         let found = problems(preset.text, roles: roles)
-        return .success(.object(["file": .string(StyleSheetFile.display(file)), "preset": .string(preset.name), "backup": backup,
-                                 "rules": .number(Double(found.sheet.ruleCount)), "warnings": problemsValue(found.problems.filter { !$0.isError })]))
-    }
-
-    /// `reset`: moves the sheet to a new backup, so every surface draws as before. Backups are `style.css.bak`, then
-    /// `.bak.1`, `.bak.2` and on; a new one takes the next number and none is ever written over (review of #604).
-    public static func reset(file: String?) -> Result {
-        guard let file else { return .failure(noFolder) }
-        let backup = nextBackup(file)
-        var data: [String: SurfaceValue] = ["file": .string(StyleSheetFile.display(file))]
-        if StyleSheetFile.load(path: file) == .missing && PolycarpThemeFile.stamp(file) == nil {
-            data["backup"] = .null
-            return .success(.object(data))
-        }
-        var st = stat()
-        guard lstat(backup, &st) != 0 else {
-            return .failure(StyleFailure("io_error", "\(StyleSheetFile.display(backup)) is already there; nothing was moved"))
-        }
-        guard rename(file, backup) == 0 else {
-            return .failure(StyleFailure("io_error", "can't move \(StyleSheetFile.display(file)) to \(StyleSheetFile.display(backup)): \(String(cString: strerror(errno)))"))
-        }
-        data["backup"] = .string(StyleSheetFile.display(backup))
+        data["rules"] = .number(Double(found.sheet.ruleCount))
+        data["warnings"] = problemsValue(found.problems.filter { !$0.isError })
         return .success(.object(data))
     }
 
-    /// The backups beside the sheet, oldest first: `style.css.bak`, then `style.css.bak.1`, `.bak.2` and on.
+    /// What `preset` keeps as the backup when there was no sheet: no rules, so restoring it is the theme's own look.
+    static let noSheet = "/* No style sheet was here before `style preset`; with no rules the theme alone styles. */\n"
+
+    /// `reset`: moves the sheet aside so every surface draws as before. It goes to a new backup and never over one
+    /// (see `moveAside`); an unedited preset is only removed, since `preset` writes it again.
+    public static func reset(file: String?) -> Result {
+        guard let file else { return .failure(noFolder) }
+        var data: [String: SurfaceValue] = ["file": .string(StyleSheetFile.display(file)), "backup": .null]
+        if case .text(let t) = StyleSheetFile.load(path: file), let p = StyleSheet.presets.first(where: { $0.text == t }) {
+            data["preset"] = .string(p.name)
+        }
+        switch moveAside(file) {
+        case .failure(let f): return .failure(f)
+        case .success(let backup): data["backup"] = backup.map { .string(StyleSheetFile.display($0)) } ?? .null
+        }
+        data["restorable"] = backups(file).last.map { .string(StyleSheetFile.display($0)) } ?? .null
+        return .success(.object(data))
+    }
+
+    /// `restore`: puts the newest backup back as the sheet. The sheet there was becomes the newest backup, so a second
+    /// `restore` undoes the first.
+    public static func restore(file: String?) -> Result {
+        guard let file else { return .failure(noFolder) }
+        guard let newest = backups(file).last else {
+            return .failure(StyleFailure("no_backup", "no backup of \(StyleSheetFile.display(file)) to restore",
+                                         suggestion: "`style preset` and `style reset` keep the sheet they replace as style.css.bak; there is none yet."))
+        }
+        var data: [String: SurfaceValue] = ["file": .string(StyleSheetFile.display(file)), "restored": .string(StyleSheetFile.display(newest)), "backup": .null]
+        var saved: String?
+        if present(file) {
+            if case .text(let now) = StyleSheetFile.load(path: file), StyleSheetFile.load(path: newest) == .text(now) {
+                data["unchanged"] = .bool(true)
+                return .success(.object(data))
+            }
+            let slot = nextBackup(file)
+            if let f = move(file, to: slot) { return .failure(f) }
+            saved = slot
+            data["backup"] = .string(StyleSheetFile.display(slot))
+        }
+        if let f = move(newest, to: file) {
+            if let saved { _ = rename(saved, file) }
+            return .failure(f)
+        }
+        return .success(.object(data))
+    }
+
+    // MARK: Backups
+
+    /// Is anything at `file`: a sheet, or something there that isn't one (a folder, a file it can't read).
+    static func present(_ file: String) -> Bool { StyleSheetFile.load(path: file) != .missing || PolycarpThemeFile.stamp(file) != nil }
+
+    /// The backups beside the sheet, oldest first: `style.css.bak`, then `style.css.bak.1`, `.bak.2` and on. A new one
+    /// always takes the next number, so none is ever written over.
     public static func backups(_ file: String) -> [String] { numberedBackups(file).map(\.path) }
 
     static func numberedBackups(_ file: String) -> [(n: Int, path: String)] {
@@ -267,6 +303,36 @@ public enum StyleOps {
     static func nextBackup(_ file: String) -> String {
         guard let last = numberedBackups(file).last else { return file + ".bak" }
         return "\(file).bak.\(last.n + 1)"
+    }
+
+    /// Renames, refusing to replace anything at `to`.
+    static func move(_ from: String, to: String) -> StyleFailure? {
+        var st = stat()
+        if lstat(to, &st) == 0 { return StyleFailure("io_error", "\(StyleSheetFile.display(to)) is already there; nothing was moved") }
+        guard rename(from, to) == 0 else {
+            return StyleFailure("io_error", "can't move \(StyleSheetFile.display(from)) to \(StyleSheetFile.display(to)): \(String(cString: strerror(errno)))")
+        }
+        return nil
+    }
+
+    /// Takes the sheet out of force without losing it: to the next backup, never over one. Text the newest backup
+    /// already holds, or an unedited preset, is only removed. Returns where the text is kept: nil for a preset or
+    /// when nothing was there.
+    static func moveAside(_ file: String) -> Swift.Result<String?, StyleFailure> {
+        guard present(file) else { return .success(nil) }
+        if case .text(let t) = StyleSheetFile.load(path: file) {
+            let isPreset = StyleSheet.presets.contains { $0.text == t }
+            let kept = backups(file).last.flatMap { StyleSheetFile.load(path: $0) == .text(t) ? $0 : nil }
+            if isPreset || kept != nil {
+                guard unlink(file) == 0 else {
+                    return .failure(StyleFailure("io_error", "can't remove \(StyleSheetFile.display(file)): \(String(cString: strerror(errno)))"))
+                }
+                return .success(isPreset ? nil : kept)
+            }
+        }
+        let slot = nextBackup(file)
+        if let f = move(file, to: slot) { return .failure(f) }
+        return .success(slot)
     }
 }
 
@@ -437,7 +503,8 @@ extension StyleSheet {
     public static let omarchy = Preset(name: "omarchy", about: "a solid dark strip, monospace, numbered workspaces with an accent line, a quiet right side", text: """
     /* Omarchy: the top bar as Omarchy's Waybar draws it. A solid dark strip in both modes, one monospace face,
        the workspace numbers muted with an accent line under the one you're on, and a quiet grayscale right side.
-       Written by `polycarp-spaces style preset omarchy`; `polycarp-spaces style reset` puts the theme's look back. */
+       Written by `polycarp-spaces style preset omarchy`; `style restore` puts back the sheet that was here, and
+       `style reset` the theme's own look. */
 
     :root {
       --strip: #1a1b26;

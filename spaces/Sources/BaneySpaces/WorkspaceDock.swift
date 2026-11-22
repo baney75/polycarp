@@ -110,6 +110,10 @@ final class WorkspaceDock {
     private let spaces: Spaces
     private var appearanceObserver: NSObjectProtocol?
     private var styleObserver: NSObjectProtocol?
+    /// The sheet's whole `dock { }` style the panel was last re-framed for (gap, padding, border and the rest), so a
+    /// mode change that moves any of it (an `@media (prefers-color-scheme)` rule) re-frames it too, as the top bar
+    /// does with `placedHeight`.
+    private var framedDock = Styles.shared.book.dock
     deinit {
         appearanceObserver.map(NotificationCenter.default.removeObserver)
         styleObserver.map(NotificationCenter.default.removeObserver)
@@ -192,12 +196,20 @@ final class WorkspaceDock {
         // A new dock size changes what SwiftUI measures; the panel (and the keep-zone, which is
         // taken from its frame) follows.
         appearanceObserver = NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] note in
-            if note.userInfo?[Appearance.dockSizeChangedKey] as? Bool == true { self?.scheduleResize() }
+            guard let self else { return }
+            // The book first: the mode may have switched which `@media` rules style the dock.
+            Styles.shared.sync()
+            let styled = Styles.shared.book.dock
+            if note.userInfo?[Appearance.dockSizeChangedKey] as? Bool == true || styled != self.framedDock {
+                self.framedDock = styled
+                self.scheduleResize()
+            }
         }
         // style.css (docs/style.md): the views redraw from `Styles`; a new gap, padding or border can change the dock's
         // size, so the panel re-frames after the layout pass, as for a new dock size.
         styleObserver = NotificationCenter.default.addObserver(forName: StyleSheetStore.didChange, object: nil, queue: .main) { [weak self] _ in
             Styles.shared.sync()
+            self?.framedDock = Styles.shared.book.dock
             self?.scheduleResize()
         }
         // What each tile says (`dock.tileLabel`), the purposes it shows, and whether the "At rest" tile shows.

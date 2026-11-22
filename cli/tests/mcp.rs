@@ -132,7 +132,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 29] = [
+const TOOLS: [&str; 30] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -162,6 +162,7 @@ const TOOLS: [&str; 29] = [
     "style_set",
     "style_unset",
     "style_preset",
+    "style_restore",
 ];
 
 #[test]
@@ -1116,6 +1117,8 @@ fn style_tools_run_the_spaces_style_command_and_pass_its_envelope_on_as_is() {
     assert_eq!(stub_args(&sb), ["style", "preset", "omarchy", "--json"]);
     s.tool("style_preset", json!({}));
     assert_eq!(stub_args(&sb), ["style", "preset", "--json"]);
+    s.tool("style_restore", json!({}));
+    assert_eq!(stub_args(&sb), ["style", "restore", "--json"]);
     s.tool("style_get", json!({}));
     assert_eq!(stub_args(&sb), ["style", "show", "--json"]);
     s.tool("style_example", json!({}));
@@ -1134,6 +1137,45 @@ fn style_tools_run_the_spaces_style_command_and_pass_its_envelope_on_as_is() {
     );
     assert_eq!(r["isError"], true);
     assert_eq!(r["structuredContent"], refused);
+    assert_eq!(s.finish(), 0);
+}
+
+/// style_restore is how an agent with only MCP undoes style_preset: it runs `style restore`, says it replaces what is in
+/// force (a second call undoes the first, so it is not idempotent), and the instructions name it (review of #604).
+#[cfg(unix)]
+#[test]
+fn style_restore_undoes_a_preset_over_mcp() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let mut s = surfaces_server(&sb, &bin);
+    let v = s.initialize("t");
+    let ins = v["result"]["instructions"].as_str().unwrap();
+    assert!(
+        ins.find("style_preset").unwrap()
+            < ins
+                .find("style_restore")
+                .expect("the instructions name style_restore")
+    );
+    let v = s.request("tools/list", json!({}));
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let by = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap().clone();
+    let restore = by("style_restore");
+    assert_eq!(
+        restore["annotations"],
+        json!({"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false})
+    );
+    assert_eq!(restore["inputSchema"]["properties"], json!({}));
+    assert_eq!(
+        by("style_preset")["annotations"]["idempotentHint"],
+        false,
+        "a second preset moves the first aside"
+    );
+    let reply = json!({"ok": true, "data": {"file": "~/.config/polycarp/style.css", "restored": "~/.config/polycarp/style.css.bak", "backup": "~/.config/polycarp/style.css.bak.1"}});
+    fs::write(sb.root.join("spaces/reply"), reply.to_string()).unwrap();
+    let r = s.tool("style_restore", json!({}));
+    assert_eq!(stub_args(&sb), ["style", "restore", "--json"]);
+    assert_eq!(r["isError"], false);
+    assert_eq!(r["structuredContent"], reply);
     assert_eq!(s.finish(), 0);
 }
 
@@ -1196,6 +1238,7 @@ fn style_tools_check_their_arguments_and_say_when_the_command_is_missing() {
         ("style_check", json!({"file": ["x"]})),
         ("style_preset", json!({"name": 3})),
         ("style_example", json!({"selector": "bar"})),
+        ("style_restore", json!({"name": "omarchy"})),
     ] {
         let r = s.tool(tool, args.clone());
         assert_eq!(r["isError"], true, "{tool} {args}");
