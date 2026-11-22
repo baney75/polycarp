@@ -52,6 +52,13 @@ The window you had in front on that workspace, else the last one opened there, e
 A display may show something that is not one of the nine (observed as workspace 0): a platform's
 own, or one you keep elsewhere. A switch to 1 to 9 then always acts, even to 1.
 
+### R-S7 A switch asked from a display
+A switch can name the display it was asked from (`switch n --monitor <name>`; a click on that display's top bar,
+[bar.md](bar.md)). Then n comes to that display, or you go to the display that already shows it (R-S3), and that
+display is the one you are on unless another shows n. Asked for the workspace that display shows, it brings that
+display's front window forward, even when you were on it: the bar takes no focus, so your window can still be on
+another display. A display that is not there is `not_found`.
+
 ## Empty means empty
 
 ### R-E1 Nothing in front on an empty workspace

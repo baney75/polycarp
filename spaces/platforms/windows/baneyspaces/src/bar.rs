@@ -5,7 +5,8 @@
 //!
 //! It runs in the daemon on a thread of its own with its own message loop, per-monitor DPI aware (v2). It never takes
 //! the core's lock: the daemon hands it each shell state line as it publishes one (`publish`, the same `ShellState`
-//! the shell's feed sends), and a click on a number goes to the worker as the chord `switch n`, the path Win+n takes.
+//! the shell's feed sends), and a click on a number goes to the worker as the chord `switch n --monitor <this display>`,
+//! the path Win+n takes, asked from the bar's own display (R-S7).
 //! Nothing here waits on the hook threads or the worker.
 //!
 //! The thread's state is a `RefCell` the window procedure only ever tries to borrow: a Win32 call made while it is
@@ -81,7 +82,7 @@ fn post(msg: u32, wp: usize, lp: isize) {
     }
 }
 
-/// Starts the bar's thread, with the bar on if `on`. `tx` is the worker's channel, where a click sends `switch n`.
+/// Starts the bar's thread, with the bar on if `on`. `tx` is the worker's channel, where a click sends its switch.
 pub fn start(tx: Sender<Msg>, on: bool) {
     if THREAD.load(Ordering::Acquire) != 0 {
         return;
@@ -372,29 +373,13 @@ impl Ui {
         self.report();
     }
 
-    /// A full-screen app opened or went. The shell tells every bar, so only the bar on the display the app fills is
-    /// hidden; when it goes, every hidden bar comes back.
+    /// A full-screen app opened or went on the display of bar `h`, the bar the shell told (`fullscreen_change`).
     fn fullscreen(&mut self, h: HWND, open: bool) {
-        if open {
-            let front = unsafe { GetForegroundWindow() };
-            let on = if front.is_null() { None } else { Some(unsafe { MonitorFromWindow(front, MONITOR_DEFAULTTONULL) }) };
-            for b in &mut self.bars {
-                let here = match on {
-                    Some(m) if !m.is_null() => m == b.hmon,
-                    _ => b.hwnd == h,
-                };
-                if here && !b.hidden {
-                    b.hidden = true;
-                    unsafe { ShowWindow(b.hwnd, SW_HIDE) };
-                }
-            }
-        } else {
-            for b in &mut self.bars {
-                if b.hidden {
-                    b.hidden = false;
-                    unsafe { ShowWindow(b.hwnd, SW_SHOWNOACTIVATE) };
-                }
-            }
+        let bars: Vec<(isize, bool)> = self.bars.iter().map(|b| (b.hwnd as isize, b.hidden)).collect();
+        if let Some(i) = fullscreen_change(&bars, h as isize, open) {
+            let b = &mut self.bars[i];
+            b.hidden = open;
+            unsafe { ShowWindow(b.hwnd, if open { SW_HIDE } else { SW_SHOWNOACTIVATE }) };
         }
         self.report();
     }
@@ -470,11 +455,11 @@ impl Ui {
         }
     }
 
-    /// A press on a bar: the number under it, sent to the worker as `switch n`, the way Win+n is.
+    /// A press on a bar: the number under it, sent to the worker the way Win+n is, asked from the bar's display.
     fn click(&self, h: HWND, x: i32) {
         let Some(b) = self.bars.iter().find(|b| b.hwnd == h) else { return };
         if let Some(n) = rule::hit(&b.cells, x) {
-            let _ = self.tx.send(Msg::Chord { args: vec!["switch".into(), n.to_string()], at: crate::winapi::tick_ms() });
+            let _ = self.tx.send(Msg::Chord { args: click_args(n, &b.monitor), at: crate::winapi::tick_ms() });
         }
     }
 
@@ -488,6 +473,21 @@ impl Ui {
             self.report();
         }
     }
+}
+
+/// Which bar an `ABN_FULLSCREENAPP` notice changes, given each bar's (hwnd, hidden): the shell sends one to each AppBar
+/// for its own display, so only the bar told (`told`) hides when an app goes full screen there (`open`) and comes back
+/// when it leaves. Another display's bar is left as it is: with a full-screen app on each display, quitting one must
+/// not bring back the other's bar over its video. None when that bar is already as asked, or is not one of ours.
+fn fullscreen_change(bars: &[(isize, bool)], told: isize, open: bool) -> Option<usize> {
+    bars.iter().position(|&(h, hidden)| h == told && hidden != open)
+}
+
+/// The chord a press on number `n` of the bar on display `monitor` sends. The bar never takes the front, so the display
+/// you were on may be another one: the switch names this one, and `n` comes here or you go to the display that shows
+/// it (`spec/bar.md`, R-S7).
+fn click_args(n: u8, monitor: &str) -> Vec<String> {
+    vec!["switch".into(), n.to_string(), "--monitor".into(), monitor.into()]
 }
 
 fn on_thread_message(msg: u32, wp: WPARAM, lp: LPARAM) {
@@ -783,4 +783,30 @@ fn clock_now(twenty_four: bool) -> String {
     let mut t: SYSTEMTIME = unsafe { std::mem::zeroed() };
     unsafe { GetLocalTime(&mut t) };
     rule::clock(t.wDayOfWeek as u8, t.wHour as u8, t.wMinute as u8, twenty_four)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_full_screen_notice_changes_only_the_bar_it_was_sent_to() {
+        // Two displays, each with a full-screen app: both bars hidden. The app on the first quits.
+        let both = [(1, true), (2, true)];
+        assert_eq!(fullscreen_change(&both, 1, false), Some(0));
+        assert_eq!(fullscreen_change(&[(1, false), (2, true)], 1, false), None, "the second display's bar stays hidden");
+        // An app goes full screen on the second display only, whichever window is in front.
+        assert_eq!(fullscreen_change(&[(1, false), (2, false)], 2, true), Some(1));
+        assert_eq!(fullscreen_change(&[(1, false), (2, true)], 2, true), None, "already hidden");
+        assert_eq!(fullscreen_change(&[(1, true), (2, true)], 3, false), None, "not one of our bars");
+    }
+
+    #[test]
+    fn a_click_switches_on_its_own_display() {
+        let args = click_args(3, r"\\.\DISPLAY2");
+        assert_eq!(args, ["switch", "3", "--monitor", r"\\.\DISPLAY2"]);
+        // The worker runs a chord as a command line: this one must parse to a switch that names the display.
+        let req = crate::request(args).unwrap();
+        assert_eq!(req, json!({ "op": "switch", "args": { "n": "3", "monitor": r"\\.\DISPLAY2" } }));
+    }
 }

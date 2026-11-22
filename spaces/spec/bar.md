@@ -18,8 +18,9 @@ it may the appearance settings, and the `set` is logged with who asked.
 
 - **Workspaces** (left): every workspace with at least one of your windows, and the one this display shows, in number
   order (`bar::workspaces`, macOS `BarLayout.dots`). A display showing none of the nine adds nothing. An agent's
-  windows never count. Click one to go there: the click runs the same switch the workspace key runs (`switch n`), so
-  the workspace comes to this display or you go to the display that shows it.
+  windows never count. Click one to go there: the click runs the same switch the workspace key runs, asked from this
+  display (`switch n --monitor <this display>`, R-S7 in [workspaces.md](workspaces.md)), so the workspace comes to
+  this display or you go to the display that shows it, whichever display you were on before the click.
 - **Clock** (center on Windows): the day and the time, `Saturday 22:04`, or `Saturday 10:04` on a 12-hour clock, with
   no AM or PM (`bar::clock`; macOS's `clock` module has the same time). Windows follows its own time format: a pattern
   with an `H` is 24 hours (`bar::clock_is_24h`).
@@ -35,7 +36,9 @@ On Windows the current workspace's number is drawn in `foreground` with a 2 px `
 - Windows: one AppBar (`SHAppBarMessage`) docked to the top of every display, so the work area starts below it and a
   maximized window stops at its bottom edge. It follows display changes, scale changes (per-monitor DPI v2), the
   taskbar or another AppBar moving (`ABN_POSCHANGED`) and explorer.exe restarting (`TaskbarCreated`). While a
-  full-screen app is up on a display, that display's bar hides (`ABN_FULLSCREENAPP`) and its place stays kept. Turning
+  full-screen app is up on a display, that display's bar hides and its place stays kept. The shell sends
+  `ABN_FULLSCREENAPP` to each bar for its own display, so only the bar told hides or comes back: with a full-screen
+  app on each display, quitting one leaves the other display's bar hidden. Turning
   it off, the daemon stopping, a panic and the session ending each take every bar off the shell's list, so the work
   area is whole again. A daemon killed outright (`taskkill /F`) runs no cleanup, and the shell drops the bar with its
   window: on the CI runner the work area was whole again within 3 s (the live suite logs it after each run).

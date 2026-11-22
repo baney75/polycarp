@@ -203,10 +203,11 @@ the right. The rules are `spec/bar.md`; the code is `baneyspaces/src/bar.rs`.
 - **An AppBar, not an overlay.** Each bar is registered with the shell (`SHAppBarMessage`), so the work area starts
   below it and a maximized window stops at its bottom edge. It is 26 px at 100%, scaled per display (per-monitor DPI
   v2), and follows display changes, scale changes, the taskbar moving and explorer.exe restarting. A full-screen app
-  hides the bar on its display. Turning it off, `baneyspaces stop`, a panic and sign-out give the work area back.
+  hides the bar on its display only (the bar the shell's `ABN_FULLSCREENAPP` was sent to). Turning it off, `baneyspaces stop`, a panic and sign-out give the work area back.
 - **In the daemon.** The bar has its own thread and message loop. It draws the same state the shell's feed sends
   (`spec/shell.md`), handed over as the daemon publishes it, so there is no second copy of the model; a click on a number
-  is sent to the worker as `switch n`, the path Win+n takes. It takes no lock and never waits on the hook threads.
+  is sent to the worker as `switch n --monitor <its display>`, the path Win+n takes, so the workspace comes to the
+  display you clicked (R-S7). It takes no lock and never waits on the hook threads.
 - **Drawn with GDI**, in Cascadia Mono (else Consolas), with no webview. Colors are the Polycarp theme's `background`,
   `foreground`, `muted` and `accent` (`%APPDATA%\Polycarp\current\theme.json`, by Windows' light or dark app mode),
   else a built-in dark look. A timer looks again every second at the file, the app mode, the clock format and the
@@ -267,7 +268,10 @@ What the runner can't run, so it stays untested live on Windows hardware:
 - A real sign-out. The suite sends WM_QUERYENDSESSION and WM_ENDSESSION to the session window; it can't end the
   runner's session.
 - The top bar on a second display, at a scale other than 100%, and under a full-screen app (`ABN_FULLSCREENAPP`).
-  Section 9 checks one bar at the runner's 96 dpi and reports the full-screen case as a skip.
+  Section 9 checks one bar at the runner's 96 dpi and reports the full-screen case as a skip. Two cases need two
+  displays: with a full-screen video on each, quit one and the other display's bar must stay hidden; with your window
+  in front on display 1, click a number on display 2's bar that no display shows and it must come up on display 2
+  (click display 1's number there instead and you go to display 1).
 
 Not done in part 1: multi-monitor placement (windows are not moved between displays; the model is, and
 this is untested without a second display), the Startup shortcut, the overview, the dock and the rest of the themed UI.

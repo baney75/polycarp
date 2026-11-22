@@ -198,7 +198,7 @@ mod tests {
     fn a_switch_changes_the_state_and_the_line_reads_back() {
         let mut m = model();
         let before = ShellState::from_model(&m, facts);
-        m.apply(Event::Switch { n: 3 }).unwrap();
+        m.apply(Event::Switch { n: 3, monitor: None }).unwrap();
         m.apply(Event::Activate {
             window: Some("w-2".into()),
             cause: Cause::User,

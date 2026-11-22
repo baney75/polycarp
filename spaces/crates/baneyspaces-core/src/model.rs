@@ -89,8 +89,12 @@ pub enum Event {
     Close {
         window: WindowId,
     },
+    /// `monitor`: the display it was asked from, a click on that display's top bar (`spec/bar.md`). Default: the one
+    /// you are on.
     Switch {
         n: u8,
+        #[serde(default)]
+        monitor: Option<MonitorId>,
     },
     Move {
         n: u8,
@@ -391,7 +395,7 @@ impl Model {
                 workspace,
             } => self.observe_window(window, pid, start, app, workspace),
             Event::Close { window } => Ok(self.close(&window)),
-            Event::Switch { n } => self.switch(n),
+            Event::Switch { n, monitor } => self.switch(n, monitor),
             Event::Move { n, window, follow } => self.move_window(n, window, follow),
             Event::Activate { window, cause } => Ok(self.activate(window, cause)),
             Event::ObserveMove { window, n } => self.observe_move(&window, n),
@@ -682,13 +686,50 @@ impl Model {
         }
     }
 
-    fn switch(&mut self, n: u8) -> Result<Vec<Effect>, ModelError> {
+    /// A switch asked from display `on` (its top bar, `spec/bar.md`): `n` comes to `on`, or you go to the display that
+    /// shows it (R-S3). Unless another display shows `n`, `on` becomes the display you are on (R-S2). Asked for the
+    /// workspace `on` shows, it brings that display's front window forward even when the model had you there already:
+    /// the bar takes no focus, so your window may still be on another display. True when that settled it.
+    fn go_to(&mut self, n: u8, on: &str, effects: &mut Vec<Effect>) -> Result<bool, ModelError> {
+        if !self.monitors.contains_key(on) {
+            return Err(ModelError::new("not_found", format!("no monitor {on}")));
+        }
+        let there = self.shown_on(n).map(String::from);
+        if there.as_deref().is_some_and(|m| m != on) {
+            return Ok(false);
+        }
+        if self.focused_monitor.as_deref() != Some(on) {
+            self.focused_monitor = Some(on.to_string());
+            self.active = self.candidate();
+            effects.push(Effect::FocusMonitor {
+                monitor: on.to_string(),
+            });
+        }
+        if there.is_none() || self.agent_shown {
+            return Ok(false);
+        }
+        let here = |w: &WindowId| self.windows_on(n).contains(&w.as_str());
+        if !self.active.as_ref().is_some_and(here) {
+            self.active = self.candidate_on(n);
+        }
+        if let Some(w) = &self.active {
+            effects.push(Effect::FocusWindow { window: w.clone() });
+        }
+        Ok(true)
+    }
+
+    fn switch(&mut self, n: u8, on: Option<MonitorId>) -> Result<Vec<Effect>, ModelError> {
         let n = Self::range(n)?;
+        let mut effects = vec![];
+        if let Some(on) = on {
+            if self.go_to(n, &on, &mut effects)? {
+                return Ok(effects);
+            }
+        }
         let focused = self
             .focused_monitor
             .clone()
             .ok_or_else(|| ModelError::new("no_monitor", "no monitor is connected"))?;
-        let mut effects = vec![];
         // R-S4: the workspace you are already on is a no-op, unless the agent workspace is covering it.
         if self.shown_on(n) == Some(focused.as_str()) && !self.agent_shown {
             return Ok(effects);

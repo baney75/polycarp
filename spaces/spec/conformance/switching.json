@@ -495,5 +495,225 @@
     }
    }
   ]
+ },
+ {
+  "name": "a switch asked from the other display brings the workspace there",
+  "rules": [
+   "R-S7"
+  ],
+  "steps": [
+   {
+    "do": "monitor_added",
+    "monitor": "A"
+   },
+   {
+    "do": "monitor_added",
+    "monitor": "B"
+   },
+   {
+    "do": "switch",
+    "n": 5,
+    "monitor": "B",
+    "effects": [
+     {
+      "do": "focus_monitor",
+      "monitor": "B"
+     },
+     {
+      "do": "show_workspace",
+      "monitor": "B",
+      "workspace": 5
+     }
+    ],
+    "expect": {
+     "focused_monitor": "B",
+     "monitors": {
+      "A": {
+       "current": 1
+      },
+      "B": {
+       "current": 5
+      }
+     }
+    }
+   }
+  ]
+ },
+ {
+  "name": "a switch asked from a display for the workspace another shows goes to that one",
+  "rules": [
+   "R-S7"
+  ],
+  "steps": [
+   {
+    "do": "monitor_added",
+    "monitor": "A"
+   },
+   {
+    "do": "monitor_added",
+    "monitor": "B"
+   },
+   {
+    "do": "open",
+    "window": "w1",
+    "pid": 1,
+    "app": "foot"
+   },
+   {
+    "do": "observe_focus_monitor",
+    "monitor": "B"
+   },
+   {
+    "do": "switch",
+    "n": 1,
+    "monitor": "B",
+    "effects": [
+     {
+      "do": "focus_monitor",
+      "monitor": "A"
+     },
+     {
+      "do": "focus_window",
+      "window": "w1"
+     }
+    ],
+    "expect": {
+     "focused_monitor": "A",
+     "active": "w1",
+     "monitors": {
+      "A": {
+       "current": 1
+      },
+      "B": {
+       "current": 2
+      }
+     }
+    }
+   },
+   {
+    "do": "switch",
+    "n": 1,
+    "monitor": "B",
+    "effects": [],
+    "expect": {
+     "focused_monitor": "A",
+     "monitors": {
+      "A": {
+       "current": 1
+      },
+      "B": {
+       "current": 2
+      }
+     }
+    }
+   }
+  ]
+ },
+ {
+  "name": "a switch asked from a display for the workspace it shows brings its front window forward",
+  "rules": [
+   "R-S7"
+  ],
+  "steps": [
+   {
+    "do": "monitor_added",
+    "monitor": "A"
+   },
+   {
+    "do": "monitor_added",
+    "monitor": "B"
+   },
+   {
+    "do": "observe_focus_monitor",
+    "monitor": "B"
+   },
+   {
+    "do": "open",
+    "window": "w2",
+    "pid": 2,
+    "app": "foot"
+   },
+   {
+    "do": "observe_focus_monitor",
+    "monitor": "A"
+   },
+   {
+    "do": "switch",
+    "n": 2,
+    "monitor": "B",
+    "effects": [
+     {
+      "do": "focus_monitor",
+      "monitor": "B"
+     },
+     {
+      "do": "focus_window",
+      "window": "w2"
+     }
+    ],
+    "expect": {
+     "focused_monitor": "B",
+     "active": "w2",
+     "monitors": {
+      "A": {
+       "current": 1
+      },
+      "B": {
+       "current": 2
+      }
+     }
+    }
+   },
+   {
+    "do": "switch",
+    "n": 2,
+    "monitor": "B",
+    "effects": [
+     {
+      "do": "focus_window",
+      "window": "w2"
+     }
+    ],
+    "expect": {
+     "focused_monitor": "B",
+     "active": "w2"
+    }
+   }
+  ]
+ },
+ {
+  "name": "a switch asked from a display that is not there is refused",
+  "rules": [
+   "R-S7"
+  ],
+  "steps": [
+   {
+    "do": "monitor_added",
+    "monitor": "A"
+   },
+   {
+    "do": "monitor_added",
+    "monitor": "B"
+   },
+   {
+    "do": "switch",
+    "n": 3,
+    "monitor": "C",
+    "error": "not_found"
+   },
+   {
+    "expect": {
+     "focused_monitor": "A",
+     "monitors": {
+      "A": {
+       "current": 1
+      },
+      "B": {
+       "current": 2
+      }
+     }
+    }
+   }
+  ]
  }
 ]

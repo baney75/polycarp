@@ -7,6 +7,7 @@ window id, or a pid.
 | Command | macOS | Linux | Windows |
 | --- | --- | --- | --- |
 | `switch <n>` | yes | yes | yes |
+| `switch <n> --monitor <name>`: asked from that display, as a click on its top bar ([workspaces.md](workspaces.md) R-S7) | not supported yet | retired | yes |
 | `move <n> [--stay]` | yes | yes | yes |
 | `window focus\|swap <dir>`, `window resize <dx> <dy>`, `window display next\|prev` | not supported yet | not supported yet | yes (`keymap.md`) |
 | `ls` | yes (session rows) | yes (windows by workspace) | yes |
