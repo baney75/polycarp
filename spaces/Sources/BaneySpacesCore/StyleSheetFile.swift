@@ -101,14 +101,30 @@ public final class StyleSheetWatcher: @unchecked Sendable {
     private let path: String?
     private let queue: DispatchQueue
     private let log: (String) -> Void
-    private let deliver: (StyleSheet) -> Void
+    /// Each sheet with its number: every look that delivers one counts up, so a store can tell an older one.
+    private let deliver: (StyleSheet, Int) -> Void
     private let schedule: PolycarpThemeWatcher.Schedule
     private let watch: PolycarpThemeWatcher.Watch
+    private let load: (String) -> StyleSheetFile.Loaded
+    /// Runs a block on a queue after a delay; tests count the retries it is given.
+    typealias After = (DispatchQueue, TimeInterval, @escaping () -> Void) -> Void
+    private let after: After
     private let retry: TimeInterval
     private var cancel: (() -> Void)?
     private var unwatch: (() -> Void)?
     private var lookDue = false
     // Only touched on `queue`.
+    /// A retry of a failed read is waiting: a read that keeps failing waits on that one, however many events and safety
+    /// ticks fail meanwhile, instead of starting a chain of its own each time (review of #604).
+    private var retryDue = false
+    /// Numbers count up across every watcher, so a store started again after `stop` still takes the new watcher's sheets.
+    private static let numbers = NSLock()
+    private static var lastNumber = 0
+    private static func nextNumber() -> Int {
+        numbers.lock(); defer { numbers.unlock() }
+        lastNumber += 1
+        return lastNumber
+    }
     private var last: PolycarpThemeFile.Stamp?
     private var looked = false
     private var lastText: String?
@@ -116,29 +132,44 @@ public final class StyleSheetWatcher: @unchecked Sendable {
     private var current = StyleSheet.empty
     private var settling: (stamp: PolycarpThemeFile.Stamp?, until: DispatchTime)?
 
-    public init(path: String? = StyleSheetFile.path(),
+    public convenience init(path: String? = StyleSheetFile.path(),
                 queue: DispatchQueue = DispatchQueue(label: "com.baney.polycarp.style", qos: .userInitiated),
                 log: @escaping (String) -> Void = { _ in },
                 schedule: @escaping PolycarpThemeWatcher.Schedule = PolycarpThemeWatcher.systemTimer,
                 watch: @escaping PolycarpThemeWatcher.Watch = PolycarpThemeWatcher.fileEvents,
                 retry: TimeInterval = 1,
                 deliver: @escaping (StyleSheet) -> Void) {
+        self.init(path: path, queue: queue, log: log, schedule: schedule, watch: watch, retry: retry, numbered: { s, _ in deliver(s) })
+    }
+
+    init(path: String?, queue: DispatchQueue = DispatchQueue(label: "com.baney.polycarp.style", qos: .userInitiated),
+         log: @escaping (String) -> Void = { _ in },
+         schedule: @escaping PolycarpThemeWatcher.Schedule = PolycarpThemeWatcher.systemTimer,
+         watch: @escaping PolycarpThemeWatcher.Watch = PolycarpThemeWatcher.fileEvents,
+         load: @escaping (String) -> StyleSheetFile.Loaded = { StyleSheetFile.load(path: $0) },
+         after: @escaping After = { q, t, f in q.asyncAfter(deadline: .now() + t, execute: f) },
+         retry: TimeInterval = 1, numbered: @escaping (StyleSheet, Int) -> Void) {
         self.path = path; self.queue = queue; self.log = log; self.schedule = schedule; self.watch = watch
-        self.retry = retry; self.deliver = deliver
+        self.load = load; self.after = after; self.retry = retry; self.deliver = numbered
     }
 
     /// Starts watching and makes the first look at once, on the watcher's queue, waiting up to `timeout` for it. Returns
     /// the sheet in force when the look finished in time (not also delivered), else nil: `deliver` gets it when it does.
     @discardableResult
     public func start(firstLookWithin timeout: TimeInterval = 0) -> StyleSheet? {
+        startNumbered(firstLookWithin: timeout)?.sheet
+    }
+
+    /// `start`, with the first look's number.
+    func startNumbered(firstLookWithin timeout: TimeInterval = 0) -> (sheet: StyleSheet, generation: Int)? {
         let box = FirstLook()
         let sem = DispatchSemaphore(value: 0)
         queue.async { [self] in
             defer { sem.signal() }
             guard cancel == nil, let path else { return }
-            tick { s in
+            tick { s, n in
                 box.lock.lock()
-                if box.abandoned || timeout <= 0 { box.lock.unlock(); self.deliver(s) } else { box.value = s; box.lock.unlock() }
+                if box.abandoned || timeout <= 0 { box.lock.unlock(); self.deliver(s, n) } else { box.value = (s, n); box.lock.unlock() }
             }
             cancel = schedule(queue, PolycarpThemeWatcher.safetyInterval, PolycarpThemeWatcher.safetyInterval) { [weak self] in self?.tick() }
             unwatch = watch(queue, path) { [weak self] in self?.changed() }
@@ -152,7 +183,7 @@ public final class StyleSheetWatcher: @unchecked Sendable {
 
     private final class FirstLook: @unchecked Sendable {
         let lock = NSLock()
-        var value: StyleSheet?
+        var value: (sheet: StyleSheet, generation: Int)?
         var abandoned = false
     }
 
@@ -173,18 +204,25 @@ public final class StyleSheetWatcher: @unchecked Sendable {
 
     /// One look: stat, read if it changed, stat again (a file that moved while being read waits for its own event).
     /// Call it on `queue` only.
-    func tick(into out: ((StyleSheet) -> Void)? = nil, fromEvent: Bool = false) {
+    func tick(into out: ((StyleSheet, Int) -> Void)? = nil, fromEvent: Bool = false) {
         guard let path else { return }
         let before = PolycarpThemeFile.stamp(path)
         if looked && before == last { return }
-        let loaded: StyleSheetFile.Loaded = before == nil ? .missing : StyleSheetFile.load(path: path)
+        let loaded: StyleSheetFile.Loaded = before == nil ? .missing : load(path)
         if PolycarpThemeFile.stamp(path) != before { return }
         let next: StyleSheet
         switch loaded {
         case .failed(let why):
             if why != lastProblem { log("style.css: could not read \(StyleSheetFile.display(path)): \(why); keeping the current sheet and trying again") }
             lastProblem = why
-            if cancel != nil { queue.asyncAfter(deadline: .now() + retry) { [weak self] in if self?.cancel != nil { self?.tick() } } }
+            if cancel != nil, !retryDue {
+                retryDue = true
+                after(queue, retry) { [weak self] in
+                    guard let self else { return }
+                    self.retryDue = false
+                    if self.cancel != nil { self.tick() }
+                }
+            }
             return
         case .rejected(let why):
             let line = "style.css: ignored \(StyleSheetFile.display(path)): \(why); no style sheet"
@@ -223,7 +261,7 @@ public final class StyleSheetWatcher: @unchecked Sendable {
         looked = true
         guard first || next != current else { return }
         current = next
-        (out ?? deliver)(next)
+        (out ?? deliver)(next, Self.nextNumber())
     }
 
     /// For tests: one look on the watcher's queue, waited for.
@@ -240,6 +278,9 @@ public final class StyleSheetStore: @unchecked Sendable {
 
     private let lock = NSLock()
     private var value = StyleSheet.empty
+    /// The number of the sheet in `value`. The first look comes back on the caller's thread while the watcher may already
+    /// have delivered a newer sheet on its queue; the older one never replaces it (review of #604).
+    private var generation = 0
     private var watcher: StyleSheetWatcher?
     private let center: NotificationCenter
 
@@ -255,10 +296,10 @@ public final class StyleSheetStore: @unchecked Sendable {
                       log: @escaping (String) -> Void = { _ in }) {
         lock.lock()
         guard watcher == nil else { lock.unlock(); return }
-        let w = StyleSheetWatcher(path: path, log: log) { [weak self] s in self?.take(s) }
+        let w = StyleSheetWatcher(path: path, log: log) { [weak self] s, n in self?.take(s, generation: n) }
         watcher = w
         lock.unlock()
-        if let first = w.start(firstLookWithin: timeout) { take(first, post: false) }
+        if let first = w.startNumbered(firstLookWithin: timeout) { take(first.sheet, generation: first.generation, post: false) }
     }
 
     public func stop() {
@@ -266,8 +307,11 @@ public final class StyleSheetStore: @unchecked Sendable {
         w?.stop()
     }
 
-    private func take(_ s: StyleSheet, post: Bool = true) {
+    /// Takes sheet number `n` unless a newer one is already in force.
+    func take(_ s: StyleSheet, generation n: Int, post: Bool = true) {
         lock.lock()
+        guard n > generation else { lock.unlock(); return }
+        generation = n
         let changed = s != value
         value = s
         lock.unlock()

@@ -197,6 +197,30 @@ public enum StyleOps {
         return .success(.object(data))
     }
 
+    /// `preset` with no name: the presets there are. With one: writes it as the whole sheet, after moving the sheet
+    /// there was to `style.css.bak` (as `reset` does), so one command applies it and one more (`reset`) undoes it.
+    public static func preset(_ name: String?, file: String?, roles: Roles) -> Result {
+        guard let name else {
+            return .success(.object(["presets": .array(StyleSheet.presets.map { .object(["name": .string($0.name), "about": .string($0.about)]) })]))
+        }
+        guard let preset = StyleSheet.presets.first(where: { $0.name == name.lowercased() }) else {
+            return .failure(StyleFailure("invalid_args", "no preset `\(name)`; the presets are \(StyleSheet.presets.map { "`\($0.name)`" }.joined(separator: ", "))",
+                                         suggestion: "Run `polycarp-spaces style preset` for the list.", exit: 2))
+        }
+        guard let file else { return .failure(noFolder) }
+        var backup: SurfaceValue = .null
+        if !(StyleSheetFile.load(path: file) == .missing && PolycarpThemeFile.stamp(file) == nil) {
+            switch reset(file: file) {
+            case .failure(let f): return .failure(f)
+            case .success(let d): backup = d.object?["backup"] ?? .null
+            }
+        }
+        do { try StyleSheetFile.write(preset.text, to: file) } catch { return .failure(StyleFailure("io_error", "\(error)")) }
+        let found = problems(preset.text, roles: roles)
+        return .success(.object(["file": .string(StyleSheetFile.display(file)), "preset": .string(preset.name), "backup": backup,
+                                 "rules": .number(Double(found.sheet.ruleCount)), "warnings": problemsValue(found.problems.filter { !$0.isError })]))
+    }
+
     /// `reset`: moves the sheet to `style.css.bak` (replacing an older one), so every surface draws as before.
     public static func reset(file: String?) -> Result {
         guard let file else { return .failure(noFolder) }
@@ -367,6 +391,56 @@ enum StyleEdit {
 // MARK: The starter sheet and the docs tables, from the property table
 
 extension StyleSheet {
+    /// A whole sheet `polycarp-spaces style preset <name>` writes in one command.
+    public struct Preset: Sendable {
+        public let name: String
+        public let about: String
+        public let text: String
+    }
+
+    public static let presets = [omarchy]
+
+    /// Omarchy's Waybar: a solid dark strip whatever the mode, one monospace face, numbered workspaces with an accent
+    /// line under the one you're on, and a quiet grayscale right side.
+    public static let omarchy = Preset(name: "omarchy", about: "a solid dark strip, monospace, numbered workspaces with an accent line, a quiet right side", text: """
+    /* Omarchy: the top bar as Omarchy's Waybar draws it. A solid dark strip in both modes, one monospace face,
+       the workspace numbers muted with an accent line under the one you're on, and a quiet grayscale right side.
+       Written by `polycarp-spaces style preset omarchy`; `polycarp-spaces style reset` puts the theme's look back. */
+
+    :root {
+      --strip: #1a1b26;
+      --ink: #a9b1d6;
+      --bright: #c0caf5;
+      --quiet: #787c99;
+      --alarm: #f7768e;
+    }
+
+    bar {
+      background: var(--strip);
+      border-bottom: none;
+      color: var(--ink);
+      font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+      font-size: 12px;
+      font-weight: 400;
+      height: 26px;
+      padding: 0 10px;
+      gap: 16px;
+    }
+
+    bar .workspaces { gap: 2px; }
+    bar .workspace { color: var(--quiet); padding: 0 6px 3px; transition-duration: 120ms; }
+    bar .workspace:hover { color: var(--ink); }
+    bar .workspace.current { color: var(--bright); border-bottom: 2px solid var(--accent); }
+
+    bar .center { color: var(--ink); }
+    bar .clock { color: var(--bright); font-variant-numeric: tabular-nums; }
+
+    bar .right { color: var(--quiet); gap: 14px; }
+    bar .status { gap: 12px; }
+    bar .network { color: var(--alarm); }
+
+    """)
+
     /// What `polycarp-spaces style example` prints: every surface, part and property, each with what it does and takes,
     /// all commented out, so it reads as documentation and applies nothing until a line is uncommented.
     public static var example: String {

@@ -153,7 +153,7 @@ final class StyleSheetTests: XCTestCase {
         bar .clock {
           opacity: 50%; font-size: 13pt; font-weight: bold; font-style: italic; letter-spacing: normal;
           text-transform: uppercase; font-variant-numeric: tabular-nums; padding: 1px 2px 3px; border-radius: 4px;
-          border: 2px solid #000; border-bottom: none; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5); display: none;
+          border: 2px solid #000; border-bottom: none; display: none;
           transition-duration: 250ms; font-family: "SF Pro Text", system-ui; background: linear-gradient(to right, red, blue);
         }
         """, .bar, "clock")
@@ -168,7 +168,8 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertEqual(s.borderRadius, 4)
         XCTAssertEqual(s.border, .solid(width: 2, color: Self.black))
         XCTAssertEqual(s.borderBottom, StyleLine.none)
-        XCTAssertEqual(s.boxShadow, .drop(x: 0, y: 2, blur: 6, color: StyleColor(red: 0, green: 0, blue: 0, alpha: 0.5)))
+        XCTAssertEqual(style("dock .tile { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5) }", .dock, "tile").boxShadow,
+                       .drop(x: 0, y: 2, blur: 6, color: StyleColor(red: 0, green: 0, blue: 0, alpha: 0.5)))
         XCTAssertTrue(s.isHidden)
         XCTAssertEqual(s.transitionDuration, 0.25)
         XCTAssertEqual(s.fontFamily, ["SF Pro Text", "system-ui"])
@@ -299,6 +300,18 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertTrue(errors(bomb).contains { $0.contains("longer than 4096 tokens") })
         _ = style(bomb)
         XCTAssertLessThan(Date().timeIntervalSince(t0), 5)
+        // The same bomb used by 2500 declarations: each is resolved once per mode and dropped, so check stays quick
+        // (review of #604: every declaration expanded the chain again, once per mode and per role set).
+        let many = bomb.replacingOccurrences(of: "} bar { color: var(--v30) }", with: "} ")
+            + (0..<2500).map { "bar .clock { color: var(--v30) } /* \($0) */" }.joined(separator: "\n")
+        let t1 = Date()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? many.write(toFile: file, atomically: true, encoding: .utf8)
+        let report = StyleOps.check(file: file, roles: Self.roles)
+        let spent = Date().timeIntervalSince(t1)
+        XCTAssertLessThan(spent, 1, "check took \(spent) s")
+        XCTAssertEqual(style(many).color, nil, "a declaration the chain broke sets nothing")
+        _ = report
         // A fallback nested far too deep.
         let deep = "bar { color: " + String(repeating: "var(--x, ", count: 2000) + "red" + String(repeating: ")", count: 2000) + " }"
         XCTAssertTrue(errors(deep).contains { $0.contains("nested more than 32 deep") })
@@ -336,13 +349,13 @@ final class StyleSheetTests: XCTestCase {
     func testSpecificityThenOrder() {
         let css = """
         dock .tile.current { color: blue }
-        dock .tile { color: red; padding: 2px }
+        dock .tile { color: red; border-radius: 2px }
         dock .tile:hover { color: lime }
-        dock .tile { padding: 4px }
+        dock .tile { border-radius: 4px }
         dock .tile.current:hover { color: yellow }
         """
         XCTAssertEqual(style(css, .dock, "tile").color, StyleColor(red: 1, green: 0, blue: 0))
-        XCTAssertEqual(style(css, .dock, "tile").padding?.top, 4, "a tie: the later rule wins")
+        XCTAssertEqual(style(css, .dock, "tile").borderRadius, 4, "a tie: the later rule wins")
         XCTAssertEqual(style(css, .dock, "tile", states: [.current]).color, StyleColor(red: 0, green: 0, blue: 1), "a class beats an earlier type")
         XCTAssertEqual(style(css, .dock, "tile", states: [.hover]).color, StyleColor(red: 0, green: 1, blue: 0))
         XCTAssertEqual(style(css, .dock, "tile", states: [.current, .hover]).color, StyleColor(red: 1, green: 1, blue: 0), "two states beat one")
@@ -445,6 +458,100 @@ final class StyleSheetTests: XCTestCase {
         try css.write(toFile: file, atomically: true, encoding: .utf8)
         guard case .success(let d) = StyleOps.check(file: file, roles: Self.roles) else { return XCTFail("warnings alone pass") }
         XCTAssertFalse(d.object?["warnings"]?.array?.isEmpty ?? true)
+    }
+
+    // MARK: What the bar and the dock read
+
+    /// A rule reaches the values the bar and the dock draw with (`StyleBook`), and a part the sheet leaves alone stays nil,
+    /// so the view draws what it drew before (review of #604: the sheet was parsed but drawn nowhere).
+    func testASheetRuleReachesTheValuesTheBarAndTheDockDraw() {
+        let css = """
+        bar { height: 30px; font-family: monospace; gap: 18px }
+        bar .right { color: #888888 }
+        bar .clock { color: #d4af37 }
+        bar .clock:hover { color: red }
+        bar .workspace { color: var(--muted) }
+        bar .workspace.current { color: var(--foreground); border-bottom: 2px solid var(--accent) }
+        dock .tile.current { border: 2px solid var(--accent) }
+        dock .badge { display: none }
+        @media (prefers-color-scheme: light) { bar .clock { color: #8a6d1f } }
+        """
+        XCTAssertEqual(problems(css).filter(\.isError), [])
+        let dark = StyleBook(sheet(css), dark: true, roles: Self.roles(true))
+        XCTAssertEqual(dark.barHeight(26), 30)
+        XCTAssertEqual(StyleBook.empty.barHeight(26), 26, "no sheet: surfaces.json's height")
+        XCTAssertEqual(dark.bar.gap, 18)
+        XCTAssertEqual(dark.module(.clock, in: .right).color, Self.gold)
+        XCTAssertEqual(dark.module(.clock, in: .right, hover: true).color, StyleColor(red: 1, green: 0, blue: 0))
+        XCTAssertEqual(dark.module(.clock, in: .right).fontFamily, ["monospace"], "inherited from the bar")
+        XCTAssertEqual(dark.module(.battery, in: .right).color, StyleColor(red: 0x88 / 255, green: 0x88 / 255, blue: 0x88 / 255), "from its region")
+        XCTAssertNil(dark.module(.battery, in: .left).color, "another region's color isn't its")
+        XCTAssertEqual(dark.module(.custom("x"), in: .left), .empty)
+        XCTAssertEqual(dark.workspace(in: .left, current: true).borderBottom, .solid(width: 2, color: Self.gold))
+        XCTAssertEqual(dark.workspace(in: .left, current: true).color, Self.white)
+        XCTAssertNil(dark.workspace(in: .left, current: false).borderBottom)
+        XCTAssertEqual(dark.tile(current: true).border, .solid(width: 2, color: Self.gold))
+        XCTAssertNil(dark.tile(current: false).border)
+        XCTAssertTrue(dark.badge(current: false).isHidden)
+        XCTAssertNil(dark.dock.background, "the dock keeps the theme's panel")
+        let light = StyleBook(sheet(css), dark: false, roles: Self.roles(false))
+        XCTAssertEqual(light.module(.clock, in: .right).color, StyleColor(red: 0x8a / 255, green: 0x6d / 255, blue: 0x1f / 255))
+        // The text helpers.
+        XCTAssertEqual(style("bar { text-transform: capitalize }").cased("the day is near"), "The Day Is Near")
+        XCTAssertEqual(style("bar { text-transform: uppercase }").cased("Mon"), "MON")
+        XCTAssertEqual(ComputedStyle.empty.cased("Mon"), "Mon")
+        XCTAssertFalse(ComputedStyle.empty.hasBox)
+        XCTAssertTrue(style("bar { border-radius: 2px }").hasBox)
+    }
+
+    /// `style preset omarchy` writes the Omarchy look in one command, checks clean in both modes, keeps the sheet that
+    /// was there in style.css.bak, and draws what it says: a dark strip, monospace, muted numbers with an accent line
+    /// under the current one, and a quiet right side.
+    func testTheOmarchyPresetAppliesInOneCommandAndChecksClean() throws {
+        XCTAssertEqual(StyleOps.problems(StyleSheet.omarchy.text, roles: Self.roles).problems, [], "no errors and no contrast warnings")
+        try "bar { color: red }".write(toFile: file, atomically: true, encoding: .utf8)
+        guard case .success(let d) = StyleOps.preset("Omarchy", file: file, roles: Self.roles) else { return XCTFail("preset omarchy") }
+        XCTAssertEqual(d.object?["preset"]?.string, "omarchy")
+        XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), StyleSheet.omarchy.text)
+        XCTAssertEqual(try String(contentsOfFile: file + ".bak", encoding: .utf8), "bar { color: red }", "the old sheet is kept")
+        guard case .success = StyleOps.check(file: file, roles: Self.roles) else { return XCTFail("the written sheet checks") }
+        for dark in [true, false] {
+            let book = StyleBook(sheet(StyleSheet.omarchy.text), dark: dark, roles: Self.roles(dark))
+            XCTAssertEqual(book.bar.background, .color(StyleColor(red: 0x1a / 255, green: 0x1b / 255, blue: 0x26 / 255)), "a solid dark strip")
+            XCTAssertEqual(book.module(.clock, in: .right).fontFamily?.last, "monospace")
+            XCTAssertEqual(book.workspace(in: .left, current: true).borderBottom, .solid(width: 2, color: Self.roles(dark)["accent"]!))
+            XCTAssertNil(book.workspace(in: .left, current: false).borderBottom, "only the current one is underlined")
+            let quiet = StyleColor(red: 0x78 / 255, green: 0x7c / 255, blue: 0x99 / 255)
+            XCTAssertEqual(book.workspace(in: .left, current: false).color, quiet)
+            XCTAssertEqual(book.module(.battery, in: .right).color, quiet, "the right side is quiet")
+            XCTAssertEqual(book.module(.battery, in: .right).color.map { $0.red == $0.green }, false, "a cool gray, as Omarchy's")
+        }
+        // No name lists them; an unknown one says which there are.
+        guard case .success(let list) = StyleOps.preset(nil, file: file, roles: Self.roles) else { return XCTFail("list") }
+        XCTAssertEqual(list.object?["presets"]?.array?.first?.object?["name"]?.string, "omarchy")
+        guard case .failure(let f) = StyleOps.preset("waybar", file: file, roles: Self.roles) else { return XCTFail("unknown preset") }
+        XCTAssertTrue(f.message.contains("`omarchy`"), f.message)
+        XCTAssertEqual(f.exit, 2)
+        // Into an empty folder: nothing to keep.
+        try FileManager.default.removeItem(atPath: file)
+        guard case .success(let fresh) = StyleOps.preset("omarchy", file: file, roles: Self.roles) else { return XCTFail("fresh") }
+        XCTAssertEqual(fresh.object?["backup"], .null)
+    }
+
+    /// The app starts the store and both surfaces redraw on its notification (review of #604).
+    func testTheAppStartsTheSheetAndTheBarAndTheDockFollowIt() throws {
+        let app = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertTrue(app.contains("StyleSheetStore.shared.start("), "AppDelegate starts the style sheet store")
+        for file in ["TopBar", "WorkspaceDock"] {
+            let code = try SourceText.code("Sources/BaneySpaces/\(file).swift")
+            XCTAssertTrue(code.contains("StyleSheetStore.didChange"), "\(file) redraws when the sheet changes")
+            XCTAssertTrue(code.contains("Styles.shared"), "\(file) draws from the sheet")
+        }
+        let top = try SourceText.code("Sources/BaneySpaces/TopBar.swift")
+        XCTAssertTrue(top.contains("barHeight("), "the bar's height comes from the sheet")
+        let dock = try SourceText.code("Sources/BaneySpaces/WorkspaceDock.swift")
+        XCTAssertTrue(SourceText.block(after: "StyleSheetStore.didChange", in: dock)?.contains("scheduleResize()") ?? false,
+                      "a sheet change that moves the dock's gap or padding re-frames the panel")
     }
 
     // MARK: The docs and the starter sheet can't drift from the table
@@ -789,6 +896,52 @@ final class StyleSheetTests: XCTestCase {
         queue.sync {}
         XCTAssertEqual(seen.all.count, 2, "unchanged and still broken: it applies what parsed")
         w.stop()
+    }
+
+    /// A file that keeps failing to read waits on one retry at a time, however many looks fail meanwhile (review of #604).
+    func testAFailingReadKeepsOneRetryWaiting() throws {
+        try "bar { color: red }".write(toFile: file, atomically: true, encoding: .utf8)
+        let queue = DispatchQueue(label: "style-retry")
+        let seen = Seen()
+        let pending = Pending()
+        let w = StyleSheetWatcher(path: file, queue: queue, log: seen.log, schedule: { _, _, _, _ in {} }, watch: { _, _, _ in {} },
+                                  load: { _ in .failed("busy") }, after: { _, _, f in pending.add(f) }, numbered: { s, _ in seen.add(s) })
+        w.start()
+        queue.sync {}
+        for n in 1...5 {
+            // Each look must see a new stamp, or it is skipped before the read.
+            try ("bar { color: red }" + String(repeating: " ", count: n)).write(toFile: file, atomically: true, encoding: .utf8)
+            w.tickNow()
+        }
+        XCTAssertEqual(pending.count, 1, "five failed looks, one retry")
+        queue.sync { pending.runAll() }
+        XCTAssertEqual(pending.count, 1, "the retry failed too and set up the next one, only one")
+        XCTAssertEqual(seen.lines.count, 1, "the same problem is logged once")
+        w.stop()
+    }
+
+    /// The first look comes back on the caller's thread while the watcher may already have delivered a newer sheet: the
+    /// older one never replaces it (review of #604).
+    func testAnOlderSheetNeverReplacesANewerOne() {
+        let store = StyleSheetStore(center: NotificationCenter())
+        let s1 = StyleSheet.parse("bar { color: red }").sheet
+        let s2 = StyleSheet.parse("bar { color: blue }").sheet
+        store.take(s2, generation: 2)
+        store.take(s1, generation: 1, post: false)
+        XCTAssertEqual(store.current, s2)
+        store.take(s1, generation: 3)
+        XCTAssertEqual(store.current, s1, "a newer one still lands")
+    }
+
+    private final class Pending: @unchecked Sendable {
+        private let lock = NSLock()
+        private var items: [() -> Void] = []
+        func add(_ f: @escaping () -> Void) { lock.lock(); items.append(f); lock.unlock() }
+        var count: Int { lock.lock(); defer { lock.unlock() }; return items.count }
+        func runAll() {
+            lock.lock(); let now = items; items = []; lock.unlock()
+            now.forEach { $0() }
+        }
     }
 
     /// The watcher as the app builds it (`StyleSheetStore.start`): each `style set` reaches the notification on the main

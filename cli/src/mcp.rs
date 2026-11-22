@@ -47,7 +47,8 @@ file of their own, not the theme: read surfaces_schema, then surfaces_get the pa
 set wrote nothing; error.data.errors gives each path and why. To undo, surfaces_set the value surfaces_get gave before.
 To restyle one part of the top bar or the dock past the theme (a gold clock, square dock tiles, a hairline bar), use \
 the style sheet: read style_example, style_set each change, then style_check. A refused style_set wrote nothing; \
-error.data.errors gives each problem with its line and column. To undo, style_unset or style_set what style_get gave.
+error.data.errors gives each problem with its line and column. To undo, style_unset or style_set what style_get gave. \
+For a whole look in one call (omarchy), style_preset.
 Every result is {ok, data} or {ok:false, error:{code, message, suggestion, data:{errors}}}.";
 
 fn obj(props: Json, required: &[&str]) -> Json {
@@ -314,7 +315,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "style_example",
-            description: "Read this before style_set. Returns a starter style.css that names every selector (bar, its regions .left .center .right and each module, dock, .tile .label .badge .icon with .current and :hover) and every property, with what each takes and where it applies, all commented out. The style sheet restyles the top bar and the dock on top of the theme with a strict subset of CSS.",
+            description: "Read this before style_set. Returns a starter style.css that names every selector (bar, its regions .left .center .right, each module and each .workspace number, dock, .tile .label .badge .icon with .current and :hover) and every property, with what each takes and where it applies, all commented out. The style sheet restyles the top bar and the dock on top of the theme with a strict subset of CSS.",
             schema: obj(json!({}), &[]),
             read_only: true,
             destructive: false,
@@ -330,11 +331,10 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "style_check",
-            description: "Check the style sheet in use, or another file, and list every problem with its line, column, severity and message in error.data.errors (warnings, such as low contrast, in data.warnings when there is no error). A sheet with errors still applies what parsed.",
-            schema: obj(
-                json!({"file": {"type":"string","description":"A CSS file to check instead of the one in use."}}),
-                &[],
-            ),
+            description: "Check the style sheet in use (style.css) and list every problem with its line, column, severity and message in error.data.errors (warnings, such as low contrast, in data.warnings when there is no error). A sheet with errors still applies what parsed.",
+            // No file argument: a path from the caller would let a prompt read any file through the problems'
+            // messages (review of #604). `polycarp-spaces style check <file>` stays for a person at a terminal.
+            schema: obj(json!({}), &[]),
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -365,6 +365,17 @@ pub(crate) fn tools() -> Vec<Tool> {
                     "media": {"type":"string","enum":["dark","light"],"description":"The mode's rules instead of the ones for both modes."}
                 }),
                 &["selector"],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
+            name: "style_preset",
+            description: "Replace style.css with a whole preset sheet in one call; the sheet that was there moves to style.css.bak. omarchy: a solid dark bar, one monospace face, numbered workspaces with an accent line under the current one, and a quiet right side. Leave name out for the list. A running Polycarp shows it within 200 ms; style_get shows the text, and the reset command (polycarp-spaces style reset) puts the theme's look back.",
+            schema: obj(
+                json!({"name": {"type":"string","enum":["omarchy"],"description":"The preset to write; leave out to list them."}}),
+                &[],
             ),
             read_only: false,
             destructive: true,
@@ -658,10 +669,11 @@ fn style_call(name: &str, a: &Args) -> theme::Envelope {
         match name {
             "style_example" => argv.push("example".into()),
             "style_get" => argv.push("show".into()),
-            "style_check" => {
-                argv.push("check".into());
-                if let Some(f) = a.text("file")? {
-                    argv.push(f.into());
+            "style_check" => argv.push("check".into()),
+            "style_preset" => {
+                argv.push("preset".into());
+                if let Some(n) = a.text("name")? {
+                    argv.push(n.into());
                 }
             }
             "style_set" => {

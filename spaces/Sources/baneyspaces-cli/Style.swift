@@ -15,6 +15,7 @@ enum StyleCommand {
       show                                   the sheet's text and its rules
       check [file]                           every problem with its line and column (default: the sheet in use)
       example                                a starter sheet naming every selector and property, all commented out
+      preset [name]                          write a whole sheet (omarchy), the old one moved to style.css.bak
       set '<selector>' <property> <value>    change or add one declaration; refused if it would add an error
       unset '<selector>' [property]          remove one declaration, or the whole rule
       reset                                  move the sheet to style.css.bak
@@ -71,6 +72,19 @@ enum StyleCommand {
         case "example":
             guard rest.isEmpty else { usageFail("example [--json]") }
             finish(StyleOps.example(), json: json) { d in d["text"]?.string ?? "" }
+        case "preset":
+            guard rest.count <= 1 else { usageFail("preset [name] [--json]") }
+            finish(StyleOps.preset(rest.first, file: file, roles: roles), json: json) { d in
+                if let list = d["presets"]?.array {
+                    return (list.compactMap { p in p.object.map { "\($0["name"]?.string ?? "")  \($0["about"]?.string ?? "")" } }
+                        + ["polycarp-spaces style preset <name> writes one"]).joined(separator: "\n")
+                }
+                var out = ["wrote the \(d["preset"]?.string ?? "") preset to \(d["file"]?.string ?? StyleSheetFile.name)"]
+                if let b = d["backup"]?.string { out.append("the sheet that was there is in \(b)") }
+                out += lines(d["warnings"], StyleSheetFile.name)
+                out.append("`polycarp-spaces style reset` puts the theme's own look back")
+                return out.joined(separator: "\n")
+            }
         case "set":
             guard rest.count >= 3 else { usageFail("set '<selector>' <property> <value> [--media dark|light] [--json]") }
             let value = rest[2...].joined(separator: " ")
@@ -100,7 +114,7 @@ enum StyleCommand {
         case "help", "-h", "--help":
             print(usage); exit(0)
         default:
-            usageFail("path|show|check|example|set|unset|reset (polycarp-spaces style help)")
+            usageFail("path|show|check|example|preset|set|unset|reset (polycarp-spaces style help)")
         }
     }
 

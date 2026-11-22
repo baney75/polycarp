@@ -308,26 +308,34 @@ struct TileNumber: View {
     let tint: Color
     let current: Bool
     let hovered: Bool
+    /// style.css `dock .label` (docs/style.md); empty draws the theme's number as before.
+    var style = ComputedStyle.empty
 
     var body: some View {
+        indicator
+            .modifier(StyledText(style: style))
+            .modifier(StyledBox(style: style))
+    }
+
+    @ViewBuilder private var indicator: some View {
         switch Chrome.spec.indicator {
         case .dot:
             Text("\(n)")
-                .font(Chrome.font(10.5, .bold, rounded: true))
-                .foregroundStyle(current ? Chrome.light() : hovered ? Chrome.wash() : Chrome.muted)
+                .font(Styled.font(style, .ui, 10.5, .bold, rounded: true))
+                .foregroundStyle(style.ink(current ? Chrome.light() : hovered ? Chrome.wash() : Chrome.muted))
                 .frame(minWidth: 18, minHeight: 15)
                 .background(Chrome.pill().fill(current ? tint : Color.clear))
         case .numberBlock:
             Text("\(n)")
-                .font(Chrome.font(10.5, .bold))
-                .foregroundStyle(current ? Chrome.panel() : tint)
+                .font(Styled.font(style, .ui, 10.5, .bold))
+                .foregroundStyle(style.ink(current ? Chrome.panel() : tint))
                 .frame(minWidth: 18, minHeight: 15)
                 .background(Rectangle().fill(current ? tint : Color.clear))
                 .overlay(Rectangle().strokeBorder(hovered || current ? Chrome.focusEdge(tint) : Chrome.edge(1),
                                                   lineWidth: Chrome.width(.dockTile, focused: current)))
         case .bar:
             VStack(spacing: 1) {
-                Text("\(n)").font(Chrome.font(10.5, .bold)).foregroundStyle(current ? Chrome.wash() : tint.opacity(hovered ? 1 : 0.85))
+                Text("\(n)").font(Styled.font(style, .ui, 10.5, .bold)).foregroundStyle(style.ink(current ? Chrome.wash() : tint.opacity(hovered ? 1 : 0.85)))
                 Rectangle().fill(current ? tint : Color.clear).frame(width: 14, height: Chrome.width(.dockTile, focused: true))
             }
             .frame(minWidth: 18, minHeight: 15)

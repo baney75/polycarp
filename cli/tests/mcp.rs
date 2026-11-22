@@ -132,7 +132,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 28] = [
+const TOOLS: [&str; 29] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -161,6 +161,7 @@ const TOOLS: [&str; 28] = [
     "style_check",
     "style_set",
     "style_unset",
+    "style_preset",
 ];
 
 #[test]
@@ -1111,11 +1112,10 @@ fn style_tools_run_the_spaces_style_command_and_pass_its_envelope_on_as_is() {
     );
     s.tool("style_check", json!({}));
     assert_eq!(stub_args(&sb), ["style", "check", "--json"]);
-    s.tool("style_check", json!({"file": "/tmp/draft.css"}));
-    assert_eq!(
-        stub_args(&sb),
-        ["style", "check", "/tmp/draft.css", "--json"]
-    );
+    s.tool("style_preset", json!({"name": "omarchy"}));
+    assert_eq!(stub_args(&sb), ["style", "preset", "omarchy", "--json"]);
+    s.tool("style_preset", json!({}));
+    assert_eq!(stub_args(&sb), ["style", "preset", "--json"]);
     s.tool("style_get", json!({}));
     assert_eq!(stub_args(&sb), ["style", "show", "--json"]);
     s.tool("style_example", json!({}));
@@ -1134,6 +1134,43 @@ fn style_tools_run_the_spaces_style_command_and_pass_its_envelope_on_as_is() {
     );
     assert_eq!(r["isError"], true);
     assert_eq!(r["structuredContent"], refused);
+    assert_eq!(s.finish(), 0);
+}
+
+/// style_check takes no file: a path from the caller would let a prompt read any file through the problems' messages
+/// (review of #604). The schema has no `file`, and a call that passes one is refused before anything runs.
+#[cfg(unix)]
+#[test]
+fn style_check_reads_only_the_sheet_in_use() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    let list = s.request("tools/list", json!({}));
+    let tools = list["result"]["tools"].as_array().unwrap();
+    let check = tools.iter().find(|t| t["name"] == "style_check").unwrap();
+    assert_eq!(
+        check["inputSchema"]["properties"],
+        json!({}),
+        "style_check takes no arguments"
+    );
+    for args in [
+        json!({"file": "/etc/passwd"}),
+        json!({"path": "~/.ssh/id_ed25519"}),
+    ] {
+        let r = s.tool("style_check", args.clone());
+        assert_eq!(r["isError"], true, "{args}");
+        assert_eq!(
+            r["structuredContent"]["error"]["code"], "invalid_args",
+            "{args}"
+        );
+    }
+    assert!(
+        !sb.root.join("spaces/args").exists(),
+        "the command never ran"
+    );
+    s.tool("style_check", json!({}));
+    assert_eq!(stub_args(&sb), ["style", "check", "--json"]);
     assert_eq!(s.finish(), 0);
 }
 
@@ -1157,6 +1194,7 @@ fn style_tools_check_their_arguments_and_say_when_the_command_is_missing() {
         ),
         ("style_unset", json!({})),
         ("style_check", json!({"file": ["x"]})),
+        ("style_preset", json!({"name": 3})),
         ("style_example", json!({"selector": "bar"})),
     ] {
         let r = s.tool(tool, args.clone());

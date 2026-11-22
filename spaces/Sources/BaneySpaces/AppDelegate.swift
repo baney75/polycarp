@@ -481,6 +481,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // surfaces.json (`polycarp-spaces surfaces set ...`, docs/surfaces.md): every surface reads
         // `SurfacesStore.shared.current` and listens for `SurfacesStore.didChange`. Same watch as the theme's, off main.
         SurfacesStore.shared.start(log: { Trace.log($0) })
+        // style.css (`polycarp-spaces style set ...`, docs/style.md): the bar and the dock draw from `Styles.shared`, which
+        // follows `StyleSheetStore.didChange`. Waits up to 0.1 s for the first read, so the first panels draw with it.
+        StyleSheetStore.shared.start(log: { Trace.log($0) })
+        Styles.shared.sync()
         // Settings › Appearance › "Theme sets the desktop picture" (off by default): looks once now, then on each change.
         ThemeWallpaperApplier.shared.start()
         // `idle.enabled` (off by default): looks every 15 s for the minutes without input it waits for.

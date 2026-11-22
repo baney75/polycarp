@@ -99,8 +99,12 @@ indirect enum StylePiece: Equatable {
 }
 
 struct StyleValueError: Error, Equatable {
+    /// Why a value failed, for the sheet's builder: only an undefined `var()` can come out differently once the real
+    /// theme stands in for the placeholder roles.
+    enum Kind: Equatable { case value, undefined, limit }
     let message: String
-    init(_ m: String) { message = m }
+    let kind: Kind
+    init(_ m: String, kind: Kind = .value) { message = m; self.kind = kind }
 }
 
 // MARK: var()
@@ -112,69 +116,113 @@ enum StyleVars {
 
     /// `tokens` with every `var()` replaced: by a custom property for this mode, else a role, else its fallback.
     static func substitute(_ tokens: [StyleToken], custom: [String: [StyleToken]], roles: [String: StyleColor]) -> Result<[StyleToken], StyleValueError> {
-        var budget = maxTokens
-        return substitute(tokens, custom: custom, roles: roles, chain: [], depth: 0, budget: &budget)
+        Expander(custom: custom, roles: roles).substitute(tokens)
     }
 
     static func needsSubstitution(_ tokens: [StyleToken]) -> Bool { tokens.contains { $0.kind == .function("var") } }
 
-    private static func substitute(_ tokens: [StyleToken], custom: [String: [StyleToken]], roles: [String: StyleColor], chain: [String],
-                                   depth: Int, budget: inout Int) -> Result<[StyleToken], StyleValueError> {
-        guard depth <= maxDepth else { return .failure(.init("`var()` is nested more than \(maxDepth) deep")) }
-        var out: [StyleToken] = []
-        var k = 0
-        while k < tokens.count {
-            let t = tokens[k]
-            guard t.kind == .function("var") else {
-                out.append(t); k += 1
-                budget -= 1
-                if budget < 0 { return .failure(.init("`var()` makes this value longer than \(maxTokens) tokens")) }
-                continue
-            }
-            // The arguments, up to the matching `)` (the value's end closes it, as in CSS).
-            var e = k + 1, d = 1
-            while e < tokens.count {
-                if tokens[e].opens { d += 1 } else if tokens[e].closes { d -= 1; if d == 0 { break } }
-                e += 1
-            }
-            let args = Array(tokens[(k + 1)..<min(e, tokens.count)])
-            var a = 0
-            while a < args.count, args[a].isSpace { a += 1 }
-            guard a < args.count, case .ident(let name) = args[a].kind, name.hasPrefix("--") else {
-                return .failure(.init("`var()` takes a custom property name, like `var(--accent)` or `var(--gold, #d4af37)`"))
-            }
-            a += 1
-            while a < args.count, args[a].isSpace { a += 1 }
-            var fallback: [StyleToken]?
-            if a < args.count {
-                guard args[a].kind == .comma else { return .failure(.init("`var(\(name)` must be followed by `)` or `, fallback)`")) }
-                fallback = Array(args[(a + 1)...]).trimmed
-            }
-            let replaced: [StyleToken]
-            if chain.contains(name) {
-                return .failure(.init("`var(\(name))` refers back to itself: \((chain + [name]).joined(separator: " -> "))"))
-            } else if let body = custom[name] {
-                switch substitute(body, custom: custom, roles: roles, chain: chain + [name], depth: depth + 1, budget: &budget) {
-                case .failure(let f): return .failure(f)
-                case .success(let r): replaced = r
-                }
-            } else if let c = roles[String(name.dropFirst(2))] {
-                replaced = [StyleToken(kind: .color(c), text: "var(\(name))", start: t.start, end: t.end, line: t.line, column: t.column)]
-            } else if let fb = fallback {
-                switch substitute(fb, custom: custom, roles: roles, chain: chain, depth: depth + 1, budget: &budget) {
-                case .failure(let f): return .failure(f)
-                case .success(let r): replaced = r
-                }
-            } else {
-                return .failure(.init("`var(\(name))` is not defined and has no fallback; define it in `:root`, or use a theme role: "
-                                      + StyleProperty.roles.map { "--" + $0 }.joined(separator: " ")))
-            }
-            out += replaced
-            budget -= replaced.count
-            if budget < 0 { return .failure(.init("`var()` makes this value longer than \(maxTokens) tokens")) }
-            k = e + 1
+    /// `var()` substitution for one mode and one set of roles. Each custom property is expanded once and kept, so a chain
+    /// that many rules use costs its length once (review of #604: a doubling chain used in 2500 rules ran `style check`
+    /// past the MCP tool's 10 s). A value that would grow past `maxTokens` or nest past `maxDepth` is refused, never built.
+    final class Expander {
+        private let custom: [String: [StyleToken]]
+        private let roles: [String: StyleColor]
+        /// Each custom property's expansion and how many levels its own `var()`s go below the one that names it. A failure
+        /// is kept too, except one for depth, which depends on how deep the property is used.
+        private var memo: [String: Result<(tokens: [StyleToken], height: Int), StyleValueError>] = [:]
+        /// The custom properties being expanded, outermost first: a name already here is a cycle.
+        private var open: [String] = []
+
+        init(custom: [String: [StyleToken]], roles: [String: StyleColor]) { self.custom = custom; self.roles = roles }
+
+        /// `tokens` with every `var()` replaced. `name` is the custom property they are the value of, so a reference
+        /// back to it is a cycle.
+        func substitute(_ tokens: [StyleToken], as name: String? = nil) -> Result<[StyleToken], StyleValueError> {
+            if let name { open.append(name) }
+            defer { if name != nil { open.removeLast() } }
+            return expand(tokens, depth: 0).map(\.tokens)
         }
-        return .success(out)
+
+        private static func tooLong() -> StyleValueError { .init("`var()` makes this value longer than \(maxTokens) tokens", kind: .limit) }
+        private static func tooDeep() -> StyleValueError { .init("`var()` is nested more than \(maxDepth) deep", kind: .limit) }
+
+        /// `reach` is the deepest level any part of the value was expanded at.
+        private func expand(_ tokens: [StyleToken], depth: Int) -> Result<(tokens: [StyleToken], reach: Int), StyleValueError> {
+            guard depth <= maxDepth else { return .failure(Self.tooDeep()) }
+            var out: [StyleToken] = []
+            var reach = depth
+            var k = 0
+            while k < tokens.count {
+                let t = tokens[k]
+                guard t.kind == .function("var") else {
+                    out.append(t); k += 1
+                    if out.count > maxTokens { return .failure(Self.tooLong()) }
+                    continue
+                }
+                // The arguments, up to the matching `)` (the value's end closes it, as in CSS).
+                var e = k + 1, d = 1
+                while e < tokens.count {
+                    if tokens[e].opens { d += 1 } else if tokens[e].closes { d -= 1; if d == 0 { break } }
+                    e += 1
+                }
+                let args = Array(tokens[(k + 1)..<min(e, tokens.count)])
+                var a = 0
+                while a < args.count, args[a].isSpace { a += 1 }
+                guard a < args.count, case .ident(let name) = args[a].kind, name.hasPrefix("--") else {
+                    return .failure(.init("`var()` takes a custom property name, like `var(--accent)` or `var(--gold, #d4af37)`", kind: .limit))
+                }
+                a += 1
+                while a < args.count, args[a].isSpace { a += 1 }
+                var fallback: [StyleToken]?
+                if a < args.count {
+                    guard args[a].kind == .comma else { return .failure(.init("`var(\(name)` must be followed by `)` or `, fallback)`", kind: .limit)) }
+                    fallback = Array(args[(a + 1)...]).trimmed
+                }
+                let replaced: [StyleToken]
+                if let i = open.firstIndex(of: name) {
+                    return .failure(.init("`var(\(name))` refers back to itself: \((open[i...] + [name]).joined(separator: " -> "))", kind: .limit))
+                } else if custom[name] != nil {
+                    switch property(name, depth: depth) {
+                    case .failure(let f): return .failure(f)
+                    case .success(let r): replaced = r.tokens; reach = max(reach, depth + r.height)
+                    }
+                } else if let c = roles[String(name.dropFirst(2))] {
+                    replaced = [StyleToken(kind: .color(c), text: "var(\(name))", start: t.start, end: t.end, line: t.line, column: t.column)]
+                } else if let fb = fallback {
+                    switch expand(fb, depth: depth + 1) {
+                    case .failure(let f): return .failure(f)
+                    case .success(let r): replaced = r.tokens; reach = max(reach, r.reach)
+                    }
+                } else {
+                    return .failure(.init("`var(\(name))` is not defined and has no fallback; define it in `:root`, or use a theme role: "
+                                          + StyleProperty.roles.map { "--" + $0 }.joined(separator: " "), kind: .undefined))
+                }
+                out += replaced
+                if out.count > maxTokens { return .failure(Self.tooLong()) }
+                k = e + 1
+            }
+            return .success((out, reach))
+        }
+
+        /// A custom property's expansion, used `depth` levels down: worked out the first time, then kept.
+        private func property(_ name: String, depth: Int) -> Result<(tokens: [StyleToken], height: Int), StyleValueError> {
+            if let known = memo[name] {
+                if case .success(let r) = known, depth + r.height > maxDepth { return .failure(Self.tooDeep()) }
+                return known
+            }
+            open.append(name)
+            let r = expand(custom[name]!, depth: depth + 1)
+            open.removeLast()
+            switch r {
+            case .success(let e):
+                let kept = Result<(tokens: [StyleToken], height: Int), StyleValueError>.success((e.tokens, e.reach - depth))
+                memo[name] = kept
+                return kept
+            case .failure(let f):
+                if f != Self.tooDeep() { memo[name] = .failure(f) }
+                return .failure(f)
+            }
+        }
     }
 }
 
@@ -482,7 +530,8 @@ enum StyleSheetBuilder {
             problems.append(StyleProblem(line: line, column: column, severity: severity, message: m))
         }
         var rules: [StyleRule] = []
-        var deferred: [(StyleDeclaration, StyleProperty, StyleMedia?)] = []
+        // Each `var()` declaration with the rule and place it was kept at, to drop it after the check if it can't work.
+        var deferred: [(decl: StyleDeclaration, property: StyleProperty, media: StyleMedia?, rule: Int, index: Int)] = []
         var customDecls: [(StyleRawDeclaration, StyleMedia?)] = []
         for raw in syntax.rules {
             guard let selectors = raw.selectors else { continue }
@@ -513,7 +562,7 @@ enum StyleSheetBuilder {
                 }
                 if StyleVars.needsSubstitution(d.value) {
                     let decl = StyleDeclaration(property: name, value: nil, tokens: d.value, line: d.valueLine, column: d.valueColumn)
-                    deferred.append((decl, property, raw.media))
+                    deferred.append((decl, property, raw.media, rules.count, kept.count))
                     kept.append(decl)
                     continue
                 }
@@ -529,27 +578,53 @@ enum StyleSheetBuilder {
             if media != .dark { light[d.name] = d.value }
             if media != .light { dark[d.name] = d.value }
         }
-        // `var()`: checked in each mode the declaration can apply in, with the roles standing in for any theme.
-        func check(_ tokens: [StyleToken], _ media: StyleMedia?, _ line: Int, _ column: Int, parse: (([StyleToken]) -> StyleValues.Parsed)?) {
+        // `var()`: checked in each mode the declaration can apply in, with the roles standing in for any theme. One expander
+        // per mode, so each custom property is expanded once however many rules use it, and a value written the same way
+        // twice is checked once.
+        let expanders: [StyleMedia: StyleVars.Expander] = [.light: .init(custom: light, roles: placeholderRoles),
+                                                            .dark: .init(custom: dark, roles: placeholderRoles)]
+        var checked: [String: StyleValueError?] = [:]
+        /// The failures by mode; nil where the value works.
+        func check(_ tokens: [StyleToken], _ media: StyleMedia?, _ line: Int, _ column: Int, name: String?, property: StyleProperty?) -> [StyleValueError?] {
             var seen: [String: [String]] = [:]
+            var results: [StyleValueError?] = []
             for mode in [StyleMedia.light, .dark] where media == nil || media == mode {
-                let r = StyleVars.substitute(tokens, custom: mode == .dark ? dark : light, roles: placeholderRoles)
-                let message: String?
-                switch r {
-                case .failure(let e): message = e.message
-                case .success(let t): if case .failure(let e)? = parse?(t) { message = e.message } else { message = nil }
+                // A custom property's own value is checked as that property, so a reference back to it is a cycle; one a
+                // later definition overrides is never used, so nothing can come back to it.
+                let own = name.flatMap { (mode == .dark ? dark : light)[$0] == tokens ? $0 : nil }
+                let key = "\(mode.rawValue)\u{0}\(own ?? "")\u{0}\(property?.name ?? "")\u{0}" + tokens.map(\.text).joined()
+                let failure: StyleValueError?
+                if let known = checked[key] { failure = known } else {
+                    switch expanders[mode]!.substitute(tokens, as: own) {
+                    case .failure(let e): failure = e
+                    case .success(let t): if let property, case .failure(let e) = StyleValues.parse(property, t) { failure = e } else { failure = nil }
+                    }
+                    checked[key] = failure
                 }
-                if let message { seen[message, default: []].append(mode.rawValue) }
+                if let failure { seen[failure.message, default: []].append(mode.rawValue) }
+                results.append(failure)
             }
             for (m, modes) in seen.sorted(by: { $0.key < $1.key }) {
                 add(line, column, m + (media == nil && modes.count == 1 ? " (in \(modes[0]) mode)" : ""))
             }
+            return results
         }
         for (d, media) in customDecls {
-            check(d.value, media, d.line, d.column, parse: nil)
+            _ = check(d.value, media, d.line, d.column, name: d.name, property: nil)
         }
-        for (d, property, media) in deferred {
-            check(d.tokens, media, d.line, d.column) { StyleValues.parse(property, $0) }
+        // A declaration that fails in every mode it can apply in, for a reason no theme can change (a cycle, a value too
+        // long or too deep, the wrong type), is dropped, so `computed` never works it out again. One whose `var()` is
+        // undefined stays: a theme role could still define it.
+        var dropped = Set<[Int]>()
+        for x in deferred {
+            let results = check(x.decl.tokens, x.media, x.decl.line, x.decl.column, name: nil, property: x.property)
+            if results.allSatisfy({ $0 != nil && $0!.kind != .undefined }) { dropped.insert([x.rule, x.index]) }
+        }
+        if !dropped.isEmpty {
+            rules = rules.enumerated().map { r, rule in
+                StyleRule(selectors: rule.selectors, media: rule.media,
+                          declarations: rule.declarations.enumerated().filter { !dropped.contains([r, $0.offset]) }.map(\.element))
+            }
         }
         problems.sort { ($0.line, $0.column) < ($1.line, $1.column) }
         return (StyleSheet(rules: rules, customLight: light, customDark: dark), problems)
@@ -577,7 +652,53 @@ enum StyleSheetBuilder {
 
 // MARK: The cascade
 
-extension StyleSheet {
+/// The sheet in one mode with one set of roles: every `var()` declaration resolved once when it is made, and each style
+/// `computed` is asked for worked out once and kept. A view makes one when the sheet or the theme changes and reads it
+/// as often as it draws, so no switch or hover pays for the cascade (review of #604). Not locked: use it from one thread.
+public final class StyleLookup {
+    public let sheet: StyleSheet
+    public let dark: Bool
+    public let roles: [String: StyleColor]
+    /// The typed value of each `var()` declaration that works in this mode, by where its value was written.
+    private var resolved: [Place: StyleValue] = [:]
+    private var memo: [Key: ComputedStyle] = [:]
+
+    struct Place: Hashable { let line: Int, column: Int }
+    private struct Key: Hashable {
+        let surface: StyleSurface
+        let part: String?
+        let region: String?
+        let states: Set<StyleState>
+    }
+
+    public init(_ sheet: StyleSheet, dark: Bool, roles: [String: StyleColor]) {
+        self.sheet = sheet; self.dark = dark; self.roles = roles
+        let expander = StyleVars.Expander(custom: dark ? sheet.customDark : sheet.customLight, roles: roles)
+        // The same value written in many rules is worked out once.
+        var byText: [String: StyleValue?] = [:]
+        for rule in sheet.rules where rule.media?.matches(dark: dark) ?? true {
+            for d in rule.declarations where d.value == nil {
+                guard let property = StyleProperty.byName[d.property] else { continue }
+                let key = d.property + "\u{0}" + d.tokens.map(\.text).joined()
+                let v: StyleValue?
+                if let known = byText[key] { v = known } else {
+                    if case .success(let t) = expander.substitute(d.tokens), case .success(let parsed) = StyleValues.parse(property, t) { v = parsed } else { v = nil }
+                    byText[key] = v
+                }
+                if let v { resolved[Place(line: d.line, column: d.column)] = v }
+            }
+        }
+    }
+
+    /// `StyleSheet.computed`, kept once worked out.
+    public func computed(surface: StyleSurface, part: String? = nil, region: String? = nil, states: Set<StyleState> = []) -> ComputedStyle {
+        let key = Key(surface: surface, part: part, region: region, states: states)
+        if let known = memo[key] { return known }
+        let c = sheet.rules.isEmpty ? .empty : (cascade(surface: surface, part: part, region: region, states: states)?.last?.computed ?? .empty)
+        memo[key] = c
+        return c
+    }
+
     /// One step down from the surface to the part: what it matches and what it ends up with.
     struct Level {
         let target: StyleTarget
@@ -589,8 +710,7 @@ extension StyleSheet {
         var computed = ComputedStyle()
     }
 
-    func cascade(surface: StyleSurface, part: String?, region: String?, states: Set<StyleState>, dark: Bool,
-                 roles: [String: StyleColor]) -> [Level]? {
+    func cascade(surface: StyleSurface, part: String?, region: String?, states: Set<StyleState>) -> [Level]? {
         guard let target = StyleTarget.of(surface, part: part) else { return nil }
         var chain: [(StyleTarget, StyleSelector)] = []
         switch target {
@@ -599,19 +719,22 @@ extension StyleSheet {
         case .barModule:
             chain.append((.bar, StyleSelector(surface: .bar)))
             if let region, StyleTarget.barRegion.parts.contains(region) { chain.append((.barRegion, StyleSelector(surface: .bar, part: region))) }
+        case .barWorkspace:
+            chain.append((.bar, StyleSelector(surface: .bar)))
+            if let region, StyleTarget.barRegion.parts.contains(region) { chain.append((.barRegion, StyleSelector(surface: .bar, part: region))) }
+            chain.append((.barModule, StyleSelector(surface: .bar, part: "workspaces", states: states.intersection(StyleTarget.barModule.states))))
         case .dockLabel, .dockBadge, .dockIcon:
             chain.append((.dock, StyleSelector(surface: .dock)))
             chain.append((.dockTile, StyleSelector(surface: .dock, part: "tile", states: states.intersection(StyleTarget.dockTile.states))))
         }
         chain.append((target, StyleSelector(surface: surface, part: part, states: states.intersection(target.states))))
-        let custom = dark ? customDark : customLight
         var levels: [Level] = []
         for (t, sel) in chain {
             var level = Level(target: t, selector: sel)
             // Matching declarations, by specificity then order: the later one wins a tie.
             var hits: [(spec: Int, order: Int, decl: StyleDeclaration)] = []
             var order = 0
-            for rule in rules {
+            for rule in sheet.rules {
                 guard rule.media?.matches(dark: dark) ?? true else { order += rule.declarations.count; continue }
                 let spec = rule.selectors.filter { $0.surface == sel.surface && $0.part == sel.part && $0.states.isSubset(of: sel.states) }
                     .map(\.specificity).max()
@@ -624,10 +747,7 @@ extension StyleSheet {
             var specified: [String: (StyleValue, Int, Int)] = [:]
             for h in hits {
                 guard let property = StyleProperty.byName[h.decl.property], property.applies(to: t) else { continue }
-                if let v = h.decl.value {
-                    specified[property.name] = (v, h.decl.line, h.decl.column)
-                } else if case .success(let toks) = StyleVars.substitute(h.decl.tokens, custom: custom, roles: roles),
-                          case .success(let v) = StyleValues.parse(property, toks) {
+                if let v = h.decl.value ?? resolved[Place(line: h.decl.line, column: h.decl.column)] {
                     specified[property.name] = (v, h.decl.line, h.decl.column)
                 }
             }
@@ -652,13 +772,15 @@ extension StyleSheet {
                 }
             }
             let own: StyleColor? = { if case .color(.rgba(let c))? = level.values["color"] { c } else { nil } }()
-            level.computed = Self.finish(level.values, target: t, current: own ?? roles["foreground"])
+            level.computed = StyleSheet.finish(level.values, target: t, current: own ?? roles["foreground"])
             levels.append(level)
         }
         return levels
     }
+}
 
-    private static func finish(_ v: [String: StyleValue], target: StyleTarget, current: StyleColor?) -> ComputedStyle {
+extension StyleSheet {
+    static func finish(_ v: [String: StyleValue], target: StyleTarget, current: StyleColor?) -> ComputedStyle {
         func color(_ r: StyleColorRef) -> StyleColor? {
             switch r {
             case .rgba(let c): c
@@ -725,12 +847,16 @@ extension StyleSheet {
             }
         }
         let stateSets: [Set<StyleState>] = [[], [.current], [.hover], [.current, .hover]]
+        for region in [nil] + StyleTarget.barRegion.parts.map(Optional.some) {
+            for st in stateSets { nodes.append((.bar, "workspace", region, st)) }
+        }
         for p in ["tile", "label", "badge"] { for st in stateSets { nodes.append((.dock, p, nil, st)) } }
         for dark in [false, true] {
             let r = roles(dark)
             guard let base = r["background"] else { continue }
+            let lookup = StyleLookup(self, dark: dark, roles: r)
             for (surface, part, region, states) in nodes {
-                guard let levels = cascade(surface: surface, part: part, region: region, states: states, dark: dark, roles: r),
+                guard let levels = lookup.cascade(surface: surface, part: part, region: region, states: states),
                       let last = levels.last,
                       levels.contains(where: { $0.own["color"] != nil || $0.own["background"] != nil }) else { continue }
                 var behind = [base]

@@ -10,9 +10,9 @@ One theme file drives every Polycarp product. Change it with the `polycarp theme
 
 What a surface shows (the top bar's modules, the desktop scene and verse, dock tiles, the status menu, the new tab
 page, the idle screen) is not the theme: it is `polycarp-spaces surfaces` (MCP `surfaces_*`, spaces/docs/surfaces.md).
-To restyle one part of the top bar or the dock past the theme (a gold clock, square dock tiles), use the style sheet,
-`<config>/style.css`: run `polycarp-spaces style example`, then `polycarp-spaces style set '<selector>' <property>
-<value>` for each change, then `polycarp-spaces style check` (MCP `style_example`, `style_set`, `style_check`; spaces/docs/style.md).
+To restyle one part of the bar or dock past the theme (a gold clock, square tiles), use `<config>/style.css`: run
+`polycarp-spaces style example`, `style set '<selector>' <property> <value>` per change, then `style check`; `style preset
+omarchy` is the Omarchy look in one command, `style reset` undoes it (MCP `style_*`; spaces/docs/style.md).
 
 ## Steps
 

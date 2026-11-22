@@ -109,7 +109,11 @@ final class WorkspaceDock {
 
     private let spaces: Spaces
     private var appearanceObserver: NSObjectProtocol?
-    deinit { appearanceObserver.map(NotificationCenter.default.removeObserver) }
+    private var styleObserver: NSObjectProtocol?
+    deinit {
+        appearanceObserver.map(NotificationCenter.default.removeObserver)
+        styleObserver.map(NotificationCenter.default.removeObserver)
+    }
     var onShowOverview: () -> Void = {}
     var onShowLauncher: () -> Void = {}
     var onTurnOff: () -> Void = {}
@@ -189,6 +193,12 @@ final class WorkspaceDock {
         // taken from its frame) follows.
         appearanceObserver = NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] note in
             if note.userInfo?[Appearance.dockSizeChangedKey] as? Bool == true { self?.scheduleResize() }
+        }
+        // style.css (docs/style.md): the views redraw from `Styles`; a new gap, padding or border can change the dock's
+        // size, so the panel re-frames after the layout pass, as for a new dock size.
+        styleObserver = NotificationCenter.default.addObserver(forName: StyleSheetStore.didChange, object: nil, queue: .main) { [weak self] _ in
+            Styles.shared.sync()
+            self?.scheduleResize()
         }
         // What each tile says (`dock.tileLabel`), the purposes it shows, and whether the "At rest" tile shows.
         readSurfaces()
@@ -1675,10 +1685,13 @@ private struct SettleIcon: View {
 }
 
 /// The mark on a tile whose workspace has a window waiting on you: a small dot in the theme's
-/// accent, still at all times (no pulse, so Reduce Motion changes nothing).
+/// accent, still at all times (no pulse, so Reduce Motion changes nothing). The sheet's `dock .badge`
+/// background (or color) fills it.
 private struct AttentionDot: View {
+    var style = ComputedStyle.empty
     var body: some View {
-        Circle().fill(Chrome.accent).frame(width: 6, height: 6)
+        Circle().fill(Styled.fill(style.background) ?? AnyShapeStyle(style.ink(Chrome.accent))).frame(width: 6, height: 6)
+            .opacity(style.opacity ?? 1)
             .accessibilityHidden(true)
     }
 }
@@ -1735,12 +1748,20 @@ struct DockView: View {
     var mode: Mode = .bar
     /// Redraws when Settings › Appearance changes.
     @ObservedObject private var appearance = Appearance.shared
+    /// style.css: what the sheet says for the dock, its tiles, labels, badges and icons (docs/style.md).
+    @ObservedObject private var styles = Styles.shared
     /// Settings › Appearance › Dock size: every tile, icon and button below scales by this.
     private var k: CGFloat { CGFloat(appearance.settings.dockSize.scale) * Chrome.tileScale }
     private var tileSize: CGFloat { Chrome.tileBase * k }
-    /// The theme's gap between tiles and padding around them (`themes.json` space).
-    private var gap: CGFloat { CGFloat(Chrome.style(.dockBar).gap) }
+    /// The theme's gap between tiles and padding around them (`themes.json` space), or the sheet's `dock { gap; padding }`.
+    private var gap: CGFloat { CGFloat(styles.book.dock.gap ?? Double(Chrome.style(.dockBar).gap)) }
     private var pad: CGFloat { CGFloat(Chrome.style(.dockBar).padding) }
+    /// Around the tiles: the theme's padding, a little less under a bottom dock's tiles, or the sheet's.
+    private var barInsets: EdgeInsets {
+        if let p = styles.book.dock.padding { return Styled.insets(p) }
+        let vertical = model.edge.isVertical
+        return EdgeInsets(top: pad, leading: pad, bottom: vertical ? pad : max(0, pad - 6), trailing: pad)
+    }
     /// Where each tile, app icon and button sits in the dock, so the strip and label line up with it.
     @State private var frames: [String: CGRect] = [:]
     @State private var sideSize: CGSize = .zero
@@ -1841,10 +1862,9 @@ struct DockView: View {
                 .padding(vertical ? .vertical : .horizontal, 4).padding(.bottom, vertical ? 0 : 14)
             utilityButtons
         }
-        .padding(.horizontal, pad)
-        .padding(.top, pad)
-        .padding(.bottom, vertical ? pad : max(0, pad - 6))
-        .background(Chrome.panelBackground(.dockBar))
+        .padding(barInsets)
+        .background(StyledPanel(surface: .dockBar, style: styles.book.dock))
+        .opacity(styles.book.dock.opacity ?? 1)
         .modifier(SizeReport(size: $barSize))
     }
 
@@ -2098,21 +2118,25 @@ struct DockView: View {
 
     /// Under the tile: its purpose in serif italic after its number kept small (the word you gave it, so the dock reads
     /// as what each place is for, and the key that gets there), its number lit for the workspace you're on, or nothing.
+    /// The sheet's `dock .label` styles both kinds, and `display: none` leaves the empty caption's room.
     @ViewBuilder private func tileCaption(_ caption: DockLabel.Caption, tile: DockModel.Tile, tint: Color, hovered: Bool) -> some View {
-        switch caption {
+        let ls = styles.book.label(current: tile.isCurrent, hover: hovered)
+        switch ls.isHidden ? DockLabel.Caption.none : caption {
         case .number:
-            TileNumber(n: tile.id, tint: tint, current: tile.isCurrent, hovered: hovered)
+            TileNumber(n: tile.id, tint: tint, current: tile.isCurrent, hovered: hovered, style: ls)
         case .purpose(let text):
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text("\(tile.id)")
-                    .font(Chrome.font(8.5, .bold, rounded: true))
-                    .foregroundStyle(tile.isCurrent ? tint : Chrome.muted)
-                Text(text)
-                    .font(Chrome.voice(11, tile.isCurrent ? .medium : .regular))
-                    .foregroundStyle(tile.isCurrent ? Chrome.wash() : hovered ? Chrome.wash(0.85) : Chrome.muted)
+                    .font(Styled.font(ls, .ui, 8.5, .bold, rounded: true))
+                    .foregroundStyle(ls.ink(tile.isCurrent ? tint : Chrome.muted))
+                Text(ls.cased(text))
+                    .font(Styled.font(ls, .voice, 11, tile.isCurrent ? .medium : .regular))
+                    .foregroundStyle(ls.ink(tile.isCurrent ? Chrome.wash() : hovered ? Chrome.wash(0.85) : Chrome.muted))
                     .lineLimit(1).truncationMode(.tail)
             }
-            .frame(maxWidth: tileSize + gap, minHeight: 15, maxHeight: 15)
+            .modifier(StyledText(style: ls))
+            .modifier(StyledBox(style: ls))
+            .frame(maxWidth: tileSize + gap, minHeight: 15, maxHeight: ls.padding == nil ? 15 : nil)
         case .none:
             Color.clear.frame(width: 18, height: 15)
         }
@@ -2124,16 +2148,26 @@ struct DockView: View {
         let target = model.dropTarget == tile.id
         let hovered = isHovered(tile) || target
         let tint = Chrome.workspace(tile.id)
-        let shape = Chrome.shape(.dockTile)
+        // style.css `dock .tile`: its background, border, corners and shadow over the theme's, faded by its own
+        // `transition-duration` on these layers alone (never the tile's layout, `HoverScale`).
+        let ts = styles.book.tile(current: tile.isCurrent, hover: hovered)
+        let shape = ts.borderRadius == nil ? Chrome.shape(.dockTile) : Styled.shape(ts)
+        let fill = Styled.fill(ts.background) ?? AnyShapeStyle(tile.isCurrent ? Chrome.lit(tint, hovered ? 0.34 : 0.26) : Chrome.cell(hovered ? 0.13 : 0.06))
+        let edge = target ? nil : Styled.line(ts.border)
+        let stroke: Color = edge?.color ?? (tile.isCurrent || target ? Chrome.focusEdge(tint) : Chrome.edge(hovered ? 0.18 : 0.08))
+        let strokeWidth: CGFloat = edge?.width ?? (target ? Chrome.width(.dockTile, focused: true) + 1 : Chrome.width(.dockTile, focused: tile.isCurrent))
         // A window waiting on you there: a quiet dot by the number, no motion, no sound; the tile's
         // click goes to that window. Not on the workspace you're on, where it is already in sight.
         let waiting = tile.isCurrent ? nil : model.attention(on: tile.id)
         let caption = model.caption(tile.id)
         return VStack(spacing: 5) {
             ZStack(alignment: .topLeading) {
-                shape.fill(tile.isCurrent ? Chrome.lit(tint, hovered ? 0.34 : 0.26) : Chrome.cell(hovered ? 0.13 : 0.06))
-                    .overlay(shape.strokeBorder(tile.isCurrent || target ? Chrome.focusEdge(tint) : Chrome.edge(hovered ? 0.18 : 0.08),
-                                                lineWidth: target ? Chrome.width(.dockTile, focused: true) + 1 : Chrome.width(.dockTile, focused: tile.isCurrent)))
+                shape.fill(fill)
+                    .overlay(shape.strokeBorder(stroke, lineWidth: strokeWidth))
+                    .overlay(StyledLines(style: ts.bottomLineOnly, shape: shape))
+                    .modifier(StyledShadow(shadow: ts.boxShadow))
+                    .modifier(StyledFade(style: ts))
+                    .opacity(ts.opacity ?? 1)
                     .onHover { model.setHover(.tile(tile.id), $0) }
                     .onTapGesture { if let waiting { model.onFocusWaiting(waiting) } else { model.onPick(tile.id) } }
                 icons(tile).frame(width: tileSize, height: tileSize)
@@ -2142,7 +2176,9 @@ struct DockView: View {
             .frame(width: tileSize, height: tileSize)
             .modifier(CenterReport(key: "tile:\(tile.id)"))
             tileCaption(caption, tile: tile, tint: tint, hovered: hovered)
-                .overlay(alignment: .topTrailing) { if waiting != nil { AttentionDot().offset(x: 5, y: -2) } }
+                .overlay(alignment: .topTrailing) {
+                    if waiting != nil, !badgeStyle(tile).isHidden { AttentionDot(style: badgeStyle(tile)).offset(x: 5, y: -2) }
+                }
                 .allowsHitTesting(false)
         }
         .help(waiting.map { DockAttention.label(app: $0.app, workspace: $0.workspace) } ?? "")
@@ -2180,11 +2216,23 @@ struct DockView: View {
         }
     }
 
+    /// style.css `dock .badge`: the finished count and the attention dot.
+    private func badgeStyle(_ tile: DockModel.Tile) -> ComputedStyle {
+        styles.book.badge(current: tile.isCurrent, hover: isHovered(tile))
+    }
+
     @ViewBuilder private func doneBadge(_ tile: DockModel.Tile) -> some View {
-        if let done = tile.agents.first(where: { $0.state == .done }) {
+        let bs = badgeStyle(tile)
+        if let done = tile.agents.first(where: { $0.state == .done }), !bs.isHidden {
+            let shape = bs.borderRadius == nil ? AnyShape(Circle()) : AnyShape(Styled.shape(bs))
             Text("\(tile.agentsDone)")
-                .font(Chrome.font(9.5, .heavy, rounded: true)).foregroundStyle(Chrome.light())
-                .frame(minWidth: 16, minHeight: 16).background(Circle().fill(Chrome.finished))
+                .font(Styled.font(bs, .ui, 9.5, .heavy, rounded: true)).foregroundStyle(bs.ink(Chrome.light()))
+                .modifier(StyledText(style: bs))
+                .frame(minWidth: 16, minHeight: 16)
+                .background(shape.fill(Styled.fill(bs.background) ?? AnyShapeStyle(Chrome.finished)))
+                .overlay { if let l = Styled.line(bs.border), l.width > 0 { shape.stroke(l.color, lineWidth: l.width) } }
+                .modifier(StyledShadow(shadow: bs.boxShadow))
+                .opacity(bs.opacity ?? 1)
                 .contentShape(Circle())
                 .onTapGesture { if model.clickCounts { model.onFocusAgent(done, tile.id) } }
                 .help(done.summary)
@@ -2282,7 +2330,11 @@ struct DockView: View {
     /// and a count. Each icon is its own button that goes straight to that app.
     @ViewBuilder private func icons(_ tile: DockModel.Tile) -> some View {
         let apps = tile.apps
-        if apps.isEmpty {
+        let ic = styles.book.icon(current: tile.isCurrent, hover: isHovered(tile))
+        if ic.isHidden, !apps.isEmpty {
+            // style.css `dock .icon { display: none }`: the tile keeps its click.
+            Color.clear.allowsHitTesting(false)
+        } else if apps.isEmpty {
             Image(systemName: "plus").font(Chrome.font(15 * k, .medium)).foregroundStyle(Chrome.wash(0.3))
                 .allowsHitTesting(false)
         } else if apps.count == 1 {
@@ -2328,7 +2380,9 @@ struct DockView: View {
         let hovered = model.drag == nil && model.hover == .app(tile.id, app.id)
         let twin = !hovered && hoveredPid == app.pid
         let ring: CGFloat = hovered ? 2 : twin ? 1 : 0
+        let ic = styles.book.icon(current: tile.isCurrent, hover: isHovered(tile))
         return Image(nsImage: app.icon).resizable().interpolation(.high).frame(width: size, height: size)
+            .opacity(ic.opacity ?? 1)
             .shadow(color: Chrome.shadow(hovered ? 0.4 : 0.2), radius: hovered ? 4 : 2, y: 1)
             // The icon under the pointer is ringed in its workspace's color. The same app on
             // another workspace gets only a faint outline, so the ring never lands on the copy
