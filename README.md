@@ -26,7 +26,7 @@ Polycarp copies its settings. On an Intel Mac, or with
 
 ### Download and open
 
-[Download Polycarp](https://github.com/baney75/polycarp/releases/download/preview/Polycarp.dmg), open the file, and drag
+[Download Polycarp](https://github.com/baney75/polycarp/releases/download/nightly/Polycarp.dmg), open the file, and drag
 Polycarp onto Applications. This download is for newer Macs with Apple silicon. To check, open the Apple menu, choose
 About This Mac, and look for a chip whose name starts with Apple.
 

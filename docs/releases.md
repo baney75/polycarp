@@ -102,3 +102,5 @@ nightly's notes, so such a copy is offered the newest nightly, installs it with 
 (the ready-made `Polycarp.zip` when it is signed with the release identity, else a build on the Mac). The build it lands on follows `latest.json` once
 it has the updater that reads it. `channels-test.sh` runs the publisher against a stand-in for GitHub and checks
 the release it leaves the way that updater reads it.
+
+The settings, secrets and publishes that turn the channels on, in order, are in [release-gate.md](release-gate.md).
