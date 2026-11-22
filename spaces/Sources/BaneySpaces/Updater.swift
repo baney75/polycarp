@@ -103,15 +103,15 @@ final class Updater: NSObject {
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.checking = false
                 // The channel changed while this asked the old one's feed, and the change's own check was
                 // skipped: ask again for the new one.
-                guard channel == self.channel else { return self.check(manual: manual) }
+                guard channel == self.channel else { self.checking = false; return self.check(manual: manual) }
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 // Nothing published on this channel yet is an answer, not a failure.
                 let feed = status == 200 ? data.flatMap(Feed.init(json:)) : nil
                 guard status == 404 || feed != nil else {
                     let problem = error?.localizedDescription ?? (status == 200 ? "the \(channel.rawValue) feed isn't one Polycarp can read" : "GitHub answered with status \(status)")
+                    self.checking = false
                     self.checkProblem = problem
                     self.checks += 1
                     if manual { self.tell("Couldn't check for updates", error?.localizedDescription ?? "\(status == 200 ? "The \(channel.title) feed isn't one Polycarp can read" : "GitHub answered with status \(status)"). Try again later.") }
@@ -119,9 +119,12 @@ final class Updater: NSObject {
                 }
                 self.lastCheck = Date()
                 let offer = feed.flatMap { Updates.offer($0, channel: channel, build: Self.build) }
+                // Still checking while GitHub compares (up to 20 s), so the menu's row stays disabled and a
+                // second click can't start a second check with its own alert.
                 self.confirm(offer, feed: feed) { release in
-                    // Changed while GitHub compared: the new channel's check is already running.
-                    guard channel == self.channel else { return }
+                    self.checking = false
+                    // Changed while GitHub compared, and the change's own check was skipped: ask the new one.
+                    guard channel == self.channel else { return self.check(manual: manual) }
                     self.available = release
                     self.checkProblem = nil
                     self.checks += 1
