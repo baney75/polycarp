@@ -60,12 +60,13 @@ Nightly and dev are built, signed and published on GitHub's hosted macOS runners
 public repository). No workflow here uses a self-hosted runner. `channel-build.yml` and `stable-build.yml` run
 the same scripts the Mac runs: `spaces/scripts/release.sh` (`--channel nightly|dev`, or the stable path). They
 sign only when the repository has the secrets
-`POLYCARP_SIGNING_P12` (base64 of a .p12 holding the key `release-requirement.txt` pins) and
-`POLYCARP_SIGNING_P12_PASSWORD` (letters and digits only, for example `openssl rand -hex 24`), which
-`spaces/scripts/ci-signing.sh` imports into a throwaway keychain. Without them the run warns, builds nothing and
+`POLYCARP_SIGNING_P12` (base64 of the owner's signing keychain, or of a .p12, holding the key
+`release-requirement.txt` pins) and `POLYCARP_SIGNING_P12_PASSWORD` (its password, letters and digits only), which
+`spaces/scripts/ci-signing.sh` unlocks, or imports into a throwaway keychain. Without them the run warns, builds nothing and
 publishes nothing. The owner sets both from the Mac that holds the key with one command,
-`spaces/scripts/set-ci-signing.sh`: it exports only the pinned identity, sets the two secrets through `gh` and prints
-neither. The owner's Mac can still publish by hand:
+`spaces/scripts/set-ci-signing.sh`: it checks the signing keychain holds only the pinned key, sets the keychain file
+and its password through `gh` and prints neither. It exports nothing, since the key trusts only `/usr/bin/codesign`
+and macOS would ask on screen first. The owner's Mac can still publish by hand:
 
 - Nightly and dev: `spaces/scripts/release.sh --channel nightly|dev` on a clean checkout of `main`. It builds,
   signs, packages and verifies, then `publish-channel.sh` uploads into a draft, downloads it back, checks it, and
