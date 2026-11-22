@@ -689,14 +689,12 @@ impl Model {
     /// A switch asked from display `on` (its top bar, `spec/bar.md`): `n` comes to `on`, or you go to the display that
     /// shows it (R-S3). Unless another display shows `n`, `on` becomes the display you are on (R-S2). Asked for the
     /// workspace `on` shows, it brings that display's front window forward even when the model had you there already:
-    /// the bar takes no focus, so your window may still be on another display. True when that settled it.
-    fn go_to(&mut self, n: u8, on: &str, effects: &mut Vec<Effect>) -> Result<bool, ModelError> {
-        if !self.monitors.contains_key(on) {
-            return Err(ModelError::new("not_found", format!("no monitor {on}")));
-        }
+    /// the bar takes no focus, so your window may still be on another display. True when that settled it. The agent
+    /// workspace is already down (`switch` closes it first, R-A4).
+    fn go_to(&mut self, n: u8, on: &str, effects: &mut Vec<Effect>) -> bool {
         let there = self.shown_on(n).map(String::from);
         if there.as_deref().is_some_and(|m| m != on) {
-            return Ok(false);
+            return false;
         }
         if self.focused_monitor.as_deref() != Some(on) {
             self.focused_monitor = Some(on.to_string());
@@ -705,8 +703,8 @@ impl Model {
                 monitor: on.to_string(),
             });
         }
-        if there.is_none() || self.agent_shown {
-            return Ok(false);
+        if there.is_none() {
+            return false;
         }
         let here = |w: &WindowId| self.windows_on(n).contains(&w.as_str());
         if !self.active.as_ref().is_some_and(here) {
@@ -715,14 +713,19 @@ impl Model {
         if let Some(w) = &self.active {
             effects.push(Effect::FocusWindow { window: w.clone() });
         }
-        Ok(true)
+        true
     }
 
     fn switch(&mut self, n: u8, on: Option<MonitorId>) -> Result<Vec<Effect>, ModelError> {
         let n = Self::range(n)?;
         let mut effects = vec![];
         if let Some(on) = on {
-            if self.go_to(n, &on, &mut effects)? {
+            if !self.monitors.contains_key(&on) {
+                return Err(ModelError::new("not_found", format!("no monitor {on}")));
+            }
+            // R-A4: the agent workspace goes down before the display you are on changes.
+            self.hide_agent_first(&mut effects);
+            if self.go_to(n, &on, &mut effects) {
                 return Ok(effects);
             }
         }

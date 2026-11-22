@@ -3,7 +3,7 @@
 
 use std::ffi::c_void;
 use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HWND, LPARAM, RECT, TRUE};
-use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows_sys::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HDC, HMONITOR, MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL};
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::System::Threading::{GetCurrentThreadId, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION};
@@ -97,6 +97,17 @@ pub fn pid_of(h: HWND) -> u32 {
 pub fn rect(h: HWND) -> Option<[i32; 4]> {
     let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     (unsafe { GetWindowRect(h, &mut r) } != 0).then_some([r.left, r.top, r.right, r.bottom])
+}
+
+/// The frame you see (DWM's extended frame bounds), without the invisible resize border `rect` counts; else `rect`.
+pub fn visible_frame(h: HWND) -> Option<[i32; 4]> {
+    let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let hr = unsafe { DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS as u32, &mut r as *mut RECT as *mut c_void, std::mem::size_of::<RECT>() as u32) };
+    if hr < 0 {
+        rect(h)
+    } else {
+        Some([r.left, r.top, r.right, r.bottom])
+    }
 }
 
 pub fn ex_style(h: HWND) -> i64 {
@@ -230,7 +241,7 @@ pub fn list_top_level() -> Vec<HWND> {
 }
 
 /// Windows the shell and system own, which are never a user's to move.
-const SHELL_CLASSES: &[&str] = &[
+pub const SHELL_CLASSES: &[&str] = &[
     "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow",
     "TopLevelWindowForOverflowXamlIsland", "NotifyIconOverflowWindow", "ForegroundStaging", "MultitaskingViewFrame", "TaskListThumbnailWnd",
 ];

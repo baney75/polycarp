@@ -715,5 +715,152 @@
     }
    }
   ]
+ },
+ {
+  "name": "a switch asked from the other display while the agent workspace is up closes it first, then goes to that display's workspace",
+  "rules": [
+   "R-S7",
+   "R-A4"
+  ],
+  "steps": [
+   {
+    "do": "monitor_added",
+    "monitor": "A"
+   },
+   {
+    "do": "monitor_added",
+    "monitor": "B"
+   },
+   {
+    "do": "open",
+    "window": "w1",
+    "pid": 1,
+    "app": "foot"
+   },
+   {
+    "do": "observe_focus_monitor",
+    "monitor": "B"
+   },
+   {
+    "do": "open",
+    "window": "w2",
+    "pid": 2,
+    "app": "foot"
+   },
+   {
+    "do": "observe_focus_monitor",
+    "monitor": "A"
+   },
+   {
+    "do": "agent_show"
+   },
+   {
+    "do": "switch",
+    "n": 2,
+    "monitor": "B",
+    "effects": [
+     {
+      "do": "hide_agent"
+     },
+     {
+      "do": "focus_monitor",
+      "monitor": "B"
+     },
+     {
+      "do": "focus_window",
+      "window": "w2"
+     }
+    ],
+    "expect": {
+     "agent": {
+      "shown": false
+     },
+     "focused_monitor": "B",
+     "active": "w2",
+     "monitors": {
+      "A": {
+       "current": 1
+      },
+      "B": {
+       "current": 2
+      }
+     }
+    }
+   }
+  ]
+ },
+ {
+  "name": "a switch asked from the other display while the agent workspace is up closes it first, then brings the workspace there",
+  "rules": [
+   "R-S7",
+   "R-A4"
+  ],
+  "steps": [
+   {
+    "do": "monitor_added",
+    "monitor": "A"
+   },
+   {
+    "do": "monitor_added",
+    "monitor": "B"
+   },
+   {
+    "do": "open",
+    "window": "w1",
+    "pid": 1,
+    "app": "foot"
+   },
+   {
+    "do": "observe_focus_monitor",
+    "monitor": "B"
+   },
+   {
+    "do": "open",
+    "window": "w2",
+    "pid": 2,
+    "app": "foot"
+   },
+   {
+    "do": "observe_focus_monitor",
+    "monitor": "A"
+   },
+   {
+    "do": "agent_show"
+   },
+   {
+    "do": "switch",
+    "n": 5,
+    "monitor": "B",
+    "effects": [
+     {
+      "do": "hide_agent"
+     },
+     {
+      "do": "focus_monitor",
+      "monitor": "B"
+     },
+     {
+      "do": "show_workspace",
+      "monitor": "B",
+      "workspace": 5
+     }
+    ],
+    "expect": {
+     "agent": {
+      "shown": false
+     },
+     "focused_monitor": "B",
+     "active": null,
+     "monitors": {
+      "A": {
+       "current": 1
+      },
+      "B": {
+       "current": 5
+      }
+     }
+    }
+   }
+  ]
  }
 ]

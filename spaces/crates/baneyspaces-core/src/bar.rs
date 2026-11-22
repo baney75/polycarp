@@ -77,6 +77,29 @@ pub fn hit(cells: &[(u8, i32, i32)], x: i32) -> Option<u8> {
     cells.iter().find(|(_, cx, w)| x >= *cx && x < cx + w).map(|(n, _, _)| *n)
 }
 
+/// A rectangle in screen pixels: left, top, right, bottom.
+pub type Rect = [i32; 4];
+
+/// Whether a full-screen app is up on the display whose whole rect (`rcMonitor`) is `display`: the frontmost of
+/// `windows` that reaches onto it covers all of it. `windows` are the top-level windows that could be one, front to
+/// back, by their visible frames; the caller leaves out the bars, the shell's own windows and any hidden, minimized,
+/// cloaked, click-through or tool window. A window only touching the display's edge does not reach onto it.
+pub fn full_screen_on(display: Rect, windows: &[Rect]) -> bool {
+    let reaches = |w: &Rect| w[0].max(display[0]) < w[2].min(display[2]) && w[1].max(display[1]) < w[3].min(display[3]);
+    windows.iter().find(|w| reaches(w)).is_some_and(|w| w[0] <= display[0] && w[1] <= display[1] && w[2] >= display[2] && w[3] >= display[3])
+}
+
+/// What a full-screen notice (Windows' `ABN_FULLSCREENAPP`) changes, given each bar's display rect and whether it is
+/// hidden now: (bar, hide) for every bar whose display has a full-screen app and is shown, or has none and is hidden.
+/// The notice says only that something changed. Which bar it went to, and whether the shell tells one bar or all of
+/// them, is not known, so every bar is decided again from the windows (`full_screen_on`), whichever bar was told.
+pub fn full_screen_bars(bars: &[(Rect, bool)], windows: &[Rect]) -> Vec<(usize, bool)> {
+    bars.iter().enumerate().filter_map(|(i, &(display, hidden))| {
+        let up = full_screen_on(display, windows);
+        (up != hidden).then_some((i, up))
+    }).collect()
+}
+
 /// An `#rrggbb` color.
 pub type Rgb = [u8; 3];
 
@@ -165,6 +188,52 @@ pub fn theme_colors(text: &str, system_dark: bool) -> Result<(Colors, String), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const ONE: Rect = [0, 0, 1920, 1080];
+    const TWO: Rect = [1920, 0, 3840, 1080];
+
+    /// Each bar's hidden state after `notices` (the bars each one went to) for the windows as they now are.
+    fn deliver(hidden: &mut [bool], windows: &[Rect], notices: &[usize]) {
+        for _told in notices {
+            let bars: Vec<(Rect, bool)> = [ONE, TWO].into_iter().zip(hidden.iter().copied()).collect();
+            for (i, hide) in full_screen_bars(&bars, windows) {
+                hidden[i] = hide;
+            }
+        }
+    }
+
+    #[test]
+    fn a_full_screen_app_hides_only_its_own_displays_bar_however_the_shell_tells_the_bars() {
+        let editor: Rect = [100, 100, 800, 600];
+        // The shell tells only the bar on the display that changed, or it tells every bar: the bars end the same.
+        for (model, one, two) in [("one bar told", vec![0], vec![1]), ("every bar told", vec![0, 1], vec![0, 1])] {
+            let mut hidden = [false, false];
+            deliver(&mut hidden, &[ONE, editor], &one);
+            assert_eq!(hidden, [true, false], "{model}: a video goes full screen on display 1");
+            deliver(&mut hidden, &[TWO, ONE, editor], &two);
+            assert_eq!(hidden, [true, true], "{model}: and another on display 2");
+            deliver(&mut hidden, &[TWO, editor], &one);
+            assert_eq!(hidden, [false, true], "{model}: display 1's quits; display 2's bar stays hidden over its video");
+            deliver(&mut hidden, &[editor], &two);
+            assert_eq!(hidden, [false, false], "{model}: display 2's quits too");
+        }
+    }
+
+    #[test]
+    fn only_the_frontmost_window_on_a_display_counts() {
+        let editor: Rect = [100, 100, 800, 600];
+        // A window brought in front of the video, even partly, puts the bar back.
+        assert!(!full_screen_on(ONE, &[editor, ONE]));
+        // A window on the next display, even one touching this display's edge, is not on this one.
+        assert!(full_screen_on(ONE, &[TWO, ONE]));
+        assert!(full_screen_on(ONE, &[[1920, 0, 2600, 700], ONE]));
+        // A maximized window stops below the bar: not full screen.
+        assert!(!full_screen_on(ONE, &[[0, 26, 1920, 1040]]));
+        // One window across both displays covers both.
+        assert!(full_screen_on(ONE, &[[0, 0, 3840, 1080]]) && full_screen_on(TWO, &[[0, 0, 3840, 1080]]));
+        assert!(!full_screen_on(ONE, &[]));
+        assert_eq!(full_screen_bars(&[(ONE, false), (TWO, false)], &[editor]), vec![], "nothing to change");
+    }
 
     #[test]
     fn the_bar_is_26_pixels_at_100_percent_and_scales_with_the_display() {

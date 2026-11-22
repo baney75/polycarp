@@ -373,14 +373,20 @@ impl Ui {
         self.report();
     }
 
-    /// A full-screen app opened or went on the display of bar `h`, the bar the shell told (`fullscreen_change`).
+    /// A full-screen app opened or went (`ABN_FULLSCREENAPP`, sent to bar `h`). Whether the shell tells only the bar on
+    /// that display or every bar is not known, so the notice only says when to look: every bar's display is decided
+    /// again from the windows on it (`rule::full_screen_bars`), whichever bar was told and whatever it was told.
     fn fullscreen(&mut self, h: HWND, open: bool) {
-        let bars: Vec<(isize, bool)> = self.bars.iter().map(|b| (b.hwnd as isize, b.hidden)).collect();
-        if let Some(i) = fullscreen_change(&bars, h as isize, open) {
+        let bars: Vec<(rule::Rect, bool)> = self.bars.iter().map(|b| (display_rect(b.hmon), b.hidden)).collect();
+        let change = rule::full_screen_bars(&bars, &front_windows());
+        for &(i, hide) in &change {
             let b = &mut self.bars[i];
-            b.hidden = open;
-            unsafe { ShowWindow(b.hwnd, if open { SW_HIDE } else { SW_SHOWNOACTIVATE }) };
+            b.hidden = hide;
+            unsafe { ShowWindow(b.hwnd, if hide { SW_HIDE } else { SW_SHOWNOACTIVATE }) };
         }
+        let told = self.bars.iter().find(|b| b.hwnd == h).map_or("no bar", |b| b.monitor.as_str());
+        let hidden: Vec<&str> = self.bars.iter().filter(|b| b.hidden).map(|b| b.monitor.as_str()).collect();
+        say(&format!("baneyspaces daemon: bar: full-screen app {} (told {told}); {} bar(s) changed, hidden on [{}]", if open { "opened" } else { "went" }, change.len(), hidden.join(", ")));
         self.report();
     }
 
@@ -473,14 +479,6 @@ impl Ui {
             self.report();
         }
     }
-}
-
-/// Which bar an `ABN_FULLSCREENAPP` notice changes, given each bar's (hwnd, hidden): the shell sends one to each AppBar
-/// for its own display, so only the bar told (`told`) hides when an app goes full screen there (`open`) and comes back
-/// when it leaves. Another display's bar is left as it is: with a full-screen app on each display, quitting one must
-/// not bring back the other's bar over its video. None when that bar is already as asked, or is not one of ours.
-fn fullscreen_change(bars: &[(isize, bool)], told: isize, open: bool) -> Option<usize> {
-    bars.iter().position(|&(h, hidden)| h == told && hidden != open)
 }
 
 /// The chord a press on number `n` of the bar on display `monitor` sends. The bar never takes the front, so the display
@@ -604,6 +602,32 @@ fn monitor_info(m: HMONITOR) -> Option<MONITORINFOEXW> {
 
 fn monitor_name(m: HMONITOR) -> Option<String> {
     monitor_info(m).map(|i| crate::winapi::wide_to_string(&i.szDevice))
+}
+
+/// The display's whole rect (`rcMonitor`), or an empty one when it is gone, which no window covers.
+fn display_rect(m: HMONITOR) -> rule::Rect {
+    monitor_info(m).map_or([0; 4], |i| {
+        let r = i.monitorInfo.rcMonitor;
+        [r.left, r.top, r.right, r.bottom]
+    })
+}
+
+/// The visible frames of the top-level windows that could be a full-screen app, front to back (`EnumWindows` order):
+/// shown, not minimized or cloaked, not click-through or a tool window, and none of the daemon's own (the bars) or the
+/// shell's (the desktop, the taskbars). A frame leaves out the invisible resize border, so a window on the next display
+/// never reaches onto this one.
+fn front_windows() -> Vec<rule::Rect> {
+    use crate::winapi as w;
+    let me = std::process::id();
+    w::list_top_level()
+        .into_iter()
+        .filter(|&h| {
+            let ex = w::ex_style(h);
+            let tool = ex & WS_EX_TOOLWINDOW as i64 != 0 && ex & WS_EX_APPWINDOW as i64 == 0;
+            w::is_visible(h) && !w::is_iconic(h) && w::cloaked(h) == 0 && !tool && ex & WS_EX_TRANSPARENT as i64 == 0 && w::pid_of(h) != me && !w::SHELL_CLASSES.contains(&w::class(h).as_str())
+        })
+        .filter_map(w::visible_frame)
+        .collect()
 }
 
 fn monitor_dpi(m: HMONITOR) -> u32 {
@@ -788,18 +812,6 @@ fn clock_now(twenty_four: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_full_screen_notice_changes_only_the_bar_it_was_sent_to() {
-        // Two displays, each with a full-screen app: both bars hidden. The app on the first quits.
-        let both = [(1, true), (2, true)];
-        assert_eq!(fullscreen_change(&both, 1, false), Some(0));
-        assert_eq!(fullscreen_change(&[(1, false), (2, true)], 1, false), None, "the second display's bar stays hidden");
-        // An app goes full screen on the second display only, whichever window is in front.
-        assert_eq!(fullscreen_change(&[(1, false), (2, false)], 2, true), Some(1));
-        assert_eq!(fullscreen_change(&[(1, false), (2, true)], 2, true), None, "already hidden");
-        assert_eq!(fullscreen_change(&[(1, true), (2, true)], 3, false), None, "not one of our bars");
-    }
 
     #[test]
     fn a_click_switches_on_its_own_display() {

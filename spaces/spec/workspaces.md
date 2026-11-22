@@ -57,7 +57,8 @@ A switch can name the display it was asked from (`switch n --monitor <name>`; a 
 [bar.md](bar.md)). Then n comes to that display, or you go to the display that already shows it (R-S3), and that
 display is the one you are on unless another shows n. Asked for the workspace that display shows, it brings that
 display's front window forward, even when you were on it: the bar takes no focus, so your window can still be on
-another display. A display that is not there is `not_found`.
+another display. With the agent workspace up, it closes first (R-A4), before the display you are on changes. A
+display that is not there is `not_found`.
 
 ## Empty means empty
 

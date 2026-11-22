@@ -36,9 +36,12 @@ On Windows the current workspace's number is drawn in `foreground` with a 2 px `
 - Windows: one AppBar (`SHAppBarMessage`) docked to the top of every display, so the work area starts below it and a
   maximized window stops at its bottom edge. It follows display changes, scale changes (per-monitor DPI v2), the
   taskbar or another AppBar moving (`ABN_POSCHANGED`) and explorer.exe restarting (`TaskbarCreated`). While a
-  full-screen app is up on a display, that display's bar hides and its place stays kept. The shell sends
-  `ABN_FULLSCREENAPP` to each bar for its own display, so only the bar told hides or comes back: with a full-screen
-  app on each display, quitting one leaves the other display's bar hidden. Turning
+  full-screen app is up on a display, that display's bar hides and its place stays kept. A display has one when the
+  frontmost window that reaches onto it (visible, not minimized or cloaked, not a tool or click-through window, not a
+  bar or the shell's desktop or taskbar) covers the display's whole rect (`bar::full_screen_on`). The shell's
+  `ABN_FULLSCREENAPP` only says when to look: which bars it is sent to is not relied on, so on every one each bar is
+  decided again from its own display's windows (`bar::full_screen_bars`). With a full-screen app on each display,
+  quitting one leaves the other display's bar hidden. Turning
   it off, the daemon stopping, a panic and the session ending each take every bar off the shell's list, so the work
   area is whole again. A daemon killed outright (`taskkill /F`) runs no cleanup, and the shell drops the bar with its
   window: on the CI runner the work area was whole again within 3 s (the live suite logs it after each run).

@@ -203,7 +203,8 @@ the right. The rules are `spec/bar.md`; the code is `baneyspaces/src/bar.rs`.
 - **An AppBar, not an overlay.** Each bar is registered with the shell (`SHAppBarMessage`), so the work area starts
   below it and a maximized window stops at its bottom edge. It is 26 px at 100%, scaled per display (per-monitor DPI
   v2), and follows display changes, scale changes, the taskbar moving and explorer.exe restarting. A full-screen app
-  hides the bar on its display only (the bar the shell's `ABN_FULLSCREENAPP` was sent to). Turning it off, `baneyspaces stop`, a panic and sign-out give the work area back.
+  hides the bar on its display only: each `ABN_FULLSCREENAPP`, whichever bar it reaches, has every bar look again at
+  whether the frontmost window on its display covers all of it. Turning it off, `baneyspaces stop`, a panic and sign-out give the work area back.
 - **In the daemon.** The bar has its own thread and message loop. It draws the same state the shell's feed sends
   (`spec/shell.md`), handed over as the daemon publishes it, so there is no second copy of the model; a click on a number
   is sent to the worker as `switch n --monitor <its display>`, the path Win+n takes, so the workspace comes to the
@@ -271,7 +272,8 @@ What the runner can't run, so it stays untested live on Windows hardware:
   Section 9 checks one bar at the runner's 96 dpi and reports the full-screen case as a skip. Two cases need two
   displays: with a full-screen video on each, quit one and the other display's bar must stay hidden; with your window
   in front on display 1, click a number on display 2's bar that no display shows and it must come up on display 2
-  (click display 1's number there instead and you go to display 1).
+  (click display 1's number there instead and you go to display 1). The daemon log's `bar: full-screen app` lines
+  name the bar each notice reached, which shows whether the shell tells one bar or all of them.
 
 Not done in part 1: multi-monitor placement (windows are not moved between displays; the model is, and
 this is untested without a second display), the Startup shortcut, the overview, the dock and the rest of the themed UI.
