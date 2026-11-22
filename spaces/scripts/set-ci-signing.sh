@@ -26,10 +26,13 @@ for dir in "$HOME/Library/Application Support/Polycarp/Signing" "$HOME/Library/A
     keychain "unlock-keychain -p $(cat "$dir/keychain-password") \"$f\""
     # One identity, and it is the pinned one: find-identity lists each by its certificate's SHA-1.
     ids=$(security find-identity "$f" 2>/dev/null | sed -n 's/^ *[0-9][0-9]*) \([0-9A-F]\{40\}\) .*/\1/p' | sort -u)
-    if [ "$ids" = "$PIN" ]; then KC=$f; PW="$dir/keychain-password"; break 2; fi
+    # And one certificate: the whole file goes to the secret, so it may hold nothing but what signing-identity.sh
+    # imported (the pinned identity's .p12).
+    certs=$(security find-certificate -a -Z "$f" 2>/dev/null | sed -n 's/^SHA-1 hash: \([0-9A-F]\{40\}\)$/\1/p' | sort -u)
+    if [ "$ids" = "$PIN" ] && [ "$certs" = "$PIN" ]; then KC=$f; PW="$dir/keychain-password"; break 2; fi
   done
 done
-[ -n "$KC" ] || { echo "set-ci-signing.sh: no keychain here holds only the pinned key ($PIN); nothing was set" >&2; exit 1; }
+[ -n "$KC" ] || { echo "set-ci-signing.sh: no keychain here holds only the pinned key and its certificate ($PIN); nothing was set" >&2; exit 1; }
 
 # ci-signing.sh unlocks with it through `security -i`, which splits on spaces and quotes, so it must be plain.
 tr -d '\n' < "$PW" | grep -qE '^[A-Za-z0-9._-]+$' \
