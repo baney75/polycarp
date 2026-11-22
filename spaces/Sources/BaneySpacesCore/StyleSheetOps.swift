@@ -212,9 +212,17 @@ public enum StyleOps {
         if StyleSheetFile.load(path: file) == .text(preset.text) {
             data["unchanged"] = .bool(true)
         } else {
+            let wasThere = present(file)
             switch moveAside(file) {
             case .failure(let f): return .failure(f)
             case .success(let backup): data["backup"] = backup.map { .string(StyleSheetFile.display($0)) } ?? .null
+            }
+            // Nothing was there: keep an empty sheet as the backup, so `restore` brings back no rules (the theme's own
+            // look) and never an older backup that a `reset` had put away (review of #609).
+            if !wasThere {
+                let slot = nextBackup(file)
+                do { try StyleSheetFile.write(Self.noSheet, to: slot) } catch { return .failure(StyleFailure("io_error", "\(error)")) }
+                data["backup"] = .string(StyleSheetFile.display(slot))
             }
             do { try StyleSheetFile.write(preset.text, to: file) } catch { return .failure(StyleFailure("io_error", "\(error)")) }
         }
@@ -223,6 +231,9 @@ public enum StyleOps {
         data["warnings"] = problemsValue(found.problems.filter { !$0.isError })
         return .success(.object(data))
     }
+
+    /// What `preset` keeps as the backup when there was no sheet: no rules, so restoring it is the theme's own look.
+    static let noSheet = "/* No style sheet was here before `style preset`; with no rules the theme alone styles. */\n"
 
     /// `reset`: moves the sheet aside so every surface draws as before. It goes to a new backup and never over one
     /// (see `moveAside`); an unedited preset is only removed, since `preset` writes it again.

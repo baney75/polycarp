@@ -160,7 +160,9 @@ Backups sit beside the sheet: `style.css.bak`, then `style.css.bak.1`, `.bak.2` 
 number, so none is ever written over. Three cases make no backup, since nothing would be lost: a preset already in force
 is left as it is, `reset` of an unedited preset only removes it (`preset` writes it again), and `reset` of text the newest
 backup already holds only removes the sheet. `restore` puts the newest backup back and keeps the sheet it replaces as the
-next backup, so a second `restore` undoes the first; with no backup it is refused with the code `no_backup`.
+next backup, so a second `restore` undoes the first; with no backup it is refused with the code `no_backup`. A preset
+written where there was no sheet keeps an empty sheet as its backup, so `restore` goes back to no rules (the theme's
+own look) and never to an older backup a `reset` put away.
 
 - `omarchy`: the top bar as Omarchy's Waybar draws it. A solid dark strip (`#1a1b26`) in both modes, one monospace face
   (JetBrains Mono when it is installed, else the system's), the workspace numbers muted with a 2 pt accent line under
