@@ -85,7 +85,14 @@ draft "$CHANNEL-next-$TIME"; id=$DRAFT_ID
 gh release delete "$CHANNEL" -R "$REPO" --cleanup-tag --yes 2>/dev/null || true
 gh api -X PATCH "repos/$REPO/releases/$id" -f tag_name="$CHANNEL" -f target_commitish="$COMMIT" \
   -F draft=false -F prerelease=true -f make_latest=false >/dev/null
-curl -fsSL "$FEED" | grep -qF "\"version\": \"$VERSION\"" || fail "$FEED doesn't offer $VERSION after the publish."
+# GitHub's download links can serve a 404 or the old file for a while after the tag moves (the first nightly, 11-22:
+# a 404 seconds after the move, the right file a minute later), so the read-back waits up to two minutes.
+offered=0
+for _ in $(seq 1 12); do
+  curl -fsSL "$FEED" 2>/dev/null | grep -qF "\"version\": \"$VERSION\"" && { offered=1; break; }
+  sleep 10
+done
+[ "$offered" = 1 ] || fail "$FEED doesn't offer $VERSION two minutes after the publish."
 
 if [ "$BRIDGE" = 1 ]; then
   step "Putting the bridge build on preview"
