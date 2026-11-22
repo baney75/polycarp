@@ -13,6 +13,14 @@ pub fn config_file() -> PathBuf {
     dir.join("config.toml")
 }
 
+/// The Polycarp theme in force, `<config>\current\theme.json` (spec/themes.md): `<config>` is `POLYCARP_CONFIG_DIR`
+/// when it is set and absolute, else `%APPDATA%\Polycarp`. None when neither is there.
+pub fn polycarp_theme_file() -> Option<PathBuf> {
+    let set = std::env::var("POLYCARP_CONFIG_DIR").ok().map(PathBuf::from).filter(|p| p.is_absolute());
+    let dir = set.or_else(|| std::env::var("APPDATA").ok().filter(|a| !a.is_empty()).map(|a| PathBuf::from(a).join("Polycarp")))?;
+    Some(dir.join("current").join("theme.json"))
+}
+
 #[derive(Clone, Debug)]
 pub struct Paths {
     pub state: PathBuf,

@@ -4,6 +4,7 @@
 
 pub mod agent;
 pub mod agent_help;
+pub mod bar;
 pub mod conformance;
 pub mod envelope;
 pub mod keymap;

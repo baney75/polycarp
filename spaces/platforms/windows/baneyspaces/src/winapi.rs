@@ -27,7 +27,7 @@ pub fn parse_window_name(s: &str) -> Option<i64> {
     s.strip_prefix("w-").unwrap_or(s).parse::<i64>().ok().filter(|n| *n != 0)
 }
 
-fn wide_to_string(buf: &[u16]) -> String {
+pub fn wide_to_string(buf: &[u16]) -> String {
     let n = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
     String::from_utf16_lossy(&buf[..n])
 }

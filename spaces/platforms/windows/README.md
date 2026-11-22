@@ -1,6 +1,6 @@
 # BaneySpaces for Windows
 
-Part 1: the workspace model on Windows 11, the keys, the agent workspace and the agent hands. No dock,
+Part 1: the workspace model on Windows 11, the keys, the agent workspace, the agent hands and the top bar. No dock,
 launcher or overview yet (part 2). The shared contract is `spec/`; the model, the scope guard and the
 envelope are `crates/baneyspaces-core`, the same code the Linux daemon runs.
 
@@ -188,10 +188,31 @@ through to the engine. `press`, `key` and `pointer` are `not_supported` (phase 3
 ## Settings
 
 `baneyspaces set|get` stores `appearance.theme` (`baneyspaces`, `omarchy`, `minimal`),
-`appearance.palette` (`auto` or a palette name) and `dock.enabled` in `settings.json` and returns them
-(`spec/themes.md`). Part 1 has no dock or themed UI, so they have no effect yet. Agents may `set` these
-three too (Donovan, 2026-11-01); every `set` is logged with the agent id and the caller's pid (never the
-value). Workspace and window operations stay user-only.
+`appearance.palette` (`auto` or a palette name), `dock.enabled` and `bar.enabled` in `settings.json` and returns them
+(`spec/themes.md`, `spec/bar.md`). Part 1 has no dock or themed UI, so the first three have no effect yet; `bar.enabled`
+turns the top bar on and off at once. Agents may `set` these too (Donovan, 2026-11-01); every `set` is logged with the
+agent id and the caller's pid (never the value). Workspace and window operations stay user-only.
+
+## The top bar
+
+`baneyspaces set bar.enabled true` (off by default) puts Polycarp's bar across the top of every display: the workspace
+numbers on the left (the ones in use and the one shown, the current one bright over a 2 px accent line; click one to go
+there), the day and time in the middle (`Saturday 22:04`, in Windows' own 12- or 24-hour clock), and Polycarp's mark on
+the right. The rules are `spec/bar.md`; the code is `baneyspaces/src/bar.rs`.
+
+- **An AppBar, not an overlay.** Each bar is registered with the shell (`SHAppBarMessage`), so the work area starts
+  below it and a maximized window stops at its bottom edge. It is 26 px at 100%, scaled per display (per-monitor DPI
+  v2), and follows display changes, scale changes, the taskbar moving and explorer.exe restarting. A full-screen app
+  hides the bar on its display. Turning it off, `baneyspaces stop`, a panic and sign-out give the work area back.
+- **In the daemon.** The bar has its own thread and message loop. It draws the same state the shell's feed sends
+  (`spec/shell.md`), handed over as the daemon publishes it, so there is no second copy of the model; a click on a number
+  is sent to the worker as `switch n`, the path Win+n takes. It takes no lock and never waits on the hook threads.
+- **Drawn with GDI**, in Cascadia Mono (else Consolas), with no webview. Colors are the Polycarp theme's `background`,
+  `foreground`, `muted` and `accent` (`%APPDATA%\Polycarp\current\theme.json`, by Windows' light or dark app mode),
+  else a built-in dark look. A timer looks again every second at the file, the app mode, the clock format and the
+  accent; a file watch would wake sooner, but the registry and locale settings have nothing to watch.
+- **Not yet:** the tray (status icons), the dock and the launcher. Until the tray arrives the mark opens nothing.
+- `baneyspaces state` shows it under `bar`. The live suite's section 9 checks it on the runner.
 
 ## Build and test
 
@@ -245,6 +266,8 @@ What the runner can't run, so it stays untested live on Windows hardware:
   Windows 11 taskbar.
 - A real sign-out. The suite sends WM_QUERYENDSESSION and WM_ENDSESSION to the session window; it can't end the
   runner's session.
+- The top bar on a second display, at a scale other than 100%, and under a full-screen app (`ABN_FULLSCREENAPP`).
+  Section 9 checks one bar at the runner's 96 dpi and reports the full-screen case as a skip.
 
 Not done in part 1: multi-monitor placement (windows are not moved between displays; the model is, and
-this is untested without a second display), the Startup shortcut, the overview, the dock and themed UI.
+this is untested without a second display), the Startup shortcut, the overview, the dock and the rest of the themed UI.

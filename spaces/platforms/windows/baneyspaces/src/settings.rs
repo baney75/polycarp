@@ -1,12 +1,12 @@
-//! The three shared settings from `spec/themes.md` (PR #112): `appearance.theme`,
-//! `appearance.palette` and `dock.enabled`. Part 1 has no dock or themed UI, so this only stores
-//! and returns them (`baneyspaces set|get`); the themed UI and the dock switch's effect are part 2.
+//! The shared settings: `appearance.theme`, `appearance.palette` and `dock.enabled` from `spec/themes.md` (PR #112),
+//! and `bar.enabled` from `spec/bar.md`. Part 1 has no dock or themed UI, so the first three are only stored and
+//! returned (`baneyspaces set|get`); `bar.enabled` turns the top bar on and off at once (`bar.rs`).
 //! Stored in `%LOCALAPPDATA%\BaneySpaces\settings.json`.
 
 use serde_json::{json, Map, Value};
 
 pub const THEMES: &[&str] = &["baneyspaces", "omarchy", "minimal"];
-pub const KEYS: &[&str] = &["appearance.theme", "appearance.palette", "dock.enabled"];
+pub const KEYS: &[&str] = &["appearance.theme", "appearance.palette", "dock.enabled", "bar.enabled"];
 
 /// The defaults on Windows (`spec/themes.json`, `default.windows`).
 pub fn defaults() -> Map<String, Value> {
@@ -14,6 +14,8 @@ pub fn defaults() -> Map<String, Value> {
     m.insert("appearance.theme".into(), json!("baneyspaces"));
     m.insert("appearance.palette".into(), json!("auto"));
     m.insert("dock.enabled".into(), json!(true));
+    // Off until you turn it on, as on macOS (spec/bar.md).
+    m.insert("bar.enabled".into(), json!(false));
     m
 }
 
@@ -52,10 +54,10 @@ pub fn validate(key: &str, value: &str) -> Result<Value, String> {
             let ok = !v.is_empty() && v.len() <= 64 && v.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
             ok.then(|| json!(v)).ok_or_else(|| "appearance.palette is \"auto\" or a palette name such as \"tokyo-night\"".to_string())
         }
-        "dock.enabled" => match value.trim().to_lowercase().as_str() {
+        "dock.enabled" | "bar.enabled" => match value.trim().to_lowercase().as_str() {
             "true" | "on" | "yes" | "1" => Ok(json!(true)),
             "false" | "off" | "no" | "0" => Ok(json!(false)),
-            _ => Err("dock.enabled is true or false".into()),
+            _ => Err(format!("{key} is true or false")),
         },
         _ => Err(format!("unknown setting {key:?}; the settings are {}", KEYS.join(", "))),
     }
@@ -71,6 +73,7 @@ mod tests {
         assert_eq!(d["appearance.theme"], "baneyspaces");
         assert_eq!(d["appearance.palette"], "auto");
         assert_eq!(d["dock.enabled"], true);
+        assert_eq!(d["bar.enabled"], false);
         assert_eq!(parse(""), d);
         assert_eq!(parse("not json"), d);
     }
@@ -81,6 +84,9 @@ mod tests {
         assert!(validate("appearance.theme", "neon").is_err());
         assert_eq!(validate("dock.enabled", "off").unwrap(), false);
         assert!(validate("dock.enabled", "maybe").is_err());
+        assert_eq!(validate("bar.enabled", "true").unwrap(), true);
+        assert_eq!(validate("bar.enabled", "off").unwrap(), false);
+        assert!(validate("bar.enabled", "maybe").unwrap_err().contains("bar.enabled"));
         assert_eq!(validate("appearance.palette", "tokyo-night").unwrap(), "tokyo-night");
         assert!(validate("appearance.palette", "../x").is_err());
         assert!(validate("appearance.palette", "").is_err());
@@ -89,7 +95,9 @@ mod tests {
 
     #[test]
     fn stored_values_override_and_bad_ones_fall_back() {
-        let s = parse(r#"{"appearance.theme":"minimal","dock.enabled":false,"appearance.palette":"Bad Name!"}"#);
+        let s = parse(r#"{"appearance.theme":"minimal","dock.enabled":false,"appearance.palette":"Bad Name!","bar.enabled":"sometimes"}"#);
+        assert_eq!(s["bar.enabled"], false);
+        assert_eq!(parse(r#"{"bar.enabled":true}"#)["bar.enabled"], true);
         assert_eq!(s["appearance.theme"], "minimal");
         assert_eq!(s["dock.enabled"], false);
         assert_eq!(s["appearance.palette"], "auto");

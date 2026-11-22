@@ -320,6 +320,89 @@ check ((bsc agent log --since 300) -match '"verb":"set"') 'the set was logged wi
 say '== 8. plug and unplug a display (R-M2, R-M3)'
 if ([Desk]::Displays() -lt 2) { skip "section 8: the runner has $([Desk]::Displays()) display and no way to add one without installing a display driver (untested live)" }
 
+say '== 9. the top bar (spec/bar.md): an AppBar on each display, and a maximized window stops below it'
+function bars { @([Desk]::Bars()) }
+function wa { "$([Desk]::WorkArea() -join ',')" }
+# Waits up to 4 s for the bars to be up ($On) or gone, with the work area changed or whole again.
+function bar_wait([switch]$On) {
+  for ($i = 0; $i -lt 40; $i++) {
+    $n = (bars).Count
+    if ($On -and $n -ge [Desk]::Displays() -and (wa) -ne $wa0) { break }
+    if (-not $On -and $n -eq 0 -and (wa) -eq $wa0) { break }
+    Start-Sleep -Milliseconds 100
+  }
+  Start-Sleep -Milliseconds 300
+}
+function bar_state { (j (bsc state)).data }
+function current_on($st, $mon) { "$(@($st.monitors.PSObject.Properties | ? { $_.Name -eq $mon })[0].Value.current)" }
+$wa0 = wa
+say "work area with the bar off: $wa0"
+check ((bsc get bar.enabled) -match '"bar.enabled":false') 'bar.enabled is off by default' (bsc get bar.enabled)
+check ((bars).Count -eq 0) 'no bar window while it is off' ((bars) -join '; ')
+$o = bsc set bar.enabled true
+check ($o -match '"ok":true') 'baneyspaces set bar.enabled true' $o
+bar_wait -On; shot '09-bar-on'
+$b = bars; $b | % { say "    bar $_" }
+$sb = (bar_state).bar; Add-Content $log "    state.bar $($sb | ConvertTo-Json -Compress -Depth 6)"
+check ($b.Count -eq [Desk]::Displays()) "a bar window on each display ($($b.Count) of $([Desk]::Displays()))"
+$p = [Desk]::Primary()
+$pb = @($b | ? { $_.L -eq $p[0] -and $_.T -eq $p[1] })[0]
+$dpi = if ($pb) { [Desk]::Dpi($pb.Hwnd) } else { 96 }
+$want = [int][Math]::Floor((26 * $dpi + 48) / 96)
+check ($pb -and $pb.R -eq $p[2] -and ($pb.B - $pb.T) -eq $want) "the primary display's bar spans its top edge, $want px tall at $dpi dpi" "$pb; display $($p -join ',')"
+check ($pb -and [Desk]::Topmost($pb.Hwnd) -and $pb.Cloaked -eq 0 -and $pb.Pid -eq (Get-Process baneyspaces).Id) 'it is a topmost window of the daemon, not cloaked' $pb
+$a = [Desk]::WorkArea()
+say "work area with the bar on: $(wa); bar bottom $($pb.B)"
+check ($pb -and $a[1] -eq $pb.B -and $a[0] -eq $wa0.Split(',')[0] -and $a[2] -eq $wa0.Split(',')[2] -and $a[3] -eq $wa0.Split(',')[3]) "the work area starts at the bar's bottom and is otherwise as it was ($(wa), was $wa0)"
+$sbar = @($sb.bars | ? { $_.hwnd -eq $pb.Hwnd })[0]
+check ($sb.enabled -eq $true -and $sbar -and "$($sbar.rect -join ',')" -eq "$($pb.L),$($pb.T),$($pb.R),$($pb.B)") "state.bar reports the AppBar rect the window has ($($sbar.rect -join ','))" ($sb | ConvertTo-Json -Compress -Depth 6)
+check ($sb.font -eq 'Cascadia Mono' -or $sb.font -eq 'Consolas') "it draws in a monospace font ($($sb.font), theme $($sb.theme), clock '$($sb.clock)')"
+check ("$($sb.clock)" -match '^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday) \d{1,2}:\d\d$') "the clock reads as day and time ('$($sb.clock)')"
+
+$mp = Start-Process $testapp -PassThru; Start-Sleep 2
+$mw = @(wins | ? { $_.Pid -eq $mp.Id -and $_.Seen })[0]
+[void][Desk]::Maximize($mw.Hwnd); Start-Sleep 1; shot '09-bar-maximized'
+$f = if ($mw) { [Desk]::Frame($mw.Hwnd) } else { @(0, 0, 0, 0) }
+say "maximized w-$($mw.Hwnd): frame $($f -join ','), window $(win $mw.Hwnd), bar bottom $($pb.B)"
+check ($mw -and [Desk]::Zoomed($mw.Hwnd) -and $f[1] -eq $pb.B) "a maximized window's top is at the bar's bottom (frame top $($f[1]), bar bottom $($pb.B))" (win $mw.Hwnd)
+check ($mw -and ([Desk]::Foreground() -ne $pb.Hwnd)) 'the bar never takes the front' "front is w-$([Desk]::Foreground())"
+
+# A click on a number goes there, the way Win+n does. The test window goes to workspace 4 so the bar shows a 4.
+$st = bar_state; $here = current_on $st $sbar.monitor
+[void](bsc move 4 --stay --window (hw $mw)); Start-Sleep 1
+$cell = @((bar_state).bar.bars | ? { $_.hwnd -eq $pb.Hwnd } | % { $_.cells } | ? { $_.n -eq 4 })[0]
+check ($cell) "the bar shows workspace 4 once a window is on it (cells $(((bar_state).bar.bars | ? { $_.hwnd -eq $pb.Hwnd } | % { $_.cells } | % { $_.n }) -join ' '))"
+if ($cell) {
+  [void][Desk]::Click($pb.L + $cell.x + [int]($cell.w / 2), $pb.T + [int](($pb.B - $pb.T) / 2)); Start-Sleep 1; shot '09-bar-clicked-4'
+  $now = current_on (bar_state) $sbar.monitor
+  check ($now -eq '4' -and (win $mw.Hwnd).Seen) "a click on 4 switched to workspace 4 and shows its window (was $here, now $now)" (win $mw.Hwnd)
+  $back = @((bar_state).bar.bars | ? { $_.hwnd -eq $pb.Hwnd } | % { $_.cells } | ? { "$($_.n)" -eq $here })[0]
+  if ($back) {
+    [void][Desk]::Click($pb.L + $back.x + [int]($back.w / 2), $pb.T + [int](($pb.B - $pb.T) / 2)); Start-Sleep 1
+    check ((current_on (bar_state) $sbar.monitor) -eq $here -and -not (win $mw.Hwnd).Seen) "a click on $here went back and hid workspace 4" (win $mw.Hwnd)
+  } else { bad "the bar shows the workspace you were on ($here)" }
+}
+skip 'the bar hiding under a full-screen app (ABN_FULLSCREENAPP): the runner has no full-screen app to raise reliably (untested live)'
+
+$o = bsc set bar.enabled false
+check ($o -match '"ok":true') 'baneyspaces set bar.enabled false' $o
+bar_wait; shot '09-bar-off'
+check ((bars).Count -eq 0) 'turned off, no bar window is left' ((bars) -join '; ')
+check ((wa) -eq $wa0) "turned off, the work area is whole again ($(wa), was $wa0)"
+Stop-Process -Id $mp.Id -Force -ErrorAction SilentlyContinue
+
+# On, then `baneyspaces stop`: the daemon takes the bar down on its way out.
+[void](bsc set bar.enabled true); bar_wait -On
+check ((bars).Count -ge 1) 'on again before the daemon stops' (wa)
+daemon_stop; Start-Sleep -Milliseconds 500
+check ((bars).Count -eq 0 -and (wa) -eq $wa0) "baneyspaces stop takes the bar down and the work area is whole ($(wa), was $wa0)"
+
+# Kept across a restart, and what a daemon killed outright leaves (no cleanup can run): logged, not checked.
+daemon_start -Test; bar_wait -On
+check ((bars).Count -ge 1 -and (wa) -ne $wa0) "bar.enabled true is kept across a restart ($(wa))"
+taskkill /F /IM baneyspaces.exe 2>&1 | Out-Null; Start-Sleep 3
+say "after taskkill /F: work area $(wa) (whole is $wa0), bar windows $((bars).Count)"
+
 daemon_stop; shot '10-end'
 Get-Process notepad, bs-testapp -ErrorAction SilentlyContinue | Stop-Process -Force
 $res = if ($script:fail -eq 0) { 'PASS' } else { 'FAIL' }
