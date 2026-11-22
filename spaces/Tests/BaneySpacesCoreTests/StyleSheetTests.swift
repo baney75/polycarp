@@ -612,6 +612,21 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertNoThrow(try StyleOps.restore(file: file).get())
         XCTAssertEqual(rulesInForce(), 0, "the sheet reset away is not brought back")
         XCTAssertTrue(StyleOps.backups(file).contains { (try? String(contentsOfFile: $0, encoding: .utf8)) == old }, "and it is still kept")
+        // A restore with no sheet in force keeps an empty one as its undo: the second restore goes back to no rules,
+        // never on to a sheet a reset put away (review of #609, round 2).
+        try clear()
+        let b = "bar .clock { color: #0000ff; }\n", a = "bar .clock { color: #00ff00; }\n"
+        try b.write(toFile: file, atomically: true, encoding: .utf8)
+        XCTAssertNoThrow(try StyleOps.reset(file: file).get())
+        try a.write(toFile: file, atomically: true, encoding: .utf8)
+        XCTAssertNoThrow(try StyleOps.preset("omarchy", file: file, roles: Self.roles).get())
+        XCTAssertNoThrow(try StyleOps.reset(file: file).get(), "an unedited preset is only removed")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file))
+        XCTAssertNoThrow(try StyleOps.restore(file: file).get())
+        XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), a, "restore brings back the sheet the preset replaced")
+        XCTAssertNoThrow(try StyleOps.restore(file: file).get(), "a second restore undoes the first")
+        XCTAssertEqual(rulesInForce(), 0, "back to no rules, not the sheet reset away")
+        XCTAssertNotEqual(try? String(contentsOfFile: file, encoding: .utf8), b)
     }
 
     /// The app starts the store and both surfaces redraw on its notification (review of #604).
