@@ -7,7 +7,8 @@ with `polycarp-spaces surfaces`, or over MCP with `polycarp mcp`. A running Poly
 nothing restarts.
 
 Colors, fonts and the theme's wallpaper stay in the theme (`polycarp theme`, `themes/*.toml`). This file says what each
-surface shows; the theme says what it looks like.
+surface shows; the theme says what it looks like. To restyle the bar or the dock past the theme (a glass bar, a gold
+clock, square tiles), use the style sheet: [style.md](style.md).
 
 - File: `~/Library/Application Support/Polycarp/surfaces.json`
 - Every field is optional. A missing field, or no file at all, takes the default below.

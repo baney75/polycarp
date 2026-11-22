@@ -132,7 +132,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 23] = [
+const TOOLS: [&str; 28] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -156,6 +156,11 @@ const TOOLS: [&str; 23] = [
     "surfaces_schema",
     "surfaces_get",
     "surfaces_set",
+    "style_example",
+    "style_get",
+    "style_check",
+    "style_set",
+    "style_unset",
 ];
 
 #[test]
@@ -1049,5 +1054,148 @@ fn the_instructions_send_surfaces_work_to_the_surfaces_tools() {
             .unwrap_or_else(|| panic!("instructions lack {w}"))
     };
     assert!(at("surfaces_schema") < at("surfaces_get") && at("surfaces_get") < at("surfaces_set"));
+    assert!(at("style_example") < at("style_set") && at("style_set") < at("style_check"));
+    assert_eq!(s.finish(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn style_tools_run_the_spaces_style_command_and_pass_its_envelope_on_as_is() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let reply = json!({"ok": true, "data": {"file": "~/.config/polycarp/style.css", "selector": "bar .clock",
+        "property": "color", "value": "#d4af37", "warnings": []}});
+    fs::write(sb.root.join("spaces/reply"), reply.to_string()).unwrap();
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    let r = s.tool(
+        "style_set",
+        json!({"selector": "bar .clock", "property": "color", "value": "#d4af37"}),
+    );
+    assert_eq!(r["isError"], false);
+    assert_eq!(r["structuredContent"], reply);
+    // Each argument goes as its own word, so a selector with spaces and a value with commas arrive whole.
+    assert_eq!(
+        stub_args(&sb),
+        ["style", "set", "bar .clock", "color", "#d4af37", "--json"]
+    );
+    s.tool(
+        "style_set",
+        json!({"selector": "bar", "property": "font-family", "value": "\"SF Pro Text\", system-ui", "media": "dark"}),
+    );
+    assert_eq!(
+        stub_args(&sb),
+        [
+            "style",
+            "set",
+            "bar",
+            "font-family",
+            "\"SF Pro Text\", system-ui",
+            "--media",
+            "dark",
+            "--json"
+        ]
+    );
+    s.tool(
+        "style_unset",
+        json!({"selector": "dock .tile", "property": "border-radius"}),
+    );
+    assert_eq!(
+        stub_args(&sb),
+        ["style", "unset", "dock .tile", "border-radius", "--json"]
+    );
+    s.tool("style_unset", json!({"selector": "bar", "media": "light"}));
+    assert_eq!(
+        stub_args(&sb),
+        ["style", "unset", "bar", "--media", "light", "--json"]
+    );
+    s.tool("style_check", json!({}));
+    assert_eq!(stub_args(&sb), ["style", "check", "--json"]);
+    s.tool("style_check", json!({"file": "/tmp/draft.css"}));
+    assert_eq!(
+        stub_args(&sb),
+        ["style", "check", "/tmp/draft.css", "--json"]
+    );
+    s.tool("style_get", json!({}));
+    assert_eq!(stub_args(&sb), ["style", "show", "--json"]);
+    s.tool("style_example", json!({}));
+    assert_eq!(stub_args(&sb), ["style", "example", "--json"]);
+
+    // A refusal from the command is a tool error with its envelope unchanged.
+    let refused = json!({"ok": false, "error": {"code": "invalid_value",
+        "message": "dock .tile { height: 30px } was not set: `height` doesn't apply to `dock .tile`; it applies to bar",
+        "retry": "never", "suggestion": "Run `polycarp-spaces style example`.",
+        "data": {"errors": [{"line": 4, "column": 3, "severity": "error", "message": "`height` doesn't apply to `dock .tile`"}]}}});
+    fs::write(sb.root.join("spaces/reply"), refused.to_string()).unwrap();
+    fs::write(sb.root.join("spaces/code"), "1").unwrap();
+    let r = s.tool(
+        "style_set",
+        json!({"selector": "dock .tile", "property": "height", "value": "30px"}),
+    );
+    assert_eq!(r["isError"], true);
+    assert_eq!(r["structuredContent"], refused);
+    assert_eq!(s.finish(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn style_tools_check_their_arguments_and_say_when_the_command_is_missing() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    for (tool, args) in [
+        ("style_set", json!({"selector": "bar", "property": "color"})),
+        ("style_set", json!({"property": "color", "value": "red"})),
+        (
+            "style_set",
+            json!({"selector": "bar", "property": "color", "value": 3}),
+        ),
+        (
+            "style_set",
+            json!({"selector": "bar", "property": "color", "value": "red", "media": "dim"}),
+        ),
+        ("style_unset", json!({})),
+        ("style_check", json!({"file": ["x"]})),
+        ("style_example", json!({"selector": "bar"})),
+    ] {
+        let r = s.tool(tool, args.clone());
+        assert_eq!(r["isError"], true, "{tool} {args}");
+        assert_eq!(
+            r["structuredContent"]["error"]["code"], "invalid_args",
+            "{tool} {args}"
+        );
+    }
+    assert!(
+        !sb.root.join("spaces/args").exists(),
+        "the command never ran"
+    );
+    assert_eq!(s.finish(), 0);
+
+    let mut s = surfaces_server(&sb, &sb.root.join("nowhere/polycarp-spaces"));
+    s.initialize("t");
+    let r = s.tool("style_get", json!({}));
+    assert_eq!(r["structuredContent"]["error"]["code"], "spaces_not_found");
+    assert!(r["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("style"));
+    assert_eq!(s.finish(), 0);
+
+    // An app from before the style sheet prints its usage and exits 2.
+    fs::write(
+        sb.root.join("spaces/stderr"),
+        "usage: polycarp-spaces <command>\n",
+    )
+    .unwrap();
+    fs::write(sb.root.join("spaces/code"), "2").unwrap();
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    let r = s.tool("style_example", json!({}));
+    assert_eq!(r["structuredContent"]["error"]["code"], "spaces_too_old");
+    assert_eq!(
+        r["structuredContent"]["error"]["message"],
+        "this Polycarp has no style command"
+    );
     assert_eq!(s.finish(), 0);
 }

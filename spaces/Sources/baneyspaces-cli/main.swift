@@ -36,6 +36,9 @@ usage: \(me) <command>
   surfaces get|set|reset|schema|validate [--json]
                               the one file every surface reads: bar, desktop, dock, menu,
                               new tab, idle screen, alarm (surfaces help, docs/surfaces.md)
+  style path|show|check [file]|example|set '<sel>' <prop> <value>|unset '<sel>' [prop]|reset [--json]
+                              style.css: restyle the bar and the dock on top of the theme
+                              (style help, docs/style.md)
   purpose list|set <n> <text>|clear <n> [--json]
                               what each workspace is for (up to 60 characters; empty clears it)
   one <text>|--clear [--json] today's one thing, set on the workspace you're on (up to 80 characters;
@@ -292,6 +295,8 @@ case "phone", "phones":
 
 case "surfaces":
     SurfacesCommand.run(rest, remote: remoteHost != nil)
+case "style":
+    StyleCommand.run(rest, remote: remoteHost != nil)
 case "contacts", "contact":
     // Asked of the running app, which holds the Contacts permission and the index the launcher uses. Local only.
     guard remoteHost == nil else { fail("contacts are read on this Mac only", code: 2) }
