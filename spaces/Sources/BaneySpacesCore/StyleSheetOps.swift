@@ -260,7 +260,7 @@ public enum StyleOps {
                                          suggestion: "`style preset` and `style reset` keep the sheet they replace as style.css.bak; there is none yet."))
         }
         var data: [String: SurfaceValue] = ["file": .string(StyleSheetFile.display(file)), "restored": .string(StyleSheetFile.display(newest)), "backup": .null]
-        var saved: String?
+        var saved: String?, empty: String?
         if present(file) {
             if case .text(let now) = StyleSheetFile.load(path: file), StyleSheetFile.load(path: newest) == .text(now) {
                 data["unchanged"] = .bool(true)
@@ -270,9 +270,16 @@ public enum StyleOps {
             if let f = move(file, to: slot) { return .failure(f) }
             saved = slot
             data["backup"] = .string(StyleSheetFile.display(slot))
+        } else {
+            // No sheet in force: keep an empty one as the undo, as `preset` does, so a second `restore` goes back to no
+            // rules and never on to an older backup a `reset` put away (review of #609).
+            let slot = nextBackup(file)
+            do { try StyleSheetFile.write(Self.noSheet, to: slot) } catch { return .failure(StyleFailure("io_error", "\(error)")) }
+            empty = slot
+            data["backup"] = .string(StyleSheetFile.display(slot))
         }
         if let f = move(newest, to: file) {
-            if let saved { _ = rename(saved, file) }
+            if let saved { _ = rename(saved, file) } else if let empty { _ = unlink(empty) }
             return .failure(f)
         }
         return .success(.object(data))
