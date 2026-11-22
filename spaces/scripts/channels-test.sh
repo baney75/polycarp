@@ -68,7 +68,7 @@ feed arm64 nightly "$base-nightly.2026111807+1a2b3c4" && bad "write-feed took a 
 POLYCARP_FEED_ARCHS=ppc scripts/write-feed.sh nightly "$(scripts/channel-version.sh nightly)" "$c" "$tmp/Polycarp.zip" "$tmp/x.json" >/dev/null 2>&1 \
   && bad "a feed with no Mac architecture was written"
 # The feed read-back after the move waits out GitHub's download cache instead of failing on its first 404.
-grep -q 'for _ in $(seq 1 12); do' scripts/publish-channel.sh && grep -qF "two minutes after the publish" scripts/publish-channel.sh \
+grep -qF 'for _ in $(seq 1 12); do' scripts/publish-channel.sh && grep -qF "two minutes after the publish" scripts/publish-channel.sh \
   || bad "publish-channel.sh reads the moved feed back once, so a cache 404 fails a good publish"
 # The bridge marks preview as the old publisher did: its tag on the build's commit, the marker in its notes.
 bridge=$(sed -n '/if \[ "$BRIDGE" = 1 \]; then/,/^fi/p' scripts/publish-channel.sh)
