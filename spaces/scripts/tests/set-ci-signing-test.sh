@@ -10,7 +10,8 @@ PIN=$(sed -n 's/.*certificate leaf = H"\([0-9a-fA-F]\{40\}\)".*/\1/p' scripts/re
 OTHER=0123456789ABCDEF0123456789ABCDEF01234567
 mkdir -p "$tmp/bin"
 # STUB_IDS: the certificate hashes find-identity lists, only once the keychain is unlocked (a locked one lists none
-# here, as it may on the Mac after a restart). `security -i` logs each command and writes a stand-in .p12.
+# here, as it may on the Mac after a restart). STUB_CERTS: the certificates find-certificate lists (default STUB_IDS).
+# STUB_CLASSES: the item classes dump-keychain lists (default one key, its certificate and its public key). `security -i` logs each command; an export writes a stand-in .p12.
 cat > "$tmp/bin/security" <<'SH'
 #!/bin/bash
 case "$1" in
@@ -20,6 +21,12 @@ case "$1" in
     n=0; for h in $STUB_IDS; do n=$((n + 1)); echo "  $n) $h \"Some Signing\""; done
     echo "     $n identities found"; echo ""; echo "  Valid identities only"
     n=0; for h in $STUB_IDS; do n=$((n + 1)); echo "  $n) $h \"Some Signing\""; done ;;
+  find-certificate)
+    grep -q "^unlock-keychain " "$STUB_DIR/security.log" 2>/dev/null || exit 0
+    for h in ${STUB_CERTS-$STUB_IDS}; do echo "SHA-1 hash: $h"; echo 'keychain: "x"'; done ;;
+  dump-keychain)
+    grep -q "^unlock-keychain " "$STUB_DIR/security.log" 2>/dev/null || exit 0
+    for c in ${STUB_CLASSES-0x00000010 0x80001000 0x0000000F}; do echo 'keychain: "x"'; echo "class: $c"; done ;;
   -i)
     while IFS= read -r line; do
       echo "$line" >> "$STUB_DIR/security.log"
@@ -41,23 +48,26 @@ esac
 SH
 chmod +x "$tmp/bin/security" "$tmp/bin/gh"
 
-run() { # <case> <ids>: a fresh home with the BaneySpaces keychain; sets $code and $out
+run() { # <case> <ids> [keychain password]: a fresh home with the BaneySpaces keychain; sets $code and $out
   local d="$tmp/$1"; mkdir -p "$d/home/Library/Application Support/BaneySpaces/Signing" "$d/t"
-  : > "$d/home/Library/Application Support/BaneySpaces/Signing/baneyspaces-signing.keychain-db"
-  printf 'kcpass' > "$d/home/Library/Application Support/BaneySpaces/Signing/keychain-password"
+  printf 'kych KEYCHAIN BYTES' > "$d/home/Library/Application Support/BaneySpaces/Signing/baneyspaces-signing.keychain-db"
+  printf '%s\n' "${3:-kcpass}" > "$d/home/Library/Application Support/BaneySpaces/Signing/keychain-password"
   out=$(HOME="$d/home" TMPDIR="$d/t" STUB_DIR="$d" STUB_IDS="$2" PATH="$tmp/bin:$PATH" bash scripts/set-ci-signing.sh r/r 2>&1); code=$?
 }
 
 run pinned "$PIN"
 [ "$code" = 0 ] || bad "the pinned key: exit $code: $out"
 d="$tmp/pinned"
-[ "$(base64 --decode < "$d/secret.POLYCARP_SIGNING_P12" 2>/dev/null)" = "P12 BYTES" ] || bad "POLYCARP_SIGNING_P12 isn't the export in base64"
-pw=$(cat "$d/secret.POLYCARP_SIGNING_P12_PASSWORD" 2>/dev/null)
-[[ "$pw" =~ ^[0-9a-f]{48}$ ]] && [ "$(wc -c < "$d/secret.POLYCARP_SIGNING_P12_PASSWORD" | tr -d ' ')" = 48 ] || bad "the password isn't 48 hex digits with no newline (ci-signing.sh refuses others)"
-grep -qF -- "-P $pw " "$d/security.log" || bad "the export wasn't made with the password that was set"
+[ "$(base64 --decode < "$d/secret.POLYCARP_SIGNING_P12" 2>/dev/null)" = "kych KEYCHAIN BYTES" ] || bad "POLYCARP_SIGNING_P12 isn't the keychain in base64"
+[ "$(cat "$d/secret.POLYCARP_SIGNING_P12_PASSWORD" 2>/dev/null)" = kcpass ] && [ "$(wc -c < "$d/secret.POLYCARP_SIGNING_P12_PASSWORD" | tr -d ' ')" = 6 ] \
+  || bad "POLYCARP_SIGNING_P12_PASSWORD isn't the keychain's password with no newline"
+grep -q "^export" "$d/security.log" && bad "an export was tried (macOS asks on screen before security can export the key)"
 grep -q "^unlock-keychain -p kcpass " "$d/security.log" || bad "the keychain wasn't unlocked with its own password"
-case "$out" in *"$pw"*|*kcpass*) bad "a password was printed" ;; esac
-[ -z "$(ls -A "$d/t")" ] || bad "the export was left behind: $(ls -A "$d/t")"
+case "$out" in *kcpass*) bad "a password was printed" ;; esac
+
+run spaced "$PIN" 'a b'
+[ "$code" != 0 ] && [[ "$out" == *"dot, dash or underscore"* ]] || bad "a password security -i would split wasn't refused by the plain-password check: $out"
+[ ! -e "$tmp/spaced/gh.log" ] || bad "secrets were set with a password ci-signing.sh refuses"
 
 run other "$OTHER"
 [ "$code" != 0 ] || bad "a key that isn't pinned was taken"
@@ -66,6 +76,17 @@ run other "$OTHER"
 run two "$PIN $OTHER"
 [ "$code" != 0 ] || bad "a keychain with a second identity was exported whole"
 [ ! -e "$tmp/two/gh.log" ] || bad "secrets were set from a keychain with two identities"
+
+STUB_CERTS="$PIN $OTHER" run extra "$PIN"
+[ "$code" != 0 ] || bad "a keychain with a second certificate was sent whole"
+[ ! -e "$tmp/extra/gh.log" ] || bad "secrets were set from a keychain with a second certificate"
+
+STUB_CLASSES="0x00000010 0x80001000 0x0000000F 0x00000010" run strayKey "$PIN"
+[ "$code" != 0 ] && [ ! -e "$tmp/strayKey/gh.log" ] || bad "a keychain with a second private key was sent whole"
+STUB_CLASSES="0x00000010 0x80001000 genp" run password "$PIN"
+[ "$code" != 0 ] && [ ! -e "$tmp/password/gh.log" ] || bad "a keychain holding a password was sent whole"
+STUB_CLASSES="0x00000010 0x80001000" run noPublic "$PIN"
+[ "$code" = 0 ] || bad "a keychain with no separate public key was refused: $out"
 
 [ "$status" = 0 ] && echo "set-ci-signing-test: pass"
 exit "$status"
