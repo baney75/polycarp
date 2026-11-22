@@ -86,9 +86,9 @@ final class SettingsSidebarTests: XCTestCase {
 
     /// The dock's finished count and its legend in Settings are one token, so the legend can't describe a different color.
     func testFinishedBadgeAndItsLegendShareAToken() throws {
-        for file in ["Sources/BaneySpaces/Setup.swift", "Sources/BaneySpaces/WorkspaceDock.swift"] {
-            XCTAssertTrue(try read(file).contains("Circle().fill(Chrome.finished)"), file)
-        }
+        XCTAssertTrue(try read("Sources/BaneySpaces/Setup.swift").contains("Circle().fill(Chrome.finished)"))
+        // The dock's badge takes style.css `dock .badge { background }` when the sheet sets one, else the same token.
+        XCTAssertTrue(try read("Sources/BaneySpaces/WorkspaceDock.swift").contains("shape.fill(Styled.fill(bs.background) ?? AnyShapeStyle(Chrome.finished))"))
     }
 
     /// `Chrome` is a plain static, so a kit view with no closure input redraws on a theme change only if it observes `Appearance`.

@@ -1,9 +1,10 @@
-//! `polycarp mcp`: the theme commands, and the surfaces commands, as MCP tools over stdio.
+//! `polycarp mcp`: the theme commands, the surfaces commands and the style sheet commands, as MCP tools over stdio.
 //!
 //! JSON-RPC 2.0, one message per line. Each theme tool calls the same `op_*` function the command line
 //! calls and returns the same envelope, so the two cannot drift. Each surfaces tool runs
 //! `polycarp-spaces surfaces ... --json` and passes its envelope on as is, for the same reason
-//! (spaces/docs/surfaces.md).
+//! (spaces/docs/surfaces.md); each style tool does the same with `polycarp-spaces style ... --json`
+//! (spaces/docs/style.md).
 
 use crate::theme::{self, ApiErr, Ctx};
 use serde_json::{json, Map, Value as Json};
@@ -44,6 +45,10 @@ a theme you made and no longer need.
 Surfaces (what the top bar, desktop scene, dock tiles, status menu, new tab page and idle screen show) are one \
 file of their own, not the theme: read surfaces_schema, then surfaces_get the path, then surfaces_set it. A refused \
 set wrote nothing; error.data.errors gives each path and why. To undo, surfaces_set the value surfaces_get gave before.
+To restyle one part of the top bar or the dock past the theme (a gold clock, square dock tiles, a hairline bar), use \
+the style sheet: read style_example, style_set each change, then style_check. A refused style_set wrote nothing; \
+error.data.errors gives each problem with its line and column. To undo, style_unset or style_set what style_get gave. \
+For a whole look in one call (omarchy), style_preset.
 Every result is {ok, data} or {ok:false, error:{code, message, suggestion, data:{errors}}}.";
 
 fn obj(props: Json, required: &[&str]) -> Json {
@@ -308,6 +313,74 @@ pub(crate) fn tools() -> Vec<Tool> {
             destructive: false,
             idempotent: true,
         },
+        Tool {
+            name: "style_example",
+            description: "Read this before style_set. Returns a starter style.css that names every selector (bar, its regions .left .center .right, each module and each .workspace number, dock, .tile .label .badge .icon with .current and :hover) and every property, with what each takes and where it applies, all commented out. The style sheet restyles the top bar and the dock on top of the theme with a strict subset of CSS.",
+            schema: obj(json!({}), &[]),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "style_get",
+            description: "The style sheet in force: its file, whether it exists, its text, and each rule with its selector and declarations. Use it to see what is there before you change it.",
+            schema: obj(json!({}), &[]),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "style_check",
+            description: "Check the style sheet in use (style.css) and list every problem with its line, column, severity and message in error.data.errors (warnings, such as low contrast, in data.warnings when there is no error). A sheet with errors still applies what parsed.",
+            // No file argument: a path from the caller would let a prompt read any file through the problems'
+            // messages (review of #604). `polycarp-spaces style check <file>` stays for a person at a terminal.
+            schema: obj(json!({}), &[]),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "style_set",
+            description: "Set one property for one selector in style.css, editing the file in place and keeping its comments: the declaration changes if the rule has it, else it is added, else the rule is added. Refused, with nothing written, when the change would add an error; error.data.errors gives each with its line and column. A running Polycarp shows the change within 200 ms.",
+            schema: obj(
+                json!({
+                    "selector": {"type":"string","description":"One selector from style_example, as bar, bar .clock, dock .tile.current or :root."},
+                    "property": {"type":"string","description":"A property from style_example, as color or border-radius, or a --custom-property on :root."},
+                    "value": {"type":"string","description":"A CSS value, as #d4af37, var(--accent), 1px solid var(--border) or glass."},
+                    "media": {"type":"string","enum":["dark","light"],"description":"Set it for that mode only, inside @media (prefers-color-scheme: ...)."}
+                }),
+                &["selector", "property", "value"],
+            ),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "style_unset",
+            description: "Remove one property from a selector's rule in style.css, or the whole rule when property is left out. A rule or @media block left empty goes too; comments elsewhere stay. To undo, style_set the value style_get gave before.",
+            schema: obj(
+                json!({
+                    "selector": {"type":"string","description":"The selector, as written for style_set."},
+                    "property": {"type":"string","description":"The property to remove; leave out to remove the whole rule."},
+                    "media": {"type":"string","enum":["dark","light"],"description":"The mode's rules instead of the ones for both modes."}
+                }),
+                &["selector"],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
+            name: "style_preset",
+            description: "Replace style.css with a whole preset sheet in one call; the sheet that was there moves to a new numbered backup (style.css.bak, .bak.1, ...), never over an older one. omarchy: a solid dark bar, one monospace face, numbered workspaces with an accent line under the current one, and a quiet right side. Leave name out for the list. A running Polycarp shows it within 200 ms; style_get shows the text, and the reset command (polycarp-spaces style reset) puts the theme's look back.",
+            schema: obj(
+                json!({"name": {"type":"string","enum":["omarchy"],"description":"The preset to write; leave out to list them."}}),
+                &[],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+        },
     ]
 }
 
@@ -463,6 +536,12 @@ pub(crate) fn call(
             Ok(a) => surfaces_call(name, &a),
         });
     }
+    if name.starts_with("style_") {
+        return Some(match Args::new(&tool, args) {
+            Err(e) => theme::envelope(&Err(e)),
+            Ok(a) => style_call(name, &a),
+        });
+    }
     let run = || -> theme::Res {
         let a = Args::new(&tool, args)?;
         if name == "theme_schema" {
@@ -579,11 +658,63 @@ fn surfaces_call(name: &str, a: &Args) -> theme::Envelope {
             argv.extend(["set".into(), path, value.to_string()]);
         }
     }
+    spaces_run(argv, "surfaces get")
+}
+
+/// Runs one style tool through `polycarp-spaces style ... --json` (no shell) and passes its envelope on
+/// (spaces/docs/style.md).
+fn style_call(name: &str, a: &Args) -> theme::Envelope {
+    let built = || -> Result<Vec<String>, ApiErr> {
+        let mut argv: Vec<String> = vec!["style".into()];
+        match name {
+            "style_example" => argv.push("example".into()),
+            "style_get" => argv.push("show".into()),
+            "style_check" => argv.push("check".into()),
+            "style_preset" => {
+                argv.push("preset".into());
+                if let Some(n) = a.text("name")? {
+                    argv.push(n.into());
+                }
+            }
+            "style_set" => {
+                argv.push("set".into());
+                argv.extend(
+                    [a.need("selector")?, a.need("property")?, a.need("value")?].map(String::from),
+                );
+            }
+            _ => {
+                argv.push("unset".into());
+                argv.push(a.need("selector")?.into());
+                if let Some(p) = a.text("property")? {
+                    argv.push(p.into());
+                }
+            }
+        }
+        if let Some(m) = a.text("media")? {
+            if m != "dark" && m != "light" {
+                return Err(ApiErr::usage(format!(
+                    "media must be \"dark\" or \"light\", not {m:?}"
+                )));
+            }
+            argv.extend(["--media".into(), m.into()]);
+        }
+        Ok(argv)
+    };
+    match built() {
+        Ok(argv) => spaces_run(argv, "style check"),
+        Err(e) => theme::envelope(&Err(e)),
+    }
+}
+
+/// Runs `polycarp-spaces <argv> --json` within the limit and passes its envelope on. `probe` is the command a
+/// person can run in a terminal to see why it failed.
+fn spaces_run(mut argv: Vec<String>, probe: &str) -> theme::Envelope {
+    let what = argv[0].clone();
     argv.push("--json".into());
     let Some(spaces) = crate::spaces_command() else {
         return surfaces_refusal(
             "spaces_not_found",
-            "polycarp-spaces was not found, so surfaces can't be read or changed here",
+            &format!("polycarp-spaces was not found, so {what} can't be read or changed here"),
             "Install Polycarp (the Mac app carries polycarp-spaces), or set POLYCARP_SPACES_BIN to its path.",
         );
     };
@@ -593,7 +724,7 @@ fn surfaces_call(name: &str, a: &Args) -> theme::Envelope {
             return surfaces_refusal(
                 "spaces_failed",
                 "polycarp-spaces didn't answer within 10 seconds",
-                "Try again; if it keeps happening, run `polycarp-spaces surfaces get` in a terminal to see why.",
+                &format!("Try again; if it keeps happening, run `polycarp-spaces {probe}` in a terminal to see why."),
             )
         }
     };
@@ -607,14 +738,14 @@ fn surfaces_call(name: &str, a: &Args) -> theme::Envelope {
             if text.contains("usage:") {
                 surfaces_refusal(
                     "spaces_too_old",
-                    "this Polycarp has no surfaces command",
+                    &format!("this Polycarp has no {what} command"),
                     "Update Polycarp (polycarp update), then try again.",
                 )
             } else {
                 let first = text.lines().next().unwrap_or("no answer").trim();
                 surfaces_refusal(
                     "spaces_failed",
-                    &format!("polycarp-spaces surfaces failed: {first}"),
+                    &format!("polycarp-spaces {what} failed: {first}"),
                     "Run the same command in a terminal to see why.",
                 )
             }

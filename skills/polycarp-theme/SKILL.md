@@ -10,6 +10,9 @@ One theme file drives every Polycarp product. Change it with the `polycarp theme
 
 What a surface shows (the top bar's modules, the desktop scene and verse, dock tiles, the status menu, the new tab
 page, the idle screen) is not the theme: it is `polycarp-spaces surfaces` (MCP `surfaces_*`, spaces/docs/surfaces.md).
+To restyle one part of the bar or dock past the theme (a gold clock, square tiles), use `<config>/style.css`: run
+`polycarp-spaces style example`, `style set '<selector>' <property> <value>` per change, then `style check`; `style preset
+omarchy` is the Omarchy look in one command, `style reset` undoes it (MCP `style_*`; spaces/docs/style.md).
 
 ## Steps
 
@@ -18,16 +21,14 @@ page, the idle screen) is not the theme: it is `polycarp-spaces surfaces` (MCP `
 2. **Read.** `polycarp theme schema` lists every field with what it controls, its range and the contrast
    rules. `polycarp theme current` says what is in force. `polycarp theme get dark.accent` reads one value.
 3. **Make the smallest change.**
-   - One value: `polycarp theme change <path> <value>`. On a built-in theme it makes `<name>-custom`
-     that extends it and switches to it; it says so. The built-ins are never edited.
+   - One value: `polycarp theme change <path> <value>`. On a built-in theme it makes `<name>-custom` that extends it and switches to it; it says so. The built-ins are never edited.
    - Several values: `polycarp theme change <path> <value> <path> <value> ...` (MCP `theme_change_many`). All
      are checked first and one `undo` takes them all back.
    - A new theme without touching the one in use: `polycarp theme create <name> --extends <base>`, then
      `polycarp theme change --theme <name> ...` (MCP `theme_change_many` with `theme`). Switch with `set` at the end.
    - A whole look: `polycarp theme apply <file|->` with TOML or JSON. Set `extends` and list only what changes.
    - One product only: use `surface.<product>.<section>.<key>` paths, or a `[surface.<product>]` table.
-   - Only the brand color: `polycarp theme accent '#rrggbb'`. It keeps the color where it reads, moves it the
-     smallest step where it doesn't and says what it chose. `--mode light` or `dark` takes it exactly or refuses.
+   - Only the brand color: `polycarp theme accent '#rrggbb'`. It keeps the color where it reads, moves it the smallest step where it doesn't and says what it chose. `--mode light` or `dark` takes it exactly or refuses.
 4. **Read refusals, then adjust.** A refusal changes nothing. With `--json`, `error.data.errors` lists each
    `path`, and for contrast the `actual` and `needs` ratios. Pick other colors. Never loosen the rules or
    edit the files in `current/` by hand.
@@ -35,8 +36,7 @@ page, the idle screen) is not the theme: it is `polycarp-spaces surfaces` (MCP `
    writes one image per product and mode into the config folder's `previews/` and lists them. Look at every image,
    change what looks wrong, preview again, and repeat until it is right. Then show the user: the PNGs, or the HTML
    page from `polycarp theme preview` (light and dark side by side). `set` the theme when they agree.
-   Over MCP you may delete or replace only themes you made in that session; any other theme needs `force`, and
-   only after the person agrees.
+   Over MCP you may delete or replace only themes you made in that session; any other theme needs `force`, and only after the person agrees.
 6. **Undo.** If they dislike it, `polycarp theme undo` steps back one change, including the theme file. If someone hand-edited that file since, it refuses (`changed_since`); use `--force` (MCP `force`) only if the person agrees. The edited text is saved in `history/` first.
    `polycarp theme reset` always works (it also turns the theme on, with the default).
    If the person wants the apps' own look back, run `polycarp theme off` (MCP `theme_off`). It removes the theme files (apps that read them use their own look when they next check), keeps their themes, and `polycarp theme on` or `undo` brings the theme back. `set`, `accent`, `change` and an activating `apply` turn it on again and say so. Set `POLYCARP_CALLER=agent:<your name>` so history says it was you.

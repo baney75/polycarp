@@ -324,7 +324,8 @@ final class AppearanceTests: XCTestCase {
     func testTheDockKeepsAndRemovesItsAppearanceObserver() throws {
         let text = try appSource("WorkspaceDock.swift")
         XCTAssertTrue(text.contains("appearanceObserver = NotificationCenter.default.addObserver(forName: Appearance.didChange"))
-        XCTAssertTrue(text.contains("deinit { appearanceObserver.map(NotificationCenter.default.removeObserver) }"))
+        // The style sheet's observer goes with it (style.css, `StyleSheetStore.didChange`).
+        XCTAssertTrue(text.contains("deinit {\n        appearanceObserver.map(NotificationCenter.default.removeObserver)\n        styleObserver.map(NotificationCenter.default.removeObserver)\n    }"))
     }
 
     func testSystemColorChangesAlwaysRefreshTheSettingsTab() throws {

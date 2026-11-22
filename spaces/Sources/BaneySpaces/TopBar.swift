@@ -34,6 +34,8 @@ final class TopBar {
     private var menuOwner: NSKeyValueObservation?
     /// The minute the menus were last read on the clock's tick.
     private var menuMinute: Date?
+    /// The height the panels were placed at, so a theme change that leaves it alone places nothing.
+    private var placedHeight: Double?
 
     init(spaces: Spaces) {
         self.spaces = spaces
@@ -53,6 +55,18 @@ final class TopBar {
     func start() {
         let center = NotificationCenter.default
         center.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload(fromFile: true) }
+        // style.css (docs/style.md): the views redraw from `Styles` on their own; the panels follow a new `height`.
+        center.addObserver(forName: StyleSheetStore.didChange, object: nil, queue: .main) { [weak self] _ in
+            Styles.shared.sync()
+            self?.reload()
+        }
+        // A mode change can pick another `@media` height; a slider drag posts this many times a second, so only a new
+        // height places the panels again.
+        center.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
+            guard let self, !self.panels.isEmpty else { return }
+            Styles.shared.sync()
+            if Styles.shared.book.barHeight(Double(self.model.bar.height)) != self.placedHeight { self.reload() }
+        }
         for name in [PurposeStore.didChange, OneThingTimerStore.didChange, NSApplication.didChangeScreenParametersNotification] {
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.reload() }
         }
@@ -110,6 +124,9 @@ final class TopBar {
         guard bar.enabled else { removeAll(); return }
 
         let hidden = UserDefaults.standard.bool(forKey: "_HIHideMenuBar")
+        // The sheet's `bar { height }` over surfaces.json's.
+        let height = Styles.shared.book.barHeight(Double(bar.height))
+        placedHeight = height
         var keep = Set<CGDirectDisplayID>()
         var covered = 0
         for screen in NSScreen.screens {
@@ -120,7 +137,7 @@ final class TopBar {
                 continue
             }
             keep.insert(id)
-            place(on: screen, id: id, notch: notch, height: CGFloat(bar.height))
+            place(on: screen, id: id, notch: notch, height: CGFloat(height))
         }
         for (id, p) in panels where !keep.contains(id) { p.orderOut(nil); panels[id] = nil }
         if covered > 0, keep.isEmpty, !loggedCovered {
@@ -359,71 +376,117 @@ final class TopBarModel: ObservableObject {
 struct TopBarView: View {
     @ObservedObject var model: TopBarModel
     @ObservedObject private var appearance = Appearance.shared
+    /// style.css: what the sheet says for the bar, its regions, modules and workspace numbers (docs/style.md).
+    @ObservedObject private var styles = Styles.shared
+    /// The module and the workspace number under the pointer, for `:hover`.
+    @State private var hovered: String?
+    @State private var hoveredNumber: Int?
     let display: CGDirectDisplayID
     let screen: NSScreen
     let sides: (left: CGFloat, right: CGFloat)?
 
     private var here: Int { model.current[display] ?? 1 }
-    /// The bar's inset from each screen edge.
-    private var gap: CGFloat { 12 }
-    /// Between modules, as Waybar spaces its own: no separators.
-    private var spacing: CGFloat { 14 }
+    /// The bar's inset from each screen edge, or the sheet's `bar { padding }`.
+    private var inset: EdgeInsets {
+        styles.book.bar.padding.map(Styled.insets) ?? EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12)
+    }
+    /// Between modules, as Waybar spaces its own: no separators. The sheet's `gap` for the bar or a region wins.
+    private var spacing: CGFloat { CGFloat(styles.book.bar.gap ?? 14) }
     /// The bar's text size: one monospace face (`Chrome.mono`) for all of it.
     private var text: Double { 12 }
 
     var body: some View {
         let places = BarLayout.places(model.bar, notch: sides != nil)
+        let pad = inset
         ZStack {
-            background
+            background.padding(EdgeInsets(top: -pad.top, leading: -pad.leading, bottom: -pad.bottom, trailing: -pad.trailing))
             if let sides {
                 HStack(spacing: 0) {
-                    row(places.left).frame(width: max(0, sides.left - gap), alignment: .leading)
+                    row(places.left, .left).frame(width: max(0, sides.left - pad.leading), alignment: .leading)
                     Spacer(minLength: 0)
-                    row(places.right).frame(width: max(0, sides.right - gap), alignment: .trailing)
+                    row(places.right, .right).frame(width: max(0, sides.right - pad.trailing), alignment: .trailing)
                 }
             } else {
                 // Each place gets its share of the width, so a long purpose or one thing shortens instead of running
                 // into the next: the middle up to half, the sides what is left either side of it.
                 GeometryReader { g in
                     let middle = places.center.isEmpty ? 0 : g.size.width * BarLayout.middleShare
-                    let side = max(0, (g.size.width - middle) / 2 - gap)
+                    let side = max(0, (g.size.width - middle) / 2 - max(pad.leading, pad.trailing))
                     ZStack {
                         HStack(spacing: 0) {
-                            row(places.left).frame(maxWidth: side, alignment: .leading)
+                            row(places.left, .left).frame(maxWidth: side, alignment: .leading)
                             Spacer(minLength: 0)
-                            row(places.right).frame(maxWidth: side, alignment: .trailing)
+                            row(places.right, .right).frame(maxWidth: side, alignment: .trailing)
                         }
-                        row(places.center).frame(maxWidth: middle)
+                        row(places.center, .center).frame(maxWidth: middle)
                     }
                     .frame(width: g.size.width, height: g.size.height)
                 }
             }
         }
-        .padding(.horizontal, gap)
+        .padding(pad)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .opacity(styles.book.bar.opacity ?? 1)
         .environment(\.colorScheme, Chrome.scheme)
     }
 
+    /// surfaces.json's `bar.style`, or the sheet's `bar { background }`, with the sheet's lines and corners over it.
     @ViewBuilder private var background: some View {
+        let b = styles.book.bar
+        let shape = Styled.shape(b)
+        ZStack {
+            if let fill = Styled.fill(b.background) {
+                shape.fill(fill)
+            } else {
+                themed.clipShape(shape)
+            }
+            StyledLines(style: b, shape: shape)
+        }
+    }
+
+    @ViewBuilder private var themed: some View {
         switch model.bar.style {
         case .solid:
             // The theme's background role, whole: one calm strip.
-            Chrome.panel().padding(.horizontal, -gap)
+            Chrome.panel()
         case .glass:
-            Rectangle().fill(.ultraThinMaterial).overlay(Chrome.panel(0.35)).padding(.horizontal, -gap)
+            Rectangle().fill(.ultraThinMaterial).overlay(Chrome.panel(0.35))
         case .hairline:
-            VStack(spacing: 0) { Spacer(minLength: 0); Chrome.edge(0.3).frame(height: Chrome.width(.dockBar)) }.padding(.horizontal, -gap)
+            VStack(spacing: 0) { Spacer(minLength: 0); Chrome.edge(0.3).frame(height: Chrome.width(.dockBar)) }
         }
     }
 
-    private func row(_ modules: [Surfaces.BarModule]) -> some View {
-        HStack(spacing: spacing) {
-            ForEach(modules.filter(BarLayout.drawn), id: \.id) { module($0) }
+    /// One region's modules. The sheet can hide a region, box it and set its own gap.
+    @ViewBuilder private func row(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region) -> some View {
+        let r = styles.book.region(region)
+        if !r.isHidden {
+            HStack(spacing: r.gap.map { CGFloat($0) } ?? spacing) {
+                ForEach(modules.filter(BarLayout.drawn), id: \.id) { styled($0, region) }
+            }
+            .lineLimit(1)
+            .modifier(StyledBox(style: r))
         }
-        .lineLimit(1)
     }
 
-    @ViewBuilder private func module(_ m: Surfaces.BarModule) -> some View {
+    /// A module with the sheet's style for it where it sits, hidden by `display: none`.
+    @ViewBuilder private func styled(_ m: Surfaces.BarModule, _ region: StyleBook.Region) -> some View {
+        let s = styles.book.module(m, in: region, hover: hovered == m.id)
+        if !s.isHidden {
+            module(m, s, region)
+                .modifier(StyledText(style: s))
+                .modifier(StyledBox(style: s))
+                .onHover { on in
+                    if on { hovered = m.id } else if hovered == m.id { hovered = nil }
+                }
+        }
+    }
+
+    /// The text of a module in its style: the sheet's font and case over the bar's one monospace face.
+    private func words(_ text: String, _ s: ComputedStyle, _ weight: TextWeight = .regular) -> Text {
+        Text(s.cased(text)).font(Styled.font(s, .mono, self.text, weight))
+    }
+
+    @ViewBuilder private func module(_ m: Surfaces.BarModule, _ s: ComputedStyle, _ region: StyleBook.Region) -> some View {
         switch m {
         case .mark:
             VineMark().frame(width: 12, height: 12)
@@ -433,11 +496,11 @@ struct TopBarView: View {
                 .accessibilityLabel("Polycarp menu")
                 .accessibilityAddTraits(.isButton)
         case .workspaces:
-            numbers
+            numbers(s, region)
         case .purpose:
             // Nothing at all when the workspace has no purpose (`BarText.purpose`).
             if let p = BarText.purpose(model.purposes[here]) {
-                Text(p).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85)).truncationMode(.tail)
+                words(p, s).foregroundStyle(s.ink(Chrome.wash(0.85))).truncationMode(.tail)
                     .help("Workspace \(here) is for: \(p)")
             }
         case .oneThing:
@@ -445,12 +508,12 @@ struct TopBarView: View {
             if let one = BarText.oneThing(model.oneThing, timerLeft: model.timerLeft) {
                 HStack(spacing: 8) {
                     if let t = one.text {
-                        Text(t).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85)).truncationMode(.tail)
+                        words(t, s).foregroundStyle(s.ink(Chrome.wash(0.85))).truncationMode(.tail)
                             .help("Today's one thing: \(t)")
                     }
                     // The one-thing timer's time left, muted, after the one thing.
                     if let timer = one.timer {
-                        Text(timer).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.5)).fixedSize()
+                        words(timer, s).foregroundStyle(s.ink(Chrome.wash(0.5), dim: 0.6)).fixedSize()
                             .help("The one-thing timer: \(timer) left")
                     }
                 }
@@ -458,45 +521,45 @@ struct TopBarView: View {
                 .accessibilityLabel(["One thing", one.text, one.timer.map { "\($0) left" }].compactMap { $0 }.joined(separator: ", "))
             }
         case .hour:
-            Text(BarText.hour(model.now, names: model.bar.hourNames)).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85))
+            words(BarText.hour(model.now, names: model.bar.hourNames), s).foregroundStyle(s.ink(Chrome.wash(0.85)))
         case .clock:
-            Text(BarText.clock(model.now, format: model.bar.clockFormat)).font(Chrome.mono(text)).foregroundStyle(Chrome.wash())
+            words(BarText.clock(model.now, format: model.bar.clockFormat), s).foregroundStyle(s.ink(Chrome.wash()))
                 .fixedSize()
         case .date:
-            Text(BarText.date(model.now)).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85))
+            words(BarText.date(model.now), s).foregroundStyle(s.ink(Chrome.wash(0.85)))
         case .verse:
             if let v = model.verse {
                 HStack(spacing: 8) {
-                    Text(v.text).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85)).truncationMode(.tail)
-                    Text(v.ref).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.5)).fixedSize()
+                    words(v.text, s).foregroundStyle(s.ink(Chrome.wash(0.85))).truncationMode(.tail)
+                    words(v.ref, s).foregroundStyle(s.ink(Chrome.wash(0.5), dim: 0.6)).fixedSize()
                 }
                 .help("\(v.text) (\(v.ref), BSB)")
             }
         case .battery:
-            if let b = model.battery { Text(b).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85)) }
+            if let b = model.battery { words(b, s).foregroundStyle(s.ink(Chrome.wash(0.85))) }
         case .network:
-            if model.offline { Text("Offline").font(Chrome.mono(text, .semibold)).foregroundStyle(Chrome.urgent) }
+            if model.offline { words("Offline", s, .semibold).foregroundStyle(s.ink(Chrome.urgent)) }
         case .appMenus:
-            menus
+            menus(s)
         case .status:
-            statusItems
+            statusItems(s)
         case .custom:
             EmptyView()
         }
     }
 
     /// The front app's menus: the Apple logo, its name in semibold, then its menus, as many as fit. Click one to open it.
-    private var menus: some View {
-        FitRow(spacing: 12) {
+    private func menus(_ s: ComputedStyle) -> some View {
+        FitRow(spacing: s.gap.map { CGFloat($0) } ?? 12) {
             ForEach(model.menus, id: \.index) { item in
                 Group {
                     switch item.role {
                     case .apple: Image(systemName: "apple.logo").font(.system(size: 12, weight: .medium))
-                    case .app: Text(item.title).font(Chrome.mono(text, .semibold))
-                    case .menu: Text(item.title).font(Chrome.mono(text))
+                    case .app: words(item.title, s, .semibold)
+                    case .menu: words(item.title, s)
                     }
                 }
-                .foregroundStyle(Chrome.wash(0.92))
+                .foregroundStyle(s.ink(Chrome.wash(0.92)))
                 .fixedSize()
                 .padding(.vertical, 4)
                 .contentShape(Rectangle())
@@ -509,15 +572,15 @@ struct TopBarView: View {
 
     /// Every app's status items, as many as fit from the right, in one monochrome row like Waybar's glyphs: macOS's as
     /// symbols and a template icon in the bar's foreground, any other app icon in gray.
-    private var statusItems: some View {
-        FitRow(spacing: 10, fromEnd: true) {
+    private func statusItems(_ s: ComputedStyle) -> some View {
+        FitRow(spacing: s.gap.map { CGFloat($0) } ?? 10, fromEnd: true) {
             ForEach(Array(model.status.enumerated()), id: \.offset) { i, item in
                 Group {
                     if let symbol = BarStatus.symbol(item, percent: model.charge?.percent, charging: model.charge?.charging ?? false) {
-                        Image(systemName: symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(Chrome.wash(0.85))
+                        Image(systemName: symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(s.ink(Chrome.wash(0.85)))
                     } else if let icon = model.icons[item.owner], icon.isTemplate {
                         Image(nsImage: icon).renderingMode(.template).resizable().interpolation(.high).frame(width: 15, height: 15)
-                            .foregroundStyle(Chrome.wash(0.85))
+                            .foregroundStyle(s.ink(Chrome.wash(0.85)))
                     } else if let icon = model.icons[item.owner] {
                         Image(nsImage: icon).resizable().interpolation(.high).frame(width: 15, height: 15)
                             .grayscale(1).opacity(0.85)
@@ -539,22 +602,32 @@ struct TopBarView: View {
     /// A number for each workspace with windows and the one you're on (`BarWorkspaces.shown`), as Omarchy's bar has them:
     /// the one you're on in full over an accent line (or on an accent block, `BarWorkspaces.marker`), the rest muted.
     /// The line sits under the digit without moving it, so the numbers stay centered. Click one to go there.
-    private var numbers: some View {
+    /// The sheet's `bar .workspace` (with `.current` and `:hover`) styles each number; a `border-bottom` it sets is the
+    /// line in place of the accent one, and the module's `gap` spaces them.
+    private func numbers(_ module: ComputedStyle, _ region: StyleBook.Region) -> some View {
         let marker = BarWorkspaces.marker(Chrome.spec.indicator)
-        return HStack(spacing: 10) {
+        return HStack(spacing: module.gap.map { CGFloat($0) } ?? 10) {
             ForEach(BarWorkspaces.shown(occupied: model.occupied, current: here), id: \.self) { n in
                 let on = n == here
+                let w = styles.book.workspace(in: region, current: on, hover: hoveredNumber == n)
                 Group {
-                    if on, marker == .block {
-                        Text("\(n)").font(Chrome.mono(text, .semibold)).foregroundStyle(Chrome.onAccent)
+                    if w.isHidden {
+                        EmptyView()
+                    } else if on, marker == .block, w.color == nil, !w.hasBox {
+                        words("\(n)", w, .semibold).foregroundStyle(Chrome.onAccent)
                             .padding(.horizontal, 4)
                             .background(Rectangle().fill(Chrome.accent))
                     } else {
-                        Text("\(n)").font(Chrome.mono(text, on ? .semibold : .regular)).foregroundStyle(on ? Chrome.wash() : Chrome.wash(0.5))
+                        words("\(n)", w, on ? .semibold : .regular).foregroundStyle(w.ink(on ? Chrome.wash() : Chrome.wash(0.5)))
+                            .modifier(StyledText(style: w))
                             .overlay(alignment: .bottom) {
-                                if on { Rectangle().fill(Chrome.accent).frame(height: 2).offset(y: 3) }
+                                if on, w.borderBottom == nil { Rectangle().fill(Chrome.accent).frame(height: 2).offset(y: 3) }
                             }
+                            .modifier(StyledBox(style: w))
                     }
+                }
+                .onHover { inside in
+                    if inside { hoveredNumber = n } else if hoveredNumber == n { hoveredNumber = nil }
                 }
                 .padding(.vertical, 4)
                 .contentShape(Rectangle())
