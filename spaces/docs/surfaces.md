@@ -82,12 +82,12 @@ Error codes: `invalid_value` (the value fails its check), `unknown_path` (no suc
 | Path | Default | Takes |
 | --- | --- | --- |
 | `bar.enabled` | `false` | `true` or `false`. Show Polycarp's top bar. Off until you turn it on. |
-| `bar.height` | `28` | A whole number of points, 22 to 40. |
-| `bar.style` | `"solid"` | `solid` (the theme's surface color), `glass` (blurred, see-through) or `hairline` (the desktop shows through, with a thin line under it). |
+| `bar.height` | `26` | A whole number of points, 22 to 40. |
+| `bar.style` | `"solid"` | `solid` (the theme's background color), `glass` (blurred, see-through) or `hairline` (the desktop shows through, with a thin line under it). |
 | `bar.modules.left` | `["mark","workspaces","app-menus","purpose"]` | Module ids, in order. |
-| `bar.modules.center` | `["one-thing"]` | Module ids, in order. |
-| `bar.modules.right` | `["status","hour","clock"]` | Module ids, in order. |
-| `bar.clockFormat` | `"12h"` | `12h` (3:05) or `24h` (15:05). |
+| `bar.modules.center` | `["clock"]` | Module ids, in order. |
+| `bar.modules.right` | `["one-thing","status"]` | Module ids, in order. |
+| `bar.clockFormat` | `"day-12h"` | `day-12h` (Saturday 10:04 PM), `day-24h` (Saturday 22:04), `12h` (3:05) or `24h` (15:05). |
 | `bar.hourNames` | `true` | The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning). |
 | `bar.hideSystemMenuBar` | `false` | Ask for the macOS menu bar to hide: Polycarp opens System Settings > Menu Bar for you to choose Always. It never changes the setting itself. |
 
@@ -99,18 +99,28 @@ What each one draws:
 | Module | Shows |
 | --- | --- |
 | `mark` | Polycarp's vine mark. Click it for Polycarp's menu (Settings, Quit and the rest), which `status` leaves out. |
-| `workspaces` | A dot for each workspace with windows, the one you're on drawn long; click one to go there. |
-| `purpose` | What the workspace you're on is for (`polycarp-spaces purpose set`), in serif italic. Nothing when it has none. |
-| `one-thing` | Today's one thing (`polycarp-spaces one`), in gold. Nothing when there is none. |
+| `workspaces` | A number for each workspace with windows and the one you're on, in order: `1 2 4`. The one you're on is bright over a short accent line (on an accent block in a `number-block` theme, such as Omarchy); the others are muted. Click one to go there. |
+| `purpose` | What the workspace you're on is for (`polycarp-spaces purpose set`). Nothing at all when it has none. |
+| `one-thing` | Today's one thing (`polycarp-spaces one`) and the timer's time left while it runs. Nothing at all when there is neither. |
 | `hour` | The day and the hour in words: "Saturday, Terce". Sunday is the Lord's Day. |
-| `clock` | 3:05, or 15:05 with `clockFormat` 24h. |
+| `clock` | Saturday 10:04 PM by default; Saturday 22:04 with `clockFormat` day-24h, 3:05 with 12h, 15:05 with 24h. |
 | `date` | November 21. |
 | `verse` | The desktop's verse for now, with its reference. |
 | `battery` | The charge, only off power or while charging. Nothing on a desktop Mac. |
 | `network` | "Offline" when there is no connection; nothing when there is. |
 | `app-menus` | The front app's menus: the Apple logo, the app's name in bold, then File, Edit and the rest. Click one to open it, as from the macOS bar. Titles past the room are left out whole, from the end. |
-| `status` | The status items of macOS and your apps, in the macOS bar's order: Wi-Fi, the battery, Control Center and the like as symbols, an app's own as its icon. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark. |
+| `status` | The status items of macOS and your apps, in the macOS bar's order, in one quiet monochrome row: Wi-Fi, the battery, Control Center and the like as symbols, an app's own as its icon drawn in gray. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark. |
 | `custom:<name>` | Kept in the file, not drawn yet. |
+
+**The look.** The bar follows Omarchy's: one solid strip in the theme's background color, one monospace face for all
+of it (the Polycarp theme's `type.mono` stack when one is in force, else SF Mono) at 12 points, the app's name in
+semibold and its menus regular, modules 14 points apart with no separators, and no color but the accent under the
+workspace you're on. **An empty day is a clean bar:** with no purpose for the workspace, no one thing and no timer
+running, the bar shows the mark, the numbers, the app's menus, the clock and the status row, nothing else.
+
+**Saved module lists are not changed.** The defaults above (the clock in the middle, the one thing at the right, no
+`hour`) are for a file that sets no `bar.modules` place. A file that already lists its modules keeps them as they are;
+to take the new layout, `polycarp-spaces surfaces reset bar.modules`.
 
 `app-menus` and `status` read through the Accessibility permission Polycarp already has; no pixels are copied, so
 they need no Screen Recording. A status item that macOS or its app doesn't show to Accessibility isn't drawn.

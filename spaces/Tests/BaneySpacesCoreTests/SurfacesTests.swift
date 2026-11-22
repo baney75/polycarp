@@ -29,12 +29,12 @@ final class SurfacesTests: XCTestCase {
     func testEveryDefaultIsCompiledInAndAnEmptyFileIsTheDefaults() throws {
         let d = Surfaces.defaults
         XCTAssertEqual(d.bar.enabled, false)
-        XCTAssertEqual(d.bar.height, 28)
+        XCTAssertEqual(d.bar.height, 26)
         XCTAssertEqual(d.bar.style, .solid)
         XCTAssertEqual(d.bar.left, [.mark, .workspaces, .appMenus, .purpose])
-        XCTAssertEqual(d.bar.center, [.oneThing])
-        XCTAssertEqual(d.bar.right, [.status, .hour, .clock])
-        XCTAssertEqual(d.bar.clockFormat, .twelveHour)
+        XCTAssertEqual(d.bar.center, [.clock])
+        XCTAssertEqual(d.bar.right, [.oneThing, .status])
+        XCTAssertEqual(d.bar.clockFormat, .dayTwelveHour)
         XCTAssertTrue(d.bar.hourNames)
         XCTAssertFalse(d.bar.hideSystemMenuBar)
         XCTAssertEqual(d.desktop.scene, .field)
@@ -129,7 +129,7 @@ final class SurfacesTests: XCTestCase {
     }
 
     func testGetMergesTheFileOverTheDefaults() throws {
-        XCTAssertEqual(try SurfacesOps.get("bar.height", file: file).get().object?["value"], .number(28), "no file: the default")
+        XCTAssertEqual(try SurfacesOps.get("bar.height", file: file).get().object?["value"], .number(26), "no file: the default")
         XCTAssertEqual(try SurfacesOps.get("bar.height", file: file).get().object?["set"], .bool(false))
         _ = SurfacesOps.set("bar.height", .number(36), file: file)
         let bar = try SurfacesOps.get("bar", file: file).get().object?["value"]
@@ -143,7 +143,7 @@ final class SurfacesTests: XCTestCase {
         _ = SurfacesOps.set("bar.height", .number(36), file: file)
         _ = SurfacesOps.set("dock.restTile", .bool(false), file: file)
         let r = try SurfacesOps.reset("bar.height", file: file).get()
-        XCTAssertEqual(r.object?["value"], .number(28))
+        XCTAssertEqual(r.object?["value"], .number(26))
         guard case .document(let d) = SurfacesFile.load(path: file) else { return XCTFail() }
         XCTAssertNil(d.tree.at(["bar"]), "an emptied group leaves the file")
         XCTAssertEqual(d.tree.at(["dock", "restTile"]), .bool(false))
@@ -170,6 +170,7 @@ final class SurfacesTests: XCTestCase {
             (#"{"bar":{"style":"frosted"}}"#, "bar.style", #"must be one of "solid", "glass", "hairline", not "frosted""#),
             (#"{"bar":{"style":1}}"#, "bar.style", "must be one of"),
             (#"{"bar":{"clockFormat":"24"}}"#, "bar.clockFormat", #"not "24""#),
+            (#"{"bar":{"clockFormat":"day"}}"#, "bar.clockFormat", #"must be one of "12h", "24h", "day-12h", "day-24h", not "day""#),
             (#"{"bar":{"modules":{"left":"mark"}}}"#, "bar.modules.left", "must be a list of ids, not a string"),
             (#"{"bar":{"modules":{"left":["mark",3]}}}"#, "bar.modules.left[1]", "must be an id (a string), not a number"),
             (#"{"bar":{"modules":{"left":["mark","wifi"]}}}"#, "bar.modules.left[1]", #""wifi" is not a known id"#),
@@ -474,11 +475,26 @@ final class SurfacesTests: XCTestCase {
         }
         let a = try bar(#"{"bar":{"modules":{"center":["hour"]}}}"#)
         XCTAssertEqual(a.center, [.hour])
-        XCTAssertEqual(a.right, [.status, .clock], "hour left the default right")
+        XCTAssertEqual(a.right, [.oneThing, .status])
         let b = try bar(#"{"bar":{"modules":{"right":["mark","clock"]}}}"#)
         XCTAssertEqual(b.left, [.workspaces, .appMenus, .purpose])
         XCTAssertEqual(b.right, [.mark, .clock])
-        XCTAssertEqual(b.center, [.oneThing])
+        XCTAssertEqual(b.center, [], "clock left the default middle")
+        // A saved list from before the Omarchy defaults is the user's: it keeps its hour and its places.
+        let old = try bar(#"{"bar":{"modules":{"left":["mark","workspaces","app-menus","purpose"],"center":["one-thing"],"right":["status","hour","clock"]}}}"#)
+        XCTAssertEqual(old.center, [.oneThing])
+        XCTAssertEqual(old.right, [.status, .hour, .clock])
+    }
+
+    /// The day forms of the clock are taken and read back; the 12h and 24h forms still read as they did.
+    func testEveryClockFormatReadsBack() throws {
+        for f in Surfaces.ClockFormat.allCases {
+            XCTAssertNoThrow(try SurfacesOps.set("bar.clockFormat", .string(f.rawValue), file: file).get(), f.rawValue)
+            guard case .document(let d) = SurfacesFile.load(path: file) else { return XCTFail("the file reads back") }
+            XCTAssertEqual(d.surfaces.bar.clockFormat, f)
+        }
+        XCTAssertEqual(Surfaces.schema.at(["properties", "bar", "properties", "clockFormat", "enum"]),
+                       .array(["12h", "24h", "day-12h", "day-24h"].map(SurfaceValue.string)))
     }
 }
 

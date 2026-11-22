@@ -158,6 +158,20 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertNil(FontFace.resolve(families: ["No Such Font 123"], weight: .regular, size: 13))
     }
 
+    /// The top bar draws in the theme's monospace stack: its named fonts, `ui-monospace` as SF Mono where it stands, and
+    /// always monospace in the end, even when no named font is installed.
+    func testTheMonospaceStackAlwaysDrawsMonospace() throws {
+        func mono(_ stack: String) throws -> [String] {
+            try parse(edited { var y = $0["type"] as! [String: Any]; y["mono"] = stack; $0["type"] = y }).get().monoFamilies
+        }
+        XCTAssertEqual(try mono(#"ui-monospace, "SF Mono", Menlo, Consolas, monospace"#),
+                       [FontFace.systemMonospace, "SF Mono", "Menlo", "Consolas"])
+        XCTAssertEqual(try mono(#""JetBrains Mono", monospace"#), ["JetBrains Mono", FontFace.systemMonospace])
+        XCTAssertEqual(try mono("Menlo"), ["Menlo", FontFace.systemMonospace])
+        let font = try XCTUnwrap(FontFace.resolve(families: try mono("No Such Font 123, monospace"), weight: .semibold, size: 12))
+        XCTAssertTrue(CTFontGetSymbolicTraits(font).contains(.traitMonoSpace))
+    }
+
     /// Font family names don't care about case in CSS, so a stack means the same thing here as in a browser.
     func testFontFamilyNamesMatchWithoutRegardToCase() throws {
         func family(_ names: [String]) throws -> String {

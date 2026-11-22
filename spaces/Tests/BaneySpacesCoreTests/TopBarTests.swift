@@ -41,6 +41,34 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(BarText.clock(at(21, 0, 7), calendar: cal, format: .twentyFourHour), "0:07")
     }
 
+    /// Omarchy's clock: the day's name, then the time, on the same 12 and 24 hour rules. The 12 hour form says AM or PM.
+    func testTheClockWithTheDay() {
+        XCTAssertEqual(BarText.clock(at(21, 22, 4), calendar: cal, format: .dayTwelveHour), "Saturday 10:04 PM")
+        XCTAssertEqual(BarText.clock(at(21, 22, 4), calendar: cal, format: .dayTwentyFourHour), "Saturday 22:04")
+        XCTAssertEqual(BarText.clock(at(21, 0, 7), calendar: cal, format: .dayTwelveHour), "Saturday 12:07 AM")
+        XCTAssertEqual(BarText.clock(at(21, 12, 0), calendar: cal, format: .dayTwelveHour), "Saturday 12:00 PM")
+        XCTAssertEqual(BarText.clock(at(21, 11, 59), calendar: cal, format: .dayTwelveHour), "Saturday 11:59 AM")
+        XCTAssertEqual(BarText.clock(at(21, 9, 5), calendar: cal, format: .dayTwentyFourHour), "Saturday 9:05")
+        XCTAssertEqual(BarText.clock(at(22, 0, 7), calendar: cal, format: .dayTwentyFourHour), "Sunday 0:07")
+        XCTAssertEqual(Surfaces.ClockFormat.allCases.map(\.rawValue), ["12h", "24h", "day-12h", "day-24h"])
+        XCTAssertEqual(Surfaces.ClockFormat.allCases.filter(\.twentyFour), [.twentyFourHour, .dayTwentyFourHour])
+        XCTAssertEqual(Surfaces.ClockFormat.allCases.filter(\.withDay), [.dayTwelveHour, .dayTwentyFourHour])
+    }
+
+    /// An empty day is a clean bar: `purpose` and `one-thing` draw nothing at all when nothing is named.
+    func testAnEmptyDayDrawsNoPurposeAndNoOneThing() {
+        XCTAssertNil(BarText.purpose(nil))
+        XCTAssertNil(BarText.purpose(""))
+        XCTAssertNil(BarText.purpose("  \n"))
+        XCTAssertEqual(BarText.purpose(" Write the paper "), "Write the paper")
+        XCTAssertNil(BarText.oneThing(nil, timerLeft: nil))
+        XCTAssertNil(BarText.oneThing(" ", timerLeft: nil))
+        XCTAssertEqual(BarText.oneThing("Finish the draft", timerLeft: nil), .init(text: "Finish the draft", timer: nil))
+        let timed = BarText.oneThing(nil, timerLeft: 125)
+        XCTAssertNil(timed?.text)
+        XCTAssertEqual(timed?.timer, BarText.timer(remaining: 125), "a running timer shows with nothing named")
+    }
+
     func testDateAndNextMinute() {
         XCTAssertEqual(BarText.date(at(21, 9), calendar: cal), "November 21")
         let next = BarText.nextMinute(after: at(21, 9, 12).addingTimeInterval(30), calendar: cal)
@@ -68,18 +96,28 @@ final class TopBarTests: XCTestCase {
     func testTheLedgerDefaults() {
         let bar = Surfaces.defaults.bar
         XCTAssertEqual(bar.left, [.mark, .workspaces, .appMenus, .purpose])
-        XCTAssertEqual(bar.center, [.oneThing])
-        XCTAssertEqual(bar.right, [.status, .hour, .clock])
+        XCTAssertEqual(bar.center, [.clock])
+        XCTAssertEqual(bar.right, [.oneThing, .status])
+        XCTAssertEqual(bar.height, 26)
+        XCTAssertEqual(bar.clockFormat, .dayTwelveHour)
         XCTAssertTrue((bar.left + bar.center + bar.right).allSatisfy(BarLayout.drawn))
         XCTAssertTrue(BarLayout.drawn(.appMenus))
         XCTAssertTrue(BarLayout.drawn(.status))
         XCTAssertFalse(BarLayout.drawn(.custom("x")))
     }
 
-    func testDotsAreOccupiedWorkspacesAndTheCurrentOne() {
-        XCTAssertEqual(BarLayout.dots(occupied: [3, 1], current: 5), [1, 3, 5])
-        XCTAssertEqual(BarLayout.dots(occupied: [], current: 2), [2])
-        XCTAssertEqual(BarLayout.dots(occupied: [0, 12, 4], current: 4), [4], "only workspaces 1 to 9")
+    func testTheNumbersAreOccupiedWorkspacesAndTheCurrentOne() {
+        XCTAssertEqual(BarWorkspaces.shown(occupied: [3, 1], current: 5), [1, 3, 5])
+        XCTAssertEqual(BarWorkspaces.shown(occupied: [], current: 2), [2])
+        XCTAssertEqual(BarWorkspaces.shown(occupied: [2, 7], current: 2), [2, 7], "the current one once")
+        XCTAssertEqual(BarWorkspaces.shown(occupied: [0, 12, 4], current: 4), [4], "only workspaces 1 to 9")
+    }
+
+    /// The built-in themes (dot, bar) underline the workspace you're on; a number-block theme draws it on a block.
+    func testTheCurrentNumbersMarkerFollowsTheTheme() {
+        XCTAssertEqual(BarWorkspaces.marker(.dot), .underline)
+        XCTAssertEqual(BarWorkspaces.marker(.bar), .underline)
+        XCTAssertEqual(BarWorkspaces.marker(.numberBlock), .block)
     }
 
     func testTheSystemBarCoversOursUnlessHidden() {

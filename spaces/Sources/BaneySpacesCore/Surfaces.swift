@@ -54,7 +54,15 @@ public struct Surfaces: Equatable, Sendable {
     public static let version = 1
 
     public enum BarStyle: String, CaseIterable, Sendable { case solid, glass, hairline }
-    public enum ClockFormat: String, CaseIterable, Sendable { case twelveHour = "12h", twentyFourHour = "24h" }
+    /// The clock module's form: the time alone ("3:05", "15:05"), or after the day's name as Omarchy's bar draws it
+    /// ("Saturday 10:04 PM", "Saturday 22:04").
+    public enum ClockFormat: String, CaseIterable, Sendable {
+        case twelveHour = "12h", twentyFourHour = "24h"
+        case dayTwelveHour = "day-12h", dayTwentyFourHour = "day-24h"
+
+        public var twentyFour: Bool { self == .twentyFourHour || self == .dayTwentyFourHour }
+        public var withDay: Bool { self == .dayTwelveHour || self == .dayTwentyFourHour }
+    }
 
     /// A top bar module. `custom` carries the name after `custom:`.
     public enum BarModule: Hashable, Sendable {
@@ -281,17 +289,17 @@ extension SurfaceField {
                      "The format of this file. This build writes 1; a higher number is read for the fields this build knows."),
 
         SurfaceField("bar.enabled", .bool, .bool(false), "Show Polycarp's top bar. Off until you turn it on."),
-        SurfaceField("bar.height", .integer(22...40), .number(28), "The bar's height in points, 22 to 40."),
+        SurfaceField("bar.height", .integer(22...40), .number(26),"The bar's height in points, 22 to 40."),
         SurfaceField("bar.style", .choice(Surfaces.BarStyle.allCases.map(\.rawValue)), .string("solid"),
                      "solid: the theme's surface color. glass: blurred and see-through. hairline: the desktop shows through, with a thin line under it."),
         SurfaceField("bar.modules.left", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
                      ids(["mark", "workspaces", "app-menus", "purpose"]), "Modules at the left, in order."),
         SurfaceField("bar.modules.center", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
-                     ids(["one-thing"]), "Modules in the middle, in order."),
+                     ids(["clock"]), "Modules in the middle, in order."),
         SurfaceField("bar.modules.right", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
-                     ids(["status", "hour", "clock"]), "Modules at the right, in order."),
-        SurfaceField("bar.clockFormat", .choice(Surfaces.ClockFormat.allCases.map(\.rawValue)), .string("12h"),
-                     "The clock module: 12h (3:05) or 24h (15:05)."),
+                     ids(["one-thing", "status"]), "Modules at the right, in order."),
+        SurfaceField("bar.clockFormat", .choice(Surfaces.ClockFormat.allCases.map(\.rawValue)), .string("day-12h"),
+                     "The clock module: day-12h (Saturday 10:04 PM), day-24h (Saturday 22:04), 12h (3:05) or 24h (15:05)."),
         SurfaceField("bar.hourNames", .bool, .bool(true), "The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning)."),
         SurfaceField("bar.hideSystemMenuBar", .bool, .bool(false),
                      "Ask for the macOS menu bar to hide while Polycarp's bar is on: Polycarp opens System Settings > Menu Bar for you to choose Always. It never changes the setting itself. Polycarp's bar shows only where the macOS bar is hidden."),
@@ -411,7 +419,7 @@ extension Surfaces {
                   left: list("bar.modules.left").compactMap(BarModule.init(id:)),
                   center: list("bar.modules.center").compactMap(BarModule.init(id:)),
                   right: list("bar.modules.right").compactMap(BarModule.init(id:)),
-                  clockFormat: ClockFormat(rawValue: s("bar.clockFormat")) ?? .twelveHour,
+                  clockFormat: ClockFormat(rawValue: s("bar.clockFormat")) ?? .dayTwelveHour,
                   hourNames: b("bar.hourNames"), hideSystemMenuBar: b("bar.hideSystemMenuBar"))
         desktop = Desktop(scene: Scene(id: s("desktop.scene")), followDaylight: b("desktop.followDaylight"), verse: b("desktop.verse"),
                           versePosition: VersePosition(rawValue: s("desktop.versePosition")) ?? .bottomRight,

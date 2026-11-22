@@ -9,7 +9,7 @@ import SwiftUI
 /// (`BarLayout.systemBarShown`), so pointing at the top edge still brings that bar and the app's menus down over it.
 /// It sits just under your windows (`BarLayout.levelBelowWindows`): a window that reaches the top of the screen covers
 /// it, so the bar never hides a window's buttons or title. It never takes focus and stays off full-screen apps. A click
-/// switches workspaces (a dot) or opens what the macOS bar would (an app's menu, a status item). Main thread only.
+/// switches workspaces (a number) or opens what the macOS bar would (an app's menu, a status item). Main thread only.
 final class TopBar {
     let model = TopBarModel()
     private let spaces: Spaces
@@ -92,7 +92,7 @@ final class TopBar {
         reload()
     }
 
-    /// Workspaces changed: the dots and the purpose follow at once.
+    /// Workspaces changed: the numbers and the purpose follow at once.
     func workspacesChanged() {
         guard !panels.isEmpty else { return }
         readWorkspaces()
@@ -364,7 +364,12 @@ struct TopBarView: View {
     let sides: (left: CGFloat, right: CGFloat)?
 
     private var here: Int { model.current[display] ?? 1 }
+    /// The bar's inset from each screen edge.
     private var gap: CGFloat { 12 }
+    /// Between modules, as Waybar spaces its own: no separators.
+    private var spacing: CGFloat { 14 }
+    /// The bar's text size: one monospace face (`Chrome.mono`) for all of it.
+    private var text: Double { 12 }
 
     var body: some View {
         let places = BarLayout.places(model.bar, notch: sides != nil)
@@ -402,7 +407,8 @@ struct TopBarView: View {
     @ViewBuilder private var background: some View {
         switch model.bar.style {
         case .solid:
-            Chrome.panel(0.94).padding(.horizontal, -gap)
+            // The theme's background role, whole: one calm strip.
+            Chrome.panel().padding(.horizontal, -gap)
         case .glass:
             Rectangle().fill(.ultraThinMaterial).overlay(Chrome.panel(0.35)).padding(.horizontal, -gap)
         case .hairline:
@@ -411,7 +417,7 @@ struct TopBarView: View {
     }
 
     private func row(_ modules: [Surfaces.BarModule]) -> some View {
-        HStack(spacing: gap) {
+        HStack(spacing: spacing) {
             ForEach(modules.filter(BarLayout.drawn), id: \.id) { module($0) }
         }
         .lineLimit(1)
@@ -427,48 +433,49 @@ struct TopBarView: View {
                 .accessibilityLabel("Polycarp menu")
                 .accessibilityAddTraits(.isButton)
         case .workspaces:
-            dots
+            numbers
         case .purpose:
-            if let p = model.purposes[here], !p.isEmpty {
-                Text(p).font(Chrome.voice(12)).foregroundStyle(Chrome.wash(0.92)).truncationMode(.tail)
+            // Nothing at all when the workspace has no purpose (`BarText.purpose`).
+            if let p = BarText.purpose(model.purposes[here]) {
+                Text(p).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85)).truncationMode(.tail)
                     .help("Workspace \(here) is for: \(p)")
             }
         case .oneThing:
-            let one = model.oneThing.flatMap { $0.isEmpty ? nil : $0 }
-            if one != nil || model.timerLeft != nil {
-                HStack(spacing: 6) {
-                    if let one {
-                        Text("One thing").font(Chrome.font(11, .medium)).foregroundStyle(Chrome.gold).fixedSize()
-                        Text(one).font(Chrome.font(11, .medium)).foregroundStyle(Chrome.wash()).truncationMode(.tail)
+            // Nothing at all with no one thing and no timer (`BarText.oneThing`), so an empty day is a clean bar.
+            if let one = BarText.oneThing(model.oneThing, timerLeft: model.timerLeft) {
+                HStack(spacing: 8) {
+                    if let t = one.text {
+                        Text(t).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85)).truncationMode(.tail)
+                            .help("Today's one thing: \(t)")
                     }
                     // The one-thing timer's time left, muted, after the one thing.
-                    if let left = model.timerLeft {
-                        Text(BarText.timer(remaining: left)).font(Chrome.font(11, .medium)).monospacedDigit()
-                            .foregroundStyle(Chrome.wash(0.85)).fixedSize()
-                            .help("The one-thing timer: \(BarText.timer(remaining: left)) left")
+                    if let timer = one.timer {
+                        Text(timer).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.5)).fixedSize()
+                            .help("The one-thing timer: \(timer) left")
                     }
                 }
                 .accessibilityElement(children: .combine)
+                .accessibilityLabel(["One thing", one.text, one.timer.map { "\($0) left" }].compactMap { $0 }.joined(separator: ", "))
             }
         case .hour:
-            Text(BarText.hour(model.now, names: model.bar.hourNames)).font(Chrome.font(11, .medium)).foregroundStyle(Chrome.wash(0.85))
+            Text(BarText.hour(model.now, names: model.bar.hourNames)).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85))
         case .clock:
-            Text(BarText.clock(model.now, format: model.bar.clockFormat)).font(Chrome.font(11, .medium)).monospacedDigit()
-                .foregroundStyle(Chrome.wash(0.85))
+            Text(BarText.clock(model.now, format: model.bar.clockFormat)).font(Chrome.mono(text)).foregroundStyle(Chrome.wash())
+                .fixedSize()
         case .date:
-            Text(BarText.date(model.now)).font(Chrome.font(11, .medium)).foregroundStyle(Chrome.wash(0.85))
+            Text(BarText.date(model.now)).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85))
         case .verse:
             if let v = model.verse {
-                HStack(spacing: 6) {
-                    Text(v.text).font(Chrome.voice(11.5)).foregroundStyle(Chrome.wash(0.85)).truncationMode(.tail)
-                    Text(v.ref).font(Chrome.font(10, .semibold)).foregroundStyle(Chrome.gold)
+                HStack(spacing: 8) {
+                    Text(v.text).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85)).truncationMode(.tail)
+                    Text(v.ref).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.5)).fixedSize()
                 }
                 .help("\(v.text) (\(v.ref), BSB)")
             }
         case .battery:
-            if let b = model.battery { Text(b).font(Chrome.font(11, .medium)).monospacedDigit().foregroundStyle(Chrome.wash(0.85)) }
+            if let b = model.battery { Text(b).font(Chrome.mono(text)).foregroundStyle(Chrome.wash(0.85)) }
         case .network:
-            if model.offline { Text("Offline").font(Chrome.font(11, .semibold)).foregroundStyle(Chrome.urgent) }
+            if model.offline { Text("Offline").font(Chrome.mono(text, .semibold)).foregroundStyle(Chrome.urgent) }
         case .appMenus:
             menus
         case .status:
@@ -478,15 +485,15 @@ struct TopBarView: View {
         }
     }
 
-    /// The front app's menus: the Apple logo, its name in bold, then its menus, as many as fit. Click one to open it.
+    /// The front app's menus: the Apple logo, its name in semibold, then its menus, as many as fit. Click one to open it.
     private var menus: some View {
-        FitRow(spacing: 14) {
+        FitRow(spacing: 12) {
             ForEach(model.menus, id: \.index) { item in
                 Group {
                     switch item.role {
                     case .apple: Image(systemName: "apple.logo").font(.system(size: 12, weight: .medium))
-                    case .app: Text(item.title).font(Chrome.font(12, .bold))
-                    case .menu: Text(item.title).font(Chrome.font(12))
+                    case .app: Text(item.title).font(Chrome.mono(text, .semibold))
+                    case .menu: Text(item.title).font(Chrome.mono(text))
                     }
                 }
                 .foregroundStyle(Chrome.wash(0.92))
@@ -500,15 +507,20 @@ struct TopBarView: View {
         }
     }
 
-    /// Every app's status items, as many as fit from the right: macOS's as symbols, an app's own as its icon.
+    /// Every app's status items, as many as fit from the right, in one monochrome row like Waybar's glyphs: macOS's as
+    /// symbols and a template icon in the bar's foreground, any other app icon in gray.
     private var statusItems: some View {
         FitRow(spacing: 10, fromEnd: true) {
             ForEach(Array(model.status.enumerated()), id: \.offset) { i, item in
                 Group {
                     if let symbol = BarStatus.symbol(item, percent: model.charge?.percent, charging: model.charge?.charging ?? false) {
                         Image(systemName: symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(Chrome.wash(0.85))
+                    } else if let icon = model.icons[item.owner], icon.isTemplate {
+                        Image(nsImage: icon).renderingMode(.template).resizable().interpolation(.high).frame(width: 15, height: 15)
+                            .foregroundStyle(Chrome.wash(0.85))
                     } else if let icon = model.icons[item.owner] {
                         Image(nsImage: icon).resizable().interpolation(.high).frame(width: 15, height: 15)
+                            .grayscale(1).opacity(0.85)
                     } else {
                         Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(Chrome.wash(0.6))
                     }
@@ -524,20 +536,32 @@ struct TopBarView: View {
         }
     }
 
-    /// A dot for each workspace with windows; the one you're on is drawn long in its color. Click one to go there.
-    private var dots: some View {
-        HStack(spacing: 4) {
-            ForEach(BarLayout.dots(occupied: model.occupied, current: here), id: \.self) { n in
+    /// A number for each workspace with windows and the one you're on (`BarWorkspaces.shown`), as Omarchy's bar has them:
+    /// the one you're on in full over an accent line (or on an accent block, `BarWorkspaces.marker`), the rest muted.
+    /// The line sits under the digit without moving it, so the numbers stay centered. Click one to go there.
+    private var numbers: some View {
+        let marker = BarWorkspaces.marker(Chrome.spec.indicator)
+        return HStack(spacing: 10) {
+            ForEach(BarWorkspaces.shown(occupied: model.occupied, current: here), id: \.self) { n in
                 let on = n == here
-                Capsule()
-                    .fill(on ? Chrome.workspace(n) : Chrome.wash(0.35))
-                    .frame(width: on ? 14 : 5, height: 5)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
-                    .onTapGesture { model.onPick(n, screen) }
-                    .help(model.purposes[n].map { "Workspace \(n): \($0)" } ?? "Workspace \(n)")
-                    .accessibilityLabel(on ? "Workspace \(n), you're here" : "Workspace \(n)")
-                    .accessibilityAddTraits(.isButton)
+                Group {
+                    if on, marker == .block {
+                        Text("\(n)").font(Chrome.mono(text, .semibold)).foregroundStyle(Chrome.onAccent)
+                            .padding(.horizontal, 4)
+                            .background(Rectangle().fill(Chrome.accent))
+                    } else {
+                        Text("\(n)").font(Chrome.mono(text, on ? .semibold : .regular)).foregroundStyle(on ? Chrome.wash() : Chrome.wash(0.5))
+                            .overlay(alignment: .bottom) {
+                                if on { Rectangle().fill(Chrome.accent).frame(height: 2).offset(y: 3) }
+                            }
+                    }
+                }
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+                .onTapGesture { model.onPick(n, screen) }
+                .help(model.purposes[n].map { "Workspace \(n): \($0)" } ?? "Workspace \(n)")
+                .accessibilityLabel(on ? "Workspace \(n), you're here" : "Workspace \(n)")
+                .accessibilityAddTraits(.isButton)
             }
         }
     }
