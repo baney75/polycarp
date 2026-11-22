@@ -38,11 +38,12 @@ On Windows the current workspace's number is drawn in `foreground` with a 2 px `
   taskbar or another AppBar moving (`ABN_POSCHANGED`) and explorer.exe restarting (`TaskbarCreated`). While a
   full-screen app is up on a display, that display's bar hides and its place stays kept. A display has one when the
   frontmost window that reaches onto it (visible, not minimized or cloaked, not a tool or click-through window, not a
-  bar or the shell's desktop or taskbar) covers the display's whole rect (`bar::full_screen_on`). The shell's
-  `ABN_FULLSCREENAPP` only says when to look: which bars it is sent to is not relied on, so on every one each bar is
-  decided again from its own display's windows (`bar::full_screen_bars`). With a full-screen app on each display,
-  quitting one leaves the other display's bar hidden. Turning
-  it off, the daemon stopping, a panic and the session ending each take every bar off the shell's list, so the work
+  bar or the shell's desktop or taskbar) covers the display's whole rect (`bar::full_screen_on`). An always-on-top
+  window (`WS_EX_TOPMOST`) that does not cover the display, such as a picture-in-picture video, a meeting's mini window
+  or a pinned note, is passed over: it floats in front of a full-screen video without bringing the bar back. Any other
+  window in front of it does. The shell's `ABN_FULLSCREENAPP` only says when to look: which bars it is sent to is not
+  relied on, so on every one each bar is decided again from its own display's windows (`bar::full_screen_bars`). With
+  a full-screen app on each display, quitting one leaves the other display's bar hidden. Turning it off, the daemon stopping, a panic and the session ending each take every bar off the shell's list, so the work
   area is whole again. A daemon killed outright (`taskkill /F`) runs no cleanup, and the shell drops the bar with its
   window: on the CI runner the work area was whole again within 3 s (the live suite logs it after each run).
 - The bar never takes the front: a click on it leaves your window in front.

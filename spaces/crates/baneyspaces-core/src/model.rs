@@ -719,6 +719,8 @@ impl Model {
     fn switch(&mut self, n: u8, on: Option<MonitorId>) -> Result<Vec<Effect>, ModelError> {
         let n = Self::range(n)?;
         let mut effects = vec![];
+        // Read before anything closes it: a switch from a display's bar closes the agent workspace first (R-A4).
+        let covered = self.agent_shown;
         if let Some(on) = on {
             if !self.monitors.contains_key(&on) {
                 return Err(ModelError::new("not_found", format!("no monitor {on}")));
@@ -734,7 +736,7 @@ impl Model {
             .clone()
             .ok_or_else(|| ModelError::new("no_monitor", "no monitor is connected"))?;
         // R-S4: the workspace you are already on is a no-op, unless the agent workspace is covering it.
-        if self.shown_on(n) == Some(focused.as_str()) && !self.agent_shown {
+        if self.shown_on(n) == Some(focused.as_str()) && !covered {
             return Ok(effects);
         }
         self.hide_agent_first(&mut effects);

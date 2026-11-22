@@ -263,21 +263,25 @@ impl Core {
             self.log(&format!("effect {e:?}"));
         }
         self.sync_visibility()?;
-        // The last focus effect wins: it is where the model says the front should be.
-        let focus = effects.iter().rev().find_map(|e| match e {
-            Effect::FocusWindow { window } => Some(window.clone()),
-            _ => None,
-        });
-        if let Some(w) = focus {
-            if let Some(i) = self.info.get(&w) {
-                if !self.hidden.contains(i.hwnd) {
-                    // Noted first: Windows may grant it late, even after reporting it refused (cause::ASKED_MS).
-                    cause::note_asked(i.hwnd, winapi::tick_ms());
-                    if !winapi::set_foreground(to_hwnd(i.hwnd)) {
-                        self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
+        match focus::front_after(effects) {
+            Some(focus::Front::Window(w)) => {
+                if let Some(i) = self.info.get(&w) {
+                    if !self.hidden.contains(i.hwnd) {
+                        // Noted first: Windows may grant it late, even after reporting it refused (cause::ASKED_MS).
+                        cause::note_asked(i.hwnd, winapi::tick_ms());
+                        if !winapi::set_foreground(to_hwnd(i.hwnd)) {
+                            self.log(&format!("{w} could not be put in front (Windows refused the foreground)"));
+                        }
                     }
                 }
             }
+            Some(focus::Front::Desktop) => {
+                let taken = winapi::set_foreground(winapi::shell_window());
+                if !taken {
+                    self.log("the desktop could not be put in front (Windows refused the foreground)");
+                }
+            }
+            None => {}
         }
         self.keep_focus_off_hidden_windows();
         let _ = self.persist();
