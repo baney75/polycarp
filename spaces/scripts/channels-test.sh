@@ -67,9 +67,6 @@ feed arm64 preview "$base" && bad "write-feed took the preview channel"
 feed arm64 nightly "$base-nightly.2026111807+1a2b3c4" && bad "write-feed took a nightly version with no build time"
 POLYCARP_FEED_ARCHS=ppc scripts/write-feed.sh nightly "$(scripts/channel-version.sh nightly)" "$c" "$tmp/Polycarp.zip" "$tmp/x.json" >/dev/null 2>&1 \
   && bad "a feed with no Mac architecture was written"
-# The feed read-back after the move waits out GitHub's download cache instead of failing on its first 404.
-grep -qF 'for _ in $(seq 1 12); do' scripts/publish-channel.sh && grep -qF "two minutes after the publish" scripts/publish-channel.sh \
-  || bad "publish-channel.sh reads the moved feed back once, so a cache 404 fails a good publish"
 # The bridge marks preview as the old publisher did: its tag on the build's commit, the marker in its notes.
 bridge=$(sed -n '/if \[ "$BRIDGE" = 1 \]; then/,/^fi/p' scripts/publish-channel.sh)
 grep -qF 'git/refs/tags/preview" -f sha="$COMMIT"' <<<"$bridge" || bad "the bridge leaves the preview tag on the old commit"
@@ -125,9 +122,14 @@ GH
 cat > "$pub/bin/curl" <<'CURL'
 #!/bin/bash
 # Honors -o and -w '%{http_code}' like curl -sSL. STUB_CURL: neterr (no answer), 500, badjson; otherwise the feed
-# when one was published, else 404.
+# when one was published, else 404. STUB_FEED_LAG=N: the first N reads after the publish answer 404, as GitHub's
+# download cache did for the first nightly.
 out=/dev/stdout
 while [ $# -gt 0 ]; do [ "$1" = -o ] && { out=$2; shift; }; shift; done
+if [ -n "${STUB_FEED_LAG:-}" ] && [ -f "$STUB_STATE/nightly.json" ]; then
+  n=$(cat "$STUB_STATE/lag" 2>/dev/null || echo 0)
+  [ "$n" -ge "$STUB_FEED_LAG" ] || { echo $((n + 1)) > "$STUB_STATE/lag"; printf 404; exit 0; }
+fi
 case "${STUB_CURL:-}" in
   neterr) exit 6 ;;
   500) printf 'oops' > "$out"; printf 500 ;;
@@ -176,6 +178,16 @@ refuses "verify-release.sh failed" STUB_VERIFY_FAIL=1
 refuses "the feed didn't answer" STUB_CURL=neterr
 refuses "the feed answered HTTP 500" STUB_CURL=500
 refuses "the feed named no version" STUB_CURL=badjson
+
+# The read-back after the move waits out a download cache that answers 404 for a while, and gives up, saying what it
+# last saw, when the feed never turns up.
+lag() { # <reads that answer 404>; sets $code and $o
+  local st="$tmp/lag-$1"; mkdir -p "$st"
+  o=$(STUB_FEED_LAG=$1 POLYCARP_FEED_RETRY_SECS=0 STUB_STATE="$st" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" \
+    bash "$pub/scripts/publish-channel.sh" nightly 2>&1); code=$?
+}
+lag 3; [ "$code" = 0 ] || bad "a feed the cache held back for three reads failed the publish: $o"
+lag 99; [ "$code" != 0 ] && [[ "$o" == *"last answer: HTTP 404"* ]] || bad "a feed that never turned up wasn't reported with its last answer: $o"
 
 # sol-F3: release.sh --soak publishes only the build the receipt soaked, by binary sha256 and build stamp.
 sk="$tmp/soak"; mkdir -p "$sk/app/Polycarp.app/Contents/MacOS" "$sk/rel"
