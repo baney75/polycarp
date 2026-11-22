@@ -48,7 +48,7 @@ set wrote nothing; error.data.errors gives each path and why. To undo, surfaces_
 To restyle one part of the top bar or the dock past the theme (a gold clock, square dock tiles, a hairline bar), use \
 the style sheet: read style_example, style_set each change, then style_check. A refused style_set wrote nothing; \
 error.data.errors gives each problem with its line and column. To undo, style_unset or style_set what style_get gave. \
-For a whole look in one call (omarchy), style_preset.
+For a whole look in one call (omarchy), style_preset; style_restore undoes it, putting back the sheet that was there.
 Every result is {ok, data} or {ok:false, error:{code, message, suggestion, data:{errors}}}.";
 
 fn obj(props: Json, required: &[&str]) -> Json {
@@ -372,11 +372,19 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "style_preset",
-            description: "Replace style.css with a whole preset sheet in one call; the sheet that was there moves to a new numbered backup (style.css.bak, .bak.1, ...), never over an older one. omarchy: a solid dark bar, one monospace face, numbered workspaces with an accent line under the current one, and a quiet right side. Leave name out for the list. A running Polycarp shows it within 200 ms; style_get shows the text, and the reset command (polycarp-spaces style reset) puts the theme's look back.",
+            description: "Replace style.css with a whole preset sheet in one call; the sheet that was there is kept as the next backup (style.css.bak, then .bak.1 and on; none is written over), and style_restore puts it back. omarchy: a solid dark bar, one monospace face, numbered workspaces with an accent line under the current one, and a quiet right side. Leave name out for the list. A running Polycarp shows it within 200 ms; style_get shows the text, and the reset command (polycarp-spaces style reset) puts the theme's look back.",
             schema: obj(
                 json!({"name": {"type":"string","enum":["omarchy"],"description":"The preset to write; leave out to list them."}}),
                 &[],
             ),
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+        },
+        Tool {
+            name: "style_restore",
+            description: "Undo style_preset: put the newest backup of style.css back in force. The sheet in force is kept as the next backup, so a second style_restore undoes the first. Refused with code no_backup when there is none. A running Polycarp shows it within 200 ms.",
+            schema: obj(json!({}), &[]),
             read_only: false,
             destructive: true,
             idempotent: false,
@@ -670,6 +678,7 @@ fn style_call(name: &str, a: &Args) -> theme::Envelope {
             "style_example" => argv.push("example".into()),
             "style_get" => argv.push("show".into()),
             "style_check" => argv.push("check".into()),
+            "style_restore" => argv.push("restore".into()),
             "style_preset" => {
                 argv.push("preset".into());
                 if let Some(n) = a.text("name")? {

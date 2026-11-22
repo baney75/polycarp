@@ -542,7 +542,8 @@ final class StyleSheetTests: XCTestCase {
     /// of #604: `reset` renamed the preset over the only backup, and a second preset did the same).
     func testPresetAndResetNeverLoseAHandWrittenSheet() throws {
         let mine = "/* mine */\nbar .clock { color: #d4af37; }\n"
-        for run in [["preset", "reset"], ["preset", "preset"], ["preset", "reset", "preset"]] {
+        let steps: [[String]] = [["preset", "reset"], ["preset", "preset"], ["preset", "reset", "preset"]]
+        for run in steps {
             for name in try FileManager.default.contentsOfDirectory(atPath: dir.path) { try FileManager.default.removeItem(atPath: dir.appendingPathComponent(name).path) }
             try mine.write(toFile: file, atomically: true, encoding: .utf8)
             for step in run {
@@ -553,6 +554,15 @@ final class StyleSheetTests: XCTestCase {
                 (try? String(contentsOfFile: dir.appendingPathComponent($0).path, encoding: .utf8)) == mine
             }
             XCTAssertFalse(kept.isEmpty, "\(run.joined(separator: ", ")): the hand-written sheet is still on disk")
+            // One `restore` brings it back, and a second puts the preset back when one was in force.
+            let before = try? String(contentsOfFile: file, encoding: .utf8)
+            XCTAssertNoThrow(try StyleOps.restore(file: file).get(), "\(run): restore")
+            XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), mine, "\(run): restore puts it back")
+            if let before {
+                XCTAssertEqual(try StyleOps.restore(file: file).get().object?["restored"]?.string?.hasSuffix(".bak.1"), true, "\(run)")
+                XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), before, "\(run): a second restore undoes the first")
+                XCTAssertEqual(StyleOps.backups(file).compactMap { try? String(contentsOfFile: $0, encoding: .utf8) }.last, mine, "\(run)")
+            }
         }
         // The preset already in force is left alone: no write, no backup.
         let backups = StyleOps.backups(file)
@@ -560,6 +570,16 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertEqual(again?["unchanged"], .bool(true))
         XCTAssertEqual(again?["backup"], .null)
         XCTAssertEqual(StyleOps.backups(file), backups)
+        // Reset of an unedited preset only removes it; the backup before it stays the newest, for restore.
+        let reset = try StyleOps.reset(file: file).get().object
+        XCTAssertEqual(reset?["preset"]?.string, "omarchy")
+        XCTAssertEqual(reset?["backup"], .null)
+        XCTAssertEqual(StyleOps.backups(file), backups)
+        XCTAssertEqual(reset?["restorable"], StyleOps.backups(file).last.map { .string(StyleSheetFile.display($0)) })
+        // Restore with no backup at all says so.
+        for b in StyleOps.backups(file) { try FileManager.default.removeItem(atPath: b) }
+        XCTAssertEqual(StyleOps.restore(file: file).failure?.code, "no_backup")
+        XCTAssertEqual(StyleOps.restore(file: nil).failure?.code, "io_error")
     }
 
     /// The app starts the store and both surfaces redraw on its notification (review of #604).
@@ -576,6 +596,18 @@ final class StyleSheetTests: XCTestCase {
         let dock = try SourceText.code("Sources/BaneySpaces/WorkspaceDock.swift")
         XCTAssertTrue(SourceText.block(after: "StyleSheetStore.didChange", in: dock)?.contains("scheduleResize()") ?? false,
                       "a sheet change that moves the dock's gap or padding re-frames the panel")
+        // A mode change can switch an `@media (prefers-color-scheme)` rule's gap or padding (review of #604): the dock
+        // rebuilds the book, then re-frames when they differ from what it last framed, as the bar does with its height.
+        let mode = SourceText.block(after: "Appearance.didChange", in: dock) ?? ""
+        XCTAssertTrue(mode.contains("Styles.shared.sync()"), "the dock's Appearance observer rebuilds the book first")
+        XCTAssertTrue(mode.contains("!= self.framedSpacing") && mode.contains("scheduleResize()"),
+                      "and re-frames the panel when the sheet's dock gap or padding changed with the mode")
+        if let sync = mode.range(of: "Styles.shared.sync()"), let check = mode.range(of: "framedSpacing") {
+            XCTAssertLessThan(sync.lowerBound, check.lowerBound, "the book is rebuilt before the spacing is compared")
+        }
+        XCTAssertTrue(dock.contains("DockSpacing(gap: Styles.shared.book.dock.gap, padding: Styles.shared.book.dock.padding)"),
+                      "the spacing compared is the sheet's dock gap and padding")
+        XCTAssertTrue(top.contains("!= self.placedHeight"), "the bar re-places on a mode change that moves its height")
     }
 
     // MARK: The docs and the starter sheet can't drift from the table
