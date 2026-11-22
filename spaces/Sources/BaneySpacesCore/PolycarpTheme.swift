@@ -75,6 +75,22 @@ public struct PolycarpTheme: Equatable, Sendable {
         }
     }
 
+    /// The font names to try, in order, for the monospace stack (`type.mono`), which the top bar draws in: its named
+    /// fonts, with `ui-monospace` and `monospace` as the system's monospaced face (SF Mono, which always resolves) where
+    /// they stand, and that face last, so the stack always draws monospace.
+    public var monoFamilies: [String] {
+        var out: [String] = []
+        for name in PolycarpTheme.parseStack(mono) ?? [] {
+            let lower = name.lowercased()
+            if ["system-ui", "-apple-system", "blinkmacsystemfont", "ui-sans-serif", "sans-serif", "ui-rounded", "ui-serif", "serif",
+                "cursive", "fantasy"].contains(lower) { continue }
+            let family = lower == "ui-monospace" || lower == "monospace" ? FontFace.systemMonospace : name
+            if !out.contains(family) { out.append(family) }
+        }
+        if !out.contains(FontFace.systemMonospace) { out.append(FontFace.systemMonospace) }
+        return out
+    }
+
     public func look(systemDark: Bool) -> Look {
         Look(theme: PolycarpTheme.carrier, spec: spec, palette: palette(systemDark: systemDark),
              polycarp: name, families: fontFamilies)

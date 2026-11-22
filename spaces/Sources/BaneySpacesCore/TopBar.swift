@@ -37,12 +37,37 @@ public enum BarText {
         return sunday ? "The Lord's Day, \(partOfDay(h))" : "\(day) \(partOfDay(h))"
     }
 
-    /// "3:05" or "15:05": no AM or PM; the hour module says what part of the day it is.
+    /// "3:05" or "15:05": no AM or PM, since the hour module says what part of the day it is. With the day, as Omarchy's
+    /// bar has it: "Saturday 10:04 PM" or "Saturday 22:04", the 12 hour form with AM or PM since it stands alone.
     public static func clock(_ date: Date, calendar: Calendar = .current, format: Surfaces.ClockFormat) -> String {
-        let c = calendar.dateComponents([.hour, .minute], from: date)
+        let c = calendar.dateComponents([.hour, .minute, .weekday], from: date)
         let h = c.hour ?? 0, m = c.minute ?? 0
-        let shown = format == .twentyFourHour ? h : (h % 12 == 0 ? 12 : h % 12)
-        return String(format: "%d:%02d", shown, m)
+        let shown = format.twentyFour ? h : (h % 12 == 0 ? 12 : h % 12)
+        let time = String(format: "%d:%02d", shown, m)
+        guard format.withDay else { return time }
+        let day = calendar.weekdaySymbols[(c.weekday ?? 1) - 1]
+        if format.twentyFour { return "\(day) \(time)" }
+        return "\(day) \(time) \(h < 12 ? calendar.amSymbol : calendar.pmSymbol)"
+    }
+
+    /// What `purpose` draws for the workspace you're on: its purpose, or nil (nothing at all) when it has none.
+    public static func purpose(_ text: String?) -> String? {
+        guard let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+        return t
+    }
+
+    /// What `one-thing` draws: today's one thing and the timer's time left, each when there is one.
+    public struct OneThing: Equatable, Sendable {
+        public var text: String?
+        public var timer: String?
+    }
+
+    /// `one-thing` with nothing named and no timer running is nil and draws nothing, so an empty day is a clean bar.
+    public static func oneThing(_ text: String?, timerLeft: TimeInterval?) -> OneThing? {
+        let one = purpose(text)
+        let timer = timerLeft.map { BarText.timer(remaining: $0) }
+        guard one != nil || timer != nil else { return nil }
+        return OneThing(text: one, timer: timer)
     }
 
     /// "November 21".
@@ -104,17 +129,34 @@ public enum BarLayout {
     /// The middle place's share of a screen without a notch; the left and right share the rest.
     public static let middleShare = 0.44
 
-    /// The workspace dots: every workspace with windows, and the one you're on, in number order.
-    public static func dots(occupied: Set<Int>, current: Int) -> [Int] {
-        Array(occupied.union([current])).filter { Workspaces.range.contains($0) }.sorted()
-    }
-
     /// Whether the system menu bar stays in view on a screen, where it would cover Polycarp's bar. Without a notch, a
     /// shown bar takes the top of the visible frame away and an auto-hidden one leaves it whole. With a notch the strip
     /// is kept either way, so the setting (`_HIHideMenuBar`) decides.
     public static func systemBarShown(frameMaxY: Double, visibleMaxY: Double, notch: Bool, hideMenuBar: Bool) -> Bool {
         if hideMenuBar { return false }
         return notch || frameMaxY - visibleMaxY > 1
+    }
+}
+
+/// What the `workspaces` module draws: a number for each workspace, as Omarchy's bar has them.
+public enum BarWorkspaces {
+    /// How the workspace you're on stands out from the others, which are drawn muted.
+    public enum Marker: Equatable, Sendable {
+        /// Full foreground over a short accent line.
+        case underline
+        /// The number on an accent block.
+        case block
+    }
+
+    /// Every workspace with windows, and the one you're on, in number order.
+    public static func shown(occupied: Set<Int>, current: Int) -> [Int] {
+        Array(occupied.union([current])).filter { Workspaces.range.contains($0) }.sorted()
+    }
+
+    /// The marker for a theme's indicator: the block for a theme that draws its numbers in blocks (`number-block`,
+    /// Omarchy's), the underline for every other, so the built-in look is the underline.
+    public static func marker(_ indicator: ThemeIndicator) -> Marker {
+        indicator == .numberBlock ? .block : .underline
     }
 }
 

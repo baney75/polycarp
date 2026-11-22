@@ -188,6 +188,25 @@ enum Chrome {
         return .system(size: CGFloat(f.size(size)), weight: f.weight(weight).swiftUI, design: .serif).italic()
     }
 
+    /// The top bar's one face, monospace: the Polycarp theme's `type.mono` stack when one is in force, else SF Mono, at
+    /// the theme's scale and weights. Resolved once per stack, weight and size.
+    private static var monoFaces: [String: CTFont?] = [:]
+    static func mono(_ size: Double, _ weight: TextWeight = .regular) -> Font {
+        let f = look.spec.font
+        let pt = f.size(size), w = f.weight(weight)
+        let families = Appearance.shared.polycarp?.monoFamilies ?? [FontFace.systemMonospace]
+        let key = "\(families.joined(separator: ","))|\(w)|\(pt)"
+        let face: CTFont?
+        if let cached = monoFaces[key] {
+            face = cached
+        } else {
+            face = FontFace.resolve(families: families, weight: w, size: pt)
+            monoFaces[key] = .some(face)
+        }
+        if let face { return Font(face) }
+        return .system(size: CGFloat(pt), weight: w.swiftUI, design: .monospaced)
+    }
+
     static func font(_ size: Double, _ weight: TextWeight = .regular, rounded: Bool = false) -> Font {
         let f = look.spec.font
         if f.family == "system-sans" {
