@@ -376,11 +376,18 @@ if ($cell) {
   [void][Desk]::Click($pb.L + $cell.x + [int]($cell.w / 2), $pb.T + [int](($pb.B - $pb.T) / 2)); Start-Sleep 1; shot '09-bar-clicked-4'
   $now = current_on (bar_state) $sbar.monitor
   check ($now -eq '4' -and (win $mw.Hwnd).Seen) "a click on 4 switched to workspace 4 and shows its window (was $here, now $now)" (win $mw.Hwnd)
-  $back = @((bar_state).bar.bars | ? { $_.hwnd -eq $pb.Hwnd } | % { $_.cells } | ? { "$($_.n)" -eq $here })[0]
+  # The rule (bar::workspaces): the ones with your windows, and the one shown. A workspace you left empty drops out.
+  $st = bar_state
+  $occ = @($st.windows.PSObject.Properties | % { $_.Value } | ? { -not $_.agent_owned -and "$($_.home)" -match '^[1-9]$' } | % { [int]"$($_.home)" })
+  $want = (@($occ) + 4 | Sort-Object -Unique) -join ' '
+  $cells = @($st.bar.bars | ? { $_.hwnd -eq $pb.Hwnd } | % { $_.cells })
+  check ((($cells | % { $_.n }) -join ' ') -eq $want) "the bar shows the workspaces with your windows and the one shown: $(($cells | % { $_.n }) -join ' ') (want $want)"
+  $back = @($cells | ? { $_.n -ne 4 })[0]
   if ($back) {
     [void][Desk]::Click($pb.L + $back.x + [int]($back.w / 2), $pb.T + [int](($pb.B - $pb.T) / 2)); Start-Sleep 1
-    check ((current_on (bar_state) $sbar.monitor) -eq $here -and -not (win $mw.Hwnd).Seen) "a click on $here went back and hid workspace 4" (win $mw.Hwnd)
-  } else { bad "the bar shows the workspace you were on ($here)" }
+    check ((current_on (bar_state) $sbar.monitor) -eq "$($back.n)" -and -not (win $mw.Hwnd).Seen) "a click on $($back.n) went there and hid workspace 4" (win $mw.Hwnd)
+  } else { bad 'the bar shows a workspace other than 4 to go back to' }
+  [void](bsc switch $here)
 }
 skip 'the bar hiding under a full-screen app (ABN_FULLSCREENAPP): the runner has no full-screen app to raise reliably (untested live)'
 

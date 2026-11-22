@@ -37,8 +37,8 @@ On Windows the current workspace's number is drawn in `foreground` with a 2 px `
   taskbar or another AppBar moving (`ABN_POSCHANGED`) and explorer.exe restarting (`TaskbarCreated`). While a
   full-screen app is up on a display, that display's bar hides (`ABN_FULLSCREENAPP`) and its place stays kept. Turning
   it off, the daemon stopping, a panic and the session ending each take every bar off the shell's list, so the work
-  area is whole again. A daemon killed outright (`taskkill /F`) runs no cleanup; the live suite logs what the work area
-  does then.
+  area is whole again. A daemon killed outright (`taskkill /F`) runs no cleanup, and the shell drops the bar with its
+  window: on the CI runner the work area was whole again within 3 s (the live suite logs it after each run).
 - The bar never takes the front: a click on it leaves your window in front.
 
 ## Colors and type
