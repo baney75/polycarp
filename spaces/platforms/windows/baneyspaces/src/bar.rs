@@ -5,7 +5,8 @@
 //!
 //! It runs in the daemon on a thread of its own with its own message loop, per-monitor DPI aware (v2). It never takes
 //! the core's lock: the daemon hands it each shell state line as it publishes one (`publish`, the same `ShellState`
-//! the shell's feed sends), and a click on a number goes to the worker as the chord `switch n`, the path Win+n takes.
+//! the shell's feed sends), and a click on a number goes to the worker as the chord `switch n --monitor <this display>`,
+//! the path Win+n takes, asked from the bar's own display (R-S7).
 //! Nothing here waits on the hook threads or the worker.
 //!
 //! The thread's state is a `RefCell` the window procedure only ever tries to borrow: a Win32 call made while it is
@@ -81,7 +82,7 @@ fn post(msg: u32, wp: usize, lp: isize) {
     }
 }
 
-/// Starts the bar's thread, with the bar on if `on`. `tx` is the worker's channel, where a click sends `switch n`.
+/// Starts the bar's thread, with the bar on if `on`. `tx` is the worker's channel, where a click sends its switch.
 pub fn start(tx: Sender<Msg>, on: bool) {
     if THREAD.load(Ordering::Acquire) != 0 {
         return;
@@ -372,30 +373,20 @@ impl Ui {
         self.report();
     }
 
-    /// A full-screen app opened or went. The shell tells every bar, so only the bar on the display the app fills is
-    /// hidden; when it goes, every hidden bar comes back.
+    /// A full-screen app opened or went (`ABN_FULLSCREENAPP`, sent to bar `h`). Whether the shell tells only the bar on
+    /// that display or every bar is not known, so the notice only says when to look: every bar's display is decided
+    /// again from the windows on it (`rule::full_screen_bars`), whichever bar was told and whatever it was told.
     fn fullscreen(&mut self, h: HWND, open: bool) {
-        if open {
-            let front = unsafe { GetForegroundWindow() };
-            let on = if front.is_null() { None } else { Some(unsafe { MonitorFromWindow(front, MONITOR_DEFAULTTONULL) }) };
-            for b in &mut self.bars {
-                let here = match on {
-                    Some(m) if !m.is_null() => m == b.hmon,
-                    _ => b.hwnd == h,
-                };
-                if here && !b.hidden {
-                    b.hidden = true;
-                    unsafe { ShowWindow(b.hwnd, SW_HIDE) };
-                }
-            }
-        } else {
-            for b in &mut self.bars {
-                if b.hidden {
-                    b.hidden = false;
-                    unsafe { ShowWindow(b.hwnd, SW_SHOWNOACTIVATE) };
-                }
-            }
+        let bars: Vec<(rule::Rect, bool)> = self.bars.iter().map(|b| (display_rect(b.hmon), b.hidden)).collect();
+        let change = rule::full_screen_bars(&bars, &front_windows());
+        for &(i, hide) in &change {
+            let b = &mut self.bars[i];
+            b.hidden = hide;
+            unsafe { ShowWindow(b.hwnd, if hide { SW_HIDE } else { SW_SHOWNOACTIVATE }) };
         }
+        let told = self.bars.iter().find(|b| b.hwnd == h).map_or("no bar", |b| b.monitor.as_str());
+        let hidden: Vec<&str> = self.bars.iter().filter(|b| b.hidden).map(|b| b.monitor.as_str()).collect();
+        say(&format!("baneyspaces daemon: bar: full-screen app {} (told {told}); {} bar(s) changed, hidden on [{}]", if open { "opened" } else { "went" }, change.len(), hidden.join(", ")));
         self.report();
     }
 
@@ -470,11 +461,11 @@ impl Ui {
         }
     }
 
-    /// A press on a bar: the number under it, sent to the worker as `switch n`, the way Win+n is.
+    /// A press on a bar: the number under it, sent to the worker the way Win+n is, asked from the bar's display.
     fn click(&self, h: HWND, x: i32) {
         let Some(b) = self.bars.iter().find(|b| b.hwnd == h) else { return };
         if let Some(n) = rule::hit(&b.cells, x) {
-            let _ = self.tx.send(Msg::Chord { args: vec!["switch".into(), n.to_string()], at: crate::winapi::tick_ms() });
+            let _ = self.tx.send(Msg::Chord { args: click_args(n, &b.monitor), at: crate::winapi::tick_ms() });
         }
     }
 
@@ -488,6 +479,13 @@ impl Ui {
             self.report();
         }
     }
+}
+
+/// The chord a press on number `n` of the bar on display `monitor` sends. The bar never takes the front, so the display
+/// you were on may be another one: the switch names this one, and `n` comes here or you go to the display that shows
+/// it (`spec/bar.md`, R-S7).
+fn click_args(n: u8, monitor: &str) -> Vec<String> {
+    vec!["switch".into(), n.to_string(), "--monitor".into(), monitor.into()]
 }
 
 fn on_thread_message(msg: u32, wp: WPARAM, lp: LPARAM) {
@@ -604,6 +602,32 @@ fn monitor_info(m: HMONITOR) -> Option<MONITORINFOEXW> {
 
 fn monitor_name(m: HMONITOR) -> Option<String> {
     monitor_info(m).map(|i| crate::winapi::wide_to_string(&i.szDevice))
+}
+
+/// The display's whole rect (`rcMonitor`), or an empty one when it is gone, which no window covers.
+fn display_rect(m: HMONITOR) -> rule::Rect {
+    monitor_info(m).map_or([0; 4], |i| {
+        let r = i.monitorInfo.rcMonitor;
+        [r.left, r.top, r.right, r.bottom]
+    })
+}
+
+/// The visible frames of the top-level windows that could be a full-screen app, front to back (`EnumWindows` order):
+/// shown, not minimized or cloaked, not click-through or a tool window, and none of the daemon's own (the bars) or the
+/// shell's (the desktop, the taskbars). A frame leaves out the invisible resize border, so a window on the next display
+/// never reaches onto this one.
+fn front_windows() -> Vec<rule::Rect> {
+    use crate::winapi as w;
+    let me = std::process::id();
+    w::list_top_level()
+        .into_iter()
+        .filter(|&h| {
+            let ex = w::ex_style(h);
+            let tool = ex & WS_EX_TOOLWINDOW as i64 != 0 && ex & WS_EX_APPWINDOW as i64 == 0;
+            w::is_visible(h) && !w::is_iconic(h) && w::cloaked(h) == 0 && !tool && ex & WS_EX_TRANSPARENT as i64 == 0 && w::pid_of(h) != me && !w::SHELL_CLASSES.contains(&w::class(h).as_str())
+        })
+        .filter_map(w::visible_frame)
+        .collect()
 }
 
 fn monitor_dpi(m: HMONITOR) -> u32 {
@@ -783,4 +807,18 @@ fn clock_now(twenty_four: bool) -> String {
     let mut t: SYSTEMTIME = unsafe { std::mem::zeroed() };
     unsafe { GetLocalTime(&mut t) };
     rule::clock(t.wDayOfWeek as u8, t.wHour as u8, t.wMinute as u8, twenty_four)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_click_switches_on_its_own_display() {
+        let args = click_args(3, r"\\.\DISPLAY2");
+        assert_eq!(args, ["switch", "3", "--monitor", r"\\.\DISPLAY2"]);
+        // The worker runs a chord as a command line: this one must parse to a switch that names the display.
+        let req = crate::request(args).unwrap();
+        assert_eq!(req, json!({ "op": "switch", "args": { "n": "3", "monitor": r"\\.\DISPLAY2" } }));
+    }
 }

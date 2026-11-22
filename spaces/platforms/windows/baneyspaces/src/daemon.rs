@@ -1102,9 +1102,10 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
                 Ok(n) => n,
                 Err(e) => return e,
             };
+            let monitor = arg_str(&args, "monitor").map(String::from);
             let mut c = lock(shared);
             c.sync_monitors();
-            match c.apply_checked(Event::Switch { n }) {
+            match c.apply_checked(Event::Switch { n, monitor }) {
                 Ok(fx) => Envelope::ok(json!({ "workspace": n, "effects": effects_json(&fx) })),
                 Err(e) => e,
             }
@@ -2269,7 +2270,7 @@ mod feed_tests {
         let refused = {
             let mut c = lock(&shared);
             c.paths.state = blocker.join("BaneySpaces");
-            c.apply_checked(Event::Switch { n: 2 }).is_err()
+            c.apply_checked(Event::Switch { n: 2, monitor: None }).is_err()
         };
         assert!(refused, "a switch that cannot save the record is refused");
         let s = last(&rx).expect("the feed was sent the state after the refusal");

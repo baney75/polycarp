@@ -45,7 +45,7 @@ use std::io::Write;
 
 const HELP: &str = "baneyspaces (Windows)
 
-  switch <n>                     show workspace n (1-9) here, or go to the display that shows it
+  switch <n> [--monitor NAME]    show workspace n (1-9) here (or on NAME), or go to the display that shows it
   move <n> [--stay] [--window W|--app NAME]  send the front window (or W: w-<hwnd>) to workspace n and follow it
   window focus|swap left|right|up|down   bring the nearest visible window that way to the front, or swap frames with it
   window resize <dx> <dy>        resize the front window by dx, dy pixels (top-left corner kept)
@@ -133,9 +133,18 @@ fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
     let req = |op: &str, args: Value| Ok(json!({ "op": op, "args": args }));
     match cmd.as_str() {
         "switch" => {
-            need(&a, 1, "switch <n>")?;
+            const USAGE: &str = "switch <n> [--monitor NAME]";
+            let named = a.iter().any(|w| w == "--monitor");
+            let monitor = take(&mut a, "--monitor");
+            if named && monitor.is_none() {
+                return Err(fail("invalid_args", &format!("usage: {USAGE}"), "Example: baneyspaces switch 3 --monitor \\\\.\\DISPLAY2"));
+            }
+            need(&a, 1, USAGE)?;
             workspace_n(&a[0])?;
-            req("switch", json!({ "n": a[0] }))
+            match monitor {
+                Some(m) => req("switch", json!({ "n": a[0], "monitor": m })),
+                None => req("switch", json!({ "n": a[0] })),
+            }
         }
         "move" => {
             let stay = take_switch(&mut a, "--stay");
@@ -574,6 +583,9 @@ mod tests {
             assert_eq!(request(v(words)).unwrap_err().error.unwrap().code, "invalid_args", "{words:?}");
         }
         assert_eq!(request(v(&["switch", "3"])).unwrap(), json!({"op":"switch","args":{"n":"3"}}));
+        // The top bar names its own display (spec/bar.md, R-S7).
+        assert_eq!(request(v(&["switch", "3", "--monitor", r"\\.\DISPLAY2"])).unwrap(), json!({"op":"switch","args":{"n":"3","monitor":r"\\.\DISPLAY2"}}));
+        assert_eq!(request(v(&["switch", "3", "--monitor"])).unwrap_err().error.unwrap().code, "invalid_args");
         let r = request(v(&["move", "2", "--stay", "--app", "notepad"])).unwrap();
         assert_eq!(r["args"], json!({"n":"2","stay":true,"window":null,"app":"notepad"}));
     }
