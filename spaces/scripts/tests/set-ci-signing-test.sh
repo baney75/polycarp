@@ -10,7 +10,8 @@ PIN=$(sed -n 's/.*certificate leaf = H"\([0-9a-fA-F]\{40\}\)".*/\1/p' scripts/re
 OTHER=0123456789ABCDEF0123456789ABCDEF01234567
 mkdir -p "$tmp/bin"
 # STUB_IDS: the certificate hashes find-identity lists, only once the keychain is unlocked (a locked one lists none
-# here, as it may on the Mac after a restart). STUB_CERTS: the certificates find-certificate lists (default STUB_IDS). `security -i` logs each command; an export writes a stand-in .p12.
+# here, as it may on the Mac after a restart). STUB_CERTS: the certificates find-certificate lists (default STUB_IDS).
+# STUB_CLASSES: the item classes dump-keychain lists (default one key, its certificate and its public key). `security -i` logs each command; an export writes a stand-in .p12.
 cat > "$tmp/bin/security" <<'SH'
 #!/bin/bash
 case "$1" in
@@ -23,6 +24,9 @@ case "$1" in
   find-certificate)
     grep -q "^unlock-keychain " "$STUB_DIR/security.log" 2>/dev/null || exit 0
     for h in ${STUB_CERTS-$STUB_IDS}; do echo "SHA-1 hash: $h"; echo 'keychain: "x"'; done ;;
+  dump-keychain)
+    grep -q "^unlock-keychain " "$STUB_DIR/security.log" 2>/dev/null || exit 0
+    for c in ${STUB_CLASSES-0x00000010 0x80001000 0x0000000F}; do echo 'keychain: "x"'; echo "class: $c"; done ;;
   -i)
     while IFS= read -r line; do
       echo "$line" >> "$STUB_DIR/security.log"
@@ -76,6 +80,13 @@ run two "$PIN $OTHER"
 STUB_CERTS="$PIN $OTHER" run extra "$PIN"
 [ "$code" != 0 ] || bad "a keychain with a second certificate was sent whole"
 [ ! -e "$tmp/extra/gh.log" ] || bad "secrets were set from a keychain with a second certificate"
+
+STUB_CLASSES="0x00000010 0x80001000 0x0000000F 0x00000010" run strayKey "$PIN"
+[ "$code" != 0 ] && [ ! -e "$tmp/strayKey/gh.log" ] || bad "a keychain with a second private key was sent whole"
+STUB_CLASSES="0x00000010 0x80001000 genp" run password "$PIN"
+[ "$code" != 0 ] && [ ! -e "$tmp/password/gh.log" ] || bad "a keychain holding a password was sent whole"
+STUB_CLASSES="0x00000010 0x80001000" run noPublic "$PIN"
+[ "$code" = 0 ] || bad "a keychain with no separate public key was refused: $out"
 
 [ "$status" = 0 ] && echo "set-ci-signing-test: pass"
 exit "$status"

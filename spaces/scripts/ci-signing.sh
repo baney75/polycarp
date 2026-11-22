@@ -1,6 +1,7 @@
 #!/bin/bash
-# CI only (channel-build.yml, stable-build.yml): puts the release signing identity from the workflow's secrets into
-# a throwaway keychain on the runner, so bundle.sh signs with it, and writes POLYCARP_SIGNING_IDENTITY and
+# CI only (channel-build.yml, stable-build.yml): makes the release signing identity from the workflow's secrets
+# usable on the runner (the owner's keychain unlocked in place, or a .p12 imported into a throwaway keychain), so
+# bundle.sh signs with it, and writes POLYCARP_SIGNING_IDENTITY and
 # POLYCARP_SIGNING_KEYCHAIN to $GITHUB_ENV. Exit 3, having changed nothing, when the secrets are not set: then the
 # workflow publishes nothing and the build is made on the owner's Mac (docs/releases.md).
 #   POLYCARP_SIGNING_P12: base64 of the owner's signing keychain (what set-ci-signing.sh sets) or of a .p12, holding
@@ -20,6 +21,9 @@ if [ "$(head -c 4 "$DIR/secret")" = kych ]; then
   mv "$DIR/secret" "$KC"; PASS=$POLYCARP_SIGNING_P12_PASSWORD
   keychain "unlock-keychain -p $PASS \"$KC\""
   keychain "set-keychain-settings -lut 7200 \"$KC\""
+  # create-keychain puts a new keychain on the search list; a placed file has to be added by hand.
+  eval "set -- $(security list-keychains -d user | tr '\n' ' ')"
+  security list-keychains -d user -s "$KC" "$@"
 else
   PASS=$(openssl rand -hex 24)
   keychain "create-keychain -p $PASS \"$KC\""

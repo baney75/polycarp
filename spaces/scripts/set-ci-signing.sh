@@ -14,7 +14,7 @@ PIN=$(sed -n 's/.*certificate leaf = H"\([0-9a-fA-F]\{40\}\)".*/\1/p' "$HERE/rel
 [ -n "$PIN" ] || { echo "set-ci-signing.sh: release-requirement.txt pins no certificate" >&2; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "set-ci-signing.sh: sign in to GitHub first: gh auth login" >&2; exit 1; }
 
-# `security -i` reads commands from stdin, so the passwords never reach `ps`. Both are hex: nothing to quote.
+# `security -i` reads commands from stdin, so the password never reaches `ps`. It must be plain (checked below).
 keychain() { printf '%s\n' "$1" | security -i >/dev/null; }
 
 # The two places signing-identity.sh keeps the key: Polycarp's, then BaneySpaces' (the key every release is pinned to).
@@ -29,10 +29,17 @@ for dir in "$HOME/Library/Application Support/Polycarp/Signing" "$HOME/Library/A
     # And one certificate: the whole file goes to the secret, so it may hold nothing but what signing-identity.sh
     # imported (the pinned identity's .p12).
     certs=$(security find-certificate -a -Z "$f" 2>/dev/null | sed -n 's/^SHA-1 hash: \([0-9A-F]\{40\}\)$/\1/p' | sort -u)
-    if [ "$ids" = "$PIN" ] && [ "$certs" = "$PIN" ]; then KC=$f; PW="$dir/keychain-password"; break 2; fi
+    # And nothing else: no other key, no password. dump-keychain without -d reads each item's class, never its value;
+    # one identity is a private key (0x00000010), its certificate (0x80001000) and at most its public key (0x0000000F).
+    classes=$(security dump-keychain "$f" 2>/dev/null | awk '$1 == "class:" { print $2 }' | LC_ALL=C sort | uniq -c | awk '{ print $2 "=" $1 }' | tr '\n' ' ')
+    case "$classes" in
+      "0x0000000F=1 0x00000010=1 0x80001000=1 "|"0x00000010=1 0x80001000=1 ") one=yes ;;
+      *) one=no ;;
+    esac
+    if [ "$ids" = "$PIN" ] && [ "$certs" = "$PIN" ] && [ "$one" = yes ]; then KC=$f; PW="$dir/keychain-password"; break 2; fi
   done
 done
-[ -n "$KC" ] || { echo "set-ci-signing.sh: no keychain here holds only the pinned key and its certificate ($PIN); nothing was set" >&2; exit 1; }
+[ -n "$KC" ] || { echo "set-ci-signing.sh: no keychain here holds only the pinned key and its certificate ($PIN), and nothing else; nothing was set" >&2; exit 1; }
 
 # ci-signing.sh unlocks with it through `security -i`, which splits on spaces and quotes, so it must be plain.
 tr -d '\n' < "$PW" | grep -qE '^[A-Za-z0-9._-]+$' \

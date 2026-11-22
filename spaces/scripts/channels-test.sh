@@ -198,12 +198,14 @@ POLYCARP_SIGNING_P12=eA== POLYCARP_SIGNING_P12_PASSWORD='a b' RUNNER_TEMP="$tmp"
   && bad "ci-signing took a password security -i would split"
 [ ! -e "$tmp/env" ] && [ -z "$(ls -d "$tmp"/signing.* 2>/dev/null)" ] || bad "ci-signing changed something before refusing"
 # A keychain secret (what set-ci-signing.sh sends) is unlocked in place with its own password, not imported as a .p12:
-# an empty one is unlocked and stops at the key's partition list, where a .p12 would have stopped at `import`.
+# an empty one is placed byte for byte as the runner's keychain (a .p12 import would have made a new file), then
+# stops for want of a key.
 ek="$tmp/empty.keychain-db"; printf '%s\n' "create-keychain -p emptypass \"$ek\"" | security -i >/dev/null
 out=$(POLYCARP_SIGNING_P12=$(base64 < "$ek" | tr -d '\n') POLYCARP_SIGNING_P12_PASSWORD=emptypass RUNNER_TEMP="$tmp/ek" GITHUB_ENV="$tmp/ek/env" \
   bash -c 'mkdir -p "$RUNNER_TEMP"; scripts/ci-signing.sh' 2>&1); code=$?
-security delete-keychain "$ek" 2>/dev/null; for k in "$tmp"/ek/signing.*/polycarp-ci.keychain-db; do security delete-keychain "$k" 2>/dev/null; done
-[ "$code" != 0 ] && [[ "$out" == *"set-key-partition-list"* ]] && [[ "$out" != *"import"* ]] || bad "ci-signing didn't unlock a keychain secret: exit $code: $out"
+placed=$(ls "$tmp"/ek/signing.*/polycarp-ci.keychain-db 2>/dev/null | head -1)
+[ "$code" != 0 ] && [ -n "$placed" ] && cmp -s "$ek" "$placed" || bad "ci-signing didn't place a keychain secret as it is: exit $code: $out"
+security delete-keychain "$ek" 2>/dev/null; [ -n "$placed" ] && security delete-keychain "$placed" 2>/dev/null
 [ ! -e "$tmp/ek/env" ] || bad "ci-signing wrote GITHUB_ENV from an empty keychain"
 POLYCARP_SIGNING_IDENTITY=nobody POLYCARP_SIGNING_KEYCHAIN="$tmp/none.keychain-db" scripts/signing-identity.sh >/dev/null 2>&1 \
   && bad "signing-identity.sh accepted a CI identity that isn't in its keychain"
