@@ -28,7 +28,8 @@ final class Updater: NSObject {
     private(set) var checkProblem: String?
 
     private var timer: Timer?
-    private var checking = false
+    /// A check is asking GitHub right now: the menu's update row reads "Checking for Updates…".
+    private(set) var checking = false
     private var watch: Timer?
     /// Alerts on screen, kept alive until a button closes them.
     private var shown: [NSAlert] = []
@@ -52,14 +53,22 @@ final class Updater: NSObject {
     /// The channel chosen in Settings, else the one this build came from (a copy installed from Nightly, or
     /// from the old Preview, follows Nightly), else Stable. A saved "preview" reads as Nightly.
     var channel: UpdateChannel {
-        get { UserDefaults.standard.string(forKey: "updateChannel").flatMap(UpdateChannel.init(rawValue:)) ?? Self.build.channel ?? .stable }
+        get { saved ?? Self.build.channel ?? .stable }
         set {
+            // Dev is offered only to a dev build or a copy already on dev (`UpdateChannel.offered`).
+            guard offered.contains(newValue) else { return }
             UserDefaults.standard.set(newValue.rawValue, forKey: "updateChannel")
             available = nil
             onChange()
             check(manual: false)
         }
     }
+
+    /// The choice saved in Settings, if any.
+    private var saved: UpdateChannel? { UserDefaults.standard.string(forKey: "updateChannel").flatMap(UpdateChannel.init(rawValue:)) }
+
+    /// The channels Settings > Updates lists: Dev only for a dev build or a copy already following it.
+    var offered: [UpdateChannel] { UpdateChannel.offered(build: Self.build.channel, saved: saved) }
 
     var checksAutomatically: Bool {
         get { UserDefaults.standard.object(forKey: "checkForUpdates") as? Bool ?? true }
@@ -155,6 +164,9 @@ final class Updater: NSObject {
         if what.hasPrefix("channel ") {
             guard let chosen = UpdateChannel(rawValue: String(what.dropFirst("channel ".count))) else {
                 return Wire.Reply(ok: false, error: "the channel is stable, nightly or dev")
+            }
+            if let why = UpdateChannel.refusal(chosen, build: Self.build.channel, saved: saved) {
+                return Wire.Reply(ok: false, error: why, info: report.info)
             }
             channel = chosen
             return Wire.Reply(ok: true, info: report.info)

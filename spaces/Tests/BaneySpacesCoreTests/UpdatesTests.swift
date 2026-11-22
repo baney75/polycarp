@@ -57,6 +57,38 @@ final class UpdatesTests: XCTestCase {
         XCTAssertNil(UpdateChannel(rawValue: "local"))
     }
 
+    /// Dev is for testing: only a dev build, or a copy whose saved choice is already dev, is offered it.
+    func testDevIsOfferedOnlyToADevBuildOrACopyAlreadyOnIt() throws {
+        XCTAssertEqual(UpdateChannel.offered(build: .stable, saved: nil), [.stable, .nightly])
+        XCTAssertEqual(UpdateChannel.offered(build: .nightly, saved: nil), [.stable, .nightly])
+        XCTAssertEqual(UpdateChannel.offered(build: .nightly, saved: .stable), [.stable, .nightly])
+        XCTAssertEqual(UpdateChannel.offered(build: .dev, saved: nil), [.stable, .nightly, .dev])
+        XCTAssertEqual(UpdateChannel.offered(build: .dev, saved: .nightly), [.stable, .nightly, .dev])
+        XCTAssertEqual(UpdateChannel.offered(build: .nightly, saved: .dev), [.stable, .nightly, .dev], "a dev user keeps dev")
+        XCTAssertEqual(UpdateChannel.offered(build: .stable, saved: .dev), [.stable, .nightly, .dev])
+        // A local build ("local" in Info.plist reads as no channel) is taken for stable by the updater, so it is
+        // offered what a stable build is; a local build already saved on dev keeps it.
+        XCTAssertEqual(UpdateChannel.offered(build: UpdateChannel(rawValue: "local"), saved: nil), [.stable, .nightly])
+        XCTAssertEqual(UpdateChannel.offered(build: nil, saved: .dev), [.stable, .nightly, .dev])
+        // The CLI hears why; anything offered is never refused.
+        XCTAssertEqual(UpdateChannel.refusal(.dev, build: .nightly, saved: nil),
+                       "the dev channel is only for a dev build of Polycarp; this one follows stable or nightly")
+        XCTAssertNotNil(UpdateChannel.refusal(.dev, build: nil, saved: .stable))
+        for build in [UpdateChannel.stable, .nightly, .dev, nil] {
+            for saved in [UpdateChannel.stable, .nightly, .dev, nil] {
+                for c in UpdateChannel.offered(build: build, saved: saved) { XCTAssertNil(UpdateChannel.refusal(c, build: build, saved: saved)) }
+            }
+        }
+        // Settings lists Dev only when offered, and every other path that sets the channel asks the same rule.
+        let setup = try Repo.code("Sources/BaneySpaces/Setup.swift")
+        XCTAssertTrue(setup.contains("if model.update.channels.contains(.dev) {\n                        Text(\"Dev: every change as it lands, for testing\")"))
+        let updater = try Repo.code("Sources/BaneySpaces/Updater.swift")
+        XCTAssertTrue(updater.contains("guard offered.contains(newValue) else { return }"))
+        XCTAssertTrue(updater.contains("if let why = UpdateChannel.refusal(chosen, build: Self.build.channel, saved: saved) {"))
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/AppDelegate.swift").contains("channels: updater.offered"))
+        XCTAssertTrue(try Repo.code("Sources/baneyspaces-cli/main.swift").contains("text == \"now\" || text.hasPrefix(\"channel \") { fail(error) }"))
+    }
+
     func testAFeedIsReadOnlyWhenItsVersionBelongsToItsChannel() throws {
         let nightly = try XCTUnwrap(feed("nightly", "0.4.0-nightly.20261118070000+1a2b3c4"))
         XCTAssertEqual(nightly.release, Release(tag: "nightly", name: "Nightly 2026-11-18", notes: "Notes.", commit: commit))

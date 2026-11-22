@@ -410,7 +410,8 @@ case "update":
     func ask(_ text: String) -> UpdateReport {
         guard let reply = Wire.call(Wire.Request(op: .update, text: text), timeout: 5) else { fail("Polycarp isn't running, so it can't check for updates. Open it and try again.") }
         guard let report = UpdateReport(info: reply.info) else { fail(reply.error ?? "this Polycarp is too old to be asked for updates; use Settings > Updates") }
-        if !reply.ok, let error = reply.error, text == "now" { fail(error) }
+        // A refused channel (dev on a stable or nightly build) stops here too, before any check.
+        if !reply.ok, let error = reply.error, text == "now" || text.hasPrefix("channel ") { fail(error) }
         return report
     }
     // Ask for a fresh check, then wait for it to finish: `checks` goes up when it has. Choosing a channel

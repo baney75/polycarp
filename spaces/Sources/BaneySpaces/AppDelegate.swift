@@ -918,10 +918,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let evening = settings.eveningExamen && at >= Rhythm.eveningStart(of: clock.day(of: at), settings: settings, clock: clock)
         let running = keeper.timer.flatMap { $0.done(now: at) ? nil : $0 }
         let timer = MenuTimer(minutes: SurfacesStore.shared.current.alarm.timerMinutes, left: running?.remaining(now: at))
-        let entries = MenuLayout.entries(now: now, oneThingSet: named.oneThing != nil, timer: timer, evening: evening,
+        let entries = MenuLayout.entries(now: now, oneThing: named.oneThing, timer: timer, evening: evening,
                                          rows: MenuLayout.rows(current: here, apps: apps, purposes: named.all),
-                                         finished: session.started ? session.unseenCount : 0, update: updateNotice(),
-                                         dockOn: WorkspaceDock.enabled)
+                                         finished: session.started ? session.unseenCount : 0,
+                                         update: MenuUpdate(notice: updateNotice(), checking: updater.checking))
         for entry in entries { menu.addItem(menuItem(for: entry)) }
     }
 
@@ -935,14 +935,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             it.attributedTitle = MenuHead.title(now)
             it.toolTip = "Click to name this hour"
             return it
-        case .nameHour:
-            return item("Name This Hour…", #selector(nameHour))
-        case .oneThing(let set):
-            return item(set ? "Change the One Thing…" : "Set the One Thing…", #selector(setOneThing))
+        case .setOneThing:
+            return item("Set the One Thing…", #selector(setOneThing))
+        case .oneThing(let one):
+            // The one thing's own words; changing it, its timer and the examen sit one level down.
+            let it = item(one.title, #selector(setOneThing))
+            it.action = nil
+            let sub = NSMenu()
+            for i in one.items { sub.addItem(oneThingItem(i)) }
+            it.submenu = sub
+            return it
         case .timer(let timer):
-            return item(timer.title, #selector(toggleTimer))
+            return oneThingItem(.timer(timer))
         case .examen:
-            return item("Evening Examen…", #selector(eveningExamen))
+            return oneThingItem(.examen)
         case .workspace(let row):
             let it = item(row.title, #selector(pick(_:)), key: "\(row.workspace)")
             it.keyEquivalentModifierMask = Modifier.current.menuFlags
@@ -956,8 +962,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let find = item("Find or Install an App…", #selector(showLauncher))
             if Launcher.onCmdSpace { find.keyEquivalent = " "; find.keyEquivalentModifierMask = [.command] }
             return find
-        case .dock(let on):
-            return item(on ? "Turn Off Workspace Dock" : "Turn On Workspace Dock", #selector(toggleDockFromMenu))
         case .settings:
             return item("Settings…", #selector(showSetup), key: ",")
         case .quit:
@@ -965,17 +969,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .finished(let count):
             // Clicking an agent goes to it and marks it seen, which drops it from this list.
             return session.finishedMenuItem(title: MenuLayout.finishedTitle(count))
-        case .update(let notice):
-            let it = item(notice.menuTitle, #selector(offerUpdate))
-            if notice.installing {
+        case .update(let update):
+            // Always here: a check by hand, the check running, or the release on offer or installing.
+            let it = item(update.title, update.offersRelease ? #selector(offerUpdate) : #selector(checkForUpdatesFromMenu))
+            if !update.enabled {
                 it.action = nil
                 it.isEnabled = false
-            } else {
+            } else if update.offersRelease {
                 it.attributedTitle = NSAttributedString(string: it.title, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
             }
             return it
         case .separator:
             return .separator()
+        }
+    }
+
+    /// One row of the one thing's submenu, or the timer or examen row when no one thing holds them.
+    private func oneThingItem(_ i: MenuOneThing.Item) -> NSMenuItem {
+        switch i {
+        case .change: return item(i.title, #selector(setOneThing))
+        case .timer: return item(i.title, #selector(toggleTimer))
+        case .examen: return item(i.title, #selector(eveningExamen))
         }
     }
 
@@ -991,9 +1005,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return updater.available.map { UpdateNotice(name: $0.name, isNightly: $0.isNightly, installing: false) }
     }
 
-    @objc private func toggleDockFromMenu() { toggleWorkspaceDock() }
-
     @objc private func offerUpdate() { if let r = updater.available { updater.offer(r) } }
+
+    /// "Check for Updates…": the manual check, which always answers, "up to date" included.
+    @objc private func checkForUpdatesFromMenu() { checkForUpdates() }
 
     @objc private func pick(_ sender: NSMenuItem) { spaces.switchTo(sender.tag) }
 
@@ -1129,7 +1144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// What Settings > Updates shows: the build you have, the channel, and any release waiting.
     private func updateInfo() -> SetupModel.UpdateInfo {
-        .init(have: Updater.buildDescription, channel: updater.channel, daily: updater.checksAutomatically, notice: updateNotice())
+        .init(have: Updater.buildDescription, channel: updater.channel, channels: updater.offered, daily: updater.checksAutomatically, notice: updateNotice())
     }
 
     private func checkForUpdates() { updater.check(manual: true) }

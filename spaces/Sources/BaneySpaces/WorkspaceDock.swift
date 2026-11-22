@@ -2198,7 +2198,8 @@ struct DockView: View {
 
     // MARK: Right-click menus
     // Short on purpose (Donovan, 2026-10-14: "way too cluttered"). The dock's own buttons find
-    // apps and show every workspace, so the menus hold only what a click can't do.
+    // apps and show every workspace, so the menus hold only what a click can't do. The app menu
+    // follows the macOS Dock's and puts its depth in submenus (`DockAppMenu`), never more rows.
 
     /// Another workspace's tile: go there or bring the front window over. The tile you're on has
     /// nothing a click doesn't do, so it shows the dock's own settings.
@@ -2213,25 +2214,52 @@ struct DockView: View {
         }
     }
 
-    /// Show and Quit; holding ⌥ turns Quit into Force Quit, as in the macOS Dock.
+    /// Exactly `DockAppMenu.items`: the app's windows here when it has several, Show, Move to Workspace, Hide and
+    /// Options, then Quit (holding ⌥ turns it into Force Quit, as in the macOS Dock) and the dock's settings.
     @ViewBuilder private func appMenu(_ app: DockModel.App, in tile: DockModel.Tile) -> some View {
-        Button("Show \(app.name)") { model.onFocusApp(app.pid, tile.id) }
-        Divider()
-        let quit = Button("Quit \(app.name)") { NSRunningApplication(processIdentifier: app.pid)?.terminate() }
-        let force = Button("Force Quit \(app.name)") { NSRunningApplication(processIdentifier: app.pid)?.forceTerminate() }
-        if #available(macOS 15, *) {
-            quit.modifierKeyAlternate(.option) { force }
-        } else {
-            quit
-            force
-        }
-        // Icons cover most of a tile, so the tile's own action is here too.
-        if !tile.isCurrent {
-            Divider()
+        let items = DockAppMenu.items(windows: app.list.map { DockAppMenu.Window(id: $0.id, title: $0.title) }, app: app.name,
+                                      workspace: tile.id, isCurrent: tile.isCurrent, purposes: model.purposes)
+        ForEach(Array(items.enumerated()), id: \.offset) { _, item in appMenuItem(item, app, in: tile) }
+    }
+
+    @ViewBuilder private func appMenuItem(_ item: DockAppMenu.Item, _ app: DockModel.App, in tile: DockModel.Tile) -> some View {
+        switch item {
+        case .window(let w):
+            Button(w.title) { model.onFocusWindow(w.id, tile.id) }
+        case .show:
+            Button("Show \(app.name)") { model.onFocusApp(app.pid, tile.id) }
+        case .moveTo(let targets):
+            // Every window of this app on this workspace, the way dragging its icon to a tile moves them.
+            Menu("Move to Workspace") {
+                ForEach(targets, id: \.workspace) { t in
+                    Button(t.title) { model.onMove(app.list.map(\.id), t.workspace) }
+                }
+            }
+        case .moveFrontHere:
+            // Icons cover most of a tile, so the tile's own action is here too.
             Button("Move Front Window Here") { model.onSendHere(tile.id) }
+        case .hide:
+            Button("Hide \(app.name)") { NSRunningApplication(processIdentifier: app.pid)?.hide() }
+        case .options:
+            Menu("Options") {
+                Button("Show in Finder") {
+                    if let url = NSRunningApplication(processIdentifier: app.pid)?.bundleURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                }
+            }
+        case .quit:
+            let quit = Button("Quit \(app.name)") { NSRunningApplication(processIdentifier: app.pid)?.terminate() }
+            let force = Button("Force Quit \(app.name)") { NSRunningApplication(processIdentifier: app.pid)?.forceTerminate() }
+            if #available(macOS 15, *) {
+                quit.modifierKeyAlternate(.option) { force }
+            } else {
+                quit
+                force
+            }
+        case .dock:
+            Menu("Dock") { dockOptions }
+        case .divider:
+            Divider()
         }
-        Divider()
-        Menu("Dock") { dockOptions }
     }
 
     @ViewBuilder private var dockOptions: some View {

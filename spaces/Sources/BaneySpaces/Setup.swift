@@ -80,6 +80,8 @@ final class SetupModel: ObservableObject {
     struct UpdateInfo: Equatable {
         var have = ""
         var channel = UpdateChannel.stable
+        /// The channels to list: Dev only for a dev build or a copy already on it (`UpdateChannel.offered`).
+        var channels: [UpdateChannel] = [.stable, .nightly]
         var daily = true
         /// A release waiting, or installing.
         var notice: UpdateNotice?
@@ -722,7 +724,10 @@ struct SetupView: View {
                 Picker("Follow", selection: binding({ model.update.channel }, { model.setUpdateChannel($0) })) {
                     Text("Stable: tested releases").tag(UpdateChannel.stable)
                     Text("Nightly: newest changes, every night").tag(UpdateChannel.nightly)
-                    Text("Dev: every change as it lands, for testing").tag(UpdateChannel.dev)
+                    // Dev is for testing: listed only on a dev build or a copy already following it.
+                    if model.update.channels.contains(.dev) {
+                        Text("Dev: every change as it lands, for testing").tag(UpdateChannel.dev)
+                    }
                 }
                 .pickerStyle(.radioGroup)
             }

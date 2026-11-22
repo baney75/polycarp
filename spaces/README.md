@@ -116,12 +116,15 @@ which opens nothing while this is on.
   <img src="docs/shots/overview-drag.jpg" alt="Dragging a Mail window card onto workspace 6 in the overview; the target tile is outlined" width="760">
 </p>
 
-The menu bar icon shows the number of the workspace you're on. Its menu lists the workspaces in
-use and one empty one to start fresh on, then **Show All Workspaces**, **Find or Install an App…**,
-**Settings…** (⌘,) and **Quit Polycarp** (⌘Q). Two more rows appear only while there is
-something to act on: **N Agents Finished While You Were Away** (a list; click one to go to it) and
-**Update to …**. Every switch, **Bring Every Window Back**, the update controls and About live in
-Settings, one click away.
+The menu bar icon shows the number of the workspace you're on. Its menu opens on what you are doing
+(click it to name the hour) and one row for the one thing: **Set the One Thing…**, or the one thing
+itself with **Change the One Thing…**, its timer and, in the evening, **Evening Examen…** under it.
+Then the workspaces in use and one empty one to start fresh on ("1  Helium", "3  Empty"), **Show All
+Workspaces**, **Find or Install an App…**, the update row, **Settings…** (⌘,) and **Quit Polycarp** (⌘Q).
+The update row is always there: **Check for Updates…**, **Checking for Updates…** while one runs, or
+**Update to …** when a release is waiting. **N Agents Finished While You Were Away** (a list; click one
+to go to it) appears only while there is something to act on. Every switch, **Bring Every Window Back**,
+the dock switch, the update controls and About live in Settings, one click away.
 
 ## Workspace Dock
 
@@ -131,8 +134,9 @@ tile for each workspace in use, plus the one you're on, each with its apps and i
 Click an app's icon to go straight to that app (again for its next window), or the tile around
 it to go to the workspace. Rest on an app with several windows and a strip of them opens over
 it, each labeled with its title, to pick one;
-hover to see what's there. Right-click a tile to move the front window there, or an app to show
-or quit it (hold ⌥ for **Force Quit**). Drag an app's icon onto
+hover to see what's there. Right-click a tile to move the front window there, or an app for a menu
+like the macOS Dock's: its windows there (when it has several), **Show**, **Move to Workspace**, **Hide**,
+**Options › Show in Finder** and **Quit** (hold ⌥ for **Force Quit**). Drag an app's icon onto
 another tile to move its windows on that workspace there, or drag one window out of the strip to
 move just that one; drop it on the dashed tile to start a new workspace with it. Drag any window
 by its title bar down to a bottom dock and it comes up; let go on a tile (or the dashed one) and the
@@ -193,7 +197,7 @@ Agents may change these too, from this Mac or, with the remote token, from anoth
 (`BANEYSPACES_AGENT=<name>` names the caller). Each change is logged in `trace.log` with who made it.
 Workspace and window commands stay yours.
 
-**Turning the dock off** (**Settings › Dock**, the menu bar item, or `dock.enabled`) leaves no dock window
+**Turning the dock off** (**Settings › Dock**, the dock's own right-click menu, the launcher, or `dock.enabled`) leaves no dock window
 at all: nothing comes up at the edge, the "+N" list never opens, and a window dragged to the bottom
 edge is left alone. Dragging to the top, the workspace keys, ⌘Tab, the launcher, the overview, the
 agent workspace and the menu bar number all keep working. Turn it back on and the dock returns the
@@ -373,8 +377,8 @@ One command updates every part of Polycarp together, the app included: `polycarp
 updater, described here; `polycarp-spaces update --check` and `--now` reach the same updater from a terminal, and
 `--channel stable|nightly|dev` chooses the channel first.
 
-Polycarp looks for a new version once a day and, when there is one, the menu bar menu shows **Update to Polycarp …** (the row is there only while
-a release is waiting) and so does **Settings > Updates**. Check by hand there with **Check for Updates Now…**. Nothing installs until you press **Update Now** in the window that
+Polycarp looks for a new version once a day and, when there is one, the menu bar menu's update row reads **Update to Polycarp …** (otherwise it
+reads **Check for Updates…**) and so does **Settings > Updates**. Check by hand from that row or with **Check for Updates Now…** in Settings. Nothing installs until you press **Update Now** in the window that
 shows what changed. The update installs the same way the first install did, into the folder the
 app is in. Every channel downloads the ready-made app, signed with the one release key, so the
 Accessibility permission carries over; only a copy that was built on your Mac (while the command
@@ -387,7 +391,8 @@ Pick what you follow under **Settings > Updates**:
   [changelog](CHANGELOG.md).
 - **Nightly**: a build of the newest code, published each night something changed (Apple silicon).
   It replaced the old Preview channel, and a copy installed from Preview follows it.
-- **Dev**: every change on main as CI passes it (Apple silicon), for testing.
+- **Dev**: every change on main as CI passes it (Apple silicon), for testing. It is listed only on a
+  dev build or a copy already following Dev; `polycarp-spaces update --channel dev` refuses it elsewhere.
 
 A copy follows the channel it was installed from until you pick another ([releases](../docs/releases.md)). Switching
 to a channel offers that channel's build only when it contains the one you have, so you never go
@@ -467,7 +472,7 @@ each once a day, and Sunday is a day of rest. Each is a switch in the app's defa
 Alarms belong to the rhythm. The wake alarm (`alarm.wake` in surfaces.json, off until you turn it on) rings at
 `alarm.wakeAt` and opens the morning question if it hasn't been given yet; on power it keeps the Mac from idle sleep
 through the night before so it can ring (a sleeping Mac can't ring). The one-thing timer gives the one thing a stretch of time: start it from the status menu, under
-Set the One Thing, or with `polycarp-spaces timer`. Its time left shows after the one thing in the top bar, and it
+the one thing's row, or with `polycarp-spaces timer`. Its time left shows after the one thing in the top bar, and it
 survives a relaunch. See the `alarm` section of [docs/surfaces.md](docs/surfaces.md).
 
 Files: `purposes.json` and `ledger.json` in the same folder. A file that can't be read is renamed to
