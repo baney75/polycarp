@@ -127,7 +127,7 @@ final class MenuLayoutTests: XCTestCase {
         let text = try code("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(text.contains("MenuTimer(minutes: SurfacesStore.shared.current.alarm.timerMinutes, left: running?.remaining(now: at))"))
         XCTAssertTrue(text.contains("case .timer: return item(i.title, #selector(toggleTimer))"))
-        XCTAssertTrue(text.contains("oneThing: named.oneThing"))
+        XCTAssertTrue(text.contains("oneThing: named.oneThing?.text"))
         XCTAssertTrue(text.contains("for i in one.items { sub.addItem(oneThingItem(i)) }"), "the one thing's submenu is its items")
         XCTAssertTrue(text.contains("WakeAlarm.shared.start()"))
     }

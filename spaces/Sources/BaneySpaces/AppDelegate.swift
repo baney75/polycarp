@@ -918,7 +918,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let evening = settings.eveningExamen && at >= Rhythm.eveningStart(of: clock.day(of: at), settings: settings, clock: clock)
         let running = keeper.timer.flatMap { $0.done(now: at) ? nil : $0 }
         let timer = MenuTimer(minutes: SurfacesStore.shared.current.alarm.timerMinutes, left: running?.remaining(now: at))
-        let entries = MenuLayout.entries(now: now, oneThing: named.oneThing, timer: timer, evening: evening,
+        let entries = MenuLayout.entries(now: now, oneThing: named.oneThing?.text, timer: timer, evening: evening,
                                          rows: MenuLayout.rows(current: here, apps: apps, purposes: named.all),
                                          finished: session.started ? session.unseenCount : 0,
                                          update: MenuUpdate(notice: updateNotice(), checking: updater.checking))
