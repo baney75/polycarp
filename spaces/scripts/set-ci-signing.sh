@@ -36,7 +36,7 @@ done
 
 # ci-signing.sh unlocks with it through `security -i`, which splits on spaces and quotes, so it must be plain.
 tr -d '\n' < "$PW" | grep -qE '^[A-Za-z0-9._-]+$' \
-  || { echo "set-ci-signing.sh: $(basename "$KC")'s password isn't plain letters and digits; nothing was set" >&2; exit 1; }
+  || { echo "set-ci-signing.sh: $(basename "$KC")'s password isn't only letters, digits, dot, dash or underscore; nothing was set" >&2; exit 1; }
 base64 < "$KC" | tr -d '\n' | gh secret set POLYCARP_SIGNING_P12 -R "$REPO" >/dev/null
 tr -d '\n' < "$PW" | gh secret set POLYCARP_SIGNING_P12_PASSWORD -R "$REPO" >/dev/null
 have=$(gh secret list -R "$REPO" | awk '$1 == "POLYCARP_SIGNING_P12" || $1 == "POLYCARP_SIGNING_P12_PASSWORD"' | wc -l | tr -d ' ')

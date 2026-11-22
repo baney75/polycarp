@@ -61,7 +61,7 @@ public repository). No workflow here uses a self-hosted runner. `channel-build.y
 the same scripts the Mac runs: `spaces/scripts/release.sh` (`--channel nightly|dev`, or the stable path). They
 sign only when the repository has the secrets
 `POLYCARP_SIGNING_P12` (base64 of the owner's signing keychain, or of a .p12, holding the key
-`release-requirement.txt` pins) and `POLYCARP_SIGNING_P12_PASSWORD` (its password, letters and digits only), which
+`release-requirement.txt` pins) and `POLYCARP_SIGNING_P12_PASSWORD` (its password: letters, digits, dot, dash or underscore), which
 `spaces/scripts/ci-signing.sh` unlocks, or imports into a throwaway keychain. Without them the run warns, builds nothing and
 publishes nothing. The owner sets both from the Mac that holds the key with one command,
 `spaces/scripts/set-ci-signing.sh`: it checks the signing keychain holds only the pinned key, sets the keychain file

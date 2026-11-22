@@ -62,7 +62,7 @@ grep -q "^unlock-keychain -p kcpass " "$d/security.log" || bad "the keychain was
 case "$out" in *kcpass*) bad "a password was printed" ;; esac
 
 run spaced "$PIN" 'a b'
-[ "$code" != 0 ] || bad "a password security -i would split was set"
+[ "$code" != 0 ] && [[ "$out" == *"dot, dash or underscore"* ]] || bad "a password security -i would split wasn't refused by the plain-password check: $out"
 [ ! -e "$tmp/spaced/gh.log" ] || bad "secrets were set with a password ci-signing.sh refuses"
 
 run other "$OTHER"

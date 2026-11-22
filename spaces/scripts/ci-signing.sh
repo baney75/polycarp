@@ -9,8 +9,7 @@
 set -euo pipefail
 [ -n "${POLYCARP_SIGNING_P12:-}" ] && [ -n "${POLYCARP_SIGNING_P12_PASSWORD:-}" ] || { echo "ci-signing.sh: no signing secrets"; exit 3; }
 [ -n "${RUNNER_TEMP:-}" ] && [ -n "${GITHUB_ENV:-}" ] || { echo "ci-signing.sh: runs only in GitHub Actions" >&2; exit 1; }
-# `security -i` splits its line on spaces and quotes, so the .p12 password must be plain (docs/releases.md makes it
-# with `openssl rand -hex 24`).
+# `security -i` splits its line on spaces and quotes, so the keychain or .p12 password must be plain.
 [[ "$POLYCARP_SIGNING_P12_PASSWORD" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "ci-signing.sh: POLYCARP_SIGNING_P12_PASSWORD must be letters, digits, dot, dash or underscore" >&2; exit 1; }
 DIR=$(mktemp -d "$RUNNER_TEMP/signing.XXXXXX")
 KC="$DIR/polycarp-ci.keychain-db"
