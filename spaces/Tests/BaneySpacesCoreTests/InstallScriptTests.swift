@@ -205,10 +205,16 @@ final class InstallScriptTests: XCTestCase {
         // A check still running for the old channel never answers for the new one, so `update --now --channel dev`
         // can't install the old channel's build.
         let stale = "guard channel == self.channel else"
-        XCTAssertLessThan(try index(of: "self.checking = false", in: updater), try index(of: stale + " { return self.check(manual: manual) }", in: updater))
-        XCTAssertLessThan(try index(of: stale + " { return self.check(manual: manual) }", in: updater), try index(of: "self.checkProblem = problem", in: updater))
-        XCTAssertLessThan(try index(of: stale + " { return }", in: updater), try index(of: "self.available = release", in: updater))
-        XCTAssertLessThan(try index(of: "self.confirm(offer, feed: feed)", in: updater), try index(of: stale + " { return }", in: updater))
+        let feedStale = stale + " { self.checking = false; return self.check(manual: manual) }"
+        XCTAssertLessThan(try index(of: feedStale, in: updater), try index(of: "self.checkProblem = problem", in: updater))
+        let compared = "self.confirm(offer, feed: feed) { release in\n                    self.checking = false\n"
+        XCTAssertLessThan(try index(of: "self.checkProblem = problem", in: updater), try index(of: compared, in: updater))
+        XCTAssertLessThan(try index(of: compared, in: updater), try index(of: stale + " { return self.check(manual: manual) }", in: updater))
+        XCTAssertLessThan(try index(of: stale + " { return self.check(manual: manual) }", in: updater), try index(of: "self.available = release", in: updater))
+        // The menu's row stays "Checking for Updates…" (disabled) until GitHub's compare answers, so a second click
+        // can't start a second check: `checking` clears only on a failure, a stale channel or the compare's answer.
+        XCTAssertEqual(updater.components(separatedBy: "self.checking = false").count - 1, 3)
+        XCTAssertTrue(updater.contains("self.checking = false\n                    self.checkProblem = problem"))
     }
 
     func testReleaseRefusesAPublishedReleaseAndAnUnpushedTag() throws {
