@@ -26,6 +26,19 @@ public enum UpdateChannel: String, CaseIterable, Sendable {
     }
 
     public var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+
+    /// The channels a copy may choose. Dev is for testing, so it is offered only to a dev build or a copy whose saved
+    /// choice is already dev (that copy keeps it). A local build (no channel) counts as the stable build the updater
+    /// takes it for (`Updater.channel`), so it is offered Stable and Nightly.
+    public static func offered(build: UpdateChannel?, saved: UpdateChannel?) -> [UpdateChannel] {
+        build == .dev || saved == .dev ? allCases : [.stable, .nightly]
+    }
+
+    /// Why `chosen` can't be followed from here, or nil when it can: the CLI's `update --channel` hears this.
+    public static func refusal(_ chosen: UpdateChannel, build: UpdateChannel?, saved: UpdateChannel?) -> String? {
+        guard !offered(build: build, saved: saved).contains(chosen) else { return nil }
+        return "the dev channel is only for a dev build of Polycarp; this one follows stable or nightly"
+    }
 }
 
 /// What this copy of Polycarp was built from, as stamped into Info.plist by the build.

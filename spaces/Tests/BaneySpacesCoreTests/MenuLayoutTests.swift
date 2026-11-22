@@ -7,23 +7,23 @@ final class MenuLayoutTests: XCTestCase {
     func testListsOnlyWorkspacesInUseThenOneEmpty() {
         let rows = MenuLayout.rows(current: 1, apps: [1: ["Helium", "Ghostty"], 2: ["Grok Bot"]])
         XCTAssertEqual(rows.map(\.workspace), [1, 2, 3])
-        XCTAssertEqual(rows.map(\.title), ["Workspace 1  ·  Helium, Ghostty", "Workspace 2  ·  Grok Bot", "Empty Workspace 3"])
+        XCTAssertEqual(rows.map(\.title), ["1  Helium, Ghostty", "2  Grok Bot", "3  Empty"], "the number alone, no \"Workspace\"")
         XCTAssertEqual(rows.map(\.isCurrent), [true, false, false])
     }
 
     func testCurrentWorkspaceShowsEvenWhenEmpty() {
         let rows = MenuLayout.rows(current: 5, apps: [1: ["Helium"]])
         XCTAssertEqual(rows.map(\.workspace), [1, 5, 2])
-        XCTAssertEqual(rows[1].title, "Workspace 5")
+        XCTAssertEqual(rows[1].title, "5  Empty")
         XCTAssertTrue(rows[1].isCurrent)
         // The empty row is another workspace than the one you're on.
-        XCTAssertEqual(rows[2].title, "Empty Workspace 2")
+        XCTAssertEqual(rows[2].title, "2  Empty")
     }
 
     func testLongAppListShortensAndKeepsTheFullListForTheTooltip() {
         let names = ["Helium", "Ghostty", "Obsidian", "T3 Code (Nightly)", "iPhone Mirroring"]
         let row = MenuLayout.rows(current: 1, apps: [1: names])[0]
-        XCTAssertEqual(row.title, "Workspace 1  ·  Helium, Ghostty, Obsidian +2")
+        XCTAssertEqual(row.title, "1  Helium, Ghostty, Obsidian +2")
         XCTAssertEqual(row.fullList, names.joined(separator: ", "))
         XCTAssertNil(MenuLayout.rows(current: 1, apps: [1: ["A", "B", "C"]])[0].fullList)
     }
@@ -33,14 +33,14 @@ final class MenuLayoutTests: XCTestCase {
         for n in 1...9 { apps[n] = ["App \(n)"] }
         let rows = MenuLayout.rows(current: 4, apps: apps)
         XCTAssertEqual(rows.count, 9)
-        XCTAssertFalse(rows.contains { $0.title.hasPrefix("Empty") })
+        XCTAssertFalse(rows.contains { $0.title.hasSuffix("Empty") })
     }
 
     /// "Now first" (Donovan's pick, 2026-11-21): a named workspace is listed by its purpose, even with no windows, and
     /// is never offered as the empty one.
     func testNamedWorkspacesAreListedByPurpose() {
         let rows = MenuLayout.rows(current: 2, apps: [1: ["Helium"], 2: ["Pages", "Mail"]], purposes: [2: "Gannon letter", 3: "Class"])
-        XCTAssertEqual(rows.map(\.title), ["Workspace 1  ·  Helium", "2  Gannon letter", "3  Class", "Empty Workspace 4"])
+        XCTAssertEqual(rows.map(\.title), ["1  Helium", "2  Gannon letter", "3  Class", "4  Empty"])
         XCTAssertEqual(rows[1].fullList, "Pages, Mail", "the apps go to the tooltip")
         XCTAssertNil(rows[2].fullList)
         XCTAssertEqual(rows.map(\.isCurrent), [false, true, false, false])
@@ -60,27 +60,59 @@ final class MenuLayoutTests: XCTestCase {
                        "No purpose named  ·  since 12:40")
     }
 
+    /// 2026-11-21 ("minimally cluttered"): the head names the hour itself, so the menu opens on it and one rhythm row,
+    /// with no "Name This Hour…" row and no dock switch. Two workspaces in use make ten rows, not fourteen.
     func testTheMenuOpensOnNowThenTheWorkspaces() {
         let rows = MenuLayout.rows(current: 1, apps: [1: ["Ghostty"]], purposes: [1: "Write"])
         let now = MenuNow(title: "Write", detail: "Workspace 1")
-        XCTAssertEqual(MenuLayout.entries(now: now, oneThingSet: true, rows: rows, finished: 0, update: nil),
-                       [.now(now), .nameHour, .oneThing(set: true), .separator] + rows.map(MenuEntry.workspace)
-                       + [.separator, .showAll, .find, .separator, .settings, .quit])
-        XCTAssertEqual(MenuLayout.entries(now: now, oneThingSet: false, evening: true, rows: rows, finished: 0, update: nil).prefix(5),
-                       [.now(now), .nameHour, .oneThing(set: false), .examen, .separator], "the examen joins the head in the evening")
+        let idle = MenuTimer(minutes: 25, left: nil)
+        let e = MenuLayout.entries(now: now, timer: idle, rows: rows, finished: 0, update: .check)
+        XCTAssertEqual(e, [.now(now), .setOneThing, .separator] + rows.map(MenuEntry.workspace)
+                       + [.separator, .showAll, .find, .separator, .update(.check), .settings, .quit])
+        let two = MenuLayout.rows(current: 1, apps: [1: ["Helium"], 2: ["T3 Code (Nightly)"]])
+        XCTAssertEqual(MenuLayout.entries(now: now, timer: idle, rows: two, finished: 0, update: .check).filter { $0 != .separator }.count, 10,
+                       "two workspaces in use and one empty make ten rows")
     }
 
-    /// The one-thing timer sits under "Set the One Thing…": a start with `alarm.timerMinutes`, a stop with the time left.
-    func testTheTimerRowSitsUnderTheOneThing() {
+    /// One rhythm row: "Set the One Thing…", or the one thing itself with Change, its timer and (in the evening) the
+    /// examen in a submenu. With no one thing, a running timer and the examen are rows of their own under it.
+    func testTheRhythmIsOneRow() {
         let rows = MenuLayout.rows(current: 1, apps: [1: ["Ghostty"]])
         let now = MenuNow(title: "Write", detail: "Workspace 1")
         let idle = MenuTimer(minutes: 25, left: nil)
-        XCTAssertEqual(MenuLayout.entries(now: now, oneThingSet: true, timer: idle, rows: rows, finished: 0, update: nil).prefix(5),
-                       [.now(now), .nameHour, .oneThing(set: true), .timer(idle), .separator])
-        XCTAssertEqual(MenuLayout.entries(now: now, timer: idle, evening: true, rows: rows, finished: 0, update: nil).prefix(6),
-                       [.now(now), .nameHour, .oneThing(set: false), .timer(idle), .examen, .separator], "the examen comes after it")
-        XCTAssertFalse(MenuLayout.entries(timer: idle, rows: rows, finished: 0, update: nil).contains(.timer(idle)),
-                       "no head, no timer row")
+        let running = MenuTimer(minutes: 25, left: 12 * 60 + 30)
+        let head: (String?, MenuTimer?, Bool) -> [MenuEntry] = { one, timer, evening in
+            Array(MenuLayout.entries(now: now, oneThing: one, timer: timer, evening: evening, rows: rows, finished: 0, update: .check)
+                .prefix { $0 != .separator })
+        }
+        // No one thing.
+        XCTAssertEqual(head(nil, idle, false), [.now(now), .setOneThing], "an idle timer has no row of its own")
+        XCTAssertEqual(head(nil, running, false), [.now(now), .setOneThing, .timer(running)], "the one case of two rhythm rows")
+        XCTAssertEqual(head(nil, idle, true), [.now(now), .setOneThing, .examen])
+        XCTAssertEqual(head(nil, running, true), [.now(now), .setOneThing, .timer(running), .examen])
+        XCTAssertEqual(head("", running, false), [.now(now), .setOneThing, .timer(running)], "an empty one thing is none")
+        // The one thing set: one row, the rest under it.
+        let set = MenuOneThing(text: "Gannon letter", timer: idle, examen: false)
+        XCTAssertEqual(head("Gannon letter", idle, false), [.now(now), .oneThing(set)])
+        XCTAssertEqual(set.title, "Gannon letter")
+        XCTAssertEqual(set.items, [.change, .timer(idle)])
+        XCTAssertEqual(set.items.map(\.title), ["Change the One Thing…", "Start a timer (25 min)"])
+        let ticking = MenuOneThing(text: "Gannon letter", timer: running, examen: false)
+        XCTAssertEqual(head("Gannon letter", running, false), [.now(now), .oneThing(ticking)])
+        XCTAssertEqual(ticking.title, "Gannon letter  ·  12 min left")
+        XCTAssertEqual(ticking.items.map(\.title), ["Change the One Thing…", "Stop the timer (12 min left)"])
+        let evening = MenuOneThing(text: "Gannon letter", timer: idle, examen: true)
+        XCTAssertEqual(head("Gannon letter", idle, true), [.now(now), .oneThing(evening)])
+        XCTAssertEqual(evening.items, [.change, .timer(idle), .examen], "the examen is the submenu's last item")
+        XCTAssertEqual(MenuOneThing.Item.examen.title, "Evening Examen…")
+        XCTAssertEqual(MenuOneThing(text: "Read", timer: nil, examen: false).items, [.change], "no timer, no timer item")
+        // No head, no rhythm.
+        XCTAssertEqual(MenuLayout.entries(oneThing: "Gannon letter", timer: running, evening: true, rows: rows, finished: 0, update: .check),
+                       rows.map(MenuEntry.workspace) + [.separator, .showAll, .find, .separator, .update(.check), .settings, .quit])
+    }
+
+    func testTimerWording() {
+        let idle = MenuTimer(minutes: 25, left: nil)
         XCTAssertEqual(idle.title, "Start a timer (25 min)")
         XCTAssertFalse(idle.running)
         XCTAssertEqual(MenuTimer(minutes: 50, left: nil).title, "Start a timer (50 min)")
@@ -88,12 +120,15 @@ final class MenuLayoutTests: XCTestCase {
         XCTAssertTrue(running.running)
         XCTAssertEqual(running.title, "Stop the timer (12 min left)")
         XCTAssertEqual(MenuTimer(minutes: 25, left: 42).title, "Stop the timer (0:42 left)")
+        XCTAssertEqual(MenuOneThing(text: "Read", timer: MenuTimer(minutes: 25, left: 42), examen: false).title, "Read  ·  0:42 left")
     }
 
     func testTheAppBuildsTheTimerRowFromTheSettingAndTheKeeper() throws {
         let text = try code("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(text.contains("MenuTimer(minutes: SurfacesStore.shared.current.alarm.timerMinutes, left: running?.remaining(now: at))"))
-        XCTAssertTrue(text.contains("return item(timer.title, #selector(toggleTimer))"))
+        XCTAssertTrue(text.contains("case .timer: return item(i.title, #selector(toggleTimer))"))
+        XCTAssertTrue(text.contains("oneThing: named.oneThing?.text"))
+        XCTAssertTrue(text.contains("for i in one.items { sub.addItem(oneThingItem(i)) }"), "the one thing's submenu is its items")
         XCTAssertTrue(text.contains("WakeAlarm.shared.start()"))
     }
 
@@ -113,27 +148,51 @@ final class MenuLayoutTests: XCTestCase {
         for gone in ["optionsItem()", "channelItem()", "updateItem()", "parkedAppsItem()", "\"About BaneySpaces\"", "session.menuItems()", "toolTip = updater"] {
             XCTAssertFalse(text.contains(gone), "\(gone) moved into Settings (Donovan, 2026-10-31)")
         }
+        // 2026-11-21: the dock's switch left the menu bar menu; the dock's own menu and Settings > Dock keep it.
+        XCTAssertFalse(text.contains("Turn Off Workspace Dock"))
+        XCTAssertFalse(text.contains("toggleDockFromMenu"))
+        XCTAssertFalse(text.contains("\"Name This Hour…\""), "the head names the hour")
     }
 
     /// Donovan, 2026-10-31: the menu keeps the workspace rows, Show All Workspaces, Find or Install
-    /// an App, Settings and Quit. Finished agents and a waiting update get a row only while there is
-    /// something to act on (review of #100: a tooltip and a Settings tab are not a notice).
-    func testMenuIsFiveKindsOfRowsWhenNothingIsPending() {
+    /// an App, Settings and Quit. Finished agents get a row only while there is something to act on
+    /// (review of #100: a tooltip and a Settings tab are not a notice); the update row is always there.
+    func testMenuIsFiveKindsOfRowsAndTheUpdateRowWhenNothingIsPending() {
         let rows = MenuLayout.rows(current: 1, apps: [1: ["Ghostty"]])
-        let e = MenuLayout.entries(rows: rows, finished: 0, update: nil)
-        XCTAssertEqual(e, rows.map(MenuEntry.workspace) + [.separator, .showAll, .find, .separator, .settings, .quit])
+        let e = MenuLayout.entries(rows: rows, finished: 0, update: .check)
+        XCTAssertEqual(e, rows.map(MenuEntry.workspace) + [.separator, .showAll, .find, .separator, .update(.check), .settings, .quit])
     }
 
-    func testFinishedAgentsAndAWaitingUpdateAddOneRowEachAndOnlyWhileTheyAreThere() {
+    func testFinishedAgentsAddARowOnlyWhileTheyAreThereAndTheUpdateRowSitsAboveSettings() {
         let rows = MenuLayout.rows(current: 1, apps: [:])
         let notice = UpdateNotice(name: "BaneySpaces 0.3.1", isNightly: false, installing: false)
         let tail: ([MenuEntry]) -> [MenuEntry] = { Array($0.dropFirst(rows.count)) }
-        XCTAssertEqual(tail(MenuLayout.entries(rows: rows, finished: 2, update: nil)),
-                       [.separator, .showAll, .find, .separator, .finished(count: 2), .separator, .settings, .quit])
-        XCTAssertEqual(tail(MenuLayout.entries(rows: rows, finished: 0, update: notice)),
-                       [.separator, .showAll, .find, .separator, .update(notice), .separator, .settings, .quit])
-        XCTAssertEqual(tail(MenuLayout.entries(rows: rows, finished: 1, update: notice)),
-                       [.separator, .showAll, .find, .separator, .finished(count: 1), .update(notice), .separator, .settings, .quit])
+        XCTAssertEqual(tail(MenuLayout.entries(rows: rows, finished: 2, update: .check)),
+                       [.separator, .showAll, .find, .separator, .finished(count: 2), .update(.check), .settings, .quit])
+        XCTAssertEqual(tail(MenuLayout.entries(rows: rows, finished: 0, update: .notice(notice))),
+                       [.separator, .showAll, .find, .separator, .update(.notice(notice)), .settings, .quit])
+        XCTAssertEqual(tail(MenuLayout.entries(rows: rows, finished: 1, update: .checking)),
+                       [.separator, .showAll, .find, .separator, .finished(count: 1), .update(.checking), .settings, .quit])
+    }
+
+    /// The update row's four states: check by hand, a check running, a release on offer, one installing.
+    func testTheUpdateRowSaysWhatTheUpdaterKnows() throws {
+        let offer = UpdateNotice(name: "BaneySpaces 0.3.1", isNightly: false, installing: false)
+        let installing = UpdateNotice(name: "BaneySpaces 0.3.1", isNightly: false, installing: true)
+        XCTAssertEqual(MenuUpdate(notice: nil, checking: false), .check)
+        XCTAssertEqual(MenuUpdate(notice: nil, checking: true), .checking)
+        XCTAssertEqual(MenuUpdate(notice: offer, checking: true), .notice(offer), "a release on offer wins over a check")
+        XCTAssertEqual(MenuUpdate.check.title, "Check for Updates…")
+        XCTAssertEqual(MenuUpdate.checking.title, "Checking for Updates…")
+        XCTAssertEqual(MenuUpdate.notice(offer).title, "Update to BaneySpaces 0.3.1…")
+        XCTAssertEqual(MenuUpdate.notice(installing).title, "Updating to BaneySpaces 0.3.1…")
+        XCTAssertEqual([MenuUpdate.check, .checking, .notice(offer), .notice(installing)].map(\.enabled), [true, false, true, false])
+        XCTAssertEqual([MenuUpdate.check, .checking, .notice(offer), .notice(installing)].map(\.offersRelease), [false, false, true, false])
+        let text = try code("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertTrue(text.contains("update: MenuUpdate(notice: updateNotice(), checking: updater.checking)"))
+        XCTAssertTrue(text.contains("update.offersRelease ? #selector(offerUpdate) : #selector(checkForUpdatesFromMenu)"))
+        XCTAssertTrue(text.contains("@objc private func checkForUpdatesFromMenu() { checkForUpdates() }"))
+        XCTAssertTrue(try code("Sources/BaneySpaces/Updater.swift").contains("private(set) var checking = false"))
     }
 
     func testUpdateWordingIsCapitalizedWhereASentenceStarts() {
@@ -172,12 +231,13 @@ final class MenuLayoutTests: XCTestCase {
             }
         }
         // `item(` also matches "menuItem(for:" and "updateItem(": only quoted titles are captured.
-        XCTAssertEqual(titles, ["Show All Workspaces", "Find or Install an App…", "Settings…", "Quit Polycarp", "Name This Hour…", "Evening Examen…",
+        // The update row, the one thing's submenu, the timer and the examen take their titles from Core.
+        XCTAssertEqual(titles, ["Show All Workspaces", "Find or Install an App…", "Settings…", "Quit Polycarp", "Set the One Thing…",
                                 "Waiting for AeroSpace to quit", "Polycarp needs permission to arrange windows", "Allow Polycarp…"])
         XCTAssertEqual(text.components(separatedBy: "NSMenuItem(").count - 1, 1, "only the item(_:_:key:) helper builds one")
         XCTAssertEqual(text.components(separatedBy: ".addItem(withTitle:").count - 1, 2, "the not-started notices")
         XCTAssertFalse(text.contains("Dictation"), "no dictation item: Polycarp has no dictation")
-        XCTAssertEqual(text.components(separatedBy: "NSMenu()").count - 1, 1, "only the status item's own menu; no submenu built here")
+        XCTAssertEqual(text.components(separatedBy: "NSMenu()").count - 1, 2, "the status item's own menu and the one thing's submenu")
         // The one other place a menu row is built, the finished-agents submenu, is the session engine's.
         let session = try code("Sources/BaneySpaces/Session/SessionController.swift")
         XCTAssertEqual(session.components(separatedBy: "NSMenuItem(").count - 1, 2, "the finished row and one item for each agent")

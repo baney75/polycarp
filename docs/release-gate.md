@@ -116,7 +116,7 @@ release list, takes the `nightly` release by its marker, and runs that commit's 
 downloads `releases/download/nightly/Polycarp.zip`, checks its checksum, the release signature and that its
 `PolycarpCommit` is the marker's commit, installs it and restarts Polycarp. No permission prompt: the signature is
 the same. Then `polycarp-spaces update --check --channel nightly` must say it's up to date, and `--channel dev`
-must answer (a dev build, or nothing on Dev yet). `~/Library/Application Support/Polycarp/update.log` shows the
+must refuse with "the dev channel is only for a dev build of Polycarp" (a nightly build with no saved dev choice). `~/Library/Application Support/Polycarp/update.log` shows the
 install.
 
 ## 8. Merge this PR

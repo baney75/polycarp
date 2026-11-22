@@ -134,13 +134,12 @@ final class DockSwitchTests: XCTestCase {
         }
     }
 
-    func testTheMenuBarMenuHasItsOwnDockToggle() {
-        let rows = MenuLayout.rows(current: 1, apps: [:])
-        let on = MenuLayout.entries(rows: rows, finished: 0, update: nil, dockOn: true)
-        XCTAssertTrue(on.contains(.dock(on: true)))
-        let off = MenuLayout.entries(rows: rows, finished: 0, update: nil, dockOn: false)
-        XCTAssertTrue(off.contains(.dock(on: false)))
-        // Before the app says, the menu is the one it always was.
-        XCTAssertFalse(MenuLayout.entries(rows: rows, finished: 0, update: nil).contains(.dock(on: true)))
+    /// 2026-11-21 ("minimally cluttered"): the switch left the menu bar menu. Settings > Dock, the dock's own
+    /// right-click menu and the launcher keep it.
+    func testTheDockSwitchLivesInSettingsAndTheDockNotTheMenuBarMenu() throws {
+        let app = try Repo.code("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertFalse(app.contains("Turn Off Workspace Dock"))
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Setup.swift").contains("SettingsRow(\"Workspace Dock in place of the macOS Dock\""))
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/WorkspaceDock.swift").contains("Button(\"Turn Off Workspace Dock\") { model.onTurnOff() }"))
     }
 }

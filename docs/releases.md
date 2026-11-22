@@ -15,6 +15,10 @@ Where this file and that one disagree, that one wins. This file says how Polycar
 Each release carries `Polycarp.zip`, `Polycarp.zip.sha256`, `Polycarp.dmg` and `latest.json`. Nightly and dev are
 Apple silicon; stable is universal.
 
+Dev is for testing. Settings > Updates lists it only on a dev build (`PolycarpChannel` is `dev`) or a copy whose
+saved choice is already dev, and the app refuses `update --channel dev` anywhere else (`UpdateChannel.offered`). A local
+build counts as stable there, as it does for the updater.
+
 Install mode is **replace**: one app (`com.baney.polycarp`) for every channel, signed by the one identity in
 `spaces/scripts/release-requirement.txt`, so moving between channels never asks for a macOS permission again.
 Because every channel shares that identity, the feeds keep the channels apart, not the keys.
