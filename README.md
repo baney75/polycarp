@@ -2,9 +2,12 @@
 
 # Polycarp
 
-Polycarp is the Omarchy-like device theme and launcher for Mac and Windows.
+Polycarp is its own OS on a Mac or a Windows PC: workspaces, the dock, the top bar, the launcher and one theme over all of them.
 
-The browser extension, its CLI helper, MCP server and computer-use tools moved to Tychicus: https://github.com/baney75/tychicus.
+The Polycarp browser extension ([`spaces/extension`](spaces/extension)) is the reading and accessibility extension that was
+Phont. It works on its own in Helium, Chrome and other Chromium browsers. With Polycarp installed on the same computer it
+also gives the browser Polycarp's new tab and updates with the app. The browser-driving extension, its CLI helper, MCP
+server and computer-use tools are in Tychicus: https://github.com/baney75/tychicus.
 The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 On a Mac it lives in `Polycarp.app`, with one Settings window, one set of permissions and one command. The Windows

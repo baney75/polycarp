@@ -1,6 +1,6 @@
 # Polycarp
 
-Polycarp's browser extension makes any page easier to read, helps you remember what you read, and gives the browser Polycarp's new tab (`newtab/`, see `../docs/newtab.md`). It works in Helium, Chrome and other Chromium browsers. It takes every color, face, radius and duration from the Polycarp theme (`src/shared/theme.css`, written by `polycarp theme export css polycarp --surface browser`).
+Polycarp's browser extension makes any page easier to read and helps you remember what you read. It is the reading and accessibility extension that was Phont, and it works on its own in Helium, Chrome and other Chromium browsers, with or without the Polycarp app. When Polycarp is installed on the same computer, the extension also joins it: the new tab (`newtab/`, see `../docs/newtab.md`) gets the day's verse and Polycarp's search settings, and the extension updates with the app. It takes every color, face, radius and duration from the Polycarp theme (`src/shared/theme.css`, written by `polycarp theme export css polycarp --surface browser`).
 
 - **Read:** bold word anchors, reading fonts (Lexend, Atkinson Hyperlegible, OpenDyslexic), spacing, tints and a focus ruler on every site.
 - **Reader:** web pages, PDF, EPUB, DOCX, Markdown, HTML, FB2 and text in a clean reader, with read-aloud and word highlighting, sprint mode and printing.
@@ -12,6 +12,14 @@ Polycarp's browser extension makes any page easier to read, helps you remember w
 Every feature cites the research behind it, rated by strength, on the welcome page. Polycarp has no server and no account; see [PRIVACY.md](PRIVACY.md).
 
 ## Install and update
+
+### On its own
+
+Without the Polycarp app, load this folder (or a copy made with `scripts/stage.sh`) as an unpacked extension, as in
+steps 1 and 2 below. Every feature works. The new tab searches with DuckDuckGo and shows no verse, since there is no
+Polycarp to ask. Update by pulling the checkout; the extension reloads itself when `version_name` changes on disk.
+
+### With Polycarp
 
 The Polycarp app carries the extension: `scripts/bundle.sh` runs `scripts/stage.sh` into
 `Polycarp.app/Contents/Resources/extension`, with the app's full version as the manifest's `version_name`.
