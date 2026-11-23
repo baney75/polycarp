@@ -23,17 +23,27 @@ public enum MenuBarEdge {
         }
     }
 
-    /// How far below the edge the pointer is held: one point, still on Polycarp's bar, so the bar keeps its edge.
+    /// How far below the edge the pointer is held: one point, on Polycarp's bar unless a window or a full-screen app
+    /// covers it there.
     public static let inset = 1.0
 
-    /// The edges to guard: the top of each screen in `guarded`, unless another screen of `all` sits on top of it there,
-    /// since then the pointer is crossing to that screen, not touching an edge macOS reveals its bar from.
+    /// The edges to guard: the top of each screen in `guarded`, less the stretches where another screen of `all` sits
+    /// directly on top of it, since there the pointer is crossing to that screen, not touching an edge macOS reveals its
+    /// bar from. A screen partly under another keeps the rest of its edge guarded.
     public static func edges(guarded: [Screen], all: [Screen]) -> [Edge] {
-        guarded.compactMap { s in
-            let above = all.contains { o in
-                o != s && abs((o.y + o.height) - s.y) < 0.5 && o.x < s.x + s.width && o.x + o.width > s.x
+        guarded.flatMap { s -> [Edge] in
+            let covers = all.filter { o in o != s && abs((o.y + o.height) - s.y) < 0.5 }
+                .map { (max($0.x, s.x), min($0.x + $0.width, s.x + s.width)) }
+                .filter { $0.0 < $0.1 }
+                .sorted { $0.0 < $1.0 }
+            var out: [Edge] = []
+            var from = s.x
+            for (a, b) in covers {
+                if a > from { out.append(Edge(minX: from, maxX: a, top: s.y)) }
+                from = max(from, b)
             }
-            return above ? nil : Edge(minX: s.x, maxX: s.x + s.width, top: s.y)
+            if from < s.x + s.width { out.append(Edge(minX: from, maxX: s.x + s.width, top: s.y)) }
+            return out
         }
     }
 
