@@ -664,6 +664,7 @@ private struct VineMark: View {
 
 /// An island's face: the theme's surface, a hairline edge and a soft shadow, each replaced by what the sheet's
 /// `bar .island` sets.
+/// Its corners and line width are the overview chip's, the theme's pill: square in Omarchy, rounded in BaneySpaces.
 private struct IslandFace: View {
     let style: ComputedStyle
     /// The sheet's `bar { background }`: a sheet written for one strip (the `omarchy` preset) chose its text colors
@@ -671,7 +672,7 @@ private struct IslandFace: View {
     let barFill: StyleBackground?
 
     var body: some View {
-        let shape = Styled.shape(style, else: 10)
+        let shape = Styled.shape(style, else: Chrome.radius(.overviewChip))
         ZStack {
             if let fill = Styled.fill(style.background) ?? Styled.fill(barFill) {
                 shape.fill(fill)
@@ -679,7 +680,7 @@ private struct IslandFace: View {
                 shape.fill(Chrome.panel(0.94))
             }
             if style.border == nil {
-                shape.strokeBorder(Chrome.edge(0.22), lineWidth: 1)
+                shape.strokeBorder(Chrome.edge(0.22), lineWidth: Chrome.width(.overviewChip))
             } else {
                 StyledLines(style: style, shape: shape)
             }
@@ -696,7 +697,7 @@ private struct IslandShadow: ViewModifier {
             content.modifier(StyledShadow(shadow: shadow))
         } else {
             // Small enough to fade inside the 3 pt the island is inset from the panel's edge.
-            content.shadow(color: .black.opacity(0.22), radius: 2, x: 0, y: 1)
+            content.shadow(color: Chrome.shadow(0.22), radius: 2, x: 0, y: 1)
         }
     }
 }
