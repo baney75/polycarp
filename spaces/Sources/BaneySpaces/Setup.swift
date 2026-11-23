@@ -104,7 +104,40 @@ final class SetupModel: ObservableObject {
         finished = finishedRows()
     }
     @Published var launcherOnCmdSpace = Launcher.onCmdSpace
-    @Published var searchEngine = Launcher.searchEngine { didSet { Launcher.searchEngine = searchEngine } }
+    /// The engine in force (`search.engine`). Picking one writes surfaces.json; a change to the file from anywhere else
+    /// (`polycarp-spaces surfaces set`, an agent) shows here too. A refused write puts the picker back and says why.
+    @Published var searchEngine = Launcher.searchEngine {
+        didSet {
+            guard !followingFile, searchEngine != oldValue else { return }
+            if let why = Launcher.setSearchEngine(searchEngine) {
+                searchEngine = oldValue
+                searchEngineProblem = "Not saved: \(why)"
+            } else {
+                searchEngineProblem = nil
+            }
+        }
+    }
+    @Published var searchEngineProblem: String?
+    private var followingFile = false
+    private var surfacesWatch: NSObjectProtocol?
+
+    init() {
+        surfacesWatch = NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] note in
+            guard let self, let s = note.userInfo?[SurfacesStore.key] as? Surfaces, s.search.engine != self.searchEngine else { return }
+            self.followingFile = true
+            self.searchEngine = s.search.engine
+            self.followingFile = false
+        }
+    }
+
+    deinit { surfacesWatch.map(NotificationCenter.default.removeObserver) }
+    /// The engines to pick from, with the one in force first added when surfaces.json names another (a bang of yours or an address).
+    var engineChoices: [Bang] {
+        let list = Bangs.engines
+        if list.contains(where: { $0.trigger == searchEngine }) { return list }
+        let current = OneSearch.engine(searchEngine, bangs: Launcher.loadBangs())
+        return list + [Bang(trigger: searchEngine, name: current.name, url: current.url)]
+    }
     @Published var agent = Launcher.agent { didSet { Launcher.agent = agent } }
     @Published var customBangs = Launcher.readCustomBangs().bangs
     @Published var newTrigger = ""
@@ -940,10 +973,11 @@ struct SetupView: View {
                     Toggle("Quick terminal on ⌃`", isOn: binding({ model.quickTerminalKey }, { model.setQuickTerminalKey($0) })).labelsHidden()
                 }
             }
-            SettingsRow("Search the web with") {
-                Picker("Search the web with", selection: $model.searchEngine) { ForEach(Bangs.engines, id: \.trigger) { Text($0.name).tag($0.trigger) } }
+            SettingsRow("Search the web with", help: "The launcher, the browser's new tab and polycarp-spaces search all use it (search.engine in surfaces.json).") {
+                Picker("Search the web with", selection: $model.searchEngine) { ForEach(model.engineChoices, id: \.trigger) { Text($0.name).tag($0.trigger) } }
                     .labelsHidden()
             }
+            if let why = model.searchEngineProblem { Text(why).font(Chrome.font(11)).foregroundStyle(Chrome.urgent) }
             SettingsRow("Ask questions (?) with", help: "Type !yt cats, !i sunsets or ? a question. Type ! to see every bang.") {
                 Picker("Ask questions with", selection: $model.agent) { ForEach(Bangs.agents, id: \.trigger) { Text($0.name).tag($0.trigger) } }
                     .labelsHidden()

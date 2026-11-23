@@ -209,6 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         a.showOverview = { [weak self] in self?.viewer.open() }
         a.sessionItems = { [weak self] q in self?.session.launcherItems(q) ?? [] }
+        a.browserTab = { [weak self] q in self?.session.browserTabItem(q) }
         a.willShow = { [weak self] in
             guard let self else { return }
             // New Terminal opens where you were working, read before the launcher takes focus.
@@ -487,6 +488,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if case .theme(let t) = watcher.start(firstLookWithin: 0.15) { Appearance.shared.usePolycarp(t) }
         // surfaces.json (`polycarp-spaces surfaces set ...`, docs/surfaces.md): every surface reads
         // `SurfacesStore.shared.current` and listens for `SurfacesStore.didChange`. Same watch as the theme's, off main.
+        // The launcher's engine moves into surfaces.json (search.engine) once, before the store's first read.
+        Launcher.moveOldSearchEngine()
         SurfacesStore.shared.start(log: { Trace.log($0) })
         // style.css (`polycarp-spaces style set ...`, docs/style.md): the bar and the dock draw from `Styles.shared`, which
         // follows `StyleSheetStore.didChange`. Waits up to 0.1 s for the first read, so the first panels draw with it.

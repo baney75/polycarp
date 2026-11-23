@@ -256,8 +256,13 @@ Spotlight. Turning that off gives ⌘Space back to Spotlight, and so does quitti
 - **Remove** lists apps Homebrew installed and asks before uninstalling one.
 - **⌘Return** shows an app or file in Finder, or a Homebrew app's web page.
 - **Search the web and ask agents.** Type anything and the launcher offers your search engine,
-  an image search and your agent. Start with **?** to ask your agent (Claude unless you pick
-  another in setup); it opens a new chat in your default browser with the question asked.
+  an image search and your agent. Web results open in your main browser (the default one,
+  usually Helium), and in **Search the Web** a tab already open there that matches comes first
+  as **Switch to ...**, so you go to it instead of opening it twice. The engine is
+  `search.engine` in surfaces.json (Google unless you pick another in setup, `ddg`, `brave`,
+  `kagi` or an `https://` address with `{query}`); the launcher, the browser's new tab and
+  `polycarp-spaces search` all use it. Start with **?** to ask your agent (Claude unless you
+  pick another in setup); it opens a new chat in your default browser with the question asked.
 - **Bangs**, as on DuckDuckGo: `!yt cats`, `!i sunsets`, `!w Erie`, `!gh polycarp`,
   `!claude why is the sky blue`, or the bang at the end (`cats !yt`). Type `!` to see them all;
   Tab fills one in. A bang that isn't built in goes to DuckDuckGo, which knows thousands.
@@ -266,6 +271,19 @@ Spotlight. Turning that off gives ⌘Space back to Spotlight, and so does quitti
   launcher offers to start Claude Code or Codex in your terminal, in your home folder. That's
   the app that opens `.command` files, or Ghostty, iTerm2, WezTerm or Warp when that's still
   Terminal and one of them is installed.
+
+### The new tab: the same search in the browser
+
+The Polycarp new tab is one field that does what the launcher does with the same words: the same
+bangs (yours too), addresses, and `search.engine`. As you type, a list under it shows open tabs and
+windows that match (Return switches to one instead of opening it again), then bang completions,
+then the search. **Down** or **⌃N** and **Up** or **⌃P** move, **Return** opens, **Tab** fills in
+a bang, **Esc** clears. Without Polycarp running it still searches and does bangs. Details:
+[docs/newtab.md](docs/newtab.md).
+
+From a terminal or an agent, `polycarp-spaces search "<text>"` prints the same ranked list as
+JSON lines (`kind`, `title`, and `url` or `id`); `--open` goes to the top one. Over MCP, `polycarp
+mcp` serves it as `search` and `search_open`.
 
 ### Your own bangs
 
@@ -282,7 +300,7 @@ $B --bangs list
 $B --bangs remove jira
 ```
 
-They live in `~/Library/Application Support/Polycarp/bangs.json`
+The new tab page and `polycarp-spaces search` read the same list. They live in `~/Library/Application Support/Polycarp/bangs.json`
 (`[{"trigger": "jira", "name": "Jira", "url": "https://…/{q}", "agent": false}]`). Only
 `https`, `http` and Apple Maps addresses are accepted.
 

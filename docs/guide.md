@@ -313,6 +313,8 @@ Any other MCP client can start the same command.
 | `style_set`, `style_unset` | Change or remove one declaration in place, keeping comments; a change that would add an error writes nothing. The grammar: [spaces/docs/style.md](../spaces/docs/style.md) |
 | `style_preset` | Replace the sheet with a whole look in one call (`omarchy`: a solid dark bar, monospace, numbered workspaces with an accent line); the old sheet is kept as the next backup (`style.css.bak`, `.bak.1` and on), never written over |
 | `style_restore` | Undo a preset: put the newest backup back; the sheet in force becomes the next backup, so a second call undoes the first |
+| `search` | Find what the person has open (tabs, windows, terminal splits) and the web, ranked as the launcher and the new tab page rank it, with the same bangs and `search.engine`. Changes nothing |
+| `search_open` | Go to the top `search` result: bring the open tab or window forward, or open the page in the default browser. Only when the person asked to go there |
 
 ### The workflow
 

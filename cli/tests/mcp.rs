@@ -132,7 +132,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 30] = [
+const TOOLS: [&str; 32] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -156,6 +156,8 @@ const TOOLS: [&str; 30] = [
     "surfaces_schema",
     "surfaces_get",
     "surfaces_set",
+    "search",
+    "search_open",
     "style_example",
     "style_get",
     "style_check",
@@ -1042,6 +1044,66 @@ fn surfaces_tools_say_when_the_spaces_command_is_missing_old_or_broken() {
     assert_eq!(e["code"], "spaces_failed");
     assert!(e["message"].as_str().unwrap().contains("boom"), "{e}");
     assert_eq!(e["data"]["errors"][0]["path"], "$");
+    assert_eq!(s.finish(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn search_tools_run_the_spaces_search_command_and_only_search_open_opens() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let reply = json!({"ok": true, "data": {"query": "!yt cats", "partial": false, "results": [
+        {"kind": "search", "title": "Search YouTube for \u{201C}cats\u{201D}", "url": "https://www.youtube.com/results?search_query=cats"}]}});
+    fs::write(sb.root.join("spaces/reply"), reply.to_string()).unwrap();
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    let r = s.tool("search", json!({"query": "!yt cats"}));
+    assert_eq!(r["isError"], false);
+    assert_eq!(r["structuredContent"], reply);
+    // The query goes after `--`, one argument, so none of its words is taken as a flag.
+    assert_eq!(stub_args(&sb), ["search", "--json", "--", "!yt cats"]);
+    s.tool("search_open", json!({"query": "gmail --open"}));
+    assert_eq!(
+        stub_args(&sb),
+        ["search", "--open", "--json", "--", "gmail --open"]
+    );
+    for q in ["--open", "--json", "help", "-h"] {
+        s.tool("search", json!({"query": q}));
+        assert_eq!(stub_args(&sb), ["search", "--json", "--", q], "{q}");
+    }
+
+    fs::remove_file(sb.root.join("spaces/args")).unwrap();
+    for args in [json!({}), json!({"query": 3}), json!({"query": "  "})] {
+        let r = s.tool("search", args.clone());
+        assert_eq!(r["isError"], true, "{args}");
+        assert_eq!(
+            r["structuredContent"]["error"]["code"], "invalid_args",
+            "{args}"
+        );
+    }
+    assert!(
+        !sb.root.join("spaces/args").exists(),
+        "the command never ran"
+    );
+    assert_eq!(s.finish(), 0);
+}
+
+#[test]
+fn search_is_read_only_and_search_open_is_not() {
+    let sb = Sandbox::new();
+    let mut s = sb.server();
+    let v = s.initialize("t");
+    let ins = v["result"]["instructions"].as_str().unwrap();
+    assert!(
+        ins.find("call search;").unwrap() < ins.find("search_open").unwrap(),
+        "search first, search_open only when asked"
+    );
+    let list = s.request("tools/list", json!({}));
+    let tools = list["result"]["tools"].as_array().unwrap();
+    let ann = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap()["annotations"].clone();
+    assert_eq!(ann("search")["readOnlyHint"], true);
+    assert_eq!(ann("search_open")["readOnlyHint"], false);
+    assert_eq!(ann("search_open")["destructiveHint"], false);
     assert_eq!(s.finish(), 0);
 }
 

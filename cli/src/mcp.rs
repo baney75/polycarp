@@ -3,7 +3,8 @@
 //! JSON-RPC 2.0, one message per line. Each theme tool calls the same `op_*` function the command line
 //! calls and returns the same envelope, so the two cannot drift. Each surfaces tool runs
 //! `polycarp-spaces surfaces ... --json` and passes its envelope on as is, for the same reason
-//! (spaces/docs/surfaces.md); each style tool does the same with `polycarp-spaces style ... --json`
+//! (spaces/docs/surfaces.md); each style tool does the same with `polycarp-spaces style ... --json`, and the search
+//! tools with `polycarp-spaces search ... --json`
 //! (spaces/docs/style.md).
 
 use crate::theme::{self, ApiErr, Ctx};
@@ -49,6 +50,10 @@ To restyle one part of the top bar or the dock past the theme (a gold clock, squ
 the style sheet: read style_example, style_set each change, then style_check. A refused style_set wrote nothing; \
 error.data.errors gives each problem with its line and column. To undo, style_unset or style_set what style_get gave. \
 For a whole look in one call (omarchy), style_preset; style_restore undoes it, putting back the sheet that was there.
+To find something the person has open (a browser tab, a window, a terminal split) or to search the web the way \
+Polycarp's launcher and new tab page do (bangs like !yt and the engine in search.engine), call search; it changes \
+nothing. search_open performs the top result: it brings an open tab or window forward, or opens the page in the \
+default browser. Call it only when the person asked to go there.
 Every result is {ok, data} or {ok:false, error:{code, message, suggestion, data:{errors}}}.";
 
 fn obj(props: Json, required: &[&str]) -> Json {
@@ -314,6 +319,28 @@ pub(crate) fn tools() -> Vec<Tool> {
             idempotent: true,
         },
         Tool {
+            name: "search",
+            description: "One search over what is open and the web, ranked as Polycarp's launcher and the browser's new tab page rank it: open tabs, windows and terminal splits that match (each with its session id), then bang completions, then what Return would do (a bang such as !yt cats or !claude a question, an address, or a search with search.engine). Changes nothing. data.results lists them best first, each with kind (tab, window, terminal, device, bang, search, open), title, and url or id; data.partial is true when Polycarp wasn't running, so only web results came back.",
+            schema: obj(
+                json!({"query": {"type":"string","description":"The words, as typed in the launcher: gmail, !yt cats, cats !yt, example.com."}}),
+                &["query"],
+            ),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "search_open",
+            description: "Perform the top result of search for the same query: bring an open tab, window or terminal split forward through Polycarp, or open the bang, address or web search in the default browser. Call search first and use this only when the person asked to go there. data.opened is the result it performed.",
+            schema: obj(
+                json!({"query": {"type":"string","description":"The same words given to search."}}),
+                &["query"],
+            ),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+        },
+        Tool {
             name: "style_example",
             description: "Read this before style_set. Returns a starter style.css that names every selector (bar, its regions .left .center .right, each module and each .workspace number, dock, .tile .label .badge .icon with .current and :hover) and every property, with what each takes and where it applies, all commented out. The style sheet restyles the top bar and the dock on top of the theme with a strict subset of CSS.",
             schema: obj(json!({}), &[]),
@@ -550,6 +577,12 @@ pub(crate) fn call(
             Ok(a) => style_call(name, &a),
         });
     }
+    if name == "search" || name == "search_open" {
+        return Some(match Args::new(&tool, args) {
+            Err(e) => theme::envelope(&Err(e)),
+            Ok(a) => search_call(name, &a),
+        });
+    }
     let run = || -> theme::Res {
         let a = Args::new(&tool, args)?;
         if name == "theme_schema" {
@@ -715,11 +748,35 @@ fn style_call(name: &str, a: &Args) -> theme::Envelope {
     }
 }
 
+/// Runs `search` or `search_open` through `polycarp-spaces search [--open] <query> --json` (no shell) and passes its
+/// envelope on (spaces/docs/newtab.md has the ranking).
+fn search_call(name: &str, a: &Args) -> theme::Envelope {
+    let query = match a.need("query") {
+        Ok(q) => q.trim().to_string(),
+        Err(e) => return theme::envelope(&Err(e)),
+    };
+    if query.is_empty() {
+        return theme::envelope(&Err(ApiErr::usage(
+            "query must be words to search for".to_string(),
+        )));
+    }
+    let mut argv: Vec<String> = vec!["search".into()];
+    if name == "search_open" {
+        argv.push("--open".into());
+    }
+    // After `--` the query is only words: `--open`, `--json` or `help` in it are searched for, never obeyed.
+    argv.extend(["--".into(), query]);
+    spaces_run(argv, "search gmail")
+}
+
 /// Runs `polycarp-spaces <argv> --json` within the limit and passes its envelope on. `probe` is the command a
-/// person can run in a terminal to see why it failed.
+/// person can run in a terminal to see why it failed. `--json` goes before a `--`, where it is still a flag.
 fn spaces_run(mut argv: Vec<String>, probe: &str) -> theme::Envelope {
     let what = argv[0].clone();
-    argv.push("--json".into());
+    match argv.iter().position(|a| a == "--") {
+        Some(at) => argv.insert(at, "--json".into()),
+        None => argv.push("--json".into()),
+    }
     let Some(spaces) = crate::spaces_command() else {
         return surfaces_refusal(
             "spaces_not_found",

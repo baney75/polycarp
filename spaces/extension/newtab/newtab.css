@@ -58,6 +58,30 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 var(--pc-border-wid
 }
 .hint.on { visibility: visible; }
 
+/* The finder (finder.js): the rows under the field while you type. Its own element, so the page around it can change. */
+.finder {
+	list-style: none;
+	margin: 8px 0 0;
+	padding: 4px;
+	border: var(--pc-border-width) solid var(--line);
+	border-radius: var(--pc-radius-large);
+	background: var(--field);
+}
+.finder[hidden] { display: none; }
+.finder-row {
+	display: flex;
+	align-items: baseline;
+	gap: 12px;
+	padding: 8px 12px;
+	border-radius: var(--pc-radius);
+	cursor: pointer;
+}
+.finder-row.on { background: var(--pc-selection); }
+.finder-what { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.finder-where { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--mute); }
+.finder-key { flex: none; font-size: 12px; color: var(--mute); visibility: hidden; }
+.finder-row.on .finder-key { visibility: visible; color: var(--accent); }
+
 .verse { margin: 0; text-align: center; }
 .verse blockquote {
 	margin: 0 auto;

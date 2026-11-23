@@ -11,7 +11,9 @@
 <main>
 	<form id="ask" autocomplete="off">
 		<label class="hide" for="field">Search or type an address</label>
-		<input id="field" name="q" type="text" spellcheck="false" placeholder="Search or type an address" autofocus>
+		<input id="field" name="q" type="text" spellcheck="false" placeholder="Search or type an address" autofocus
+			role="combobox" aria-autocomplete="list" aria-controls="finder" aria-expanded="false">
+		<ul id="finder" class="finder" role="listbox" aria-label="Open tabs, bangs and the web" hidden></ul>
 		<p id="hint" class="hint" aria-live="polite"></p>
 	</form>
 	<figure id="verse" class="verse" hidden>
@@ -20,6 +22,7 @@
 	</figure>
 </main>
 <script src="logic.js"></script>
+<script src="finder.js"></script>
 <script src="newtab.js"></script>
 </body>
 </html>

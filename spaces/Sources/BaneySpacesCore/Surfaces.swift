@@ -27,6 +27,8 @@ public enum SurfaceKind: Equatable, Sendable {
     case text(max: Int)
     /// An https URL with `{query}` where the search words go.
     case searchTemplate
+    /// A web search engine: a bang trigger (`g`, `ddg`, `brave`, `kagi`) or a `searchTemplate`.
+    case engine
     /// An ordered list of ids, each once: one of `known`, or `custom:<name>` when `custom`.
     case ids(known: [String], custom: Bool)
 }
@@ -206,6 +208,13 @@ public struct Surfaces: Equatable, Sendable {
         }
     }
 
+    /// One web search for the launcher, the new tab page and `polycarp-spaces search` (`OneSearch`).
+    public struct Search: Equatable, Sendable {
+        /// The engine in force: a bang trigger (`g`) or an https template with `{query}`. A file that leaves
+        /// `search.engine` out but sets `newtab.searchURL` gets that template here (`Surfaces.check`).
+        public var engine: String
+    }
+
     public enum IdleStyle: String, CaseIterable, Sendable { case martyrNight = "martyr-night", field, verse }
 
     public struct Idle: Equatable, Sendable {
@@ -246,6 +255,7 @@ public struct Surfaces: Equatable, Sendable {
     public var desktop: Desktop
     public var dock: Dock
     public var menu: Menu
+    public var search: Search
     public var newtab: NewTab
     public var idle: Idle
     public var text: Text
@@ -267,6 +277,7 @@ extension SurfaceField {
         ("desktop", "The desktop scene behind every window, and its verse."),
         ("dock", "The Workspace Dock's tiles."),
         ("menu", "The status menu (Polycarp's menu bar icon)."),
+        ("search", "One web search for the launcher, the browser's new tab page and polycarp-spaces search."),
         ("newtab", "The browser's new tab page."),
         ("idle", "The idle screen (Martyr Night)."),
         ("text", "Where verses come from."),
@@ -311,10 +322,13 @@ extension SurfaceField {
         SurfaceField("menu.hidden", .ids(known: Surfaces.MenuRow.allCases.map(\.rawValue), custom: false), ids([]),
                      "Rows not shown. settings and quit can't be hidden."),
 
+        SurfaceField("search.engine", .engine, .string("g"),
+                     "The web search engine for the launcher, the new tab page and polycarp-spaces search: a bang trigger (g, ddg, brave, kagi, b, pplx or any bang of yours) or an https URL with {query} where the words go. When the file leaves it out and sets newtab.searchURL, that template is the engine."),
+
         SurfaceField("newtab.question", .text(max: 160), .string("Search or type an address"), "The placeholder in the new tab's one field."),
         SurfaceField("newtab.verse", .bool, .bool(true), "A verse on the new tab page."),
         SurfaceField("newtab.searchURL", .searchTemplate, .string("https://duckduckgo.com/?q={query}"),
-                     "The search engine: an https URL with {query} where the words go."),
+                     "The older name for the engine: an https URL with {query} where the words go. Used only when the file doesn't set search.engine."),
 
         SurfaceField("idle.enabled", .bool, .bool(false), "Show Polycarp's idle screen. Off until you turn it on."),
         SurfaceField("idle.style", .choice(Surfaces.IdleStyle.allCases.map(\.rawValue)), .string("martyr-night"),
@@ -378,6 +392,8 @@ extension Surfaces {
         guard errors.isEmpty else { return .failure(SurfacesErrors(errors.sorted { $0.path < $1.path })) }
         let resolved = SurfaceField.defaultTree.merged(with: doc)
         var surfaces = Surfaces(resolved: resolved)
+        // One engine: search.engine wins; a file from before it that set newtab.searchURL keeps searching there.
+        if doc.at(["search", "engine"]) == nil, let legacy = doc.at(["newtab", "searchURL"])?.string { surfaces.search.engine = legacy }
         // The modules a place in the file holds leave the places still at their default (see `crossChecks`).
         let own = ["left", "center", "right"].filter { doc.at(["bar", "modules", $0]) != nil }
         let taken = Set(own.flatMap { (doc.at(["bar", "modules", $0])?.array ?? []).compactMap(\.string) }).subtracting(["|"])
@@ -414,6 +430,7 @@ extension Surfaces {
                           verseRotation: VerseRotation(id: s("desktop.verseRotation")))
         dock = Dock(tileLabel: TileLabel(rawValue: s("dock.tileLabel")) ?? .number, restTile: b("dock.restTile"))
         menu = Menu(order: list("menu.order").compactMap(MenuRow.init(rawValue:)), hidden: list("menu.hidden").compactMap(MenuRow.init(rawValue:)))
+        search = Search(engine: s("search.engine"))
         newtab = NewTab(question: s("newtab.question"), verse: b("newtab.verse"), searchURL: s("newtab.searchURL"))
         idle = Idle(enabled: b("idle.enabled"), style: IdleStyle(rawValue: s("idle.style")) ?? .martyrNight, effects: b("idle.effects"),
                     showMachineName: b("idle.showMachineName"), showVerse: b("idle.showVerse"),
@@ -469,6 +486,8 @@ enum SurfaceCheck {
     /// A Bible reference: an optional book number, the book's name, a chapter, optionally a verse or a range.
     static let referencePattern = "^([1-3] )?[A-Za-z]+( [A-Za-z]+){0,3} [0-9]{1,3}(:[0-9]{1,3}(-[0-9]{1,3})?)?$"
     static let maxTemplate = 512
+    /// A bang trigger as `search.engine` names one: lowercase, no "!".
+    static let triggerPattern = "^[a-z0-9][a-z0-9._-]{0,31}$"
 
     static func matches(_ s: String, _ pattern: String) -> Bool { s.range(of: pattern, options: .regularExpression) != nil }
 
@@ -517,6 +536,11 @@ enum SurfaceCheck {
             if s.count > max { return (nil, "must be at most \(max) characters, not \(s.count)") }
             if s.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) { return (nil, "must be one line, with no control characters") }
             return nil
+        case .engine:
+            guard let s = v.string else { return (nil, "must be a bang trigger such as \"g\" or an https URL with {query}, not \(v.kind)") }
+            if s.hasPrefix("https://") || s.contains("/") || s.contains(":") { return problem(v, kind: .searchTemplate) }
+            return matches(s, triggerPattern) ? nil
+                : (nil, "must be a bang trigger (lowercase letters, digits, - . _; no !) such as \"g\", \"ddg\", \"brave\" or \"kagi\", or an https URL with {query}, not \"\(s)\"")
         case .searchTemplate:
             guard let s = v.string else { return (nil, "must be a URL template, not \(v.kind)") }
             if s.count > maxTemplate { return (nil, "must be at most \(maxTemplate) characters") }
@@ -614,6 +638,11 @@ extension Surfaces {
                 o["examples"] = .array([.string(choices[0]), .string(example)])
             case let .text(max):
                 o["type"] = .string("string"); o["minLength"] = .number(1); o["maxLength"] = .number(Double(max))
+            case .engine:
+                o["type"] = .string("string"); o["maxLength"] = .number(Double(SurfaceCheck.maxTemplate))
+                o["anyOf"] = .array([.object(["pattern": .string(SurfaceCheck.triggerPattern)]),
+                                     .object(["pattern": .string("^https://[^\\s{}]+[^\\s]*\\{query\\}[^\\s]*$")])])
+                o["examples"] = .array([.string("g"), .string("kagi"), .string("https://search.brave.com/search?q={query}")])
             case .searchTemplate:
                 o["type"] = .string("string"); o["maxLength"] = .number(Double(SurfaceCheck.maxTemplate))
                 o["pattern"] = .string("^https://[^\\s{}]+[^\\s]*\\{query\\}[^\\s]*$")

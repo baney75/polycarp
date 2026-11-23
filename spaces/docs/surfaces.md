@@ -181,13 +181,34 @@ lilies stand opposite it.
 Row ids: `workspaces`, `show-all`, `find`, `agents` (agents that finished while you were away), `update`, `dock`
 (the dock switch), `settings`, `quit`.
 
+### `search`: one web search for the launcher, the new tab page and `polycarp-spaces search`
+
+| Path | Default | Takes |
+| --- | --- | --- |
+| `search.engine` | `"g"` | Where plain words go: a bang trigger (`g` Google, `ddg` DuckDuckGo, `brave` Brave Search, `kagi` Kagi, `b` Bing, `pplx` Perplexity, or one of yours from `bangs.json`), or an `https://` URL with `{query}` once. A trigger Polycarp doesn't list searches DuckDuckGo with that bang. |
+
+The launcher (its Search the Web menu and the web rows under every search), the browser's new tab page and
+`polycarp-spaces search` all read this one setting, and all three use the same bang table: the built-in bangs plus yours
+from `bangs.json` in the support folder, so `!yt cats` or `!claude a question` does the same thing in each. Settings >
+Launcher's "Search the web with" picker writes it.
+
+Which engine wins: `search.engine` when the file sets it; else `newtab.searchURL` when the file sets that (a file from
+before `search.engine` keeps searching where it did); else Google. `surfaces get search.engine` prints `"g"` for a
+file that sets only `newtab.searchURL`, but searches go where `newtab.searchURL` says until `search.engine` is set. An
+engine chosen in the launcher before this setting existed moves into the file once, the first time Polycarp starts,
+unless the file already chose one: `search.engine`, or a `newtab.searchURL` other than its default (a full file from
+`surfaces get` carries the default, which nobody chose). Settings > Launcher shows the engine in force and follows the
+file; a pick the file refuses goes back, with the reason under the picker.
+
 ### `newtab`: the browser's new tab page
 
 | Path | Default | Takes |
 | --- | --- | --- |
 | `newtab.question` | `"Search or type an address"` | The placeholder in the new tab's one field: one line, not blank, up to 160 characters. |
 | `newtab.verse` | `true` | A verse on the page. |
-| `newtab.searchURL` | `"https://duckduckgo.com/?q={query}"` | An `https://` URL with `{query}` once, where the search words go. |
+| `newtab.searchURL` | `"https://duckduckgo.com/?q={query}"` | The older name for the engine: an `https://` URL with `{query}` once. Used only when the file doesn't set `search.engine`. With no Polycarp host at all, the page searches DuckDuckGo. |
+
+The page's finder, its keys and the host's `find` reply: [newtab.md](newtab.md).
 
 ### `idle`: the idle screen
 
@@ -242,9 +263,10 @@ polycarp-spaces surfaces set dock.restTile false
 # A quieter menu.
 polycarp-spaces surfaces set menu.hidden '["find","agents"]'
 
-# The new tab page's placeholder and search engine.
+# The new tab page's placeholder; one search engine for the launcher, the new tab and polycarp-spaces search.
 polycarp-spaces surfaces set newtab.question '"Search the web"'
-polycarp-spaces surfaces set newtab.searchURL '"https://search.brave.com/search?q={query}"'
+polycarp-spaces surfaces set search.engine kagi
+polycarp-spaces surfaces set search.engine '"https://search.brave.com/search?q={query}"'
 
 # Check a draft before putting it in place; undo one change; start over.
 polycarp-spaces surfaces validate ./draft.json
@@ -277,6 +299,10 @@ returns its envelope as is, so the command and the tools can't disagree:
 
 To undo, `surfaces_set` the old value (from `surfaces_get` before the change), or run `polycarp-spaces surfaces reset <path>`.
 
+Two search tools read `search.engine` and the bangs the same way: `search` (`query`; read-only) runs
+`polycarp-spaces search <query> --json` and returns the ranked results, and `search_open` (`query`) runs it with
+`--open` to go to the top one.
+
 ## For views (Swift)
 
 Views read `SurfacesStore.shared.current` (a `Surfaces`, safe from any thread) and listen for
@@ -295,7 +321,8 @@ NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object:
 The model is `Surfaces` in BaneySpacesCore: `bar` (`Bar`: `enabled`, `height`, `style`, `left`, `center`, `right` as
 `[BarModule]`, `clockFormat`, `hourNames`), `desktop` (`scene`, `followDaylight`, `verse`,
 `versePosition`, `verseRotation`), `dock` (`tileLabel`, `restTile`), `menu` (`order`, `hidden`, and
-`rows`, the rows to show in order), `newtab` (`question`, `verse`, `searchURL`, and `searchURL(for:)`), `idle`
+`rows`, the rows to show in order), `search` (`engine`; `OneSearch.engine` resolves it against the bangs), `newtab`
+(`question`, `verse`, `searchURL`, and `searchURL(for:)`), `idle`
 (`enabled`, `style`, `effects`, `showMachineName`, `showVerse`, `showKierkegaard`, `startAfterMinutes`) and `text` (`translation`, `verseSource`). `SurfaceField.all` is the one list of fields: validation, defaults, the model and the schema all read it.
 
 Test hook: `POLYCARP_SURFACES_FILE` (an absolute path) points the command at another file. Never set in real use.

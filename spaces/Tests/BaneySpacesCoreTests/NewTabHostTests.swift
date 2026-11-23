@@ -86,7 +86,7 @@ final class NewTabHostTests: XCTestCase {
         let r = try ask(#"{"op":"page"}"#, source())
         XCTAssertEqual(r["ok"] as? Bool, true)
         XCTAssertEqual(r["question"] as? String, Surfaces.defaults.newtab.question)
-        XCTAssertEqual(r["searchURL"] as? String, "https://duckduckgo.com/?q={query}")
+        XCTAssertEqual(r["searchURL"] as? String, "https://www.google.com/search?q={query}", "the engine in force, Google until chosen")
         let day = try XCTUnwrap(Verses.pick(.daily, at: now, timeZone: chicago))
         let verse = try XCTUnwrap(r["verse"] as? [String: String])
         XCTAssertEqual(verse, ["text": day.text, "ref": day.ref])
@@ -96,7 +96,7 @@ final class NewTabHostTests: XCTestCase {
         var s = Surfaces.defaults
         s.newtab.verse = false
         s.newtab.question = "Find it"
-        s.newtab.searchURL = "https://search.example/?q={query}"
+        s.search.engine = "https://search.example/?q={query}"
         let reply = NewTabHost.answer(Data(#"{"op":"page"}"#.utf8), source: source(s))
         let text = String(decoding: reply, as: UTF8.self)
         XCTAssertTrue(text.contains(#""verse":null"#), "a verse switched off is null, not missing: \(text)")
@@ -110,10 +110,119 @@ final class NewTabHostTests: XCTestCase {
     /// a page from an older build that still sends `name` or `go` gets a plain refusal.
     func testThePageNamesNothingAndShowsNoPurpose() throws {
         let r = try ask(#"{"op":"page"}"#, source())
-        XCTAssertEqual(Set(r.keys), ["ok", "question", "searchURL", "verse"])
+        XCTAssertEqual(Set(r.keys), ["ok", "question", "searchURL", "verse", "engine", "bangs"])
         for old in [#"{"op":"name","text":"Pray"}"#, #"{"op":"go","workspace":3}"#] {
             XCTAssertEqual(try ask(old, source())["ok"] as? Bool, false, old)
         }
+    }
+
+    // MARK: find and focus
+
+    private func row(_ id: String, _ title: String, kind: Item.Kind = .tab, detail: String = "") -> Item {
+        Item(id: id, bundleID: "com.example.browser", appName: "Browser", role: .browser, kind: kind, group: "g", title: title, detail: detail)
+    }
+
+    func testFindAnswersFromTheSessionEngineBestFirst() throws {
+        var waited: [TimeInterval] = []
+        var s = source()
+        s.sessions = { wait in
+            waited.append(wait)
+            return [self.row("tab:b:1:1", "Weather"), self.row("tab:b:1:2", "Inbox - Gmail", detail: "mail.google.com/mail/u/0"),
+                    self.row("win:7", "Notes about Gmail", kind: .window)]
+        }
+        let r = try ask(#"{"op":"find","q":"gmail"}"#, s)
+        XCTAssertEqual(r["ok"] as? Bool, true)
+        XCTAssertEqual(r["partial"] as? Bool, false)
+        let items = try XCTUnwrap(r["items"] as? [[String: Any]])
+        XCTAssertEqual(items.map { $0["id"] as? String }, ["tab:b:1:2", "win:7"])
+        XCTAssertEqual(items[0]["kind"] as? String, "tab")
+        XCTAssertEqual(items[0]["title"] as? String, "Inbox - Gmail")
+        XCTAssertEqual(items[0]["detail"] as? String, "mail.google.com/mail/u/0")
+        XCTAssertEqual(waited, [NewTabHost.findBudget], "one ask of the app, within 150 ms")
+        XCTAssertEqual(NewTabHost.findBudget, 0.15)
+    }
+
+    func testFindReturnsWhatItHasWhenTheAppIsSlowOrAway() throws {
+        var s = source()
+        s.sessions = { _ in nil }
+        let r = try ask(#"{"op":"find","q":"gmail"}"#, s)
+        XCTAssertEqual(r["ok"] as? Bool, true)
+        XCTAssertEqual(r["partial"] as? Bool, true)
+        XCTAssertEqual((r["items"] as? [Any])?.count, 0)
+    }
+
+    func testFindDoesNotAskTheAppForABangOrNothing() throws {
+        var asked = 0
+        var s = source()
+        s.sessions = { _ in asked += 1; return [] }
+        for q in ["!yt cats", "cats !yt", "  ", "? why"] {
+            let r = try ask(#"{"op":"find","q":"\#(q)"}"#, s)
+            XCTAssertEqual(r["ok"] as? Bool, true, q)
+            XCTAssertEqual((r["items"] as? [Any])?.count, 0, q)
+        }
+        XCTAssertEqual(asked, 0)
+        XCTAssertEqual(try ask(#"{"op":"find"}"#, s)["ok"] as? Bool, false, "find needs q")
+        XCTAssertEqual(try ask(#"{"op":"find","q":"\#(String(repeating: "a", count: 600))"}"#, s)["ok"] as? Bool, false)
+    }
+
+    func testAFindReplyStaysUnderTheLimitWithAThousandRows() throws {
+        var s = source()
+        s.sessions = { _ in (0..<1000).map { self.row("tab:b:1:\($0)", "Gmail " + String(repeating: "x", count: 400)) } }
+        let reply = NewTabHost.answer(Data(#"{"op":"find","q":"gmail"}"#.utf8), source: s)
+        XCTAssertLessThan(reply.count, NewTabHost.maxMessage)
+        let r = try XCTUnwrap(JSONSerialization.jsonObject(with: reply) as? [String: Any])
+        XCTAssertEqual((r["items"] as? [Any])?.count, OneSearch.limit)
+    }
+
+    /// The find reply names the browser that started the host, so the page pairs only its own rows (review second-F8).
+    func testFindNamesTheBrowserThatStartedTheHost() throws {
+        var s = source()
+        s.sessions = { _ in [self.row("tab:b:1:2", "Inbox - Gmail")] }
+        XCTAssertNil(try ask(#"{"op":"find","q":"gmail"}"#, s)["browser"], "left out when it can't be told")
+        s.browser = { "com.example.browser" }
+        XCTAssertEqual(try ask(#"{"op":"find","q":"gmail"}"#, s)["browser"] as? String, "com.example.browser")
+        XCTAssertEqual(try XCTUnwrap(try ask(#"{"op":"find","q":"gmail"}"#, s)["items"] as? [[String: Any]]).first?["bundleID"] as? String,
+                       "com.example.browser")
+    }
+
+    func testTheBrowserIsTheOutermostAppOnTheParentsPath() {
+        let calendar = "/System/Applications/Calendar.app"
+        XCTAssertEqual(NewTabHost.appBundleID(executable: calendar + "/Contents/MacOS/Calendar"), "com.apple.iCal")
+        XCTAssertEqual(NewTabHost.appBundleID(executable: calendar + "/Contents/Frameworks/Helper.app/Contents/MacOS/Helper"), "com.apple.iCal",
+                       "a helper inside the browser's bundle names the browser")
+        XCTAssertNil(NewTabHost.appBundleID(executable: "/usr/bin/env"))
+        XCTAssertNotNil(NewTabHost.appBundleID(of: getpid()) ?? "no app", "reads its own path without trouble")
+    }
+
+    func testFocusAsksPolycarpForTheRow() throws {
+        var got: [String] = []
+        var s = source()
+        s.focus = { id in got.append(id); return id == "tab:b:1:2" ? .success("Inbox") : .failure(.init("nothing matches")) }
+        let ok = try ask(#"{"op":"focus","id":"tab:b:1:2"}"#, s)
+        XCTAssertEqual(ok["ok"] as? Bool, true)
+        XCTAssertEqual(ok["label"] as? String, "Inbox")
+        let no = try ask(#"{"op":"focus","id":"win:404"}"#, s)
+        XCTAssertEqual(no["ok"] as? Bool, false)
+        XCTAssertEqual(no["error"] as? String, "nothing matches")
+        XCTAssertEqual(got, ["tab:b:1:2", "win:404"])
+        XCTAssertEqual(try ask(#"{"op":"focus"}"#, s)["ok"] as? Bool, false)
+    }
+
+    func testThePageCarriesTheEngineAndTheBangs() throws {
+        var s = Surfaces.defaults
+        s.search.engine = "kagi"
+        let r = try ask(#"{"op":"page"}"#, source(s))
+        XCTAssertEqual(r["searchURL"] as? String, "https://kagi.com/search?q={query}", "an older page searches where the launcher does")
+        let engine = try XCTUnwrap(r["engine"] as? [String: Any])
+        XCTAssertEqual(engine["name"] as? String, "Kagi")
+        XCTAssertEqual(engine["url"] as? String, "https://kagi.com/search?q={q}")
+        let bangs = try XCTUnwrap(r["bangs"] as? [[String: Any]])
+        XCTAssertEqual(bangs.count, Bangs.builtIn.count)
+        let claude = try XCTUnwrap(bangs.first { $0["trigger"] as? String == "claude" })
+        XCTAssertEqual(claude["agent"] as? Bool, true)
+        XCTAssertEqual(claude["url"] as? String, "https://claude.ai/new?q={q}")
+        XCTAssertEqual(claude["home"] as? String, "https://claude.ai/new")
+        XCTAssertEqual(Set(claude.keys), ["trigger", "name", "url", "home", "agent"])
     }
 
     func testUnknownOpAndBadJSON() throws {
