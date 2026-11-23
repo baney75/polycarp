@@ -261,30 +261,30 @@ final class NewTabPageTests: XCTestCase {
         return ctx
     }
 
-    @discardableResult private func js(_ ctx: JSContext, _ code: String) -> String { ctx.evaluateScript(code)?.toString() ?? "" }
+    @discardableResult private func paperJS(_ ctx: JSContext, _ code: String) -> String { ctx.evaluateScript(code)?.toString() ?? "" }
 
     func testTheKeptPaperIsPaintedFirstWithoutAskingPolycarp() throws {
         let ctx = try paperPage()
-        let key = js(ctx, "PolycarpPaper.cacheKey")
+        let key = paperJS(ctx, "PolycarpPaper.cacheKey")
         XCTAssertEqual(key, "polycarpNewTabPaper")
-        js(ctx, ##"stored[PolycarpPaper.cacheKey] = {color: "#112233"}; var got; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });"##)
-        XCTAssertEqual(js(ctx, "got"), "color")
-        XCTAssertEqual(js(ctx, "layer.style.backgroundColor"), "#112233")
-        XCTAssertEqual(js(ctx, "body.getAttribute('data-paper')"), "color", "the body is marked, so the scrim and panel show")
+        paperJS(ctx, ##"stored[PolycarpPaper.cacheKey] = {color: "#112233"}; var got; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });"##)
+        XCTAssertEqual(paperJS(ctx, "got"), "color")
+        XCTAssertEqual(paperJS(ctx, "layer.style.backgroundColor"), "#112233")
+        XCTAssertEqual(paperJS(ctx, "body.getAttribute('data-paper')"), "color", "the body is marked, so the scrim and panel show")
 
         let image = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
-        js(ctx, "stored[PolycarpPaper.cacheKey] = {image: \"\(image)\"}; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });")
-        XCTAssertEqual(js(ctx, "got"), "image")
-        XCTAssertEqual(js(ctx, "layer.style.backgroundImage"), "url(\"\(image)\")")
-        XCTAssertEqual(js(ctx, "layer.style.backgroundColor"), "", "the color before it is cleared")
+        paperJS(ctx, "stored[PolycarpPaper.cacheKey] = {image: \"\(image)\"}; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });")
+        XCTAssertEqual(paperJS(ctx, "got"), "image")
+        XCTAssertEqual(paperJS(ctx, "layer.style.backgroundImage"), "url(\"\(image)\")")
+        XCTAssertEqual(paperJS(ctx, "layer.style.backgroundColor"), "", "the color before it is cleared")
 
-        js(ctx, #"stored[PolycarpPaper.cacheKey] = {scene: "olive"}; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });"#)
-        XCTAssertEqual(js(ctx, "layer.getAttribute('data-scene')"), "olive")
-        XCTAssertEqual(js(ctx, "layer.style.backgroundImage"), "")
+        paperJS(ctx, #"stored[PolycarpPaper.cacheKey] = {scene: "olive"}; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });"#)
+        XCTAssertEqual(paperJS(ctx, "layer.getAttribute('data-scene')"), "olive")
+        XCTAssertEqual(paperJS(ctx, "layer.style.backgroundImage"), "")
 
-        js(ctx, "delete stored[PolycarpPaper.cacheKey]; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });")
-        XCTAssertEqual(js(ctx, "got"), "none", "nothing kept, nothing painted: the page as before paper")
-        XCTAssertEqual(js(ctx, "layer.getAttribute('data-paper')"), "none")
+        paperJS(ctx, "delete stored[PolycarpPaper.cacheKey]; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });")
+        XCTAssertEqual(paperJS(ctx, "got"), "none", "nothing kept, nothing painted: the page as before paper")
+        XCTAssertEqual(paperJS(ctx, "layer.getAttribute('data-paper')"), "none")
     }
 
     func testOnlyAPaperPolycarpCouldSendIsPainted() throws {
@@ -292,75 +292,75 @@ final class NewTabPageTests: XCTestCase {
         for bad in [#"{color: "red"}"#, ##"{color: "#11223344"}"##, #"{scene: "beach"}"#, #"{image: "https://example.com/a.jpg"}"#,
                     #"{image: 'data:image/jpeg;base64,AA") , url("https://example.com/x'}"#, #"{image: "data:image/svg+xml;base64,AAAA"}"#,
                     "null", "42"] {
-            XCTAssertEqual(js(ctx, "PolycarpPaper.paint(layer, body, \(bad))"), "none", bad)
-            XCTAssertEqual(js(ctx, "layer.style.backgroundImage"), "", bad)
+            XCTAssertEqual(paperJS(ctx, "PolycarpPaper.paint(layer, body, \(bad))"), "none", bad)
+            XCTAssertEqual(paperJS(ctx, "layer.style.backgroundImage"), "", bad)
         }
     }
 
     func testThePageReplyIsPaintedKeptAndLeftOutOfThePagesOwnCache() throws {
         let ctx = try paperPage()
-        js(ctx, ##"var rest = PolycarpPaper.take(layer, body, storage, {ok: true, question: "Q", paper: {color: "#445566"}});"##)
-        XCTAssertEqual(js(ctx, "layer.style.backgroundColor"), "#445566")
-        XCTAssertEqual(js(ctx, "stored[PolycarpPaper.cacheKey].color"), "#445566")
-        XCTAssertEqual(js(ctx, "'paper' in rest"), "false")
-        XCTAssertEqual(js(ctx, "rest.question"), "Q")
-        js(ctx, #"PolycarpPaper.take(layer, body, storage, {ok: true, question: "Q"});"#)
-        XCTAssertEqual(js(ctx, "PolycarpPaper.cacheKey in stored"), "false", "no paper in the reply forgets the kept one")
-        XCTAssertEqual(js(ctx, "layer.getAttribute('data-paper')"), "none")
-        js(ctx, #"var w = writes, r = removes; PolycarpPaper.take(layer, body, storage, {ok: false});"#)
-        XCTAssertEqual(js(ctx, "writes === w && removes === r"), "true", "a failed reply leaves the paper alone")
-        XCTAssertEqual(js(ctx, "typeof PolycarpPaper.took"), "function")
+        paperJS(ctx, ##"var rest = PolycarpPaper.take(layer, body, storage, {ok: true, question: "Q", paper: {color: "#445566"}});"##)
+        XCTAssertEqual(paperJS(ctx, "layer.style.backgroundColor"), "#445566")
+        XCTAssertEqual(paperJS(ctx, "stored[PolycarpPaper.cacheKey].color"), "#445566")
+        XCTAssertEqual(paperJS(ctx, "'paper' in rest"), "false")
+        XCTAssertEqual(paperJS(ctx, "rest.question"), "Q")
+        paperJS(ctx, #"PolycarpPaper.take(layer, body, storage, {ok: true, question: "Q"});"#)
+        XCTAssertEqual(paperJS(ctx, "PolycarpPaper.cacheKey in stored"), "false", "no paper in the reply forgets the kept one")
+        XCTAssertEqual(paperJS(ctx, "layer.getAttribute('data-paper')"), "none")
+        paperJS(ctx, #"var w = writes, r = removes; PolycarpPaper.take(layer, body, storage, {ok: false});"#)
+        XCTAssertEqual(paperJS(ctx, "writes === w && removes === r"), "true", "a failed reply leaves the paper alone")
+        XCTAssertEqual(paperJS(ctx, "typeof PolycarpPaper.took"), "function")
     }
 
     func testAKeptPaperAnsweringLateNeverCoversThePageReply() throws {
         let ctx = try paperPage()
-        js(ctx, ##"stored[PolycarpPaper.cacheKey] = {color: "#112233"}; var got; PolycarpPaper.start(layer, body, late, function (k) { got = k; });"##)
-        js(ctx, ##"PolycarpPaper.take(layer, body, late, {ok: true, paper: {color: "#445566"}});"##)
-        js(ctx, "held();")
-        XCTAssertEqual(js(ctx, "layer.style.backgroundColor"), "#445566", "the reply is newer than the kept paper")
-        XCTAssertEqual(js(ctx, "got"), "taken")
-        XCTAssertEqual(js(ctx, "stored[PolycarpPaper.cacheKey].color"), "#445566")
+        paperJS(ctx, ##"stored[PolycarpPaper.cacheKey] = {color: "#112233"}; var got; PolycarpPaper.start(layer, body, late, function (k) { got = k; });"##)
+        paperJS(ctx, ##"PolycarpPaper.take(layer, body, late, {ok: true, paper: {color: "#445566"}});"##)
+        paperJS(ctx, "held();")
+        XCTAssertEqual(paperJS(ctx, "layer.style.backgroundColor"), "#445566", "the reply is newer than the kept paper")
+        XCTAssertEqual(paperJS(ctx, "got"), "taken")
+        XCTAssertEqual(paperJS(ctx, "stored[PolycarpPaper.cacheKey].color"), "#445566")
     }
 
     func testTheMarkPaintsBeforeStorageAnswers() throws {
         let ctx = try paperPage()
-        XCTAssertEqual(js(ctx, "PolycarpPaper.markKey"), "polycarpNewTabPaperMark")
+        XCTAssertEqual(paperJS(ctx, "PolycarpPaper.markKey"), "polycarpNewTabPaperMark")
         // The reply keeps a mark of its paper.
-        js(ctx, ##"PolycarpPaper.take(layer, body, storage, {ok: true, paper: {color: "#445566"}}, marks);"##)
-        XCTAssertEqual(js(ctx, "JSON.parse(marked[PolycarpPaper.markKey]).color"), "#445566")
-        XCTAssertEqual(js(ctx, "JSON.parse(marked[PolycarpPaper.markKey]).kind"), "color")
+        paperJS(ctx, ##"PolycarpPaper.take(layer, body, storage, {ok: true, paper: {color: "#445566"}}, marks);"##)
+        XCTAssertEqual(paperJS(ctx, "JSON.parse(marked[PolycarpPaper.markKey]).color"), "#445566")
+        XCTAssertEqual(paperJS(ctx, "JSON.parse(marked[PolycarpPaper.markKey]).kind"), "color")
 
         // A new page: the mark is painted before storage has answered at all.
         let next = try paperPage()
-        js(next, ##"marked[PolycarpPaper.markKey] = JSON.stringify({kind: "color", color: "#445566"}); stored[PolycarpPaper.cacheKey] = {color: "#445566"};"##)
-        js(next, "PolycarpPaper.start(layer, body, late, null, marks);")
-        XCTAssertEqual(js(next, "layer.style.backgroundColor"), "#445566", "painted at once, no frame without it")
-        XCTAssertEqual(js(next, "body.getAttribute('data-paper')"), "color")
+        paperJS(next, ##"marked[PolycarpPaper.markKey] = JSON.stringify({kind: "color", color: "#445566"}); stored[PolycarpPaper.cacheKey] = {color: "#445566"};"##)
+        paperJS(next, "PolycarpPaper.start(layer, body, late, null, marks);")
+        XCTAssertEqual(paperJS(next, "layer.style.backgroundColor"), "#445566", "painted at once, no frame without it")
+        XCTAssertEqual(paperJS(next, "body.getAttribute('data-paper')"), "color")
 
-        js(next, ##"marked[PolycarpPaper.markKey] = JSON.stringify({kind: "scene", scene: "olive"}); PolycarpPaper.start(layer, body, late, null, marks);"##)
-        XCTAssertEqual(js(next, "layer.getAttribute('data-scene')"), "olive")
+        paperJS(next, ##"marked[PolycarpPaper.markKey] = JSON.stringify({kind: "scene", scene: "olive"}); PolycarpPaper.start(layer, body, late, null, marks);"##)
+        XCTAssertEqual(paperJS(next, "layer.getAttribute('data-scene')"), "olive")
 
         // A picture's mark is its kind alone; the picture follows from storage.
         let image = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
-        js(next, "stored[PolycarpPaper.cacheKey] = {image: \"\(image)\"}; PolycarpPaper.take(layer, body, storage, {ok: true, paper: {image: \"\(image)\"}}, marks);")
-        XCTAssertEqual(js(next, "marked[PolycarpPaper.markKey]"), #"{"kind":"image"}"#, "no picture in localStorage")
+        paperJS(next, "stored[PolycarpPaper.cacheKey] = {image: \"\(image)\"}; PolycarpPaper.take(layer, body, storage, {ok: true, paper: {image: \"\(image)\"}}, marks);")
+        XCTAssertEqual(paperJS(next, "marked[PolycarpPaper.markKey]"), #"{"kind":"image"}"#, "no picture in localStorage")
         let third = try paperPage()
-        js(third, ##"marked[PolycarpPaper.markKey] = '{"kind":"image"}'; stored[PolycarpPaper.cacheKey] = {image: "\##(image)"};"##)
-        js(third, "PolycarpPaper.start(layer, body, late, null, marks);")
-        XCTAssertEqual(js(third, "body.getAttribute('data-paper')"), "image", "the scrim and panel are up from the first frame")
-        XCTAssertEqual(js(third, "layer.style.backgroundImage"), "")
-        js(third, "held();")
-        XCTAssertEqual(js(third, "layer.style.backgroundImage"), "url(\"\(image)\")")
+        paperJS(third, ##"marked[PolycarpPaper.markKey] = '{"kind":"image"}'; stored[PolycarpPaper.cacheKey] = {image: "\##(image)"};"##)
+        paperJS(third, "PolycarpPaper.start(layer, body, late, null, marks);")
+        XCTAssertEqual(paperJS(third, "body.getAttribute('data-paper')"), "image", "the scrim and panel are up from the first frame")
+        XCTAssertEqual(paperJS(third, "layer.style.backgroundImage"), "")
+        paperJS(third, "held();")
+        XCTAssertEqual(paperJS(third, "layer.style.backgroundImage"), "url(\"\(image)\")")
 
         // A mark that isn't one paints nothing, and no paper forgets the mark.
         for bad in [#"'{"kind":"color","color":"red"}'"#, #"'{"kind":"scene","scene":"beach"}'"#, "'not json'"] {
             let page = try paperPage()
             // As newtab.html starts it.
-            js(page, "layer.setAttribute('data-paper', 'none'); marked[PolycarpPaper.markKey] = \(bad); PolycarpPaper.start(layer, body, late, null, marks);")
-            XCTAssertEqual(js(page, "layer.getAttribute('data-paper')"), "none", bad)
+            paperJS(page, "layer.setAttribute('data-paper', 'none'); marked[PolycarpPaper.markKey] = \(bad); PolycarpPaper.start(layer, body, late, null, marks);")
+            XCTAssertEqual(paperJS(page, "layer.getAttribute('data-paper')"), "none", bad)
         }
-        js(ctx, #"PolycarpPaper.take(layer, body, storage, {ok: true}, marks);"#)
-        XCTAssertEqual(js(ctx, "PolycarpPaper.markKey in marked"), "false")
+        paperJS(ctx, #"PolycarpPaper.take(layer, body, storage, {ok: true}, marks);"#)
+        XCTAssertEqual(paperJS(ctx, "PolycarpPaper.markKey in marked"), "false")
     }
 
     func testThePageLoadsNothingFromTheNetwork() throws {
