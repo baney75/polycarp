@@ -202,6 +202,32 @@ final class TopBarTests: XCTestCase {
     }
 
     /// In macOS's order when every place is known, and without what a module already shows.
+    /// macOS 27 wraps each of its own items in a nameless AXGroup: read the item inside, or the row is all dots.
+    func testMacOS27WrappedItemsAreReadThroughTheirChild() {
+        XCTAssertEqual(BarStatus.pick(role: "AXMenuBarItem"), .itself)
+        XCTAssertEqual(BarStatus.pick(role: nil), .itself, "an item whose role didn't answer is still drawn")
+        XCTAssertEqual(BarStatus.pick(role: "AXGroup", childRoles: ["AXMenuBarItem"]), .child(0))
+        XCTAssertEqual(BarStatus.pick(role: "AXGroup", childRoles: [nil, "AXMenuBarItem"]), .child(1))
+        XCTAssertEqual(BarStatus.pick(role: "AXGroup", childRoles: ["AXImage"]), .skip)
+        XCTAssertEqual(BarStatus.pick(role: "AXButton"), .skip, "Show Hidden Menu Bar Items is not a status item")
+        let focus = BarStatus.Item(owner: "com.apple.MenuBarAgent", identifier: "com.apple.menuextra.focusmode")
+        XCTAssertEqual(BarStatus.symbol(focus), "moon")
+        XCTAssertEqual(BarStatus.symbol(BarStatus.Item(owner: "com.apple.MenuBarAgent", identifier: "com.apple.menuextra.wifi")), "wifi")
+    }
+
+    /// An item macOS hid for want of room is parked off the bar (y 970 on a 982-point display) and isn't drawn.
+    func testItemsMacOSHidOffItsBarAreLeftOut() {
+        let wifi = BarStatus.Item(owner: "com.apple.MenuBarAgent", identifier: "com.apple.menuextra.wifi", x: 1261, y: 0)
+        let drive = BarStatus.Item(owner: "ch.protonmail.drive", x: 1184, y: 4.5)
+        let teams = BarStatus.Item(owner: "com.microsoft.teams2", x: -1, y: 970)
+        let codex = BarStatus.Item(owner: "com.openai.codex", label: "ChatGPT", x: 7, y: 970)
+        XCTAssertEqual(BarStatus.shown([wifi, teams, drive, codex], modules: []), [drive, wifi])
+        XCTAssertFalse(BarStatus.parked(BarStatus.Item(owner: "a"), barTops: [0]), "no place read: kept")
+        let above = BarStatus.Item(owner: "a", x: 100, y: -1080)
+        XCTAssertTrue(BarStatus.parked(above, barTops: [0]))
+        XCTAssertFalse(BarStatus.parked(above, barTops: [0, -1080]), "on the bar of a display above the main one")
+    }
+
     func testStatusItemsFollowTheMacOSOrderAndSkipWhatAModuleShows() {
         let clock = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.clock", x: 900)
         let battery = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.battery", x: 800)

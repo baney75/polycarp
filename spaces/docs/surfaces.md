@@ -105,7 +105,7 @@ What each one draws:
 | `battery` | The charge, only off power or while charging. Nothing on a desktop Mac. |
 | `network` | "Offline" when there is no connection; nothing when there is. |
 | `app-menus` | The front app's menus: the Apple logo, the app's name in bold, then File, Edit and the rest. Click one to open it, as from the macOS bar. Titles past the room are left out whole, from the end. |
-| `status` | The status items of macOS and your apps, in the macOS bar's order, in one quiet monochrome row: Wi-Fi, the battery, Control Center and the like as symbols, an app's own as its icon drawn in gray. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark. |
+| `status` | The status items of macOS and your apps, in the macOS bar's order, in one quiet monochrome row: Wi-Fi, the battery, Control Center and the like as symbols, an app's own as its icon drawn in gray. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark, and what macOS hid behind its "Show Hidden Menu Bar Items" button stays hidden. |
 | `custom:<name>` | Kept in the file, not drawn yet. |
 
 **The look.** The bar follows Omarchy's: one solid strip in the theme's background color, one monospace face for all

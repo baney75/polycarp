@@ -190,9 +190,12 @@ public enum BarStatus {
         public var label: String?
         /// Its place along the macOS bar, when Accessibility gives one.
         public var x: Double?
+        /// Its top, in Accessibility's coordinates (0 is the top of the main display). An item macOS hid for want of
+        /// room sits off every bar, as the ones behind macOS 27's "Show Hidden Menu Bar Items" do.
+        public var y: Double?
 
-        public init(owner: String, identifier: String? = nil, label: String? = nil, x: Double? = nil) {
-            self.owner = owner; self.identifier = identifier; self.label = label; self.x = x
+        public init(owner: String, identifier: String? = nil, label: String? = nil, x: Double? = nil, y: Double? = nil) {
+            self.owner = owner; self.identifier = identifier; self.label = label; self.x = x; self.y = y
         }
 
         /// One of macOS's own: Wi-Fi, the battery, Control Center and the rest.
@@ -237,6 +240,32 @@ public enum BarStatus {
         return symbols.first { words.contains($0.0) }?.1 ?? "circle.fill"
     }
 
+    /// How a child of `AXExtrasMenuBar` is read, by its role and its children's.
+    public enum Pick: Equatable, Sendable {
+        /// The item itself: an app's `AXMenuBarItem`, or one whose role didn't answer.
+        case itself
+        /// The menu bar item inside it, at this index of its children. macOS 27 wraps each of its own in an `AXGroup`
+        /// that carries no name; the item inside has the `com.apple.menuextra.<name>` identifier and is what to press.
+        case child(Int)
+        /// Not a status item, such as macOS 27's "Show Hidden Menu Bar Items" button.
+        case skip
+    }
+
+    public static func pick(role: String?, childRoles: [String?] = []) -> Pick {
+        switch role {
+        case nil, "AXMenuBarItem": return .itself
+        case "AXGroup": return childRoles.firstIndex { $0 == "AXMenuBarItem" }.map(Pick.child) ?? .skip
+        default: return .skip
+        }
+    }
+
+    /// Whether macOS has hidden an item off its bar: its top is on none of the bars (`barTops`, one per display, in
+    /// Accessibility's coordinates). An item with no place read is kept.
+    public static func parked(_ item: Item, barTops: [Double]) -> Bool {
+        guard let y = item.y else { return false }
+        return !barTops.contains { y >= $0 - 2 && y < $0 + 50 }
+    }
+
     /// The battery symbol for a charge, in quarters. The bolt comes only with a full one (SF Symbols has no other), so a
     /// low battery charging still reads as low.
     public static func battery(percent: Int?, charging: Bool) -> String {
@@ -247,17 +276,19 @@ public enum BarStatus {
 
     /// The items the bar draws, left to right: in the order macOS puts them when every place is known, else as read;
     /// without the ones a module of the bar already shows (the clock beside `clock` or `date`, the battery beside
-    /// `battery`).
-    public static func shown(_ items: [Item], modules: [Surfaces.BarModule]) -> [Item] {
-        shown(items, \.self, modules: modules)
+    /// `battery`) and the ones macOS hid off its bar (`parked`).
+    public static func shown(_ items: [Item], modules: [Surfaces.BarModule], barTops: [Double] = [0]) -> [Item] {
+        shown(items, \.self, modules: modules, barTops: barTops)
     }
 
     /// `shown` for anything that carries an item, such as the app's read of one with what to press.
-    public static func shown<T>(_ list: [T], _ item: (T) -> Item, modules: [Surfaces.BarModule]) -> [T] {
+    public static func shown<T>(_ list: [T], _ item: (T) -> Item, modules: [Surfaces.BarModule],
+                                barTops: [Double] = [0]) -> [T] {
         let clock = modules.contains(.clock) || modules.contains(.date)
         let battery = modules.contains(.battery)
         let kept = list.filter { entry in
             let it = item(entry)
+            if parked(it, barTops: barTops) { return false }
             guard it.isSystem else { return true }
             let words = ((it.identifier ?? "") + " " + (it.label ?? "")).lowercased()
             if clock, words.contains("clock") { return false }
