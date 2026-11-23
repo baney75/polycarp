@@ -512,5 +512,4 @@ private final class Seen: @unchecked Sendable {
         func add(_ s: String) { lock.lock(); list.append(s); lock.unlock() }
         var all: [String] { lock.lock(); defer { lock.unlock() }; return list }
     }
-
 }

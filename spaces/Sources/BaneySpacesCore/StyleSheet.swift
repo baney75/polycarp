@@ -206,7 +206,7 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         switch self {
         case .bar: "The top bar itself."
         case .barRegion: "The bar's three regions; modules inherit text properties from their region."
-        case .barIsland: "One island of modules when bar.style is islands: its background, corners, line, shadow and padding."
+        case .barIsland: "One island of modules when bar.style is islands: its background, corners, line, shadow, padding and gap. Text inside takes its region's and module's styles."
         case .barModule: "One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it."
         case .barWorkspace: "One number in the workspaces module; .current is the workspace you're on, :hover the one under the pointer."
         case .dock: "The Workspace Dock's bar."
@@ -300,11 +300,11 @@ public struct StyleProperty: Sendable {
     public func applies(to target: StyleTarget) -> Bool { targets.contains(target) }
 
     /// Everything that draws text or a fill: every target but the dock's app icons.
-    static let boxes: [StyleTarget] = [.bar, .barRegion, .barIsland, .barModule, .barWorkspace, .dock, .dockTile, .dockLabel, .dockBadge]
+    static let boxes: [StyleTarget] = [.bar, .barRegion, .barModule, .barWorkspace, .dock, .dockTile, .dockLabel, .dockBadge]
 
     public static let all: [StyleProperty] = [
         StyleProperty("color", .color, boxes, inherited: true, "Text and symbol color.", example: "var(--foreground)"),
-        StyleProperty("background", .background, boxes, "What is drawn behind it.", example: "glass"),
+        StyleProperty("background", .background, boxes + [.barIsland], "What is drawn behind it.", example: "glass"),
         StyleProperty("opacity", .opacity, StyleTarget.allCases, "How opaque the whole thing is.", example: "1"),
         StyleProperty("font-family", .fontFamily, boxes, inherited: true, "The font, first installed name wins; `monospace` and `serif` are the system's.",
                       example: "system-ui, sans-serif"),
@@ -321,8 +321,8 @@ public struct StyleProperty: Sendable {
         StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule, .dock],
                       "Space between modules (bar, a region), between a module's items (workspace numbers, menus, status items) or between tiles (dock).",
                       example: "8px"),
-        StyleProperty("border-radius", .length(0...40), boxes, "Corner radius.", example: "6px"),
-        StyleProperty("border", .line, boxes, "A line all around.", example: "1px solid var(--border)"),
+        StyleProperty("border-radius", .length(0...40), boxes + [.barIsland], "Corner radius.", example: "6px"),
+        StyleProperty("border", .line, boxes + [.barIsland], "A line all around.", example: "1px solid var(--border)"),
         StyleProperty("border-bottom", .line, [.bar, .barRegion, .barModule, .barWorkspace, .dock, .dockTile], "A line along the bottom edge only.",
                       example: "1px solid var(--border)"),
         StyleProperty("box-shadow", .shadow, [.barIsland, .dock, .dockTile, .dockBadge], "A drop shadow.", example: "0 4px 12px rgba(0, 0, 0, 0.3)"),

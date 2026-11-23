@@ -444,9 +444,11 @@ struct TopBarView: View {
         if !r.isHidden {
             Group {
                 if model.bar.style == .islands {
-                    HStack(spacing: r.gap.map { CGFloat($0) } ?? 6) {
-                        ForEach(Array(BarLayout.islands(modules).enumerated()), id: \.offset) { _, group in
-                            island(group, region)
+                    // A fixed space between islands; the region's gap still spaces the modules inside each.
+                    HStack(spacing: 6) {
+                        ForEach(Array(BarLayout.islands(modules).map { $0.filter { draws($0, region) } }
+                            .filter { !$0.isEmpty }.enumerated()), id: \.offset) { _, group in
+                            island(group, region, gap: r.gap)
                         }
                     }
                 } else {
@@ -462,15 +464,15 @@ struct TopBarView: View {
 
     /// One island: its modules on a rounded face, inset from the bar's top and bottom so it floats. The sheet's
     /// `bar .island` sets its background, corners, line, shadow, padding and gap; what it leaves unset keeps the face.
-    @ViewBuilder private func island(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region) -> some View {
+    @ViewBuilder private func island(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region, gap: Double?) -> some View {
         let s = styles.book.island(in: region)
         if !s.isHidden {
-            HStack(spacing: s.gap.map { CGFloat($0) } ?? spacing) {
+            HStack(spacing: CGFloat(s.gap ?? gap ?? Double(spacing))) {
                 ForEach(modules, id: \.id) { styled($0, region) }
             }
             .padding(s.padding.map(Styled.insets) ?? EdgeInsets(top: 0, leading: 11, bottom: 0, trailing: 11))
             .frame(maxHeight: .infinity)
-            .background { IslandFace(style: s) }
+            .background { IslandFace(style: s, barFill: styles.book.bar.background) }
             .padding(.vertical, 3)
             .opacity(s.opacity ?? 1)
         }
@@ -486,6 +488,21 @@ struct TopBarView: View {
                 .onHover { on in
                     if on { hovered = m.id } else if hovered == m.id { hovered = nil }
                 }
+        }
+    }
+
+    /// Whether a module draws anything now, so an island of modules that draw nothing (a battery on a desktop Mac, the
+    /// network while online) isn't an empty pill.
+    private func draws(_ m: Surfaces.BarModule, _ region: StyleBook.Region) -> Bool {
+        guard !styles.book.module(m, in: region).isHidden else { return false }
+        switch m {
+        case .battery: return model.battery != nil
+        case .network: return model.offline
+        case .verse: return model.verse != nil
+        case .appMenus: return !model.menus.isEmpty
+        case .status: return !model.status.isEmpty
+        case .custom, .split: return false
+        default: return true
         }
     }
 
@@ -649,12 +666,19 @@ private struct VineMark: View {
 /// `bar .island` sets.
 private struct IslandFace: View {
     let style: ComputedStyle
+    /// The sheet's `bar { background }`: a sheet written for one strip (the `omarchy` preset) chose its text colors
+    /// for that fill, so an island it leaves unset wears it.
+    let barFill: StyleBackground?
 
     var body: some View {
         let shape = Styled.shape(style, else: 10)
         ZStack {
-            if let fill = Styled.fill(style.background) { shape.fill(fill) } else { shape.fill(Chrome.panel(0.94)) }
-            if style.border == nil && style.borderBottom == nil {
+            if let fill = Styled.fill(style.background) ?? Styled.fill(barFill) {
+                shape.fill(fill)
+            } else {
+                shape.fill(Chrome.panel(0.94))
+            }
+            if style.border == nil {
                 shape.strokeBorder(Chrome.edge(0.22), lineWidth: 1)
             } else {
                 StyledLines(style: style, shape: shape)
@@ -671,7 +695,8 @@ private struct IslandShadow: ViewModifier {
         if shadow != nil {
             content.modifier(StyledShadow(shadow: shadow))
         } else {
-            content.shadow(color: .black.opacity(0.22), radius: 5, x: 0, y: 1.5)
+            // Small enough to fade inside the 3 pt the island is inset from the panel's edge.
+            content.shadow(color: .black.opacity(0.22), radius: 2, x: 0, y: 1)
         }
     }
 }

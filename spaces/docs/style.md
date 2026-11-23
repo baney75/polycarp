@@ -64,7 +64,7 @@ A warning (low contrast) still applies; `check` passes when there are only warni
 | --- | --- | --- |
 | `bar` | none | The top bar itself. |
 | `bar .left` `bar .center` `bar .right` | none | The bar's three regions; modules inherit text properties from their region. |
-| `bar .island` | none | One island of modules when bar.style is islands: its background, corners, line, shadow and padding. |
+| `bar .island` | none | One island of modules when bar.style is islands: its background, corners, line, shadow, padding and gap. Text inside takes its region's and module's styles. |
 | `bar .mark` `bar .workspaces` `bar .app-menus` `bar .status` `bar .hour` `bar .clock` `bar .date` `bar .verse` `bar .battery` `bar .network` | `:hover` | One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it. |
 | `bar .workspace` | `.current` `:hover` | One number in the workspaces module; .current is the workspace you're on, :hover the one under the pointer. |
 | `dock` | none | The Workspace Dock's bar. |
@@ -81,21 +81,21 @@ module has no class yet.
 
 | Property | Takes | Applies to | Inherited | What it does |
 | --- | --- | --- | --- | --- |
-| `color` | a color | bar, bar region, bar island, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Text and symbol color. |
-| `background` | a color, `none`, `glass` (the platform's blur) or `linear-gradient(<color>, <color>)`, optionally starting `to bottom,` or `to right,` | bar, bar region, bar island, bar module, bar workspace, dock, dock tile, dock label, dock badge | no | What is drawn behind it. |
+| `color` | a color | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Text and symbol color. |
+| `background` | a color, `none`, `glass` (the platform's blur) or `linear-gradient(<color>, <color>)`, optionally starting `to bottom,` or `to right,` | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge, bar island | no | What is drawn behind it. |
 | `opacity` | a number from 0 to 1, or a percentage | everything | no | How opaque the whole thing is. |
-| `font-family` | a font stack, as the theme's `type.ui`: names separated by commas, quoted when they hold other characters | bar, bar region, bar island, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | The font, first installed name wins; `monospace` and `serif` are the system's. |
-| `font-size` | a length from 6 to 40 (`px` or `pt`) | bar, bar region, bar island, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Text size in points. |
-| `font-weight` | 100 to 900, `normal` (400) or `bold` (700) | bar, bar region, bar island, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Text weight. |
-| `font-style` | `normal` or `italic` | bar, bar region, bar island, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Upright or italic text. |
-| `letter-spacing` | `normal` or a length from -2 to 10 (`px` or `pt`) | bar, bar region, bar island, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Extra space between letters. |
-| `text-transform` | `none`, `uppercase`, `lowercase` or `capitalize` | bar, bar region, bar island, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Letter case, whatever the text says. |
-| `font-variant-numeric` | `normal` or `tabular-nums` | bar, bar region, bar island, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | `tabular-nums` gives every digit the same width, so a clock doesn't jiggle. |
+| `font-family` | a font stack, as the theme's `type.ui`: names separated by commas, quoted when they hold other characters | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | The font, first installed name wins; `monospace` and `serif` are the system's. |
+| `font-size` | a length from 6 to 40 (`px` or `pt`) | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Text size in points. |
+| `font-weight` | 100 to 900, `normal` (400) or `bold` (700) | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Text weight. |
+| `font-style` | `normal` or `italic` | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Upright or italic text. |
+| `letter-spacing` | `normal` or a length from -2 to 10 (`px` or `pt`) | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Extra space between letters. |
+| `text-transform` | `none`, `uppercase`, `lowercase` or `capitalize` | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Letter case, whatever the text says. |
+| `font-variant-numeric` | `normal` or `tabular-nums` | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | `tabular-nums` gives every digit the same width, so a clock doesn't jiggle. |
 | `height` | a length from 18 to 64 (`px` or `pt`) | bar | no | The bar's height (on a screen with a notch the bar fills the strip beside it). |
 | `padding` | 1 to 4 lengths from 0 to 40, in CSS order (top, right, bottom, left) | bar, bar region, bar island, bar module, bar workspace, dock, dock label | no | Space inside the edge. |
 | `gap` | a length from 0 to 40 (`px` or `pt`) | bar, bar region, bar island, bar module, dock | no | Space between modules (bar, a region), between a module's items (workspace numbers, menus, status items) or between tiles (dock). |
-| `border-radius` | a length from 0 to 40 (`px` or `pt`) | bar, bar region, bar island, bar module, bar workspace, dock, dock tile, dock label, dock badge | no | Corner radius. |
-| `border` | `none` or `<width 0 to 8> solid <color>` | bar, bar region, bar island, bar module, bar workspace, dock, dock tile, dock label, dock badge | no | A line all around. |
+| `border-radius` | a length from 0 to 40 (`px` or `pt`) | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge, bar island | no | Corner radius. |
+| `border` | `none` or `<width 0 to 8> solid <color>` | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge, bar island | no | A line all around. |
 | `border-bottom` | `none` or `<width 0 to 8> solid <color>` | bar, bar region, bar module, bar workspace, dock, dock tile | no | A line along the bottom edge only. |
 | `box-shadow` | `none` or `<x> <y> <blur> <color>` (x and y -40 to 40, blur 0 to 64) | bar island, dock, dock tile, dock badge | no | A drop shadow. |
 | `display` | `flex` or `none` | bar region, bar island, bar module, bar workspace, dock label, dock badge, dock icon | no | `none` hides it; `flex` (the default) shows it. |

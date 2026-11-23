@@ -204,7 +204,6 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(BarStatus.battery(percent: nil, charging: false), "battery.100percent")
     }
 
-    /// In macOS's order when every place is known, and without what a module already shows.
     /// Islands: "|" splits a place into islands, may repeat, and is checked like any other id.
     func testIslandsSplitAtBarsAndDropWhatIsNotDrawn() {
         let m: [Surfaces.BarModule] = [.mark, .workspaces, .split, .appMenus, .split, .split, .custom("x"), .split]
@@ -244,6 +243,7 @@ final class TopBarTests: XCTestCase {
         XCTAssertFalse(BarStatus.parked(above, barTops: [0, -1080]), "on the bar of a display above the main one")
     }
 
+    /// In macOS's order when every place is known, and without what a module already shows.
     func testStatusItemsFollowTheMacOSOrderAndSkipWhatAModuleShows() {
         let clock = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.clock", x: 900)
         let battery = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.battery", x: 800)
