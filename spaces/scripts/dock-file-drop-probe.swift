@@ -155,6 +155,8 @@ made.isReleasedWhenClosed = false
 let source = Source()
 source.file = dropDoc
 made.contentView = source
+/// Read here, on the main thread; the drags run on another.
+let madeNumber = made.windowNumber
 
 func windows() -> [[String: Any]] {
     CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
@@ -199,7 +201,7 @@ func hold(_ p: CGPoint, _ seconds: Double) {
 
 /// Presses the probe's window and drags the file out of it; `then` moves on from `from` and returns where to let go.
 func dragFile(then: (CGPoint) -> CGPoint) {
-    guard let f = windows().first(where: { ($0[kCGWindowNumber as String] as? Int) == made.windowNumber }).flatMap(bounds) else {
+    guard let f = windows().first(where: { ($0[kCGWindowNumber as String] as? Int) == madeNumber }).flatMap(bounds) else {
         print("the probe's window isn't on screen"); exit(2)
     }
     let press = CGPoint(x: f.midX, y: f.midY + 20)
@@ -291,7 +293,7 @@ DispatchQueue.global().async {
         return glide(top, from)
     }
     lines = traceSince(mark)
-    expect(watcherLetGo(lines, window: UInt32(made.windowNumber)), "the watcher let the file drag go (topDrag let go window=\(made.windowNumber))")
+    expect(watcherLetGo(lines, window: UInt32(madeNumber)), "the watcher let the file drag go (topDrag let go window=\(madeNumber))")
     expect(!overviewOpened(lines), "no overview opened for a file dragged to the top")
 
     DispatchQueue.main.sync { made.close() }
