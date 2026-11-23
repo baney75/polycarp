@@ -720,8 +720,9 @@ private struct IslandShadow: ViewModifier {
     }
 }
 
-/// macOS's battery, drawn: an outline, filled to the charge in the bar's ink (yellow in Low Power Mode, red nearly
-/// empty), with a bolt while charging or a plug on power.
+/// macOS's battery, drawn: an outline filled to the charge in the bar's ink, the theme's `working` color in Low Power
+/// Mode and `urgent` nearly empty, with a bolt while charging or a plug on power cut out of it in the panel's color.
+/// Corners are the launcher key's, so the theme decides them (square in Omarchy).
 private struct BatteryGlyph: View {
     let look: BarStatus.BatteryLook
     let ink: Color
@@ -729,30 +730,29 @@ private struct BatteryGlyph: View {
     private var fillColor: Color {
         switch look.tint {
         case .normal: ink
-        case .lowPower: Color(red: 1, green: 0.84, blue: 0.04)
-        case .critical: Color(red: 1, green: 0.27, blue: 0.23)
+        case .lowPower: Chrome.working
+        case .critical: Chrome.urgent
         }
     }
 
     var body: some View {
+        let outer = Chrome.shape(.launcherKey)
         HStack(spacing: 1) {
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 3.5, style: .continuous).strokeBorder(ink.opacity(0.45), lineWidth: 1)
+                outer.strokeBorder(ink.opacity(0.45), lineWidth: Chrome.width(.launcherKey))
                 GeometryReader { g in
-                    RoundedRectangle(cornerRadius: 2, style: .continuous).fill(fillColor)
+                    Chrome.shape(.launcherKey).fill(fillColor)
                         .frame(width: max(2, (g.size.width - 4) * look.fill), height: g.size.height - 4)
                         .offset(x: 2, y: 2)
                 }
                 if look.badge != .none {
-                    Image(systemName: look.badge == .bolt ? "bolt.fill" : "powerplug.fill")
-                        .font(.system(size: 7.5, weight: .black))
-                        .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.7), radius: 0.6)
+                    Image(systemName: look.badge == .bolt ? "bolt.fill" : "powerplug.fill").font(.system(size: 7.5, weight: .black))
+                        .foregroundStyle(Chrome.panel())
                         .frame(maxWidth: .infinity)
                 }
             }
             .frame(width: 22, height: 11)
-            RoundedRectangle(cornerRadius: 1, style: .continuous).fill(ink.opacity(0.45)).frame(width: 1.5, height: 4)
+            Capsule().fill(ink.opacity(0.45)).frame(width: 1.5, height: 4)
         }
         .accessibilityElement(children: .ignore)
     }
