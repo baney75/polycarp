@@ -379,7 +379,8 @@ final class LauncherModel: ObservableObject {
     /// Terminal agents found on this Mac: command to path.
     var agents: [String: String] = [:]
     /// Calculator and the other providers, asked on every keystroke of the main search.
-    var providers: [LauncherProvider] = LauncherProviders.standard(terminal: TerminalFeature.built) + [ContactsLibrary.shared.provider]
+    /// The rooms first: a room's name or mark ("know", "=") is that room, above an app that starts the same.
+    var providers: [LauncherProvider] = [RoomsProvider.shared] + LauncherProviders.standard(terminal: TerminalFeature.built) + [ContactsLibrary.shared.provider]
     /// People's pictures, made once from their image data.
     private let contactImages: NSCache<NSString, NSImage> = {
         let c = NSCache<NSString, NSImage>()
@@ -442,6 +443,8 @@ final class LauncherModel: ObservableObject {
         bangs = Launcher.loadBangs()
         // Contacts access turned on or off in System Settings counts at once. It reads macOS's answer; it never asks.
         ContactsLibrary.shared.launcherOpened()
+        // The BES root and its Inbox count, read once here so a keystroke never touches the disk for them.
+        RoomsProvider.shared.refresh()
         rebuild()
         // Apps installed since the last look show up without a restart.
         rescanApps()
@@ -544,6 +547,10 @@ final class LauncherModel: ObservableObject {
                 out += actions.sessionItems("")
                 out += recentApps().prefix(5)
                 out += menuItems()
+            } else if RoomsProvider.shared.filter(q) != nil {
+                // "room:know tax": the room, then the files in it, and nothing else, since the filter says it's files.
+                out += RoomsProvider.shared.results(for: q).map(providedItem)
+                out += fileItems()
             } else {
                 let provided = LauncherProviders.results(providers, for: q)
                 out += provided.top.map(providedItem)
@@ -1096,13 +1103,17 @@ final class LauncherModel: ObservableObject {
         fileSearches += 1
         let q = query.trimmingCharacters(in: .whitespaces)
         let forFiles = scope == .files || scope == .root && !q.hasPrefix("!") && !q.hasPrefix("?") && Bangs.parse(q) == nil
-        guard forFiles, FileSearch.spotlightQuery(q) != nil else {
+        // "room:know tax" looks for "tax" in 3 Know only, and shows more than the main search's five.
+        let filter = RoomsProvider.shared.filter(q)
+        let words = filter?.words ?? q
+        let within = filter.flatMap { f in RoomsProvider.shared.rooms?.url(f.room).path }
+        guard forFiles, FileSearch.spotlightQuery(words) != nil else {
             if !fileResults.isEmpty { fileResults = []; rebuild() }
             return
         }
         let search = fileSearches, inScope = scope
         let work = DispatchWorkItem {
-            FileFinder.find(q, limit: inScope == .files ? 60 : 5, search: search) { [weak self] hits in
+            FileFinder.find(words, limit: inScope == .files || within != nil ? 60 : 5, search: search, within: within) { [weak self] hits in
                 guard let self, self.fileSearches == search, self.scope == inScope else { return }
                 self.fileResults = hits
                 self.fileResultsQuery = q
@@ -1117,7 +1128,8 @@ final class LauncherModel: ObservableObject {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         // An older search's files stay up while the newer one runs, only those that still match.
         let q = query.trimmingCharacters(in: .whitespaces)
-        let shown = q == fileResultsQuery ? fileResults : fileResults.filter { FileSearch.matches(q, $0.name) }
+        let words = RoomsProvider.shared.filter(q)?.words ?? q
+        let shown = q == fileResultsQuery ? fileResults : fileResults.filter { FileSearch.matches(words, $0.name) }
         return shown.map { f in
             let url = URL(fileURLWithPath: f.path)
             return LauncherItem(id: "file:\(f.path)", section: "Files", title: f.name,
@@ -1150,15 +1162,16 @@ enum FileFinder {
     nonisolated(unsafe) private static var newest = 0
     private static func isNewest(_ n: Int) -> Bool { lock.lock(); defer { lock.unlock() }; return newest == n }
 
-    static func find(_ typed: String, limit: Int, search n: Int, done: @escaping ([FileSearch.Hit]) -> Void) {
+    /// `within` narrows the search to one folder (a room, for "room:know"), with nothing from the home folder's top.
+    static func find(_ typed: String, limit: Int, search n: Int, within: String? = nil, done: @escaping ([FileSearch.Hit]) -> Void) {
         guard let text = FileSearch.spotlightQuery(typed) else { return done([]) }
         lock.lock(); newest = n; lock.unlock()
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         queue.async {
             guard isNewest(n) else { return }
             let start = Date()
-            let places = scopes(home)
-            let hits = search(text, in: places, stale: { !isNewest(n) }) + topLevel(typed, home)
+            let places = within.map { [$0] } ?? scopes(home)
+            let hits = search(text, in: places, stale: { !isNewest(n) }) + (within == nil ? topLevel(typed, home) : [])
             guard isNewest(n) else { return }
             let ranked = FileSearch.rank(typed, hits, home: home, limit: limit)
             let ms = Int(Date().timeIntervalSince(start) * 1000)

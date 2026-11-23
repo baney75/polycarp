@@ -230,6 +230,15 @@ To try it: `polycarp-spaces surfaces set alarm '{"wake":true,"wakeAt":"07:00","d
 Not here yet: the morning question, the evening examen and Sunday rest. They belong to workspace purposes and the day
 ledger, which are built separately; this file will mirror them once that work lands.
 
+### `rooms`: the Baney Extended System's rooms
+
+| Path | Default | Takes |
+| --- | --- | --- |
+| `rooms.root` | `"~/BES"` | The folder that holds `0 Inbox`, `1 Do`, `2 Keep`, `3 Know` and `4 Let Go` (`bes init` makes them). `~/` starts at your home folder; a drive works too (`/Volumes/Drive/BES`). Polycarp shows the rooms only once this folder has `.bes/` or `0 Inbox/` in it, and never makes them. |
+| `rooms.menu` | `true` | A Rooms section in the status menu: the five rooms, and what waits in the Inbox. |
+
+What the rooms do in the launcher, the menu and the dock: [rooms.md](rooms.md).
+
 ## Examples
 
 ```sh

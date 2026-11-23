@@ -929,6 +929,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let timer = MenuTimer(minutes: SurfacesStore.shared.current.alarm.timerMinutes, left: running?.remaining(now: at))
         let entries = MenuLayout.entries(now: now, oneThing: named.oneThing?.text, timer: timer, evening: evening,
                                          rows: MenuLayout.rows(current: here, apps: apps, purposes: named.all),
+                                         rooms: roomsInbox(),
                                          finished: session.started ? session.unseenCount : 0,
                                          update: MenuUpdate(notice: updateNotice(), checking: updater.checking))
         for entry in entries { menu.addItem(menuItem(for: entry)) }
@@ -971,6 +972,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let find = item("Find or Install an App…", #selector(showLauncher))
             if Launcher.onCmdSpace { find.keyEquivalent = " "; find.keyEquivalentModifierMask = [.command] }
             return find
+        case .room(let room, let waiting):
+            let it = item(MenuLayout.roomTitle(room, waiting: waiting), #selector(openRoom(_:)))
+            it.tag = room.rawValue
+            it.toolTip = room.blurb + (room.mark.map { ", marked \($0)" } ?? "")
+            return it
         case .settings:
             return item("Settings…", #selector(showSetup), key: ",")
         case .quit:
@@ -1020,6 +1026,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func checkForUpdatesFromMenu() { checkForUpdates() }
 
     @objc private func pick(_ sender: NSMenuItem) { spaces.switchTo(sender.tag) }
+
+    /// The Inbox's count for the menu's Rooms section, or nil for no section: `rooms.menu` is off or the root isn't
+    /// set up. One look at the root and one directory listing, each time the menu opens.
+    private func roomsInbox() -> Int? {
+        let rooms = Rooms.configured
+        guard SurfacesStore.shared.current.rooms.menu, rooms.exists() else { return nil }
+        return rooms.count(.inbox)
+    }
+
+    /// A room row: the room in Finder. A room folder that isn't there (only some were made) beeps.
+    @objc private func openRoom(_ sender: NSMenuItem) {
+        guard let room = Room(rawValue: sender.tag), NSWorkspace.shared.open(Rooms.configured.url(room)) else { return NSSound.beep() }
+        Trace.log("rooms: opened \(room.id) from the menu")
+    }
 
     /// "Evening Examen…": the examen card now, given tonight or not.
     @objc private func eveningExamen() {
