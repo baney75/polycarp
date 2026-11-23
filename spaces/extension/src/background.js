@@ -54,12 +54,19 @@ async function checkDisk() {
   return disk;
 }
 chrome.tabs.onRemoved.addListener(() => { if (updatePending) setTimeout(tryApplyUpdate, 500); });
+chrome.tabs.onActivated.addListener(() => { if (updatePending) setTimeout(tryApplyUpdate, 500); });
 async function tryApplyUpdate() {
   if (!updatePending) return;
   try {
-    // A new tab holds nothing to lose, so only the other Polycarp pages hold an update back.
-    const open = (await chrome.runtime.getContexts({ contextTypes: ["TAB"] })).filter((c) => !/\/newtab\//.test(c.documentUrl || ""));
-    if (open.length) return;
+    // Any other Polycarp page (Reader, Library, Review) holds the update back. A new tab holds it back only while it
+    // is the tab in front of its window, where someone may be typing; a reload closes it, and one in the background
+    // has nothing to lose.
+    // Tab ids, not URLs: without the tabs permission an overridden new tab's URL is not ours to read.
+    const NEWTAB = /\/newtab\//;
+    const tabs = await chrome.runtime.getContexts({ contextTypes: ["TAB"] });
+    if (tabs.some((c) => !NEWTAB.test(c.documentUrl || ""))) return;
+    const front = new Set((await chrome.tabs.query({ active: true })).map((t) => t.id));
+    if (tabs.some((c) => front.has(c.tabId))) return;
   } catch (e) { /* older Chrome: fall through */ }
   chrome.runtime.reload();
 }

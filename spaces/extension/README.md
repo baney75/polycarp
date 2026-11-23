@@ -20,7 +20,8 @@ The Polycarp app carries the extension: `scripts/bundle.sh` runs `scripts/stage.
 2. Click **Load unpacked** and pick `~/Applications/Polycarp.app/Contents/Resources/extension`. This is the one step done by hand.
 3. From then on, each app update updates the extension: every 15 minutes and at browser start, the extension compares the
    `version_name` on disk with the one running and reloads itself when they differ, unless a Reader, Library or other
-   Polycarp page is open; it waits for those to close. An open new tab does not hold it back.
+   Polycarp page is open, or a Polycarp new tab is the tab in front of its window; it waits for those to close or
+   move behind. A reload closes Polycarp's tabs, so only new tabs in the background are let go.
 
 For work on the extension itself, load this folder instead.
 

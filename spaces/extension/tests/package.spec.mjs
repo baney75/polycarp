@@ -83,7 +83,11 @@ try {
   ok(await sw.evaluate(() => checkDisk().then(() => __reloads)) === 0, 'an open Reader holds the update back');
   await reader.close();
   await new Promise((r) => setTimeout(r, 1500)); // the tab-closed listener retries after 500 ms
-  ok(await sw.evaluate(() => __reloads) === 1, 'reloads into the new copy once the Reader closes, with a new tab still open');
+  ok(await sw.evaluate(() => __reloads) === 0, 'a new tab in front of its window holds the update back (review finding first-F2)');
+  const front = await ctx.newPage(); await front.goto(`http://127.0.0.1:${server.address().port}/`); await front.bringToFront();
+  await sw.evaluate(() => tryApplyUpdate());
+  ok(await sw.evaluate(() => __reloads) === 1, 'reloads into the new copy once the new tab is behind another tab');
+  await front.close();
   ok(errors.length === 0, 'no page errors ' + errors.join(' | '));
 } catch (e) {
   ok(false, 'threw ' + (e.stack || e));
