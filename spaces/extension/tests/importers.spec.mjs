@@ -360,6 +360,24 @@ const brief = (doc) => doc.error ? doc.error : { title: doc.title, sections: doc
 }
 
 // ---------------------------------------------------------------------------
+// Handler attributes go before parsing, and only handler attributes: a value that merely contains
+// "onclick=" keeps its text (review finding sol-F1).
+// ---------------------------------------------------------------------------
+{
+  const r = await page.evaluate(() => ({
+    drop: PolycarpImport.dropHandlers('<p title="Use onclick=example" onclick="x()">Keep this paragraph.</p><img alt="Turn one=two on" onerror=z src=p.png>'),
+    clean: PolycarpImport.sanitize('<p title="Use onclick=example">Keep this paragraph.</p><p>And <img alt="Turn one=two on" src="https://a.example/p.png"> this one.</p>'),
+    doc: PolycarpImport.fromHtml('<!doctype html><title>Values</title><article><h1>Values</h1>' +
+      '<p title="Use onclick=example">Keep this paragraph about rivers, valleys and the slow work of water over time.</p>' +
+      '<p>' + 'Rivers carry silt to the sea and lay it down where the current slows. '.repeat(12) + '</p></article>', 'https://v.example/a', 'fallback')
+  }));
+  check('dropHandlers: handler gone, values whole', r.drop === '<p title="Use onclick=example">Keep this paragraph.</p><img alt="Turn one=two on" src=p.png>', r.drop);
+  check('sanitize: a value containing onclick= keeps its paragraph', /Keep this paragraph\./.test(r.clean) && /alt="Turn one=two on"/.test(r.clean), r.clean);
+  const h = r.doc && r.doc.sections ? r.doc.sections.map((x) => x.html).join('') : '';
+  check('fromHtml: a value containing onclick= keeps its paragraph', /Keep this paragraph about rivers/.test(h), h.slice(0, 300));
+}
+
+// ---------------------------------------------------------------------------
 // fromHtml and fromUrl (local HTTP server)
 // ---------------------------------------------------------------------------
 const server = http.createServer((req, res) => {

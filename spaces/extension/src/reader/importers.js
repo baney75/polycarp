@@ -106,10 +106,53 @@
     return d;
   }
 
-  // Event handler attributes never run here (the sanitizer drops them too), but an XHTML document
-  // parsed under the Reader's CSP still reports each one as a violation, so they go before parsing.
+  // Event handler attributes never run here (the sanitizer drops them too), but a document parsed under the
+  // Reader's CSP still reports each one as a violation, so they go before parsing. This walks the markup as a
+  // parser would: tags, then each attribute with its quoted or bare value, so an ordinary value that happens to
+  // contain "onclick=" is left whole. Comments, declarations, end tags and the text of raw-text elements are copied
+  // as they are.
+  var RAW_TEXT = { script: 1, style: 1, textarea: 1, title: 1, xmp: 1, iframe: 1, noembed: 1, noframes: 1, noscript: 1 };
   function dropHandlers(text) {
-    return text.replace(/<[^>]+>/g, function (tag) { return tag.replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, ''); });
+    var out = '', i = 0, n = text.length;
+    function copyThrough(end) {
+      var k = text.indexOf(end, i);
+      k = k < 0 ? n : k + end.length;
+      out += text.slice(i, k); i = k;
+    }
+    while (i < n) {
+      var lt = text.indexOf('<', i);
+      if (lt < 0) { out += text.slice(i); break; }
+      out += text.slice(i, lt); i = lt;
+      if (text.startsWith('<!--', i)) { copyThrough('-->'); continue; }
+      if (text.startsWith('<![CDATA[', i)) { copyThrough(']]>'); continue; }
+      if (/^<[!?/]/.test(text.slice(i, i + 2))) { copyThrough('>'); continue; }
+      if (!/^<[A-Za-z]/.test(text.slice(i, i + 2))) { out += '<'; i++; continue; }
+      var name = /^<([^\s/>]+)/.exec(text.slice(i, i + 256))[1];
+      out += '<' + name; i += 1 + name.length;
+      for (;;) {
+        var ws = /^[\s/]*/.exec(text.slice(i, i + 4096))[0];
+        i += ws.length;
+        if (i >= n) { out += ws; break; }
+        if (text[i] === '>') { out += ws + '>'; i++; break; }
+        var an = /^[^\s/>=]+/.exec(text.slice(i, i + 1024))[0];
+        var start = i; i += an.length;
+        var eq = /^\s*=\s*/.exec(text.slice(i, i + 1024));
+        if (eq) {
+          i += eq[0].length;
+          var q = text[i];
+          if (q === '"' || q === "'") { var close = text.indexOf(q, i + 1); i = close < 0 ? n : close + 1; }
+          else i += /^[^\s>]*/.exec(text.slice(i, i + 65536))[0].length;
+        }
+        if (!/^on/i.test(an)) out += ws + text.slice(start, i);
+      }
+      var lower = name.toLowerCase();
+      if (RAW_TEXT[lower]) {
+        var m = new RegExp('</' + lower + '[\\s/>]', 'i').exec(text.slice(i));
+        var end = m ? i + m.index : n;
+        out += text.slice(i, end); i = end;
+      }
+    }
+    return out;
   }
 
   // Every page, chapter and fragment goes through this parser, never DOMParser itself.
@@ -2516,6 +2559,7 @@
     fromUrl: fromUrl,
     fromHtml: fromHtml,
     fromText: fromText,
-    sanitize: sanitize
+    sanitize: sanitize,
+    dropHandlers: dropHandlers
   };
 })();
