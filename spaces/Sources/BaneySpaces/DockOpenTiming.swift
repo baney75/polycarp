@@ -35,7 +35,7 @@ enum DockOpenTiming {
         let model = DockModel()
         model.edge = .bottom
         model.iconSource = { sample.icon($0) }
-        let panel = WorkspaceDock.makePanel(model: model) {}
+        let panel = WorkspaceDock.makePanel(model: model, drop: DockDropDestination(model: model)) {}
         guard let host = panel.contentView else { return 2 }
         let screen = CGSize(width: 1512, height: 982)
 
