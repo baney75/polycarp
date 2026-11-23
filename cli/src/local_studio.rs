@@ -312,6 +312,12 @@ mod tests {
         fn walk(dir: &Path, base: &Path, out: &mut BTreeSet<String>) {
             for e in fs::read_dir(dir).unwrap() {
                 let p = e.unwrap().path();
+                // Finder's .DS_Store and other dot files are not the plugin's; Local Studio skips them too.
+                if p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+                {
+                    continue;
+                }
                 if p.is_dir() {
                     walk(&p, base, out);
                 } else {

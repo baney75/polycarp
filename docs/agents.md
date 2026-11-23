@@ -63,7 +63,7 @@ Local Studio's own agent, Eukhe, can drive Polycarp on a model that runs on this
 2. Grant it: the install runs `local-studio plugin grant polycarp mcp-server` when Local Studio's command is on your PATH. If it is not, the install prints that command for you to run. Local Studio then adds the server to `~/.eukhe/settings.json` as `plugin-polycarp`.
 3. Remove it: `polycarp install --local-studio --uninstall` revokes the grant and removes the folder.
 
-The local agent gets the stdio route, so it has every scope: it can list your windows and workspaces, bring a window forward, switch workspaces, open the launcher, read and set surfaces (the bar, the dock, the desktop paper), switch the theme and search your files. Its skill tells it to ask before it deletes or sends anything.
+The local agent gets the stdio route, so it has every scope: it can list your windows and workspaces, bring a window forward, switch workspaces, open the launcher, read and set surfaces (the bar, the desktop paper), switch the theme and search your files. Its skill tells it to ask before it deletes or sends anything, but that is advice to the model, not a lock: a page title or file it reads could try to talk it into a change, so give a local agent only the tasks you would give any agent with these tools.
 
 To make a local model the default, set Eukhe's `defaultProvider` and `defaultModel` in `~/.eukhe/settings.json`, to the provider and model id of a local model as they appear in Eukhe's `models.json`. Every new Local Studio thread then starts on that model with Polycarp's tools. The launcher offers Eukhe as a terminal agent too ("eukhe"), when Local Studio is in `/Applications`.
 

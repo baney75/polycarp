@@ -1,11 +1,11 @@
 ---
 name: polycarp
-description: Use when the person asks about their Polycarp desk on this Mac, such as workspaces, windows, the top bar, the dock, the desktop picture, the theme, the launcher or finding a file.
+description: Use when the person asks about their Polycarp desk on this Mac, such as workspaces, windows, the top bar, the desktop picture, the theme, the launcher or finding a file.
 ---
 
 # Drive Polycarp
 
-Polycarp runs this Mac's workspaces, dock, top bar, desktop and theme. You reach it through the `polycarp` tools.
+Polycarp runs this Mac's workspaces, top bar, desktop and theme. You reach it through the `polycarp` tools.
 Call one tool per step. Read the answer before the next step.
 
 ## When to use
@@ -16,10 +16,17 @@ Call one tool per step. Read the answer before the next step.
 
 ## Steps
 
-1. Read first. Call `app_status`. If the app is not running, say so and stop.
-2. Find what the person means. Call `app_items` to see every window and terminal with its workspace number.
-3. Do the one thing they asked, with one tool from the list below.
-4. Read it back. Call the matching read tool (`app_items`, `surfaces_get`, `theme_current`) and check the change.
+1. Pick the kind of request.
+   - A question ("list my workspaces", "list themes", "find my tax letter"): go to step 2.
+   - A change ("go to workspace 2", "switch to a dark theme", "make the clock 24 hour"): go to step 3.
+2. Answer a question. Call the one read tool from the list below (`app_items`, `theme_list`, `files_search`,
+   `surfaces_get`). Tell the person the answer in a few short lines. Stop.
+3. Make a change.
+   - Window, workspace, launcher and surface tools need the app: call `app_status` first. If it is not running, say so
+     and stop. Theme and file tools work without it.
+   - To act on a window, call `app_items` to find it, then the change tool.
+   - Call the one change tool from the list below.
+4. Read it back with the matching read tool (`app_items`, `surfaces_get`, `theme_current`).
 5. Tell the person in one short sentence what changed.
 
 ## The 10 calls
@@ -41,7 +48,6 @@ More surface examples, each a `surfaces_set` call:
 
 - Desktop paper: `{"path": "desktop.scene", "value": "parchment"}`. Choices: `field`, `olive`, `water`, `parchment`, `solid`.
 - Clock: `{"path": "bar.clockFormat", "value": "day-24h"}`.
-- Dock labels: `{"path": "dock.tileLabel", "value": "number"}`.
 
 Not sure of a path or value? Call `surfaces_schema` once, then try again.
 
@@ -55,4 +61,4 @@ Not sure of a path or value? Call `surfaces_schema` once, then try again.
 
 ## Done when
 
-The read-back in step 4 shows the change, or you told the person why it could not be made.
+You answered the question, or the read-back in step 4 shows the change, or you told the person why it could not be done.

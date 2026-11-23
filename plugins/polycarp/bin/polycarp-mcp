@@ -1,11 +1,14 @@
 #!/bin/sh
 # Local Studio starts this as the polycarp plugin's MCP server. It finds the polycarp command and hands off to
 # `polycarp agent serve --stdio`, the same gateway Claude Code and Codex use. Nothing else runs.
-for p in "$(command -v polycarp 2>/dev/null)" \
-	"$HOME/.local/bin/polycarp" \
+# The fixed install spots come first and PATH last, and only an absolute path from PATH counts, so a file named
+# polycarp in the project folder Local Studio runs in is never started (the CLI's own `find` refuses it too).
+for p in "/Applications/Polycarp.app/Contents/Resources/bin/polycarp" \
 	"$HOME/Applications/Polycarp.app/Contents/Resources/bin/polycarp" \
-	"/Applications/Polycarp.app/Contents/Resources/bin/polycarp"; do
-	if [ -n "$p" ] && [ -f "$p" ] && [ -x "$p" ]; then
+	"$HOME/.local/bin/polycarp" \
+	"$(command -v polycarp 2>/dev/null)"; do
+	case "$p" in /*) ;; *) continue ;; esac
+	if [ -f "$p" ] && [ -x "$p" ]; then
 		exec "$p" agent serve --stdio
 	fi
 done
