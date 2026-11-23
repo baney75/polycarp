@@ -75,7 +75,8 @@ public enum BarLayout {
     /// The three places on a screen. A screen with a notch has no middle: the middle's modules follow the left's,
     /// before the camera housing.
     public static func places(_ bar: Surfaces.Bar, notch: Bool) -> (left: [Surfaces.BarModule], center: [Surfaces.BarModule], right: [Surfaces.BarModule]) {
-        notch ? (bar.left + bar.center, [], bar.right) : (bar.left, bar.center, bar.right)
+        // The middle's modules keep their own island after the left's.
+        notch ? (bar.left + (bar.center.isEmpty ? [] : [.split] + bar.center), [], bar.right) : (bar.left, bar.center, bar.right)
     }
 
     /// The modules the bar draws today. Custom modules are kept in the file but not drawn; the island split is a place,

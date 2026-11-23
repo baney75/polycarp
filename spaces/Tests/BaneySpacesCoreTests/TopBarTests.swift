@@ -74,8 +74,11 @@ final class TopBarTests: XCTestCase {
         let flat = BarLayout.places(bar, notch: false)
         XCTAssertEqual(flat.center, bar.center)
         let notched = BarLayout.places(bar, notch: true)
-        XCTAssertEqual(notched.left, bar.left + bar.center)
+        XCTAssertEqual(notched.left, bar.left + [.split] + bar.center, "the middle keeps its own island")
+        XCTAssertEqual(BarLayout.islands(notched.left).last, bar.center)
         XCTAssertTrue(notched.center.isEmpty)
+        var empty = bar; empty.center = []
+        XCTAssertEqual(BarLayout.places(empty, notch: true).left, bar.left)
         XCTAssertEqual(notched.right, bar.right)
     }
 
