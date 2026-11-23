@@ -116,10 +116,8 @@ which opens nothing while this is on.
   <img src="docs/shots/overview-drag.jpg" alt="Dragging a Mail window card onto workspace 6 in the overview; the target tile is outlined" width="760">
 </p>
 
-The menu bar icon shows the number of the workspace you're on. Its menu opens on what you are doing
-(click it to name the hour) and one row for the one thing: **Set the One Thing…**, or the one thing
-itself with **Change the One Thing…**, its timer and, in the evening, **Evening Examen…** under it.
-Then the workspaces in use and one empty one to start fresh on ("1  Helium", "3  Empty"), **Show All
+The menu bar icon shows the number of the workspace you're on. Its menu opens on the workspaces in
+use and one empty one to start fresh on ("1  Helium", "3  Empty"), **Show All
 Workspaces**, **Find or Install an App…**, the update row, **Settings…** (⌘,) and **Quit Polycarp** (⌘Q).
 The update row is always there: **Check for Updates…**, **Checking for Updates…** while one runs, or
 **Update to …** when a release is waiting. **N Agents Finished While You Were Away** (a list; click one
@@ -440,44 +438,6 @@ polycarp-spaces doctor                 # what's working and what isn't
 ```
 
 `polycarp-spaces skill install` teaches Claude Code the same commands.
-
-## What each workspace is for
-
-Purity of heart is to will one thing. Each workspace can say what it is for, and one thing can stay in front for the
-day. This is the data the top bar, the dock tiles, the status menu, the new tab page and the idle screen will read;
-those views are still to come.
-
-```sh
-polycarp-spaces purpose set 1 "Prayer and Scripture"   # up to 60 characters; empty text clears it
-polycarp-spaces purpose clear 1
-polycarp-spaces purpose list --json                    # all nine, unnamed ones with no purpose
-polycarp-spaces one "Finish the chapter"               # today's one thing, set on the workspace you're on
-polycarp-spaces one --clear
-polycarp-spaces day                                    # today's time on each workspace
-polycarp-spaces timer                                  # a one-thing timer, alarm.timerMinutes long (25 by default)
-polycarp-spaces timer 50                               # or 1 to 240 minutes
-polycarp-spaces timer status --json                    # how long is left; timer stop ends it early
-```
-
-A day runs from 4 am to 4 am, so a late night counts for the day it began in. Purposes carry over until you change
-them; the one thing clears at 4 am. The day's time counts only while you are there: not while the screen sleeps or is
-locked, and not a stretch of over 5 minutes with no input. Ninety days are kept.
-
-The morning question comes with your first input after 4 am, the evening examen with your first input after 6 pm,
-each once a day, and Sunday is a day of rest. Each is a switch in the app's defaults:
-`defaults write com.baney.polycarp morningQuestion -bool false`, `eveningExamen`, `restOnSunday`, and
-`examenHour -int 20` for a later evening. Examen answers are kept as Markdown, one file a day, in
-`~/Library/Application Support/Polycarp/Journal/`, with the day's time at the end. They stay on this Mac.
-
-Alarms belong to the rhythm. The wake alarm (`alarm.wake` in surfaces.json, off until you turn it on) rings at
-`alarm.wakeAt` and opens the morning question if it hasn't been given yet; on power it keeps the Mac from idle sleep
-through the night before so it can ring (a sleeping Mac can't ring). The one-thing timer gives the one thing a stretch of time: start it from the status menu, under
-the one thing's row, or with `polycarp-spaces timer`. Its time left shows after the one thing in the top bar, and it
-survives a relaunch. See the `alarm` section of [docs/surfaces.md](docs/surfaces.md).
-
-Files: `purposes.json` and `ledger.json` in the same folder. A file that can't be read is renamed to
-`<name>.bad-<time>`, logged in `trace.log`, and Polycarp starts that part empty. These commands work on this Mac only:
-another machine can't read or set them.
 
 ## A workspace for agents
 

@@ -5,16 +5,13 @@
 
 	var host = "com.polycarp.newtab";
 	var cacheKey = "polycarpNewTabPage";
-	var mac = /Mac/i.test(navigator.platform || navigator.userAgent);
-	var keyName = mac ? "⌘Return" : "Ctrl+Return";
-	var hintText = "Return to search. " + keyName + " names this hour.";
+	var hintText = "Return to search or open the address.";
 
 	var field = document.getElementById("field");
 	var form = document.getElementById("ask");
 	var hint = document.getElementById("hint");
-	var chips = document.getElementById("chips");
 	var verse = document.getElementById("verse");
-	var page = { question: field.placeholder, searchURL: PolycarpNewTab.fallbackSearch, verse: null, chips: [], workspace: null };
+	var page = { question: field.placeholder, searchURL: PolycarpNewTab.fallbackSearch, verse: null };
 
 	function ask(message) {
 		return new Promise(function (resolve) {
@@ -28,9 +25,9 @@
 		});
 	}
 
-	function say(text, kind) {
+	function say(text) {
 		hint.textContent = text;
-		hint.className = "hint" + (text ? " on" : "") + (kind ? " " + kind : "");
+		hint.className = "hint" + (text ? " on" : "");
 	}
 
 	function render(p) {
@@ -47,21 +44,6 @@
 		} else {
 			verse.hidden = true;
 		}
-		chips.textContent = "";
-		(p.chips || []).forEach(function (c) {
-			var b = document.createElement("button");
-			b.type = "button";
-			b.textContent = c.purpose;
-			b.title = "Workspace " + c.workspace;
-			if (c.workspace === p.workspace) b.setAttribute("aria-current", "true");
-			b.addEventListener("click", function () {
-				ask({ op: "go", workspace: c.workspace }).then(function (r) {
-					if (!r || !r.ok) say(r && r.error ? r.error : "Polycarp isn't answering.", "error");
-				});
-			});
-			chips.appendChild(b);
-		});
-		chips.hidden = chips.childElementCount === 0;
 	}
 
 	try { render(JSON.parse(localStorage.getItem(cacheKey) || "null")); } catch (e) { /* a private window: no cache */ }
@@ -76,30 +58,19 @@
 		say(field.value.trim() ? hintText : "");
 	});
 
-	function go(nameIt) {
-		var a = PolycarpNewTab.act(field.value, page.searchURL, nameIt);
+	function go() {
+		var a = PolycarpNewTab.act(field.value, page.searchURL);
 		if (a.kind === "none") return;
-		if (a.kind === "name") {
-			ask({ op: "name", text: a.text }).then(function (r) {
-				if (r && r.ok) {
-					field.value = "";
-					say("Workspace " + r.workspace + " is for " + r.purpose + ".", "done");
-				} else {
-					say(r && r.error ? r.error : "Polycarp isn't answering, so nothing was named.", "error");
-				}
-			});
-			return;
-		}
 		location.assign(a.url);
 	}
 
 	field.addEventListener("keydown", function (e) {
 		if (e.key !== "Enter" || e.isComposing) return;
 		e.preventDefault();
-		go(e.metaKey || e.ctrlKey);
+		go();
 	});
 	form.addEventListener("submit", function (e) {
 		e.preventDefault();
-		go(false);
+		go();
 	});
 })();

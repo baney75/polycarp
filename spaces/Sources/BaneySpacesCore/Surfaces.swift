@@ -29,8 +29,6 @@ public enum SurfaceKind: Equatable, Sendable {
     case searchTemplate
     /// An ordered list of ids, each once: one of `known`, or `custom:<name>` when `custom`.
     case ids(known: [String], custom: Bool)
-    /// A time of day, "HH:MM" on the 24 hour clock, from "00:00" to "23:59".
-    case time
 }
 
 /// One field of surfaces.json.
@@ -66,18 +64,16 @@ public struct Surfaces: Equatable, Sendable {
 
     /// A top bar module. `custom` carries the name after `custom:`.
     public enum BarModule: Hashable, Sendable {
-        case mark, workspaces, purpose, oneThing, appMenus, status, hour, clock, date, verse, battery, network
+        case mark, workspaces, appMenus, status, hour, clock, date, verse, battery, network
         case custom(String)
 
-        public static let builtIn: [BarModule] = [.mark, .workspaces, .purpose, .oneThing, .appMenus, .status, .hour, .clock,
-                                                  .date, .verse, .battery, .network]
+        public static let builtIn: [BarModule] = [.mark, .workspaces, .appMenus, .status, .hour, .clock, .date, .verse, .battery,
+                                                  .network]
 
         public var id: String {
             switch self {
             case .mark: "mark"
             case .workspaces: "workspaces"
-            case .purpose: "purpose"
-            case .oneThing: "one-thing"
             case .appMenus: "app-menus"
             case .status: "status"
             case .hour: "hour"
@@ -106,7 +102,6 @@ public struct Surfaces: Equatable, Sendable {
         public var right: [BarModule]
         public var clockFormat: ClockFormat
         public var hourNames: Bool
-        public var hideSystemMenuBar: Bool
     }
 
     public enum Scene: Equatable, Sendable {
@@ -165,7 +160,7 @@ public struct Surfaces: Equatable, Sendable {
         public var verseRotation: VerseRotation
     }
 
-    public enum TileLabel: String, CaseIterable, Sendable { case purpose, number, icons }
+    public enum TileLabel: String, CaseIterable, Sendable { case number, icons }
 
     public struct Dock: Equatable, Sendable {
         public var tileLabel: TileLabel
@@ -191,8 +186,8 @@ public struct Surfaces: Equatable, Sendable {
     }
 
     public struct NewTab: Equatable, Sendable {
+        /// The placeholder in the page's one field.
         public var question: String
-        public var chips: Bool
         public var verse: Bool
         /// An https URL with `{query}` in it.
         public var searchURL: String
@@ -214,28 +209,6 @@ public struct Surfaces: Equatable, Sendable {
         public var showVerse: Bool
         public var showKierkegaard: Bool
         public var startAfterMinutes: Int
-    }
-
-    /// Which days the wake alarm rings: all, Monday to Friday, or all but Sunday.
-    public enum AlarmDays: String, CaseIterable, Sendable { case every, weekdays, notSunday = "not-sunday" }
-
-    public struct Alarm: Equatable, Sendable {
-        /// Ring at `wakeAt`. Off until you turn it on.
-        public var wake: Bool
-        /// "HH:MM", 24 hour.
-        public var wakeAt: String
-        public var days: AlarmDays
-        /// On power, keep the Mac from idle sleep through the 12 hours before the alarm so it can ring.
-        public var keepAwake: Bool
-        /// The one-thing timer's default length.
-        public var timerMinutes: Int
-
-        public init(wake: Bool, wakeAt: String, days: AlarmDays, keepAwake: Bool, timerMinutes: Int) {
-            self.wake = wake; self.wakeAt = wakeAt; self.days = days; self.keepAwake = keepAwake; self.timerMinutes = timerMinutes
-        }
-
-        /// `wakeAt` as an hour and a minute; nil when it isn't "HH:MM".
-        public var time: (hour: Int, minute: Int)? { SurfaceCheck.time(wakeAt) }
     }
 
     public enum Translation: String, CaseIterable, Sendable { case bsb = "BSB" }
@@ -267,7 +240,6 @@ public struct Surfaces: Equatable, Sendable {
     public var menu: Menu
     public var newtab: NewTab
     public var idle: Idle
-    public var alarm: Alarm
     public var text: Text
     public var rooms: RoomsSettings
 
@@ -289,7 +261,6 @@ extension SurfaceField {
         ("menu", "The status menu (Polycarp's menu bar icon)."),
         ("newtab", "The browser's new tab page."),
         ("idle", "The idle screen (Martyr Night)."),
-        ("alarm", "The wake alarm and the one-thing timer."),
         ("text", "Where verses come from."),
         ("rooms", "The Baney Extended System's rooms: 0 Inbox, 1 Do, 2 Keep, 3 Know, 4 Let Go under one root."),
     ]
@@ -303,16 +274,14 @@ extension SurfaceField {
         SurfaceField("bar.style", .choice(Surfaces.BarStyle.allCases.map(\.rawValue)), .string("solid"),
                      "solid: the theme's surface color. glass: blurred and see-through. hairline: the desktop shows through, with a thin line under it."),
         SurfaceField("bar.modules.left", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
-                     ids(["mark", "workspaces", "app-menus", "purpose"]), "Modules at the left, in order."),
+                     ids(["mark", "workspaces", "app-menus"]), "Modules at the left, in order."),
         SurfaceField("bar.modules.center", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
                      ids(["clock"]), "Modules in the middle, in order."),
         SurfaceField("bar.modules.right", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
-                     ids(["one-thing", "status"]), "Modules at the right, in order."),
+                     ids(["status"]), "Modules at the right, in order."),
         SurfaceField("bar.clockFormat", .choice(Surfaces.ClockFormat.allCases.map(\.rawValue)), .string("day-12h"),
                      "The clock module: day-12h (Saturday 10:04 PM), day-24h (Saturday 22:04), 12h (3:05) or 24h (15:05)."),
         SurfaceField("bar.hourNames", .bool, .bool(true), "The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning)."),
-        SurfaceField("bar.hideSystemMenuBar", .bool, .bool(false),
-                     "Ask for the macOS menu bar to hide while Polycarp's bar is on: Polycarp opens System Settings > Menu Bar for you to choose Always. It never changes the setting itself. Polycarp's bar shows only where the macOS bar is hidden."),
 
         SurfaceField("desktop.scene", .tagged(choices: Surfaces.Scene.named, prefix: "image", pattern: SurfaceCheck.picturePattern,
                                               example: "image:dawn.png"),
@@ -325,8 +294,8 @@ extension SurfaceField {
                                                       example: "fixed:Psalm 46:10"),
                      .string("daily"), "daily, hourly, or fixed:<reference> for one verse always."),
 
-        SurfaceField("dock.tileLabel", .choice(Surfaces.TileLabel.allCases.map(\.rawValue)), .string("purpose"),
-                     "What each workspace tile says: its purpose (its number where it has none), its number, or only its apps' icons."),
+        SurfaceField("dock.tileLabel", .choice(Surfaces.TileLabel.allCases.map(\.rawValue)), .string("number"),
+                     "What each workspace tile says: its number, or only its apps' icons."),
         SurfaceField("dock.restTile", .bool, .bool(true), "An \"At rest\" tile after the workspaces gathers apps running with no window."),
 
         SurfaceField("menu.order", .ids(known: Surfaces.MenuRow.allCases.map(\.rawValue), custom: false),
@@ -334,8 +303,7 @@ extension SurfaceField {
         SurfaceField("menu.hidden", .ids(known: Surfaces.MenuRow.allCases.map(\.rawValue), custom: false), ids([]),
                      "Rows not shown. settings and quit can't be hidden."),
 
-        SurfaceField("newtab.question", .text(max: 160), .string("What is this hour for?"), "The question in the new tab's one field."),
-        SurfaceField("newtab.chips", .bool, .bool(false), "Your workspaces by purpose under the field; a click switches to one."),
+        SurfaceField("newtab.question", .text(max: 160), .string("Search or type an address"), "The placeholder in the new tab's one field."),
         SurfaceField("newtab.verse", .bool, .bool(true), "A verse on the new tab page."),
         SurfaceField("newtab.searchURL", .searchTemplate, .string("https://duckduckgo.com/?q={query}"),
                      "The search engine: an https URL with {query} where the words go."),
@@ -348,14 +316,6 @@ extension SurfaceField {
         SurfaceField("idle.showVerse", .bool, .bool(true), "A verse on the idle screen."),
         SurfaceField("idle.showKierkegaard", .bool, .bool(true), "A line from Kierkegaard on the idle screen."),
         SurfaceField("idle.startAfterMinutes", .integer(1...240), .number(10), "Minutes without input before the idle screen comes up."),
-
-        SurfaceField("alarm.wake", .bool, .bool(false), "Ring at alarm.wakeAt and open the morning question. Off until you turn it on."),
-        SurfaceField("alarm.wakeAt", .time, .string("06:30"), "When the wake alarm rings: \"HH:MM\" on the 24 hour clock, 00:00 to 23:59."),
-        SurfaceField("alarm.days", .choice(Surfaces.AlarmDays.allCases.map(\.rawValue)), .string("every"),
-                     "Which days ring: every (all), weekdays (Monday to Friday) or not-sunday (all but Sunday)."),
-        SurfaceField("alarm.keepAwake", .bool, .bool(true),
-                     "On power, keep the Mac from idle sleep through the 12 hours before the alarm so it can ring. The display still sleeps; a closed lid still sleeps the Mac."),
-        SurfaceField("alarm.timerMinutes", .integer(1...240), .number(25), "The one-thing timer's default length in minutes, 1 to 240."),
 
         SurfaceField("text.translation", .choice(Surfaces.Translation.allCases.map(\.rawValue)), .string("BSB"),
                      "The Bible translation. Only BSB (the Berean Standard Bible, public domain) for now."),
@@ -397,10 +357,11 @@ extension Surfaces {
     }
 
     /// Checks a whole file's tree. Errors are in path order; unknown keys are warnings, kept in the tree.
-    public static func check(_ doc: SurfaceValue) -> Result<Checked, SurfacesErrors> {
+    public static func check(_ file: SurfaceValue) -> Result<Checked, SurfacesErrors> {
         var errors: [SurfacesIssue] = []
         var warnings: [SurfacesIssue] = []
-        guard case .object = doc else { return .failure(SurfacesErrors([SurfacesIssue("$", "the file must be a JSON object, not \(doc.kind)")])) }
+        guard case .object = file else { return .failure(SurfacesErrors([SurfacesIssue("$", "the file must be a JSON object, not \(file.kind)")])) }
+        let doc = SurfaceCheck.retire(file, warnings: &warnings)
         SurfaceCheck.walk(doc, at: [], errors: &errors, warnings: &warnings)
         if let v = doc.at(["version"])?.integer, v > Surfaces.version {
             warnings.append(SurfacesIssue("version", "written by a newer Polycarp (format \(v)); this build reads the fields it knows"))
@@ -439,18 +400,16 @@ extension Surfaces {
                   center: list("bar.modules.center").compactMap(BarModule.init(id:)),
                   right: list("bar.modules.right").compactMap(BarModule.init(id:)),
                   clockFormat: ClockFormat(rawValue: s("bar.clockFormat")) ?? .dayTwelveHour,
-                  hourNames: b("bar.hourNames"), hideSystemMenuBar: b("bar.hideSystemMenuBar"))
+                  hourNames: b("bar.hourNames"))
         desktop = Desktop(scene: Scene(id: s("desktop.scene")), followDaylight: b("desktop.followDaylight"), verse: b("desktop.verse"),
                           versePosition: VersePosition(rawValue: s("desktop.versePosition")) ?? .bottomRight,
                           verseRotation: VerseRotation(id: s("desktop.verseRotation")))
-        dock = Dock(tileLabel: TileLabel(rawValue: s("dock.tileLabel")) ?? .purpose, restTile: b("dock.restTile"))
+        dock = Dock(tileLabel: TileLabel(rawValue: s("dock.tileLabel")) ?? .number, restTile: b("dock.restTile"))
         menu = Menu(order: list("menu.order").compactMap(MenuRow.init(rawValue:)), hidden: list("menu.hidden").compactMap(MenuRow.init(rawValue:)))
-        newtab = NewTab(question: s("newtab.question"), chips: b("newtab.chips"), verse: b("newtab.verse"), searchURL: s("newtab.searchURL"))
+        newtab = NewTab(question: s("newtab.question"), verse: b("newtab.verse"), searchURL: s("newtab.searchURL"))
         idle = Idle(enabled: b("idle.enabled"), style: IdleStyle(rawValue: s("idle.style")) ?? .martyrNight, effects: b("idle.effects"),
                     showMachineName: b("idle.showMachineName"), showVerse: b("idle.showVerse"),
                     showKierkegaard: b("idle.showKierkegaard"), startAfterMinutes: n("idle.startAfterMinutes"))
-        alarm = Alarm(wake: b("alarm.wake"), wakeAt: s("alarm.wakeAt"), days: AlarmDays(rawValue: s("alarm.days")) ?? .every,
-                      keepAwake: b("alarm.keepAwake"), timerMinutes: n("alarm.timerMinutes"))
         text = Text(translation: Translation(rawValue: s("text.translation")) ?? .bsb, verseSource: VerseSource(id: s("text.verseSource")))
         rooms = RoomsSettings(root: s("rooms.root"), menu: b("rooms.menu"))
     }
@@ -469,6 +428,32 @@ public struct SurfacesErrors: Error, Equatable, Sendable, CustomStringConvertibl
 }
 
 enum SurfaceCheck {
+    /// Values only a build with workspace purposes wrote, removed with them (2026-11-22): a file that holds one still
+    /// reads, with a warning, as if it were left out. A new write of one is refused like any unknown value.
+    static let retired: [String: Set<String>] = [
+        "bar.modules.left": ["purpose", "one-thing"], "bar.modules.center": ["purpose", "one-thing"],
+        "bar.modules.right": ["purpose", "one-thing"], "dock.tileLabel": ["purpose"],
+    ]
+
+    /// `doc` without its retired values: a list loses them, a field holding one is left out (its default).
+    static func retire(_ doc: SurfaceValue, warnings: inout [SurfacesIssue]) -> SurfaceValue {
+        var out = doc
+        for (path, gone) in retired.sorted(by: { $0.key < $1.key }) {
+            let keys = path.split(separator: ".").map(String.init)
+            guard let v = out.at(keys) else { continue }
+            if let s = v.string, gone.contains(s) {
+                warnings.append(SurfacesIssue(path, "\"\(s)\" went with workspace purposes; the default is used"))
+                out = out.removing(keys)
+            } else if let a = v.array {
+                let kept = a.filter { $0.string.map { !gone.contains($0) } ?? true }
+                guard kept.count != a.count else { continue }
+                for item in a { if let s = item.string, gone.contains(s) { warnings.append(SurfacesIssue(path, "\"\(s)\" went with workspace purposes; it is left out")) } }
+                out = out.setting(keys, to: .array(kept))
+            }
+        }
+        return out
+    }
+
     static let namePattern = "^[a-z0-9][a-z0-9-]{0,31}$"
     /// The same file names `ThemeWallpaper` takes for `image:`.
     static let picturePattern = "^[a-z0-9][a-z0-9-]{0,47}\\.(png|jpg|heic)$"
@@ -476,14 +461,6 @@ enum SurfaceCheck {
     /// A Bible reference: an optional book number, the book's name, a chapter, optionally a verse or a range.
     static let referencePattern = "^([1-3] )?[A-Za-z]+( [A-Za-z]+){0,3} [0-9]{1,3}(:[0-9]{1,3}(-[0-9]{1,3})?)?$"
     static let maxTemplate = 512
-    /// "HH:MM" on the 24 hour clock.
-    static let timePattern = "^([01][0-9]|2[0-3]):[0-5][0-9]$"
-
-    /// "06:30" as (6, 30); nil for anything that isn't "HH:MM" from 00:00 to 23:59.
-    static func time(_ s: String) -> (hour: Int, minute: Int)? {
-        guard matches(s, timePattern), let h = Int(s.prefix(2)), let m = Int(s.suffix(2)) else { return nil }
-        return (h, m)
-    }
 
     static func matches(_ s: String, _ pattern: String) -> Bool { s.range(of: pattern, options: .regularExpression) != nil }
 
@@ -555,9 +532,6 @@ enum SurfaceCheck {
                 if !seen.insert(id).inserted { return ("[\(i)]", "\"\(id)\" is listed twice") }
             }
             return nil
-        case .time:
-            guard let s = v.string else { return (nil, "must be a time \"HH:MM\" (24 hour, as \"06:30\"), not \(v.kind)") }
-            return time(s) == nil ? (nil, "must be a time \"HH:MM\" from 00:00 to 23:59 (as \"06:30\"), not \"\(s)\"") : nil
         }
     }
 
@@ -644,8 +618,6 @@ extension Surfaces {
                     item["enum"] = .array(known.map { .string($0) })
                 }
                 o["type"] = .string("array"); o["items"] = .object(item); o["uniqueItems"] = .bool(true)
-            case .time:
-                o["type"] = .string("string"); o["pattern"] = .string(SurfaceCheck.timePattern); o["examples"] = .array([.string("06:30")])
             }
             return .object(o)
         }

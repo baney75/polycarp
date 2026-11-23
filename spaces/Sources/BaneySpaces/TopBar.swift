@@ -4,8 +4,8 @@ import IOKit.ps
 import Network
 import SwiftUI
 
-/// Polycarp's top bar (`bar.*` in surfaces.json): one strip per screen with the workspace you're on, what it is for,
-/// today's one thing and the hour in words. It shows only where the macOS bar is set to hide
+/// Polycarp's top bar (`bar.*` in surfaces.json): one strip per screen with the workspace you're on and the hour in
+/// words. It shows only where the macOS bar is set to hide
 /// (`BarLayout.systemBarShown`), so pointing at the top edge still brings that bar and the app's menus down over it.
 /// It sits just under your windows (`BarLayout.levelBelowWindows`): a window that reaches the top of the screen covers
 /// it, so the bar never hides a window's buttons or title. It never takes focus and stays off full-screen apps. A click
@@ -17,9 +17,6 @@ final class TopBar {
     private var tick: Timer?
     private let network = NWPathMonitor()
     private var powerSource: CFRunLoopSource?
-    /// Set once System Settings was opened for `hideSystemMenuBar`, kept across launches, cleared when surfaces.json
-    /// turns it off (`BarLayout.menuBarAsk`): the pane opens once each time you turn the setting on.
-    private static let askedKey = "topBarAskedToHideMenuBar"
     private var loggedCovered = false
     private var menuPress: (Int) -> Void = { _ in }
     /// The app whose menus are being read or shown.
@@ -54,7 +51,7 @@ final class TopBar {
 
     func start() {
         let center = NotificationCenter.default
-        center.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload(fromFile: true) }
+        center.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload() }
         // style.css (docs/style.md): the views redraw from `Styles` on their own; the panels follow a new `height`.
         center.addObserver(forName: StyleSheetStore.didChange, object: nil, queue: .main) { [weak self] _ in
             Styles.shared.sync()
@@ -67,8 +64,8 @@ final class TopBar {
             Styles.shared.sync()
             if Styles.shared.book.barHeight(Double(self.model.bar.height)) != self.placedHeight { self.reload() }
         }
-        for name in [PurposeStore.didChange, OneThingTimerStore.didChange, NSApplication.didChangeScreenParametersNotification] {
-            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.reload() }
+        center.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.reload()
         }
         // Set in System Settings, the menu bar's hiding changes the visible frame (and posts this, undocumented).
         DistributedNotificationCenter.default().addObserver(forName: .init("AppleInterfaceMenuBarHidingChangedNotification"),
@@ -106,21 +103,17 @@ final class TopBar {
         reload()
     }
 
-    /// Workspaces changed: the numbers and the purpose follow at once.
+    /// Workspaces changed: the numbers follow at once.
     func workspacesChanged() {
         guard !panels.isEmpty else { return }
         readWorkspaces()
     }
 
-    /// Reads surfaces.json, the purposes and the screens, and puts a bar on each screen where the macOS bar is hidden.
-    /// `fromFile` is a change the store read from surfaces.json, the only kind that may clear the menu bar latch.
-    func reload(fromFile: Bool = false) {
+    /// Reads surfaces.json and the screens, and puts a bar on each screen where the macOS bar is hidden. Polycarp
+    /// never opens System Settings for it (2026-11-22): the trace says what to set when every screen's bar is covered.
+    func reload() {
         let bar = SurfacesStore.shared.current.bar
         model.bar = bar
-        let ask = BarLayout.menuBarAsk(wantsHidden: bar.hideSystemMenuBar && bar.enabled,
-                                       asked: UserDefaults.standard.bool(forKey: Self.askedKey), fromFile: fromFile)
-        UserDefaults.standard.set(ask.asked, forKey: Self.askedKey)
-        if ask.open { askToHideMenuBar() }
         guard bar.enabled else { removeAll(); return }
 
         let hidden = UserDefaults.standard.bool(forKey: "_HIHideMenuBar")
@@ -145,7 +138,6 @@ final class TopBar {
         }
         loggedCovered = covered > 0 && keep.isEmpty
         guard !panels.isEmpty else { stopTicking(); forgetReads(); return }
-        readPurposes()
         readWorkspaces()
         readBattery()
         readMenus()
@@ -272,21 +264,12 @@ final class TopBar {
         }
     }
 
-    private func readPurposes() {
-        let store = PurposeKeeper.shared.purposes
-        let all = store.snapshot.all
-        if model.purposes != all { model.purposes = all }
-        let one = store.oneThing?.text
-        if model.oneThing != one { model.oneThing = one }
-    }
-
     private func readWorkspaces() {
         var current: [CGDirectDisplayID: Int] = [:]
         for screen in NSScreen.screens { if let id = screen.displayID { current[id] = spaces.workspace(onScreen: screen) } }
         let occupied = Set(Workspaces.range.filter { !spaces.model.windows(on: $0).isEmpty })
         if model.current != current { model.current = current }
         if model.occupied != occupied { model.occupied = occupied }
-        readPurposes()
     }
 
     fileprivate func readBattery() {
@@ -306,22 +289,16 @@ final class TopBar {
         if model.battery != text { model.battery = text }
     }
 
-    /// The clock and the hour change on the minute; the timer is set for the next one, not every second. While the
-    /// one-thing timer runs, also when its time left reads differently (`BarText.timerNextChange`).
+    /// The clock and the hour change on the minute; the timer is set for the next one, not every second.
     private func refreshTime() {
         let now = Date()
         model.now = now
         model.verse = Verses.pick(SurfacesStore.shared.current.desktop.verseRotation, at: now)
-        // An app can change its menus without coming forward again (Electron apps do on a window change). Once a minute,
-        // though a running timer ticks this each second.
+        // An app can change its menus without coming forward again (Electron apps do on a window change). Once a minute.
         let minute = BarText.nextMinute(after: now)
         if minute != menuMinute { menuMinute = minute; readMenus() }
-        let left = PurposeKeeper.shared.timer.flatMap { $0.done(now: now) ? nil : $0.remaining(now: now) }
-        if model.timerLeft.map(BarText.timer(remaining:)) != left.map(BarText.timer(remaining:)) { model.timerLeft = left }
-        var fire = minute
-        if let left { fire = min(fire, now.addingTimeInterval(BarText.timerNextChange(remaining: left))) }
         tick?.invalidate()
-        let t = Timer(fire: fire, interval: 0, repeats: false) { [weak self] _ in self?.refreshTime() }
+        let t = Timer(fire: minute, interval: 0, repeats: false) { [weak self] _ in self?.refreshTime() }
         t.tolerance = 1
         RunLoop.main.add(t, forMode: .common)
         tick = t
@@ -330,14 +307,6 @@ final class TopBar {
     private func stopTicking() {
         tick?.invalidate()
         tick = nil
-    }
-
-    /// Polycarp never writes the menu bar setting: it opens the pane where you choose Always.
-    private func askToHideMenuBar() {
-        guard !UserDefaults.standard.bool(forKey: "_HIHideMenuBar"),
-              let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension?MenuBar") else { return }
-        Trace.log("top bar: opening System Settings > Menu Bar so you can set the macOS menu bar to hide")
-        NSWorkspace.shared.open(url)
     }
 }
 
@@ -350,10 +319,6 @@ final class TopBarModel: ObservableObject {
     @Published var now = Date()
     @Published var current: [CGDirectDisplayID: Int] = [:]
     @Published var occupied: Set<Int> = []
-    @Published var purposes: [Int: String] = [:]
-    @Published var oneThing: String?
-    /// Seconds left on the one-thing timer while it runs.
-    @Published var timerLeft: TimeInterval?
     @Published var battery: String?
     @Published var offline = false
     @Published var verse: Verse?
@@ -407,7 +372,7 @@ struct TopBarView: View {
                     row(places.right, .right).frame(width: max(0, sides.right - pad.trailing), alignment: .trailing)
                 }
             } else {
-                // Each place gets its share of the width, so a long purpose or one thing shortens instead of running
+                // Each place gets its share of the width, so a long verse or app menu row shortens instead of running
                 // into the next: the middle up to half, the sides what is left either side of it.
                 GeometryReader { g in
                     let middle = places.center.isEmpty ? 0 : g.size.width * BarLayout.middleShare
@@ -497,29 +462,6 @@ struct TopBarView: View {
                 .accessibilityAddTraits(.isButton)
         case .workspaces:
             numbers(s, region)
-        case .purpose:
-            // Nothing at all when the workspace has no purpose (`BarText.purpose`).
-            if let p = BarText.purpose(model.purposes[here]) {
-                words(p, s).foregroundStyle(s.ink(Chrome.wash(0.85))).truncationMode(.tail)
-                    .help("Workspace \(here) is for: \(p)")
-            }
-        case .oneThing:
-            // Nothing at all with no one thing and no timer (`BarText.oneThing`), so an empty day is a clean bar.
-            if let one = BarText.oneThing(model.oneThing, timerLeft: model.timerLeft) {
-                HStack(spacing: 8) {
-                    if let t = one.text {
-                        words(t, s).foregroundStyle(s.ink(Chrome.wash(0.85))).truncationMode(.tail)
-                            .help("Today's one thing: \(t)")
-                    }
-                    // The one-thing timer's time left, muted, after the one thing.
-                    if let timer = one.timer {
-                        words(timer, s).foregroundStyle(s.ink(Chrome.wash(0.5), dim: 0.6)).fixedSize()
-                            .help("The one-thing timer: \(timer) left")
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(["One thing", one.text, one.timer.map { "\($0) left" }].compactMap { $0 }.joined(separator: ", "))
-            }
         case .hour:
             words(BarText.hour(model.now, names: model.bar.hourNames), s).foregroundStyle(s.ink(Chrome.wash(0.85)))
         case .clock:
@@ -632,7 +574,7 @@ struct TopBarView: View {
                 .padding(.vertical, 4)
                 .contentShape(Rectangle())
                 .onTapGesture { model.onPick(n, screen) }
-                .help(model.purposes[n].map { "Workspace \(n): \($0)" } ?? "Workspace \(n)")
+                .help("Workspace \(n)")
                 .accessibilityLabel(on ? "Workspace \(n), you're here" : "Workspace \(n)")
                 .accessibilityAddTraits(.isButton)
             }

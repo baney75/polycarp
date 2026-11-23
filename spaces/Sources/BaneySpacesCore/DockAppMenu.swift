@@ -12,7 +12,7 @@ public enum DockAppMenu {
         public init(id: WindowID, title: String) { self.id = id; self.title = title }
     }
 
-    /// One workspace in "Move to Workspace": "Workspace 2", or "Workspace 2  ·  Gannon letter" when it has a purpose.
+    /// One workspace in "Move to Workspace": "Workspace 2".
     public struct Target: Equatable, Sendable {
         public let workspace: Int
         public let title: String
@@ -38,18 +38,15 @@ public enum DockAppMenu {
         case divider
     }
 
-    /// `windows` is the app's windows on the tile's `workspace`; `purposes` names workspaces by number.
-    public static func items(windows: [Window], app: String, workspace: Int, isCurrent: Bool, purposes: [Int: String] = [:],
-                             range: ClosedRange<Int> = 1...9) -> [Item] {
+    /// `windows` is the app's windows on the tile's `workspace`.
+    public static func items(windows: [Window], app: String, workspace: Int, isCurrent: Bool, range: ClosedRange<Int> = 1...9) -> [Item] {
         var out: [Item] = []
         if windows.count >= 2 {
             out += windows.map { .window(Window(id: $0.id, title: $0.title.isEmpty ? app : $0.title)) }
             out.append(.divider)
         }
         out.append(.show)
-        let targets = range.filter { $0 != workspace }.map { n in
-            Target(workspace: n, title: purposes[n].flatMap { $0.isEmpty ? nil : "Workspace \(n)  ·  \($0)" } ?? "Workspace \(n)")
-        }
+        let targets = range.filter { $0 != workspace }.map { Target(workspace: $0, title: "Workspace \($0)") }
         if !windows.isEmpty, !targets.isEmpty { out.append(.moveTo(targets)) }
         if !isCurrent { out.append(.moveFrontHere) }
         out += [.hide, .options, .divider, .quit, .divider, .dock]

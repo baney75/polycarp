@@ -66,7 +66,7 @@ enum Chrome {
     static func wash(_ opacity: Double = 1) -> Color { Appearance.color(look.color("foreground")).opacity(opacity) }
 
     /// Plain white at `opacity`: text on a workspace's own tint in the BaneySpaces theme, which dims the tints for it.
-    /// The theme's warm color (its "working" role; gold in the Polycarp theme): the one thing, a verse's reference.
+    /// The theme's warm color (its "working" role; gold in the Polycarp theme): a verse's reference.
     static var gold: Color { Appearance.color(look.color("working")) }
 
     static func light(_ opacity: Double = 1) -> Color { Appearance.color(look.color("light")).opacity(opacity) }
@@ -181,8 +181,8 @@ enum Chrome {
     }
 
     /// Text at a size written for the 12 pt base, in the theme's family and weight.
-    /// The voice for words you gave Polycarp (a workspace's purpose, the one thing): serif italic, at the theme's scale
-    /// and weights, so it reads as yours beside the interface's own labels.
+    /// The quiet serif voice ("At rest"): serif italic, at the theme's scale and weights, so it reads apart from the
+    /// interface's own labels.
     static func voice(_ size: Double, _ weight: TextWeight = .regular) -> Font {
         let f = look.spec.font
         return .system(size: CGFloat(f.size(size)), weight: f.weight(weight).swiftUI, design: .serif).italic()

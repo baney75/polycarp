@@ -19,8 +19,6 @@ window id, or a pid.
 | `play <file>` ([player.md](player.md), R-P8) | yes | retired | not supported yet |
 | `contacts find <query> [--json] [--full]`, `contacts call\|facetime\|message\|email <query> [--text T]` ([contacts.md](../../docs/contacts.md)): opens the app with a draft, never sends | yes | retired | not supported yet |
 | `agent windows` | yes | yes | yes |
-| `purpose list\|set <n> <text>\|clear <n>`, `one <text>\|--clear`, `day` (`--json` on each; local callers only) | yes | retired | not supported yet |
-| `timer [minutes]\|stop\|status [--json]`: the one-thing timer, 1 to 240 minutes (`alarm.timerMinutes` when bare; local callers only) | yes | retired | not supported yet |
 | `agent open <app> [file...]` | removed: computer use is Tychicus | yes: an allowlisted app by name, files from the handoff folder only | yes |
 | `agent run [--dir D] -- CMD` | removed: computer use is Tychicus | yes | yes |
 | `agent move <window>`, `agent bring <window>` | `agent move <window>` only ([agent-workspace-api.md](../docs/agent-workspace-api.md)) | yes | yes |

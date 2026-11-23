@@ -55,20 +55,6 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(Surfaces.ClockFormat.allCases.filter(\.withDay), [.dayTwelveHour, .dayTwentyFourHour])
     }
 
-    /// An empty day is a clean bar: `purpose` and `one-thing` draw nothing at all when nothing is named.
-    func testAnEmptyDayDrawsNoPurposeAndNoOneThing() {
-        XCTAssertNil(BarText.purpose(nil))
-        XCTAssertNil(BarText.purpose(""))
-        XCTAssertNil(BarText.purpose("  \n"))
-        XCTAssertEqual(BarText.purpose(" Write the paper "), "Write the paper")
-        XCTAssertNil(BarText.oneThing(nil, timerLeft: nil))
-        XCTAssertNil(BarText.oneThing(" ", timerLeft: nil))
-        XCTAssertEqual(BarText.oneThing("Finish the draft", timerLeft: nil), .init(text: "Finish the draft", timer: nil))
-        let timed = BarText.oneThing(nil, timerLeft: 125)
-        XCTAssertNil(timed?.text)
-        XCTAssertEqual(timed?.timer, BarText.timer(remaining: 125), "a running timer shows with nothing named")
-    }
-
     func testDateAndNextMinute() {
         XCTAssertEqual(BarText.date(at(21, 9), calendar: cal), "November 21")
         let next = BarText.nextMinute(after: at(21, 9, 12).addingTimeInterval(30), calendar: cal)
@@ -95,9 +81,9 @@ final class TopBarTests: XCTestCase {
 
     func testTheLedgerDefaults() {
         let bar = Surfaces.defaults.bar
-        XCTAssertEqual(bar.left, [.mark, .workspaces, .appMenus, .purpose])
+        XCTAssertEqual(bar.left, [.mark, .workspaces, .appMenus])
         XCTAssertEqual(bar.center, [.clock])
-        XCTAssertEqual(bar.right, [.oneThing, .status])
+        XCTAssertEqual(bar.right, [.status])
         XCTAssertEqual(bar.height, 26)
         XCTAssertEqual(bar.clockFormat, .dayTwelveHour)
         XCTAssertTrue((bar.left + bar.center + bar.right).allSatisfy(BarLayout.drawn))
@@ -143,32 +129,18 @@ final class TopBarTests: XCTestCase {
         XCTAssertFalse(code.contains(".mainMenuWindow"), "never over windows")
     }
 
-    /// Review of #587: System Settings opens once each time `hideSystemMenuBar` turns on, not on every launch.
-    func testTheMenuBarPaneOpensOncePerTurnOn() throws {
-        // Two launches with the setting on: each starts on the defaults, then the file arrives a moment later.
-        var asked = false, opened = 0
-        func reload(wants: Bool, fromFile: Bool) {
-            let r = BarLayout.menuBarAsk(wantsHidden: wants, asked: asked, fromFile: fromFile)
-            asked = r.asked
-            if r.open { opened += 1 }
-        }
-        for _ in 1...2 {
-            reload(wants: false, fromFile: false)
-            reload(wants: true, fromFile: true)
-        }
-        XCTAssertEqual(opened, 1, "the late read at the second launch doesn't open the pane again")
-        reload(wants: false, fromFile: true)
-        reload(wants: true, fromFile: true)
-        XCTAssertEqual(opened, 2, "turning it off in the file and on again asks again")
+    /// 2026-11-22: the bar never opens System Settings or any other window to ask for something.
+    func testTheBarOpensNothing() throws {
         let code = try app("TopBar.swift")
-        XCTAssertTrue(code.contains("forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.reload(fromFile: true) }"))
-        XCTAssertEqual(code.components(separatedBy: "fromFile: true").count, 2, "only the surfaces change counts as the file")
+        XCTAssertFalse(code.contains("x-apple.systempreferences"), "no System Settings pane")
+        XCTAssertFalse(code.contains("NSWorkspace.shared.open("), "it opens no URL or app")
+        XCTAssertFalse(code.contains("NSAlert"), "no alert")
     }
 
     func testTheMiddleLeavesRoomForTheSides() {
         let width = 1280.0, gap = 12.0
         let side = (width - width * BarLayout.middleShare) / 2 - gap
-        XCTAssertGreaterThan(side, 300, "the mark, the dots and a purpose fit beside the middle on a 1280-point screen")
+        XCTAssertGreaterThan(side, 300, "the mark, the dots and the app menus fit beside the middle on a 1280-point screen")
     }
 
     /// The front app's menu bar as the bar draws it: the Apple menu as the logo, the app's menu in bold, an icon-only

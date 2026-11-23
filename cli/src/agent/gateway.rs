@@ -46,12 +46,12 @@ pub enum From {
 }
 
 // ------------------------------------------------------------------------------------------------
-// EXTENSION POINTS: purposes, surfaces and contacts.
+// EXTENSION POINTS: surfaces and contacts.
 //
-// The features on feat/purpose, feat/surfaces and feat/contacts each add their MCP tools here by implementing
+// The features on feat/surfaces and feat/contacts each add their MCP tools here by implementing
 // `Provider` and returning it from `extensions()`. Nothing here depends on those branches. The rules every provider
 // gets for free, and can't opt out of:
-// - Its tools need the scope its area says (`Area::scope`): purposes and surfaces need read or act per tool, and every
+// - Its tools need the scope its area says (`Area::scope`): surfaces need read or act per tool, and every
 //   contacts tool needs `contacts`, a scope a connection gets only when the owner grants it by name.
 // - A built-in tool name always wins: a provider can't replace theme_*, files_*, app_* or workspace_*.
 // - Its results reach the assistant as data, in the same envelope.
@@ -61,8 +61,6 @@ pub enum From {
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Area {
-    /// What the owner is working toward (feat/purpose).
-    Purposes,
     /// Product surfaces the owner arranges (feat/surfaces).
     Surfaces,
     /// The owner's people (feat/contacts). Always the `contacts` scope.
@@ -88,7 +86,7 @@ pub struct ExtTool {
     pub read_only: bool,
 }
 
-/// What feat/purpose, feat/surfaces and feat/contacts implement.
+/// What feat/surfaces and feat/contacts implement.
 pub trait Provider: Send + Sync {
     fn area(&self) -> Area;
     fn tools(&self) -> Vec<ExtTool>;
@@ -520,7 +518,7 @@ mod tests {
                 .unwrap()
                 .1
         );
-        assert_eq!(Area::Purposes.scope(true), "read");
+        assert_eq!(Area::Surfaces.scope(true), "read");
         assert_eq!(Area::Surfaces.scope(false), "act");
     }
 

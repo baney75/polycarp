@@ -29,10 +29,10 @@ final class DockAppMenuTests: XCTestCase {
         XCTAssertEqual(items, [.show, .moveTo(all), .moveFrontHere, .hide, .options, .divider, .quit, .divider, .dock])
     }
 
-    func testMoveToWorkspaceNamesEachByItsPurpose() {
-        let items = DockAppMenu.items(windows: one, app: "Mail", workspace: 1, isCurrent: true, purposes: [2: "Gannon letter", 3: ""])
+    func testMoveToWorkspaceNamesEachByItsNumber() {
+        let items = DockAppMenu.items(windows: one, app: "Mail", workspace: 1, isCurrent: true)
         guard case .moveTo(let all) = items[1] else { return XCTFail("Move to Workspace comes after Show") }
-        XCTAssertEqual(all.prefix(2).map(\.title), ["Workspace 2  ·  Gannon letter", "Workspace 3"])
+        XCTAssertEqual(all.prefix(2).map(\.title), ["Workspace 2", "Workspace 3"])
         XCTAssertEqual(all.map(\.workspace), Array(2...9))
     }
 

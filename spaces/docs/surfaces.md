@@ -1,9 +1,7 @@
 # Surfaces: one file for every Polycarp surface
 
 `surfaces.json` says how each Polycarp surface looks and behaves: the top bar, the desktop scene and its verse, the
-Workspace Dock's tiles, the status menu, the browser's new tab page, the idle screen, and the wake alarm and one-thing
-timer. Agents and the owner edit it
-with `polycarp-spaces surfaces`, or over MCP with `polycarp mcp`. A running Polycarp picks up a change within 150 ms;
+Workspace Dock's tiles, the status menu, the browser's new tab page and the idle screen. Agents and the owner edit it with `polycarp-spaces surfaces`, or over MCP with `polycarp mcp`. A running Polycarp picks up a change within 150 ms;
 nothing restarts.
 
 Colors, fonts and the theme's wallpaper stay in the theme (`polycarp theme`, `themes/*.toml`). This file says what each
@@ -85,14 +83,13 @@ Error codes: `invalid_value` (the value fails its check), `unknown_path` (no suc
 | `bar.enabled` | `false` | `true` or `false`. Show Polycarp's top bar. Off until you turn it on. |
 | `bar.height` | `26` | A whole number of points, 22 to 40. |
 | `bar.style` | `"solid"` | `solid` (the theme's background color), `glass` (blurred, see-through) or `hairline` (the desktop shows through, with a thin line under it). |
-| `bar.modules.left` | `["mark","workspaces","app-menus","purpose"]` | Module ids, in order. |
+| `bar.modules.left` | `["mark","workspaces","app-menus"]` | Module ids, in order. |
 | `bar.modules.center` | `["clock"]` | Module ids, in order. |
-| `bar.modules.right` | `["one-thing","status"]` | Module ids, in order. |
+| `bar.modules.right` | `["status"]` | Module ids, in order. |
 | `bar.clockFormat` | `"day-12h"` | `day-12h` (Saturday 10:04 PM), `day-24h` (Saturday 22:04), `12h` (3:05) or `24h` (15:05). |
 | `bar.hourNames` | `true` | The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning). |
-| `bar.hideSystemMenuBar` | `false` | Ask for the macOS menu bar to hide: Polycarp opens System Settings > Menu Bar for you to choose Always. It never changes the setting itself. |
 
-Module ids: `mark`, `workspaces`, `purpose`, `one-thing`, `app-menus`, `status`, `hour`, `clock`, `date`, `verse`,
+Module ids: `mark`, `workspaces`, `app-menus`, `status`, `hour`, `clock`, `date`, `verse`,
 `battery`, `network`, and `custom:<name>` (lowercase letters, digits and hyphens, up to 32) for a module of your own.
 
 What each one draws:
@@ -101,8 +98,6 @@ What each one draws:
 | --- | --- |
 | `mark` | Polycarp's vine mark. Click it for Polycarp's menu (Settings, Quit and the rest), which `status` leaves out. |
 | `workspaces` | A number for each workspace with windows and the one you're on, in order: `1 2 4`. The one you're on is bright over a short accent line (on an accent block in a `number-block` theme, such as Omarchy); the others are muted. Click one to go there. |
-| `purpose` | What the workspace you're on is for (`polycarp-spaces purpose set`). Nothing at all when it has none. |
-| `one-thing` | Today's one thing (`polycarp-spaces one`) and the timer's time left while it runs. Nothing at all when there is neither. |
 | `hour` | The day and the hour in words: "Saturday, Terce". Sunday is the Lord's Day. |
 | `clock` | Saturday 10:04 PM by default; Saturday 22:04 with `clockFormat` day-24h, 3:05 with 12h, 15:05 with 24h. |
 | `date` | November 21. |
@@ -116,12 +111,17 @@ What each one draws:
 **The look.** The bar follows Omarchy's: one solid strip in the theme's background color, one monospace face for all
 of it (the Polycarp theme's `type.mono` stack when one is in force, else SF Mono) at 12 points, the app's name in
 semibold and its menus regular, modules 14 points apart with no separators, and no color but the accent under the
-workspace you're on. **An empty day is a clean bar:** with no purpose for the workspace, no one thing and no timer
-running, the bar shows the mark, the numbers, the app's menus, the clock and the status row, nothing else.
+workspace you're on. By default the bar shows the mark, the numbers, the app's menus, the clock and the status row,
+nothing else.
 
-**Saved module lists are not changed.** The defaults above (the clock in the middle, the one thing at the right, no
+**Saved module lists are not changed.** The defaults above (the clock in the middle, the status row at the right, no
 `hour`) are for a file that sets no `bar.modules` place. A file that already lists its modules keeps them as they are;
 to take the new layout, `polycarp-spaces surfaces reset bar.modules`.
+
+**Retired values still read.** Workspace purposes, the day's focus and the menu bar ask were removed on 2026-11-22. A
+file written before then still reads, with a warning for each retired value: `purpose` and `one-thing` are left out
+of a module list, a `dock.tileLabel` of `purpose` falls back to `number`, and `bar.hideSystemMenuBar`, `newtab.chips`
+and an `alarm` section are ignored as unknown keys. `surfaces set` refuses them.
 
 `app-menus` and `status` read through the Accessibility permission Polycarp already has; no pixels are copied, so
 they need no Screen Recording. A status item that macOS or its app doesn't show to Accessibility isn't drawn.
@@ -157,7 +157,7 @@ lilies stand opposite it.
 
 | Path | Default | Takes |
 | --- | --- | --- |
-| `dock.tileLabel` | `"purpose"` | What each workspace tile says: `purpose` (the workspace's purpose in italic under the tile, with its number in the tile's corner; the number alone where it has no purpose), `number`, or `icons` (only its apps' icons). |
+| `dock.tileLabel` | `"number"` | What each workspace tile says: `number` (its number under the tile) or `icons` (only its apps' icons). |
 | `dock.restTile` | `true` | An "At rest" tile after the workspaces gathers apps running with no window. Off, they don't show on the dock. |
 
 ### `menu`: the status menu (Polycarp's menu bar icon)
@@ -174,8 +174,7 @@ Row ids: `workspaces`, `show-all`, `find`, `agents` (agents that finished while 
 
 | Path | Default | Takes |
 | --- | --- | --- |
-| `newtab.question` | `"What is this hour for?"` | One line, not blank, up to 160 characters. |
-| `newtab.chips` | `false` | Your workspaces by purpose under the field; a click switches to one. |
+| `newtab.question` | `"Search or type an address"` | The placeholder in the new tab's one field: one line, not blank, up to 160 characters. |
 | `newtab.verse` | `true` | A verse on the page. |
 | `newtab.searchURL` | `"https://duckduckgo.com/?q={query}"` | An `https://` URL with `{query}` once, where the search words go. |
 
@@ -198,37 +197,12 @@ app under it. It doesn't come up while an app keeps the display awake (a video p
 screen saver, lock or display sleep has the screen; those still come in their time, over it. To see it soon: `polycarp-spaces surfaces set idle
 '{"enabled":true,"startAfterMinutes":1}'`.
 
-### `alarm`: the wake alarm and the one-thing timer
-
-| Path | Default | Takes |
-| --- | --- | --- |
-| `alarm.wake` | `false` | Ring at `alarm.wakeAt` and open the morning question. Off until you turn it on. |
-| `alarm.wakeAt` | `"06:30"` | When: `"HH:MM"` on the 24 hour clock, `00:00` to `23:59` (`"6:30"` is refused; write `"06:30"`). |
-| `alarm.days` | `"every"` | Which days ring: `every` (all), `weekdays` (Monday to Friday) or `not-sunday` (all but Sunday). |
-| `alarm.keepAwake` | `true` | On power, keep the Mac from idle sleep through the 12 hours before the alarm so it can ring. |
-| `alarm.timerMinutes` | `25` | The one-thing timer's default length in minutes: 1 to 240. |
-
-At `wakeAt`, on a day `days` allows, Polycarp lights the display, takes the idle screen down and plays Glass (a macOS
-sound), then again each minute up to five rings in all; any key, click or move stops it. If the morning question hasn't
-been given today, its card opens, unless the morning question is off, it is a resting Sunday, or the alarm is before
-4 am (that ring belongs to the night, and 4 am asks on its own). On a DST day the alarm keeps the clock time and rings
-once. Only a Mac that is awake can ring: nothing runs once it sleeps, and waking it takes root. So with `keepAwake` on
-and the Mac on power, Polycarp holds off idle sleep ("Polycarp wake alarm" in `pmset -g assertions`) through the 12
-hours before the alarm, which covers the night; the display still sleeps. On battery, or with the lid closed, the Mac
-sleeps as it would and the alarm can't ring. An alarm the Mac slept through doesn't ring late; one woken for within a
-minute of its time still rings. The one-thing timer is started from the status menu ("Start a timer (25 min)") or
-`polycarp-spaces timer [minutes]`; its time left shows after the one thing in the bar, and Glass plays once at its end.
-To try it: `polycarp-spaces surfaces set alarm '{"wake":true,"wakeAt":"07:00","days":"weekdays"}'`.
-
 ### `text`: where verses come from
 
 | Path | Default | Takes |
 | --- | --- | --- |
 | `text.translation` | `"BSB"` | The Bible translation. Only `BSB` (the Berean Standard Bible, public domain) for now. |
 | `text.verseSource` | `"built-in"` | `built-in`, or `file:<name>.json` for a list of references in the support folder's `verses/` folder. |
-
-Not here yet: the morning question, the evening examen and Sunday rest. They belong to workspace purposes and the day
-ledger, which are built separately; this file will mirror them once that work lands.
 
 ### `rooms`: the Baney Extended System's rooms
 
@@ -250,15 +224,15 @@ polycarp-spaces surfaces set bar.modules '{"left":["mark","workspaces"],"center"
 polycarp-spaces surfaces set desktop.verseRotation '"fixed:Psalm 46:10"'
 polycarp-spaces surfaces set desktop.versePosition top-right
 
-# Dock tiles by purpose; rest after an hour.
-polycarp-spaces surfaces set dock.tileLabel purpose
+# Dock tiles with only their apps' icons; no "At rest" tile.
+polycarp-spaces surfaces set dock.tileLabel icons
 polycarp-spaces surfaces set dock.restTile false
 
 # A quieter menu.
 polycarp-spaces surfaces set menu.hidden '["find","agents"]'
 
-# The new tab page's question and search engine.
-polycarp-spaces surfaces set newtab.question '"Purity of heart is to will one thing."'
+# The new tab page's placeholder and search engine.
+polycarp-spaces surfaces set newtab.question '"Search the web"'
 polycarp-spaces surfaces set newtab.searchURL '"https://search.brave.com/search?q={query}"'
 
 # Check a draft before putting it in place; undo one change; start over.
@@ -308,10 +282,9 @@ NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object:
 ```
 
 The model is `Surfaces` in BaneySpacesCore: `bar` (`Bar`: `enabled`, `height`, `style`, `left`, `center`, `right` as
-`[BarModule]`, `clockFormat`, `hourNames`, `hideSystemMenuBar`), `desktop` (`scene`, `followDaylight`, `verse`,
+`[BarModule]`, `clockFormat`, `hourNames`), `desktop` (`scene`, `followDaylight`, `verse`,
 `versePosition`, `verseRotation`), `dock` (`tileLabel`, `restTile`), `menu` (`order`, `hidden`, and
-`rows`, the rows to show in order), `newtab` (`question`, `chips`, `verse`, `searchURL`, and `searchURL(for:)`), `idle`
-(`enabled`, `style`, `effects`, `showMachineName`, `showVerse`, `showKierkegaard`, `startAfterMinutes`), `alarm` (`wake`,
-`wakeAt`, `days`, `keepAwake`, `timerMinutes`, and `time`, the hour and minute) and `text` (`translation`, `verseSource`). `SurfaceField.all` is the one list of fields: validation, defaults, the model and the schema all read it.
+`rows`, the rows to show in order), `newtab` (`question`, `verse`, `searchURL`, and `searchURL(for:)`), `idle`
+(`enabled`, `style`, `effects`, `showMachineName`, `showVerse`, `showKierkegaard`, `startAfterMinutes`) and `text` (`translation`, `verseSource`). `SurfaceField.all` is the one list of fields: validation, defaults, the model and the schema all read it.
 
 Test hook: `POLYCARP_SURFACES_FILE` (an absolute path) points the command at another file. Never set in real use.

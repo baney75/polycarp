@@ -1,5 +1,6 @@
 import AppKit
 import BaneySpacesCore
+import IOKit
 import IOKit.pwr_mgt
 import SwiftUI
 import SystemConfiguration
@@ -19,8 +20,6 @@ final class IdleCover {
     private var monitor: Any?
     private var cursorHidden = false
     private var screenSaverRunning = false
-    /// Set by `hideUntilInput`: the idle time at the last look, until there is input (`IdleScreen.hold`).
-    private var held: TimeInterval?
 
     var isUp: Bool { !windows.isEmpty }
 
@@ -42,15 +41,14 @@ final class IdleCover {
     private func look() {
         let settings = SurfacesStore.shared.current.idle
         guard !isUp, settings.enabled else { return }
-        let idle = PurposeKeeper.idleSeconds()
-        held = IdleScreen.hold(held, idle: idle)
-        guard held == nil, IdleScreen.shouldStart(idle: idle, settings: settings, displayHeldAwake: Self.displayHeldAwake(),
+        let idle = Self.idleSeconds()
+        guard IdleScreen.shouldStart(idle: idle, settings: settings, displayHeldAwake: Self.displayHeldAwake(),
                                      systemHasScreen: screenSaverRunning || Self.locked() || Self.displaysAsleep()) else { return }
         show(idle: idle)
     }
 
     /// Puts the cover up now, whatever the time since the last input.
-    func show(idle: TimeInterval = PurposeKeeper.idleSeconds()) {
+    func show(idle: TimeInterval = IdleCover.idleSeconds()) {
         // With no screen there is no window to take away, so the hidden cursor and the monitor would stay.
         guard !isUp, !NSScreen.screens.isEmpty else { return }
         let settings = SurfacesStore.shared.current.idle
@@ -94,16 +92,20 @@ final class IdleCover {
 
     /// A move of the pointer, or input that reached another process first, shows as the idle time going down.
     private func checkInput() {
-        let idle = PurposeKeeper.idleSeconds()
+        let idle = Self.idleSeconds()
         if IdleScreen.inputSince(lastIdle: lastIdle, idle: idle) { hide(); return }
         lastIdle = idle
     }
 
-    /// Takes the cover down and keeps it down until the next key, click or move: the wake alarm rings over a Mac
-    /// that has had no input all night.
-    func hideUntilInput() {
-        held = PurposeKeeper.idleSeconds()
-        hide()
+    /// Seconds since the last keyboard, mouse or trackpad input: IOHIDSystem's HIDIdleTime, the same value
+    /// `ioreg -c IOHIDSystem` prints. 0 when it can't be read.
+    static func idleSeconds() -> TimeInterval {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOHIDSystem"))
+        guard service != 0 else { return 0 }
+        defer { IOObjectRelease(service) }
+        guard let value = IORegistryEntryCreateCFProperty(service, "HIDIdleTime" as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? NSNumber else { return 0 }
+        return value.doubleValue / 1_000_000_000
     }
 
     func hide() {
@@ -222,7 +224,7 @@ struct IdleView: View {
     }
 
     private func words(_ date: Date) -> some View {
-        let c = IdleScreen.content(settings, at: date, machine: machine, twentyFourHour: MenuNow.usesTwentyFourHourClock)
+        let c = IdleScreen.content(settings, at: date, machine: machine, twentyFourHour: IdleScreen.usesTwentyFourHourClock)
         let h = size.height
         let shift = IdleScreen.drift(at: date)
         return ZStack {
