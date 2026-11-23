@@ -346,14 +346,16 @@ mod tests {
             "\"$HOME/.local/bin/polycarp\"",
             "\"/Applications/Polycarp.app/Contents/Resources/bin/polycarp\"",
             "\"$HOME/Applications/Polycarp.app/Contents/Resources/bin/polycarp\"",
-            "\"$(command -v polycarp 2>/dev/null)\"",
+            "for d in $PATH; do",
         ];
         let at: Vec<usize> = order
             .iter()
             .map(|spot| script.find(spot).unwrap_or_else(|| panic!("no {spot}")))
             .collect();
         assert!(at.windows(2).all(|w| w[0] < w[1]), "out of order: {at:?}");
-        assert!(script.contains("case \"$p\" in /*) ;; *) continue ;; esac"));
+        // Only absolute PATH entries are searched: sh would read "." or an empty entry as the working folder.
+        assert!(script.contains("case \"$d\" in /*) ;; *) continue ;; esac"));
+        assert!(!script.contains("$(command -v"));
         assert!(script.contains("exec \"$p\" agent serve --stdio"));
         assert!(script.contains("exit 127"));
     }
