@@ -65,12 +65,20 @@ enum BarReader {
             let ax = AX.app(app.pid, timeout: 0.1)
             let bar: AXUIElement? = ax.value("AXExtrasMenuBar")
             let children: [AXUIElement] = bar?.value(kAXChildrenAttribute) ?? []
-            return children.map { el in
+            return children.compactMap { read -> Status? in
+                let role = read.string(kAXRoleAttribute)
+                let kids: [AXUIElement] = role == "AXGroup" ? read.value(kAXChildrenAttribute) ?? [] : []
+                let el: AXUIElement
+                switch BarStatus.pick(role: role, childRoles: kids.map { $0.string(kAXRoleAttribute) }) {
+                case .itself: el = read
+                case .child(let i): el = kids[i]
+                case .skip: return nil
+                }
                 let label = [kAXDescriptionAttribute, kAXTitleAttribute, kAXHelpAttribute]
                     .lazy.compactMap { el.string($0) }.first { !$0.isEmpty }
-                let at: CGPoint? = el.value(kAXPositionAttribute, .cgPoint)
+                let at: CGPoint? = el.value(kAXPositionAttribute, .cgPoint) ?? read.value(kAXPositionAttribute, .cgPoint)
                 return Status(item: BarStatus.Item(owner: app.bundle, identifier: el.string(kAXIdentifierAttribute),
-                                                   label: label, x: at.map { Double($0.x) }),
+                                                   label: label, x: at.map { Double($0.x) }, y: at.map { Double($0.y) }),
                               element: el)
             }
         }

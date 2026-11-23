@@ -261,7 +261,10 @@ final class TopBar {
                 // The module went off while this was read.
                 guard self.wants(.status) else { return }
                 let bar = self.model.bar
-                let kept = BarStatus.shown(read, \.item, modules: bar.left + bar.center + bar.right)
+                // Each display's top in Accessibility's coordinates, where the main display's top is 0 and y runs down.
+                let main = NSScreen.screens.first?.frame.maxY ?? 0
+                let tops = NSScreen.screens.map { Double(main - $0.frame.maxY) }
+                let kept = BarStatus.shown(read, \.item, modules: bar.left + bar.center + bar.right, barTops: tops.isEmpty ? [0] : tops)
                 self.statusElements = kept.map(\.element)
                 let items = kept.map(\.item)
                 // Icons only for owners not seen yet; an app without a bundle id draws the plain dot.
