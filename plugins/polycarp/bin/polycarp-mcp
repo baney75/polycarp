@@ -1,0 +1,13 @@
+#!/bin/sh
+# Local Studio starts this as the polycarp plugin's MCP server. It finds the polycarp command and hands off to
+# `polycarp agent serve --stdio`, the same gateway Claude Code and Codex use. Nothing else runs.
+for p in "$(command -v polycarp 2>/dev/null)" \
+	"$HOME/.local/bin/polycarp" \
+	"$HOME/Applications/Polycarp.app/Contents/Resources/bin/polycarp" \
+	"/Applications/Polycarp.app/Contents/Resources/bin/polycarp"; do
+	if [ -n "$p" ] && [ -f "$p" ] && [ -x "$p" ]; then
+		exec "$p" agent serve --stdio
+	fi
+done
+echo "polycarp-mcp: the polycarp command was not found. Install Polycarp from https://github.com/baney75/polycarp." >&2
+exit 127

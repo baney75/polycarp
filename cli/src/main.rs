@@ -12,6 +12,7 @@ mod agent;
 mod channel;
 mod features;
 mod files;
+mod local_studio;
 mod mcp;
 mod retire;
 mod theme;
@@ -59,6 +60,19 @@ const SPACES: Tool = Tool {
     install: "https://github.com/baney75/polycarp",
 };
 
+/// Local Studio's own command, which `install --local-studio` runs to grant the plugin its tool server. Nothing
+/// bundles it yet, so it is found on PATH or where a build puts it.
+const LOCAL_STUDIO: Tool = Tool {
+    sub: "install",
+    product: "Local Studio",
+    exe: "local-studio",
+    old_exes: &[],
+    env: "POLYCARP_LOCAL_STUDIO_BIN",
+    bundled: &[],
+    spots: &["~/.local/bin/local-studio", "~/.cargo/bin/local-studio"],
+    install: "https://github.com/baney75/local-studio",
+};
+
 /// What `polycarp browser` (and `polycarp features on|off browser`) prints now, on stderr with exit 2: the helper moved out.
 const BROWSER_MOVED: &str =
     "The browser helper is now Tychicus: https://github.com/baney75/tychicus";
@@ -72,6 +86,7 @@ Usage:
   polycarp mcp                 serve the theme and surfaces commands to an agent over MCP (stdio)
   polycarp files <command>     search, open and send your files across your devices (polycarp files --help)
   polycarp agent <command>     one MCP gateway for Claude, Codex, Grok Bot and web assistants (polycarp agent --help)
+  polycarp install --local-studio [--uninstall]   add Polycarp's plugin to Local Studio and grant its tools
   polycarp doctor              show which tools were found
   polycarp --version
   polycarp version [--json] [--check]   every part, its commit, and whether they match
@@ -107,6 +122,7 @@ fn main() {
         Some("mcp") => mcp::run(&rest),
         Some("files") => files::run(&rest),
         Some("agent") => agent::run(&rest),
+        Some("install") => local_studio::run(&rest, local_studio_command()),
         Some("doctor") => doctor(),
         Some("version") => version::run(&rest, &version_device()),
         Some("update") => update::run(
@@ -502,6 +518,12 @@ fn run(mut cmd: Command) -> i32 {
             126
         }
     }
+}
+
+/// Local Studio's command for `install --local-studio`, found as `handoff` finds a tool and only from a trusted
+/// folder, since it runs unasked.
+fn local_studio_command() -> Option<PathBuf> {
+    find(&LOCAL_STUDIO).ok().filter(|p| trusted_tool(p))
 }
 
 /// The spaces command for `polycarp mcp`'s surfaces tools, which run it unasked: found as `handoff` finds it, and only
