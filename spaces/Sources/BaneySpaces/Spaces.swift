@@ -956,6 +956,13 @@ final class Spaces {
         }
     }
 
+    /// Whether Polycarp filled window `id` and it still has the size it landed at: a record kept after a resize by hand
+    /// doesn't count (`FullScreenFill.DragStart.forget`).
+    func filledHere(_ id: WindowID, frame: CGRect) -> Bool {
+        guard let landed = filled[id]?.landed else { return false }
+        return abs(frame.width - landed.width) <= 3 && abs(frame.height - landed.height) <= 3
+    }
+
     /// Windows this filled, so a second press puts each back. Kept across launches: an update or a restart must not leave
     /// a filled window with a green button that does nothing.
     private lazy var filled: [WindowID: FullScreenFill.Record] = Self.loadFilled()

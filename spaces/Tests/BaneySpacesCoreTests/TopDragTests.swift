@@ -25,6 +25,53 @@ final class TopDragTests: XCTestCase {
         XCTAssertTrue(d.fired)
     }
 
+    func testTheOverviewWaitsOutTheRestBeforeAMacOSFill() {
+        // A let-go at the top after a short rest is macOS's fill. At 0.25 s the overview opened over it and shut again at
+        // the release (trace: opened 264 to 274 ms in, let go 74 to 178 ms later, 2026-11-20 23:19:06 and 11-22 12:29:39).
+        var d = TopDrag()
+        d.press(window)
+        XCTAssertNil(drag(&d, to: 400, at: 0))
+        XCTAssertNil(drag(&d, to: 0, at: 0.5))
+        XCTAssertNil(drag(&d, to: 0, at: 0.5 + 0.55), "a 0.55 s rest at the top is still a fill, not the overview")
+        XCTAssertEqual(drag(&d, to: 0, at: 0.5 + 0.65), window, "a 0.65 s rest opens the overview")
+    }
+
+    func testADragFromAFullSizeWindowNeverOpensTheOverview() {
+        // A filled window dragged down (macOS gives its old size back) and up again to fill it once more.
+        let filled = CGRect(x: 0, y: 34, width: 1512, height: 948)
+        let full = TopDrag.Grab(window: 11, frame: filled, press: CGPoint(x: 700, y: 46), startedFull: true)
+        var d = TopDrag()
+        d.press(full)
+        let small = CGSize(width: 900, height: 600)
+        XCTAssertNil(d.tick(cursor: CGPoint(x: 700, y: 300), frame: CGRect(origin: CGPoint(x: 250, y: 288), size: small), screens: [main], now: 0))
+        XCTAssertNil(d.tick(cursor: CGPoint(x: 700, y: 200), frame: CGRect(origin: CGPoint(x: 250, y: 188), size: small), screens: [main], now: 0.1))
+        XCTAssertTrue(d.moving)
+        for t in stride(from: 0.5, through: 3.0, by: 0.05) {
+            XCTAssertNil(d.tick(cursor: CGPoint(x: 700, y: 0), frame: CGRect(origin: CGPoint(x: 250, y: 34), size: small), screens: [main], now: t))
+        }
+        XCTAssertNotNil(d.topSince, "the rest at the top is still timed, so trace.log shows it")
+        XCTAssertFalse(d.fired)
+
+        // Pushed up without moving, as a filled window under the menu bar is: still no overview.
+        var p = TopDrag()
+        p.press(full)
+        for t in stride(from: 0.0, through: 2.0, by: 0.05) {
+            XCTAssertNil(p.tick(cursor: CGPoint(x: 700, y: 0), frame: filled, screens: [main], now: t))
+        }
+        XCTAssertTrue(p.pinned)
+    }
+
+    func testAFullSizeStartIsAFilledFrameOrAPolycarpFill() {
+        let visible = [CGRect(x: 0, y: 34, width: 1512, height: 948)]
+        // Helium as macOS filled it (trace 12:29:39): a point off at each edge.
+        XCTAssertTrue(TopDrag.startsFull(CGRect(x: -1, y: 34, width: 1512, height: 949), visible: visible, filledHere: false))
+        // A torn-off tab as large as the screen, hanging off it (trace 12:29:30): not filled.
+        XCTAssertFalse(TopDrag.startsFull(CGRect(x: -363, y: 313, width: 1512, height: 945), visible: visible, filledHere: false))
+        // Ghostty filled by Polycarp lands short of the screen on character cells: its record says it's full.
+        XCTAssertTrue(TopDrag.startsFull(CGRect(x: 0, y: 34, width: 1505, height: 940), visible: visible, filledHere: true))
+        XCTAssertFalse(TopDrag.startsFull(CGRect(x: 300, y: 200, width: 800, height: 600), visible: visible, filledHere: false))
+    }
+
     func testRearmedItOpensOnTheNextTickStillAtTheTop() {
         var d = TopDrag()
         d.press(window)
@@ -78,8 +125,9 @@ final class TopDragTests: XCTestCase {
     }
 
     func testAWindowAlreadyAgainstTheMenuBarCountsWhenPushedUp() {
-        // A full-height window under a 33 pt menu bar can't go any higher: the pointer does.
-        let tall = TopDrag.Grab(window: 8, frame: CGRect(x: 0, y: 33, width: 1512, height: 949), press: CGPoint(x: 700, y: 45))
+        // A full-height window under a 33 pt menu bar can't go any higher: the pointer does. Not full width: one that fills
+        // the screen never opens the overview (`testADragFromAFullSizeWindowNeverOpensTheOverview`).
+        let tall = TopDrag.Grab(window: 8, frame: CGRect(x: 0, y: 33, width: 1000, height: 949), press: CGPoint(x: 700, y: 45))
         var d = TopDrag()
         d.press(tall)
         XCTAssertNil(d.tick(cursor: CGPoint(x: 700, y: 20), frame: tall.frame, screens: [main], now: 0.5))
@@ -90,7 +138,7 @@ final class TopDragTests: XCTestCase {
 
     func testAWindowWhoseTopIsTheScreenEdgeCountsWhenPushedUp() {
         // The menu bar hides itself: the window's top is the screen's top, and so is the pointer.
-        let tall = TopDrag.Grab(window: 9, frame: CGRect(x: 0, y: 0, width: 1512, height: 982), press: CGPoint(x: 700, y: 12))
+        let tall = TopDrag.Grab(window: 9, frame: CGRect(x: 0, y: 0, width: 1000, height: 982), press: CGPoint(x: 700, y: 12))
         var d = TopDrag()
         d.press(tall)
         XCTAssertNil(d.tick(cursor: CGPoint(x: 700, y: 0), frame: tall.frame, screens: [main], now: 0.5))

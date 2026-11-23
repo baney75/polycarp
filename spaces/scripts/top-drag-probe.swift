@@ -279,7 +279,7 @@ func fills(_ r: CGRect?) -> Bool {
     r.map { abs($0.minY - visible.minY) < 12 && $0.width >= visible.width * 0.9 && $0.height >= visible.height * 0.85 } ?? false
 }
 // TopDrag.dwell, the rest before the overview opens; the probe can't import it.
-let dwell = 0.25
+let dwell = 0.6
 // The short rest stays under the dwell but long enough for macOS's own fill: at 0.1 s macOS
 // sometimes didn't fill at all (2026-10-30, #73).
 for (hold, what) in [(dwell * 0.72, "a short rest"), (dwell + 1.0, "a rest long enough to open the overview")] {

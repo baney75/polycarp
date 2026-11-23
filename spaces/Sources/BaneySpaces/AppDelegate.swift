@@ -91,6 +91,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// A window dragged to the top of the screen opens the overview, in place of Mission Control.
     private lazy var topDrag: TopDragWatcher = {
         let t = TopDragWatcher()
+        // A window macOS or Polycarp filled: dragging it down and back up is a fill, never the overview.
+        t.startsFull = { [weak self] id, frame in
+            TopDrag.startsFull(frame, visible: Spaces.dragDisplays().map(\.visible),
+                               filledHere: self?.spaces.filledHere(id, frame: frame) ?? false)
+        }
         t.onDragStart = { [weak self] id, p in
             self?.cancelCorrection(id)
             self?.spaces.unfillForDrag(id, at: p)
