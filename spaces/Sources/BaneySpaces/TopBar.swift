@@ -6,8 +6,8 @@ import SwiftUI
 
 /// Polycarp's top bar (`bar.*` in surfaces.json): one strip per screen with the workspace you're on and the hour in
 /// words. It shows only where the macOS bar is set to hide
-/// (`BarLayout.systemBarShown`). While it is up, `MenuBarEdgeGuard` keeps the pointer off the top edge so that bar never
-/// slides in over it (Donovan, 2026-11-23); the app's menus open from the bar's own `app-menus`.
+/// (`BarLayout.systemBarShown`). While it is up, `SystemMenuBar` keeps that bar transparent and out of the way, so it
+/// never slides in over Polycarp's (Donovan, 2026-11-23); the app's menus open from the bar's own `app-menus`.
 /// It sits just under your windows (`BarLayout.levelBelowWindows`): a window that reaches the top of the screen covers
 /// it, so the bar never hides a window's buttons or title. It never takes focus and stays off full-screen apps. A click
 /// switches workspaces (a number) or opens what the macOS bar would (an app's menu, a status item). Main thread only.
@@ -75,6 +75,11 @@ final class TopBar {
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.reload()
         }
+        // A Space change (full screen in or out, a desktop switch) may set the macOS bar back; hide it again (review of #621).
+        workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            SystemMenuBar.hide(!self.panels.isEmpty)
+        }
         // The menus are the menu bar owner's, which an accessory app coming forward (Raycast, a launcher) doesn't take.
         // Some apps fill their menu bar a moment after they take it, so it is read again half a second on.
         menuOwner = NSWorkspace.shared.observe(\.menuBarOwningApplication) { [weak self] _, _ in
@@ -107,6 +112,7 @@ final class TopBar {
     /// Workspaces changed: the numbers follow at once.
     func workspacesChanged() {
         guard !panels.isEmpty else { return }
+        SystemMenuBar.hide(true)
         readWorkspaces()
     }
 
@@ -135,7 +141,7 @@ final class TopBar {
         }
         for (id, p) in panels where !keep.contains(id) { p.orderOut(nil); panels[id] = nil }
         // Where the bar is up, macOS's own bar may not come in over it.
-        MenuBarEdgeGuard.shared.guardScreens(NSScreen.screens.filter { $0.displayID.map(keep.contains) ?? false })
+        SystemMenuBar.hide(!keep.isEmpty)
         if covered > 0, keep.isEmpty, !loggedCovered {
             Trace.log("top bar: on, but the macOS menu bar is shown on every screen; set System Settings > Menu Bar > Automatically hide and show the menu bar to Always")
         }
@@ -175,7 +181,7 @@ final class TopBar {
     }
 
     private func removeAll() {
-        MenuBarEdgeGuard.shared.guardScreens([])
+        SystemMenuBar.hide(false)
         for p in panels.values { p.orderOut(nil) }
         panels = [:]
         stopTicking()
