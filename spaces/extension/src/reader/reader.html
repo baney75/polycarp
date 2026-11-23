@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en" data-rt="paper" data-theme-mode="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polycarp Reader</title>
+<link rel="icon" href="../../icons/icon32.png">
+<link rel="stylesheet" href="../shared/theme.css">
+<link rel="stylesheet" href="../shared/ui.css">
+<link rel="stylesheet" href="reader.css">
+</head>
+<body data-state="landing">
+<div class="progress" aria-hidden="true"><i id="progressFill"></i></div>
+
+<header class="bar" id="bar">
+  <a class="wordmark" href="reader.html" data-wordmark title="Polycarp Reader home"></a>
+  <div class="doc"><b id="docTitle"></b><span id="docMeta"></span></div>
+  <nav class="tools" aria-label="Reader tools">
+    <button class="tool" id="tToc" aria-pressed="false" title="Contents (C)"></button>
+    <button class="tool" id="tListen" aria-pressed="false" title="Listen (L)"></button>
+    <button class="tool" id="tSprint" title="Speed read, one word at a time (R)"></button>
+    <button class="tool" id="tNotes" aria-pressed="false" title="Notes and highlights (N)"></button>
+    <button class="tool" id="tType" aria-pressed="false" title="Text settings (A)"></button>
+    <button class="tool" id="tPrint" title="Print (P)"></button>
+  </nav>
+  <nav class="pnav" aria-label="Polycarp pages">
+    <a href="reader.html" id="navRead" aria-current="page"></a>
+    <a href="../pages/search.html" id="navSearch"></a>
+    <a href="../pages/library.html" id="libLink"></a>
+    <a href="../pages/review.html" id="reviewLink"></a>
+    <a href="../pages/settings.html" id="settingsLink"></a>
+  </nav>
+</header>
+
+<main>
+  <!-- Landing: open something -->
+  <section class="view" id="landing" aria-labelledby="landTitle">
+    <div class="land">
+      <div class="hero">
+        <span id="heroPip"></span>
+        <div>
+          <h1 id="landTitle">Open anything. Read it your way.</h1>
+          <p>PDFs, ebooks, Word files, web pages and plain text, set in your font and spacing, with recall built in.</p>
+        </div>
+      </div>
+      <label class="drop" id="drop" tabindex="0">
+        <span id="dropIcon"></span>
+        <b>Drop a file here or choose one</b>
+        <span>PDF, EPUB, Word (.docx), FB2, HTML, Markdown or plain text. It stays on this computer.</span>
+        <input type="file" id="file" class="sr" accept=".pdf,.epub,.docx,.docm,.txt,.text,.md,.markdown,.html,.htm,.xhtml,.fb2,.csv,application/pdf,application/epub+zip">
+      </label>
+      <form class="or" id="urlForm">
+        <input class="field" id="url" type="url" placeholder="Paste a link to a page or PDF" aria-label="Link to a page or PDF" autocomplete="off">
+        <button class="btn" type="submit">Open link</button>
+      </form>
+      <div class="landlinks">
+        <button class="btn quiet" id="pasteBtn" type="button"></button>
+      </div>
+      <form id="pasteForm" hidden>
+        <textarea class="field" id="pasteText" placeholder="Paste any text to read it here." aria-label="Text to read"></textarea>
+        <div style="display:flex;justify-content:flex-end;margin-top:var(--s2)"><button class="btn" type="submit">Read this text</button></div>
+      </form>
+      <div class="shelf" id="shelf" hidden>
+        <div class="shelf-head"><h2>Recently opened</h2><a href="../pages/library.html">See your whole library</a></div>
+        <ul id="shelfList"></ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="loading" aria-live="polite">
+    <div class="center blinking">
+      <span id="loadPip"></span>
+      <h1 id="loadTitle">Opening</h1>
+      <div class="bigmeter"><i id="loadFill"></i></div>
+      <p id="loadNote">Getting it ready.</p>
+    </div>
+  </section>
+
+  <section class="view" id="error" role="alert">
+    <div class="center">
+      <span id="errPip"></span>
+      <h1>Polycarp could not open this</h1>
+      <p id="errText"></p>
+      <div style="display:flex;gap:var(--s2);flex-wrap:wrap;justify-content:center">
+        <a class="btn primary" href="reader.html">Open something else</a>
+        <a class="btn" id="errOriginal" hidden target="_blank" rel="noopener">Open the original</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="reader">
+    <div class="col">
+      <header class="dochead"><h1 id="docH1"></h1><p id="docByline"></p></header>
+      <div id="ideas"></div>
+      <article id="article" lang="en"></article>
+      <div id="finish"></div>
+    </div>
+  </section>
+</main>
+
+<div class="print-only" id="studySheet"></div>
+
+<!-- Contents -->
+<div class="scrim" id="scrim" hidden></div>
+<aside class="sheet left" id="tocSheet" hidden aria-labelledby="tocTitle">
+  <div class="sheet-head"><h2 id="tocTitle">Contents</h2><button class="btn icon quiet" data-close aria-label="Close"></button></div>
+  <ol class="toc" id="toc"></ol>
+</aside>
+
+<!-- Notes and highlights -->
+<aside class="sheet right" id="notesSheet" hidden aria-labelledby="notesTitle">
+  <div class="sheet-head"><h2 id="notesTitle">Notes</h2><button class="btn icon quiet" data-close aria-label="Close"></button></div>
+  <form class="note-new" id="noteForm">
+    <textarea class="field" id="noteText" rows="3" placeholder="A thought about this. Type [[ to link another item." aria-label="New note"></textarea>
+    <div class="note-acts"><span class="muted" id="noteWhere"></span><button class="btn" type="submit">Add note</button></div>
+  </form>
+  <ul class="notes" id="notesList"></ul>
+  <div class="related" id="relatedBox" hidden>
+    <h3>Connected in your library</h3>
+    <ul id="relatedList"></ul>
+  </div>
+  <a class="btn quiet" id="openInLib" href="../pages/library.html"></a>
+</aside>
+
+<!-- Text settings -->
+<aside class="sheet right" id="typeSheet" hidden aria-labelledby="typeTitle">
+  <div class="sheet-head"><h2 id="typeTitle">Text</h2><button class="btn icon quiet" data-close aria-label="Close"></button></div>
+  <div class="grp">
+    <h3>Page color</h3>
+    <div class="themes" id="themes" role="radiogroup" aria-label="Reading theme"></div>
+  </div>
+  <div class="grp">
+    <h3>Font</h3>
+    <div class="chips" id="fonts" role="group" aria-label="Font"></div>
+    <label class="line"><span>Size</span><input type="range" id="size" min="14" max="34" step="1"><output id="sizeOut"></output></label>
+    <label class="line"><span>Line height</span><input type="range" id="lineH" min="1.3" max="2.4" step="0.05"><output id="lineOut"></output></label>
+    <label class="line"><span>Letter spacing</span><input type="range" id="letter" min="0" max="0.2" step="0.01"><output id="letterOut"></output></label>
+    <label class="line"><span>Word spacing</span><input type="range" id="word" min="0" max="0.5" step="0.02"><output id="wordOut"></output></label>
+    <label class="line"><span>Line length</span><input type="range" id="width" min="40" max="90" step="1"><output id="widthOut"></output></label>
+  </div>
+  <div class="grp">
+    <h3>Anchors and color</h3>
+    <label class="line"><span>Bold anchors</span><input type="range" id="strength" min="0" max="5" step="1"><output id="strengthOut"></output></label>
+    <div class="line sw"><span class="muted">Tint</span><div class="swatches" id="tints" role="radiogroup" aria-label="Tint"></div></div>
+  </div>
+  <div class="grp">
+    <h3>Focus and memory</h3>
+    <label class="line sw"><span>Spotlight the paragraph you are on</span><span class="switch"><input type="checkbox" id="focusMode"></span></label>
+    <label class="line sw"><span>Mark paragraphs once read</span><span class="switch"><input type="checkbox" id="marks"></span></label>
+    <div class="line sw"><span>Recall breaks</span></div>
+    <div class="seg" id="rounds" role="group" aria-label="Recall breaks">
+      <button data-v="off">Off</button><button data-v="long">Rarely</button><button data-v="medium">Normal</button><button data-v="short">Often</button>
+    </div>
+    <label class="line sw"><span>Soft sounds</span><span class="switch"><input type="checkbox" id="sound"></span></label>
+  </div>
+</aside>
+
+<!-- Listen dock -->
+<div class="dock" id="dock" hidden role="region" aria-label="Listen">
+  <button class="btn icon quiet" id="lPrev" aria-label="Previous paragraph"></button>
+  <button class="play" id="lPlay" aria-label="Play"></button>
+  <button class="btn icon quiet" id="lNext" aria-label="Next paragraph"></button>
+  <div class="who">
+    <select id="voice" aria-label="Voice"></select>
+    <span id="lStatus">Ready</span>
+  </div>
+  <button class="rate" id="lRate" aria-label="Speed">1×</button>
+  <button class="btn icon quiet" id="lClose" aria-label="Close listening"></button>
+</div>
+
+<!-- Sprint -->
+<div class="sprint" id="sprint" hidden role="dialog" aria-modal="true" aria-label="Speed read">
+  <div class="bar2"><i id="spFill"></i></div>
+  <div class="top"><b id="spTitle">Speed read</b><span class="muted" id="spLeft"></span><button class="btn icon quiet" id="spClose" aria-label="Close speed read"></button></div>
+  <div class="stage"><div class="word" id="spWord" aria-live="off"><span class="l"></span><span class="o"></span><span class="r"></span></div></div>
+  <p class="ctx" id="spCtx"></p>
+  <div class="ctrl">
+    <button class="btn icon" id="spSlower" aria-label="Slower"></button>
+    <span class="wpm" id="spWpm">300 words/min</span>
+    <button class="btn icon" id="spFaster" aria-label="Faster"></button>
+    <button class="btn icon quiet" id="spBack" aria-label="Back one sentence"></button>
+    <button class="bigplay" id="spPlay" aria-label="Play"></button>
+    <button class="btn icon quiet" id="spFwd" aria-label="Forward one sentence"></button>
+  </div>
+  <p class="keys"><kbd>Space</kbd> play or pause · <kbd>←</kbd> <kbd>→</kbd> sentence · <kbd>↑</kbd> <kbd>↓</kbd> speed · <kbd>Esc</kbd> back to the page</p>
+</div>
+
+<!-- Print -->
+<div class="dialog" id="printDlg" hidden role="dialog" aria-modal="true" aria-labelledby="printTitle">
+  <div>
+    <h2 id="printTitle">Print</h2>
+    <p>Polycarp prints the text the way you set it, so the page in your hands reads like the one on screen.</p>
+    <label class="check"><input type="checkbox" id="pAnchors" checked><span><b>Bold anchors</b><span>Keep the bold word starts.</span></span></label>
+    <label class="check"><input type="checkbox" id="pMine" checked><span><b>My font and spacing</b><span>Off prints in a plain book font.</span></span></label>
+    <label class="check"><input type="checkbox" id="pLarge"><span><b>Large print</b><span>16 point text.</span></span></label>
+    <label class="check"><input type="checkbox" id="pTint"><span><b>Tinted paper</b><span>Prints your tint as a light page color.</span></span></label>
+    <label class="check"><input type="checkbox" id="pSheet" checked><span><b>Recall sheet</b><span>Questions to answer from memory at the end, answers on the last page.</span></span></label>
+    <label class="check"><input type="checkbox" id="pBreaks"><span><b>New page per section</b><span>Each section starts on its own page.</span></span></label>
+    <div class="acts"><button class="btn quiet" id="pCancel">Cancel</button><button class="btn primary" id="pGo"></button></div>
+  </div>
+</div>
+
+<div id="tint" aria-hidden="true"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="selbar" id="selbar" hidden role="toolbar" aria-label="Selection">
+  <button id="selHi" title="Highlight (H)"></button>
+  <button id="selNote" title="Add a note"></button>
+  <button id="snap" title="Remember this (S)"></button>
+</div>
+
+<script src="../shared/core.js"></script>
+<script src="../shared/bionic.js"></script>
+<script src="../shared/icons.js"></script>
+<script src="../shared/memory.js"></script>
+<script src="../shared/fx.js"></script>
+<script src="../shared/docstore.js"></script>
+<script src="../shared/library.js"></script>
+<script src="../shared/nas.js"></script>
+<script src="../../lib/jszip.min.js"></script>
+<script src="../../lib/mammoth.browser.min.js"></script>
+<script src="../../lib/Readability.js"></script>
+<script src="importers.js"></script>
+<script src="../audio/voice.js"></script>
+<script src="reader.js"></script>
+<script src="reader-learn.js"></script>
+<script src="reader-listen.js"></script>
+<script src="reader-sprint.js"></script>
+<script src="reader-print.js"></script>
+<script src="../shared/notes-ui.js"></script>
+<script src="reader-notes.js"></script>
+</body>
+</html>

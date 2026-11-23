@@ -1,0 +1,41 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Media Site | Rich Media Story</title>
+<meta name="author" content="Mia Media">
+<script>window.tracker = 1;</script></head>
+<body>
+<header><nav><a href="/">Home</a> <a href="/about">About</a></nav></header>
+<main>
+<article>
+<h1>Rich Media Story</h1>
+<p class="byline">By Mia Media</p>
+<p>The opening paragraph sets the scene, with commas, clauses, and enough words that Readability treats this block as the main article body, not a sidebar.</p>
+<p>See the <a href="#details">details below</a>, the <a href="/guide/start">site guide</a>, the <a href="https://other.example/report">outside report</a>, a <a href="javascript:alert(1)">script link JSLINKTEXT</a>, a <a href="mailto:desk@media.example">mail link</a>, and an <a href="https://other.example/empty"> </a>empty one.</p>
+
+<h2 id="pictures">Pictures</h2>
+<p>Lazy pictures, responsive pictures, and art-directed pictures all appear in modern articles, so the reader needs to find the real file behind each one.</p>
+<p><img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-src="/img/lazy-real.jpg" alt="Lazy photo" width="800" height="600"></p>
+<p><img src="/img/small-400.jpg" srcset="/img/pic-400.jpg 400w, /img/pic-1100.jpg 1100w, /img/pic-2400.jpg 2400w" alt="Srcset photo"></p>
+<p><picture><source type="image/webp" srcset="/img/art-1x.webp 1x, /img/art-2x.webp 2x"><img src="/img/spacer.gif" alt="Picture photo"></picture></p>
+<p><img src="https://track.example/p.gif" width="1" height="1" alt=""></p>
+<p><img src="/img/handler.jpg" onerror="alert(2)" onload="alert(3)" style="border:9px solid red" alt="Handler photo"></p>
+<figure><img src="/img/figure.jpg" alt="Figure photo"><figcaption>FIGCAPTEXT a caption under the figure photo.</figcaption></figure>
+
+<h3 id="watch">Watch <a class="anchor" href="#watch" aria-hidden="true">#</a></h3>
+<p>Video players arrive as iframes from many hosts, and the reader should turn each one into a plain link card instead of a live frame, for privacy, speed, and calm.</p>
+<figure><iframe width="560" height="315" src="https://www.youtube.com/embed/dQw4w9WgXcQ?start=42" title="A Great Talk" frameborder="0" allowfullscreen onload="alert(4)"></iframe><figcaption>EMBEDCAP the talk in full.</figcaption></figure>
+<div class="video-wrap"><iframe src="https://player.vimeo.com/video/76979871" width="640" height="360"></iframe></div>
+<p><iframe src="javascript:alert(5)"></iframe><iframe src="about:blank"></iframe><iframe></iframe></p>
+<blockquote class="twitter-tweet"><p lang="en">TWEETTEXT reading calmly beats skimming, every single time. <a href="https://t.co/abc">pic.twitter.com/abc</a></p>- Someone (@someone) <a href="https://twitter.com/someone/status/1234567890?ref_src=twsrc%5Etfw">May 1, 2026</a></blockquote>
+
+<h4 id="details"><a href="#details">Details</a></h4>
+<p>Native players are kept with controls, but they never start by themselves, never loop, and never load data until the reader presses play, which saves bandwidth.</p>
+<video src="/media/clip.mp4" poster="/media/poster.jpg" autoplay loop muted onplay="alert(6)"></video>
+<audio controls autoplay><source src="/media/talk.mp3" type="audio/mpeg"></audio>
+<video src="blob:https://media.example/1234-5678"></video>
+<p>The closing paragraph ends the article with MEDIAEND, after enough words, commas, and sentences that Readability keeps every block above it in the result.</p>
+<form><input name="q" value="FORMVALUE"><button>Go</button><select><option>OPTIONTEXT</option></select></form>
+</article>
+</main>
+<aside>Sidebar junk that should not appear.</aside>
+<footer>Footer junk copyright line.</footer>
+</body></html>

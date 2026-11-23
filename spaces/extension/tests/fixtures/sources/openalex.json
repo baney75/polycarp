@@ -1,0 +1,1727 @@
+{
+ "meta": {
+  "notice": "No API key, so this request shares one free daily budget ($0.10) with everyone on your network's IP address. Get a free key with its own $1/day at https://openalex.org/settings/api and add api_key=YOUR_KEY to your requests. An AI agent can get one for its user in one call: POST https://api.openalex.org/api-keys with {\"email\": \"<your user's email>\"}; we email them a link, and the key works once they click it. Docs for agents: https://help.openalex.org/llms.txt",
+  "count": 13010,
+  "db_response_time_ms": 70,
+  "page": 1,
+  "per_page": 10,
+  "groups_count": null,
+  "x_query": {
+   "oql": "get open access works with (moby dick) in the title, abstract, or full text",
+   "x_new_oql": "get open access works with (moby dick) in the title, abstract, or full text",
+   "oqo": {
+    "get_rows": "works",
+    "filter_rows": [
+     {
+      "column_id": "fulltext.search",
+      "value": "moby dick",
+      "operator": "has"
+     },
+     {
+      "column_id": "open_access.is_oa",
+      "value": true
+     }
+    ]
+   },
+   "url": "/works?filter=fulltext.search:moby dick,open_access.is_oa:true&per_page=10",
+   "order": "best matches first",
+   "order_default": true
+  },
+  "cost_usd": 0.001
+ },
+ "results": [
+  {
+   "id": "https://openalex.org/W4242064770",
+   "doi": "https://doi.org/10.5962/bhl.title.62077",
+   "title": "Moby-Dick, or, the Whale /",
+   "display_name": "Moby-Dick, or, the Whale /",
+   "publication_year": 1851,
+   "primary_location": {
+    "id": "doi:10.5962/bhl.title.62077",
+    "doi": "https://doi.org/10.5962/bhl.title.62077",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.5962/bhl.title.62077",
+    "pdf_url": "https://www.biodiversitylibrary.org/itempdf/126294",
+    "source": {
+     "id": "https://openalex.org/S4306463354",
+     "display_name": "Harper & Brothers eBooks",
+     "issn_l": null,
+     "issn": null,
+     "is_oa": false,
+     "is_in_doaj": false,
+     "is_core": false,
+     "listed_in": [],
+     "host_organization": "https://openalex.org/P4310320116",
+     "host_organization_name": "Harper",
+     "host_organization_lineage": [
+      "https://openalex.org/P4310320116",
+      "https://openalex.org/P4320800753",
+      "https://openalex.org/P4310316276"
+     ],
+     "host_organization_lineage_names": [
+      "Harper",
+      "HarperCollins",
+      "News Corp"
+     ],
+     "type": "ebook platform"
+    },
+    "license": null,
+    "license_id": null,
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": null,
+    "raw_type": "monograph"
+   },
+   "open_access": {
+    "is_oa": true,
+    "oa_status": "bronze",
+    "oa_url": "https://www.biodiversitylibrary.org/itempdf/126294",
+    "any_repository_has_fulltext": false
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "Herman Melville"
+     }
+    }
+   ],
+   "best_oa_location": {
+    "id": "doi:10.5962/bhl.title.62077",
+    "doi": "https://doi.org/10.5962/bhl.title.62077",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.5962/bhl.title.62077",
+    "pdf_url": "https://www.biodiversitylibrary.org/itempdf/126294",
+    "source": {
+     "id": "https://openalex.org/S4306463354",
+     "display_name": "Harper & Brothers eBooks",
+     "issn_l": null,
+     "issn": null,
+     "is_oa": false,
+     "is_in_doaj": false,
+     "is_core": false,
+     "listed_in": [],
+     "host_organization": "https://openalex.org/P4310320116",
+     "host_organization_name": "Harper",
+     "host_organization_lineage": [
+      "https://openalex.org/P4310320116",
+      "https://openalex.org/P4320800753",
+      "https://openalex.org/P4310316276"
+     ],
+     "host_organization_lineage_names": [
+      "Harper",
+      "HarperCollins",
+      "News Corp"
+     ],
+     "type": "ebook platform"
+    },
+    "license": null,
+    "license_id": null,
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": null,
+    "raw_type": "monograph"
+   },
+   "abstract_inverted_index": null,
+   "type": "book"
+  },
+  {
+   "id": "https://openalex.org/W4233679920",
+   "doi": "https://doi.org/10.1093/oseo/instance.00209189",
+   "title": "Moby-Dick: or The Whale",
+   "display_name": "Moby-Dick: or The Whale",
+   "publication_year": 1988,
+   "primary_location": {
+    "id": "doi:10.1093/oseo/instance.00209189",
+    "doi": "https://doi.org/10.1093/oseo/instance.00209189",
+    "is_oa": false,
+    "landing_page_url": "https://doi.org/10.1093/oseo/instance.00209189",
+    "pdf_url": null,
+    "source": {
+     "id": "https://openalex.org/S4306463671",
+     "display_name": "Northwestern University Press eBooks",
+     "issn_l": null,
+     "issn": null,
+     "is_oa": false,
+     "is_in_doaj": false,
+     "is_core": false,
+     "listed_in": [],
+     "host_organization": "https://openalex.org/P4310316374",
+     "host_organization_name": "Northwestern University Press",
+     "host_organization_lineage": [
+      "https://openalex.org/P4310316374",
+      "https://openalex.org/P4310316339"
+     ],
+     "host_organization_lineage_names": [
+      "Northwestern University Press",
+      "Northwestern University"
+     ],
+     "type": "ebook platform"
+    },
+    "license": null,
+    "license_id": null,
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": "The Writings of Herman Melville: The Northwestern-Newberry Edition, Vol. 6: Moby-Dick: or The Whale",
+    "raw_type": "book-chapter"
+   },
+   "open_access": {
+    "is_oa": true,
+    "oa_status": "green",
+    "oa_url": "http://hdl.handle.net/2027/chi.15592139",
+    "any_repository_has_fulltext": true
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "Herman Melville"
+     }
+    }
+   ],
+   "best_oa_location": {
+    "id": "pmh:oai:quod.lib.umich.edu:MIU01-100862955",
+    "doi": null,
+    "is_oa": true,
+    "landing_page_url": "http://hdl.handle.net/2027/chi.15592139",
+    "pdf_url": null,
+    "source": {
+     "id": "https://openalex.org/S7407064297",
+     "display_name": "University of Michigan Library Repository",
+     "issn_l": null,
+     "issn": null,
+     "is_oa": false,
+     "is_in_doaj": false,
+     "is_core": false,
+     "listed_in": [],
+     "host_organization": null,
+     "host_organization_name": null,
+     "host_organization_lineage": [],
+     "host_organization_lineage_names": [],
+     "type": "repository"
+    },
+    "license": "public-domain",
+    "license_id": "https://openalex.org/licenses/public-domain",
+    "version": "submittedVersion",
+    "is_accepted": false,
+    "is_published": false,
+    "raw_source_name": null,
+    "raw_type": "text"
+   },
+   "abstract_inverted_index": null,
+   "type": "book-chapter"
+  },
+  {
+   "id": "https://openalex.org/W2116150815",
+   "doi": "https://doi.org/10.14713/jrul.v3i2.1169",
+   "title": "Reviews of Moby-Dick",
+   "display_name": "Reviews of Moby-Dick",
+   "publication_year": 2012,
+   "primary_location": {
+    "id": "doi:10.14713/jrul.v3i2.1169",
+    "doi": "https://doi.org/10.14713/jrul.v3i2.1169",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.14713/jrul.v3i2.1169",
+    "pdf_url": "https://jrul.libraries.rutgers.edu/index.php/jrul/article/download/1169/2611",
+    "source": {
+     "id": "https://openalex.org/S2764486302",
+     "display_name": "The Journal of the Rutgers University Libraries",
+     "issn_l": "0036-0473",
+     "issn": [
+      "0036-0473",
+      "2331-3781"
+     ],
+     "is_oa": true,
+     "is_in_doaj": false,
+     "is_core": false,
+     "listed_in": [],
+     "host_organization": "https://openalex.org/P4310315838",
+     "host_organization_name": "Rutgers University Libraries",
+     "host_organization_lineage": [
+      "https://openalex.org/P4310315838"
+     ],
+     "host_organization_lineage_names": [
+      "Rutgers University Libraries"
+     ],
+     "type": "journal"
+    },
+    "license": "cc-by-nc",
+    "license_id": "https://openalex.org/licenses/cc-by-nc",
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": "The Journal of the Rutgers University Libraries",
+    "raw_type": "journal-article"
+   },
+   "open_access": {
+    "is_oa": true,
+    "oa_status": "diamond",
+    "oa_url": "https://jrul.libraries.rutgers.edu/index.php/jrul/article/download/1169/2611",
+    "any_repository_has_fulltext": false
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "David Potter"
+     }
+    }
+   ],
+   "best_oa_location": {
+    "id": "doi:10.14713/jrul.v3i2.1169",
+    "doi": "https://doi.org/10.14713/jrul.v3i2.1169",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.14713/jrul.v3i2.1169",
+    "pdf_url": "https://jrul.libraries.rutgers.edu/index.php/jrul/article/download/1169/2611",
+    "source": {
+     "id": "https://openalex.org/S2764486302",
+     "display_name": "The Journal of the Rutgers University Libraries",
+     "issn_l": "0036-0473",
+     "issn": [
+      "0036-0473",
+      "2331-3781"
+     ],
+     "is_oa": true,
+     "is_in_doaj": false,
+     "is_core": false,
+     "listed_in": [],
+     "host_organization": "https://openalex.org/P4310315838",
+     "host_organization_name": "Rutgers University Libraries",
+     "host_organization_lineage": [
+      "https://openalex.org/P4310315838"
+     ],
+     "host_organization_lineage_names": [
+      "Rutgers University Libraries"
+     ],
+     "type": "journal"
+    },
+    "license": "cc-by-nc",
+    "license_id": "https://openalex.org/licenses/cc-by-nc",
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": "The Journal of the Rutgers University Libraries",
+    "raw_type": "journal-article"
+   },
+   "abstract_inverted_index": {
+    "The": [
+     0
+    ],
+    "following": [
+     1
+    ],
+    "article,": [
+     2
+    ],
+    "which": [
+     3,
+     122
+    ],
+    "is": [
+     4
+    ],
+    "based": [
+     5
+    ],
+    "on": [
+     6,
+     126,
+     170
+    ],
+    "an": [
+     7,
+     54
+    ],
+    "examination": [
+     8
+    ],
+    "of": [
+     9,
+     50,
+     56,
+     63,
+     120,
+     141,
+     150,
+     173,
+     193,
+     204,
+     212,
+     216
+    ],
+    "magazine": [
+     10,
+     196
+    ],
+    "files": [
+     11
+    ],
+    "in": [
+     12,
+     41,
+     107,
+     158,
+     163
+    ],
+    "the": [
+     13,
+     19,
+     48,
+     51,
+     61,
+     72,
+     82,
+     98,
+     108,
+     127,
+     139,
+     147,
+     171,
+     190,
+     208,
+     217,
+     223,
+     227,
+     232,
+     243
+    ],
+    "Rutgers": [
+     14,
+     40,
+     109
+    ],
+    "Library,": [
+     15,
+     111
+    ],
+    "helps": [
+     16
+    ],
+    "to": [
+     17,
+     153
+    ],
+    "correct": [
+     18
+    ],
+    "popular": [
+     20
+    ],
+    "misconception": [
+     21
+    ],
+    "that": [
+     22,
+     88
+    ],
+    "Moby-Dick": [
+     23,
+     121,
+     155
+    ],
+    "was": [
+     24,
+     30,
+     156,
+     168
+    ],
+    "not": [
+     25
+    ],
+    "well": [
+     26
+    ],
+    "received": [
+     27,
+     96
+    ],
+    "when": [
+     28
+    ],
+    "it": [
+     29
+    ],
+    "first": [
+     31
+    ],
+    "published.Mr.": [
+     32
+    ],
+    "Potter,": [
+     33
+    ],
+    "a": [
+     34,
+     174
+    ],
+    "true": [
+     35
+    ],
+    "Melville": [
+     36,
+     151,
+     167,
+     211
+    ],
+    "enthusiast,": [
+     37
+    ],
+    "graduated": [
+     38
+    ],
+    "from": [
+     39,
+     226
+    ],
+    "193": [
+     42
+    ],
+    "7": [
+     43
+    ],
+    "and": [
+     44,
+     65,
+     70,
+     133,
+     160,
+     180,
+     200,
+     222,
+     231
+    ],
+    "immediately": [
+     45
+    ],
+    "afterward": [
+     46
+    ],
+    "joined": [
+     47
+    ],
+    "staff": [
+     49
+    ],
+    "University": [
+     52,
+     110
+    ],
+    "as": [
+     53,
+     198
+    ],
+    "instructor": [
+     55
+    ],
+    "Public": [
+     57
+    ],
+    "Speaking.": [
+     58
+    ],
+    "D": [
+     59
+    ],
+    "ESPITE": [
+     60
+    ],
+    "number": [
+     62
+    ],
+    "articles": [
+     64
+    ],
+    "volumes": [
+     66
+    ],
+    "written": [
+     67,
+     202
+    ],
+    "about": [
+     68
+    ],
+    "HermanMelville": [
+     69
+    ],
+    "Moby-Dick,": [
+     71,
+     93
+    ],
+    "general": [
+     73
+    ],
+    "reading": [
+     74
+    ],
+    "public,": [
+     75
+    ],
+    "including": [
+     76
+    ],
+    "many": [
+     77
+    ],
+    "''Melvillites/'": [
+     78
+    ],
+    "has": [
+     79
+    ],
+    "long": [
+     80
+    ],
+    "fostered": [
+     81
+    ],
+    "unfounded,": [
+     83
+    ],
+    "but": [
+     84
+    ],
+    "remarkably": [
+     85
+    ],
+    "persistent,": [
+     86
+    ],
+    "belief": [
+     87
+    ],
+    "Melville's": [
+     89
+    ],
+    "novels": [
+     90
+    ],
+    "and,": [
+     91
+    ],
+    "especially": [
+     92
+    ],
+    "were": [
+     94
+    ],
+    "unfavorably": [
+     95
+    ],
+    "by": [
+     97,
+     130,
+     189
+    ],
+    "American": [
+     99,
+     105,
+     148,
+     195,
+     219
+    ],
+    "public.While": [
+     100
+    ],
+    "working": [
+     101
+    ],
+    "through": [
+     102
+    ],
+    "some": [
+     103
+    ],
+    "old": [
+     104
+    ],
+    "periodicals": [
+     106
+    ],
+    "I": [
+     112
+    ],
+    "recently": [
+     113
+    ],
+    "came": [
+     114
+    ],
+    "across": [
+     115
+    ],
+    "several": [
+     116
+    ],
+    "hitherto": [
+     117
+    ],
+    "neglected": [
+     118
+    ],
+    "reviews": [
+     119
+    ],
+    "shed": [
+     123
+    ],
+    "further": [
+     124
+    ],
+    "light": [
+     125
+    ],
+    "researches": [
+     128
+    ],
+    "initiated": [
+     129
+    ],
+    "Anderson,": [
+     131
+    ],
+    "Hetherington,": [
+     132
+    ],
+    "Thorp.": [
+     134
+    ],
+    "1": [
+     135
+    ],
+    "But": [
+     136
+    ],
+    "before": [
+     137
+    ],
+    "examining": [
+     138
+    ],
+    "contents": [
+     140
+    ],
+    "these": [
+     142
+    ],
+    "reviews,": [
+     143
+    ],
+    "let": [
+     144
+    ],
+    "us": [
+     145
+    ],
+    "consider": [
+     146
+    ],
+    "reputation": [
+     149
+    ],
+    "up": [
+     152
+    ],
+    "1851.When": [
+     154
+    ],
+    "published": [
+     157
+    ],
+    "London": [
+     159
+    ],
+    "New": [
+     161,
+     229
+    ],
+    "York": [
+     162,
+     236
+    ],
+    "October,": [
+     164
+    ],
+    "1851,": [
+     165
+    ],
+    "Herman": [
+     166
+    ],
+    "riding": [
+     169
+    ],
+    "crest": [
+     172
+    ],
+    "tremendous": [
+     175
+    ],
+    "literary": [
+     176
+    ],
+    "popularity.Typee": [
+     177
+    ],
+    "2": [
+     178
+    ],
+    "(1846)": [
+     179
+    ],
+    "Omoo": [
+     181
+    ],
+    "3": [
+     182
+    ],
+    "(1847)": [
+     183
+    ],
+    "had": [
+     184
+    ],
+    "been": [
+     185
+    ],
+    "instantaneous": [
+     186
+    ],
+    "successes,": [
+     187
+    ],
+    "accepted": [
+     188
+    ],
+    "vast": [
+     191
+    ],
+    "majority": [
+     192
+    ],
+    "contemporary": [
+     194
+    ],
+    "critics": [
+     197
+    ],
+    "truthful": [
+     199
+    ],
+    "beautifully": [
+     201
+    ],
+    "accounts": [
+     203
+    ],
+    "exciting": [
+     205
+    ],
+    "adventure.Not": [
+     206
+    ],
+    "even": [
+     207
+    ],
+    "philippics": [
+     209
+    ],
+    "against": [
+     210
+    ],
+    "G.": [
+     213
+    ],
+    "W.": [
+     214
+    ],
+    "Peck": [
+     215
+    ],
+    "changeable": [
+     218
+    ],
+    "Whig": [
+     220
+    ],
+    "Review,": [
+     221
+    ],
+    "earnest": [
+     224
+    ],
+    "denunciations": [
+     225
+    ],
+    "clerical": [
+     228
+    ],
+    "Englander": [
+     230
+    ],
+    "equally": [
+     233
+    ],
+    "zealous": [
+     234
+    ],
+    "Hew": [
+     235
+    ],
+    "Evangelist": [
+     237
+    ],
+    "could": [
+     238
+    ],
+    "dim": [
+     239
+    ],
+    "their": [
+     240
+    ],
+    "great": [
+     241
+    ],
+    "popularity.Even": [
+     242
+    ],
+    "religious": [
+     244
+    ],
+    "press,": [
+     245
+    ]
+   },
+   "type": "book-review"
+  },
+  {
+   "id": "https://openalex.org/W4232015281",
+   "doi": "https://doi.org/10.5962/bhl.title.140282",
+   "title": "Moby Dick;",
+   "display_name": "Moby Dick;",
+   "publication_year": 1922,
+   "primary_location": {
+    "id": "doi:10.5962/bhl.title.140282",
+    "doi": "https://doi.org/10.5962/bhl.title.140282",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.5962/bhl.title.140282",
+    "pdf_url": "https://www.biodiversitylibrary.org/itempdf/238068",
+    "source": {
+     "id": "https://openalex.org/S4306402618",
+     "display_name": "Biodiversity Heritage Library (Smithsonian Institution)",
+     "issn_l": null,
+     "issn": null,
+     "is_oa": false,
+     "is_in_doaj": false,
+     "is_core": false,
+     "listed_in": [],
+     "host_organization": "https://openalex.org/I103187081",
+     "host_organization_name": "Smithsonian Institution",
+     "host_organization_lineage": [
+      "https://openalex.org/I103187081"
+     ],
+     "host_organization_lineage_names": [],
+     "type": "repository"
+    },
+    "license": null,
+    "license_id": null,
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": null,
+    "raw_type": "monograph"
+   },
+   "open_access": {
+    "is_oa": true,
+    "oa_status": "green",
+    "oa_url": "https://www.biodiversitylibrary.org/itempdf/238068",
+    "any_repository_has_fulltext": true
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "Herman Melville"
+     }
+    },
+    {
+     "author": {
+      "display_name": "Mead Schaeffer"
+     }
+    }
+   ],
+   "best_oa_location": {
+    "id": "doi:10.5962/bhl.title.140282",
+    "doi": "https://doi.org/10.5962/bhl.title.140282",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.5962/bhl.title.140282",
+    "pdf_url": "https://www.biodiversitylibrary.org/itempdf/238068",
+    "source": {
+     "id": "https://openalex.org/S4306402618",
+     "display_name": "Biodiversity Heritage Library (Smithsonian Institution)",
+     "issn_l": null,
+     "issn": null,
+     "is_oa": false,
+     "is_in_doaj": false,
+     "is_core": false,
+     "listed_in": [],
+     "host_organization": "https://openalex.org/I103187081",
+     "host_organization_name": "Smithsonian Institution",
+     "host_organization_lineage": [
+      "https://openalex.org/I103187081"
+     ],
+     "host_organization_lineage_names": [],
+     "type": "repository"
+    },
+    "license": null,
+    "license_id": null,
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": null,
+    "raw_type": "monograph"
+   },
+   "abstract_inverted_index": null,
+   "type": "book"
+  },
+  {
+   "id": "https://openalex.org/W4403488190",
+   "doi": "https://doi.org/10.59045/nalans.2024.52",
+   "title": "The Geopolitical Imaginaries in Moby-Dick; or, The Whale and Hakugei: Legend of the Moby Dick",
+   "display_name": "The Geopolitical Imaginaries in Moby-Dick; or, The Whale and Hakugei: Legend of the Moby Dick",
+   "publication_year": 2024,
+   "primary_location": {
+    "id": "doi:10.59045/nalans.2024.52",
+    "doi": "https://doi.org/10.59045/nalans.2024.52",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.59045/nalans.2024.52",
+    "pdf_url": "https://nalans.com/index.php/nalans/article/download/644/303",
+    "source": {
+     "id": "https://openalex.org/S4306515904",
+     "display_name": "Journal of Narrative and Language Studies",
+     "issn_l": "2148-4066",
+     "issn": [
+      "2148-4066"
+     ],
+     "is_oa": true,
+     "is_in_doaj": true,
+     "is_core": false,
+     "listed_in": [
+      "doaj",
+      "jufo-1",
+      "norway-1",
+      "poland-20",
+      "russia-white-list-2"
+     ],
+     "host_organization": null,
+     "host_organization_name": null,
+     "host_organization_lineage": [],
+     "host_organization_lineage_names": [],
+     "type": "journal"
+    },
+    "license": "cc-by-nc-nd",
+    "license_id": "https://openalex.org/licenses/cc-by-nc-nd",
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": "Journal of Narrative and Language Studies",
+    "raw_type": "journal-article"
+   },
+   "open_access": {
+    "is_oa": true,
+    "oa_status": "diamond",
+    "oa_url": "https://nalans.com/index.php/nalans/article/download/644/303",
+    "any_repository_has_fulltext": true
+   },
+   "authorships": [
+    {
+     "author": {
+      "display_name": "Mikayo Sakuma"
+     }
+    }
+   ],
+   "best_oa_location": {
+    "id": "doi:10.59045/nalans.2024.52",
+    "doi": "https://doi.org/10.59045/nalans.2024.52",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.59045/nalans.2024.52",
+    "pdf_url": "https://nalans.com/index.php/nalans/article/download/644/303",
+    "source": {
+     "id": "https://openalex.org/S4306515904",
+     "display_name": "Journal of Narrative and Language Studies",
+     "issn_l": "2148-4066",
+     "issn": [
+      "2148-4066"
+     ],
+     "is_oa": true,
+     "is_in_doaj": true,
+     "is_core": false,
+     "listed_in": [
+      "doaj",
+      "jufo-1",
+      "norway-1",
+      "poland-20",
+      "russia-white-list-2"
+     ],
+     "host_organization": null,
+     "host_organization_name": null,
+     "host_organization_lineage": [],
+     "host_organization_lineage_names": [],
+     "type": "journal"
+    },
+    "license": "cc-by-nc-nd",
+    "license_id": "https://openalex.org/licenses/cc-by-nc-nd",
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": "Journal of Narrative and Language Studies",
+    "raw_type": "journal-article"
+   },
+   "abstract_inverted_index": {
+    "This": [
+     0
+    ],
+    "paper": [
+     1,
+     173
+    ],
+    "explores": [
+     2
+    ],
+    "the": [
+     3,
+     16,
+     25,
+     30,
+     43,
+     52,
+     57,
+     63,
+     66,
+     72,
+     78,
+     93,
+     97,
+     107,
+     111,
+     116,
+     121,
+     136,
+     152,
+     165,
+     182,
+     186,
+     202,
+     210,
+     242,
+     264
+    ],
+    "geopolitical": [
+     4,
+     99,
+     183
+    ],
+    "imaginaries": [
+     5
+    ],
+    "in": [
+     6,
+     15,
+     92,
+     106,
+     115,
+     135,
+     206,
+     270
+    ],
+    "Herman": [
+     7
+    ],
+    "Melville’s": [
+     8,
+     216,
+     231,
+     261
+    ],
+    "Moby-Dick;": [
+     9
+    ],
+    "or,": [
+     10
+    ],
+    "The": [
+     11
+    ],
+    "Whale": [
+     12
+    ],
+    "(1851)": [
+     13
+    ],
+    "and": [
+     14,
+     96,
+     179,
+     190,
+     227,
+     268
+    ],
+    "Japanese": [
+     17,
+     31,
+     129,
+     163,
+     211
+    ],
+    "science": [
+     18
+    ],
+    "fiction": [
+     19
+    ],
+    "animation": [
+     20,
+     32,
+     153
+    ],
+    "titled": [
+     21
+    ],
+    "Hakugei:": [
+     22
+    ],
+    "Legend": [
+     23
+    ],
+    "of": [
+     24,
+     41,
+     45,
+     68,
+     81,
+     89,
+     110,
+     118,
+     126,
+     139,
+     167,
+     185,
+     266,
+     274
+    ],
+    "Moby": [
+     26
+    ],
+    "Dick": [
+     27
+    ],
+    "(1997-1999)": [
+     28
+    ],
+    "by": [
+     29,
+     143,
+     147,
+     194,
+     222
+    ],
+    "artist": [
+     33
+    ],
+    "Osamu": [
+     34
+    ],
+    "Dezaki.": [
+     35
+    ],
+    "Although": [
+     36
+    ],
+    "it": [
+     37
+    ],
+    "is": [
+     38,
+     205
+    ],
+    "an": [
+     39
+    ],
+    "adaptation": [
+     40
+    ],
+    "Moby-Dick,": [
+     42
+    ],
+    "setting": [
+     44,
+     67
+    ],
+    "Hakugei": [
+     46,
+     175
+    ],
+    "has": [
+     47
+    ],
+    "been": [
+     48
+    ],
+    "creatively": [
+     49
+    ],
+    "changed": [
+     50
+    ],
+    "from": [
+     51
+    ],
+    "sea": [
+     53,
+     64,
+     73,
+     122
+    ],
+    "to": [
+     54
+    ],
+    "space.": [
+     55
+    ],
+    "In": [
+     56,
+     249
+    ],
+    "mid-nineteenth": [
+     58
+    ],
+    "century,": [
+     59,
+     113
+    ],
+    "when": [
+     60
+    ],
+    "Melville": [
+     61,
+     84
+    ],
+    "chose": [
+     62
+    ],
+    "as": [
+     65,
+     123,
+     146,
+     198,
+     218,
+     237
+    ],
+    "his": [
+     69
+    ],
+    "quest": [
+     70,
+     127
+    ],
+    "novel,": [
+     71
+    ],
+    "was": [
+     74,
+     160
+    ],
+    "inextricably": [
+     75
+    ],
+    "intertwined": [
+     76
+    ],
+    "with": [
+     77
+    ],
+    "nineteenth-century": [
+     79
+    ],
+    "myth": [
+     80
+    ],
+    "U.S.": [
+     82
+    ],
+    "expansionism.": [
+     83,
+     230
+    ],
+    "presents": [
+     85
+    ],
+    "a": [
+     86,
+     124,
+     155,
+     199,
+     219
+    ],
+    "double": [
+     87
+    ],
+    "vision": [
+     88
+    ],
+    "imaginary": [
+     90
+    ],
+    "islands": [
+     91
+    ],
+    "South": [
+     94
+    ],
+    "Sea": [
+     95
+    ],
+    "actual": [
+     98
+    ],
+    "relationships": [
+     100
+    ],
+    "between": [
+     101
+    ],
+    "existing": [
+     102
+    ],
+    "transatlantic": [
+     103
+    ],
+    "countries.": [
+     104
+    ],
+    "Yet": [
+     105
+    ],
+    "second": [
+     108
+    ],
+    "half": [
+     109
+    ],
+    "twentieth": [
+     112
+    ],
+    "especially": [
+     114
+    ],
+    "wake": [
+     117
+    ],
+    "Transpacific": [
+     119
+    ],
+    "tensions,": [
+     120
+    ],
+    "place": [
+     125
+    ],
+    "among": [
+     128,
+     162
+    ],
+    "writers": [
+     130
+    ],
+    "could": [
+     131
+    ],
+    "not": [
+     132
+    ],
+    "be": [
+     133,
+     234
+    ],
+    "delineated": [
+     134
+    ],
+    "same": [
+     137
+    ],
+    "kind": [
+     138
+    ],
+    "prefigurative": [
+     140
+    ],
+    "language": [
+     141
+    ],
+    "used": [
+     142
+    ],
+    "Melville,": [
+     144
+    ],
+    "such": [
+     145
+    ],
+    "drawing": [
+     148,
+     253
+    ],
+    "on": [
+     149,
+     215,
+     254
+    ],
+    "symbolism.": [
+     150
+    ],
+    "Instead,": [
+     151
+    ],
+    "reflects": [
+     154
+    ],
+    "Cold": [
+     156
+    ],
+    "War": [
+     157,
+     169
+    ],
+    "psychology": [
+     158
+    ],
+    "that": [
+     159,
+     209
+    ],
+    "prevalent": [
+     161
+    ],
+    "after": [
+     164
+    ],
+    "defeat": [
+     166
+    ],
+    "World": [
+     168
+    ],
+    "II.": [
+     170
+    ],
+    "As": [
+     171
+    ],
+    "this": [
+     172,
+     207
+    ],
+    "suggests,": [
+     174
+    ],
+    "displays": [
+     176
+    ],
+    "both": [
+     177
+    ],
+    "fear": [
+     178
+    ],
+    "hope": [
+     180
+    ],
+    "for": [
+     181,
+     201,
+     236,
+     277
+    ],
+    "transformation": [
+     184
+    ],
+    "Pacific": [
+     187
+    ],
+    "Rim": [
+     188
+    ],
+    "countries": [
+     189
+    ],
+    "their": [
+     191
+    ],
+    "future": [
+     192
+    ],
+    "safety": [
+     193
+    ],
+    "choosing": [
+     195
+    ],
+    "outer": [
+     196
+    ],
+    "space": [
+     197
+    ],
+    "site": [
+     200
+    ],
+    "fable.": [
+     203
+    ],
+    "It": [
+     204
+    ],
+    "way": [
+     208
+    ],
+    "animator": [
+     212
+    ],
+    "Dezaki": [
+     213,
+     259
+    ],
+    "draws": [
+     214
+    ],
+    "Moby-Dick": [
+     217
+    ],
+    "source": [
+     220
+    ],
+    "text": [
+     221
+    ],
+    "engaging": [
+     223
+    ],
+    "geopolitics,": [
+     224
+    ],
+    "anti-war": [
+     225
+    ],
+    "psychology,": [
+     226
+    ],
+    "uneasiness": [
+     228
+    ],
+    "toward": [
+     229
+    ],
+    "pacifism": [
+     232
+    ],
+    "can": [
+     233
+    ],
+    "argued": [
+     235
+    ],
+    "major": [
+     238
+    ],
+    "transcultural": [
+     239
+    ],
+    "influence,": [
+     240
+    ],
+    "at": [
+     241
+    ],
+    "very": [
+     243
+    ],
+    "least,": [
+     244
+    ],
+    "driving": [
+     245
+    ],
+    "Hakugei’s": [
+     246
+    ],
+    "anime": [
+     247
+    ],
+    "characterization.": [
+     248
+    ],
+    "fact,": [
+     250
+    ],
+    "going": [
+     251
+    ],
+    "beyond": [
+     252
+    ],
+    "certain": [
+     255
+    ],
+    "characters,": [
+     256
+    ],
+    "including": [
+     257
+    ],
+    "Ahab,": [
+     258
+    ],
+    "retains": [
+     260
+    ],
+    "anxiety": [
+     262
+    ],
+    "over": [
+     263
+    ],
+    "proximity": [
+     265
+    ],
+    "creation": [
+     267
+    ],
+    "destruction": [
+     269
+    ],
+    "yet": [
+     271
+    ],
+    "another": [
+     272
+    ],
+    "era": [
+     273
+    ],
+    "increasing": [
+     275
+    ],
+    "concern": [
+     276
+    ],
+    "world": [
+     278
+    ],
+    "peace.": [
+     279
+    ]
+   },
+   "type": "article"
+  }
+ ]
+}

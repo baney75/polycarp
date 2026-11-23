@@ -1,0 +1,63 @@
+{
+ "count": 3,
+ "next": null,
+ "previous": null,
+ "results": [
+  {
+   "id": 2701,
+   "title": "Moby Dick; Or, The Whale",
+   "authors": [{"name": "Melville, Herman", "birth_year": 1819, "death_year": 1891}],
+   "summaries": ["\"Moby Dick; Or, The Whale\" by Herman Melville is a novel written in the mid-19th century. The story follows Ishmael, a sailor who joins the crew of the whaling ship Pequod, captained by the obsessed Ahab, who hunts the white whale that took his leg."],
+   "translators": [],
+   "subjects": ["Adventure stories", "Ahab, Captain (Fictitious character) -- Fiction", "Whaling -- Fiction"],
+   "bookshelves": ["Best Books Ever Listings"],
+   "languages": ["en"],
+   "copyright": false,
+   "media_type": "Text",
+   "formats": {
+    "text/html": "https://www.gutenberg.org/ebooks/2701.html.images",
+    "application/epub+zip": "https://www.gutenberg.org/ebooks/2701.epub3.images",
+    "application/x-mobipocket-ebook": "https://www.gutenberg.org/ebooks/2701.kf8.images",
+    "text/plain; charset=us-ascii": "https://www.gutenberg.org/ebooks/2701.txt.utf-8",
+    "application/rdf+xml": "https://www.gutenberg.org/ebooks/2701.rdf",
+    "image/jpeg": "https://www.gutenberg.org/cache/epub/2701/pg2701.cover.medium.jpg",
+    "application/octet-stream": "https://www.gutenberg.org/cache/epub/2701/pg2701-h.zip"
+   },
+   "download_count": 98765
+  },
+  {
+   "id": 15,
+   "title": "Moby-Dick; or, The Whale",
+   "authors": [{"name": "Melville, Herman", "birth_year": 1819, "death_year": 1891}],
+   "summaries": [],
+   "translators": [],
+   "subjects": ["Sea stories", "Whales -- Fiction", "Whaling -- Fiction", "Mentally ill -- Fiction"],
+   "bookshelves": [],
+   "languages": ["en"],
+   "copyright": false,
+   "media_type": "Text",
+   "formats": {
+    "text/plain; charset=us-ascii": "https://www.gutenberg.org/ebooks/15.txt.utf-8",
+    "application/epub+zip": "https://www.gutenberg.org/ebooks/15.epub.noimages",
+    "image/jpeg": "https://www.gutenberg.org/cache/epub/15/pg15.cover.medium.jpg"
+   },
+   "download_count": 1234
+  },
+  {
+   "id": 70391,
+   "title": "Moby Dick: A Play in Three Acts",
+   "authors": [],
+   "summaries": [],
+   "translators": [],
+   "subjects": [],
+   "bookshelves": [],
+   "languages": ["en"],
+   "copyright": false,
+   "media_type": "Text",
+   "formats": {
+    "text/html": "https://www.gutenberg.org/ebooks/70391.html.images"
+   },
+   "download_count": 12
+  }
+ ]
+}

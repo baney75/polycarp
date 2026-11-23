@@ -1,0 +1,8 @@
+polycarp-t, polycarp-b, polycarp-r { display: inline !important; }
+polycarp-b { font-weight: var(--polycarp-weight, 700) !important; }
+polycarp-r { opacity: var(--polycarp-fade, 1); }
+html.polycarp-marks .polycarp-done { box-shadow: -6px 0 0 -3px var(--polycarp-done, currentColor) !important; }
+polycarp-ui { display: contents !important; }
+@media print {
+  polycarp-ui { display: none !important; }
+}

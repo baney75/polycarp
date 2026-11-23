@@ -1,0 +1,15 @@
+Polycarp audio library: third party components
+
+@huggingface/jinja@0.5.13  MIT
+@huggingface/transformers@3.8.1  Apache-2.0
+kokoro-js@1.2.1  Apache-2.0
+onnxruntime-common@1.22.0-dev.20250409-89f8206ba4  MIT
+onnxruntime-web@1.22.0-dev.20250409-89f8206ba4  MIT
+phonemizer@1.2.1  Apache-2.0
+
+phonemizer.mjs is the unmodified dist/phonemizer.js of phonemizer@1.2.1 (https://github.com/xenova/phonemizer).
+It contains eSpeak NG (https://github.com/espeak-ng/espeak-ng) compiled to WebAssembly, with its English data.
+eSpeak NG is licensed GPL-3.0-or-later; see eSpeak-NG.GPL-3.0.txt. Source: the phonemizer and espeak-ng repositories above.
+
+Model weights and voices (onnx-community/Kokoro-82M-v1.0-ONNX, Apache-2.0) are not shipped;
+they are downloaded from Hugging Face at the user's request and cached by the browser.

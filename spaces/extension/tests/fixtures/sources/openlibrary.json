@@ -1,0 +1,83 @@
+{
+ "numFound": 1471,
+ "start": 0,
+ "numFoundExact": true,
+ "num_found": 1471,
+ "documentation_url": "https://openlibrary.org/dev/docs/api/search",
+ "q": "moby dick",
+ "offset": null,
+ "docs": [
+  {
+   "author_name": [
+    "Herman Melville"
+   ],
+   "cover_i": 10544254,
+   "ebook_access": "public",
+   "first_publish_year": 1851,
+   "ia": [
+    "bwb_W9-CNP-717",
+    "mobydick0000herm_j9u7",
+    "mobydick0000herm_s2z4"
+   ],
+   "key": "/works/OL102749W",
+   "title": "Moby Dick"
+  },
+  {
+   "author_name": [
+    "Herman Melville",
+    "Nigel Cliff"
+   ],
+   "cover_i": 10089516,
+   "ebook_access": "printdisabled",
+   "first_publish_year": 2016,
+   "ia": [
+    "mobydickorwhale0000melv_m3e4"
+   ],
+   "key": "/works/OL20746848W",
+   "title": "Moby Dick"
+  },
+  {
+   "author_name": [
+    "Herman Melville"
+   ],
+   "cover_i": 12116552,
+   "ebook_access": "no_ebook",
+   "first_publish_year": 1947,
+   "key": "/works/OL26158026W",
+   "title": "Moby Dick"
+  },
+  {
+   "author_name": [
+    "Herman Melville"
+   ],
+   "cover_i": 12286532,
+   "ebook_access": "no_ebook",
+   "first_publish_year": 1991,
+   "key": "/works/OL26282779W",
+   "title": "Moby Dick"
+  },
+  {
+   "author_name": [
+    "Academic Industries",
+    "Herman Melville"
+   ],
+   "cover_i": 6901867,
+   "ebook_access": "printdisabled",
+   "first_publish_year": 1984,
+   "ia": [
+    "mobydickmelv00melv"
+   ],
+   "key": "/works/OL16033740W",
+   "title": "Moby Dick"
+  },
+  {
+   "author_name": [
+    "Herman Melville"
+   ],
+   "ebook_access": "no_ebook",
+   "first_publish_year": 2020,
+   "key": "/works/OL26032991W",
+   "title": "Moby Dick by Herman Melville"
+  }
+ ]
+}

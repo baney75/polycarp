@@ -194,7 +194,12 @@ final class NewTabHostTests: XCTestCase {
         XCTAssertTrue(reg.contains("bundle.pathExtension == \"app\""), "a debug build registers nothing")
         XCTAssertTrue(reg.contains("DispatchQueue.global"), "off the main thread")
         let bundle = try String(contentsOf: SourceText.root.appendingPathComponent("scripts/bundle.sh"), encoding: .utf8)
-        XCTAssertTrue(bundle.contains(#"cp -R extension/newtab "$APP/Contents/Resources/newtab-extension""#))
-        XCTAssertTrue(bundle.contains("[ -d extension/newtab ]"))
+        // The page ships inside the one Polycarp extension, staged with the app's full version so it updates with it.
+        XCTAssertTrue(bundle.contains(#"sh extension/scripts/stage.sh "$APP/Contents/Resources/extension" "$FULL_VERSION""#))
+        XCTAssertFalse(bundle.contains("newtab-extension"), "no second copy of the page")
+        let stage = try XCTUnwrap(bundle.range(of: "extension/scripts/stage.sh")).lowerBound
+        let version = try XCTUnwrap(bundle.range(of: "FULL_VERSION=")).lowerBound
+        let sign = try XCTUnwrap(bundle.range(of: "codesign --force")).lowerBound
+        XCTAssertTrue(version < stage && stage < sign, "staged after the version is known and before signing")
     }
 }

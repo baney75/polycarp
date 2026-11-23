@@ -1,0 +1,84 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/CoqKRpofHNUeJv+L+unpuYW85A8</id>
+  <title>arXiv Query: search_query=all:moby OR all:dick&amp;id_list=&amp;start=0&amp;max_results=10</title>
+  <updated>2026-11-21T03:45:06Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=all:moby+OR+all:dick&amp;start=0&amp;max_results=10&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>10</opensearch:itemsPerPage>
+  <opensearch:totalResults>3888</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/1903.12102v1</id>
+    <title>Ahab's Arithmetic; or, the mathematics of Moby-Dick</title>
+    <updated>2019-03-28T16:38:59Z</updated>
+    <link href="https://arxiv.org/abs/1903.12102v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1903.12102v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Herman Melville's novel Moby-Dick contains a surprising number of mathematical allusions. In this article we explore some of these, as well as discussing the questions that naturally follow: why did Melville choose to use so much mathematical imagery? How did Melville come to acquire the level of mathematical knowledge shown in the novel? And is it commensurate with the general level of mathematical literacy at that time?</summary>
+    <category term="math.HO" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2019-03-28T16:38:59Z</published>
+    <arxiv:comment>NOTE: A companion document "Mathematical Quotations in Melville's Moby-Dick", collating all the quotations I could find in Moby-Dick referring to mathematics, or mathematicians, or using mathematical imagery in some way, is available here: http://eprints.bbk.ac.uk/id/eprint/26952</arxiv:comment>
+    <arxiv:primary_category term="math.HO"/>
+    <arxiv:journal_ref>J. Humanistic Math, 11(1) (January 2021), 4-32. https://scholarship.claremont.edu/jhm/vol11/iss1/3</arxiv:journal_ref>
+    <author>
+      <name>Sarah Hart</name>
+    </author>
+    <arxiv:doi>10.5642/jhummath.202101.03</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.5642/jhummath.202101.03" title="doi"/>
+  </entry>
+<entry>
+    <id>http://arxiv.org/abs/1909.10508v1</id>
+    <title>A tribute to Dick Askey</title>
+    <updated>2019-09-23T17:57:59Z</updated>
+    <link href="https://arxiv.org/abs/1909.10508v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1909.10508v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>This is a small contribution to the (September 15, 2019) Liber Amicorum Richard "Dick" Allen Askey. At the end a positivity conjecture related to the First and Second Borwein Conjectures is offered.</summary>
+    <category term="math.CO" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="math.HO" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="math.NT" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2019-09-23T17:57:59Z</published>
+    <arxiv:comment>4 pages; this is contribution #44 to the Liber Amicorum Richard "Dick" Allen Askey</arxiv:comment>
+    <arxiv:primary_category term="math.CO"/>
+    <author>
+      <name>Michael J. Schlosser</name>
+    </author>
+  </entry>
+<entry>
+    <id>http://arxiv.org/abs/1203.4322v1</id>
+    <title>A higher order Blokh-Zyablov propagation rule for higher order nets</title>
+    <updated>2012-03-20T06:17:34Z</updated>
+    <link href="https://arxiv.org/abs/1203.4322v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1203.4322v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Higher order nets were introduced by Dick as a generalisation of classical $(t,m,s)$-nets, which are point sets frequently used in quasi-Monte Carlo integration algorithms. Essential tools in finding such point sets of high quality are propagation rules, which make it possible to generate new higher order nets from existing higher order nets and even classical $(t,m,s)$-nets. Such propagation rules for higher order nets were first considered by the authors in [J. Dick, P. Kritzer. Duality theory and propagation rules for generalized digital nets. Math. Comp. 79, 993--1017, 2010] and further developed in [J. Baldeaux, J. Dick, F. Pillichshammer. Duality theory and propagation rules for higher order nets. Discrete Math. 311, 362--386, 2011]. In [E.L. Blokh, V.V. Zyablov. Coding of generalized concatenated codes. Problems of Information Transmission, 10, 218--222, 1974] Blokh and Zyablov established a very general propagation rule for linear codes. This propagation rule has been extended to $(t,m,s)$-nets by Schürer and Schmid in [R. Schürer, W.Ch. Schmid. \textit{MinT---the database of optimal net, code, OA, and OOA parameters}. Available at: \texttt{http://mint.sbg.ac.at}]. In this paper we show that this propagation rule can also be extended to higher order nets. Examples indicate that this propagation rule yields new higher order nets with significantly higher quality.</summary>
+    <category term="math.NA" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2012-03-20T06:17:34Z</published>
+    <arxiv:primary_category term="math.NA"/>
+    <author>
+      <name>Josef Dick</name>
+    </author>
+    <author>
+      <name>Peter Kritzer</name>
+    </author>
+  </entry>
+<entry>
+    <id>http://arxiv.org/abs/1203.5157v1</id>
+    <title>A characterization of Sobolev spaces on the sphere and an extension of Stolarsky's invariance principle to arbitrary smoothness</title>
+    <updated>2012-03-23T02:30:21Z</updated>
+    <link href="https://arxiv.org/abs/1203.5157v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1203.5157v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>In this paper we study reproducing kernel Hilbert spaces of arbitrary smoothness on the sphere $\mathbb{S}^d \subset \mathbb{R}^{d+1}$. The reproducing kernel is given by an integral representation using the truncated power function $(\boldsymbol{x} \cdot \boldsymbol{z} - t)_+^{β-1}$ defined on spherical caps centered at $\boldsymbol{z}$ of height $t$, which reduce to an integral over indicator functions of spherical caps as studied in [J. Brauchart, J. Dick, arXiv:1101.4448v1 [math.NA], to appear in Proc. Amer. Math. Soc.] for $β= 1$. This is in analogy to the generalization of the reproducing kernel to arbitrary smoothness on the unit cube.
+  We show that the reproducing kernel is a sum of a Kamp{é} de F{é}riet function and the Euclidean distance $\|\boldsymbol{x}-\boldsymbol{y}\|$ of the arguments of the kernel raised to the power of $2β-1$ if $2β- 1$ is not an even integer; otherwise the logarithm of the distance $\|\boldsymbol{x}-\boldsymbol{y}\|$ appears. For $β\in \mathbb{N}$ the Kampé de Fériet function reduces to a polynomial, giving a simple closed form expression for the reproducing kernel.
+  Using this space we can generalize Stolarsky's invariance principle to arbitrary smoothness. Previously, Warnock's formula, which is the analogue to Stolarsky's invariance principle for the unit cube $[0,1]^s$, has been generalized using similar techniques [J. Dick, Ann. Mat. Pura. Appl., (4) 187 (2008), no. 3, 385--403].</summary>
+    <category term="math.NA" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2012-03-23T02:30:21Z</published>
+    <arxiv:primary_category term="math.NA"/>
+    <arxiv:journal_ref>Constr. Approx. 38 (2013), no. 3, 397--445</arxiv:journal_ref>
+    <author>
+      <name>J. Brauchart</name>
+    </author>
+    <author>
+      <name>J. Dick</name>
+    </author>
+    <arxiv:doi>10.1007/s00365-013-9217-z</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1007/s00365-013-9217-z" title="doi"/>
+  </entry>
+</feed>

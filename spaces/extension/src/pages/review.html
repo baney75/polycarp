@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polycarp Review</title>
+<link rel="icon" href="../../icons/icon32.png">
+<link rel="stylesheet" href="../shared/theme.css">
+<link rel="stylesheet" href="../shared/ui.css">
+<link rel="stylesheet" href="pages.css">
+<link rel="stylesheet" href="review.css">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../reader/reader.html" data-wordmark></a>
+  <nav class="pnav" aria-label="Polycarp pages">
+    <a href="../reader/reader.html" id="navRead"></a>
+    <a href="search.html" id="navSearch"></a>
+    <a href="library.html" id="navLib"></a>
+    <a href="review.html" id="navReview" aria-current="page"></a>
+    <a href="settings.html" id="navSettings"></a>
+  </nav>
+</header>
+<main class="page">
+  <section id="home">
+    <div class="hello">
+      <span id="pip"></span>
+      <div>
+        <h1 id="headline">Your memory garden</h1>
+        <p class="lead" id="sub"></p>
+      </div>
+    </div>
+    <div class="start" id="startBox"></div>
+    <div class="garden" id="garden" role="group" aria-label="Ideas by stage"></div>
+    <p class="garden-note" id="gardenNote"></p>
+    <details class="all" id="allBox">
+      <summary id="allSum">All ideas</summary>
+      <input class="field" id="filter" type="search" placeholder="Search your ideas" aria-label="Search your ideas">
+      <ul class="cards" id="cards"></ul>
+    </details>
+  </section>
+
+  <section id="session" hidden aria-live="polite">
+    <div class="sbar"><span id="sCount"></span><div class="meter"><i id="sFill"></i></div><button class="btn quiet" id="sStop">Stop</button></div>
+    <div class="card" id="card"></div>
+  </section>
+
+  <section id="done" hidden></section>
+</main>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="../shared/core.js"></script>
+<script src="../shared/icons.js"></script>
+<script src="../shared/memory.js"></script>
+<script src="../shared/fx.js"></script>
+<script src="review.js"></script>
+</body>
+</html>

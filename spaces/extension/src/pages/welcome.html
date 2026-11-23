@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Welcome to Polycarp</title>
+<link rel="icon" href="../../icons/icon32.png">
+<link rel="stylesheet" href="../shared/theme.css">
+<link rel="stylesheet" href="../shared/ui.css">
+<link rel="stylesheet" href="pages.css">
+<link rel="stylesheet" href="welcome.css">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../reader/reader.html" data-wordmark></a>
+  <nav class="pnav" aria-label="Polycarp pages">
+    <a href="../reader/reader.html" id="navRead"></a>
+    <a href="search.html" id="navSearch"></a>
+    <a href="library.html" id="navLib"></a>
+    <a href="review.html" id="navReview"></a>
+    <a href="settings.html" id="navSettings"></a>
+  </nav>
+</header>
+
+<main class="page">
+  <section class="hello" aria-labelledby="hi">
+    <span id="pip"></span>
+    <div>
+      <h1 id="hi">Reading that fits the way you think</h1>
+      <p class="lead">Polycarp sets any page, PDF or ebook in the type that is easiest for you, reads it aloud and highlights each word as it goes, and helps you keep what you read.</p>
+    </div>
+  </section>
+
+  <section class="step" aria-labelledby="pickTitle">
+    <h2 id="pickTitle"><span class="n">1</span>Pick how you read</h2>
+    <p class="note">A starting point. Change anything later in Settings and Polycarp keeps your mix.</p>
+    <div class="chips" id="profiles" role="group" aria-label="Reading profile"></div>
+    <figure class="sample" id="sample">
+      <p id="sampleText" data-text="Your eyes do not glide across a line. They jump from word to word and rest for a moment on each one. When the letters, the spacing and the color suit you, reading can feel easier."></p>
+      <figcaption id="blurb"></figcaption>
+    </figure>
+  </section>
+
+  <section class="step" aria-labelledby="tryTitle">
+    <h2 id="tryTitle"><span class="n">2</span>Three things to try</h2>
+    <ol class="try">
+      <li>
+        <b>Any web page</b>
+        <span>Polycarp is already on. Press <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>P</kbd> to turn it off or on for a site, or click the Polycarp icon for quick changes.</span>
+      </li>
+      <li>
+        <b>A PDF, ebook or Word file</b>
+        <span>Open it in the Reader for clean pages, contents, printing and recall breaks. On a PDF tab, press <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>R</kbd>.</span>
+        <a class="btn primary" href="../reader/reader.html" id="openReader"></a>
+      </li>
+      <li>
+        <b>Listen and remember</b>
+        <span>In the Reader, press <kbd>L</kbd> to hear it read aloud with each word highlighted. Every few pages a short recall break plants the main ideas, and Review brings them back as they start to fade.</span>
+      </li>
+    </ol>
+    <p class="pin" id="pin"></p>
+  </section>
+
+  <section class="step" id="science" aria-labelledby="sciTitle">
+    <h2 id="sciTitle">Why it works</h2>
+    <p class="note">Polycarp is built on reading and memory research. Here is what each part rests on and how strong the evidence is. Where it is weak, we say so.</p>
+    <ul class="ev" id="evidence"></ul>
+    <div class="nopromise">
+      <h3>What Polycarp does not promise</h3>
+      <p><b>Photographic memory.</b> Careful study has not found it in adults (Haber 1979). What does work is recalling what you read, spaced over days. Polycarp builds that into every document, so more of what you read stays with you.</p>
+      <p><b>Speed reading.</b> Reading much faster than normal costs understanding (Rayner et al. 2016). Polycarp aims for reading that is easier, steadier and better remembered.</p>
+    </div>
+  </section>
+
+  <section class="step" id="new" aria-labelledby="newTitle">
+    <h2 id="newTitle">What is new in <span id="ver"></span></h2>
+    <p class="note">Polycarp updates with the Polycarp app. When something changes, it is listed here.</p>
+    <ul class="news">
+      <li><b>One Polycarp in your browser.</b> The reading extension and Polycarp's new tab are now one extension, in Polycarp's own colors and type. Restore a backup from the earlier reading extension in Settings and it carries over.</li>
+      <li><b>Polycarp Search.</b> One box for your library, YouTube, Wikipedia and free book catalogs. Paste any link to make that site, feed or catalog searchable too, and make your Audible or Kindle library searchable from its own page.</li>
+      <li><b>Your own NAS.</b> Browse it, search its files, save downloads to it and keep a daily backup there.</li>
+      <li><b>Find anything on a page.</b> Press <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>S</kbd> for headings, links, images and video, a YouTube transcript, or the X posts you have scrolled past.</li>
+      <li><b>Take a break.</b> Pause Polycarp for an hour or until tomorrow from the toolbar popup, or switch off any site helper in Settings.</li>
+      <li><b>A library that links itself.</b> Save pages, PDFs, ebooks, audiobooks and notes. Polycarp connects them by shared ideas, people and sites, and by the <code>[[links]]</code> in your notes. Send it all to Obsidian or Notion.</li>
+      <li><b>A Reader for many formats.</b> PDF, EPUB, DOCX, HTML, Markdown, FB2 and plain text, with contents, a library and your place saved.</li>
+      <li><b>Listen with word highlighting.</b> Natural Kokoro voices that run on this computer, with a second voice for dialogue. They download once, the first time you listen.</li>
+      <li><b>Recall breaks and a memory garden.</b> Short questions while you read, and spaced review that brings each idea back as it starts to fade.</li>
+      <li><b>Print it your way.</b> Your font, spacing and anchors on paper, with an optional recall sheet at the end.</li>
+      <li><b>Make every site readable.</b> A minimum text size, left-aligned text, no italics, and copy turned back on where sites block it.</li>
+    </ul>
+  </section>
+
+  <section class="step" aria-labelledby="privTitle">
+    <h2 id="privTitle">Private by design</h2>
+    <p class="note">Polycarp has no account, no tracking and no servers. Your settings, library, notes and memory garden stay on this computer. Polycarp goes online only when you ask: to open a page or file, to search (only your search words go to the sources you switch on), to download the reading voice the first time you listen, or to reach a NAS you connect. If you connect Notion, your library goes to Notion when you press Sync, and not before.</p>
+    <div class="acts">
+      <a class="btn" href="settings.html">Open Settings</a>
+      <a class="btn quiet" href="review.html">See your memory garden</a>
+    </div>
+  </section>
+</main>
+
+<script src="../shared/core.js"></script>
+<script src="../shared/bionic.js"></script>
+<script src="../shared/icons.js"></script>
+<script src="welcome.js"></script>
+</body>
+</html>
