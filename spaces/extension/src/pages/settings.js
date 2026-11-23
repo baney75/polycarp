@@ -122,7 +122,7 @@
         '<button class="btn quiet" id="resetSettings">Reset settings</button></div><p class="note" id="dataNote"></p>', bindData)
     ]],
     ["About", "", [
-      raw('<div class="row"><span class="lbl"><b id="ver"></b><span>Polycarp updates with the Polycarp app. A new version starts as soon as no Reader tab is open.</span></span><button class="btn" id="checkUpd">' + I("rotate") + '<span>Check for updates</span></button></div><p class="note" id="updNote" aria-live="polite"></p>' +
+      raw('<div class="row"><span class="lbl"><b id="ver"></b><span>With the Polycarp app installed, this extension updates with it. A new version starts as soon as no Reader tab is open.</span></span><button class="btn" id="checkUpd">' + I("rotate") + '<span>Check for updates</span></button></div><p class="note" id="updNote" aria-live="polite"></p>' +
         '<div class="acts"><a class="btn quiet" href="welcome.html#science">The research behind Polycarp</a><a class="btn quiet" href="welcome.html#new">What is new</a><a class="btn quiet" href="welcome.html">Welcome page</a></div>', bindAbout)
     ]]
   ];
@@ -319,7 +319,7 @@
       const r = await chrome.runtime.sendMessage({ type: "polycarp:checkUpdate" }).catch((e) => ({ status: "error", message: e.message }));
       const msg = {
         update_available: "Update " + ((r && r.version) || "") + " found. Polycarp restarts with it as soon as no Reader tab is open.",
-        no_update: "You have the version the Polycarp app carries."
+        no_update: "You have the newest version on this computer."
       }[r && r.status] || "Could not check right now" + (r && r.message ? ": " + r.message : "") + ". Polycarp checks again on its own.";
       $("updNote").textContent = msg;
     });

@@ -36,8 +36,8 @@ async function noteVersion(previous) {
 function nasAlarm() { const N = globalThis.PolycarpNAS; if (N && N.ensureAlarm) N.ensureAlarm().catch(() => {}); }
 chrome.runtime.onStartup.addListener(() => { refreshBadge(); nasAlarm(); noteVersion(); });
 
-// Polycarp's app ships this extension inside Polycarp.app, and Helium runs it unpacked from there.
-// When the app updates, the files on disk change but the running copy does not. Compare the
+// Polycarp's app ships this extension inside Polycarp.app, and Helium runs it unpacked from there; without the app it
+// runs unpacked from a checkout. When the app or the checkout updates, the files on disk change but the running copy does not. Compare the
 // version on disk with the running one; when they differ, reload right away unless a Polycarp
 // page (Reader, Review) is open, in which case wait until those tabs close.
 let updatePending = false;

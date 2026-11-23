@@ -1,6 +1,6 @@
 # Polycarp agent rules
 
-Polycarp is Spaces and themes for macOS and Windows, with its own browser extension for reading and the new tab (`spaces/extension`, Donovan, 2026-11-21). The agent browser extension (the side panel), its CLI helper, MCP server and computer-use tools moved to Tychicus: https://github.com/baney75/tychicus. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
+Polycarp is its own OS on macOS and Windows: Spaces, the dock, the bar, the launcher and themes (Donovan, 2026-11-23). Its browser extension for reading and the new tab (`spaces/extension`, Donovan, 2026-11-21) is the accessibility extension that was Phont: it works on its own, with no Polycarp app, and joins Polycarp (new tab host, updates with the app) when Polycarp is installed on the same computer (Donovan, 2026-11-23). The agent browser extension (the side panel), its CLI helper, MCP server and computer-use tools moved to Tychicus: https://github.com/baney75/tychicus. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 Browser agent and voice work goes to Tychicus and Silas; Linux desktop work is retired. A PR here that adds any of it is refused. Polycarp's reading extension in `spaces/extension` is not browser agent work and belongs here.
 
