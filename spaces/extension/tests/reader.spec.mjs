@@ -33,7 +33,7 @@ try {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('console', (m) => { if (m.type() === 'error') { errors.push(m.text()); if (process.env.SHOW_ERRORS) console.log('CONSOLE', m.text().slice(0, 200), JSON.stringify(m.location())); } });
   await page.setViewportSize({ width: 1280, height: 860 });
   await page.goto(base);
   ok(await page.locator('body[data-state="landing"]').count() === 1, 'landing shows with no params');

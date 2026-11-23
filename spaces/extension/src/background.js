@@ -49,7 +49,8 @@ chrome.tabs.onRemoved.addListener(() => { if (updatePending) setTimeout(tryApply
 async function tryApplyUpdate() {
   if (!updatePending) return;
   try {
-    const open = await chrome.runtime.getContexts({ contextTypes: ["TAB"] });
+    // A new tab holds nothing to lose, so only the other Polycarp pages hold an update back.
+    const open = (await chrome.runtime.getContexts({ contextTypes: ["TAB"] })).filter((c) => !/\/newtab\//.test(c.documentUrl || ""));
     if (open.length) return;
   } catch (e) { /* older Chrome: fall through */ }
   chrome.runtime.reload();

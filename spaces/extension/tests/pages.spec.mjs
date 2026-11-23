@@ -87,7 +87,7 @@ try {
   ok(w.levels.includes('weak') && w.levels.includes('strong'), 'evidence shows both strong and weak levels');
   ok(w.chips === 5 && w.pressed === 'everyday', `profile chips render, default ${w.pressed}`);
   ok(w.anchors > 10, `live sample has bold anchors (${w.anchors})`);
-  ok(w.ver === '1.0.0', 'what is new shows the version');
+  ok(w.ver === JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8')).version, 'what is new shows the version');
   ok(!/photographic memory/i.test(w.text.replace(/Photographic memory\.\s/, '')) || /does not promise/i.test(w.text), 'photographic memory appears only as a non-promise');
   ok(!/[–—]/.test(w.text), 'welcome copy has no en or em dashes');
 

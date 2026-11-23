@@ -223,8 +223,14 @@
         ideas.slice(0, 8).map((c) => "<li>" + IC.plant(c.tier) + "<span>" + esc(O.ideaLine(c)) + "</span></li>").join("") +
         '</ul><p class="muted" style="margin-top:12px"><a href="review.html">Review them</a> to keep them growing.</p></section>';
     }
+    // A re-render (the audio length arriving, a sync) keeps a note being typed for the same item.
+    const draftEl = box.dataset.item === it.id ? $("dNote") : null;
+    const draft = draftEl ? draftEl.value : "";
+    const typing = draftEl && document.activeElement === draftEl;
     box.innerHTML = html;
+    box.dataset.item = it.id;
     const form = $("dNoteForm");
+    if (form && draft) { $("dNote").value = draft; if (typing) $("dNote").focus(); }
     if (form) {
       N.autocomplete($("dNote"), () => items);
       $("dNote").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.requestSubmit(); } });

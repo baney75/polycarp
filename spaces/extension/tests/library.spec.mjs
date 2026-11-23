@@ -79,7 +79,7 @@ try {
   const page = await ctx.newPage();
   await page.setViewportSize({ width: 1280, height: 860 });
   const errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('pageerror', (e) => { errors.push(String(e)); if (process.env.SHOW_ERRORS) console.log('pageerror', String(e)); });
   page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
 
   // ---------- Empty state ----------
@@ -141,6 +141,7 @@ try {
 
   // ---------- Connections ----------
   await page.click('#items button:has-text("The water cycle")');
+  await page.waitForFunction(() => /The water cycle/.test((document.querySelector('#detail h2') || {}).textContent || ''));
   await page.waitForSelector('#detail .conn, #detail .d-sec p.muted');
   const conn = await page.$$eval('#detail .conn li', (l) => l.map((x) => x.textContent));
   ok(conn.some((c) => c.includes('Weather questions')), 'backlink: the note that names this item is connected');
@@ -234,6 +235,7 @@ try {
   await page.waitForFunction(() => !document.body.classList.contains('has-item'));
   ok(await page.isVisible('#items'), 'phone: back returns to the list');
   await page.click('#items button:has-text("Weather questions")');
+  await page.waitForFunction(() => document.body.classList.contains('has-item') && /Weather questions/.test((document.querySelector('#detail h2') || {}).textContent || ''));
   ok(!(await page.isVisible('#items')) && (await page.isVisible('#detail h2')), 'phone: an item fills the screen');
 
   ok(!errors.length, 'no page errors ' + (errors.length ? JSON.stringify(errors.slice(0, 5)) : ''));

@@ -53,13 +53,20 @@ try {
   await web.waitForSelector('polycarp-b', { timeout: 8000 }).catch(() => {});
   ok(await web.evaluate(() => document.querySelectorAll('polycarp-b').length > 5), 'content script restyles a web page');
   // The app's update path: the app writes a new copy with a new version_name; the running extension
-  // sees it on disk and reloads into it once no Polycarp page is open.
+  // sees it on disk and reloads into it, but not while a Polycarp page (here the Reader) is open.
+  // chrome.runtime.reload is recorded, not run: headless Chromium does not bring a command-line
+  // extension back after a reload, so the browser's own reload is the part this cannot show.
+  await sw.evaluate(() => { globalThis.__reloads = 0; chrome.runtime.reload = () => { globalThis.__reloads++; }; });
+  ok(await sw.evaluate(() => checkDisk().then(() => __reloads)) === 0, 'no reload while the copy on disk is the one running');
   const next = { ...shipped, version_name: APP_VERSION + '.next' };
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(next, null, 2));
-  const reborn = ctx.waitForEvent('serviceworker', { timeout: 15000 });
-  await sw.evaluate(() => checkDisk()).catch(() => {}); // the worker reloads under this call
-  const sw2 = await reborn;
-  ok(await sw2.evaluate(() => chrome.runtime.getManifest().version_name) === next.version_name, 'reloads itself into the new copy on disk');
+  for (const pg of ctx.pages()) if (pg.url().startsWith('chrome-extension://')) await pg.close();
+  const reader = await ctx.newPage(); await reader.goto(`chrome-extension://${id}/src/reader/reader.html`);
+  const nt = await ctx.newPage(); await nt.goto(`chrome-extension://${id}/newtab/newtab.html`);
+  ok(await sw.evaluate(() => checkDisk().then(() => __reloads)) === 0, 'an open Reader holds the update back');
+  await reader.close();
+  await new Promise((r) => setTimeout(r, 1500)); // the tab-closed listener retries after 500 ms
+  ok(await sw.evaluate(() => __reloads) === 1, 'reloads into the new copy once the Reader closes, with a new tab still open');
   ok(errors.length === 0, 'no page errors ' + errors.join(' | '));
 } catch (e) {
   ok(false, 'threw ' + (e.stack || e));

@@ -106,7 +106,14 @@
     return d;
   }
 
+  // Event handler attributes never run here (the sanitizer drops them too), but an XHTML document
+  // parsed under the Reader's CSP still reports each one as a violation, so they go before parsing.
+  function dropHandlers(text) {
+    return text.replace(/<[^>]+>/g, function (tag) { return tag.replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, ''); });
+  }
+
   function parseXhtml(text) {
+    text = dropHandlers(text);
     var d = new DOMParser().parseFromString(text, 'application/xhtml+xml');
     if (d.getElementsByTagName('parsererror').length || !d.documentElement) {
       d = new DOMParser().parseFromString(text, 'text/html');
