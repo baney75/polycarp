@@ -457,7 +457,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "keys_list",
-            description: "Every Polycarp keyboard shortcut on this Mac, from the one table the app, docs/keys.md and `polycarp-spaces keys` use. Each row has id, keys (display parts; \"mod\" is the person's Polycarp modifier, picked in Settings > Keys), display (the keys as macOS symbols with their modifier filled in, as \"⌘1...9\" or \"⌃⌘K\"), title (what it does), group (launcher, workspaces, windows, terminal, agents, bar) and scope (global: anywhere; launcher; terminal: while a terminal app is in front; newTab: the browser's new tab page). Read-only.",
+            description: "Every Polycarp keyboard shortcut on this Mac, from the one table the app, docs/keys.md and `polycarp-spaces keys` use. Each row has id, keys (display parts; \"mod\" is the person's Polycarp modifier, picked in Settings > Keys), display (the keys as macOS symbols with their modifier filled in, as \"⌘1...9\" or \"⌃⌘K\"), title (what it does), group (launcher, workspaces, windows, terminal, agents, player, bar), scope (global: anywhere; launcher; terminal: while a terminal app is in front; newTab: the browser's new tab page; overview; switcher: while the ⌘Tab switcher is up; player; menu: the Polycarp menu in the menu bar) and note (when it works beyond its scope, as \"When Settings has it on\", or null when it always does). Read-only.",
             schema: obj(json!({}), &[]),
             read_only: true,
             destructive: false,

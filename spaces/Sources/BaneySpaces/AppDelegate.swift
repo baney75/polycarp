@@ -931,7 +931,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return item("Show All Workspaces", #selector(showViewer))
         case .find:
             let find = item("Find or Install an App…", #selector(showLauncher))
-            if Launcher.onCmdSpace { find.keyEquivalent = " "; find.keyEquivalentModifierMask = [.command] }
+            if Launcher.onCmdSpace, !SystemShortcuts.spotlightOwnsCmdSpace { find.keyEquivalent = " "; find.keyEquivalentModifierMask = [.command] } else { find.keyEquivalent = "k"; find.keyEquivalentModifierMask = [.control, .command] }
             return find
         case .room(let room, let waiting):
             let it = item(MenuLayout.roomTitle(room, waiting: waiting), #selector(openRoom(_:)))

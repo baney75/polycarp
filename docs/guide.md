@@ -318,7 +318,7 @@ Any other MCP client can start the same command.
 | `style_restore` | Undo a preset: put the newest backup back; the sheet in force becomes the next backup, so a second call undoes the first |
 | `search` | Find what the person has open (tabs, windows, terminal splits) and the web, ranked as the launcher and the new tab page rank it, with the same bangs and `search.engine`. Changes nothing |
 | `search_open` | Go to the top `search` result: bring the open tab or window forward, or open the page in the default browser. Only when the person asked to go there |
-| `keys_list` | Read every Polycarp keyboard shortcut: its keys (`mod` is the person's modifier), what it does, its group and where it works. Read-only. The same list: [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md) |
+| `keys_list` | Read every Polycarp keyboard shortcut: its keys (`mod` is the person's modifier), what it does, its group, where it works and when. Read-only. The same list: [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md) |
 
 ### The workflow
 

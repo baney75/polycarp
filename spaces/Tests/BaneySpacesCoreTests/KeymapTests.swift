@@ -33,16 +33,36 @@ final class KeymapTests: XCTestCase {
     /// Each `e.key` the new tab page acts on, and its row.
     static let newTabKeys: [String: String] = ["Enter": "newtab.go"]
 
-    /// Rows that come from no call the scan above reads: the ⌘Tab and Mission Control keys go through the event tap in
-    /// MissionControlKeys.swift, ⌘Return is a flag read inside the Return branch, and the keys.* rows are the
-    /// shortcut sheet still to be built.
-    static let unscanned: Set<String> = [
-        "launcher.reveal", "workspace.overview", "workspace.overview.controlUp", "switcher.next", "switcher.back",
-        "keys.hold", "keys.launcher", "keys.launcher.question",
+    /// Each key the overview's key monitor (Viewer.swift) reads, by key code, and its row. Its 1 to 9 is read as
+    /// characters and has its own check.
+    static let overviewKeyCodes: [String: String] = [
+        "53": "overview.close", "36": "overview.go",
+        "123": "overview.move", "124": "overview.move", "125": "overview.move", "126": "overview.move",
     ]
 
-    /// kVK_ constants in Launcher.swift that are not a shortcut: ⌘Q is posted to quit an app, never read.
-    static let launcherKeyCodesNotShortcuts: Set<String> = ["kVK_ANSI_Q"]
+    /// Each key equivalent the status menu's items carry (`item(_:_:key:)` in AppDelegate.swift), and its row.
+    static let menuKeys: [String: String] = [#"\(row.workspace)"#: "menu.workspace", ",": "menu.settings", "q": "menu.quit"]
+
+    /// What the player does for each key it acts on (`PlayerKeys.command`), as "<modifiers>+<key>", and its row.
+    static let playerKeys: [String: String] = [
+        "space": "player.play", "left": "player.seek", "right": "player.seek",
+        "shift+left": "player.longSeek", "shift+right": "player.longSeek",
+        "up": "player.volume", "down": "player.volume",
+        "cmd+left": "player.step", "cmd+right": "player.step",
+        "f": "player.fill", "cmd+i": "player.info", "escape": "player.close", "cmd+w": "player.closeCmd",
+    ]
+
+    /// Rows that come from no call the scans read: the ⌘Tab, switcher and Mission Control keys go through the event tap
+    /// in MissionControlKeys.swift (`testTheEventTapStillTakesTheKeysItsRowsSay`), ⌘Return is a flag read inside the
+    /// Return branch, the overview's 1 to 9 is read as characters, and the keys.* rows are the shortcut sheet.
+    static let unscanned: Set<String> = [
+        "launcher.reveal", "workspace.overview", "workspace.overview.controlUp", "switcher.next", "switcher.back",
+        "switcher.arrows", "switcher.cancel", "overview.pick", "keys.hold", "keys.launcher", "keys.launcher.word",
+    ]
+
+    /// kVK_ constants in Launcher.swift and the row each is, or nil when it is not a shortcut: ⌘Q is posted to quit an
+    /// app, never read. One way only: the sheet's ⌘K may be read here or elsewhere.
+    static let launcherKeyCodes: [String: String?] = ["kVK_ANSI_Q": nil, "kVK_ANSI_K": "keys.launcher"]
 
     /// Files that call RegisterEventHotKey themselves; anything else registering a key would skip the scan.
     static let hotkeyFiles: Set<String> = ["Hotkeys.swift", "ScopedHotkeys.swift"]
@@ -110,7 +130,11 @@ final class KeymapTests: XCTestCase {
         // ⌘Return: the Return branch reads ⌘.
         XCTAssertTrue(handler.contains("runSelected(reveal: NSEvent.modifierFlags.contains(.command))"), "⌘Return changed; fix launcher.reveal")
         for k in Self.matches(#"(kVK_\w+)"#, in: code).map({ $0[0] }) {
-            XCTAssertTrue(Self.launcherKeyCodesNotShortcuts.contains(k), "Launcher.swift reads \(k): give it a Keymap row, or list it as not a shortcut")
+            guard let row = Self.launcherKeyCodes[k] else {
+                XCTFail("Launcher.swift reads \(k): give it a Keymap row and map it in KeymapTests.launcherKeyCodes, or map it to nil")
+                continue
+            }
+            if let id = row { XCTAssertNotNil(Keymap.binding(id), "\(k) maps to \(id), which Keymap.all lacks") }
         }
     }
 
@@ -129,8 +153,82 @@ final class KeymapTests: XCTestCase {
         }
     }
 
+    func testEveryKeyTheOverviewHandlesHasARow() throws {
+        let code = try SourceText.code("Sources/BaneySpaces/Viewer.swift")
+        let monitor = try XCTUnwrap(SourceText.block(after: "keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown)", in: code),
+                                    "the overview's key monitor moved; point this test at it")
+        let codes = Self.matches(#"keyCode == (\d+)"#, in: monitor).map { $0[0] }
+            + Self.matches(#"(\d+): \.(?:left|right|up|down)"#, in: monitor).map { $0[0] }
+        XCTAssertEqual(Set(codes).count, 6, "the overview's keys changed: \(codes)")
+        for c in codes {
+            guard let id = Self.overviewKeyCodes[c] else { XCTFail("the overview reads key code \(c) with no Keymap row"); continue }
+            XCTAssertNotNil(Keymap.binding(id))
+        }
+        for c in Self.overviewKeyCodes.keys where !codes.contains(c) { XCTFail("the overview no longer reads key code \(c)") }
+        XCTAssertTrue(monitor.contains("let n = Int(c), Workspaces.range.contains(n)"), "the overview's 1 to 9 changed; fix overview.pick")
+        XCTAssertEqual(monitor.components(separatedBy: "return nil").count - 1, 4, "the overview takes a key this test doesn't know")
+    }
+
+    func testEveryKeyTheStatusMenuShowsHasARow() throws {
+        let code = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
+        let keys = Self.matches(#"item\([^\n]*?key: "((?:[^"\\]|\\.)*)"\)"#, in: code).map { $0[0] }
+        XCTAssertFalse(keys.isEmpty, "the status menu's items moved; point this test at them")
+        for k in keys {
+            guard let id = Self.menuKeys[k] else { XCTFail("a status menu item shows key \(k) with no Keymap row"); continue }
+            XCTAssertNotNil(Keymap.binding(id))
+        }
+        for k in Self.menuKeys.keys where !keys.contains(k) { XCTFail("the status menu no longer shows key \(k)") }
+        // The workspace rows carry the modifier, as menu.workspace's "mod" says.
+        XCTAssertTrue(code.contains("it.keyEquivalentModifierMask = Modifier.current.menuFlags"))
+    }
+
+    /// The menu's "Find or Install an App" shows the launcher key that works: ⌘Space only when it is registered.
+    func testTheMenuShowsTheLauncherKeyThatIsRegistered() throws {
+        let code = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
+        let register = try XCTUnwrap(Self.matches(#"if (.+?) \{\s*hotkeys\.register\(keyCode: kVK_Space"#, in: code).first?[0])
+        let find = try XCTUnwrap(Self.matches(#"if (.+?) \{ find\.keyEquivalent = " "; find\.keyEquivalentModifierMask = \[\.command\] \}(.*)"#, in: code).first)
+        XCTAssertEqual(find[0], register, "the menu shows ⌘Space under another condition than the one that registers it")
+        XCTAssertTrue(find[1].contains(#"else { find.keyEquivalent = "k"; find.keyEquivalentModifierMask = [.control, .command] }"#),
+                      "without ⌘Space the menu shows ⌃⌘K")
+    }
+
+    func testEveryKeyThePlayerActsOnHasARow() {
+        let keys: [(String, PlayerKey)] = [("space", .space), ("left", .left), ("right", .right), ("up", .up), ("down", .down), ("escape", .escape)]
+            + "abcdefghijklmnopqrstuvwxyz0123456789`-=[]\\;',./ ".map { (String($0), PlayerKey.character($0)) }
+        let mods: [(String, PlayerModifiers)] = [("cmd", .command), ("shift", .shift), ("opt", .option), ("ctrl", .control)]
+        var found: Set<String> = []
+        for kind in MediaKind.allCases {
+            for (name, key) in keys {
+                for bits in 0..<16 {
+                    let held = mods.enumerated().filter { bits & (1 << $0.offset) != 0 }.map(\.element)
+                    let set = held.reduce(into: PlayerModifiers()) { $0.insert($1.1) }
+                    guard let c = PlayerKeys.command(key, set, kind: kind) else { continue }
+                    // ⇧ that changes nothing isn't a shortcut of its own.
+                    if set.contains(.shift), PlayerKeys.command(key, set.subtracting(.shift), kind: kind) == c { continue }
+                    let sig = (held.map(\.0) + [name]).joined(separator: "+")
+                    found.insert(sig)
+                    guard let id = Self.playerKeys[sig] else { XCTFail("the player acts on \(sig) with no Keymap row"); continue }
+                    XCTAssertNotNil(Keymap.binding(id))
+                }
+            }
+        }
+        for sig in Self.playerKeys.keys where !found.contains(sig) { XCTFail("the player no longer acts on \(sig)") }
+    }
+
+    func testThePlayerTurnsEveryKeyIntoAPlayerKey() throws {
+        let code = try SourceText.code("Sources/BaneySpaces/Player.swift")
+        XCTAssertTrue(code.contains("guard let c = PlayerKeys.command(key, mods, kind: kind) else { return false }"),
+                      "the player decides its keys somewhere other than PlayerKeys; point testEveryKeyThePlayerActsOnHasARow at it")
+    }
+
     func testTheEventTapStillTakesTheKeysItsRowsSay() throws {
         let tap = try SourceText.code("Sources/BaneySpaces/MissionControlKeys.swift")
+        // While the switcher is up: Esc closes it and the arrows step; every other key is swallowed.
+        XCTAssertEqual(Self.matches(#"if inGesture, code == (\w+)"#, in: tap).map { $0[0] }, ["escapeKey"], "the switcher's keys changed; fix switcher.cancel")
+        XCTAssertTrue(tap.contains("if inGesture, let forward = SwitcherSelection.arrow(keyCode: code)"), "the switcher's arrows changed; fix switcher.arrows")
+        let order = try SourceText.code("Sources/BaneySpacesCore/WorkspaceSwitcherOrder.swift")
+        XCTAssertTrue(order.contains("case rightArrow, downArrow: return true") && order.contains("case leftArrow, upArrow: return false"),
+                      "the switcher's arrows changed; fix switcher.arrows")
         XCTAssertTrue(tap.contains("let back = event.flags.contains(.maskShift)"), "⌘⇧Tab changed; fix switcher.back")
         XCTAssertTrue(tap.contains("mods == .maskCommand"), "⌘Tab changed; fix switcher.next")
         let core = try SourceText.code("Sources/BaneySpacesCore/MissionControlTakeover.swift")
@@ -139,6 +237,7 @@ final class KeymapTests: XCTestCase {
 
     func testEveryRowIsAKeyTheCodeTakesOrIsListedAsUnscanned() {
         let mapped = Set(Self.registered.values).union(Self.launcherCommands.values).union(Self.newTabKeys.values)
+            .union(Self.overviewKeyCodes.values).union(Self.menuKeys.values).union(Self.playerKeys.values)
         for b in Keymap.all {
             XCTAssertTrue(mapped.contains(b.id) || Self.unscanned.contains(b.id), "\(b.id) stands for no key the scan finds; map it or list it in unscanned")
         }
@@ -152,7 +251,8 @@ final class KeymapTests: XCTestCase {
         for b in Keymap.all {
             XCTAssertFalse(b.keys.isEmpty, b.id)
             XCTAssertFalse(b.title.isEmpty, b.id)
-            for text in [b.title] + b.keys {
+            XCTAssertNotEqual(b.note, "", b.id)
+            for text in [b.title, b.note ?? ""] + b.keys {
                 XCTAssertFalse(text.contains("\u{2014}") || text.contains("\u{2013}"), "\(b.id): no em or en dashes")
             }
         }
@@ -162,7 +262,9 @@ final class KeymapTests: XCTestCase {
         XCTAssertEqual(Keymap.binding("keys.hold"), KeyBinding(id: "keys.hold", keys: ["hold mod"], title: "Show every shortcut", group: .launcher, scope: .global))
         XCTAssertEqual(Keymap.binding("keys.launcher")?.keys, ["cmd", "K"])
         XCTAssertEqual(Keymap.binding("keys.launcher")?.scope, .launcher)
-        XCTAssertEqual(Keymap.binding("keys.launcher.question")?.keys, ["?"])
+        XCTAssertEqual(Keymap.binding("keys.launcher.word"), KeyBinding(id: "keys.launcher.word", keys: ["keys"], title: "Type keys to show every shortcut", group: .launcher, scope: .launcher))
+        // "?" in the launcher asks an agent, so it is not a shortcut.
+        XCTAssertFalse(Keymap.all.contains { $0.keys == ["?"] })
         XCTAssertEqual(Keymap.binding("workspace.switch")?.keys, ["mod", "1...9"])
         XCTAssertEqual(Keymap.binding("launcher.open")?.keys, ["ctrl", "cmd", "K"])
     }
@@ -213,10 +315,9 @@ final class KeymapTests: XCTestCase {
         // Groups in order, each heading once, empty groups left out.
         let headings = lines.filter { KeyBinding.Group.allCases.map(\.title).contains($0) }
         XCTAssertEqual(headings, Keymap.grouped.map(\.group.title))
-        XCTAssertFalse(headings.contains("Bar"), "no bar shortcut yet, so no Bar heading")
         for b in Keymap.all {
             let row = "  " + b.display(modifierSymbol: "⌃")
-            XCTAssertTrue(lines.contains { $0.hasPrefix(row) && $0.contains(b.title) && $0.hasSuffix(b.scope.title) }, b.id)
+            XCTAssertTrue(lines.contains { $0.hasPrefix(row) && $0.contains(b.title) && $0.contains(b.scope.title) && $0.hasSuffix(b.note ?? b.scope.title) }, b.id)
         }
         XCTAssertTrue(lines.contains { $0.hasPrefix("  ⌃1...9 ") && $0.contains("Go to workspace 1 to 9") })
         // Each row sits under its own group's heading.
@@ -234,7 +335,8 @@ final class KeymapTests: XCTestCase {
         let rows = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])
         XCTAssertEqual(rows.count, Keymap.all.count)
         for (row, b) in zip(rows, Keymap.all) {
-            XCTAssertEqual(Set(row.keys), ["id", "keys", "display", "title", "group", "scope"])
+            XCTAssertEqual(Set(row.keys), ["id", "keys", "display", "title", "group", "scope", "note"])
+            if let note = b.note { XCTAssertEqual(row["note"] as? String, note) } else { XCTAssertTrue(row["note"] is NSNull, b.id) }
             XCTAssertEqual(row["id"] as? String, b.id)
             XCTAssertEqual(row["keys"] as? [String], b.keys)
             XCTAssertEqual(row["display"] as? String, b.display(modifierSymbol: "⌥"))
