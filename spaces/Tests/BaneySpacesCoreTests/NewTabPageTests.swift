@@ -225,8 +225,83 @@ final class NewTabPageTests: XCTestCase {
         XCTAssertTrue((manifest["permissions"] as? [String] ?? []).contains("nativeMessaging"), "the page talks to Polycarp")
     }
 
+    // MARK: Paper (paper.js)
+
+    /// paper.js in JavaScriptCore, with a stand-in for the #paper layer, the body and chrome.storage.local.
+    private func paperPage() throws -> JSContext {
+        let ctx = try XCTUnwrap(JSContext())
+        ctx.exceptionHandler = { _, e in XCTFail("paper.js threw: \(e?.toString() ?? "?")") }
+        ctx.evaluateScript("""
+            function element() {
+                var attrs = {};
+                return { style: { backgroundColor: "", backgroundImage: "" }, attrs: attrs,
+                         setAttribute: function (k, v) { attrs[k] = String(v); }, getAttribute: function (k) { return attrs[k]; } };
+            }
+            var layer = element(), body = element();
+            var stored = {}, writes = 0, removes = 0;
+            var storage = {
+                get: function (key, cb) { var o = {}; if (key in stored) o[key] = stored[key]; cb(o); },
+                set: function (items) { writes++; for (var k in items) stored[k] = items[k]; },
+                remove: function (key) { removes++; delete stored[key]; }
+            };
+            """)
+        ctx.evaluateScript(try Repo.text("extension/newtab/paper.js"))
+        return ctx
+    }
+
+    @discardableResult private func js(_ ctx: JSContext, _ code: String) -> String { ctx.evaluateScript(code)?.toString() ?? "" }
+
+    func testTheKeptPaperIsPaintedFirstWithoutAskingPolycarp() throws {
+        let ctx = try paperPage()
+        let key = js(ctx, "PolycarpPaper.cacheKey")
+        XCTAssertEqual(key, "polycarpNewTabPaper")
+        js(ctx, ##"stored[PolycarpPaper.cacheKey] = {color: "#112233"}; var got; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });"##)
+        XCTAssertEqual(js(ctx, "got"), "color")
+        XCTAssertEqual(js(ctx, "layer.style.backgroundColor"), "#112233")
+        XCTAssertEqual(js(ctx, "body.getAttribute('data-paper')"), "color", "the body is marked, so the scrim and panel show")
+
+        let image = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+        js(ctx, "stored[PolycarpPaper.cacheKey] = {image: \"\(image)\"}; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });")
+        XCTAssertEqual(js(ctx, "got"), "image")
+        XCTAssertEqual(js(ctx, "layer.style.backgroundImage"), "url(\"\(image)\")")
+        XCTAssertEqual(js(ctx, "layer.style.backgroundColor"), "", "the color before it is cleared")
+
+        js(ctx, #"stored[PolycarpPaper.cacheKey] = {scene: "olive"}; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });"#)
+        XCTAssertEqual(js(ctx, "layer.getAttribute('data-scene')"), "olive")
+        XCTAssertEqual(js(ctx, "layer.style.backgroundImage"), "")
+
+        js(ctx, "delete stored[PolycarpPaper.cacheKey]; PolycarpPaper.start(layer, body, storage, function (k) { got = k; });")
+        XCTAssertEqual(js(ctx, "got"), "none", "nothing kept, nothing painted: the page as before paper")
+        XCTAssertEqual(js(ctx, "layer.getAttribute('data-paper')"), "none")
+    }
+
+    func testOnlyAPaperPolycarpCouldSendIsPainted() throws {
+        let ctx = try paperPage()
+        for bad in [#"{color: "red"}"#, ##"{color: "#11223344"}"##, #"{scene: "beach"}"#, #"{image: "https://example.com/a.jpg"}"#,
+                    #"{image: 'data:image/jpeg;base64,AA") , url("https://example.com/x'}"#, #"{image: "data:image/svg+xml;base64,AAAA"}"#,
+                    "null", "42"] {
+            XCTAssertEqual(js(ctx, "PolycarpPaper.paint(layer, body, \(bad))"), "none", bad)
+            XCTAssertEqual(js(ctx, "layer.style.backgroundImage"), "", bad)
+        }
+    }
+
+    func testThePageReplyIsPaintedKeptAndLeftOutOfThePagesOwnCache() throws {
+        let ctx = try paperPage()
+        js(ctx, ##"var rest = PolycarpPaper.take(layer, body, storage, {ok: true, question: "Q", paper: {color: "#445566"}});"##)
+        XCTAssertEqual(js(ctx, "layer.style.backgroundColor"), "#445566")
+        XCTAssertEqual(js(ctx, "stored[PolycarpPaper.cacheKey].color"), "#445566")
+        XCTAssertEqual(js(ctx, "'paper' in rest"), "false")
+        XCTAssertEqual(js(ctx, "rest.question"), "Q")
+        js(ctx, #"PolycarpPaper.take(layer, body, storage, {ok: true, question: "Q"});"#)
+        XCTAssertEqual(js(ctx, "PolycarpPaper.cacheKey in stored"), "false", "no paper in the reply forgets the kept one")
+        XCTAssertEqual(js(ctx, "layer.getAttribute('data-paper')"), "none")
+        js(ctx, #"var w = writes, r = removes; PolycarpPaper.take(layer, body, storage, {ok: false});"#)
+        XCTAssertEqual(js(ctx, "writes === w && removes === r"), "true", "a failed reply leaves the paper alone")
+        XCTAssertEqual(js(ctx, "typeof PolycarpPaper.took"), "function")
+    }
+
     func testThePageLoadsNothingFromTheNetwork() throws {
-        for file in ["newtab.html", "newtab.css", "newtab.js", "logic.js", "finder.js"] {
+        for file in ["newtab.html", "newtab.css", "newtab.js", "logic.js", "finder.js", "paper.js"] {
             let text = try Repo.text("extension/newtab/\(file)")
             for line in text.split(separator: "\n") where line.contains("http://") || line.contains("https://") {
                 let s = String(line)

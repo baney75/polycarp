@@ -16,7 +16,8 @@ public enum NewTabHost {
     /// The explicit command, for trying the host by hand.
     public static let command = "newtab-host"
     /// The largest request read. The page's requests are a few dozen bytes; this only keeps a bad length from
-    /// allocating gigabytes. Chrome caps a host's reply at 1 MB, and ours are far under it.
+    /// allocating gigabytes. Chrome caps a host's reply at 1 MB; a paper's picture is sent at most
+    /// `PaperImage.newTabBytes`, so a reply stays under it.
     public static let maxMessage = 1 << 20
 
     /// Whether the command line is Chrome starting the host: its first argument is a `chrome-extension://` origin.
@@ -76,7 +77,8 @@ public enum NewTabHost {
     /// How long `find` waits for the session engine before it answers with what it has.
     public static let findBudget: TimeInterval = 0.15
 
-    /// What a request needs from the world: surfaces.json, the bangs, the time, and the running app's session engine.
+    /// What a request needs from the world: surfaces.json, the bangs, the papers' pictures, the time, and the running
+    /// app's session engine.
     public struct Source {
         /// surfaces.json as it is now (defaults when it is missing or invalid).
         public var surfaces: () -> Surfaces
@@ -91,6 +93,8 @@ public enum NewTabHost {
         /// The bundle ID of the browser that started the host (its parent process), so the page can tell its own
         /// tabs from another browser's; nil when it can't be told.
         public var browser: () -> String?
+        /// Papers/, where a paper's picture is; nil sends no picture.
+        public var papers: PaperStore?
 
         public struct FocusFailure: Error, Equatable { public let message: String; public init(_ m: String) { message = m } }
 
@@ -98,9 +102,11 @@ public enum NewTabHost {
                     bangs: @escaping () -> [Bang] = { Bangs.builtIn },
                     sessions: @escaping (TimeInterval) -> [Item]? = { _ in nil },
                     focus: @escaping (String) -> Result<String, FocusFailure> = { _ in .failure(.init("Polycarp isn't running")) },
-                    browser: @escaping () -> String? = { nil }) {
+                    browser: @escaping () -> String? = { nil },
+                    papers: PaperStore? = nil) {
             self.surfaces = surfaces; self.now = now; self.timeZone = timeZone
             self.bangs = bangs; self.sessions = sessions; self.focus = focus; self.browser = browser
+            self.papers = papers
         }
 
         /// The real one: surfaces.json and bangs.json from disk the way `polycarp-spaces surfaces get` reads them (the app
@@ -118,7 +124,8 @@ public enum NewTabHost {
             }, focus: { id in
                 guard let r = Wire.call(Wire.Request(op: .focus, target: id), timeout: 2) else { return .failure(.init("Polycarp isn't running")) }
                 return r.ok ? .success(r.info?["label"] ?? "") : .failure(.init(r.error ?? "nothing matches"))
-            }, browser: { NewTabHost.appBundleID(of: getppid()) })
+            }, browser: { NewTabHost.appBundleID(of: getppid()) },
+            papers: PaperStore.beside(surfacesFile: SurfacesFile.path()))
         }
     }
 
@@ -147,6 +154,10 @@ public enum NewTabHost {
         // searchURL is the engine in force, so a page from before bangs searches where the launcher does.
         var reply: [String: Any] = ["ok": true, "question": s.question, "searchURL": OneSearch.template(engine),
                                     "engine": bangObject(engine)]
+        // No paper, no key: the page clears the one it kept and looks as it did before paper.
+        if let paper = surfaces.paper(on: .newtab)?.newTab(store: source.papers) {
+            reply["paper"] = paper
+        }
         if s.verse, let v = Verses.pick(.daily, at: source.now(), timeZone: source.timeZone) {
             reply["verse"] = ["text": v.text, "ref": v.ref]
         } else {

@@ -31,6 +31,8 @@ public enum SurfaceKind: Equatable, Sendable {
     case engine
     /// An ordered list of ids, each once: one of `known`, or `custom:<name>` when `custom`.
     case ids(known: [String], custom: Bool)
+    /// A paper (Paper.swift): empty (none), `#RRGGBB`, a scene name, or `picture:<name>` for a picture in Papers/.
+    case paper
 }
 
 /// One field of surfaces.json.
@@ -168,6 +170,8 @@ public struct Surfaces: Equatable, Sendable {
         public var verse: Bool
         public var versePosition: VersePosition
         public var verseRotation: VerseRotation
+        /// The desktop's own paper; nil follows `Surfaces.paper`.
+        public var paper: Paper?
     }
 
     public enum TileLabel: String, CaseIterable, Sendable { case number, icons }
@@ -206,6 +210,8 @@ public struct Surfaces: Equatable, Sendable {
             let q = words.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? ""
             return URL(string: searchURL.replacingOccurrences(of: "{query}", with: q))
         }
+        /// The new tab page's own paper; nil follows `Surfaces.paper`.
+        public var paper: Paper?
     }
 
     /// One web search for the launcher, the new tab page and `polycarp-spaces search` (`OneSearch`).
@@ -226,6 +232,8 @@ public struct Surfaces: Equatable, Sendable {
         public var showVerse: Bool
         public var showKierkegaard: Bool
         public var startAfterMinutes: Int
+        /// The idle screen's own paper; nil follows `Surfaces.paper`.
+        public var paper: Paper?
     }
 
     public enum Translation: String, CaseIterable, Sendable { case bsb = "BSB" }
@@ -251,6 +259,9 @@ public struct Surfaces: Equatable, Sendable {
         public var menu: Bool
     }
 
+    /// What lies behind the desktop, the new tab page and the idle screen (Paper.swift); each place's own overrides it.
+    /// Nil leaves every place as it was before paper.
+    public var paper: Paper?
     public var bar: Bar
     public var desktop: Desktop
     public var dock: Dock
@@ -287,6 +298,8 @@ extension SurfaceField {
     public static let all: [SurfaceField] = [
         SurfaceField("version", .integer(1...1_000), .number(Double(Surfaces.version)),
                      "The format of this file. This build writes 1; a higher number is read for the fields this build knows."),
+        SurfaceField("paper", .paper, .string(""),
+                     "What lies behind the desktop, the new tab page and the idle screen: #RRGGBB, a scene (field, olive, water, parchment, solid) or picture:<name> for a picture in Papers/ (polycarp-spaces paper set makes it). Empty: each place as before. desktop.paper, newtab.paper and idle.paper override it for one place."),
 
         SurfaceField("bar.enabled", .bool, .bool(false), "Show Polycarp's top bar. Off until you turn it on."),
         SurfaceField("bar.height", .integer(22...40), .number(26),"The bar's height in points, 22 to 40."),
@@ -312,6 +325,8 @@ extension SurfaceField {
         SurfaceField("desktop.verseRotation", .tagged(choices: ["daily", "hourly"], prefix: "fixed", pattern: SurfaceCheck.referencePattern,
                                                       example: "fixed:Psalm 46:10"),
                      .string("daily"), "daily, hourly, or fixed:<reference> for one verse always."),
+        SurfaceField("desktop.paper", .paper, .string(""),
+                     "The desktop's own paper, over paper: #RRGGBB, a scene or picture:<name>. It wins over the theme's wallpaper and desktop.scene. Empty follows paper."),
 
         SurfaceField("dock.tileLabel", .choice(Surfaces.TileLabel.allCases.map(\.rawValue)), .string("number"),
                      "What each workspace tile says: its number, or only its apps' icons."),
@@ -329,6 +344,8 @@ extension SurfaceField {
         SurfaceField("newtab.verse", .bool, .bool(true), "A verse on the new tab page."),
         SurfaceField("newtab.searchURL", .searchTemplate, .string("https://duckduckgo.com/?q={query}"),
                      "The older name for the engine: an https URL with {query} where the words go. Used only when the file doesn't set search.engine."),
+        SurfaceField("newtab.paper", .paper, .string(""),
+                     "The new tab page's own paper, over paper: #RRGGBB, a scene or picture:<name>. Empty follows paper."),
 
         SurfaceField("idle.enabled", .bool, .bool(false), "Show Polycarp's idle screen. Off until you turn it on."),
         SurfaceField("idle.style", .choice(Surfaces.IdleStyle.allCases.map(\.rawValue)), .string("martyr-night"),
@@ -338,6 +355,8 @@ extension SurfaceField {
         SurfaceField("idle.showVerse", .bool, .bool(true), "A verse on the idle screen."),
         SurfaceField("idle.showKierkegaard", .bool, .bool(true), "A line from Kierkegaard on the idle screen."),
         SurfaceField("idle.startAfterMinutes", .integer(1...240), .number(10), "Minutes without input before the idle screen comes up."),
+        SurfaceField("idle.paper", .paper, .string(""),
+                     "The idle screen's own paper, over paper: #RRGGBB, a scene or picture:<name>, dimmed behind the words. Empty follows paper."),
 
         SurfaceField("text.translation", .choice(Surfaces.Translation.allCases.map(\.rawValue)), .string("BSB"),
                      "The Bible translation. Only BSB (the Berean Standard Bible, public domain) for now."),
@@ -427,14 +446,15 @@ extension Surfaces {
                   hourNames: b("bar.hourNames"))
         desktop = Desktop(scene: Scene(id: s("desktop.scene")), followDaylight: b("desktop.followDaylight"), verse: b("desktop.verse"),
                           versePosition: VersePosition(rawValue: s("desktop.versePosition")) ?? .bottomRight,
-                          verseRotation: VerseRotation(id: s("desktop.verseRotation")))
+                          verseRotation: VerseRotation(id: s("desktop.verseRotation")), paper: Paper(id: s("desktop.paper")))
         dock = Dock(tileLabel: TileLabel(rawValue: s("dock.tileLabel")) ?? .number, restTile: b("dock.restTile"))
         menu = Menu(order: list("menu.order").compactMap(MenuRow.init(rawValue:)), hidden: list("menu.hidden").compactMap(MenuRow.init(rawValue:)))
         search = Search(engine: s("search.engine"))
-        newtab = NewTab(question: s("newtab.question"), verse: b("newtab.verse"), searchURL: s("newtab.searchURL"))
+        newtab = NewTab(question: s("newtab.question"), verse: b("newtab.verse"), searchURL: s("newtab.searchURL"), paper: Paper(id: s("newtab.paper")))
         idle = Idle(enabled: b("idle.enabled"), style: IdleStyle(rawValue: s("idle.style")) ?? .martyrNight, effects: b("idle.effects"),
                     showMachineName: b("idle.showMachineName"), showVerse: b("idle.showVerse"),
-                    showKierkegaard: b("idle.showKierkegaard"), startAfterMinutes: n("idle.startAfterMinutes"))
+                    showKierkegaard: b("idle.showKierkegaard"), startAfterMinutes: n("idle.startAfterMinutes"), paper: Paper(id: s("idle.paper")))
+        paper = Paper(id: s("paper"))
         text = Text(translation: Translation(rawValue: s("text.translation")) ?? .bsb, verseSource: VerseSource(id: s("text.verseSource")))
         rooms = RoomsSettings(root: s("rooms.root"), menu: b("rooms.menu"))
     }
@@ -564,6 +584,12 @@ enum SurfaceCheck {
                 if id != "|", !seen.insert(id).inserted { return ("[\(i)]", "\"\(id)\" is listed twice") }
             }
             return nil
+        case .paper:
+            let want = "empty, #RRGGBB, one of \(quoted(Surfaces.Scene.named)) or picture:<name> (polycarp-spaces paper set makes it)"
+            guard let s = v.string else { return (nil, "must be \(want), not \(v.kind)") }
+            if s.isEmpty || Paper(id: s) != nil { return nil }
+            if s.hasPrefix("picture:") { return (nil, "\"\(s.dropFirst(8))\" is not a name paper set gives; use polycarp-spaces paper set <picture>") }
+            return (nil, "must be \(want), not \"\(s)\"")
         }
     }
 
@@ -656,6 +682,12 @@ extension Surfaces {
                 }
                 // The island split may repeat; every other id is listed once, which `problem` checks.
                 o["type"] = .string("array"); o["items"] = .object(item); o["uniqueItems"] = .bool(!known.contains("|"))
+            case .paper:
+                o["type"] = .string("string")
+                o["anyOf"] = .array([.object(["enum": .array(([""] + Surfaces.Scene.named).map { .string($0) })]),
+                                     .object(["pattern": .string(Paper.colorPattern)]),
+                                     .object(["pattern": .string("^picture:" + Paper.picturePattern.dropFirst())])])
+                o["examples"] = .array([.string(""), .string("#2B2E26"), .string("olive"), .string("picture:paper-0123456789abcdef.jpg")])
             }
             return .object(o)
         }

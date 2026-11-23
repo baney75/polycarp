@@ -67,6 +67,25 @@ serves the same as `surfaces_schema`, `surfaces_get` and `surfaces_set`, and `se
 `search_open`. `search.engine` is the one web engine for the launcher, the new tab and `search`. Colors and fonts are the theme's
 (`polycarp theme`), not this file's. Every field: spaces/docs/surfaces.md.
 
+## Paper: the wallpaper, the new tab and the idle screen
+
+To change the wallpaper (or what lies behind the browser's new tab page and the idle screen), one command does it.
+Use it when Donovan asks for a new wallpaper or background; "make my wallpaper this sunset picture" is one call:
+
+```sh
+baneyspaces paper set ~/Pictures/sunset.jpg                  # a picture: .png .jpg .heic .webp, up to 25 MB
+baneyspaces paper set https://example.com/sunset.jpg         # fetched once; refused unless it is a picture
+baneyspaces paper set "#2B2E26" --on newtab,idle             # a color, only on those places
+baneyspaces paper set olive --on desktop                     # a scene: field olive water parchment solid
+baneyspaces paper get --json                                 # each place's paper and where it comes from
+baneyspaces paper reset                                      # the theme's wallpaper and the old looks back
+```
+
+`--on` takes `desktop`, `newtab`, `idle` or `all` (the default), joined with commas. A picture is copied into
+Polycarp's `Papers/` folder under a name it makes; never write `picture:` values by hand. A paper wins over the
+theme's wallpaper, and his own desktop picture is kept and comes back on `reset`. Over MCP, `polycarp mcp` serves the
+same as `paper_set`, `paper_get` and `paper_reset`. Docs: spaces/docs/surfaces.md, "Paper".
+
 ## People in Contacts
 
 ```sh

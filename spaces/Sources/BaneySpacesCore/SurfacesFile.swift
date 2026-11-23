@@ -127,6 +127,11 @@ public struct SurfacesFailure: Error, Equatable, Sendable {
         switch code {
         case "invalid_args": "Run `polycarp-spaces surfaces help` for the usage."
         case "io_error": "Check the file and its folder, then try again."
+        case "invalid_paper", "not_found":
+            "Give a picture (.png, .jpg, .heic or .webp), an https URL to one, a #RRGGBB color, or a scene: field, olive, water, parchment or solid."
+        case "not_a_picture": "Use a PNG, JPEG, HEIC or WebP picture that opens in Preview."
+        case "too_large": "Use a picture of at most 25 MB, or a smaller copy of it."
+        case "fetch_failed": "Check the URL opens a picture in a browser, or save the picture and give its path."
         default: "Run `polycarp-spaces surfaces schema` for every path and what it takes."
         }
     }

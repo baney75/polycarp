@@ -49,6 +49,20 @@ To load it in Helium (or Chrome): open `chrome://extensions`, turn on Developer 
 updates update the extension too: it reloads itself when the copy in the app has a new `version_name`.
 A new tab opens with the keyboard in the address bar, as Chrome does for every extension's new tab; click the field to type there.
 
+## Paper
+
+The page can lie on a paper: a picture, a color or a scene behind the field and the verse. Set it with
+`polycarp-spaces paper set <what> --on newtab` (or for every place at once); see
+[surfaces.md](surfaces.md#paper-the-desktop-the-new-tab-and-the-idle-screen-in-one-command). The host sends it in the
+`page` reply as `paper`; with no paper the key is left out and the page looks as it always did.
+
+The page keeps the last paper in `chrome.storage.local` (`polycarpNewTabPaper`) and paints it before the host answers,
+so a new tab never goes blank or flashes; a reply with no `paper` forgets it. Nothing is loaded from the network: a
+picture comes inside the reply as a `data:` URL. Over a picture or a scene a soft scrim from the theme's background
+sits under the words, and the verse sits on a panel of the theme's background, so both read on any picture. A scene is
+drawn from the theme's own colors. The code is `extension/newtab/paper.js` and the `Paper` block of `newtab.css`;
+`NewTabPageTests` runs `paper.js` in JavaScriptCore.
+
 ## What the host does
 
 Chrome starts the host's `path` with the page's origin as the first argument
@@ -87,6 +101,11 @@ unsigned length, then that many bytes of UTF-8 JSON, on stdin and on stdout. A r
 - `searchURL` is the same engine as a template with `{query}`, for a page from before `engine`.
 - `verse` is the day's verse when `newtab.verse` is true: the same pick as the desktop's daily rotation
   (`Verses.pick(.daily, at:)`), so it changes at local midnight. Otherwise `null`.
+- `paper`, only when the page has one (`newtab.paper`, else `paper`): `{"color":"#RRGGBB"}`, `{"scene":"field"}`
+  (`field`, `olive`, `water`, `parchment` or `solid`) or `{"image":"data:image/jpeg;base64,..."}`. A picture is sent as
+  a JPEG at most 1920 pixels wide and under 700 KB, lower in quality and then smaller until it fits, so the reply stays
+  under Chrome's 1 MB limit for a native message. The host makes that copy once, in `Papers/.newtab/`, and reads it
+  after. A picture that is gone or won't decode is sent as no paper.
 
 ### `{"op":"find","q":"..."}`
 

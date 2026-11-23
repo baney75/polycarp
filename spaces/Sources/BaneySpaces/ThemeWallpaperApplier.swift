@@ -14,7 +14,10 @@ final class ThemeWallpaperApplier {
 
     private lazy var keeper = WallpaperKeeper(folder: Product.supportDir(home: URL(fileURLWithPath: NSHomeDirectory())).appendingPathComponent("Wallpaper", isDirectory: true),
                                               desktop: SystemDesktop(),
-                                              bundledFolder: Bundle.main.resourceURL?.appendingPathComponent("Wallpapers", isDirectory: true))
+                                              bundledFolder: Bundle.main.resourceURL?.appendingPathComponent("Wallpapers", isDirectory: true),
+                                              papersFolder: Self.papers.folder)
+    /// Papers/ beside surfaces.json, where `paper set` keeps pictures.
+    static let papers = PaperStore.beside(surfacesFile: SurfacesFile.path())
     private var observers: [NSObjectProtocol] = []
     private var last: ThemeWallpaper??
 
@@ -36,16 +39,27 @@ final class ThemeWallpaperApplier {
     /// Fires at the scene's next phase edge or verse change, so the desktop turns with the day.
     private var turn: Timer?
 
-    /// What should show now, while the switch is on and a Polycarp theme is in force (else nothing): the desktop scene
-    /// surfaces.json names (`desktop.scene`), drawn in the hour's light with its verse; for `solid`, the theme's own
-    /// picture; for `image:<file>`, that picture from the app's Wallpapers.
+    /// What should show now. A paper (`desktop.paper`, else `paper`) first, whatever the switch and the theme: someone
+    /// asked for it by name. Else, while the switch is on and a Polycarp theme is in force (else nothing): the desktop
+    /// scene surfaces.json names (`desktop.scene`), drawn in the hour's light with its verse; for `solid`, the theme's
+    /// own picture; for `image:<file>`, that picture from the app's Wallpapers.
     var wanted: ThemeWallpaper? {
         let a = Appearance.shared
+        let surfaces = SurfacesStore.shared.current
+        let themeJSON = { PolycarpThemeFile.path().flatMap(ThemeWallpaper.themeJSON(atPath:)) }
+        if let paper = surfaces.paper(on: .desktop),
+           let w = paper.wallpaper(desktop: surfaces.desktop, papers: Self.papers.folder, at: Date(), systemDark: Appearance.systemDark, themeOwn: {
+               if let t = a.polycarp { return ThemeWallpaper.of(t, json: themeJSON(), systemDark: Appearance.systemDark) }
+               let look = a.look
+               return .gradient(look.color("background"), look.color("sunken"))
+           }) {
+            return w
+        }
         guard a.settings.themeWallpaper, let t = a.polycarp else { return nil }
-        let desktop = SurfacesStore.shared.current.desktop
+        let desktop = surfaces.desktop
         if let scene = DesktopScene.of(desktop, at: Date(), systemDark: Appearance.systemDark) { return .scene(scene) }
         if case .image(let file) = desktop.scene { return .image(file) }
-        return ThemeWallpaper.of(t, json: PolycarpThemeFile.path().flatMap(ThemeWallpaper.themeJSON(atPath:)), systemDark: Appearance.systemDark)
+        return ThemeWallpaper.of(t, json: themeJSON(), systemDark: Appearance.systemDark)
     }
 
     /// `force` looks even if what should show hasn't changed (a Space or a display did).

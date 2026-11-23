@@ -143,9 +143,17 @@ final class IdleCover {
         (SCDynamicStoreCopyComputerName(nil, nil) as String?) ?? ProcessInfo.processInfo.hostName
     }
 
-    /// The field style's picture: the desktop scene in its light now, without its own verse. Nil for the other styles,
+    /// The picture behind the words, dimmed: the idle screen's paper (`idle.paper`, else `paper`) in any style when one
+    /// is set; else the field style's desktop scene in its light now, without its own verse. Nil for the other styles,
     /// or when the desktop isn't a scene, which then shows the night sky.
     static func backdrop(_ settings: Surfaces.Idle, size: CGSize, scale: CGFloat) -> CGImage? {
+        let surfaces = SurfacesStore.shared.current
+        if let paper = surfaces.paper(on: .idle),
+           let image = paper.image(width: Int(size.width * scale), height: Int(size.height * scale), desktop: surfaces.desktop,
+                                   papers: ThemeWallpaperApplier.papers.folder, at: Date(), systemDark: Appearance.systemDark,
+                                   background: Appearance.shared.look.color("background")) {
+            return image
+        }
         guard settings.style == .field, var scene = DesktopScene.of(SurfacesStore.shared.current.desktop, at: Date(), systemDark: Appearance.systemDark) else { return nil }
         scene.verse = nil
         return scene.image(width: Int(size.width * scale), height: Int(size.height * scale))

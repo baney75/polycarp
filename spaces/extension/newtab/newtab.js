@@ -51,6 +51,7 @@
 
 	ask({ op: "page" }).then(function (p) {
 		if (!p || !p.ok) return;
+		p = PolycarpPaper.took(p);
 		render(p);
 		try { localStorage.setItem(cacheKey, JSON.stringify(p)); } catch (e) { /* no cache, still fine */ }
 	});
