@@ -146,16 +146,17 @@ final class NewTabPageTests: XCTestCase {
     func testTheFinderListsTabsThenBangsThenTheSearch() throws {
         let ctx = try logic()
         let sessions = """
-        [{"id":"tab:com.example.browser:1:2","kind":"tab","title":"Inbox - Gmail","detail":"mail.google.com/mail/u/0","app":"Browser"},
+        [{"id":"tab:com.example.browser:1:2","kind":"tab","title":"Inbox - Gmail","detail":"mail.google.com/mail/u/0","app":"Browser","bundleID":"com.example.browser"},
          {"id":"win:5","kind":"window","title":"Notes about Gmail","app":"Notes","workspace":3}]
         """
         let tabs = #"[{"id":9,"windowId":1,"title":"Inbox - Gmail","url":"https://mail.google.com/mail/u/0"},{"id":10,"windowId":1,"title":"Support for Gmail users","url":"https://support.google.com/mail"}]"#
         ctx.setObject(page(), forKeyedSubscript: "pageText" as NSString)
-        func rows(_ typed: String, withTabs: Bool = true) -> [[String: Any]] {
+        func rows(_ typed: String, withTabs: Bool = true, browser: String? = "com.example.browser") -> [[String: Any]] {
             ctx.setObject(typed, forKeyedSubscript: "typed" as NSString)
+            let b = browser.map { "\"\($0)\"" } ?? "null"
             let r = ctx.evaluateScript("""
                 (function () { var p = JSON.parse(pageText);
-                  return PolycarpNewTab.rows(typed, {engine: p.engine, bangs: p.bangs, sessions: \(sessions), tabs: \(withTabs ? tabs : "[]")}); })()
+                  return PolycarpNewTab.rows(typed, {engine: p.engine, bangs: p.bangs, sessions: \(sessions), tabs: \(withTabs ? tabs : "[]"), browser: \(b)}); })()
                 """)
             return r?.toArray() as? [[String: Any]] ?? []
         }
@@ -166,6 +167,19 @@ final class NewTabPageTests: XCTestCase {
         XCTAssertNil(g[1]["tab"] as? [String: Any], "a window in another app goes through Polycarp")
         XCTAssertEqual(g[2]["title"] as? String, "Support for Gmail users", "a tab only this browser has still shows")
         XCTAssertEqual(g[3]["title"] as? String, "Search Google for \u{201C}gmail\u{201D}")
+        // The same title in another browser: that browser's row goes through Polycarp, and this browser's tab is its
+        // own row, so both can be reached.
+        let other = rows("gmail", browser: "com.other.browser")
+        XCTAssertEqual(other.map { $0["kind"] as? String }, ["tab", "tab", "window", "tab", "search"])
+        XCTAssertNil(other[0]["tab"] as? [String: Any], "a row from another browser never switches a tab here")
+        XCTAssertEqual(other[0]["id"] as? String, "tab:com.example.browser:1:2")
+        XCTAssertEqual((other[1]["tab"] as? [String: Any])?["id"] as? Int, 9, "this browser's own Inbox tab, listed as well")
+        XCTAssertNil(other[1]["id"] as? String)
+        // A host that can't tell the browser: the row goes through Polycarp, and its look-alike isn't listed twice.
+        let unknown = rows("gmail", browser: nil)
+        XCTAssertEqual(unknown.map { $0["kind"] as? String }, ["tab", "window", "tab", "search"])
+        XCTAssertNil(unknown[0]["tab"] as? [String: Any])
+        XCTAssertEqual(unknown[2]["title"] as? String, "Support for Gmail users")
         let y = rows("!y")
         XCTAssertEqual(y.first?["kind"] as? String, "bang")
         XCTAssertEqual(y.first?["trigger"] as? String, "yt")
@@ -221,5 +235,109 @@ final class NewTabPageTests: XCTestCase {
             }
             XCTAssertFalse(text.contains("\u{2014}") || text.contains("\u{2013}"), "\(file): no dashes")
         }
+    }
+
+    // MARK: The finder driven: create(), keys and late replies
+
+    /// logic.js and finder.js over a stand-in page: a field and a list with just the DOM finder.js touches, timers run
+    /// by hand (`runTimers()`), `ask` that answers only when the test says (`answer(i, reply)`), and `location.assign`
+    /// recorded. `chromeStub` defines `chrome` when the test needs this browser's tabs.
+    private func finder(chromeStub: String = "") throws -> JSContext {
+        let ctx = try logic()
+        ctx.exceptionHandler = { _, e in XCTFail("JS threw: \(e?.toString() ?? "?")") }
+        ctx.setObject(page(), forKeyedSubscript: "pageText" as NSString)
+        ctx.evaluateScript("""
+            var timers = [];
+            function setTimeout(f) { timers.push(f); return timers.length; }
+            function clearTimeout(id) { if (id) timers[id - 1] = null; }
+            function runTimers() { var t = timers; timers = []; t.forEach(function (f) { if (f) f(); }); }
+            function el() {
+              var e = { children: [], hidden: false, attrs: {}, value: "", text: "", className: "", on: false,
+                setAttribute: function (k, v) { e.attrs[k] = v; }, removeAttribute: function (k) { delete e.attrs[k]; },
+                appendChild: function (c) { e.children.push(c); }, addEventListener: function () {} };
+              e.classList = { toggle: function (c, v) { e.on = !!v; } };
+              Object.defineProperty(e, "textContent", { get: function () { return e.text; },
+                set: function (v) { e.text = v; if (v === "") e.children = []; } });
+              return e;
+            }
+            var document = { createElement: function () { return el(); } };
+            var assigned = [];
+            var location = { assign: function (u) { assigned.push(u); } };
+            var asks = [], answers = [], said = [];
+            function ask(m) { asks.push(m); return new Promise(function (r) { answers.push(r); }); }
+            function answer(i, reply) { answers[i](reply); }
+            var field = el(), list = el();
+            var pageAnswer = JSON.parse(pageText);
+            \(chromeStub)
+            """)
+        ctx.evaluateScript(try Repo.text("extension/newtab/finder.js"))
+        ctx.evaluateScript("""
+            var finder = PolycarpFinder.create({ field: field, list: list, ask: ask, say: function (t) { said.push(t); },
+              page: function () { return pageAnswer; } });
+            function type(text) { field.value = text; finder.update(); }
+            function key(k) { return finder.keydown({ key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false }); }
+            function chosen() { return finder.rows().map(function (r, i) { return list.children[i] && list.children[i].on ? r.kind : null; })
+              .filter(function (k) { return k; }); }
+            """)
+        return ctx
+    }
+
+    @discardableResult
+    private func js(_ ctx: JSContext, _ script: String) -> JSValue? { ctx.evaluateScript(script) }
+
+    /// Typing fast and pressing Return after the find reply lands opens the top row (the open tab), not the search row
+    /// that was first before the reply (review second-F6).
+    func testReturnOpensTheTopRowWhenTheFindReplyLandsLate() throws {
+        let ctx = try finder()
+        let reply = #"{"ok":true,"partial":false,"browser":"com.example.browser","items":[{"id":"tab:com.other.browser:1:2","kind":"tab","title":"Inbox - Gmail","app":"Other","bundleID":"com.other.browser"}]}"#
+        js(ctx, #"type("g"); type("gm"); type("gmail"); runTimers();"#)
+        XCTAssertEqual(js(ctx, "finder.rows().map(function (r) { return r.kind; }).join()")?.toString(), "search", "before the reply")
+        XCTAssertEqual(js(ctx, "asks.length")?.toInt32(), 1, "one find for the text as it stands")
+        js(ctx, "answer(0, \(reply));")
+        XCTAssertEqual(js(ctx, "finder.rows().map(function (r) { return r.kind; }).join()")?.toString(), "tab,search")
+        XCTAssertEqual(js(ctx, "chosen().join()")?.toString(), "tab", "the top row is chosen once the reply lands")
+        js(ctx, #"key("Enter");"#)
+        XCTAssertEqual(js(ctx, "JSON.stringify(asks[1])")?.toString(), #"{"op":"focus","id":"tab:com.other.browser:1:2"}"#)
+        XCTAssertEqual(js(ctx, "assigned.length")?.toInt32(), 0, "no search opened")
+    }
+
+    /// Once the person moves, a late reply keeps their row chosen; new text starts again at the top.
+    func testAMovedSelectionSurvivesALateReplyAndNewTextStartsAtTheTop() throws {
+        let ctx = try finder()
+        let reply = #"{"ok":true,"items":[{"id":"win:5","kind":"window","title":"Notes about Gmail","app":"Notes","bundleID":"com.apple.Notes"}]}"#
+        // Moved before the reply: the row they chose stays chosen when the reply adds rows above it.
+        js(ctx, #"type("gmail"); key("ArrowDown"); runTimers(); answer(0, \#(reply));"#)
+        XCTAssertEqual(js(ctx, "finder.rows().map(function (r) { return r.kind; }).join()")?.toString(), "window,search")
+        XCTAssertEqual(js(ctx, "chosen().join()")?.toString(), "search", "a moved selection stays put")
+        js(ctx, #"key("Enter");"#)
+        XCTAssertEqual(js(ctx, "assigned[0]")?.toString(), "https://www.google.com/search?q=gmail")
+        // New text starts again at the top.
+        js(ctx, #"type("gmail "); runTimers(); answer(1, \#(reply));"#)
+        XCTAssertEqual(js(ctx, "chosen().join()")?.toString(), "window", "typing again starts at the top")
+    }
+
+    /// A tab of this browser that closed since the list was drawn: the switch fails through lastError, the new tab
+    /// stays, and Return's search goes instead; a switch that takes closes the new tab (review first-F2).
+    func testASwitchToATabThatIsGoneKeepsTheNewTab() throws {
+        let ctx = try finder(chromeStub: """
+            var removed = [], gone = true;
+            var chrome = { runtime: { lastError: null },
+              tabs: {
+                getCurrent: function (cb) { cb({ id: 99 }); },
+                query: function (q, cb) { cb([{ id: 9, windowId: 1, title: "Inbox - Gmail", url: "https://mail.google.com/mail/u/0" }, { id: 99, windowId: 1, title: "New Tab", url: "chrome://newtab/" }]); },
+                update: function (id, props, cb) {
+                  if (gone) { chrome.runtime.lastError = { message: "No tab with id: " + id }; cb(undefined); chrome.runtime.lastError = null; }
+                  else cb({ id: id });
+                },
+                remove: function (id) { removed.push(id); } },
+              windows: { update: function (id, props, cb) { if (cb) cb({}); } } };
+            """)
+        js(ctx, #"type("gmail"); runTimers(); answer(0, {"ok":true,"items":[],"browser":"com.example.browser"});"#)
+        XCTAssertEqual(js(ctx, "finder.rows().map(function (r) { return r.kind; }).join()")?.toString(), "tab,search")
+        js(ctx, #"key("Enter");"#)
+        XCTAssertEqual(js(ctx, "removed.length")?.toInt32(), 0, "the new tab stays when the switch failed")
+        XCTAssertEqual(js(ctx, "assigned[0]")?.toString(), "https://www.google.com/search?q=gmail", "the search goes instead")
+        js(ctx, #"gone = false; key("Enter");"#)
+        XCTAssertEqual(js(ctx, "removed.join()")?.toString(), "99", "a switch that took closes the new tab")
     }
 }

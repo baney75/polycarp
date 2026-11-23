@@ -88,15 +88,19 @@ public enum NewTabHost {
         public var sessions: (TimeInterval) -> [Item]?
         /// Asks Polycarp to bring a row forward (`polycarp-spaces focus`): nil when it isn't running, else its error or nil.
         public var focus: (String) -> Result<String, FocusFailure>
+        /// The bundle ID of the browser that started the host (its parent process), so the page can tell its own
+        /// tabs from another browser's; nil when it can't be told.
+        public var browser: () -> String?
 
         public struct FocusFailure: Error, Equatable { public let message: String; public init(_ m: String) { message = m } }
 
         public init(surfaces: @escaping () -> Surfaces, now: @escaping () -> Date = Date.init, timeZone: TimeZone = .current,
                     bangs: @escaping () -> [Bang] = { Bangs.builtIn },
                     sessions: @escaping (TimeInterval) -> [Item]? = { _ in nil },
-                    focus: @escaping (String) -> Result<String, FocusFailure> = { _ in .failure(.init("Polycarp isn't running")) }) {
+                    focus: @escaping (String) -> Result<String, FocusFailure> = { _ in .failure(.init("Polycarp isn't running")) },
+                    browser: @escaping () -> String? = { nil }) {
             self.surfaces = surfaces; self.now = now; self.timeZone = timeZone
-            self.bangs = bangs; self.sessions = sessions; self.focus = focus
+            self.bangs = bangs; self.sessions = sessions; self.focus = focus; self.browser = browser
         }
 
         /// The real one: surfaces.json and bangs.json from disk the way `polycarp-spaces surfaces get` reads them (the app
@@ -114,7 +118,7 @@ public enum NewTabHost {
             }, focus: { id in
                 guard let r = Wire.call(Wire.Request(op: .focus, target: id), timeout: 2) else { return .failure(.init("Polycarp isn't running")) }
                 return r.ok ? .success(r.info?["label"] ?? "") : .failure(.init(r.error ?? "nothing matches"))
-            })
+            }, browser: { NewTabHost.appBundleID(of: getppid()) })
         }
     }
 
@@ -177,7 +181,9 @@ public enum NewTabHost {
         }
         let items = source.sessions(findBudget)
         let rows = OneSearch.sessions(text, in: items ?? []).map(sessionObject)
-        return json(["ok": true, "items": rows, "partial": items == nil])
+        var reply: [String: Any] = ["ok": true, "items": rows, "partial": items == nil]
+        if let b = source.browser() { reply["browser"] = b }
+        return json(reply)
     }
 
     static func sessionObject(_ item: Item) -> [String: Any] {
@@ -195,6 +201,24 @@ public enum NewTabHost {
         case .success(let label): return json(["ok": true, "label": label])
         case .failure(let f): return failure(f.message)
         }
+    }
+
+    /// The bundle ID of the app a process belongs to: the outermost `.app` on its executable's path, so a browser's
+    /// helper inside its own bundle still names the browser. nil when the path can't be read or holds no app.
+    public static func appBundleID(of pid: pid_t) -> String? {
+        var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return nil }
+        return appBundleID(executable: String(cString: buf))
+    }
+
+    static func appBundleID(executable path: String) -> String? {
+        var url = URL(fileURLWithPath: path)
+        var app: URL?
+        while url.path != "/" && !url.path.isEmpty {
+            if url.pathExtension == "app" { app = url }
+            url.deleteLastPathComponent()
+        }
+        return app.flatMap { Bundle(url: $0)?.bundleIdentifier }
     }
 
     public static func failure(_ error: String) -> Data { json(["ok": false, "error": error]) }

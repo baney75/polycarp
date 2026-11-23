@@ -16,36 +16,36 @@ enum Launcher {
 
     /// The engine a plain web search uses: `search.engine` in surfaces.json, the one setting the launcher, the new tab
     /// page and `polycarp-spaces search` read (Google unless chosen; `OneSearch.engine` resolves it).
-    static var searchEngine: String {
-        get { SurfacesStore.shared.current.search.engine }
-        set {
-            if case .failure(let f) = SurfacesOps.set("search.engine", .string(newValue), file: SurfacesFile.path()) {
-                Trace.log("search engine not saved: \(f.message)")
-            }
-        }
+    static var searchEngine: String { SurfacesStore.shared.current.search.engine }
+
+    /// Writes `search.engine`; nil when it was saved, else why not (an invalid surfaces.json, a value it refuses).
+    static func setSearchEngine(_ engine: String) -> String? {
+        guard case .failure(let f) = SurfacesOps.set("search.engine", .string(engine), file: SurfacesFile.path()) else { return nil }
+        Trace.log("search engine not saved: \(f.message)")
+        return f.message
     }
 
     /// Where the launcher kept its engine before `search.engine`.
     static let oldSearchEngineKey = "launcherSearchEngine"
 
-    /// Moves an engine chosen before `search.engine` into surfaces.json once, unless the file already names one
-    /// (`search.engine`, or `newtab.searchURL`, which then wins), then forgets the old key. Google, the default, needs
-    /// no line in the file.
+    /// Moves an engine chosen before `search.engine` into surfaces.json once (`OneSearch.moveOldEngine` decides), then
+    /// forgets the old key. A file that can't be read or written now keeps the key, so the choice moves once it can.
     static func moveOldSearchEngine(file: String = SurfacesFile.path()) {
         let defaults = UserDefaults.standard
-        guard let old = defaults.string(forKey: oldSearchEngineKey) else { return }
-        if case .document(let d) = SurfacesFile.load(path: file), d.tree.at(["search", "engine"]) != nil || d.tree.at(["newtab", "searchURL"]) != nil {
+        let old = defaults.string(forKey: oldSearchEngineKey)
+        switch OneSearch.moveOldEngine(old, file: SurfacesFile.load(path: file)) {
+        case .keep:
+            if old != nil { Trace.log("search engine \(old ?? "") not moved yet: surfaces.json can't be read") }
+        case .forget:
             defaults.removeObject(forKey: oldSearchEngineKey)
-            return
-        }
-        if old == "g" { defaults.removeObject(forKey: oldSearchEngineKey); return }
-        switch SurfacesOps.set("search.engine", .string(old), file: file) {
-        case .success:
-            defaults.removeObject(forKey: oldSearchEngineKey)
-            Trace.log("search engine \(old) moved into surfaces.json")
-        case .failure(let f):
-            // An invalid file keeps the old key, so the choice moves once the file is fixed.
-            Trace.log("search engine \(old) not moved into surfaces.json: \(f.message)")
+        case .write(let engine):
+            switch SurfacesOps.set("search.engine", .string(engine), file: file) {
+            case .success:
+                defaults.removeObject(forKey: oldSearchEngineKey)
+                Trace.log("search engine \(engine) moved into surfaces.json")
+            case .failure(let f):
+                Trace.log("search engine \(engine) not moved into surfaces.json: \(f.message)")
+            }
         }
     }
 

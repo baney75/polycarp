@@ -14,7 +14,7 @@ usage: \(me) <command>
   ls [--json]                 everything the session engine wraps: terminals, agents, browser tabs
   focus <id | words>          bring it forward (an ID from ls, or a fuzzy search)
   open <url>                  open in your default browser
-  search [--open] [--json] <text>
+  search [--open] [--json] [--] <text>
                               one search, as the launcher and the new tab page do it: open tabs and
                               windows that match, bang completions, then the web (search.engine); one
                               JSON line per result, best first; --open performs the top one

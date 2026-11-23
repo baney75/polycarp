@@ -116,8 +116,8 @@ fn the_guide_and_the_server_list_the_same_mcp_tools() {
         .flat_map(|prefix| guide.match_indices(prefix))
         .map(|(at, _)| guide[at..].chars().take_while(|c| word_char(*c)).collect())
         .collect();
-    // The one tool named by a bare word.
-    if guide.contains("`search`") {
+    // The one tool named by a bare word: its own row in the MCP table, not a mention in another row.
+    if guide.lines().any(|l| l.starts_with("| `search` |")) {
         docs.insert("search".into());
     }
     assert_eq!(code, docs, "docs/guide.md and tools/list disagree");

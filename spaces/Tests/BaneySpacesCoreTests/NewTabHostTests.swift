@@ -174,6 +174,26 @@ final class NewTabHostTests: XCTestCase {
         XCTAssertEqual((r["items"] as? [Any])?.count, OneSearch.limit)
     }
 
+    /// The find reply names the browser that started the host, so the page pairs only its own rows (review second-F8).
+    func testFindNamesTheBrowserThatStartedTheHost() throws {
+        var s = source()
+        s.sessions = { _ in [self.row("tab:b:1:2", "Inbox - Gmail")] }
+        XCTAssertNil(try ask(#"{"op":"find","q":"gmail"}"#, s)["browser"], "left out when it can't be told")
+        s.browser = { "com.example.browser" }
+        XCTAssertEqual(try ask(#"{"op":"find","q":"gmail"}"#, s)["browser"] as? String, "com.example.browser")
+        XCTAssertEqual(try XCTUnwrap(try ask(#"{"op":"find","q":"gmail"}"#, s)["items"] as? [[String: Any]]).first?["bundleID"] as? String,
+                       "com.example.browser")
+    }
+
+    func testTheBrowserIsTheOutermostAppOnTheParentsPath() {
+        let calendar = "/System/Applications/Calendar.app"
+        XCTAssertEqual(NewTabHost.appBundleID(executable: calendar + "/Contents/MacOS/Calendar"), "com.apple.iCal")
+        XCTAssertEqual(NewTabHost.appBundleID(executable: calendar + "/Contents/Frameworks/Helper.app/Contents/MacOS/Helper"), "com.apple.iCal",
+                       "a helper inside the browser's bundle names the browser")
+        XCTAssertNil(NewTabHost.appBundleID(executable: "/usr/bin/env"))
+        XCTAssertNotNil(NewTabHost.appBundleID(of: getpid()) ?? "no app", "reads its own path without trouble")
+    }
+
     func testFocusAsksPolycarpForTheRow() throws {
         var got: [String] = []
         var s = source()

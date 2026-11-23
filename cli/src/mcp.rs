@@ -755,25 +755,28 @@ fn search_call(name: &str, a: &Args) -> theme::Envelope {
         Ok(q) => q.trim().to_string(),
         Err(e) => return theme::envelope(&Err(e)),
     };
-    // The command reads --open and --json wherever they stand, so a query that is one of them would change what runs.
-    if query.is_empty() || query == "--open" || query == "--json" {
-        return theme::envelope(&Err(ApiErr::usage(format!(
-            "query must be words to search for, not {query:?}"
-        ))));
+    if query.is_empty() {
+        return theme::envelope(&Err(ApiErr::usage(
+            "query must be words to search for".to_string(),
+        )));
     }
     let mut argv: Vec<String> = vec!["search".into()];
     if name == "search_open" {
         argv.push("--open".into());
     }
-    argv.push(query);
+    // After `--` the query is only words: `--open`, `--json` or `help` in it are searched for, never obeyed.
+    argv.extend(["--".into(), query]);
     spaces_run(argv, "search gmail")
 }
 
 /// Runs `polycarp-spaces <argv> --json` within the limit and passes its envelope on. `probe` is the command a
-/// person can run in a terminal to see why it failed.
+/// person can run in a terminal to see why it failed. `--json` goes before a `--`, where it is still a flag.
 fn spaces_run(mut argv: Vec<String>, probe: &str) -> theme::Envelope {
     let what = argv[0].clone();
-    argv.push("--json".into());
+    match argv.iter().position(|a| a == "--") {
+        Some(at) => argv.insert(at, "--json".into()),
+        None => argv.push("--json".into()),
+    }
     let Some(spaces) = crate::spaces_command() else {
         return surfaces_refusal(
             "spaces_not_found",

@@ -150,4 +150,67 @@ public enum OneSearch {
         if let last { out.append(last) }
         return out
     }
+
+    // MARK: polycarp-spaces search
+
+    /// `polycarp-spaces search`'s arguments. Before `--`, `--json` and `--open` are flags wherever they stand; after it,
+    /// everything is text (`polycarp mcp` sends its query that way, so a query can't become a flag or a help request).
+    public struct Arguments: Equatable, Sendable {
+        public var json = false
+        public var open = false
+        public var words: [String] = []
+        /// Whether a `--` came before the words.
+        public var separated = false
+
+        public init(_ args: [String]) {
+            var rest = args[...]
+            while let a = rest.popFirst() {
+                if a == "--" { separated = true; words += rest; break }
+                if a == "--json" { json = true } else if a == "--open" { open = true } else { words.append(a) }
+            }
+        }
+
+        public var text: String { words.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines) }
+        /// `help`, `-h` or `--help` asks for the usage only when it is the one word typed and not after `--`.
+        public var asksHelp: Bool { !separated && words.count == 1 && ["help", "--help", "-h"].contains(words[0]) }
+    }
+
+    /// The result `--open` performs: the first that Return would act on. A bang completion only fills in its bang in
+    /// the launcher and the finder, so it is passed over.
+    public static func toOpen(_ results: [Result]) -> Result? { results.first { $0.kind != "bang" } }
+
+    // MARK: The launcher's engine from before search.engine
+
+    /// What to do with the engine the launcher kept in its own defaults before `search.engine`.
+    public enum OldEngineMove: Equatable, Sendable {
+        /// Nothing to move, or the file can't be read now: keep the old key for next time.
+        case keep
+        /// The file already says where searches go (a value the person chose), or it is the old value: drop the old key.
+        case forget
+        /// Write this into `search.engine`, then drop the old key once that worked.
+        case write(String)
+    }
+
+    /// Decides the one-time move of the launcher's old engine (`old`) into surfaces.json, given what the file holds.
+    /// The old choice gives way only to a choice in the file: `search.engine`, or a `newtab.searchURL` that isn't its
+    /// compiled-in default (a full file from `surfaces get` carries the default, which nobody chose). Otherwise the old
+    /// choice goes into `search.engine` unless it is already the engine in force.
+    public static func moveOldEngine(_ old: String?, file: SurfacesFile.Loaded) -> OldEngineMove {
+        guard let old, !old.isEmpty else { return .keep }
+        let tree: SurfaceValue
+        let inForce: String
+        switch file {
+        case .missing:
+            return old == Surfaces.defaults.search.engine ? .forget : .write(old)
+        case .document(let d):
+            tree = d.tree
+            inForce = d.surfaces.search.engine
+        case .invalid, .rejected, .failed:
+            return .keep
+        }
+        if tree.at(["search", "engine"]) != nil { return .forget }
+        let legacyDefault = SurfaceField.byPath["newtab.searchURL"]?.defaultValue
+        if let legacy = tree.at(["newtab", "searchURL"]), legacy != legacyDefault { return .forget }
+        return old == inForce ? .forget : .write(old)
+    }
 }

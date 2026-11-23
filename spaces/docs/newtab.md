@@ -24,8 +24,11 @@ As you type, a list under the field (`#finder`, at most seven rows) shows, in th
 
 1. Open tabs and windows that match, from Polycarp's session engine (the host's `find`), and this browser's own tabs
    (`chrome.tabs`). Choosing one switches to it instead of opening the page twice: a tab in this browser is activated with
-   `chrome.tabs` and the new tab closes; anything else (another browser's tab, a window, a terminal split) is brought
-   forward by Polycarp (the host's `focus`, the path `polycarp-spaces focus` takes).
+   `chrome.tabs`, and the new tab closes once that took; anything else (another browser's tab, a window, a terminal
+   split) is brought forward by Polycarp (the host's `focus`, the path `polycarp-spaces focus` takes). A session row is
+   paired with this browser's tab only when its `bundleID` is the `browser` the host reported, so the same page open in
+   two browsers lists both. A tab closed since the list was drawn isn't switched to: Polycarp tries it, or Return's
+   search goes instead, and the new tab stays.
 2. Bang completions while a bang is being typed (`!y` lists `!yt` and the rest).
 3. What Return does with the text: "Search Google for ...", "Open example.com", or "Ask Claude ...".
 
@@ -33,7 +36,7 @@ As you type, a list under the field (`#finder`, at most seven rows) shows, in th
 | --- | --- |
 | Down or Control-N | The next row. |
 | Up or Control-P | The row before. |
-| Return | Opens the chosen row (the first one until you move). |
+| Return | Opens the chosen row: the first one until you move, even when rows arrive after you stop typing. |
 | Tab | Fills in the chosen bang, or the first bang listed, as `!yt `. |
 | Esc | Clears the field. |
 
@@ -88,7 +91,7 @@ unsigned length, then that many bytes of UTF-8 JSON, on stdin and on stdout. A r
 ### `{"op":"find","q":"..."}`
 
 ```json
-{"ok": true, "partial": false,
+{"ok": true, "partial": false, "browser": "com.example.browser",
  "items": [{"id": "tab:com.example.browser:1:2", "kind": "tab", "title": "Inbox - Gmail", "app": "Browser",
             "bundleID": "com.example.browser", "activity": "shell", "detail": "mail.google.com/mail/u/0"},
            {"id": "win:5", "kind": "window", "title": "Notes about Gmail", "app": "Notes",
@@ -99,6 +102,8 @@ unsigned length, then that many bytes of UTF-8 JSON, on stdin and on stdout. A r
   (`OneSearch.sessions`, the launcher's ranking: a match must be a word or a prefix, not letters scattered through a
   title), at most seven. `activity` is `working`, `waiting` (an agent waiting on you) or `shell`; `detail` and
   `workspace` appear when they have a value.
+- `browser` is the bundle ID of the browser that started the host (its parent process, the outermost `.app` on its
+  path), left out when it can't be told.
 - One request, one reply, under 1 MiB. The host waits at most 150 ms (`NewTabHost.findBudget`) for the app's list and
   answers with what it has: `partial` is true, with no items, when the app didn't answer in time or isn't running.
 - A bang or blank `q` gets no items, and the app isn't asked. A missing `q`, or one over 512 characters, gets

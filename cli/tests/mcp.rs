@@ -1060,22 +1060,20 @@ fn search_tools_run_the_spaces_search_command_and_only_search_open_opens() {
     let r = s.tool("search", json!({"query": "!yt cats"}));
     assert_eq!(r["isError"], false);
     assert_eq!(r["structuredContent"], reply);
-    // One argument for the whole query, so its words can't turn into flags.
-    assert_eq!(stub_args(&sb), ["search", "!yt cats", "--json"]);
+    // The query goes after `--`, one argument, so none of its words is taken as a flag.
+    assert_eq!(stub_args(&sb), ["search", "--json", "--", "!yt cats"]);
     s.tool("search_open", json!({"query": "gmail --open"}));
     assert_eq!(
         stub_args(&sb),
-        ["search", "--open", "gmail --open", "--json"]
+        ["search", "--open", "--json", "--", "gmail --open"]
     );
+    for q in ["--open", "--json", "help", "-h"] {
+        s.tool("search", json!({"query": q}));
+        assert_eq!(stub_args(&sb), ["search", "--json", "--", q], "{q}");
+    }
 
     fs::remove_file(sb.root.join("spaces/args")).unwrap();
-    for args in [
-        json!({}),
-        json!({"query": 3}),
-        json!({"query": "  "}),
-        json!({"query": "--open"}),
-        json!({"query": "--json"}),
-    ] {
+    for args in [json!({}), json!({"query": 3}), json!({"query": "  "})] {
         let r = s.tool("search", args.clone());
         assert_eq!(r["isError"], true, "{args}");
         assert_eq!(

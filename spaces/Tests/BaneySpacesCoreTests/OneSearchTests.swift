@@ -129,4 +129,62 @@ final class OneSearchTests: XCTestCase {
         try Data(#"[{"trigger":"yt","name":"Mine","url":"https://me.example/?v={q}"}]"#.utf8).write(to: Bangs.customFile(supportDir: dir))
         XCTAssertEqual(Bangs.find("yt", in: Bangs.load(supportDir: dir))?.name, "Mine", "yours replace a built-in")
     }
+
+    // MARK: The launcher's engine from before search.engine (review first-F1)
+
+    private func loaded(_ json: String) throws -> SurfacesFile.Loaded {
+        let tree = try SurfaceValue.parse(Data(json.utf8)).get()
+        guard case .success(let c) = Surfaces.check(tree) else { throw XCTSkip("unreachable: \(json) should check") }
+        return .document(.init(tree: tree, surfaces: c.surfaces, warnings: []))
+    }
+
+    func testTheOldLauncherEngineMovesUnlessTheFileChoseOne() throws {
+        let ddg = "https://duckduckgo.com/?q={query}"
+        XCTAssertEqual(OneSearch.moveOldEngine(nil, file: .missing), .keep, "nothing to move")
+        XCTAssertEqual(OneSearch.moveOldEngine("b", file: .missing), .write("b"))
+        XCTAssertEqual(OneSearch.moveOldEngine("g", file: .missing), .forget, "Google is already in force")
+        // A full file from `surfaces get` carries newtab.searchURL at its default: nobody chose it, so the launcher's
+        // choice moves, Google included (else the default DuckDuckGo would take over the launcher).
+        let full = try loaded(#"{"newtab":{"searchURL":"\#(ddg)"}}"#)
+        XCTAssertEqual(OneSearch.moveOldEngine("b", file: full), .write("b"))
+        XCTAssertEqual(OneSearch.moveOldEngine("g", file: full), .write("g"))
+        // A newtab.searchURL someone set, or a search.engine, is a choice in the file: it wins and the old key goes.
+        let brave = try loaded(#"{"newtab":{"searchURL":"https://search.brave.com/search?q={query}"}}"#)
+        XCTAssertEqual(OneSearch.moveOldEngine("b", file: brave), .forget)
+        XCTAssertEqual(OneSearch.moveOldEngine("b", file: try loaded(#"{"search":{"engine":"kagi"}}"#)), .forget)
+        XCTAssertEqual(OneSearch.moveOldEngine("b", file: try loaded(#"{"newtab":{"verse":false}}"#)), .write("b"))
+        // A file that can't be read now keeps the key for next time.
+        XCTAssertEqual(OneSearch.moveOldEngine("b", file: .failed("busy")), .keep)
+        XCTAssertEqual(OneSearch.moveOldEngine("b", file: .rejected("too big")), .keep)
+    }
+
+    // MARK: polycarp-spaces search's arguments (review first-F4, second-F7)
+
+    func testSearchArgumentsTakeFlagsOnlyBeforeTheSeparator() {
+        let a = OneSearch.Arguments(["--json", "gmail", "inbox"])
+        XCTAssertTrue(a.json); XCTAssertFalse(a.open); XCTAssertEqual(a.text, "gmail inbox"); XCTAssertFalse(a.asksHelp)
+        XCTAssertTrue(OneSearch.Arguments(["cats", "--open"]).open, "a flag anywhere before --")
+        XCTAssertTrue(OneSearch.Arguments(["help"]).asksHelp)
+        XCTAssertTrue(OneSearch.Arguments(["--json", "-h"]).asksHelp)
+        XCTAssertFalse(OneSearch.Arguments(["help", "me"]).asksHelp, "help with more words is a search")
+        // What polycarp mcp sends: flags, then --, then the query whole.
+        let mcp = OneSearch.Arguments(["--open", "--json", "--", "--open"])
+        XCTAssertTrue(mcp.open); XCTAssertTrue(mcp.json); XCTAssertEqual(mcp.text, "--open")
+        let help = OneSearch.Arguments(["--json", "--", "help"])
+        XCTAssertFalse(help.asksHelp, "help after -- is searched for")
+        XCTAssertEqual(help.text, "help")
+        XCTAssertFalse(OneSearch.Arguments(["--", "--json"]).json)
+    }
+
+    func testOpenPassesOverBangCompletions() {
+        let bangs = Bangs.builtIn
+        let g = OneSearch.engine("g", bangs: bangs)
+        let y = OneSearch.results("!y", items: [], engine: g, bangs: bangs)
+        XCTAssertEqual(y.first?.kind, "bang")
+        XCTAssertEqual(OneSearch.toOpen(y)?.kind, "search", "a completion only fills in its bang, so --open goes on")
+        XCTAssertEqual(OneSearch.toOpen(y)?.url, "https://duckduckgo.com/?q=%21y")
+        let items = [item("tab:h:1:1", .tab, "Inbox - Gmail")]
+        XCTAssertEqual(OneSearch.toOpen(OneSearch.results("gmail", items: items, engine: g, bangs: bangs))?.id, "tab:h:1:1")
+        XCTAssertNil(OneSearch.toOpen([]))
+    }
 }

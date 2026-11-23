@@ -175,7 +175,8 @@
 
 	// The finder's rows, at most `limit`, in order: open tabs and windows that match (this browser's own tabs switch
 	// with chrome.tabs; the session engine's rows through Polycarp), then bang completions, then what Return does.
-	// ctx: {engine, bangs, sessions: the host's find items, tabs: this browser's tabs {id, windowId, title, url}}.
+	// ctx: {engine, bangs, sessions: the host's find items, tabs: this browser's tabs {id, windowId, title, url},
+	// browser: this browser's bundle ID from the find reply, or null}.
 	function rows(typed, ctx) {
 		ctx = ctx || {};
 		var text = String(typed || "").trim();
@@ -192,9 +193,18 @@
 				var sc = best(text, [s.title, (s.app || "") + " " + s.title, s.detail]);
 				if (sc === null || sc < sessionFloor) return;
 				var mine = null;
-				if (s.kind === "tab") {
+				// A session row is this browser's own tab only when it comes from this browser (ctx.browser, the bundle
+				// ID the host reports); a tab with the same title in another browser goes through Polycarp. When the
+				// host can't tell which browser it is, the row still goes through Polycarp and the look-alike tab
+				// here isn't listed twice.
+				var here = !!ctx.browser && s.bundleID === ctx.browser;
+				if (s.kind === "tab" && (here || !ctx.browser)) {
 					for (var j = 0; j < tabs.length; j++) {
-						if (!used[j] && (tabs[j].title === s.title || (s.detail && short(tabs[j].url) === s.detail))) { mine = tabs[j]; used[j] = true; break; }
+						if (!used[j] && (tabs[j].title === s.title || (s.detail && short(tabs[j].url) === s.detail))) {
+							used[j] = true;
+							if (here) mine = tabs[j];
+							break;
+						}
 					}
 				}
 				found.push({ score: sc, order: i, row: { kind: s.kind || "window", title: s.title, detail: s.detail || s.app || "", app: s.app || "",

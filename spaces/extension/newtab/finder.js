@@ -17,6 +17,11 @@
 		var asked = 0;
 		var sessions = [];
 		var tabs = [];
+		// This browser's bundle ID as the host reports it, so its own rows switch with chrome.tabs.
+		var browser = null;
+		// Whether the person moved the selection since the text last changed. Until they do, the top row is chosen,
+		// whatever a late reply puts there, so Return opens what is first (docs/newtab.md).
+		var moved = false;
 		var timer = null;
 		var self = null;
 
@@ -44,11 +49,13 @@
 		function key(row) { return row.kind + ":" + (row.id || "") + ":" + row.title + ":" + (row.url || row.trigger || ""); }
 
 		function draw() {
-			var was = rows[selected] ? key(rows[selected]) : null;
+			var was = moved && rows[selected] ? key(rows[selected]) : null;
 			var page = opts.page();
-			rows = PolycarpNewTab.rows(field.value, { engine: page.engine || page.searchURL, bangs: page.bangs, sessions: sessions, tabs: tabs });
+			rows = PolycarpNewTab.rows(field.value, { engine: page.engine || page.searchURL, bangs: page.bangs, sessions: sessions, tabs: tabs,
+				browser: browser });
 			var again = was === null ? -1 : rows.map(key).indexOf(was);
 			selected = again >= 0 ? again : 0;
+			if (again < 0) moved = false;
 			list.textContent = "";
 			rows.forEach(function (row, i) {
 				var li = document.createElement("li");
@@ -68,7 +75,7 @@
 				li.appendChild(what);
 				li.appendChild(where);
 				li.appendChild(label);
-				li.addEventListener("mousemove", function () { if (selected !== i) { selected = i; mark(); } });
+				li.addEventListener("mousemove", function () { if (selected !== i) { selected = i; moved = true; mark(); } });
 				li.addEventListener("mousedown", function (e) { e.preventDefault(); selected = i; open(rows[i]); });
 				list.appendChild(li);
 			});
@@ -88,6 +95,7 @@
 
 		// Draws now from what it has, then asks Polycarp and this browser once typing pauses.
 		function update() {
+			moved = false;
 			draw();
 			clearTimeout(timer);
 			var text = field.value.trim();
@@ -97,6 +105,7 @@
 				Promise.all([opts.ask({ op: "find", q: text }), readTabs()]).then(function (got) {
 					if (mine !== asked) return;
 					sessions = got[0] && got[0].ok && Array.isArray(got[0].items) ? got[0].items : [];
+					if (got[0] && got[0].ok && typeof got[0].browser === "string") browser = got[0].browser;
 					tabs = got[1];
 					draw();
 				});
@@ -112,18 +121,41 @@
 			if (!row) return;
 			if (row.kind === "bang") return complete(row);
 			if (row.url) return location.assign(row.url);
-			if (row.tab && hasTabs()) {
-				try {
-					chrome.tabs.update(row.tab.id, { active: true });
-					if (chrome.windows) chrome.windows.update(row.tab.windowId, { focused: true });
-					return closeThisTab();
-				} catch (e) { /* fall through to Polycarp */ }
+			if (row.tab && hasTabs()) return switchTab(row);
+			viaPolycarp(row);
+		}
+
+		// This browser's tab: activate it and its window, and close this new tab only once the switch took. A tab
+		// closed since the list was drawn fails without throwing (lastError), so then Polycarp or the search goes instead.
+		function switchTab(row) {
+			var failed = function () { if (row.id) viaPolycarp(row); else instead(); };
+			try {
+				chrome.tabs.update(row.tab.id, { active: true }, function (tab) {
+					if ((chrome.runtime && chrome.runtime.lastError) || !tab) return failed();
+					if (!chrome.windows) return closeThisTab();
+					chrome.windows.update(row.tab.windowId, { focused: true }, function () {
+						void (chrome.runtime && chrome.runtime.lastError); // the tab is in front either way
+						closeThisTab();
+					});
+				});
+			} catch (e) {
+				failed();
 			}
-			if (!row.id) return;
+		}
+
+		function viaPolycarp(row) {
+			if (!row.id) return instead();
 			opts.ask({ op: "focus", id: row.id }).then(function (r) {
 				if (r && r.ok) return closeThisTab();
 				opts.say(r && r.error ? "Polycarp couldn’t go there: " + r.error : "Polycarp isn’t running, so it can’t go there.");
 			});
+		}
+
+		// What Return does with the text (the last row), when the row chosen can't be reached.
+		function instead() {
+			var last = rows[rows.length - 1];
+			if (last && last.url) return location.assign(last.url);
+			opts.say("That tab is gone.");
 		}
 
 		function complete(row) {
@@ -133,6 +165,7 @@
 
 		function move(by) {
 			if (!rows.length) return;
+			moved = true;
 			selected = (selected + by + rows.length) % rows.length;
 			mark();
 		}

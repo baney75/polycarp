@@ -196,7 +196,9 @@ Which engine wins: `search.engine` when the file sets it; else `newtab.searchURL
 before `search.engine` keeps searching where it did); else Google. `surfaces get search.engine` prints `"g"` for a
 file that sets only `newtab.searchURL`, but searches go where `newtab.searchURL` says until `search.engine` is set. An
 engine chosen in the launcher before this setting existed moves into the file once, the first time Polycarp starts,
-unless the file already names one.
+unless the file already chose one: `search.engine`, or a `newtab.searchURL` other than its default (a full file from
+`surfaces get` carries the default, which nobody chose). Settings > Launcher shows the engine in force and follows the
+file; a pick the file refuses goes back, with the reason under the picker.
 
 ### `newtab`: the browser's new tab page
 

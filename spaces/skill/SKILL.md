@@ -27,8 +27,8 @@ BaneySpaces workspace.
 | Want | Command |
 | --- | --- |
 | Bring something forward | `baneyspaces focus <id or words>` (fuzzy: `baneyspaces focus helium github`) |
-| Find a tab or window, or search the web | `baneyspaces search "gmail"` (JSON lines, best first: open tabs and windows that match with their `id`, bang completions, then the web search or bang `url`; ranked as the launcher and the new tab rank it, with `search.engine` and the bangs). `--json` for the envelope. Read-only |
-| Go to the top search result | `baneyspaces search --open "gmail"` (an open tab or window comes forward as `focus` does; a web result opens in the default browser). Only when Donovan asked to go there |
+| Find a tab or window, or search the web | `baneyspaces search "gmail"` (JSON lines, best first: open tabs and windows that match with their `id`, bang completions, then the web search or bang `url`; ranked as the launcher and the new tab rank it, with `search.engine` and the bangs). `--json` for the envelope; text after `--` is never a flag. Read-only |
+| Go to the top search result | `baneyspaces search --open "gmail"` (an open tab or window comes forward as `focus` does; a web result opens in the default browser; bang completions are passed over). Only when Donovan asked to go there |
 | Open a page | `baneyspaces open https://…` (default browser, stays in the session engine) |
 | Type into another Ghostty terminal | `baneyspaces send <id or words> "text"` (pasted, no Return unless you include a newline) |
 | Tell Donovan this terminal needs him | `baneyspaces notify "Tests failed, need a decision"` |
