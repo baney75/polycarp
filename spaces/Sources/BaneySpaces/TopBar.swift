@@ -106,6 +106,10 @@ final class TopBar {
             CFRunLoopAddSource(CFRunLoopGetMain(), src, .defaultMode)
             powerSource = src
         }
+        // Low Power Mode changes without a power-source event; the battery turns yellow (or back) at once.
+        NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { [weak self] _ in
+            self?.readBattery()
+        }
         reload()
     }
 
@@ -297,7 +301,10 @@ final class TopBar {
             let charging = d[kIOPSIsChargingKey] as? Bool ?? false
             text = BarText.battery(percent: percent, charging: charging,
                                    onPower: d[kIOPSPowerSourceStateKey] as? String == kIOPSACPowerValue)
-            if model.charge?.percent != percent || model.charge?.charging != charging { model.charge = (percent, charging) }
+            let onPower = d[kIOPSPowerSourceStateKey] as? String == kIOPSACPowerValue
+            let now = TopBarModel.Charge(percent: percent, charging: charging, onPower: onPower,
+                                         lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled)
+            if model.charge != now { model.charge = now }
         }
         if model.battery != text { model.battery = text }
     }
@@ -340,7 +347,14 @@ final class TopBarModel: ObservableObject {
     /// An app's icon by bundle id, drawn for its status items.
     @Published var icons: [String: NSImage] = [:]
     /// The battery's charge for the macOS battery item in `status`.
-    @Published var charge: (percent: Int, charging: Bool)?
+    @Published var charge: Charge?
+
+    struct Charge: Equatable {
+        var percent: Int
+        var charging: Bool
+        var onPower: Bool
+        var lowPower: Bool
+    }
     var onPick: (Int, NSScreen) -> Void = { _, _ in }
     /// Presses the front app's menu at a `BarMenus.Item.index`.
     var onMenu: (Int) -> Void = { _ in }
@@ -578,7 +592,11 @@ struct TopBarView: View {
         FitRow(spacing: s.gap.map { CGFloat($0) } ?? 10, fromEnd: true) {
             ForEach(Array(model.status.enumerated()), id: \.offset) { i, item in
                 Group {
-                    if let symbol = BarStatus.symbol(item, percent: model.charge?.percent, charging: model.charge?.charging ?? false) {
+                    if BarStatus.isBattery(item), let c = model.charge {
+                        BatteryGlyph(look: BarStatus.batteryLook(percent: c.percent, charging: c.charging, onPower: c.onPower,
+                                                                 lowPower: c.lowPower),
+                                     ink: s.ink(Chrome.wash(0.85)))
+                    } else if let symbol = BarStatus.symbol(item, percent: model.charge?.percent, charging: model.charge?.charging ?? false) {
                         Image(systemName: symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(s.ink(Chrome.wash(0.85)))
                     } else if let icon = model.icons[item.owner], icon.isTemplate {
                         Image(nsImage: icon).renderingMode(.template).resizable().interpolation(.high).frame(width: 15, height: 15)
@@ -699,5 +717,43 @@ private struct IslandShadow: ViewModifier {
             // Small enough to fade inside the 3 pt the island is inset from the panel's edge.
             content.shadow(color: Chrome.shadow(0.22), radius: 2, x: 0, y: 1)
         }
+    }
+}
+
+/// macOS's battery, drawn: an outline, filled to the charge in the bar's ink (yellow in Low Power Mode, red nearly
+/// empty), with a bolt while charging or a plug on power.
+private struct BatteryGlyph: View {
+    let look: BarStatus.BatteryLook
+    let ink: Color
+
+    private var fillColor: Color {
+        switch look.tint {
+        case .normal: ink
+        case .lowPower: Color(red: 1, green: 0.84, blue: 0.04)
+        case .critical: Color(red: 1, green: 0.27, blue: 0.23)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 1) {
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3.5, style: .continuous).strokeBorder(ink.opacity(0.45), lineWidth: 1)
+                GeometryReader { g in
+                    RoundedRectangle(cornerRadius: 2, style: .continuous).fill(fillColor)
+                        .frame(width: max(2, (g.size.width - 4) * look.fill), height: g.size.height - 4)
+                        .offset(x: 2, y: 2)
+                }
+                if look.badge != .none {
+                    Image(systemName: look.badge == .bolt ? "bolt.fill" : "powerplug.fill")
+                        .font(.system(size: 7.5, weight: .black))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.7), radius: 0.6)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(width: 22, height: 11)
+            RoundedRectangle(cornerRadius: 1, style: .continuous).fill(ink.opacity(0.45)).frame(width: 1.5, height: 4)
+        }
+        .accessibilityElement(children: .ignore)
     }
 }

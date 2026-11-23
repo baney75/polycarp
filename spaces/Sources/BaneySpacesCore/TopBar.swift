@@ -277,6 +277,29 @@ public enum BarStatus {
         return !barTops.contains { y >= $0 - 2 && y < $0 + 50 }
     }
 
+    /// How the battery glyph is drawn, as macOS draws its own: filled to the charge, yellow in Low Power Mode, red when
+    /// nearly empty on battery, a bolt while charging and a plug on power but not charging (a full battery, or one held
+    /// back by Optimized Charging).
+    public struct BatteryLook: Equatable, Sendable {
+        public enum Tint: Equatable, Sendable { case normal, lowPower, critical }
+        public enum Badge: Equatable, Sendable { case none, bolt, plug }
+        public var fill: Double
+        public var tint: Tint
+        public var badge: Badge
+    }
+
+    public static func batteryLook(percent: Int?, charging: Bool, onPower: Bool, lowPower: Bool) -> BatteryLook {
+        let fill = percent.map { min(1, max(0, Double($0) / 100)) } ?? 1
+        let tint: BatteryLook.Tint = lowPower ? .lowPower : ((percent ?? 100) <= 10 && !onPower && !charging ? .critical : .normal)
+        let badge: BatteryLook.Badge = charging ? .bolt : (onPower ? .plug : .none)
+        return BatteryLook(fill: fill, tint: tint, badge: badge)
+    }
+
+    /// Whether an item is macOS's battery, drawn as `batteryLook` rather than a symbol.
+    public static func isBattery(_ item: Item) -> Bool {
+        item.isSystem && ((item.identifier ?? "") + " " + (item.label ?? "")).lowercased().contains("battery")
+    }
+
     /// The battery symbol for a charge, in quarters. The bolt comes only with a full one (SF Symbols has no other), so a
     /// low battery charging still reads as low.
     public static func battery(percent: Int?, charging: Bool) -> String {
