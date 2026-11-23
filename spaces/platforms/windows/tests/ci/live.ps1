@@ -371,7 +371,7 @@ check ($mw -and ([Desk]::Foreground() -ne $pb.Hwnd)) 'the bar never takes the fr
 $st = bar_state; $here = current_on $st $sbar.monitor
 [void](bsc move 4 --stay --window (hw $mw)); Start-Sleep 1
 $cell = @((bar_state).bar.bars | ? { $_.hwnd -eq $pb.Hwnd } | % { $_.cells } | ? { $_.n -eq 4 })[0]
-check ($cell) "the bar shows workspace 4 once a window is on it (cells $(((bar_state).bar.bars | ? { $_.hwnd -eq $pb.Hwnd } | % { $_.cells } | % { $_.n }) -join ' '))"
+check ([bool]$cell) "the bar shows workspace 4 once a window is on it (cells $(((bar_state).bar.bars | ? { $_.hwnd -eq $pb.Hwnd } | % { $_.cells } | % { $_.n }) -join ' '))"
 if ($cell) {
   [void][Desk]::Click($pb.L + $cell.x + [int]($cell.w / 2), $pb.T + [int](($pb.B - $pb.T) / 2)); Start-Sleep 1; shot '09-bar-clicked-4'
   $now = current_on (bar_state) $sbar.monitor
