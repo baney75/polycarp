@@ -424,6 +424,9 @@ struct TopBarView: View {
 
     @ViewBuilder private var themed: some View {
         switch model.bar.style {
+        case .islands:
+            // Nothing behind the islands: the desktop shows between them.
+            Color.clear
         case .solid:
             // The theme's background role, whole: one calm strip.
             Chrome.panel()
@@ -434,15 +437,42 @@ struct TopBarView: View {
         }
     }
 
-    /// One region's modules. The sheet can hide a region, box it and set its own gap.
+    /// One region's modules. The sheet can hide a region, box it and set its own gap. With `bar.style` islands, each
+    /// group between `|` splits floats in its own island.
     @ViewBuilder private func row(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region) -> some View {
         let r = styles.book.region(region)
         if !r.isHidden {
-            HStack(spacing: r.gap.map { CGFloat($0) } ?? spacing) {
-                ForEach(modules.filter(BarLayout.drawn), id: \.id) { styled($0, region) }
+            Group {
+                if model.bar.style == .islands {
+                    HStack(spacing: r.gap.map { CGFloat($0) } ?? 6) {
+                        ForEach(Array(BarLayout.islands(modules).enumerated()), id: \.offset) { _, group in
+                            island(group, region)
+                        }
+                    }
+                } else {
+                    HStack(spacing: r.gap.map { CGFloat($0) } ?? spacing) {
+                        ForEach(modules.filter(BarLayout.drawn), id: \.id) { styled($0, region) }
+                    }
+                }
             }
             .lineLimit(1)
             .modifier(StyledBox(style: r))
+        }
+    }
+
+    /// One island: its modules on a rounded face, inset from the bar's top and bottom so it floats. The sheet's
+    /// `bar .island` sets its background, corners, line, shadow, padding and gap; what it leaves unset keeps the face.
+    @ViewBuilder private func island(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region) -> some View {
+        let s = styles.book.island(in: region)
+        if !s.isHidden {
+            HStack(spacing: s.gap.map { CGFloat($0) } ?? spacing) {
+                ForEach(modules, id: \.id) { styled($0, region) }
+            }
+            .padding(s.padding.map(Styled.insets) ?? EdgeInsets(top: 0, leading: 11, bottom: 0, trailing: 11))
+            .frame(maxHeight: .infinity)
+            .background { IslandFace(style: s) }
+            .padding(.vertical, 3)
+            .opacity(s.opacity ?? 1)
         }
     }
 
@@ -498,7 +528,7 @@ struct TopBarView: View {
             menus(s)
         case .status:
             statusItems(s)
-        case .custom:
+        case .custom, .split:
             EmptyView()
         }
     }
@@ -525,8 +555,8 @@ struct TopBarView: View {
         }
     }
 
-    /// Every app's status items, as many as fit from the right, in one monochrome row like Waybar's glyphs: macOS's as
-    /// symbols and a template icon in the bar's foreground, any other app icon in gray.
+    /// Every app's status items, as many as fit from the right, like Waybar's tray: macOS's as symbols and a template
+    /// icon in the bar's foreground, any other app icon in its own colors.
     private func statusItems(_ s: ComputedStyle) -> some View {
         FitRow(spacing: s.gap.map { CGFloat($0) } ?? 10, fromEnd: true) {
             ForEach(Array(model.status.enumerated()), id: \.offset) { i, item in
@@ -537,8 +567,8 @@ struct TopBarView: View {
                         Image(nsImage: icon).renderingMode(.template).resizable().interpolation(.high).frame(width: 15, height: 15)
                             .foregroundStyle(s.ink(Chrome.wash(0.85)))
                     } else if let icon = model.icons[item.owner] {
-                        Image(nsImage: icon).resizable().interpolation(.high).frame(width: 15, height: 15)
-                            .grayscale(1).opacity(0.85)
+                        // In color: a gray app icon is a smudge at this size; its own colors are how it is known.
+                        Image(nsImage: icon).resizable().interpolation(.high).frame(width: 16, height: 16)
                     } else {
                         Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(Chrome.wash(0.6))
                     }
@@ -611,6 +641,37 @@ private struct VineMark: View {
             }
             leaf(6.5, 8, 2.2, 1.2, -40, Chrome.accent)
             leaf(10, 6.4, 2, 1.1, 30, Chrome.gold)
+        }
+    }
+}
+
+/// An island's face: the theme's surface, a hairline edge and a soft shadow, each replaced by what the sheet's
+/// `bar .island` sets.
+private struct IslandFace: View {
+    let style: ComputedStyle
+
+    var body: some View {
+        let shape = Styled.shape(style, else: 10)
+        ZStack {
+            if let fill = Styled.fill(style.background) { shape.fill(fill) } else { shape.fill(Chrome.panel(0.94)) }
+            if style.border == nil && style.borderBottom == nil {
+                shape.strokeBorder(Chrome.edge(0.22), lineWidth: 1)
+            } else {
+                StyledLines(style: style, shape: shape)
+            }
+        }
+        .compositingGroup()
+        .modifier(IslandShadow(shadow: style.boxShadow))
+    }
+}
+
+private struct IslandShadow: ViewModifier {
+    let shadow: StyleShadow?
+    func body(content: Content) -> some View {
+        if shadow != nil {
+            content.modifier(StyledShadow(shadow: shadow))
+        } else {
+            content.shadow(color: .black.opacity(0.22), radius: 5, x: 0, y: 1.5)
         }
     }
 }

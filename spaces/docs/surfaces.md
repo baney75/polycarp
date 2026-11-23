@@ -82,8 +82,8 @@ Error codes: `invalid_value` (the value fails its check), `unknown_path` (no suc
 | --- | --- | --- |
 | `bar.enabled` | `false` | `true` or `false`. Show Polycarp's top bar. Off until you turn it on. |
 | `bar.height` | `26` | A whole number of points, 22 to 40. |
-| `bar.style` | `"solid"` | `solid` (the theme's background color), `glass` (blurred, see-through) or `hairline` (the desktop shows through, with a thin line under it). |
-| `bar.modules.left` | `["mark","workspaces","app-menus"]` | Module ids, in order. |
+| `bar.style` | `"islands"` | `islands` (each group of modules floats in its own rounded island over the desktop; `"\|"` in a module list starts a new island; style them with `bar .island` in style.css), `solid` (the theme's background color), `glass` (blurred, see-through) or `hairline` (the desktop shows through, with a thin line under it). |
+| `bar.modules.left` | `["mark","workspaces","\|","app-menus"]` | Module ids, in order. `"\|"` starts a new island, as often as you like. |
 | `bar.modules.center` | `["clock"]` | Module ids, in order. |
 | `bar.modules.right` | `["status"]` | Module ids, in order. |
 | `bar.clockFormat` | `"day-12h"` | `day-12h` (Saturday 10:04 PM), `day-24h` (Saturday 22:04), `12h` (3:05) or `24h` (15:05). |

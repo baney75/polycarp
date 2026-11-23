@@ -51,7 +51,7 @@ public struct Surfaces: Equatable, Sendable {
     /// The format this build writes. A file with a higher one is read for the fields this build knows.
     public static let version = 1
 
-    public enum BarStyle: String, CaseIterable, Sendable { case solid, glass, hairline }
+    public enum BarStyle: String, CaseIterable, Sendable { case islands, solid, glass, hairline }
     /// The clock module's form: the time alone ("3:05", "15:05"), or after the day's name as Omarchy's bar draws it
     /// ("Saturday 10:04 PM", "Saturday 22:04").
     public enum ClockFormat: String, CaseIterable, Sendable {
@@ -66,6 +66,9 @@ public struct Surfaces: Equatable, Sendable {
     public enum BarModule: Hashable, Sendable {
         case mark, workspaces, appMenus, status, hour, clock, date, verse, battery, network
         case custom(String)
+        /// `|` in a module list: where one island ends and the next begins (`BarLayout.islands`). It may appear any
+        /// number of times, in any place.
+        case split
 
         public static let builtIn: [BarModule] = [.mark, .workspaces, .appMenus, .status, .hour, .clock, .date, .verse, .battery,
                                                   .network]
@@ -83,10 +86,15 @@ public struct Surfaces: Equatable, Sendable {
             case .battery: "battery"
             case .network: "network"
             case let .custom(name): "custom:" + name
+            case .split: "|"
             }
         }
 
+        /// Every id a module list takes: the built-in modules and the island split.
+        public static let listIds: [String] = builtIn.map(\.id) + ["|"]
+
         public init?(id: String) {
+            if id == "|" { self = .split; return }
             if let b = BarModule.builtIn.first(where: { $0.id == id }) { self = b; return }
             guard id.hasPrefix("custom:"), SurfaceCheck.matches(String(id.dropFirst(7)), SurfaceCheck.namePattern) else { return nil }
             self = .custom(String(id.dropFirst(7)))
@@ -271,14 +279,14 @@ extension SurfaceField {
 
         SurfaceField("bar.enabled", .bool, .bool(false), "Show Polycarp's top bar. Off until you turn it on."),
         SurfaceField("bar.height", .integer(22...40), .number(26),"The bar's height in points, 22 to 40."),
-        SurfaceField("bar.style", .choice(Surfaces.BarStyle.allCases.map(\.rawValue)), .string("solid"),
-                     "solid: the theme's surface color. glass: blurred and see-through. hairline: the desktop shows through, with a thin line under it."),
-        SurfaceField("bar.modules.left", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
-                     ids(["mark", "workspaces", "app-menus"]), "Modules at the left, in order."),
-        SurfaceField("bar.modules.center", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
-                     ids(["clock"]), "Modules in the middle, in order."),
-        SurfaceField("bar.modules.right", .ids(known: Surfaces.BarModule.builtIn.map(\.id), custom: true),
-                     ids(["status"]), "Modules at the right, in order."),
+        SurfaceField("bar.style", .choice(Surfaces.BarStyle.allCases.map(\.rawValue)), .string("islands"),
+                     "islands: each group of modules floats in its own rounded island over the desktop; \"|\" in a module list starts a new one. solid: one strip in the theme's surface color. glass: one blurred, see-through strip. hairline: the desktop shows through, with a thin line under it."),
+        SurfaceField("bar.modules.left", .ids(known: Surfaces.BarModule.listIds, custom: true),
+                     ids(["mark", "workspaces", "|", "app-menus"]), "Modules at the left, in order; \"|\" starts a new island."),
+        SurfaceField("bar.modules.center", .ids(known: Surfaces.BarModule.listIds, custom: true),
+                     ids(["clock"]), "Modules in the middle, in order; \"|\" starts a new island."),
+        SurfaceField("bar.modules.right", .ids(known: Surfaces.BarModule.listIds, custom: true),
+                     ids(["status"]), "Modules at the right, in order; \"|\" starts a new island."),
         SurfaceField("bar.clockFormat", .choice(Surfaces.ClockFormat.allCases.map(\.rawValue)), .string("day-12h"),
                      "The clock module: day-12h (Saturday 10:04 PM), day-24h (Saturday 22:04), 12h (3:05) or 24h (15:05)."),
         SurfaceField("bar.hourNames", .bool, .bool(true), "The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning)."),
@@ -372,7 +380,7 @@ extension Surfaces {
         var surfaces = Surfaces(resolved: resolved)
         // The modules a place in the file holds leave the places still at their default (see `crossChecks`).
         let own = ["left", "center", "right"].filter { doc.at(["bar", "modules", $0]) != nil }
-        let taken = Set(own.flatMap { (doc.at(["bar", "modules", $0])?.array ?? []).compactMap(\.string) })
+        let taken = Set(own.flatMap { (doc.at(["bar", "modules", $0])?.array ?? []).compactMap(\.string) }).subtracting(["|"])
         if !own.contains("left") { surfaces.bar.left.removeAll { taken.contains($0.id) } }
         if !own.contains("center") { surfaces.bar.center.removeAll { taken.contains($0.id) } }
         if !own.contains("right") { surfaces.bar.right.removeAll { taken.contains($0.id) } }
@@ -395,7 +403,7 @@ extension Surfaces {
         func n(_ p: String) -> Int { v(p).integer ?? 0 }
         func s(_ p: String) -> String { v(p).string ?? "" }
         func list(_ p: String) -> [String] { (v(p).array ?? []).compactMap(\.string) }
-        bar = Bar(enabled: b("bar.enabled"), height: n("bar.height"), style: BarStyle(rawValue: s("bar.style")) ?? .solid,
+        bar = Bar(enabled: b("bar.enabled"), height: n("bar.height"), style: BarStyle(rawValue: s("bar.style")) ?? .islands,
                   left: list("bar.modules.left").compactMap(BarModule.init(id:)),
                   center: list("bar.modules.center").compactMap(BarModule.init(id:)),
                   right: list("bar.modules.right").compactMap(BarModule.init(id:)),
@@ -529,7 +537,7 @@ enum SurfaceCheck {
                     let extra = custom ? " or custom:<name> (lowercase letters, digits and hyphens)" : ""
                     return ("[\(i)]", "\"\(id)\" is not a known id; use one of \(quoted(known))\(extra)")
                 }
-                if !seen.insert(id).inserted { return ("[\(i)]", "\"\(id)\" is listed twice") }
+                if id != "|", !seen.insert(id).inserted { return ("[\(i)]", "\"\(id)\" is listed twice") }
             }
             return nil
         }
@@ -551,7 +559,7 @@ enum SurfaceCheck {
             let ids = own ?? (SurfaceField.byPath[path]!.defaultValue.array ?? []).compactMap(\.string)
             // A place the file sets takes its modules from the default places, so a file written for other defaults
             // still reads; only the file naming one module in two places is a mistake.
-            for (j, id) in ids.enumerated() {
+            for (j, id) in ids.enumerated() where id != "|" {
                 guard let other = placed[id] else { placed[id] = (place, j, own != nil); continue }
                 if own != nil && other.fromFile {
                     errors.append(SurfacesIssue("\(path)[\(j)]", "\"\(id)\" is already in bar.modules.\(other.place); a module goes in one place"))
@@ -617,7 +625,8 @@ extension Surfaces {
                 } else {
                     item["enum"] = .array(known.map { .string($0) })
                 }
-                o["type"] = .string("array"); o["items"] = .object(item); o["uniqueItems"] = .bool(true)
+                // The island split may repeat; every other id is listed once, which `problem` checks.
+                o["type"] = .string("array"); o["items"] = .object(item); o["uniqueItems"] = .bool(!known.contains("|"))
             }
             return .object(o)
         }

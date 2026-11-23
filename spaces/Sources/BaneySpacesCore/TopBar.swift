@@ -78,10 +78,20 @@ public enum BarLayout {
         notch ? (bar.left + bar.center, [], bar.right) : (bar.left, bar.center, bar.right)
     }
 
-    /// The modules the bar draws today. Custom modules are kept in the file but not drawn.
+    /// The modules the bar draws today. Custom modules are kept in the file but not drawn; the island split is a place,
+    /// not a module.
     public static func drawn(_ m: Surfaces.BarModule) -> Bool {
-        if case .custom = m { return false }
-        return true
+        switch m {
+        case .custom, .split: false
+        default: true
+        }
+    }
+
+    /// A place's modules as islands, split at each `|`, without the modules not drawn and the islands left empty.
+    public static func islands(_ modules: [Surfaces.BarModule]) -> [[Surfaces.BarModule]] {
+        modules.split(separator: .split, omittingEmptySubsequences: false)
+            .map { $0.filter(drawn) }
+            .filter { !$0.isEmpty }
     }
 
     /// How many of a row's items fit in `room`, from the first: a title is left out whole, never cut.
