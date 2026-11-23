@@ -37,9 +37,11 @@ test("every page loads the theme before its own styles", () => {
   assert.ok(war.includes("src/shared/theme.css"), "the content script can read the theme");
 });
 
-test("the old name is gone, but for the one line that reads old backups", () => {
+test("the old name is gone, but for the marked lines that carry old backups and syncs across", () => {
   const shipped = [...ours, "manifest.json", "README.md", "PRIVACY.md"];
   const hits = shipped.flatMap((f) => read(f).split("\n").map((l, i) => [f, i + 1, l])).filter(([, , l]) => /phont/i.test(l));
-  assert.equal(hits.length, 1, hits.map(([f, n]) => f + ":" + n).join(" "));
-  assert.equal(hits[0][0], path.join("src", "shared", "backup.js"));
+  const unmarked = hits.filter(([, , l]) => !/\/\/ migration: /.test(l));
+  assert.deepEqual(unmarked.map(([f, n]) => f + ":" + n), []);
+  // backup.js restores old backups; sync-notion.js and sync-obsidian.js keep syncing where an old backup synced.
+  assert.deepEqual([...new Set(hits.map(([f]) => path.basename(f)))].sort(), ["backup.js", "sync-notion.js", "sync-obsidian.js"]);
 });

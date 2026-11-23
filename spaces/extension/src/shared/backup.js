@@ -43,7 +43,7 @@
   // A backup from the reading extension that became Polycarp's carries its old app name and key
   // prefix; read it as a Polycarp backup. Anything else passes through unchanged.
   function upgrade(j) {
-    if (j && j.data && j.app === "phont") return Object.assign({}, j, { app: "polycarp", data: Object.fromEntries(Object.entries(j.data).map(([k, v]) => [k.replace(/^phont\./, "polycarp."), v])) });
+    if (j && j.data && j.app === "phont") return Object.assign({}, j, { app: "polycarp", data: Object.fromEntries(Object.entries(j.data).map(([k, v]) => [k.replace(/^phont\./, "polycarp."), v])) }); // migration: backups made under the earlier name
     return j;
   }
 

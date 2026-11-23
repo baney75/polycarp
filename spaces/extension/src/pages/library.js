@@ -797,7 +797,8 @@
     const acts = [];
     if (h) {
       acts.push('<button class="btn" data-o="sync">' + I("sync") + "<span>Sync to Obsidian</span></button>");
-      acts.push('<a class="btn quiet" href="' + esc(O.obsidianUrl(h.name, O.FOLDER + "/" + O.INDEX_NAME)) + '">' + I("external") + "<span>Open in Obsidian</span></a>");
+      const folder = await O.folderIn(h).catch(() => O.FOLDER);
+      acts.push('<a class="btn quiet" href="' + esc(O.obsidianUrl(h.name, folder + "/" + O.INDEX_NAME)) + '">' + I("external") + "<span>Open in Obsidian</span></a>");
       acts.push('<button class="btn quiet" data-o="pick">Change folder</button>');
     } else if (typeof showDirectoryPicker === "function") {
       acts.push('<button class="btn" data-o="pick">' + I("upload") + "<span>Choose your vault folder</span></button>");

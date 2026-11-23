@@ -270,8 +270,13 @@
           const patch = {};
           const titleName = Object.keys(have).find(k => have[k] && have[k].type === "title");
           if (titleName && titleName !== "Name") patch[titleName] = { name: "Name" };
+          // A database made under the earlier name keys its pages by that name's ID column: rename it, so the
+          // pages already there are matched rather than made a second time.
+          const OLD_ID = "Phont ID"; // migration: the earlier name's key column
+          if (have[OLD_ID] && !have["Polycarp ID"]) patch[OLD_ID] = { name: "Polycarp ID" };
           for (const k of Object.keys(PROPS)) {
             if (k === "Name" && titleName) continue;
+            if (k === "Polycarp ID" && patch[OLD_ID]) continue;
             if (!have[k]) patch[k] = PROPS[k];
           }
           if (!have.Related) patch.Related = relationProp(db.id || existingDbId);
@@ -358,7 +363,8 @@
         if (p.archived || p.in_trash) continue;
         const st = stateOf(p);
         byPage.set(bareId(p.id), st);
-        const pid = plainOf((p.properties || {})["Polycarp ID"]);
+        const props = p.properties || {};
+        const pid = plainOf(props["Polycarp ID"]) || plainOf(props["Phont ID"]); // migration: pages keyed under the earlier name
         if (pid && !byPolycarp.has(pid)) byPolycarp.set(pid, st);
       }
 

@@ -155,7 +155,7 @@
   function idIn(text) {
     const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(String(text || ""));
     if (!fm) return "";
-    const m = /^polycarp-id:\s*"?([^"\r\n]*?)"?\s*$/m.exec(fm[1]);
+    const m = /^(?:polycarp|phont)-id:\s*"?([^"\r\n]*?)"?\s*$/m.exec(fm[1]); // migration: notes written under the earlier name
     return m ? m[1].trim() : "";
   }
 
@@ -167,6 +167,14 @@
     }
     const file = await fh.getFile();
     return { text: await file.text() };
+  }
+
+  // A vault synced under the earlier name keeps getting its notes in that folder, so nothing is written twice,
+  // until a Polycarp folder exists there.
+  const OLD_FOLDER = "Phont"; // migration: the earlier name's vault folder
+  async function folderIn(dirHandle) {
+    const has = async (name) => { try { await dirHandle.getDirectoryHandle(name); return true; } catch (e) { return false; } };
+    return !(await has(FOLDER)) && (await has(OLD_FOLDER)) ? OLD_FOLDER : FOLDER;
   }
 
   function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
@@ -185,7 +193,9 @@
       }
       plan.push({ name, body: String(f.body || ""), id: idIn(f.body) });
     }
-    const dir = await dirHandle.getDirectoryHandle(FOLDER, { create: true });
+    const disk = await folderIn(dirHandle);
+    result.folder = disk;
+    const dir = await dirHandle.getDirectoryHandle(disk, { create: true });
     const intended = new Set(plan.map(p => p.name.toLowerCase()));
     const claimed = new Set();
     const cache = new Map();
@@ -210,7 +220,7 @@
         if (!ex2 || (p.id && idIn(ex2.text) === p.id)) {
           claimed.add(k);
           renameMap.push([stem, cand.replace(/\.md$/i, "")]);
-          result.renames.push({ from: FOLDER + "/" + p.name, to: FOLDER + "/" + cand });
+          result.renames.push({ from: disk + "/" + p.name, to: disk + "/" + cand });
           p.name = cand;
           break;
         }
@@ -239,7 +249,7 @@
         result.written++;
       }
       done++;
-      if (onProgress) { try { onProgress({ done, total: plan.length, path: FOLDER + "/" + p.name }); } catch (e) { /* ignore */ } }
+      if (onProgress) { try { onProgress({ done, total: plan.length, path: disk + "/" + p.name }); } catch (e) { /* ignore */ } }
     }
     return result;
   }
@@ -276,7 +286,7 @@
 
   globalThis.PolycarpObsidian = {
     FOLDER, INDEX_NAME,
-    safeName, basenames, toMarkdown, indexNote, writeVault, zip, obsidianUrl,
+    safeName, basenames, toMarkdown, indexNote, writeVault, folderIn, idIn, zip, obsidianUrl,
     saveHandle, loadHandle, ensurePermission, ideaLine, anchorLabel
   };
 })();

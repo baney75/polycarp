@@ -10,12 +10,13 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 for (const f of ["lib/jszip.min.js", "src/shared/memory.js", "src/shared/library.js",
-  "src/shared/sync-obsidian.js", "src/shared/sync-notion.js"]) {
+  "src/shared/sync-obsidian.js", "src/shared/sync-notion.js", "src/shared/backup.js"]) {
   vm.runInThisContext(fs.readFileSync(path.join(root, f), "utf8"), { filename: path.basename(f) });
 }
 const L = globalThis.PolycarpLibrary;
 const O = globalThis.PolycarpObsidian;
 const N = globalThis.PolycarpNotion;
+const B = globalThis.PolycarpBackup;
 
 function fresh() { L.useMemoryStore(); }
 
@@ -568,7 +569,11 @@ function fakeNotion() {
       const db = dbs.get(m[1]);
       if (!db) return [404, { object: "error", status: 404, code: "object_not_found", message: "Could not find database" }];
       if (method === "PATCH") for (const [k, v] of Object.entries(body.properties)) {
-        if (v.name && Object.keys(v).length === 1) { db.properties[v.name] = db.properties[k]; delete db.properties[k]; } else db.properties[k] = Object.assign({ type: Object.keys(v)[0] }, v);
+        if (v.name && Object.keys(v).length === 1) {
+          db.properties[v.name] = db.properties[k]; delete db.properties[k];
+          // Notion renames the property on every page of the database too.
+          for (const pg of pages.values()) if (pg.parent.database_id === db.id && k in pg.properties) { pg.properties[v.name] = pg.properties[k]; delete pg.properties[k]; }
+        } else db.properties[k] = Object.assign({ type: Object.keys(v)[0] }, v);
       }
       return [200, { object: "database", id: db.id, properties: db.properties }];
     }
@@ -789,4 +794,67 @@ test("search: #tag filters by tag, through note-items and item notes", async () 
   assert.deepEqual(r.items.map(i => i.id).sort(), [a.id, n.id].sort());
   assert.equal(r.notes.length, 1);
   assert.equal((await L.search("#nothing")).items.length, 0);
+});
+
+// ---------- A restored backup from the earlier name (review finding second-F9) ----------
+
+// A Notion database made under the earlier name, keyed by its "Phont ID" column, with one page already in it.
+function legacyNotion(itemId) {
+  const fake = fakeNotion();
+  const dbId = "legacy-db";
+  const props = {};
+  for (const [k, v] of Object.entries(N.PROPS || {})) if (k !== "Polycarp ID") props[k] = Object.assign({ type: Object.keys(v)[0] }, v);
+  props.Name = props.Name || { type: "title", title: {} };
+  props["Phont ID"] = { type: "rich_text", rich_text: {} };
+  props.Related = { type: "relation", relation: { database_id: dbId } };
+  fake.dbs.set(dbId, { id: dbId, properties: props });
+  fake.pages.set("legacy-page", { id: "legacy-page", parent: { database_id: dbId }, properties: {
+    Name: { title: [{ text: { content: "How plants make food" } }] },
+    "Phont ID": { rich_text: [{ text: { content: itemId } }] } } });
+  fake.children.set("legacy-page", []);
+  return { fake, dbId };
+}
+
+test("a restored backup keeps syncing into its Notion database: the old ID column is renamed and its pages matched", async () => {
+  fresh();
+  const { a } = await addFive();
+  const restored = B.upgrade({ app: "phont", version: "1.1.0", data: { "phont.notion": { token: "secret_test", dbId: "legacy-db" } } });
+  assert.equal(restored.app, "polycarp");
+  assert.deepEqual(restored.data["polycarp.notion"], { token: "secret_test", dbId: "legacy-db" });
+  const { fake, dbId } = legacyNotion(a.id);
+  const c = notionClient(fake, []);
+  const id = await c.ensureDatabase("page-1", restored.data["polycarp.notion"].dbId);
+  assert.equal(id, dbId, "the same database, not a new one");
+  const have = fake.dbs.get(dbId).properties;
+  assert.ok(have["Polycarp ID"] && !have["Phont ID"], "the key column was renamed, not added beside the old one");
+  const r = await c.syncItems(dbId, [await L.getItem(a.id)], { notesFor: L.notesFor, relatedFor: () => [], ideasFor: () => [] });
+  assert.equal(r.created, 0, "no second copy of the page");
+  assert.equal(r.pageIds[a.id], "legacy-page");
+  assert.equal(fake.pages.size, 1);
+});
+
+test("pages still keyed by the old ID column are matched even before the database is renamed", async () => {
+  fresh();
+  const { a } = await addFive();
+  const { fake, dbId } = legacyNotion(a.id);
+  const c = notionClient(fake, []);
+  const r = await c.syncItems(dbId, [await L.getItem(a.id)], { notesFor: L.notesFor, relatedFor: () => [], ideasFor: () => [] });
+  assert.equal(r.created, 0);
+  assert.equal(r.pageIds[a.id], "legacy-page");
+});
+
+test("a vault synced under the earlier name keeps its folder and its notes are ours", async () => {
+  const dir = fakeDir();
+  const old = await dir.getDirectoryHandle("Phont", { create: true });
+  old.files.set("bread basics.md", { name: "Bread basics.md", text: "---\nphont-id: \"i_1\"\n---\nold body" });
+  const items = [{ id: "i_1", kind: "doc", title: "Bread basics", created: 1, updated: 5, tags: [] }];
+  assert.equal(O.idIn(old.files.get("bread basics.md").text), "i_1");
+  assert.equal(await O.folderIn(dir), "Phont");
+  const r = await O.writeVault(dir, [O.toMarkdown(items[0], { names: O.basenames(items) })], {});
+  assert.equal(r.folder, "Phont");
+  assert.equal(r.renamed, 0, "the old note is ours, so it is rewritten in place");
+  assert.ok(old.files.get("bread basics.md").text.includes('polycarp-id: "i_1"'));
+  assert.deepEqual([...dir.dirs.keys()], ["Phont"], "no second folder");
+  await dir.getDirectoryHandle("Polycarp", { create: true });
+  assert.equal(await O.folderIn(dir), "Polycarp", "once a Polycarp folder exists it wins");
 });
