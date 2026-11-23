@@ -716,7 +716,7 @@ public final class StyleLookup {
         switch target {
         case .bar, .dock: break
         case .barRegion, .dockTile: chain.append((target.parent!, StyleSelector(surface: surface)))
-        case .barModule:
+        case .barModule, .barIsland:
             chain.append((.bar, StyleSelector(surface: .bar)))
             if let region, StyleTarget.barRegion.parts.contains(region) { chain.append((.barRegion, StyleSelector(surface: .bar, part: region))) }
         case .barWorkspace:

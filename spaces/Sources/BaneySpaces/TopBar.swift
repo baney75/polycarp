@@ -424,6 +424,9 @@ struct TopBarView: View {
 
     @ViewBuilder private var themed: some View {
         switch model.bar.style {
+        case .islands:
+            // Nothing behind the islands: the desktop shows between them.
+            Color.clear
         case .solid:
             // The theme's background role, whole: one calm strip.
             Chrome.panel()
@@ -434,15 +437,44 @@ struct TopBarView: View {
         }
     }
 
-    /// One region's modules. The sheet can hide a region, box it and set its own gap.
+    /// One region's modules. The sheet can hide a region, box it and set its own gap. With `bar.style` islands, each
+    /// group between `|` splits floats in its own island.
     @ViewBuilder private func row(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region) -> some View {
         let r = styles.book.region(region)
         if !r.isHidden {
-            HStack(spacing: r.gap.map { CGFloat($0) } ?? spacing) {
-                ForEach(modules.filter(BarLayout.drawn), id: \.id) { styled($0, region) }
+            Group {
+                if model.bar.style == .islands {
+                    // A fixed space between islands; the region's gap still spaces the modules inside each.
+                    HStack(spacing: 6) {
+                        ForEach(Array(BarLayout.islands(modules).map { $0.filter { draws($0, region) } }
+                            .filter { !$0.isEmpty }.enumerated()), id: \.offset) { _, group in
+                            island(group, region, gap: r.gap)
+                        }
+                    }
+                } else {
+                    HStack(spacing: r.gap.map { CGFloat($0) } ?? spacing) {
+                        ForEach(modules.filter(BarLayout.drawn), id: \.id) { styled($0, region) }
+                    }
+                }
             }
             .lineLimit(1)
             .modifier(StyledBox(style: r))
+        }
+    }
+
+    /// One island: its modules on a rounded face, inset from the bar's top and bottom so it floats. The sheet's
+    /// `bar .island` sets its background, corners, line, shadow, padding and gap; what it leaves unset keeps the face.
+    @ViewBuilder private func island(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region, gap: Double?) -> some View {
+        let s = styles.book.island(in: region)
+        if !s.isHidden {
+            HStack(spacing: CGFloat(s.gap ?? gap ?? Double(spacing))) {
+                ForEach(modules, id: \.id) { styled($0, region) }
+            }
+            .padding(s.padding.map(Styled.insets) ?? EdgeInsets(top: 0, leading: 11, bottom: 0, trailing: 11))
+            .frame(maxHeight: .infinity)
+            .background { IslandFace(style: s, barFill: styles.book.bar.background) }
+            .padding(.vertical, 3)
+            .opacity(s.opacity ?? 1)
         }
     }
 
@@ -456,6 +488,21 @@ struct TopBarView: View {
                 .onHover { on in
                     if on { hovered = m.id } else if hovered == m.id { hovered = nil }
                 }
+        }
+    }
+
+    /// Whether a module draws anything now, so an island of modules that draw nothing (a battery on a desktop Mac, the
+    /// network while online) isn't an empty pill.
+    private func draws(_ m: Surfaces.BarModule, _ region: StyleBook.Region) -> Bool {
+        guard !styles.book.module(m, in: region).isHidden else { return false }
+        switch m {
+        case .battery: return model.battery != nil
+        case .network: return model.offline
+        case .verse: return model.verse != nil
+        case .appMenus: return !model.menus.isEmpty
+        case .status: return !model.status.isEmpty
+        case .custom, .split: return false
+        default: return true
         }
     }
 
@@ -498,7 +545,7 @@ struct TopBarView: View {
             menus(s)
         case .status:
             statusItems(s)
-        case .custom:
+        case .custom, .split:
             EmptyView()
         }
     }
@@ -525,8 +572,8 @@ struct TopBarView: View {
         }
     }
 
-    /// Every app's status items, as many as fit from the right, in one monochrome row like Waybar's glyphs: macOS's as
-    /// symbols and a template icon in the bar's foreground, any other app icon in gray.
+    /// Every app's status items, as many as fit from the right, like Waybar's tray: macOS's as symbols and a template
+    /// icon in the bar's foreground, any other app icon in its own colors.
     private func statusItems(_ s: ComputedStyle) -> some View {
         FitRow(spacing: s.gap.map { CGFloat($0) } ?? 10, fromEnd: true) {
             ForEach(Array(model.status.enumerated()), id: \.offset) { i, item in
@@ -537,8 +584,8 @@ struct TopBarView: View {
                         Image(nsImage: icon).renderingMode(.template).resizable().interpolation(.high).frame(width: 15, height: 15)
                             .foregroundStyle(s.ink(Chrome.wash(0.85)))
                     } else if let icon = model.icons[item.owner] {
-                        Image(nsImage: icon).resizable().interpolation(.high).frame(width: 15, height: 15)
-                            .grayscale(1).opacity(0.85)
+                        // In color: a gray app icon is a smudge at this size; its own colors are how it is known.
+                        Image(nsImage: icon).resizable().interpolation(.high).frame(width: 16, height: 16)
                     } else {
                         Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(Chrome.wash(0.6))
                     }
@@ -611,6 +658,46 @@ private struct VineMark: View {
             }
             leaf(6.5, 8, 2.2, 1.2, -40, Chrome.accent)
             leaf(10, 6.4, 2, 1.1, 30, Chrome.gold)
+        }
+    }
+}
+
+/// An island's face: the theme's surface, a hairline edge and a soft shadow, each replaced by what the sheet's
+/// `bar .island` sets.
+/// Its corners and line width are the overview chip's, the theme's pill: square in Omarchy, rounded in BaneySpaces.
+private struct IslandFace: View {
+    let style: ComputedStyle
+    /// The sheet's `bar { background }`: a sheet written for one strip (the `omarchy` preset) chose its text colors
+    /// for that fill, so an island it leaves unset wears it.
+    let barFill: StyleBackground?
+
+    var body: some View {
+        let shape = Styled.shape(style, else: Chrome.radius(.overviewChip))
+        ZStack {
+            if let fill = Styled.fill(style.background) ?? Styled.fill(barFill) {
+                shape.fill(fill)
+            } else {
+                shape.fill(Chrome.panel(0.94))
+            }
+            if style.border == nil {
+                shape.strokeBorder(Chrome.edge(0.22), lineWidth: Chrome.width(.overviewChip))
+            } else {
+                StyledLines(style: style, shape: shape)
+            }
+        }
+        .compositingGroup()
+        .modifier(IslandShadow(shadow: style.boxShadow))
+    }
+}
+
+private struct IslandShadow: ViewModifier {
+    let shadow: StyleShadow?
+    func body(content: Content) -> some View {
+        if shadow != nil {
+            content.modifier(StyledShadow(shadow: shadow))
+        } else {
+            // Small enough to fade inside the 3 pt the island is inset from the panel's edge.
+            content.shadow(color: Chrome.shadow(0.22), radius: 2, x: 0, y: 1)
         }
     }
 }

@@ -154,12 +154,12 @@ public enum StyleState: String, CaseIterable, Sendable {
 
 /// One kind of thing a selector names. Properties say which of these they apply to.
 public enum StyleTarget: String, CaseIterable, Sendable {
-    case bar, barRegion = "bar region", barModule = "bar module", barWorkspace = "bar workspace"
+    case bar, barRegion = "bar region", barIsland = "bar island", barModule = "bar module", barWorkspace = "bar workspace"
     case dock, dockTile = "dock tile", dockLabel = "dock label", dockBadge = "dock badge", dockIcon = "dock icon"
 
     public var surface: StyleSurface {
         switch self {
-        case .bar, .barRegion, .barModule, .barWorkspace: .bar
+        case .bar, .barRegion, .barIsland, .barModule, .barWorkspace: .bar
         default: .dock
         }
     }
@@ -169,6 +169,7 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         switch self {
         case .bar, .dock: []
         case .barRegion: ["left", "center", "right"]
+        case .barIsland: ["island"]
         case .barModule: Surfaces.BarModule.builtIn.map(\.id)
         case .barWorkspace: ["workspace"]
         case .dockTile: ["tile"]
@@ -180,7 +181,7 @@ public enum StyleTarget: String, CaseIterable, Sendable {
 
     public var states: [StyleState] {
         switch self {
-        case .bar, .barRegion, .dock: []
+        case .bar, .barRegion, .barIsland, .dock: []
         case .barModule: [.hover]
         case .barWorkspace: [.current, .hover]
         case .dockTile, .dockLabel, .dockBadge, .dockIcon: [.current, .hover]
@@ -193,6 +194,7 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         switch self {
         case .bar, .dock: nil
         case .barRegion, .barModule: .bar
+        case .barIsland: .barRegion
         case .barWorkspace: .barModule
         case .dockTile: .dock
         case .dockLabel, .dockBadge, .dockIcon: .dockTile
@@ -204,6 +206,7 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         switch self {
         case .bar: "The top bar itself."
         case .barRegion: "The bar's three regions; modules inherit text properties from their region."
+        case .barIsland: "One island of modules when bar.style is islands: its background, corners, line, shadow, padding and gap. Text inside takes its region's and module's styles."
         case .barModule: "One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it."
         case .barWorkspace: "One number in the workspaces module; .current is the workspace you're on, :hover the one under the pointer."
         case .dock: "The Workspace Dock's bar."
@@ -301,7 +304,7 @@ public struct StyleProperty: Sendable {
 
     public static let all: [StyleProperty] = [
         StyleProperty("color", .color, boxes, inherited: true, "Text and symbol color.", example: "var(--foreground)"),
-        StyleProperty("background", .background, boxes, "What is drawn behind it.", example: "glass"),
+        StyleProperty("background", .background, boxes + [.barIsland], "What is drawn behind it.", example: "glass"),
         StyleProperty("opacity", .opacity, StyleTarget.allCases, "How opaque the whole thing is.", example: "1"),
         StyleProperty("font-family", .fontFamily, boxes, inherited: true, "The font, first installed name wins; `monospace` and `serif` are the system's.",
                       example: "system-ui, sans-serif"),
@@ -314,16 +317,16 @@ public struct StyleProperty: Sendable {
         StyleProperty("font-variant-numeric", .keywords(StyleNumerals.allCases.map(\.rawValue)), boxes, inherited: true,
                       "`tabular-nums` gives every digit the same width, so a clock doesn't jiggle.", example: "tabular-nums"),
         StyleProperty("height", .length(18...64), [.bar], "The bar's height (on a screen with a notch the bar fills the strip beside it).", example: "28px"),
-        StyleProperty("padding", .padding, [.bar, .barRegion, .barModule, .barWorkspace, .dock, .dockLabel], "Space inside the edge.", example: "0 8px"),
-        StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barModule, .dock],
+        StyleProperty("padding", .padding, [.bar, .barRegion, .barIsland, .barModule, .barWorkspace, .dock, .dockLabel], "Space inside the edge.", example: "0 8px"),
+        StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule, .dock],
                       "Space between modules (bar, a region), between a module's items (workspace numbers, menus, status items) or between tiles (dock).",
                       example: "8px"),
-        StyleProperty("border-radius", .length(0...40), boxes, "Corner radius.", example: "6px"),
-        StyleProperty("border", .line, boxes, "A line all around.", example: "1px solid var(--border)"),
+        StyleProperty("border-radius", .length(0...40), boxes + [.barIsland], "Corner radius.", example: "6px"),
+        StyleProperty("border", .line, boxes + [.barIsland], "A line all around.", example: "1px solid var(--border)"),
         StyleProperty("border-bottom", .line, [.bar, .barRegion, .barModule, .barWorkspace, .dock, .dockTile], "A line along the bottom edge only.",
                       example: "1px solid var(--border)"),
-        StyleProperty("box-shadow", .shadow, [.dock, .dockTile, .dockBadge], "A drop shadow.", example: "0 4px 12px rgba(0, 0, 0, 0.3)"),
-        StyleProperty("display", .keywords(StyleDisplay.allCases.map(\.rawValue)), [.barRegion, .barModule, .barWorkspace, .dockLabel, .dockBadge, .dockIcon],
+        StyleProperty("box-shadow", .shadow, [.barIsland, .dock, .dockTile, .dockBadge], "A drop shadow.", example: "0 4px 12px rgba(0, 0, 0, 0.3)"),
+        StyleProperty("display", .keywords(StyleDisplay.allCases.map(\.rawValue)), [.barRegion, .barIsland, .barModule, .barWorkspace, .dockLabel, .dockBadge, .dockIcon],
                       "`none` hides it; `flex` (the default) shows it.", example: "flex"),
         StyleProperty("transition-duration", .time, [.barModule, .barWorkspace, .dockTile],
                       "How long a change of state (hover, current) fades its colors and lines.", example: "150ms"),

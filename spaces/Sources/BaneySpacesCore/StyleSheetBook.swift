@@ -46,10 +46,17 @@ public final class StyleBook {
         lookup.computed(surface: .bar, part: "workspace", region: region.rawValue, states: Self.states(current: current, hover: hover))
     }
 
+    /// One island of modules (bar.style islands), in the region it sits in.
+    public func island(in region: Region) -> ComputedStyle {
+        lookup.computed(surface: .bar, part: "island", region: region.rawValue)
+    }
+
     /// A built-in module's class, the same as its surfaces.json id.
     public static func part(_ m: Surfaces.BarModule) -> String? {
-        if case .custom = m { return nil }
-        return m.id
+        switch m {
+        case .custom, .split: nil
+        default: m.id
+        }
     }
 
     // MARK: The dock

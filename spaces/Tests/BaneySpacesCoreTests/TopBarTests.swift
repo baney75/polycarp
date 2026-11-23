@@ -74,19 +74,22 @@ final class TopBarTests: XCTestCase {
         let flat = BarLayout.places(bar, notch: false)
         XCTAssertEqual(flat.center, bar.center)
         let notched = BarLayout.places(bar, notch: true)
-        XCTAssertEqual(notched.left, bar.left + bar.center)
+        XCTAssertEqual(notched.left, bar.left + [.split] + bar.center, "the middle keeps its own island")
+        XCTAssertEqual(BarLayout.islands(notched.left).last, bar.center)
         XCTAssertTrue(notched.center.isEmpty)
+        var empty = bar; empty.center = []
+        XCTAssertEqual(BarLayout.places(empty, notch: true).left, bar.left)
         XCTAssertEqual(notched.right, bar.right)
     }
 
     func testTheLedgerDefaults() {
         let bar = Surfaces.defaults.bar
-        XCTAssertEqual(bar.left, [.mark, .workspaces, .appMenus])
+        XCTAssertEqual(bar.left, [.mark, .workspaces, .split, .appMenus])
         XCTAssertEqual(bar.center, [.clock])
         XCTAssertEqual(bar.right, [.status])
         XCTAssertEqual(bar.height, 26)
         XCTAssertEqual(bar.clockFormat, .dayTwelveHour)
-        XCTAssertTrue((bar.left + bar.center + bar.right).allSatisfy(BarLayout.drawn))
+        XCTAssertTrue((bar.left + bar.center + bar.right).filter { $0 != .split }.allSatisfy(BarLayout.drawn))
         XCTAssertTrue(BarLayout.drawn(.appMenus))
         XCTAssertTrue(BarLayout.drawn(.status))
         XCTAssertFalse(BarLayout.drawn(.custom("x")))
@@ -201,7 +204,19 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(BarStatus.battery(percent: nil, charging: false), "battery.100percent")
     }
 
-    /// In macOS's order when every place is known, and without what a module already shows.
+    /// Islands: "|" splits a place into islands, may repeat, and is checked like any other id.
+    func testIslandsSplitAtBarsAndDropWhatIsNotDrawn() {
+        let m: [Surfaces.BarModule] = [.mark, .workspaces, .split, .appMenus, .split, .split, .custom("x"), .split]
+        XCTAssertEqual(BarLayout.islands(m), [[.mark, .workspaces], [.appMenus]])
+        XCTAssertEqual(BarLayout.islands([]), [])
+        XCTAssertEqual(BarLayout.islands([.clock]), [[.clock]])
+        XCTAssertFalse(BarLayout.drawn(.split))
+        XCTAssertEqual(Surfaces.BarModule(id: "|"), .split)
+        XCTAssertEqual(Surfaces.BarModule.split.id, "|")
+        XCTAssertEqual(Surfaces.defaults.bar.style, .islands, "islands is the bar's look unless a file says otherwise")
+        XCTAssertEqual(Surfaces.defaults.bar.left, [.mark, .workspaces, .split, .appMenus])
+    }
+
     /// macOS 27 wraps each of its own items in a nameless AXGroup: read the item inside, or the row is all dots.
     func testMacOS27WrappedItemsAreReadThroughTheirChild() {
         XCTAssertEqual(BarStatus.pick(role: "AXMenuBarItem"), .itself)
@@ -228,6 +243,7 @@ final class TopBarTests: XCTestCase {
         XCTAssertFalse(BarStatus.parked(above, barTops: [0, -1080]), "on the bar of a display above the main one")
     }
 
+    /// In macOS's order when every place is known, and without what a module already shows.
     func testStatusItemsFollowTheMacOSOrderAndSkipWhatAModuleShows() {
         let clock = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.clock", x: 900)
         let battery = BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.battery", x: 800)

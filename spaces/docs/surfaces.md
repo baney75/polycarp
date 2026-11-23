@@ -82,8 +82,8 @@ Error codes: `invalid_value` (the value fails its check), `unknown_path` (no suc
 | --- | --- | --- |
 | `bar.enabled` | `false` | `true` or `false`. Show Polycarp's top bar. Off until you turn it on. |
 | `bar.height` | `26` | A whole number of points, 22 to 40. |
-| `bar.style` | `"solid"` | `solid` (the theme's background color), `glass` (blurred, see-through) or `hairline` (the desktop shows through, with a thin line under it). |
-| `bar.modules.left` | `["mark","workspaces","app-menus"]` | Module ids, in order. |
+| `bar.style` | `"islands"` | `islands` (each group of modules floats in its own rounded island over the desktop; `"\|"` in a module list starts a new island; style them with `bar .island` in style.css), `solid` (the theme's background color), `glass` (blurred, see-through) or `hairline` (the desktop shows through, with a thin line under it). |
+| `bar.modules.left` | `["mark","workspaces","\|","app-menus"]` | Module ids, in order. `"\|"` starts a new island, as often as you like. |
 | `bar.modules.center` | `["clock"]` | Module ids, in order. |
 | `bar.modules.right` | `["status"]` | Module ids, in order. |
 | `bar.clockFormat` | `"day-12h"` | `day-12h` (Saturday 10:04 PM), `day-24h` (Saturday 22:04), `12h` (3:05) or `24h` (15:05). |
@@ -105,10 +105,14 @@ What each one draws:
 | `battery` | The charge, only off power or while charging. Nothing on a desktop Mac. |
 | `network` | "Offline" when there is no connection; nothing when there is. |
 | `app-menus` | The front app's menus: the Apple logo, the app's name in bold, then File, Edit and the rest. Click one to open it, as from the macOS bar. Titles past the room are left out whole, from the end. |
-| `status` | The status items of macOS and your apps, in the macOS bar's order, in one quiet monochrome row: Wi-Fi, the battery, Control Center and the like as symbols, an app's own as its icon drawn in gray. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark, and what macOS hid behind its "Show Hidden Menu Bar Items" button stays hidden. |
+| `status` | The status items of macOS and your apps, in the macOS bar's order, in one row like Waybar's tray: Wi-Fi, the battery, Control Center and the like as symbols in the bar's text color, an app's own as its icon in its own colors. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark, and what macOS hid behind its "Show Hidden Menu Bar Items" button stays hidden. |
 | `custom:<name>` | Kept in the file, not drawn yet. |
 
-**The look.** The bar follows Omarchy's: one solid strip in the theme's background color, one monospace face for all
+**The look.** By default (`bar.style` islands) each group of modules floats in its own rounded island over the
+desktop, as many Omarchy and Waybar setups draw theirs: the theme's surface color, a hairline edge, a small shadow,
+6 points between islands. `"|"` in a module list starts a new island; `bar .island` in style.css restyles them; an
+island whose modules draw nothing (the battery on a desktop Mac, the network while online) isn't drawn. `solid` is
+Omarchy's own look: one strip in the theme's background color. Either way the bar has one monospace face for all
 of it (the Polycarp theme's `type.mono` stack when one is in force, else SF Mono) at 12 points, the app's name in
 semibold and its menus regular, modules 14 points apart with no separators, and no color but the accent under the
 workspace you're on. By default the bar shows the mark, the numbers, the app's menus, the clock and the status row,

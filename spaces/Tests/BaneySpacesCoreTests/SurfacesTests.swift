@@ -19,6 +19,17 @@ final class SurfacesTests: XCTestCase {
         return v
     }
 
+    /// Islands: "|" may repeat in any place; every other id is still listed once.
+    func testAFileMaySplitIntoIslandsManyTimes() {
+        let json = #"{"bar": {"style": "islands", "modules": {"right": ["status", "|", "battery", "|", "network"], "center": ["clock", "|", "date"]}}}"#
+        guard case .success(let c) = Surfaces.check(tree(json)) else { return XCTFail("repeated splits must read") }
+        XCTAssertEqual(c.surfaces.bar.right, [.status, .split, .battery, .split, .network])
+        XCTAssertEqual(BarLayout.islands(c.surfaces.bar.right), [[.status], [.battery], [.network]])
+        XCTAssertEqual(c.surfaces.bar.left, [.mark, .workspaces, .split, .appMenus], "a split elsewhere takes nothing from the left")
+        XCTAssertFalse(errors(#"{"bar": {"modules": {"right": ["status", "|", "status"]}}}"#).isEmpty, "a module is still listed once")
+        XCTAssertFalse(errors(#"{"bar": {"style": "puddles"}}"#).isEmpty)
+    }
+
     private func errors(_ json: String) -> [SurfacesIssue] {
         if case .failure(let e) = Surfaces.check(tree(json)) { return e.issues }
         return []
@@ -30,8 +41,8 @@ final class SurfacesTests: XCTestCase {
         let d = Surfaces.defaults
         XCTAssertEqual(d.bar.enabled, false)
         XCTAssertEqual(d.bar.height, 26)
-        XCTAssertEqual(d.bar.style, .solid)
-        XCTAssertEqual(d.bar.left, [.mark, .workspaces, .appMenus])
+        XCTAssertEqual(d.bar.style, .islands)
+        XCTAssertEqual(d.bar.left, [.mark, .workspaces, .split, .appMenus])
         XCTAssertEqual(d.bar.center, [.clock])
         XCTAssertEqual(d.bar.right, [.status])
         XCTAssertEqual(d.bar.clockFormat, .dayTwelveHour)
@@ -128,7 +139,7 @@ final class SurfacesTests: XCTestCase {
         _ = SurfacesOps.set("bar.height", .number(36), file: file)
         let bar = try SurfacesOps.get("bar", file: file).get().object?["value"]
         XCTAssertEqual(bar?.at(["height"]), .number(36))
-        XCTAssertEqual(bar?.at(["style"]), .string("solid"), "fields the file leaves out are the defaults")
+        XCTAssertEqual(bar?.at(["style"]), .string("islands"), "fields the file leaves out are the defaults")
         let all = try SurfacesOps.get(nil, file: file).get().object?["value"]
         XCTAssertEqual(all?.at(["idle", "style"]), .string("martyr-night"))
     }
@@ -161,7 +172,7 @@ final class SurfacesTests: XCTestCase {
             (#"{"bar":{"height":41}}"#, "bar.height", "must be from 22 to 40, not 41"),
             (#"{"bar":{"height":28.5}}"#, "bar.height", "must be a whole number from 22 to 40, not 28.5"),
             (#"{"bar":{"height":null}}"#, "bar.height", "must be a whole number from 22 to 40, not null"),
-            (#"{"bar":{"style":"frosted"}}"#, "bar.style", #"must be one of "solid", "glass", "hairline", not "frosted""#),
+            (#"{"bar":{"style":"frosted"}}"#, "bar.style", #"must be one of "islands", "solid", "glass", "hairline", not "frosted""#),
             (#"{"bar":{"style":1}}"#, "bar.style", "must be one of"),
             (#"{"bar":{"clockFormat":"24"}}"#, "bar.clockFormat", #"not "24""#),
             (#"{"bar":{"clockFormat":"day"}}"#, "bar.clockFormat", #"must be one of "12h", "24h", "day-12h", "day-24h", not "day""#),
@@ -420,7 +431,7 @@ final class SurfacesTests: XCTestCase {
         }
         XCTAssertEqual(s.at(["properties", "bar", "properties", "height", "minimum"]), .number(22))
         XCTAssertEqual(s.at(["properties", "bar", "properties", "height", "maximum"]), .number(40))
-        XCTAssertEqual(s.at(["properties", "bar", "properties", "style", "enum"]), .array([.string("solid"), .string("glass"), .string("hairline")]))
+        XCTAssertEqual(s.at(["properties", "bar", "properties", "style", "enum"]), .array([.string("islands"), .string("solid"), .string("glass"), .string("hairline")]))
         // The text is JSON a schema tool can read.
         XCTAssertEqual(tree(s.json()), s)
     }
@@ -430,7 +441,9 @@ final class SurfacesTests: XCTestCase {
         let doc = try String(contentsOf: SourceText.root.appendingPathComponent("docs/surfaces.md"), encoding: .utf8)
         for f in SurfaceField.all where f.path != "version" {
             XCTAssertTrue(doc.contains("| `\(f.path)` |"), "docs/surfaces.md has no row for \(f.path)")
-            XCTAssertTrue(doc.contains("`\(f.defaultValue.json(pretty: false))`"), "docs/surfaces.md lacks \(f.path)'s default \(f.defaultValue.json(pretty: false))")
+            // A table cell writes "|" as "\\|".
+            let shown = "`\(f.defaultValue.json(pretty: false))`"
+            XCTAssertTrue(doc.contains(shown) || doc.contains(shown.replacingOccurrences(of: "|", with: "\\|")), "docs/surfaces.md lacks \(f.path)'s default \(f.defaultValue.json(pretty: false))")
         }
         XCTAssertFalse(doc.contains("\u{2014}") || doc.contains("\u{2013}"), "no em or en dashes")
     }
@@ -450,7 +463,7 @@ final class SurfacesTests: XCTestCase {
         let d = try bar(#"{"bar":{"modules":{"center":["hour"],"right":["status"]}}}"#)
         XCTAssertEqual(d.right, [.status], "a right the file sets is left as written")
         let b = try bar(#"{"bar":{"modules":{"right":["mark","clock"]}}}"#)
-        XCTAssertEqual(b.left, [.workspaces, .appMenus])
+        XCTAssertEqual(b.left, [.workspaces, .split, .appMenus])
         XCTAssertEqual(b.right, [.mark, .clock])
         XCTAssertEqual(b.center, [], "clock left the default middle")
         // A saved list from before the Omarchy defaults is the user's: it keeps its hour and its places.
