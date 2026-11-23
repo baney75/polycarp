@@ -286,6 +286,12 @@ public enum BarStatus {
         public var fill: Double
         public var tint: Tint
         public var badge: Badge
+
+        public init(fill: Double, tint: Tint, badge: Badge) {
+            self.fill = fill
+            self.tint = tint
+            self.badge = badge
+        }
     }
 
     public static func batteryLook(percent: Int?, charging: Bool, onPower: Bool, lowPower: Bool) -> BatteryLook {

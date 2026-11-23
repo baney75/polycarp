@@ -299,9 +299,8 @@ final class TopBar {
                   let cur = d[kIOPSCurrentCapacityKey] as? Int, let max = d[kIOPSMaxCapacityKey] as? Int, max > 0 else { continue }
             let percent = Int((Double(cur) / Double(max) * 100).rounded())
             let charging = d[kIOPSIsChargingKey] as? Bool ?? false
-            text = BarText.battery(percent: percent, charging: charging,
-                                   onPower: d[kIOPSPowerSourceStateKey] as? String == kIOPSACPowerValue)
             let onPower = d[kIOPSPowerSourceStateKey] as? String == kIOPSACPowerValue
+            text = BarText.battery(percent: percent, charging: charging, onPower: onPower)
             let now = TopBarModel.Charge(percent: percent, charging: charging, onPower: onPower,
                                          lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled)
             if model.charge != now { model.charge = now }
@@ -721,7 +720,7 @@ private struct IslandShadow: ViewModifier {
 }
 
 /// macOS's battery, drawn: an outline filled to the charge in the bar's ink, the theme's `working` color in Low Power
-/// Mode and `urgent` nearly empty, with a bolt while charging or a plug on power cut out of it in the panel's color.
+/// Mode and `urgent` nearly empty, with a bolt while charging or a plug on power in ink, haloed in the panel's color.
 /// Corners are the launcher key's, so the theme decides them (square in Omarchy).
 private struct BatteryGlyph: View {
     let look: BarStatus.BatteryLook
@@ -746,9 +745,13 @@ private struct BatteryGlyph: View {
                         .offset(x: 2, y: 2)
                 }
                 if look.badge != .none {
-                    Image(systemName: look.badge == .bolt ? "bolt.fill" : "powerplug.fill").font(.system(size: 7.5, weight: .black))
-                        .foregroundStyle(Chrome.panel())
-                        .frame(maxWidth: .infinity)
+                    // In ink with a halo in the panel's color, so it reads on the fill and on the empty part alike.
+                    let symbol = look.badge == .bolt ? "bolt.fill" : "powerplug.fill"
+                    ZStack {
+                        Image(systemName: symbol).font(.system(size: 10, weight: .black)).foregroundStyle(Chrome.panel())
+                        Image(systemName: symbol).font(.system(size: 7, weight: .black)).foregroundStyle(ink)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
             }
             .frame(width: 22, height: 11)
