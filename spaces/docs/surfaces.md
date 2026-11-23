@@ -131,7 +131,8 @@ Settings > Menu Bar > "Automatically hide and show the menu bar" set to Always. 
 window server draw the macOS bar fully transparent, and then it takes no clicks either, so pointing at the top edge
 never brings it in, full screen included (Donovan, 2026-11-23: "block the bar from coming in any form"); the app's
 menus open from the bar's `app-menus`. Holding the pointer off the edge was tried first and failed: macOS reveals its
-bar from the raw pointer events. The setting ends when Polycarp quits or crashes, so the macOS bar comes back then.
+bar from the raw pointer events. Polycarp sets it again on every Space and workspace change. The setting ends when Polycarp quits or crashes, so the
+macOS bar comes back then.
 Where a window fills the top of the screen or an app is in full screen, Polycarp's bar is covered and the pointer can't
 reach any menus there: use the keyboard (⌃F2 opens the menus, ⌃⌘F leaves full screen).
 The trace says `macOS menu bar: hidden under Polycarp's bar` or `shown`. Where the macOS bar stays, Polycarp's bar steps aside, and on a full-screen app it

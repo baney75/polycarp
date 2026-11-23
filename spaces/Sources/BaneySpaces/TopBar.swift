@@ -75,6 +75,11 @@ final class TopBar {
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.reload()
         }
+        // A Space change (full screen in or out, a desktop switch) may set the macOS bar back; hide it again (review of #621).
+        workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            SystemMenuBar.hide(!self.panels.isEmpty)
+        }
         // The menus are the menu bar owner's, which an accessory app coming forward (Raycast, a launcher) doesn't take.
         // Some apps fill their menu bar a moment after they take it, so it is read again half a second on.
         menuOwner = NSWorkspace.shared.observe(\.menuBarOwningApplication) { [weak self] _, _ in
@@ -107,6 +112,7 @@ final class TopBar {
     /// Workspaces changed: the numbers follow at once.
     func workspacesChanged() {
         guard !panels.isEmpty else { return }
+        SystemMenuBar.hide(true)
         readWorkspaces()
     }
 

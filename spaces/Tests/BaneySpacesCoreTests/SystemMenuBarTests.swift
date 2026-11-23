@@ -12,6 +12,8 @@ final class SystemMenuBarTests: XCTestCase {
                       "every reload hides the macOS bar where Polycarp's is up")
         let remove = try XCTUnwrap(bar.range(of: "private func removeAll()"))
         XCTAssertTrue(bar[remove.upperBound...].prefix(200).contains("SystemMenuBar.hide(false)"), "turning the bar off gives it back")
+        XCTAssertTrue(bar.contains("activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in\n            guard let self else { return }\n            SystemMenuBar.hide(!self.panels.isEmpty)"),
+                      "a Space change hides it again (review of #621)")
     }
 
     func testItIsTheWindowServersMenuBarAlphaNotAPointerClamp() throws {
