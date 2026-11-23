@@ -1,8 +1,8 @@
 # Polycarp agent rules
 
-Polycarp is Spaces and themes for macOS and Windows. The browser extension, its CLI helper, MCP server and computer-use tools moved to Tychicus: https://github.com/baney75/tychicus. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
+Polycarp is Spaces and themes for macOS and Windows, with its own browser extension for reading and the new tab (`spaces/extension`, Donovan, 2026-11-21). The agent browser extension (the side panel), its CLI helper, MCP server and computer-use tools moved to Tychicus: https://github.com/baney75/tychicus. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
-Browser and voice work goes to Tychicus and Silas; Linux desktop work is retired. A PR here that adds any of it is refused.
+Browser agent and voice work goes to Tychicus and Silas; Linux desktop work is retired. A PR here that adds any of it is refused. Polycarp's reading extension in `spaces/extension` is not browser agent work and belongs here.
 
 This repo holds the Spaces app (`spaces/`), the themes (`themes/`) and one small command (`cli/`) with their full
 history. Each directory keeps its own `AGENTS.md` rules; read the one for the directory you

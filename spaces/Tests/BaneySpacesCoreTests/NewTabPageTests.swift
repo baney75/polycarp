@@ -3,8 +3,8 @@ import CryptoKit
 import JavaScriptCore
 import XCTest
 
-/// The new tab page's own files (extension/newtab): the field logic run as the page runs it, and the manifest the host
-/// trusts.
+/// The new tab page's own files (extension/newtab, inside the Polycarp extension): the field logic run as the page runs
+/// it, and the manifest the host trusts.
 final class NewTabPageTests: XCTestCase {
     private func logic() throws -> JSContext {
         let ctx = try XCTUnwrap(JSContext())
@@ -61,8 +61,8 @@ final class NewTabPageTests: XCTestCase {
         let ctx = try logic()
         XCTAssertEqual(act(ctx, "Gannon letter", cmd: true).kind, "search")
         XCTAssertEqual(act(ctx, "dbaney.com", cmd: true).kind, "open")
-        for file in ["newtab.html", "newtab.js", "logic.js", "manifest.json"] {
-            let text = try Repo.text("extension/newtab/\(file)").lowercased()
+        for file in ["newtab/newtab.html", "newtab/newtab.js", "newtab/logic.js", "manifest.json"] {
+            let text = try Repo.text("extension/\(file)").lowercased()
             for word in ["this hour", "is for", "purpose", "chips", "op: \"name\"", "op: \"go\"", "one " + "thing"] {
                 XCTAssertFalse(text.contains(word), "\(file) still says \(word)")
             }
@@ -72,15 +72,15 @@ final class NewTabPageTests: XCTestCase {
     /// Chrome derives an unpacked extension's ID from its manifest key; the host's manifest allows only that ID. If the
     /// key and `NewTabHost.extensionID` ever part, the page can't reach Polycarp.
     func testTheManifestKeyGivesTheIDTheHostAllows() throws {
-        let data = try XCTUnwrap(Repo.text("extension/newtab/manifest.json").data(using: .utf8))
+        let data = try XCTUnwrap(Repo.text("extension/manifest.json").data(using: .utf8))
         let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let key = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(manifest["key"] as? String)))
         let hex = SHA256.hash(data: key).prefix(16).map { String(format: "%02x", $0) }.joined()
         let letters = Array("abcdefghijklmnop")
         let id = String(hex.map { letters[Int(String($0), radix: 16)!] })
         XCTAssertEqual(id, NewTabHost.extensionID)
-        XCTAssertEqual((manifest["chrome_url_overrides"] as? [String: String])?["newtab"], "newtab.html")
-        XCTAssertEqual(manifest["permissions"] as? [String], ["nativeMessaging"], "nothing beyond talking to Polycarp")
+        XCTAssertEqual((manifest["chrome_url_overrides"] as? [String: String])?["newtab"], "newtab/newtab.html")
+        XCTAssertTrue((manifest["permissions"] as? [String] ?? []).contains("nativeMessaging"), "the page talks to Polycarp")
     }
 
     func testThePageLoadsNothingFromTheNetwork() throws {

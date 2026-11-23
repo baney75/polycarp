@@ -52,10 +52,6 @@ else
     -output "$APP/Contents/Resources/bin/polycarp"
 fi
 cp skill/SKILL.md "$APP/Contents/Resources/skill/SKILL.md"
-# The new tab page (a small Chrome extension, docs/newtab.md); its host is the bundled command.
-if [ -d extension/newtab ]; then
-  cp -R extension/newtab "$APP/Contents/Resources/newtab-extension"
-fi
 cp engine/lib/libagent_desktop_ffi.dylib "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
 cp NOTICE "$APP/Contents/Resources/NOTICE"
 cp LICENSES/* "$APP/Contents/Resources/licenses/"
@@ -98,6 +94,10 @@ COMMIT_DATE=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:
 # 1 when tracked files had changes, so the commit does not say everything (`polycarp version` shows it).
 DIRTY=0
 [ -z "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] || DIRTY=1
+# The Polycarp browser extension (extension/README.md): reading, the Reader, the Library and the new tab, whose host is
+# the bundled command. Its version_name is this build's full version; the extension reloads itself when the copy here
+# differs from the one the browser runs, so an app update updates it too.
+sh extension/scripts/stage.sh "$APP/Contents/Resources/extension" "$FULL_VERSION"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@FULL_VERSION@/$FULL_VERSION/g" -e "s/@CHANNEL@/$CHANNEL/g" -e "s/@BUILD_NUMBER@/$BUILD_NUMBER/g" -e "s/@COMMIT@/$COMMIT/g" -e "s/@COMMIT_DATE@/$COMMIT_DATE/g" -e "s/@DIRTY@/$DIRTY/g" Resources/Info.plist > "$APP/Contents/Info.plist"
 # A stable local identity keeps the Accessibility permission across rebuilds; ad-hoc is the fallback.
 # Ad-hoc is for local builds and CI checks only and never ships as an update: install-app.sh refuses

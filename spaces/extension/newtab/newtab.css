@@ -1,27 +1,15 @@
-/* Polycarp's paper: cream, ink, vine. One family (the system serif), no web fonts, nothing fetched. */
+/* Polycarp's new tab, in the Polycarp theme (../src/shared/theme.css): every color, face, radius and duration comes
+   from it, in light and dark. Nothing is fetched. */
 :root {
-	--bg: #F6F3E8;
-	--field: #FFFDF6;
-	--ink: #2B2E26;
-	--mute: #5C6152;
-	--line: #D5D0BF;
-	--accent: #59693F;
-	--error: #9B3B2E;
-	--serif: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
-	--ui: -apple-system, system-ui, "Segoe UI", sans-serif;
-	color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-	:root {
-		--bg: #1C1E19;
-		--field: #24271F;
-		--ink: #ECE8DA;
-		--mute: #B5B9A6;
-		--line: #3A3E33;
-		--accent: #A9BB8A;
-		--error: #E29A8C;
-		color-scheme: dark;
-	}
+	--bg: var(--pc-background);
+	--field: var(--pc-surface);
+	--ink: var(--pc-foreground);
+	--mute: var(--pc-muted);
+	--line: var(--pc-border);
+	--accent: var(--pc-accent);
+	--error: var(--pc-urgent);
+	--serif: var(--pc-font-display);
+	--ui: var(--pc-font-ui);
 }
 
 * { box-sizing: border-box; }
@@ -29,7 +17,7 @@ html, body { height: 100%; margin: 0; }
 body {
 	background: var(--bg);
 	color: var(--ink);
-	font: 16px/1.5 var(--ui);
+	font: var(--pc-font-weight) var(--pc-font-size)/var(--pc-line-height) var(--ui);
 }
 
 /* The field sits a little above the middle, where the eye lands on a new tab. */
@@ -50,15 +38,15 @@ input {
 	width: 100%;
 	max-width: 100%;
 	padding: 16px 20px;
-	border: 1px solid var(--line);
-	border-radius: 12px;
+	border: var(--pc-border-width) solid var(--line);
+	border-radius: var(--pc-radius-large);
 	background: var(--field);
 	color: var(--ink);
 	font: 400 24px/1.3 var(--serif);
 	outline: none;
 }
 input::placeholder { color: var(--mute); font-style: italic; opacity: 1; }
-input:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+input:focus { border-color: var(--accent); box-shadow: 0 0 0 var(--pc-border-width) var(--accent); }
 
 /* Shows only while you type, so the empty page is just the field and the verse. */
 .hint {

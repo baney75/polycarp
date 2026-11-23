@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polycarp Library</title>
+<link rel="icon" href="../../icons/icon32.png">
+<link rel="stylesheet" href="../shared/theme.css">
+<link rel="stylesheet" href="../shared/ui.css">
+<link rel="stylesheet" href="pages.css">
+<link rel="stylesheet" href="library.css">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../reader/reader.html" data-wordmark></a>
+  <nav class="pnav" aria-label="Polycarp pages">
+    <a href="../reader/reader.html" id="navRead"></a>
+    <a href="search.html" id="navSearch"></a>
+    <a href="library.html" id="navLib" aria-current="page"></a>
+    <a href="review.html" id="navReview"></a>
+    <a href="settings.html" id="navSettings"></a>
+  </nav>
+</header>
+<main class="page wide">
+  <div class="lib-head">
+    <div>
+      <h1>Library</h1>
+      <p class="lead" id="sum"></p>
+    </div>
+    <div class="acts">
+      <button class="btn quiet" id="openSync"></button>
+      <button class="btn" id="openAdd"></button>
+    </div>
+  </div>
+
+  <div class="lib-tools" id="tools">
+    <label class="search">
+      <span class="sr">Search your library</span>
+      <span class="si" id="searchIcon"></span>
+      <input class="field" id="q" type="search" placeholder="Search titles, text and notes" autocomplete="off">
+    </label>
+    <div class="chips" id="kinds" role="group" aria-label="Show"></div>
+    <div class="seg view" role="group" aria-label="View">
+      <button id="vList" aria-pressed="true"></button>
+      <button id="vMap" aria-pressed="false"></button>
+    </div>
+  </div>
+
+  <div class="empty-lib" id="empty" hidden>
+    <span id="emptyPip"></span>
+    <h2>Start your library</h2>
+    <p>Everything you open in the Reader lands here. Add a link, a PDF, an ebook, an audiobook or a note, and Polycarp connects it to what you already have: shared ideas, the same people, the same site, and every <code>[[link]]</code> you write in a note.</p>
+    <button class="btn primary" id="emptyAdd"></button>
+  </div>
+
+  <div class="panes" id="panes">
+    <section class="list-pane" id="listPane" aria-label="Items">
+      <ul class="items" id="items"></ul>
+      <div class="note-hits" id="noteHits" hidden>
+        <h3>In your notes</h3>
+        <ul id="noteHitList"></ul>
+      </div>
+      <div class="map" id="map" hidden>
+        <svg id="mapSvg" role="group" aria-label="Map of connections"></svg>
+        <p class="map-key" id="mapKey"></p>
+      </div>
+    </section>
+    <section class="detail" id="detail" aria-live="polite" tabindex="-1"></section>
+  </div>
+</main>
+
+<dialog class="dlg" id="addDlg" aria-labelledby="addTitle">
+  <form id="addForm">
+    <div class="dlg-head"><h2 id="addTitle">Add to your library</h2><button class="btn icon quiet" type="button" data-close aria-label="Close"></button></div>
+    <div class="seg" role="group" aria-label="What to add" id="addTabs">
+      <button type="button" data-tab="link" aria-pressed="true">Link</button>
+      <button type="button" data-tab="file" aria-pressed="false">File</button>
+      <button type="button" data-tab="note" aria-pressed="false">Note</button>
+    </div>
+    <div class="tab" data-panel="link">
+      <label class="fld"><b>Web address</b><input class="field" id="addUrl" type="url" inputmode="url" placeholder="https://" autocomplete="off"></label>
+      <p class="hint">Pages, PDFs and ebooks all work. Polycarp keeps the readable text, so it can connect the link to everything else.</p>
+    </div>
+    <div class="tab" data-panel="file" hidden>
+      <label class="drop" id="drop">
+        <input type="file" id="addFiles" multiple accept=".pdf,.epub,.docx,.txt,.md,.markdown,.html,.htm,.fb2,.mp3,.m4a,.m4b,.aac,.ogg,.oga,.opus,.wav,.flac,.webm,audio/*">
+        <span class="drop-i" id="dropIcon"></span>
+        <b>Choose files</b>
+        <span>or drop them here. PDF, EPUB, Word (.docx), FB2, HTML, Markdown and plain text, plus audiobooks and recordings.</span>
+      </label>
+      <ul class="queue" id="queue"></ul>
+    </div>
+    <div class="tab" data-panel="note" hidden>
+      <label class="fld"><b>Title</b><input class="field" id="noteTitle" placeholder="Optional" autocomplete="off"></label>
+      <label class="fld"><b>Note</b><textarea class="field" id="noteBody" rows="6" placeholder="Type [[ to link to anything in your library. Use #tags to group ideas."></textarea></label>
+    </div>
+    <p class="status" id="addStatus" role="status"></p>
+    <div class="dlg-foot"><button class="btn quiet" type="button" data-close>Cancel</button><button class="btn primary" type="submit" id="addGo">Save link</button></div>
+  </form>
+</dialog>
+
+<dialog class="dlg" id="syncDlg" aria-labelledby="syncTitle">
+  <div class="dlg-head"><h2 id="syncTitle">Send to your notes app</h2><button class="btn icon quiet" type="button" data-close aria-label="Close"></button></div>
+  <section class="sync" aria-labelledby="obsTitle">
+    <h3 id="obsTitle">Obsidian</h3>
+    <p>Polycarp writes one Markdown file per item into a <b>Polycarp</b> folder in your vault, with highlights, notes and <code>[[links]]</code> between connected items. Files you made yourself are never touched.</p>
+    <p class="status" id="obsStatus" role="status"></p>
+    <div class="acts" id="obsActs"></div>
+  </section>
+  <section class="sync" aria-labelledby="notionTitle">
+    <h3 id="notionTitle">Notion</h3>
+    <div id="notionBox"></div>
+    <p class="status" id="notionStatus" role="status"></p>
+  </section>
+  <p class="hint">Nothing leaves this computer until you press Sync. Polycarp has no server and no account.</p>
+</dialog>
+
+<div class="dropzone" id="dropzone" hidden><div>Drop to add to your library</div></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="../shared/core.js"></script>
+<script src="../shared/icons.js"></script>
+<script src="../shared/memory.js"></script>
+<script src="../shared/docstore.js"></script>
+<script src="../shared/library.js"></script>
+<script src="../shared/notes-ui.js"></script>
+<script src="../shared/sync-obsidian.js"></script>
+<script src="../shared/sync-notion.js"></script>
+<script src="../../lib/jszip.min.js"></script>
+<script src="../../lib/mammoth.browser.min.js"></script>
+<script src="../../lib/Readability.js"></script>
+<script src="../reader/importers.js"></script>
+<script src="library.js"></script>
+</body>
+</html>

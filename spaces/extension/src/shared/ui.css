@@ -1,0 +1,144 @@
+/* Polycarp extension tokens and base components.
+   Every color, font, radius and duration comes from the Polycarp theme (theme.css, written by
+   `polycarp theme export css polycarp --surface browser`). These names are short aliases for it, so
+   components never hold a value of their own. The reading fonts below are the reader's choice of
+   typeface for text, not the interface's. */
+@font-face { font-family: "Polycarp Lexend"; font-weight: 400; font-display: swap; src: url("../../fonts/lexend-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Polycarp Lexend"; font-weight: 700; font-display: swap; src: url("../../fonts/lexend-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Polycarp Atkinson"; font-weight: 400; font-display: swap; src: url("../../fonts/atkinson-hyperlegible-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Polycarp Atkinson"; font-weight: 700; font-display: swap; src: url("../../fonts/atkinson-hyperlegible-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Polycarp OpenDyslexic"; font-weight: 400; font-display: swap; src: url("../../fonts/opendyslexic-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Polycarp OpenDyslexic"; font-weight: 700; font-display: swap; src: url("../../fonts/opendyslexic-latin-700-normal.woff2") format("woff2"); }
+
+:root {
+  --bg: var(--pc-background);
+  --surface: var(--pc-surface);
+  --sunk: var(--pc-sunken);
+  --ink: var(--pc-foreground);
+  --strong: var(--pc-strong);
+  --muted: var(--pc-muted);
+  --line: var(--pc-border);
+  --accent: var(--pc-accent);
+  --accent-ink: var(--pc-on-accent);
+  --accent-soft: var(--pc-selection);
+  --ok: var(--pc-done);
+  --err: var(--pc-urgent);
+  --warn: var(--pc-working);
+  --focus: var(--pc-strong);
+  --scrim: color-mix(in srgb, var(--pc-strong) 45%, transparent);
+  --hl: color-mix(in srgb, var(--pc-working) 35%, transparent);
+  --mark: var(--pc-accent);
+
+  --font: var(--pc-font-ui);
+  --font-display: var(--pc-font-display);
+  --font-mono: var(--pc-font-mono);
+  --bw: var(--pc-border-width);
+  --r-sm: var(--pc-radius-small);
+  --r-md: var(--pc-radius);
+  --r-lg: var(--pc-radius-large);
+  --r-pill: calc(var(--pc-radius-large) * 100);
+  --shadow: 0 1px 2px color-mix(in srgb, var(--pc-strong) calc(var(--pc-shadow) * 50%), transparent), 0 8px 24px color-mix(in srgb, var(--pc-strong) calc(var(--pc-shadow) * 100%), transparent);
+  --fast: var(--pc-motion-fast);
+  --normal: var(--pc-motion-normal);
+  --slow: var(--pc-motion-slow);
+  --ease: var(--pc-motion-easing);
+
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 64px;
+  --t-md: calc(var(--pc-font-size) * .9375);
+  --t-xs: calc(var(--t-md) * .8); --t-sm: calc(var(--t-md) * .8667); --t-lg: calc(var(--t-md) * 1.2);
+  --t-xl: calc(var(--t-md) * 1.4667); --t-2xl: calc(var(--t-md) * 1.8667); --t-3xl: calc(var(--t-md) * 2.4);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 var(--t-md)/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-sm); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.muted { color: var(--muted); }
+svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Wordmark: the olive branch (brand/mark.svg), then the name in the theme's display face. */
+.wordmark { display: inline-flex; align-items: center; gap: .3em; font: 600 var(--wm, 24px)/1 var(--font-display); color: var(--strong); text-decoration: none; }
+.wordmark svg { height: 1.15em; width: auto; flex: none; color: var(--mark); }
+.wordmark span { font-weight: 600; }
+.mark-branch { color: var(--mark); }
+.pip { width: auto; height: 48px; overflow: visible; color: var(--mark); }
+
+/* Garden plants */
+.plant { width: 32px; height: 32px; flex: none; }
+.plant .g-soil { stroke: var(--line); stroke-width: 2; stroke-linecap: round; }
+.plant .g-seed { fill: var(--warn); }
+.plant .g-stem, .plant .g-trunk { stroke: var(--accent); stroke-width: 2; stroke-linecap: round; fill: none; }
+.plant .g-trunk { stroke: var(--warn); stroke-width: 3; }
+.plant .g-leaf { fill: var(--accent); }
+.plant .g-petal { fill: var(--ok); }
+.plant .g-heart { fill: var(--warn); }
+.plant .g-crown { fill: var(--accent); }
+.plant .g-fruit { fill: var(--warn); }
+.plant .g-pine { fill: var(--ok); }
+.plant .g-star { fill: var(--warn); }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--s2); min-height: 40px; padding: 0 var(--s4); border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-weight: 700; cursor: pointer; text-decoration: none; }
+.btn:hover { border-color: color-mix(in srgb, var(--ink) 30%, var(--line)); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--ink)); }
+.btn.quiet { background: transparent; border-color: transparent; color: var(--muted); font-weight: 400; }
+.btn.quiet:hover { color: var(--ink); background: var(--sunk); }
+.btn.block { width: 100%; min-height: 48px; font-size: var(--t-md); }
+.btn.icon { width: 40px; padding: 0; }
+
+/* Switch */
+.switch { position: relative; width: 44px; height: 26px; flex: none; }
+.switch input { appearance: none; margin: 0; width: 100%; height: 100%; border-radius: var(--r-pill); background: var(--line); cursor: pointer; transition: background var(--fast) var(--ease); }
+.switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: var(--r-pill); background: var(--surface); box-shadow: var(--shadow); transition: transform var(--fast) var(--ease); }
+.switch input:checked { background: var(--accent); }
+.switch input:checked::after { transform: translateX(18px); }
+.switch input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Segmented control */
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; padding: 3px; background: var(--sunk); border-radius: var(--r-sm); }
+.seg button { border: 0; background: transparent; padding: 6px 4px; border-radius: var(--r-sm); cursor: pointer; color: var(--muted); font-size: var(--t-sm); font-weight: 700; min-height: 32px; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+
+/* Range */
+input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; background: transparent; margin: 0; cursor: pointer; }
+input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: var(--r-sm); background: linear-gradient(to right, var(--accent) var(--fill, 50%), var(--line) var(--fill, 50%)); }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px; border-radius: var(--r-pill); background: var(--surface); border: 2px solid var(--accent); box-shadow: var(--shadow); }
+
+select.select { appearance: none; min-height: 36px; padding: 0 32px 0 var(--s3); border-radius: var(--r-sm); border: 1px solid var(--line); background: linear-gradient(45deg, transparent 50%, var(--muted) 50%) right 16px center / 5px 5px no-repeat, linear-gradient(135deg, var(--muted) 50%, transparent 50%) right 11px center / 5px 5px no-repeat, var(--surface); max-width: 100%; }
+
+/* Bionic text inside extension pages */
+polycarp-b { font-weight: var(--polycarp-weight, 700); }
+polycarp-r { opacity: var(--polycarp-fade, 1); }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* A key hint inside a filled button takes the button's own colors. */
+.btn.primary kbd { background: transparent; color: inherit; border-color: color-mix(in srgb, currentColor 55%, transparent); }
+
+/* Notes: [[wiki links]], #tags and the [[ autocomplete menu, shared by the Reader and the Library. */
+.wl { color: var(--accent); text-decoration: none; font-weight: 700; }
+.wl.missing { color: var(--muted); text-decoration: underline dotted; font-weight: 400; }
+.wl-menu { position: absolute; z-index: 60; min-width: 220px; max-width: 320px; max-height: 240px; overflow-y: auto; margin: 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); box-shadow: var(--shadow); font: 400 var(--t-sm)/1.3 var(--font); }
+.wl-menu li { padding: 8px 10px; border-radius: var(--r-sm); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-menu li[aria-selected="true"] { background: var(--sunk); }
+.ntag { color: var(--muted); font-weight: 700; }
+.nt p { margin: 0; }
+.nt p + p, .nt ul + p, .nt p + ul { margin-top: var(--s2); }
+.nt ul { margin: 0; padding-left: 1.2em; }
+.nt code { font-size: .92em; padding: 1px 4px; border-radius: var(--r-sm); background: var(--sunk); font-family: var(--font-mono); }
+
+/* Page nav: Reader, Library, Review, Settings. Phones get a labeled bottom bar, like the Reader's tools. */
+.pnav { margin-left: auto; display: flex; gap: var(--s1); }
+.pnav a { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 var(--s3); border-radius: var(--r-sm); color: var(--muted); text-decoration: none; font-weight: 700; font-size: var(--t-sm); white-space: nowrap; }
+.pnav a:hover { background: var(--sunk); color: var(--ink); }
+.pnav a[aria-current="page"] { color: var(--ink); background: var(--sunk); }
+.pnav a svg { width: 18px; height: 18px; flex: none; }
+.pnav .due { color: var(--accent); font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) {
+  .pnav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; margin: 0; gap: 0; padding: var(--s1) var(--s1) max(var(--s1), env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--line); }
+  .pnav a { flex: 1 1 0; min-width: 0; flex-direction: column; justify-content: center; gap: 2px; height: 56px; padding: 0; font-size: var(--t-xs); }
+}

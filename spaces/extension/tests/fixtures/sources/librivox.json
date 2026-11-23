@@ -1,0 +1,172 @@
+{
+ "books": [
+  {
+   "id": "753",
+   "title": "Moby Dick, or the Whale",
+   "description": "Few things, even in literature, can really be said to be unique - but Moby Dick is truly unlike anything written before or since. The novel is nominally about the obsessive hunt by the crazed Captain Ahab of the book’s eponymous white whale. But interspersed in that story are digressions, paradoxes, philosophical riffs on whaling and life, and a display of techniques so advanced for its time that some have referred to the 1851 Moby Dick as the first “modern” novel.\n(Summary by Stewart Wills)",
+   "url_text_source": "https://www.gutenberg.org/etext/2701",
+   "language": "English",
+   "copyright_year": "1851",
+   "num_sections": "44",
+   "url_rss": "https://librivox.org/rss/753",
+   "url_zip_file": "https://archive.org/compress/moby_dick_librivox/formats=64KBPS MP3&file=/moby_dick_librivox.zip",
+   "url_project": "https://en.wikipedia.org/wiki/Moby-Dick",
+   "url_librivox": "https://librivox.org/moby-dick-by-herman-melville",
+   "url_other": "",
+   "totaltime": "24:37:50",
+   "totaltimesecs": 88670,
+   "authors": [
+    {
+     "id": "329",
+     "first_name": "Herman",
+     "last_name": "Melville",
+     "dob": "1819",
+     "dod": "1891"
+    }
+   ],
+   "url_iarchive": "https://www.archive.org/details/moby_dick_librivox",
+   "sections": [
+    {
+     "id": "132387",
+     "section_number": "1",
+     "title": "Chapter 000: Etymology and Extracts ",
+     "listen_url": "https://www.archive.org/download/moby_dick_librivox/mobydick_000_melville_64kb.mp3",
+     "language": "English",
+     "playtime": "1753",
+     "file_name": null,
+     "readers": [
+      {
+       "reader_id": "196",
+       "display_name": "Stewart Wills"
+      }
+     ]
+    },
+    {
+     "id": "132388",
+     "section_number": "2",
+     "title": "Chapter 001-002 ",
+     "listen_url": "https://www.archive.org/download/moby_dick_librivox/mobydick_001_002_melville_64kb.mp3",
+     "language": "English",
+     "playtime": "1436",
+     "file_name": null,
+     "readers": [
+      {
+       "reader_id": "196",
+       "display_name": "Stewart Wills"
+      }
+     ]
+    },
+    {
+     "id": "132389",
+     "section_number": "3",
+     "title": "Chapter 003 ",
+     "listen_url": "https://www.archive.org/download/moby_dick_librivox/mobydick_003_melville_64kb.mp3",
+     "language": "English",
+     "playtime": "2093",
+     "file_name": null,
+     "readers": [
+      {
+       "reader_id": "196",
+       "display_name": "Stewart Wills"
+      }
+     ]
+    }
+   ],
+   "genres": [
+    {
+     "id": "3",
+     "name": "Action & Adventure Fiction"
+    },
+    {
+     "id": "23",
+     "name": "Nautical & Marine Fiction"
+    }
+   ],
+   "translators": []
+  },
+  {
+   "id": "21919",
+   "title": "Moby Dick; or, The Whale (version 2)",
+   "description": "This great, genre-bending novel nominally centres on the quest of the monomaniacal Captain Ahab to gain revenge for the loss of his leg to an apparently malicious white sperm whale known in the fishery as Moby Dick.\r\n\r\nAt times the compulsive and bombastic Captain Ahab sounds more like a figure from grand guignol than a reincarnated Lear, and listeners may find themselves wondering if the story of Ahab's attempted revenge, as narrated by Ishmael, one of his crew members, is at least partly a pretext allowing the author to explore other subjects in which he actually has a deeper interest - themes including the true brotherhood of man, the wondrous qualities, varieties and behaviour of whales themselves, and the immense courage and ingenuity required of the men who hunted these whales for their oil in the mid-nineteenth century. (Summary by Peter Dann)",
+   "url_text_source": "https://www.gutenberg.org/ebooks/15 ",
+   "language": "English",
+   "copyright_year": "1851",
+   "num_sections": "138",
+   "url_rss": "https://librivox.org/rss/21919",
+   "url_zip_file": "https://archive.org/compress/mobydick2_2511_librivox/formats=64KBPS MP3&file=/mobydick2_2511_librivox.zip",
+   "url_project": "https://en.wikipedia.org/wiki/Moby-Dick",
+   "url_librivox": "https://librivox.org/moby-dick-or-the-whale-version-2-by-herman-melville/",
+   "url_other": "",
+   "totaltime": "23:34:48",
+   "totaltimesecs": 84888,
+   "authors": [
+    {
+     "id": "329",
+     "first_name": "Herman",
+     "last_name": "Melville",
+     "dob": "1819",
+     "dod": "1891"
+    }
+   ],
+   "url_iarchive": "https://archive.org/details/mobydick2_2511_librivox",
+   "sections": [
+    {
+     "id": "683175",
+     "section_number": "1",
+     "title": "Etymology",
+     "listen_url": "https://www.archive.org/download/mobydick2_2511_librivox/mobydickorthewhale_001_melville_64kb.mp3",
+     "language": "English",
+     "playtime": "279",
+     "file_name": "mobydickorthewhale_001_melville_128kb.mp3",
+     "readers": [
+      {
+       "reader_id": "15664",
+       "display_name": "Peter Dann"
+      }
+     ]
+    },
+    {
+     "id": "683176",
+     "section_number": "2",
+     "title": "Extracts",
+     "listen_url": "https://www.archive.org/download/mobydick2_2511_librivox/mobydickorthewhale_002_melville_64kb.mp3",
+     "language": "English",
+     "playtime": "1426",
+     "file_name": "mobydickorthewhale_002_melville_128kb.mp3",
+     "readers": [
+      {
+       "reader_id": "15664",
+       "display_name": "Peter Dann"
+      }
+     ]
+    },
+    {
+     "id": "683177",
+     "section_number": "3",
+     "title": "1: Loomings",
+     "listen_url": "https://www.archive.org/download/mobydick2_2511_librivox/mobydickorthewhale_003_melville_64kb.mp3",
+     "language": "English",
+     "playtime": "868",
+     "file_name": "mobydickorthewhale_003_melville_128kb.mp3",
+     "readers": [
+      {
+       "reader_id": "15664",
+       "display_name": "Peter Dann"
+      }
+     ]
+    }
+   ],
+   "genres": [
+    {
+     "id": "3",
+     "name": "Action & Adventure Fiction"
+    },
+    {
+     "id": "20",
+     "name": "Literary Fiction"
+    }
+   ],
+   "translators": []
+  }
+ ]
+}

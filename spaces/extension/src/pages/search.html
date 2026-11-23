@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polycarp Search</title>
+<link rel="icon" href="../../icons/icon32.png">
+<link rel="stylesheet" href="../shared/theme.css">
+<link rel="stylesheet" href="../shared/ui.css">
+<link rel="stylesheet" href="pages.css">
+<link rel="stylesheet" href="search.css">
+</head>
+<body>
+<header class="top">
+  <a class="wordmark" href="../reader/reader.html" data-wordmark></a>
+  <nav class="pnav" aria-label="Polycarp pages">
+    <a href="../reader/reader.html" id="navRead"></a>
+    <a href="search.html" id="navSearch" aria-current="page"></a>
+    <a href="library.html" id="navLib"></a>
+    <a href="review.html" id="navReview"></a>
+    <a href="settings.html" id="navSettings"></a>
+  </nav>
+</header>
+<main class="page search">
+  <h1 class="sr">Search</h1>
+  <form class="sbox" id="form" role="search">
+    <label class="sr" for="q">Search with Polycarp</label>
+    <span class="si" id="sIcon" aria-hidden="true"></span>
+    <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Search your library, YouTube, free books and your sources">
+    <button class="btn primary" id="go">Search</button>
+  </form>
+  <div class="srcs" id="chips" role="group" aria-label="Sources to search"></div>
+  <div class="notice" id="notice" role="status" hidden></div>
+
+  <section id="results" aria-label="Results"></section>
+
+  <section id="home" class="home">
+    <div class="block" id="addBlock">
+      <div class="bhead">
+        <h2>Make any site searchable</h2>
+        <p>Paste a link to a site, a blog, a podcast feed, a book catalog or a search page. Polycarp works out the best way to search it.</p>
+      </div>
+      <form class="add" id="addForm">
+        <label class="sr" for="addUrl">Link to add</label>
+        <input id="addUrl" type="url" inputmode="url" placeholder="https://" autocomplete="off" required>
+        <button class="btn" id="addGo">Check link</button>
+      </form>
+      <div class="proposal" id="proposal" hidden></div>
+      <p class="tip" id="libTip"></p>
+    </div>
+
+    <div class="block">
+      <div class="bhead">
+        <h2>Your sources</h2>
+        <p>Switch off any you don't want in your results.</p>
+      </div>
+      <ul class="slist" id="slist"></ul>
+    </div>
+
+    <div class="block" id="nasBlock">
+      <div class="bhead">
+        <h2>Your NAS</h2>
+        <p id="nasLead">Search your own books and audiobooks, open them in Polycarp, and save downloads and backups to your home server. Works with Synology, QNAP, TrueNAS, Nextcloud and anything that speaks WebDAV.</p>
+      </div>
+      <div id="nasBody"></div>
+    </div>
+  </section>
+</main>
+
+<dialog id="nasDlg" class="dlg" aria-labelledby="nasTitle">
+  <form method="dialog" id="nasForm">
+    <h2 id="nasTitle">Connect your NAS</h2>
+    <label>Address<input id="nasUrl" type="url" placeholder="http://192.168.1.20:5005/" required autocomplete="off"></label>
+    <p class="hint">Turn on WebDAV in your NAS settings first. On Synology it is the WebDAV Server package (port 5005, or 5006 for https).</p>
+    <label>User name<input id="nasUser" autocomplete="username"></label>
+    <label>Password<input id="nasPass" type="password" autocomplete="current-password"></label>
+    <label>Folder<input id="nasFolder" placeholder="/" autocomplete="off"></label>
+    <label class="check"><input type="checkbox" id="nasRemember"> Remember the password on this computer</label>
+    <p class="err" id="nasErr" role="alert" hidden></p>
+    <div class="dacts">
+      <button class="btn quiet" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn primary" id="nasSave" value="save">Test and connect</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="browseDlg" class="dlg wide" aria-labelledby="browseTitle">
+  <div class="bhead row">
+    <h2 id="browseTitle">Your NAS</h2>
+    <button class="btn quiet icon" id="browseClose" aria-label="Close"></button>
+  </div>
+  <nav class="crumbs" id="crumbs" aria-label="Folder"></nav>
+  <ul class="files" id="files"></ul>
+</dialog>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="../shared/core.js"></script>
+<script src="../shared/icons.js"></script>
+<script src="../shared/library.js"></script>
+<script src="../shared/search-index.js"></script>
+<script src="../shared/sources.js"></script>
+<script src="../shared/backup.js"></script>
+<script src="../shared/nas.js"></script>
+<script src="search.js"></script>
+</body>
+</html>

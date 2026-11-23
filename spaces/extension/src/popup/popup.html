@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Polycarp</title>
+<link rel="stylesheet" href="../shared/theme.css">
+<link rel="stylesheet" href="../shared/ui.css">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<main class="pop">
+  <header class="head">
+    <h1 class="sr">Polycarp</h1>
+    <span class="wordmark" data-wordmark></span>
+    <div class="headr">
+      <label class="site" id="siteRow">
+        <span id="siteName">this site</span>
+        <span class="switch"><input type="checkbox" id="siteSwitch" aria-describedby="siteName"></span>
+      </label>
+      <button class="btn quiet icon" id="power" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="powerMenu" title="Pause or turn off Polycarp" aria-label="Pause or turn off Polycarp"></button>
+    </div>
+    <div class="pmenu" id="powerMenu" hidden>
+      <button type="button" data-p="hour">Pause everywhere for 1 hour</button>
+      <button type="button" data-p="tomorrow">Pause until tomorrow morning</button>
+      <button type="button" data-p="off">Turn Polycarp off everywhere</button>
+    </div>
+  </header>
+
+  <div class="status" id="status" hidden role="status">
+    <span id="statusText"></span>
+    <button class="btn" type="button" id="statusBtn"></button>
+  </div>
+
+  <form class="find" id="findForm" role="search">
+    <label class="sr" for="q">Search with Polycarp</label>
+    <span class="fi" id="findIcon" aria-hidden="true"></span>
+    <input id="q" type="search" autocomplete="off" placeholder="Search with Polycarp">
+    <button class="btn quiet" type="button" id="findPage" title="Search this page (Alt+Shift+S)">On this page</button>
+  </form>
+
+  <a class="news" id="news" hidden href="#"></a>
+
+  <section aria-label="Reading profile">
+    <div class="chips" id="profiles" role="group" aria-label="Profiles"></div>
+    <p class="blurb" id="blurb"></p>
+  </section>
+
+  <div class="spec" id="spec" aria-label="Preview of your reading style"></div>
+
+  <section class="ctl" aria-label="Quick settings">
+    <label for="strength">Bold strength</label>
+    <input type="range" id="strength" min="0" max="5" step="1">
+    <label for="font">Font</label>
+    <select class="select" id="font"></select>
+    <span id="tintLbl">Tint</span>
+    <div class="swatches" id="tints" role="radiogroup" aria-labelledby="tintLbl"></div>
+    <label for="ruler">Focus ruler</label>
+    <span class="switch"><input type="checkbox" id="ruler"></span>
+  </section>
+
+  <button class="btn primary block" id="read"></button>
+  <nav class="more">
+    <button class="btn quiet" id="openFile"></button>
+    <button class="btn quiet" id="save"></button>
+    <button class="btn quiet" id="print"></button>
+    <button class="btn quiet" id="review"></button>
+    <button class="btn quiet" id="settings" title="All settings"></button>
+  </nav>
+
+  <footer class="today" id="today">
+    <div class="meter" aria-hidden="true"><i id="meterFill"></i></div>
+    <p id="todayText"></p>
+  </footer>
+</main>
+<script src="../shared/core.js"></script>
+<script src="../shared/bionic.js"></script>
+<script src="../shared/icons.js"></script>
+<script src="../shared/memory.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

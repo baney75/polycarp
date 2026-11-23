@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Polycarp voice test</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #faf8f3; --fg: #222; --muted: #666; --accent: #2a6df4; --word: #ffe27a; --sentence: #e8f0ff; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1d; --fg: #eee; --muted: #aaa; --word: #8a6d00; --sentence: #23314d; } }
+    body { margin: 0; padding: 24px 16px; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+    main { max-width: 760px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 12px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+    select, button, input, textarea { font: inherit; }
+    button { padding: 6px 12px; border-radius: 8px; border: 1px solid #8884; background: transparent; color: inherit; cursor: pointer; }
+    button:disabled { opacity: 0.4; cursor: default; }
+    progress { width: 200px; }
+    #status, #log { color: var(--muted); font-size: 14px; }
+    #log { white-space: pre-wrap; max-height: 160px; overflow: auto; border-top: 1px solid #8883; margin-top: 12px; padding-top: 8px; }
+    textarea { width: 100%; min-height: 80px; box-sizing: border-box; }
+    #reading { font-size: 22px; line-height: 1.7; margin: 16px 0; }
+    ::highlight(polycarp-sentence) { background-color: var(--sentence); }
+    ::highlight(polycarp-word) { background-color: var(--word); color: inherit; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Polycarp voice test</h1>
+  <div class="row">
+    <label>Voice <select id="voice"></select></label>
+    <button id="preview">Preview</button>
+  </div>
+  <div class="row">
+    <button id="download">Download Kokoro voices</button>
+    <button id="remove">Remove</button>
+    <progress id="bar" max="1" value="0"></progress>
+    <span id="status">Checking...</span>
+  </div>
+  <textarea id="source">Reading aloud helps many people stay with a page. Each word lights up as the voice reaches it, so your eyes always know where to go. Try a slower rate if the words feel rushed; try a faster one once you settle in.</textarea>
+  <div class="row">
+    <button id="play">Play</button>
+    <button id="pause">Pause</button>
+    <button id="resume">Resume</button>
+    <button id="stop">Stop</button>
+    <button id="prev">Previous</button>
+    <button id="next">Next</button>
+    <label>Rate <input id="rate" type="range" min="0.6" max="2" step="0.1" value="1"> <span id="rateVal">1.0</span></label>
+  </div>
+  <div id="reading"></div>
+  <div id="log"></div>
+</main>
+<script src="voice.js"></script>
+<script src="dev-voice.js"></script>
+</body>
+</html>

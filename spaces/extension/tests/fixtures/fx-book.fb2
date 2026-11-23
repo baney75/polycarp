@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <author><first-name>Fyodor</first-name><last-name>Fixture</last-name></author>
+      <book-title>The FB2 Fixture</book-title>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Part One</p></title>
+      <p>The first FB2 section has <emphasis>emphasis</emphasis> and <strong>strong</strong> text. The lamp burned low while the house slept, and the pages turned one after another as the story found its pace. Nothing in the room moved except the reader and the light. </p>
+      <image l:href="#pic.png"/>
+    </section>
+    <section>
+      <title><p>Part Two</p></title>
+      <p>The second FB2 section. The lamp burned low while the house slept, and the pages turned one after another as the story found its pace. Nothing in the room moved except the reader and the light. </p>
+    </section>
+  </body>
+  <binary id="pic.png" content-type="image/png">iVBORw0KGgoAAAANSUhEUgAAAHgAAABQCAIAAABd+SbeAAACWUlEQVR4nO3dTUgUYQCH8RnbTa0tNglCIouytJCgi17ERS8JdUg6BBVKSOClg2AnJQ8WdRAPCl4k/LaLSCexoJYOEhGtldkHrBu0sAul4laKou6GTIRoFMjOf2Hn+Z1m3sPMyzMvL7swMGbh5R4D9ssQ3AOE1mFFi7g2nnwYrFHd1xFOXun9c8yKTsWK3vocsD1b9wZWtAihRQgtQmgRQosQWoTQIoQWIbQIoUUILUJoEUKLEFqE0CKEFiG0CKFFCC1CaBFCixBahNAihBYhtAihRQgtQmgRQqfubdJNJrqvTk7PWMdPA196Rt9bI6ZpeLLd7cOv/YHwRd/xKl/+7mxX69Cr8cmI/dNOx9Arq2vVt8f+OlKYl9PZUPEm+O1C2bHqlrEjuXs76svP3Xxo54QduXV8Cs+trsW9nszBxx/jiUR0dsHryUze3By2ov+h5FTu3f6XoUgsFIkZhnG2+LB/Ipy8uTkstNu1o6+p0jpuvv/8czRmjex0ZxQd3f9iKuoPrMfNO7Cn9nxRzZ1H9s/ZeXv0iUP7Bm6tP4NdWa62G77GrvG570t2ztape/T8z+Xw1x+madyrK+0enXob/P3jBMnZo62tI55IWJtJVVl+6emDXk/WpYqCxaWVutYn27hm2vt/6OLrDzaNnLk2sPH0XWh25Fkw2RNLN/wzFCG0CKFFCC1CaBFCixBahNAihBYhtAihRQgtQmgRQosQWoTQIoQWIbQIoUUILUJoEUKLEFqE0CKEFiG0CKFFCC1C6NS9Tcq3K+zAihYx+VaWBitahNAihDY0fgE4AI6qm0zv1gAAAABJRU5ErkJggg==</binary>
+</FictionBook>

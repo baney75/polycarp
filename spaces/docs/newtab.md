@@ -1,7 +1,7 @@
 # The new tab page's host
 
-Polycarp's new tab page is a small Chrome extension (`extension/newtab/`, ID `kdaddaaobomjfjcgjeabgbenfddkcfcl`, fixed
-by the `key` in its manifest). It asks Polycarp what to show over Chrome native messaging. The host that answers is
+Polycarp's new tab page is part of the Polycarp browser extension (`extension/`, page in `extension/newtab/`, ID
+`kdaddaaobomjfjcgjeabgbenfddkcfcl`, fixed by the `key` in `extension/manifest.json`; see `extension/README.md`). It asks Polycarp what to show over Chrome native messaging. The host that answers is
 the bundled command, `polycarp-spaces`. The code is `NewTabHost` in `Sources/BaneySpacesCore/NewTabHost.swift`.
 
 ## The page
@@ -13,7 +13,8 @@ still searches with DuckDuckGo. It loads nothing from the network. The field log
 `NewTabPageTests` runs it in JavaScriptCore.
 
 To load it in Helium (or Chrome): open `chrome://extensions`, turn on Developer mode, choose Load unpacked, and pick
-`/Applications/Polycarp.app/Contents/Resources/newtab-extension`. Polycarp writes the host manifest on its next launch.
+`~/Applications/Polycarp.app/Contents/Resources/extension`. Polycarp writes the host manifest on its next launch. App
+updates update the extension too: it reloads itself when the copy in the app has a new `version_name`.
 A new tab opens with the keyboard in the address bar, as Chrome does for every extension's new tab; click the field to type there.
 
 ## What the host does
@@ -72,7 +73,7 @@ as `<that folder>/NativeMessagingHosts/com.polycarp.newtab.json`, making `Native
 `path` is wherever the running app's bundled command is. The write happens off the main thread and only when the file's
 content differs. trace.log gets one line: `newtab host: manifest written for Helium`, `already current for ...`,
 `failed for ...`, or `no Helium, Chrome or Chromium folder, nothing registered`. A debug build (not in a .app)
-registers nothing. `scripts/bundle.sh` copies the page itself to `Contents/Resources/newtab-extension`.
+registers nothing. `scripts/bundle.sh` stages the whole extension, page included, to `Contents/Resources/extension`.
 
 ## Trying it by hand
 
