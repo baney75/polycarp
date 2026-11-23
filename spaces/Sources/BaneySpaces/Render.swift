@@ -147,6 +147,23 @@ enum Render {
             guard save(SwitcherView(model: appSwitcher).padding(30), frame.name, CGSize(width: 820, height: 0)) else { return 1 }
         }
 
+        // The Ledger top bar, on a screen without a notch and on one with it (the middle folds left).
+        let topBar = TopBarModel()
+        topBar.occupied = [1, 2, 4]
+        topBar.now = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 9, minute: 12)) ?? Date()
+        if let screen = NSScreen.main, let id = screen.displayID {
+            topBar.current[id] = 2
+            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar.png", CGSize(width: 1512, height: 24)) else { return 1 }
+            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: (left: 656, right: 656)).background(Color(white: 0.35)), "topbar-notch.png", CGSize(width: 1512, height: 37)) else { return 1 }
+        }
+
+        // The switch HUD, landing on workspace 4.
+        let hud = HUDModel()
+        hud.current = 4
+        hud.occupied = [1, 2, 3, 4, 5, 7]
+        hud.icons = [icon("/System/Applications/Mail.app"), icon("/System/Applications/Utilities/Terminal.app"), icon("/System/Applications/Messages.app")]
+        guard save(HUDView(model: hud).background(Color(white: 0.35)), "hud.png", CGSize(width: 260, height: 0)) else { return 1 }
+
         // The ⌘Tab window bar: Tab held on Helium.
         let bar = SwitcherModel()
         bar.mode = .apps

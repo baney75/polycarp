@@ -120,7 +120,7 @@ With no browser at hand (over SSH, or for an agent that reads images), ask for p
 polycarp theme preview still-water --format png
 ```
 
-It writes one PNG for each product in each mode (the dock and window bar, the dictation pill, the browser panel, the site) and prints their paths. The text in them is a pixel font, so judge the colors, corners and contrast, not the typeface.
+It writes one PNG for each product in each mode (the workspace tiles and window bar, the dictation pill, the browser panel, the site) and prints their paths. The text in them is a pixel font, so judge the colors, corners and contrast, not the typeface.
 
 ### Change one thing
 
@@ -373,7 +373,7 @@ This moved to Tychicus with the browser extension: https://github.com/baney75/ty
 
 ## Keys, motion and behavior
 
-Themes cover the look. On a Mac, keys, the dock and the launcher are all in Polycarp's Settings. Browser access is [Tychicus](https://github.com/baney75/tychicus)'s, and dictation is the [Silas](/projects/silas/docs/) app's, each with its own settings.
+Themes cover the look. On a Mac, keys, the top bar and the launcher are all in Polycarp's Settings. Browser access is [Tychicus](https://github.com/baney75/tychicus)'s, and dictation is the [Silas](/projects/silas/docs/) app's, each with its own settings.
 
 One file for all of them, with undo and a recovery key, is on the plan. Its contract is [`spaces/spec/config.md`](https://github.com/baney75/polycarp/blob/main/spaces/spec/config.md).
 

@@ -175,6 +175,40 @@ enum RunningApps {
     /// Bumped by every launch, quit, hide and unhide: a read from before one is stale.
     private static var seed = 0
     private static var watchingFacts = false
+    private static var preparing = false
+    /// What runs once the read off the main thread lands.
+    private static var waiting: [() -> Void] = []
+    private static let factsQueue = DispatchQueue(label: "com.baney.polycarp.running-apps", qos: .userInteractive)
+
+    /// Reads the facts off the main thread, then runs `then` on the main thread with the read at hand, so
+    /// `facts()` answers without reading. The launcher asks for its "Running, no window" rows this way: the open
+    /// draws first and the rows join a moment later, instead of every open waiting 25 to 30 ms on main. A fresh
+    /// read already at hand still answers on the next main loop turn, never inside the caller. Main thread.
+    static func prepare(then: @escaping () -> Void) {
+        watchFacts()
+        if factsPrepared { DispatchQueue.main.async(execute: then); return }
+        waiting.append(then)
+        guard !preparing else { return }
+        preparing = true
+        let started = seed
+        factsQueue.async {
+            let facts = readFacts()
+            DispatchQueue.main.async {
+                preparing = false
+                // An app launched, quit, hid or unhid meanwhile: this read is stale, and `facts()` reads again.
+                if seed == started { prepared = (facts, ProcessInfo.processInfo.systemUptime, started) }
+                let run = waiting
+                waiting = []
+                for w in run { w() }
+            }
+        }
+    }
+
+    /// Whether `facts()` would answer without reading.
+    static var factsPrepared: Bool {
+        guard let p = prepared else { return false }
+        return p.seed == seed && ProcessInfo.processInfo.systemUptime - p.at < freshFor
+    }
 
     /// The fresh read if there is one, else a read now. Main thread.
     static func facts() -> [pid_t: Facts] {
@@ -186,6 +220,7 @@ enum RunningApps {
         return facts
     }
 
+    /// NSRunningApplication's properties are safe to read from any thread (AppKit returns them atomically).
     private static func readFacts() -> [pid_t: Facts] {
         var out: [pid_t: Facts] = [:]
         for a in NSWorkspace.shared.runningApplications {

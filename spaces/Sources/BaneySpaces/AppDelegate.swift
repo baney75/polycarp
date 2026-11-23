@@ -179,10 +179,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.showOverview = { [weak self] in self?.viewer.open() }
         // Runs right after `workspacesByApp`, which just refreshed the windows. Hidden apps are asked
         // again in the background, so a window closed behind ⌘H counts the next time the launcher opens.
-        a.restingApps = { [weak self] in
-            guard let self, self.started else { return [] }
-            self.spaces.refreshHidden()
-            return self.spaces.backgroundApps()
+        a.restingApps = { [weak self] done in
+            guard let self, self.started else { return done([]) }
+            // Every running app is read off the main thread first; the list is then built from that read on main.
+            RunningApps.prepare { [weak self] in
+                guard let self else { return done([]) }
+                self.spaces.refreshHidden()
+                done(self.spaces.backgroundApps())
+            }
         }
         a.showResting = { [weak self] pid in self?.run { $0.showBackgroundApp(pid) } }
         a.quitResting = { pid in NSRunningApplication(processIdentifier: pid)?.terminate() }
@@ -736,18 +740,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return false
     }
 
-    /// Windows dragged by their title bars are followed while the drag to the top opens the
-    /// overview. macOS's own top-of-screen drag is the top drag's to turn off and on (`setTopDrag`).
+    /// Windows dragged by their title bars are followed whether or not the drag to the top opens the overview: with it
+    /// off (`topEnabled` false) the watcher still ends each drag in `onDragEnd`, which puts back a title bar let go out of
+    /// reach (`DragRelease`). It stops only when Polycarp quits or is paused. macOS's own top-of-screen drag is the top
+    /// drag's to turn off and on (`setTopDrag`).
     private func syncWindowDrags() {
         guard started else { return }
         topDrag.topEnabled = TopDragWatcher.enabled
-        if TopDragWatcher.enabled {
-            topDrag.start()
-        } else {
-            topDrag.stop()
-            DragFrameTrace.stopAll()
-            cancelSettling()
-        }
+        topDrag.start()
     }
 
     private func setTopDrag(_ on: Bool) {

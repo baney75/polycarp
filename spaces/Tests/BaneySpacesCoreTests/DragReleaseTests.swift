@@ -269,4 +269,20 @@ final class DragReleaseTests: XCTestCase {
         XCTAssertFalse(PressTarget.takesPress(alpha: 0, tags: plain), "alpha 0")
         XCTAssertTrue(PressTarget.takesPress(alpha: nil, tags: nil), "unreadable: counted, as before")
     }
+
+    /// Review of PR #624 second-F10: with the drag to the top turned off, title-bar drags are still followed, so a
+    /// window let go with its title bar out of reach is still put back (`onDragEnd`). Before the dock went, the dock kept
+    /// the watcher running; now nothing but quitting or pausing stops it.
+    func testTheWatcherFollowsDragsWithTheTopDragOff() throws {
+        let d = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
+        let sync = try XCTUnwrap(SourceText.block(after: "private func syncWindowDrags()", in: d))
+        XCTAssertTrue(sync.contains("topDrag.topEnabled = TopDragWatcher.enabled"))
+        XCTAssertTrue(sync.contains("topDrag.start()"))
+        XCTAssertFalse(sync.contains("topDrag.stop()"), "turning the top drag off stops the rescue")
+        XCTAssertTrue(d.contains("t.onDragEnd = { [weak self] id, end in self?.correctOnceStill(id, after: end) }"))
+        let w = try SourceText.code("Sources/BaneySpaces/TopDragWatcher.swift")
+        let tick = try XCTUnwrap(SourceText.block(after: "private func tick()", in: w))
+        XCTAssertTrue(tick.contains("if let g = top, topEnabled"), "the overview opens only with the top drag on")
+        XCTAssertTrue(tick.contains("state.rearm()"), "with it off the drag goes on as if the top never fired")
+    }
 }

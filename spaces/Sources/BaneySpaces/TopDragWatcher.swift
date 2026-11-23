@@ -147,7 +147,7 @@ final class TopDragWatcher {
     /// Any let-go of a drag the watcher saw move, even one it stopped following (the overview declined it): the frame watch.
     var onLetGo: (WindowID) -> Void = { _ in }
     private var letGo = DragLetGo()
-    /// The drag to the top opens the overview.
+    /// The drag to the top opens the overview. Off, the watcher still follows drags, for `onDragEnd`'s title bar rescue.
     var topEnabled = true
     /// The press as a possible drag of the window's content (a file out of Finder) rather than of the window.
     private var content = ContentDrag()

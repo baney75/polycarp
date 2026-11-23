@@ -1,7 +1,7 @@
 import XCTest
 @testable import BaneySpacesCore
 
-/// The dock's "Background" tile: running apps with no window to see on any workspace.
+/// The launcher's "Running, no window" rows: running apps with no window to see on any workspace.
 final class BackgroundAppsTests: XCTestCase {
     let me: Int32 = 1
 
@@ -130,5 +130,21 @@ final class BackgroundAppsTests: XCTestCase {
         let quit = try XCTUnwrap(app.range(of: "a.quitResting = {").map { String(app[$0.lowerBound...].prefix(200)) })
         XCTAssertTrue(quit.contains("NSRunningApplication(processIdentifier: pid)?.terminate()"))
         XCTAssertFalse(quit.contains("forceTerminate"))
+    }
+
+    /// Review of PR #624 first-F6: a hidden app typed into the launcher showed twice, as an app row and a resting row.
+    /// It keeps one row, the resting one, where ⌘Return quits it; apps not running or not resting keep theirs.
+    func testTheLauncherListsARestingAppOnce() throws {
+        let resting = [BackgroundApps.Entry(pid: 7, name: "Helium", state: .hidden)]
+        let rows: [(name: String, pid: pid_t?)] = [("Helium", 7), ("Notes", 9), ("Maps", nil)]
+        XCTAssertEqual(BackgroundApps.withoutResting(rows, resting: resting) { $0.pid }.map(\.name), ["Notes", "Maps"])
+        XCTAssertEqual(BackgroundApps.withoutResting(rows, resting: []) { $0.pid }.map(\.name), ["Helium", "Notes", "Maps"])
+        let l = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        for m in ["private func recentApps()", "private func appItems("] {
+            let b = try XCTUnwrap(SourceText.block(after: m, in: l))
+            XCTAssertTrue(b.contains("BackgroundApps.withoutResting("), "\(m) lists a resting app a second time")
+        }
+        let rows2 = try XCTUnwrap(SourceText.block(after: "private func restingItems(", in: l))
+        XCTAssertTrue(rows2.contains("alternateTitle: \"Quit\""), "the one row keeps Quit as its alternate")
     }
 }

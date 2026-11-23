@@ -288,7 +288,7 @@ polycarp theme set mine                                   # use it when you like
   and names every bad path.
 - `--theme mine` edits your theme while the current one stays in force, so you can try things without your
   desktop changing. Leave it out to edit the theme in force.
-- The PNGs are 720 by 420 and draw the dock and window bar, the dictation pill, the browser side panel with a
+- The PNGs are 720 by 420 and draw the workspace tiles and window bar, the dictation pill, the browser side panel with a
   permission prompt, and the site, in the theme's colors, corners, borders, shadow, density and indicator. A
   terminal that shows images can show them in place (in kitty or Ghostty, `kitty +kitten icat <file>`); any
   image viewer works. The text is a pixel font, so judge colors and contrast, not the typeface.

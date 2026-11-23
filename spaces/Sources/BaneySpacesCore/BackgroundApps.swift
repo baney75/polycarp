@@ -124,4 +124,12 @@ public enum BackgroundApps {
         let keptPids = Set(kept.map(\.pid))
         return kept + fresh.filter { !keptPids.contains($0.pid) }
     }
+
+    /// The launcher lists a resting app once, under "Running, no window", where ⌘Return quits it: the plain app
+    /// row for the same pid is left out. `pid` is a row's running pid, nil when that app isn't running.
+    public static func withoutResting<Row>(_ rows: [Row], resting: [Entry], pid: (Row) -> pid_t?) -> [Row] {
+        let skip = Set(resting.map(\.pid))
+        guard !skip.isEmpty else { return rows }
+        return rows.filter { pid($0).map { !skip.contains($0) } ?? true }
+    }
 }

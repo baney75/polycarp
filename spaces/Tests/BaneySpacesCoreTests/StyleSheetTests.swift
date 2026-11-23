@@ -631,6 +631,23 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertTrue(top.contains("!= self.placedHeight"), "the bar re-places on a mode change that moves its height")
     }
 
+    /// Review of PR #624 second-F7: the dock's Appearance observer used to rebuild the book. With the dock gone, a mode
+    /// switch must still rebuild it on main, so `@media (prefers-color-scheme)` rules follow Light and Dark: `Styles`
+    /// does on its own, and the bar's observer does before it compares heights.
+    func testAModeChangeRebuildsTheBookWithoutTheDock() throws {
+        let styled = try SourceText.code("Sources/BaneySpaces/Styled.swift")
+        let initBlock = try XCTUnwrap(SourceText.block(after: "private init()", in: styled))
+        XCTAssertTrue(initBlock.contains("Appearance.didChange"), "Styles follows the mode itself")
+        XCTAssertTrue(initBlock.contains("queue: .main"), "on the main thread")
+        XCTAssertTrue(initBlock.contains("self?.sync()"))
+        let top = try SourceText.code("Sources/BaneySpaces/TopBar.swift")
+        let start = try XCTUnwrap(SourceText.block(after: "func start()", in: top))
+        let mode = try XCTUnwrap(SourceText.block(after: "forName: Appearance.didChange, object: nil, queue: .main)", in: start))
+        let sync = try XCTUnwrap(mode.range(of: "Styles.shared.sync()"), "the bar's Appearance observer rebuilds the book")
+        let compare = try XCTUnwrap(mode.range(of: "!= self.placedHeight"))
+        XCTAssertLessThan(sync.lowerBound, compare.lowerBound, "the book is rebuilt before the bar compares heights")
+    }
+
     // MARK: A sheet from a build that had the Workspace Dock
 
     /// The Workspace Dock was removed on 2026-11-23. A style.css written for it still loads: each `dock` selector is a
@@ -652,6 +669,30 @@ final class StyleSheetTests: XCTestCase {
         guard case .success = StyleOps.check(file: file, roles: Self.roles) else { return XCTFail("an older sheet still checks") }
         // A new rule for it is refused, so nothing writes one again.
         guard case .failure = StyleOps.set("dock .tile", "opacity", "1", file: file, roles: Self.roles) else { return XCTFail() }
+    }
+
+    /// Review of PR #624 first-F4: `style unset 'dock .tile'` takes out an older sheet's rule for the retired surface, so
+    /// the warning `style check` gives for it can be cleared with the tool. Other rules stay as written.
+    func testUnsetRemovesARetiredDockRule() throws {
+        let css = """
+        bar .clock { color: #d4af37 }
+        dock  .TILE { opacity: 0.5; gap: 2px }
+        dock { gap: 6px }
+        @media (prefers-color-scheme: dark) {
+          dock .tile { opacity: 1 }
+        }
+        """
+        try css.write(toFile: file, atomically: true, encoding: .utf8)
+        let one = try StyleOps.unset("dock .tile", "opacity", file: file).get().object
+        XCTAssertEqual(one?["removed"], .number(1))
+        XCTAssertEqual(one?["selector"], .string("dock .tile"))
+        XCTAssertEqual(try StyleOps.unset("dock .tile", nil, media: "dark", file: file).get().object?["removed"], .number(1))
+        XCTAssertEqual(try StyleOps.unset("dock .tile", nil, file: file).get().object?["removed"], .number(1))
+        XCTAssertEqual(try StyleOps.unset("dock", nil, file: file).get().object?["removed"], .number(1))
+        XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), "bar .clock { color: #d4af37 }\n")
+        let (_, p) = StyleSheet.parse(try String(contentsOfFile: file, encoding: .utf8))
+        XCTAssertTrue(p.isEmpty, "\(p)")
+        XCTAssertEqual(try StyleOps.unset("dock .tile", nil, file: file).get().object?["removed"], .number(0))
     }
 
     // MARK: The docs and the starter sheet can't drift from the table

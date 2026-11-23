@@ -192,6 +192,9 @@ struct StyleRawRule: Sendable {
     let line: Int, column: Int
     /// Scalar offsets of the selector's start, the `{`, and the `}` (nil when the block is never closed).
     let start: Int, open: Int, close: Int?
+    /// The selector as written, lowercased with each run of space made one (`StyleSyntax.plain`): how `style unset`
+    /// finds a rule for a retired surface (`dock .tile`), which has no `StyleSelector`.
+    var selectorText = ""
 }
 
 struct StyleRawMedia: Sendable {
@@ -312,7 +315,8 @@ struct StyleSyntax {
         let declarations = declarationList(j + 1, end ?? limit)
         rules.append(StyleRawRule(selectors: selectors, media: media, nested: media != nil, declarations: declarations,
                                   line: tokens[i].line, column: tokens[i].column,
-                                  start: tokens[i].start, open: tokens[j].start, close: end.map { tokens[$0].start }))
+                                  start: tokens[i].start, open: tokens[j].start, close: end.map { tokens[$0].start },
+                                  selectorText: Self.plain(text(i, j))))
         return end.map { $0 + 1 } ?? limit
     }
 
@@ -516,6 +520,11 @@ struct StyleSyntax {
             states.insert(.hover)
         }
         return .success(StyleSelector(surface: surface, part: partName, states: states))
+    }
+
+    /// Selector text compared as written: lowercased, each run of space made one.
+    static func plain(_ text: String) -> String {
+        text.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     /// One selector on its own, as `style set` takes it: the canonical selector or why not.

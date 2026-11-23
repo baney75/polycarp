@@ -118,6 +118,14 @@ final class SpeedBudgetTests: XCTestCase {
         XCTAssertTrue(r.out.contains("newthing: no budget"), r.out)
     }
 
+    /// Review of PR #624 first-F3: the day after the dock went, timing.log still holds the last build's `open dock=`
+    /// lines. A retired kind is skipped, not a miss.
+    func testARetiredDockKindIsSkipped() throws {
+        let r = try report(timing: fast() + (0..<20).map { "\(now - $0) open dock=400" })
+        XCTAssertEqual(r.status, 0, r.out)
+        XCTAssertFalse(r.out.contains("dock"), r.out)
+    }
+
     func testAWrongSwitcherFails() throws {
         for line in ["cmdTab panel not on screen; rebuilding it",
                      "cmdTab landed wrong: highlighted Ghostty pid 12, front pid 34"] {

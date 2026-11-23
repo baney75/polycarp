@@ -53,6 +53,31 @@ final class MainThreadScanTests: XCTestCase {
         XCTAssertTrue(off.contains("DispatchQueue.main.async"))
     }
 
+    /// Review of PR #624 first-F2: the launcher's "Running, no window" rows need every running app read (about 130,
+    /// 25 to 30 ms). The open never waits for it: the read runs off the main thread (`RunningApps.prepare`) and the rows
+    /// join after the first draw, as files and agents do.
+    func testTheRestingRowsAreReadOffMainAfterTheOpenDraws() throws {
+        let l = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        let prepare = try XCTUnwrap(SourceText.block(after: "func prepare(scope: Scope)", in: l))
+        XCTAssertFalse(prepare.contains("= actions.restingApps()"), "the open waits on the running apps")
+        let draw = try XCTUnwrap(prepare.range(of: "rebuild()"))
+        let ask = try XCTUnwrap(prepare.range(of: "actions.restingApps {"), "the rows are asked for with a callback")
+        XCTAssertLessThan(draw.lowerBound, ask.lowerBound, "the launcher draws before it asks")
+        let answer = try XCTUnwrap(SourceText.block(after: "actions.restingApps ", in: prepare))
+        XCTAssertTrue(answer.contains("ask == self.restingAsk"), "an answer for an earlier open is dropped")
+        XCTAssertTrue(answer.contains("rebuildKeepingSelection()"), "the row you're on stays put when the rows join")
+        let d = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
+        let resting = try XCTUnwrap(SourceText.block(after: "a.restingApps =", in: d))
+        XCTAssertTrue(resting.contains("RunningApps.prepare {"), "the running apps are read off main first")
+        for call in asksAnApp { XCTAssertFalse(resting.contains(call), "restingApps calls \(call)") }
+        let w = try SourceText.code("Sources/BaneySpaces/Windows.swift")
+        let prep = try XCTUnwrap(SourceText.block(after: "static func prepare(then:", in: w))
+        let off = try XCTUnwrap(SourceText.block(after: "factsQueue.async", in: prep))
+        XCTAssertTrue(off.contains("readFacts()"), "the read runs on the facts queue")
+        XCTAssertTrue(off.contains("DispatchQueue.main.async"), "and answers on main")
+        XCTAssertTrue(prep.contains("DispatchQueue.main.async(execute: then)"), "a fresh read still answers after the open draws")
+    }
+
     /// The app list is read from disk off the main thread, and a key press compares precomputed keys.
     func testTheAppListIsAnIndexBuiltOffMain() throws {
         let s = try SourceText.code("Sources/BaneySpaces/Launcher.swift")

@@ -472,7 +472,7 @@ fn header(cv: &mut Canvas, l: &Look, title: &str, surface: &str) {
 }
 
 fn spaces(cv: &mut Canvas, l: &Look) {
-    // The dock: nine tiles on a bar, the theme's indicator on each.
+    // The workspaces: nine tiles on a strip, the theme's indicator on each.
     let tile = 52.0;
     let gap = l.pad(8.0);
     let pad = l.pad(10.0);
