@@ -78,7 +78,7 @@ final class TopDragTests: XCTestCase {
         XCTAssertNil(drag(&d, to: 0, at: 0.5))
         XCTAssertNotNil(drag(&d, to: 0, at: 0.5 + TopDrag.dwell))
         d.rearm()
-        XCTAssertEqual(drag(&d, to: 0, at: 1), window)
+        XCTAssertEqual(drag(&d, to: 0, at: 0.5 + TopDrag.dwell + 0.1), window)
     }
 
     func testPassingThroughTheTopDoesNotOpen() {
