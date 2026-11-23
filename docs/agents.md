@@ -7,6 +7,7 @@ Behind it are the same tools Polycarp already has:
 | Tools | Scope | What they do |
 | --- | --- | --- |
 | `theme_*` | read to look, act to change | Everything `polycarp mcp` does |
+| `keys_list` | read | Every Polycarp keyboard shortcut, from the same table as [keys.md](keys.md) |
 | `files_*` | files | Everything `polycarp files mcp` does |
 | `app_status`, `app_items`, `app_settings`, `workspace_agent_status` | read | Ask the running app what it tracks and how it is set |
 | `app_setting_set`, `app_focus`, `workspace_agent_set`, `workspace_agent_move`, `workspace_switch`, `launcher_open` | act | Change a setting, bring a window forward, run the agent workspace, switch workspaces, open the launcher |
