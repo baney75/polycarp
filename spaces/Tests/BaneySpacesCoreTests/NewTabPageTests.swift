@@ -61,8 +61,8 @@ final class NewTabPageTests: XCTestCase {
         let ctx = try logic()
         XCTAssertEqual(act(ctx, "Gannon letter", cmd: true).kind, "search")
         XCTAssertEqual(act(ctx, "dbaney.com", cmd: true).kind, "open")
-        for file in ["newtab.html", "newtab.js", "logic.js", "manifest.json"] {
-            let text = try Repo.text("extension/newtab/\(file)").lowercased()
+        for file in ["newtab/newtab.html", "newtab/newtab.js", "newtab/logic.js", "manifest.json"] {
+            let text = try Repo.text("extension/\(file)").lowercased()
             for word in ["this hour", "is for", "purpose", "chips", "op: \"name\"", "op: \"go\"", "one " + "thing"] {
                 XCTAssertFalse(text.contains(word), "\(file) still says \(word)")
             }
