@@ -17,7 +17,7 @@ An assistant sees only the tools its scopes allow. App tools talk to the running
 
 | Route | How to reach it | Who uses it |
 | --- | --- | --- |
-| Local stdio | `polycarp agent serve --stdio` | Claude Code, Codex, Grok Bot on this Mac |
+| Local stdio | `polycarp agent serve --stdio` | Claude Code, Codex, Grok Bot and Local Studio on this Mac |
 | Local HTTP | `http://127.0.0.1:41772/mcp` | Any client on this Mac that speaks Streamable HTTP |
 | Tailnet | `http://<this-mac>.<tailnet>.ts.net:41772/mcp`, with `serve --tailnet` | Grok Bot and other clients on your own devices |
 | Your Cloudflare tunnel | `https://<your host>/mcp` | Web assistants (dev and nightly) |
@@ -54,6 +54,18 @@ The channel is the app's own (its Info.plist), or for a source install the one `
 - **grok.com**: Connectors > New Connector > Custom, with the address and OAuth.
 
 Web assistants run in their makers' clouds, so they need a public address: your Cloudflare tunnel or Tailscale Funnel. Tailscale Serve reaches only your own devices.
+
+## Local Studio
+
+Local Studio's own agent, Eukhe, can drive Polycarp on a model that runs on this Mac. Polycarp ships a Local Studio plugin in `plugins/polycarp`: a manifest, a skill written for small models (1.7B to 24B), a `/desk` command, and `bin/polycarp-mcp`, which finds the `polycarp` command and runs `polycarp agent serve --stdio`.
+
+1. Install it: `polycarp install --local-studio`. The plugin goes in `$LOCAL_STUDIO_DATA_DIR/plugins/polycarp`, or `~/.local-studio/plugins/polycarp`. Running it again replaces the folder with the same files.
+2. Grant it: the install runs `local-studio plugin grant polycarp mcp-server` when Local Studio's command is on your PATH. If it is not, the install prints that command for you to run. Local Studio then adds the server to `~/.eukhe/settings.json` as `plugin-polycarp`.
+3. Remove it: `polycarp install --local-studio --uninstall` revokes the grant and removes the folder.
+
+The local agent gets the stdio route, so it has every scope: it can list your windows and workspaces, bring a window forward, switch workspaces, open the launcher, read and set surfaces (the bar, the desktop paper), switch the theme and search your files. Its skill tells it to ask before it deletes or sends anything, but that is advice to the model, not a lock: a page title or file it reads could try to talk it into a change, so give a local agent only the tasks you would give any agent with these tools.
+
+To make a local model the default, set Eukhe's `defaultProvider` and `defaultModel` in `~/.eukhe/settings.json`, to the provider and model id of a local model as they appear in Eukhe's `models.json`. Every new Local Studio thread then starts on that model with Polycarp's tools. The launcher offers Eukhe as a terminal agent too ("eukhe"), when Local Studio is in `/Applications`.
 
 ## Scopes
 

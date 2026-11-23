@@ -11,6 +11,18 @@ final class TerminalAgentTests: XCTestCase {
         XCTAssertEqual(TerminalAgent.matches("cl", installed: both).map(\.command), ["claude"])
     }
 
+    func testEukheIsOfferedOnlyWhenFoundAndItsAppFolderIsSearched() {
+        let all: Set<String> = ["claude", "codex", "eukhe"]
+        XCTAssertEqual(TerminalAgent.matches("eukhe", installed: all).map(\.command), ["eukhe"])
+        XCTAssertEqual(TerminalAgent.matches("Eukhe", installed: all).map(\.name), ["Eukhe"])
+        XCTAssertEqual(TerminalAgent.matches("eu", installed: all).map(\.command), ["eukhe"])
+        XCTAssertEqual(TerminalAgent.matches("eukhe", installed: both), [], "not shown when Local Studio is absent")
+        XCTAssertTrue(TerminalAgent.folders.contains("/Applications/Local Studio Nightly.app/Contents/MacOS"))
+        XCTAssertTrue(TerminalAgent.folders.contains("/Applications/Local Studio.app/Contents/MacOS"))
+        XCTAssertNotNil(TerminalAgent.all[2].script(at: "/Applications/Local Studio Nightly.app/Contents/MacOS/eukhe"),
+                         "a path with spaces in the app name still runs")
+    }
+
     func testScatteredLettersAndOtherWordsDoNot() {
         XCTAssertEqual(TerminalAgent.matches("cdx", installed: both), [])
         XCTAssertEqual(TerminalAgent.matches("safari", installed: both), [])

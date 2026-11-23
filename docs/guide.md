@@ -58,6 +58,7 @@ polycarp doctor
 | `polycarp mcp` | Serves the theme commands to an agent |
 | `polycarp files <command>` | Searches, opens and sends your files across your own devices, over Tailscale only. See [Files](https://github.com/baney75/polycarp/blob/main/docs/files.md) |
 | `polycarp agent <command>` | One MCP gateway for Grok Bot, Claude Code, Codex and web assistants, local, over your tailnet or through a tunnel. See [Agents](https://github.com/baney75/polycarp/blob/main/docs/agents.md) |
+| `polycarp install --local-studio [--uninstall]` | Adds Polycarp's plugin to Local Studio and grants its tools, so a local model can drive Polycarp. See [Agents](https://github.com/baney75/polycarp/blob/main/docs/agents.md#local-studio) |
 | `polycarp doctor` | Shows which apps were found, and whether their builds match |
 | `polycarp version [--json] [--check]` | Lists every part with its version and commit, and says whether they all match |
 | `polycarp update [--check] [--dry-run] [--yes]` | Brings every part on this device to the newest commit together. See [Updating](https://github.com/baney75/polycarp#updating) |

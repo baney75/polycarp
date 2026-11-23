@@ -1,0 +1,16 @@
+# A Local Studio plugin: Local Studio's own agent (Eukhe, often on a local model) drives Polycarp through
+# `polycarp agent serve --stdio`. Install with `polycarp install --local-studio`; the tools start after
+# `local-studio plugin grant polycarp mcp-server`. Docs: docs/agents.md, "Local Studio".
+id = "polycarp"
+version = "0.4.0"
+description = "Drive Polycarp: workspaces, windows, surfaces, paper, theme, search, launcher."
+skills = "skills"
+capabilities = ["mcp-server"]
+
+[mcp]
+command = "bin/polycarp-mcp"
+
+[[commands]]
+name = "desk"
+description = "Work with your Polycarp desk: workspaces, windows, the bar, the theme and files"
+skill = "polycarp"

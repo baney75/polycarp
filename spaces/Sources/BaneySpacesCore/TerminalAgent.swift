@@ -1,18 +1,22 @@
 import Foundation
 
 /// A coding agent that runs in a terminal, offered by the launcher when its name is typed:
-/// "claude" opens Claude Code in your terminal, "codex" opens Codex. Only agents found on this
-/// Mac are offered.
+/// "claude" opens Claude Code in your terminal, "codex" opens Codex, "eukhe" opens Local Studio's own
+/// agent, which runs a local model. Only agents found on this Mac are offered.
 public struct TerminalAgent: Equatable, Sendable {
     public let name: String
     /// The program to run. Fixed here, never typed, so nothing from the search reaches a shell.
     public let command: String
 
-    public static let all = [TerminalAgent(name: "Claude Code", command: "claude"), TerminalAgent(name: "Codex", command: "codex")]
+    public static let all = [TerminalAgent(name: "Claude Code", command: "claude"), TerminalAgent(name: "Codex", command: "codex"),
+                             TerminalAgent(name: "Eukhe", command: "eukhe")]
 
-    /// Where the installers put them, for a check that doesn't need a shell.
+    /// Where the installers put them, for a check that doesn't need a shell. Eukhe ships inside
+    /// Local Studio's app and is not on PATH, so the app's own folder is listed too.
     public static let folders = ["~/.local/bin", "~/.claude/local", "/opt/homebrew/bin", "/usr/local/bin",
-                                 "~/.npm-global/bin", "~/.bun/bin", "~/.volta/bin"]
+                                 "~/.npm-global/bin", "~/.bun/bin", "~/.volta/bin",
+                                 "/Applications/Local Studio Nightly.app/Contents/MacOS",
+                                 "/Applications/Local Studio.app/Contents/MacOS"]
 
     /// The installed agents that answer `query`: by the start of a word in the name or the
     /// command ("cl", "code", "codex"), not by letters scattered through it.
