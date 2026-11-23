@@ -340,11 +340,164 @@ mod tests {
     fn the_server_script_hands_off_to_the_agent_gateway_and_says_when_polycarp_is_missing() {
         let script = FILES[1].1;
         assert!(script.starts_with("#!/bin/sh\n"));
-        assert!(script.contains("command -v polycarp"));
-        assert!(script.contains("\"$HOME/.local/bin/polycarp\""));
-        assert!(script.contains("/Applications/Polycarp.app/Contents/Resources/bin/polycarp\""));
+        // The search order: the link the last install placed, the app in /Applications, the app in ~/Applications,
+        // then PATH.
+        let order = [
+            "\"$HOME/.local/bin/polycarp\"",
+            "\"/Applications/Polycarp.app/Contents/Resources/bin/polycarp\"",
+            "\"$HOME/Applications/Polycarp.app/Contents/Resources/bin/polycarp\"",
+            "\"$(command -v polycarp 2>/dev/null)\"",
+        ];
+        let at: Vec<usize> = order
+            .iter()
+            .map(|spot| script.find(spot).unwrap_or_else(|| panic!("no {spot}")))
+            .collect();
+        assert!(at.windows(2).all(|w| w[0] < w[1]), "out of order: {at:?}");
+        assert!(script.contains("case \"$p\" in /*) ;; *) continue ;; esac"));
         assert!(script.contains("exec \"$p\" agent serve --stdio"));
         assert!(script.contains("exit 127"));
+    }
+
+    /// The SKILL.md table's `tool` and `{arguments}` cells, with the line each came from.
+    fn skill_table(skill: &str) -> (usize, Vec<(String, String, String)>) {
+        let mut lines = skill.lines();
+        let count = lines
+            .by_ref()
+            .find_map(|l| {
+                l.strip_prefix("## The ")?
+                    .strip_suffix(" calls")?
+                    .parse()
+                    .ok()
+            })
+            .expect("SKILL.md has a \"## The N calls\" heading");
+        let ticked = |cell: &str| {
+            cell.trim()
+                .strip_prefix('`')
+                .and_then(|c| c.strip_suffix('`'))
+                .map(str::to_string)
+        };
+        let rows = lines
+            .skip_while(|l| !l.starts_with('|'))
+            .take_while(|l| l.starts_with('|'))
+            .filter(|l| !l.starts_with("| Goal") && !l.starts_with("| ---"))
+            .map(|l| {
+                let cells: Vec<&str> = l.split('|').collect();
+                assert_eq!(cells.len(), 5, "a row is | goal | tool | arguments |: {l}");
+                let tool = ticked(cells[2]).unwrap_or_else(|| panic!("no `tool` in {l}"));
+                let args = ticked(cells[3]).unwrap_or_else(|| panic!("no `{{...}}` in {l}"));
+                (l.to_string(), tool, args)
+            })
+            .collect();
+        (count, rows)
+    }
+
+    /// Whether `args` is a call the tool's input schema takes: every key a property, every required key there,
+    /// each value of the property's type and in its enum.
+    fn check_call(schema: &serde_json::Value, args: &str) -> Result<(), String> {
+        use serde_json::Value;
+        let args: Value = serde_json::from_str(args).map_err(|e| format!("not JSON: {e}"))?;
+        let args = args.as_object().ok_or("not an object")?;
+        let props = schema["properties"]
+            .as_object()
+            .ok_or("the schema has no properties")?;
+        for (k, v) in args {
+            let Some(prop) = props.get(k) else {
+                let known: Vec<&String> = props.keys().collect();
+                return Err(format!("{k:?} is not a property; it takes {known:?}"));
+            };
+            let fits = |t: &str| match t {
+                "string" => v.is_string(),
+                "integer" => v.is_i64() || v.is_u64(),
+                "number" => v.is_number(),
+                "boolean" => v.is_boolean(),
+                "object" => v.is_object(),
+                "array" => v.is_array(),
+                _ => true,
+            };
+            let typed = match &prop["type"] {
+                Value::String(t) => fits(t),
+                Value::Array(ts) => ts.iter().filter_map(Value::as_str).any(fits),
+                _ => true,
+            };
+            if !typed {
+                return Err(format!("{k} = {v} is not of type {}", prop["type"]));
+            }
+            if let Some(choices) = prop["enum"].as_array() {
+                if !choices.contains(v) {
+                    return Err(format!("{k} = {v} is not one of {choices:?}"));
+                }
+            }
+        }
+        for r in schema["required"].as_array().into_iter().flatten() {
+            let r = r.as_str().unwrap_or_default();
+            if !args.contains_key(r) {
+                return Err(format!("{r:?} is required"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn every_call_in_the_skill_is_one_the_gateway_takes() {
+        use crate::agent::{app::tests::Fake, gateway::Gateway};
+        let gw = Gateway::new(std::sync::Arc::new(Fake::new(true)));
+        let catalog = gw.catalog();
+        let schema = |name: &str| catalog.iter().find(|t| t.name == name).map(|t| &t.schema);
+        let skill = FILES[2].1;
+        let mut wrong = Vec::new();
+
+        let (count, rows) = skill_table(skill);
+        assert!(rows.len() >= 10, "the table was not found: {rows:?}");
+        if count != rows.len() {
+            wrong.push(format!(
+                "\"The {count} calls\" heads a table of {} rows",
+                rows.len()
+            ));
+        }
+        for (line, tool, args) in &rows {
+            match schema(tool) {
+                None => wrong.push(format!("{line}\n  the gateway has no tool {tool}")),
+                Some(s) => {
+                    if let Err(e) = check_call(s, args) {
+                        wrong.push(format!("{line}\n  {tool}: {e}"));
+                    }
+                }
+            }
+        }
+
+        // The surfaces_set examples below the table are calls too.
+        let set = schema("surfaces_set").expect("the gateway has surfaces_set");
+        let mut examples = 0;
+        for line in skill
+            .lines()
+            .filter(|l| l.starts_with("- ") && l.contains("`{"))
+        {
+            let args = line.split('`').find(|c| c.starts_with('{')).unwrap();
+            examples += 1;
+            if let Err(e) = check_call(set, args) {
+                wrong.push(format!("{line}\n  surfaces_set: {e}"));
+            }
+        }
+        assert!(examples >= 2, "the surfaces_set examples were not found");
+
+        // Every tool the steps and rules name, such as `theme_current` or `files_send`, is one the gateway has.
+        for name in skill.split('`').skip(1).step_by(2) {
+            let tool_like = name.contains('_')
+                && name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                && !name.starts_with('_')
+                && !name.ends_with('_');
+            if tool_like && schema(name).is_none() {
+                wrong.push(format!(
+                    "SKILL.md names `{name}`, which the gateway does not have"
+                ));
+            }
+        }
+
+        assert!(
+            wrong.is_empty(),
+            "SKILL.md calls the gateway would refuse:\n{}",
+            wrong.join("\n")
+        );
     }
 
     #[test]
