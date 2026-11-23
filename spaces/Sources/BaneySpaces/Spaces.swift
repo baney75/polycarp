@@ -54,6 +54,8 @@ final class Spaces {
     private var appliedSerial = 0
     /// The scan running on `scanQueue` now, if any.
     private var scanning: ScanStart?
+    /// The apps outside the regular list that drew a window on screen at the last refresh (`ScanApps.listStale`).
+    private var outsiders = Set<pid_t>()
     /// Accessibility scans run here, never on the main thread (2026-11-21, `ScanPlan`).
     private static let scanQueue = DispatchQueue(label: "com.baney.polycarp.scan", qos: .userInitiated)
     /// Short Accessibility questions (which window has focus, has a new window appeared), asked off the main thread.
@@ -210,8 +212,19 @@ final class Spaces {
     }
 
     private func refresh(full: Bool, asking: Set<pid_t>, then body: (() -> Void)?) {
-        let pids = RunningApps.regular
-        let snap = Windows.snapshot(apps: pids)
+        var pids = RunningApps.regular
+        var snap = Windows.snapshot(apps: pids)
+        // An app outside the cached list draws a window it didn't before: it may have turned regular with no launch or
+        // activation to say so (Silas, opened from the menu bar). The list is read again before anything is skipped.
+        if ScanApps.listStale(outsiders: snap.outsiders, before: outsiders) {
+            RunningApps.invalidate()
+            let again = RunningApps.regular
+            if again != pids {
+                pids = again
+                snap = Windows.snapshot(apps: pids)
+            }
+        }
+        outsiders = snap.outsiders
         clock.mark(.snap)
         let offKnown = offscreenKnown(snap.offscreen)
         let stray = ScanCheck.unplaced(onScreen: snap.onScreen, placed: Set(model.home.keys),
@@ -245,7 +258,7 @@ final class Spaces {
     /// the regular apps, and the apps to ask.
     private struct ScanStart {
         let serial: Int
-        let snap: (alive: Set<WindowID>, appWindows: Set<WindowID>, owners: Set<pid_t>, offscreen: [WindowID: pid_t], onScreen: [WindowID: pid_t])
+        let snap: Windows.Snapshot
         let pids: Set<pid_t>
         let owners: Set<pid_t>
         let ask: Set<pid_t>
@@ -256,6 +269,7 @@ final class Spaces {
         let pidsNow = RunningApps.regular
         Windows.keepBench(pidsNow)
         let snap = Windows.snapshot(apps: pidsNow)
+        outsiders = snap.outsiders
         // Only apps that own a window are asked. A running app with no windows is often frozen by
         // macOS and never answers, which would cost a full timeout on every scan.
         let owners = pidsNow.intersection(snap.owners)
