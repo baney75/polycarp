@@ -12,8 +12,10 @@ public struct TopDrag: Sendable {
     /// itself, so only the pointer reaches the very edge.
     public static let band: CGFloat = 3
     /// How long the pointer rests there before the overview opens, so a drag that only passes
-    /// the top on its way to another screen doesn't open it.
-    public static let dwell: TimeInterval = 0.25
+    /// the top on its way to another screen doesn't open it. Also longer than the pause before a
+    /// let-go that asks macOS to fill the screen: at 0.25 s the overview flashed open and shut over
+    /// every fill that took a moment (trace 2026-11-20 23:19:06, 11-21 22:02:36, 11-22 12:29:39).
+    public static let dwell: TimeInterval = 0.6
 
     /// How far below a window's top edge a press can be and still be on its title bar or
     /// toolbar, the parts a window is dragged by. The first few points are the edge that
@@ -21,15 +23,27 @@ public struct TopDrag: Sendable {
     public static let titleBand: ClosedRange<CGFloat> = 5...52
 
     /// The window under the press, its frame before the drag moved it, and where the press was.
+    /// `startedFull`: it filled its screen when pressed (`startsFull`), so the drag is macOS's
+    /// un-fill and re-fill, never the overview's.
     public struct Grab: Equatable, Sendable {
         public let window: WindowID
         public let frame: CGRect
         public let press: CGPoint
-        public init(window: WindowID, frame: CGRect, press: CGPoint? = nil) {
+        public let startedFull: Bool
+        public init(window: WindowID, frame: CGRect, press: CGPoint? = nil, startedFull: Bool = false) {
             self.window = window
             self.frame = frame
             self.press = press ?? CGPoint(x: frame.midX, y: frame.minY + 12)
+            self.startedFull = startedFull
         }
+    }
+
+    /// Whether a window pressed at `frame` is already full size: macOS filled it (its frame is a
+    /// display's visible area, within `FullScreenFill.isFilling`'s 3 pt) or Polycarp did
+    /// (`filledHere`: a fill record whose landed size it still has, which can fall short of the
+    /// screen). A window merely as large as the screen but hanging off it (a torn-off tab) is not.
+    public static func startsFull(_ frame: CGRect, visible: [CGRect], filledHere: Bool) -> Bool {
+        filledHere || visible.contains { FullScreenFill.isFilling(frame, $0) }
     }
 
     public private(set) var grab: Grab?
@@ -89,6 +103,10 @@ public struct TopDrag: Sendable {
         let since = topSince ?? now
         topSince = since
         guard now - since >= TopDrag.dwell else { return nil }
+        // A window that filled the screen when pressed: dragged back to the top it is macOS's fill
+        // again, and the overview flashing open over it was the glitch (Donovan, 2026-11-22). The
+        // rest is still timed, so trace.log shows the drag reached the top.
+        guard !grab.startedFull else { return nil }
         fired = true
         return grab
     }

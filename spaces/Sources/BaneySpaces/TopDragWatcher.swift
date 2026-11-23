@@ -129,6 +129,8 @@ final class TopDragWatcher {
     var onPress: (WindowID?) -> Void = { _ in }
     /// The pointer moved while the overview is open for a drag.
     var onMove: (CGPoint) -> Void = { _ in }
+    /// Whether the pressed window already fills its screen (`TopDrag.startsFull`): its drag never opens the overview.
+    var startsFull: (WindowID, CGRect) -> Bool = { _, _ in false }
     /// A window's title bar started moving, once per drag: a filled window shrinks here.
     var onDragStart: (WindowID, CGPoint) -> Void = { _, _ in }
     /// The button came up with the overview open for `grab`, at `at`. Nil when the drag ended
@@ -216,7 +218,8 @@ final class TopDragWatcher {
         let found = TopDragWatcher.window(at: p)
         onPress(found?.grab.window)
         guard let found else { return }
-        state.press(found.grab)
+        let g = found.grab
+        state.press(TopDrag.Grab(window: g.window, frame: g.frame, press: g.press, startedFull: startsFull(g.window, g.frame)))
         owner = found.pid
         let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(t, forMode: .common)
@@ -239,7 +242,9 @@ final class TopDragWatcher {
         let top = state.tick(cursor: p, frame: frame, screens: TopDragWatcher.screens(), now: now)
         if !wasDragging, state.moving { onDragStart(grab.window, p) }
         // The rest at the top and the decision it leads to, for top-drag-probe to read.
-        if !resting, state.topSince != nil { Trace.log("topDrag dwell start window=\(grab.window)") }
+        if !resting, state.topSince != nil {
+            Trace.log("topDrag dwell start window=\(grab.window)" + (grab.startedFull ? " (started full: no overview)" : ""))
+        }
         if let g = top, topEnabled {
             // A window against the top that didn't move: a tab torn off its title bar makes a
             // new window of the same app in front of it, and that drag isn't this one.

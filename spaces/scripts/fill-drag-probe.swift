@@ -532,7 +532,7 @@ func sideEdgePause(_ id: CGWindowID, _ name: String) {
     guard let f = frame(id) else { return expect(false, "\(name): precondition, the window has a frame") }
     let before = traceEnd()
     let grab = CGPoint(x: f.maxX - 60, y: titleY(f))
-    let d = drag(id, from: grab, path: [CGPoint(x: grab.x, y: 0), CGPoint(x: 0, y: visible.midY)], speed: 500, hold: 0.7, after: 3)
+    let d = drag(id, from: grab, path: [CGPoint(x: grab.x, y: 0), CGPoint(x: 0, y: visible.midY)], speed: 500, hold: 0.9, after: 3)
     writeWatch(d.watched, name)
     let letGo = d.samples.last(where: { $0.down })?.frame
     expect(letGo.map { $0.minX < -50 } == true, "\(name): precondition, let go with part of it past the left edge (\(String(describing: letGo)))")
@@ -697,7 +697,7 @@ func cases1to4() {
         let before = traceEnd()
         // Held near its right end, so letting go at x 160 leaves most of the window off the left edge.
         let grab = CGPoint(x: f.maxX - 60, y: titleY(f))
-        let samples = drag(id3, from: grab, path: [CGPoint(x: grab.x, y: 0), CGPoint(x: 160, y: 520)], speed: 500, hold: 0.7).samples
+        let samples = drag(id3, from: grab, path: [CGPoint(x: grab.x, y: 0), CGPoint(x: 160, y: 520)], speed: 500, hold: 0.9).samples
         usleep(800_000)
         let trace = traceSince(before)
         let none = missing(trace, Array(overviewPutBack(id3).prefix(2))).isEmpty
