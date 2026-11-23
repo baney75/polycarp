@@ -8,7 +8,13 @@ import BaneySpacesCore
 /// lights and gets the drop. The items are read from the drag's own pasteboard, which a destination may read during the
 /// drag, never by the drag pasteboard's name.
 final class DockDropDestination {
-    static let types: [NSPasteboard.PasteboardType] = [.fileURL, .URL]
+    /// The types the panel registers: every kind of drag the dock follows (`DockDragTypes.followed`), plus AppKit's
+    /// file-promise types, so a text or image drag springs a tile too. Only files and links are taken (`update`).
+    static let types: [NSPasteboard.PasteboardType] = {
+        var seen = Set<String>()
+        let raw = DockDragTypes.followed + NSFilePromiseReceiver.readableDraggedTypes
+        return raw.filter { seen.insert($0).inserted }.map { NSPasteboard.PasteboardType($0) }
+    }()
 
     private let model: DockModel
     /// The kinds of tile that take a drop. App icons are registered by the dock; another kind registers here.

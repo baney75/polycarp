@@ -177,3 +177,16 @@ public struct DockDropRelease {
     /// A button is down, or the drag dropped, ended or entered again: the wait starts over.
     public mutating func reset() { upSince = nil }
 }
+
+/// The drag types the dock's panel listens for. AppKit tells a view about a drag only when the drag carries a type the
+/// view registered, so the dock listens for more than it takes: text, images and file promises (Mail attachments,
+/// Photos) still bring the dock up, light the tile under them and spring it forward, though only files and links drop.
+public enum DockDragTypes {
+    /// What a tile can take: files and links.
+    public static let dropped = ["public.file-url", "public.url"]
+    /// What the dock follows for coming up and spring-loading. The app adds AppKit's own file-promise types.
+    public static let followed = dropped + [
+        "public.utf8-plain-text", "public.rtf", "public.html", "public.tiff", "public.png", "public.jpeg",
+        "com.adobe.pdf", "com.apple.pasteboard.promised-file-url", "com.apple.NSFilePromiseItemMetaData",
+    ]
+}

@@ -211,3 +211,19 @@ final class DockDropReleaseTests: XCTestCase {
         XCTAssertFalse(r.buttonsUp(now: 1 + DockDropRelease.grace + 1), "the wait counts from the latest release")
     }
 }
+
+/// Review of #613, round 2 first-F1 (high): the panel registered only file and link types, so AppKit never told it
+/// about a text, image or file-promise drag, and those stopped springing tiles forward as they did before.
+final class DockDragTypesTests: XCTestCase {
+    func testTheDockFollowsTextImagesAndFilePromisesNotOnlyFiles() {
+        let followed = Set(DockDragTypes.followed)
+        XCTAssertTrue(Set(DockDragTypes.dropped).isSubset(of: followed))
+        for t in ["public.utf8-plain-text", "public.tiff", "public.png", "com.apple.NSFilePromiseItemMetaData"] {
+            XCTAssertTrue(followed.contains(t), "\(t) must spring a tile")
+        }
+    }
+
+    func testOnlyFilesAndLinksDrop() {
+        XCTAssertEqual(DockDragTypes.dropped, ["public.file-url", "public.url"])
+    }
+}
