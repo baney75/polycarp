@@ -124,6 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self, self.started else { return }
             self.dock.carryMoved(grab)
         }
+        // A file dragged out of a window is not that window carried (`ContentDrag`).
+        t.contentDragSeen = { [weak self] in self?.dock.outsideDragSeen }
         t.onCarryEnd = { [weak self] grab, p in
             guard let self, let n = self.dock.endCarry(grab, at: p), p != nil else { return false }
             self.dropCarried(grab, on: n)

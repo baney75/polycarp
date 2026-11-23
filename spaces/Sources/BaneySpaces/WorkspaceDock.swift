@@ -154,6 +154,11 @@ final class WorkspaceDock {
     private var outsideDrag = OutsideDrag()
     /// Resting that drag on an icon or tile brings its window or workspace forward.
     private var spring = SpringLoad()
+    /// The panel as a drag destination: what a file drag over it lights, and its drop.
+    private lazy var drop = DockDropDestination(model: model)
+    /// Whether a drag of content from another app is under way, as the dock sees it; nil while the dock isn't watching.
+    /// The window-drag watcher asks, so a file drag is never taken for a window carried to the top or the dock.
+    var outsideDragSeen: Bool? { isRunning ? outsideDrag.active || drop.hovering : nil }
     /// How long other apps' menu-level windows have been up: an old one isn't a menu.
     private var menuWindows = MenuWindows()
     private var menusSeenAt: TimeInterval = 0
@@ -223,8 +228,17 @@ final class WorkspaceDock {
         model.onSetEdge = { [weak self] e in self?.onSetEdge(e) }
         model.onReplayOrder = { [weak self] in self?.reload() }
         model.onSetAgentStatus = { [weak self] on in self?.onSetAgentStatus(on) }
-        model.onOpenFiles = { [weak self] urls, pid, n in self?.open(urls, with: pid, on: n) }
-        model.openable = { [weak self] pid in self?.openable(by: pid) ?? [] }
+        // Files and links dropped on an app's icon open in that app (`AppTileDrop`). Another kind of tile registers its
+        // own `DockDropKind` the same way.
+        drop.targets.register(AppTileDrop.kind(
+            app: { [weak self] n, id in self?.dropApp(workspace: n, id: id) },
+            openers: { [weak self] urls in self?.openers(of: urls) ?? [] },
+            open: { [weak self] urls, app, n in self?.open(urls, with: app, on: n) }))
+        drop.point = { [weak self] info in self?.dropPoint(info) }
+        drop.onDragDone = { [weak self] in
+            self?.dropApps = [:]
+            self?.openersCache = nil
+        }
         // The workspace on the dock's own display, which a tile press changes.
         model.liveCurrent = { [weak self] in self.map { $0.spaces.workspace(onScreen: $0.shownOn) } ?? 0 }
         // The Background tile follows apps coming and going and hiding; the model's own changes reload through `Spaces.onChange`.
@@ -353,8 +367,11 @@ final class WorkspaceDock {
     private func tick() {
         guard isRunning else { return }
         sweepStrays(now: ProcessInfo.processInfo.systemUptime)
-        // A pinned dock takes drags from other apps too, though it doesn't come and go.
-        let carrying = outsideDrag.update(buttonsDown: NSEvent.pressedMouseButtons != 0) { NSPasteboard(name: .drag).changeCount }
+        // A pinned dock takes drags from other apps too, though it doesn't come and go. One over the panel counts even if
+        // the pasteboard watch missed its start; with the buttons up, none is over it, whatever AppKit last said.
+        if NSEvent.pressedMouseButtons == 0 { drop.buttonsUp() }
+        let seen = outsideDrag.update(buttonsDown: NSEvent.pressedMouseButtons != 0) { NSPasteboard(name: .drag).changeCount }
+        let carrying = seen || drop.hovering
         // A drag that ended without leaving the dock or dropping (Escape) is over too.
         if !carrying, model.fileDrag != nil { model.fileDrag = nil }
         // A drag whose windows closed, or whose "+N" row went away (taking its gesture, and the
@@ -416,6 +433,8 @@ final class WorkspaceDock {
                 input.inKeepZone = edge.keeps(mouse, bar: bar, panel: p.frame, side: side, screen: screenFrame) || unmoved
                 nearBar = edge.keeps(mouse, bar: bar, panel: p.frame, side: nil, screen: screenFrame)
             }
+            // A file drag over the panel (its label row too) keeps the dock up while it hovers.
+            if drop.hovering { input.inKeepZone = true }
         } else if let n = edge.screen(at: mouse, among: screens.map(\.frame)) {
             let screen = screens[n]
             input.edgeScreen = n
@@ -670,18 +689,29 @@ final class WorkspaceDock {
     }
 
     /// Files or links dropped on an app's icon open in that app on that icon's workspace: you go
-    /// there first, so the window they open in is the one in front of you.
-    private func open(_ urls: [URL], with pid: pid_t, on n: Int) {
-        guard let app = NSRunningApplication(processIdentifier: pid)?.bundleURL else { return }
-        spaces.useDisplay(of: shownOn)
+    /// there first, so the window they open in is the one in front of you. An app that quit since the
+    /// drag began is launched with them.
+    private func open(_ urls: [URL], with app: AppTileDrop.App, on n: Int) {
+        guard let bundle = app.bundleURL else { return }
+        let name = bundle.deletingPathExtension().lastPathComponent
         let openThem = {
-            NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-                if let error { Trace.log("dock drop: \(app.lastPathComponent) didn't open \(urls.count) item(s): \(error.localizedDescription)") }
+            NSWorkspace.shared.open(urls, withApplicationAt: bundle, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                DispatchQueue.main.async {
+                    if let error { return Trace.log("dock drop: \(name) didn't open \(urls.count) item(s): \(error.localizedDescription)") }
+                    Trace.log("dock drop: \(name) opened \(urls.count) item(s)")
+                }
             }
         }
+        // The same process, still running: not a pid reused by another app.
+        guard let live = NSRunningApplication(processIdentifier: app.pid), !live.isTerminated,
+              live.bundleIdentifier == app.bundleID else {
+            Trace.log("dock drop: \(name) isn't running; launching it with \(urls.count) item(s)")
+            return openThem()
+        }
+        spaces.useDisplay(of: shownOn)
         // Here too: the app's window on this workspace comes forward, so a browser puts the
         // link in that window, not in one parked on another workspace.
-        spaces.focusApp(pid, on: n, announce: false)
+        spaces.focusApp(app.pid, on: n, announce: false)
         // A switch runs over a few turns of the run loop (one a spring started may still be, and
         // a window leaving full screen takes its animation); open once it's done. The cap is only
         // for a switch that never ends, and says so. In the common modes, so an open menu
@@ -698,23 +728,35 @@ final class WorkspaceDock {
         RunLoop.main.add(t, forMode: .common)
     }
 
-    /// The files and links being dragged that this app can open, or none unless it can open them
-    /// all. Asked on every move over an icon, so it's kept per drag and app.
-    private func openable(by pid: pid_t) -> [URL] {
-        let board = NSPasteboard(name: .drag)
-        if openableCache?.drag != board.changeCount {
-            let urls = board.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
-            let apps = DockOpen.apps(openingAll: urls, kind: { url in
-                url.isFileURL ? ((try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.identifier ?? DockOpen.kind(url)) : DockOpen.kind(url)
-            }, handlers: { NSWorkspace.shared.urlsForApplications(toOpen: $0) }, identify: { Bundle(url: $0)?.bundleIdentifier })
-            openableCache = (board.changeCount, urls, apps)
-        }
-        guard let cache = openableCache, let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
-              cache.apps.contains(id) else { return [] }
-        return cache.urls
+    /// The app behind icon `id` on tile `n`, read once per drag: the tiles hold still during a drag, so an app that
+    /// quits after the pointer first reached its icon keeps its bundle, and the drop launches it.
+    private func dropApp(workspace n: Int, id: String) -> AppTileDrop.App? {
+        let key = "\(n):\(id)"
+        if let known = dropApps[key] { return known }
+        guard let pid = model.tiles.first(where: { $0.id == n })?.apps.first(where: { $0.id == id })?.pid,
+              let running = NSRunningApplication(processIdentifier: pid) else { return nil }
+        let app = AppTileDrop.App(bundleID: running.bundleIdentifier, bundleURL: running.bundleURL, pid: pid)
+        dropApps[key] = app
+        return app
     }
-    /// One drag's files and links, and the bundle identifiers of the apps that can open them all.
-    private var openableCache: (drag: Int, urls: [URL], apps: Set<String>)?
+    private var dropApps: [String: AppTileDrop.App] = [:]
+
+    /// The bundle identifiers of the apps that can open every one of `urls`, asked of LaunchServices once per drag.
+    private func openers(of urls: [URL]) -> Set<String> {
+        if let cache = openersCache, cache.urls == urls { return cache.apps }
+        let apps = DockOpen.apps(openingAll: urls, kind: { url in
+            url.isFileURL ? ((try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.identifier ?? DockOpen.kind(url)) : DockOpen.kind(url)
+        }, handlers: { NSWorkspace.shared.urlsForApplications(toOpen: $0) }, identify: { Bundle(url: $0)?.bundleIdentifier })
+        openersCache = (urls, apps)
+        return apps
+    }
+    private var openersCache: (urls: [URL], apps: Set<String>)?
+
+    /// A drag's pointer in the dock's own space, where the tiles report their frames.
+    private func dropPoint(_ info: NSDraggingInfo) -> CGPoint? {
+        guard let p = panel else { return nil }
+        return DockCarry.point(p.convertPoint(toScreen: info.draggingLocation), panel: p.frame, origin: model.origin)
+    }
 
     /// `baneyspaces://dock/more` and `dock/lessmore`, for checks: the first tile's "+N" list, open or closed.
     func openMoreForCheck() -> Bool {
@@ -1098,11 +1140,11 @@ final class WorkspaceDock {
     }
 
     private func makePanel() -> DockPanel {
-        WorkspaceDock.makePanel(model: model) { [weak self] in self?.scheduleResize() }
+        WorkspaceDock.makePanel(model: model, drop: drop) { [weak self] in self?.scheduleResize() }
     }
 
     /// The dock's panel and its SwiftUI view, as the dock and its bench (`DockOpenTiming`) both build it.
-    static func makePanel(model: DockModel, onSizeChange: @escaping () -> Void) -> DockPanel {
+    static func makePanel(model: DockModel, drop: DockDropDestination? = nil, onSizeChange: @escaping () -> Void) -> DockPanel {
         let p = DockPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         p.level = .statusBar
         p.isOpaque = false
@@ -1123,6 +1165,8 @@ final class WorkspaceDock {
         // (two crashes, 2026-10-14). SwiftUI now only reports its size, and the dock follows it.
         host.sizingOptions = [.intrinsicContentSize]
         host.onSizeChange = onSizeChange
+        // Files and links dragged from other apps (`DockDropDestination`).
+        host.drop = drop
         p.contentView = host
         return p
     }
@@ -1152,6 +1196,25 @@ private final class FirstClickHostingView<Content: View>: NSHostingView<Content>
     /// SwiftUI's size for the dock changed.
     var onSizeChange: () -> Void = {}
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// The dock's own panel takes files and links dragged from other apps; the list's panel doesn't.
+    var drop: DockDropDestination? {
+        didSet {
+            if drop != nil { registerForDraggedTypes(DockDropDestination.types) } else { unregisterDraggedTypes() }
+        }
+    }
+
+    /// SwiftUI may clear the hosting view's drag types; the dock's stay while it has a drop destination.
+    override func unregisterDraggedTypes() {
+        super.unregisterDraggedTypes()
+        if drop != nil { super.registerForDraggedTypes(DockDropDestination.types) }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { drop?.entered(sender) ?? [] }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { drop?.updated(sender) ?? [] }
+    override func draggingExited(_ sender: NSDraggingInfo?) { drop?.exited() }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool { drop?.perform(sender) ?? false }
+    override func draggingEnded(_ sender: NSDraggingInfo) { drop?.ended() }
     override func invalidateIntrinsicContentSize() {
         super.invalidateIntrinsicContentSize()
         onSizeChange()
@@ -1212,6 +1275,8 @@ final class DockModel: ObservableObject {
     struct FileDrag: Equatable {
         var target: DockSpringTarget?
         var canOpen: Bool
+        /// The tile that takes the drop, lit for it (`DockDropTargets`): an app icon's key, or another kind's.
+        var dropKey: String? = nil
     }
     /// What the pointer rests on: a whole tile, one app in a tile, or a button.
     enum Hover: Equatable {
@@ -1339,8 +1404,9 @@ final class DockModel: ObservableObject {
             // callback that ended it returns, so a window scan never holds up the drop.
             if fileDrag == nil { DispatchQueue.main.async { [weak self] in self?.onDragDone() } }
             // During a drag the pointer's hover isn't reported; the drag's target lights up instead.
+            // An app's icon lights only when its app can open what is dragged, as on the macOS Dock.
             switch fileDrag?.target {
-            case .app(let n, let id): hover = .app(n, id)
+            case .app(let n, let id): hover = fileDrag?.canOpen == true ? .app(n, id) : nil
             case .tile(let n): hover = .tile(n)
             case nil: if oldValue?.target != nil { hover = nil }
             }
@@ -1376,15 +1442,13 @@ final class DockModel: ObservableObject {
     var cancelled = DragCancel()
     /// When the window list was last re-read for a drag in flight.
     var lastFreshRead: TimeInterval?
-    /// Files or links dropped on an app's icon: that app opens them on the icon's workspace.
-    var onOpenFiles: ([URL], pid_t, Int) -> Void = { _, _, _ in }
-    /// What of the drag an app can open: everything, or nothing.
-    var openable: (pid_t) -> [URL] = { _ in [] }
     /// The workspace you're on now. During a drag the tiles hold still, so theirs can be old.
     var liveCurrent: () -> Int = { 0 }
     /// The icon or tile the drag was last over, as lit and labeled. The drop goes there, even
     /// if the tiles moved after the button came up.
     var heldTarget: DockSpringTarget?
+    /// The key of the tile lit for the drop when the button came up (`DockDropDestination`).
+    var heldDrop: String?
     var onShowOverview: () -> Void = {}
     var onShowLauncher: () -> Void = {}
     var onTurnOff: () -> Void = {}
@@ -1626,6 +1690,7 @@ final class DockModel: ObservableObject {
         cancelled.released()
         fileDrag = nil
         heldTarget = nil
+        heldDrop = nil
         shown = false
         dwell?.cancel()
         hover = nil
@@ -1830,9 +1895,7 @@ struct DockView: View {
             Color.clear.preference(key: AppFrames.self, value: [DockView.originKey: g.frame(in: .global)])
         })
         .coordinateSpace(name: "dock")
-        // Files, links and images dragged from another app. Its location is in the stack's own
-        // space, the one named "dock" that the frames are reported in.
-        .onDrop(of: [.item], delegate: OutsideDrop(model: model))
+        // Files and links dragged from another app land on the panel's hosting view (`DockDropDestination`).
         .onPreferenceChange(AppFrames.self) { f in
             frames = f
             model.frames = f
@@ -1978,7 +2041,7 @@ struct DockView: View {
             switch file.target {
             case .app(let n, let id):
                 guard let app = model.tiles.first(where: { $0.id == n })?.apps.first(where: { $0.id == id }) else { return nil }
-                return file.canOpen ? "Hold to bring up \(app.name), or drop to open it there" : "Hold to bring up \(app.name)"
+                return file.canOpen ? "Hold to bring up \(app.name), or drop to open it there" : "\(app.name) can't open this; hold to bring it up"
             case .tile(let n):
                 return n == model.liveCurrent() ? "Workspace \(n) · you're here" : "Hold to go to Workspace \(n)"
             case nil:
@@ -2535,52 +2598,6 @@ struct DockView: View {
             .accessibilityLabel(name)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { action() }
-    }
-}
-
-/// A drag from another app over the dock: it lights the icon or tile under it (the dock springs
-/// that open after a moment, in `WorkspaceDock.springLoad`), and a drop on an app's icon opens
-/// the files or links in that app, as the macOS Dock does.
-private struct OutsideDrop: DropDelegate {
-    let model: DockModel
-
-    func validateDrop(info: DropInfo) -> Bool { true }
-
-    func dropEntered(info: DropInfo) { track(info) }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        track(info)
-        guard case .app = model.fileDrag?.target, model.fileDrag?.canOpen == true else { return DropProposal(operation: .cancel) }
-        return DropProposal(operation: .copy)
-    }
-
-    func dropExited(info: DropInfo) {
-        model.heldTarget = nil
-        model.fileDrag = nil
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        // What was lit when the button came up: the dock's tick may since have cleared the
-        // drag and let the tiles move.
-        let target = model.heldTarget
-        model.heldTarget = nil
-        model.fileDrag = nil
-        guard case .app(let n, let id) = target, let pid = pid_t(id) else { return false }
-        let urls = model.openable(pid)
-        guard !urls.isEmpty else { return false }
-        // The drop is answered at once; going to the app (Accessibility calls a busy app can
-        // stall) waits for the next turn of the run loop, so the source app isn't held up.
-        DispatchQueue.main.async { [model] in model.onOpenFiles(urls, pid, n) }
-        return true
-    }
-
-    private func track(_ info: DropInfo) {
-        let target = DockSpringTarget.at(info.location, frames: model.frames)
-        var canOpen = false
-        if case .app(_, let id) = target, let pid = pid_t(id) { canOpen = !model.openable(pid).isEmpty }
-        model.heldTarget = target
-        let state = DockModel.FileDrag(target: target, canOpen: canOpen)
-        if model.fileDrag != state { model.fileDrag = state }
     }
 }
 

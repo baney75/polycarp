@@ -156,6 +156,11 @@ final class TopDragWatcher {
     /// overview took it, the window went away, the watcher stopped), so nothing moves.
     /// Returns whether the window was dropped on a workspace.
     var onCarryEnd: (TopDrag.Grab, CGPoint?) -> Bool = { _, _ in false }
+    /// Whether the dock has seen a drag of content from another app start (`WorkspaceDock.outsideDragSeen`); nil while
+    /// the dock isn't watching, and then the press's own sample of the drag pasteboard decides (`ContentDrag`).
+    var contentDragSeen: () -> Bool? = { nil }
+    /// The press as a possible drag of the window's content (a file out of Finder) rather than of the window.
+    private var content = ContentDrag()
 
     private var monitor: Any?
     private var upMonitor: Any?
@@ -220,6 +225,7 @@ final class TopDragWatcher {
         guard let found else { return }
         let g = found.grab
         state.press(TopDrag.Grab(window: g.window, frame: g.frame, press: g.press, startedFull: startsFull(g.window, g.frame)))
+        content.press(count: NSPasteboard(name: .drag).changeCount)
         owner = found.pid
         let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(t, forMode: .common)
@@ -240,6 +246,14 @@ final class TopDragWatcher {
         let now = ProcessInfo.processInfo.systemUptime
         let resting = state.topSince != nil
         let top = state.tick(cursor: p, frame: frame, screens: TopDragWatcher.screens(), now: now)
+        // A file, text or a link dragged out of the window while the window stayed put: the press is let go before the
+        // overview, the dock or a correction can act on it, so a later move of the window (a workspace switch the drag
+        // sprang parks it) is never taken for the window carried. A window that moved first stays a window drag.
+        if content.isContent(windowMoved: state.moving || state.pinned, dockSaw: contentDragSeen(),
+                             count: { NSPasteboard(name: .drag).changeCount }) {
+            Trace.log("topDrag let go window=\(grab.window): a drag of its content, not of the window")
+            return endTicks()
+        }
         if !wasDragging, state.moving { onDragStart(grab.window, p) }
         // The rest at the top and the decision it leads to, for top-drag-probe to read.
         if !resting, state.topSince != nil {
@@ -287,6 +301,7 @@ final class TopDragWatcher {
         timer?.invalidate()
         timer = nil
         state.release()
+        content.release()
     }
 
     /// The pointer in window-server space (top-left origin).
