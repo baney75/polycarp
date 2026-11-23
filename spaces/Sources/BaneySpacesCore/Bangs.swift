@@ -88,13 +88,24 @@ public enum Bangs {
         Bang(trigger: "lechat", name: "Le Chat", url: "https://chat.mistral.ai/chat?q={q}", home: "https://chat.mistral.ai/chat", agent: true),
     ]
 
-    /// Search engines a plain search can go to.
-    public static var engines: [Bang] { ["g", "ddg", "b", "pplx"].compactMap { t in (builtIn + agents).first { $0.trigger == t } } }
+    /// Search engines a plain search can go to (`search.engine` in surfaces.json, docs/surfaces.md).
+    public static var engines: [Bang] { ["g", "ddg", "brave", "kagi", "b", "pplx"].compactMap { t in (builtIn + agents).first { $0.trigger == t } } }
+
+    /// Your own bangs, in the support folder: the launcher, the new tab page and `polycarp-spaces search` read the same file.
+    public static func customFile(supportDir: URL) -> URL { supportDir.appendingPathComponent("bangs.json") }
+
+    /// Every bang in force: your own from `bangs.json` (a missing or unreadable file is none), then the built-ins.
+    public static func load(supportDir: URL) -> [Bang] {
+        guard let data = FileManager.default.contents(atPath: customFile(supportDir: supportDir).path) else { return builtIn }
+        return all(custom: decodeCustom(data).bangs)
+    }
 
     public static let builtIn: [Bang] = agents + [
         Bang(trigger: "g", name: "Google", url: "https://www.google.com/search?q={q}"),
         Bang(trigger: "ddg", name: "DuckDuckGo", url: "https://duckduckgo.com/?q={q}"),
         Bang(trigger: "b", name: "Bing", url: "https://www.bing.com/search?q={q}"),
+        Bang(trigger: "brave", name: "Brave Search", url: "https://search.brave.com/search?q={q}"),
+        Bang(trigger: "kagi", name: "Kagi", url: "https://kagi.com/search?q={q}"),
         Bang(trigger: "yt", name: "YouTube", url: "https://www.youtube.com/results?search_query={q}"),
         Bang(trigger: "w", name: "Wikipedia", url: "https://en.wikipedia.org/wiki/Special:Search?search={q}"),
         Bang(trigger: "gi", name: "Google Images", url: "https://www.google.com/search?tbm=isch&q={q}", home: "https://images.google.com/"),

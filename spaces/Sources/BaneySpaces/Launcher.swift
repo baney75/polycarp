@@ -14,10 +14,55 @@ enum Launcher {
         set { UserDefaults.standard.set(newValue, forKey: "launcherOnCmdSpace") }
     }
 
-    /// The bang a plain web search uses: Google unless chosen.
+    /// The engine a plain web search uses: `search.engine` in surfaces.json, the one setting the launcher, the new tab
+    /// page and `polycarp-spaces search` read (Google unless chosen; `OneSearch.engine` resolves it).
     static var searchEngine: String {
-        get { UserDefaults.standard.string(forKey: "launcherSearchEngine") ?? "g" }
-        set { UserDefaults.standard.set(newValue, forKey: "launcherSearchEngine") }
+        get { SurfacesStore.shared.current.search.engine }
+        set {
+            if case .failure(let f) = SurfacesOps.set("search.engine", .string(newValue), file: SurfacesFile.path()) {
+                Trace.log("search engine not saved: \(f.message)")
+            }
+        }
+    }
+
+    /// Where the launcher kept its engine before `search.engine`.
+    static let oldSearchEngineKey = "launcherSearchEngine"
+
+    /// Moves an engine chosen before `search.engine` into surfaces.json once, unless the file already names one
+    /// (`search.engine`, or `newtab.searchURL`, which then wins), then forgets the old key. Google, the default, needs
+    /// no line in the file.
+    static func moveOldSearchEngine(file: String = SurfacesFile.path()) {
+        let defaults = UserDefaults.standard
+        guard let old = defaults.string(forKey: oldSearchEngineKey) else { return }
+        if case .document(let d) = SurfacesFile.load(path: file), d.tree.at(["search", "engine"]) != nil || d.tree.at(["newtab", "searchURL"]) != nil {
+            defaults.removeObject(forKey: oldSearchEngineKey)
+            return
+        }
+        if old == "g" { defaults.removeObject(forKey: oldSearchEngineKey); return }
+        switch SurfacesOps.set("search.engine", .string(old), file: file) {
+        case .success:
+            defaults.removeObject(forKey: oldSearchEngineKey)
+            Trace.log("search engine \(old) moved into surfaces.json")
+        case .failure(let f):
+            // An invalid file keeps the old key, so the choice moves once the file is fixed.
+            Trace.log("search engine \(old) not moved into surfaces.json: \(f.message)")
+        }
+    }
+
+    /// A web address in the main browser (the default, usually Helium), never an app that claims the link; Apple Maps
+    /// and anything else go where macOS sends them.
+    static func openInBrowser(_ url: URL) {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let browser = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!) else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.open([url], withApplicationAt: browser, configuration: config) { _, error in
+            guard error != nil else { return }
+            DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+        }
     }
 
     /// The agent a "?" question goes to: Claude unless chosen.
@@ -165,6 +210,8 @@ struct LauncherActions {
     /// The session rows (terminal splits, browser tabs, agents) that answer a query; with nothing
     /// typed, only the agents that finished or need you.
     var sessionItems: (String) -> [LauncherItem] = { _ in [] }
+    /// The tab already open in the main browser that answers a web search, as a "Switch to" row (`OneSearch.sessions`).
+    var browserTab: (String) -> LauncherItem? = { _ in nil }
     /// The launcher is opening: read every app's tabs and splits again, since the session engine
     /// reads background tabs only now and then (`Sweep`). They arrive through `rowsChanged`.
     var willShow: () -> Void = {}
@@ -663,7 +710,9 @@ final class LauncherModel: ObservableObject {
     private func bangItem(_ b: Bang, _ terms: String, section: String) -> LauncherItem {
         let title: String
         if terms.isEmpty { title = "Open \(b.name)" } else if b.isAgent { title = "Ask \(b.name) “\(terms)”" } else { title = "Search \(b.name) for “\(terms)”" }
-        let subtitle = b.isAgent ? "!\(b.trigger) · opens a new chat in your browser with the question asked" : "!\(b.trigger) · opens in your browser"
+        // An engine given as an address has no trigger: its host says where it goes.
+        let mark = b.trigger.isEmpty ? (URL(string: b.url.replacingOccurrences(of: "{q}", with: ""))?.host ?? b.name) : "!\(b.trigger)"
+        let subtitle = b.isAgent ? "\(mark) · opens a new chat in your browser with the question asked" : "\(mark) · opens in your browser"
         return LauncherItem(id: "bang:\(b.trigger):\(section)", section: section, title: title, subtitle: subtitle, icon: .symbol(Self.symbol(for: b)),
                             run: { [weak self] in self?.openWeb(b.address(for: terms)) })
     }
@@ -680,9 +729,11 @@ final class LauncherModel: ObservableObject {
                      run: { [weak self] in self?.openWeb(Bangs.fallbackAddress(trigger: trigger, terms: terms)) })
     }
 
-    /// Plain words: your search engine, images, and your agent first, then every other bang.
+    /// Plain words: your search engine (`search.engine`), images, and your agent first, then every other bang. In the
+    /// Search the Web menu a tab already open in the main browser that answers the words comes first, so it is switched
+    /// to rather than opened twice; the main search lists it with the other tabs above the web rows.
     private func searchEverywhere(_ q: String) -> [LauncherItem] {
-        let engine = Bangs.find(Launcher.searchEngine, in: bangs) ?? Bangs.builtIn.first { $0.trigger == "g" }!
+        let engine = OneSearch.engine(Launcher.searchEngine, bangs: bangs)
         let agent = Bangs.find(Launcher.agent, in: bangs) ?? Bangs.agents[0]
         let images = Bangs.find("i", in: bangs)
         var seen = Set<String>()
@@ -695,7 +746,7 @@ final class LauncherModel: ObservableObject {
         }
         guard scope == .web else { return leadItems }
         let skip = Set(lead.map(\.trigger) + ["img", "gi"])
-        return leadItems + bangs.filter { !skip.contains($0.trigger) }.map { bangItem($0, q, section: $0.isAgent ? "Agents" : "Sites") }
+        return (actions.browserTab(q).map { [$0] } ?? []) + leadItems + bangs.filter { !skip.contains($0.trigger) }.map { bangItem($0, q, section: $0.isAgent ? "Agents" : "Sites") }
     }
 
     /// The Search the Web menu with nothing typed: every agent and site, each a bang to fill in.
@@ -721,11 +772,11 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    /// In a new tab of your default browser (or Maps for an Apple Maps bang).
+    /// In a new tab of your main browser (or Maps for an Apple Maps bang).
     private func openWeb(_ url: URL?) {
         close()
         guard let url else { return NSSound.beep() }
-        NSWorkspace.shared.open(url)
+        Launcher.openInBrowser(url)
     }
 
     private func setQuery(_ q: String) {

@@ -14,6 +14,10 @@ usage: \(me) <command>
   ls [--json]                 everything the session engine wraps: terminals, agents, browser tabs
   focus <id | words>          bring it forward (an ID from ls, or a fuzzy search)
   open <url>                  open in your default browser
+  search [--open] [--json] <text>
+                              one search, as the launcher and the new tab page do it: open tabs and
+                              windows that match, bang completions, then the web (search.engine); one
+                              JSON line per result, best first; --open performs the top one
   play <file>                 show a song, video or photo in Polycarp's player (its folder is the playlist)
   send <id | words> <text>    type text into a Ghostty terminal, as if pasted
   term [shell|claude|codex] [--cmd "<command>"] [--host <tailnet device>] [--quick]
@@ -164,6 +168,9 @@ case "focus", "go":
     guard !rest.isEmpty else { fail("usage: \(me) focus <id | words>", code: 2) }
     let r = call(Wire.Request(op: .focus, target: rest.joined(separator: " ")))
     if let label = r.info?["label"] { out("→ \(label)") }
+
+case "search":
+    SearchCommand.run(rest, remote: remoteHost != nil)
 
 case "open":
     guard let url = rest.first else { fail("usage: \(me) open <url>", code: 2) }

@@ -322,6 +322,27 @@ final class SessionController {
         }
     }
 
+    /// The tab already open in the main browser (the default one) that best answers a web search, as the launcher's
+    /// "Switch to" row: chosen, it goes there as any session row does, so the search isn't opened twice.
+    func browserTabItem(_ q: String) -> LauncherItem? {
+        guard started, let browser = Self.mainBrowser() else { return nil }
+        let tabs = engine.items.filter { $0.kind == .tab && $0.bundleID == browser }
+        guard let item = OneSearch.sessions(q, in: tabs, limit: 1).first else { return nil }
+        let sub = [item.appName, item.detail, "already open"].filter { !$0.isEmpty }.joined(separator: " · ")
+        return LauncherItem(id: "switch:" + item.id, section: "Web", title: "Switch to \(item.label)", subtitle: sub,
+                            icon: .file(Self.appPath(item.bundleID)), badge: "Open", workspaces: item.workspace > 0 ? [item.workspace] : [],
+                            run: { [weak self] in self?.focus(item) })
+    }
+
+    /// The main browser's bundle ID: the app macOS opens web links in. Read once a minute, not on every key press.
+    private static var browserRead: (id: String?, at: TimeInterval) = (nil, -.infinity)
+    static func mainBrowser(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> String? {
+        if now - browserRead.at < 60 { return browserRead.id }
+        let id = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!).flatMap { Bundle(url: $0)?.bundleIdentifier }
+        browserRead = (id, now)
+        return id
+    }
+
     /// The screen showing the front app's focused window, else the main one: where the toast appears.
     static func activeScreen() -> NSScreen {
         if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,

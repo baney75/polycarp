@@ -73,23 +73,47 @@ public enum NewTabHost {
 
     // MARK: Requests
 
-    /// What a request needs from the world: surfaces.json and the time.
+    /// How long `find` waits for the session engine before it answers with what it has.
+    public static let findBudget: TimeInterval = 0.15
+
+    /// What a request needs from the world: surfaces.json, the bangs, the time, and the running app's session engine.
     public struct Source {
         /// surfaces.json as it is now (defaults when it is missing or invalid).
         public var surfaces: () -> Surfaces
         public var now: () -> Date
         public var timeZone: TimeZone
+        /// Every bang in force: bangs.json's, then the built-ins.
+        public var bangs: () -> [Bang]
+        /// The session engine's rows, waiting at most the given seconds; nil when the app didn't answer in time.
+        public var sessions: (TimeInterval) -> [Item]?
+        /// Asks Polycarp to bring a row forward (`polycarp-spaces focus`): nil when it isn't running, else its error or nil.
+        public var focus: (String) -> Result<String, FocusFailure>
 
-        public init(surfaces: @escaping () -> Surfaces, now: @escaping () -> Date = Date.init, timeZone: TimeZone = .current) {
+        public struct FocusFailure: Error, Equatable { public let message: String; public init(_ m: String) { message = m } }
+
+        public init(surfaces: @escaping () -> Surfaces, now: @escaping () -> Date = Date.init, timeZone: TimeZone = .current,
+                    bangs: @escaping () -> [Bang] = { Bangs.builtIn },
+                    sessions: @escaping (TimeInterval) -> [Item]? = { _ in nil },
+                    focus: @escaping (String) -> Result<String, FocusFailure> = { _ in .failure(.init("Polycarp isn't running")) }) {
             self.surfaces = surfaces; self.now = now; self.timeZone = timeZone
+            self.bangs = bangs; self.sessions = sessions; self.focus = focus
         }
 
-        /// The real one: surfaces.json from disk the way `polycarp-spaces surfaces get` reads it (the app need not be
-        /// running).
+        /// The real one: surfaces.json and bangs.json from disk the way `polycarp-spaces surfaces get` reads them (the app
+        /// need not be running), and the session engine over the app's socket, the path `polycarp-spaces ls` and
+        /// `focus` take.
         public static func live() -> Source {
             Source(surfaces: {
                 if case .document(let d) = SurfacesFile.load(path: SurfacesFile.path()) { return d.surfaces }
                 return Surfaces.defaults
+            }, bangs: {
+                Bangs.load(supportDir: Product.supportDir(home: FileManager.default.homeDirectoryForCurrentUser))
+            }, sessions: { wait in
+                guard let r = Wire.call(Wire.Request(op: .list), timeout: max(0.01, wait)), r.ok else { return nil }
+                return r.items ?? []
+            }, focus: { id in
+                guard let r = Wire.call(Wire.Request(op: .focus, target: id), timeout: 2) else { return .failure(.init("Polycarp isn't running")) }
+                return r.ok ? .success(r.info?["label"] ?? "") : .failure(.init(r.error ?? "nothing matches"))
             })
         }
     }
@@ -101,20 +125,76 @@ public enum NewTabHost {
         }
         switch object["op"] as? String {
         case "page": return page(source)
+        case "find": return find(object["q"], source)
+        case "focus": return focus(object["id"], source)
         case let op?: return failure("there is no request called \(op)")
         case nil: return failure("the request has no op")
         }
     }
 
+    /// The most bangs a `page` reply carries: bangs.json has no size limit of its own, a reply does.
+    public static let maxBangs = 500
+
     private static func page(_ source: Source) -> Data {
-        let s = source.surfaces().newtab
-        var reply: [String: Any] = ["ok": true, "question": s.question, "searchURL": s.searchURL]
+        let surfaces = source.surfaces()
+        let s = surfaces.newtab
+        let bangs = source.bangs()
+        let engine = OneSearch.engine(surfaces.search.engine, bangs: bangs)
+        // searchURL is the engine in force, so a page from before bangs searches where the launcher does.
+        var reply: [String: Any] = ["ok": true, "question": s.question, "searchURL": OneSearch.template(engine),
+                                    "engine": bangObject(engine)]
         if s.verse, let v = Verses.pick(.daily, at: source.now(), timeZone: source.timeZone) {
             reply["verse"] = ["text": v.text, "ref": v.ref]
         } else {
             reply["verse"] = NSNull()
         }
+        reply["bangs"] = bangs.prefix(maxBangs).map(bangObject)
+        let data = json(reply)
+        if data.count <= maxMessage { return data }
+        reply["bangs"] = Bangs.builtIn.map(bangObject)
         return json(reply)
+    }
+
+    /// A bang as the page reads it: trigger, name, url with {q}, home when it has one, agent.
+    static func bangObject(_ b: Bang) -> [String: Any] {
+        var o: [String: Any] = ["trigger": b.trigger, "name": b.name, "url": b.url, "agent": b.isAgent]
+        if let home = b.home { o["home"] = home }
+        return o
+    }
+
+    /// The longest query `find` takes; the field is one line.
+    public static let maxQuery = 512
+
+    /// `{"op":"find","q":"..."}`: the session engine's rows that match, best first (`OneSearch.sessions`), from the
+    /// running app's list within `findBudget`. `partial` is true when the app didn't answer in time or isn't running.
+    private static func find(_ q: Any?, _ source: Source) -> Data {
+        guard let q = q as? String else { return failure("find needs q, the text typed") }
+        guard q.count <= maxQuery else { return failure("q is over \(maxQuery) characters") }
+        let text = q.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard OneSearch.findsSessions(text) else {
+            // Nothing typed, or a bang: nothing to switch to, and no need to ask the app.
+            return json(["ok": true, "items": [], "partial": false])
+        }
+        let items = source.sessions(findBudget)
+        let rows = OneSearch.sessions(text, in: items ?? []).map(sessionObject)
+        return json(["ok": true, "items": rows, "partial": items == nil])
+    }
+
+    static func sessionObject(_ item: Item) -> [String: Any] {
+        var o: [String: Any] = ["id": item.id, "kind": item.kind.rawValue, "title": item.label, "app": item.appName,
+                                "bundleID": item.bundleID, "activity": "\(item.activity)"]
+        if !item.detail.isEmpty { o["detail"] = item.detail }
+        if item.workspace > 0 { o["workspace"] = item.workspace }
+        return o
+    }
+
+    /// `{"op":"focus","id":"tab:..."}`: brings a row from `find` forward through Polycarp, as `polycarp-spaces focus` does.
+    private static func focus(_ id: Any?, _ source: Source) -> Data {
+        guard let id = id as? String, !id.isEmpty, id.count <= maxQuery else { return failure("focus needs id, a row's id from find") }
+        switch source.focus(id) {
+        case .success(let label): return json(["ok": true, "label": label])
+        case .failure(let f): return failure(f.message)
+        }
     }
 
     public static func failure(_ error: String) -> Data { json(["ok": false, "error": error]) }

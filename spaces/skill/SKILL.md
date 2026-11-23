@@ -27,6 +27,8 @@ BaneySpaces workspace.
 | Want | Command |
 | --- | --- |
 | Bring something forward | `baneyspaces focus <id or words>` (fuzzy: `baneyspaces focus helium github`) |
+| Find a tab or window, or search the web | `baneyspaces search "gmail"` (JSON lines, best first: open tabs and windows that match with their `id`, bang completions, then the web search or bang `url`; ranked as the launcher and the new tab rank it, with `search.engine` and the bangs). `--json` for the envelope. Read-only |
+| Go to the top search result | `baneyspaces search --open "gmail"` (an open tab or window comes forward as `focus` does; a web result opens in the default browser). Only when Donovan asked to go there |
 | Open a page | `baneyspaces open https://…` (default browser, stays in the session engine) |
 | Type into another Ghostty terminal | `baneyspaces send <id or words> "text"` (pasted, no Return unless you include a newline) |
 | Tell Donovan this terminal needs him | `baneyspaces notify "Tests failed, need a decision"` |
@@ -61,7 +63,8 @@ Paths are keys joined with dots (`desktop.verseRotation`). Values are JSON (`30`
 `["mark"]`). A refusal names each path and why (`--json`: `error.data.errors`). A bar module goes in one place across
 left, center and right, defaults included, so set `bar.modules` whole to move one. `settings` and `quit` can't be
 hidden from the menu. Note the old value with `get` before a `set`, so you can put it back. Over MCP, `polycarp mcp`
-serves the same as `surfaces_schema`, `surfaces_get` and `surfaces_set`. Colors and fonts are the theme's
+serves the same as `surfaces_schema`, `surfaces_get` and `surfaces_set`, and `search` as `search` (read-only) and
+`search_open`. `search.engine` is the one web engine for the launcher, the new tab and `search`. Colors and fonts are the theme's
 (`polycarp theme`), not this file's. Every field: spaces/docs/surfaces.md.
 
 ## People in Contacts

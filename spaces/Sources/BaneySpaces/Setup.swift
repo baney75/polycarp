@@ -104,7 +104,14 @@ final class SetupModel: ObservableObject {
         finished = finishedRows()
     }
     @Published var launcherOnCmdSpace = Launcher.onCmdSpace
-    @Published var searchEngine = Launcher.searchEngine { didSet { Launcher.searchEngine = searchEngine } }
+    @Published var searchEngine = Launcher.searchEngine { didSet { if searchEngine != oldValue { Launcher.searchEngine = searchEngine } } }
+    /// The engines to pick from, with the one in force first added when surfaces.json names another (a bang of yours or an address).
+    var engineChoices: [Bang] {
+        let list = Bangs.engines
+        if list.contains(where: { $0.trigger == searchEngine }) { return list }
+        let current = OneSearch.engine(searchEngine, bangs: Launcher.loadBangs())
+        return list + [Bang(trigger: searchEngine, name: current.name, url: current.url)]
+    }
     @Published var agent = Launcher.agent { didSet { Launcher.agent = agent } }
     @Published var customBangs = Launcher.readCustomBangs().bangs
     @Published var newTrigger = ""
@@ -940,8 +947,8 @@ struct SetupView: View {
                     Toggle("Quick terminal on ⌃`", isOn: binding({ model.quickTerminalKey }, { model.setQuickTerminalKey($0) })).labelsHidden()
                 }
             }
-            SettingsRow("Search the web with") {
-                Picker("Search the web with", selection: $model.searchEngine) { ForEach(Bangs.engines, id: \.trigger) { Text($0.name).tag($0.trigger) } }
+            SettingsRow("Search the web with", help: "The launcher, the browser's new tab and polycarp-spaces search all use it (search.engine in surfaces.json).") {
+                Picker("Search the web with", selection: $model.searchEngine) { ForEach(model.engineChoices, id: \.trigger) { Text($0.name).tag($0.trigger) } }
                     .labelsHidden()
             }
             SettingsRow("Ask questions (?) with", help: "Type !yt cats, !i sunsets or ? a question. Type ! to see every bang.") {
