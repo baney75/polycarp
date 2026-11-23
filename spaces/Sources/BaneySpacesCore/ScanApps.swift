@@ -16,4 +16,14 @@ public enum ScanApps {
     public static func listStale(outsiders: Set<Int32>, before: Set<Int32>) -> Bool {
         !outsiders.isSubset(of: before)
     }
+
+    /// The apps a scan asks: every regular app, and every app still running that owns a window a workspace holds,
+    /// regular or not. Silas closing its window hides it (the window server keeps it, off screen) and turns Silas
+    /// accessory. Scans asked only regular apps, so Silas was never asked again, `closedWindows` never heard that the
+    /// window was gone, and the window kept its workspace: Silas stayed on that workspace's dock tile, and every switch
+    /// away hid Silas and every switch back showed it. Asked until it has no window there, Silas says the window is
+    /// closed, and the workspace lets it go. `running` is asked only about apps outside `regular`.
+    public static func covered(regular: Set<Int32>, tracked: Set<Int32>, running: (Int32) -> Bool) -> Set<Int32> {
+        regular.union(tracked.subtracting(regular).filter(running))
+    }
 }

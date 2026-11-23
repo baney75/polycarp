@@ -212,13 +212,13 @@ final class Spaces {
     }
 
     private func refresh(full: Bool, asking: Set<pid_t>, then body: (() -> Void)?) {
-        var pids = RunningApps.regular
+        var pids = scanApps()
         var snap = Windows.snapshot(apps: pids)
         // An app outside the cached list draws a window it didn't before: it may have turned regular with no launch or
         // activation to say so (Silas, opened from the menu bar). The list is read again before anything is skipped.
         if ScanApps.listStale(outsiders: snap.outsiders, before: outsiders) {
             RunningApps.invalidate()
-            let again = RunningApps.regular
+            let again = scanApps()
             if again != pids {
                 pids = again
                 snap = Windows.snapshot(apps: pids)
@@ -254,6 +254,16 @@ final class Spaces {
         startScan()
     }
 
+    /// The apps scans ask (`ScanApps.covered`): the regular ones, and any still running that owns a window a workspace
+    /// holds, so an app that turned accessory (Silas, its window closed) can still say that window is gone.
+    private func scanApps() -> Set<pid_t> {
+        let regular = RunningApps.regular
+        let tracked = Set(model.home.keys.compactMap { windows[$0]?.pid })
+        return ScanApps.covered(regular: regular, tracked: tracked) { pid in
+            NSRunningApplication(processIdentifier: pid).map { !$0.isTerminated } ?? false
+        }
+    }
+
     /// What a scan starts from, read on the main thread from the window server (never an app): its list of windows,
     /// the regular apps, and the apps to ask.
     private struct ScanStart {
@@ -266,7 +276,7 @@ final class Spaces {
 
     private func scanStart(full: Bool, extra: Set<pid_t>) -> ScanStart {
         RunningApps.invalidate()
-        let pidsNow = RunningApps.regular
+        let pidsNow = scanApps()
         Windows.keepBench(pidsNow)
         let snap = Windows.snapshot(apps: pidsNow)
         outsiders = snap.outsiders
