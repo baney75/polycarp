@@ -17,6 +17,7 @@ test("stylesheets take colors and durations from the theme", () => {
     const css = read(f).replace(/\/\*[\s\S]*?\*\//g, "");
     assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|\b(rgb|hsl)a?\(/i, `${f}: a color literal`);
     assert.doesNotMatch(css, /[\s:(,]\.?\d+(\.\d+)?m?s\b/, `${f}: a raw duration`);
+    assert.doesNotMatch(css, /var\(\s*--var\(/, `${f}: a var() nested where a name belongs`);
   }
 });
 
