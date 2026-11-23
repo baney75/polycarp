@@ -132,7 +132,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 32] = [
+const TOOLS: [&str; 35] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -158,6 +158,9 @@ const TOOLS: [&str; 32] = [
     "surfaces_set",
     "search",
     "search_open",
+    "paper_set",
+    "paper_get",
+    "paper_reset",
     "style_example",
     "style_get",
     "style_check",
@@ -983,6 +986,79 @@ fn surfaces_tools_run_the_spaces_command_and_pass_its_envelope_on_as_is() {
 
 #[cfg(unix)]
 #[test]
+fn paper_tools_run_the_spaces_paper_command_and_pass_its_envelope_on_as_is() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let reply = json!({"ok": true, "data": {"paper": {"value": "olive", "kind": "scene"},
+        "desktop": {"value": "olive", "kind": "scene", "from": "paper"}}});
+    fs::write(sb.root.join("spaces/reply"), reply.to_string()).unwrap();
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    let r = s.tool(
+        "paper_set",
+        json!({"what": "/Users/me/Pictures/sunset.jpg"}),
+    );
+    assert_eq!(r["isError"], false);
+    assert_eq!(r["structuredContent"], reply);
+    assert_eq!(
+        stub_args(&sb),
+        ["paper", "set", "/Users/me/Pictures/sunset.jpg", "--json"]
+    );
+    s.tool(
+        "paper_set",
+        json!({"what": "#2B2E26", "on": "desktop,newtab"}),
+    );
+    assert_eq!(
+        stub_args(&sb),
+        [
+            "paper",
+            "set",
+            "#2B2E26",
+            "--on",
+            "desktop,newtab",
+            "--json"
+        ]
+    );
+    s.tool("paper_get", json!({}));
+    assert_eq!(stub_args(&sb), ["paper", "get", "--json"]);
+    s.tool("paper_reset", json!({"on": "idle"}));
+    assert_eq!(stub_args(&sb), ["paper", "reset", "--on", "idle", "--json"]);
+    s.tool("paper_reset", json!({}));
+    assert_eq!(stub_args(&sb), ["paper", "reset", "--json"]);
+    // Both replace or remove what was there (set clears each place's own), so a client that asks first asks
+    // (review of #626).
+    let v = s.request("tools/list", json!({}));
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let ann = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap()["annotations"].clone();
+    for n in ["paper_set", "paper_reset"] {
+        assert_eq!(
+            ann(n),
+            json!({"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false}),
+            "{n}"
+        );
+    }
+    assert_eq!(
+        ann("paper_get"),
+        json!({"readOnlyHint": true, "openWorldHint": false})
+    );
+    for (tool, args) in [
+        ("paper_set", json!({})),
+        ("paper_set", json!({"what": 3})),
+        ("paper_set", json!({"what": "olive", "on": ["desktop"]})),
+        ("paper_get", json!({"on": "desktop"})),
+    ] {
+        let r = s.tool(tool, args.clone());
+        assert_eq!(r["isError"], true, "{tool} {args}");
+        assert_eq!(
+            r["structuredContent"]["error"]["code"], "invalid_args",
+            "{tool} {args}"
+        );
+    }
+    assert_eq!(s.finish(), 0);
+}
+
+#[cfg(unix)]
+#[test]
 fn surfaces_tools_check_their_arguments_before_running_anything() {
     let sb = Sandbox::new();
     let bin = spaces_stub(&sb);
@@ -1119,6 +1195,7 @@ fn the_instructions_send_surfaces_work_to_the_surfaces_tools() {
     };
     assert!(at("surfaces_schema") < at("surfaces_get") && at("surfaces_get") < at("surfaces_set"));
     assert!(at("style_example") < at("style_set") && at("style_set") < at("style_check"));
+    assert!(at("paper_set") < at("paper_get") && at("paper_get") < at("paper_reset"));
     assert_eq!(s.finish(), 0);
 }
 

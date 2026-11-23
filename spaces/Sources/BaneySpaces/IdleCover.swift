@@ -20,6 +20,11 @@ final class IdleCover {
     private var monitor: Any?
     private var cursorHidden = false
     private var screenSaverRunning = false
+    /// The idle paper drawn once, by what it was drawn from (`paperKey`); one picture serves every screen.
+    private var paperCache: (key: String, image: CGImage?)?
+    /// The key being drawn off the main thread, so a look doesn't start a second.
+    private var paperDrawing: String?
+    private let paperQueue = DispatchQueue(label: "polycarp.idle.paper", qos: .utility)
 
     var isUp: Bool { !windows.isEmpty }
 
@@ -34,13 +39,79 @@ final class IdleCover {
         watch = t
         NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in
             if !SurfacesStore.shared.current.idle.enabled { self?.hide() }
+            self?.prewarm()
         }
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.prewarm()
+        }
+        prewarm()
+    }
+
+    /// What the idle paper would be drawn from now, and at what size: the largest screen's pixels. Nil with no paper.
+    private struct PaperJob {
+        let key: String, paper: Paper, desktop: Surfaces.Desktop, width: Int, height: Int, date: Date, systemDark: Bool, background: RGB
+
+        init?() {
+            let surfaces = SurfacesStore.shared.current
+            guard surfaces.idle.enabled, let paper = surfaces.paper(on: .idle),
+                  let big = NSScreen.screens.max(by: { $0.frame.width * $0.backingScaleFactor < $1.frame.width * $1.backingScaleFactor }) else { return nil }
+            self.paper = paper
+            desktop = surfaces.desktop
+            let w = Int((big.frame.width * big.backingScaleFactor).rounded()), h = Int((big.frame.height * big.backingScaleFactor).rounded())
+            width = w
+            height = h
+            date = Date()
+            systemDark = Appearance.systemDark
+            background = Appearance.shared.look.color("background")
+            // A scene looks different with the hour and `solid` with the theme, so those are in the key too.
+            var key = "\(paper.id)|\(w)x\(h)"
+            switch paper {
+            case .scene(.solid): key += "|" + Paper.hex(background)
+            case .scene(let s):
+                var d = desktop
+                d.scene = s
+                key += "|" + (DesktopScene.of(d, at: date, systemDark: systemDark).map { $0.fileName(width: w, height: h) } ?? "")
+            default: break
+            }
+            self.key = key
+        }
+
+        func draw() -> CGImage? {
+            paper.image(width: width, height: height, desktop: desktop, papers: ThemeWallpaperApplier.papers.folder, at: date,
+                        systemDark: systemDark, background: background)
+        }
+    }
+
+    /// Draws the idle paper off the main thread when what it is drawn from has changed, so the cover comes up with it
+    /// ready. Cheap when nothing changed: the watch calls it each look.
+    private func prewarm() {
+        guard let job = PaperJob() else { paperCache = nil; return }
+        guard paperCache?.key != job.key, paperDrawing != job.key else { return }
+        paperDrawing = job.key
+        paperQueue.async { [weak self] in
+            let image = job.draw()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if self.paperDrawing == job.key { self.paperDrawing = nil }
+                if PaperJob()?.key == job.key { self.paperCache = (job.key, image) }
+            }
+        }
+    }
+
+    /// The idle paper for the cover now: the drawn one when it is current, else drawn here once for every screen.
+    private func paperImage() -> CGImage? {
+        guard let job = PaperJob() else { return nil }
+        if let c = paperCache, c.key == job.key { return c.image }
+        let image = job.draw()
+        paperCache = (job.key, image)
+        return image
     }
 
     /// Comes up when the time has come and nothing is keeping the display awake.
     private func look() {
         let settings = SurfacesStore.shared.current.idle
         guard !isUp, settings.enabled else { return }
+        prewarm()
         let idle = Self.idleSeconds()
         guard IdleScreen.shouldStart(idle: idle, settings: settings, displayHeldAwake: Self.displayHeldAwake(),
                                      systemHasScreen: screenSaverRunning || Self.locked() || Self.displaysAsleep()) else { return }
@@ -53,6 +124,7 @@ final class IdleCover {
         guard !isUp, !NSScreen.screens.isEmpty else { return }
         let settings = SurfacesStore.shared.current.idle
         let name = Self.machineName()
+        let paper = paperImage()
         for screen in NSScreen.screens {
             let w = CoverWindow(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             w.becomesKeyOnlyIfNeeded = false
@@ -65,7 +137,7 @@ final class IdleCover {
             w.animationBehavior = .none
             w.setFrame(screen.frame, display: false)
             w.contentView = NSHostingView(rootView: IdleView(settings: settings, machine: name, size: screen.frame.size,
-                                                             backdrop: Self.backdrop(settings, size: screen.frame.size, scale: screen.backingScaleFactor)))
+                                                             backdrop: paper ?? Self.backdrop(settings, size: screen.frame.size, scale: screen.backingScaleFactor)))
             w.alphaValue = 0
             w.orderFrontRegardless()
             windows.append(w)
@@ -143,8 +215,10 @@ final class IdleCover {
         (SCDynamicStoreCopyComputerName(nil, nil) as String?) ?? ProcessInfo.processInfo.hostName
     }
 
-    /// The field style's picture: the desktop scene in its light now, without its own verse. Nil for the other styles,
-    /// or when the desktop isn't a scene, which then shows the night sky.
+    /// The picture behind the words without a paper, dimmed: the field style's desktop scene in its light now, without
+    /// its own verse. Nil for the other styles, or when the desktop isn't a scene, which then shows the night sky. The
+    /// idle screen's paper (`idle.paper`, else `paper`), when one is set and draws, comes first in any style
+    /// (`paperImage`).
     static func backdrop(_ settings: Surfaces.Idle, size: CGSize, scale: CGFloat) -> CGImage? {
         guard settings.style == .field, var scene = DesktopScene.of(SurfacesStore.shared.current.desktop, at: Date(), systemDark: Appearance.systemDark) else { return nil }
         scene.verse = nil

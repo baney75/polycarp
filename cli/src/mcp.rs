@@ -3,9 +3,9 @@
 //! JSON-RPC 2.0, one message per line. Each theme tool calls the same `op_*` function the command line
 //! calls and returns the same envelope, so the two cannot drift. Each surfaces tool runs
 //! `polycarp-spaces surfaces ... --json` and passes its envelope on as is, for the same reason
-//! (spaces/docs/surfaces.md); each style tool does the same with `polycarp-spaces style ... --json`, and the search
-//! tools with `polycarp-spaces search ... --json`
-//! (spaces/docs/style.md).
+//! (spaces/docs/surfaces.md); each style tool does the same with `polycarp-spaces style ... --json`
+//! (spaces/docs/style.md), the search tools with `polycarp-spaces search ... --json`, and each paper tool with
+//! `polycarp-spaces paper ... --json`.
 
 use crate::theme::{self, ApiErr, Ctx};
 use serde_json::{json, Map, Value as Json};
@@ -46,6 +46,10 @@ a theme you made and no longer need.
 Surfaces (what the top bar, desktop scene, dock tiles, status menu, new tab page and idle screen show) are one \
 file of their own, not the theme: read surfaces_schema, then surfaces_get the path, then surfaces_set it. A refused \
 set wrote nothing; error.data.errors gives each path and why. To undo, surfaces_set the value surfaces_get gave before.
+To change what lies behind the desktop, the browser's new tab page and the idle screen (wallpaper, background), \
+use paper_set with a picture path, an https URL to a picture, a #RRGGBB color or a scene (field, olive, water, \
+parchment, solid), in one call; on limits it to some places. paper_get shows each place's paper; paper_reset puts \
+the theme's wallpaper and each place's old look back.
 To restyle one part of the top bar or the dock past the theme (a gold clock, square dock tiles, a hairline bar), use \
 the style sheet: read style_example, style_set each change, then style_check. A refused style_set wrote nothing; \
 error.data.errors gives each problem with its line and column. To undo, style_unset or style_set what style_get gave. \
@@ -341,6 +345,39 @@ pub(crate) fn tools() -> Vec<Tool> {
             idempotent: false,
         },
         Tool {
+            name: "paper_set",
+            description: "Change the wallpaper: what lies behind the desktop, the browser's new tab page and the idle screen, in one call. `what` is a picture on this Mac (an absolute path to a .png, .jpg, .heic or .webp), an https URL to a picture (fetched once, at most 25 MB, refused unless it is a picture), a color as #RRGGBB, or a scene: field, olive, water, parchment or solid (the theme's own). A picture is copied into Polycarp's Papers folder; you never name it. A paper wins over the theme's wallpaper, and the person's own desktop picture is kept to come back. A running Polycarp shows it within 150 ms. Returns each place's paper, as paper_get does.",
+            schema: obj(
+                json!({
+                    "what": {"type":"string","description":"An absolute picture path, an https URL to a picture, #RRGGBB, or field, olive, water, parchment or solid."},
+                    "on": {"type":"string","description":"Where: desktop, newtab, idle or all, joined with commas (desktop,newtab). Leave out for all."}
+                }),
+                &["what"],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
+            name: "paper_get",
+            description: "Each place's paper now (desktop, newtab, idle): its value, its kind (picture, color or scene), a picture's file, and where it comes from (the shared paper or the place's own). null means the place looks as it did before paper: the theme's wallpaper on the desktop.",
+            schema: obj(json!({}), &[]),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "paper_reset",
+            description: "Take the paper off: the desktop gets the theme's wallpaper (or the person's own picture) back, the new tab page and the idle screen their old look. `on` limits it to some places; the others keep the paper they show.",
+            schema: obj(
+                json!({"on": {"type":"string","description":"Where: desktop, newtab, idle or all, joined with commas. Leave out for all."}}),
+                &[],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
             name: "style_example",
             description: "Read this before style_set. Returns a starter style.css that names every selector (bar, its regions .left .center .right, each module and each .workspace number, dock, .tile .label .badge .icon with .current and :hover) and every property, with what each takes and where it applies, all commented out. The style sheet restyles the top bar and the dock on top of the theme with a strict subset of CSS.",
             schema: obj(json!({}), &[]),
@@ -571,6 +608,12 @@ pub(crate) fn call(
             Ok(a) => surfaces_call(name, &a),
         });
     }
+    if name.starts_with("paper_") {
+        return Some(match Args::new(&tool, args) {
+            Err(e) => theme::envelope(&Err(e)),
+            Ok(a) => paper_call(name, &a),
+        });
+    }
     if name.starts_with("style_") {
         return Some(match Args::new(&tool, args) {
             Err(e) => theme::envelope(&Err(e)),
@@ -702,6 +745,30 @@ fn surfaces_call(name: &str, a: &Args) -> theme::Envelope {
     spaces_run(argv, "surfaces get")
 }
 
+/// How long one paper command may take: a paper_set with a URL fetches the picture (the command gives up at 45
+/// seconds) before it writes.
+const PAPER_LIMIT: Duration = Duration::from_secs(60);
+
+/// Runs one paper tool through `polycarp-spaces paper ... --json` (no shell) and passes its envelope on.
+fn paper_call(name: &str, a: &Args) -> theme::Envelope {
+    let built = || -> Result<Vec<String>, ApiErr> {
+        let mut argv: Vec<String> = vec!["paper".into()];
+        match name {
+            "paper_get" => argv.push("get".into()),
+            "paper_set" => argv.extend(["set".into(), a.need("what")?.to_string()]),
+            _ => argv.push("reset".into()),
+        }
+        if let Some(on) = a.text("on")? {
+            argv.extend(["--on".into(), on.into()]);
+        }
+        Ok(argv)
+    };
+    match built() {
+        Ok(argv) => spaces_run_within(argv, "paper get", PAPER_LIMIT),
+        Err(e) => theme::envelope(&Err(e)),
+    }
+}
+
 /// Runs one style tool through `polycarp-spaces style ... --json` (no shell) and passes its envelope on
 /// (spaces/docs/style.md).
 fn style_call(name: &str, a: &Args) -> theme::Envelope {
@@ -771,7 +838,12 @@ fn search_call(name: &str, a: &Args) -> theme::Envelope {
 
 /// Runs `polycarp-spaces <argv> --json` within the limit and passes its envelope on. `probe` is the command a
 /// person can run in a terminal to see why it failed. `--json` goes before a `--`, where it is still a flag.
-fn spaces_run(mut argv: Vec<String>, probe: &str) -> theme::Envelope {
+fn spaces_run(argv: Vec<String>, probe: &str) -> theme::Envelope {
+    spaces_run_within(argv, probe, SURFACES_LIMIT)
+}
+
+/// `spaces_run` with its own time limit.
+fn spaces_run_within(mut argv: Vec<String>, probe: &str, limit: Duration) -> theme::Envelope {
     let what = argv[0].clone();
     match argv.iter().position(|a| a == "--") {
         Some(at) => argv.insert(at, "--json".into()),
@@ -784,12 +856,15 @@ fn spaces_run(mut argv: Vec<String>, probe: &str) -> theme::Envelope {
             "Install Polycarp (the Mac app carries polycarp-spaces), or set POLYCARP_SPACES_BIN to its path.",
         );
     };
-    let (out, err) = match run_limited(&spaces, &argv) {
+    let (out, err) = match run_limited(&spaces, &argv, limit) {
         Some(o) => o,
         None => {
             return surfaces_refusal(
                 "spaces_failed",
-                "polycarp-spaces didn't answer within 10 seconds",
+                &format!(
+                    "polycarp-spaces didn't answer within {} seconds",
+                    limit.as_secs()
+                ),
                 &format!("Try again; if it keeps happening, run `polycarp-spaces {probe}` in a terminal to see why."),
             )
         }
@@ -834,7 +909,11 @@ fn surfaces_refusal(code: &str, message: &str, suggestion: &str) -> theme::Envel
 }
 
 /// Runs `exe` with `args` and gives back stdout and stderr, or None when it couldn't start or ran past the limit.
-fn run_limited(exe: &std::path::Path, args: &[String]) -> Option<(Vec<u8>, Vec<u8>)> {
+fn run_limited(
+    exe: &std::path::Path,
+    args: &[String],
+    limit: Duration,
+) -> Option<(Vec<u8>, Vec<u8>)> {
     let mut child = Command::new(exe)
         .args(args)
         .stdin(Stdio::null())
@@ -858,7 +937,7 @@ fn run_limited(exe: &std::path::Path, args: &[String]) -> Option<(Vec<u8>, Vec<u
     let (tx, rx) = mpsc::channel();
     read_into(child.stdout.take(), tx.clone(), true);
     read_into(child.stderr.take(), tx, false);
-    let deadline = std::time::Instant::now() + SURFACES_LIMIT;
+    let deadline = std::time::Instant::now() + limit;
     let (mut out, mut err) = (None, None);
     while out.is_none() || err.is_none() {
         match rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {

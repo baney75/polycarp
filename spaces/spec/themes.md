@@ -156,6 +156,11 @@ Space gets its own picture back as you visit it, from the copy if the original i
 reads nothing. `trace.log` says `theme wallpaper: set on N display(s)`, `your own picture back on N display(s)`, or
 `left display <key> alone: <why>`.
 
+A paper (`desktop.paper`, else `paper` in surfaces.json, set with `polycarp-spaces paper set`; docs/surfaces.md) wins
+over all of this, with the switch on or off and with or without a theme: the desktop shows the paper, kept and put back
+the same way (a picture from `Papers/` is Polycarp's own and is never recorded as the person's). `paper reset` brings
+back the theme's picture while the switch is on, else each Space's own.
+
 ## Every surface uses the theme
 
 The dock, the "+N" list and window strip, the window switcher (⌘Tab or Alt+Tab), the launcher,

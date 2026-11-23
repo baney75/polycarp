@@ -102,3 +102,51 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 var(--pc-border-wid
 	input { font-size: 20px; padding: 12px 16px; }
 	.verse blockquote { font-size: 18px; }
 }
+
+/* Paper: what lies behind the field and the verse (paper.js, docs/newtab.md). The layer sits under everything;
+   a scrim from the theme's background keeps the words readable on any picture, and the field and the verse sit on
+   a soft panel. With no paper (data-paper="none") none of this shows. */
+.paper {
+	position: fixed;
+	inset: 0;
+	z-index: -1;
+	background-position: center;
+	background-size: cover;
+	background-repeat: no-repeat;
+}
+.paper[data-paper="none"] { display: none; }
+/* A picture's mark paints before the picture itself: the theme's background holds its place, never the bare page. */
+.paper[data-paper="image"] { background-color: var(--pc-background); }
+.paper::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: radial-gradient(ellipse at 50% 40%,
+		color-mix(in srgb, var(--pc-background) 55%, transparent),
+		color-mix(in srgb, var(--pc-background) 20%, transparent) 70%);
+}
+.paper[data-paper="color"]::after { background: none; }
+.paper[data-scene="field"] {
+	background-image: linear-gradient(to bottom, var(--pc-selection), var(--pc-background) 62%,
+		color-mix(in srgb, var(--pc-accent) 55%, var(--pc-background)) 63%, var(--pc-accent));
+}
+.paper[data-scene="olive"] {
+	background-image: linear-gradient(to bottom, var(--pc-background), var(--pc-selection) 58%,
+		color-mix(in srgb, var(--pc-accent) 70%, var(--pc-sunken)) 59%, color-mix(in srgb, var(--pc-accent) 80%, var(--pc-strong)));
+}
+.paper[data-scene="water"] {
+	background-image: linear-gradient(to bottom, var(--pc-background), var(--pc-surface) 55%,
+		color-mix(in srgb, var(--pc-done) 45%, var(--pc-background)) 56%, var(--pc-done));
+}
+.paper[data-scene="parchment"] { background-image: linear-gradient(to bottom, var(--pc-surface), var(--pc-sunken)); }
+.paper[data-scene="solid"] { background-color: var(--pc-background); }
+.paper[data-scene="solid"]::after { background: none; }
+body[data-paper]:not([data-paper="none"]) { background: transparent; }
+body[data-paper]:not([data-paper="none"]) .verse {
+	padding: 16px 24px;
+	border-radius: var(--pc-radius-large);
+	background: color-mix(in srgb, var(--pc-background) 78%, transparent);
+	backdrop-filter: blur(12px);
+}
+body[data-paper]:not([data-paper="none"]) .verse blockquote,
+body[data-paper]:not([data-paper="none"]) .verse figcaption { color: var(--pc-foreground); }

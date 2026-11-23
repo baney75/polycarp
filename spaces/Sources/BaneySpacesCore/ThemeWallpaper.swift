@@ -18,6 +18,8 @@ public enum ThemeWallpaper: Equatable, Sendable {
     case image(String)
     /// A painted scene from surfaces.json: field, olive, water or parchment, in the hour's light, with a verse.
     case scene(DesktopScene)
+    /// A paper's picture (Paper.swift), a file in Papers/ that `paper set` copied in.
+    case picture(URL)
 
     /// The theme's own colors when it names none: its `background` at the top fading to `sunken` at the bottom. A theme
     /// always has both (`PolycarpTheme.parse` refuses one without); black stands in for either if not.
@@ -74,7 +76,7 @@ public enum ThemeWallpaper: Equatable, Sendable {
         switch self {
         case .solid(let c): return "solid-\(hex(c))-\(width)x\(height).png"
         case .gradient(let a, let b): return "gradient-\(hex(a))-\(hex(b))-\(width)x\(height).png"
-        case .image: return nil
+        case .image, .picture: return nil
         case .scene(let s): return s.fileName(width: width, height: height)
         }
     }
@@ -85,7 +87,7 @@ public enum ThemeWallpaper: Equatable, Sendable {
         switch self {
         case .solid(let c): (top, bottom) = (c, c)
         case .gradient(let a, let b): (top, bottom) = (a, b)
-        case .image: return nil
+        case .image, .picture: return nil
         case .scene(let s): return s.png(width: width, height: height)
         }
         guard width > 0, height > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
@@ -136,23 +138,26 @@ public final class WallpaperKeeper {
     private let desktop: DesktopPictures
     /// Where the pictures that ship with Polycarp are (the app's `Wallpapers` folder), if anywhere.
     private let bundledFolder: URL?
+    /// Where the papers' pictures are (Papers/ beside surfaces.json), if anywhere: never recorded as the person's own.
+    private let papersFolder: URL?
     public private(set) var saved: [SavedPicture]
 
     public var pictures: URL { folder.appendingPathComponent("Pictures", isDirectory: true) }
     public var kept: URL { folder.appendingPathComponent("Kept", isDirectory: true) }
     private var record: URL { folder.appendingPathComponent("saved.json") }
 
-    public init(folder: URL, desktop: DesktopPictures, bundledFolder: URL? = nil) {
+    public init(folder: URL, desktop: DesktopPictures, bundledFolder: URL? = nil, papersFolder: URL? = nil) {
         self.folder = folder
         self.desktop = desktop
         self.bundledFolder = bundledFolder
+        self.papersFolder = papersFolder
         saved = (try? JSONDecoder().decode([SavedPicture].self, from: Data(contentsOf: folder.appendingPathComponent("saved.json")))) ?? []
     }
 
     /// Whether `url` is a picture this keeper made or shipped (so it is never recorded as the person's own).
     public func isOurs(_ url: URL) -> Bool {
         let p = url.standardizedFileURL.path
-        return [pictures, bundledFolder].contains { f in f.map { p.hasPrefix($0.standardizedFileURL.path + "/") } ?? false }
+        return [pictures, bundledFolder, papersFolder].contains { f in f.map { p.hasPrefix($0.standardizedFileURL.path + "/") } ?? false }
     }
 
     /// A stable name for a kept copy (Swift's own hash changes every launch).
@@ -183,7 +188,7 @@ public final class WallpaperKeeper {
                     do { try keep(d.key, now.url, now.options) } catch { out.skipped[d.key] = "its picture could not be kept: \(error.localizedDescription)"; continue }
                 }
                 guard saved.contains(where: { $0.display == d.key }) else { out.skipped[d.key] = "no saved picture to go back to"; continue }
-                do { try desktop.set(d.key, url: ours, options: PictureOptions(scaling: 0, allowClipping: true)); out.set.append(d.key) } catch {
+                do { try desktop.set(d.key, url: ours, options: Self.options(wallpaper)); out.set.append(d.key) } catch {
                     out.skipped[d.key] = "macOS refused the picture: \(error.localizedDescription)"
                 }
             } else {
@@ -198,6 +203,13 @@ public final class WallpaperKeeper {
             }
         }
         return out
+    }
+
+    /// How Polycarp's picture fills a display: one drawn at the display's size as it is; a paper's picture scaled to
+    /// fill it, cropping what overhangs (macOS's "Fill Screen").
+    static func options(_ w: ThemeWallpaper) -> PictureOptions {
+        if case .picture = w { return PictureOptions(scaling: 3, allowClipping: true) }
+        return PictureOptions(scaling: 0, allowClipping: true)
     }
 
     /// Records a display's own picture and copies its file into `Kept/`, before anything covers it. The record is on disk
@@ -236,6 +248,7 @@ public final class WallpaperKeeper {
             guard let f = bundledFolder?.appendingPathComponent(name), FileManager.default.fileExists(atPath: f.path) else { return nil }
             return f
         }
+        if case .picture(let f) = w { return FileManager.default.fileExists(atPath: f.path) ? f : nil }
         guard let name = w.fileName(width: pixels.width, height: pixels.height) else { return nil }
         let url = pictures.appendingPathComponent(name)
         if FileManager.default.fileExists(atPath: url.path) { return url }

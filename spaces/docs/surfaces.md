@@ -12,6 +12,7 @@ clock, square tiles), use the style sheet: [style.md](style.md).
 - Every field is optional. A missing field, or no file at all, takes the default below.
 - A path is the keys joined with dots: `bar.height`, `bar.modules.left`, `desktop.scene`.
 - `polycarp-spaces surfaces schema` prints the JSON Schema (draft 2020-12) with every field, its default and its rules.
+- To change the wallpaper, use `polycarp-spaces paper` ([Paper](#paper-the-desktop-the-new-tab-and-the-idle-screen-in-one-command)): it takes a picture, a URL, a color or a scene and writes the `paper` fields for you.
 
 ## Commands
 
@@ -74,7 +75,62 @@ Error codes: `invalid_value` (the value fails its check), `unknown_path` (no suc
 - **`settings` and `quit` can't be hidden** from the status menu.
 - `version` is the file's format. This build writes 1, and never lowers a higher one it finds.
 
+## Paper: the desktop, the new tab and the idle screen in one command
+
+The paper is what lies behind a place: the desktop picture, the browser's new tab page and the idle screen. One
+command sets it for all three, or for the places you name:
+
+```sh
+polycarp-spaces paper set ~/Pictures/sunset.jpg                 # every place
+polycarp-spaces paper set https://example.com/sunset.jpg --on desktop
+polycarp-spaces paper set "#2B2E26" --on newtab,idle
+polycarp-spaces paper set olive                                 # a scene, drawn in the hour's light
+polycarp-spaces paper get [--json]                              # each place's paper and where it comes from
+polycarp-spaces paper reset [--on desktop,newtab,idle|all]      # back to what each place showed before
+```
+
+`<what>` is one of:
+
+- a picture on this Mac: `.png`, `.jpg`, `.heic` or `.webp`, at most 25 MB and at most 16384 pixels on a side and
+  100 megapixels (`too_large`, read from its header before any decode). `~/` is your home folder; a relative path
+  starts where you run the command.
+- an `https://` URL to a picture. It is fetched once, at most 25 MB, and refused unless it decodes as a PNG, JPEG,
+  HEIC or WebP picture. Plain `http://` is refused, and so is a host on this Mac or the local network (`localhost`,
+  `.local`, loopback, private, link-local and shared addresses, by name or by what it resolves to), before the
+  request and on every redirect.
+- a color, `#RRGGBB`.
+- a scene: `field`, `olive`, `water`, `parchment` (drawn at each display's size, in the hour's light, with the
+  desktop's verse), or `solid` (the theme's own picture).
+
+A picture is copied into `Papers/` beside surfaces.json (`~/Library/Application Support/Polycarp/Papers/`) as
+`paper-<16 hex digits>.<ext>`, named for its content, so you never follow a naming rule by hand and the same picture
+twice is one file. After each `set` and `reset`, pictures no paper names are pruned, keeping the newest 10.
+
+`--on` takes `desktop`, `newtab`, `idle` or `all`, joined with commas; the default is `all`. All three places write
+`paper` and clear each place's own. Fewer write only those places' own (`desktop.paper` and the rest). `reset --on
+desktop` takes the desktop's paper off and leaves the others showing what they showed.
+
+- **Desktop.** The running app sets it within the same 150 ms pickup as any surfaces change, on every display and
+  Space, the way the theme's wallpaper is set: before Polycarp first covers a display's picture it records it and keeps
+  a copy, and reset puts it back. A paper wins over the theme's wallpaper and `desktop.scene`, whatever the Settings
+  switch "Theme sets the desktop picture" says; reset brings the theme's back while that switch is on. A picture fills
+  the screen, cropping what overhangs.
+- **New tab.** The page paints it behind the field and the verse, with a soft scrim from the theme's background so
+  both stay readable on any picture ([newtab.md](newtab.md#paper)).
+- **Idle screen.** It is the background in any style, dimmed like the `field` style.
+
+An unset paper changes nothing: each place looks as it did before paper. A picture that is gone from `Papers/` counts
+as unset for that place. `paper set` and `paper reset` print each place's paper as `paper get` does; with `--json` the
+envelope's `data` is `{paper, desktop, newtab, idle, file}`, each place `{value, kind, picture, from}` (`value` null
+for none, `from` `paper` or the place's own path). Error codes, beyond the surfaces ones: `invalid_paper`,
+`not_found`, `not_a_picture`, `too_large`, `fetch_failed`. A file with errors of its own refuses the paper with
+`invalid_file` before a picture is fetched or copied in, and a write that fails takes a newly copied picture back out.
+
 ## Every field
+
+| Path | Default | Takes |
+| --- | --- | --- |
+| `paper` | `""` | What lies behind the desktop, the new tab page and the idle screen: `#RRGGBB`, a scene (`field`, `olive`, `water`, `parchment`, `solid`), or `picture:<name>` for a picture in `Papers/` that `polycarp-spaces paper set` made. Empty: every place as before paper. Each place's own `paper` overrides it. |
 
 ### `bar`: the top bar that stands in for the macOS menu bar
 
@@ -152,6 +208,7 @@ losing its buttons under it.
 | `desktop.verse` | `true` | A small verse on the desktop. |
 | `desktop.versePosition` | `"bottom-right"` | `bottom-left`, `bottom-center`, `bottom-right`, `top-left`, `top-center`, `top-right` or `center`. |
 | `desktop.verseRotation` | `"daily"` | `daily`, `hourly`, or `fixed:<reference>` for one verse always, as `fixed:Psalm 46:10` or `fixed:Lamentations 3:22-23`. |
+| `desktop.paper` | `""` | The desktop's own paper, over `paper`: `#RRGGBB`, a scene or `picture:<name>`. It wins over the theme's wallpaper and `desktop.scene`. Empty follows `paper`. |
 
 The desktop shows a scene while Settings › Appearance › "Theme sets the desktop picture" is on and a Polycarp theme is in
 force; off, each display gets its own picture back. `field`, `olive`, `water` and `parchment` are drawn by Polycarp at each
@@ -207,6 +264,7 @@ file; a pick the file refuses goes back, with the reason under the picker.
 | `newtab.question` | `"Search or type an address"` | The placeholder in the new tab's one field: one line, not blank, up to 160 characters. |
 | `newtab.verse` | `true` | A verse on the page. |
 | `newtab.searchURL` | `"https://duckduckgo.com/?q={query}"` | The older name for the engine: an `https://` URL with `{query}` once. Used only when the file doesn't set `search.engine`. With no Polycarp host at all, the page searches DuckDuckGo. |
+| `newtab.paper` | `""` | The page's own paper, over `paper`: `#RRGGBB`, a scene or `picture:<name>`. Empty follows `paper`. |
 
 The page's finder, its keys and the host's `find` reply: [newtab.md](newtab.md).
 
@@ -221,6 +279,7 @@ The page's finder, its keys and the host's `find` reply: [newtab.md](newtab.md).
 | `idle.showVerse` | `true` | A verse. |
 | `idle.showKierkegaard` | `true` | A line from Kierkegaard. |
 | `idle.startAfterMinutes` | `10` | Minutes without input before it comes up: 1 to 240. |
+| `idle.paper` | `""` | The idle screen's own paper, over `paper`, dimmed behind the words in any style: `#RRGGBB`, a scene or `picture:<name>`. Empty follows `paper`. |
 
 The idle screen covers every screen after `startAfterMinutes` without input: the Mac's name, the time, a verse (BSB,
 a new one each hour) and a line of Kierkegaard (a new one each day). The words drift a few points a minute so nothing
@@ -303,6 +362,15 @@ Two search tools read `search.engine` and the bangs the same way: `search` (`que
 `polycarp-spaces search <query> --json` and returns the ranked results, and `search_open` (`query`) runs it with
 `--open` to go to the top one.
 
+Three paper tools run `polycarp-spaces paper ... --json` the same way, so "make my wallpaper this sunset picture" is one
+call:
+
+| Tool | Arguments | Does |
+| --- | --- | --- |
+| `paper_set` | `what`, `on` (optional) | A picture path, an https URL, `#RRGGBB` or a scene, for every place or those in `on`. |
+| `paper_get` | none | Each place's paper and where it comes from. |
+| `paper_reset` | `on` (optional) | Takes the paper off those places. |
+
 ## For views (Swift)
 
 Views read `SurfacesStore.shared.current` (a `Surfaces`, safe from any thread) and listen for
@@ -320,9 +388,10 @@ NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object:
 
 The model is `Surfaces` in BaneySpacesCore: `bar` (`Bar`: `enabled`, `height`, `style`, `left`, `center`, `right` as
 `[BarModule]`, `clockFormat`, `hourNames`), `desktop` (`scene`, `followDaylight`, `verse`,
-`versePosition`, `verseRotation`), `dock` (`tileLabel`, `restTile`), `menu` (`order`, `hidden`, and
+`versePosition`, `verseRotation`, `paper`), `dock` (`tileLabel`, `restTile`), `menu` (`order`, `hidden`, and
 `rows`, the rows to show in order), `search` (`engine`; `OneSearch.engine` resolves it against the bangs), `newtab`
-(`question`, `verse`, `searchURL`, and `searchURL(for:)`), `idle`
-(`enabled`, `style`, `effects`, `showMachineName`, `showVerse`, `showKierkegaard`, `startAfterMinutes`) and `text` (`translation`, `verseSource`). `SurfaceField.all` is the one list of fields: validation, defaults, the model and the schema all read it.
+(`question`, `verse`, `searchURL`, `paper`, and `searchURL(for:)`), `idle`
+(`enabled`, `style`, `effects`, `showMachineName`, `showVerse`, `showKierkegaard`, `startAfterMinutes`, `paper`), `paper`
+and `paper(on:)` (the paper in force for a place, Paper.swift) and `text` (`translation`, `verseSource`). `SurfaceField.all` is the one list of fields: validation, defaults, the model and the schema all read it.
 
 Test hook: `POLYCARP_SURFACES_FILE` (an absolute path) points the command at another file. Never set in real use.
