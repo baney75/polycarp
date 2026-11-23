@@ -53,4 +53,4 @@ If this policy changes, the new version will be posted here with a new date, and
 
 ## Contact
 
-Questions about this policy: open an issue on the project's page, or use the support link on the Chrome Web Store listing.
+Questions about this policy: open an issue on the Polycarp repository.

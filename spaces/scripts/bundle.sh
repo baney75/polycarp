@@ -94,7 +94,7 @@ COMMIT_DATE=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:
 # 1 when tracked files had changes, so the commit does not say everything (`polycarp version` shows it).
 DIRTY=0
 [ -z "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] || DIRTY=1
-# The Polycarp browser extension (docs/extension.md): reading, the Reader, the Library and the new tab, whose host is
+# The Polycarp browser extension (extension/README.md): reading, the Reader, the Library and the new tab, whose host is
 # the bundled command. Its version_name is this build's full version; the extension reloads itself when the copy here
 # differs from the one the browser runs, so an app update updates it too.
 sh extension/scripts/stage.sh "$APP/Contents/Resources/extension" "$FULL_VERSION"

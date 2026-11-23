@@ -1,8 +1,6 @@
 # Polycarp
 
-Polycarp is a Chrome extension that makes any page easier to read and helps you remember what you read. It works in Chrome, Helium and other Chromium browsers.
-
-![Polycarp on a web page: bold word anchors, a focus ruler and the toolbar popup](store/screenshots/1-any-page.jpg)
+Polycarp's browser extension makes any page easier to read, helps you remember what you read, and gives the browser Polycarp's new tab (`newtab/`, see `../docs/newtab.md`). It works in Helium, Chrome and other Chromium browsers. It takes every color, face, radius and duration from the Polycarp theme (`src/shared/theme.css`, written by `polycarp theme export css polycarp --surface browser`).
 
 - **Read:** bold word anchors, reading fonts (Lexend, Atkinson Hyperlegible, OpenDyslexic), spacing, tints and a focus ruler on every site.
 - **Reader:** web pages, PDF, EPUB, DOCX, Markdown, HTML, FB2 and text in a clean reader, with read-aloud and word highlighting, sprint mode and printing.
@@ -13,20 +11,22 @@ Polycarp is a Chrome extension that makes any page easier to read and helps you 
 
 Every feature cites the research behind it, rated by strength, on the welcome page. Polycarp has no server and no account; see [PRIVACY.md](PRIVACY.md).
 
-## Try it
+## Install and update
 
-1. Open `chrome://extensions` (or `helium://extensions`) and turn on Developer mode.
-2. Click **Load unpacked** and pick the `extension/` folder.
-3. Open any article. Click the Polycarp icon to change the profile.
+The Polycarp app carries the extension: `scripts/bundle.sh` runs `scripts/stage.sh` into
+`Polycarp.app/Contents/Resources/extension`, with the app's full version as the manifest's `version_name`.
 
-## Build the store package
+1. Open `helium://extensions` (or `chrome://extensions`) and turn on Developer mode.
+2. Click **Load unpacked** and pick `~/Applications/Polycarp.app/Contents/Resources/extension`. This is the one step done by hand.
+3. From then on, each app update updates the extension: every 15 minutes and at browser start, the extension compares the
+   `version_name` on disk with the one running and reloads itself when they differ, unless a Reader, Library or other
+   Polycarp page is open; it waits for those to close. An open new tab does not hold it back.
+
+For work on the extension itself, load this folder instead.
 
 ```sh
-sh scripts/build.sh            # writes dist/polycarp-<version>.zip and checks every file it names
-node store/make-shots.mjs      # rebuilds the store screenshots and promo tiles
+sh scripts/stage.sh <dest> [version_name]   # the shipped copy: no tests, scripts, docs or dev pages; checks every file it names
 ```
-
-`store/listing.md` has every Web Store field, ready to paste.
 
 ## Tests
 
@@ -38,6 +38,7 @@ node tests/pages.spec.mjs
 node tests/reader.spec.mjs
 node tests/importers.spec.mjs
 node tests/library.spec.mjs
+node tests/package.spec.mjs      # the staged copy installs, carries the app version and updates itself
 node tests/sites.spec.mjs        # YouTube, X, Audible and feed fixtures, finder and pause
 node tests/sources.spec.mjs      # Search sources against saved fixtures
 node tests/nas.spec.mjs          # NAS against a local WebDAV fake
@@ -49,11 +50,12 @@ node tests/voice.spec.mjs --deps <folder with playwright>   # downloads the Koko
 
 | Path | What it holds |
 | --- | --- |
-| `extension/src/content` | The script that restyles pages, the page finder and the site helpers |
-| `extension/src/reader` | The Reader, importers, read-aloud, recall and print |
-| `extension/src/pages` | Welcome, Library, Review, Search and Settings |
-| `extension/src/shared` | Settings, memory, library, search sources, NAS, sync and icons, shared by all pages |
-| `extension/lib` | Bundled third-party code, each with its license |
+| `src/content` | The script that restyles pages, the page finder and the site helpers |
+| `src/reader` | The Reader, importers, read-aloud, recall and print |
+| `src/pages` | Welcome, Library, Review, Search and Settings |
+| `src/shared` | Settings, memory, library, search sources, NAS, sync and icons, shared by all pages |
+| `lib` | Bundled third-party code, each with its license |
+| `newtab` | The new tab page and its field logic |
 | `docs/research` | The research notes behind the features |
 
 ## License

@@ -89,7 +89,7 @@ try {
   ok(w.anchors > 10, `live sample has bold anchors (${w.anchors})`);
   ok(w.ver === JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8')).version, 'what is new shows the version');
   ok(!/photographic memory/i.test(w.text.replace(/Photographic memory\.\s/, '')) || /does not promise/i.test(w.text), 'photographic memory appears only as a non-promise');
-  ok(!/[–—]/.test(w.text), 'welcome copy has no en or em dashes');
+  ok(!/[\u2013\u2014]/.test(w.text), 'welcome copy has no en or em dashes');
 
   await page.click('#profiles .chip[data-id="dyslexia"]');
   await page.waitForTimeout(200);

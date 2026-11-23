@@ -1,6 +1,6 @@
 # Polycarp plan
 
-Polycarp is Spaces and themes for macOS and Windows. The browser extension, its CLI helper, MCP server and computer-use tools moved to Tychicus: https://github.com/baney75/tychicus. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
+Polycarp is Spaces and themes for macOS and Windows, with its own browser extension for reading and the new tab (`spaces/extension`, Donovan, 2026-11-21). The agent browser extension (the side panel), its CLI helper, MCP server and computer-use tools moved to Tychicus: https://github.com/baney75/tychicus. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 The rest of this plan is Spaces and themes, on Mac and Windows first. Old apps keep working, and their repos stay up. A box is checked only when its check has passed.
 

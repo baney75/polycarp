@@ -118,7 +118,7 @@ async function clickShadow(page, tag, title) {
 const errors = [];
 function watch(page, name) {
   page.on('pageerror', (e) => errors.push(`${name}: ${e}`));
-  page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|net::ERR/.test(m.text())) errors.push(`${name}: ${m.text()}`); });
+  page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|net::ERR/.test(m.text())) errors.push(`${name}: ${m.text()}` + (process.env.SHOW_ERRORS ? " at " + JSON.stringify(m.location()) : "")); });
   return page;
 }
 
@@ -140,18 +140,21 @@ try {
 
   // ---------- Popup ----------
   if (on('popup')) {
-    const openPopup = async () => {
+    // The toolbar popup is 360 wide; 390 and 1280 show it as a page on a phone and a desktop too.
+    const openPopup = async (w = 360) => {
       const pp = watch(await ctx.newPage(), 'popup');
       await pp.addInitScript(([tid, url]) => {
         const real = chrome.tabs.query.bind(chrome.tabs);
         chrome.tabs.query = async (q) => (q && q.active ? [{ id: tid, url, title: 'The water cycle', active: true }] : real(q));
       }, [artTab, LOCAL + '/article']);
-      await pp.setViewportSize({ width: 360, height: 640 });
+      await pp.setViewportSize({ width: w, height: w < 500 ? 640 : 900 });
       await pp.goto(X('src/popup/popup.html'));
       await sleep(600);
       return pp;
     };
-    let pp = await openPopup();
+    let pp;
+    for (const w of [390, 1280]) { pp = await openPopup(w); await shot(pp, 'popup', 'page', { full: true }); await pp.close(); }
+    pp = await openPopup();
     await shot(pp, 'popup', 'normal', { full: true });
     const menuBtn = await pp.$('[aria-controls="powerMenu"], #power, .headr button');
     if (menuBtn) { await menuBtn.click(); await sleep(200); await shot(pp, 'popup', 'menu', { full: true }); }

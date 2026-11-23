@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0 (2026-11-22)
+
+- The reading extension and Polycarp's new tab are one extension, named Polycarp, carried and updated by the Polycarp app. The earlier name, Phont, is gone.
+- Every color, face, radius and duration comes from the Polycarp theme, in light and dark; the olive branch replaces the old mascot.
+- Restoring a backup made under the earlier name brings its settings, memory garden and library across.
+- Where Polycarp is off for a page, its content script sets no timer and no observer.
+- A note being typed in the Library survives the page refreshing around it.
+
 ## 1.1.0 (2026-11-20)
 
 - Phont Search: one box for your library, YouTube, Wikipedia, Project Gutenberg, Open Library and LibriVox, with the Internet Archive, arXiv and OpenAlex one switch away. Results open in the Reader or save to your library.

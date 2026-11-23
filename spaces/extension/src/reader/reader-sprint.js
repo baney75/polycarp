@@ -67,7 +67,7 @@
     if (len > 8) f += 0.3;
     if (len > 12) f += 0.3;
     if (/[.!?…]["'”’)\]]*$/.test(it.w)) f += 1.2;
-    else if (/[,;:—–-]["'”’)\]]*$/.test(it.w)) f += 0.5;
+    else if (/[,;:\u2014\u2013-]["'”’)\]]*$/.test(it.w)) f += 0.5;
     if (it.first) f += 0.6;
     if (warm > 0) { f += warm * 0.12; warm--; }
     return (60000 / wpm()) * f;

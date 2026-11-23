@@ -112,11 +112,13 @@
     return text.replace(/<[^>]+>/g, function (tag) { return tag.replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, ''); });
   }
 
+  // Every page, chapter and fragment goes through this parser, never DOMParser itself.
+  var markupParser = { parseFromString: function (text, type) { return new DOMParser().parseFromString(dropHandlers(String(text)), type); } };
+
   function parseXhtml(text) {
-    text = dropHandlers(text);
-    var d = new DOMParser().parseFromString(text, 'application/xhtml+xml');
+    var d = markupParser.parseFromString(text, 'application/xhtml+xml');
     if (d.getElementsByTagName('parsererror').length || !d.documentElement) {
-      d = new DOMParser().parseFromString(text, 'text/html');
+      d = markupParser.parseFromString(text, 'text/html');
     }
     return d;
   }
@@ -808,7 +810,7 @@
    * @returns {string}
    */
   function sanitize(html, baseUrl) {
-    var d = new DOMParser().parseFromString('<!doctype html><html><head></head><body>' + String(html == null ? '' : html) + '</body></html>', 'text/html');
+    var d = markupParser.parseFromString('<!doctype html><html><head></head><body>' + String(html == null ? '' : html) + '</body></html>', 'text/html');
     return sanitizeNode(d.body, baseUrl);
   }
 
@@ -817,7 +819,7 @@
   // by rank to h2, h3, h4. Web pages (keepLevels) keep h2 to h6 as written and
   // only move a stray h1 down to h2.
   function finishSection(html, title, baseUrl, keepLevels) {
-    var d = new DOMParser().parseFromString('<!doctype html><html><head></head><body>' + html + '</body></html>', 'text/html');
+    var d = markupParser.parseFromString('<!doctype html><html><head></head><body>' + html + '</body></html>', 'text/html');
     var box = sanitizeNodeToContainer(d.body, baseUrl);
     var tkey = normKey(title);
     if (tkey) {
@@ -848,7 +850,7 @@
   }
 
   function htmlTextLength(html) {
-    var d = new DOMParser().parseFromString('<body>' + html + '</body>', 'text/html');
+    var d = markupParser.parseFromString('<body>' + html + '</body>', 'text/html');
     return collapse(d.body.textContent).length;
   }
 
@@ -1155,7 +1157,7 @@
   }
 
   function fromHtml(html, baseUrl, fallbackTitle) {
-    var doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+    var doc = markupParser.parseFromString(String(html || ''), 'text/html');
     var base = null;
     if (baseUrl) {
       var existing = doc.querySelector('base[href]');
@@ -1468,7 +1470,7 @@
   }
 
   function splitAtH1(html, docTitle) {
-    var d = new DOMParser().parseFromString('<!doctype html><html><head></head><body>' + html + '</body></html>', 'text/html');
+    var d = markupParser.parseFromString('<!doctype html><html><head></head><body>' + html + '</body></html>', 'text/html');
     var parts = [{ title: null, nodes: [] }];
     Array.prototype.slice.call(d.body.childNodes).forEach(function (n) {
       if (n.nodeType === 1 && lname(n) === 'h1') {
