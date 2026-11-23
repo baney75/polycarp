@@ -52,6 +52,23 @@ try {
   await web.goto(`http://127.0.0.1:${server.address().port}/`);
   await web.waitForSelector('polycarp-b', { timeout: 8000 }).catch(() => {});
   ok(await web.evaluate(() => document.querySelectorAll('polycarp-b').length > 5), 'content script restyles a web page');
+  // An app update changes only version_name: the popup still learns what is new, and the welcome page and backups
+  // name the full version (review finding second-F8).
+  const seenAtInstall = await sw.evaluate(() => chrome.storage.local.get('polycarp.seenVersion').then((g) => g['polycarp.seenVersion']));
+  ok(seenAtInstall === APP_VERSION, `install records the version it saw (${seenAtInstall})`);
+  await sw.evaluate(() => chrome.storage.local.set({ 'polycarp.seenVersion': '0.0.0-test.0+local.before', 'polycarp.whatsNew': null }));
+  await sw.evaluate(() => noteVersion());
+  const wn = await sw.evaluate(() => chrome.storage.local.get(['polycarp.whatsNew', 'polycarp.seenVersion']));
+  ok(wn['polycarp.whatsNew'] && wn['polycarp.whatsNew'].from === '0.0.0-test.0+local.before' && wn['polycarp.whatsNew'].to === APP_VERSION && wn['polycarp.seenVersion'] === APP_VERSION,
+    'a new version_name alone sets what is new ' + JSON.stringify(wn));
+  await sw.evaluate(() => noteVersion());
+  ok((await sw.evaluate(() => chrome.storage.local.get('polycarp.whatsNew')))['polycarp.whatsNew'].from === '0.0.0-test.0+local.before', 'the same version again changes nothing');
+  const wp = await ctx.newPage(); await wp.goto(`chrome-extension://${id}/src/pages/welcome.html`);
+  ok((await wp.textContent('#ver')) === APP_VERSION, 'the welcome page names the full version');
+  await wp.goto(`chrome-extension://${id}/src/pages/settings.html`);
+  ok((await wp.evaluate(() => PolycarpBackup.make().then((b) => b.version))) === APP_VERSION, 'a backup records the full version');
+  await wp.close();
+
   // The app's update path: the app writes a new copy with a new version_name; the running extension
   // sees it on disk and reloads into it, but not while a Polycarp page (here the Reader) is open.
   // chrome.runtime.reload is recorded, not run: headless Chromium does not bring a command-line

@@ -11,12 +11,10 @@ const READER = "src/reader/reader.html";
 chrome.runtime.onInstalled.addListener(async (details) => {
   const settings = await P.getSettings();
   await P.setSettings(settings); // writes defaults or migrates an older schema
-  const version = chrome.runtime.getManifest().version;
   if (details.reason === "install") {
+    await chrome.storage.local.set({ [SEEN_VERSION]: runningVersion() });
     chrome.tabs.create({ url: chrome.runtime.getURL("src/pages/welcome.html") });
-  } else if (details.reason === "update" && details.previousVersion !== version) {
-    await chrome.storage.local.set({ "polycarp.whatsNew": { from: details.previousVersion, to: version, seen: false } });
-  }
+  } else await noteVersion(details.previousVersion);
   buildMenus();
   injectIntoOpenTabs();
   refreshBadge();
@@ -24,9 +22,19 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   nasAlarm();
 });
 
+// An app update changes only version_name (the app's full version), not version, so the last version seen is kept
+// here and compared on every update and browser start; a change lists what is new in the popup.
+const SEEN_VERSION = "polycarp.seenVersion";
+async function noteVersion(previous) {
+  const now = runningVersion();
+  const seen = (await chrome.storage.local.get(SEEN_VERSION))[SEEN_VERSION] || previous || "";
+  if (seen && seen !== now) await chrome.storage.local.set({ "polycarp.whatsNew": { from: seen, to: now, seen: false } });
+  if (seen !== now) await chrome.storage.local.set({ [SEEN_VERSION]: now });
+}
+
 // The daily NAS backup alarm can go missing after a browser update; put it back.
 function nasAlarm() { const N = globalThis.PolycarpNAS; if (N && N.ensureAlarm) N.ensureAlarm().catch(() => {}); }
-chrome.runtime.onStartup.addListener(() => { refreshBadge(); nasAlarm(); });
+chrome.runtime.onStartup.addListener(() => { refreshBadge(); nasAlarm(); noteVersion(); });
 
 // Polycarp's app ships this extension inside Polycarp.app, and Helium runs it unpacked from there.
 // When the app updates, the files on disk change but the running copy does not. Compare the

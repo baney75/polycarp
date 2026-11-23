@@ -22,7 +22,8 @@
     const L = globalThis.PolycarpLibrary;
     let library = null;
     try { library = L ? await L.exportData() : null; } catch (e) { library = null; }
-    return { app: "polycarp", version: chrome.runtime.getManifest().version, at: new Date().toISOString(), data: all, library };
+    const m = chrome.runtime.getManifest();
+    return { app: "polycarp", version: m.version_name || m.version, at: new Date().toISOString(), data: all, library };
   }
 
   function stringify(backup) { return JSON.stringify(backup, null, 2); }

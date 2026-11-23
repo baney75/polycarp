@@ -15,7 +15,8 @@
   $("navSettings").innerHTML = I("sliders") + "<span>Settings</span>";
   $("pip").innerHTML = IC.mascot("open");
   $("openReader").innerHTML = I("upload") + "<span>Open a file</span>";
-  $("ver").textContent = chrome.runtime.getManifest().version;
+  const manifest = chrome.runtime.getManifest();
+  $("ver").textContent = manifest.version_name || manifest.version;
   $("pin").textContent = "Keep Polycarp one click away: click the puzzle piece in your browser's toolbar, then the pin next to Polycarp.";
 
   // ---------- Evidence ----------
