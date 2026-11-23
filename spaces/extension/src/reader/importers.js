@@ -112,6 +112,8 @@
   // contain "onclick=" is left whole. Comments, declarations, end tags and the text of raw-text elements are copied
   // as they are.
   var RAW_TEXT = { script: 1, style: 1, textarea: 1, title: 1, xmp: 1, iframe: 1, noembed: 1, noframes: 1, noscript: 1 };
+  // Sticky patterns read in place at any length, so a long run of spaces or a long value never ends a match early.
+  var WS = /[\s/]*/y, NAME = /=?[^\s/>=]*/y, EQ = /\s*=\s*/y, BARE = /[^\s>]*/y;
   function dropHandlers(text) {
     var out = '', i = 0, n = text.length;
     function copyThrough(end) {
@@ -130,18 +132,22 @@
       var name = /^<([^\s/>]+)/.exec(text.slice(i, i + 256))[1];
       out += '<' + name; i += 1 + name.length;
       for (;;) {
-        var ws = /^[\s/]*/.exec(text.slice(i, i + 4096))[0];
+        WS.lastIndex = i;
+        var ws = WS.exec(text)[0];
         i += ws.length;
         if (i >= n) { out += ws; break; }
         if (text[i] === '>') { out += ws + '>'; i++; break; }
-        var an = /^[^\s/>=]+/.exec(text.slice(i, i + 1024))[0];
+        // An attribute name may start with "=" (`<p =x>`), as the HTML tokenizer reads it; never an empty match.
+        NAME.lastIndex = i;
+        var an = NAME.exec(text)[0] || text[i];
         var start = i; i += an.length;
-        var eq = /^\s*=\s*/.exec(text.slice(i, i + 1024));
+        EQ.lastIndex = i;
+        var eq = EQ.exec(text);
         if (eq) {
           i += eq[0].length;
           var q = text[i];
           if (q === '"' || q === "'") { var close = text.indexOf(q, i + 1); i = close < 0 ? n : close + 1; }
-          else i += /^[^\s>]*/.exec(text.slice(i, i + 65536))[0].length;
+          else { BARE.lastIndex = i; i += BARE.exec(text)[0].length; }
         }
         if (!/^on/i.test(an)) out += ws + text.slice(start, i);
       }
@@ -156,7 +162,9 @@
   }
 
   // Every page, chapter and fragment goes through this parser, never DOMParser itself.
-  var markupParser = { parseFromString: function (text, type) { return new DOMParser().parseFromString(dropHandlers(String(text)), type); } };
+  // Stripping is only to quiet CSP reports; if it ever fails on strange markup, the page still parses (handlers never run).
+  function withoutHandlers(text) { try { return dropHandlers(text); } catch (e) { return text; } }
+  var markupParser = { parseFromString: function (text, type) { return new DOMParser().parseFromString(withoutHandlers(String(text)), type); } };
 
   function parseXhtml(text) {
     var d = markupParser.parseFromString(text, 'application/xhtml+xml');

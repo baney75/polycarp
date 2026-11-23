@@ -377,6 +377,26 @@ const brief = (doc) => doc.error ? doc.error : { title: doc.title, sections: doc
   check('fromHtml: a value containing onclick= keeps its paragraph', /Keep this paragraph about rivers/.test(h), h.slice(0, 300));
 }
 
+// Review of #616 round 2 (first-F1, sol-F1): malformed or very long tags must neither throw nor lose text.
+{
+  const r = await page.evaluate(() => {
+    const out = {};
+    for (const [k, html] of Object.entries({
+      eqName: '<p =x onclick="y()">Keep A</p>',
+      eqAfterValue: '<img src="a.png"=b onerror=z><p>Keep B</p>',
+      longSpace: '<p' + ' '.repeat(5000) + 'title="x" onclick="y()">Keep C</p>',
+      longBare: '<p title=' + 'v'.repeat(70000) + ' onclick=y>Keep D</p>',
+    })) {
+      try { out[k] = PolycarpImport.dropHandlers(html); } catch (e) { out[k] = 'THREW ' + e.message; }
+    }
+    return out;
+  });
+  check('dropHandlers: an attribute named from "=" is read, handler gone', r.eqName === '<p =x>Keep A</p>', r.eqName);
+  check('dropHandlers: "=" right after a quoted value', !/THREW|onerror/.test(r.eqAfterValue) && /Keep B/.test(r.eqAfterValue), r.eqAfterValue);
+  check('dropHandlers: 5000 spaces in a tag', !/THREW|onclick/.test(r.longSpace) && /title="x">Keep C/.test(r.longSpace), r.longSpace.slice(-60));
+  check('dropHandlers: a 70000-character bare value', !/THREW|onclick/.test(r.longBare) && /Keep D/.test(r.longBare), r.longBare.slice(-40));
+}
+
 // ---------------------------------------------------------------------------
 // fromHtml and fromUrl (local HTTP server)
 // ---------------------------------------------------------------------------
