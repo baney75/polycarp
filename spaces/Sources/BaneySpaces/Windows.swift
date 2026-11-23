@@ -440,20 +440,32 @@ enum Windows {
     /// `offscreen` holds the app windows the window server isn't drawing (a hidden app's,
     /// minimized ones, ones on another macOS desktop, and ones the app closed but kept), by owner;
     /// `onScreen` the rest.
-    static func snapshot(apps: Set<pid_t>) -> (alive: Set<WindowID>, appWindows: Set<WindowID>, owners: Set<pid_t>, offscreen: [WindowID: pid_t], onScreen: [WindowID: pid_t]) {
+    /// `outsiders` are the apps outside `apps` (Polycarp aside) drawing an app-level window on screen: one may have turned
+    /// regular since `apps` was read (`ScanApps.listStale`).
+    static func snapshot(apps: Set<pid_t>) -> Snapshot {
         let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
         var alive = Set<WindowID>(), appWindows = Set<WindowID>(), owners = Set<pid_t>(), offscreen: [WindowID: pid_t] = [:], onScreen: [WindowID: pid_t] = [:]
+        var outsiders = Set<pid_t>()
+        let me = getpid()
         for w in info {
             guard let id = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { continue }
             alive.insert(id)
             guard (w[kCGWindowLayer as String] as? Int) == 0,
-                  let pid = (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value, apps.contains(pid) else { continue }
+                  let pid = (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value else { continue }
+            let shown = (w[kCGWindowIsOnscreen as String] as? Bool) == true
+            guard apps.contains(pid) else {
+                if shown, pid != me { outsiders.insert(pid) }
+                continue
+            }
             appWindows.insert(id)
             owners.insert(pid)
-            if (w[kCGWindowIsOnscreen as String] as? Bool) != true { offscreen[id] = pid } else { onScreen[id] = pid }
+            if !shown { offscreen[id] = pid } else { onScreen[id] = pid }
         }
-        return (alive, appWindows, owners, offscreen, onScreen)
+        return (alive, appWindows, owners, offscreen, onScreen, outsiders)
     }
+
+    typealias Snapshot = (alive: Set<WindowID>, appWindows: Set<WindowID>, owners: Set<pid_t>, offscreen: [WindowID: pid_t],
+                          onScreen: [WindowID: pid_t], outsiders: Set<pid_t>)
 
     /// Whether a window is on no macOS desktop at all, or on one a display is showing. A window
     /// the app closed but kept (Ghostty keeps every one; so does Music), or a tab behind

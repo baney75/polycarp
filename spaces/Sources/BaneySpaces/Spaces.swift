@@ -54,6 +54,13 @@ final class Spaces {
     private var appliedSerial = 0
     /// The scan running on `scanQueue` now, if any.
     private var scanning: ScanStart?
+    /// The apps outside the regular list that drew a window on screen at the last refresh (`ScanApps.listStale`).
+    private var outsiders = Set<pid_t>()
+    /// The app windows on screen at the last refresh, by app: a switch holds the ones no workspace has yet whose app
+    /// didn't answer (`UnansweredWindows`).
+    private var seenOnScreen: [WindowID: pid_t] = [:]
+    /// The windows in `pendingLayout` a switch held because their app didn't answer (`holdUnanswered`), not saved ones.
+    private var heldWindows = Set<WindowID>()
     /// Accessibility scans run here, never on the main thread (2026-11-21, `ScanPlan`).
     private static let scanQueue = DispatchQueue(label: "com.baney.polycarp.scan", qos: .userInitiated)
     /// Short Accessibility questions (which window has focus, has a new window appeared), asked off the main thread.
@@ -210,8 +217,20 @@ final class Spaces {
     }
 
     private func refresh(full: Bool, asking: Set<pid_t>, then body: (() -> Void)?) {
-        let pids = RunningApps.regular
-        let snap = Windows.snapshot(apps: pids)
+        var pids = scanApps()
+        var snap = Windows.snapshot(apps: pids)
+        // An app outside the cached list draws a window it didn't before: it may have turned regular with no launch or
+        // activation to say so (Silas, opened from the menu bar). The list is read again before anything is skipped.
+        if ScanApps.listStale(outsiders: snap.outsiders, before: outsiders) {
+            RunningApps.invalidate()
+            let again = scanApps()
+            if again != pids {
+                pids = again
+                snap = Windows.snapshot(apps: pids)
+            }
+        }
+        outsiders = snap.outsiders
+        seenOnScreen = snap.onScreen
         clock.mark(.snap)
         let offKnown = offscreenKnown(snap.offscreen)
         let stray = ScanCheck.unplaced(onScreen: snap.onScreen, placed: Set(model.home.keys),
@@ -241,11 +260,21 @@ final class Spaces {
         startScan()
     }
 
+    /// The apps scans ask (`ScanApps.covered`): the regular ones, and any still running that owns a window a workspace
+    /// holds, so an app that turned accessory (Silas, its window closed) can still say that window is gone.
+    private func scanApps() -> Set<pid_t> {
+        let regular = RunningApps.regular
+        let tracked = Set(model.home.keys.compactMap { windows[$0]?.pid })
+        return ScanApps.covered(regular: regular, tracked: tracked) { pid in
+            NSRunningApplication(processIdentifier: pid).map { !$0.isTerminated } ?? false
+        }
+    }
+
     /// What a scan starts from, read on the main thread from the window server (never an app): its list of windows,
     /// the regular apps, and the apps to ask.
     private struct ScanStart {
         let serial: Int
-        let snap: (alive: Set<WindowID>, appWindows: Set<WindowID>, owners: Set<pid_t>, offscreen: [WindowID: pid_t], onScreen: [WindowID: pid_t])
+        let snap: Windows.Snapshot
         let pids: Set<pid_t>
         let owners: Set<pid_t>
         let ask: Set<pid_t>
@@ -253,9 +282,10 @@ final class Spaces {
 
     private func scanStart(full: Bool, extra: Set<pid_t>) -> ScanStart {
         RunningApps.invalidate()
-        let pidsNow = RunningApps.regular
+        let pidsNow = scanApps()
         Windows.keepBench(pidsNow)
         let snap = Windows.snapshot(apps: pidsNow)
+        outsiders = snap.outsiders
         // Only apps that own a window are asked. A running app with no windows is often frozen by
         // macOS and never answers, which would cost a full timeout on every scan.
         let owners = pidsNow.intersection(snap.owners)
@@ -431,8 +461,16 @@ final class Spaces {
             }
             guard let entry = pendingLayout.removeValue(forKey: id), windows[id]?.pid == entry.pid else { continue }
             model.assign(id, to: entry.workspace, focus: false)
-            fromLayout.insert(id)
-            returned = returned || !model.isShown(entry.workspace)
+            // A held window is a new one: a claim or an agent's app may still send it elsewhere. A saved one isn't.
+            if heldWindows.remove(id) == nil { fromLayout.insert(id) }
+            // Its app hidden while it waited (it had windows elsewhere), the window landing here must come back.
+            let hiddenByUs = saved.hiddenApps.contains(entry.pid) && NSRunningApplication(processIdentifier: entry.pid)?.isHidden == true
+            returned = returned || UnansweredWindows.appliesAgain(workspaceShown: model.isShown(entry.workspace), appHiddenByUs: hiddenByUs)
+        }
+        // A held window its app answered for in full without listing it as a window isn't one (an overlay): let it go.
+        for id in Array(heldWindows) where pendingLayout[id].map({ answered.contains($0.pid) }) ?? true {
+            pendingLayout[id] = nil
+            heldWindows.remove(id)
         }
         // At launch every window is new; the saved layout decides where they go. A window that sat
         // unplaced in plain sight while Accessibility was out isn't new either.
@@ -774,6 +812,7 @@ final class Spaces {
         saved.hiddenApps = saved.hiddenApps.filter { NSRunningApplication(processIdentifier: $0).map { !$0.isTerminated } ?? false }
         refusedFullScreen.formIntersection(alive)
         pendingLayout = pendingLayout.filter { alive.contains($0.key) }
+        heldWindows.formIntersection(pendingLayout.keys)
     }
 
     /// `takeFocus: false` rearranges windows without touching focus, for moves made from the
@@ -821,6 +860,7 @@ final class Spaces {
         if let f = focused, model.workspace(of: f.id) == model.current { noteFocus(f.id) }
         let leaving = model.current
         clock.from = leaving
+        holdUnanswered()
         let plan = model.switchTo(n)
         recent.removeAll { $0 == n }
         recent.insert(n, at: 0)
@@ -856,6 +896,30 @@ final class Spaces {
                 apply(model.switchTo(n), moveFocus: moveFocus)
             })
         }
+    }
+
+    /// A window on screen that no workspace holds because its app didn't answer the last scan (Finder, benched 5 s after
+    /// one slow answer just as the launcher opened its window) belongs to the workspace it's seen on. Held there like a
+    /// saved-layout window, it leaves with that workspace and lands on it when the app answers, instead of riding along
+    /// to the next workspace and joining it (`UnansweredWindows`).
+    private func holdUnanswered() {
+        let held = UnansweredWindows.held(onScreen: seenOnScreen, placed: Set(model.home.keys), waiting: Set(pendingLayout.keys),
+                                          notWindows: notWindows, unsure: lastScan?.unsure ?? [])
+        guard !held.isEmpty else { return }
+        // With one display it's the workspace you're on; with more, the one on the display it's on.
+        let several = model.shown.count > 1
+        let frames = several ? Dictionary(Windows.displays().map { ($0.key, $0.frame) }, uniquingKeysWith: { a, _ in a }) : [:]
+        let server = several ? Windows.serverWindows() : [:]
+        var on = Set<Int>()
+        for (id, pid) in held {
+            let display = server[id]?.bounds.flatMap { Geometry.display(of: $0, in: frames) }
+            let n = display.flatMap { model.shown[$0] } ?? model.current
+            pendingLayout[id] = SavedLayout.Entry(window: id, pid: pid, workspace: n)
+            heldWindows.insert(id)
+            on.insert(n)
+        }
+        let apps = Set(held.values).map { NSRunningApplication(processIdentifier: $0)?.localizedName ?? "pid \($0)" }.sorted()
+        Trace.log("unanswered: \(held.count) window(s) of \(apps.joined(separator: ", ")) held on workspace \(on.sorted().map(String.init).joined(separator: ","))")
     }
 
     /// The windows among `ids` in macOS full screen. Only windows exactly the size of a screen are
@@ -1890,7 +1954,10 @@ final class Spaces {
             for (d, n) in model.shown { carry(model.windows(on: n), to: d) }
         }
         let parkedApps = parkedPids()
-        let how = Concealment(plan: plan, owner: windows.mapValues(\.pid), alsoShown: waiting, neverHidden: parkedApps)
+        // An app whose window a switch held for a workspace not shown goes out of sight with that workspace.
+        let heldAway = Set(pendingLayout.values.filter { heldWindows.contains($0.window) && !model.isShown($0.workspace) }.map(\.pid))
+        let how = Concealment(plan: plan, owner: windows.mapValues(\.pid), alsoShown: waiting, neverHidden: parkedApps,
+                              alsoHidden: heldAway)
         let home = plan.show.compactMap { id -> (Window, CGRect)? in
             guard let frame = saved.frames[id], let w = windows[id] else { return nil }
             return (w, frame)
