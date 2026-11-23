@@ -27,14 +27,21 @@ final class DockDropDestination {
 
     init(model: DockModel) { self.model = model }
 
-    /// The buttons are up: no drag can be over the dock, whatever AppKit last said.
+    /// The buttons have come up. AppKit's drop arrives a moment later, so the drag counts as stale only after
+    /// `DockDropRelease.grace` with no drop or end; then no drag can be over the dock, whatever AppKit last said.
     func buttonsUp() {
-        guard hovering || items != nil else { return }
-        finish()
+        guard hovering || items != nil else { release.reset(); return }
+        if release.buttonsUp(now: ProcessInfo.processInfo.systemUptime) { finish() }
     }
+
+    /// A button is down: a drag still in progress isn't stale.
+    func buttonsDown() { release.reset() }
+
+    private var release = DockDropRelease()
 
     func entered(_ info: NSDraggingInfo) -> NSDragOperation {
         hovering = true
+        release.reset()
         return update(info)
     }
 
@@ -74,7 +81,11 @@ final class DockDropDestination {
         model.heldTarget = nil
         model.heldDrop = nil
         model.fileDrag = nil
-        onDragDone()
+        release.reset()
+        // Per-drag memory (the apps resolved for the lit icons) goes after work already queued, so a drop `perform`
+        // handed to the next turn of the run loop still finds the app it accepted, even one that quit since.
+        let done = onDragDone
+        DispatchQueue.main.async { done() }
     }
 
     private func update(_ info: NSDraggingInfo) -> NSDragOperation {
@@ -95,9 +106,10 @@ final class DockDropDestination {
         return DockDropDestination.operation(info.draggingSourceOperationMask)
     }
 
-    /// Copy where the source allows it, the way the macOS Dock opens a file: the file stays where it is.
+    /// Copy where the source allows it, the way the macOS Dock opens a file: the file stays where it is. Never `.move`:
+    /// a source told its item moved deletes its own copy, and the dock only opened it.
     static func operation(_ allowed: NSDragOperation) -> NSDragOperation {
-        for op: NSDragOperation in [.copy, .link, .generic, .move] where allowed.contains(op) { return op }
+        for op: NSDragOperation in [.copy, .link, .generic] where allowed.contains(op) { return op }
         return []
     }
 

@@ -369,7 +369,7 @@ final class WorkspaceDock {
         sweepStrays(now: ProcessInfo.processInfo.systemUptime)
         // A pinned dock takes drags from other apps too, though it doesn't come and go. One over the panel counts even if
         // the pasteboard watch missed its start; with the buttons up, none is over it, whatever AppKit last said.
-        if NSEvent.pressedMouseButtons == 0 { drop.buttonsUp() }
+        if NSEvent.pressedMouseButtons == 0 { drop.buttonsUp() } else { drop.buttonsDown() }
         let seen = outsideDrag.update(buttonsDown: NSEvent.pressedMouseButtons != 0) { NSPasteboard(name: .drag).changeCount }
         let carrying = seen || drop.hovering
         // A drag that ended without leaving the dock or dropping (Escape) is over too.

@@ -157,3 +157,23 @@ public struct ContentDrag: Sendable {
         return count() != atPress
     }
 }
+
+/// When the buttons come up during a drag over the dock. AppKit delivers the drop (`performDragOperation`) a few
+/// milliseconds after the hardware button comes up, so the dock's tick, which sees the buttons up first, waits `grace`
+/// before it takes the drag for stale; a drop or an end inside that wait resets it. Without the wait a tick in that gap
+/// cleared the lit tile and the drop was refused.
+public struct DockDropRelease {
+    public static let grace: TimeInterval = 0.5
+    private var upSince: TimeInterval?
+
+    public init() {}
+
+    /// The buttons are up at `now`: true once they have stayed up `grace` with no drop or end, so the drag is stale.
+    public mutating func buttonsUp(now: TimeInterval) -> Bool {
+        guard let since = upSince else { upSince = now; return false }
+        return now - since >= Self.grace
+    }
+
+    /// A button is down, or the drag dropped, ended or entered again: the wait starts over.
+    public mutating func reset() { upSince = nil }
+}

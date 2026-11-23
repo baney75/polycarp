@@ -187,3 +187,27 @@ final class DockFileDropTests: XCTestCase {
         XCTAssertTrue(app.contains("t.contentDragSeen = { [weak self] in self?.dock.outsideDragSeen }"))
     }
 }
+
+/// Review of #613, first-F1 (high): the dock's tick sees the buttons up a few milliseconds before AppKit delivers the
+/// drop, and once cleared the lit tile there, so a normal drop on an app icon was refused at random.
+final class DockDropReleaseTests: XCTestCase {
+    func testTheDropThatArrivesJustAfterTheButtonsComeUpStillCounts() {
+        var r = DockDropRelease()
+        XCTAssertFalse(r.buttonsUp(now: 10.000), "the first tick with the buttons up must not end the drag")
+        XCTAssertFalse(r.buttonsUp(now: 10.034), "nor one a tick later, while AppKit's drop is on its way")
+        XCTAssertFalse(r.buttonsUp(now: 10.0 + DockDropRelease.grace - 0.01))
+    }
+
+    func testADragWithNoDropOrEndGoesStaleAfterTheGrace() {
+        var r = DockDropRelease()
+        _ = r.buttonsUp(now: 5)
+        XCTAssertTrue(r.buttonsUp(now: 5 + DockDropRelease.grace))
+    }
+
+    func testAPressOrANewDragStartsTheWaitOver() {
+        var r = DockDropRelease()
+        _ = r.buttonsUp(now: 1)
+        r.reset()
+        XCTAssertFalse(r.buttonsUp(now: 1 + DockDropRelease.grace + 1), "the wait counts from the latest release")
+    }
+}
