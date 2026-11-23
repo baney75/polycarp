@@ -76,11 +76,12 @@ final class ThemeWallpaperApplier {
         for (d, why) in out.skipped.sorted(by: { $0.key < $1.key }) { Trace.log("theme wallpaper: left display \(d) alone: \(why)") }
     }
 
-    /// One timer, for the next moment a scene may look different; none when no scene shows.
+    /// One timer, for the next moment a scene may look different; none when no scene shows. It times the drawn scene, a
+    /// scene paper's when one is set, not `desktop.scene`.
     private func schedule(_ want: ThemeWallpaper?) {
         turn?.invalidate()
         turn = nil
-        guard case .scene = want, let next = DesktopScene.nextChange(SurfacesStore.shared.current.desktop, after: Date()) else { return }
+        guard let next = SurfacesStore.shared.current.nextDesktopTurn(want, after: Date()) else { return }
         let t = Timer(fire: next.addingTimeInterval(1), interval: 0, repeats: false) { [weak self] _ in self?.sync(force: false) }
         t.tolerance = 30
         RunLoop.main.add(t, forMode: .common)

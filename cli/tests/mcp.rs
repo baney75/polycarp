@@ -1025,6 +1025,22 @@ fn paper_tools_run_the_spaces_paper_command_and_pass_its_envelope_on_as_is() {
     assert_eq!(stub_args(&sb), ["paper", "reset", "--on", "idle", "--json"]);
     s.tool("paper_reset", json!({}));
     assert_eq!(stub_args(&sb), ["paper", "reset", "--json"]);
+    // Both replace or remove what was there (set clears each place's own), so a client that asks first asks
+    // (review of #626).
+    let v = s.request("tools/list", json!({}));
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let ann = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap()["annotations"].clone();
+    for n in ["paper_set", "paper_reset"] {
+        assert_eq!(
+            ann(n),
+            json!({"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false}),
+            "{n}"
+        );
+    }
+    assert_eq!(
+        ann("paper_get"),
+        json!({"readOnlyHint": true, "openWorldHint": false})
+    );
     for (tool, args) in [
         ("paper_set", json!({})),
         ("paper_set", json!({"what": 3})),

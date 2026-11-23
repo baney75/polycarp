@@ -115,6 +115,8 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 var(--pc-border-wid
 	background-repeat: no-repeat;
 }
 .paper[data-paper="none"] { display: none; }
+/* A picture's mark paints before the picture itself: the theme's background holds its place, never the bare page. */
+.paper[data-paper="image"] { background-color: var(--pc-background); }
 .paper::after {
 	content: "";
 	position: absolute;

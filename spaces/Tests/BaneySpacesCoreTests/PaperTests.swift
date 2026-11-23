@@ -2,6 +2,7 @@ import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
 import XCTest
+import zlib
 @testable import BaneySpacesCore
 
 /// The paper: one value for what lies behind the desktop, the new tab page and the idle screen (Paper.swift). The
@@ -187,6 +188,125 @@ final class PaperTests: XCTestCase {
         XCTAssertEqual(u.code, "not_a_picture", "a page where a picture should be is refused")
         XCTAssertEqual(SurfacesFile.load(path: file), .missing, "nothing was written")
         XCTAssertEqual(store.pictures(), [])
+    }
+
+    /// A PNG that claims `width` by `height` in a few kilobytes: 1-bit rows of zeros, deflated. Its header is whole, so
+    /// ImageIO reads its size, and a decode would take `width * height * 4` bytes. `header` leaves out the pixel data
+    /// altogether.
+    private func bombPNG(width: Int, height: Int, header: Bool = false) -> Data {
+        func be(_ v: Int) -> [UInt8] { [UInt8(v >> 24 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v & 0xFF)] }
+        func chunk(_ type: String, _ body: [UInt8]) -> [UInt8] {
+            let t = Array(type.utf8)
+            let c = body.withUnsafeBufferPointer { crc32(crc32(0, t, UInt32(t.count)), $0.baseAddress, UInt32(body.count)) }
+            return be(body.count) + t + body + be(Int(c))
+        }
+        var pixels: [UInt8] = []
+        if !header {
+            var z = z_stream()
+            deflateInit_(&z, 9, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
+            let row = [UInt8](repeating: 0, count: 1 + (width + 7) / 8)
+            var buf = [UInt8](repeating: 0, count: 1 << 16)
+            for i in 0..<height {
+                row.withUnsafeBufferPointer { r in
+                    z.next_in = UnsafeMutablePointer(mutating: r.baseAddress)
+                    z.avail_in = UInt32(r.count)
+                    repeat {
+                        buf.withUnsafeMutableBufferPointer { o in
+                            z.next_out = o.baseAddress
+                            z.avail_out = UInt32(o.count)
+                            deflate(&z, i == height - 1 ? Z_FINISH : Z_NO_FLUSH)
+                            pixels += o[0..<(o.count - Int(z.avail_out))]
+                        }
+                    } while z.avail_out == 0
+                }
+            }
+            deflateEnd(&z)
+        }
+        let signature: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        return Data(signature + chunk("IHDR", be(width) + be(height) + [1, 0, 0, 0, 0])
+                    + (header ? [] : chunk("IDAT", pixels)) + chunk("IEND", []))
+    }
+
+    func testAPictureTooManyPixelsToDecodeIsRefusedFromItsHeader() throws {
+        for (w, h) in [(16385, 100), (100, 16385), (12000, 9000), (20000, 20000)] {
+            let png = bombPNG(width: w, height: h)
+            XCTAssertLessThan(png.count, 64 * 1024, "a few kilobytes claim \(w) by \(h)")
+            guard case .failure(let f) = store.add(png) else { return XCTFail("\(w) by \(h) is too many pixels") }
+            XCTAssertEqual(f.code, "too_large", "\(w) by \(h): \(f.message)")
+            let path = try write(png, "huge-\(w)x\(h).png")
+            guard case .failure(let g) = PaperOps.set(path, on: [], file: file, cwd: "/") else { return XCTFail() }
+            XCTAssertEqual(g.code, "too_large")
+            XCTAssertNil(PaperImage.thumbnail(URL(fileURLWithPath: path), longest: 64), "never decoded for the idle screen")
+            XCTAssertNil(PaperImage.dataURL(URL(fileURLWithPath: path)), "never decoded for the new tab")
+        }
+        // Only a header: ImageIO won't say its size, so it is refused before any decode as no picture.
+        guard case .failure(let f) = store.add(bombPNG(width: 60000, height: 60000, header: true)) else { return XCTFail() }
+        XCTAssertEqual(f.code, "not_a_picture")
+        XCTAssertEqual(store.pictures(), [])
+        XCTAssertNoThrow(try store.add(bombPNG(width: 4000, height: 3000)).get(), "12 megapixels still go in")
+    }
+
+    func testAFileThatWouldRefuseThePaperGetsNoPictureCopiedIn() throws {
+        try Data(##"{"version": 1, "desktop": {"followDaylight": "yes"}}"##.utf8).write(to: URL(fileURLWithPath: file))
+        let png = try write(try picture(width: 32, height: 20), "a.png")
+        guard case .failure(let f) = PaperOps.set(png, on: [], file: file, cwd: "/") else { return XCTFail("the file has errors") }
+        XCTAssertEqual(f.code, "invalid_file")
+        var fetched = false
+        guard case .failure(let u) = PaperOps.set("https://example.com/a.png", on: [], file: file, cwd: "/",
+                                                  fetch: { _ in fetched = true; return .failure(PaperFailure("fetch_failed", "")) }) else { return XCTFail() }
+        XCTAssertEqual(u.code, "invalid_file")
+        XCTAssertFalse(fetched, "nothing is fetched for a file that would refuse it")
+        XCTAssertEqual(store.pictures(), [], "nothing copied in")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.folder.path))
+    }
+
+    func testAWriteThatFailsTakesTheNewPictureBackOut() throws {
+        let png = try write(try picture(width: 32, height: 20), "a.png")
+        let kept = try store.add(try picture(width: 8, height: 8, seed: 9)).get()
+        // Papers/ can take a picture but surfaces.json's folder can't take the file.
+        let fm = FileManager.default
+        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+        defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path) }
+        guard case .failure(let f) = PaperOps.set(png, on: [], file: file, cwd: "/") else { return XCTFail("the file can't be written") }
+        XCTAssertEqual(f.code, "io_error")
+        XCTAssertEqual(store.pictures(), [kept], "the new copy is gone; the one that was there stays")
+    }
+
+    func testALoopbackOrPrivateURLIsNeverFetched() throws {
+        for u in ["https://127.0.0.1:9/a.png", "https://localhost/a.png", "https://LOCALHOST./a.png", "https://app.localhost/a.png",
+                  "https://printer.local/a.png", "https://[::1]/a.png", "https://[fe80::1]/a.png", "https://[fd00::1]/a.png",
+                  "https://[::ffff:127.0.0.1]/a.png", "https://10.0.0.1/a.png", "https://172.16.4.2/a.png", "https://192.168.1.1/a.png",
+                  "https://169.254.169.254/latest", "https://100.64.0.1/a.png", "https://0.0.0.0/a.png", "https://2130706433/a.png"] {
+            let url = try XCTUnwrap(URL(string: u))
+            XCTAssertNotNil(PaperDownload.refusal(url), u)
+            guard case .failure(let f) = PaperDownload.fetch(url, timeout: 2) else { return XCTFail("\(u) was fetched") }
+            XCTAssertEqual(f.code, "invalid_paper", u)
+        }
+        guard case .failure(let f) = PaperOps.set("https://127.0.0.1:9/a.png", on: [], file: file, cwd: "/") else { return XCTFail() }
+        XCTAssertEqual(f.code, "invalid_paper", "the command refuses it through the real fetch")
+        XCTAssertEqual(store.pictures(), [])
+        for ip in ["8.8.8.8", "93.184.216.34", "2606:4700::1111", "172.32.0.1", "100.128.0.1"] {
+            XCTAssertEqual(PaperDownload.privateAddress(ip), false, ip)
+        }
+        XCTAssertNil(PaperDownload.privateAddress("example.com"))
+        XCTAssertNil(PaperDownload.refusal(try XCTUnwrap(URL(string: "https://93.184.216.34/a.png")), resolve: false))
+    }
+
+    func testAScenePaperOverASolidDesktopTurnsWithTheDay() throws {
+        var s = Surfaces.defaults
+        s.desktop.scene = .solid
+        s.desktop.followDaylight = true
+        let now = Date()
+        let theme: ThemeWallpaper = .gradient(RGB(r: 1, g: 1, b: 1), RGB(r: 0, g: 0, b: 0))
+        XCTAssertNil(s.nextDesktopTurn(theme, after: now), "the theme's own picture never turns")
+        s.paper = .scene(.olive)
+        XCTAssertEqual(s.drawnDesktop.scene, .olive, "the paper is what is drawn")
+        let want = s.paper(on: .desktop)?.wallpaper(desktop: s.desktop, papers: store.folder, at: now, systemDark: false, themeOwn: { theme })
+        guard case .scene? = want else { return XCTFail("olive is drawn as a scene") }
+        let next = try XCTUnwrap(s.nextDesktopTurn(want, after: now), "the drawn scene schedules its next light")
+        XCTAssertGreaterThan(next, now)
+        s.paper = nil
+        XCTAssertNil(s.nextDesktopTurn(want, after: now), "desktop.scene alone is solid, so it is the paper that turns")
     }
 
     func testAFetchedPictureIsKeptLikeAFile() throws {

@@ -355,7 +355,7 @@ pub(crate) fn tools() -> Vec<Tool> {
                 &["what"],
             ),
             read_only: false,
-            destructive: false,
+            destructive: true,
             idempotent: true,
         },
         Tool {
@@ -374,7 +374,7 @@ pub(crate) fn tools() -> Vec<Tool> {
                 &[],
             ),
             read_only: false,
-            destructive: false,
+            destructive: true,
             idempotent: true,
         },
         Tool {

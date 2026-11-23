@@ -91,10 +91,13 @@ polycarp-spaces paper reset [--on desktop,newtab,idle|all]      # back to what e
 
 `<what>` is one of:
 
-- a picture on this Mac: `.png`, `.jpg`, `.heic` or `.webp`, at most 25 MB. `~/` is your home folder; a relative path
+- a picture on this Mac: `.png`, `.jpg`, `.heic` or `.webp`, at most 25 MB and at most 16384 pixels on a side and
+  100 megapixels (`too_large`, read from its header before any decode). `~/` is your home folder; a relative path
   starts where you run the command.
 - an `https://` URL to a picture. It is fetched once, at most 25 MB, and refused unless it decodes as a PNG, JPEG,
-  HEIC or WebP picture. Plain `http://` is refused.
+  HEIC or WebP picture. Plain `http://` is refused, and so is a host on this Mac or the local network (`localhost`,
+  `.local`, loopback, private, link-local and shared addresses, by name or by what it resolves to), before the
+  request and on every redirect.
 - a color, `#RRGGBB`.
 - a scene: `field`, `olive`, `water`, `parchment` (drawn at each display's size, in the hour's light, with the
   desktop's verse), or `solid` (the theme's own picture).
@@ -120,7 +123,8 @@ An unset paper changes nothing: each place looks as it did before paper. A pictu
 as unset for that place. `paper set` and `paper reset` print each place's paper as `paper get` does; with `--json` the
 envelope's `data` is `{paper, desktop, newtab, idle, file}`, each place `{value, kind, picture, from}` (`value` null
 for none, `from` `paper` or the place's own path). Error codes, beyond the surfaces ones: `invalid_paper`,
-`not_found`, `not_a_picture`, `too_large`, `fetch_failed`.
+`not_found`, `not_a_picture`, `too_large`, `fetch_failed`. A file with errors of its own refuses the paper with
+`invalid_file` before a picture is fetched or copied in, and a write that fails takes a newly copied picture back out.
 
 ## Every field
 

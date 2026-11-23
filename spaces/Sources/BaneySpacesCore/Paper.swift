@@ -115,6 +115,23 @@ extension Surfaces {
         }
     }
 
+    /// The desktop as it is drawn: `desktop` with a scene paper in place of `desktop.scene`, so whatever reads the
+    /// scene (drawing it, timing its next turn) reads the one on screen.
+    public var drawnDesktop: Desktop {
+        var d = desktop
+        if case .scene(let s)? = paper(on: .desktop), s != .solid { d.scene = s }
+        return d
+    }
+
+    /// When the desktop may next look different while `want` shows: the drawn scene's next phase edge or verse change.
+    /// Nil unless `want` is a scene and the drawn desktop draws one.
+    public func nextDesktopTurn(_ want: ThemeWallpaper?, after date: Date, timeZone: TimeZone = .current) -> Date? {
+        guard case .scene = want else { return nil }
+        let d = drawnDesktop
+        guard DesktopScene.of(d, at: date, timeZone: timeZone, systemDark: false) != nil else { return nil }
+        return DesktopScene.nextChange(d, after: date, timeZone: timeZone)
+    }
+
     /// Every picture a paper names, by file name, so pruning keeps them.
     public var paperPictures: Set<String> {
         Set(([paper] + PaperPlace.allCases.map { paper(on: $0) }).compactMap { p in
@@ -222,8 +239,12 @@ public struct PaperStore {
               let ext = Self.ext(forType: type) else {
             return .failure(PaperFailure("not_a_picture", "that is not a PNG, JPEG, HEIC or WebP picture"))
         }
+        guard CGImageSourceGetCount(src) > 0 else {
+            return .failure(PaperFailure("not_a_picture", "the picture doesn't decode; it may be cut short or damaged"))
+        }
+        if let f = Self.oversize(src) { return .failure(f) }
         let probe: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 64]
-        guard CGImageSourceGetCount(src) > 0, CGImageSourceCreateThumbnailAtIndex(src, 0, probe as CFDictionary) != nil else {
+        guard CGImageSourceCreateThumbnailAtIndex(src, 0, probe as CFDictionary) != nil else {
             return .failure(PaperFailure("not_a_picture", "the picture doesn't decode; it may be cut short or damaged"))
         }
         let hash = SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
@@ -245,6 +266,24 @@ public struct PaperStore {
     }
 
     /// The pictures kept, newest first.
+    /// The most pixels a paper may have on a side, and in all: a decode of more could take gigabytes.
+    public static let maxSide = 16384
+    public static let maxPixels = 100_000_000
+
+    /// Why the first picture in `src` is refused for its size, read from its header without decoding it; nil when it
+    /// may be decoded. A header that gives no size is refused too.
+    public static func oversize(_ src: CGImageSource) -> PaperFailure? {
+        guard let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+              let h = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue, w > 0, h > 0 else {
+            return PaperFailure("not_a_picture", "the picture doesn't say how big it is; it may be cut short or damaged")
+        }
+        guard w <= maxSide, h <= maxSide, w * h <= maxPixels else {
+            return PaperFailure("too_large", "the picture is \(w) by \(h) pixels; a paper may be at most \(maxSide) on a side and 100 megapixels")
+        }
+        return nil
+    }
+
     public func pictures() -> [String] {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: folder.path) else { return [] }
@@ -281,6 +320,7 @@ public struct PaperStore {
 public enum PaperDownload {
     public static func fetch(_ url: URL, cap: Int = PaperStore.maxBytes, timeout: TimeInterval = 45) -> Result<Data, PaperFailure> {
         guard url.scheme?.lowercased() == "https" else { return .failure(PaperFailure("invalid_paper", "only https URLs are fetched")) }
+        if let why = refusal(url) { return .failure(PaperFailure("invalid_paper", why)) }
         let fetcher = Fetcher(cap: cap)
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
@@ -291,6 +331,70 @@ public enum PaperDownload {
         fetcher.done.wait()
         session.invalidateAndCancel()
         return fetcher.result
+    }
+
+    /// Why `url` isn't fetched, or nil: its host is this Mac, the local network or a link-local address, by name, by
+    /// address, or by what the name resolves to. A paper URL must not reach a router page or a local service.
+    public static func refusal(_ url: URL, resolve: Bool = true) -> String? {
+        guard var host = url.host?.lowercased(), !host.isEmpty else { return "the URL has no host" }
+        if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
+        if let zone = host.firstIndex(of: "%") { host = String(host[..<zone]) }
+        while host.hasSuffix(".") { host.removeLast() }
+        let local = "\(host) is on this Mac or the local network; only public addresses are fetched"
+        if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") { return local }
+        if let literal = privateAddress(host) { return literal ? local : nil }
+        guard resolve else { return nil }
+        return resolved(host).contains { privateAddress($0) == true } ? local : nil
+    }
+
+    /// Whether `ip` (IPv4 or IPv6 text) is loopback, private, link-local, shared, multicast or unspecified; nil when it
+    /// isn't an address.
+    public static func privateAddress(_ ip: String) -> Bool? {
+        var v4 = in_addr()
+        if inet_pton(AF_INET, ip, &v4) == 1 {
+            return privateV4(withUnsafeBytes(of: &v4) { Array($0) })
+        }
+        var v6 = in6_addr()
+        guard inet_pton(AF_INET6, ip, &v6) == 1 else { return nil }
+        let b = withUnsafeBytes(of: &v6) { Array($0) }
+        // IPv4-mapped (::ffff:a.b.c.d) and IPv4-compatible (::a.b.c.d, which takes in :: and ::1) carry an IPv4 address.
+        if b[0..<10].allSatisfy({ $0 == 0 }), (b[10] == 0xff && b[11] == 0xff) || (b[10] == 0 && b[11] == 0) {
+            return privateV4(Array(b[12..<16]))
+        }
+        if b[0] == 0xfe, b[1] & 0xc0 == 0x80 { return true }  // fe80::/10 link-local
+        if b[0] & 0xfe == 0xfc { return true }                // fc00::/7 unique local
+        if b[0] == 0xff { return true }                       // ff00::/8 multicast
+        return false
+    }
+
+    private static func privateV4(_ a: [UInt8]) -> Bool {
+        switch (a[0], a[1]) {
+        case (0, _), (10, _), (127, _), (169, 254), (192, 168): return true
+        case (172, 16...31), (100, 64...127): return true
+        case (224..., _): return true  // multicast and reserved, the broadcast address with them
+        default: return false
+        }
+    }
+
+    /// Every address `host` resolves to, as text. Empty when it doesn't resolve; the fetch then fails on its own.
+    static func resolved(_ host: String) -> [String] {
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        var list: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &list) == 0, let first = list else { return [] }
+        defer { freeaddrinfo(first) }
+        var out: [String] = []
+        var node: UnsafeMutablePointer<addrinfo>? = first
+        while let n = node {
+            var text = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if let a = n.pointee.ai_addr,
+               getnameinfo(a, n.pointee.ai_addrlen, &text, socklen_t(text.count), nil, 0, NI_NUMERICHOST) == 0 {
+                out.append(String(cString: text))
+            }
+            node = n.pointee.ai_next
+        }
+        return out
     }
 
     private final class Fetcher: NSObject, URLSessionDataDelegate, @unchecked Sendable {
@@ -321,8 +425,12 @@ public enum PaperDownload {
 
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                         newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-            guard request.url?.scheme?.lowercased() == "https" else {
+            guard let url = request.url, url.scheme?.lowercased() == "https" else {
                 refusal = PaperFailure("fetch_failed", "the URL sent Polycarp to a plain http address, which it doesn't fetch")
+                return completionHandler(nil)
+            }
+            if let why = PaperDownload.refusal(url) {
+                refusal = PaperFailure("fetch_failed", "the URL sent Polycarp on: " + why)
                 return completionHandler(nil)
             }
             completionHandler(request)
@@ -356,7 +464,8 @@ public enum PaperImage {
 
     /// The picture at `url` with its longest side at most `longest` pixels, turned upright. Nil when it doesn't decode.
     public static func thumbnail(_ url: URL, longest: Int) -> CGImage? {
-        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(src) > 0,
+              PaperStore.oversize(src) == nil else { return nil }
         let o: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
                                   kCGImageSourceThumbnailMaxPixelSize: max(1, longest)]
         return CGImageSourceCreateThumbnailAtIndex(src, 0, o as CFDictionary)
@@ -371,7 +480,8 @@ public enum PaperImage {
     /// The picture at `url` as a `data:image/jpeg;base64,` URL at most `newTabWidth` pixels wide and under `maxBytes`
     /// characters: JPEG at falling quality, then smaller, until it fits. Nil when it doesn't decode or never fits.
     public static func dataURL(_ url: URL, maxWidth: Int = newTabWidth, maxBytes: Int = newTabBytes) -> String? {
-        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(src) > 0,
+              PaperStore.oversize(src) == nil,
               let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
               var w = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
               var h = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue, w > 0, h > 0 else { return nil }
@@ -445,20 +555,24 @@ public enum PaperOps {
         let input: PaperInput
         switch PaperInput.parse(what, cwd: cwd) { case .failure(let f): return .failure(f); case .success(let i): input = i }
         let value: Paper
+        // A picture new to Papers/ is taken back out if the write fails, so a refused set leaves nothing behind.
+        var added: String?
         switch input {
         case .color(let c): value = .color(c)
         case .scene(let s): value = .scene(s)
         case .file(let path):
-            let data: Data
-            switch read(path) { case .failure(let f): return .failure(f); case .success(let d): data = d }
-            switch store.add(data) { case .failure(let f): return .failure(f); case .success(let n): value = .picture(n) }
+            switch keep(file: file, store: store, { read(path) }) {
+            case .failure(let f): return .failure(f)
+            case .success(let k): value = .picture(k.name); added = k.new ? k.name : nil
+            }
         case .url(let u):
-            let data: Data
-            switch fetch(u) { case .failure(let f): return .failure(f); case .success(let d): data = d }
-            switch store.add(data) { case .failure(let f): return .failure(f); case .success(let n): value = .picture(n) }
+            switch keep(file: file, store: store, { fetch(u) }) {
+            case .failure(let f): return .failure(f)
+            case .success(let k): value = .picture(k.name); added = k.new ? k.name : nil
+            }
         }
         let places = places.isEmpty ? Set(PaperPlace.allCases) : places
-        return write(file: file, store: store) { tree in
+        let result = write(file: file, store: store) { tree in
             var t = tree
             if places.count == PaperPlace.allCases.count {
                 t = t.setting(["paper"], to: .string(value.id))
@@ -468,6 +582,8 @@ public enum PaperOps {
             }
             return t
         }
+        if case .failure = result, let added { try? FileManager.default.removeItem(at: store.url(added)) }
+        return result
     }
 
     /// `paper reset [--on ...]`: those places back to what they showed before paper. A shared `paper` stays on the
@@ -541,6 +657,33 @@ public enum PaperOps {
         return .success(data)
     }
 
+    /// Checks the file can take a paper, then gets the picture and keeps it in Papers/: its name, and whether it is new
+    /// there. Nothing is fetched or copied for a file that would refuse it.
+    private static func keep(file: String, store: PaperStore,
+                             _ get: () -> Swift.Result<Data, PaperFailure>) -> Swift.Result<(name: String, new: Bool), PaperFailure> {
+        if let f = precheck(file) { return .failure(f) }
+        let data: Data
+        switch get() { case .failure(let f): return .failure(f); case .success(let d): data = d }
+        let before = Set(store.pictures())
+        return store.add(data).map { ($0, !before.contains($0)) }
+    }
+
+    /// Why the file can't take a paper as it stands (it can't be read, or it has errors of its own), or nil.
+    private static func precheck(_ file: String) -> PaperFailure? {
+        switch SurfacesOps.editable(file) {
+        case .failure(let f): return f
+        case .success(var tree):
+            if tree.at(["version"]) == nil { tree = tree.setting(["version"], to: .number(Double(Surfaces.version))) }
+            if case .failure(let e) = Surfaces.check(tree) { return invalidFile(e) }
+            return nil
+        }
+    }
+
+    private static func invalidFile(_ e: SurfacesErrors) -> PaperFailure {
+        SurfacesFailure("invalid_file", "the file has other errors, so the paper was not set: \(e.summary)",
+                        suggestion: "fix or `polycarp-spaces surfaces reset` the paths listed, then try again", issues: e.issues)
+    }
+
     /// Edits the file's tree, checks it whole, writes it once, then prunes the pictures no paper names.
     private static func write(file: String, store: PaperStore, _ edit: (SurfaceValue) -> SurfaceValue) -> Result {
         var tree: SurfaceValue
@@ -549,8 +692,7 @@ public enum PaperOps {
         if tree.at(["version"]) == nil { tree = tree.setting(["version"], to: .number(Double(Surfaces.version))) }
         switch Surfaces.check(tree) {
         case .failure(let e):
-            return .failure(SurfacesFailure("invalid_file", "the file has other errors, so the paper was not set: \(e.summary)",
-                                            suggestion: "fix or `polycarp-spaces surfaces reset` the paths listed, then try again", issues: e.issues))
+            return .failure(invalidFile(e))
         case .success(let c):
             do { try SurfacesFile.write(tree, to: file) } catch { return .failure(SurfacesFailure("io_error", "\(error)")) }
             store.prune(inUse: c.surfaces.paperPictures)
