@@ -414,7 +414,7 @@ mod tests {
         let (code, m) = gw
             .call(
                 "app_setting_set",
-                Some(&json!({"name": "dock.enabled", "value": "false"})),
+                Some(&json!({"name": "appearance.palette", "value": "auto"})),
                 &read,
                 &mut s,
             )

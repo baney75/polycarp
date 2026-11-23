@@ -14,7 +14,7 @@ extension Chrome {
     static var done: Color { role("done") }
     static var working: Color { role("working") }
     static var urgent: Color { role("urgent") }
-    /// The dock's "finished while you were away" count, and its legend in Settings.
+    /// The "finished while you were away" count.
     static var finished: Color { working }
     /// Quiet text: help lines, headers, units.
     static var muted: Color { wash(0.74) }
@@ -155,7 +155,7 @@ private extension View {
 enum SettingsSidebar {
     struct Group { var header: String?; var tabs: [SettingsTab] }
     static let groups: [Group] = [
-        Group(header: nil, tabs: [.general, .keys, .dock, .appearance, .launcher]),
+        Group(header: nil, tabs: [.general, .keys, .agents, .appearance, .launcher]),
         Group(header: "System", tabs: [.permissions, .automation, .updates]),
     ]
     static var order: [SettingsTab] { groups.flatMap(\.tabs) }

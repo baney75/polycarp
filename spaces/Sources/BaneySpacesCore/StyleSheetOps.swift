@@ -552,7 +552,7 @@ extension StyleSheet {
     public static var example: String {
         var out = """
         /* Polycarp style sheet: <config>/style.css (the folder `polycarp theme current` prints).
-           It restyles the top bar and the Workspace Dock on top of the theme: the theme sets colors, shape, type and
+           It restyles the top bar on top of the theme: the theme sets colors, shape, type and
            motion everywhere; a rule here sets them for one surface or part, and anything left out is drawn as before.
            Edits apply live. Change it with `polycarp-spaces style set '<selector>' <property> <value>`, then run
            `polycarp-spaces style check`. A bad line is dropped and listed with its line and column; the rest applies.

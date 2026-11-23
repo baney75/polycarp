@@ -103,33 +103,31 @@ final class DragReleaseTests: XCTestCase {
         let p = CGPoint(x: 290, y: 498)
         // Asked before the overview's release closes it.
         var showing = true
-        let end = ReleaseOrder.end(at: p, coveredFrom: from, overviewCovers: { showing }, endCarry: { false },
+        let end = ReleaseOrder.end(at: p, coveredFrom: from, overviewCovers: { showing }, endTicks: {},
                                    release: { showing = false; return false })
         XCTAssertEqual(end, DragEnd(pointer: p, coveredFrom: from, dropped: false))
         // Review of #152 (F1, F6): closed mid-carry, or carried to a display the overview isn't on.
-        let notThere = ReleaseOrder.end(at: p, coveredFrom: from, overviewCovers: { false }, endCarry: { false }, release: { false })
+        let notThere = ReleaseOrder.end(at: p, coveredFrom: from, overviewCovers: { false }, endTicks: {}, release: { false })
         XCTAssertNil(notThere.coveredFrom)
         // No overview for this drag: nothing to ask.
-        let plainDrag = ReleaseOrder.end(at: p, coveredFrom: nil, overviewCovers: { XCTFail("asked"); return true }, endCarry: { false }, release: nil)
+        let plainDrag = ReleaseOrder.end(at: p, coveredFrom: nil, overviewCovers: { XCTFail("asked"); return true }, endTicks: {}, release: nil)
         XCTAssertEqual(plainDrag, DragEnd(pointer: p, coveredFrom: nil, dropped: false))
     }
 
-    func testEitherDropMakesTheDragADrop() {
-        // The drop travels in DragEnd from the callbacks' own answers (review of #150, F5), carry first, then the overview.
+    func testTheOverviewsReleaseDecidesTheDrop() {
+        // The drop travels in DragEnd from the overview's own answer (review of #150, F5), after the ticks end.
         var order: [String] = []
         let p = CGPoint(x: 290, y: 498)
-        func end(carry: Bool, release: Bool?) -> DragEnd {
+        func end(release: Bool?) -> DragEnd {
             ReleaseOrder.end(at: p, coveredFrom: nil, overviewCovers: { true },
-                             endCarry: { order.append("carry"); return carry },
+                             endTicks: { order.append("ticks") },
                              release: release.map { r in { order.append("release"); return r } })
         }
-        XCTAssertTrue(end(carry: true, release: nil).dropped)
-        XCTAssertTrue(end(carry: false, release: true).dropped)
-        XCTAssertTrue(end(carry: true, release: false).dropped)
-        XCTAssertFalse(end(carry: false, release: nil).dropped)
+        XCTAssertTrue(end(release: true).dropped)
+        XCTAssertFalse(end(release: nil).dropped)
         order = []
-        XCTAssertFalse(end(carry: false, release: false).dropped)
-        XCTAssertEqual(order, ["carry", "release"])
+        XCTAssertFalse(end(release: false).dropped)
+        XCTAssertEqual(order, ["ticks", "release"])
     }
 
     func testASeamCountsOnlyWhereTheOtherDisplayIsAtThePointer() {

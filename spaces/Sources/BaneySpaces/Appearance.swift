@@ -7,8 +7,7 @@ import SwiftUI
 /// pure and tested in BaneySpacesCore; this holds it, saves it and tells the panels.
 final class Appearance: ObservableObject {
     static let shared = Appearance()
-    /// Posted after every change, for AppKit code that can't observe a SwiftUI object (the dock's
-    /// panel re-frames itself on it).
+    /// Posted after every change, for AppKit code that can't observe a SwiftUI object.
     static let didChange = Notification.Name("PolycarpAppearanceDidChange")
 
     @Published var settings: AppearanceSettings {
@@ -18,9 +17,7 @@ final class Appearance: ObservableObject {
             // A Polycarp theme in force keeps ThemeCenter; the stored choice is only remembered.
             if settings.theme != oldValue.theme { ThemeCenter.use(settings.theme, polycarp: polycarp) }
             if persists { scheduleSave() }
-            // A theme sets the tile size, gap and padding as well as the dock's size, so it re-frames the dock too.
-            NotificationCenter.default.post(name: Appearance.didChange, object: nil,
-                                            userInfo: [Appearance.dockSizeChangedKey: settings.dockSize != oldValue.dockSize || settings.theme != oldValue.theme])
+            NotificationCenter.default.post(name: Appearance.didChange, object: nil)
         }
     }
 
@@ -32,8 +29,7 @@ final class Appearance: ObservableObject {
             guard polycarp != oldValue else { return }
             cachedLook = nil
             ThemeCenter.use(settings.theme, polycarp: polycarp)
-            // The theme sets the tile size, gap and padding as well, so the dock re-frames.
-            NotificationCenter.default.post(name: Appearance.didChange, object: nil, userInfo: [Appearance.dockSizeChangedKey: true])
+            NotificationCenter.default.post(name: Appearance.didChange, object: nil)
         }
     }
 
@@ -83,9 +79,6 @@ final class Appearance: ObservableObject {
 
     /// A change still waiting to be saved is written as BaneySpaces quits.
     private var quitObserver: NSObjectProtocol?
-
-    /// `didChange`'s userInfo key: true when the dock size changed, so the dock re-frames.
-    static let dockSizeChangedKey = "dockSizeChanged"
 
     private init() {
         settings = AppearanceSettings.load()

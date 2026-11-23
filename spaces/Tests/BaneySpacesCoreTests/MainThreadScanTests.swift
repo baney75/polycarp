@@ -3,7 +3,7 @@ import XCTest
 /// 2026-11-21 (owner: "switching of windows, and tabs, and search still appears to be glitchy and slow"): trace.log had
 /// 50 `slow scan: ... on main` lines in four hours (p50 255 ms, p90 260, max 303), each the main thread waiting on an
 /// app's Accessibility answer, and dock opens of 337 ms landed in the same second as one. Scans now run on a background
-/// queue and the main thread acts on the last answer. These checks fail if a switch, a dock or overview open, the
+/// queue and the main thread acts on the last answer. These checks fail if a switch, an overview open, the
 /// launcher, a key press in its search, or a focus change asks an app on the main thread again.
 final class MainThreadScanTests: XCTestCase {
     /// Calls that wait on another app's answer.
@@ -30,9 +30,7 @@ final class MainThreadScanTests: XCTestCase {
         try assertAsksNoApp("Sources/BaneySpaces/WorkspaceSwitcher.swift", ["func commit("])
     }
 
-    func testDockAndOverviewOpenAskNoAppOnMain() throws {
-        try assertAsksNoApp("Sources/BaneySpaces/WorkspaceDock.swift", ["private func show(on screen: NSScreen", "func load(from spaces: Spaces,",
-                                                                        "func loadTiles(", "func loadBackground("])
+    func testTheOverviewOpenAsksNoAppOnMain() throws {
         try assertAsksNoApp("Sources/BaneySpaces/Viewer.swift", ["func open()", "func load(from spaces: Spaces)"])
         try assertAsksNoApp("Sources/BaneySpaces/Spaces.swift", ["func entries(on n: Int)", "func entry(for id: WindowID)",
                                                                  "func backgroundApps()", "func rememberFocus()"])
@@ -91,7 +89,7 @@ final class MainThreadScanTests: XCTestCase {
         XCTAssertEqual(count("refreshNow()", in: s), 3, "refreshNow is called from somewhere new")
         XCTAssertEqual(count("refreshNow()", in: try XCTUnwrap(SourceText.block(after: "func start()", in: s))), 1)
         XCTAssertEqual(count("refreshNow()", in: try XCTUnwrap(SourceText.block(after: "func restoreAll()", in: s))), 1)
-        for file in ["AppDelegate", "WorkspaceDock", "Viewer", "Launcher", "WorkspaceSwitcher", "FocusWatcher"] {
+        for file in ["AppDelegate", "Viewer", "Launcher", "WorkspaceSwitcher", "FocusWatcher"] {
             let other = try SourceText.code("Sources/BaneySpaces/\(file).swift")
             XCTAssertFalse(other.contains("Windows.all("), "\(file) scans every app")
         }

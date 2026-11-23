@@ -42,10 +42,11 @@ final class SettingsSidebarTests: XCTestCase {
 
     func testSectionsAreGroupedAsDesigned() throws {
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
-        XCTAssertTrue(kit.contains(#"tabs: [.general, .keys, .dock, .appearance, .launcher]"#))
-        // Settings > Agents held only the sandbox, which is Tychicus's now (Donovan, 2026-11-21): the tab and its group are gone.
+        XCTAssertTrue(kit.contains(#"tabs: [.general, .keys, .agents, .appearance, .launcher]"#))
+        // The sandbox is Tychicus's now (Donovan, 2026-11-21). Settings > Agents holds the hooks and the finished list,
+        // which lived under Settings > Dock until the Workspace Dock went (2026-11-23).
         XCTAssertFalse(kit.contains("Your tools"))
-        XCTAssertFalse(try tabCases().contains("agents"))
+        XCTAssertFalse(try tabCases().contains("dock"))
         XCTAssertTrue(kit.contains(#"header: "System", tabs: [.permissions, .automation, .updates]"#))
     }
 
@@ -82,13 +83,6 @@ final class SettingsSidebarTests: XCTestCase {
         // "My own colors" runs a real subcommand: the command's own tests cover what `theme off` does to the files.
         let cli = try String(contentsOf: folder.deletingLastPathComponent().appendingPathComponent("cli/src/theme.rs"), encoding: .utf8)
         XCTAssertTrue(cli.contains("\"off\" => cmd(rest"))
-    }
-
-    /// The dock's finished count and its legend in Settings are one token, so the legend can't describe a different color.
-    func testFinishedBadgeAndItsLegendShareAToken() throws {
-        XCTAssertTrue(try read("Sources/BaneySpaces/Setup.swift").contains("Circle().fill(Chrome.finished)"))
-        // The dock's badge takes style.css `dock .badge { background }` when the sheet sets one, else the same token.
-        XCTAssertTrue(try read("Sources/BaneySpaces/WorkspaceDock.swift").contains("shape.fill(Styled.fill(bs.background) ?? AnyShapeStyle(Chrome.finished))"))
     }
 
     /// `Chrome` is a plain static, so a kit view with no closure input redraws on a theme change only if it observes `Appearance`.

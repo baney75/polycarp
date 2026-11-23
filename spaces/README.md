@@ -62,9 +62,9 @@ Prefer to keep ⌘1 for your browser's first tab? Pick ⌃, ⌥ or ⌃⌥ in set
   press ⌘2 from there and the window leaves full screen first, so it stays on its workspace.
 - **Empty means empty.** Go to a workspace with nothing on it and you get a clean desktop.
   Typing goes nowhere until you open something.
-- **Each display has a workspace of its own.** With a second monitor or Sidecar, ⌘1–⌘9 change
-  only the display you're on: the one you last clicked (a window, the desktop, the Workspace
-  Dock or the overview), or whose window you switched to. The other keeps showing its workspace.
+- **Each display has a workspace of its own.** With a second monitor or Sidecar, ⌘1 to ⌘9 change
+  only the display you're on: the one you last clicked (a window, the desktop, the top bar or
+  the overview), or whose window you switched to. The other keeps showing its workspace.
   Press the number of the workspace the other display shows and you go there, as in AeroSpace.
   Drag a window onto the other display and it joins that display's workspace. A display you
   plug in shows an empty workspace; one you unplug takes its workspace out of sight until you
@@ -122,57 +122,21 @@ Workspaces**, **Find or Install an App…**, the update row, **Settings…** (�
 The update row is always there: **Check for Updates…**, **Checking for Updates…** while one runs, or
 **Update to …** when a release is waiting. **N Agents Finished While You Were Away** (a list; click one
 to go to it) appears only while there is something to act on. Every switch, **Bring Every Window Back**,
-the dock switch, the update controls and About live in Settings, one click away.
+the update controls and About live in Settings, one click away.
 
-## Workspace Dock
+## The Workspace Dock is gone
 
-Turn on **Workspace Dock** under **Settings > Dock** and the Dock shows your workspaces
-instead of your apps. Rest the pointer on the bottom edge of the screen and it slides up: a
-tile for each workspace in use, plus the one you're on, each with its apps and its number.
-Click an app's icon to go straight to that app (again for its next window), or the tile around
-it to go to the workspace. Rest on an app with several windows and a strip of them opens over
-it, each labeled with its title, to pick one;
-hover to see what's there. Right-click a tile to move the front window there, or an app for a menu
-like the macOS Dock's: its windows there (when it has several), **Show**, **Move to Workspace**, **Hide**,
-**Options › Show in Finder** and **Quit** (hold ⌥ for **Force Quit**). Drag an app's icon onto
-another tile to move its windows on that workspace there, or drag one window out of the strip to
-move just that one; drop it on the dashed tile to start a new workspace with it. Drag any window
-by its title bar down to a bottom dock and it comes up; let go on a tile (or the dashed one) and the
-window goes to that workspace, back where you picked it up. Dragging a file,
-link or image from another app brings the dock up too: hold it over an app's icon and that
-app's window comes forward, or over a tile and you go to that workspace, then drop it into the
-window. Drop a file or link on an app's icon and that app opens it, if it can. A tile with more than four apps shows three
-and a "+N"; rest on the "+N" to list the rest and click one. You stay where
-you are. The dashed tile goes to
-the first empty workspace. Right after it, a small **Background** tile appears whenever an app is
-running with no window on any workspace (hidden, only minimized windows, or none at all, as when an
-app starts itself in the background): rest on it or click it to list those apps with why each is there,
-and click one to bring it forward on the workspace you're on (a minimized window comes back here; an app
-with no window opens one here). Finder, menu bar apps, an app showing a dialog or a full-screen window, and
-an app launched in the last 3 seconds aren't listed. Neither is an app with a window on some workspace, even
-one hidden with ⌘H: that workspace's tile shows it. The two
-small buttons at the end open the launcher and the overview of all nine.
-
-It can sit on any side of the screen: choose **Bottom**, **Left**, **Right** or **Top** under **Settings > Dock > Position on screen**, or from the dock's right-click menu. At the
-top it sits under the menu bar and waits half a second before opening, so reaching for a menu
-doesn't bring it up. A dock with more tiles than the screen has room for shrinks to fit.
-
-While it's on, the macOS Dock stays out of sight, and its icons don't bounce: an app asking
-for you would otherwise pop its icon out of the hidden Dock once a minute. The Workspace Dock
-marks the workspace that app's window waits on instead (a dot on its tile; click the tile to go
-there with that window in front). Polycarp saves the Dock's own settings first and puts them
-back exactly when you turn the Workspace Dock off or quit. If Polycarp ever crashed with it on,
-open Polycarp again (or run the uninstaller) and the Dock comes back; by hand,
-`defaults delete com.apple.dock autohide-delay; defaults delete com.apple.dock no-bouncing; killall Dock`
-gives the Dock its usual delay and bouncing.
+The Workspace Dock was removed on 2026-11-23. Workspaces are on ⌘1 to ⌘9 and the top bar's numbers; the overview is on
+the Mission Control key, the hot corner and **Show All Workspaces** in the menu bar menu; apps running with no window are
+in the launcher (⌃⌘K) under **Running, no window**. If an older build had hidden the macOS Dock for it, the next launch
+puts the Dock back as it was, once.
 
 ### Colors and looks
 
 **Settings › Appearance** changes how every panel looks, and the open ones change as you click. Pick
 an accent (nine colors, **System** to follow macOS, or any color of your own), a palette for the
 nine workspace colors (**Rainbow**, **Accent**, **Calm** or **Mono**) and your own color for any one
-workspace, a panel style (**Glass**, **Tinted** or **Solid**) with an opacity slider, and a **Small**,
-**Medium** or **Large** Workspace Dock. White numbers stay readable: a workspace color that's too
+workspace, and a panel style (**Glass**, **Tinted** or **Solid**) with an opacity slider. White numbers stay readable: a workspace color that's too
 bright is dimmed. The defaults are the look Polycarp always had.
 
 **Themes and palettes.** A theme is shape, type and motion; a palette is color; any theme takes any
@@ -181,25 +145,18 @@ blocky like Omarchy's own Waybar and Hyprland: square corners, a solid 2 px bord
 what's current), an opaque fill, no blur or shadow, a monospace font, numbered blocks for
 workspaces, and fades only. **Minimal** is flat and small, with thin borders and a bar under each
 workspace number. The palette is **Auto** (the panels' own dark look with your accent) or one of
-Omarchy's 22. The dock, the "+N" list and window strip, ⌘Tab, the launcher, the overview, the menu bar
+Omarchy's 22. ⌘Tab, the launcher, the overview, the menu bar
 number and Settings all follow the theme, live. From a terminal:
 
 ```
 polycarp-spaces set appearance.theme omarchy      # or baneyspaces, minimal
 polycarp-spaces set appearance.palette gruvbox    # or auto
-polycarp-spaces set dock.enabled false            # or true
-polycarp-spaces get                               # all three
+polycarp-spaces get                               # both
 ```
 
 Agents may change these too, from this Mac or, with the remote token, from another one
 (`BANEYSPACES_AGENT=<name>` names the caller). Each change is logged in `trace.log` with who made it.
 Workspace and window commands stay yours.
-
-**Turning the dock off** (**Settings › Dock**, the dock's own right-click menu, the launcher, or `dock.enabled`) leaves no dock window
-at all: nothing comes up at the edge, the "+N" list never opens, and a window dragged to the bottom
-edge is left alone. Dragging to the top, the workspace keys, ⌘Tab, the launcher, the overview, the
-agent workspace and the menu bar number all keep working. Turn it back on and the dock returns the
-next time the pointer rests on its edge.
 
 ## ⌘Tab across workspaces
 
@@ -214,26 +171,28 @@ window; hold Tab again to go back to the apps.
 
 ## Agent status
 
-Polycarp knows what your coding agents are doing. On the Workspace Dock, a turning ring on an
-app's icon means a Claude Code or Grok session is working, a yellow **?** means it's asking you
-something, a red **!** means it stopped on an error, and an orange count means agents finished
-while you were looking somewhere else. When that happens in another app, a small notice says so
-in the corner of the screen; click it, or press **⌃⌘U**, to go there. The menu bar icon counts
-them too. Click a badged app on the dock and you land on that agent's tab or split.
+Polycarp knows what your coding agents are doing. When a Claude Code or Grok session finishes in
+another app while you're looking somewhere else, a small notice says so in the corner of the
+screen; click it, or press **⌃⌘U**, to go there. The menu bar icon counts them, and
+**Settings › Agents** lists them, one click to each. In the launcher, with nothing typed, the agents
+that finished or need you come first.
 
-Agents report their state through hooks. Turn them on once, from setup (Dock tab) or with
+Agents report their state through hooks. Turn them on once, from **Settings › Agents** or with
 `polycarp-spaces hooks install`, which adds them beside your own in `~/.claude/settings.json` and
 in `~/.grok/hooks`. Without hooks Polycarp reads Claude's terminal title instead.
 
 ## Launcher
 
 One box to open, find, install and remove apps, and find files, terminal tabs and splits,
-browser tabs and agent windows. **⌃⌘K** opens it from any app. You can also open it from the menu bar menu (**Find or Install an App…**) or the Workspace
-Dock, or turn on **⌘Space opens the Polycarp launcher** in setup to use it in place of
+browser tabs and agent windows. **⌃⌘K** opens it from any app. You can also open it from the menu bar menu (**Find or Install an App…**), or turn on **⌘Space opens the Polycarp launcher** in setup to use it in place of
 Spotlight. Turning that off gives ⌘Space back to Spotlight, and so does quitting Polycarp.
 
 - **Type** to search apps, files, commands and workspaces at once. An app that's already open
   takes you to the workspace it's on.
+- **Running, no window.** With nothing typed, apps that are running with no window on any
+  workspace (hidden, only minimized windows, or none at all) are listed after the recent apps.
+  Return brings one forward on the workspace you're on; **⌘Return** quits it. Typing narrows them
+  like any app.
 - **Terminals, tabs and agents.** Type part of a name and the launcher lists matching Ghostty,
   Terminal and iTerm tabs and splits, tabs in your default browser (Helium, Chrome, Arc, Brave,
   Edge or Vivaldi), and windows of Claude, ChatGPT, T3 Code, Cursor and Grok Bot. Return goes
@@ -472,7 +431,7 @@ polycarp-spaces agent off
 
 Three rules keep it from ever taking your screen. Its apps are parked out of view instead of
 hidden, so tools can still click and type in them from behind. Nothing on it coming forward takes
-you there: you go with ⌘9, its Dock tile or a launcher row. And a window an app on it opens in the
+you there: you go with ⌘9, its top bar number or a launcher row. And a window an app on it opens in the
 background lands there, not on your workspace.
 
 Polycarp doesn't read, click or type into apps. Computer use lives in
@@ -540,7 +499,7 @@ Both run the same script. Polycarp quits first, which brings every hidden window
 back; if it won't quit, the uninstaller stops without deleting anything. Then it puts back what
 Polycarp changed:
 
-- the macOS Dock's own hide settings, if the Workspace Dock had it out of sight
+- the macOS Dock's own hide settings, if an older build's Workspace Dock had it out of sight
 - macOS's screenshot and Spotlight shortcuts, if setup or the launcher turned them off
 - Claude Code's `~/.claude/settings.json`: only Polycarp's hooks come out; your own hooks and
   settings stay. Its first backup, from before Polycarp touched the file, stays beside it as

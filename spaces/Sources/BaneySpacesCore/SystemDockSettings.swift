@@ -1,13 +1,13 @@
 import Foundation
 
-/// The macOS Dock settings Polycarp changes while the Workspace Dock is on, and how the person's
-/// own values are saved and put back. `SystemDock` in the app does the reading and writing.
+/// The macOS Dock settings Polycarp changed while its Workspace Dock was on (the Workspace Dock was
+/// removed on 2026-11-23), and how the person's own values were saved and are put back. `SystemDock`
+/// in the app restores them once, at launch, on a Mac where an older build hid the macOS Dock.
 ///
 /// `no-bouncing`: an auto-hidden macOS Dock still pops an app's icon above the screen's edge when
 /// the app asks for attention, and leaves it there for seconds, once a minute while the app keeps
 /// asking (Word, 2026-11-10: `handleDockEventAppNeedsAttention` in the Dock's log at :57.648 each
-/// minute). With the Workspace Dock on, that icon is a stray piece of a dock you never see; the
-/// Workspace Dock marks the waiting workspace instead (`DockAttention`).
+/// minute). With the Workspace Dock on, that icon was a stray piece of a dock you never saw.
 public enum SystemDockSettings {
     /// Long enough that the Dock never slides up by accident while the Workspace Dock is in use.
     public static let hiddenDelay = 1000.0

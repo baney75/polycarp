@@ -156,7 +156,7 @@ enum RunningApps {
         }
     }
 
-    /// What a dock open reads of one running app.
+    /// What a background-apps read (the launcher's "Running, no window") takes of one running app.
     struct Facts {
         let pid: pid_t
         let regular: Bool
@@ -168,35 +168,13 @@ enum RunningApps {
     }
 
     /// Reading those for every running app (about 130) costs 25 to 30 ms: each `NSRunningApplication` fetches its
-    /// state on first read, and name and launch date on every read. Until 2026-11-21 every dock open paid that on the
-    /// main thread. Now the dock asks for it while the pointer rests on the edge (`prepare`, during the 120 ms dwell),
-    /// it is read off the main thread, and the open uses it. It is used for `freshFor` seconds, and never after an app
-    /// launched, quit, hid or unhid; an open without one (a script's `dock/show`) reads it on the spot, as before.
+    /// state on first read, and name and launch date on every read. A read is used for `freshFor` seconds, and never
+    /// after an app launched, quit, hid or unhid.
     static let freshFor: TimeInterval = 0.5
     private static var prepared: (facts: [pid_t: Facts], at: TimeInterval, seed: Int)?
-    private static var preparing = false
     /// Bumped by every launch, quit, hide and unhide: a read from before one is stale.
     private static var seed = 0
     private static var watchingFacts = false
-    private static let factsQueue = DispatchQueue(label: "com.baney.polycarp.running-apps", qos: .userInteractive)
-
-    /// Starts reading the facts off the main thread, unless a fresh read is at hand or one is running. Main thread.
-    static func prepare() {
-        watchFacts()
-        let now = ProcessInfo.processInfo.systemUptime
-        if let p = prepared, p.seed == seed, now - p.at < freshFor / 2 { return }
-        guard !preparing else { return }
-        preparing = true
-        let started = seed
-        factsQueue.async {
-            let facts = readFacts()
-            DispatchQueue.main.async {
-                preparing = false
-                guard seed == started else { return }
-                prepared = (facts, ProcessInfo.processInfo.systemUptime, started)
-            }
-        }
-    }
 
     /// The fresh read if there is one, else a read now. Main thread.
     static func facts() -> [pid_t: Facts] {
@@ -208,13 +186,6 @@ enum RunningApps {
         return facts
     }
 
-    /// Whether `facts()` would answer without reading (for the dock bench).
-    static var factsPrepared: Bool {
-        guard let p = prepared else { return false }
-        return p.seed == seed && ProcessInfo.processInfo.systemUptime - p.at < freshFor
-    }
-
-    /// NSRunningApplication's properties are safe to read from any thread (AppKit returns them atomically).
     private static func readFacts() -> [pid_t: Facts] {
         var out: [pid_t: Facts] = [:]
         for a in NSWorkspace.shared.runningApplications {

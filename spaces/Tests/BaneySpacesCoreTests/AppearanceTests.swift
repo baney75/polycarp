@@ -13,7 +13,6 @@ final class AppearanceTests: XCTestCase {
         XCTAssertEqual(s.accent, .preset(.red))
         XCTAssertEqual(s.palette, .accent)
         XCTAssertEqual(s.panelStyle, .glass)
-        XCTAssertEqual(s.dockSize, .medium)
         XCTAssertEqual(s.panelOpacity, 0.88)
         XCTAssertTrue(s.overrides.isEmpty)
     }
@@ -25,7 +24,6 @@ final class AppearanceTests: XCTestCase {
         s.overrides = [2: RGB(hex: "#112233")!, 9: RGB(hex: "#FFAA00")!]
         s.panelStyle = .tinted
         s.panelOpacity = 0.7
-        s.dockSize = .large
         XCTAssertEqual(AppearanceSettings.decoded(s.encoded()), s)
         s.accent = .system
         XCTAssertEqual(AppearanceSettings.decoded(s.encoded()), s)
@@ -44,10 +42,9 @@ final class AppearanceTests: XCTestCase {
         s.palette = .calm
         s.panelStyle = .tinted
         s.panelOpacity = 0.7
-        s.dockSize = .large
         s.overrides = [3: RGB(r: 0.2, g: 0.3, b: 0.4)]
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(s.encoded())) as? [String: Any])
-        for key in ["accent", "palette", "overrides", "panelStyle", "panelOpacity", "dockSize"] {
+        for key in ["accent", "palette", "overrides", "panelStyle", "panelOpacity"] {
             var partial = object
             partial.removeValue(forKey: key)
             let back = AppearanceSettings.decoded(try JSONSerialization.data(withJSONObject: partial))
@@ -57,8 +54,7 @@ final class AppearanceTests: XCTestCase {
             case "palette": want.palette = AppearanceSettings().palette
             case "overrides": want.overrides = [:]
             case "panelStyle": want.panelStyle = AppearanceSettings().panelStyle
-            case "panelOpacity": want.panelOpacity = AppearanceSettings().panelOpacity
-            default: want.dockSize = AppearanceSettings().dockSize
+            default: want.panelOpacity = AppearanceSettings().panelOpacity
             }
             XCTAssertEqual(back, want, "without \(key)")
         }
@@ -69,13 +65,11 @@ final class AppearanceTests: XCTestCase {
     func testAnUnknownRawValueFallsBackForThatFieldOnly() throws {
         var s = AppearanceSettings()
         s.palette = .mono
-        s.dockSize = .small
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(s.encoded())) as? [String: Any])
         object["panelStyle"] = "neon"
         let back = AppearanceSettings.decoded(try JSONSerialization.data(withJSONObject: object))
         XCTAssertEqual(back.panelStyle, .glass)
         XCTAssertEqual(back.palette, .mono)
-        XCTAssertEqual(back.dockSize, .small)
     }
 
     func testAColorOutsideZeroToOneIsBroughtBackOnDecode() throws {
@@ -257,10 +251,12 @@ final class AppearanceTests: XCTestCase {
         XCTAssertLessThan(loose.overviewDim, s.overviewDim)
     }
 
-    func testDockSizeScales() {
-        XCTAssertEqual(DockSize.medium.scale, 1, "Medium is the size the dock has always had")
-        XCTAssertLessThan(DockSize.small.scale, 1)
-        XCTAssertGreaterThan(DockSize.large.scale, 1)
+    /// The Workspace Dock and its size went on 2026-11-23: a saved look that still has `dockSize` keeps everything else.
+    func testASavedDockSizeIsIgnored() throws {
+        let back = AppearanceSettings.decoded(Data(#"{"panelStyle":"tinted","dockSize":"large"}"#.utf8))
+        XCTAssertEqual(back.panelStyle, .tinted)
+        let saved = try XCTUnwrap(String(data: XCTUnwrap(back.encoded()), encoding: .utf8))
+        XCTAssertFalse(saved.contains("dockSize"), "it isn't written back")
     }
 
     // MARK: Wiring
@@ -288,7 +284,7 @@ final class AppearanceTests: XCTestCase {
     }
 
     func testEveryPanelDrawsItsBackgroundFromChromeAndWatchesAppearance() throws {
-        for (file, view) in [("WorkspaceDock.swift", "struct DockView"), ("WorkspaceSwitcher.swift", "struct SwitcherView"),
+        for (file, view) in [("WorkspaceSwitcher.swift", "struct SwitcherView"),
                              ("Launcher.swift", "struct LauncherView"), ("SwitchHUD.swift", "struct HUDView"),
                              ("Viewer.swift", "struct ViewerView"), ("WorkspaceSwitcher.swift", "struct WorkspaceBadge")] {
             let text = try appSource(file)
@@ -297,13 +293,6 @@ final class AppearanceTests: XCTestCase {
             XCTAssertTrue(head.contains("@ObservedObject private var appearance = Appearance.shared"), "\(view) must redraw when the look changes")
         }
         XCTAssertFalse(try appSource("Viewer.swift").contains("Color(red: 0.91"), "the overview's accent must follow Settings")
-    }
-
-    func testTheDockScalesFromTheDockSizeSetting() throws {
-        let text = try appSource("WorkspaceDock.swift")
-        XCTAssertTrue(text.contains("appearance.settings.dockSize.scale"))
-        XCTAssertTrue(text.contains("private var tileSize: CGFloat { Chrome.tileBase * k }"))
-        XCTAssertTrue(text.contains("forName: Appearance.didChange"), "a new size must re-frame the dock's panel")
     }
 
     func testBothColorPickersIgnoreAnEchoOfTheColorShown() throws {
@@ -319,13 +308,6 @@ final class AppearanceTests: XCTestCase {
         let body = String(swatch[changed.lowerBound...].prefix(500))
         XCTAssertLessThan(try XCTUnwrap(body.range(of: "<= 0.01 { return }"), "an echo of the shown color must not switch to Custom").lowerBound,
                           try XCTUnwrap(body.range(of: "apply?(rgb)")).lowerBound)
-    }
-
-    func testTheDockKeepsAndRemovesItsAppearanceObserver() throws {
-        let text = try appSource("WorkspaceDock.swift")
-        XCTAssertTrue(text.contains("appearanceObserver = NotificationCenter.default.addObserver(forName: Appearance.didChange"))
-        // The style sheet's observer goes with it (style.css, `StyleSheetStore.didChange`).
-        XCTAssertTrue(text.contains("deinit {\n        appearanceObserver.map(NotificationCenter.default.removeObserver)\n        styleObserver.map(NotificationCenter.default.removeObserver)\n    }"))
     }
 
     func testSystemColorChangesAlwaysRefreshTheSettingsTab() throws {
@@ -349,12 +331,9 @@ final class AppearanceTests: XCTestCase {
         XCTAssertEqual(RGB(hex: "#FF0000"), RGB(r: 1, g: 0, b: 0))
     }
 
-    func testTheDockReframesOnTheSameKeyAppearancePosts() throws {
+    func testAPendingSaveIsFlushedOnQuit() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let app = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/Appearance.swift"), encoding: .utf8)
-        let dock = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/WorkspaceDock.swift"), encoding: .utf8)
-        XCTAssertTrue(app.contains("userInfo: [Appearance.dockSizeChangedKey:"), "Appearance posts the shared key")
-        XCTAssertTrue(dock.contains("note.userInfo?[Appearance.dockSizeChangedKey]"), "the dock reads the shared key")
         XCTAssertTrue(app.contains("NSApplication.willTerminateNotification"), "a pending save is flushed on quit")
     }
 }

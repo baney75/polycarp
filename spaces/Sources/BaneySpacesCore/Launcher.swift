@@ -179,16 +179,6 @@ public enum AppSwitchList {
     }
 }
 
-/// Clicking an app in the dock again steps to its next window on that workspace.
-public enum WindowCycle {
-    /// The window to focus among `windows` (in a stable order) when `focused` is in front.
-    public static func next<ID: Equatable>(_ windows: [ID], after focused: ID?) -> ID? {
-        guard !windows.isEmpty else { return nil }
-        guard let focused, let i = windows.firstIndex(of: focused) else { return windows[0] }
-        return windows[(i + 1) % windows.count]
-    }
-}
-
 /// Holding Tab in the ⌘Tab switcher (instead of tapping it) opens or closes the window bar.
 /// macOS sends repeats while a key is held, after the person's own repeat delay, which can be
 /// very short; a hold counts only once the key has been down `threshold` seconds, and only

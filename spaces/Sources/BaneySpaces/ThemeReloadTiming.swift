@@ -5,8 +5,9 @@ import SwiftUI
 
 /// `BANEYSPACES_RENDER_THEME_RELOAD=<rounds> Polycarp --render <folder>` times a theme change end to end: from the moment
 /// `polycarp theme set <name>` is started (the real command, with `POLYCARP_CONFIG_DIR` set to a fresh temp folder) to
-/// the first frame of the Workspace Dock drawn in the new theme. The watcher is built and applied as `AppDelegate` does
-/// (deliver on its queue, then `usePolycarp` on main); the dock is the live `DockView`, in a window that is never shown.
+/// the first frame of the ⌘Tab workspace switcher drawn in the new theme. The watcher is built and applied as `AppDelegate`
+/// does (deliver on its queue, then `usePolycarp` on main); the switcher is the live `SwitcherView`, in a window that is
+/// never shown.
 /// A frame is the main thread's whole share: the update, layout, display and the Core Animation commit. One line a round,
 /// then the median, p90 and worst. Exits 1 when any round takes 200 ms or more. `POLYCARP_CLI` names the command;
 /// otherwise the first `polycarp` on PATH.
@@ -40,12 +41,11 @@ enum ThemeReloadTiming {
         if case .theme(let t) = watcher.start(firstLookWithin: 0.5) { Appearance.shared.usePolycarp(t) }
         defer { watcher.stop() }
 
-        let dock = DockModel()
+        let switcher = SwitcherModel()
         let icon = NSWorkspace.shared.icon(forFile: "/System/Applications/Utilities/Terminal.app")
-        dock.tiles = (1...4).map { n in
-            .init(id: n, apps: [DockModel.App(id: "\(n)t", pid: pid_t(n), name: "Terminal", icon: icon, windows: 1)], isCurrent: n == 1)
-        }
-        let host = NSHostingView(rootView: DockView(model: dock))
+        switcher.tiles = (1...4).map { n in .init(n: n, icons: [icon], count: 1, isCurrent: n == 1) }
+        switcher.selected = 1
+        let host = NSHostingView(rootView: SwitcherView(model: switcher))
         let size = CGSize(width: 820, height: 140)
         let window = RenderWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = host
@@ -80,7 +80,7 @@ enum ThemeReloadTiming {
             draw()
             let framed = DispatchTime.now().uptimeNanoseconds
             p.waitUntilExit()
-            // Untimed: the dock really looks different from the round before.
+            // Untimed: the switcher really looks different from the round before.
             let now = pixels()
             let changed = now != nil && now != last
             last = now
@@ -88,8 +88,8 @@ enum ThemeReloadTiming {
             total.append(ms)
             toLand.append(Double(landed - t0) / 1e6)
             if !changed { failed = true }
-            print(String(format: "theme reload %2d %-10@ %6.1f ms to the first dock frame (landed %6.1f ms)%@", i + 1, name as NSString,
-                         ms, toLand.last!, changed ? "" : "  FAIL: the dock did not change"))
+            print(String(format: "theme reload %2d %-10@ %6.1f ms to the first switcher frame (landed %6.1f ms)%@", i + 1, name as NSString,
+                         ms, toLand.last!, changed ? "" : "  FAIL: the switcher did not change"))
             if ms >= budgetMs { failed = true }
         }
         guard !total.isEmpty else { return 1 }

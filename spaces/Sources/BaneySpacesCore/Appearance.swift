@@ -144,21 +144,6 @@ public enum PanelStyle: String, Codable, CaseIterable, Equatable {
     public var title: String { rawValue.capitalized }
 }
 
-public enum DockSize: String, Codable, CaseIterable, Equatable {
-    case small, medium, large
-
-    public var title: String { rawValue.capitalized }
-
-    /// How much the dock's tiles and icons are scaled; Medium is the size it has always had.
-    public var scale: Double {
-        switch self {
-        case .small: 0.85
-        case .medium: 1
-        case .large: 1.2
-        }
-    }
-}
-
 /// Everything a person can change about how BaneySpaces looks. The defaults are the look it
 /// shipped with, so a fresh install is unchanged.
 public struct AppearanceSettings: Codable, Equatable {
@@ -169,7 +154,6 @@ public struct AppearanceSettings: Codable, Equatable {
     public var panelStyle: PanelStyle = .glass
     /// How solid the panels' dark fill is. 0.88 is what they have always used.
     public var panelOpacity: Double = AppearanceSettings.defaultPanelOpacity
-    public var dockSize: DockSize = .medium
     /// The shape, type and motion of every surface (`appearance.theme`).
     public var theme: ThemeID = .macDefault
     /// The color palette (`appearance.palette`): "auto", or a name in palettes.json. Not the
@@ -192,7 +176,7 @@ public struct AppearanceSettings: Codable, Equatable {
 
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case accent, palette, overrides, panelStyle, panelOpacity, dockSize, theme, colorPalette, windowBorders, otherWindowBorders, themeWallpaper }
+    private enum CodingKeys: String, CodingKey { case accent, palette, overrides, panelStyle, panelOpacity, theme, colorPalette, windowBorders, otherWindowBorders, themeWallpaper }
 
     /// Each field on its own: one missing or unreadable (a newer build's value, an older build's
     /// blob) takes its default and leaves the rest as saved.
@@ -204,7 +188,6 @@ public struct AppearanceSettings: Codable, Equatable {
         overrides = (try? c.decodeIfPresent([Int: RGB].self, forKey: .overrides)) ?? overrides
         panelStyle = (try? c.decodeIfPresent(PanelStyle.self, forKey: .panelStyle)) ?? panelStyle
         panelOpacity = (try? c.decodeIfPresent(Double.self, forKey: .panelOpacity)) ?? panelOpacity
-        dockSize = (try? c.decodeIfPresent(DockSize.self, forKey: .dockSize)) ?? dockSize
         theme = (try? c.decodeIfPresent(ThemeID.self, forKey: .theme)) ?? theme
         colorPalette = (try? c.decodeIfPresent(String.self, forKey: .colorPalette)) ?? colorPalette
         windowBorders = (try? c.decodeIfPresent(Bool.self, forKey: .windowBorders)) ?? windowBorders

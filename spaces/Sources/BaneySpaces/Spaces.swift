@@ -74,10 +74,8 @@ final class Spaces {
     /// window the scan missed (see `ScanCheck`) from a sheet or panel; and the on-screen windows
     /// scans couldn't place, each with its next look.
     private var notWindows = Set<WindowID>()
-    /// What the last scan listed that waits on you (`WaitingWindow`), and the workspaces the dock
-    /// marks for it (`DockAttention`), kept current after each scan and each switch.
+    /// What the last scan listed that waits on you (`WaitingWindow`): a claim keeps a modal with its app.
     private var asking: [WaitingWindow.Seen] = []
-    private(set) var attention: [DockAttention.Mark] = []
     private var unplaced = UnplacedWindows()
     private var heal: DispatchWorkItem?
     /// Windows that ignored every request to leave macOS full screen. Asking again only stalls.
@@ -242,7 +240,6 @@ final class Spaces {
             unplaced.keep(stray)
             scheduleHeal()
             clock.scan = "skip"
-            updateAttention()
             body?()
             return
         }
@@ -507,44 +504,6 @@ final class Spaces {
                          known: knownWindows, now: now)
         placedBefore.formUnion(model.home.keys)
         scheduleHeal()
-        updateAttention()
-    }
-
-    /// Works out which workspaces have a window waiting on you out of sight, and says in
-    /// `trace.log` when a mark sets or clears. Nothing moves and you aren't taken anywhere.
-    private func updateAttention() {
-        let live = asking.filter { snapAlive(pid: $0.pid) }
-        var parents: [Int32: Set<Int>] = [:], names: [Int32: String] = [:]
-        for (id, ws) in model.home {
-            guard let w = windows[id] else { continue }
-            parents[w.pid, default: []].insert(ws)
-            names[w.pid] = w.appName
-        }
-        let marks = DockAttention.marks(live, names: names, parents: parents,
-                                        shown: Set(Workspaces.range.filter(model.isShown)), recent: recent)
-        guard marks != attention else { return }
-        for line in DockAttention.traceLines(from: attention, to: marks) { Trace.log(line) }
-        attention = marks
-        onChange?()
-    }
-
-    private func snapAlive(pid: Int32) -> Bool { NSRunningApplication(processIdentifier: pid).map { !$0.isTerminated } ?? false }
-
-    /// A click on a marked tile: that workspace, with the waiting window in front of its app.
-    func focusWaiting(_ mark: DockAttention.Mark) {
-        guard active else { return }
-        if switching { return enqueue { [weak self] in self?.focusWaiting(mark) } }
-        Trace.log("dock attention picked: \(mark.app) on workspace \(mark.workspace)")
-        if !model.isShown(mark.workspace) { switchTo(mark.workspace, announce: false) }
-        let raise = { [weak self] in
-            guard let self, self.active else { return }
-            let ax = AXUIElementCreateApplication(mark.pid)
-            AXUIElementSetMessagingTimeout(ax, 0.25)
-            let list: [AXUIElement] = ax.value(kAXWindowsAttribute) ?? []
-            if let el = list.first(where: { $0.windowID == mark.window }) { AXUIElementPerformAction(el, kAXRaiseAction as CFString) }
-            NSRunningApplication(processIdentifier: mark.pid)?.activate()
-        }
-        if switching { enqueue(raise) } else { raise() }
     }
 
     /// A window that opens in a parked app (see `ParkedApps`) while that app stays in the
@@ -1580,7 +1539,7 @@ final class Spaces {
             // A hidden app's window closing doesn't prompt a scan, so its record can outlive it and
             // keep a windowless app off the list. Ask the app, as `focusApp` does; one on another
             // macOS desktop is never listed from here, so it still counts.
-            // The listing is the app's last scan answer (`refreshHidden` asks hidden apps again when the dock opens).
+            // The listing is the app's last scan answer (`refreshHidden` asks hidden apps again when the launcher opens).
             if hiddenApps.contains(pid), let a = answers[pid], a.answered, !a.partial {
                 list = list.filter { a.listed.contains($0.id) || !Windows.onNoOtherDesktop($0.id) }
             }
@@ -1817,30 +1776,24 @@ final class Spaces {
         (recent + Array(Workspaces.range)).first { n in model.lastFocused[n].flatMap { windows[$0]?.pid } == pid }
     }
 
-    /// `on` limits it to one workspace, for an app icon clicked in a dock tile. `cycle` steps to
-    /// the app's next window there when one of its windows on that workspace is already in front.
-    func focusApp(_ pid: pid_t, on only: Int? = nil, cycle: Bool = false, announce: Bool = true) {
+    /// `on` limits it to one workspace.
+    func focusApp(_ pid: pid_t, on only: Int? = nil, announce: Bool = true) {
         guard active else { NSRunningApplication(processIdentifier: pid)?.activate(options: []); return }
-        if switching { return enqueue { [weak self] in self?.focusApp(pid, on: only, cycle: cycle, announce: announce) } }
+        if switching { return enqueue { [weak self] in self?.focusApp(pid, on: only, announce: announce) } }
         // A hidden app's window closing doesn't prompt a scan (its windows are off screen anyway), so a hidden app is
         // asked which windows it has before one is picked: going to one it closed would bring nothing forward. Any
         // other app's closed window left the screen, which a scan notices. The scan runs in the background; other
         // requests wait their turn meanwhile.
         let hidden = NSRunningApplication(processIdentifier: pid)?.isHidden == true
-        holdUntilFresh(asking: hidden ? [pid] : []) { [self] in pickApp(pid, on: only, cycle: cycle, announce: announce) }
+        holdUntilFresh(asking: hidden ? [pid] : []) { [self] in pickApp(pid, on: only, announce: announce) }
     }
 
-    private func pickApp(_ pid: pid_t, on only: Int?, cycle: Bool, announce: Bool) {
+    private func pickApp(_ pid: pid_t, on only: Int?, announce: Bool) {
         let mine = windows.values.filter { $0.pid == pid && model.workspace(of: $0.id) != nil }
         let order = only.map { [$0] } ?? ([model.current] + recent.filter { $0 != model.current } + Array(Workspaces.range))
         for n in order {
             let here = mine.filter { model.workspace(of: $0.id) == n }
             guard !here.isEmpty else { continue }
-            if cycle, n == model.current, let front = Windows.front(in: windows),
-               here.contains(where: { $0.id == front.id }), here.count > 1,
-               let next = WindowCycle.next(here.map(\.id).sorted(), after: front.id) {
-                return focus(next, on: n, announce: announce)
-            }
             let last = model.lastFocused[n].flatMap { id in here.first { $0.id == id } }
             let pick = last ?? here.first { !(details[$0.id]?.minimized ?? false) } ?? here[0]
             return focus(pick.id, on: n, announce: announce)
@@ -2073,7 +2026,6 @@ final class Spaces {
     private func finish() {
         switching = false
         holding = false
-        updateAttention()
         onChange?()
         // A scan asked for during the switch runs now that nothing is moving.
         startScan()

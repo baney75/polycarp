@@ -7,9 +7,8 @@
 # a miss. A percentile is judged only with spacesTiming.minSamples lines or more (fewer prints
 # "few"). A kind in the log with no budget is a miss too.
 # It also counts, from trace.log and its two rotations, the lines that mean a glitch Donovan
-# reported came back (gap G8): the dock stuck open, and the ⌘Tab switcher coming up or landing
-# wrong. Each must be 0.
-# Exit 0 when everything is in budget and both counts are 0, 1 on any miss, 2 when there is no
+# reported came back (gap G8): the ⌘Tab switcher coming up or landing wrong. It must be 0.
+# Exit 0 when everything is in budget and the count is 0, 1 on any miss, 2 when there is no
 # timing.log. POLYCARP_SUPPORT_DIR points it at another folder (the tests use a fixture).
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -94,7 +93,6 @@ for kind in list(budgets) + sorted(set(samples) - set(budgets)):
 
 # Gap G8: lines that mean a glitch Donovan reported came back.
 glitches = {
-    "dock stuck open": [r"^dock stray:", r"^dock held 2s with the bar unmeasured", r"^dock menu marked open with none on screen"],
     "switcher wrong": [r"^cmdTab panel not on screen", r"^cmdTab passed to macOS started=true viewerOpen=false", r"^cmdTab landed wrong:"],
 }
 counts = {name: 0 for name in glitches}

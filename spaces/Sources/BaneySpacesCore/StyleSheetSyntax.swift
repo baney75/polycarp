@@ -408,6 +408,11 @@ struct StyleSyntax {
             case .success(let sel): out.append(sel)
             case .failure(let why):
                 let at = tokens[x..<y].first { !$0.isSpace } ?? tokens[min(x, tokens.count - 1)]
+                // A retired surface (an older build's `dock`) only warns: the rest of the list still applies.
+                if why.retired {
+                    problems.append(StyleProblem(line: at.line, column: at.column, severity: .warning, message: why.message + "; the selector is ignored"))
+                    continue
+                }
                 problems.append(StyleProblem(line: at.line, column: at.column, message: why.message + "; the rule is dropped"))
                 ok = false
             }
@@ -416,10 +421,14 @@ struct StyleSyntax {
             problem(tokens[a], "`:root` must be alone in its rule; the rule is dropped")
             return nil
         }
-        return ok ? out : nil
+        return ok && !out.isEmpty ? out : nil
     }
 
-    struct SelectorError: Error { let message: String }
+    struct SelectorError: Error {
+        let message: String
+        /// It names a surface an older build had, not a mistake.
+        var retired = false
+    }
 
     static var surfacesText: String { StyleNumber.list(StyleSurface.allCases.map { "`\($0.rawValue)`" }, last: "and") }
 
@@ -450,6 +459,9 @@ struct StyleSyntax {
             }
             return fail("`\(written)` isn't a selector; start with a surface: \(Self.surfacesText)")
         }
+        if let why = StyleSurface.retired[name.lowercased()] {
+            return .failure(SelectorError(message: "`\(name)` \(why)", retired: true))
+        }
         guard let surface = StyleSurface(rawValue: name.lowercased()) else {
             return fail("unknown surface `\(name)`; the surfaces are \(Self.surfacesText)")
         }
@@ -457,7 +469,7 @@ struct StyleSyntax {
         if rest.isEmpty { return .success(StyleSelector(surface: surface)) }
         guard rest.first?.isSpace == true else {
             if rest.first?.kind == .colon, rest.count > 1, case .ident(let p) = rest[1].kind {
-                return fail("`\(name)` takes no states (`:\(p)`); states go on a part, like `dock .tile:hover`")
+                return fail("`\(name)` takes no states (`:\(p)`); states go on a part, like `bar .workspace:hover`")
             }
             return fail("write `\(written.replacingOccurrences(of: name + ".", with: name + " ."))` with a space: a part is inside its surface")
         }

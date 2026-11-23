@@ -5,7 +5,12 @@ import Foundation
 public enum SettingKey: String, CaseIterable, Sendable {
     case theme = "appearance.theme"
     case palette = "appearance.palette"
-    case dockEnabled = "dock.enabled"
+
+    /// Settings a Polycarp no longer has, each with why: asked for one, `set` and `get` say so instead of "no setting".
+    public static let retired: [String: String] = [
+        "dock.enabled": "dock.enabled is gone: the Workspace Dock was removed on 2026-11-23. Workspaces are on ⌘1-9 and the top bar, "
+            + "the overview on the Mission Control key, and apps running with no window in the launcher (⌃⌘K).",
+    ]
 
     public init?(name: String) { self.init(rawValue: name.trimmingCharacters(in: .whitespaces).lowercased()) }
 
@@ -13,7 +18,6 @@ public enum SettingKey: String, CaseIterable, Sendable {
         switch self {
         case .theme: "\(rawValue) \(ThemeID.allCases.map(\.rawValue).joined(separator: "|"))"
         case .palette: "\(rawValue) auto|\(PaletteCatalog.shared.names.joined(separator: "|"))"
-        case .dockEnabled: "\(rawValue) true|false"
         }
     }
 
@@ -23,10 +27,6 @@ public enum SettingKey: String, CaseIterable, Sendable {
         switch self {
         case .theme: return ThemeID(rawValue: v)?.rawValue
         case .palette: return v == AppearanceSettings.autoPalette || PaletteCatalog.shared.named(v) != nil ? v : nil
-        case .dockEnabled:
-            if ["true", "on", "yes", "1"].contains(v) { return "true" }
-            if ["false", "off", "no", "0"].contains(v) { return "false" }
-            return nil
         }
     }
 
@@ -49,6 +49,7 @@ public enum SettingKey: String, CaseIterable, Sendable {
         // when a value came with it.
         if text != nil, target?.isEmpty ?? true { return .refused("no setting name; the settings are \(allCases.map(\.rawValue).joined(separator: ", "))") }
         guard let target, !target.isEmpty else { return .list }
+        if let why = retired[target.trimmingCharacters(in: .whitespaces).lowercased()] { return .refused(why) }
         guard let key = SettingKey(name: target) else {
             return .refused("no setting \(target); the settings are \(allCases.map(\.rawValue).joined(separator: ", "))")
         }

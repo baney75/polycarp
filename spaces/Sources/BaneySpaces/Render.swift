@@ -65,9 +65,6 @@ enum Render {
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SETTINGS_TIMING"].flatMap(Int.init) {
             return SettingsTiming.run(rounds: r)
         }
-        if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_DOCK_OPEN"].flatMap(Int.init) {
-            return DockOpenTiming.run(rounds: r)
-        }
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME_RELOAD"].flatMap(Int.init) {
             return ThemeReloadTiming.run(rounds: r)
         }
@@ -149,113 +146,6 @@ enum Render {
             appSwitcher.selected = frame.selected
             guard save(SwitcherView(model: appSwitcher).padding(30), frame.name, CGSize(width: 820, height: 0)) else { return 1 }
         }
-
-        // The Workspace Dock with workspace 4 current, hovering Terminal on workspace 1.
-        let dock = DockModel()
-        let app = { (n: Int, name: String, path: String) in
-            DockModel.App(id: "\(n)\(name)", pid: name == "Terminal" ? 99 : pid_t(n * 10 + name.count), name: name, icon: icon(path),
-                          windows: name == "Terminal" && n == 4 ? 2 : 1)
-        }
-        dock.tiles = [
-            .init(id: 1, apps: [app(1, "Claude", "/Applications/Safari.app"), app(1, "Terminal", "/System/Applications/Utilities/Terminal.app")], isCurrent: false),
-            .init(id: 2, apps: [app(2, "Music", "/System/Applications/Music.app")], isCurrent: false),
-            .init(id: 3, apps: [app(3, "Notes", "/System/Applications/Notes.app")], isCurrent: false),
-            .init(id: 4, apps: [app(4, "Mail", "/System/Applications/Mail.app"), app(4, "Terminal", "/System/Applications/Utilities/Terminal.app"),
-                                app(4, "Messages", "/System/Applications/Messages.app")], isCurrent: true),
-            .init(id: 5, apps: (0..<6).map { app(5, "App\($0)", ["/System/Applications/Photos.app", "/System/Applications/Maps.app", "/System/Applications/Preview.app", "/System/Applications/Books.app", "/System/Applications/News.app", "/System/Applications/Podcasts.app"][$0]) }, isCurrent: false),
-        ]
-        dock.hover = .app(1, "1Terminal")
-        guard save(DockView(model: dock).padding(.vertical, 20).background(Color(white: 0.35)), "dock.png", CGSize(width: 820, height: 0)) else { return 1 }
-        // The Ledger top bar, on a screen without a notch and on one with it (the middle folds left).
-        let topBar = TopBarModel()
-        topBar.occupied = [1, 2, 4]
-        topBar.now = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 9, minute: 12)) ?? Date()
-        if let screen = NSScreen.main, let id = screen.displayID {
-            topBar.current[id] = 2
-            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar.png", CGSize(width: 1512, height: 24)) else { return 1 }
-            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: (left: 656, right: 656)).background(Color(white: 0.35)), "topbar-notch.png", CGSize(width: 1512, height: 37)) else { return 1 }
-        }
-
-        // Every agent badge: working on 1, asking on 2, an error on 3, a finish on 4.
-        let agentDock = DockModel()
-        func agent(_ n: Int, _ state: DockAgent.State, _ name: String, _ path: String) -> DockModel.Tile {
-            var a = app(n, name, path)
-            let ag = DockAgent(id: "\(n)", window: WindowID(n), workspace: n, state: state, name: "Claude", task: "Fix the build")
-            a.agent = ag
-            var t = DockModel.Tile(id: n, apps: [a, app(n, "Notes", "/System/Applications/Notes.app")], isCurrent: n == 1)
-            t.agents = [ag]
-            return t
-        }
-        // Two agents in one app: its icon shows the one asking, and nothing doubles up in the corner.
-        var both = agent(5, .asking, "Terminal", "/System/Applications/Utilities/Terminal.app")
-        both.agents.append(DockAgent(id: "5b", window: 55, workspace: 5, state: .working, name: "Claude", task: "Run the tests"))
-        agentDock.tiles = [agent(1, .working, "Terminal", "/System/Applications/Utilities/Terminal.app"),
-                           agent(2, .asking, "Terminal", "/System/Applications/Utilities/Terminal.app"),
-                           agent(3, .failed, "Terminal", "/System/Applications/Utilities/Terminal.app"),
-                           agent(4, .done, "Terminal", "/System/Applications/Utilities/Terminal.app"), both]
-        guard save(DockView(model: agentDock).padding(.vertical, 20).background(Color(white: 0.35)), "dock-agents.png", CGSize(width: 820, height: 0)) else { return 1 }
-
-        // The switch HUD, landing on workspace 4.
-        let hud = HUDModel()
-        hud.current = 4
-        hud.occupied = [1, 2, 3, 4, 5, 7]
-        hud.icons = [icon("/System/Applications/Mail.app"), icon("/System/Applications/Utilities/Terminal.app"), icon("/System/Applications/Messages.app")]
-        guard save(HUDView(model: hud).background(Color(white: 0.35)), "hud.png", CGSize(width: 260, height: 0)) else { return 1 }
-
-        // The same dock with Terminal's window strip open over workspace 4.
-        dock.tiles[3] = .init(id: 4, apps: dock.tiles[3].apps.map { a in
-            var a = a
-            if a.name == "Terminal" {
-                a.list = [.init(id: 1, title: "New Tab"), .init(id: 2, title: "Forward and auto-reply - Proton Account", isLast: true),
-                          .init(id: 3, title: "YouTube - I finally ported TypeScript to Go")]
-            }
-            return a
-        }, isCurrent: true)
-        dock.hover = .app(4, "4Terminal")
-        dock.strip = (4, "4Terminal")
-        guard save(DockView(model: dock).padding(.vertical, 20).background(Color(white: 0.35)), "dock-strip.png", CGSize(width: 820, height: 0)) else { return 1 }
-
-        // The Background list, long enough to scroll, with an X on each row.
-        dock.strip = nil
-        dock.hover = .background
-        dock.backgroundApps = ["Claude", "Ghostty", "Grok Bot", "Helium", "Messages", "Obsidian", "Preview", "Proton Mail", "Shottr", "Xcode", "Calendar"].enumerated().map {
-            BackgroundApps.Entry(pid: Int32(90_000 + $0.offset), name: $0.element, state: $0.element == "Shottr" ? .hidden : .noWindow)
-        }
-        dock.backgroundOpen = true
-        guard save(DockView(model: dock, mode: .side).padding(20).background(Color(white: 0.35)), "dock-background.png", CGSize(width: 340, height: 0)) else { return 1 }
-        dock.backgroundOpen = false
-        dock.backgroundApps = []
-
-        // The dock on the other edges: a side dock with a hover label, the top dock with the strip.
-        dock.strip = nil
-        dock.edge = .left
-        dock.hover = .tile(2)
-        guard save(DockView(model: dock).padding(20).background(Color(white: 0.35)), "dock-left.png", CGSize(width: 520, height: 0)) else { return 1 }
-        dock.edge = .right
-        dock.hover = .app(4, "4Terminal")
-        dock.strip = (4, "4Terminal")
-        guard save(DockView(model: dock).padding(20).background(Color(white: 0.35)), "dock-right.png", CGSize(width: 520, height: 0)) else { return 1 }
-        // A short screen: the side dock shrinks to fit.
-        dock.strip = nil
-        dock.hover = nil
-        dock.edge = .left
-        dock.maxLength = 560
-        guard save(DockView(model: dock).padding(20).background(Color(white: 0.35)), "dock-left-fit.png", CGSize(width: 520, height: 0)) else { return 1 }
-        dock.maxLength = .infinity
-        dock.hover = .app(4, "4Terminal")
-        dock.strip = (4, "4Terminal")
-        dock.edge = .top
-        guard save(DockView(model: dock).padding(.vertical, 20).background(Color(white: 0.35)), "dock-top.png", CGSize(width: 820, height: 0)) else { return 1 }
-        dock.edge = .bottom
-
-        // Mail dragged from workspace 4 onto workspace 2. The first pass measures the tiles.
-        dock.strip = nil
-        dock.hover = nil
-        let dragView = DockView(model: dock).padding(.vertical, 20).background(Color(white: 0.35))
-        guard save(dragView, "dock-drag.png", CGSize(width: 820, height: 0)), let two = dock.frames["tile:2"] else { return 1 }
-        dock.drag = .init(ids: [1], from: 4, icon: icon("/System/Applications/Mail.app"), name: "Mail", location: CGPoint(x: two.midX + 6, y: two.midY - 4))
-        guard save(dragView, "dock-drag.png", CGSize(width: 820, height: 0)) else { return 1 }
-        dock.drag = nil
 
         // The ⌘Tab window bar: Tab held on Helium.
         let bar = SwitcherModel()

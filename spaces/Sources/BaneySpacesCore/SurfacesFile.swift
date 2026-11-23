@@ -152,6 +152,11 @@ public enum SurfacesOps {
         let keys = path.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
         if keys.contains(where: \.isEmpty) { return .failure(.usage("\"\(path)\" is not a path: keys joined with dots, like bar.height")) }
         if SurfaceField.isKnown(path) || (tree.flatMap { $0.at(keys) } != nil) { return .success(keys) }
+        if let why = SurfaceCheck.retiredGroups[keys[0]] {
+            return .failure(SurfacesFailure("unknown_path", "no field \(path): \(keys[0]) \(why)",
+                                            suggestion: "run `surfaces schema` for every path",
+                                            issues: [SurfacesIssue(path, "\(keys[0]) \(why)")]))
+        }
         let near = SurfaceField.nearest(path)
         return .failure(SurfacesFailure("unknown_path", "no field \(path)",
                                         suggestion: near.isEmpty ? "run `surfaces schema` for every path" : "did you mean \(near.joined(separator: " or "))?",

@@ -714,8 +714,8 @@ public final class StyleLookup {
         guard let target = StyleTarget.of(surface, part: part) else { return nil }
         var chain: [(StyleTarget, StyleSelector)] = []
         switch target {
-        case .bar, .dock: break
-        case .barRegion, .dockTile: chain.append((target.parent!, StyleSelector(surface: surface)))
+        case .bar: break
+        case .barRegion: chain.append((target.parent!, StyleSelector(surface: surface)))
         case .barModule, .barIsland:
             chain.append((.bar, StyleSelector(surface: .bar)))
             if let region, StyleTarget.barRegion.parts.contains(region) { chain.append((.barRegion, StyleSelector(surface: .bar, part: region))) }
@@ -723,9 +723,6 @@ public final class StyleLookup {
             chain.append((.bar, StyleSelector(surface: .bar)))
             if let region, StyleTarget.barRegion.parts.contains(region) { chain.append((.barRegion, StyleSelector(surface: .bar, part: region))) }
             chain.append((.barModule, StyleSelector(surface: .bar, part: "workspaces", states: states.intersection(StyleTarget.barModule.states))))
-        case .dockLabel, .dockBadge, .dockIcon:
-            chain.append((.dock, StyleSelector(surface: .dock)))
-            chain.append((.dockTile, StyleSelector(surface: .dock, part: "tile", states: states.intersection(StyleTarget.dockTile.states))))
         }
         chain.append((target, StyleSelector(surface: surface, part: part, states: states.intersection(target.states))))
         var levels: [Level] = []
@@ -838,7 +835,7 @@ extension StyleSheet {
     func contrastWarnings(roles: (Bool) -> [String: StyleColor]) -> [StyleProblem] {
         var out: [StyleProblem] = []
         var seen = Set<String>()
-        var nodes: [(StyleSurface, String?, String?, Set<StyleState>)] = [(.bar, nil, nil, []), (.dock, nil, nil, [])]
+        var nodes: [(StyleSurface, String?, String?, Set<StyleState>)] = [(.bar, nil, nil, [])]
         for r in StyleTarget.barRegion.parts { nodes.append((.bar, r, nil, [])) }
         for m in StyleTarget.barModule.parts {
             for region in [nil] + StyleTarget.barRegion.parts.map(Optional.some) {
@@ -850,7 +847,6 @@ extension StyleSheet {
         for region in [nil] + StyleTarget.barRegion.parts.map(Optional.some) {
             for st in stateSets { nodes.append((.bar, "workspace", region, st)) }
         }
-        for p in ["tile", "label", "badge"] { for st in stateSets { nodes.append((.dock, p, nil, st)) } }
         for dark in [false, true] {
             let r = roles(dark)
             guard let base = r["background"] else { continue }

@@ -1,12 +1,17 @@
 # Surfaces: one file for every Polycarp surface
 
 `surfaces.json` says how each Polycarp surface looks and behaves: the top bar, the desktop scene and its verse, the
-Workspace Dock's tiles, the status menu, the browser's new tab page and the idle screen. Agents and the owner edit it with `polycarp-spaces surfaces`, or over MCP with `polycarp mcp`. A running Polycarp picks up a change within 150 ms;
+status menu, the browser's new tab page and the idle screen. Agents and the owner edit it with `polycarp-spaces surfaces`, or over MCP with `polycarp mcp`. A running Polycarp picks up a change within 150 ms;
 nothing restarts.
 
 Colors, fonts and the theme's wallpaper stay in the theme (`polycarp theme`, `themes/*.toml`). This file says what each
-surface shows; the theme says what it looks like. To restyle the bar or the dock past the theme (a glass bar, a gold
-clock, square tiles), use the style sheet: [style.md](style.md).
+surface shows; the theme says what it looks like. To restyle the bar past the theme (a glass bar, a gold
+clock), use the style sheet: [style.md](style.md).
+
+The Workspace Dock was removed on 2026-11-23. Workspaces are on ⌘1 to ⌘9 and the top bar's numbers; the overview is on
+the Mission Control key, the hot corner and the status menu; apps running with no window are in the launcher (⌃⌘K)
+under "Running, no window". A file that still has a `dock` section, or `dock` in `menu.order` or `menu.hidden`, reads
+with a warning and the rest applies; `surfaces set dock.*` is refused.
 
 - File: `~/Library/Application Support/Polycarp/surfaces.json`
 - Every field is optional. A missing field, or no file at all, takes the default below.
@@ -180,7 +185,7 @@ to take the new layout, `polycarp-spaces surfaces reset bar.modules`.
 
 **Retired values still read.** Workspace purposes, the day's focus and the menu bar ask were removed on 2026-11-22. A
 file written before then still reads, with a warning for each retired value: `purpose` and `one-thing` are left out
-of a module list, a `dock.tileLabel` of `purpose` falls back to `number`, and `bar.hideSystemMenuBar`, `newtab.chips`
+of a module list, and `bar.hideSystemMenuBar`, `newtab.chips`
 and an `alarm` section are ignored as unknown keys. `surfaces set` refuses them.
 
 `app-menus` and `status` read through the Accessibility permission Polycarp already has; no pixels are copied, so
@@ -221,22 +226,15 @@ words. A `fixed:` reference outside that set turns daily instead, so the desktop
 low on the left, right or center, clear of the Dock; with the verse on the right the land is drawn mirrored, so the
 lilies stand opposite it.
 
-### `dock`: the Workspace Dock's tiles
-
-| Path | Default | Takes |
-| --- | --- | --- |
-| `dock.tileLabel` | `"number"` | What each workspace tile says: `number` (its number under the tile) or `icons` (only its apps' icons). |
-| `dock.restTile` | `true` | An "At rest" tile after the workspaces gathers apps running with no window. Off, they don't show on the dock. |
-
 ### `menu`: the status menu (Polycarp's menu bar icon)
 
 | Path | Default | Takes |
 | --- | --- | --- |
-| `menu.order` | `["workspaces","show-all","find","agents","update","dock","settings","quit"]` | Row ids in order. Rows left out follow in their default order. |
+| `menu.order` | `["workspaces","show-all","find","agents","update","settings","quit"]` | Row ids in order. Rows left out follow in their default order. |
 | `menu.hidden` | `[]` | Row ids not shown. `settings` and `quit` can't be hidden. |
 
-Row ids: `workspaces`, `show-all`, `find`, `agents` (agents that finished while you were away), `update`, `dock`
-(the dock switch), `settings`, `quit`.
+Row ids: `workspaces`, `show-all`, `find`, `agents` (agents that finished while you were away), `update`, `settings`,
+`quit`.
 
 ### `search`: one web search for the launcher, the new tab page and `polycarp-spaces search`
 
@@ -302,7 +300,7 @@ screen saver, lock or display sleep has the screen; those still come in their ti
 | `rooms.root` | `"~/BES"` | The folder that holds `0 Inbox`, `1 Do`, `2 Keep`, `3 Know` and `4 Let Go` (`bes init` makes them). `~/` starts at your home folder; a drive works too (`/Volumes/Drive/BES`). Polycarp shows the rooms only once this folder has `.bes/` or `0 Inbox/` in it, and never makes them. |
 | `rooms.menu` | `true` | A Rooms section in the status menu: the five rooms, and what waits in the Inbox. |
 
-What the rooms do in the launcher, the menu and the dock: [rooms.md](rooms.md).
+What the rooms do in the launcher and the menu: [rooms.md](rooms.md).
 
 ## Examples
 
@@ -314,10 +312,6 @@ polycarp-spaces surfaces set bar.modules '{"left":["mark","workspaces"],"center"
 # One verse on the desktop, always, at the top right.
 polycarp-spaces surfaces set desktop.verseRotation '"fixed:Psalm 46:10"'
 polycarp-spaces surfaces set desktop.versePosition top-right
-
-# Dock tiles with only their apps' icons; no "At rest" tile.
-polycarp-spaces surfaces set dock.tileLabel icons
-polycarp-spaces surfaces set dock.restTile false
 
 # A quieter menu.
 polycarp-spaces surfaces set menu.hidden '["find","agents"]'
@@ -388,7 +382,7 @@ NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object:
 
 The model is `Surfaces` in BaneySpacesCore: `bar` (`Bar`: `enabled`, `height`, `style`, `left`, `center`, `right` as
 `[BarModule]`, `clockFormat`, `hourNames`), `desktop` (`scene`, `followDaylight`, `verse`,
-`versePosition`, `verseRotation`, `paper`), `dock` (`tileLabel`, `restTile`), `menu` (`order`, `hidden`, and
+`versePosition`, `verseRotation`, `paper`), `menu` (`order`, `hidden`, and
 `rows`, the rows to show in order), `search` (`engine`; `OneSearch.engine` resolves it against the bangs), `newtab`
 (`question`, `verse`, `searchURL`, `paper`, and `searchURL(for:)`), `idle`
 (`enabled`, `style`, `effects`, `showMachineName`, `showVerse`, `showKierkegaard`, `startAfterMinutes`, `paper`), `paper`

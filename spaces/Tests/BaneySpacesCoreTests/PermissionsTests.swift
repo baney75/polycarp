@@ -109,7 +109,7 @@ final class PermissionsTests: XCTestCase {
         XCTAssertEqual(all.optional.map(\.id), [.notifications, .contacts], "nice to have waits with the optional ones")
         XCTAssertEqual(all.next, .accessibility)
         XCTAssertFalse(all.canStart)
-        XCTAssertEqual(all.needed.first?.stops, ["Workspaces, the dock and the overview"])
+        XCTAssertEqual(all.needed.first?.stops, ["Workspaces and the overview"])
     }
 
     func testTheSummaryAndNextFollowTheAnswers() {

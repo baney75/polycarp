@@ -225,7 +225,7 @@ enum Chrome {
 
     /// A fade or slide of `shipped` seconds as the theme times it: zero under Reduce Motion.
     static func duration(_ shipped: Double, _ k: MotionKind) -> Double {
-        DockMotion.duration(seconds(shipped, k), reduceMotion: reduceMotion)
+        reduceMotion ? 0 : seconds(shipped, k)
     }
 
     /// An ease-out animation of that length, or none under Reduce Motion.
@@ -240,7 +240,7 @@ enum Chrome {
     }
 
     /// The scale a picked-up tile grows to (1 where the theme only fades).
-    static var lift: CGFloat { DockMotion.lift }
+    static var lift: CGFloat { CGFloat(spec.motion.lift) }
 }
 
 extension Appearance {
@@ -299,48 +299,6 @@ struct ThemedMark: InsettableShape {
         return Chrome.spec.radius.row == 0 ? Rectangle().path(in: r) : Circle().path(in: r)
     }
     func inset(by amount: CGFloat) -> ThemedMark { ThemedMark(inset: inset + amount) }
-}
-
-/// The number under a dock tile, lit for the workspace you're on, like the key that gets there:
-/// a number on a pill (BaneySpaces), in a bordered block (Omarchy) or over a bar (Minimal).
-struct TileNumber: View {
-    let n: Int
-    let tint: Color
-    let current: Bool
-    let hovered: Bool
-    /// style.css `dock .label` (docs/style.md); empty draws the theme's number as before.
-    var style = ComputedStyle.empty
-
-    var body: some View {
-        indicator
-            .modifier(StyledText(style: style))
-            .modifier(StyledBox(style: style))
-    }
-
-    @ViewBuilder private var indicator: some View {
-        switch Chrome.spec.indicator {
-        case .dot:
-            Text("\(n)")
-                .font(Styled.font(style, .ui, 10.5, .bold, rounded: true))
-                .foregroundStyle(style.ink(current ? Chrome.light() : hovered ? Chrome.wash() : Chrome.muted))
-                .frame(minWidth: 18, minHeight: 15)
-                .background(Chrome.pill().fill(current ? tint : Color.clear))
-        case .numberBlock:
-            Text("\(n)")
-                .font(Styled.font(style, .ui, 10.5, .bold))
-                .foregroundStyle(style.ink(current ? Chrome.panel() : tint))
-                .frame(minWidth: 18, minHeight: 15)
-                .background(Rectangle().fill(current ? tint : Color.clear))
-                .overlay(Rectangle().strokeBorder(hovered || current ? Chrome.focusEdge(tint) : Chrome.edge(1),
-                                                  lineWidth: Chrome.width(.dockTile, focused: current)))
-        case .bar:
-            VStack(spacing: 1) {
-                Text("\(n)").font(Styled.font(style, .ui, 10.5, .bold)).foregroundStyle(style.ink(current ? Chrome.wash() : tint.opacity(hovered ? 1 : 0.85)))
-                Rectangle().fill(current ? tint : Color.clear).frame(width: 14, height: Chrome.width(.dockTile, focused: true))
-            }
-            .frame(minWidth: 18, minHeight: 15)
-        }
-    }
 }
 
 extension RGB {

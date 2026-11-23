@@ -2,7 +2,7 @@ import AppKit
 import BaneySpacesCore
 import SwiftUI
 
-/// The draft drawn the way the Mac app draws it, in one mode: a dock with its workspace marks, a panel with a selected row,
+/// The draft drawn the way the Mac app draws it, in one mode: a bar of workspace tiles, a panel with a selected row,
 /// buttons, a settings row and status colors. Every color, corner, border and size comes from the draft,
 /// not from the theme the app is using now.
 struct ThemeEditorPreview: View {
@@ -154,8 +154,8 @@ struct ThemeEditorPreview: View {
         let shape = RoundedRectangle(cornerRadius: CGFloat(box.radius), style: .continuous)
         return HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
-                Text("Show the Workspace Dock").font(font(11)).foregroundStyle(c("foreground"))
-                Text("At the bottom of every screen").font(font(9)).foregroundStyle(c("muted"))
+                Text("Show the Top Bar").font(font(11)).foregroundStyle(c("foreground"))
+                Text("Across the top of every screen").font(font(9)).foregroundStyle(c("muted"))
             }
             Spacer(minLength: 0)
             ZStack(alignment: .trailing) {

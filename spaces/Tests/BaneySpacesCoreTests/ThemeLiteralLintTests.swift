@@ -93,6 +93,6 @@ final class ThemeLiteralLintTests: XCTestCase {
         for s in caught { XCTAssertTrue(hit(s), "should be caught: \(s)") }
         for s in passed { XCTAssertFalse(hit(s), "should pass: \(s)") }
         XCTAssertTrue(Self.exempt("Sources/BaneySpacesCore/ThemeEditorPalette.swift"))
-        XCTAssertFalse(Self.exempt("Sources/BaneySpaces/WorkspaceDock.swift"))
+        XCTAssertFalse(Self.exempt("Sources/BaneySpaces/Launcher.swift"))
     }
 }

@@ -48,7 +48,7 @@ final class SpeedBudgetTests: XCTestCase {
 
     func testEveryLoggedKindHasABudget() throws {
         let kinds = try loggedKinds()
-        XCTAssertTrue(kinds.isSuperset(of: ["switch", "parked", "dock", "launcher", "overview", "settings", "settings-pane"]), "\(kinds)")
+        XCTAssertTrue(kinds.isSuperset(of: ["switch", "parked", "launcher", "overview", "settings", "settings-pane"]), "\(kinds)")
         let budgets = try budgets()
         for kind in kinds.sorted() {
             let b = try XCTUnwrap(budgets[kind], "timing.log kind \(kind) has no budget in spec/speed.json spacesTiming")
@@ -63,7 +63,7 @@ final class SpeedBudgetTests: XCTestCase {
         XCTAssertLessThanOrEqual(try XCTUnwrap(b["switch"]?["p50"] as? Int), 50)
         XCTAssertLessThanOrEqual(try XCTUnwrap(b["switch"]?["p90"] as? Int), 100)
         XCTAssertLessThanOrEqual(try XCTUnwrap(b["parked"]?["p90"] as? Int), 150)
-        XCTAssertLessThanOrEqual(try XCTUnwrap(b["dock"]?["p99"] as? Int), 150)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(b["launcher"]?["p99"] as? Int), 150)
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(try timing()["minSamples"] as? Int), 5)
     }
 
@@ -93,23 +93,23 @@ final class SpeedBudgetTests: XCTestCase {
         (0..<20).flatMap { i in [
             "\(now - 60 * i) ws=2 from=1 scan=skip snap=3 done=30 parked=80",
             "\(now - 60 * i) ws=1 from=1 scan=skip done=500 parked=900", // a no-op switch: not counted
-            "\(now - 60 * i) open dock=40",
+            "\(now - 60 * i) open overview=40",
             "\(now - 60 * i) open launcher=40",
         ] }
     }
 
     func testADayInBudgetPasses() throws {
-        let r = try report(timing: fast() + ["\(now - 90_000) open dock=5000"], // older than a day
-                           trace: ["\(now - 10).5 dock held 2s off the bar by more: pointer 1,1 bar 0,0 10x10"])
+        let r = try report(timing: fast() + ["\(now - 90_000) open launcher=5000"], // older than a day
+                           trace: ["\(now - 10).5 cmdTab opened on ⌘Tab"])
         XCTAssertEqual(r.status, 0, r.out)
         XCTAssertTrue(r.out.contains("speed-report: pass"), r.out)
     }
 
     func testASlowTailFails() throws {
-        let slow = (0..<3).map { "\(now - $0) open dock=400" }
+        let slow = (0..<3).map { "\(now - $0) open launcher=400" }
         let r = try report(timing: fast() + slow)
         XCTAssertEqual(r.status, 1, r.out)
-        XCTAssertTrue(r.out.contains("dock p99 400 ms over"), r.out)
+        XCTAssertTrue(r.out.contains("launcher p99 400 ms over"), r.out)
     }
 
     func testAKindWithNoBudgetFails() throws {
@@ -118,10 +118,8 @@ final class SpeedBudgetTests: XCTestCase {
         XCTAssertTrue(r.out.contains("newthing: no budget"), r.out)
     }
 
-    func testAStuckDockOrAWrongSwitcherFails() throws {
-        for line in ["dock stray: the dock panel was still on screen 3.0s after the dock went down; ordered out",
-                     "dock held 2s with the bar unmeasured, so the whole panel counts: pointer 1,1",
-                     "cmdTab panel not on screen; rebuilding it",
+    func testAWrongSwitcherFails() throws {
+        for line in ["cmdTab panel not on screen; rebuilding it",
                      "cmdTab landed wrong: highlighted Ghostty pid 12, front pid 34"] {
             let r = try report(timing: fast(), trace: ["\(now - 5).25 \(line)"])
             XCTAssertEqual(r.status, 1, "\(line)\n\(r.out)")
