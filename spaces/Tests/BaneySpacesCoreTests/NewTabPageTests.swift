@@ -14,11 +14,11 @@ final class NewTabPageTests: XCTestCase {
     }
 
     private func act(_ ctx: JSContext, _ typed: String, template: String = "https://duckduckgo.com/?q={query}",
-                     name: Bool = false) -> (kind: String, value: String) {
+                     cmd: Bool = false) -> (kind: String, value: String) {
         let r = ctx.objectForKeyedSubscript("PolycarpNewTab").objectForKeyedSubscript("act")
-            .call(withArguments: [typed, template, name])!
+            .call(withArguments: [typed, template, cmd])!
         let kind = r.objectForKeyedSubscript("kind").toString() ?? ""
-        let value = r.objectForKeyedSubscript(kind == "name" ? "text" : "url")
+        let value = r.objectForKeyedSubscript("url")
         return (kind, value?.isUndefined == false ? value!.toString() : "")
     }
 
@@ -55,12 +55,18 @@ final class NewTabPageTests: XCTestCase {
         XCTAssertEqual(act(ctx, "x", template: "https://no-slot.example/").value, "https://duckduckgo.com/?q=x")
     }
 
-    func testCommandReturnNamesTheHourWithTheWords() throws {
+    /// 2026-11-22: the page never asks what the hour is for. Cmd+Return names nothing; it opens or searches like Return,
+    /// and the page has no question, no naming and no workspace chips.
+    func testThePageNeverAsksWhatTheHourIsFor() throws {
         let ctx = try logic()
-        let n = act(ctx, "  Gannon letter ", name: true)
-        XCTAssertEqual(n.kind, "name")
-        XCTAssertEqual(n.value, "Gannon letter")
-        XCTAssertEqual(act(ctx, "dbaney.com", name: true).kind, "name", "naming wins over opening")
+        XCTAssertEqual(act(ctx, "Gannon letter", cmd: true).kind, "search")
+        XCTAssertEqual(act(ctx, "dbaney.com", cmd: true).kind, "open")
+        for file in ["newtab.html", "newtab.js", "logic.js", "manifest.json"] {
+            let text = try Repo.text("extension/newtab/\(file)").lowercased()
+            for word in ["this hour", "is for", "purpose", "chips", "op: \"name\"", "op: \"go\"", "one " + "thing"] {
+                XCTAssertFalse(text.contains(word), "\(file) still says \(word)")
+            }
+        }
     }
 
     /// Chrome derives an unpacked extension's ID from its manifest key; the host's manifest allows only that ID. If the

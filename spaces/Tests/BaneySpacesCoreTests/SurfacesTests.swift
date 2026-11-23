@@ -31,31 +31,27 @@ final class SurfacesTests: XCTestCase {
         XCTAssertEqual(d.bar.enabled, false)
         XCTAssertEqual(d.bar.height, 26)
         XCTAssertEqual(d.bar.style, .solid)
-        XCTAssertEqual(d.bar.left, [.mark, .workspaces, .appMenus, .purpose])
+        XCTAssertEqual(d.bar.left, [.mark, .workspaces, .appMenus])
         XCTAssertEqual(d.bar.center, [.clock])
-        XCTAssertEqual(d.bar.right, [.oneThing, .status])
+        XCTAssertEqual(d.bar.right, [.status])
         XCTAssertEqual(d.bar.clockFormat, .dayTwelveHour)
         XCTAssertTrue(d.bar.hourNames)
-        XCTAssertFalse(d.bar.hideSystemMenuBar)
         XCTAssertEqual(d.desktop.scene, .field)
         XCTAssertTrue(d.desktop.followDaylight)
         XCTAssertTrue(d.desktop.verse)
         XCTAssertEqual(d.desktop.versePosition, .bottomRight)
         XCTAssertEqual(d.desktop.verseRotation, .daily)
-        XCTAssertEqual(d.dock.tileLabel, .purpose)
+        XCTAssertEqual(d.dock.tileLabel, .number)
         XCTAssertTrue(d.dock.restTile)
         XCTAssertEqual(d.menu.rows, Surfaces.MenuRow.allCases)
         XCTAssertEqual(d.menu.hidden, [])
-        XCTAssertEqual(d.newtab.question, "What is this hour for?")
-        XCTAssertFalse(d.newtab.chips, "one field: the bar already shows the purposes")
+        XCTAssertEqual(d.newtab.question, "Search or type an address", "a placeholder, never a question about your hour")
         XCTAssertTrue(d.newtab.verse)
         XCTAssertEqual(d.newtab.searchURL(for: "purity of heart")?.absoluteString, "https://duckduckgo.com/?q=purity%20of%20heart")
         XCTAssertFalse(d.idle.enabled, "the idle screen waits until you turn it on")
         XCTAssertEqual(d.idle.style, .martyrNight)
         XCTAssertTrue(d.idle.effects && d.idle.showMachineName && d.idle.showVerse && d.idle.showKierkegaard)
         XCTAssertEqual(d.idle.startAfterMinutes, 10)
-        XCTAssertEqual(d.alarm, .init(wake: false, wakeAt: "06:30", days: .every, keepAwake: true, timerMinutes: 25),
-                       "the wake alarm waits until you turn it on")
         XCTAssertEqual(d.text.translation, .bsb)
         XCTAssertEqual(d.text.verseSource, .builtIn)
 
@@ -74,8 +70,9 @@ final class SurfacesTests: XCTestCase {
             XCTAssertFalse(f.help.isEmpty, f.path)
         }
         XCTAssertEqual(Set(SurfaceField.all.map(\.path)).count, SurfaceField.all.count)
-        // No rhythm section: the morning question and examen are the purpose work's (feat/purpose), not mirrored here.
-        XCTAssertFalse(SurfaceField.all.contains { $0.path.hasPrefix("rhythm") })
+        // No rhythm or alarm section: nothing here asks what you are doing or wakes you to ask (2026-11-22).
+        XCTAssertFalse(SurfaceField.all.contains { $0.path.hasPrefix("rhythm") || $0.path.hasPrefix("alarm") })
+        XCTAssertFalse(SurfaceField.groups.contains { $0.path == "alarm" || $0.path == "rhythm" })
     }
 
     func testTheSupportFolderHoldsTheFileUnlessTheTestHookPointsElsewhere() {
@@ -92,17 +89,15 @@ final class SurfacesTests: XCTestCase {
         let sets: [(String, String)] = [
             ("bar.enabled", "true"), ("bar.height", "34"), ("bar.style", "\"glass\""),
             ("bar.modules", #"{"left":["mark","custom:weather"],"center":["hour","verse"],"right":["clock"]}"#),
-            ("bar.clockFormat", "\"24h\""), ("bar.hourNames", "false"), ("bar.hideSystemMenuBar", "true"),
+            ("bar.clockFormat", "\"24h\""), ("bar.hourNames", "false"),
             ("desktop.scene", "\"image:dawn-field.heic\""), ("desktop.followDaylight", "false"), ("desktop.verse", "false"),
             ("desktop.versePosition", "\"top-center\""), ("desktop.verseRotation", "\"fixed:1 Corinthians 13:4-7\""),
             ("dock.tileLabel", "\"number\""), ("dock.restTile", "false"),
             ("menu.order", #"["quit","settings"]"#), ("menu.hidden", #"["update","agents"]"#),
-            ("newtab.question", "\"Will one thing.\""), ("newtab.chips", "true"), ("newtab.verse", "false"),
+            ("newtab.question", "\"Find it.\""), ("newtab.verse", "false"),
             ("newtab.searchURL", "\"https://search.brave.com/search?q={query}&source=web\""),
             ("idle.enabled", "true"), ("idle.style", "\"verse\""), ("idle.effects", "false"), ("idle.showMachineName", "false"), ("idle.showVerse", "false"),
             ("idle.showKierkegaard", "false"), ("idle.startAfterMinutes", "5"),
-            ("alarm.wake", "true"), ("alarm.wakeAt", "\"05:45\""), ("alarm.days", "\"weekdays\""), ("alarm.keepAwake", "false"),
-            ("alarm.timerMinutes", "50"),
             ("text.translation", "\"BSB\""), ("text.verseSource", "\"file:psalms.json\""),
         ]
         for (p, v) in sets {
@@ -111,14 +106,13 @@ final class SurfacesTests: XCTestCase {
         guard case .document(let d) = SurfacesFile.load(path: file) else { return XCTFail("the file reads back") }
         let s = d.surfaces
         XCTAssertEqual(s.bar, .init(enabled: true, height: 34, style: .glass, left: [.mark, .custom("weather")], center: [.hour, .verse],
-                                    right: [.clock], clockFormat: .twentyFourHour, hourNames: false, hideSystemMenuBar: true))
+                                    right: [.clock], clockFormat: .twentyFourHour, hourNames: false))
         XCTAssertEqual(s.desktop, .init(scene: .image("dawn-field.heic"), followDaylight: false, verse: false, versePosition: .topCenter,
                                         verseRotation: .fixed("1 Corinthians 13:4-7")))
         XCTAssertEqual(s.dock, .init(tileLabel: .number, restTile: false))
         XCTAssertEqual(s.menu.rows, [.quit, .settings, .workspaces, .showAll, .find, .dock], "left-out rows follow; hidden ones go")
-        XCTAssertEqual(s.newtab, .init(question: "Will one thing.", chips: true, verse: false, searchURL: "https://search.brave.com/search?q={query}&source=web"))
+        XCTAssertEqual(s.newtab, .init(question: "Find it.", verse: false, searchURL: "https://search.brave.com/search?q={query}&source=web"))
         XCTAssertEqual(s.idle, .init(enabled: true, style: .verse, effects: false, showMachineName: false, showVerse: false, showKierkegaard: false, startAfterMinutes: 5))
-        XCTAssertEqual(s.alarm, .init(wake: true, wakeAt: "05:45", days: .weekdays, keepAwake: false, timerMinutes: 50))
         XCTAssertEqual(s.text, .init(translation: .bsb, verseSource: .file("psalms.json")))
         // Reading the tree's text again gives the same tree: nothing is lost or reordered into something else.
         XCTAssertEqual(tree(d.tree.json()), d.tree)
@@ -200,14 +194,6 @@ final class SurfacesTests: XCTestCase {
             (#"{"idle":{"style":"martyr"}}"#, "idle.style", #"not "martyr""#),
             (#"{"idle":{"startAfterMinutes":241}}"#, "idle.startAfterMinutes", "must be from 1 to 240, not 241"),
             (#"{"idle":{"effects":1}}"#, "idle.effects", "must be true or false, not a number"),
-            (#"{"alarm":{"wakeAt":"25:00"}}"#, "alarm.wakeAt", #"must be a time "HH:MM" from 00:00 to 23:59 (as "06:30"), not "25:00""#),
-            (#"{"alarm":{"wakeAt":"6:3"}}"#, "alarm.wakeAt", #"not "6:3""#),
-            (#"{"alarm":{"wakeAt":"06:60"}}"#, "alarm.wakeAt", #"not "06:60""#),
-            (#"{"alarm":{"wakeAt":630}}"#, "alarm.wakeAt", "must be a time \"HH:MM\" (24 hour, as \"06:30\"), not a number"),
-            (#"{"alarm":{"timerMinutes":0}}"#, "alarm.timerMinutes", "must be from 1 to 240, not 0"),
-            (#"{"alarm":{"timerMinutes":241}}"#, "alarm.timerMinutes", "must be from 1 to 240, not 241"),
-            (#"{"alarm":{"days":"sundays"}}"#, "alarm.days", #"must be one of "every", "weekdays", "not-sunday", not "sundays""#),
-            (#"{"alarm":{"wake":"on"}}"#, "alarm.wake", "must be true or false, not a string"),
             (#"{"text":{"translation":"KJV"}}"#, "text.translation", #"must be one of "BSB", not "KJV""#),
             (#"{"text":{"verseSource":"file:psalms.txt"}}"#, "text.verseSource", "is not a valid file value"),
         ]
@@ -435,8 +421,6 @@ final class SurfacesTests: XCTestCase {
         XCTAssertEqual(s.at(["properties", "bar", "properties", "height", "minimum"]), .number(22))
         XCTAssertEqual(s.at(["properties", "bar", "properties", "height", "maximum"]), .number(40))
         XCTAssertEqual(s.at(["properties", "bar", "properties", "style", "enum"]), .array([.string("solid"), .string("glass"), .string("hairline")]))
-        XCTAssertEqual(s.at(["properties", "alarm", "properties", "wakeAt", "pattern"]), .string("^([01][0-9]|2[0-3]):[0-5][0-9]$"))
-        XCTAssertEqual(s.at(["properties", "alarm", "properties", "timerMinutes", "maximum"]), .number(240))
         // The text is JSON a schema tool can read.
         XCTAssertEqual(tree(s.json()), s)
     }
@@ -451,21 +435,6 @@ final class SurfacesTests: XCTestCase {
         XCTAssertFalse(doc.contains("\u{2014}") || doc.contains("\u{2013}"), "no em or en dashes")
     }
 
-    /// `alarm.wakeAt` takes every minute of the day as "HH:MM" and nothing else; a set of a bare word reads as text.
-    func testTheWakeTimeIsHoursAndMinutesOnTheTwentyFourHourClock() throws {
-        for good in ["00:00", "06:30", "12:05", "23:59"] { XCTAssertNil(SurfaceCheck.problem(.string(good), kind: .time), good) }
-        for bad in ["24:00", "25:00", "6:3", "6:30", "06:3", "0630", "06:30 ", "", "ab:cd"] {
-            XCTAssertNotNil(SurfaceCheck.problem(.string(bad), kind: .time), bad)
-        }
-        XCTAssertEqual(Surfaces.defaults.alarm.time?.hour, 6)
-        XCTAssertEqual(Surfaces.defaults.alarm.time?.minute, 30)
-        XCTAssertNoThrow(try SurfacesOps.set("alarm", tree(#"{"wake":true,"wakeAt":"07:15","days":"not-sunday"}"#), file: file).get())
-        guard case .document(let d) = SurfacesFile.load(path: file) else { return XCTFail("the file reads back") }
-        XCTAssertEqual(d.surfaces.alarm, .init(wake: true, wakeAt: "07:15", days: .notSunday, keepAwake: true, timerMinutes: 25))
-        guard case .failure(let f) = SurfacesOps.set("alarm.wakeAt", .string("7:15"), file: file) else { return XCTFail("7:15 is refused") }
-        XCTAssertEqual(f.issues.first?.path, "alarm.wakeAt")
-    }
-
     /// Review of #587: a file that set one place under the old defaults (`center: ["hour"]`, the docs' own example)
     /// must still read. A place the file sets takes its modules from the places left at their default.
     func testAPlaceTheFileSetsTakesItsModulesFromTheDefaults() throws {
@@ -475,19 +444,35 @@ final class SurfacesTests: XCTestCase {
         }
         let a = try bar(#"{"bar":{"modules":{"center":["hour"]}}}"#)
         XCTAssertEqual(a.center, [.hour])
-        XCTAssertEqual(a.right, [.oneThing, .status, .clock], "a middle set without the clock keeps it at the right (review of #602)")
-        let c = try bar(#"{"bar":{"modules":{"center":["one-thing","clock"]}}}"#)
+        XCTAssertEqual(a.right, [.status, .clock], "a middle set without the clock keeps it at the right (review of #602)")
+        let c = try bar(#"{"bar":{"modules":{"center":["date","clock"]}}}"#)
         XCTAssertEqual(c.right, [.status], "a middle that holds the clock keeps it there")
         let d = try bar(#"{"bar":{"modules":{"center":["hour"],"right":["status"]}}}"#)
         XCTAssertEqual(d.right, [.status], "a right the file sets is left as written")
         let b = try bar(#"{"bar":{"modules":{"right":["mark","clock"]}}}"#)
-        XCTAssertEqual(b.left, [.workspaces, .appMenus, .purpose])
+        XCTAssertEqual(b.left, [.workspaces, .appMenus])
         XCTAssertEqual(b.right, [.mark, .clock])
         XCTAssertEqual(b.center, [], "clock left the default middle")
         // A saved list from before the Omarchy defaults is the user's: it keeps its hour and its places.
-        let old = try bar(#"{"bar":{"modules":{"left":["mark","workspaces","app-menus","purpose"],"center":["one-thing"],"right":["status","hour","clock"]}}}"#)
-        XCTAssertEqual(old.center, [.oneThing])
+        let old = try bar(#"{"bar":{"modules":{"left":["mark","workspaces","app-menus"],"center":["date"],"right":["status","hour","clock"]}}}"#)
+        XCTAssertEqual(old.center, [.date])
         XCTAssertEqual(old.right, [.status, .hour, .clock])
+    }
+
+    /// 2026-11-22: workspace purposes, the daily focus and the alarm are gone. A file a build with them wrote still reads,
+    /// warned about, as if those values and keys were left out; nothing in it is an error, so the rest still applies.
+    func testAFileWrittenWithPurposesStillReads() throws {
+        let json = #"{"bar":{"enabled":true,"hideSystemMenuBar":true,"modules":{"left":["mark","workspaces","app-menus","purpose"],"center":["one-thing"],"right":["status","clock"]}},"dock":{"tileLabel":"purpose"},"newtab":{"chips":true},"alarm":{"wake":true,"wakeAt":"06:30"}}"#
+        guard case .success(let c) = Surfaces.check(tree(json)) else { return XCTFail("a file from a build with purposes must read") }
+        XCTAssertTrue(c.surfaces.bar.enabled, "the rest of the file still applies")
+        XCTAssertEqual(c.surfaces.bar.left, [.mark, .workspaces, .appMenus])
+        XCTAssertEqual(c.surfaces.bar.center, [])
+        XCTAssertEqual(c.surfaces.bar.right, [.status, .clock])
+        XCTAssertEqual(c.surfaces.dock.tileLabel, .number)
+        XCTAssertEqual(Set(c.warnings.map(\.path)), ["alarm", "bar.hideSystemMenuBar", "bar.modules.center", "bar.modules.left", "dock.tileLabel", "newtab.chips"])
+        // A new write of a retired value is refused like any unknown one.
+        guard case .failure = SurfacesOps.set("bar.modules.left", tree(#"["mark","purpose"]"#), file: file) else { return XCTFail("purpose is no module now") }
+        guard case .failure = SurfacesOps.set("dock.tileLabel", .string("purpose"), file: file) else { return XCTFail("purpose is no tile label now") }
     }
 
     /// The day forms of the clock are taken and read back; the 12h and 24h forms still read as they did.

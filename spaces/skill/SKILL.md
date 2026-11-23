@@ -64,17 +64,6 @@ hidden from the menu. Note the old value with `get` before a `set`, so you can p
 serves the same as `surfaces_schema`, `surfaces_get` and `surfaces_set`. Colors and fonts are the theme's
 (`polycarp theme`), not this file's. Every field: spaces/docs/surfaces.md.
 
-## What each workspace is for
-
-```sh
-baneyspaces purpose list --json   # each workspace's purpose, and today's one thing
-baneyspaces day --json            # today's seconds on each workspace
-```
-
-Read these to know what Donovan is about today and where his attention goes. Setting them (`purpose set <n> <text>`,
-`purpose clear <n>`, `one <text>`, `one --clear`) states what his workspaces and his day are for: do it only when he
-asks. Purposes hold up to 60 characters, the one thing up to 80; it clears at 4 am.
-
 ## People in Contacts
 
 ```sh

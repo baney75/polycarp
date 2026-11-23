@@ -70,9 +70,6 @@ public enum Wire {
             /// Show `target` (an absolute file path) in the built-in player (`polycarp-spaces play`, spec/player.md).
             /// Local callers only (`Remote.allows` never lets it through).
             case play
-            /// The purpose layer (`PurposeAPI`): `text` is list, set, clear, one or day, `args` the rest. Local callers
-            /// only (`Remote.allows` never lets it through).
-            case purpose
             /// People in Contacts (`polycarp-spaces contacts`, docs/contacts.md): `text` is find, call, facetime, message
             /// or email, `target` the query, `args` the flags (`--full`, `--text` and the draft). Never sends a message.
             /// Local callers only (`Remote.allows` never lets it through).

@@ -212,11 +212,9 @@ final class WorkspaceDock {
             self?.framedDock = Styles.shared.book.dock
             self?.scheduleResize()
         }
-        // What each tile says (`dock.tileLabel`), the purposes it shows, and whether the "At rest" tile shows.
+        // What each tile says (`dock.tileLabel`) and whether the "At rest" tile shows.
         readSurfaces()
-        for name in [SurfacesStore.didChange, PurposeStore.didChange] {
-            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.readSurfaces() }
-        }
+        NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in self?.readSurfaces() }
         model.onShowOverview = { [weak self] in self?.hide(); self?.onShowOverview() }
         model.onShowLauncher = { [weak self] in self?.hide(); self?.onShowLauncher() }
         model.onTurnOff = { [weak self] in self?.onTurnOff() }
@@ -246,13 +244,11 @@ final class WorkspaceDock {
 
     func start() { dockSwitch.set(true) }
 
-    /// Takes `dock.*` from surfaces.json and the purposes from the purpose store; publishes only what changed.
+    /// Takes `dock.*` from surfaces.json; publishes only what changed.
     private func readSurfaces() {
         let d = SurfacesStore.shared.current.dock
-        let purposes = PurposeKeeper.shared.purposes.snapshot.all
         var changed = false
         if model.tileLabel != d.tileLabel { model.tileLabel = d.tileLabel; changed = true }
-        if model.purposes != purposes { model.purposes = purposes; changed = true }
         if model.restTile != d.restTile {
             model.restTile = d.restTile
             if !d.restTile { model.backgroundOpen = false }
@@ -1275,12 +1271,11 @@ final class DockModel: ObservableObject {
     }
     /// The running apps with no window anywhere (`BackgroundApps`), for the "At rest" tile.
     @Published var backgroundApps: [BackgroundApps.Entry] = []
-    /// `dock.tileLabel` and each workspace's purpose, by number: what goes under each tile.
-    @Published var tileLabel: Surfaces.TileLabel = .purpose
-    @Published var purposes: [Int: String] = [:]
+    /// `dock.tileLabel`: what goes under each tile.
+    @Published var tileLabel: Surfaces.TileLabel = .number
     /// `dock.restTile`: the "At rest" tile shows.
     @Published var restTile = true
-    func caption(_ n: Int) -> DockLabel.Caption { DockLabel.caption(purpose: purposes[n], mode: tileLabel) }
+    func caption(_ n: Int) -> DockLabel.Caption { DockLabel.caption(mode: tileLabel) }
     /// The Background list: opened by resting on, or clicking, the "Background" tile.
     @Published var backgroundOpen = false {
         didSet {
@@ -2118,7 +2113,7 @@ struct DockView: View {
     private func title(_ tile: DockModel.Tile, shown: Int = DockModel.iconsShown) -> String {
         let apps = tile.apps.map { $0.windows > 1 ? "\($0.name) (\($0.windows))" : $0.name }
         let agent = tile.agents.max { $0.state.urgency < $1.state.urgency }
-        return DockLabel.tileTitle(workspace: tile.id, purpose: model.purposes[tile.id], apps: apps, agent: agent?.summary, shown: shown)
+        return DockLabel.tileTitle(workspace: tile.id, apps: apps, agent: agent?.summary, shown: shown)
     }
 
     private func isHovered(_ tile: DockModel.Tile) -> Bool {
@@ -2128,27 +2123,13 @@ struct DockView: View {
         }
     }
 
-    /// Under the tile: its purpose in serif italic after its number kept small (the word you gave it, so the dock reads
-    /// as what each place is for, and the key that gets there), its number lit for the workspace you're on, or nothing.
-    /// The sheet's `dock .label` styles both kinds, and `display: none` leaves the empty caption's room.
+    /// Under the tile: its number, lit for the workspace you're on, or nothing. The sheet's `dock .label` styles it,
+    /// and `display: none` leaves the empty caption's room.
     @ViewBuilder private func tileCaption(_ caption: DockLabel.Caption, tile: DockModel.Tile, tint: Color, hovered: Bool) -> some View {
         let ls = styles.book.label(current: tile.isCurrent, hover: hovered)
         switch ls.isHidden ? DockLabel.Caption.none : caption {
         case .number:
             TileNumber(n: tile.id, tint: tint, current: tile.isCurrent, hovered: hovered, style: ls)
-        case .purpose(let text):
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text("\(tile.id)")
-                    .font(Styled.font(ls, .ui, 8.5, .bold, rounded: true))
-                    .foregroundStyle(ls.ink(tile.isCurrent ? tint : Chrome.muted))
-                Text(ls.cased(text))
-                    .font(Styled.font(ls, .voice, 11, tile.isCurrent ? .medium : .regular))
-                    .foregroundStyle(ls.ink(tile.isCurrent ? Chrome.wash() : hovered ? Chrome.wash(0.85) : Chrome.muted))
-                    .lineLimit(1).truncationMode(.tail)
-            }
-            .modifier(StyledText(style: ls))
-            .modifier(StyledBox(style: ls))
-            .frame(maxWidth: tileSize + gap, minHeight: 15, maxHeight: ls.padding == nil ? 15 : nil)
         case .none:
             Color.clear.frame(width: 18, height: 15)
         }
@@ -2278,7 +2259,7 @@ struct DockView: View {
     /// Options, then Quit (holding ⌥ turns it into Force Quit, as in the macOS Dock) and the dock's settings.
     @ViewBuilder private func appMenu(_ app: DockModel.App, in tile: DockModel.Tile) -> some View {
         let items = DockAppMenu.items(windows: app.list.map { DockAppMenu.Window(id: $0.id, title: $0.title) }, app: app.name,
-                                      workspace: tile.id, isCurrent: tile.isCurrent, purposes: model.purposes)
+                                      workspace: tile.id, isCurrent: tile.isCurrent)
         ForEach(Array(items.enumerated()), id: \.offset) { _, item in appMenuItem(item, app, in: tile) }
     }
 

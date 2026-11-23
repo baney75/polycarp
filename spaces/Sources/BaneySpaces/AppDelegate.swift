@@ -494,8 +494,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ThemeWallpaperApplier.shared.start()
         // `idle.enabled` (off by default): looks every 15 s for the minutes without input it waits for.
         IdleCover.shared.start()
-        // `alarm.wake` (off by default): rings at `alarm.wakeAt` and opens the morning question; re-arms on each change.
-        WakeAlarm.shared.start()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self
@@ -507,20 +505,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.updateIcon()
             self.dock.reload()
             self.topBar.workspacesChanged()
-            // The day ledger counts time from each switch; a change that keeps the workspace adds nothing.
-            PurposeKeeper.shared.noteWorkspace(self.spaces.model.current)
         }
-        // The purpose layer (purposes, the one thing, the day ledger, the rhythm) answers from launch on: none of it
-        // needs Accessibility. It draws nothing itself; the surfaces read it.
-        session.purposeHandler = { [weak self] r in PurposeKeeper.shared.answer(r, current: self?.spaces.model.current ?? 1) }
-        PurposeKeeper.shared.start()
-        // After the purposes, which it shows; it reads surfaces.json and stays away while `bar.enabled` is off.
+        // It reads surfaces.json and stays away while `bar.enabled` is off.
         topBar.start()
-        RhythmSheet.shared.workspaces = { [weak self] in
-            guard let self else { return ([], 1) }
-            return (Set(Workspaces.range.filter { !self.spaces.apps(on: $0).isEmpty }), self.spaces.model.current)
-        }
-        RhythmSheet.shared.start()
         // A new theme redraws the menu bar indicator as well as the panels.
         NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.updateIcon()
@@ -642,8 +629,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let forInstall = InstallHandoff.isCurrent(markedAt: (UserDefaults.standard.object(forKey: InstallHandoff.key) as? NSNumber)?.doubleValue, now: Date().timeIntervalSince1970)
         UserDefaults.standard.removeObject(forKey: InstallHandoff.key)
         DockRestart.isQuitting = true
-        // A purpose set a moment ago is on disk before the app is gone.
-        PurposeKeeper.flushIfStarted()
         // The macOS Dock comes back with everything else; the next launch tucks it away again.
         dock.stop(restoreSystemDock: !forInstall)
         topDrag.stop()
@@ -919,16 +904,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         spaces.refresh()
         var apps: [Int: [String]] = [:]
         for n in Workspaces.range { apps[n] = spaces.apps(on: n) }
-        let keeper = PurposeKeeper.shared
-        let named = keeper.purposes.snapshot
-        let here = spaces.model.current
-        let now = MenuNow.make(workspace: here, purpose: named.purpose(of: here), since: keeper.arrived)
-        let settings = keeper.settings, clock = keeper.ledger.dayClock, at = Date()
-        let evening = settings.eveningExamen && at >= Rhythm.eveningStart(of: clock.day(of: at), settings: settings, clock: clock)
-        let running = keeper.timer.flatMap { $0.done(now: at) ? nil : $0 }
-        let timer = MenuTimer(minutes: SurfacesStore.shared.current.alarm.timerMinutes, left: running?.remaining(now: at))
-        let entries = MenuLayout.entries(now: now, oneThing: named.oneThing?.text, timer: timer, evening: evening,
-                                         rows: MenuLayout.rows(current: here, apps: apps, purposes: named.all),
+        let entries = MenuLayout.entries(rows: MenuLayout.rows(current: spaces.model.current, apps: apps),
                                          rooms: roomsInbox(),
                                          finished: session.started ? session.unseenCount : 0,
                                          update: MenuUpdate(notice: updateNotice(), checking: updater.checking))
@@ -939,26 +915,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// is built here or in `item(_:_:key:)`, which `MenuLayoutTests` counts.
     private func menuItem(for entry: MenuEntry) -> NSMenuItem {
         switch entry {
-        case .now(let now):
-            // The purpose in serif italic, the workspace and time below it; clicking it opens Name This Hour.
-            let it = item(now.title, #selector(nameHour))
-            it.attributedTitle = MenuHead.title(now)
-            it.toolTip = "Click to name this hour"
-            return it
-        case .setOneThing:
-            return item("Set the One Thing…", #selector(setOneThing))
-        case .oneThing(let one):
-            // The one thing's own words; changing it, its timer and the examen sit one level down.
-            let it = item(one.title, #selector(setOneThing))
-            it.action = nil
-            let sub = NSMenu()
-            for i in one.items { sub.addItem(oneThingItem(i)) }
-            it.submenu = sub
-            return it
-        case .timer(let timer):
-            return oneThingItem(.timer(timer))
-        case .examen:
-            return oneThingItem(.examen)
         case .workspace(let row):
             let it = item(row.title, #selector(pick(_:)), key: "\(row.workspace)")
             it.keyEquivalentModifierMask = Modifier.current.menuFlags
@@ -999,15 +955,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// One row of the one thing's submenu, or the timer or examen row when no one thing holds them.
-    private func oneThingItem(_ i: MenuOneThing.Item) -> NSMenuItem {
-        switch i {
-        case .change: return item(i.title, #selector(setOneThing))
-        case .timer: return item(i.title, #selector(toggleTimer))
-        case .examen: return item(i.title, #selector(eveningExamen))
-        }
-    }
-
     private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
         let it = NSMenuItem(title: title, action: action, keyEquivalent: key)
         it.target = self
@@ -1039,33 +986,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openRoom(_ sender: NSMenuItem) {
         guard let room = Room(rawValue: sender.tag), NSWorkspace.shared.open(Rooms.configured.url(room)) else { return NSSound.beep() }
         Trace.log("rooms: opened \(room.id) from the menu")
-    }
-
-    /// "Evening Examen…": the examen card now, given tonight or not.
-    @objc private func eveningExamen() {
-        RhythmSheet.shared.show(.eveningExamen)
-    }
-
-    /// "Start a timer (25 min)" / "Stop the timer (12 min left)": the one-thing timer.
-    @objc private func toggleTimer() {
-        let keeper = PurposeKeeper.shared
-        if let t = keeper.timer, !t.done(now: Date()) { keeper.stopTimer(by: "menu") } else { keeper.startTimer(by: "menu") }
-    }
-
-    /// "Name This Hour…": what the workspace you are on is for.
-    @objc private func nameHour() {
-        let n = spaces.model.current
-        let store = PurposeKeeper.shared.purposes
-        MenuHead.ask("What is this hour for?", info: "Workspace \(n). A few words, up to \(Purposes.purposeLimit) characters; leave it empty to clear it.",
-                     value: store.purpose(of: n) ?? "") { try store.setPurpose($0, for: n); Trace.log("purpose: workspace \(n) purpose set by menu") }
-    }
-
-    /// "Set the One Thing…": the one thing for today, until 4 am.
-    @objc private func setOneThing() {
-        let n = spaces.model.current
-        let store = PurposeKeeper.shared.purposes
-        MenuHead.ask("What is the one thing today?", info: "Up to \(Purposes.oneThingLimit) characters. It clears at 4 am; leave it empty to clear it now.",
-                     value: store.oneThing?.text ?? "") { try store.setOneThing($0, workspace: n); Trace.log("purpose: one thing set by menu") }
     }
 
     /// Apps whose windows are parked instead of hidden, so automation can still use them: Settings >

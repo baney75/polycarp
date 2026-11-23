@@ -216,8 +216,8 @@ final class StyleSheetTests: XCTestCase {
         for m in Surfaces.BarModule.builtIn {
             XCTAssertEqual(problems("bar .\(m.id) { color: red }"), [], "every bar module has its class: \(m.id)")
         }
-        XCTAssertEqual(StyleTarget.barModule.parts, ["mark", "workspaces", "purpose", "one-thing", "app-menus", "status", "hour", "clock",
-                                                     "date", "verse", "battery", "network"])
+        XCTAssertEqual(StyleTarget.barModule.parts, ["mark", "workspaces", "app-menus", "status", "hour", "clock", "date", "verse",
+                                                     "battery", "network"])
         XCTAssertEqual(problems("dock .tile.current:hover { color: red } dock .label:hover.current { color: red } :root { --x: 1px }"), [])
         XCTAssertEqual(problems("BAR { color: red }"), [], "a type selector is case-insensitive")
     }
@@ -226,7 +226,7 @@ final class StyleSheetTests: XCTestCase {
         let cases: [(String, String)] = [
             ("baz { color: red }", "the surfaces are `bar` and `dock`"),
             ("bar .clok { color: red }", "`.clock`"),
-            ("bar .clok { color: red }", "`.one-thing`"),
+            ("bar .clok { color: red }", "`.hour`"),
             ("dock .tile.active { color: red }", "takes `.current` and `:hover`"),
             ("bar .left:hover { color: red }", "takes no states"),
             ("bar:hover { color: red }", "takes no states"),
@@ -829,7 +829,7 @@ final class StyleSheetTests: XCTestCase {
     func testSetThenUnsetRoundTripsToTheSameText() throws {
         let start = "/* a */\nbar {\n  color: red; /* b */\n}\n/* c */\n"
         try start.write(toFile: file, atomically: true, encoding: .utf8)
-        for (sel, prop, value) in [("bar", "gap", "4px"), ("dock .badge", "color", "white"), ("bar .one-thing", "font-style", "italic")] {
+        for (sel, prop, value) in [("bar", "gap", "4px"), ("dock .badge", "color", "white"), ("bar .hour", "font-style", "italic")] {
             _ = try StyleOps.set(sel, prop, value, file: file, roles: Self.roles).get()
             _ = try StyleOps.unset(sel, prop, file: file).get()
         }

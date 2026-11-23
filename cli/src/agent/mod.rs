@@ -5,7 +5,7 @@
 //! - `store`: the private folder, hashing, the lock.
 //! - `policy`: which channel may use which route (the owner's policy of 2026-11-21).
 //! - `auth`: OAuth 2.1 for web connectors, bearer tokens for local clients, owner approval.
-//! - `gateway`: the tool catalog, scopes and the extension points for purposes, surfaces and contacts.
+//! - `gateway`: the tool catalog, scopes and the extension points for surfaces and contacts.
 //! - `app`: pass-through to the running app.
 //! - `server`: Streamable HTTP on loopback, and the tailnet listener.
 //! - `tunnel`, `service`, `doctor`, `connect`: the commands around it.

@@ -6,11 +6,9 @@ the bundled command, `polycarp-spaces`. The code is `NewTabHost` in `Sources/Ban
 
 ## The page
 
-One field whose placeholder is `newtab.question` ("What is this hour for?"), and the day's verse (BSB) under it when
-`newtab.verse` is on. Return opens what you typed when it is an address (`https://...`, `example.com`, `localhost:3000`)
-and otherwise searches with `newtab.searchURL`. Cmd+Return (Ctrl+Return off a Mac) names the workspace you are on with
-the words instead. With `newtab.chips` on, your workspaces by purpose sit under the field, and a click switches to one.
-The page paints the last answer it had first, so it is never blank while the host answers, and with no host at all it
+One field whose placeholder is `newtab.question` ("Search or type an address"), and the day's verse (BSB) under it
+when `newtab.verse` is on. Return opens what you typed when it is an address (`https://...`, `example.com`,
+`localhost:3000`) and otherwise searches with `newtab.searchURL`. The page asks nothing and names nothing. The page paints the last answer it had first, so it is never blank while the host answers, and with no host at all it
 still searches with DuckDuckGo. It loads nothing from the network. The field logic is `extension/newtab/logic.js`;
 `NewTabPageTests` runs it in JavaScriptCore.
 
@@ -28,9 +26,8 @@ host by name, for trying it by hand.
 The host reads one request, writes one reply, and exits 0. It writes nothing else to stdout. With no whole request on
 stdin it writes nothing and exits 1.
 
-It reads surfaces.json from disk the way `polycarp-spaces surfaces get` does, so the app need not be running for the
-question, the search URL and the verse. The purposes come from the running app over its socket, the way
-`polycarp-spaces purpose list --json` gets them.
+It reads surfaces.json from disk the way `polycarp-spaces surfaces get` does, so the app need not be running. It never
+talks to the running app.
 
 ## The contract
 
@@ -40,37 +37,20 @@ unsigned length, then that many bytes of UTF-8 JSON, on stdin and on stdout. A r
 ### `{"op":"page"}`
 
 ```json
-{"ok": true, "question": "What is this hour for?",
- "verse": {"text": "But only one thing is necessary.", "ref": "Luke 10:42"},
- "searchURL": "https://duckduckgo.com/?q={query}",
- "workspace": 2, "purpose": "Pray", "oneThing": "Finish chapter one",
- "chips": [{"workspace": 2, "purpose": "Pray"}, {"workspace": 3, "purpose": "Write the book"}]}
+{"ok": true, "question": "Search or type an address",
+ "verse": {"text": "Be still, and know that I am God.", "ref": "Psalm 46:10"},
+ "searchURL": "https://duckduckgo.com/?q={query}"}
 ```
 
 - `question` and `searchURL` (the template, with `{query}` in it) are surfaces.json's `newtab.question` and
   `newtab.searchURL`.
 - `verse` is the day's verse when `newtab.verse` is true: the same pick as the desktop's daily rotation
   (`Verses.pick(.daily, at:)`), so it changes at local midnight. Otherwise `null`.
-- `workspace`, `purpose` and `oneThing` are the workspace you are on, its purpose and today's one thing. When the app
-  isn't running or doesn't answer, all three are `null` and the reply is still `ok`.
-- `chips` is every workspace that has a purpose, in number order, when `newtab.chips` is true. Otherwise, or with no
-  app, `[]`.
-
-### `{"op":"name","text":"..."}`
-
-Sets the purpose of the workspace you are on, the same path as `polycarp-spaces purpose set <current> <text>`. Spaces
-in the text are folded to one. The reply is `{"ok":true,"workspace":2,"purpose":"Pray"}`, or `{"ok":false,"error":...}`:
-over 60 characters (`that is 61 characters; keep it to 60`), blank text, or no app running.
-
-### `{"op":"go","workspace":3}`
-
-Switches Polycarp to that workspace (1 to 9) by opening `polycarp://switch/N`, the link the shortcuts' scripts use, in
-the background. The reply is `{"ok":true,"workspace":3}`, or `{"ok":false,"error":...}` for a workspace outside 1 to 9
-or when the link couldn't be opened.
 
 ### Anything else
 
-An unknown `op`, a missing `op`, or a request that isn't a JSON object gets `{"ok":false,"error":...}`.
+`page` is the only request. An unknown `op` (the retired `name` and `go` included), a missing `op`, or a request that
+isn't a JSON object gets `{"ok":false,"error":...}`.
 
 ## Where the manifest goes
 
@@ -109,5 +89,5 @@ The same works with `printf` for a fixed request: `{"op":"page"}` is 13 bytes, s
 printf '\x0d\x00\x00\x00{"op":"page"}' | polycarp-spaces newtab-host | tail -c +5; echo
 ```
 
-Swap in `{"op":"name","text":"Pray"}` to name the workspace you are on. To check what a browser will run, read its
+To check what a browser will run, read its
 manifest: `cat ~/Library/Application\ Support/net.imput.helium/NativeMessagingHosts/com.polycarp.newtab.json`.

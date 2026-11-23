@@ -137,8 +137,8 @@ extension DockTiles {
 /// the tile's "+N" does, so eight apps don't stretch the label past the dock (2026-10-31). The
 /// agent's state comes before the apps, so when the label is cut short the apps go, not it.
 public enum DockLabel {
-    public static func tileTitle(workspace: Int, purpose: String? = nil, apps: [String], agent: String?, shown: Int) -> String {
-        let name = ["Workspace \(workspace)"] + [purpose.flatMap { $0.isEmpty ? nil : $0 }].compactMap { $0 }
+    public static func tileTitle(workspace: Int, apps: [String], agent: String?, shown: Int) -> String {
+        let name = ["Workspace \(workspace)"]
         guard !apps.isEmpty else { return (name + ["empty"]).joined(separator: " · ") }
         let more = hidden(apps.count, shown: shown)
         let listed = more > 0 ? apps.prefix(shown).joined(separator: ", ") + " +\(more) more" : apps.joined(separator: ", ")
@@ -149,21 +149,15 @@ public enum DockLabel {
     public enum Caption: Equatable, Sendable {
         /// The workspace's number, in the row under the tile.
         case number
-        /// Its purpose under the tile, in serif italic; the number moves into the tile's corner.
-        case purpose(String)
         /// Nothing: the apps' icons say it.
         case none
     }
 
-    /// The caption for a tile: its purpose when the dock shows purposes and it has one, else its number; nothing for
-    /// `icons`. Spaces and line breaks in a purpose fold to single spaces, so a purpose always fits one line.
-    public static func caption(purpose: String?, mode: Surfaces.TileLabel) -> Caption {
+    /// The caption for a tile: its number, or nothing for `icons`.
+    public static func caption(mode: Surfaces.TileLabel) -> Caption {
         switch mode {
         case .icons: return .none
         case .number: return .number
-        case .purpose:
-            let text = (purpose ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
-            return text.isEmpty ? .number : .purpose(text)
         }
     }
 

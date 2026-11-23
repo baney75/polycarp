@@ -65,12 +65,10 @@ public enum IdleScreen {
     /// the count is read twice a second and isn't exact.
     public static func inputSince(lastIdle: TimeInterval, idle: TimeInterval) -> Bool { idle + 0.25 < lastIdle }
 
-    /// The cover taken down for something else (the wake alarm) stays down until the next input, since the time since
-    /// the last input keeps growing through a ringing alarm. Takes the hold and the idle time now; gives the hold to
-    /// keep, nil once there was input.
-    public static func hold(_ held: TimeInterval?, idle: TimeInterval) -> TimeInterval? {
-        guard let held, !inputSince(lastIdle: held, idle: idle) else { return nil }
-        return idle
+    /// Whether the Mac shows a 24-hour clock: its short time format has an hour from 0 to 23.
+    public static var usesTwentyFourHourClock: Bool {
+        let f = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current) ?? ""
+        return f.contains("H") || f.contains("k")
     }
 
     /// How far the words have drifted at `date`, in points: a few points a minute along a slow loop, so no letter sits on

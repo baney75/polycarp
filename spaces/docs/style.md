@@ -64,11 +64,11 @@ A warning (low contrast) still applies; `check` passes when there are only warni
 | --- | --- | --- |
 | `bar` | none | The top bar itself. |
 | `bar .left` `bar .center` `bar .right` | none | The bar's three regions; modules inherit text properties from their region. |
-| `bar .mark` `bar .workspaces` `bar .purpose` `bar .one-thing` `bar .app-menus` `bar .status` `bar .hour` `bar .clock` `bar .date` `bar .verse` `bar .battery` `bar .network` | `:hover` | One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it. |
+| `bar .mark` `bar .workspaces` `bar .app-menus` `bar .status` `bar .hour` `bar .clock` `bar .date` `bar .verse` `bar .battery` `bar .network` | `:hover` | One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it. |
 | `bar .workspace` | `.current` `:hover` | One number in the workspaces module; .current is the workspace you're on, :hover the one under the pointer. |
 | `dock` | none | The Workspace Dock's bar. |
 | `dock .tile` | `.current` `:hover` | A workspace tile; .current is the workspace you're on, :hover the one under the pointer. |
-| `dock .label` | `.current` `:hover` | The tile's label (purpose or number, surfaces.json dock.tileLabel). |
+| `dock .label` | `.current` `:hover` | The tile's label (its number, surfaces.json dock.tileLabel). |
 | `dock .badge` | `.current` `:hover` | The tile's badge (a count or an attention dot). |
 | `dock .icon` | `.current` `:hover` | An app icon on a tile. |
 

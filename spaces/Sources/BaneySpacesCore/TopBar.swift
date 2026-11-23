@@ -50,26 +50,6 @@ public enum BarText {
         return "\(day) \(time) \(h < 12 ? calendar.amSymbol : calendar.pmSymbol)"
     }
 
-    /// What `purpose` draws for the workspace you're on: its purpose, or nil (nothing at all) when it has none.
-    public static func purpose(_ text: String?) -> String? {
-        guard let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
-        return t
-    }
-
-    /// What `one-thing` draws: today's one thing and the timer's time left, each when there is one.
-    public struct OneThing: Equatable, Sendable {
-        public var text: String?
-        public var timer: String?
-    }
-
-    /// `one-thing` with nothing named and no timer running is nil and draws nothing, so an empty day is a clean bar.
-    public static func oneThing(_ text: String?, timerLeft: TimeInterval?) -> OneThing? {
-        let one = purpose(text)
-        let timer = timerLeft.map { BarText.timer(remaining: $0) }
-        guard one != nil || timer != nil else { return nil }
-        return OneThing(text: one, timer: timer)
-    }
-
     /// "November 21".
     public static func date(_ date: Date, calendar: Calendar = .current) -> String {
         let c = calendar.dateComponents([.month, .day], from: date)
@@ -92,14 +72,6 @@ public enum BarText {
 
 /// Where the top bar puts its modules.
 public enum BarLayout {
-    /// Whether to open System Settings for `hideSystemMenuBar`, and the latch to keep across launches. The pane opens
-    /// once each time the setting turns on. Only a change read from surfaces.json clears the latch (`fromFile`): the
-    /// defaults the bar starts with before the file is read never do, so the pane doesn't open again at every launch.
-    public static func menuBarAsk(wantsHidden: Bool, asked: Bool, fromFile: Bool) -> (open: Bool, asked: Bool) {
-        if wantsHidden { return (!asked, true) }
-        return (false, fromFile ? false : asked)
-    }
-
     /// The three places on a screen. A screen with a notch has no middle: the middle's modules follow the left's,
     /// before the camera housing.
     public static func places(_ bar: Surfaces.Bar, notch: Bool) -> (left: [Surfaces.BarModule], center: [Surfaces.BarModule], right: [Surfaces.BarModule]) {

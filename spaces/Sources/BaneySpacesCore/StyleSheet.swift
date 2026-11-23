@@ -208,7 +208,7 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .barWorkspace: "One number in the workspaces module; .current is the workspace you're on, :hover the one under the pointer."
         case .dock: "The Workspace Dock's bar."
         case .dockTile: "A workspace tile; .current is the workspace you're on, :hover the one under the pointer."
-        case .dockLabel: "The tile's label (purpose or number, surfaces.json dock.tileLabel)."
+        case .dockLabel: "The tile's label (its number, surfaces.json dock.tileLabel)."
         case .dockBadge: "The tile's badge (a count or an attention dot)."
         case .dockIcon: "An app icon on a tile."
         }

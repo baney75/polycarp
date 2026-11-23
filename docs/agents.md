@@ -126,7 +126,7 @@ Everything is under `agent/` in Polycarp's config folder. The folder is 0700 and
 
 ## Extension points
 
-Purposes, surfaces and contacts add their tools by implementing `Provider` in `cli/src/agent/gateway.rs` and listing it in `extensions()`. The gateway sets the rules: a purposes or surfaces tool needs read or act, every contacts tool needs contacts, and no extension can replace a built-in tool.
+Surfaces and contacts add their tools by implementing `Provider` in `cli/src/agent/gateway.rs` and listing it in `extensions()`. The gateway sets the rules: a surfaces tool needs read or act, every contacts tool needs contacts, and no extension can replace a built-in tool.
 
 ## Threat model
 

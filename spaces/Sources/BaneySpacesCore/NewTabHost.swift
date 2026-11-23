@@ -73,47 +73,26 @@ public enum NewTabHost {
 
     // MARK: Requests
 
-    /// What a request needs from the world: surfaces.json, the running app's purposes, and the time.
+    /// What a request needs from the world: surfaces.json and the time.
     public struct Source {
         /// surfaces.json as it is now (defaults when it is missing or invalid).
         public var surfaces: () -> Surfaces
-        /// One purpose request to the running app (`Wire.Request.Op.purpose`): the subcommand and its arguments, as
-        /// `polycarp-spaces purpose` sends them. Nil when the app isn't running or didn't answer.
-        public var purpose: (_ text: String, _ args: [String]) -> Wire.Reply?
         public var now: () -> Date
         public var timeZone: TimeZone
-        /// Opens a `polycarp://` link, which the app runs (`switch/N`); whether it was handed over.
-        public var open: (URL) -> Bool
 
-        public init(surfaces: @escaping () -> Surfaces, purpose: @escaping (String, [String]) -> Wire.Reply?,
-                    now: @escaping () -> Date = Date.init, timeZone: TimeZone = .current,
-                    open: @escaping (URL) -> Bool = { _ in false }) {
-            self.surfaces = surfaces; self.purpose = purpose; self.now = now; self.timeZone = timeZone; self.open = open
+        public init(surfaces: @escaping () -> Surfaces, now: @escaping () -> Date = Date.init, timeZone: TimeZone = .current) {
+            self.surfaces = surfaces; self.now = now; self.timeZone = timeZone
         }
 
         /// The real one: surfaces.json from disk the way `polycarp-spaces surfaces get` reads it (the app need not be
-        /// running), and the app's socket the way `polycarp-spaces purpose` reaches it.
-        public static func live(timeout: Double = 2) -> Source {
+        /// running).
+        public static func live() -> Source {
             Source(surfaces: {
                 if case .document(let d) = SurfacesFile.load(path: SurfacesFile.path()) { return d.surfaces }
                 return Surfaces.defaults
-            }, purpose: { text, args in
-                Wire.call(Wire.Request(op: .purpose, text: text, args: args, caller: "newtab"), timeout: timeout)
-            }, open: { url in
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                p.arguments = ["-g", url.absoluteString]
-                p.standardOutput = FileHandle.nullDevice
-                p.standardError = FileHandle.nullDevice
-                guard (try? p.run()) != nil else { return false }
-                p.waitUntilExit()
-                return p.terminationStatus == 0
             })
         }
     }
-
-    public static let notRunning = "Polycarp isn't running, so it can't name this workspace"
-    public static let noSwitch = "Polycarp couldn't switch workspaces"
 
     /// The reply to one request, as the JSON bytes that go back to the page.
     public static func answer(_ request: Data, source: Source) -> Data {
@@ -122,16 +101,6 @@ public enum NewTabHost {
         }
         switch object["op"] as? String {
         case "page": return page(source)
-        case "name":
-            guard let text = object["text"] as? String else { return failure("name needs text") }
-            return name(text, source)
-        case "go":
-            // The same link the shortcuts' scripts use (`AppDelegate.runURL`); the app does the switch.
-            guard let n = object["workspace"] as? Int, Workspaces.range.contains(n) else {
-                return failure("go needs a workspace from \(Workspaces.range.lowerBound) to \(Workspaces.range.upperBound)")
-            }
-            guard let url = switchURL(n), source.open(url) else { return failure(noSwitch) }
-            return json(["ok": true, "workspace": n])
         case let op?: return failure("there is no request called \(op)")
         case nil: return failure("the request has no op")
         }
@@ -139,34 +108,14 @@ public enum NewTabHost {
 
     private static func page(_ source: Source) -> Data {
         let s = source.surfaces().newtab
-        let listing = source.purpose("list", []).flatMap(PurposeAPI.decodeListing)
         var reply: [String: Any] = ["ok": true, "question": s.question, "searchURL": s.searchURL]
         if s.verse, let v = Verses.pick(.daily, at: source.now(), timeZone: source.timeZone) {
             reply["verse"] = ["text": v.text, "ref": v.ref]
         } else {
             reply["verse"] = NSNull()
         }
-        reply["workspace"] = listing.map { $0.current as Any } ?? NSNull()
-        reply["purpose"] = listing.flatMap { l in l.workspaces.first { $0.workspace == l.current }?.purpose } ?? NSNull()
-        reply["oneThing"] = listing?.one?.text ?? NSNull()
-        let named = (listing?.workspaces ?? []).filter { $0.purpose != nil }.sorted { $0.workspace < $1.workspace }
-        reply["chips"] = s.chips ? named.map { ["workspace": $0.workspace, "purpose": $0.purpose ?? ""] as [String: Any] } : []
         return json(reply)
     }
-
-    private static func name(_ text: String, _ source: Source) -> Data {
-        guard Purposes.clean(text, limit: .max) != nil else { return failure("type a few words to name this workspace") }
-        guard let list = source.purpose("list", []) else { return failure(notRunning) }
-        guard let current = PurposeAPI.decodeListing(list)?.current else { return failure(list.error ?? "Polycarp didn't say which workspace you are on") }
-        guard let set = source.purpose("set", ["\(current)", text]) else { return failure(notRunning) }
-        guard set.ok else { return failure(set.error ?? "Polycarp couldn't name this workspace") }
-        let purpose = PurposeAPI.decodeListing(set)?.workspaces.first { $0.workspace == current }?.purpose
-            ?? Purposes.clean(text, limit: .max) ?? text
-        return json(["ok": true, "workspace": current, "purpose": purpose])
-    }
-
-    /// The link that switches Polycarp to workspace `n`.
-    public static func switchURL(_ n: Int) -> URL? { URL(string: "polycarp://switch/\(n)") }
 
     public static func failure(_ error: String) -> Data { json(["ok": false, "error": error]) }
 

@@ -197,6 +197,13 @@ public enum SurfacesOps {
             return .failure(SurfacesFailure("invalid_value", "\(path) is a group: its value must be an object of its fields, not \(value.kind)",
                                             issues: [SurfacesIssue(path, "must be an object, not \(value.kind)")]))
         }
+        // A value retired with workspace purposes reads from an old file, but is never written again.
+        var retired: [SurfacesIssue] = []
+        _ = SurfaceCheck.retire(SurfaceValue.object([:]).setting(k, to: value), warnings: &retired)
+        if let first = retired.first {
+            let why = "\(first.path): \(first.message.components(separatedBy: ";")[0]), so it can't be set"
+            return .failure(SurfacesFailure("invalid_value", why, suggestion: "run `surfaces schema` for what \(path) takes", issues: retired))
+        }
         var tree: SurfaceValue
         switch editable(file) { case .failure(let f): return .failure(f); case .success(let t): tree = t }
         tree = tree.setting(k, to: value)
