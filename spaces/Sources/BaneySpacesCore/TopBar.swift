@@ -246,8 +246,8 @@ public enum BarStatus {
     /// (`battery(percent:charging:)`); a macOS item the list doesn't know is a plain dot, so it can still be clicked.
     public static func symbol(_ item: Item, percent: Int? = nil, charging: Bool = false) -> String? {
         guard item.isSystem else { return nil }
+        if isBattery(item) { return battery(percent: percent, charging: charging) }
         let words = ((item.identifier ?? "") + " " + (item.label ?? "")).lowercased()
-        if words.contains("battery") { return battery(percent: percent, charging: charging) }
         return symbols.first { words.contains($0.0) }?.1 ?? "circle.fill"
     }
 
@@ -332,7 +332,7 @@ public enum BarStatus {
             guard it.isSystem else { return true }
             let words = ((it.identifier ?? "") + " " + (it.label ?? "")).lowercased()
             if clock, words.contains("clock") { return false }
-            if battery, words.contains("battery") { return false }
+            if battery, isBattery(it) { return false }
             return true
         }
         let places = kept.map { item($0).x }

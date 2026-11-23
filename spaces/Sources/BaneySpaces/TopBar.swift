@@ -551,7 +551,16 @@ struct TopBarView: View {
                 .help("\(v.text) (\(v.ref), BSB)")
             }
         case .battery:
-            if let b = model.battery { words(b, s).foregroundStyle(s.ink(Chrome.wash(0.85))) }
+            if let b = model.battery {
+                HStack(spacing: 5) {
+                    if let c = model.charge {
+                        BatteryGlyph(look: BarStatus.batteryLook(percent: c.percent, charging: c.charging, onPower: c.onPower,
+                                                                 lowPower: c.lowPower),
+                                     ink: s.ink(Chrome.wash(0.85)))
+                    }
+                    words(b, s).foregroundStyle(s.ink(Chrome.wash(0.85)))
+                }
+            }
         case .network:
             if model.offline { words("Offline", s, .semibold).foregroundStyle(s.ink(Chrome.urgent)) }
         case .appMenus:
@@ -720,11 +729,19 @@ private struct IslandShadow: ViewModifier {
 }
 
 /// macOS's battery, drawn: an outline filled to the charge in the bar's ink, the theme's `working` color in Low Power
-/// Mode and `urgent` nearly empty, with a bolt while charging or a plug on power in ink, haloed in the panel's color.
+/// Mode and `urgent` nearly empty, with a bolt while charging or a plug on power in ink, set in a gap cut out of the glyph.
 /// Corners are the launcher key's, so the theme decides them (square in Omarchy).
 private struct BatteryGlyph: View {
     let look: BarStatus.BatteryLook
     let ink: Color
+
+    private var badgeSymbol: String? {
+        switch look.badge {
+        case .none: nil
+        case .bolt: "bolt.fill"
+        case .plug: "powerplug.fill"
+        }
+    }
 
     private var fillColor: Color {
         switch look.tint {
@@ -744,17 +761,21 @@ private struct BatteryGlyph: View {
                         .frame(width: max(2, (g.size.width - 4) * look.fill), height: g.size.height - 4)
                         .offset(x: 2, y: 2)
                 }
-                if look.badge != .none {
-                    // In ink with a halo in the panel's color, so it reads on the fill and on the empty part alike.
-                    let symbol = look.badge == .bolt ? "bolt.fill" : "powerplug.fill"
-                    ZStack {
-                        Image(systemName: symbol).font(.system(size: 10, weight: .black)).foregroundStyle(Chrome.panel())
-                        Image(systemName: symbol).font(.system(size: 7, weight: .black)).foregroundStyle(ink)
-                    }
-                    .frame(maxWidth: .infinity)
+                if let symbol = badgeSymbol {
+                    // A larger copy cuts a gap out of the outline and the fill, so the badge reads on whatever is behind
+                    // the bar, filled or empty, with no color assumed.
+                    Image(systemName: symbol).font(.system(size: 10, weight: .black))
+                        .frame(maxWidth: .infinity).blendMode(.destinationOut)
+                }
+            }
+            .compositingGroup()
+            .overlay {
+                if let symbol = badgeSymbol {
+                    Image(systemName: symbol).font(.system(size: 7, weight: .black)).foregroundStyle(ink)
                 }
             }
             .frame(width: 22, height: 11)
+            .clipped()
             Capsule().fill(ink.opacity(0.45)).frame(width: 1.5, height: 4)
         }
         .accessibilityElement(children: .ignore)
