@@ -253,6 +253,14 @@ public struct Surfaces: Equatable, Sendable {
         public var verseSource: VerseSource
     }
 
+    /// The Baney Extended System's rooms (Rooms.swift, docs/rooms.md).
+    public struct RoomsSettings: Equatable, Sendable {
+        /// The folder that holds the five rooms; "~/" starts at home.
+        public var root: String
+        /// A Rooms section in the status menu while the root is set up.
+        public var menu: Bool
+    }
+
     public var bar: Bar
     public var desktop: Desktop
     public var dock: Dock
@@ -261,6 +269,7 @@ public struct Surfaces: Equatable, Sendable {
     public var idle: Idle
     public var alarm: Alarm
     public var text: Text
+    public var rooms: RoomsSettings
 
     /// Every default, as compiled in.
     public static let defaults = Surfaces(resolved: SurfaceField.defaultTree)
@@ -282,6 +291,7 @@ extension SurfaceField {
         ("idle", "The idle screen (Martyr Night)."),
         ("alarm", "The wake alarm and the one-thing timer."),
         ("text", "Where verses come from."),
+        ("rooms", "The Baney Extended System's rooms: 0 Inbox, 1 Do, 2 Keep, 3 Know, 4 Let Go under one root."),
     ]
 
     public static let all: [SurfaceField] = [
@@ -352,6 +362,10 @@ extension SurfaceField {
         SurfaceField("text.verseSource", .tagged(choices: ["built-in"], prefix: "file", pattern: SurfaceCheck.listPattern,
                                                  example: "file:psalms.json"),
                      .string("built-in"), "built-in, or file:<name>.json for a list of references in the support folder's verses/ folder."),
+
+        SurfaceField("rooms.root", .text(max: 1024), .string(Rooms.defaultRoot),
+                     "The folder that holds the five rooms (bes init makes them). ~/ starts at your home folder. Polycarp shows the rooms only once this folder has .bes/ or 0 Inbox/ in it; it never makes them."),
+        SurfaceField("rooms.menu", .bool, .bool(true), "A Rooms section in the status menu: the five rooms and what waits in the Inbox."),
     ]
 
     static let byPath: [String: SurfaceField] = Dictionary(uniqueKeysWithValues: all.map { ($0.path, $0) })
@@ -438,6 +452,7 @@ extension Surfaces {
         alarm = Alarm(wake: b("alarm.wake"), wakeAt: s("alarm.wakeAt"), days: AlarmDays(rawValue: s("alarm.days")) ?? .every,
                       keepAwake: b("alarm.keepAwake"), timerMinutes: n("alarm.timerMinutes"))
         text = Text(translation: Translation(rawValue: s("text.translation")) ?? .bsb, verseSource: VerseSource(id: s("text.verseSource")))
+        rooms = RoomsSettings(root: s("rooms.root"), menu: b("rooms.menu"))
     }
 }
 

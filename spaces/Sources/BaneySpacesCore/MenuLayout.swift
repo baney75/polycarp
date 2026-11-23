@@ -155,6 +155,9 @@ public enum MenuEntry: Equatable, Sendable {
     case examen
     case workspace(MenuLayout.Row)
     case showAll, find, settings, quit
+    /// One of the Baney Extended System's rooms; `waiting` is the Inbox's count (nil for the other four). Opens the
+    /// room in Finder.
+    case room(Room, waiting: Int?)
     /// "N agents finished while you were away", a submenu listing them.
     case finished(count: Int)
     case update(MenuUpdate)
@@ -216,7 +219,7 @@ extension MenuLayout {
     /// examen get rows of their own. Then the workspaces, the two finders, and last the finished agents, the
     /// `update` row, Settings and Quit together.
     public static func entries(now: MenuNow? = nil, oneThing: String? = nil, timer: MenuTimer? = nil, evening: Bool = false, rows: [Row],
-                               finished: Int, update: MenuUpdate) -> [MenuEntry] {
+                               rooms inbox: Int? = nil, finished: Int, update: MenuUpdate) -> [MenuEntry] {
         var out: [MenuEntry] = []
         if let now {
             out.append(.now(now))
@@ -231,9 +234,17 @@ extension MenuLayout {
         }
         out += rows.map(MenuEntry.workspace)
         out += [.separator, .showAll, .find, .separator]
+        // The rooms, when a BES root is set up (`inbox` is its Inbox count): five rows that open, never a question.
+        if let inbox { out += Room.allCases.map { .room($0, waiting: $0 == .inbox ? inbox : nil) } + [.separator] }
         if finished > 0 { out.append(.finished(count: finished)) }
         out += [.update(update), .settings, .quit]
         return out
+    }
+
+    /// "Inbox (3)", or a room's name. An empty Inbox shows no count.
+    public static func roomTitle(_ room: Room, waiting: Int?) -> String {
+        guard let waiting, waiting > 0 else { return room.name }
+        return "\(room.name) (\(waiting))"
     }
 
     /// "1 Agent Finished While You Were Away" / "3 Agents Finished While You Were Away".
