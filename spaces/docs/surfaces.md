@@ -127,8 +127,10 @@ and an `alarm` section are ignored as unknown keys. `surfaces set` refuses them.
 they need no Screen Recording. A status item that macOS or its app doesn't show to Accessibility isn't drawn.
 
 **The macOS menu bar.** No app can remove it, so Polycarp's bar shows only where the macOS bar is hidden: System
-Settings > Menu Bar > "Automatically hide and show the menu bar" set to Always. Pointing at the top edge still brings the
-macOS bar and the app's menus down. Where the macOS bar stays, Polycarp's bar steps aside, and on a full-screen app it
+Settings > Menu Bar > "Automatically hide and show the menu bar" set to Always. While Polycarp's bar is up on a
+screen, the pointer is held one point under that screen's top edge, so the macOS bar never slides in, full screen
+included (Donovan, 2026-11-23); the app's menus open from the bar's `app-menus`. The trace says `menu bar edge: held on
+N screen(s)` or `off`. Where the macOS bar stays, Polycarp's bar steps aside, and on a full-screen app it
 stays away. The bar sits just under your windows, so a window that reaches the top of the screen covers it rather than
 losing its buttons under it.
 
