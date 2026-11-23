@@ -128,7 +128,7 @@ they need no Screen Recording. A status item that macOS or its app doesn't show 
 
 **The macOS menu bar.** No app can remove it, so Polycarp's bar shows only where the macOS bar is hidden: System
 Settings > Menu Bar > "Automatically hide and show the menu bar" set to Always. While Polycarp's bar is up on a
-screen, the pointer is held one point under that screen's top edge, so the macOS bar never slides in, full screen
+screen, the pointer is held 4 points under that screen's top edge (macOS reveals its bar from 2), so the macOS bar never slides in, full screen
 included (Donovan, 2026-11-23: "block the bar from coming in any form"); the app's menus open from the bar's
 `app-menus`. Where a window fills the top of the screen or an app is in full screen, Polycarp's bar is covered and the
 pointer can't reach any menus there: use the keyboard (⌃F2 opens the menus, ⌃⌘F leaves full screen). The trace says `menu bar edge: held on

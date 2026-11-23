@@ -23,9 +23,10 @@ public enum MenuBarEdge {
         }
     }
 
-    /// How far below the edge the pointer is held: one point, on Polycarp's bar unless a window or a full-screen app
-    /// covers it there.
-    public static let inset = 1.0
+    /// How far below the edge the pointer is held. macOS slides its hidden bar in with the pointer 2 points under the
+    /// top edge, not at 3 (measured 2026-11-23 on a MacBook Pro with a notch, held 1.2 s at each depth): 4 keeps a
+    /// point to spare and stays well inside Polycarp's bar unless a window or a full-screen app covers it there.
+    public static let inset = 4.0
 
     /// The edges to guard: the top of each screen in `guarded`, less the stretches where another screen of `all` sits
     /// directly on top of it, since there the pointer is crossing to that screen, not touching an edge macOS reveals its
