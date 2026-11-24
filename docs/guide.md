@@ -321,6 +321,7 @@ Any other MCP client can start the same command.
 | `search` | Find what the person has open (tabs, windows, terminal splits) and the web, ranked as the launcher and the new tab page rank it, with the same bangs and `search.engine`. Changes nothing |
 | `search_open` | Go to the top `search` result: bring the open tab or window forward, or open the page in the default browser. Only when the person asked to go there |
 | `keys_list` | Read every Polycarp keyboard shortcut: its keys (`mod` is the person's modifier), what it does, its group, where it works and when. Read-only. The same list: [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md) |
+| `filters_list`, `filter_set`, `filter_remove` | See, add or replace (by `id`), and remove the feed filters and page edits Polycarp's browser extension applies. See [Filters](#filters) |
 
 ### The workflow
 
@@ -369,6 +370,22 @@ polycarp agent clients                # what is connected, with last use
 ```
 
 The routes, the scopes and the threat model are in [docs/agents.md](https://github.com/baney75/polycarp/blob/main/docs/agents.md).
+
+## Filters
+
+Polycarp's browser extension hides posts you don't want in your feeds on X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn and Mastodon, each behind a one-click Show bar, and can hide parts of a site's pages. The rules live in `filters.json`, beside `bangs.json` in `~/Library/Application Support/Polycarp/`. Open pages pick a change up within 30 seconds, new pages at once. The app need not be running to change them.
+
+An agent calls `filters_list`, then `filter_set` with one rule; `filter_remove` takes one away. From a terminal:
+
+```sh
+polycarp-spaces filters set '{"id":"no-shorts","sites":["youtube.com"],"kinds":["shorts"]}'
+polycarp-spaces filters set '{"id":"x-sidebar","sites":["x.com"],"hide":["[data-testid=sidebarColumn]"]}'
+polycarp-spaces filters ls
+polycarp-spaces filters rm no-shorts
+polycarp-spaces filters reset       # every rule gone
+```
+
+A rule has an `id` (1 to 64 of a-z, 0-9 and -; `set` with an id in use replaces that rule), `enabled` (true unless set false), `sites` (hosts such as `youtube.com`; none means every site), and at least one of `words`, `patterns` (JavaScript regular expressions), `accounts` (handles such as `@name`), `kinds` (`shorts`, `promoted`, `reposts`) and `hide` (CSS selectors of page parts, only with `sites`). A pattern must compile, and may not repeat a group that holds a quantifier (`(a+)+`), count past `{20}`, or use a backreference or lookbehind, since any of those can stall a page on a long post. A selector may not hold `{ } ; \ @ <`, `/*`, `*/` or a line break, or leave a quote, bracket or parenthesis open. Limits: 200 rules, 200 entries a list, 200 characters an entry, 256 KiB for the file. A rule past one, or with a bad field, is refused with the field named, and nothing is written. Every command takes `--json`.
 
 ## Use your browser from Claude, ChatGPT and Grok
 

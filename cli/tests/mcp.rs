@@ -132,7 +132,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 36] = [
+const TOOLS: [&str; 39] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -169,6 +169,9 @@ const TOOLS: [&str; 36] = [
     "style_preset",
     "style_restore",
     "keys_list",
+    "filters_list",
+    "filter_set",
+    "filter_remove",
 ];
 
 #[test]
@@ -1060,6 +1063,80 @@ fn paper_tools_run_the_spaces_paper_command_and_pass_its_envelope_on_as_is() {
 
 #[cfg(unix)]
 #[test]
+fn filter_tools_run_the_spaces_filters_command_and_pass_its_envelope_on_as_is() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let reply = json!({"ok": true, "data": {"filter": {"id": "no-shorts"}, "replaced": false}});
+    fs::write(sb.root.join("spaces/reply"), reply.to_string()).unwrap();
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    // The rule goes as one JSON argument, as given; the command checks and normalizes it.
+    let rule = json!({"id": "no-shorts", "enabled": true, "sites": ["www.YouTube.com"], "words": ["spoiler"],
+        "patterns": ["^ad\\b"], "accounts": ["@Spam"], "kinds": ["shorts"], "hide": ["#related"]});
+    let r = s.tool("filter_set", rule.clone());
+    assert_eq!(r["isError"], false);
+    assert_eq!(r["structuredContent"], reply);
+    let argv = stub_args(&sb);
+    assert_eq!(argv.len(), 4, "{argv:?}");
+    assert_eq!(argv[..2], ["filters", "set"]);
+    assert_eq!(serde_json::from_str::<Value>(&argv[2]).unwrap(), rule);
+    assert_eq!(argv[3], "--json");
+    s.tool("filters_list", json!({}));
+    assert_eq!(stub_args(&sb), ["filters", "ls", "--json"]);
+    s.tool("filter_remove", json!({"id": "no-shorts"}));
+    assert_eq!(stub_args(&sb), ["filters", "rm", "no-shorts", "--json"]);
+
+    let v = s.request("tools/list", json!({}));
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let by = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap().clone();
+    for n in ["filter_set", "filter_remove"] {
+        assert_eq!(
+            by(n)["annotations"],
+            json!({"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false}),
+            "{n}"
+        );
+    }
+    assert_eq!(by("filters_list")["annotations"]["readOnlyHint"], true);
+    let set = by("filter_set");
+    assert_eq!(set["inputSchema"]["required"], json!(["id"]));
+    assert_eq!(
+        set["inputSchema"]["properties"]["kinds"]["items"]["enum"],
+        json!(["shorts", "promoted", "reposts"])
+    );
+    let text = set["description"].as_str().unwrap();
+    for w in [
+        "X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn and Mastodon",
+        "Show bar",
+        "30 seconds",
+        "hide",
+    ] {
+        assert!(text.contains(w), "filter_set's description lacks {w}");
+    }
+
+    // Bad arguments are refused here, and the command never runs.
+    for (tool, args) in [
+        ("filter_set", json!({})),
+        ("filter_set", json!({"words": ["x"]})),
+        ("filter_set", json!({"id": "a", "colour": "red"})),
+        ("filter_set", json!("no-shorts")),
+        ("filter_remove", json!({})),
+        ("filter_remove", json!({"id": 3})),
+        ("filters_list", json!({"id": "a"})),
+    ] {
+        fs::remove_file(sb.root.join("spaces/args")).unwrap_or_default();
+        let r = s.tool(tool, args.clone());
+        assert_eq!(r["isError"], true, "{tool} {args}");
+        assert_eq!(
+            r["structuredContent"]["error"]["code"], "invalid_args",
+            "{tool} {args}"
+        );
+        assert!(stub_args(&sb).is_empty(), "{tool} {args} ran the command");
+    }
+    assert_eq!(s.finish(), 0);
+}
+
+#[cfg(unix)]
+#[test]
 fn surfaces_tools_check_their_arguments_before_running_anything() {
     let sb = Sandbox::new();
     let bin = spaces_stub(&sb);
@@ -1197,6 +1274,7 @@ fn the_instructions_send_surfaces_work_to_the_surfaces_tools() {
     assert!(at("surfaces_schema") < at("surfaces_get") && at("surfaces_get") < at("surfaces_set"));
     assert!(at("style_example") < at("style_set") && at("style_set") < at("style_check"));
     assert!(at("paper_set") < at("paper_get") && at("paper_get") < at("paper_reset"));
+    assert!(at("filters_list") < at("filter_set") && at("filter_set") < at("filter_remove"));
     assert_eq!(s.finish(), 0);
 }
 
