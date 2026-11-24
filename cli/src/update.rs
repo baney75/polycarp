@@ -833,7 +833,13 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
             }
             // Not in the usage text: a script or job that passes it keeps updating.
             Some("--channel") => {
-                it.next();
+                if it
+                    .clone()
+                    .next()
+                    .is_some_and(|n| !n.to_string_lossy().starts_with("--"))
+                {
+                    it.next();
+                }
                 out.channel_ignored = true;
             }
             Some("--source") => {
@@ -1056,7 +1062,7 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         }
     };
     if parsed.channel_ignored {
-        eprintln!("polycarp update: --channel is ignored. Every install updates from main.");
+        eprintln!("polycarp update: --channel is ignored. Updates are built from main. An older Polycarp.app set to Stable in Settings > Updates finds no update until Nightly is picked there once.");
     }
     let Some(home) = device.home.clone() else {
         eprintln!(
@@ -1519,6 +1525,9 @@ mod tests {
         let p = parsed(&["--yes", "--channel", "dev", "--check"]).unwrap();
         assert!(p.channel_ignored);
         assert!(p.options.yes && p.options.check);
+        // A flag after a bare --channel is still read.
+        let p = parsed(&["--channel", "--yes"]).unwrap();
+        assert!(p.channel_ignored && p.options.yes);
         assert!(parsed(&["--stable"]).is_err());
     }
 
