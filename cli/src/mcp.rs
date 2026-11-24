@@ -231,7 +231,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_preview",
-            description: "Show the theme on product UI, written only into the previews folder of the config folder. With format \"png\" it writes one image per product and mode (the dock and window bar, the dictation pill, the browser side panel with a permission prompt, the site) and returns data.images, a list of {surface, mode, path}: look at each image, fix what is wrong, and preview again. Needs no browser. With format \"html\" (the default) it writes one page with every product, to open in a browser and show the person. Call it after every change.",
+            description: "Show the theme on product UI, written only into the previews folder of the config folder. With format \"png\" it writes one image per product and mode (the dock and window bar, the dictation pill, the browser extension on a page, the site) and returns data.images, a list of {surface, mode, path}: look at each image, fix what is wrong, and preview again. Needs no browser. With format \"html\" (the default) it writes one page with every product, to open in a browser and show the person. Call it after every change.",
             schema: obj(json!({
                 "name": name,
                 "mode": {"type":"string","enum":["light","dark","both"],"description":"Default both: side by side in html, one image each in png."},

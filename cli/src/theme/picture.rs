@@ -721,8 +721,8 @@ fn browser(cv: &mut Canvas, l: &Look) {
         l.c("border"),
         1.0,
     );
-    // The person's turn, then the agent's.
-    let me = "Summarize this page";
+    // The reading line, then the text.
+    let me = "4 minutes left";
     let mw = text_width(me, l.s) + 24.0;
     cv.rect(
         [x1 - 16.0 - mw, y0 + 60.0, x1 - 16.0, y0 + 92.0],
@@ -749,11 +749,11 @@ fn browser(cv: &mut Canvas, l: &Look) {
     cv.text(
         x0 + 30.0,
         y0 + 138.0 + l.line_h(),
-        "Working: drafting",
+        "Working: reading aloud",
         l.s,
         l.c("working"),
     );
-    // The permission prompt.
+    // A page edit, with its undo.
     let (ay0, ay1) = (y0 + 178.0 + l.line_h(), y0 + 290.0 + l.line_h());
     cv.rect(
         [x0 + 12.0, ay0, x1 - 12.0, ay1],
@@ -767,32 +767,18 @@ fn browser(cv: &mut Canvas, l: &Look) {
         l.line().max(1.0),
         l.c("urgent"),
     );
-    cv.text(x0 + 26.0, ay0 + 14.0, "Needs you", l.s, l.c("urgent"));
+    cv.text(x0 + 26.0, ay0 + 14.0, "Edited page", l.s, l.c("urgent"));
     cv.text(
         x0 + 26.0,
         ay0 + 38.0,
-        "Click Send on the mail page?",
+        "Your agent hid a sidebar",
         l.s,
         l.c("foreground"),
     );
-    let bx = l.button(
-        cv,
-        x0 + 26.0,
-        ay0 + 62.0,
-        "Not now",
-        "surface",
-        "foreground",
-    );
-    l.button(
-        cv,
-        bx + 10.0,
-        ay0 + 62.0,
-        "Allow once",
-        "accent",
-        "on_accent",
-    );
+    let bx = l.button(cv, x0 + 26.0, ay0 + 62.0, "Undo", "surface", "foreground");
+    l.button(cv, bx + 10.0, ay0 + 62.0, "Keep", "accent", "on_accent");
 
-    // A page beside the panel: text, a link and a field.
+    // The page beside it: text, a link and a field.
     let (px0, py0, px1, py1) = (472.0, 56.0, 696.0, 400.0);
     l.card(cv, [px0, py0, px1, py1], l.radius(), "background");
     cv.text(px0 + 16.0, py0 + 18.0, "Budget", l.s + 1, l.c("strong"));

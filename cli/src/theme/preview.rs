@@ -133,15 +133,15 @@ fn pane(r: &Resolved, mode: &str) -> String {
 <div class="split">
   <div class="card side">
     <div class="side-head"><b>Quarterly report</b><span class="x">&times;</span></div>
-    <div class="turn me">Summarize this page and send it to Ruth.</div>
-    <div class="turn ai">I read the page. It has <code>3</code> tables and one open question about the budget.
-      <div class="status working"><i class="pulse"></i> Working: drafting the email</div></div>
+    <div class="turn me">Reading, 4 minutes left</div>
+    <div class="turn ai">The report has <code>3</code> tables and one open question about the budget.
+      <div class="status working"><i class="pulse"></i> Working: reading aloud</div></div>
     <div class="ask">
-      <div class="status urgent">Needs you</div>
-      <p>Tabkyra wants to click <b>Send</b> on the mail page.</p>
-      <div class="row"><button class="btn secondary">Not now</button><button class="btn primary">Allow once</button></div>
+      <div class="status urgent">Edited page</div>
+      <p>Your agent hid <b>Related stories</b> on this site.</p>
+      <div class="row"><button class="btn secondary">Undo</button><button class="btn primary">Keep</button></div>
     </div>
-    <div class="field"><span>Ask about this page</span></div>
+    <div class="field"><span>Search this page</span></div>
   </div>
 
   <div class="card form">
