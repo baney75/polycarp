@@ -4319,7 +4319,7 @@ fn a_pin_to_a_missing_folder_is_ignored() {
     );
 }
 
-const FOLLOW_RETIRED: &str = "polycarp: following the Omarchy theme is retired with the Linux desktop. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.\nPolycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n";
+const FOLLOW_RETIRED: &str = "polycarp: following the Omarchy theme is retired with the Linux desktop. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.\nPolycarp runs on macOS and Windows. The Linux desktop is retired.\n";
 
 impl Box {
     /// What an older Polycarp left while it followed Omarchy's theme: the following theme current,

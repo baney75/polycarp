@@ -167,7 +167,7 @@ https://github.com/baney75/polycarp (see spaces/platforms/windows/README.md):
 `polycarp version` works on Windows and shows what is installed.";
 
 /// Polycarp is for macOS and Windows. The Linux and Omarchy desktop is retired.
-pub const LINUX_MOVED: &str = "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus";
+pub const LINUX_MOVED: &str = "Polycarp runs on macOS and Windows. The Linux desktop is retired.";
 
 const NO_SOURCE: &str = "\
 polycarp update does not know how Polycarp was installed on this device.
@@ -882,7 +882,7 @@ fn parse_check(args: &[OsString]) -> Result<Check, String> {
         match a.to_str() {
             Some("--needs") => {
                 let list = it.next().ok_or("--needs needs a list of parts")?;
-                // A list from a polycarp older than the browser's move to Tychicus may name the browser helper, which
+                // A list from an older polycarp may name the browser helper, which
                 // nothing here installs now: it is skipped, or no update could ever pass.
                 check.needs = list
                     .to_string_lossy()
@@ -1416,7 +1416,7 @@ mod tests {
         assert!(matches!(plan(&f, FINISH), Plan::Run { ask: false, .. }));
     }
 
-    /// The browser moved to Tychicus: no step of an update builds, installs or reloads any of it, so an
+    /// The browser extension was removed: no step of an update builds, installs or reloads any of it, so an
     /// update never waits on Node, bun or a browser.
     #[test]
     fn no_step_touches_the_browser_that_moved() {
@@ -1568,8 +1568,7 @@ mod tests {
                 assert_eq!(code, 0);
                 assert_eq!(message, LINUX_MOVED);
                 assert!(
-                    message.contains("The Linux desktop is retired")
-                        && message.contains("https://github.com/baney75/tychicus")
+                    message.contains("The Linux desktop is retired") && !message.contains("http")
                 );
             }
         }

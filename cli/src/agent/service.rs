@@ -251,9 +251,7 @@ mod tests {
             assert_ne!(u.label(), crate::files::service::LABEL);
             // `update --retire-old-browser` removes the old helper's jobs on every Mac install: never ours.
             assert!(!crate::retire::LABELS.contains(&u.label()), "{}", u.label());
-            assert!(
-                !u.label().starts_with("com.tabkyra") && !u.label().starts_with("com.tychicus")
-            );
+            assert!(!u.label().starts_with("com.tabkyra"));
             assert_ne!(u.systemd(), crate::files::service::SYSTEMD_UNIT);
             for os in [Os::Mac, Os::Linux, Os::Windows] {
                 let p = unit_path(u, os, Path::new("/h"), None);

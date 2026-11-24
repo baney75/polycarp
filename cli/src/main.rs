@@ -73,8 +73,7 @@ const LOCAL_STUDIO: Tool = Tool {
 };
 
 /// What `polycarp browser` (and `polycarp features on|off browser`) prints now, on stderr with exit 2: the helper moved out.
-const BROWSER_MOVED: &str =
-    "The browser helper is now Tychicus: https://github.com/baney75/tychicus";
+const BROWSER_MOVED: &str = "The agent browser extension was removed from Polycarp.";
 
 const USAGE: &str = "\
 polycarp: one command for Polycarp Spaces and themes
@@ -94,7 +93,7 @@ Usage:
 
 The app must already be installed. POLYCARP_SPACES_BIN sets the spaces command.
 
-The browser helper is now Tychicus: https://github.com/baney75/tychicus
+The agent browser extension was removed from Polycarp.
 The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 ";
 

@@ -2,7 +2,7 @@
 //!
 //! Every install brings its own tunnel:
 //! - `cloudflare --hostname <name>`: a named tunnel on the person's own Cloudflare account, through their own
-//!   `cloudflared`, after Tychicus D31. Sign-in is `cloudflared tunnel login`, done by the person; this command only
+//!   `cloudflared`. Sign-in is `cloudflared tunnel login`, done by the person; this command only
 //!   checks that it happened (`~/.cloudflared/cert.pem` exists; it is never read). No API key is asked for or stored.
 //!   The tunnel's config goes under Polycarp's config folder; its credentials stay where cloudflared put them.
 //! - `tailscale [--public]`: Tailscale Serve on port 8443 (the tailnet only), or Funnel (public) with a warning.

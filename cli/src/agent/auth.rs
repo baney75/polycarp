@@ -3,7 +3,7 @@
 //! Two kinds of caller:
 //!
 //! - Remote connectors (claude.ai, ChatGPT, grok.com) can't send a static header, so they get a single-owner OAuth 2.1
-//!   authorization server, after Waypost's `src/oauth.ts` and Tychicus D30: dynamic client registration, the
+//!   authorization server, after Waypost's `src/oauth.ts`: dynamic client registration, the
 //!   authorization code grant with PKCE S256 only, exact redirect URI matching, `state` required and returned, short
 //!   access tokens and refresh tokens that rotate (a spent refresh token that comes back ends the whole grant).
 //!   Consent never happens on the remote page: the page shows an approval code and the owner approves it on this
