@@ -821,7 +821,13 @@ fn browser(cv: &mut Canvas, l: &Look) {
         l.line(),
         l.c("border"),
     );
-    cv.text(px0 + 28.0, py1 - 45.0, "Search this page", l.s, l.c("muted"));
+    cv.text(
+        px0 + 28.0,
+        py1 - 45.0,
+        "Search this page",
+        l.s,
+        l.c("muted"),
+    );
 }
 
 fn site(cv: &mut Canvas, l: &Look) {
