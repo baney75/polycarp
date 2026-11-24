@@ -73,8 +73,8 @@ public struct KeyBinding: Equatable {
     }
 }
 
-/// Every Polycarp shortcut, in one table. `polycarp-spaces keys`, the `keys_list` MCP tool and docs/keys.md all read
-/// it. `KeymapTests` fails when the code takes a key that has no row here, a row outlives its
+/// Every Polycarp shortcut, in one table. `polycarp-spaces keys`, the `keys_list` MCP tool, the shortcut sheet and
+/// docs/keys.md all read it. `KeymapTests` fails when the code takes a key that has no row here, a row outlives its
 /// key, or docs/keys.md says something else.
 public enum Keymap {
     public static let all: [KeyBinding] = [
@@ -82,6 +82,9 @@ public enum Keymap {
         KeyBinding(id: "launcher.cmdSpace", keys: ["cmd", "Space"], title: "Open the launcher", group: .launcher, scope: .global,
                    note: "When Settings puts the launcher on ⌘Space and Spotlight doesn't hold it"),
         KeyBinding(id: "launcher.open", keys: ["ctrl", "cmd", "K"], title: "Open the launcher", group: .launcher, scope: .global),
+        KeyBinding(id: "keys.hold", keys: ["hold mod"], title: "Show every shortcut", group: .launcher, scope: .global),
+        KeyBinding(id: "keys.launcher", keys: ["cmd", "K"], title: "Show every shortcut", group: .launcher, scope: .launcher),
+        KeyBinding(id: "keys.launcher.word", keys: ["keys"], title: "Type keys to show every shortcut", group: .launcher, scope: .launcher),
         KeyBinding(id: "launcher.down", keys: ["↓"], title: "Select the next result", group: .launcher, scope: .launcher),
         KeyBinding(id: "launcher.up", keys: ["↑"], title: "Select the previous result", group: .launcher, scope: .launcher),
         KeyBinding(id: "launcher.run", keys: ["Return"], title: "Open the selected result", group: .launcher, scope: .launcher),
