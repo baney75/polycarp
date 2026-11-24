@@ -88,12 +88,11 @@ draft() {
   DRAFT_ID=$id
 }
 
-# move <tag> <feed file> <feed url> <version>: the rolling release <tag> becomes this build, and its feed is read back.
-# The release is replaced, never edited in place, so its files always belong to one build.
-move() {
-  local tag=$1 file=$2 url=$3 want=$4 id offered=0 seen="" code try
+# flip <tag> <draft id> <feed url> <version>: the rolling release <tag> becomes the checked draft, and its feed is
+# read back. The release is replaced, never edited in place, so its files always belong to one build.
+flip() {
+  local tag=$1 id=$2 url=$3 want=$4 offered=0 seen="" code try
   step "Moving $tag to $want"
-  draft "$tag-next-$TIME" "$file"; id=$DRAFT_ID
   gh release delete "$tag" -R "$REPO" --cleanup-tag --yes 2>/dev/null || true
   gh api -X PATCH "repos/$REPO/releases/$id" -f tag_name="$tag" -f target_commitish="$COMMIT" \
     -F draft=false -F prerelease=true -f make_latest=false >/dev/null
@@ -109,9 +108,15 @@ move() {
   [ "$offered" = 1 ] || fail "$url doesn't offer $want two minutes after the publish (last answer: $seen)."
 }
 
+# Every release is a checked draft before any of them is published, so a failed upload or check moves nothing.
+step "Uploading and checking nightly-$TIME, nightly and dev"
+draft "nightly-$TIME" build/latest.json; ARCHIVE_ID=$DRAFT_ID
+draft "dev-next-$TIME" build/dev-latest.json; DEV_ID=$DRAFT_ID
+draft "nightly-next-$TIME" build/latest.json; NIGHTLY_ID=$DRAFT_ID
 step "Publishing the immutable prerelease nightly-$TIME"
-draft "nightly-$TIME" build/latest.json
-gh api -X PATCH "repos/$REPO/releases/$DRAFT_ID" -F draft=false -f make_latest=false >/dev/null
-move nightly build/latest.json "$FEED" "$VERSION"
-move dev build/dev-latest.json "$DEV_FEED" "$DEV_VERSION"
+gh api -X PATCH "repos/$REPO/releases/$ARCHIVE_ID" -F draft=false -f make_latest=false >/dev/null
+# Dev moves first. release.yml builds a commit only while it is ahead of the nightly tag, so a run that stops after
+# dev moved (or before) leaves nightly behind, and starting the workflow again finishes both.
+flip dev "$DEV_ID" "$DEV_FEED" "$DEV_VERSION"
+flip nightly "$NIGHTLY_ID" "$FEED" "$VERSION"
 echo "published Polycarp $VERSION"

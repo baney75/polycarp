@@ -27,13 +27,16 @@ g="$tmp/gate"; mkdir -p "$g/bin"
 cat > "$g/bin/gh" <<'GH'
 #!/bin/bash
 # STUB_LAST: the channel tag's commit (empty: 404). STUB_REL_<base>_<head>: compare status. STUB_GREEN: newest green
-# CI run's commit. STUB_MAIN: main's head.
+# CI run's commit. STUB_MAIN: main's head. STUB_OLD: a commit with no publish.sh. STUB_OPEN: open blocking issues.
 case "$*" in
+  "api repos/r/contents/spaces/scripts/publish.sh?ref="*)
+    [ "${2##*ref=}" != "${STUB_OLD:-}" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    [ "${2##*ref=}" != "${STUB_NETERR:-}" ] || { echo "gh: connection reset" >&2; exit 1; } ;;
   "api repos/r/git/ref/tags/"*) [ -n "$STUB_LAST" ] && echo "$STUB_LAST" || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; } ;;
   "api repos/r/compare/"*) p=${2#repos/r/compare/}; v="STUB_REL_${p%%...*}_${p##*...}"; echo "${!v:?no stub for $p}" ;;
   "api repos/r/commits/main"*) echo "$STUB_MAIN" ;;
   "run list"*) echo "${STUB_GREEN:-}" ;;
-  "issue list"*) echo "" ;;
+  "issue list"*) echo "${STUB_OPEN:-}" ;;
   *) echo "gh stand-in: $*" >&2; exit 1 ;;
 esac
 GH
@@ -52,6 +55,11 @@ expect "the same commit again" "$(gate release RUN_SHA=bbb STUB_LAST=bbb STUB_RE
 # Started by hand: the newest commit with a green CI run, never main's untested head (ddd).
 expect "started by hand" "$(gate release RUN_SHA= REF=refs/heads/main STUB_MAIN=ddd STUB_GREEN=ccc STUB_LAST=bbb STUB_REL_bbb_ccc=ahead)" "true ccc"
 expect "by hand, no green run" "$(gate release RUN_SHA= REF=refs/heads/main STUB_GREEN= STUB_LAST=bbb)" "false "
+# sol-F3: a commit from before the one stream would move nightly alone, so it isn't built; a lookup that fails is an error.
+expect "a commit from before publish.sh" "$(gate release RUN_SHA=ccc STUB_OLD=ccc STUB_LAST=bbb STUB_REL_bbb_ccc=ahead)" "false "
+[ "$(gate release RUN_SHA=ccc STUB_NETERR=ccc STUB_LAST=bbb STUB_REL_bbb_ccc=ahead)" = error ] || bad "a failed publish.sh lookup was taken as an old commit"
+# first-F2: an open regression labeled blocks-nightly holds every release.
+expect "an open blocking regression" "$(gate release RUN_SHA=ccc STUB_OPEN='#7' STUB_LAST=bbb STUB_REL_bbb_ccc=ahead)" "false "
 [ "$(gate release RUN_SHA= REF=refs/heads/feature STUB_GREEN=ccc)" = error ] || bad "a release was started from a branch other than main"
 # A job's own permissions replace the workflow's, so each job that lists issues or runs must grant reading them.
 python3 -I - ../.github/workflows/*.yml <<'PY' || bad "a workflow job calls gh issue list or gh run list without the permission to read them"

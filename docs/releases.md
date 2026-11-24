@@ -55,7 +55,7 @@ Every release is signed by the one release identity. Without it nothing ships: a
 
 | Workflow | Starts on | Does |
 | --- | --- | --- |
-| `release.yml` | CI passing on a push to main, or by hand | Builds that commit when it is ahead of the one `nightly` offers, and publishes it (see "One stream" below). A run that is publishing is never cancelled; a newer one waits. Deletes `nightly-<time>` prereleases over 14 days old, always keeping the newest. |
+| `release.yml` | CI passing on a push to main, or by hand | Builds that commit when it is ahead of the one `nightly` offers, and publishes it (see "One stream" below). A run that is publishing is never cancelled; a newer one waits. Waits while an open issue is labeled both `regression` and `blocks-nightly`. Deletes `nightly-<time>` prereleases over 14 days old, always keeping the newest. |
 | `promote.yml` | By hand only, with `nightly=nightly-<time>` or `hotfix=true` | Checks the nightly is 72 hours old, stable is behind it and no `regression` issue is open (a hotfix: VERSION is the last tag's patch + 1). Fast-forwards `stable`, tags `vX.Y.Z` on it, makes the draft release, then calls `stable-build.yml`. |
 | `stable-build.yml` | `promote.yml` only | Builds the universal app at the tag and uploads it into the draft. It never publishes. |
 
@@ -98,9 +98,13 @@ or any copy whose Settings chose Dev. Such a copy installs the build from the `d
 tag when it builds from source) and, once it runs an app with no channel choice, reads the nightly feed.
 `verify-release.sh` accepts that feed only as the same build with `-nightly.` said as `-dev.`.
 
-Keep the dev mirror until no copy reads it: each copy fetches `dev/latest.json` at most once a day, so a `dev`
-release whose `latest.json` shows no downloads (`gh release view dev --json assets`) over 30 days of builds can
-stop being written. Its last build stays installable from it after that.
+Each publish checks every draft before it publishes any, then moves `dev` before `nightly`. A run that stops
+partway leaves `nightly` behind, so the gate still takes that commit: start Release again by hand and it finishes
+both. The gate skips a commit from before `publish.sh`, whose release script would move `nightly` alone.
+
+Keep the dev mirror until every copy that read the dev feed runs an app with no channel choice. A download count
+can't show that, since each publish replaces the `dev` release and its count starts again at zero. Its last build
+stays installable from it after it stops.
 
 ## From preview to nightly
 

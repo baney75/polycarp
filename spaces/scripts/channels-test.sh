@@ -75,7 +75,8 @@ POLYCARP_FEED_ARCHS=ppc scripts/write-feed.sh nightly "$(scripts/channel-version
 # This runs the real publish.sh against a stand-in for gh and curl and checks the release it leaves.
 pub="$tmp/pub"; mkdir -p "$pub/scripts" "$pub/bin" "$pub/state" "$pub/build/Polycarp.app/Contents"
 cp scripts/publish.sh scripts/semver-newer.py scripts/product.env scripts/write-feed.sh scripts/release-requirement.txt "$pub/scripts/"
-printf '#!/bin/bash\n[ -z "${STUB_VERIFY_FAIL:-}" ]\n' > "$pub/scripts/verify-release.sh"
+# STUB_VERIFY_FAIL=N: the Nth check, and every one after it, fails.
+printf '#!/bin/bash\nn=$(( $(cat "$STUB_STATE/verifies" 2>/dev/null || echo 0) + 1 )); echo $n > "$STUB_STATE/verifies"\n[ -z "${STUB_VERIFY_FAIL:-}" ] || [ "$n" -lt "$STUB_VERIFY_FAIL" ]\n' > "$pub/scripts/verify-release.sh"
 pv=$(scripts/channel-version.sh nightly); pdate=2026-11-21T12:00:00Z
 python3 -I -c 'import plistlib,sys; plistlib.dump({"PolycarpVersion": sys.argv[2], "PolycarpChannel": "nightly", "PolycarpCommit": sys.argv[3], "PolycarpCommitDate": sys.argv[4], "PolycarpCommitDirty": "0"}, open(sys.argv[1], "wb"))' \
   "$pub/build/Polycarp.app/Contents/Info.plist" "$pv" "$c" "$pdate"
@@ -124,6 +125,8 @@ out=/dev/stdout; feed=nightly
 while [ $# -gt 0 ]; do
   case "$1" in -o) out=$2; shift ;; */download/dev/*) feed=dev ;; esac; shift
 done
+# STUB_DEV_404: the dev feed never turns up.
+[ "$feed" = dev ] && [ -n "${STUB_DEV_404:-}" ] && { printf 404; exit 0; }
 if [ -n "${STUB_FEED_LAG:-}" ] && [ -f "$STUB_STATE/nightly.json" ]; then
   n=$(cat "$STUB_STATE/lag" 2>/dev/null || echo 0)
   [ "$n" -ge "$STUB_FEED_LAG" ] || { echo $((n + 1)) > "$STUB_STATE/lag"; printf 404; exit 0; }
@@ -197,6 +200,13 @@ refuses "verify-release.sh failed" STUB_VERIFY_FAIL=1
 refuses "the feed didn't answer" STUB_CURL=neterr
 refuses "the feed answered HTTP 500" STUB_CURL=500
 refuses "the feed named no version" STUB_CURL=badjson
+# sol-F2: every draft is checked before any release is published, and dev moves before nightly, so a run that stops
+# at dev leaves nightly where it was and release.yml builds the commit again.
+refuses "the last draft failed its check" STUB_VERIFY_FAIL=3
+st="$tmp/dev-stuck"; mkdir -p "$st"
+STUB_DEV_404=1 POLYCARP_FEED_RETRY_SECS=0 STUB_STATE="$st" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" \
+  bash "$pub/scripts/publish.sh" >/dev/null 2>&1 && bad "publish.sh succeeded though the dev feed never turned up"
+[ ! -f "$st/nightly.json" ] || bad "nightly moved although dev's move failed, so a second run would stop at the gate"
 
 # The read-back after the move waits out a download cache that answers 404 for a while, and gives up, saying what it
 # last saw, when the feed never turns up.

@@ -24,6 +24,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      issues: read
       actions: read
     outputs:
       go: ${{ steps.decide.outputs.go }}
@@ -47,6 +48,12 @@ jobs:
               --json headSha --jq '.[0].headSha // empty')
             [ -n "$SHA" ] || stop "no CI run on main has passed."
           fi
+          # A commit from before the one stream carries a publisher that moves nightly alone and leaves the dev feed
+          # behind (docs/releases.md, "One stream"), so only a commit holding spaces/scripts/publish.sh is built.
+          if ! gh api "repos/$REPO/contents/spaces/scripts/publish.sh?ref=$SHA" --silent 2>"$RUNNER_TEMP/pub.err"; then
+            grep -q 'HTTP 404' "$RUNNER_TEMP/pub.err" || { cat "$RUNNER_TEMP/pub.err" >&2; exit 1; }
+            stop "$SHA is from before the one stream; the next green commit on main is built instead."
+          fi
           # CI runs can finish out of order, and an old one can be re-run. Only a commit ahead of the one the release
           # already offers moves it, so an update never goes back to older code.
           if LAST=$(gh api "repos/$REPO/git/ref/tags/nightly" --jq .object.sha 2>"$RUNNER_TEMP/last.err"); then
@@ -55,6 +62,9 @@ jobs:
           else
             grep -q 'HTTP 404' "$RUNNER_TEMP/last.err" || { cat "$RUNNER_TEMP/last.err" >&2; exit 1; }
           fi
+          # An open issue labeled both `regression` and `blocks-nightly` holds every release until it is closed.
+          OPEN=$(gh issue list -R "$REPO" --state open --label regression --label blocks-nightly --json number --jq 'map("#\(.number)") | join(" ")')
+          [ -z "$OPEN" ] || stop "open regressions block it: $OPEN"
           { echo "go=true"; echo "commit=$SHA"; echo "time=$(date -u +%Y%m%d%H%M%S)"; } >> "$GITHUB_OUTPUT"
   build:
     needs: gate
