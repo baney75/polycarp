@@ -58,12 +58,13 @@ public enum SurfacesFile {
 
     /// Writes the whole tree: a temp file beside the target, flushed, then renamed over it, so a reader (the app's
     /// watcher, another agent) sees the old file or the new one and never half of one. Makes the folder if need be.
-    public static func write(_ tree: SurfaceValue, to path: String) throws {
+    /// `limit` is the largest file written (filters.json has its own).
+    public static func write(_ tree: SurfaceValue, to path: String, limit: Int = maxBytes) throws {
         let url = URL(fileURLWithPath: path)
         let dir = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let text = tree.json(pretty: true) + "\n"
-        guard text.utf8.count <= maxBytes else { throw WriteError("the file would be over \(maxBytes) bytes") }
+        guard text.utf8.count <= limit else { throw WriteError("the file would be over \(limit) bytes") }
         let tmp = dir.appendingPathComponent(".\(url.lastPathComponent).\(getpid()).\(UInt32.random(in: 0...UInt32.max)).tmp").path
         let fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o644)
         guard fd >= 0 else { throw WriteError("can't write \(dir.path): \(String(cString: strerror(errno)))") }
