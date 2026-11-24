@@ -248,7 +248,7 @@ public enum Filters {
         if let bad = t.unicodeScalars.first(where: { "{};\\@<".unicodeScalars.contains($0) || CharacterSet.controlCharacters.contains($0) }) {
             return refused(CharacterSet.controlCharacters.contains(bad) ? "it may not hold a line break" : "it may not hold \(bad)")
         }
-        if t.contains("/*") || t.contains("*/") { return refused("it may not hold a comment mark, /* or */") }
+        if t.holds("/*") || t.holds("*/") { return refused("it may not hold a comment mark, /* or */") }
         var quote: Unicode.Scalar?
         var open: [Unicode.Scalar] = []
         for ch in t.unicodeScalars {
