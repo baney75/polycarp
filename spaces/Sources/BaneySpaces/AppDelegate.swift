@@ -274,7 +274,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         c.model.updateInfo = { [weak self] in self?.updateInfo() ?? .init() }
         c.model.onCheckForUpdates = { [weak self] in self?.checkForUpdates() }
         c.model.onOfferUpdate = { [weak self] in if let r = self?.updater.available { self?.updater.offer(r) } }
-        c.model.onSetUpdateChannel = { [weak self] in self?.updater.channel = $0 }
         c.model.onSetCheckDaily = { [weak self] in self?.updater.checksAutomatically = $0 }
         c.model.finishedRows = { [weak self] in
             guard let self, self.session.started else { return [] }
@@ -974,8 +973,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// A release waiting or installing, if any: the menu's "Update to …" row and Settings > Updates.
     private func updateNotice() -> UpdateNotice? {
-        if let r = updater.installing { return UpdateNotice(name: r.name, isNightly: r.isNightly, installing: true) }
-        return updater.available.map { UpdateNotice(name: $0.name, isNightly: $0.isNightly, installing: false) }
+        if let r = updater.installing { return UpdateNotice(name: r.name, installing: true) }
+        return updater.available.map { UpdateNotice(name: $0.name, installing: false) }
     }
 
     @objc private func offerUpdate() { if let r = updater.available { updater.offer(r) } }
@@ -1104,7 +1103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// What Settings > Updates shows: the build you have, the channel, and any release waiting.
     private func updateInfo() -> SetupModel.UpdateInfo {
-        .init(have: Updater.buildDescription, channel: updater.channel, channels: updater.offered, daily: updater.checksAutomatically, notice: updateNotice())
+        .init(have: Updater.buildDescription, daily: updater.checksAutomatically, notice: updateNotice())
     }
 
     private func checkForUpdates() { updater.check(manual: true) }

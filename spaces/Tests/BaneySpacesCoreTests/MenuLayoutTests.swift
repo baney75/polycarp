@@ -80,7 +80,7 @@ final class MenuLayoutTests: XCTestCase {
 
     func testFinishedAgentsAddARowOnlyWhileTheyAreThereAndTheUpdateRowSitsAboveSettings() {
         let rows = MenuLayout.rows(current: 1, apps: [:])
-        let notice = UpdateNotice(name: "BaneySpaces 0.3.1", isNightly: false, installing: false)
+        let notice = UpdateNotice(name: "BaneySpaces 0.3.1", installing: false)
         let tail: ([MenuEntry]) -> [MenuEntry] = { Array($0.dropFirst(rows.count)) }
         XCTAssertEqual(tail(MenuLayout.entries(rows: rows, finished: 2, update: .check)),
                        [.separator, .showAll, .find, .separator, .finished(count: 2), .update(.check), .settings, .quit])
@@ -92,8 +92,8 @@ final class MenuLayoutTests: XCTestCase {
 
     /// The update row's four states: check by hand, a check running, a release on offer, one installing.
     func testTheUpdateRowSaysWhatTheUpdaterKnows() throws {
-        let offer = UpdateNotice(name: "BaneySpaces 0.3.1", isNightly: false, installing: false)
-        let installing = UpdateNotice(name: "BaneySpaces 0.3.1", isNightly: false, installing: true)
+        let offer = UpdateNotice(name: "BaneySpaces 0.3.1", installing: false)
+        let installing = UpdateNotice(name: "BaneySpaces 0.3.1", installing: true)
         XCTAssertEqual(MenuUpdate(notice: nil, checking: false), .check)
         XCTAssertEqual(MenuUpdate(notice: nil, checking: true), .checking)
         XCTAssertEqual(MenuUpdate(notice: offer, checking: true), .notice(offer), "a release on offer wins over a check")
@@ -111,13 +111,10 @@ final class MenuLayoutTests: XCTestCase {
     }
 
     func testUpdateWordingIsCapitalizedWhereASentenceStarts() {
-        let stable = UpdateNotice(name: "BaneySpaces 0.3.1", isNightly: false, installing: false)
-        let nightly = UpdateNotice(name: "nightly-2026-10-31", isNightly: true, installing: false)
-        XCTAssertEqual(stable.menuTitle, "Update to BaneySpaces 0.3.1…")
-        XCTAssertEqual(stable.sentence, "BaneySpaces 0.3.1 is available.")
-        XCTAssertEqual(nightly.menuTitle, "Update to the Nightly Build…")
-        XCTAssertEqual(nightly.sentence, "The nightly build is available.")
-        XCTAssertEqual(UpdateNotice(name: "x", isNightly: true, installing: true).menuTitle, "Updating to the Nightly Build…")
+        let notice = UpdateNotice(name: "Polycarp 0.4.0 (2026-11-25)", installing: false)
+        XCTAssertEqual(notice.menuTitle, "Update to Polycarp 0.4.0 (2026-11-25)…")
+        XCTAssertEqual(notice.sentence, "Polycarp 0.4.0 (2026-11-25) is available.")
+        XCTAssertEqual(UpdateNotice(name: "Polycarp 0.4.0 (2026-11-25)", installing: true).menuTitle, "Updating to Polycarp 0.4.0 (2026-11-25)…")
         XCTAssertEqual(MenuLayout.finishedTitle(1), "1 Agent Finished While You Were Away")
         XCTAssertEqual(MenuLayout.finishedTitle(3), "3 Agents Finished While You Were Away")
     }
@@ -189,12 +186,12 @@ final class MenuLayoutTests: XCTestCase {
                         "Show what coding agents are doing on their app icons",
                         "⌘Space opens the Polycarp launcher instead of Spotlight",
                         "Keep usable by automation", "Bring Every Window Back", "Uninstall Polycarp…",
-                        "Stable: tested releases", "Check for updates daily", "Check for Updates Now…",
+                        "Check for updates daily", "Check for Updates Now…",
                         "Button(notice.menuTitle)", "About Polycarp…", "Finished while you were away"] {
             XCTAssertTrue(setup.contains(control), "Settings lacks \"\(control)\"")
         }
         for wire in ["onBringBack", "onAbout", "onToggleParked", "onCheckForUpdates", "onOfferUpdate",
-                     "onSetUpdateChannel", "onSetCheckDaily", "onFocusFinished", "onUninstall"] {
+                     "onSetCheckDaily", "onFocusFinished", "onUninstall"] {
             XCTAssertTrue(wired.contains("c.model.\(wire) ="), "\(wire) isn't wired")
         }
     }

@@ -1,8 +1,8 @@
 import AppKit
 import BaneySpacesCore
 
-/// Finds new builds on the channel the person chose (Stable, Nightly or Dev) and installs one only
-/// when they press Update Now. Checking reads the channel's latest.json once a day, and can be turned
+/// Finds new builds of Polycarp, each one built from main, and installs one only when the person
+/// presses Update Now. Checking reads the feed's latest.json once a day, and can be turned
 /// off; it sends nothing about this Mac. Installing runs the same installer as the first install: it
 /// downloads the release's signed app (checked against the pinned release key) and puts it where
 /// this copy is. It builds on this Mac instead when this copy was built here and the command line
@@ -40,35 +40,15 @@ final class Updater: NSObject {
         let date = (info["PolycarpCommitDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
         let short = info["CFBundleShortVersionString"] as? String ?? "0"
         return BuildInfo(version: info["PolycarpVersion"] as? String ?? short, commit: commit, commitDate: date,
-                         channel: (info["PolycarpChannel"] as? String).flatMap(UpdateChannel.init(rawValue:)))
+                         isRelease: BuildInfo.isRelease(channel: info["PolycarpChannel"] as? String))
     }()
 
-    /// "0.4.0 (abc1234)" for a stable build, "0.4.0 Nightly (abc1234)" for a nightly, "0.4.0" without a commit.
+    /// "0.4.0 (abc1234)" for a release, "0.4.0 local build (abc1234)" for one built here, "0.4.0" without a commit.
     static var buildDescription: String {
         let base = SemVer(build.version)?.base ?? build.version
-        let named = build.channel.map { $0 == .stable ? base : "\(base) \($0.title)" } ?? base
+        let named = build.isRelease ? base : "\(base) local build"
         return build.commit.map { "\(named) (\($0.prefix(7)))" } ?? named
     }
-
-    /// The channel chosen in Settings, else the one this build came from (a copy installed from Nightly, or
-    /// from the old Preview, follows Nightly), else Stable. A saved "preview" reads as Nightly.
-    var channel: UpdateChannel {
-        get { saved ?? Self.build.channel ?? .stable }
-        set {
-            // Dev is offered only to a dev build or a copy already on dev (`UpdateChannel.offered`).
-            guard offered.contains(newValue) else { return }
-            UserDefaults.standard.set(newValue.rawValue, forKey: "updateChannel")
-            available = nil
-            onChange()
-            check(manual: false)
-        }
-    }
-
-    /// The choice saved in Settings, if any.
-    private var saved: UpdateChannel? { UserDefaults.standard.string(forKey: "updateChannel").flatMap(UpdateChannel.init(rawValue:)) }
-
-    /// The channels Settings > Updates lists: Dev only for a dev build or a copy already following it.
-    var offered: [UpdateChannel] { UpdateChannel.offered(build: Self.build.channel, saved: saved) }
 
     var checksAutomatically: Bool {
         get { UserDefaults.standard.object(forKey: "checkForUpdates") as? Bool ?? true }
@@ -81,6 +61,8 @@ final class Updater: NSObject {
     }
 
     func start() {
+        // Copies from before one stream saved a channel choice; nothing reads it now.
+        UserDefaults.standard.removeObject(forKey: "updateChannel")
         showWhatsNewIfJustUpdated()
         // A quiet check soon after launch, then once a day while BaneySpaces runs.
         timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.checkIfDue() }
@@ -93,38 +75,32 @@ final class Updater: NSObject {
         check(manual: false)
     }
 
-    /// Reads the channel's latest.json. A manual check always answers, even "you're up to date".
+    /// Reads the feed's latest.json. A manual check always answers, even "you're up to date".
     func check(manual: Bool) {
         guard !checking else { return }
         checking = true
-        let channel = self.channel
-        var request = URLRequest(url: channel.feedURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
+        var request = URLRequest(url: Updates.feedURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.setValue("Polycarp/\(Self.build.version)", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self else { return }
-                // The channel changed while this asked the old one's feed, and the change's own check was
-                // skipped: ask again for the new one.
-                guard channel == self.channel else { self.checking = false; return self.check(manual: manual) }
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                // Nothing published on this channel yet is an answer, not a failure.
+                // Nothing published yet is an answer, not a failure.
                 let feed = status == 200 ? data.flatMap(Feed.init(json:)) : nil
                 guard status == 404 || feed != nil else {
-                    let problem = error?.localizedDescription ?? (status == 200 ? "the \(channel.rawValue) feed isn't one Polycarp can read" : "GitHub answered with status \(status)")
+                    let problem = error?.localizedDescription ?? (status == 200 ? "the update feed isn't one Polycarp can read" : "GitHub answered with status \(status)")
                     self.checking = false
                     self.checkProblem = problem
                     self.checks += 1
-                    if manual { self.tell("Couldn't check for updates", error?.localizedDescription ?? "\(status == 200 ? "The \(channel.title) feed isn't one Polycarp can read" : "GitHub answered with status \(status)"). Try again later.") }
+                    if manual { self.tell("Couldn't check for updates", error?.localizedDescription ?? "\(status == 200 ? "The update feed isn't one Polycarp can read" : "GitHub answered with status \(status)"). Try again later.") }
                     return
                 }
                 self.lastCheck = Date()
-                let offer = feed.flatMap { Updates.offer($0, channel: channel, build: Self.build) }
+                let offer = feed.flatMap { Updates.offer($0, build: Self.build) }
                 // Still checking while GitHub compares (up to 20 s), so the menu's row stays disabled and a
                 // second click can't start a second check with its own alert.
                 self.confirm(offer, feed: feed) { release in
                     self.checking = false
-                    // Changed while GitHub compared, and the change's own check was skipped: ask the new one.
-                    guard channel == self.channel else { return self.check(manual: manual) }
                     self.available = release
                     self.checkProblem = nil
                     self.checks += 1
@@ -133,11 +109,11 @@ final class Updater: NSObject {
                     if let release {
                         self.offer(release)
                     } else if feed == nil {
-                        self.tell("Nothing on \(channel.title) yet", "No build has been published on the \(channel.title) channel yet. You have \(Self.buildDescription).")
+                        self.tell("Nothing published yet", "No build of Polycarp has been published yet. You have \(Self.buildDescription).")
                     } else if feed?.platforms.contains(Feed.thisMac) == false {
-                        self.tell("No \(channel.title) build for this Mac", "\(channel.title) builds are for Apple silicon Macs. Stable runs on this one. You have \(Self.buildDescription).")
+                        self.tell("No build for this Mac", "Polycarp builds are for Apple silicon Macs. To update this one, build it from source with the installer. You have \(Self.buildDescription).")
                     } else {
-                        self.tell("Polycarp is up to date", "You have \(Self.buildDescription), the newest \(channel == .stable ? "stable release" : "build on the \(channel.title) channel").")
+                        self.tell("Polycarp is up to date", "You have \(Self.buildDescription), the newest build.")
                     }
                 }
             }
@@ -148,32 +124,21 @@ final class Updater: NSObject {
     var report: UpdateReport {
         let build = Self.buildDescription
         if let r = installing ?? (Self.installerRunning ? available : nil) {
-            return UpdateReport(state: .installing, build: build, channel: channel, name: r.name, commit: r.commit, checks: checks)
+            return UpdateReport(state: .installing, build: build, name: r.name, commit: r.commit, checks: checks)
         }
         if let r = available {
-            return UpdateReport(state: .available, build: build, channel: channel, name: r.name, commit: r.commit, checks: checks)
+            return UpdateReport(state: .available, build: build, name: r.name, commit: r.commit, checks: checks)
         }
         if checks == 0 || checkProblem != nil {
-            return UpdateReport(state: .unknown, build: build, channel: channel, checks: checks, problem: checkProblem)
+            return UpdateReport(state: .unknown, build: build, checks: checks, problem: checkProblem)
         }
-        return UpdateReport(state: .current, build: build, channel: channel, checks: checks)
+        return UpdateReport(state: .current, build: build, checks: checks)
     }
 
     /// Answers `polycarp-spaces update`: "status" reports, "check" also asks GitHub again (the answer
     /// arrives in a later status, when `checks` has gone up), "now" installs the release on offer the
-    /// way Update Now does: the same installer, the same signature check, nothing new. "channel <name>"
-    /// chooses the channel, as Settings > Updates does, and checks it.
+    /// way Update Now does: the same installer, the same signature check, nothing new.
     func answer(_ what: String) -> Wire.Reply {
-        if what.hasPrefix("channel ") {
-            guard let chosen = UpdateChannel(rawValue: String(what.dropFirst("channel ".count))) else {
-                return Wire.Reply(ok: false, error: "the channel is stable, nightly or dev")
-            }
-            if let why = UpdateChannel.refusal(chosen, build: Self.build.channel, saved: saved) {
-                return Wire.Reply(ok: false, error: why, info: report.info)
-            }
-            channel = chosen
-            return Wire.Reply(ok: true, info: report.info)
-        }
         switch what {
         case "status": break
         case "check": check(manual: false)
@@ -188,7 +153,7 @@ final class Updater: NSObject {
     }
 
     /// Offers `release` only when GitHub confirms it is ahead of this build: it contains every change this build
-    /// has, plus more. Dates and versions alone can't tell a hotfix on stable from main. Without an answer
+    /// has, plus more. Versions alone can't tell a local build's commit from main's. Without an answer
     /// (offline, rate limited), the version decides (`Updates.isNewerVersion`).
     private func confirm(_ release: Release?, feed: Feed?, then: @escaping (Release?) -> Void) {
         guard let release, let feed else { return then(nil) }
@@ -213,7 +178,7 @@ final class Updater: NSObject {
     /// Shows what's new in `release` and installs it if the person agrees.
     func offer(_ release: Release) {
         let alert = NSAlert()
-        alert.messageText = release.isNightly ? "A new nightly build is available" : "\(release.name) is available"
+        alert.messageText = "\(release.name) is available"
         alert.informativeText = "You have \(Self.buildDescription). Updating installs the new version in about a minute, then Polycarp restarts by itself. Your workspaces stay as they are."
         alert.accessoryView = Self.notesView(release.notes)
         alert.addButton(withTitle: "Update Now")
@@ -303,7 +268,7 @@ final class Updater: NSObject {
         let folder = Self.supportFolder
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // The tag and commit only ever reach the shell as environment variables, and only a tag
-        // Polycarp publishes (vX.Y.Z, nightly or dev) and a hex commit get this far. The script
+        // Polycarp publishes (nightly) and a hex commit get this far. The script
         // writes its exit status last, whatever stopped it.
         let script = """
         set -uo pipefail

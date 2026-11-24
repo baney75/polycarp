@@ -184,37 +184,26 @@ final class InstallScriptTests: XCTestCase {
         XCTAssertTrue(install.contains(#"bundle.sh" --install"#), "older revisions only")
     }
 
-    /// Every channel ships a ready-made app now, so no channel waits for the command line tools: the updater
-    /// reads only the channel's feed, which names a ready-made app for this Mac or isn't offered.
-    func testEveryChannelInstallsReadyMade() throws {
+    /// Every release ships a ready-made app, so no update waits for the command line tools: the updater reads only
+    /// the feed, which names a ready-made app for this Mac or isn't offered.
+    func testEveryUpdateInstallsReadyMade() throws {
         let updater = try read("Sources/BaneySpaces/Updater.swift")
-        XCTAssertTrue(updater.contains("channel.feedURL"))
-        XCTAssertTrue(updater.contains("Updates.offer($0, channel: channel, build: Self.build)"))
+        XCTAssertTrue(updater.contains("Updates.feedURL"))
+        XCTAssertTrue(updater.contains("Updates.offer($0, build: Self.build)"))
         for gone in ["hasCommandLineTools", "api.github.com/repos/baney75/polycarp/releases?"] {
             XCTAssertFalse(updater.contains(gone), gone)
         }
-        // `polycarp-spaces update --channel <c>` (and so `polycarp update --channel <c>`) chooses the channel
-        // before it asks for the check.
+        // `polycarp update` runs `polycarp-spaces update --help` to read the usage.
         let cli = try read("Sources/baneyspaces-cli/main.swift")
-        XCTAssertLessThan(try index(of: #"_ = ask("channel \(channel.rawValue)")"#, in: cli), try index(of: #"let before = ask("check")"#, in: cli))
-        XCTAssertTrue(updater.contains(#"if what.hasPrefix("channel ")"#))
-        // `polycarp update --channel` runs `polycarp-spaces update --help` and passes --channel only when the
-        // usage names it; an app from before the channels prints a usage without it.
-        XCTAssertTrue(cli.contains(#"let usage = "usage: \(me) update --check|--now [--channel stable|nightly|dev]""#))
+        XCTAssertTrue(cli.contains(#"let usage = "usage: \(me) update --check|--now""#))
         XCTAssertTrue(cli.contains(#"if rest == ["--help"] { out(usage); exit(0) }"#))
-        // A check still running for the old channel never answers for the new one, so `update --now --channel dev`
-        // can't install the old channel's build.
-        let stale = "guard channel == self.channel else"
-        let feedStale = stale + " { self.checking = false; return self.check(manual: manual) }"
-        XCTAssertLessThan(try index(of: feedStale, in: updater), try index(of: "self.checkProblem = problem", in: updater))
-        let compared = "self.confirm(offer, feed: feed) { release in\n                    self.checking = false\n"
-        XCTAssertLessThan(try index(of: "self.checkProblem = problem", in: updater), try index(of: compared, in: updater))
-        XCTAssertLessThan(try index(of: compared, in: updater), try index(of: stale + " { return self.check(manual: manual) }", in: updater))
-        XCTAssertLessThan(try index(of: stale + " { return self.check(manual: manual) }", in: updater), try index(of: "self.available = release", in: updater))
         // The menu's row stays "Checking for Updates…" (disabled) until GitHub's compare answers, so a second click
-        // can't start a second check: `checking` clears only on a failure, a stale channel or the compare's answer.
-        XCTAssertEqual(updater.components(separatedBy: "self.checking = false").count - 1, 3)
-        XCTAssertTrue(updater.contains("self.checking = false\n                    self.checkProblem = problem"))
+        // can't start a second check: `checking` clears only on a failure or the compare's answer.
+        let failed = "self.checking = false\n                    self.checkProblem = problem"
+        let compared = "self.confirm(offer, feed: feed) { release in\n                    self.checking = false\n"
+        XCTAssertLessThan(try index(of: failed, in: updater), try index(of: compared, in: updater))
+        XCTAssertLessThan(try index(of: compared, in: updater), try index(of: "self.available = release", in: updater))
+        XCTAssertEqual(updater.components(separatedBy: "self.checking = false").count - 1, 2)
     }
 
     func testReleaseRefusesAPublishedReleaseAndAnUnpushedTag() throws {
