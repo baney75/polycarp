@@ -1,11 +1,6 @@
 ---
-<<<<<<< HEAD
 name: polycarp-spaces
 description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on), the agent workspace (list its windows, move a window there) and his Contacts (find a person, open a call, FaceTime, a Messages draft or an email to them). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, keep an agent's windows off his workspaces, or set up a call or message he asked for. Faster and safer than screenshots. Also use it to change what Polycarp's surfaces show (top bar, desktop scene and verse, dock tiles, status menu, new tab page, idle screen) through `surfaces get|set|reset`, and to set the wallpaper, new tab background or idle background (a picture, URL, color or scene) through `paper set|get|reset`. It does not click or type into apps.
-=======
-name: baneyspaces
-description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on), the agent workspace (list its windows, move a window there) and his Contacts (find a person, open a call, FaceTime, a Messages draft or an email to them). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, keep an agent's windows off his workspaces, or set up a call or message he asked for. Faster and safer than screenshots. Also use it to change what Polycarp's surfaces show (top bar, desktop scene and verse, dock tiles, status menu, new tab page, idle screen) through `surfaces get|set|reset`, and to set the wallpaper, new tab background or idle background (a picture, URL, color or scene) through `paper set|get|reset`. It does not click or type into apps.
->>>>>>> fb86a81a (docs: say the browser and computer use were removed)
 ---
 
 # BaneySpaces
