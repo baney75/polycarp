@@ -96,6 +96,11 @@ flip() {
   gh release delete "$tag" -R "$REPO" --cleanup-tag --yes 2>/dev/null || true
   gh api -X PATCH "repos/$REPO/releases/$id" -f tag_name="$tag" -f target_commitish="$COMMIT" \
     -F draft=false -F prerelease=true -f make_latest=false >/dev/null
+  # The tag must now be this build's commit: a tag the delete left behind keeps its old commit, and a source build
+  # clones the tag.
+  local at
+  at=$(gh api "repos/$REPO/git/ref/tags/$tag" --jq .object.sha) || fail "couldn't read the $tag tag back."
+  [ "$at" = "$COMMIT" ] || fail "the $tag tag is on $at, not $COMMIT."
   # GitHub's download links can serve a 404 or the old file for a while after the tag moves (the first nightly,
   # 11-22: a 404 seconds after the move, the right file a minute later), so the read-back tries 12 times, 10 s apart.
   for try in $(seq 1 12); do

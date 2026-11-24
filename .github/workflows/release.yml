@@ -4,17 +4,16 @@ name: Release
 # The build runs on GitHub's hosted macOS runner (never a self-hosted one: this repository is public), with
 # spaces/scripts/release.sh, the same script the owner's Mac runs. It signs only with the release identity from the
 # POLYCARP_SIGNING_P12 secrets; without them nothing is built or published, the run says so, and the Mac publishes
-# instead. An ad-hoc build never ships (spaces/AGENTS.md). A run that is publishing is never cancelled (the rolling
-# release would be left half moved): a newer commit waits, and GitHub keeps only the newest waiting one.
+# instead. An ad-hoc build never ships (spaces/AGENTS.md). A build that is publishing is never cancelled (the rolling
+# release would be left half moved): a newer commit's build waits, and GitHub keeps only the newest waiting one. The
+# newest is always enough, since it holds every commit before it. The gate runs outside that queue, so a run it stops
+# (a failed CI run, an older commit) never takes a waiting build's place.
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [main]
   workflow_dispatch:
-concurrency:
-  group: release
-  cancel-in-progress: false
 permissions:
   contents: read
 jobs:
@@ -29,7 +28,6 @@ jobs:
     outputs:
       go: ${{ steps.decide.outputs.go }}
       commit: ${{ steps.decide.outputs.commit }}
-      time: ${{ steps.decide.outputs.time }}
     steps:
       - name: Decide
         id: decide
@@ -54,23 +52,29 @@ jobs:
             grep -q 'HTTP 404' "$RUNNER_TEMP/pub.err" || { cat "$RUNNER_TEMP/pub.err" >&2; exit 1; }
             stop "$SHA is from before the one stream; the next green commit on main is built instead."
           fi
-          # CI runs can finish out of order, and an old one can be re-run. Only a commit ahead of the one the release
-          # already offers moves it, so an update never goes back to older code.
-          if LAST=$(gh api "repos/$REPO/git/ref/tags/nightly" --jq .object.sha 2>"$RUNNER_TEMP/last.err"); then
-            REL=$(gh api "repos/$REPO/compare/$LAST...$SHA" --jq .status)
-            [ "$REL" = ahead ] || stop "$SHA is $REL of $LAST, the commit the release already offers."
-          else
-            grep -q 'HTTP 404' "$RUNNER_TEMP/last.err" || { cat "$RUNNER_TEMP/last.err" >&2; exit 1; }
-          fi
+          # CI runs can finish out of order, and an old one can be re-run. Only a commit ahead of the one nightly
+          # offers moves it, and never one behind dev, so neither feed goes back to older code. Dev can already hold
+          # this commit when a run stopped after moving dev (publish.sh moves dev first); then the run finishes nightly.
+          for tag in nightly dev; do
+            if LAST=$(gh api "repos/$REPO/git/ref/tags/$tag" --jq .object.sha 2>"$RUNNER_TEMP/last.err"); then
+              REL=$(gh api "repos/$REPO/compare/$LAST...$SHA" --jq .status)
+              case "$tag:$REL" in nightly:ahead|dev:ahead|dev:identical) ;; *) stop "$SHA is $REL of $LAST, the commit $tag already offers." ;; esac
+            else
+              grep -q 'HTTP 404' "$RUNNER_TEMP/last.err" || { cat "$RUNNER_TEMP/last.err" >&2; exit 1; }
+            fi
+          done
           # An open issue labeled both `regression` and `blocks-nightly` holds every release until it is closed.
           OPEN=$(gh issue list -R "$REPO" --state open --label regression --label blocks-nightly --json number --jq 'map("#\(.number)") | join(" ")')
           [ -z "$OPEN" ] || stop "open regressions block it: $OPEN"
-          { echo "go=true"; echo "commit=$SHA"; echo "time=$(date -u +%Y%m%d%H%M%S)"; } >> "$GITHUB_OUTPUT"
+          { echo "go=true"; echo "commit=$SHA"; } >> "$GITHUB_OUTPUT"
   build:
     needs: gate
     if: needs.gate.outputs.go == 'true'
     runs-on: macos-15
     timeout-minutes: 90
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
     defaults:
@@ -132,7 +136,6 @@ jobs:
         if: steps.sign.outputs.signed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          POLYCARP_BUILD_TIME: ${{ needs.gate.outputs.time }}
         run: scripts/release.sh --channel nightly
   prune:
     needs: [gate, build]
@@ -142,17 +145,26 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Delete nightly-<time> prereleases older than 14 days, keeping the newest
+      - name: Delete nightly-<time> prereleases older than 14 days, keeping the newest and the one the feed names
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # The rolling feed's url names its nightly-<time>; a run that stopped partway can leave a newer one, so
+          # keeping the newest alone could delete the zip every copy downloads.
+          FEED=$(gh release download nightly -R "$REPO" -p latest.json -O - 2>/dev/null) || FEED=""
+          KEEP=$(printf '%s' "$FEED" | jq -r '[.platforms[].url] | first // empty' 2>/dev/null \
+            | sed -n 's#.*/releases/download/\(nightly-[0-9]\{14\}\)/Polycarp.zip$#\1#p')
+          if [ -z "$KEEP" ]; then
+            echo "::warning title=nothing pruned::The nightly feed couldn't be read, so no nightly-<time> release was deleted."
+            exit 0
+          fi
           CUT=$(date -u -d '14 days ago' +%Y%m%d%H%M%S)
           gh api --paginate "repos/$REPO/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name' \
             | { grep -E '^nightly-[0-9]{14}$' || true; } | sort -r | tail -n +2 \
             | while read -r t; do
-                [ "${t#nightly-}" \< "$CUT" ] || continue
+                [ "$t" != "$KEEP" ] && [ "${t#nightly-}" \< "$CUT" ] || continue
                 echo "deleting $t"
                 gh release delete "$t" -R "$REPO" --cleanup-tag --yes
               done

@@ -106,12 +106,18 @@ val() { local f; for f in "${fields[@]}"; do [ "${f%%=*}" = "$1" ] && { printf '
 case "$url" in
   repos/*/releases)
     n=$(( $(ls -d "$S"/r* 2>/dev/null | wc -l) + 1 )); d="$S/r$n"; mkdir -p "$d/assets"
-    val tag_name > "$d/tag"; val draft > "$d/draft"; val body > "$d/body"; echo "r$n" ;;
+    val tag_name > "$d/tag"; val draft > "$d/draft"; val body > "$d/body"; val target_commitish > "$d/target"; echo "r$n" ;;
   https://uploads.github.com/*) id=${url#*/releases/}; id=${id%%/*}; cp "$input" "$S/$id/assets/${url##*name=}" ;;
   repos/*/releases/*/assets) id=${url#*/releases/}; id=${id%/assets}; for a in "$S/$id"/assets/*; do printf '%s\t%s\n' "$id/assets/${a##*/}" "${a##*/}"; done ;;
   repos/*/releases/assets/*) cat "$S/${url#*/releases/assets/}" ;;
+  repos/*/git/ref/tags/*)
+    # STUB_TAG_STUCK=<tag>: that tag survived the delete and still names an older commit.
+    t=${url##*/}; [ "$t" != "${STUB_TAG_STUCK:-}" ] || { echo 0000000000000000000000000000000000000000; exit 0; }
+    for d in "$S"/r*; do [ "$(cat "$d/tag")" = "$t" ] && [ "$(cat "$d/draft")" = false ] && { cat "$d/target"; exit 0; }; done
+    echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
   repos/*/releases/*)
     d="$S/${url##*/}"; t=$(val tag_name) && echo "$t" > "$d/tag"; v=$(val draft) && echo "$v" > "$d/draft"
+    v=$(val target_commitish) && echo "$v" > "$d/target"
     t=$(cat "$d/tag"); case "$t" in nightly|dev) [ "$(cat "$d/draft")" != false ] || cp "$d/assets/latest.json" "$S/$t.json" ;; esac ;;
   *) echo "gh stand-in: $url" >&2; exit 1 ;;
 esac
@@ -207,6 +213,11 @@ st="$tmp/dev-stuck"; mkdir -p "$st"
 STUB_DEV_404=1 POLYCARP_FEED_RETRY_SECS=0 STUB_STATE="$st" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" \
   bash "$pub/scripts/publish.sh" >/dev/null 2>&1 && bad "publish.sh succeeded though the dev feed never turned up"
 [ ! -f "$st/nightly.json" ] || bad "nightly moved although dev's move failed, so a second run would stop at the gate"
+# sol-sol-F5: a rolling tag the delete left on an older commit fails the publish before nightly moves.
+st="$tmp/tag-stuck"; mkdir -p "$st"
+STUB_TAG_STUCK=dev POLYCARP_FEED_RETRY_SECS=0 STUB_STATE="$st" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" \
+  bash "$pub/scripts/publish.sh" >/dev/null 2>&1 && bad "publish.sh succeeded though the dev tag stayed on an older commit"
+[ ! -f "$st/nightly.json" ] || bad "nightly moved although the dev tag didn't"
 
 # The read-back after the move waits out a download cache that answers 404 for a while, and gives up, saying what it
 # last saw, when the feed never turns up.
