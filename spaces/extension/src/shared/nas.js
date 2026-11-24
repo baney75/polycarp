@@ -31,6 +31,7 @@
     config: "Connect your NAS first: add its WebDAV address in Settings.",
     password: "Polycarp needs your NAS password again. Enter it in Settings.",
     address: "That does not look like a web address. Try one like http://192.168.1.20:5005",
+    insecure: "Use an https address for a NAS outside your home network. Plain http, which sends your password unencrypted, works only for home and private network addresses.",
     unreachable: "Polycarp could not reach your NAS at that address. Check the address, that this computer is on the same network as the NAS, and that WebDAV is turned on in the NAS settings.",
     auth: "Your NAS did not accept that user name or password.",
     forbidden: "That NAS account does not have permission to use this folder.",
@@ -134,10 +135,15 @@
   function normUrl(raw) {
     let u = String(raw || "").trim();
     if (!u) return { url: "", user: "", pass: "" };
-    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = "http://" + u;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) {
+      let host = "";
+      try { host = new URL("http://" + u).hostname; } catch (e) { throw new NASError("address"); }
+      u = (isLocalHost(host) ? "http://" : "https://") + u;
+    }
     let p;
     try { p = new URL(u); } catch (e) { throw new NASError("address"); }
     if (p.protocol !== "http:" && p.protocol !== "https:") throw new NASError("address");
+    if (p.protocol === "http:" && !isLocalHost(p.hostname)) throw new NASError("insecure");
     const user = safeDecode(p.username), pass = safeDecode(p.password);
     p.username = ""; p.password = ""; p.hash = ""; p.search = "";
     return { url: p.href.replace(/\/+$/, ""), user, pass };
