@@ -795,10 +795,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// The shortcuts are taken only once they work, so the keys keep their usual meaning in other
     /// apps until then. Picking a different modifier in setup re-registers them.
+    /// Whether ⌘Space opens the launcher now: set from the hotkey registration itself, which the menu reads.
+    private var cmdSpaceHeld = false
+
     private func registerShortcuts() {
         hotkeys.removeAll()
+        cmdSpaceHeld = false
         if Launcher.onCmdSpace, !SystemShortcuts.spotlightOwnsCmdSpace {
-            hotkeys.register(keyCode: kVK_Space, modifiers: cmdKey) { [weak self] in self?.launcher.toggle() }
+            cmdSpaceHeld = hotkeys.register(keyCode: kVK_Space, modifiers: cmdKey) { [weak self] in self?.launcher.toggle() }
         }
         // ⌃⌘K opens the launcher from any app, with or without Accessibility.
         hotkeys.register(keyCode: kVK_ANSI_K, modifiers: controlKey | cmdKey) { [weak self] in self?.session.onSearch() }
@@ -931,7 +935,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return item("Show All Workspaces", #selector(showViewer))
         case .find:
             let find = item("Find or Install an App…", #selector(showLauncher))
-            if Launcher.onCmdSpace, !SystemShortcuts.spotlightOwnsCmdSpace { find.keyEquivalent = " "; find.keyEquivalentModifierMask = [.command] } else { find.keyEquivalent = "k"; find.keyEquivalentModifierMask = [.control, .command] }
+            // The key Polycarp really holds: ⌘Space only when its registration took, so a Spotlight change since then
+            // never makes the menu show a key that does nothing.
+            if cmdSpaceHeld { find.keyEquivalent = " "; find.keyEquivalentModifierMask = [.command] } else { find.keyEquivalent = "k"; find.keyEquivalentModifierMask = [.control, .command] }
             return find
         case .room(let room, let waiting):
             let it = item(MenuLayout.roomTitle(room, waiting: waiting), #selector(openRoom(_:)))

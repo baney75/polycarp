@@ -188,9 +188,11 @@ final class KeymapTests: XCTestCase {
     /// The menu's "Find or Install an App" shows the launcher key that works: ⌘Space only when it is registered.
     func testTheMenuShowsTheLauncherKeyThatIsRegistered() throws {
         let code = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
-        let register = try XCTUnwrap(Self.matches(#"if (.+?) \{\s*hotkeys\.register\(keyCode: kVK_Space"#, in: code).first?[0])
+        // The menu reads what the registration returned, so a Spotlight change after launch never shows a dead key.
+        XCTAssertTrue(code.contains("cmdSpaceHeld = hotkeys.register(keyCode: kVK_Space"), "the ⌘Space registration records whether it took")
+        XCTAssertTrue(code.contains("hotkeys.removeAll()\n        cmdSpaceHeld = false"), "re-registering starts from not held")
         let find = try XCTUnwrap(Self.matches(#"if (.+?) \{ find\.keyEquivalent = " "; find\.keyEquivalentModifierMask = \[\.command\] \}(.*)"#, in: code).first)
-        XCTAssertEqual(find[0], register, "the menu shows ⌘Space under another condition than the one that registers it")
+        XCTAssertEqual(find[0], "cmdSpaceHeld", "the menu shows ⌘Space only when Polycarp holds it")
         XCTAssertTrue(find[1].contains(#"else { find.keyEquivalent = "k"; find.keyEquivalentModifierMask = [.control, .command] }"#),
                       "without ⌘Space the menu shows ⌃⌘K")
     }
