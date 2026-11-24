@@ -42,18 +42,17 @@ Call one tool per step. Read the answer before the next step.
 | Bring a window forward | `app_focus` | `{"target": "Safari"}` |
 | Go to workspace 3 | `workspace_switch` | `{"workspace": 3}` |
 | Open the launcher | `launcher_open` | `{}` |
-| Read a surface setting | `surfaces_get` | `{"path": "desktop.scene"}` |
-| Change a surface setting | `surfaces_set` | `{"path": "desktop.scene", "value": "olive"}` |
+| Read a surface setting | `surfaces_get` | `{"path": "bar.clockFormat"}` |
+| Change a surface setting | `surfaces_set` | `{"path": "bar.clockFormat", "value": "day-24h"}` |
 | Change the paper (desktop, new tab, idle screen) | `paper_set` | `{"what": "olive"}` |
 | List themes | `theme_list` | `{}` |
 | Which theme is on? | `theme_current` | `{}` |
 | Switch theme | `theme_set` | `{"name": "polycarp", "mode": "dark"}` |
 | Find a file | `files_search` | `{"query": "tax letter"}` |
 
-More surface examples, each a `surfaces_set` call:
-
-- Desktop paper: `{"path": "desktop.scene", "value": "parchment"}`. Choices: `field`, `olive`, `water`, `parchment`, `solid`.
-- Clock: `{"path": "bar.clockFormat", "value": "day-24h"}`.
+The desktop picture, the new tab background and the idle screen background are always `paper_set`, never a
+`surfaces_set`. `what` is a scene (`field`, `olive`, `water`, `parchment`, `solid`), a color as `#RRGGBB`, a picture's
+full path, or an https link to a picture. Add `"on": "desktop"` to change only the desktop.
 
 Not sure of a path or value? Call `surfaces_schema` once, then try again.
 
