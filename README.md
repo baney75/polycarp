@@ -4,6 +4,8 @@
 
 Polycarp is its own OS on a Mac or a Windows PC: workspaces, the dock, the top bar, the launcher and one theme over all of them.
 
+It is a personal tool: Donovan Baney builds it for his own machines. The code and the releases are public.
+
 The Polycarp browser extension ([`spaces/extension`](spaces/extension)) is the reading and accessibility extension that was
 Phont. It works on its own in Helium, Chrome and other Chromium browsers. With Polycarp installed on the same computer it
 also gives the browser Polycarp's new tab and updates with the app. The browser-driving extension, its CLI helper, MCP
@@ -17,7 +19,8 @@ version is on the way; see [the plan](PLAN.md). It grew from [BaneySpaces](https
 Every keyboard shortcut, by group and with where it works, is in [docs/keys.md](docs/keys.md); `polycarp-spaces keys`
 prints the same list with your modifier.
 
-Dictation is not part of Polycarp. [Silas](https://github.com/baney75/silas) is its own app: install and update it on its own.
+Dictation is [Silas](https://github.com/baney75/silas) and screenshots are [Shotate](https://github.com/baney75/shotate).
+Each is its own app: install and update it on its own.
 
 ## Install on a Mac
 
