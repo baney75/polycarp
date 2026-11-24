@@ -93,7 +93,10 @@ refuses an ad-hoc build over an installed copy.
 ## Shared core and Windows (`crates/`, `spec/`, `platforms/windows`)
 
 A change there is done when `cargo test --workspace --locked` passes. A rule that is not in `spec/` does not ship on
-one platform alone. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
+one platform alone. This holds for the Mac app too: a behavior change under `Sources/`, `crates/` or
+`platforms/windows/` ships with a `spec/` edit, a `Spec: R-..` line in the PR body naming existing rule ids, or
+`Spec: none (reason)`; CI's spec gate (`scripts/spec-gate.py` at the repo root) enforces it. The Linux and Omarchy
+desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 `spec/` still lists its key row as a record. Linux desktop work is retired.
 
 ## Regression ledger
