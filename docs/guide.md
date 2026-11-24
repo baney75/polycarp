@@ -123,7 +123,7 @@ With no browser at hand (over SSH, or for an agent that reads images), ask for p
 polycarp theme preview still-water --format png
 ```
 
-It writes one PNG for each product in each mode (the dock and window bar, the dictation pill, the browser panel, the site) and prints their paths. The text in them is a pixel font, so judge the colors, corners and contrast, not the typeface.
+It writes one PNG for each product in each mode (the workspace tiles and window bar, the dictation pill, the browser panel, the site) and prints their paths. The text in them is a pixel font, so judge the colors, corners and contrast, not the typeface.
 
 ### Change one thing
 
@@ -309,12 +309,12 @@ Any other MCP client can start the same command.
 | `theme_create`, `theme_delete` | Start a new theme file, or clean up one you made. A theme the agent didn't make in that session is refused unless it passes `force` |
 | `theme_off`, `theme_on` | Remove the theme files so apps that read them use their own look, or bring the theme back |
 | `theme_history`, `theme_undo`, `theme_reset` | See changes and go back |
-| `surfaces_schema` | Read every surfaces field (top bar, desktop scene, dock tiles, status menu, new tab page, idle screen) with its default and rules. Start here for those |
+| `surfaces_schema` | Read every surfaces field (top bar, desktop scene, status menu, new tab page, idle screen) with its default and rules. Start here for those |
 | `surfaces_get` | See what a surface shows now: the file over the defaults |
 | `surfaces_set` | Change one field or group; it's checked whole and a refusal writes nothing. Every field: [spaces/docs/surfaces.md](../spaces/docs/surfaces.md) |
 | `paper_set` | Change the wallpaper in one call: what lies behind the desktop, the new tab page and the idle screen. A picture path, an https URL to a picture, `#RRGGBB` or a scene; `on` limits it to some places |
 | `paper_get`, `paper_reset` | See each place's paper, or take it off so the theme's wallpaper and each place's old look come back |
-| `style_example` | Read every style sheet selector and property for the top bar and the dock, with what each takes. Start here to restyle one part past the theme |
+| `style_example` | Read every style sheet selector and property for the top bar, with what each takes. Start here to restyle one part past the theme |
 | `style_get`, `style_check` | See the style sheet in use, or list its problems with line and column |
 | `style_set`, `style_unset` | Change or remove one declaration in place, keeping comments; a change that would add an error writes nothing. The grammar: [spaces/docs/style.md](../spaces/docs/style.md) |
 | `style_preset` | Replace the sheet with a whole look in one call (`omarchy`: a solid dark bar, monospace, numbered workspaces with an accent line); the old sheet is kept as the next backup (`style.css.bak`, `.bak.1` and on), never written over |
@@ -391,7 +391,7 @@ A rule has an `id` (1 to 64 of a-z, 0-9 and -; `set` with an id in use replaces 
 
 ## Keys, motion and behavior
 
-Themes cover the look. On a Mac, keys, the dock and the launcher are all in Polycarp's Settings. Every shortcut, by group and with where it works, is in [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md); `polycarp-spaces keys` prints the same list with your modifier. Dictation is the [Silas](/projects/silas/docs/) app's, with its own settings.
+Themes cover the look. On a Mac, keys, the top bar and the launcher are all in Polycarp's Settings. Every shortcut, by group and with where it works, is in [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md); `polycarp-spaces keys` prints the same list with your modifier. Dictation is the [Silas](/projects/silas/docs/) app's, with its own settings.
 
 One file for all of them, with undo and a recovery key, is on the plan. Its contract is [`spaces/spec/config.md`](https://github.com/baney75/polycarp/blob/main/spaces/spec/config.md).
 

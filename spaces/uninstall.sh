@@ -161,7 +161,7 @@ top_level() {
 }
 # dock-record:end
 
-# The Workspace Dock's own Dock settings, if the app wasn't there to put them back. Each goes
+# The macOS Dock settings an older build's Workspace Dock changed, if the app wasn't there to put them back. Each goes
 # back only if it's still at BaneySpaces' value; a setting changed since is the person's.
 if [ -z "$TEST" ] && [ "$(defaults read com.apple.dock autohide-delay 2>/dev/null)" = "1000" ]; then
   step "Bringing the macOS Dock back"

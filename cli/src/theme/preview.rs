@@ -64,7 +64,7 @@ pub(super) fn render(full: &Full, surface: Option<&str>, modes: &[&str]) -> Stri
     )
 }
 
-/// How the dock marks a workspace's status, for the theme's `indicator`.
+/// How a tile marks a workspace's status, for the theme's `indicator`.
 fn indicator_css(kind: &str) -> &'static str {
     match kind {
         "bar" => {

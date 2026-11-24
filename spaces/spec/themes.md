@@ -1,7 +1,7 @@
 # Themes and the dock switch
 
 Every platform (macOS, Windows, Linux and Omarchy) draws its UI from the same themes and
-palettes, and every one lets you turn the dock off. `themes.json` and `palettes.json` are the
+palettes, and every one with a dock lets you turn it off. `themes.json` and `palettes.json` are the
 contract; this file says how to read them.
 
 ## Settings
@@ -12,9 +12,9 @@ contract; this file says how to read them.
 | `appearance.palette` | `auto`, or any name in `palettes.json` | `auto` |
 | `dock.enabled` | `true`, `false` | `true`; `false` on macOS (`default_by_platform`) |
 
-All three are in Settings on every platform and apply live: no restart, and the next frame after
-the change already shows them (budget: 200 ms). The CLI sets them too:
-`baneyspaces set appearance.theme omarchy`, `baneyspaces set dock.enabled false`.
+They are in Settings on every platform (on macOS only the first two) and apply live: no restart, and the next frame
+after the change already shows them (budget: 200 ms). The CLI sets them too:
+`baneyspaces set appearance.theme omarchy`, and off macOS `baneyspaces set dock.enabled false`.
 
 ## Themes
 
@@ -204,8 +204,8 @@ border settings).
 ## The dock switch
 
 `themes.json` keeps `default` a plain bool (`true`) and lists the exceptions under
-`default_by_platform`. On macOS the Workspace Dock replaces the macOS Dock, so it stays opt-in: a new install leaves
-the macOS Dock alone until you turn the Workspace Dock on. Elsewhere the dock starts on.
+`default_by_platform`. The Mac app's Workspace Dock was removed on 2026-11-23: there `dock.enabled` is refused with
+where its features went. Elsewhere the dock starts on.
 
 With `dock.enabled` false:
 

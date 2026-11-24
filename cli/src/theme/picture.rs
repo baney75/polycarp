@@ -472,7 +472,7 @@ fn header(cv: &mut Canvas, l: &Look, title: &str, surface: &str) {
 }
 
 fn spaces(cv: &mut Canvas, l: &Look) {
-    // The dock: nine tiles on a bar, the theme's indicator on each.
+    // The workspaces: nine tiles on a strip, the theme's indicator on each.
     let tile = 52.0;
     let gap = l.pad(8.0);
     let pad = l.pad(10.0);
@@ -602,7 +602,7 @@ fn spaces(cv: &mut Canvas, l: &Look) {
     cv.text(
         sx0 + 18.0,
         mid - 10.0,
-        "Show the dock",
+        "Show the top bar",
         l.s,
         l.c("foreground"),
     );
@@ -615,7 +615,7 @@ fn spaces(cv: &mut Canvas, l: &Look) {
     );
     cv.circle(kx + 35.0, ky + 13.0, 9.0, l.c("on_accent"));
     let mid2 = sy0 + 2.0 * (sy1 - sy0) / 3.0;
-    cv.text(sx0 + 18.0, mid2 - 10.0, "Dock size", l.s, l.c("foreground"));
+    cv.text(sx0 + 18.0, mid2 - 10.0, "Bar size", l.s, l.c("foreground"));
     let label = "Medium";
     let w = text_width(label, l.s) + 24.0;
     cv.rect(
@@ -835,7 +835,7 @@ fn site(cv: &mut Canvas, l: &Look) {
     cv.text(24.0, y, "One theme for every app", l.s + 1, l.c("strong"));
     y += (GLYPH_H * (l.s + 1)) as f32 + l.pad(14.0);
     for t in [
-        "Your colors follow you from the dock",
+        "Your colors follow you from the bar",
         "to dictation and the browser.",
     ] {
         cv.text(24.0, y, t, l.s, l.c("foreground"));
@@ -980,7 +980,7 @@ mod tests {
         assert_eq!(blocks.base.shape.radius_large, 0);
         let sq = render(&blocks.base, "B", "spaces", "light");
         let rd = render(&polycarp.base, "P", "spaces", "light");
-        // The dock's top left corner: the bar's color in a square theme, the page in a round one.
+        // The strip's top left corner: the bar's color in a square theme, the page in a round one.
         let tile = 52.0;
         let bar_w = |d: f32| 9.0 * tile + 8.0 * (8.0 * d).round() + 2.0 * (10.0 * d).round();
         let x0 = ((WIDTH as f32 - bar_w(1.0)) / 2.0).round() as usize;
