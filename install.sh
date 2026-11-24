@@ -204,7 +204,15 @@ main() {
     say "  ${dim}The theme wasn't set; Polycarp uses its own look. Try: polycarp theme set polycarp${reset}"
   fi
 
-  # Companions: what --with or POLYCARP_WITH named, else one question at a terminal. Each runs its own installer.
+  # 5. Open it. (Test mode never opens anything.)
+  if [ -z "$test_mode" ]; then
+    local dest
+    for dest in "$HOME/Applications/Polycarp.app" "/Applications/Polycarp.app"; do [ -d "$dest" ] && break; done
+    step "Opening Polycarp" open "$dest"
+  fi
+
+  # Companions, after Polycarp is open: what --with or POLYCARP_WITH named, else one question at a terminal. Each
+  # runs its own installer.
   local picked
   if [ -z "$asked_with" ] && [ -z "$test_mode" ] && [ -t 1 ] && { : </dev/tty; } 2>/dev/null; then
     WITH=$(ask_companions </dev/tty)
@@ -214,22 +222,17 @@ main() {
     local c
     for c in $picked; do
       if [ -n "$test_mode" ]; then say "  ${dim}Would install $(companion_name "$c"): $(companion_command "$c")${reset}"; continue; fi
-      if (step_soft "Installing $(companion_name "$c")" bash -c "$(companion_command "$c")"); then
-        if [ "$c" = local-studio ]; then
-          step_soft "Adding Polycarp to Local Studio" "$installed/Contents/Resources/bin/polycarp" install --local-studio || true
+      if (step_soft "Installing $(companion_name "$c")" companion_install "$c"); then
+        if [ "$c" = local-studio ] && ! (PATH="$HOME/.local/bin:$HOME/.local-studio/bin:/opt/homebrew/bin:$PATH" \
+            step_soft "Adding Polycarp to Local Studio" "$installed/Contents/Resources/bin/polycarp" install --local-studio); then
+          say "  ${dim}Local Studio is installed, but Polycarp's plugin isn't in it yet. Try: polycarp install --local-studio (log: $LOG)${reset}"
         fi
       else
-        say "  ${dim}$(companion_name "$c") didn't install; Polycarp is fine. Try it alone: $(companion_command "$c")${reset}"
+        say "  ${dim}$(companion_name "$c") didn't install; Polycarp is fine. Try it alone: $(companion_command "$c") (log: $LOG)${reset}"
       fi
     done
   fi
 
-  # 5. Open it, last. (Test mode never opens anything.)
-  if [ -z "$test_mode" ]; then
-    local dest
-    for dest in "$HOME/Applications/Polycarp.app" "/Applications/Polycarp.app"; do [ -d "$dest" ] && break; done
-    step "Opening Polycarp" open "$dest"
-  fi
 
   say ""
   # The welcome window asks for one switch on a first run, or when macOS has forgotten the permission.
@@ -315,14 +318,20 @@ companion_command() {
     local-studio) echo 'curl -fsSL https://raw.githubusercontent.com/baney75/local-studio/main/scripts/install.sh | bash -s -- --channel nightly' ;;
   esac
 }
+# companion_install <companion>: download its installer and run it. pipefail, so a download that fails (a 404, no
+# network) fails here instead of feeding an empty script to a shell that then reports success.
+companion_install() {
+  bash -o pipefail -c "$(companion_command "$1")" </dev/null
+}
 # companion_list "<list>": the companions a comma- or space-separated list names, each once, in COMPANIONS order.
 # Accepts names (any case, "local studio", "localstudio", "ls") and the question's numbers 1 to 4, and "all". Prints
 # one line naming anything it doesn't know, on stderr.
 companion_list() {
-  local raw words w c out="" n
+  local raw w c out="" n
   raw=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's/local[ _]studio/local-studio/g; s/localstudio/local-studio/g')
-  words=$(printf '%s' "$raw" | tr ',' ' ')
-  for w in $words; do
+  local -a words=()
+  read -r -a words <<<"$(printf '%s' "$raw" | tr ',' ' ')" || true # read splits without expanding * or ?
+  for w in ${words[@]+"${words[@]}"}; do
     case "$w" in all) out="$COMPANIONS"; continue ;; ls) w=local-studio ;; esac
     if [[ "$w" =~ ^[1-4]$ ]]; then n=0; for c in $COMPANIONS; do n=$((n + 1)); if [ "$n" = "$w" ]; then w=$c; fi; done; fi
     if names_part "$w" "${COMPANIONS// /,}"; then out="$out $w"
@@ -340,7 +349,7 @@ ask_companions() {
     for c in $COMPANIONS; do n=$((n + 1)); printf '    %s  %-13s %s\n' "$n" "$(companion_name "$c")" "$(companion_blurb "$c")"; done
     printf '  Numbers to add, like 1 3 (Return for none): '
   } >&2
-  read -r answer || answer=""
+  read -r -t 120 answer || answer="" # no answer in two minutes means none
   printf '%s' "$answer"
 }
 
