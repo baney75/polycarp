@@ -306,12 +306,12 @@ Any other MCP client can start the same command.
 | `theme_create`, `theme_delete` | Start a new theme file, or clean up one you made. A theme the agent didn't make in that session is refused unless it passes `force` |
 | `theme_off`, `theme_on` | Remove the theme files so apps that read them use their own look, or bring the theme back |
 | `theme_history`, `theme_undo`, `theme_reset` | See changes and go back |
-| `surfaces_schema` | Read every surfaces field (top bar, desktop scene, dock tiles, status menu, new tab page, idle screen) with its default and rules. Start here for those |
+| `surfaces_schema` | Read every surfaces field (top bar, desktop scene, status menu, new tab page, idle screen) with its default and rules. Start here for those |
 | `surfaces_get` | See what a surface shows now: the file over the defaults |
 | `surfaces_set` | Change one field or group; it's checked whole and a refusal writes nothing. Every field: [spaces/docs/surfaces.md](../spaces/docs/surfaces.md) |
 | `paper_set` | Change the wallpaper in one call: what lies behind the desktop, the new tab page and the idle screen. A picture path, an https URL to a picture, `#RRGGBB` or a scene; `on` limits it to some places |
 | `paper_get`, `paper_reset` | See each place's paper, or take it off so the theme's wallpaper and each place's old look come back |
-| `style_example` | Read every style sheet selector and property for the top bar and the dock, with what each takes. Start here to restyle one part past the theme |
+| `style_example` | Read every style sheet selector and property for the top bar, with what each takes. Start here to restyle one part past the theme |
 | `style_get`, `style_check` | See the style sheet in use, or list its problems with line and column |
 | `style_set`, `style_unset` | Change or remove one declaration in place, keeping comments; a change that would add an error writes nothing. The grammar: [spaces/docs/style.md](../spaces/docs/style.md) |
 | `style_preset` | Replace the sheet with a whole look in one call (`omarchy`: a solid dark bar, monospace, numbered workspaces with an accent line); the old sheet is kept as the next backup (`style.css.bak`, `.bak.1` and on), never written over |

@@ -8,9 +8,9 @@ description: Use when the user wants Polycarp (Spaces, Voice, Browser or the web
 One theme file drives every Polycarp product. Change it with the `polycarp theme` command, or with the
 `theme_*` tools if `polycarp mcp` is connected. Both give the same JSON result (`--json` on the command).
 
-What a surface shows (the top bar's modules, the desktop scene and verse, dock tiles, the status menu, the new tab
+What a surface shows (the top bar's modules, the desktop scene and verse, the status menu, the new tab
 page, the idle screen) is not the theme: it is `polycarp-spaces surfaces` (MCP `surfaces_*`, spaces/docs/surfaces.md).
-To restyle one part of the bar or dock past the theme (a gold clock, square tiles), use `<config>/style.css`: run
+To restyle one part of the bar past the theme (a gold clock, square workspace numbers), use `<config>/style.css`: run
 `polycarp-spaces style example`, `style set '<selector>' <property> <value>` per change, then `style check`; `style preset
 omarchy` is the Omarchy look in one command, `style restore` undoes it (MCP `style_*`; spaces/docs/style.md).
 
