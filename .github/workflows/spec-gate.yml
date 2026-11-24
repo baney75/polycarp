@@ -2,8 +2,12 @@ name: Spec gate
 # A behavior change under spaces/Sources, spaces/crates or spaces/platforms/windows ships with a spec edit,
 # a `Spec: R-..` line naming existing rule ids, or `Spec: none (reason)` (rules S-G1 to S-G7 in
 # scripts/spec-gate.py). Editing the PR body reruns it. It never runs on a push to main.
+#
+# pull_request_target runs this file and scripts/spec-gate.py from main, never the PR's copies, so a PR can't weaken
+# the gate that judges it. The PR head is fetched as git data only: the gate reads it with git diff, ls-tree and show,
+# and nothing from the PR runs. No secrets, read-only token. A change to the gate itself takes effect after it merges.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
@@ -14,8 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Fetch the PR head as data
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: git fetch --no-tags "https://github.com/$REPO" "+refs/pull/$PR/head:refs/remotes/pr/head"
       - name: The gate's own tests
         run: bash scripts/tests/spec-gate-test.sh
       - name: Spec gate
