@@ -187,4 +187,20 @@ final class OneSearchTests: XCTestCase {
         XCTAssertEqual(OneSearch.toOpen(OneSearch.results("gmail", items: items, engine: g, bangs: bangs))?.id, "tab:h:1:1")
         XCTAssertNil(OneSearch.toOpen([]))
     }
+
+    // "x.com" in the launcher opens x.com in the main browser, ahead of apps and files (Donovan, 2026-11-24).
+    func testATypedWebsiteOpensFirstAndAFileNameDoesNot() {
+        for typed in ["x.com", "X.com", "youtube.com", "claude.ai", "news.ycombinator.com", "www.example.md", "x.com/home",
+                      "localhost:3000", "192.168.1.20", "https://notes.md", "github.io"] {
+            XCTAssertEqual(OneSearch.typedSite(typed)?.sure, true, typed)
+        }
+        XCTAssertEqual(OneSearch.typedSite("x.com")?.url.absoluteString, "https://x.com")
+        XCTAssertEqual(OneSearch.typedSite("  x.com/home ")?.url.absoluteString, "https://x.com/home")
+        for typed in ["notes.md", "Xcode.app", "install.sh", "report.zip", "main.rs", "build.py"] {
+            XCTAssertEqual(OneSearch.typedSite(typed)?.sure, false, typed)
+        }
+        for typed in ["x", "polycarp", "two words.com", "ftp://x.com", "", "x.c"] {
+            XCTAssertNil(OneSearch.typedSite(typed), typed)
+        }
+    }
 }

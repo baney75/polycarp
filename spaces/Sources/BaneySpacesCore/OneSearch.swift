@@ -46,6 +46,29 @@ public enum OneSearch {
         return nil
     }
 
+    /// A web address the launcher should open, and whether it can only be one. Sure: a scheme, `www.`, a path or port,
+    /// localhost or an IP, or a web ending like `.com`, so "x.com" opens x.com before any app or file. Not sure: an
+    /// address whose ending is also a file type ("notes.md", "Xcode.app"), which keeps apps and files above it.
+    public static func typedSite(_ typed: String) -> (url: URL, sure: Bool)? {
+        let t = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = address(t) else { return nil }
+        if t.range(of: "://") != nil || url.scheme == "http" { return (url, true) }
+        let host = (url.host ?? "").lowercased()
+        let rest = t.dropFirst(min(t.count, host.count))
+        if host.hasPrefix("www.") || rest.hasPrefix("/") || rest.hasPrefix(":") { return (url, true) }
+        let ending = host.split(separator: ".").last.map(String.init) ?? ""
+        return (url, webEndings.contains(ending))
+    }
+
+    /// Endings that are almost always a website when typed bare. Endings that are also common file types (md, sh, py,
+    /// rs, app, zip, mov, pdf...) are left out on purpose.
+    static let webEndings: Set<String> = [
+        "com", "org", "net", "edu", "gov", "mil", "int", "io", "co", "ai", "dev", "me", "tv", "gg", "fm", "ly", "to", "so",
+        "xyz", "info", "biz", "news", "blog", "site", "page", "tech", "cloud", "online", "store", "shop", "today", "world",
+        "us", "uk", "ca", "au", "nz", "ie", "de", "fr", "es", "it", "nl", "be", "se", "no", "fi", "dk", "ch", "at", "pl",
+        "eu", "jp", "kr", "cn", "tw", "hk", "sg", "in", "br", "mx", "ar", "za", "ru", "ua", "il", "ae",
+    ]
+
     /// One ranked answer. Sessions carry `id`; everything else carries `url`.
     public struct Result: Equatable, Sendable, Encodable {
         /// `tab`, `terminal`, `window` or `device` for a session row; `bang` (a completion), `search` or `open`.

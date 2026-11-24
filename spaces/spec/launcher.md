@@ -92,8 +92,15 @@ with an empty query the launcher shows its own fixed list.
 
 ### R-L11 Top Hit
 With something typed, the launcher's first row is the best entry by R-L9 across every kind,
-under the section "Top Hit", and Return runs it. The other sections follow in their usual order, each
+under the section "Top Hit", and Return runs it, unless R-L14 puts a typed website first. The other sections follow in their usual order, each
 ranked by R-L9 and without the Top Hit row.
+
+### R-L14 A typed website
+A query that is one web address (a host with a dot and a web ending, such as `x.com`, `claude.ai` or
+`x.com/home`, with no spaces) gets one row, "Open <query>", that opens it in a new tab of the main
+(default) browser and names that browser. When the ending is only a web ending, the row comes first,
+ahead of the Top Hit. When the ending is also a file type (`notes.md`, `Xcode.app`, `install.sh`), apps
+and files come first and the row sits just above the web searches. Search the Web offers the row too.
 
 ### R-L12 From memory, every keystroke
 Apps, windows, commands, workspaces and menus are found from names prepared ahead (folded, bonuses
