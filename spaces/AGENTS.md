@@ -80,9 +80,9 @@ The crash itself is in `~/Library/Logs/DiagnosticReports/BaneySpaces-*.ips`. The
 the build and `~` paths, never window titles or the user name; keep it that way.
 
 
-## Stable releases
+## Releases
 
-Do not mark a GitHub release as Latest / stable until `scripts/soak-check.sh` prints `SOAK PASSED` on rectory1 (or another Mac with the build installed and running) and Sol APPROVE includes the soak receipt path. `--ci` mode is for the script self-check only; it is not a live soak. Never unpublish or retag an already-published stable (including 0.3.0). The updater reads one feed, the `nightly` release's `latest.json` (`Updates.feedURL`); a build whose `PolycarpChannel` is missing or `local` is a local build and skips the version check (`BuildInfo.isRelease`).
+Every release is built from main by `release.yml` (or `scripts/release.sh` on the owner's Mac) and published by `scripts/publish.sh`, which checks every draft before it moves a release (docs/releases.md). No release is ever marked Latest. The updater reads one feed, the `nightly` release's `latest.json` (`Updates.feedURL`); a build whose `PolycarpChannel` is missing or `local` is a local build and skips the version check (`BuildInfo.isRelease`).
 
 Updates must never reset macOS permissions (TCC). Never distribute an ad-hoc build (`codesign --sign -`,
 `BANEYSPACES_ADHOC=1`) as an update or attach one to any release, nightly included: those builds are for

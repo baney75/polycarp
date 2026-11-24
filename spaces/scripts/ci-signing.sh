@@ -1,5 +1,5 @@
 #!/bin/bash
-# CI only (channel-build.yml, stable-build.yml): makes the release signing identity from the workflow's secrets
+# CI only (release.yml): makes the release signing identity from the workflow's secrets
 # usable on the runner (the owner's keychain unlocked in place, or a .p12 imported into a throwaway keychain), so
 # bundle.sh signs with it, and writes POLYCARP_SIGNING_IDENTITY and
 # POLYCARP_SIGNING_KEYCHAIN to $GITHUB_ENV. Exit 3, having changed nothing, when the secrets are not set: then the

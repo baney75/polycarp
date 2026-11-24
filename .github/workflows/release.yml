@@ -136,6 +136,7 @@ jobs:
         if: steps.sign.outputs.signed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+        # --channel nightly stays: an older commit's release.sh builds a stable release without it (release.sh).
         run: scripts/release.sh --channel nightly
   prune:
     needs: [gate, build]

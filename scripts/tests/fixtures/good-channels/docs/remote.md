@@ -1,3 +1,0 @@
-# remote
-
-`min_protocol`

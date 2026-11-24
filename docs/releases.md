@@ -1,92 +1,75 @@
 # Releases
 
-Polycarp ships on three channels, **stable**, **nightly** and **dev**, under the one scheme every Local Studio
-product follows: [docs/channels.md in baney75/local-studio](https://github.com/baney75/local-studio/blob/main/docs/channels.md).
-Where this file and that one disagree, that one wins. This file says how Polycarp does it.
+Polycarp has one update stream. Every commit to `main` whose CI passes is built, signed and published to the
+rolling `nightly` release, and every installed copy updates from it. Polycarp no longer follows the stable, nightly
+and dev channel scheme of [local-studio](https://github.com/baney75/local-studio/blob/main/docs/channels.md): there is
+no stable branch, no promotion and no channel choice.
 
-## Channels
+## The release
 
-| Channel | Built from | Tag | Feed (`latest.json`) |
-| --- | --- | --- | --- |
-| stable | `stable` branch | `vX.Y.Z`, immutable | `https://github.com/baney75/polycarp/releases/latest/download/latest.json` |
-| nightly | `main` | rolling `nightly`, plus `nightly-YYYYMMDDHHMMSS` kept 14 days | `https://github.com/baney75/polycarp/releases/download/nightly/latest.json` |
-| dev | `main` | rolling `dev` | `https://github.com/baney75/polycarp/releases/download/dev/latest.json` |
+| Release | Holds | Kept |
+| --- | --- | --- |
+| `nightly` | the newest build, rolling | always |
+| `nightly-YYYYMMDDHHMMSS` | one build, immutable | 14 days, and always the newest and the one the feed names |
+| `dev` | the newest build again, with a dev-shaped feed (see "One stream") | until the mirror is retired |
 
-Each release carries `Polycarp.zip`, `Polycarp.zip.sha256`, `Polycarp.dmg` and `latest.json`. Nightly and dev are
-Apple silicon; stable is universal.
+Each release carries `Polycarp.zip`, `Polycarp.zip.sha256`, `Polycarp.dmg` and `latest.json`, built for Apple
+silicon. The feed is `https://github.com/baney75/polycarp/releases/download/nightly/latest.json` and the download
+link on dbaney.com is `nightly/Polycarp.dmg`.
 
-Dev is for testing. Settings > Updates lists it only on a dev build (`PolycarpChannel` is `dev`) or a copy whose
-saved choice is already dev, and the app refuses `update --channel dev` anywhere else (`UpdateChannel.offered`). A local
-build counts as stable there, as it does for the updater.
-
-Install mode is **replace**: one app (`com.baney.polycarp`) for every channel, signed by the one identity in
-`spaces/scripts/release-requirement.txt`, so moving between channels never asks for a macOS permission again.
-Because every channel shares that identity, the feeds keep the channels apart, not the keys.
+Install mode is **replace**: one app (`com.baney.polycarp`), signed by the one identity in
+`spaces/scripts/release-requirement.txt`, so an update never asks for a macOS permission again.
 
 ## Versions
 
-The base version is `spaces/VERSION`. `spaces/scripts/channel-version.sh` prints the string a build carries:
+The base version is `spaces/VERSION`. `spaces/scripts/build-version.sh` prints the string a build carries:
 
-| Channel | Version | Example |
+| Build | Version | Example |
 | --- | --- | --- |
-| stable | `X.Y.Z` | `0.4.0` |
-| nightly | `X.Y.Z-nightly.YYYYMMDDHHMMSS+<sha7>` | `0.4.0-nightly.20261118070000+1a2b3c4` |
-| dev | `X.Y.Z-dev.YYYYMMDDHHMMSS+<sha7>` | `0.4.0-dev.20261117131042+9f8e7d6` |
+| release | `X.Y.Z-nightly.YYYYMMDDHHMMSS+<sha7>` | `0.4.0-nightly.20261118070000+1a2b3c4` |
 | local build | `X.Y.Z-dev.0+local.<sha7>` | `0.4.0-dev.0+local.9f8e7d6` |
 
 `spaces/scripts/bundle.sh` stamps it into the app: `PolycarpVersion` (the full string), `PolycarpChannel`
-(`stable`, `nightly`, `dev`, or `local` when `POLYCARP_CHANNEL` is unset), `CFBundleShortVersionString` (`X.Y.Z`)
-and `CFBundleVersion` (the build time, `YYYYMMDD.HHMMSS`). The updater compares versions within its own channel.
-After stable `X.Y.Z` ships, `main` bumps to `X.(Y+1).0`; patches belong to hotfixes on `stable`.
+(`nightly` for a release build, `local` otherwise), `CFBundleShortVersionString` (`X.Y.Z`) and `CFBundleVersion`
+(the build time, `YYYYMMDD.HHMMSS`). A release build sets `POLYCARP_RELEASE=1`; nothing else does, so a local
+build never passes for a release one.
 
 ## The feed
 
-`spaces/scripts/write-feed.sh` writes `latest.json`: Tauri v2's updater manifest plus `product`, `channel`,
-`commit`, `protocol` and `sha256`. Polycarp's Mac app does not check Tauri's minisign `signature` (it is empty).
-An update is trusted by the code signature (`requirement`, the release requirement) and the zip's `sha256`, both
-checked by the installer before anything is replaced. A feed's `url` names a release whose files never change: `vX.Y.Z` for stable and
-`nightly-YYYYMMDDHHMMSS` for nightly, so any copy of a nightly feed stays good for the 14 days that release is
-kept. Dev has only its rolling release, so a dev feed is good until the next dev build and can't be rolled back to. `verify-release.sh` fails a release whose feed doesn't
-name its zip's checksum, version and commit.
+`spaces/scripts/write-feed.sh` writes `latest.json`: Tauri v2's updater manifest plus `product`, `channel`
+(always `nightly`), `commit`, `protocol` and `sha256`. Polycarp's Mac app does not check Tauri's minisign
+`signature` (it is empty). An update is trusted by the code signature (`requirement`, the release requirement)
+and the zip's `sha256`, both checked by the installer before anything is replaced. The feed's `url` names the
+immutable `nightly-YYYYMMDDHHMMSS` release, so any copy of a feed stays good for the 14 days that release is kept.
+`verify-release.sh` fails a release whose feed doesn't name its zip's checksum, version and commit.
 
 ## Publishing
 
 Every release is signed by the one release identity. Without it nothing ships: an ad-hoc build never does.
 
-| Workflow | Starts on | Does |
-| --- | --- | --- |
-| `release.yml` | CI passing on a push to main, or by hand | Builds that commit when it is ahead of the one `nightly` offers, and publishes it (see "One stream" below). A run that is publishing is never cancelled; a newer one waits. Waits while an open issue is labeled both `regression` and `blocks-nightly`. Deletes `nightly-<time>` prereleases over 14 days old, always keeping the newest. |
-| `promote.yml` | By hand only, with `nightly=nightly-<time>` or `hotfix=true` | Checks the nightly is 72 hours old, stable is behind it and no `regression` issue is open (a hotfix: VERSION is the last tag's patch + 1). Fast-forwards `stable`, tags `vX.Y.Z` on it, makes the draft release, then calls `stable-build.yml`. |
-| `stable-build.yml` | `promote.yml` only | Builds the universal app at the tag and uploads it into the draft. It never publishes. |
+`release.yml` starts when CI passes on a push to main, or by hand. It builds that commit when it is ahead of the
+one `nightly` offers and publishes it (see "One stream" below). A run that is publishing is never cancelled; a
+newer one waits. It waits while an open issue is labeled both `regression` and `blocks-nightly`, and it deletes
+`nightly-<time>` prereleases over 14 days old.
 
-Nightly and dev are built, signed and published on GitHub's hosted macOS runners (`macos-15`, free for this
-public repository). No workflow here uses a self-hosted runner. `release.yml` and `stable-build.yml` run
-the same scripts the Mac runs: `spaces/scripts/release.sh` (`--channel nightly`, or the stable path). They
-sign only when the repository has the secrets
-`POLYCARP_SIGNING_P12` (base64 of the owner's signing keychain, or of a .p12, holding the key
-`release-requirement.txt` pins) and `POLYCARP_SIGNING_P12_PASSWORD` (its password: letters, digits, dot, dash or underscore), which
-`spaces/scripts/ci-signing.sh` unlocks, or imports into a throwaway keychain. Without them the run warns, builds nothing and
-publishes nothing. The owner sets both from the Mac that holds the key with one command,
-`spaces/scripts/set-ci-signing.sh`: it checks the signing keychain holds only the pinned key, sets the keychain file
-and its password through `gh` and prints neither. It exports nothing, since the key trusts only `/usr/bin/codesign`
-and macOS would ask on screen first. The owner's Mac can still publish by hand:
+Builds run on GitHub's hosted macOS runners (`macos-15`, free for this public repository), never a self-hosted
+one, with the same script the Mac runs: `spaces/scripts/release.sh`. They sign only when the repository has the
+secrets `POLYCARP_SIGNING_P12` (base64 of the owner's signing keychain, or of a .p12, holding the key
+`release-requirement.txt` pins) and `POLYCARP_SIGNING_P12_PASSWORD` (its password: letters, digits and `.-_`),
+which `spaces/scripts/ci-signing.sh` opens, or imports into a throwaway keychain. Without them the
+run warns, builds nothing and publishes nothing. The owner sets both from the Mac that holds the key with one
+command, `spaces/scripts/set-ci-signing.sh`: it checks the signing keychain holds only the pinned key, sets the
+keychain file and its password through `gh` and prints neither. It exports nothing, since the key trusts only
+`/usr/bin/codesign` and macOS would ask on screen first.
 
-- Nightly: `spaces/scripts/release.sh --channel nightly` on a clean checkout of `main`. It builds, signs,
-  packages and verifies, then `publish.sh` uploads into a draft, downloads it back, checks it, and only then
-  moves the rolling tags. It refuses a build that isn't newer than the nightly feed's.
-- Stable: after `promote.yml`, `git checkout vX.Y.Z && spaces/scripts/release.sh` uploads into the draft.
+The owner's Mac can still publish by hand: `spaces/scripts/release.sh` on a clean checkout of a commit on
+`origin/main` builds, signs, packages and verifies, then `publish.sh` uploads into drafts, downloads them back,
+checks them, and only then moves the rolling tags. `--dry-run` skips the main check and the publish, so it
+runs on a branch.
 
-Stable is published only from the Mac: after `scripts/soak-check.sh` prints `SOAK PASSED` on rectory1 for that
-build, `spaces/scripts/release.sh --soak <receipt>` checks the uploaded files again and publishes the draft as
-Latest, which is the stable feed. A `--ci` receipt never counts (spaces/AGENTS.md, "Stable releases").
-
-`promote.yml` runs in the `stable` environment. Pushing to `stable` needs a token its ruleset lets through: the
-optional secret `POLYCARP_RELEASE_TOKEN`, else the workflow's own token. The `stable` branch is made once by hand;
-`promote.yml` never makes it. After stable `X.Y.Z` ships, a pull request moves `main` to `X.(Y+1).0`.
-
-No workflow starts on a pushed tag. `scripts/check-channels.sh` (copied from local-studio) checks that and the
-version order on every pull request (`.github/workflows/channels.yml`), with `spaces/scripts/channels-test.sh`,
-which also checks that CI signing fails closed and that no workflow publishes a stable release.
+No workflow starts on a pushed tag. `spaces/scripts/channels-test.sh` checks that on every pull request
+(`.github/workflows/channels.yml`), along with the version order, that CI signing fails closed, and the releases
+the publisher leaves.
 
 ## One stream
 
@@ -122,5 +105,3 @@ nightly's notes, so such a copy is offered the newest nightly, installs it with 
 (the ready-made `Polycarp.zip` when it is signed with the release identity, else a build on the Mac). The build it lands on follows `latest.json` once
 it has the updater that reads it. `channels-test.sh` runs the publisher against a stand-in for GitHub and checks
 the releases it leaves the way those updaters read them.
-
-The settings, secrets and publishes that turn the channels on, in order, are in [release-gate.md](release-gate.md).

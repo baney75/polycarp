@@ -50,7 +50,7 @@ NOTES="Polycarp $VERSION, built from $COMMIT."
 # The marker lets a build from before the feeds (0.3.0 and older; it reads GitHub's release list) see this one.
 BODY="$NOTES
 <!-- baneyspaces commit=$COMMIT date=$DATE -->"
-scripts/write-feed.sh nightly "$VERSION" "$COMMIT" "build/$PRODUCT_NAME.zip" build/latest.json "$NOTES"
+scripts/write-feed.sh "$VERSION" "$COMMIT" "build/$PRODUCT_NAME.zip" build/latest.json "$NOTES"
 # The dev feed: the same build, said the way a copy that reads the dev feed takes it. Such a copy wants channel
 # "dev" and a version X.Y.Z-dev.<time>+<sha7> newer than its own, and installs from the dev release by its tag.
 DEV_VERSION=${VERSION/-nightly./-dev.}

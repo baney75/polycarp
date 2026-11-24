@@ -84,12 +84,13 @@ swift scripts/make-icon.swift --menu-bar "$APP/Contents/Resources" ../brand
 
 # The commit and its date tell the updater exactly which build this is.
 COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
-# The channel and its version string (docs/releases.md): POLYCARP_CHANNEL is stable, nightly or dev for a release
-# and unset for a build made here, which is "local". CFBundleShortVersionString stays X.Y.Z, as macOS wants.
-CHANNEL="${POLYCARP_CHANNEL:-local}"
+# The version string (docs/releases.md): POLYCARP_RELEASE=1 (release.sh) is a release build, anything else a build
+# made here. PolycarpChannel tells the updater which: "nightly" for a release, "local" for a build made here.
+# CFBundleShortVersionString stays X.Y.Z, as macOS wants.
+if [ "${POLYCARP_RELEASE:-}" = 1 ]; then KIND=release CHANNEL=nightly; else KIND=local CHANNEL=local; fi
 export POLYCARP_BUILD_TIME="${POLYCARP_BUILD_TIME:-$(date -u +%Y%m%d%H%M%S)}"
-if [ "$COMMIT" = unknown ]; then FULL_VERSION="$VERSION-dev.0+local.unknown"; else FULL_VERSION=$(POLYCARP_COMMIT=$COMMIT scripts/channel-version.sh "$CHANNEL"); fi
-BUILD_NUMBER=$(scripts/channel-version.sh --bundle-version)
+if [ "$COMMIT" = unknown ]; then FULL_VERSION="$VERSION-dev.0+local.unknown"; else FULL_VERSION=$(POLYCARP_COMMIT=$COMMIT scripts/build-version.sh "$KIND"); fi
+BUILD_NUMBER=$(scripts/build-version.sh --bundle-version)
 COMMIT_DATE=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
 # 1 when tracked files had changes, so the commit does not say everything (`polycarp version` shows it).
 DIRTY=0
