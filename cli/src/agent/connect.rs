@@ -4,14 +4,13 @@
 //!   port, no token, the owner's own process.
 //! - grokbot gets the stdio entry for `~/.grok/config.toml` (the form magnus-singularity's client adapter writes,
 //!   checked with `grok mcp doctor`), or, with --tailnet, the URL form for a Grok Bot on another of the owner's devices.
-//! - claude.ai, chatgpt and grok.com run in their makers' clouds, so they need a public tunnel and OAuth. On stable
-//!   that is the waitlisted hosted tunnel; this says so and offers what works now.
+//! - claude.ai, chatgpt and grok.com run in their makers' clouds, so they need a public tunnel (the person's own) and
+//!   OAuth.
 //!
 //! Nothing here prints a token: where one is needed, it says which command makes it.
 
-use super::policy::{self, Route};
+use super::policy::Route;
 use super::store::{self, Tunnel};
-use crate::channel::Channel;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -27,7 +26,6 @@ pub const CLIENTS: [&str; 6] = [
 pub struct Ctx<'a> {
     pub exe: PathBuf,
     pub dir: &'a Path,
-    pub channel: Channel,
     pub port: u16,
     pub home: Option<PathBuf>,
     /// This device's MagicDNS name, for --tailnet.
@@ -120,28 +118,15 @@ pub fn add_entry(path: &Path, entry: &str) -> Result<&'static str, String> {
 
 /// The public MCP URL for a web assistant, or why there is none yet.
 pub fn public_url(c: &Ctx) -> Result<String, String> {
-    let invited = policy::load_invite(c.dir).is_some();
-    let t = Tunnel::load(c.dir);
-    if c.channel == Channel::Stable {
-        // Stable never uses an own tunnel; the hosted one isn't open in this build.
-        return Err(if invited {
-            "Your hosted tunnel invite is stored, but Polycarp's hosted tunnel isn't open yet. Until it is, use local \
-MCP (`polycarp agent connect claude-code` or `codex`) or your tailnet (`polycarp agent connect grokbot --tailnet`)."
-                .to_string()
-        } else {
-            policy::waitlist_message()
-        });
-    }
-    let Some(t) = t else {
-        return Err(format!(
-            "A web assistant runs in its maker's cloud, so it needs a public address for this Mac. On {} you bring \
-your own: `polycarp agent tunnel cloudflare --hostname <name on your Cloudflare domain>` or `polycarp agent tunnel \
-tailscale --public`. Then run this again.",
-            c.channel.name()
-        ));
+    let Some(t) = Tunnel::load(c.dir) else {
+        return Err(
+            "A web assistant runs in its maker's cloud, so it needs a public address for this Mac. You bring your \
+own: `polycarp agent tunnel cloudflare --hostname <name on your Cloudflare domain>` or `polycarp agent tunnel \
+tailscale --public`. Then run this again."
+                .into(),
+        );
     };
     let route = t.route().ok_or("tunnel.json names an unknown kind")?;
-    policy::check(c.channel, route, invited).map_err(|r| r.message)?;
     if route == Route::TailscaleServe {
         return Err(format!(
             "{} is Tailscale Serve, which only your own devices can reach; a web assistant's servers can't. Use \
@@ -230,11 +215,10 @@ Server URL: {url}\n  Authentication: OAuth\nThen connect.\n\n{APPROVE}"
 mod tests {
     use super::*;
 
-    fn ctx(dir: &Path, channel: Channel) -> Ctx<'_> {
+    fn ctx(dir: &Path) -> Ctx<'_> {
         Ctx {
             exe: PathBuf::from("/Users/d/.local/bin/polycarp"),
             dir,
-            channel,
             port: 41772,
             home: Some(PathBuf::from("/Users/d")),
             tailnet_name: Some("mac.tail1234.ts.net".into()),
@@ -251,7 +235,7 @@ mod tests {
     #[test]
     fn local_clients_get_the_stdio_server() {
         let d = temp("local");
-        let c = ctx(&d, Channel::Stable);
+        let c = ctx(&d);
         let cc = instructions(&c, "claude-code", false).unwrap();
         assert!(cc.contains("claude mcp add --scope user polycarp -- /Users/d/.local/bin/polycarp agent serve --stdio"), "{cc}");
         let cx = instructions(&c, "codex", false).unwrap();
@@ -270,12 +254,10 @@ mod tests {
     }
 
     #[test]
-    fn web_assistants_need_a_public_tunnel_and_stable_gets_the_waitlist() {
+    fn web_assistants_need_a_public_tunnel_of_your_own() {
         let d = temp("web");
         for client in ["claude.ai", "chatgpt", "grok.com"] {
-            let e = instructions(&ctx(&d, Channel::Stable), client, false).unwrap_err();
-            assert!(e.contains(policy::WAITLIST_URL), "{e}");
-            let e = instructions(&ctx(&d, Channel::Dev), client, false).unwrap_err();
+            let e = instructions(&ctx(&d), client, false).unwrap_err();
             assert!(
                 e.contains("bring") && e.contains("tunnel cloudflare"),
                 "{e}"
@@ -289,33 +271,29 @@ mod tests {
             created: 1,
         };
         store::write_json(&d.join(store::TUNNEL_FILE), &t("tailscale")).unwrap();
-        assert!(instructions(&ctx(&d, Channel::Nightly), "claude.ai", false)
+        assert!(instructions(&ctx(&d), "claude.ai", false)
             .unwrap_err()
             .contains("only your own devices"));
         store::write_json(&d.join(store::TUNNEL_FILE), &t("cloudflare")).unwrap();
-        let ok = instructions(&ctx(&d, Channel::Nightly), "claude.ai", false).unwrap();
+        let ok = instructions(&ctx(&d), "claude.ai", false).unwrap();
         assert!(
             ok.contains("https://agent.example.com/mcp")
                 && ok.contains("Add custom connector")
                 && ok.contains("polycarp agent approve")
         );
-        assert!(instructions(&ctx(&d, Channel::Dev), "chatgpt", false)
+        assert!(instructions(&ctx(&d), "chatgpt", false)
             .unwrap()
             .contains("Developer mode"));
-        assert!(instructions(&ctx(&d, Channel::Dev), "grok.com", false)
+        assert!(instructions(&ctx(&d), "grok.com", false)
             .unwrap()
             .contains("New Connector"));
-        // The same tunnel on stable is refused; an invite doesn't change that.
-        policy::redeem(&d, Channel::Stable, "pcinv_abcdefgh", 1).unwrap();
-        let e = instructions(&ctx(&d, Channel::Stable), "claude.ai", false).unwrap_err();
-        assert!(e.contains("isn't open yet"), "{e}");
     }
 
     #[test]
     fn the_codex_entry_is_added_once_and_the_rest_of_the_file_is_kept() {
         let d = temp("codex");
         let p = d.join("config.toml");
-        let c = ctx(&d, Channel::Dev);
+        let c = ctx(&d);
         fs::write(
             &p,
             "model = \"gpt-6\"\n\n[mcp_servers.other]\ncommand = \"x\"\n",
@@ -332,7 +310,7 @@ mod tests {
         );
         let other = Ctx {
             exe: PathBuf::from("/elsewhere/polycarp"),
-            ..ctx(&d, Channel::Dev)
+            ..ctx(&d)
         };
         assert!(add_entry(&p, &stdio_toml(&other))
             .unwrap_err()

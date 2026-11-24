@@ -1,9 +1,8 @@
 //! `polycarp agent`: one MCP gateway for every assistant (Grok Bot, Claude Code, Codex, claude.ai, ChatGPT, grok.com),
-//! locally, over the tailnet, or through a tunnel. docs/agents.md has the routes, the channel policy and the threat
-//! model.
+//! locally, over the tailnet, or through a tunnel. docs/agents.md has the routes and the threat model.
 //!
 //! - `store`: the private folder, hashing, the lock.
-//! - `policy`: which channel may use which route (the owner's policy of 2026-11-21).
+//! - `policy`: the routes every install has.
 //! - `auth`: OAuth 2.1 for web connectors, bearer tokens for local clients, owner approval.
 //! - `gateway`: the tool catalog, scopes and the extension points for surfaces and contacts.
 //! - `app`: pass-through to the running app.
@@ -21,7 +20,6 @@ pub mod service;
 pub mod store;
 pub mod tunnel;
 
-use crate::channel::Channel;
 use crate::files::config::Os;
 use serde_json::json;
 use std::ffi::OsString;
@@ -43,7 +41,6 @@ Usage:
   polycarp agent tunnel cloudflare --hostname <name> [--name <tunnel>] [--dry-run]
   polycarp agent tunnel tailscale [--public] [--dry-run]
   polycarp agent tunnel status [--json] | off [--dry-run] | run
-  polycarp agent tunnel join [--print] | redeem <invite>
   polycarp agent service install|uninstall|status [--tunnel] [--tailnet]
   polycarp agent doctor [--json]
   polycarp agent fix
@@ -51,8 +48,7 @@ Usage:
 serve listens on loopback only (127.0.0.1:41772). --stdio serves one local client over stdin and stdout instead.
 --tailnet also listens on this device's Tailscale addresses, for your own devices only.
 Scopes: read (look), files (search and move your files), act (change settings, themes and workspaces), contacts.
-Every channel has local MCP and the tailnet. dev and nightly bring their own tunnel; on stable the hosted tunnel is
-waitlisted (tunnel join).
+Every install has local MCP, the tailnet and its own tunnel (Cloudflare or Tailscale). There is no hosted tunnel.
 ";
 
 fn usage(msg: &str) -> i32 {
@@ -241,20 +237,13 @@ fn serve(a: &Args) -> i32 {
         Some(Ok(p)) if p > 0 => p,
         Some(_) => return usage("--port takes a number from 1 to 65535"),
     };
-    let channel = policy::current_channel();
     let want_tailnet = a.flag("--tailnet") || settings.tailnet;
-    // Every route passes the one gate, even the ones every channel has today.
     let routes: &[policy::Route] = if want_tailnet {
         &[policy::Route::Local, policy::Route::Tailnet]
     } else {
         &[policy::Route::Local]
     };
-    for r in routes {
-        if let Err(e) = policy::check(channel, *r, false) {
-            return fail(&e.message);
-        }
-    }
-    let mut ctx = server::Ctx::new(dir.clone(), gw, channel, settings);
+    let mut ctx = server::Ctx::new(dir.clone(), gw, settings);
     let mut tail_addrs = Vec::new();
     if want_tailnet {
         let cli = match crate::files::tailnet::Cli::find() {
@@ -284,8 +273,7 @@ fn serve(a: &Args) -> i32 {
         .map(|ip| SocketAddr::new(ip, port))
         .collect();
     eprintln!(
-        "polycarp agent: channel {}; routes {}; state in {}",
-        channel.name(),
+        "polycarp agent: routes {}; state in {}",
         routes
             .iter()
             .map(|r| r.name())
@@ -293,18 +281,8 @@ fn serve(a: &Args) -> i32 {
             .join(", "),
         dir.display()
     );
-    if let Some(t) = store::Tunnel::load(&dir) {
-        let allowed = t
-            .route()
-            .map(|r| policy::check(channel, r, policy::load_invite(&dir).is_some()));
-        match allowed {
-            Some(Ok(())) => eprintln!("polycarp agent: tunnel {} at {}/mcp", t.kind, t.public_url),
-            Some(Err(r)) => eprintln!(
-                "polycarp agent: the {} tunnel is refused on this channel. {}",
-                t.kind, r.message
-            ),
-            None => {}
-        }
+    if let Some(t) = store::Tunnel::load(&dir).filter(|t| t.route().is_some()) {
+        eprintln!("polycarp agent: tunnel {} at {}/mcp", t.kind, t.public_url);
     }
     // With ::1 unavailable (IPv6 off), 127.0.0.1 alone is enough.
     let ctx = Arc::new(ctx);
@@ -532,7 +510,6 @@ fn tunnel_env<'a>(dir: &'a Path, runner: &'a dyn tunnel::Runner, dry_run: bool) 
         .unwrap_or(store::PORT);
     tunnel::Env {
         dir,
-        channel: policy::current_channel(),
         port,
         home: crate::home(),
         cloudflared: tunnel::find_cloudflared(),
@@ -576,9 +553,7 @@ fn tunnel_cmd(a: &Args) -> i32 {
         Some("status") => check(&["--json"], 1),
         Some("off") => check(&["--dry-run"], 1),
         Some("run") => check(&[], 1),
-        Some("join") => check(&["--print"], 1),
-        Some("redeem") => check(&[], 2),
-        _ => Err("tunnel takes cloudflare, tailscale, status, off, run, join or redeem".into()),
+        _ => Err("tunnel takes cloudflare, tailscale, status, off or run".into()),
     };
     if let Err(e) = shape {
         return usage(&e);
@@ -616,24 +591,14 @@ fn tunnel_cmd(a: &Args) -> i32 {
                 );
                 return 0;
             }
-            println!("Channel: {}", s["channel"].as_str().unwrap_or_default());
             match s["tunnel"].as_object() {
                 None => println!("Tunnel: none"),
-                Some(t) => {
-                    println!(
-                        "Tunnel: {} at {}",
-                        t["kind"].as_str().unwrap_or_default(),
-                        t["url"].as_str().unwrap_or_default()
-                    );
-                    if let Some(why) = t["refused"].as_str() {
-                        println!("Refused on this channel: {why}");
-                    }
-                }
+                Some(t) => println!(
+                    "Tunnel: {} at {}",
+                    t["kind"].as_str().unwrap_or_default(),
+                    t["url"].as_str().unwrap_or_default()
+                ),
             }
-            println!(
-                "Hosted tunnel: {}",
-                s["hosted"].as_str().unwrap_or_default()
-            );
             0
         }
         Some("run") => match tunnel::run_argv(&env) {
@@ -643,37 +608,7 @@ fn tunnel_cmd(a: &Args) -> i32 {
             },
             Err(e) => fail(&e),
         },
-        Some("join") => {
-            println!(
-                "Join the waitlist for Polycarp's hosted tunnel: {}",
-                policy::WAITLIST_URL
-            );
-            if env.channel != Channel::Stable {
-                println!(
-                    "You're on {}, which brings its own tunnel instead; the hosted one is for stable.",
-                    env.channel.name()
-                );
-            }
-            if !a.flag("--print") && cfg!(target_os = "macos") {
-                let _ = crate::files::tailnet::run_for(
-                    Path::new("/usr/bin/open"),
-                    &[policy::WAITLIST_URL],
-                    std::time::Duration::from_secs(10),
-                );
-            }
-            0
-        }
-        Some("redeem") => match policy::redeem(&dir, env.channel, &a.words[1], store::now()) {
-            Ok(_) => {
-                println!(
-                    "Your invite is stored. Polycarp's hosted tunnel isn't open yet; this install uses it when it \
-is. Until then, local MCP and your tailnet work now (`polycarp agent connect --help`)."
-                );
-                0
-            }
-            Err(r) => fail(&r.message),
-        },
-        _ => usage("tunnel takes cloudflare, tailscale, status, off, run, join or redeem"),
+        _ => usage("tunnel takes cloudflare, tailscale, status, off or run"),
     }
 }
 
@@ -695,14 +630,6 @@ fn service_cmd(a: &Args) -> Result<(), Exit> {
                 let dir = dir()?;
                 let t = store::Tunnel::load(&dir)
                     .ok_or("No tunnel is set up yet: `polycarp agent tunnel --help`.")?;
-                if let Some(r) = t.route() {
-                    policy::check(
-                        policy::current_channel(),
-                        r,
-                        policy::load_invite(&dir).is_some(),
-                    )
-                    .map_err(|r| r.message)?;
-                }
                 if t.kind != "cloudflare" {
                     return Err(Exit::Fail(
                         "Tailscale keeps its own tunnel running; no service is needed.".into(),
@@ -793,7 +720,7 @@ fn doctor_cmd(a: &Args) -> i32 {
         Err(e) => return fail(&e),
     };
     let link = app::Local::new();
-    let f = doctor::gather(&dir, policy::current_channel(), true, Some(&link));
+    let f = doctor::gather(&dir, true, Some(&link));
     let hints = doctor::fixes(&f);
     if a.flag("--json") {
         let mut facts = serde_json::to_value(&f).unwrap_or_default();
@@ -804,7 +731,6 @@ fn doctor_cmd(a: &Args) -> i32 {
             serde_json::to_string_pretty(&crate::files::ok_json(facts)).unwrap_or_default()
         );
     } else {
-        println!("Channel: {}", f.channel);
         println!(
             "Gateway: {}",
             if f.serve_running {
@@ -836,7 +762,7 @@ fn doctor_cmd(a: &Args) -> i32 {
 fn fix_cmd(a: &Args) -> Result<(), Exit> {
     need_only(a, &[])?;
     let dir = dir()?;
-    let f = doctor::gather(&dir, policy::current_channel(), true, None);
+    let f = doctor::gather(&dir, true, None);
     let plan = doctor::fix_plan(&f);
     if plan.is_empty() {
         println!("Nothing `fix` can do on its own.");
@@ -857,12 +783,7 @@ fn fix_cmd(a: &Args) -> Result<(), Exit> {
             }
         }
     }
-    let after = doctor::fixes(&doctor::gather(
-        &dir,
-        policy::current_channel(),
-        false,
-        None,
-    ));
+    let after = doctor::fixes(&doctor::gather(&dir, false, None));
     for h in after {
         println!("- {h}");
     }
@@ -895,7 +816,6 @@ fn connect(a: &Args) -> Result<(), Exit> {
     let c = connect::Ctx {
         exe,
         dir: &dir,
-        channel: policy::current_channel(),
         port: store::Settings::load(&dir)
             .map(|s| s.port())
             .unwrap_or(store::PORT),

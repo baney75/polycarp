@@ -15,7 +15,6 @@ pub const PORT: u16 = 41772;
 pub const AUTH_FILE: &str = "auth.json";
 pub const SETTINGS_FILE: &str = "agent.toml";
 pub const TUNNEL_FILE: &str = "tunnel.json";
-pub const INVITE_FILE: &str = "invite.json";
 /// What the app may show: the connections waiting for the owner's approval (no secrets in it).
 pub const APPROVALS_FILE: &str = "approvals.json";
 const LOCK_FILE: &str = "state.lock";

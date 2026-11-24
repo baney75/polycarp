@@ -1,9 +1,8 @@
-//! The HTTP side: loopback-only binds, Host and Origin refusal, the channel gate on tunnels, the 401 challenge, the
+//! The HTTP side: loopback-only binds, Host and Origin refusal, own tunnels, the 401 challenge, the
 //! whole OAuth flow over HTTP into an MCP session, and the tailnet listener's whois allow and deny.
 
 use super::*;
 use crate::agent::app::tests::Fake;
-use crate::agent::policy::WAITLIST_URL;
 use crate::files::tailnet::Status;
 use std::io::Cursor;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -20,11 +19,10 @@ fn temp(tag: &str) -> PathBuf {
     d
 }
 
-fn ctx_in(dir: &std::path::Path, channel: Channel) -> Ctx {
+fn ctx_in(dir: &std::path::Path) -> Ctx {
     Ctx::new(
         dir.to_path_buf(),
         Gateway::new(Arc::new(Fake::new(true))),
-        channel,
         Settings::default(),
     )
 }
@@ -76,14 +74,14 @@ fn it_binds_loopback_only() {
         let e = check_bind(no.parse().unwrap()).unwrap_err();
         assert!(e.contains("loopback only"), "{no}: {e}");
     }
-    let ctx = Arc::new(ctx_in(&temp("bind"), Channel::Dev));
+    let ctx = Arc::new(ctx_in(&temp("bind")));
     let e = serve(ctx, &["0.0.0.0:0".parse().unwrap()], &[], &|_| {}).unwrap_err();
     assert!(e.contains("loopback only"), "{e}");
 }
 
 #[test]
 fn a_real_loopback_listener_answers() {
-    let ctx = Arc::new(ctx_in(&temp("live"), Channel::Dev));
+    let ctx = Arc::new(ctx_in(&temp("live")));
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = serve(ctx, &["127.0.0.1:0".parse().unwrap()], &[], &|a| {
@@ -139,7 +137,7 @@ fn the_parser_takes_chunked_bodies_and_refuses_smuggling_shapes() {
 
 #[test]
 fn a_host_that_is_not_this_machine_is_refused() {
-    let ctx = ctx_in(&temp("host"), Channel::Dev);
+    let ctx = ctx_in(&temp("host"));
     for h in [
         LOCAL,
         "localhost:41772",
@@ -172,7 +170,7 @@ fn a_host_that_is_not_this_machine_is_refused() {
 
 #[test]
 fn a_web_page_reaches_only_the_public_metadata_and_the_approval_page() {
-    let ctx = ctx_in(&temp("origin"), Channel::Dev);
+    let ctx = ctx_in(&temp("origin"));
     let page_headers: [&[(&str, &str)]; 3] = [
         &[("Host", LOCAL), ("Origin", "https://evil.example")],
         &[("Host", LOCAL), ("Origin", "null")],
@@ -219,7 +217,7 @@ fn a_web_page_reaches_only_the_public_metadata_and_the_approval_page() {
 
 #[test]
 fn an_unauthenticated_mcp_request_gets_the_challenge_that_starts_oauth() {
-    let ctx = ctx_in(&temp("401"), Channel::Dev);
+    let ctx = ctx_in(&temp("401"));
     let r = route_local(
         &ctx,
         &req(
@@ -485,7 +483,7 @@ fn oauth_token(ctx: &Ctx, host: &str, scope: &str) -> (String, String) {
 #[test]
 fn oauth_over_http_into_an_mcp_session() {
     let dir = temp("e2e");
-    let ctx = ctx_in(&dir, Channel::Dev);
+    let ctx = ctx_in(&dir);
     let (client, token) = oauth_token(&ctx, LOCAL, "read");
     let r = mcp_post(
         &ctx,
@@ -653,7 +651,7 @@ fn oauth_over_http_into_an_mcp_session() {
 
 #[test]
 fn mcp_requests_must_be_json_and_a_known_protocol_version() {
-    let ctx = ctx_in(&temp("shape"), Channel::Dev);
+    let ctx = ctx_in(&temp("shape"));
     let (_, tok) = ctx
         .with_state(|s| s.create_bearer("t", vec!["read".into()], false, store::now()))
         .unwrap()
@@ -762,40 +760,21 @@ fn write_tunnel(dir: &std::path::Path, kind: &str) {
 }
 
 #[test]
-fn a_tunnel_works_on_dev_and_nightly_and_stable_gets_the_waitlist() {
+fn every_own_tunnel_is_served_and_local_still_works() {
     let dir = temp("tunnel");
-    write_tunnel(&dir, "cloudflare");
+    let ctx = ctx_in(&dir);
     let h = [("Host", "agent.example.com")];
-    for c in [Channel::Dev, Channel::Nightly] {
-        let ctx = ctx_in(&dir, c);
+    for kind in ["cloudflare", "tailscale", "funnel"] {
+        write_tunnel(&dir, kind);
         let r = route_local(
             &ctx,
             &req("GET", "/.well-known/oauth-protected-resource", &h, b""),
         );
-        assert_eq!(r.status, 200);
+        assert_eq!(r.status, 200, "{kind}");
         assert_eq!(body_json(&r)["resource"], "https://agent.example.com/mcp");
     }
-    let stable = ctx_in(&dir, Channel::Stable);
-    for kind in ["cloudflare", "tailscale", "funnel"] {
-        write_tunnel(&dir, kind);
-        let r = route_local(&stable, &req("GET", "/health", &h, b""));
-        assert_eq!(r.status, 403, "{kind}");
-        let b = body_json(&r);
-        assert_eq!(b["error"]["code"], "waitlisted");
-        assert!(b["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains(WAITLIST_URL));
-    }
-    // An invite is for the hosted tunnel, not one's own.
-    policy::redeem(&dir, Channel::Stable, "pcinv_abcdefgh", 1).unwrap();
     assert_eq!(
-        route_local(&stable, &req("GET", "/health", &h, b"")).status,
-        403
-    );
-    // Local still works on stable.
-    assert_eq!(
-        route_local(&stable, &req("GET", "/health", &[("Host", LOCAL)], b"")).status,
+        route_local(&ctx, &req("GET", "/health", &[("Host", LOCAL)], b"")).status,
         200
     );
 }
@@ -804,7 +783,7 @@ fn a_tunnel_works_on_dev_and_nightly_and_stable_gets_the_waitlist() {
 fn a_local_token_stays_off_the_tunnel_unless_made_for_it() {
     let dir = temp("tunneltok");
     write_tunnel(&dir, "cloudflare");
-    let ctx = ctx_in(&dir, Channel::Dev);
+    let ctx = ctx_in(&dir);
     let (_, local) = ctx
         .with_state(|s| s.create_bearer("codex", vec!["read".into()], false, store::now()))
         .unwrap()
@@ -869,7 +848,7 @@ fn node(name: &str, user: i64, tags: &[&str]) -> Node {
 /// One request through a real tailnet listener whose whois says `peer`.
 fn over_tailnet(peer: Option<Node>, allow: &[&str], raw: &dyn Fn(u16) -> String) -> (u16, String) {
     let dir = temp(&format!("tn-{}", store::b64url(&store::random(4))));
-    let mut ctx = ctx_in(&dir, Channel::Stable);
+    let mut ctx = ctx_in(&dir);
     ctx.settings.allow_devices = allow.iter().map(|s| s.to_string()).collect();
     // The peers all dial from 127.0.0.1; this device has its own address, so a peer reads as itself only when
     // it names that address.
@@ -905,7 +884,7 @@ fn mcp_ping(port: u16) -> String {
 
 #[test]
 fn the_tailnet_lets_in_the_owners_devices_and_no_one_else() {
-    // The owner's laptop, with a token: in, on every channel (this one is stable).
+    // The owner's laptop, with a token: in.
     let (s, out) = over_tailnet(Some(node("laptop", 7, &[])), &[], &mcp_ping);
     assert_eq!(s, 200, "{out}");
     // The owner's device without a token: whois isn't enough.
@@ -987,7 +966,7 @@ fn health_ok(addr: SocketAddr) -> bool {
 
 #[test]
 fn a_chunk_size_that_would_overflow_is_refused_and_the_server_keeps_serving() {
-    let addr = listen(ctx_in(&temp("overflow"), Channel::Dev));
+    let addr = listen(ctx_in(&temp("overflow")));
     let host = format!("127.0.0.1:{}", addr.port());
     for size in [
         "ffffffffffffffff",
@@ -1038,7 +1017,6 @@ fn a_tunnel_visitor_named_like_an_assistant_cant_be_approved_by_a_plain_approve(
     let ctx = Ctx::new(
         dir.clone(),
         Gateway::new(Arc::new(Fake::new(true))),
-        Channel::Nightly,
         settings,
     );
     let tunnel = "agent.example.com";
@@ -1077,7 +1055,7 @@ fn a_tunnel_visitor_named_like_an_assistant_cant_be_approved_by_a_plain_approve(
     assert_eq!(w["origin"], "tunnel");
     assert_eq!(w["unverified"], true);
     assert!(w.get("approval").is_none() && w.get("command").is_none());
-    let facts = crate::agent::doctor::gather(&dir, Channel::Nightly, false, None);
+    let facts = crate::agent::doctor::gather(&dir, false, None);
     let advice = crate::agent::doctor::fixes(&facts).join("\n");
     assert!(
         !advice.contains(&code),
@@ -1121,13 +1099,13 @@ fn a_tunnel_visitor_named_like_an_assistant_cant_be_approved_by_a_plain_approve(
 }
 
 /// A tunnel that forwards `Host: 127.0.0.1` still marks what it forwards. Such a request is the tunnel's: a local token
-/// is refused, metadata names the public URL, a registration counts as the tunnel's, and with no tunnel set up (or a
-/// channel that refuses it) the request is refused outright.
+/// is refused, metadata names the public URL, a registration counts as the tunnel's, and with no tunnel set up the
+/// request is refused outright.
 #[test]
 fn a_forwarded_request_naming_loopback_is_still_the_tunnels() {
     let dir = temp("fwd");
     write_tunnel(&dir, "cloudflare");
-    let ctx = ctx_in(&dir, Channel::Dev);
+    let ctx = ctx_in(&dir);
     let (_, local) = ctx
         .with_state(|s| s.create_bearer("codex", vec!["read".into()], false, store::now()))
         .unwrap()
@@ -1193,15 +1171,9 @@ fn a_forwarded_request_naming_loopback_is_still_the_tunnels() {
     let st: State = store::read_json(&dir.join(AUTH_FILE)).unwrap();
     assert_eq!(st.clients[&id].origin, Origin::Tunnel);
 
-    // Stable refuses its own tunnel, forwarded loopback Host included.
-    let stable = ctx_in(&dir, Channel::Stable);
-    let h = [("Host", LOCAL), ("Cf-Connecting-Ip", "203.0.113.9")];
-    assert_eq!(
-        route_local(&stable, &req("GET", "/health", &h, b"")).status,
-        403
-    );
     // With no tunnel set up, a forwarded request has nothing to belong to.
-    let bare = ctx_in(&temp("fwd-none"), Channel::Dev);
+    let h = [("Host", LOCAL), ("Cf-Connecting-Ip", "203.0.113.9")];
+    let bare = ctx_in(&temp("fwd-none"));
     assert_eq!(
         route_local(&bare, &req("GET", "/health", &h, b"")).status,
         403
@@ -1216,7 +1188,7 @@ fn a_forwarded_request_naming_loopback_is_still_the_tunnels() {
 /// header deadline passes, and the slot it held is free again.
 #[test]
 fn a_slow_writer_is_cut_off_at_the_header_deadline() {
-    let mut ctx = ctx_in(&temp("slow"), Channel::Dev);
+    let mut ctx = ctx_in(&temp("slow"));
     ctx.header_deadline = Duration::from_millis(800);
     let addr = listen(ctx);
     let mut s = TcpStream::connect(addr).unwrap();

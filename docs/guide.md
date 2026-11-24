@@ -368,7 +368,7 @@ polycarp agent connect claude-code    # or codex, grokbot, claude.ai, chatgpt, g
 polycarp agent clients                # what is connected, with last use
 ```
 
-The routes, the release channel rules, the scopes and the threat model are in [docs/agents.md](https://github.com/baney75/polycarp/blob/main/docs/agents.md).
+The routes, the scopes and the threat model are in [docs/agents.md](https://github.com/baney75/polycarp/blob/main/docs/agents.md).
 
 ## Use your browser from Claude, ChatGPT and Grok
 

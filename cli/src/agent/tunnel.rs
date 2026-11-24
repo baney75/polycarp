@@ -1,18 +1,15 @@
 //! `polycarp agent tunnel ...`: reach the gateway from the internet, or from the whole tailnet over HTTPS.
 //!
-//! Every command passes `policy::check` first. dev and nightly bring their own tunnel:
+//! Every install brings its own tunnel:
 //! - `cloudflare --hostname <name>`: a named tunnel on the person's own Cloudflare account, through their own
 //!   `cloudflared`, after Tychicus D31. Sign-in is `cloudflared tunnel login`, done by the person; this command only
 //!   checks that it happened (`~/.cloudflared/cert.pem` exists; it is never read). No API key is asked for or stored.
 //!   The tunnel's config goes under Polycarp's config folder; its credentials stay where cloudflared put them.
 //! - `tailscale [--public]`: Tailscale Serve on port 8443 (the tailnet only), or Funnel (public) with a warning.
 //!
-//! stable sets up neither and says so: its hosted tunnel is waitlisted (`join`, `redeem`). There is no hosted relay
-//! in this build; with an invite stored, `status` says the hosted tunnel isn't open yet.
+//! There is no hosted tunnel or relay.
 
-use super::policy::{self, Route};
 use super::store::{self, Tunnel, TUNNEL_FILE};
-use crate::channel::Channel;
 use serde_json::{json, Value as Json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -39,7 +36,6 @@ impl Runner for Real {
 /// What a tunnel command needs to know about this machine.
 pub struct Env<'a> {
     pub dir: &'a Path,
-    pub channel: Channel,
     pub port: u16,
     pub home: Option<PathBuf>,
     pub cloudflared: Option<PathBuf>,
@@ -56,11 +52,6 @@ pub struct Done {
     /// The commands it ran (or would run, with --dry-run), program first.
     pub ran: Vec<Vec<String>>,
     pub tunnel: Option<Tunnel>,
-}
-
-fn gate(env: &Env, route: Route) -> Result<(), String> {
-    let invited = policy::load_invite(env.dir).is_some();
-    policy::check(env.channel, route, invited).map_err(|r| r.message)
 }
 
 impl Env<'_> {
@@ -124,7 +115,6 @@ tunnel: {id}\ncredentials-file: \"{}\"\nno-autoupdate: true\ningress:\n  - hostn
 }
 
 pub fn cloudflare(env: &Env, hostname: &str, name: Option<&str>) -> Result<Done, String> {
-    gate(env, Route::Cloudflare)?;
     let host = hostname.trim().trim_end_matches('.').to_ascii_lowercase();
     if !hostname_ok(&host) {
         return Err(format!(
@@ -268,12 +258,6 @@ only a connector the owner approved on this machine, or a token made with --remo
 --public) when every assistant runs on your own devices.";
 
 pub fn tailscale(env: &Env, public: bool) -> Result<Done, String> {
-    let route = if public {
-        Route::TailscaleFunnel
-    } else {
-        Route::TailscaleServe
-    };
-    gate(env, route)?;
     let ts = env
         .tailscale
         .as_deref()
@@ -368,12 +352,10 @@ Cloudflare account; delete it there with `cloudflared tunnel delete {}` if you'r
     Ok(done)
 }
 
-/// What `tunnel run` starts: cloudflared with our config. Checked against the policy each time, so an install that
-/// moved to stable stops publishing.
+/// What `tunnel run` starts: cloudflared with our config.
 pub fn run_argv(env: &Env) -> Result<(PathBuf, Vec<String>), String> {
     let t = Tunnel::load(env.dir).ok_or("No tunnel is set up: `polycarp agent tunnel --help`.")?;
-    let route = t.route().ok_or("tunnel.json names an unknown kind")?;
-    gate(env, route)?;
+    t.route().ok_or("tunnel.json names an unknown kind")?;
     if t.kind != "cloudflare" {
         return Err("Tailscale serves this tunnel itself; nothing to run here.".into());
     }
@@ -399,28 +381,14 @@ pub fn run_argv(env: &Env) -> Result<(PathBuf, Vec<String>), String> {
     ))
 }
 
-/// `tunnel status`: the route, whether this channel allows it, and the hosted tunnel's waitlist state.
+/// `tunnel status`: the tunnel that is set up, if any.
 pub fn status(env: &Env) -> Json {
     let t = Tunnel::load(env.dir);
-    let invite = policy::load_invite(env.dir);
-    let allowed = t.as_ref().and_then(|t| t.route()).map(|r| gate(env, r));
-    let hosted = match env.channel {
-        Channel::Stable if invite.is_some() => {
-            "invited: Polycarp's hosted tunnel isn't open yet; your invite is stored for when it is"
-        }
-        Channel::Stable => "waitlisted: `polycarp agent tunnel join`",
-        _ => "not on this channel: bring your own tunnel",
-    };
     json!({
-        "channel": env.channel.name(),
         "tunnel": t.as_ref().map(|t| json!({
             "kind": t.kind,
             "url": format!("{}/mcp", t.public_url),
-            "allowed": allowed.as_ref().is_some_and(|a| a.is_ok()),
-            "refused": allowed.and_then(|a| a.err()),
         })),
-        "hosted": hosted,
-        "invite": invite.is_some(),
     })
 }
 
@@ -512,10 +480,9 @@ mod tests {
         (root.join("agent"), home)
     }
 
-    fn env<'a>(dir: &'a Path, home: &Path, channel: Channel, stub: &'a Stub) -> Env<'a> {
+    fn env<'a>(dir: &'a Path, home: &Path, stub: &'a Stub) -> Env<'a> {
         Env {
             dir,
-            channel,
             port: 41772,
             home: Some(home.to_path_buf()),
             cloudflared: Some(PathBuf::from("/opt/homebrew/bin/cloudflared")),
@@ -526,38 +493,30 @@ mod tests {
     }
 
     #[test]
-    fn stable_refuses_both_own_tunnels_before_running_anything() {
-        let (dir, home) = setup("stable");
+    fn every_install_brings_its_own_tunnel_with_no_channel_anywhere() {
+        let (dir, home) = setup("own");
+        fs::write(home.join(".cloudflared/cert.pem"), "stub").unwrap();
         let stub = Stub::new();
-        let e = env(&dir, &home, Channel::Stable, &stub);
-        for r in [
-            cloudflare(&e, "agent.example.com", None),
-            tailscale(&e, false),
-            tailscale(&e, true),
-        ] {
-            let m = r.unwrap_err();
-            assert!(
-                m.contains(policy::WAITLIST_URL) && m.contains("local MCP works now"),
-                "{m}"
-            );
+        let e = env(&dir, &home, &stub);
+        assert_eq!(status(&e), json!({ "tunnel": null }));
+        for kind in ["tailscale", "funnel", "cloudflare"] {
+            let r = match kind {
+                "cloudflare" => cloudflare(&e, "agent.example.com", None),
+                k => tailscale(&e, k == "funnel"),
+            };
+            assert_eq!(r.unwrap().tunnel.unwrap().kind, kind);
+            let s = status(&e);
+            assert_eq!(s.as_object().unwrap().len(), 1, "{s}");
+            assert_eq!(s["tunnel"]["kind"], kind);
         }
-        assert!(
-            stub.calls.borrow().is_empty(),
-            "stable ran {:?}",
-            stub.calls.borrow()
-        );
-        let s = status(&e);
-        assert_eq!(
-            s["hosted"].as_str().unwrap().split(':').next(),
-            Some("waitlisted")
-        );
+        assert!(run_argv(&e).is_ok());
     }
 
     #[test]
     fn cloudflare_needs_the_persons_own_sign_in_and_never_a_key() {
         let (dir, home) = setup("cflogin");
         let stub = Stub::new();
-        let e = env(&dir, &home, Channel::Nightly, &stub);
+        let e = env(&dir, &home, &stub);
         let m = cloudflare(&e, "agent.example.com", None).unwrap_err();
         assert!(
             m.contains("cloudflared tunnel login")
@@ -586,7 +545,7 @@ mod tests {
         let (dir, home) = setup("cf");
         fs::write(home.join(".cloudflared/cert.pem"), "stub").unwrap();
         let stub = Stub::new();
-        let e = env(&dir, &home, Channel::Dev, &stub);
+        let e = env(&dir, &home, &stub);
         let d = cloudflare(&e, "Agent.Example.com.", None).unwrap();
         let calls: Vec<String> = stub
             .calls
@@ -623,11 +582,6 @@ mod tests {
         assert!(prog.ends_with("cloudflared"));
         assert_eq!(args[0], "tunnel");
         assert_eq!(args.last().map(String::as_str), Some("run"));
-        // The same install moved to stable stops publishing.
-        let stable = env(&dir, &home, Channel::Stable, &stub);
-        assert!(run_argv(&stable)
-            .unwrap_err()
-            .contains(policy::WAITLIST_URL));
         // A second run reuses the tunnel.
         stub.calls.borrow_mut().clear();
         cloudflare(&e, "agent.example.com", None).unwrap();
@@ -645,7 +599,7 @@ mod tests {
     fn tailscale_serves_on_8443_and_funnel_warns() {
         let (dir, home) = setup("ts");
         let stub = Stub::new();
-        let e = env(&dir, &home, Channel::Nightly, &stub);
+        let e = env(&dir, &home, &stub);
         let d = tailscale(&e, false).unwrap();
         assert!(stub
             .calls
@@ -674,13 +628,13 @@ mod tests {
         let (dir, home) = setup("tsbusy");
         let mut stub = Stub::new();
         stub.serve_status = r#"{"Web":{"mac.tail1234.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}"#.into();
-        let e = env(&dir, &home, Channel::Dev, &stub);
+        let e = env(&dir, &home, &stub);
         assert!(tailscale(&e, false)
             .unwrap_err()
             .contains("won't replace it"));
         let mut stub = Stub::new();
         stub.fail_with = Some("funnel not available; tailnet lock is enabled".into());
-        let e = env(&dir, &home, Channel::Dev, &stub);
+        let e = env(&dir, &home, &stub);
         assert!(tailscale(&e, true)
             .unwrap_err()
             .contains("Tailnet Lock refuses Funnel"));
@@ -691,7 +645,7 @@ mod tests {
         let (dir, home) = setup("dry");
         fs::write(home.join(".cloudflared/cert.pem"), "stub").unwrap();
         let stub = Stub::new();
-        let mut e = env(&dir, &home, Channel::Dev, &stub);
+        let mut e = env(&dir, &home, &stub);
         e.dry_run = true;
         let d = cloudflare(&e, "agent.example.com", None).unwrap();
         assert!(stub.calls.borrow().is_empty());
