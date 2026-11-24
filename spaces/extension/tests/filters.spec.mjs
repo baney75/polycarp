@@ -152,6 +152,13 @@ try {
   const rd = await until(async () => { const v = byId(await view(rp, 'article')); return v.a1?.collapsed && v.a2?.collapsed && v.a4?.collapsed ? v : null; });
   ok(rd && /@spez/.test(rd.a1.bar) && /@r\/politics/.test(rd.a2.bar) && /nba/i.test(rd.a4.bar), 'Reddit: posts by a user, in a subreddit and with a word collapse, the article around each');
   ok(rd && !rd.a3.collapsed, 'Reddit: a post that matches nothing is untouched');
+  // Reddit's feed, like X's, builds a post again when it scrolls back: Show holds for the new copy.
+  await rp.locator('#a1 polycarp-filter-bar button').click();
+  await rp.evaluate(() => { const a = document.getElementById('a1'); const c = a.cloneNode(true);
+    c.querySelector(':scope > polycarp-filter-bar')?.remove(); c.classList.remove('polycarp-filtered'); a.replaceWith(c); });
+  await sleep(300);
+  const rd2 = byId(await view(rp, 'article'));
+  ok(!rd2.a1.collapsed && rd2.a2.collapsed, 'Reddit: a revealed post the feed builds again stays revealed, and the others stay hidden');
   const op = await ctx.newPage();
   await op.goto('https://old.reddit.com/');
   const od = await until(async () => { const v = byId(await view(op, 'div.thing')); return v.t1?.collapsed && v.t3?.collapsed ? v : null; });

@@ -102,6 +102,14 @@
       "ytm-rich-item-renderer", "ytm-video-with-context-renderer", "ytm-compact-video-renderer",
       "ytm-shorts-lockup-view-model", "ytm-shorts-lockup-view-model-v2", YT_ADS].join(","),
     shelf: YT_SHELF,
+    key(item) {
+      if (item.matches(YT_SHELF)) return "";
+      for (const a of item.querySelectorAll("a[href]")) {
+        const m = /[?&]v=([\w-]{6,})|\/shorts\/([\w-]{2,})/.exec(a.getAttribute("href"));
+        if (m) return "yt:" + (m[1] || m[2]);
+      }
+      return "";
+    },
     // A shelf is matched by its title, never by the videos in it: one title in a row of ten must not hide all ten.
     text: (item) => item.matches(YT_SHELF) ? (((item.querySelector("#title, h2") || {}).textContent) || "") : itemText(item),
     accounts: (item) => firstHandle(item, 'a[href^="/@"], a[href^="/channel/"]', /^\/(?:@|channel\/)([^/?#]+)/),
@@ -120,6 +128,11 @@
     // Posts only: a comment's text holds its replies, so a reply's word would hide the thread above it.
     items: "shreddit-post,shreddit-ad-post,div.thing.link",
     target: (item) => (item.parentElement && item.parentElement.tagName === "ARTICLE" ? item.parentElement : item),
+    key(item) {
+      const a = item.querySelector('a[slot="title"][href], a.title[href]');
+      const k = (item.getAttribute("permalink") || item.getAttribute("data-permalink") || (a && a.getAttribute("href")) || "");
+      return k ? "reddit:" + k : "";
+    },
     text: (item) => [item.getAttribute("post-title") || "", itemText(item)].join("\n"),
     accounts(item) {
       const out = [];
@@ -141,6 +154,7 @@
   const HN = {
     id: "hn",
     items: "tr.athing",
+    key: (item) => (item.id ? "hn:" + item.id : ""),
     also(item) {
       if (item.classList.contains("comtr")) return [];
       const sub = item.nextElementSibling;
@@ -157,6 +171,7 @@
   const BLUESKY = {
     id: "bluesky",
     items: '[data-testid^="feedItem-by-"]',
+    key(item) { const a = item.querySelector('a[href*="/post/"]'); return a ? "bsky:" + a.getAttribute("href") : ""; },
     // The author is named on the item; links in the body are mentions, replies and quotes.
     accounts: (item) => [F.normalizeHandle(item.getAttribute("data-testid").slice("feedItem-by-".length))],
     kinds: (item) => (item.querySelector('[aria-label^="Reposted by" i]') || textIs(item, "a,span", /^Reposted by\b/i) ? ["reposts"] : [])
@@ -165,6 +180,7 @@
   const LINKEDIN = {
     id: "linkedin",
     items: 'div.feed-shared-update-v2,div[data-urn^="urn:li:activity"]',
+    key(item) { const u = item.closest("[data-urn]") || item.querySelector("[data-urn]"); return u ? "li:" + u.getAttribute("data-urn") : ""; },
     accounts: (item) => firstHandle(item.querySelector(".update-components-actor") || item, 'a[href*="/in/"], a[href*="/company/"]', /\/(?:in|company)\/([^/?#]+)/),
     kinds(item) {
       const out = [];
