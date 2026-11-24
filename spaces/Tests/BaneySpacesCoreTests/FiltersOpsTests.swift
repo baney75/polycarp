@@ -54,6 +54,19 @@ final class FiltersOpsTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), [Filters.name])
     }
 
+    func testARuleThatWouldTakeTheFilePastItsSizeIsTooManyNotAnIOError() throws {
+        // Six rules of 200 words of about 190 characters fit; a seventh takes the file past 256 KiB.
+        let words = (0..<Filters.maxEntries).map { "\($0)" + String(repeating: "w", count: 186) }
+        let big = (0..<6).map { i -> FilterRule in var r = FilterRule(id: "big\(i)"); r.words = words; return r }
+        try Filters.save(big, to: file)
+        let saved = try Data(contentsOf: URL(fileURLWithPath: file))
+        let one = String(decoding: try JSONSerialization.data(withJSONObject: ["id": "big6", "words": words]), as: UTF8.self)
+        guard case .failure(let f) = FiltersOps.set(one, file: file) else { return XCTFail("a rule past 256 KiB taken") }
+        XCTAssertEqual(f.code, "too_many")
+        XCTAssertEqual(f.issues.first?.path, "filters")
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: file)), saved)
+    }
+
     func testAnInvalidFileIsNeverWrittenOverBySet() throws {
         try Data("{oops".utf8).write(to: URL(fileURLWithPath: file))
         guard case .failure(let f) = FiltersOps.set(#"{"id":"one","words":["a"]}"#, file: file) else { return XCTFail("wrote over it") }

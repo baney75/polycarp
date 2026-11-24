@@ -13,6 +13,17 @@ public enum FiltersOps {
         Filters.load(path: file).mapError { SurfacesFailure("invalid_file", $0.description, suggestion: fixFile, issues: [$0]) }
     }
 
+    /// Writes the rules. A refusal from the check `save` runs (the file would be over 256 KiB) is `too_many`, not
+    /// `io_error`, so the suggestion says what to change rather than to try again.
+    static func saved(_ rules: [FilterRule], file: String) -> SurfacesFailure? {
+        do { try Filters.save(rules, to: file); return nil } catch let issue as SurfacesIssue {
+            return SurfacesFailure("too_many", issue.description, suggestion: "Make the rule shorter, or remove a rule with `polycarp-spaces filters rm <id>` first.",
+                                   issues: [issue])
+        } catch {
+            return SurfacesFailure("io_error", "\(error)")
+        }
+    }
+
     static func listing(_ rules: [FilterRule], file: String) -> SurfaceValue {
         .object(["file": .string(file), "filters": .array(rules.map(\.value))])
     }
@@ -43,9 +54,7 @@ public enum FiltersOps {
             return failure("too_many", SurfacesIssue("filters", "\(Filters.name) holds \(Filters.maxRules) rules already"),
                            "Remove a rule with `polycarp-spaces filters rm <id>` first.")
         }
-        do { try Filters.save(rules, to: file) } catch {
-            return .failure(SurfacesFailure("io_error", "\(error)"))
-        }
+        if let f = saved(rules, file: file) { return .failure(f) }
         return .success(.object(["filter": rule.value, "replaced": .bool(replaced != nil), "file": .string(file)]))
     }
 
@@ -60,9 +69,7 @@ public enum FiltersOps {
             return failure("not_found", SurfacesIssue("id", "no rule has the id \"\(id)\""), "Run `polycarp-spaces filters ls` for the ids.")
         }
         rules.remove(at: i)
-        do { try Filters.save(rules, to: file) } catch {
-            return .failure(SurfacesFailure("io_error", "\(error)"))
-        }
+        if let f = saved(rules, file: file) { return .failure(f) }
         return .success(listing(rules, file: file))
     }
 

@@ -138,7 +138,9 @@ Brings a row from `find` forward, as `polycarp-spaces focus <id>` does: `{"ok":t
 The feed filters and page edits in `filters.json` (beside `bangs.json`; `polycarp-spaces filters`, docs/guide.md),
 each rule normalized with every key: `{"ok":true,"filters":[{"id":"no-shorts","enabled":true,"sites":["youtube.com"],
 "words":[],"patterns":[],"accounts":[],"kinds":["shorts"],"hide":[]}]}`. No file is `{"ok":true,"filters":[]}`; a file
-that doesn't read or check is `{"ok":false,"error":...}` naming the field.
+that doesn't read or check is `{"ok":false,"error":...}` naming the field. Each pattern compiled as an
+NSRegularExpression and passed the slow-pattern rule in `Filters.pattern`; JavaScript's syntax differs at the edges, so
+the extension still skips a pattern its `RegExp` refuses.
 
 ### Anything else
 

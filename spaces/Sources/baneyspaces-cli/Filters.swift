@@ -17,8 +17,10 @@ enum FiltersCommand {
     A rule: {"id": "no-shorts", "enabled": true, "sites": ["youtube.com"], "words": [...], "patterns": [...],
     "accounts": ["@name"], "kinds": ["shorts", "promoted", "reposts"], "hide": ["css selector"]}.
     id is 1 to 64 of a-z, 0-9 and -. sites empty means every site; hide needs sites. A rule needs at least one of
-    words, patterns (JavaScript regex), accounts, kinds or hide. At most 200 rules, 200 entries a list, 200
-    characters an entry. Matching posts on X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn and Mastodon hide
+    words, patterns (JavaScript regex), accounts, kinds or hide. A pattern may not repeat a group that holds a
+    quantifier, as (a+)+, count past {20}, or use a backreference or lookbehind. A hide selector may not hold
+    { } ; \\ @ < /* */ or a line break, or leave a quote, bracket or parenthesis open. At most 200 rules, 200 entries
+    a list, 200 characters an entry. Matching posts on X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn and Mastodon hide
     behind a Show bar; open pages pick a change up within 30 seconds, new pages at once.
     """
 
