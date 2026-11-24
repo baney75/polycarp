@@ -137,7 +137,7 @@ fn pane(r: &Resolved, mode: &str) -> String {
     <div class="turn ai">The report has <code>3</code> tables and one open question about the budget.
       <div class="status working"><i class="pulse"></i> Working: reading aloud</div></div>
     <div class="ask">
-      <div class="status urgent">Edited page</div>
+      <div class="status done">Edited page</div>
       <p>Your agent hid <b>Related stories</b> on this site.</p>
       <div class="row"><button class="btn secondary">Undo</button><button class="btn primary">Keep</button></div>
     </div>

@@ -2702,7 +2702,7 @@ fn preview_writes_one_self_contained_page() {
         "pc-dark",
         "Workspaces",
         "Listening",
-        "Keep",
+        ">Keep<",
         "Delete",
         "Edited page",
         "Working",

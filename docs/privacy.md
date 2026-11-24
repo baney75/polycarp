@@ -1,7 +1,7 @@
 ---
 title: Polycarp privacy policy
 seo_title: "Polycarp privacy policy: what it reads and where it goes"
-description: What the Polycarp extension and Mac app read, where that goes, what stays on your computer, and how to delete it. No accounts, no analytics.
+description: What the Polycarp Mac app and commands read, where that goes, what stays on your computer, and how to delete it. No accounts, no analytics.
 updated: November 24, 2026
 ---
 
@@ -25,9 +25,10 @@ This policy covers the Polycarp app for Mac. Polycarp's browser extension, for r
 
 ## Deleting your data
 
-- **Extension:** remove it from your browser, which deletes everything it stored there.
+- **Extension:** remove it from your browser, which deletes everything it stored there. If you ever used the agent extension older builds shipped, also delete `~/.local/share/polycarp/browser`, where it kept copies of chats; removing an extension can't reach that folder.
 - **File index**, on each device that has one, before you uninstall the app: run `polycarp files service uninstall` and the stop command it prints, then delete `~/Library/Caches/Polycarp/files` on a Mac, `%LOCALAPPDATA%\Polycarp\files` on Windows or `~/.cache/polycarp/files` on Linux.
 - **Mac app:** run the uninstaller, then delete the `Polycarp` folder in `~/Library/Application Support`.
+- **Data you or your agents sent to an AI provider:** ask that provider. We never had it.
 
 ## Children
 
