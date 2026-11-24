@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod agent;
-mod channel;
 mod features;
 mod files;
 mod local_studio;
@@ -90,7 +89,7 @@ Usage:
   polycarp doctor              show which tools were found
   polycarp --version
   polycarp version [--json] [--check]   every part, its commit, and whether they match
-  polycarp update [--check] [--dry-run] [--yes] [--channel <c>] [--source <checkout>]
+  polycarp update [--check] [--dry-run] [--yes] [--source <checkout>]
   polycarp --help
 
 The app must already be installed. POLYCARP_SPACES_BIN sets the spaces command.
