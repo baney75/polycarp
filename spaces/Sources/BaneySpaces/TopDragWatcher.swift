@@ -111,8 +111,8 @@ enum SystemTopDrag {
     }
 }
 
-/// Watches for another app's window being dragged by its title bar to the top of a screen, or
-/// down to the Workspace Dock, and then follows the drag until the button comes up. A press is
+/// Watches for another app's window being dragged by its title bar to the top of a screen, and
+/// then follows the drag until the button comes up. A press is
 /// all it listens for; a tick per frame runs only while the button that started on a window
 /// stays down.
 final class TopDragWatcher {
@@ -141,24 +141,14 @@ final class TopDragWatcher {
     /// `onRelease` closes it: a drag counts as covered only then (it may have closed mid-carry, or the window may have
     /// been carried to another display, where the person could see it).
     var overviewCovers: (CGPoint) -> Bool = { _ in false }
-    /// A drag of a window's title bar ended with the button let go, however it ended (overview, dock, or neither): where,
+    /// A drag of a window's title bar ended with the button let go, however it ended (overview or not): where,
     /// whether the overview covered the window and from what frame, and whether a drop took it. Called last.
     var onDragEnd: (WindowID, DragEnd) -> Void = { _, _ in }
     /// Any let-go of a drag the watcher saw move, even one it stopped following (the overview declined it): the frame watch.
     var onLetGo: (WindowID) -> Void = { _ in }
     private var letGo = DragLetGo()
-    /// The drag to the top opens the overview. Off, the watcher still follows drags for the dock.
+    /// The drag to the top opens the overview. Off, the watcher still follows drags, for `onDragEnd`'s title bar rescue.
     var topEnabled = true
-    /// The window follows the pointer, on every tick until the overview opens for it: the dock
-    /// comes up when the pointer reaches its edge.
-    var onCarry: (TopDrag.Grab, CGPoint) -> Void = { _, _ in }
-    /// That drag ended: let go at the point given, or nil when it ended some other way (the
-    /// overview took it, the window went away, the watcher stopped), so nothing moves.
-    /// Returns whether the window was dropped on a workspace.
-    var onCarryEnd: (TopDrag.Grab, CGPoint?) -> Bool = { _, _ in false }
-    /// Whether the dock has seen a drag of content from another app start (`WorkspaceDock.outsideDragSeen`); nil while
-    /// the dock isn't watching, and then the press's own sample of the drag pasteboard decides (`ContentDrag`).
-    var contentDragSeen: () -> Bool? = { nil }
     /// The press as a possible drag of the window's content (a file out of Finder) rather than of the window.
     private var content = ContentDrag()
 
@@ -169,8 +159,6 @@ final class TopDragWatcher {
     private var open: TopDrag.Grab?
     /// The window's frame when the overview opened over it, for `DragEnd.coveredFrom`.
     private var coveredFrom: CGRect?
-    /// The drag `onCarry` has been told about.
-    private var carried: TopDrag.Grab?
     /// The app whose window was pressed.
     private var owner: pid_t = 0
 
@@ -205,11 +193,9 @@ final class TopDragWatcher {
         let end = ReleaseOrder.end(
             at: p ?? .zero, coveredFrom: g != nil ? from : nil,
             overviewCovers: { [self] in p.map(overviewCovers) ?? false },
-            endCarry: { [self] in
-                let dropped = endCarry(at: p)
+            endTicks: { [self] in
                 endTicks()
                 if g != nil, let p { onMove(p) }
-                return dropped
             },
             release: g.map { g in { [self] in onRelease(g, p) } })
         if let dragged, p != nil { onDragEnd(dragged.window, end) }
@@ -247,10 +233,9 @@ final class TopDragWatcher {
         let resting = state.topSince != nil
         let top = state.tick(cursor: p, frame: frame, screens: TopDragWatcher.screens(), now: now)
         // A file, text or a link dragged out of the window while the window stayed put: the press is let go before the
-        // overview, the dock or a correction can act on it, so a later move of the window (a workspace switch the drag
+        // overview or a correction can act on it, so a later move of the window (a workspace switch the drag
         // sprang parks it) is never taken for the window carried. A window that moved first stays a window drag.
-        if content.isContent(windowMoved: state.moving || state.pinned, dockSaw: contentDragSeen(),
-                             count: { NSPasteboard(name: .drag).changeCount }) {
+        if content.isContent(windowMoved: state.moving || state.pinned, count: { NSPasteboard(name: .drag).changeCount }) {
             Trace.log("topDrag let go window=\(grab.window): a drag of its content, not of the window")
             return endTicks()
         }
@@ -265,9 +250,7 @@ final class TopDragWatcher {
             if !state.moving, TopDragWatcher.frontWindow(of: owner) != g.window { return endTicks() }
             switch onOpen(g, p) {
             case true?:
-                // The overview has it now, not the dock.
                 Trace.log("topDrag overview open after \(Int(((now - (state.topSince ?? now)) * 1000).rounded())) ms window=\(g.window)")
-                endCarry(at: nil)
                 open = g
                 coveredFrom = TopDragWatcher.bounds(of: g.window)
             case false?:
@@ -280,24 +263,13 @@ final class TopDragWatcher {
         } else if state.grab == nil {
             endTicks()
         } else if top != nil {
-            // The overview is off: the drag goes on, for the dock, as if the top never fired.
+            // The overview is off: the drag goes on as if the top never fired.
             state.rearm()
-        } else if state.moving {
-            carried = grab
-            onCarry(grab, p)
         }
-    }
-
-    @discardableResult
-    private func endCarry(at p: CGPoint?) -> Bool {
-        guard let g = carried else { return false }
-        carried = nil
-        return onCarryEnd(g, p)
     }
 
     private func endTicks() {
         letGo.ticksEnded(dragging: (state.moving || state.pinned) ? state.grab?.window : nil)
-        endCarry(at: nil)
         timer?.invalidate()
         timer = nil
         state.release()

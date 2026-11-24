@@ -2,11 +2,10 @@ import XCTest
 
 /// What Donovan opens most has to report how long it took, or "fast" is a guess. A view that loses its clock fails here.
 final class OpenClockTests: XCTestCase {
-    func testTheLauncherOverviewAndDockEachTimeTheirOpening() throws {
+    func testTheLauncherAndOverviewEachTimeTheirOpening() throws {
         for (file, clock) in [
             ("Sources/BaneySpaces/Launcher.swift", "OpenClock(panel == nil ? \"launcher-first\" : \"launcher\")"),
             ("Sources/BaneySpaces/Viewer.swift", "OpenClock(panel == nil ? \"overview-first\" : \"overview\")"),
-            ("Sources/BaneySpaces/WorkspaceDock.swift", "OpenClock(\"dock\")"),
         ] {
             let code = try SourceText.code(file)
             XCTAssertTrue(code.contains(clock), "\(file) has no clock")

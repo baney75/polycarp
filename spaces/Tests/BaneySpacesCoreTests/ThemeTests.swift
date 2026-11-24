@@ -93,54 +93,15 @@ final class ThemeTests: XCTestCase {
         XCTAssertTrue(t.motion.slides)
     }
 
-    func testDockMotionReadsTheTheme() {
-        XCTAssertEqual(DockMotion.slide, 8)
-        XCTAssertEqual(DockMotion.dockIn, 0.18)
-        XCTAssertEqual(DockMotion.dockOut, 0.14)
-        XCTAssertEqual(DockMotion.listIn, 0.14)
-        XCTAssertEqual(DockMotion.listOut, 0.10)
-        XCTAssertEqual(DockMotion.rowHover, 0.08)
-        XCTAssertEqual(DockMotion.settle, 0.12)
-        XCTAssertEqual(DockMotion.listScale, 0.96)
-        XCTAssertEqual(DockMotion.lift, 1.04)
-        inTheme(.omarchy) {
-            XCTAssertEqual(DockMotion.dockIn, 0.12)
-            XCTAssertEqual(DockMotion.dockOut, 0.10)
-            XCTAssertEqual(DockMotion.listIn, 0.10)
-            XCTAssertEqual(DockMotion.listOut, 0.08)
-            // Fades only: nothing slides, scales or lifts.
-            XCTAssertEqual(DockMotion.slide, 0)
-            XCTAssertEqual(DockMotion.listScale, 1)
-            XCTAssertEqual(DockMotion.lift, 1)
-            XCTAssertEqual(DockMotion.rowHover, 0)
-            XCTAssertEqual(DockMotion.settle, 0)
-            XCTAssertEqual(DockEdge.bottom.away, CGVector(dx: 0, dy: 0))
-            // Reduce Motion still zeroes every one.
-            for d in [DockMotion.dockIn, DockMotion.dockOut, DockMotion.listIn, DockMotion.listOut] {
-                XCTAssertEqual(DockMotion.duration(d, reduceMotion: true), 0)
-            }
-        }
-        inTheme(.minimal) {
-            XCTAssertEqual(DockMotion.dockIn, 0.10)
-            XCTAssertEqual(DockMotion.slide, 0)
-        }
-        XCTAssertEqual(DockMotion.dockIn, 0.18, "the theme is put back")
-    }
-
-    func testDockEnabledIsABoolWithAMacOSException() throws {
+    /// The Mac app has no Workspace Dock since 2026-11-23, but the spec is shared: other platforms still read the switch.
+    func testTheSharedSpecKeepsTheDockSwitchForOtherPlatforms() throws {
         // `default` stays a plain bool, so another platform's reader still parses it.
         let data = try Repo.text("spec/themes.json").data(using: .utf8)!
         let root = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         let dock = (root["settings"] as! [String: Any])["dock.enabled"] as! [String: Any]
         XCTAssertEqual(dock["default"] as? Bool, true)
         XCTAssertEqual(dock["default_by_platform"] as? [String: Bool], ["macos": false])
-        XCTAssertFalse(ThemeCatalog.shared.dockEnabled(platform: "macos"))
-        XCTAssertTrue(ThemeCatalog.shared.dockEnabled(platform: "windows"))
-        XCTAssertTrue(ThemeCatalog.shared.dockEnabled(platform: "linux"))
-        XCTAssertTrue(ThemeCatalog.shared.dockEnabled(platform: "omarchy"))
-        // The app reads it for an unset switch.
-        let dockSource = try Repo.code("Sources/BaneySpaces/WorkspaceDock.swift")
-        XCTAssertTrue(dockSource.contains("ThemeCatalog.shared.dockEnabled()"))
+        XCTAssertNotNil(ThemeCatalog.parse(try Repo.text("spec/themes.json")), "the Mac app still reads the shared file")
     }
 
     func testOmarchyIsBlocky() {
@@ -205,6 +166,5 @@ final class ThemeTests: XCTestCase {
         let odd = AppearanceSettings.decoded(#"{"theme":"vaporwave","colorPalette":"nope","dockSize":"large"}"#.data(using: .utf8))
         XCTAssertEqual(odd.theme, .baneyspaces)
         XCTAssertEqual(odd.colorPalette, "auto")
-        XCTAssertEqual(odd.dockSize, .large)
     }
 }

@@ -1,17 +1,17 @@
 import Foundation
 
 /// Apps that are running with nothing to see: no window on any workspace, or only minimized ones.
-/// The Workspace Dock's "Background" tile lists them, so an app that opened itself in the
-/// background (an updater, a helper that turned regular) can be seen and brought forward.
+/// The launcher (⌃⌘K) lists them under "Running, no window", so an app that opened itself in the
+/// background (an updater, a helper that turned regular) can be seen, brought forward or quit.
 ///
 /// Pure over value types so the rule is tested without AppKit. An app BaneySpaces hid because its
 /// windows live on another workspace has a tracked window that is not minimized, so it is not here:
-/// it already shows on that workspace's tile.
+/// it already shows on that workspace.
 public enum BackgroundApps {
     /// Finder always runs, usually with no window; listing it would be noise.
     public static let finderBundleID = "com.apple.finder"
     /// A just-launched app has no window yet; it isn't listed until it has had this long to open one,
-    /// or every launch would flash the tile up and away.
+    /// or every launch would flash a row up and away.
     public static let launchGrace: TimeInterval = 3
 
     /// One running app, as `NSRunningApplication` reports it.
@@ -63,7 +63,7 @@ public enum BackgroundApps {
         /// Running with no window at all.
         case noWindow
 
-        /// The short word on the dock's row.
+        /// The short word for the app's state.
         public var label: String {
             switch self {
             case .hidden: "hidden"
@@ -123,5 +123,13 @@ public enum BackgroundApps {
         let kept = shown.compactMap { byPid[$0.pid] }
         let keptPids = Set(kept.map(\.pid))
         return kept + fresh.filter { !keptPids.contains($0.pid) }
+    }
+
+    /// The launcher lists a resting app once, under "Running, no window", where ⌘Return quits it: the plain app
+    /// row for the same pid is left out. `pid` is a row's running pid, nil when that app isn't running.
+    public static func withoutResting<Row>(_ rows: [Row], resting: [Entry], pid: (Row) -> pid_t?) -> [Row] {
+        let skip = Set(resting.map(\.pid))
+        guard !skip.isEmpty else { return rows }
+        return rows.filter { pid($0).map { !skip.contains($0) } ?? true }
     }
 }

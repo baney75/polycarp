@@ -156,7 +156,7 @@ enum RunningApps {
         }
     }
 
-    /// What a dock open reads of one running app.
+    /// What a background-apps read (the launcher's "Running, no window") takes of one running app.
     struct Facts {
         let pid: pid_t
         let regular: Bool
@@ -168,23 +168,26 @@ enum RunningApps {
     }
 
     /// Reading those for every running app (about 130) costs 25 to 30 ms: each `NSRunningApplication` fetches its
-    /// state on first read, and name and launch date on every read. Until 2026-11-21 every dock open paid that on the
-    /// main thread. Now the dock asks for it while the pointer rests on the edge (`prepare`, during the 120 ms dwell),
-    /// it is read off the main thread, and the open uses it. It is used for `freshFor` seconds, and never after an app
-    /// launched, quit, hid or unhid; an open without one (a script's `dock/show`) reads it on the spot, as before.
+    /// state on first read, and name and launch date on every read. A read is used for `freshFor` seconds, and never
+    /// after an app launched, quit, hid or unhid.
     static let freshFor: TimeInterval = 0.5
     private static var prepared: (facts: [pid_t: Facts], at: TimeInterval, seed: Int)?
-    private static var preparing = false
     /// Bumped by every launch, quit, hide and unhide: a read from before one is stale.
     private static var seed = 0
     private static var watchingFacts = false
+    private static var preparing = false
+    /// What runs once the read off the main thread lands.
+    private static var waiting: [() -> Void] = []
     private static let factsQueue = DispatchQueue(label: "com.baney.polycarp.running-apps", qos: .userInteractive)
 
-    /// Starts reading the facts off the main thread, unless a fresh read is at hand or one is running. Main thread.
-    static func prepare() {
+    /// Reads the facts off the main thread, then runs `then` on the main thread with the read at hand, so
+    /// `facts()` answers without reading. The launcher asks for its "Running, no window" rows this way: the open
+    /// draws first and the rows join a moment later, instead of every open waiting 25 to 30 ms on main. A fresh
+    /// read already at hand still answers on the next main loop turn, never inside the caller. Main thread.
+    static func prepare(then: @escaping () -> Void) {
         watchFacts()
-        let now = ProcessInfo.processInfo.systemUptime
-        if let p = prepared, p.seed == seed, now - p.at < freshFor / 2 { return }
+        if factsPrepared { DispatchQueue.main.async(execute: then); return }
+        waiting.append(then)
         guard !preparing else { return }
         preparing = true
         let started = seed
@@ -192,10 +195,19 @@ enum RunningApps {
             let facts = readFacts()
             DispatchQueue.main.async {
                 preparing = false
-                guard seed == started else { return }
-                prepared = (facts, ProcessInfo.processInfo.systemUptime, started)
+                // An app launched, quit, hid or unhid meanwhile: this read is stale, and `facts()` reads again.
+                if seed == started { prepared = (facts, ProcessInfo.processInfo.systemUptime, started) }
+                let run = waiting
+                waiting = []
+                for w in run { w() }
             }
         }
+    }
+
+    /// Whether `facts()` would answer without reading.
+    static var factsPrepared: Bool {
+        guard let p = prepared else { return false }
+        return p.seed == seed && ProcessInfo.processInfo.systemUptime - p.at < freshFor
     }
 
     /// The fresh read if there is one, else a read now. Main thread.
@@ -206,12 +218,6 @@ enum RunningApps {
         let facts = readFacts()
         prepared = (facts, now, seed)
         return facts
-    }
-
-    /// Whether `facts()` would answer without reading (for the dock bench).
-    static var factsPrepared: Bool {
-        guard let p = prepared else { return false }
-        return p.seed == seed && ProcessInfo.processInfo.systemUptime - p.at < freshFor
     }
 
     /// NSRunningApplication's properties are safe to read from any thread (AppKit returns them atomically).

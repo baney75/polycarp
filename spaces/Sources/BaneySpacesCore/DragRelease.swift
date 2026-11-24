@@ -7,7 +7,7 @@ public struct DragEnd: Equatable, Sendable {
     /// The window's frame when Polycarp's overview opened over it, set only when the overview was still showing over the
     /// display the button came up on. Nil when the person could see where they put the window.
     public var coveredFrom: CGRect?
-    /// The release dropped the window on a workspace (an overview or dock tile): the drop moves it, nothing else may.
+    /// The release dropped the window on a workspace (an overview tile): the drop moves it, nothing else may.
     public var dropped: Bool
 
     public init(pointer: CGPoint, coveredFrom: CGRect?, dropped: Bool) {
@@ -18,14 +18,13 @@ public struct DragEnd: Equatable, Sendable {
 }
 
 /// The order `TopDragWatcher` ends a drag in. Whether the overview covers the release is asked first, because ending the
-/// overview closes it; then the dock carry ends, then the overview's own release. Either one dropping the window makes
-/// it a drop.
+/// overview closes it; then the watcher's ticks end, then the overview's own release, which says whether it was a drop.
 public enum ReleaseOrder {
     public static func end(at pointer: CGPoint, coveredFrom: CGRect?, overviewCovers: () -> Bool,
-                           endCarry: () -> Bool, release: (() -> Bool)?) -> DragEnd {
+                           endTicks: () -> Void, release: (() -> Bool)?) -> DragEnd {
         let covered = coveredFrom != nil && overviewCovers() ? coveredFrom : nil
-        var dropped = endCarry()
-        if let release { dropped = release() || dropped }
+        endTicks()
+        let dropped = release?() ?? false
         return DragEnd(pointer: pointer, coveredFrom: covered, dropped: dropped)
     }
 }

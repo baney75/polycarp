@@ -3,7 +3,7 @@ import XCTest
 /// 2026-11-21 (owner: "switching of windows, and tabs, and search still appears to be glitchy and slow"): trace.log had
 /// 50 `slow scan: ... on main` lines in four hours (p50 255 ms, p90 260, max 303), each the main thread waiting on an
 /// app's Accessibility answer, and dock opens of 337 ms landed in the same second as one. Scans now run on a background
-/// queue and the main thread acts on the last answer. These checks fail if a switch, a dock or overview open, the
+/// queue and the main thread acts on the last answer. These checks fail if a switch, an overview open, the
 /// launcher, a key press in its search, or a focus change asks an app on the main thread again.
 final class MainThreadScanTests: XCTestCase {
     /// Calls that wait on another app's answer.
@@ -30,9 +30,7 @@ final class MainThreadScanTests: XCTestCase {
         try assertAsksNoApp("Sources/BaneySpaces/WorkspaceSwitcher.swift", ["func commit("])
     }
 
-    func testDockAndOverviewOpenAskNoAppOnMain() throws {
-        try assertAsksNoApp("Sources/BaneySpaces/WorkspaceDock.swift", ["private func show(on screen: NSScreen", "func load(from spaces: Spaces,",
-                                                                        "func loadTiles(", "func loadBackground("])
+    func testTheOverviewOpenAsksNoAppOnMain() throws {
         try assertAsksNoApp("Sources/BaneySpaces/Viewer.swift", ["func open()", "func load(from spaces: Spaces)"])
         try assertAsksNoApp("Sources/BaneySpaces/Spaces.swift", ["func entries(on n: Int)", "func entry(for id: WindowID)",
                                                                  "func backgroundApps()", "func rememberFocus()"])
@@ -53,6 +51,31 @@ final class MainThreadScanTests: XCTestCase {
         let off = try XCTUnwrap(SourceText.block(after: "Spaces.axQueue.async", in: can))
         XCTAssertTrue(off.contains("Windows.newWindowItem(pid)"))
         XCTAssertTrue(off.contains("DispatchQueue.main.async"))
+    }
+
+    /// Review of PR #624 first-F2: the launcher's "Running, no window" rows need every running app read (about 130,
+    /// 25 to 30 ms). The open never waits for it: the read runs off the main thread (`RunningApps.prepare`) and the rows
+    /// join after the first draw, as files and agents do.
+    func testTheRestingRowsAreReadOffMainAfterTheOpenDraws() throws {
+        let l = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        let prepare = try XCTUnwrap(SourceText.block(after: "func prepare(scope: Scope)", in: l))
+        XCTAssertFalse(prepare.contains("= actions.restingApps()"), "the open waits on the running apps")
+        let draw = try XCTUnwrap(prepare.range(of: "rebuild()"))
+        let ask = try XCTUnwrap(prepare.range(of: "actions.restingApps {"), "the rows are asked for with a callback")
+        XCTAssertLessThan(draw.lowerBound, ask.lowerBound, "the launcher draws before it asks")
+        let answer = try XCTUnwrap(SourceText.block(after: "actions.restingApps ", in: prepare))
+        XCTAssertTrue(answer.contains("ask == self.restingAsk"), "an answer for an earlier open is dropped")
+        XCTAssertTrue(answer.contains("rebuildKeepingSelection()"), "the row you're on stays put when the rows join")
+        let d = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
+        let resting = try XCTUnwrap(SourceText.block(after: "a.restingApps =", in: d))
+        XCTAssertTrue(resting.contains("RunningApps.prepare {"), "the running apps are read off main first")
+        for call in asksAnApp { XCTAssertFalse(resting.contains(call), "restingApps calls \(call)") }
+        let w = try SourceText.code("Sources/BaneySpaces/Windows.swift")
+        let prep = try XCTUnwrap(SourceText.block(after: "static func prepare(then:", in: w))
+        let off = try XCTUnwrap(SourceText.block(after: "factsQueue.async", in: prep))
+        XCTAssertTrue(off.contains("readFacts()"), "the read runs on the facts queue")
+        XCTAssertTrue(off.contains("DispatchQueue.main.async"), "and answers on main")
+        XCTAssertTrue(prep.contains("DispatchQueue.main.async(execute: then)"), "a fresh read still answers after the open draws")
     }
 
     /// The app list is read from disk off the main thread, and a key press compares precomputed keys.
@@ -91,7 +114,7 @@ final class MainThreadScanTests: XCTestCase {
         XCTAssertEqual(count("refreshNow()", in: s), 3, "refreshNow is called from somewhere new")
         XCTAssertEqual(count("refreshNow()", in: try XCTUnwrap(SourceText.block(after: "func start()", in: s))), 1)
         XCTAssertEqual(count("refreshNow()", in: try XCTUnwrap(SourceText.block(after: "func restoreAll()", in: s))), 1)
-        for file in ["AppDelegate", "WorkspaceDock", "Viewer", "Launcher", "WorkspaceSwitcher", "FocusWatcher"] {
+        for file in ["AppDelegate", "Viewer", "Launcher", "WorkspaceSwitcher", "FocusWatcher"] {
             let other = try SourceText.code("Sources/BaneySpaces/\(file).swift")
             XCTAssertFalse(other.contains("Windows.all("), "\(file) scans every app")
         }

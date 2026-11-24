@@ -6,7 +6,7 @@ import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let spaces = Spaces()
-    /// Terminal splits, browser tabs and agents for the launcher and the dock's badges, plus the `baneyspaces` command.
+    /// Terminal splits, browser tabs and agents for the launcher, plus the `baneyspaces` command.
     private let session = SessionController()
     private let hotkeys = Hotkeys()
     private let updater = Updater()
@@ -19,24 +19,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var viewer = ViewerController(spaces: spaces)
     /// The top bar (`bar.*` in surfaces.json); draws nothing until `bar.enabled`.
     private lazy var topBar = TopBar(spaces: spaces)
-    private lazy var dock: WorkspaceDock = {
-        let d = WorkspaceDock(spaces: spaces)
-        d.onShowOverview = { [weak self] in self?.viewer.open() }
-        d.onShowLauncher = { [weak self] in self?.launcher.show() }
-        d.onSetEdge = { [weak self] e in self?.setDockEdge(e) }
-        d.onTurnOff = { [weak self] in self?.setWorkspaceDock(false) }
-        d.onSetAgentStatus = { [weak self] on in self?.setDockAgentStatus(on) }
-        d.notMenus = { [weak self] in self?.switcher.windowNumber.map { [$0] } ?? [] }
-        d.model.agents = { [weak self] in
-            guard let self, self.session.started else { return [] }
-            return self.session.dockAgents()
-        }
-        d.model.onFocusAgent = { [weak self] a, n in
-            guard let self, !self.session.focusAgent(a.id) else { return }
-            if a.window != 0 { self.spaces.focus(a.window, on: n) } else { self.spaces.switchTo(n, announce: false) }
-        }
-        return d
-    }()
     private lazy var switcher = WorkspaceSwitcher(spaces: spaces)
     /// Carried windows let go over a workspace, each waiting for its drop to settle. Picking
     /// one up again bumps its generation, so its stale move never runs, even one queued.
@@ -119,26 +101,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.dropCarried(grab, on: n)
             return true
         }
-        // The same drag taken down to the Workspace Dock: let go on a tile, it goes there.
-        t.onCarry = { [weak self] grab, _ in
-            guard let self, self.started else { return }
-            self.dock.carryMoved(grab)
-        }
-        // A file dragged out of a window is not that window carried (`ContentDrag`).
-        t.contentDragSeen = { [weak self] in self?.dock.outsideDragSeen }
-        t.onCarryEnd = { [weak self] grab, p in
-            guard let self, let n = self.dock.endCarry(grab, at: p), p != nil else { return false }
-            self.dropCarried(grab, on: n)
-            return true
-        }
         // A drag the overview covered and that dropped nowhere goes back where it was; any other is the person's own.
         t.onDragEnd = { [weak self] id, end in self?.correctOnceStill(id, after: end) }
         t.onLetGo = { id in DragFrameTrace.released(id) }
         return t
     }()
 
-    /// A window dragged by its title bar and let go over workspace `n` in the overview or the
-    /// dock. The window server and the app finish their own drop first: the window moves once
+    /// A window dragged by its title bar and let go over workspace `n` in the overview. The window server and the app finish their own drop first: the window moves once
     /// it has held still for 60 ms (four looks 20 ms apart), no sooner than 0.1 s after the
     /// release and no later than 0.5 s.
     private func dropCarried(_ grab: TopDrag.Grab, on n: Int) {
@@ -209,6 +178,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return out
         }
         a.showOverview = { [weak self] in self?.viewer.open() }
+        // Runs right after `workspacesByApp`, which just refreshed the windows. Hidden apps are asked
+        // again in the background, so a window closed behind ⌘H counts the next time the launcher opens.
+        a.restingApps = { [weak self] done in
+            guard let self, self.started else { return done([]) }
+            // Every running app is read off the main thread first; the list is then built from that read on main.
+            RunningApps.prepare { [weak self] in
+                guard let self else { return done([]) }
+                self.spaces.refreshHidden()
+                done(self.spaces.backgroundApps())
+            }
+        }
+        a.showResting = { [weak self] pid in self?.run { $0.showBackgroundApp(pid) } }
+        a.quitResting = { pid in NSRunningApplication(processIdentifier: pid)?.terminate() }
         a.sessionItems = { [weak self] q in self?.session.launcherItems(q) ?? [] }
         a.browserTab = { [weak self] q in self?.session.browserTabItem(q) }
         a.willShow = { [weak self] in
@@ -226,8 +208,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.session.engine.runInGhostty(in: dir, script: script, orElse: orElse)
         }
         a.bringBack = { [weak self] in self?.bringBack() }
-        a.toggleDock = { [weak self] in self?.toggleWorkspaceDock() }
-        a.dockOn = { WorkspaceDock.enabled }
         a.checkForUpdates = { [weak self] in self?.checkForUpdates() }
         a.showSetup = { [weak self] in self?.showSetup() }
         return LauncherController(actions: a)
@@ -289,10 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if self.started { self.restartKeyWatcher() }
             self.syncMissionControl()
         }
-        c.model.onWorkspaceDockChange = { [weak self] on in self?.setWorkspaceDock(on) }
         c.model.onTopDragChange = { [weak self] on in self?.setTopDrag(on) }
-        c.model.onDockEdgeChange = { [weak self] e in self?.setDockEdge(e) }
-        c.model.onDockAgentStatusChange = { [weak self] on in self?.setDockAgentStatus(on) }
         // Every event, not just any: an older install lacks StopFailure, which the red badge needs.
         c.model.hooksInstalled = {
             guard let d = FileManager.default.contents(atPath: NSHomeDirectory() + "/.claude/settings.json") else { return .noClaudeCode }
@@ -422,8 +399,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let left = !(UserDefaults.standard.array(forKey: "freedShortcuts") ?? []).isEmpty || SystemShortcuts.spotlightFreed
             exit(left ? 1 : 0)
         }
-        // `BaneySpaces --restore-dock`: the uninstaller's way to put the macOS Dock back if the
-        // Workspace Dock had it out of sight.
+        // `BaneySpaces --restore-dock`: the uninstaller's way to put the macOS Dock back if an older
+        // build's Workspace Dock left it out of sight.
         if CommandLine.arguments.contains("--restore-dock") {
             SystemDock.restore()
             SystemTopDrag.restore()
@@ -468,11 +445,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         tryRetirement(0)
+        // The Workspace Dock is gone (2026-11-23). A macOS Dock an older build hid for it comes back once, here; with no
+        // saved record this does nothing.
+        SystemDock.restoreLeftover()
         NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleURL(_:reply:)),
                                                      forEventClass: AEEventClass(kInternetEventClass),
                                                      andEventID: AEEventID(kAEGetURL))
-        // `baneyspaces set` and `get` answer from launch on, before Accessibility: looks and the dock switch
-        // only store a choice then; the dock starts with the rest once BaneySpaces does.
+        // `baneyspaces set` and `get` answer from launch on, before Accessibility: looks only store a choice then.
         session.readSetting = { [weak self] in self?.settingValue($0) }
         session.writeSetting = { [weak self] k, v in self?.applySetting(k, v) ?? false }
         // A Polycarp theme (`polycarp theme set ...`) draws instead of Settings' theme and palette while its
@@ -491,7 +470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The launcher's engine moves into surfaces.json (search.engine) once, before the store's first read.
         Launcher.moveOldSearchEngine()
         SurfacesStore.shared.start(log: { Trace.log($0) })
-        // style.css (`polycarp-spaces style set ...`, docs/style.md): the bar and the dock draw from `Styles.shared`, which
+        // style.css (`polycarp-spaces style set ...`, docs/style.md): the bar draws from `Styles.shared`, which
         // follows `StyleSheetStore.didChange`. Waits up to 0.1 s for the first read, so the first panels draw with it.
         StyleSheetStore.shared.start(log: { Trace.log($0) })
         Styles.shared.sync()
@@ -508,7 +487,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         spaces.onChange = { [weak self] in
             guard let self else { return }
             self.updateIcon()
-            self.dock.reload()
             self.topBar.workspacesChanged()
         }
         // It reads surfaces.json and stays away while `bar.enabled` is off.
@@ -531,8 +509,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard self.started else { return }
             self.spaces.appActivated(app)
             self.session.appChanged()
-            // The app used last goes first on its tile, so a dock in view reorders now.
-            self.dock.reload()
         }
         // Once another app is in front, the viewer and the empty-workspace holder step aside.
         NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification,
@@ -629,13 +605,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ n: Notification) {
-        // An install swaps the app in place: the Dock and Mission Control stay as they are, since
-        // restoring them here and taking them back at the launch would restart the Dock twice in seconds.
+        // An install swaps the app in place: Mission Control stays as it is, since restoring it here and
+        // taking it back at the launch would restart the Dock twice in seconds.
         let forInstall = InstallHandoff.isCurrent(markedAt: (UserDefaults.standard.object(forKey: InstallHandoff.key) as? NSNumber)?.doubleValue, now: Date().timeIntervalSince1970)
         UserDefaults.standard.removeObject(forKey: InstallHandoff.key)
         DockRestart.isQuitting = true
-        // The macOS Dock comes back with everything else; the next launch tucks it away again.
-        dock.stop(restoreSystemDock: !forInstall)
         topDrag.stop()
         DragFrameTrace.stopAll()
         // Mission Control comes back with the Dock, so there's always a way to see the desktops.
@@ -663,9 +637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func startWhenTrusted() {
         if canStart { return start() }
-        // Left out of sight by a crash, the macOS Dock comes back while BaneySpaces waits; the
-        // Workspace Dock takes over again once it starts. The same goes for the drag to the top.
-        SystemDock.restore()
+        // Left taken over by a crash, the drag to the top comes back while BaneySpaces waits.
         SystemTopDrag.restore()
         SystemMissionControl.restore()
         updateIcon()
@@ -684,8 +656,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var canStart: Bool { AXIsProcessTrusted() && !aeroSpaceRunning }
 
     /// A press anywhere tells Spaces which display you're on: in other apps and on the desktop
-    /// (global), and on BaneySpaces' own dock, overview and launcher (local, before the press is
-    /// handled, so a dock tile switches the dock's display).
+    /// (global), and on BaneySpaces' own overview and launcher (local, before the press is handled).
     private var clickMonitors: [Any] = []
     private func watchClicksForDisplay() {
         guard clickMonitors.isEmpty else { return }
@@ -708,7 +679,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fullScreenGestures.onGesture = { [weak self] window in self?.spaces.toggleFill(window) }
         fullScreenGestures.start()
         watchClicksForDisplay()
-        if WorkspaceDock.enabled { dock.start() }
         // macOS's own top-of-screen drag goes quiet first, so only one view answers the gesture.
         // Off, settings left taken over (a crash, a change while it wasn't running) go back.
         if TopDragWatcher.enabled { SystemTopDrag.takeOver() } else { SystemTopDrag.restore() }
@@ -760,7 +730,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotCorners.stop()
         SystemMissionControl.restore()
         viewer.close()
-        dock.stop(restoreSystemDock: true)
         session.stop()
         spaces.suspend()
         started = false
@@ -771,20 +740,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return false
     }
 
-    /// Windows dragged by their title bars are followed while the drag to the top opens the
-    /// overview or the Workspace Dock takes them. macOS's own top-of-screen drag is the top
-    /// drag's to turn off and on (`setTopDrag`), never the dock's: turning the dock on or off
-    /// leaves those settings, and the Dock process, alone.
+    /// Windows dragged by their title bars are followed whether or not the drag to the top opens the overview: with it
+    /// off (`topEnabled` false) the watcher still ends each drag in `onDragEnd`, which puts back a title bar let go out of
+    /// reach (`DragRelease`). It stops only when Polycarp quits or is paused. macOS's own top-of-screen drag is the top
+    /// drag's to turn off and on (`setTopDrag`).
     private func syncWindowDrags() {
         guard started else { return }
         topDrag.topEnabled = TopDragWatcher.enabled
-        if DockSwitch<DockPanel>.windowDragsNeeded(topDrag: TopDragWatcher.enabled, dockEnabled: WorkspaceDock.enabled) {
-            topDrag.start()
-        } else {
-            topDrag.stop()
-            DragFrameTrace.stopAll()
-            cancelSettling()
-        }
+        topDrag.start()
     }
 
     private func setTopDrag(_ on: Bool) {
@@ -876,7 +839,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func startSession() {
-        session.onUnseenChange = { [weak self] _ in self?.updateIcon(); self?.dock.reload() }
+        session.onUnseenChange = { [weak self] _ in self?.updateIcon() }
         var h = AgentHost()
         h.workspace = { Spaces.agentWorkspace }
         h.setWorkspace = { [weak self] n in Spaces.agentWorkspace = n; self?.run { $0.reapply() } }
@@ -887,7 +850,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         h.occupied = { [weak self] n in self?.spaces.isOccupied(n) ?? false }
         session.agentHost = h
         session.updateHandler = { [weak self] what in self?.updater.answer(what) ?? Wire.Reply(ok: false, error: "the updater isn't ready") }
-        session.onWorkingChange = { [weak self] in self?.dock.reload() }
         // A moment after launch: setting up an observer per app costs the main thread a few
         // hundred milliseconds, which would otherwise land on your first workspace switch.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -1024,16 +986,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return apps.map { .init(id: $0.bundleID, name: $0.name, on: on.contains($0.bundleID), animates: slow.contains($0.bundleID)) }
     }
 
-    // MARK: Workspace Dock
-
-    private func toggleWorkspaceDock() { setWorkspaceDock(!WorkspaceDock.enabled) }
-
-    /// Moves the Workspace Dock to another side of the screen; setup follows.
-    func setDockEdge(_ e: DockEdge) {
-        dock.setEdge(e)
-        if setup.model.dockEdge != e { setup.model.dockEdge = e }
-    }
-
     /// Asks, then hands off to the bundled uninstall.sh and quits; quitting brings every window
     /// back, and the script waits for that before it removes anything.
     private func uninstall() {
@@ -1056,20 +1008,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// Shows or hides agent badges on the Workspace Dock; settings follow.
-    func setDockAgentStatus(_ on: Bool) {
-        WorkspaceDock.agentStatus = on
-        dock.model.agentStatus = on
-        if setup.model.dockAgentStatus != on { setup.model.dockAgentStatus = on }
-        dock.reload()
-    }
-
-    /// `dock.enabled`, `appearance.theme` and `appearance.palette` by name: what `baneyspaces get` reads.
+    /// `appearance.theme` and `appearance.palette` by name: what `baneyspaces get` reads.
     func settingValue(_ key: SettingKey) -> String? {
         switch key {
         case .theme: Appearance.shared.settings.theme.rawValue
         case .palette: Appearance.shared.settings.colorPalette
-        case .dockEnabled: WorkspaceDock.enabled ? "true" : "false"
         }
     }
 
@@ -1079,18 +1022,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch key {
         case .theme: Appearance.shared.settings.theme = ThemeID(rawValue: value) ?? .macDefault
         case .palette: Appearance.shared.settings.colorPalette = value
-        case .dockEnabled: setWorkspaceDock(value == "true")
         }
         return true
-    }
-
-    /// Turns the Workspace Dock on or off (`dock.enabled`). Off, there is no dock window at all and
-    /// the macOS Dock comes back as it was; on, the dock returns on the next reveal at its edge.
-    func setWorkspaceDock(_ on: Bool) {
-        WorkspaceDock.enabled = on
-        if setup.model.workspaceDock != on { setup.model.workspaceDock = on }
-        if on, started { dock.start() } else if !on { dock.stop(restoreSystemDock: true) }
-        syncWindowDrags()
     }
 
     // MARK: Launcher
@@ -1163,23 +1096,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "viewer": run { _ in viewer.toggle() }
         // Opening it changes nothing on its own, so a web page may: every action inside needs a key press.
         case "launcher": launcher.show(scope: LauncherModel.Scope(rawValue: url.lastPathComponent) ?? .root, takeKeys: false)
-        case "dock":
-            // Turning it off or hiding it is always allowed: a pinned dock must never outlive
-            // its check (2026-10-14, a hide that raced the setting going off left it stuck up).
-            // Showing it or turning it on (which hides the macOS Dock) is for checks, only when
-            // `defaults write com.baney.baneyspaces dockURLCommands -bool true` says so, so a
-            // web page can't do either.
-            let checks = UserDefaults.standard.bool(forKey: "dockURLCommands")
-            switch url.lastPathComponent {
-            case "off": run { _ in setWorkspaceDock(false) }
-            case "show" where checks: run { _ in dock.pin(true) }
-            case "hide": run { _ in dock.pin(false) }
-            case "on" where checks: run { _ in setWorkspaceDock(true) }
-            // For `scripts/dock-motion-probe.swift`: open and close the first "+N" list without the pointer.
-            case "more" where checks: run { _ in _ = dock.openMoreForCheck() }
-            case "lessmore" where checks: run { _ in dock.closeMoreForCheck() }
-            default: NSLog("Polycarp: dock command refused or unknown %@", text)
-            }
         default: NSLog("Polycarp: unknown command %@", text)
         }
     }

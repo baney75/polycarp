@@ -18,13 +18,7 @@ final class SetupModel: ObservableObject {
     var onTopDragChange: ((Bool) -> Void)?
     @Published var cmdTab = MissionControlKeys.cmdTabMode
     var onCmdTabChange: ((MissionControlKeys.CmdTabMode) -> Void)?
-    @Published var workspaceDock = WorkspaceDock.enabled
-    var onWorkspaceDockChange: ((Bool) -> Void)?
-    @Published var dockEdge = WorkspaceDock.edge
-    var onDockEdgeChange: ((DockEdge) -> Void)?
-    @Published var dockAgentStatus = WorkspaceDock.agentStatus
-    var onDockAgentStatusChange: ((Bool) -> Void)?
-    /// Whether Claude Code and Grok report to BaneySpaces; agent badges need it.
+    /// Whether Claude Code and Grok report to BaneySpaces; the launcher's agent rows need it.
     enum HookState { case on, off, noClaudeCode, unreadable }
     var hooksInstalled: () -> HookState = { .on }
     var onInstallHooks: (() -> Void)?
@@ -353,16 +347,6 @@ final class SetupModel: ObservableObject {
         onCmdTabChange?(mode)
     }
 
-    func setWorkspaceDock(_ on: Bool) {
-        workspaceDock = on
-        onWorkspaceDockChange?(on)
-    }
-
-    func setDockAgentStatus(_ on: Bool) {
-        dockAgentStatus = on
-        onDockAgentStatusChange?(on)
-    }
-
     func installHooks() {
         onInstallHooks?()
         hooks = hooksInstalled()
@@ -432,7 +416,7 @@ final class SetupModel: ObservableObject {
 
 /// The settings window's tabs. General comes first: it's where a new Mac starts.
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case general = "General", keys = "Keys", dock = "Dock", appearance = "Appearance", launcher = "Launcher",
+    case general = "General", keys = "Keys", agents = "Agents", appearance = "Appearance", launcher = "Launcher",
          automation = "Automation", permissions = "Permissions", updates = "Updates"
     var id: Self { self }
 
@@ -440,7 +424,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape"
         case .keys: "keyboard"
-        case .dock: "dock.rectangle"
+        case .agents: "sparkles"
         case .appearance: "paintpalette"
         case .launcher: "magnifyingglass"
         case .automation: "gearshape.2"
@@ -469,7 +453,7 @@ struct SetupView: View {
                     switch model.tab {
                     case .general: general
                     case .keys: keys
-                    case .dock: dock
+                    case .agents: agents
                     case .appearance: appearanceTab
                     case .launcher: launcher
                     case .automation: automation
@@ -626,40 +610,9 @@ struct SetupView: View {
         }
     }
 
-    // MARK: Dock
+    // MARK: Agents
 
-    @ViewBuilder private var dock: some View {
-        SettingsGroup("Workspace Dock") {
-            SettingsRow("Workspace Dock in place of the macOS Dock", help: "Rest the pointer on the screen edge to see your workspaces and their apps.") {
-                Toggle("Workspace Dock", isOn: binding({ model.workspaceDock }, { model.setWorkspaceDock($0) })).labelsHidden()
-            }
-            SettingsRow("Position on screen") {
-                Picker("Position on screen", selection: binding({ model.dockEdge }, { model.dockEdge = $0; model.onDockEdgeChange?($0) })) {
-                    ForEach(DockEdge.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .labelsHidden().disabled(!model.workspaceDock)
-            }
-            LearnMore("Click a workspace to go there. At the top the dock waits a moment longer, so reaching for the menu bar doesn't bring it up. The macOS Dock stays out of sight while this is on and comes back as it was when you turn it off or quit Polycarp.")
-        }
-
-        SettingsGroup("Agent status") {
-            SettingsRow("Show what coding agents are doing on their app icons", help: "Click an app with a badge to go to that agent's tab.") {
-                Toggle("Agent status", isOn: binding({ model.dockAgentStatus }, { model.setDockAgentStatus($0) })).labelsHidden()
-                    .disabled(!model.workspaceDock)
-            }
-            SettingsBlock {
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
-                    legend(AgentStatusBadge(state: .working, size: 16), "Working")
-                    legend(AgentStatusBadge(state: .asking, size: 16), "Asking you something, such as a permission")
-                    legend(AgentStatusBadge(state: .failed, size: 16), "Stopped on an error")
-                    legend(Text("1").font(Chrome.font(10, .heavy, rounded: true)).foregroundStyle(Chrome.light())
-                            .frame(width: 16, height: 16).background(Circle().fill(Chrome.finished)),
-                           "Finished while you were away")
-                }
-                .opacity(model.dockAgentStatus && model.workspaceDock ? 1 : 0.4)
-            }
-        }
-
+    @ViewBuilder private var agents: some View {
         if !model.finished.isEmpty {
             SettingsGroup("Finished while you were away") {
                 ForEach(model.finished) { row in
@@ -686,13 +639,6 @@ struct SetupView: View {
                     Button("Install Hooks", action: model.installHooks)
                 }
             }
-        }
-    }
-
-    private func legend<Badge: View>(_ badge: Badge, _ text: String) -> some View {
-        GridRow {
-            badge.frame(width: 18, alignment: .center)
-            Text(text).font(Chrome.font(12))
         }
     }
 
@@ -882,7 +828,7 @@ struct SetupView: View {
                 .pickerStyle(.segmented).labelsHidden().frame(width: 200)
                 .disabled(!Chrome.spec.fill.adjustable)
             }
-            SettingsRow("Opacity", help: Chrome.spec.fill.adjustable ? "Dock, ⌘Tab, launcher, overview and switch overlay. Solid is always opaque."
+            SettingsRow("Opacity", help: Chrome.spec.fill.adjustable ? "⌘Tab, launcher, overview and switch overlay. Solid is always opaque."
                         : "This look draws its own fill, so style and opacity don't change it.") {
                 HStack(spacing: 8) {
                     Slider(value: binding({ appearance.settings.panelOpacity }, { appearance.settings.panelOpacity = $0 }),
@@ -893,15 +839,6 @@ struct SetupView: View {
                     Text("\(Int((appearance.settings.effectivePanelOpacity * 100).rounded()))%")
                         .font(Chrome.font(12).monospacedDigit()).foregroundStyle(Chrome.muted).frame(width: 40, alignment: .trailing)
                 }
-            }
-        }
-
-        SettingsGroup("Dock size") {
-            SettingsRow("Size") {
-                Picker("Dock size", selection: binding({ appearance.settings.dockSize }, { appearance.settings.dockSize = $0 })) {
-                    ForEach(DockSize.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 200)
             }
         }
     }
@@ -947,7 +884,7 @@ struct SetupView: View {
             SettingsRow("⌘Space opens the Polycarp launcher instead of Spotlight", help: "One box for apps, files, tabs, the web and agents. ⌃⌘K opens it from any app.") {
                 Toggle("Launcher on ⌘Space", isOn: binding({ model.launcherOnCmdSpace }, { model.setLauncher($0) })).labelsHidden()
             }
-            LearnMore("Open apps, install and remove them, find files, terminal tabs and splits, browser tabs and agent windows, search the web and ask an agent, from one box. Off gives ⌘Space back to Spotlight; the launcher stays in the menu bar, the Workspace Dock and ⌃⌘K.")
+            LearnMore("Open apps, install and remove them, find files, terminal tabs and splits, browser tabs and agent windows, search the web and ask an agent, from one box. Off gives ⌘Space back to Spotlight; the launcher stays in the menu bar and on ⌃⌘K.")
             if TerminalFeature.built {
                 SettingsRow("⌃` drops down the quick terminal", help: "From any app. Off leaves ⌃` to other apps, such as VS Code's terminal; polycarp-spaces term --quick still opens it.") {
                     Toggle("Quick terminal on ⌃`", isOn: binding({ model.quickTerminalKey }, { model.setQuickTerminalKey($0) })).labelsHidden()
@@ -1133,7 +1070,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     func show() {
         model.justEnabled = false
         if !model.ready { model.tab = model.trusted ? .general : .permissions }
-        model.dockAgentStatus = WorkspaceDock.agentStatus
         model.readShown(opening: true)
         model.reloadBangs()
         model.startWatching()

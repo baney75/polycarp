@@ -18,7 +18,7 @@ struct AgentHost {
 }
 
 /// The session engine: the engine behind every terminal split, browser tab and coding agent BaneySpaces
-/// knows about. It feeds the launcher's rows, the Workspace Dock's agent badges and the
+/// knows about. It feeds the launcher's rows and the
 /// `baneyspaces` command, reads agent state from hooks, and toasts when an agent finishes while
 /// you're elsewhere. BaneySpaces' app delegate owns it and starts it once Accessibility is allowed.
 final class SessionController {
@@ -54,37 +54,10 @@ final class SessionController {
 
     /// Set by the app delegate: the menu bar badge shows how many agents finished unseen.
     var onUnseenChange: (Int) -> Void = { _ in }
-    /// `baneyspaces get` and `set` (the theme, the palette, the dock switch): the app reads and applies them.
+    /// `baneyspaces get` and `set` (the theme and the palette): the app reads and applies them.
     /// Until the app wires them (it does at launch, before the socket listens) a write is refused, never dropped.
     var readSetting: (SettingKey) -> String? = { _ in nil }
     var writeSetting: (SettingKey, String) -> Bool = { _, _ in false }
-    /// Which rows are working, asking or stopped changed, so the Workspace Dock's badges can follow.
-    var onWorkingChange: () -> Void = {}
-    private var lastWorking: [String: String] = [:]
-
-    /// Agents working, asking, stopped on an error or finished unseen, for the Workspace Dock: each with its window, so the
-    /// dock can badge the app it runs in and go straight to it.
-    /// Finished ones come in the order ⌘⇧U visits them, so a tile's badge goes to the same one.
-    func dockAgents() -> [DockAgent] {
-        let unseen = engine.attention.unseen
-        let agents = engine.items.compactMap { item -> DockAgent? in
-            guard let state = DockAgent.State.of(activity: item.activity, unseen: unseen.contains(item.id), notice: item.notice) else { return nil }
-            let name = item.agent.isEmpty ? item.appName : item.agent.prefix(1).uppercased() + item.agent.dropFirst()
-            return DockAgent(id: item.id, window: item.windowNumber, workspace: item.workspace, state: state, name: name,
-                             task: Activity.label(of: item.title))
-        }
-        let rank = { (a: DockAgent) in unseen.firstIndex(of: a.id) ?? unseen.count }
-        return agents.sorted { rank($0) < rank($1) }
-    }
-
-    /// Goes to an agent's own row: its tab or split selected, and a finished one marked seen.
-    /// False when the session engine no longer has it.
-    func focusAgent(_ id: String) -> Bool {
-        guard started, let item = engine.item(id) else { return false }
-        focus(item)
-        return true
-    }
-
     /// Agents that finished unseen and still have a row to go to; the menu bar badge counts these,
     /// so it never counts one the menu's list can't show (a session that closed before you looked).
     var unseenCount: Int { finishedRows().count }
@@ -147,9 +120,6 @@ final class SessionController {
             toast.show(item, more: fresh.count - 1, on: Self.activeScreen())
         }
         if unseen != lastUnseen { onUnseenChange(unseen.count) }
-        let working = Dictionary(engine.items.filter { $0.activity == .working || !$0.notice.isEmpty }
-            .map { ($0.id, $0.activity == .working ? "" : $0.notice) }) { a, _ in a }
-        if working != lastWorking { lastWorking = working; onWorkingChange() }
         lastUnseen = unseen
         if engine.items != lastItems { lastItems = engine.items; onItemsChange() }
         writeState()
@@ -197,7 +167,7 @@ final class SessionController {
 
     // MARK: actions
 
-    /// Goes to a row picked in the launcher, a toast, ⌘⇧U or a dock badge. A phone opens as its app.
+    /// Goes to a row picked in the launcher, a toast or ⌘⇧U. A phone opens as its app.
     /// A row whose window BaneySpaces has on a workspace goes there through `focusWindow` (the same
     /// path as a dock icon click), and the engine only selects the tab or split inside it. Activating
     /// the app from here instead reached Spaces as an activation it didn't ask for, of an app it had
@@ -370,7 +340,7 @@ final class SessionController {
     }
 
     func handle(_ r: Wire.Request) -> Wire.Reply {
-        // Looks and the dock switch need no Accessibility, so they answer before the session engine has started.
+        // Looks need no Accessibility, so they answer before the session engine has started.
         if r.op == .setting { return setting(r) }
         // Updating needs no Accessibility either. A remote caller never gets here (`Remote.allows`), and the
         // check below keeps it so if that ever changes: another machine does not get to restart this app.
@@ -543,7 +513,7 @@ final class SessionController {
 
     // MARK: finished agents
 
-    /// Agents that finished while you were away, for Settings > Dock.
+    /// Agents that finished while you were away, for Settings > Agents and the status menu.
     func finishedRows() -> [(id: String, label: String)] {
         engine.attention.unseen.compactMap { engine.item($0) }.map { ($0.id, $0.label) }
     }

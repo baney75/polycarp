@@ -143,12 +143,8 @@ final class ThemeConformanceTests: XCTestCase {
 
     /// The files that draw a surface. `Theming.swift` is the theme layer: the only place a shipped
     /// value of the BaneySpaces theme may be written down.
-    private let surfaceFiles = ["WorkspaceDock", "WorkspaceSwitcher", "Launcher", "Viewer", "SwitchHUD", "Setup", "Appearance",
+    private let surfaceFiles = ["WorkspaceSwitcher", "Launcher", "Viewer", "SwitchHUD", "Setup", "Appearance",
                                 "Permissions/PermissionsPane", "Permissions/DragHelper", "Player", "TopBar", "KeysSheet"]
-
-    /// What an agent shows keeps its own colors (the agent cursor, the spinner and its badges), so
-    /// agent activity is never mistaken for yours: the dock's source from this line on.
-    private let agentBadgeStart = "struct AgentStatusBadge: View"
 
     private let banned: [(String, String)] = [
         (#"cornerRadius:\s*[0-9]"#, "a corner radius"),
@@ -168,7 +164,6 @@ final class ThemeConformanceTests: XCTestCase {
         var found: [String] = []
         for file in surfaceFiles {
             var code = try Repo.code("Sources/BaneySpaces/\(file).swift")
-            if file == "WorkspaceDock", let r = code.range(of: agentBadgeStart) { code = String(code[..<r.lowerBound]) }
             // Appearance.swift holds the model's own conversions (RGB to Color) before the panel.
             if file == "Appearance", let r = code.range(of: "struct PanelBackground") { code = String(code[r.lowerBound...]) }
             for (n, line) in code.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
@@ -187,7 +182,7 @@ final class ThemeConformanceTests: XCTestCase {
         XCTAssertNotNil(line.range(of: banned[0].0, options: .regularExpression))
         XCTAssertNotNil("Color.white.opacity(0.5)".range(of: banned[4].0, options: .regularExpression))
         XCTAssertNotNil(".foregroundStyle(.white)".range(of: banned[6].0, options: .regularExpression))
-        XCTAssertNil("Chrome.shape(.dockTile)".range(of: banned[0].0, options: .regularExpression))
+        XCTAssertNil("Chrome.shape(.launcherRow)".range(of: banned[0].0, options: .regularExpression))
     }
 
     func testEverySurfaceFileReadsTheTheme() throws {
@@ -198,17 +193,12 @@ final class ThemeConformanceTests: XCTestCase {
         // The panel is the one place the fill, border and shadow are drawn, from `PanelLook`.
         let panel = try Repo.code("Sources/BaneySpaces/Appearance.swift")
         XCTAssertTrue(panel.contains("PanelLook.make"))
-        // The dock's measurements are the theme's.
-        let dock = try Repo.code("Sources/BaneySpaces/WorkspaceDock.swift")
-        XCTAssertTrue(dock.contains("Chrome.tileScale"))
-        XCTAssertTrue(dock.contains("Chrome.style(.dockBar).gap"))
-        XCTAssertTrue(dock.contains("Chrome.style(.dockBar).padding"))
     }
 
     /// `.primary` and `.secondary` text follows the color scheme: a light palette's panels need the light scheme,
     /// or the overview's text is white on a pale tile.
     func testEverySurfaceSetsTheColorSchemeFromThePalette() throws {
-        for file in ["WorkspaceDock", "WorkspaceSwitcher", "Launcher", "Viewer", "SwitchHUD"] {
+        for file in ["WorkspaceSwitcher", "Launcher", "Viewer", "SwitchHUD"] {
             let code = try Repo.code("Sources/BaneySpaces/\(file).swift")
             XCTAssertTrue(code.contains("\\.colorScheme, Chrome.scheme"), "\(file) pins the scheme instead of following the palette")
         }
@@ -220,7 +210,6 @@ final class ThemeConformanceTests: XCTestCase {
             ("Launcher", [".launcherPanel", ".launcherRow", ".launcherThumb"]),
             ("Viewer", [".overviewTile", ".overviewChip"]),
             ("SwitchHUD", [".hudPanel", ".hudCell"]),
-            ("WorkspaceDock", [".dockBar", ".dockList", ".dockTile", ".dockRow", ".dockButton"]),
             ("Setup", [".settingsTile"]),
             ("SettingsKit", [".settingsCallout", ".settingsCell"]),
         ]

@@ -1,25 +1,32 @@
 import XCTest
 @testable import BaneySpacesCore
 
-/// `baneyspaces set appearance.theme omarchy`, `set appearance.palette nord`, `set dock.enabled false`.
+/// `baneyspaces set appearance.theme omarchy`, `set appearance.palette nord`.
 final class SettingKeyTests: XCTestCase {
-    func testTheThreeSettingsHaveTheSpecNames() {
-        XCTAssertEqual(SettingKey.allCases.map(\.rawValue), ["appearance.theme", "appearance.palette", "dock.enabled"])
+    func testTheSettingsHaveTheSpecNames() {
+        XCTAssertEqual(SettingKey.allCases.map(\.rawValue), ["appearance.theme", "appearance.palette"])
     }
 
-    func testThemesPalettesAndTheDockSwitchTakeTheirValues() {
+    /// The Workspace Dock was removed (2026-11-23): an agent that still sets or reads its switch hears why, not "no setting".
+    func testTheDockSwitchIsRefusedWithWhereItsFeaturesWent() {
+        for text in ["false", "true", nil] {
+            guard case .refused(let why) = SettingKey.ask(target: "dock.enabled", text: text) else { return XCTFail("dock.enabled \(text ?? "get")") }
+            XCTAssertTrue(why.contains("Workspace Dock was removed"), why)
+            XCTAssertTrue(why.contains("launcher"), why)
+        }
+        guard case .refused = SettingKey.ask(target: " Dock.Enabled ", text: "false") else { return XCTFail("case and spaces") }
+    }
+
+    func testThemesAndPalettesTakeTheirValues() {
         XCTAssertEqual(SettingKey.ask(target: "appearance.theme", text: "omarchy"), .set(.theme, "omarchy"))
         XCTAssertEqual(SettingKey.ask(target: "appearance.theme", text: "Minimal"), .set(.theme, "minimal"))
         XCTAssertEqual(SettingKey.ask(target: "appearance.palette", text: "auto"), .set(.palette, "auto"))
         XCTAssertEqual(SettingKey.ask(target: "appearance.palette", text: "nord"), .set(.palette, "nord"))
-        XCTAssertEqual(SettingKey.ask(target: "dock.enabled", text: "false"), .set(.dockEnabled, "false"))
-        XCTAssertEqual(SettingKey.ask(target: "dock.enabled", text: "on"), .set(.dockEnabled, "true"))
-        XCTAssertEqual(SettingKey.ask(target: "dock.enabled", text: nil), .get(.dockEnabled))
         XCTAssertEqual(SettingKey.ask(target: nil, text: nil), .list)
     }
 
     func testAWrongValueOrNameIsRefusedWithWhatWouldWork() {
-        for (k, v) in [("appearance.theme", "vaporwave"), ("appearance.palette", "nope"), ("dock.enabled", "maybe"), ("nothing", "x")] {
+        for (k, v) in [("appearance.theme", "vaporwave"), ("appearance.palette", "nope"), ("nothing", "x")] {
             guard case .refused(let why) = SettingKey.ask(target: k, text: v) else { return XCTFail("\(k) \(v)") }
             XCTAssertFalse(why.isEmpty)
         }
@@ -42,7 +49,7 @@ final class SettingKeyTests: XCTestCase {
             XCTAssertTrue(Remote.allows(Wire.Request(op: .setting, target: key.rawValue)), key.rawValue)
         }
         // The request, caller included, survives the wire.
-        let set = Wire.Request(op: .setting, target: "dock.enabled", text: "false", caller: "claude-code")
+        let set = Wire.Request(op: .setting, target: "appearance.palette", text: "nord", caller: "claude-code")
         let back = try? JSONDecoder().decode(Wire.Request.self, from: JSONEncoder().encode(set))
         XCTAssertEqual(back, set)
         XCTAssertEqual(back?.caller, "claude-code")

@@ -199,8 +199,13 @@ struct LauncherActions {
     var workspacesByApp: () -> [String: [Int]] = { [:] }
     var showOverview: () -> Void = {}
     var bringBack: () -> Void = {}
-    var toggleDock: () -> Void = {}
-    var dockOn: () -> Bool = { false }
+    /// Apps running with no window to see (`BackgroundApps`), read once when the launcher opens. The answer comes
+    /// back on the main thread after the open has drawn: the read of every running app runs off it (`RunningApps.prepare`).
+    var restingApps: (@escaping ([BackgroundApps.Entry]) -> Void) -> Void = { $0([]) }
+    /// Brings a resting app forward onto the workspace you're on (`Spaces.showBackgroundApp`).
+    var showResting: (pid_t) -> Void = { _ in }
+    /// Quits a resting app the way its Quit menu would.
+    var quitResting: (pid_t) -> Void = { _ in }
     var checkForUpdates: () -> Void = {}
     var showSetup: () -> Void = {}
     /// Another Claude Code session beside the ones running, in Ghostty.
@@ -428,6 +433,10 @@ final class LauncherModel: ObservableObject {
     private var running: [String: [Int]] = [:]
     /// Running apps by bundle path, read when the launcher opens, so rows don't walk the running apps on every keystroke.
     private var runningPids: [String: pid_t] = [:]
+    /// Apps running with no window to see, read when the launcher opens (`LauncherActions.restingApps`).
+    private var resting: [BackgroundApps.Entry] = []
+    /// Bumped by every open, so an answer for an earlier open is dropped.
+    private var restingAsk = 0
     private var recents = Recents(UserDefaults.standard.stringArray(forKey: "launcherRecents") ?? [])
     private var iconCache: [String: NSImage] = [:]
     private let catalog = CaskCatalog()
@@ -502,6 +511,8 @@ final class LauncherModel: ObservableObject {
             guard let path = app.bundleURL?.path, runningPids[path] == nil else { continue }
             runningPids[path] = app.processIdentifier
         }
+        resting = []
+        restingAsk += 1
         storeResults = []
         fileResults = []
         bangs = Launcher.loadBangs()
@@ -510,6 +521,15 @@ final class LauncherModel: ObservableObject {
         // The BES root and its Inbox count, read once here so a keystroke never touches the disk for them.
         RoomsProvider.shared.refresh()
         rebuild()
+        // The "Running, no window" rows join once the running apps are read off the main thread, as files and agents do.
+        if scope == .root {
+            let ask = restingAsk
+            actions.restingApps { [weak self] list in
+                guard let self, ask == self.restingAsk, !list.isEmpty else { return }
+                self.resting = list
+                self.rebuildKeepingSelection()
+            }
+        }
         // Apps installed since the last look show up without a restart.
         rescanApps()
         Terminals.installedAgents { [weak self] found in
@@ -610,6 +630,7 @@ final class LauncherModel: ObservableObject {
             if q.isEmpty {
                 out += actions.sessionItems("")
                 out += recentApps().prefix(5)
+                out += restingItems("")
                 out += menuItems()
             } else if RoomsProvider.shared.filter(q) != nil {
                 // "room:know tax": the room, then the files in it, and nothing else, since the filter says it's files.
@@ -622,6 +643,7 @@ final class LauncherModel: ObservableObject {
                 if site?.sure == true { out += siteItems(q) }
                 out += provided.top.map(providedItem)
                 out += appItems(q, limit: 8)
+                out += restingItems(q)
                 out += actions.sessionItems(q).prefix(8)
                 out += agentItems(q)
                 out += provided.normal.map(providedItem)
@@ -828,7 +850,9 @@ final class LauncherModel: ObservableObject {
     }
 
     private func recentApps() -> [LauncherItem] {
-        recents.paths.compactMap { path in apps.first { $0.path == path } }.map { appItem($0, section: "Recent") }
+        let recent = recents.paths.compactMap { path in apps.first { $0.path == path } }
+        // A resting app has its one row under "Running, no window" (`restingItems`), where ⌘Return quits it.
+        return BackgroundApps.withoutResting(recent, resting: resting) { runningPids[$0.path] }.map { appItem($0, section: "Recent") }
     }
 
     private func appItems(_ q: String, limit: Int) -> [LauncherItem] {
@@ -844,9 +868,11 @@ final class LauncherModel: ObservableObject {
             .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.name < $1.0.name }
             .map(\.0)
         }
+        // A resting app has its one row under "Running, no window" (`restingItems`), where ⌘Return quits it.
+        let shown = scope == .root ? BackgroundApps.withoutResting(matches, resting: resting) { runningPids[$0.path] } : matches
         // An app open on more than one workspace also gets a row for each, to pick which, and so
         // does one that opens a new window here instead of going to its workspace.
-        return matches.prefix(limit).flatMap { a -> [LauncherItem] in
+        return shown.prefix(limit).flatMap { a -> [LauncherItem] in
             let on = running[a.path] ?? []
             let look = !q.isEmpty && limit <= 8
             let main = appItem(a, section: "Apps", look: look)
@@ -989,8 +1015,36 @@ final class LauncherModel: ObservableObject {
         enter(scope == .keys ? .root : .keys)
     }
 
+    /// Apps running with no window to see, under their own heading: Return brings one forward onto
+    /// this workspace, ⌘Return quits it. With nothing typed every one is listed; a query keeps the ones whose name matches.
+    private func restingItems(_ q: String) -> [LauncherItem] {
+        resting.filter { q.isEmpty || Fuzzy.score(q, $0.name) != nil }.map { e in
+            let pid = e.pid
+            let icon: LauncherItem.Icon = NSRunningApplication(processIdentifier: pid)?.bundleURL.map { .file($0.path) } ?? .symbol("app.dashed")
+            return LauncherItem(id: "resting:\(pid)", section: Self.restingSection, title: e.name, subtitle: Self.restingSubtitle(e.state),
+                                icon: icon,
+                                run: { [weak self] in self?.close(); self?.actions.showResting(pid) },
+                                alternate: { [weak self] in
+                                    guard let self else { return }
+                                    self.actions.quitResting(pid)
+                                    self.resting.removeAll { $0.pid == pid }
+                                    self.rebuildKeepingSelection()
+                                },
+                                alternateTitle: "Quit")
+        }
+    }
+
+    static let restingSection = "Running, no window"
+
+    static func restingSubtitle(_ state: BackgroundApps.State) -> String {
+        switch state {
+        case .hidden: "Hidden, no window · Return shows it here, ⌘Return quits"
+        case .minimized: "Every window minimized · Return shows it here, ⌘Return quits"
+        case .noWindow: "No window · Return opens one here, ⌘Return quits"
+        }
+    }
+
     private func commandItems(_ q: String) -> [LauncherItem] {
-        let dockOn = actions.dockOn()
         let all: [(String, String, String, () -> Void)] = [
             ("Lock Screen", "lock", "", { System.lock() }),
             ("Sleep", "moon.zzz", "", { System.run("/usr/bin/pmset", ["sleepnow"]) }),
@@ -1003,7 +1057,6 @@ final class LauncherModel: ObservableObject {
             ("New Terminal", "plus", "A new Ghostty window", { [weak self] in self?.actions.newTerminal() }),
             ("Show All Workspaces", "square.grid.3x3", "", { [weak self] in self?.actions.showOverview() }),
             ("Bring Every Window Back", "arrow.uturn.backward.circle", "Gathers every window onto workspace 1", { [weak self] in self?.actions.bringBack() }),
-            (dockOn ? "Turn Off Workspace Dock" : "Turn On Workspace Dock", "dock.rectangle", "", { [weak self] in self?.actions.toggleDock() }),
             ("Polycarp Settings", "slider.horizontal.3", "", { [weak self] in self?.actions.showSetup() }),
         ]
         return all.filter { q.isEmpty || Fuzzy.score(q, $0.0) != nil }.map { c in

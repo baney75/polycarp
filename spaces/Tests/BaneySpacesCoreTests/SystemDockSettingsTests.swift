@@ -88,7 +88,7 @@ final class SystemDockSettingsTests: XCTestCase {
 
     func testTheAppDropsTheRecordOnlyAfterEveryWriteReadsBack() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let s = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/WorkspaceDock.swift"), encoding: .utf8)
+        let s = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/SystemDock.swift"), encoding: .utf8)
         XCTAssertTrue(s.contains("current: current(SystemDockSettings.listed(saved))"), "reads every key the record lists")
         XCTAssertTrue(s.contains("let landed = plan.allSatisfy { key, value in read(key) == value }\n        if landed {\n            UserDefaults.standard.removeObject(forKey: savedKey)"))
     }
