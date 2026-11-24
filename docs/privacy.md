@@ -2,7 +2,7 @@
 title: Polycarp privacy policy
 seo_title: "Polycarp privacy policy: what it reads and where it goes"
 description: What the Polycarp extension and Mac app read, where that goes, what stays on your computer, and how to delete it. No accounts, no analytics.
-updated: November 18, 2026
+updated: November 24, 2026
 ---
 
 # Polycarp privacy policy
@@ -50,8 +50,12 @@ The use of information received from Google APIs will adhere to the [Chrome Web 
 
 ## The Polycarp app for Mac
 
-- **Workspaces** reads window titles and positions to arrange your windows. These stay on your Mac.
+- **Workspaces** reads window titles and positions to arrange your windows. These stay on your Mac, unless an agent you connect asks for them (below).
 - **The launcher** looks up apps when you ask. It sends what you typed to Apple's App Store search, and it downloads Homebrew's public list of apps.
+- **Web search**, from the launcher, the new tab page, `polycarp-spaces search` or an agent. Your words are matched against your open tabs, windows and terminal splits on your Mac, and Polycarp sends nothing to look them up. Opening a web result opens it in your browser, so the words go to your search engine (Google unless you chose another), to the site or AI service a bang such as `!yt` or `!claude` names, or to DuckDuckGo for a bang Polycarp doesn't know.
+- **A wallpaper from a web address.** When you or an agent sets the wallpaper to an https URL, the app downloads that picture from its host and any host it redirects to. They see an ordinary request.
+- **Files.** `polycarp files` keeps its index on each of your devices, and they reach each other over your own Tailscale network only ([what it never reads](files.md#what-it-never-reads)).
+- **Agents you connect**, such as Claude Code or Codex, over `polycarp mcp`, `polycarp files mcp` or `polycarp agent`. What a tool returns goes to that agent and is then covered by its own terms. `search` returns the titles of open tabs, windows and terminal splits, with a folder or host for some. The file tools return file names and contents. Web assistants reach your Mac only through a tunnel you set up, and you approve each one there ([agents](agents.md)).
 - **Updates.** The app asks GitHub about new releases.
 - **Files from the retired purpose features.** Polycarp no longer asks what a workspace is for or keeps a day log or journal, and it no longer reads or writes `purposes.json`, `ledger.json` or `Journal/` in `~/Library/Application Support/Polycarp`. Files an older version wrote stay where they are, untouched, until you delete them. They were never sent anywhere.
 - **Contacts**, only after you allow it: the launcher reads names, nicknames, companies, numbers, email addresses and contact pictures to call and message people. They stay on your Mac. A small file there lists who you reached from Polycarp and when, with no numbers and no message text ([contacts](contacts.md)).
