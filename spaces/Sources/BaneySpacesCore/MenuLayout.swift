@@ -43,24 +43,18 @@ public enum MenuLayout {
 /// A release waiting to be installed, or installing, as the menu bar menu and Settings word it.
 public struct UpdateNotice: Equatable, Sendable {
     public let name: String
-    public let isNightly: Bool
     public let installing: Bool
 
-    public init(name: String, isNightly: Bool, installing: Bool) {
+    public init(name: String, installing: Bool) {
         self.name = name
-        self.isNightly = isNightly
         self.installing = installing
     }
 
-    /// "Update to BaneySpaces 0.3.1…" or "Update to the Nightly Build…"; "Updating to …" while it installs.
-    public var menuTitle: String {
-        installing ? "Updating to \(isNightly ? "the Nightly Build" : name)…" : "Update to \(isNightly ? "the Nightly Build" : name)…"
-    }
+    /// "Update to Polycarp 0.4.0 (2026-11-18)…"; "Updating to …" while it installs.
+    public var menuTitle: String { installing ? "Updating to \(name)…" : "Update to \(name)…" }
 
-    /// A sentence of its own: "BaneySpaces 0.3.1 is available." / "The nightly build is available."
-    public var sentence: String {
-        isNightly ? "The nightly build is available." : "\(name) is available."
-    }
+    /// A sentence of its own: "Polycarp 0.4.0 (2026-11-18) is available."
+    public var sentence: String { "\(name) is available." }
 }
 
 /// The menu bar menu's one update row, always there just above Settings…: a check once a day never showed one, so a

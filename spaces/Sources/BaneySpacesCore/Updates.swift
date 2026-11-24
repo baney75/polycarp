@@ -1,66 +1,30 @@
 import Foundation
 
-/// Which builds an install follows (docs/releases.md). Stable is each promoted release, nightly is main once a day,
-/// dev is every main commit CI passed. Every channel is the same app with the same signature, so moving between
-/// them never asks for a macOS permission again.
-public enum UpdateChannel: String, CaseIterable, Sendable {
-    case stable, nightly, dev
-
-    /// "preview", the one channel before these, is nightly now: a choice saved as preview follows nightly.
-    public init?(rawValue: String) {
-        switch rawValue {
-        case "stable": self = .stable
-        case "nightly", "preview": self = .nightly
-        case "dev": self = .dev
-        default: return nil
-        }
-    }
-
-    /// The channel's latest.json. Stable's is the Latest release's, so it moves only when a release is published.
-    public var feedURL: URL {
-        let releases = "https://github.com/baney75/polycarp/releases"
-        switch self {
-        case .stable: return URL(string: "\(releases)/latest/download/latest.json")!
-        case .nightly, .dev: return URL(string: "\(releases)/download/\(rawValue)/latest.json")!
-        }
-    }
-
-    public var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
-
-    /// The channels a copy may choose. Dev is for testing, so it is offered only to a dev build or a copy whose saved
-    /// choice is already dev (that copy keeps it). A local build (no channel) counts as the stable build the updater
-    /// takes it for (`Updater.channel`), so it is offered Stable and Nightly.
-    public static func offered(build: UpdateChannel?, saved: UpdateChannel?) -> [UpdateChannel] {
-        build == .dev || saved == .dev ? allCases : [.stable, .nightly]
-    }
-
-    /// Why `chosen` can't be followed from here, or nil when it can: the CLI's `update --channel` hears this.
-    public static func refusal(_ chosen: UpdateChannel, build: UpdateChannel?, saved: UpdateChannel?) -> String? {
-        guard !offered(build: build, saved: saved).contains(chosen) else { return nil }
-        return "the dev channel is only for a dev build of Polycarp; this one follows stable or nightly"
-    }
-}
-
 /// What this copy of Polycarp was built from, as stamped into Info.plist by the build.
 public struct BuildInfo: Equatable, Sendable {
-    /// The full version (`PolycarpVersion`): "0.4.0", "0.4.0-nightly.20261118070000+1a2b3c4".
+    /// The full version (`PolycarpVersion`): "0.4.0-nightly.20261118070000+1a2b3c4".
     public let version: String
     public let commit: String?
     public let commitDate: Date?
-    /// The channel it was built for; nil for a local build.
-    public let channel: UpdateChannel?
+    /// A published build. A local build (`PolycarpChannel` missing or `local`) is not, so the updater never
+    /// takes its version for a release's.
+    public let isRelease: Bool
 
-    public init(version: String, commit: String?, commitDate: Date?, channel: UpdateChannel? = nil) {
+    public init(version: String, commit: String?, commitDate: Date?, isRelease: Bool = false) {
         self.version = version
         self.commit = commit
         self.commitDate = commitDate
-        self.channel = channel
+        self.isRelease = isRelease
     }
+
+    /// Whether a `PolycarpChannel` value marks a published build. Builds from before one stream say `stable`,
+    /// `nightly` or `dev`; today's say `nightly`, and a local one says `local`.
+    public static func isRelease(channel: String?) -> Bool { channel.map { !$0.isEmpty && $0 != "local" } ?? false }
 }
 
 /// A build the updater can offer and install.
 public struct Release: Equatable, Sendable {
-    /// The release install.sh downloads it from: vX.Y.Z, nightly or dev.
+    /// The release install.sh downloads it from: always `nightly`.
     public let tag: String
     public let name: String
     public let notes: String
@@ -74,9 +38,7 @@ public struct Release: Equatable, Sendable {
     }
 
     /// Only tags Polycarp itself publishes, so nothing else ever reaches the installer.
-    public var isInstallable: Bool { tag == "nightly" || tag == "dev" || (tag.hasPrefix("v") && Version(tag) != nil) }
-
-    public var isNightly: Bool { tag == "nightly" }
+    public var isInstallable: Bool { tag == Updates.tag }
 }
 
 /// A release version like `v0.2.1` or `0.2.1`.
@@ -101,7 +63,7 @@ public struct Version: Comparable, Sendable {
 }
 
 /// A SemVer 2.0 version ordered by precedence: build metadata (after "+") is ignored, a pre-release sorts below
-/// its release, and numeric identifiers compare as numbers. So for one base, dev < nightly < stable.
+/// its release, and numeric identifiers compare as numbers. So for one base, a local build (`-dev.0`) sorts below a release.
 public struct SemVer: Comparable, Sendable, CustomStringConvertible {
     public let major: Int, minor: Int, patch: Int
     public let prerelease: [String]
@@ -155,25 +117,22 @@ public struct SemVer: Comparable, Sendable, CustomStringConvertible {
     public static func == (a: SemVer, b: SemVer) -> Bool { !(a < b) && !(b < a) }
 }
 
-/// A channel's latest.json (spaces/scripts/write-feed.sh): the one build the channel offers.
+/// The feed's latest.json (spaces/scripts/write-feed.sh): the one build on offer.
 public struct Feed: Equatable, Sendable {
-    public let channel: UpdateChannel
     public let version: SemVer
     public let commit: String
     public let notes: String
     /// The platform keys with a ready-made app: "darwin-aarch64", "darwin-x86_64".
     public let platforms: Set<String>
 
-    /// Nil unless it is Polycarp's feed and its version belongs to its channel.
+    /// Nil unless it is Polycarp's feed with a release version (`X.Y.Z-nightly.<time>`).
     public init?(json: Data) {
         guard let o = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any], o["product"] as? String == "polycarp",
-              let channel = (o["channel"] as? String).flatMap(UpdateChannel.init(rawValue:)),
+              o["channel"] as? String == Updates.tag,
               let version = (o["version"] as? String).flatMap(SemVer.init),
+              version.prerelease.count == 2, version.prerelease[0] == Updates.tag,
               let commit = o["commit"] as? String, commit.count == 40, commit.allSatisfy(\.isHexDigit),
               let platforms = o["platforms"] as? [String: Any] else { return nil }
-        guard channel == .stable ? version.prerelease.isEmpty
-                : version.prerelease.count == 2 && version.prerelease[0] == channel.rawValue else { return nil }
-        self.channel = channel
         self.version = version
         self.commit = commit
         notes = o["notes"] as? String ?? ""
@@ -189,29 +148,30 @@ public struct Feed: Equatable, Sendable {
         #endif
     }
 
-    /// The build as the updater offers and installs it.
+    /// The build as the updater offers and installs it: "Polycarp 0.4.0 (2026-11-18)".
     public var release: Release {
         // nightly.20261118070000 -> 2026-11-18
         let time = version.prerelease.last ?? ""
         let day = time.count == 14 ? "\(time.prefix(4))-\(time.dropFirst(4).prefix(2))-\(time.dropFirst(6).prefix(2))" : time
-        switch channel {
-        case .stable: return Release(tag: "v\(version.base)", name: "Polycarp \(version.base)", notes: notes, commit: commit)
-        case .nightly: return Release(tag: "nightly", name: "Nightly \(day)", notes: notes, commit: commit)
-        case .dev: return Release(tag: "dev", name: "Dev build \(day)", notes: notes, commit: commit)
-        }
+        return Release(tag: Updates.tag, name: "Polycarp \(version.base) (\(day))", notes: notes, commit: commit)
     }
 }
 
 public enum Updates {
-    /// The build `feed` offers this Mac on `channel`, if any. Never the build you have, and never one without a
-    /// ready-made app for this Mac. On the channel this copy was built for, only a newer version; a copy from
-    /// another channel (or built here) is offered the channel's build, and the app then asks GitHub whether that
-    /// build contains this one (`isNewerVersion` decides when GitHub can't answer), so a change of channel never
-    /// goes back in time.
-    public static func offer(_ feed: Feed, channel: UpdateChannel, build: BuildInfo, platform: String = Feed.thisMac) -> Release? {
-        guard feed.channel == channel, feed.platforms.contains(platform) else { return nil }
+    /// The rolling release every copy updates from (docs/releases.md).
+    public static let tag = "nightly"
+
+    /// The feed every copy reads.
+    public static let feedURL = URL(string: "https://github.com/baney75/polycarp/releases/download/\(tag)/latest.json")!
+
+    /// The build `feed` offers this Mac, if any. Never the build you have, and never one without a ready-made app
+    /// for this Mac. A release build is offered only a newer version. A local build is offered the feed's build,
+    /// and the app then asks GitHub whether that build contains this one (`isNewerVersion` decides when GitHub
+    /// can't answer), so an update never goes back in time.
+    public static func offer(_ feed: Feed, build: BuildInfo, platform: String = Feed.thisMac) -> Release? {
+        guard feed.platforms.contains(platform) else { return nil }
         if let mine = build.commit, feed.commit.hasPrefix(mine) || mine.hasPrefix(feed.commit) { return nil }
-        if build.channel == channel, !isNewerVersion(feed, than: build) { return nil }
+        if build.isRelease, !isNewerVersion(feed, than: build) { return nil }
         return feed.release
     }
 
@@ -226,7 +186,7 @@ public enum Updates {
 /// the app fills it in; the command reads it back and turns it into a line and an exit code.
 public struct UpdateReport: Equatable, Sendable {
     public enum State: String, Sendable {
-        /// The last check found nothing newer on the channel.
+        /// The last check found nothing newer.
         case current
         /// A newer release is on offer.
         case available
@@ -239,7 +199,6 @@ public struct UpdateReport: Equatable, Sendable {
     public var state: State
     /// This build, as the app describes it: "0.2.1 (abc1234)".
     public var build: String
-    public var channel: UpdateChannel
     /// The release on offer or installing: its name and, when known, its commit.
     public var name: String?
     public var commit: String?
@@ -248,14 +207,14 @@ public struct UpdateReport: Equatable, Sendable {
     public var checks: Int
     public var problem: String?
 
-    public init(state: State, build: String, channel: UpdateChannel, name: String? = nil, commit: String? = nil,
+    public init(state: State, build: String, name: String? = nil, commit: String? = nil,
                 checks: Int = 0, problem: String? = nil) {
-        self.state = state; self.build = build; self.channel = channel; self.name = name; self.commit = commit
+        self.state = state; self.build = build; self.name = name; self.commit = commit
         self.checks = checks; self.problem = problem
     }
 
     public var info: [String: String] {
-        var out = ["state": state.rawValue, "build": build, "channel": channel.rawValue, "checks": String(checks)]
+        var out = ["state": state.rawValue, "build": build, "checks": String(checks)]
         out["name"] = name
         out["commit"] = commit
         out["problem"] = problem
@@ -264,9 +223,8 @@ public struct UpdateReport: Equatable, Sendable {
 
     /// Nil when the reply is not an update report (an older app that does not know the request).
     public init?(info: [String: String]?) {
-        guard let info, let state = info["state"].flatMap(State.init), let build = info["build"],
-              let channel = info["channel"].flatMap(UpdateChannel.init) else { return nil }
-        self.init(state: state, build: build, channel: channel, name: info["name"], commit: info["commit"],
+        guard let info, let state = info["state"].flatMap(State.init), let build = info["build"] else { return nil }
+        self.init(state: state, build: build, name: info["name"], commit: info["commit"],
                   checks: info["checks"].flatMap { Int($0) } ?? 0, problem: info["problem"])
     }
 
@@ -274,7 +232,7 @@ public struct UpdateReport: Equatable, Sendable {
     public var line: String {
         let offered = [name, commit.map { "(\($0.prefix(7)))" }].compactMap { $0 }.joined(separator: " ")
         switch state {
-        case .current: return "up to date: Polycarp \(build) is the newest on the \(channel.rawValue) channel"
+        case .current: return "up to date: Polycarp \(build) is the newest build"
         case .available: return "update available: \(offered.isEmpty ? "a newer release" : offered). You have \(build)"
         case .installing: return "an update is installing: \(offered.isEmpty ? "a newer release" : offered). Polycarp restarts when it is done"
         case .unknown: return "could not check for updates: \(problem ?? "no check has finished yet")"

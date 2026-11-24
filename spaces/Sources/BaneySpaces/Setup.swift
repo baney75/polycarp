@@ -76,12 +76,9 @@ final class SetupModel: ObservableObject {
     /// Why Automation can't act yet, or nil.
     var automationReason: String? { AutomationGate.reason(trusted: trusted, aeroSpaceRunning: aeroSpaceRunning, started: started) }
     var onToggleParked: ((String) -> Void)?
-    /// BaneySpaces' own updates: the build you have, the channel, and any release waiting.
+    /// Polycarp's own updates: the build you have and any release waiting.
     struct UpdateInfo: Equatable {
         var have = ""
-        var channel = UpdateChannel.stable
-        /// The channels to list: Dev only for a dev build or a copy already on it (`UpdateChannel.offered`).
-        var channels: [UpdateChannel] = [.stable, .nightly]
         var daily = true
         /// A release waiting, or installing.
         var notice: UpdateNotice?
@@ -90,7 +87,6 @@ final class SetupModel: ObservableObject {
     var updateInfo: () -> UpdateInfo = { UpdateInfo() }
     var onCheckForUpdates: (() -> Void)?
     var onOfferUpdate: (() -> Void)?
-    var onSetUpdateChannel: ((UpdateChannel) -> Void)?
     var onSetCheckDaily: ((Bool) -> Void)?
     /// Agents that finished while you were away, newest to oldest; a click goes to the agent.
     struct FinishedRow: Identifiable, Equatable { let id: String; let label: String }
@@ -263,11 +259,6 @@ final class SetupModel: ObservableObject {
     func toggleParked(_ id: String) {
         onToggleParked?(id)
         reloadParked()
-    }
-
-    func setUpdateChannel(_ channel: UpdateChannel) {
-        onSetUpdateChannel?(channel)
-        update = updateInfo()
     }
 
     func setCheckDaily(_ on: Bool) {
@@ -752,17 +743,6 @@ struct SetupView: View {
                 SettingsRow(notice.sentence, help: "Shows what's new first. Nothing installs until you press Update Now.") {
                     Button(notice.menuTitle) { model.onOfferUpdate?() }
                 }
-            }
-            SettingsBlock {
-                Picker("Follow", selection: binding({ model.update.channel }, { model.setUpdateChannel($0) })) {
-                    Text("Stable: tested releases").tag(UpdateChannel.stable)
-                    Text("Nightly: newest changes, every night").tag(UpdateChannel.nightly)
-                    // Dev is for testing: listed only on a dev build or a copy already following it.
-                    if model.update.channels.contains(.dev) {
-                        Text("Dev: every change as it lands, for testing").tag(UpdateChannel.dev)
-                    }
-                }
-                .pickerStyle(.radioGroup)
             }
             SettingsRow("Check for updates daily") {
                 Toggle("Daily", isOn: binding({ model.update.daily }, { model.setCheckDaily($0) })).labelsHidden()
