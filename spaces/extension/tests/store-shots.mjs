@@ -48,10 +48,8 @@ const LOCAL = `http://127.0.0.1:${server.address().port}`;
 
 const W = 1120, H = 610; // the part of the window the 1280x800 frame shows
 const { chromium } = await loadPlaywright();
-const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'polycarp-store-')), {
-  channel: 'chromium', headless: true, viewport: { width: W, height: H },
-  args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`]
-});
+const PROFILE = fs.mkdtempSync(path.join(os.tmpdir(), 'polycarp-store-'));
+let ctx = null;
 const errors = [];
 const watch = (p, n) => { p.on('pageerror', (e) => errors.push(`${n}: ${e}`)); return p; };
 const raw = {};
@@ -64,6 +62,10 @@ async function grab(page, name, scheme = 'light') {
 }
 
 try {
+  ctx = await chromium.launchPersistentContext(PROFILE, {
+    channel: 'chromium', headless: true, viewport: { width: W, height: H },
+    args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`]
+  });
   let [sw] = ctx.serviceWorkers();
   if (!sw) sw = await ctx.waitForEvent('serviceworker');
   const id = sw.url().split('/')[2];
@@ -126,10 +128,6 @@ try {
   await lp.getByText('How the printing press changed reading').first().click();
   await sleep(700);
   await grab(lp, 'library', 'dark');
-  const map = lp.getByRole('button', { name: 'Map' }).or(lp.getByRole('tab', { name: 'Map' })).first();
-  await map.click().catch((e) => errors.push('library: map ' + e));
-  await sleep(1500);
-  await grab(lp, 'map');
 
   // 5. Listen: the dock as it opens.
   await rp.bringToFront();
@@ -181,8 +179,10 @@ try {
   await sleep(150);
   await fp.screenshot({ path: path.join(OUT, 'promo-440x280.png'), clip: { x: 0, y: 0, width: 440, height: 280 } });
 } finally {
-  await ctx.close();
+  if (ctx) await ctx.close();
   server.close();
+  fs.rmSync(PROFILE, { recursive: true, force: true });
 }
 console.log(errors.length ? 'errors:\n' + errors.join('\n') : 'no page errors');
+if (errors.length) process.exitCode = 1;
 console.log(fs.readdirSync(OUT).map((f) => path.join(OUT, f)).join('\n'));
