@@ -25,7 +25,7 @@ not a public issue.
   look settings. A remote caller can't focus, type, list or move windows, or change what you see. `remote off` closes it. The `--on HOST` client sends the token only to
   tailnet addresses.
 - **Agents.** Polycarp drives no app for an agent: computer use (reading, clicking and typing into
-  apps) moved to Tychicus on 2026-11-18. What is left is the agent workspace, a workspace of its own
+  apps) was removed on 2026-11-18. What is left is the agent workspace, a workspace of its own
   that agent apps can use, and a local API with two operations, list its windows and move a window
   there ([docs/agent-workspace-api.md](docs/agent-workspace-api.md)). Both run on the local socket only.
 - **Hooks.** `polycarp-spaces hooks install` adds entries to `~/.claude/settings.json` and a file

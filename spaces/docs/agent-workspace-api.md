@@ -6,8 +6,7 @@ operations on it and nothing else:
 - `windows`: list the windows on the agent workspace.
 - `move`: move one window to the agent workspace.
 
-Polycarp does not read, click or type into apps. Computer use lives in Tychicus (baney75/tychicus), which starts its
-apps and then uses this API to keep their windows on the agent workspace.
+Polycarp does not read, click or type into apps. A computer-use client starts its apps and then uses this API to keep their windows on the agent workspace.
 
 ## Transport
 
@@ -19,7 +18,7 @@ arguments. `caller` is optional and names you in Polycarp's trace log.
 
 ```json
 {"op":"agent","text":"windows"}
-{"op":"agent","text":"move","args":["4127"],"caller":"tychicus"}
+{"op":"agent","text":"move","args":["4127"],"caller":"agent"}
 ```
 
 The reply is a `Wire.Reply`: `ok`, an `error` string when `ok` is false, and `info`, a map of strings.

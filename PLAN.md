@@ -1,6 +1,6 @@
 # Polycarp plan
 
-Polycarp is its own OS on macOS and Windows: Spaces, the dock, the bar, the launcher and themes (Donovan, 2026-11-23). Its browser extension for reading and the new tab (`spaces/extension`, Donovan, 2026-11-21) is the accessibility extension that was Phont: it works on its own, with no Polycarp app, and joins Polycarp (new tab host, updates with the app) when Polycarp is installed on the same computer (Donovan, 2026-11-23). The agent browser extension (the side panel), its CLI helper, MCP server and computer-use tools moved to Tychicus: https://github.com/baney75/tychicus. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
+Polycarp is its own OS on macOS and Windows: Spaces, the dock, the bar, the launcher and themes (Donovan, 2026-11-23). Its browser extension for reading and the new tab (`spaces/extension`, Donovan, 2026-11-21) is the accessibility extension that was Phont: it works on its own, with no Polycarp app, and joins Polycarp (new tab host, updates with the app) when Polycarp is installed on the same computer (Donovan, 2026-11-23). The agent browser extension (the side panel), its CLI helper, MCP server and computer-use tools were removed from Polycarp. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 The rest of this plan is Spaces and themes, on Mac and Windows first. Old apps keep working, and their repos stay up. A box is checked only when its check has passed.
 
@@ -10,7 +10,7 @@ The rest of this plan is Spaces and themes, on Mac and Windows first. Old apps k
 - [x] Every suite in `./check.sh` passes on a Mac and in CI
 
 ## 2. One name, one command
-- [x] `polycarp spaces`, `polycarp browser` (now a pointer to Tychicus). Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
+- [x] `polycarp spaces`, `polycarp browser` (now says the browser extension was removed). Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
 - Moved to Silas (baney75/silas), 2026-11-18: `polycarp voice` only says Silas is its own app and where to get it
 - [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
 
@@ -36,10 +36,8 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 - [x] A person can get the apps' own look back from the command. Check: `polycarp theme off` removes the theme files, and `theme on` or `undo` brings them back
 - [ ] Spaces falls back to its own look when the theme files are gone. Check: a Spaces test that removes `current/theme.json` and reads back its own look
 - Moved to Silas (baney75/silas): Voice falls back to its own look when the theme files are gone. Check: a Voice test that removes `current/theme.json` and reads back its own look
-- Moved to Tychicus (baney75/tychicus): Browser falls back to its own look when the theme files are gone. Check: a Browser test that removes `current/theme.json` and reads back its own look
 - [x] The default themes look good, not just pass contrast. Check: `theme preview` of each, both modes, judged on a contact sheet
 - [ ] Every color, radius, font and duration in every surface comes from the theme. Check: a test fails on a hard-coded value in product UI, with a written allowlist
-- Moved to Tychicus (baney75/tychicus): Browser reads the theme. Check: `polycarp theme set still-water` changes the installed panel within 5 seconds, read back in a real browser
 - [ ] Spaces reads the theme. Check: `polycarp theme set still-water` changes the installed app within 2 seconds on every surface, read back on a real Mac with the probes in `spaces/AGENTS.md`
 - [ ] Any value can be overridden per product. Check: a `[surface.*]` override changes only that product
 - [x] Unreadable themes are refused. Check: contrast tests on every built-in and surface
@@ -60,12 +58,12 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 ## 6. The old apps
 Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos stay up, so people can keep using the independent apps. They are not archived.
 - [ ] Land or move open PRs that belong in Polycarp. Check: `gh pr list` in each old repo shows none that belong here
-- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash). The browser is Tychicus now, and Silas is its own app. Check: workspaces work through Polycarp before BaneySpaces goes
+- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash). The browser extension was removed, and Silas is its own app. Check: workspaces work through Polycarp before BaneySpaces goes
 
 ## One app, everywhere
 Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.
 - Moved to Silas (baney75/silas), 2026-11-18: the voice engine and its C interface. `core/` left this repo with them
-- Moved to Tychicus (baney75/tychicus): the browser agents, the extension and its helper
+- Removed: the browser agents, the extension and its helper
 - [x] Mac: workspaces inside `Polycarp.app`, with one Settings window, one welcome window and one install. Check: tests and renders
 - [ ] Windows: one Tauri app with workspaces. Check: a Windows VM
 - [ ] iPhone, iPad, Android: one app with control of your computer. Check: Simulator, emulator and a real device
@@ -82,7 +80,7 @@ Asked for by Donovan, 2026-11-05: installation and permissions need to be excell
 Retired with the Linux desktop, 2026-11-17. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 ## Agents' computer use
-Moved to Tychicus (baney75/tychicus, issue #27), 2026-11-18. Polycarp keeps the agent workspace and its two-call API (`spaces/docs/agent-workspace-api.md`).
+Removed from Polycarp, 2026-11-18. Polycarp keeps the agent workspace and its two-call API (`spaces/docs/agent-workspace-api.md`).
 
 ## Voice
 Moved to Silas (baney75/silas), 2026-11-18. Silas is its own app. Polycarp has no dictation, no voice core and no

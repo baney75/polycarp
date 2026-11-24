@@ -20,8 +20,7 @@ agent-desktop (Apache License 2.0)
 cua-driver (MIT License, Copyright (c) 2025 Cua AI, Inc.), trycua
   https://github.com/trycua/cua. Polycarp's agent computer use ported logic from
   libs/cua-driver/rust/crates/platform-macos/src/input/ (keyboard.rs, mouse.rs, skylight.rs) to Swift.
-  That code left Polycarp on 2026-11-18 with computer use, which lives in Tychicus now; the
-  notice stays for the releases that carried it.
+  That code left Polycarp on 2026-11-18 with computer use; the notice stays for the releases that carried it.
   The license text is in LICENSES/cua-driver-MIT.txt and in the app at
   Contents/Resources/licenses/cua-driver-MIT.txt.
 
