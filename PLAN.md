@@ -10,7 +10,7 @@ The rest of this plan is Spaces and themes, on Mac and Windows first. Old apps k
 - [x] Every suite in `./check.sh` passes on a Mac and in CI
 
 ## 2. One name, one command
-- [x] `polycarp spaces`, `polycarp browser` (now says the browser extension was removed). Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
+- [x] `polycarp spaces`, `polycarp browser` (now says the agent browser extension was removed). Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
 - Moved to Silas (baney75/silas), 2026-11-18: `polycarp voice` only says Silas is its own app and where to get it
 - [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
 
@@ -58,7 +58,7 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 ## 6. The old apps
 Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos stay up, so people can keep using the independent apps. They are not archived.
 - [ ] Land or move open PRs that belong in Polycarp. Check: `gh pr list` in each old repo shows none that belong here
-- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash). The browser extension was removed, and Silas is its own app. Check: workspaces work through Polycarp before BaneySpaces goes
+- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash). The agent browser extension was removed, and Silas is its own app. Check: workspaces work through Polycarp before BaneySpaces goes
 
 ## One app, everywhere
 Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.

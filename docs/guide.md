@@ -67,7 +67,7 @@ polycarp doctor
 | `polycarp --version` | Prints the version |
 | `polycarp --help` | Prints the usage |
 
-`polycarp spaces` passes your arguments, input, output and exit code straight through. `polycarp browser` only says the browser extension was removed, and exits with code 2. `polycarp voice` only says Silas is its own app, and exits with code 1.
+`polycarp spaces` passes your arguments, input, output and exit code straight through. `polycarp browser` only says the agent browser extension was removed, and exits with code 2. `polycarp voice` only says Silas is its own app, and exits with code 1.
 
 ### How it finds an app
 

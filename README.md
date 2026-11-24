@@ -59,7 +59,7 @@ bears much fruit, for apart from me you can do nothing."
 ## The command
 
 `polycarp` is one command for Polycarp Spaces and themes. It comes with the Mac app and with the install
-script; [Updating](#updating) keeps it current with everything else. `polycarp browser` only says the browser
+script; [Updating](#updating) keeps it current with everything else. `polycarp browser` only says the agent browser
 extension was removed and exits 2.
 
 ```
