@@ -4,6 +4,7 @@ try { importScripts("shared/memory.js"); } catch (e) { /* memory engine optional
 try { importScripts("shared/library.js"); } catch (e) { /* library optional at load */ }
 try { importScripts("shared/backup.js", "shared/nas.js"); } catch (e) { /* NAS optional at load */ }
 try { importScripts("shared/filters.js"); } catch (e) { /* feed filters optional at load */ }
+try { importScripts("shared/edits.js"); } catch (e) { /* page edits optional at load */ }
 
 const P = globalThis.Polycarp;
 const READER = "src/reader/reader.html";
@@ -80,12 +81,13 @@ chrome.alarms.onAlarm.addListener((a) => { if (a.name === "polycarp-update") che
 
 async function injectIntoOpenTabs() {
   const manifest = chrome.runtime.getManifest();
-  const cs = manifest.content_scripts[0];
   const tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
   for (const tab of tabs) {
     if (tab.discarded) continue;
-    chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: cs.css }).catch(() => {});
-    chrome.scripting.executeScript({ target: { tabId: tab.id }, files: cs.js }).catch(() => {});
+    for (const cs of manifest.content_scripts) {
+      if (cs.css) chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: cs.css }).catch(() => {});
+      chrome.scripting.executeScript({ target: { tabId: tab.id }, files: cs.js }).catch(() => {});
+    }
   }
 }
 
@@ -398,13 +400,13 @@ chrome.alarms.onAlarm.addListener((a) => {
   else if (globalThis.PolycarpNAS && a.name === globalThis.PolycarpNAS.ALARM) globalThis.PolycarpNAS.onAlarm(a).catch(() => {});
 });
 
-// ---------- Feed filters from the Polycarp app ----------
-// The app's rules come over native messaging ({op:"filters"} to the new tab's host) and are kept in storage, where
-// content scripts read them with this browser's own rules (src/shared/filters.js merge). Asked at browser start, every
-// 30 seconds, when the app connection is granted, and when a page starts filtering with an answer older than 5 seconds.
-// Storage is written only when the answer changes, so open pages hear only real changes. With no app (the host
-// missing, or the nativeMessaging permission not granted) there are no app rules and nothing to report: the extension's
-// own rules still work.
+// ---------- Feed filters and page edits from the Polycarp app ----------
+// The app's rules and edits come over native messaging ({op:"filters"} and {op:"edits"} to the new tab's host) and are
+// kept in storage, where content scripts read them with this browser's own (merge in src/shared/filters.js and edits.js).
+// Asked at browser start, every 30 seconds, when the app connection is granted, and when a page starts with an answer
+// older than 5 seconds. Storage is written only when the answer changes, so open pages hear only real changes. With no
+// app (the host missing, or the nativeMessaging permission not granted) there are none from it and nothing to report:
+// the extension's own still work.
 const FILTERS_HOST = "com.polycarp.newtab";
 const FILTERS_ALARM = "polycarp-filters";
 const FILTERS_AT = "polycarp.filters.appAt"; // session storage: when the app was last asked
@@ -413,35 +415,41 @@ async function appConnected() {
   if (!chrome.runtime.sendNativeMessage || !chrome.permissions) return false;
   try { return await chrome.permissions.contains({ permissions: ["nativeMessaging"] }); } catch (e) { return false; }
 }
-function askFiltersHost() {
+function askFiltersHost(op) {
   return new Promise((resolve) => {
     try {
-      chrome.runtime.sendNativeMessage(FILTERS_HOST, { op: "filters" }, (reply) => {
+      chrome.runtime.sendNativeMessage(FILTERS_HOST, { op }, (reply) => {
         const err = chrome.runtime.lastError;
         resolve(err ? { failed: String(err.message || err) } : reply);
       });
     } catch (e) { resolve({ failed: String(e && e.message || e) }); }
   });
 }
+// One list: ask for `op`, keep the reply's `op` list under `key` as { [field]: list, connected, error }.
+async function keepAppList(op, key, field, most) {
+  const cur = (await chrome.storage.local.get(key))[key] || null;
+  let next;
+  if (!(await appConnected())) next = { [field]: [], connected: false };
+  else {
+    const r = await askFiltersHost(op);
+    if (r && r.ok === true && Array.isArray(r[op])) next = { [field]: r[op].slice(0, most), connected: true };
+    // No Polycarp on this computer (or not allowed to talk to it): nothing from it, and no error to show.
+    else if (r && r.failed && /not found|forbidden/i.test(r.failed)) next = { [field]: [], connected: false };
+    // An app from before this list existed.
+    else if (r && r.ok === false && r.error === "there is no request called " + op) next = { [field]: [], connected: true };
+    // The app answered with an error, or the call broke: keep the last list it sent and say why on the Settings page.
+    else next = { [field]: (cur && cur[field]) || [], connected: true, error: (r && (r.error || r.failed)) ? String(r.error || r.failed).slice(0, 300) : "Polycarp gave no answer" };
+  }
+  if (JSON.stringify(next) !== JSON.stringify(cur)) await chrome.storage.local.set({ [key]: next });
+}
 function refreshAppFilters() {
-  const F = globalThis.PolycarpFilters;
-  if (!F) return Promise.resolve();
+  const F = globalThis.PolycarpFilters, E = globalThis.PolycarpEdits;
   if (filtersAsking) return filtersAsking;
-  filtersAsking = (async () => {
-    const cur = (await chrome.storage.local.get(F.APP_KEY))[F.APP_KEY] || null;
-    let next;
-    if (!(await appConnected())) next = { rules: [], connected: false };
-    else {
-      const r = await askFiltersHost();
-      if (r && r.ok === true && Array.isArray(r.filters)) next = { rules: r.filters.slice(0, 500), connected: true };
-      // No Polycarp on this computer (or not allowed to talk to it): no app rules, and no error to show.
-      else if (r && r.failed && /not found|forbidden/i.test(r.failed)) next = { rules: [], connected: false };
-      // The app answered with an error, or the call broke: keep the last rules it sent and say why on the Settings page.
-      else next = { rules: (cur && cur.rules) || [], connected: true, error: (r && (r.error || r.failed)) ? String(r.error || r.failed).slice(0, 300) : "Polycarp gave no answer" };
-    }
-    await chrome.storage.session.set({ [FILTERS_AT]: Date.now() }).catch(() => {});
-    if (JSON.stringify(next) !== JSON.stringify(cur)) await chrome.storage.local.set({ [F.APP_KEY]: next });
-  })().catch(() => {}).finally(() => { filtersAsking = null; });
+  filtersAsking = Promise.allSettled([
+    F ? keepAppList("filters", F.APP_KEY, "rules", 500) : null,
+    E ? keepAppList("edits", E.APP_KEY, "edits", E.MAX.edits) : null,
+    chrome.storage.session.set({ [FILTERS_AT]: Date.now() })
+  ]).finally(() => { filtersAsking = null; });
   return filtersAsking;
 }
 async function filtersFresh(maxAge) {
