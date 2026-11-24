@@ -3,7 +3,6 @@
 ## Unreleased
 
 - `scripts/stage.sh --store` makes the Chrome Web Store copy: no fixed key, no new tab page, and the link to the Polycarp app only when the user connects it in Settings. A store install shows no update button, since the store updates it.
-- The extension no longer asks for `activeTab`; its host permissions already cover every page.
 - A NAS outside the home network needs an https address, so its password is never sent unencrypted.
 - The privacy policy lists every site Polycarp loads pictures from, the link to the Polycarp app, the new tab page and the Chrome Web Store Limited Use statement.
 

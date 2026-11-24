@@ -34,6 +34,7 @@
     "storage",
     "unlimitedStorage",
     "contextMenus",
+    "activeTab",
     "scripting",
     "alarms",
     "nativeMessaging"

@@ -47,6 +47,8 @@ presses **Connect to the Polycarp app** in Settings. The store updates that copy
 button. The Polycarp app's native messaging host must list the store item's ID in `allowed_origins` before the
 connection works. The store refuses an upload whose `version` is not above the last one it took, so raise `version`
 in `manifest.json` before each store upload; `version_name` alone is not enough.
+`node tests/store-shots.mjs` makes the listing's screenshots (1280x800) and small promo tile (440x280) in
+`tests/out/store` from the real pages, with a demo article written for them.
 
 ## Tests
 
@@ -64,6 +66,7 @@ node tests/sites.spec.mjs        # YouTube, X, Audible and feed fixtures, finder
 node tests/sources.spec.mjs      # Search sources against saved fixtures
 node tests/nas.spec.mjs          # NAS against a local WebDAV fake
 node tests/contact.mjs [piece]   # screenshots of every surface to tests/out/contact
+node tests/store-shots.mjs       # the Chrome Web Store screenshots and promo tile to tests/out/store
 node tests/voice.spec.mjs --deps <folder with playwright>   # downloads the Kokoro voice once
 ```
 
