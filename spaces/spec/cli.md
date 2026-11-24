@@ -71,6 +71,20 @@ holds snapshot text, values, typed text or captures. Records older than 30 days 
 has no `mcp` any more: its `computer_*` tools moved to Tychicus. The agent API's queries and commands ([agent-api.md](agent-api.md)) are tools too. The ones that
 switch, focus, or move or size a window on your workspaces need view control, which is off until you turn it on.
 
+## Agent skill
+
+macOS only. The app bundle carries the agent skill at `Contents/Resources/skill/SKILL.md`, named `polycarp-spaces`.
+
+- **R-K1** `skill install` writes it to `~/.claude/skills/polycarp-spaces/SKILL.md`, replacing any file there, and
+  prints `installed <path>`.
+- **R-K2** After that write succeeds, it removes `~/.claude/skills/baneyspaces/` only when that folder is a real
+  directory whose `SKILL.md` names itself `baneyspaces` (the copy installs before the rename wrote), and prints
+  `removed <path>`. Any other folder there is someone else's and stays. A failed write removes nothing.
+- **R-K3** Without the bundled copy it prints an error and changes nothing.
+- **R-K4** `polycarp version` and `polycarp update` count the skill as installed when either folder holds a
+  `SKILL.md`, the new name first, so an old install is still refreshed and the refresh moves it to the new name.
+  Uninstall removes both folders.
+
 ## Global flags
 
 `--text` and `--agent-id ID` (or `--agent-id=ID`) are read only **before** the command. After the

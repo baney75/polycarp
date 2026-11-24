@@ -1264,7 +1264,7 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
             .unwrap_or_else(|| installed.clone()),
         installed: installed.clone(),
         arm64: cfg!(target_arch = "aarch64"),
-        skill_installed: home.join(".claude/skills/baneyspaces/SKILL.md").is_file(),
+        skill_installed: crate::version::installed_skill(&home).is_some(),
         terminal: std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
         home: home.clone(),
         // A check with a channel is refused on a Mac app, so nothing is asked for it.
