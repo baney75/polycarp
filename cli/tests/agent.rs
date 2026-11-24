@@ -1,6 +1,6 @@
 //! `polycarp agent` end to end: the built binary with its own HOME, config folder and an empty PATH, so no real
-//! cloudflared, Tailscale, app or assistant config is ever reached. The channel comes from source.toml, the way a
-//! source install records it. The HTTP, OAuth, tunnel and tailnet parts are tested in the source with stubs.
+//! cloudflared, Tailscale, app or assistant config is ever reached. The HTTP, OAuth, tunnel and tailnet parts are
+//! tested in the source with stubs.
 
 use serde_json::Value;
 use std::fs;
@@ -16,7 +16,7 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    fn new(channel: &str) -> Sandbox {
+    fn new() -> Sandbox {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
         let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
             .join(format!("agent-{}-{n}", std::process::id()));
@@ -24,11 +24,6 @@ impl Sandbox {
         for d in ["home", "cfg", "empty"] {
             fs::create_dir_all(root.join(d)).unwrap();
         }
-        fs::write(
-            root.join("cfg/source.toml"),
-            format!("channel = \"{channel}\"\n"),
-        )
-        .unwrap();
         Sandbox { root }
     }
     fn dir(&self, name: &str) -> PathBuf {
@@ -71,106 +66,46 @@ fn text(o: &Output) -> String {
     )
 }
 
-const WAITLIST: &str = "https://dbaney.com/polycarp/waitlist";
-
 #[test]
-fn stable_refuses_own_tunnels_with_the_waitlist_and_offers_local_and_tailnet() {
-    let sb = Sandbox::new("stable");
-    for args in [
-        &[
-            "agent",
-            "tunnel",
-            "cloudflare",
-            "--hostname",
-            "agent.example.com",
-        ][..],
-        &["agent", "tunnel", "tailscale"],
-        &["agent", "tunnel", "tailscale", "--public"],
-        &[
-            "agent",
-            "tunnel",
-            "cloudflare",
-            "--hostname",
-            "agent.example.com",
-            "--dry-run",
-        ],
-    ] {
-        let o = sb.run(args);
-        assert_eq!(o.status.code(), Some(1), "{args:?}: {}", text(&o));
-        let t = text(&o);
-        assert!(
-            t.contains(WAITLIST) && t.contains("local MCP works now") && t.contains("tailnet"),
-            "{t}"
-        );
-    }
-    assert!(!sb.agent().join("tunnel.json").exists());
-    for client in ["claude.ai", "chatgpt", "grok.com"] {
-        let o = sb.run(&["agent", "connect", client]);
-        assert_eq!(o.status.code(), Some(1));
-        assert!(text(&o).contains(WAITLIST), "{}", text(&o));
-    }
-    let o = sb.run(&["agent", "tunnel", "join", "--print"]);
-    assert_eq!(o.status.code(), Some(0));
-    assert!(text(&o).contains(WAITLIST));
+fn a_tunnel_command_works_with_no_channel_anywhere() {
+    let sb = Sandbox::new();
+    // No cloudflared on this empty PATH: the step that's missing is what it says.
+    let o = sb.run(&[
+        "agent",
+        "tunnel",
+        "cloudflare",
+        "--hostname",
+        "agent.example.com",
+    ]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(
+        text(&o).contains("cloudflared is not installed"),
+        "{}",
+        text(&o)
+    );
+    let o = sb.run(&["agent", "connect", "claude.ai"]);
+    assert!(text(&o).contains("tunnel cloudflare"), "{}", text(&o));
+    // An invite file left on disk is ignored and kept.
+    fs::create_dir_all(sb.agent()).unwrap();
+    fs::write(sb.agent().join("invite.json"), "{}").unwrap();
     let o = sb.run(&["agent", "tunnel", "status", "--json"]);
-    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
-    assert_eq!(v["data"]["channel"], "stable");
-    assert!(v["data"]["hosted"]
-        .as_str()
-        .unwrap()
-        .starts_with("waitlisted"));
-    // An invite is stored privately; the hosted tunnel itself isn't open in this build.
-    let o = sb.run(&["agent", "tunnel", "redeem", "pcinv_ABCdef-123"]);
     assert_eq!(o.status.code(), Some(0), "{}", text(&o));
-    assert!(text(&o).contains("isn't open yet"));
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(sb.agent().join("invite.json"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(mode, 0o600);
-    }
-    let o = sb.run(&["agent", "tunnel", "status", "--json"]);
     let v: Value = serde_json::from_slice(&o.stdout).unwrap();
-    assert!(v["data"]["hosted"].as_str().unwrap().starts_with("invited"));
-    // Local works on stable.
+    assert_eq!(v["data"], serde_json::json!({ "tunnel": null }));
+    assert!(sb.agent().join("invite.json").exists());
+    for gone in [&["join"][..], &["redeem", "pcinv_ABCdef-123"]] {
+        let mut args = vec!["agent", "tunnel"];
+        args.extend(gone);
+        assert_eq!(sb.run(&args).status.code(), Some(2), "{gone:?}");
+    }
     let o = sb.run(&["agent", "connect", "claude-code"]);
     assert_eq!(o.status.code(), Some(0));
     assert!(text(&o).contains("agent serve --stdio"));
 }
 
 #[test]
-fn dev_and_nightly_may_set_up_their_own_tunnel_and_take_no_invite() {
-    for ch in ["dev", "nightly"] {
-        let sb = Sandbox::new(ch);
-        // No cloudflared on this empty PATH: the step that's missing, not the waitlist.
-        let o = sb.run(&[
-            "agent",
-            "tunnel",
-            "cloudflare",
-            "--hostname",
-            "agent.example.com",
-        ]);
-        assert_eq!(o.status.code(), Some(1));
-        let t = text(&o);
-        assert!(
-            t.contains("cloudflared is not installed") && !t.contains(WAITLIST),
-            "{t}"
-        );
-        let o = sb.run(&["agent", "tunnel", "redeem", "pcinv_ABCdef-123"]);
-        assert_eq!(o.status.code(), Some(1));
-        assert!(text(&o).contains("bring your own tunnel"), "{}", text(&o));
-        let o = sb.run(&["agent", "connect", "claude.ai"]);
-        assert!(text(&o).contains("tunnel cloudflare"), "{}", text(&o));
-    }
-}
-
-#[test]
 fn tokens_are_shown_once_stored_hashed_in_private_files_and_revocable() {
-    let sb = Sandbox::new("dev");
+    let sb = Sandbox::new();
     let o = sb.run(&[
         "agent", "token", "create", "--name", "grokbot", "--scopes", "read,act",
     ]);
@@ -216,7 +151,7 @@ fn tokens_are_shown_once_stored_hashed_in_private_files_and_revocable() {
 
 #[test]
 fn serve_refuses_any_address_but_loopback() {
-    let sb = Sandbox::new("dev");
+    let sb = Sandbox::new();
     for addr in ["0.0.0.0", "::", "192.168.1.20", "100.100.100.100"] {
         let o = sb.run(&["agent", "serve", "--bind", addr]);
         assert_eq!(o.status.code(), Some(2), "{addr}");
@@ -226,7 +161,7 @@ fn serve_refuses_any_address_but_loopback() {
 
 #[test]
 fn serve_stdio_speaks_mcp_with_every_tool() {
-    let sb = Sandbox::new("stable");
+    let sb = Sandbox::new();
     let mut child = sb
         .cmd(&["agent", "serve", "--stdio"])
         .stdin(Stdio::piped())
@@ -280,7 +215,7 @@ fn serve_stdio_speaks_mcp_with_every_tool() {
 
 #[test]
 fn approve_with_nothing_waiting_and_a_bad_code_say_so() {
-    let sb = Sandbox::new("dev");
+    let sb = Sandbox::new();
     let o = sb.run(&["agent", "approve"]);
     assert_eq!(o.status.code(), Some(0));
     assert!(text(&o).contains("No connection is waiting"));
@@ -301,7 +236,7 @@ fn approve_with_nothing_waiting_and_a_bad_code_say_so() {
 
 #[test]
 fn help_lists_every_command_and_unknown_ones_are_usage_errors() {
-    let sb = Sandbox::new("dev");
+    let sb = Sandbox::new();
     let o = sb.run(&["agent", "--help"]);
     assert_eq!(o.status.code(), Some(0));
     let h = text(&o);
@@ -332,7 +267,7 @@ fn help_lists_every_command_and_unknown_ones_are_usage_errors() {
 
 #[test]
 fn codex_write_adds_the_entry_and_keeps_the_file() {
-    let sb = Sandbox::new("dev");
+    let sb = Sandbox::new();
     let cfg = sb.dir("home").join(".codex/config.toml");
     fs::create_dir_all(cfg.parent().unwrap()).unwrap();
     fs::write(&cfg, "model = \"m\"\n").unwrap();

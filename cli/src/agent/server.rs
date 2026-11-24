@@ -4,8 +4,7 @@
 //! addresses, after whois.
 //!
 //! The rules every request meets, in order:
-//! 1. Host names this server: a loopback name, or the host of a tunnel this channel allows. A stable install with an
-//!    own tunnel left from a nightly gets the waitlist message instead. This stops DNS rebinding.
+//! 1. Host names this server: a loopback name, or the host of the tunnel that is set up. This stops DNS rebinding.
 //! 2. A request a web page sent (Origin, or Sec-Fetch-Site other than none) may only read the public metadata and
 //!    the approval page. It can never reach /mcp, /token, /register or /revoke, and nothing here sends CORS headers.
 //! 3. /mcp needs a bearer token: an OAuth access token for this endpoint, or a local token from `token create`
@@ -13,9 +12,7 @@
 
 use super::auth::{redirect_host, AuthzErr, Caller, Origin, Poll, State};
 use super::gateway::{Gateway, Session};
-use super::policy;
 use super::store::{self, Settings, Tunnel, APPROVALS_FILE, AUTH_FILE};
-use crate::channel::Channel;
 use crate::files::http::{percent_decode, read_line};
 use crate::files::serve::{authorize as whois_authorize, host_ok};
 use crate::files::tailnet::{Node, Tailnet};
@@ -484,7 +481,6 @@ impl TailCtx {
 pub struct Ctx {
     pub dir: PathBuf,
     pub gw: Gateway,
-    pub channel: Channel,
     pub settings: Settings,
     pub tailnet: Option<TailCtx>,
     sessions: Mutex<HashMap<String, Arc<Mutex<Sess>>>>,
@@ -502,11 +498,10 @@ enum Via {
 }
 
 impl Ctx {
-    pub fn new(dir: PathBuf, gw: Gateway, channel: Channel, settings: Settings) -> Ctx {
+    pub fn new(dir: PathBuf, gw: Gateway, settings: Settings) -> Ctx {
         Ctx {
             dir,
             gw,
-            channel,
             settings,
             tailnet: None,
             sessions: Mutex::new(HashMap::new()),
@@ -545,33 +540,20 @@ impl Ctx {
     /// marks what it forwards (cloudflared with Cf-Connecting-Ip and X-Forwarded-For, Tailscale Serve and Funnel
     /// with Tailscale-* and X-Forwarded-For), and such a request is the tunnel's whatever Host it names: a tunnel
     /// set to send `Host: 127.0.0.1` can't make a public request look local. Without those marks, a request is
-    /// local when Host is a loopback name and the tunnel's when Host names the tunnel. Err when it is the tunnel's
-    /// and this channel refuses that tunnel.
-    fn via(&self, req: &Req) -> Result<Option<Via>, Resp> {
+    /// local when Host is a loopback name and the tunnel's when Host names the tunnel. None when it is neither.
+    fn via(&self, req: &Req) -> Option<Via> {
         let host = req.header("host").unwrap_or_default();
         let forwarded = forwarded(req);
         if loopback_host(host) && !forwarded {
-            return Ok(Some(Via::Local));
+            return Some(Via::Local);
         }
-        let Some(t) = Tunnel::load(&self.dir) else {
-            return Ok(None);
-        };
+        let t = Tunnel::load(&self.dir)?;
         let names_tunnel = match (split_host(host), split_host(&t.host)) {
             (Some((name, _)), Some((want, _))) => name == want,
             _ => false,
         };
         let tunnels = names_tunnel || (forwarded && loopback_host(host));
-        if !tunnels {
-            return Ok(None);
-        }
-        let Some(route) = t.route() else {
-            return Ok(None);
-        };
-        let invited = policy::load_invite(&self.dir).is_some();
-        match policy::check(self.channel, route, invited) {
-            Ok(()) => Ok(Some(Via::Tunnel(t))),
-            Err(r) => Err(Resp::fail(403, r.code, &r.message, "")),
-        }
+        (tunnels && t.route().is_some()).then_some(Via::Tunnel(t))
     }
 
     fn session(&self, id: &str) -> Option<Arc<Mutex<Sess>>> {
@@ -689,17 +671,13 @@ fn browser_may(req: &Req) -> bool {
 /// Everything on the loopback listener (and so everything a tunnel forwards).
 pub fn route_local(ctx: &Ctx, req: &Req) -> Resp {
     let host = req.header("host").unwrap_or_default();
-    let via = match ctx.via(req) {
-        Ok(Some(v)) => v,
-        Ok(None) => {
-            return Resp::fail(
-                403,
-                "wrong_host",
-                "this server answers only to its own names: the request named another host",
-                "Use http://127.0.0.1 and the port polycarp agent serve printed.",
-            )
-        }
-        Err(r) => return r,
+    let Some(via) = ctx.via(req) else {
+        return Resp::fail(
+            403,
+            "wrong_host",
+            "this server answers only to its own names: the request named another host",
+            "Use http://127.0.0.1 and the port polycarp agent serve printed.",
+        );
     };
     if req.sent_by_page() && !browser_may(req) {
         return Resp::fail(

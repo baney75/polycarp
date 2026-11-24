@@ -21,26 +21,13 @@ An assistant sees only the tools its scopes allow. App tools talk to the running
 | Local stdio | `polycarp agent serve --stdio` | Claude Code, Codex, Grok Bot and Local Studio on this Mac |
 | Local HTTP | `http://127.0.0.1:41772/mcp` | Any client on this Mac that speaks Streamable HTTP |
 | Tailnet | `http://<this-mac>.<tailnet>.ts.net:41772/mcp`, with `serve --tailnet` | Grok Bot and other clients on your own devices |
-| Your Cloudflare tunnel | `https://<your host>/mcp` | Web assistants (dev and nightly) |
-| Tailscale Serve | `https://<this-mac>.<tailnet>.ts.net:8443/mcp` | Your own devices over HTTPS (dev and nightly) |
-| Tailscale Funnel | the same address, public | Web assistants (dev and nightly) |
-| Hosted tunnel | not open yet | Web assistants on stable, by invite |
+| Your Cloudflare tunnel | `https://<your host>/mcp` | Web assistants |
+| Tailscale Serve | `https://<this-mac>.<tailnet>.ts.net:8443/mcp` | Your own devices over HTTPS |
+| Tailscale Funnel | the same address, public | Web assistants |
 
 The HTTP server listens on loopback only. `--bind` takes 127.0.0.1 or ::1 and refuses anything else, including 0.0.0.0, a LAN address and a Tailscale address. The tailnet listener is separate: it binds this device's Tailscale addresses only and asks Tailscale who each caller is before it reads a byte.
 
-## Release channels
-
-| Channel | Local and tailnet | Your own tunnel (Cloudflare, Tailscale) | Hosted tunnel |
-| --- | --- | --- | --- |
-| dev | yes | yes | no |
-| nightly | yes | yes | no |
-| stable | yes | no | waitlisted |
-
-On stable, `polycarp agent tunnel cloudflare` and `tunnel tailscale` refuse and say why: the hosted tunnel may cost money to run, so it opens by invite. `polycarp agent tunnel join` opens the waitlist at https://dbaney.com/polycarp/waitlist, and `polycarp agent tunnel redeem <invite>` stores an invite you get. Until then, local and tailnet work on stable as on any channel.
-
-The gate is checked every time, not only at setup. A tunnel set up on nightly stops working if the install moves to stable: requests through it get the waitlist message, and `tunnel run` won't start cloudflared.
-
-The channel is the app's own (its Info.plist), or for a source install the one `polycarp update --channel` recorded, or dev.
+Every install has local MCP, the tailnet and bring-your-own tunnel (Cloudflare or Tailscale); there is no hosted tunnel.
 
 ## Connecting each assistant
 
@@ -105,8 +92,8 @@ polycarp agent revoke <id>
 ## Tunnels
 
 ```sh
-polycarp agent tunnel cloudflare --hostname agent.example.com   # dev, nightly
-polycarp agent tunnel tailscale [--public]                      # dev, nightly
+polycarp agent tunnel cloudflare --hostname agent.example.com
+polycarp agent tunnel tailscale [--public]
 polycarp agent tunnel status
 polycarp agent tunnel off
 polycarp agent service install [--tunnel] [--tailnet]
@@ -122,7 +109,7 @@ Each tunnel command takes `--dry-run` to print what it would run. `POLYCARP_CLOU
 
 ## Doctor and fix
 
-`polycarp agent doctor` says whether the gateway answers, whether its files are private, which tunnel is set up and whether this channel allows it, which units are written and loaded, what is waiting for approval, and whether the app is running, with the step that fixes each problem. `--json` gives the same as data. `polycarp agent fix` does only the safe steps: make the folder and its files private again, and restart a loaded unit that stopped answering.
+`polycarp agent doctor` says whether the gateway answers, whether its files are private, which tunnel is set up, which units are written and loaded, what is waiting for approval, and whether the app is running, with the step that fixes each problem. `--json` gives the same as data. `polycarp agent fix` does only the safe steps: make the folder and its files private again, and restart a loaded unit that stopped answering.
 
 ## Where the state lives
 
@@ -134,7 +121,6 @@ Everything is under `agent/` in Polycarp's config folder. The folder is 0700 and
 | `agent.toml` | Your settings: `port`, `tailnet`, `allow_devices`, `extra_redirects` |
 | `tunnel.json` | The tunnel a tunnel command set up |
 | `cloudflared.yml` | The Cloudflare tunnel's config (cloudflared's credentials stay in `~/.cloudflared`) |
-| `invite.json` | A hosted tunnel invite (stable) |
 | `approvals.json` | What is waiting for approval, for the app to show |
 
 ## Extension points
@@ -156,7 +142,7 @@ Surfaces and contacts add their tools by implementing `Provider` in `cli/src/age
 ### What a malicious web page can't do
 
 - **Call a tool.** A request from a web page (it carries `Origin`, or `Sec-Fetch-Site` other than `none`) can reach only the public metadata and the approval page. `/mcp`, `/token`, `/register` and `/revoke` refuse it, and no response carries CORS headers, so the page can't read an answer either.
-- **Rebind DNS.** Every request must name this server in its Host header: a loopback name, the host of a tunnel this channel allows, or (on the tailnet) this device's own name or address. A page on `evil.example` that rebinds its name to 127.0.0.1 still sends `Host: evil.example` and is refused.
+- **Rebind DNS.** Every request must name this server in its Host header: a loopback name, the host of the tunnel that is set up, or (on the tailnet) this device's own name or address. A page on `evil.example` that rebinds its name to 127.0.0.1 still sends `Host: evil.example` and is refused.
 - **Forge a request.** Browsers mark a cross-site post with `Origin`, so a form a page submits to `/token` or `/mcp` is refused before it is read. `/mcp` also takes only `application/json` and a bearer header, which a page can't send cross-site without a CORS preflight, and none is ever answered. No cookie is ever set, so there is nothing for a page to ride on.
 - **Approve itself.** Approval happens only on this Mac, at the command line. The approval page has no buttons, no forms and no scripts (`Content-Security-Policy: default-src 'none'`), and it can't be framed.
 - **Divert a code to an address it didn't register.** A code goes only to a redirect address the client registered, matched exactly, and registration accepts only the known assistants' callbacks, loopback, or ones you added.
@@ -168,9 +154,8 @@ That last rule does not stop a visitor to a public tunnel from starting a connec
 - Another user on this Mac can't read the state: the folder is 0700. A process running as you can; that is outside what Polycarp can defend.
 - Another person's device on your tailnet, a tagged device, or one outside `allow_devices` is refused by whois before the request is read. Your own device still needs a token.
 - Through a public tunnel, anyone can reach the sign-in pages and register a client. Registration is rate-limited and capped, and a registered client gets nothing until you approve it here.
-- A tunnel connects to the gateway from this machine, so the gateway never treats a request as local because of its Host header or its peer address alone. A request carrying a tunnel's forwarding headers (`Cf-Connecting-Ip`, `Cf-Ray`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-Ip`, `Forwarded`, `Tailscale-Funnel-Request`, `Tailscale-User-Login`) is the tunnel's even when it names `127.0.0.1`: a local token is refused there, and with no tunnel set up, or on a channel that refuses it, the request is refused.
+- A tunnel connects to the gateway from this machine, so the gateway never treats a request as local because of its Host header or its peer address alone. A request carrying a tunnel's forwarding headers (`Cf-Connecting-Ip`, `Cf-Ray`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-Ip`, `Forwarded`, `Tailscale-Funnel-Request`, `Tailscale-User-Login`) is the tunnel's even when it names `127.0.0.1`: a local token is refused there, and with no tunnel set up the request is refused.
 
 ### Not built yet
 
-- The hosted tunnel and its relay. Stable only joins the waitlist and stores an invite.
 - An approval prompt in the app itself. Until then the app can read `agent/approvals.json`, and `serve` logs each waiting connection by client id and redirect host, without its code.

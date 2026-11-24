@@ -2,11 +2,9 @@
 //! safe steps: make the gateway's files private again and restart a loaded unit that stopped answering.
 
 use super::auth::State;
-use super::policy;
 use super::service::{self, Unit};
 use super::store::{self, Settings, Tunnel, AUTH_FILE};
 use super::tunnel;
-use crate::channel::Channel;
 use crate::files::config::Os;
 use serde::Serialize;
 use std::net::SocketAddr;
@@ -15,7 +13,6 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct Facts {
-    pub channel: String,
     pub version: String,
     pub dir: String,
     pub port: u16,
@@ -31,9 +28,6 @@ pub struct Facts {
     pub tunnel_loaded: Option<bool>,
     pub tunnel_kind: Option<String>,
     pub tunnel_url: Option<String>,
-    /// Why this channel refuses the tunnel that is set up.
-    pub tunnel_refused: Option<String>,
-    pub invite: bool,
     pub clients: usize,
     pub tokens: usize,
     pub waiting: Vec<Waiting>,
@@ -66,7 +60,6 @@ impl Facts {
     pub fn healthy(&self) -> bool {
         self.serve_running
             && self.not_private.is_empty()
-            && self.tunnel_refused.is_none()
             && self.auth_error.is_none()
             && self.settings_error.is_none()
     }
@@ -117,13 +110,7 @@ pub fn fixes(f: &Facts) -> Vec<String> {
             "polycarp agent service install",
         );
     }
-    if let Some(why) = &f.tunnel_refused {
-        out.push(format!(
-            "A {} tunnel is set up, but the {} channel doesn't allow it, so it is refused. Run `polycarp agent tunnel off`. {why}",
-            f.tunnel_kind.as_deref().unwrap_or("?"),
-            f.channel
-        ));
-    } else if f.tunnel_kind.as_deref() == Some("cloudflare") {
+    if f.tunnel_kind.as_deref() == Some("cloudflare") {
         if f.cloudflared.is_none() {
             out.push(
                 "The Cloudflare tunnel needs cloudflared, which isn't installed here anymore."
@@ -172,8 +159,7 @@ pub fn fix_plan(f: &Facts) -> Vec<Action> {
     if !f.serve_running && f.gateway_unit.is_some() && f.gateway_loaded == Some(true) {
         plan.push(Action::Restart(Unit::Gateway));
     }
-    if f.tunnel_refused.is_none()
-        && f.tunnel_kind.as_deref() == Some("cloudflare")
+    if f.tunnel_kind.as_deref() == Some("cloudflare")
         && f.tunnel_unit.is_some()
         && f.tunnel_loaded == Some(true)
         && !f.serve_running
@@ -232,14 +218,8 @@ fn loaded(unit: Unit) -> Option<bool> {
 }
 
 /// Looks at everything. `probe_units` false skips asking launchd or systemd (tests).
-pub fn gather(
-    dir: &Path,
-    channel: Channel,
-    probe_units: bool,
-    app: Option<&dyn super::app::AppLink>,
-) -> Facts {
+pub fn gather(dir: &Path, probe_units: bool, app: Option<&dyn super::app::AppLink>) -> Facts {
     let mut f = Facts {
-        channel: channel.name().to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         dir: dir.display().to_string(),
         port: store::PORT,
@@ -293,14 +273,7 @@ pub fn gather(
     if let Some(t) = Tunnel::load(dir) {
         f.tunnel_kind = Some(t.kind.clone());
         f.tunnel_url = Some(format!("{}/mcp", t.public_url));
-        if let Some(route) = t.route() {
-            let invited = policy::load_invite(dir).is_some();
-            f.tunnel_refused = policy::check(channel, route, invited)
-                .err()
-                .map(|r| r.message);
-        }
     }
-    f.invite = policy::load_invite(dir).is_some();
     f.cloudflared = tunnel::find_cloudflared().map(|p| p.display().to_string());
     if let Some(home) = crate::home() {
         f.cloudflared_signed_in = home.join(".cloudflared/cert.pem").is_file();
@@ -336,7 +309,6 @@ mod tests {
 
     fn up() -> Facts {
         Facts {
-            channel: "dev".into(),
             port: 41772,
             serve_running: true,
             ..Facts::default()
@@ -374,24 +346,6 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_tunnel_is_named_with_the_way_out_and_never_restarted() {
-        let mut f = up();
-        f.channel = "stable".into();
-        f.tunnel_kind = Some("cloudflare".into());
-        f.tunnel_unit = Some("/u".into());
-        f.tunnel_loaded = Some(true);
-        f.serve_running = false;
-        f.tunnel_refused = Some(policy::waitlist_message());
-        let h = fixes(&f).join("\n");
-        assert!(
-            h.contains("polycarp agent tunnel off") && h.contains(policy::WAITLIST_URL),
-            "{h}"
-        );
-        assert!(!fix_plan(&f).contains(&Action::Restart(Unit::Tunnel)));
-        assert!(!f.healthy());
-    }
-
-    #[test]
     fn waiting_connectors_are_listed_by_client_and_redirect_host() {
         let mut f = up();
         f.waiting = vec![Waiting {
@@ -411,22 +365,16 @@ mod tests {
         let d = std::env::temp_dir().join(format!("pc-agent-doc-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         store::write_json(&d.join(AUTH_FILE), &State::default()).unwrap();
-        let f = gather(&d, Channel::Nightly, false, None);
+        let f = gather(&d, false, None);
         assert!(f.not_private.is_empty(), "{:?}", f.not_private);
-        assert_eq!(f.channel, "nightly");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(d.join(AUTH_FILE), std::fs::Permissions::from_mode(0o644))
                 .unwrap();
-            assert_eq!(
-                gather(&d, Channel::Nightly, false, None).not_private.len(),
-                1
-            );
+            assert_eq!(gather(&d, false, None).not_private.len(), 1);
             assert_eq!(make_private(&d).unwrap(), 1);
-            assert!(gather(&d, Channel::Nightly, false, None)
-                .not_private
-                .is_empty());
+            assert!(gather(&d, false, None).not_private.is_empty());
         }
         let _ = std::fs::remove_dir_all(&d);
     }
