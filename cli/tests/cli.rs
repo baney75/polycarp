@@ -173,7 +173,10 @@ fn doctor_not_found_exits_1() {
     let t = out(&o);
     assert!(t.contains("spaces: not found"), "{t}");
     assert!(!t.contains("voice"), "{t}");
-    assert!(!t.contains("browser"), "the browser is Tychicus now: {t}");
+    assert!(
+        !t.contains("browser"),
+        "the browser extension was removed: {t}"
+    );
 }
 
 // ---- Unix tests with stub executables ----
@@ -207,14 +210,13 @@ fn child_exit_code_comes_back() {
 }
 
 #[cfg(unix)]
-const TYCHICUS_LINE: &str =
-    "The browser helper is now Tychicus: https://github.com/baney75/tychicus\n";
+const BROWSER_LINE: &str = "The browser extension was removed from Polycarp.\n";
 
-/// The browser moved to Tychicus. `polycarp browser`, with any arguments, says so on stderr and exits 2, and never runs an
+/// The browser extension was removed. `polycarp browser`, with any arguments, says so on stderr and exits 2, and never runs an
 /// old helper still on the machine, nor `features on|off browser`, which writes nothing.
 #[cfg(unix)]
 #[test]
-fn browser_points_at_tychicus_runs_nothing_and_exits_2() {
+fn browser_says_it_was_removed_runs_nothing_and_exits_2() {
     let s = Sandbox::new();
     let marker = s.dir("ran");
     let ran = format!("echo x > '{}'", marker.display());
@@ -241,7 +243,7 @@ fn browser_points_at_tychicus_runs_nothing_and_exits_2() {
             .output()
             .unwrap();
         assert_eq!(code(&o), 2, "{args:?}: {}", err(&o));
-        assert_eq!(err(&o), TYCHICUS_LINE, "{args:?}");
+        assert_eq!(err(&o), BROWSER_LINE, "{args:?}");
         assert_eq!(out(&o), "", "{args:?}");
     }
     assert!(!marker.exists(), "an old browser helper ran");
@@ -252,7 +254,7 @@ fn browser_points_at_tychicus_runs_nothing_and_exits_2() {
     let list = s.run(&["features"]);
     assert!(!out(&list).contains("browser"), "{}", out(&list));
     let help = s.run(&["--help"]);
-    assert!(out(&help).contains(TYCHICUS_LINE), "{}", out(&help));
+    assert!(out(&help).contains(BROWSER_LINE), "{}", out(&help));
     assert!(!out(&help).contains("polycarp browser ["), "{}", out(&help));
 }
 
@@ -610,11 +612,11 @@ fn windows_finds_the_exe_on_path_passes_args_and_returns_its_exit_code() {
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert_eq!(out(&o).trim_end(), "hello");
     assert_eq!(code(&run(&["spaces", "/c", "exit", "7"])), 7);
-    // The browser moved to Tychicus: a pointer on stderr, exit 2, on Windows too.
+    // The browser extension was removed: one line on stderr, exit 2, on Windows too.
     let o = run(&["browser", "--version"]);
     assert_eq!(code(&o), 2, "{}", err(&o));
     assert!(
-        err(&o).contains("https://github.com/baney75/tychicus"),
+        err(&o).contains("The browser extension was removed from Polycarp."),
         "{}",
         err(&o)
     );
@@ -1344,7 +1346,7 @@ fn on_linux_update_says_the_desktop_is_retired_and_runs_nothing() {
         assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
         assert_eq!(
             out(&o),
-            "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n"
+            "Polycarp runs on macOS and Windows. The Linux desktop is retired.\n"
         );
         assert!(!repo.join(".git/FETCH_HEAD").exists() && !cache.exists());
         assert!(!s.dir("home").join(".config/polycarp/source.toml").exists());
@@ -1478,7 +1480,7 @@ fn on_linux_update_says_the_desktop_is_retired_before_it_reads_anything() {
         assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
         assert_eq!(
             out(&o),
-            "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n",
+            "Polycarp runs on macOS and Windows. The Linux desktop is retired.\n",
             "{args:?}"
         );
         assert_eq!(err(&o), "", "{args:?}");
@@ -1532,7 +1534,7 @@ fn an_older_linux_update_plan_lands_on_this_tree() {
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert_eq!(
         out(&o),
-        "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n"
+        "Polycarp runs on macOS and Windows. The Linux desktop is retired.\n"
     );
 }
 
@@ -1670,7 +1672,7 @@ fn update_without_a_known_install_says_how_to_point_it_at_a_checkout() {
             assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
             assert_eq!(
                 out(&o),
-                "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n"
+                "Polycarp runs on macOS and Windows. The Linux desktop is retired.\n"
             );
             continue;
         }
@@ -1780,7 +1782,7 @@ fn a_build_in_a_checkout_judges_the_installed_command_not_itself() {
         "{}",
         out(&o)
     );
-    // The gate an older polycarp's plan runs still names the browser helper, which moved to Tychicus and
+    // The gate an older polycarp's plan runs still names the browser helper, which was removed and
     // nothing here installs: it is skipped, so the update is not held back for it, before or after the install.
     for extra in [&[][..], &["--after-install"]] {
         let old = [&gate[..], &["polycarp command,browser helper"], extra].concat();
@@ -1805,9 +1807,9 @@ fn a_build_in_a_checkout_judges_the_installed_command_not_itself() {
     assert_eq!(code(&run(&[&gate[..], &["x", "--bogus"]].concat())), 2);
 }
 
-/// What `polycarp update --retire-old-browser` prints, once, while a remote connector job waits for Tychicus.
+/// What `polycarp update --retire-old-browser` prints, once, while a remote connector job is left running.
 #[cfg(target_os = "macos")]
-const CONNECTOR_STAYS: &str = "Your remote connector still runs on Polycarp's helper; run `tychicus remote import-polycarp` to move it to Tychicus.\n";
+const CONNECTOR_STAYS: &str = "Your remote connector still runs on the old browser helper, outside Polycarp, so its jobs were left running.\n";
 
 /// A LaunchAgents plist in the form the old helper wrote.
 #[cfg(target_os = "macos")]
@@ -1846,14 +1848,14 @@ fn launchctl(s: &Sandbox, loaded: &[&str], bootout: i32) -> (PathBuf, PathBuf) {
 /// The remote connector as it runs on Donovan's Mac (2026-11-17): `com.polycarp.serve` runs the helper's launcher and
 /// `com.polycarp.cloudflared` runs `~/.config/tabkyra/tabkyra`, a link to `~/.config/tabkyra/polycarp`. Both are sh
 /// shims that exec node on a working tree outside the app, so neither points into Polycarp.app. Next to them are the
-/// app's own job and Tychicus's serve job.
+/// app's own job and another app's serve job.
 #[cfg(target_os = "macos")]
 struct Connector {
     home: PathBuf,
     agents: PathBuf,
     serve: (PathBuf, String),
     cloudflared: (PathBuf, String),
-    /// Plists that must never change: `com.tychicus.serve` and `com.baney.polycarp`.
+    /// Plists that must never change: `com.example.serve` and `com.baney.polycarp`.
     untouched: Vec<(PathBuf, String)>,
 }
 
@@ -1891,9 +1893,9 @@ impl Connector {
         let untouched = vec![
             keep(launch_agent(
                 &agents,
-                "com.tychicus.serve",
+                "com.example.serve",
                 &home
-                    .join(".local/share/tychicus/release/tychicus")
+                    .join(".local/share/other/release/other")
                     .to_string_lossy(),
             )),
             keep(launch_agent(
@@ -1911,14 +1913,7 @@ impl Connector {
         }
     }
 
-    /// Tychicus has taken the connector over: it wrote its remote settings.
-    fn tychicus_remote(&self) {
-        let p = self.home.join(".config/tychicus/remote.json");
-        fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(p, "{}").unwrap();
-    }
-
-    /// The things no run may touch, whatever the gate said.
+    /// The things no run may touch.
     fn assert_kept(&self, calls: &str) {
         for (p, text) in &self.untouched {
             assert_eq!(&fs::read_to_string(p).unwrap(), text, "{}", p.display());
@@ -1932,8 +1927,8 @@ impl Connector {
         assert!(self.home.join(".config/tabkyra/tabkyra").is_symlink());
         for line in calls.lines() {
             assert!(
-                !line.contains("com.tychicus.") || line.starts_with("print "),
-                "a Tychicus job was touched: {calls}"
+                !line.contains("com.example."),
+                "another app's job was touched: {calls}"
             );
             assert!(!line.contains("com.baney.polycarp"), "{calls}");
         }
@@ -1948,95 +1943,31 @@ fn retire_old_browser(s: &Sandbox, launchctl: &Path) -> Output {
         .unwrap()
 }
 
-/// The gate met: Tychicus's serve job is loaded and `~/.config/tychicus/remote.json` exists, so the connector's
-/// serve and cloudflared jobs are booted out and their plists removed, though neither points into Polycarp.app.
-/// On main, `--retire-old-browser` is not a flag, so both stay.
+/// The remote connector's jobs (serve, cloudflared, hub, link) run shims that exec node on a working tree outside the
+/// app, so their program is still on disk: all four keep running, nothing is booted out, and the step prints exactly
+/// one line.
 /// macOS only: on Linux `update` answers only that the desktop is retired.
 #[cfg(target_os = "macos")]
 #[test]
-fn the_connector_jobs_go_once_tychicus_runs_the_connector() {
+fn the_connector_jobs_keep_running_while_their_program_does() {
     let s = Sandbox::new();
     let c = Connector::new(&s);
-    c.tychicus_remote();
-    let (launchctl, log) = launchctl(&s, &["com.tychicus.serve"], 0);
-
-    let o = retire_old_browser(&s, &launchctl);
-    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
-    assert!(!c.serve.0.exists(), "{}", out(&o));
-    assert!(!c.cloudflared.0.exists(), "{}", out(&o));
-    let calls = fs::read_to_string(&log).unwrap();
-    let uid = this_uid();
-    let mut bootouts: Vec<&str> = calls.lines().filter(|l| l.starts_with("bootout")).collect();
-    bootouts.sort();
-    assert_eq!(
-        bootouts,
-        [
-            format!("bootout gui/{uid}/com.polycarp.cloudflared"),
-            format!("bootout gui/{uid}/com.polycarp.serve"),
-        ]
-    );
-    c.assert_kept(&calls);
-    assert!(
-        out(&o).contains("retired com.polycarp.serve"),
-        "{}",
-        out(&o)
-    );
-    assert!(
-        !out(&o).contains("tychicus remote import-polycarp"),
-        "{}",
-        out(&o)
-    );
-}
-
-/// The gate unmet (Tychicus's serve job not loaded, or no `~/.config/tychicus/remote.json`): the connector keeps
-/// running on Polycarp's helper. Both jobs are untouched, nothing is booted out, and the step prints exactly one line.
-/// macOS only: on Linux `update` answers only that the desktop is retired.
-#[cfg(target_os = "macos")]
-#[test]
-fn the_connector_jobs_keep_running_until_tychicus_runs_the_connector() {
-    for (remote, loaded) in [(false, true), (true, false), (false, false)] {
-        let s = Sandbox::new();
-        let c = Connector::new(&s);
-        if remote {
-            c.tychicus_remote();
-        }
-        let loaded: &[&str] = if loaded { &["com.tychicus.serve"] } else { &[] };
-        let (launchctl, log) = launchctl(&s, loaded, 0);
-
-        let o = retire_old_browser(&s, &launchctl);
-        let case = format!("remote.json {remote}, loaded {loaded:?}");
-        assert_eq!(code(&o), 0, "{case}: {}{}", out(&o), err(&o));
-        assert_eq!(out(&o), CONNECTOR_STAYS, "{case}");
-        assert_eq!(err(&o), "", "{case}");
-        for (p, text) in [&c.serve, &c.cloudflared] {
-            assert_eq!(&fs::read_to_string(p).unwrap(), text, "{case}");
-        }
-        let calls = fs::read_to_string(&log).unwrap_or_default();
-        assert!(!calls.contains("bootout"), "{case}: {calls}");
-        c.assert_kept(&calls);
-    }
-}
-
-/// The hub and the link wait for their own Tychicus jobs: with `com.tychicus.hub` loaded and `com.tychicus.link` not,
-/// the hub goes and the link stays, and the one line is printed.
-/// macOS only: on Linux `update` answers only that the desktop is retired.
-#[cfg(target_os = "macos")]
-#[test]
-fn the_hub_and_link_wait_for_their_own_tychicus_jobs() {
-    let s = Sandbox::new();
-    let c = Connector::new(&s);
-    c.tychicus_remote();
     let launcher = c.home.join(".config/polycarp/browser/polycarp");
     let hub = launch_agent(&c.agents, "com.polycarp.hub", &launcher.to_string_lossy());
     let link = launch_agent(&c.agents, "com.polycarp.link", &launcher.to_string_lossy());
-    let (launchctl, log) = launchctl(&s, &["com.tychicus.serve", "com.tychicus.hub"], 0);
+    let (launchctl, log) = launchctl(&s, &[], 0);
 
     let o = retire_old_browser(&s, &launchctl);
     assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
-    assert!(!hub.exists() && !c.serve.0.exists() && !c.cloudflared.0.exists());
-    assert!(link.exists());
-    assert_eq!(out(&o).matches(CONNECTOR_STAYS).count(), 1, "{}", out(&o));
-    c.assert_kept(&fs::read_to_string(&log).unwrap());
+    assert_eq!(out(&o), CONNECTOR_STAYS);
+    assert_eq!(err(&o), "");
+    for (p, text) in [&c.serve, &c.cloudflared] {
+        assert_eq!(&fs::read_to_string(p).unwrap(), text);
+    }
+    assert!(hub.exists() && link.exists());
+    let calls = fs::read_to_string(&log).unwrap_or_default();
+    assert!(!calls.contains("bootout"), "{calls}");
+    c.assert_kept(&calls);
 }
 
 /// The step passes when a job is already gone or its plist was moved: a job launchd no longer has (bootout fails,
@@ -2047,7 +1978,6 @@ fn the_hub_and_link_wait_for_their_own_tychicus_jobs() {
 fn the_retire_step_passes_when_a_job_is_already_gone_or_moved() {
     let s = Sandbox::new();
     let c = Connector::new(&s);
-    c.tychicus_remote();
     let retired = c.agents.join("retired-tabkyra");
     let moved: Vec<(PathBuf, String)> = ["com.polycarp.cloudflared", "com.tabkyra.serve"]
         .iter()
@@ -2073,11 +2003,15 @@ fn the_retire_step_passes_when_a_job_is_already_gone_or_moved() {
         "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
     );
     // Every Polycarp job is already booted out: bootout fails and print finds nothing.
-    let (launchctl, log) = launchctl(&s, &["com.tychicus.serve"], 3);
+    let (launchctl, log) = launchctl(&s, &[], 3);
 
     let o = retire_old_browser(&s, &launchctl);
     assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
-    assert!(!c.serve.0.exists(), "{}", out(&o));
+    assert!(
+        c.serve.0.exists(),
+        "its program is still on disk: {}",
+        out(&o)
+    );
     assert!(!browser.exists(), "{}", out(&o));
     for (p, text) in &moved {
         assert_eq!(&fs::read_to_string(p).unwrap(), text, "{}", p.display());
@@ -2154,7 +2088,7 @@ fn an_update_retires_the_old_browser_jobs_and_leaves_everyone_elses() {
     let said = out(&o);
     assert!(said.contains("retired com.polycarp.browser"), "{said}");
     assert!(said.contains("left com.tabkyra.hub alone"), "{said}");
-    assert!(!said.contains("tychicus remote import-polycarp"), "{said}");
+    assert!(!said.contains("remote connector"), "{said}");
     // The installer runs it on every install, after the commands are linked.
     let installer = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../spaces/scripts/install-app.sh"),
