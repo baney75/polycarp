@@ -90,7 +90,7 @@ final class RootInstallerTests: XCTestCase {
         XCTAssertFalse(try installer().contains("theme follow omarchy"), "the Omarchy theme follow left with Linux")
     }
 
-    /// The browser extension was removed from Polycarp: asked for by name, the installer prints one line saying so, exits 0 and writes nothing, not even its log or the parts file, whatever else is named with it. A `uname`
+    /// The agent browser extension was removed from Polycarp: asked for by name, the installer prints one line saying so, exits 0 and writes nothing, not even its log or the parts file, whatever else is named with it. A `uname`
     /// that answers Darwin stands in for a Mac.
     func testAskingForTheBrowserNamesWhereItWentAndInstallsNothing() throws {
         let fm = FileManager.default
@@ -102,7 +102,7 @@ final class RootInstallerTests: XCTestCase {
         let uname = bin.appendingPathComponent("uname")
         try "#!/bin/sh\necho Darwin\n".write(to: uname, atomically: true, encoding: .utf8)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uname.path)
-        let removed = "The browser extension was removed from Polycarp.\n"
+        let removed = "The agent browser extension was removed from Polycarp.\n"
         let silas = "  voice is Silas now, its own app: https://github.com/baney75/silas\n"
         for (features, line, note) in [("browser", removed, ""), ("browser,voice", removed, silas)] {
             let p = Process()
@@ -130,7 +130,7 @@ final class RootInstallerTests: XCTestCase {
     /// is. Sourced for its functions, so nothing is installed.
     func testOnlyTheBrowserStopsTheInstall() throws {
         // `workspaces,browser` was the old documented non-interactive answer: it gets the removed line and still installs.
-        let removed = "The browser extension was removed from Polycarp.\n"
+        let removed = "The agent browser extension was removed from Polycarp.\n"
         for both in ["workspaces,browser", "workspaces, browser", "browser workspaces"] {
             let (out, rc) = try functions("moved_notes '\(both)'; echo \"rc=$?\"")
             XCTAssertEqual(rc, 0, out)
@@ -138,7 +138,7 @@ final class RootInstallerTests: XCTestCase {
         }
         let (said, code) = try functions("moved_notes 'workspaces,voice'; echo \"rc=$?\"; moved_notes browser || echo stop")
         XCTAssertEqual(code, 0, said)
-        XCTAssertEqual(said, "  voice is Silas now, its own app: https://github.com/baney75/silas\nrc=0\nThe browser extension was removed from Polycarp.\nstop\n")
+        XCTAssertEqual(said, "  voice is Silas now, its own app: https://github.com/baney75/silas\nrc=0\nThe agent browser extension was removed from Polycarp.\nstop\n")
         let main = try installer()
         XCTAssertTrue(main.contains("  moved_notes \"${POLYCARP_FEATURES:-}\" || return 0\n"), "main stops only when moved_notes says so")
     }
@@ -226,7 +226,7 @@ final class RootInstallerTests: XCTestCase {
         let open = try XCTUnwrap(main.range(of: "step \"Opening Polycarp\""))
         let companions = try XCTUnwrap(main.range(of: "companion_install \"$c\""))
         XCTAssertLessThan(open.lowerBound, companions.lowerBound, "Polycarp's own install finishes and opens first")
-        XCTAssertTrue(main.contains("polycarp install --local-studio (log: $LOG)"), "a failed Local Studio plugin step says how to retry")
+        XCTAssertTrue(main.contains("didn't install; Polycarp is fine. Try it alone: $(companion_command \"$c\")"), "a failed companion says how to retry")
     }
 
     /// Runs `script` in bash with install.sh sourced for its functions only, under the script's own `set -euo pipefail`.

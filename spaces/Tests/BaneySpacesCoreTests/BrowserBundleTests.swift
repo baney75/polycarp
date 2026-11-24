@@ -1,7 +1,7 @@
 @testable import BaneySpacesCore
 import XCTest
 
-/// The browser extension was removed. `BrowserSetup.swift` stays because a test outside this repo reads its bundle ids.
+/// The agent browser extension was removed. `BrowserSetup.swift` stays because a test outside this repo reads its bundle ids.
 final class BrowserBundleTests: XCTestCase {
     func testTheBundleIDsAreStillHereInTheFormTheyAreRead() throws {
         XCTAssertGreaterThanOrEqual(BrowserBundle.bundleIDs.count, 10)

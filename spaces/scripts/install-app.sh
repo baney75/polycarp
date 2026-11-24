@@ -153,7 +153,7 @@ for name in $CLI_NAME $CLI_ALIASES; do
 done
 # The `polycarp` command comes with the app.
 ln -sf "$DEST/Contents/Resources/bin/polycarp" "$HOME/.local/bin/polycarp"
-# The browser extension was removed. An older Polycarp left launchd jobs (remote access, hub, link, tunnel) running its
+# The agent browser extension was removed. An older Polycarp left launchd jobs (remote access, hub, link, tunnel) running its
 # helper, which this app no longer carries: they are booted out and their plists removed. A job whose program isn't
 # Polycarp's is left alone. Never in test mode.
 if [ -z "$TEST" ] && [ -x "$DEST/Contents/Resources/bin/polycarp" ]; then

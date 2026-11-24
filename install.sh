@@ -9,7 +9,7 @@
 # POLYCARP_SOURCE=/path/to/checkout builds that checkout instead of downloading.
 # Linux: the Linux and Omarchy desktop is retired. Run there, this prints one line saying so and installs nothing.
 # Polycarp has no parts to choose: workspaces always run. POLYCARP_FEATURES is read only for the parts that left. One that
-# names browser prints that the browser extension was removed (BROWSER_MOVED below) and installs nothing; one that names
+# names browser prints that the agent browser extension was removed (BROWSER_MOVED below) and installs nothing; one that names
 # voice prints where Silas is and carries on. Anything else in it is ignored, and so is an old features.toml.
 # Companion apps, each from its own official installer and only when asked: Silas (dictation) and Shotate (screenshots
 # and recordings). `curl ... | bash -s -- --with silas,shotate` or POLYCARP_WITH=silas,shotate picks them; at a terminal with
@@ -245,7 +245,7 @@ main() {
 # The one line a Linux run prints (LINUX_MOVED in cli/src/update.rs says the same).
 LINUX_MOVED="Polycarp runs on macOS and Windows. The Linux desktop is retired."
 # The line a run that names the browser prints (BROWSER_MOVED in cli/src/main.rs says the same).
-BROWSER_MOVED="The browser extension was removed from Polycarp."
+BROWSER_MOVED="The agent browser extension was removed from Polycarp."
 
 # The parts POLYCARP_FEATURES ($1) names that left: one line each saying so. Returns 1 when the install must stop there
 # (only the browser was asked for, and it was removed), 0 to carry on. `workspaces,browser`, the old
