@@ -1,5 +1,7 @@
 # Polycarp agent rules
 
+Polycarp is a personal tool for Donovan. The repository, releases and page stay public (Donovan, 2026-11-24). Updates are one stream, and its only sibling apps are Silas and Shotate.
+
 Polycarp is its own OS on macOS and Windows: Spaces, the dock, the bar, the launcher and themes (Donovan, 2026-11-23). Its browser extension for reading and the new tab (`spaces/extension`, Donovan, 2026-11-21) is the accessibility extension that was Phont: it works on its own, with no Polycarp app, and joins Polycarp (new tab host, updates with the app) when Polycarp is installed on the same computer (Donovan, 2026-11-23). The agent browser extension (the side panel), its CLI helper, MCP server and computer-use tools were removed from Polycarp. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 Browser agent and computer-use work does not belong here, voice work goes to Silas, and Linux desktop work is retired. A PR here that adds any of it is refused. Polycarp's own extension in `spaces/extension` is not browser agent work and belongs here, with everything it owns: reading, the new tab, and its feed filters and page edits, which agents set through Polycarp (`filter_set`, `polycarp-spaces filters`).
