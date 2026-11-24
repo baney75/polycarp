@@ -253,6 +253,15 @@ for wf in release; do
     END { s = s "\n"; step(); exit !(n && !miss) }
   ' "$f" || bad "$wf.yml runs release.sh without the signing identity"
 done
+# GitHub runs main's release.yml on the commit the gate picks, which can be older than the one stream. Its release.sh
+# builds stable when given no channel, so the workflow names nightly, and today's release.sh takes only that.
+grep -qE '^        run: scripts/release\.sh --channel nightly$' ../.github/workflows/release.yml \
+  || bad "release.yml runs release.sh without --channel nightly, so an older commit would build a stable release"
+for args in "--channel stable" "--channel" "--channel nightly --soak x" "--bogus"; do
+  # shellcheck disable=SC2086
+  out=$(scripts/release.sh $args 2>&1 </dev/null); code=$?
+  [ $code = 1 ] && [[ "$out" == usage:* ]] || bad "release.sh $args: got exit $code \"$out\", want the usage line"
+done
 # This repository is public: no job runs on a self-hosted runner, and the builds run on GitHub's hosted macOS.
 if grep -nE 'runs-on:.*self-hosted|^ *- *self-hosted' ../.github/workflows/*.yml; then bad "a workflow uses a self-hosted runner"; fi
 # Every job that runs release.sh runs on macos-15.

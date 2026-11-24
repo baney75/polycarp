@@ -7,11 +7,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DRY=0
-case "$*" in
-  "") ;;
-  --dry-run) DRY=1 ;;
-  *) echo "usage: scripts/release.sh [--dry-run]" >&2; exit 1 ;;
-esac
+# `--channel nightly` is accepted and changes nothing. release.yml always passes it: GitHub runs main's release.yml
+# against whichever green commit the gate picks, and a release.sh from before the one stream builds a stable
+# release when it gets no channel.
+usage() { echo "usage: scripts/release.sh [--channel nightly] [--dry-run]" >&2; exit 1; }
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY=1 ;;
+    --channel) [ "${2:-}" = nightly ] || usage; shift ;;
+    *) usage ;;
+  esac
+  shift
+done
 export POLYCARP_RELEASE=1 BANEYSPACES_ARM64_ONLY=1
 export POLYCARP_BUILD_TIME="${POLYCARP_BUILD_TIME:-$(date -u +%Y%m%d%H%M%S)}"
 unset BANEYSPACES_ADHOC
