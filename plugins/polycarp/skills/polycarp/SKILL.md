@@ -24,16 +24,16 @@ Call one tool per step. Read the answer before the next step.
 3. Make a change.
    - Window, workspace and launcher tools need the running app: call `app_status` first. If it is not running, say
      so and stop.
-   - Surface, theme and file tools work without the app. Do not call `app_status` for them.
+   - Surface, paper, theme and file tools work without the app. Do not call `app_status` for them.
    - To act on a window, call `app_items` to find it, then the change tool.
    - Call the one change tool from the list below.
 4. Check the change.
    - After `app_focus`, call `app_items`. After `surfaces_set`, call `surfaces_get`. After `theme_set`, call
-     `theme_current`.
+     `theme_current`. After `paper_set`, the tool's own answer is the check.
    - After `launcher_open` or `workspace_switch`, the tool's own answer is the check. Call nothing more.
 5. Tell the person in one short sentence what changed.
 
-## The 11 calls
+## The 12 calls
 
 | Goal | Tool | Arguments |
 | --- | --- | --- |
@@ -44,6 +44,7 @@ Call one tool per step. Read the answer before the next step.
 | Open the launcher | `launcher_open` | `{}` |
 | Read a surface setting | `surfaces_get` | `{"path": "desktop.scene"}` |
 | Change a surface setting | `surfaces_set` | `{"path": "desktop.scene", "value": "olive"}` |
+| Change the paper (desktop, new tab, idle screen) | `paper_set` | `{"what": "olive"}` |
 | List themes | `theme_list` | `{}` |
 | Which theme is on? | `theme_current` | `{}` |
 | Switch theme | `theme_set` | `{"name": "polycarp", "mode": "dark"}` |
