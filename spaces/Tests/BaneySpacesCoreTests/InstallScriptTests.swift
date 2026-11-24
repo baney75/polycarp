@@ -206,6 +206,16 @@ final class InstallScriptTests: XCTestCase {
         XCTAssertEqual(updater.components(separatedBy: "self.checking = false").count - 1, 2)
     }
 
+    func testReleaseRefusesAPublishedReleaseAndAnUnpushedTag() throws {
+        let release = try read("scripts/release.sh")
+        let upload = try index(of: "gh release upload", in: release)
+        XCTAssertLessThan(try index(of: ".draft", in: release), upload)
+        XCTAssertLessThan(try index(of: "git ls-remote origin", in: release), upload)
+        XCTAssertTrue(release.contains("is already published"))
+        // No workflow starts on a pushed tag (docs/releases.md); the old tag-started one is gone.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".github/workflows/release.yml").path))
+    }
+
     private func runSigningRestore(home: URL) throws -> String {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
