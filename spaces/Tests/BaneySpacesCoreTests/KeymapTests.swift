@@ -57,15 +57,15 @@ final class KeymapTests: XCTestCase {
 
     /// Rows that come from no call the scans read: the ⌘Tab, switcher and Mission Control keys go through the event tap
     /// in MissionControlKeys.swift (`testTheEventTapStillTakesTheKeysItsRowsSay`), ⌘Return is a flag read inside the
-    /// Return branch, and the overview's 1 to 9 is read as characters.
+    /// Return branch, the overview's 1 to 9 is read as characters, and the keys.* rows are the shortcut sheet.
     static let unscanned: Set<String> = [
         "launcher.reveal", "workspace.overview", "workspace.overview.controlUp", "switcher.next", "switcher.back",
-        "switcher.arrows", "switcher.cancel", "overview.pick",
+        "switcher.arrows", "switcher.cancel", "overview.pick", "keys.hold", "keys.launcher", "keys.launcher.word",
     ]
 
     /// kVK_ constants in Launcher.swift and the row each is, or nil when it is not a shortcut: ⌘Q is posted to quit an
-    /// app, never read.
-    static let launcherKeyCodes: [String: String?] = ["kVK_ANSI_Q": nil]
+    /// app, never read. One way only: the sheet's ⌘K may be read here or elsewhere.
+    static let launcherKeyCodes: [String: String?] = ["kVK_ANSI_Q": nil, "kVK_ANSI_K": "keys.launcher"]
 
     /// Files that call RegisterEventHotKey themselves; anything else registering a key would skip the scan.
     static let hotkeyFiles: Set<String> = ["Hotkeys.swift", "ScopedHotkeys.swift"]
@@ -263,10 +263,22 @@ final class KeymapTests: XCTestCase {
         }
     }
 
+    func testTheRowsTheLeadAskedForAreThere() {
+        XCTAssertEqual(Keymap.binding("keys.hold"), KeyBinding(id: "keys.hold", keys: ["hold mod"], title: "Show every shortcut", group: .launcher, scope: .global))
+        XCTAssertEqual(Keymap.binding("keys.launcher")?.keys, ["cmd", "K"])
+        XCTAssertEqual(Keymap.binding("keys.launcher")?.scope, .launcher)
+        XCTAssertEqual(Keymap.binding("keys.launcher.word"), KeyBinding(id: "keys.launcher.word", keys: ["keys"], title: "Type keys to show every shortcut", group: .launcher, scope: .launcher))
+        // "?" in the launcher asks an agent, so it is not a shortcut.
+        XCTAssertFalse(Keymap.all.contains { $0.keys == ["?"] })
+        XCTAssertEqual(Keymap.binding("workspace.switch")?.keys, ["mod", "1...9"])
+        XCTAssertEqual(Keymap.binding("launcher.open")?.keys, ["ctrl", "cmd", "K"])
+    }
+
     func testDisplayWritesMacSymbolsWithTheModifierGiven() {
         XCTAssertEqual(Keymap.binding("launcher.open")?.display(modifierSymbol: "⌥"), "⌃⌘K")
         XCTAssertEqual(Keymap.binding("workspace.switch")?.display(modifierSymbol: "⌘"), "⌘1...9")
         XCTAssertEqual(Keymap.binding("window.move")?.display(modifierSymbol: "⌃⌥"), "⌃⌥⇧1...9")
+        XCTAssertEqual(Keymap.binding("keys.hold")?.display(modifierSymbol: "⌃"), "hold ⌃")
         XCTAssertEqual(KeyBinding(id: "x", keys: ["opt", "shift", "Return"], title: "x", group: .bar, scope: .global).display(modifierSymbol: "⌘"), "⌥⇧Return")
     }
 

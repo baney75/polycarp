@@ -3,9 +3,9 @@
 Every Polycarp shortcut on a Mac, by group. The list comes from one table in the code (`Keymap.all` in
 `spaces/Sources/BaneySpacesCore/Keymap.swift`), and a test fails when this page or the code says something else.
 
-⌘ in "go to workspace" and "move to workspace" (in the menu too) is your Polycarp modifier: ⌘ unless you picked ⌃,
-⌥ or ⌃⌥ in Settings > Keys. The When column says when a shortcut works beyond its place, such as only while a
-Settings switch is on; Always means it always works there.
+⌘ in "go to workspace" and "move to workspace" (in the menu too) and in "hold ⌘" is your Polycarp modifier: ⌘
+unless you picked ⌃, ⌥ or ⌃⌥ in Settings > Keys. The When column says when a shortcut works beyond its place, such as
+only while a Settings switch is on; Always means it always works there.
 
 - `polycarp-spaces keys` prints this list with your modifier, grouped like a cheat sheet.
 - `polycarp-spaces keys --json` prints it as an array of `{id, keys, display, title, group, scope, note}`. In `keys`,
@@ -20,6 +20,9 @@ Settings switch is on; Always means it always works there.
 | --- | --- | --- | --- |
 | ⌘Space | Open the launcher | Anywhere | When Settings puts the launcher on ⌘Space and Spotlight doesn't hold it |
 | ⌃⌘K | Open the launcher | Anywhere | Always |
+| hold ⌘ | Show every shortcut | Anywhere | Always |
+| ⌘K | Show every shortcut | In the launcher | Always |
+| keys | Type keys to show every shortcut | In the launcher | Always |
 | ↓ | Select the next result | In the launcher | Always |
 | ↑ | Select the previous result | In the launcher | Always |
 | Return | Open the selected result | In the launcher | Always |

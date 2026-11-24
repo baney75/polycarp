@@ -289,6 +289,7 @@ final class LauncherController: NSObject, NSWindowDelegate {
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         p.delegate = self
         p.contentView = NSHostingView(rootView: LauncherView(model: model).environment(\.colorScheme, .dark))
+        p.onKeys = { [weak self] in self?.model.toggleKeys() }
         return p
     }
 }
@@ -296,6 +297,18 @@ final class LauncherController: NSObject, NSWindowDelegate {
 /// Takes the keyboard without bringing BaneySpaces forward, so the app you were in stays in front.
 final class LauncherPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+    /// ⌘K: every shortcut, and ⌘K again goes back.
+    var onKeys: (() -> Void)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // ⌘ alone among ⌘⇧⌃⌥, so Caps Lock, fn and the keypad flag never stop it.
+        let flags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
+        if KeysHold.commandOnly(flags), event.keyCode == UInt16(kVK_ANSI_K), let onKeys {
+            onKeys()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 // MARK: Model
@@ -329,7 +342,7 @@ struct LauncherItem: Identifiable {
 
 final class LauncherModel: ObservableObject {
     enum Scope: String, CaseIterable {
-        case root, web, apps, files, install, remove, update, system, workspaces
+        case root, web, apps, files, install, remove, update, system, workspaces, keys
 
         var title: String {
             switch self {
@@ -342,6 +355,7 @@ final class LauncherModel: ObservableObject {
             case .update: "Update"
             case .system: "System"
             case .workspaces: "Workspaces"
+            case .keys: "Shortcuts"
             }
         }
         var symbol: String {
@@ -355,6 +369,7 @@ final class LauncherModel: ObservableObject {
             case .update: "arrow.triangle.2.circlepath"
             case .system: "gearshape"
             case .workspaces: "rectangle.split.3x3"
+            case .keys: "keyboard"
             }
         }
         var blurb: String {
@@ -368,6 +383,7 @@ final class LauncherModel: ObservableObject {
             case .update: "Homebrew apps, macOS and Polycarp"
             case .system: "Lock, sleep, restart, dark mode and more"
             case .workspaces: "Go to any of the nine"
+            case .keys: "Every Polycarp shortcut and where it works (⌘K)"
             }
         }
         var placeholder: String {
@@ -376,6 +392,7 @@ final class LauncherModel: ObservableObject {
             case .files: "Search files and folders by name"
             case .web: "Search the web, or !bang, or ? to ask"
             case .install: "Search for an app to install"
+            case .keys: "Search shortcuts: workspace, terminal, ⌘1"
             default: "Search \(title.lowercased())"
             }
         }
@@ -607,6 +624,7 @@ final class LauncherModel: ObservableObject {
                 out += provided.normal.map(providedItem)
                 out += workspaceItems(q)
                 out += commandItems(q)
+                out += keysEntry(q)
                 out += menuItems().filter { Fuzzy.score(q, $0.title) != nil }
                 // Files come in a moment after the rest, below them, so the row you're on stays put.
                 out += fileItems().prefix(5)
@@ -622,6 +640,7 @@ final class LauncherModel: ObservableObject {
         case .update: out = updateItems().filter { q.isEmpty || Fuzzy.score(q, $0.title) != nil }
         case .system: out = commandItems(q)
         case .workspaces: out = workspaceItems(q, all: true)
+        case .keys: out = keyItems(q)
         }
         items = out
         if selected >= items.count { selected = max(0, items.count - 1) }
@@ -921,6 +940,36 @@ final class LauncherModel: ObservableObject {
                                 subtitle: apps.isEmpty ? "Empty" : apps.joined(separator: ", "), icon: .symbol("\(n).square"),
                                 run: { [weak self] in self?.close(); self?.actions.switchTo(n) })
         }
+    }
+
+    /// Every shortcut from the keymap, grouped as the sheet groups them, the keys at the right in the modifier the
+    /// person picked. Typing matches the title, the group, where it works and the keys themselves ("⌘1", "tab").
+    private func keyItems(_ q: String) -> [LauncherItem] {
+        let mod = Modifier.current.symbol
+        let rows = KeyBinding.Group.allCases.flatMap { group in Keymap.all.filter { $0.group == group } }
+        return rows.compactMap { b in
+            let keys = b.display(modifierSymbol: mod)
+            if !q.isEmpty {
+                let text = "\(b.title) \(b.group.title) \(b.scope.title) \(b.note ?? "") \(keys)"
+                guard Fuzzy.score(q, text) != nil || keys.localizedCaseInsensitiveContains(q) else { return nil }
+            }
+            let subtitle = b.note.map { "\(b.scope.title). \($0)" } ?? b.scope.title
+            return LauncherItem(id: "key:\(b.id)", section: b.group.title, title: b.title, subtitle: subtitle,
+                                icon: .symbol("keyboard"), badge: keys, run: {})
+        }
+    }
+
+    /// "keys", "shortcuts" or "keyboard" typed at the top: one row into the shortcuts.
+    private func keysEntry(_ q: String) -> [LauncherItem] {
+        guard ["keys", "shortcuts", "keyboard", "cheat sheet"].contains(where: { Fuzzy.score(q, $0) != nil }) else { return [] }
+        return [LauncherItem(id: "keys-entry", section: "Shortcuts", title: "Keys and Shortcuts",
+                             subtitle: "Every Polycarp shortcut. Hold \(Modifier.current.symbol) anywhere to see them",
+                             icon: .symbol("keyboard"), badge: "⌘K", run: { [weak self] in self?.enter(.keys) })]
+    }
+
+    /// ⌘K in the launcher: the shortcuts, and ⌘K again goes back.
+    func toggleKeys() {
+        enter(scope == .keys ? .root : .keys)
     }
 
     private func commandItems(_ q: String) -> [LauncherItem] {

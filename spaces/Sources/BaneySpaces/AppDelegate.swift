@@ -175,6 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     /// The launcher is built just after launch (its app scan runs off the main thread), so the first open finds the apps.
     private var launcherBuilt = false
+    private let keysHold = KeysHoldWatcher()
     /// The focused terminal's folder when the launcher opened, for New Terminal.
     private var terminalFolder: String?
     private lazy var launcher: LauncherController = {
@@ -800,6 +801,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func registerShortcuts() {
         hotkeys.removeAll()
         cmdSpaceHeld = false
+        keysHold.stop()
         if Launcher.onCmdSpace, !SystemShortcuts.spotlightOwnsCmdSpace {
             cmdSpaceHeld = hotkeys.register(keyCode: kVK_Space, modifiers: cmdKey) { [weak self] in self?.launcher.toggle() }
         }
@@ -810,6 +812,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if self?.session.started == true { self?.session.jumpToFinished() }
         }
         guard started else { return }
+        // Holding the modifier alone shows every shortcut (`KeysSheet.swift`). Never over the launcher, the overview or a
+        // ⌘Tab gesture; the launcher is checked only once it exists, so this never builds it.
+        keysHold.allowed = { [weak self] in
+            guard let self else { return false }
+            return !(self.launcherBuilt && self.launcher.isShown) && !MissionControlKeys.inGesture && !MissionControlKeys.viewerOpen
+        }
+        if AXIsProcessTrusted() { keysHold.start(modifier: Modifier.current) }
         // ⌃` drops the quick terminal down, from any app (in builds with the terminal, while Settings has it on).
         TerminalFeature.registerQuickKey(hotkeys)
         let mods = Modifier.current.carbon
