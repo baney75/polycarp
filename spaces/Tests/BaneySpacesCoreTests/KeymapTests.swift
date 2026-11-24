@@ -31,7 +31,10 @@ final class KeymapTests: XCTestCase {
     ]
 
     /// Each `e.key` the new tab page acts on, and its row.
-    static let newTabKeys: [String: String] = ["Enter": "newtab.go"]
+    static let newTabKeys: [String: String] = [
+        "Enter": "newtab.go", "ArrowDown": "newtab.down", "n": "newtab.down.ctrl", "ArrowUp": "newtab.up", "p": "newtab.up.ctrl",
+        "Tab": "newtab.tab", "Escape": "newtab.clear",
+    ]
 
     /// Each key the overview's key monitor (Viewer.swift) reads, by key code, and its row. Its 1 to 9 is read as
     /// characters and has its own check.

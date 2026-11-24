@@ -31,6 +31,12 @@ only while a Settings switch is on; Always means it always works there.
 | Esc | Clear the search, then go back a menu, then close | In the launcher | Always |
 | Delete | Go back a menu | In the launcher | When the search is empty |
 | Return | Search, or go to the address typed | On the browser's new tab page | Always |
+| ↓ | Select the next result | On the browser's new tab page | Always |
+| ⌃N | Select the next result | On the browser's new tab page | Always |
+| ↑ | Select the previous result | On the browser's new tab page | Always |
+| ⌃P | Select the previous result | On the browser's new tab page | Always |
+| Tab | Finish a bang | On the browser's new tab page | Always |
+| Esc | Clear the search | On the browser's new tab page | When the search has text |
 
 ## Workspaces
 

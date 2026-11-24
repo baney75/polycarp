@@ -111,11 +111,18 @@ fn the_guide_and_the_server_list_the_same_mcp_tools() {
     let code = served_tools();
     assert!(code.len() >= 15, "{code:?}");
     let guide = guide();
-    let mut docs: BTreeSet<String> = ["theme_", "surfaces_", "paper_", "style_", "search_", "keys_"]
-        .iter()
-        .flat_map(|prefix| guide.match_indices(prefix))
-        .map(|(at, _)| guide[at..].chars().take_while(|c| word_char(*c)).collect())
-        .collect();
+    let mut docs: BTreeSet<String> = [
+        "theme_",
+        "surfaces_",
+        "paper_",
+        "style_",
+        "search_",
+        "keys_",
+    ]
+    .iter()
+    .flat_map(|prefix| guide.match_indices(prefix))
+    .map(|(at, _)| guide[at..].chars().take_while(|c| word_char(*c)).collect())
+    .collect();
     // The one tool named by a bare word: its own row in the MCP table, not a mention in another row.
     if guide.lines().any(|l| l.starts_with("| `search` |")) {
         docs.insert("search".into());

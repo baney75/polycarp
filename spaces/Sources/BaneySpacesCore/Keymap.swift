@@ -97,6 +97,13 @@ public enum Keymap {
         KeyBinding(id: "launcher.back", keys: ["Delete"], title: "Go back a menu", group: .launcher, scope: .launcher,
                    note: "When the search is empty"),
         KeyBinding(id: "newtab.go", keys: ["Return"], title: "Search, or go to the address typed", group: .launcher, scope: .newTab),
+        KeyBinding(id: "newtab.down", keys: ["↓"], title: "Select the next result", group: .launcher, scope: .newTab),
+        KeyBinding(id: "newtab.down.ctrl", keys: ["ctrl", "N"], title: "Select the next result", group: .launcher, scope: .newTab),
+        KeyBinding(id: "newtab.up", keys: ["↑"], title: "Select the previous result", group: .launcher, scope: .newTab),
+        KeyBinding(id: "newtab.up.ctrl", keys: ["ctrl", "P"], title: "Select the previous result", group: .launcher, scope: .newTab),
+        KeyBinding(id: "newtab.tab", keys: ["Tab"], title: "Finish a bang", group: .launcher, scope: .newTab),
+        KeyBinding(id: "newtab.clear", keys: ["Esc"], title: "Clear the search", group: .launcher, scope: .newTab,
+                   note: "When the search has text"),
         // Workspaces
         KeyBinding(id: "workspace.switch", keys: ["mod", "1...9"], title: "Go to workspace 1 to 9", group: .workspaces, scope: .global),
         KeyBinding(id: "workspace.overview", keys: ["F3"], title: "Show every workspace (the Mission Control key)",
