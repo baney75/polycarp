@@ -188,7 +188,7 @@ final class TerminalReviewTests: XCTestCase {
     func testAZigDownloadFailureIsCantBuildHere() throws {
         let f = try source("scripts/fetch-zig.sh")
         XCTAssertTrue(f.contains("exit 3"), "fetch-zig.sh has no can't-build exit")
-        let channel = try source("../.github/workflows/channel-build.yml")
+        let channel = try source("../.github/workflows/release.yml")
         XCTAssertFalse(channel.contains(#"PATH="$(scripts/fetch-zig.sh):$PATH""#), "a fetch failure fails the publish")
     }
 

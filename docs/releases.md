@@ -55,14 +55,13 @@ Every release is signed by the one release identity. Without it nothing ships: a
 
 | Workflow | Starts on | Does |
 | --- | --- | --- |
-| `nightly.yml` | 07:00 UTC daily, or by hand | Builds main when main moved since the last nightly, CI is green on it and no open issue is labeled both `regression` and `blocks-nightly`. Deletes `nightly-<time>` prereleases over 14 days old, always keeping the newest. |
-| `dev.yml` | CI passing on a push to main, or by hand | Builds that commit. A run that is publishing is never cancelled; a newer one waits. |
+| `release.yml` | CI passing on a push to main, or by hand | Builds that commit when it is ahead of the one `nightly` offers, and publishes it (see "One stream" below). A run that is publishing is never cancelled; a newer one waits. Waits while an open issue is labeled both `regression` and `blocks-nightly`. Deletes `nightly-<time>` prereleases over 14 days old, always keeping the newest. |
 | `promote.yml` | By hand only, with `nightly=nightly-<time>` or `hotfix=true` | Checks the nightly is 72 hours old, stable is behind it and no `regression` issue is open (a hotfix: VERSION is the last tag's patch + 1). Fast-forwards `stable`, tags `vX.Y.Z` on it, makes the draft release, then calls `stable-build.yml`. |
 | `stable-build.yml` | `promote.yml` only | Builds the universal app at the tag and uploads it into the draft. It never publishes. |
 
 Nightly and dev are built, signed and published on GitHub's hosted macOS runners (`macos-15`, free for this
-public repository). No workflow here uses a self-hosted runner. `channel-build.yml` and `stable-build.yml` run
-the same scripts the Mac runs: `spaces/scripts/release.sh` (`--channel nightly|dev`, or the stable path). They
+public repository). No workflow here uses a self-hosted runner. `release.yml` and `stable-build.yml` run
+the same scripts the Mac runs: `spaces/scripts/release.sh` (`--channel nightly`, or the stable path). They
 sign only when the repository has the secrets
 `POLYCARP_SIGNING_P12` (base64 of the owner's signing keychain, or of a .p12, holding the key
 `release-requirement.txt` pins) and `POLYCARP_SIGNING_P12_PASSWORD` (its password: letters, digits, dot, dash or underscore), which
@@ -72,9 +71,9 @@ publishes nothing. The owner sets both from the Mac that holds the key with one 
 and its password through `gh` and prints neither. It exports nothing, since the key trusts only `/usr/bin/codesign`
 and macOS would ask on screen first. The owner's Mac can still publish by hand:
 
-- Nightly and dev: `spaces/scripts/release.sh --channel nightly|dev` on a clean checkout of `main`. It builds,
-  signs, packages and verifies, then `publish-channel.sh` uploads into a draft, downloads it back, checks it, and
-  only then moves the rolling tag. It refuses a build that isn't newer than its feed's.
+- Nightly: `spaces/scripts/release.sh --channel nightly` on a clean checkout of `main`. It builds, signs,
+  packages and verifies, then `publish.sh` uploads into a draft, downloads it back, checks it, and only then
+  moves the rolling tags. It refuses a build that isn't newer than the nightly feed's.
 - Stable: after `promote.yml`, `git checkout vX.Y.Z && spaces/scripts/release.sh` uploads into the draft.
 
 Stable is published only from the Mac: after `scripts/soak-check.sh` prints `SOAK PASSED` on rectory1 for that
@@ -89,22 +88,39 @@ No workflow starts on a pushed tag. `scripts/check-channels.sh` (copied from loc
 version order on every pull request (`.github/workflows/channels.yml`), with `spaces/scripts/channels-test.sh`,
 which also checks that CI signing fails closed and that no workflow publishes a stable release.
 
+## One stream
+
+Every build `release.yml` publishes goes to three releases: the immutable `nightly-<time>` its feed names, the
+rolling `nightly` (the download link on dbaney.com and the feed copies read), and the rolling `dev`. Dev is no
+longer built on its own. Its release holds the same files with a `latest.json` said the old dev way (`channel`
+`dev`, version `X.Y.Z-dev.<time>+<sha7>`), because a copy that reads the dev feed refuses any other: a dev build,
+or any copy whose Settings chose Dev. Such a copy installs the build from the `dev` release (the zip, or the `dev`
+tag when it builds from source) and, once it runs an app with no channel choice, reads the nightly feed.
+`verify-release.sh` accepts that feed only as the same build with `-nightly.` said as `-dev.`.
+
+Each publish checks every draft before it publishes any, then moves `dev` before `nightly`. A run that stops
+partway leaves `nightly` behind, so the gate still takes that commit: start Release again by hand and it finishes
+both. The gate skips a commit from before `publish.sh`, whose release script would move `nightly` alone.
+
+Keep the dev mirror until every copy that read the dev feed runs an app with no channel choice. A download count
+can't show that, since each publish replaces the `dev` release and its count starts again at zero. Its last build
+stays installable from it after it stops.
+
 ## From preview to nightly
 
 Until November 2026 Polycarp shipped one rolling prerelease, `preview`, whose builds carried the plain base
 version (`0.3.0`). `nightly` sorts below a plain version of the same base, so `main` went to `0.4.0` at the
-rename. One bridge build (`gh workflow run nightly.yml -f bridge=true`, or `release.sh --channel nightly --bridge`
-on the Mac) is both the first nightly and the last
+rename. One bridge build (published 2026-11-22; the step is gone now) was both the first nightly and the last
 preview: its updater follows nightly, and the `preview` release keeps serving it, with a `latest.json`, until
 every install has moved. Then `preview` is retired. Releases are never deleted to roll back: re-publish the last
 good `latest.json` and fix forward.
 
 A copy from before the channels (0.3.0 and older) doesn't read `latest.json`. On the Nightly channel it reads
 GitHub's release list, takes the release tagged exactly `nightly`, and reads the commit and date from the
-`<!-- baneyspaces commit=<sha> date=<ISO> -->` line of its notes. `publish-channel.sh` writes that line into every
+`<!-- baneyspaces commit=<sha> date=<ISO> -->` line of its notes. `publish.sh` writes that line into every
 nightly's notes, so such a copy is offered the newest nightly, installs it with the `install.sh` of that commit
 (the ready-made `Polycarp.zip` when it is signed with the release identity, else a build on the Mac). The build it lands on follows `latest.json` once
 it has the updater that reads it. `channels-test.sh` runs the publisher against a stand-in for GitHub and checks
-the release it leaves the way that updater reads it.
+the releases it leaves the way those updaters read them.
 
 The settings, secrets and publishes that turn the channels on, in order, are in [release-gate.md](release-gate.md).

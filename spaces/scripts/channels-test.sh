@@ -24,7 +24,7 @@ order=(0.3.0-dev.20261117131042+9f8e7d6 0.3.0-nightly.20261117070000+1a2b3c4 0.3
 sorted=$(npx -y semver@7.6.3 "${order[@]}" 2>/dev/null)
 # semver prints each version without its build metadata (+sha), which never counts for order.
 expect "SemVer order" "$sorted" "$(printf '%s\n' "${order[@]%%+*}")"
-# publish-channel.sh's own comparison agrees with the semver package on every neighbouring pair, both ways.
+# publish.sh's own comparison agrees with the semver package on every neighbouring pair, both ways.
 for ((i = 1; i < ${#order[@]}; i++)); do
   python3 -I scripts/semver-newer.py "${order[i]}" "${order[i-1]}" || bad "semver-newer.py: ${order[i]} is not above ${order[i-1]}"
   python3 -I scripts/semver-newer.py "${order[i-1]}" "${order[i]}" && bad "semver-newer.py: ${order[i-1]} is above ${order[i]}"
@@ -67,26 +67,23 @@ feed arm64 preview "$base" && bad "write-feed took the preview channel"
 feed arm64 nightly "$base-nightly.2026111807+1a2b3c4" && bad "write-feed took a nightly version with no build time"
 POLYCARP_FEED_ARCHS=ppc scripts/write-feed.sh nightly "$(scripts/channel-version.sh nightly)" "$c" "$tmp/Polycarp.zip" "$tmp/x.json" >/dev/null 2>&1 \
   && bad "a feed with no Mac architecture was written"
-# The bridge marks preview as the old publisher did: its tag on the build's commit, the marker in its notes.
-bridge=$(sed -n '/if \[ "$BRIDGE" = 1 \]; then/,/^fi/p' scripts/publish-channel.sh)
-grep -qF 'git/refs/tags/preview" -f sha="$COMMIT"' <<<"$bridge" || bad "the bridge leaves the preview tag on the old commit"
-grep -qF '<!-- baneyspaces commit=$COMMIT date=$DATE -->' <<<"$bridge" || bad "the bridge's preview notes have no commit marker"
 # The rolling nightly must be found by a build from before the channels, such as a 0.3.0 copy built from main on
 # the Nightly channel. That updater (Updates.swift before #456) reads GitHub's release list, takes the release
 # tagged exactly `nightly` that isn't a draft, reads the commit and date from the `<!-- baneyspaces ... -->` line
 # of its notes, offers it when that date is later than its own commit's, and then runs install.sh at that commit
 # with BANEYSPACES_REF=nightly, which downloads releases/download/nightly/Polycarp.zip and its .sha256.
-# This runs the real publish-channel.sh against a stand-in for gh and curl and checks the release it leaves.
+# This runs the real publish.sh against a stand-in for gh and curl and checks the release it leaves.
 pub="$tmp/pub"; mkdir -p "$pub/scripts" "$pub/bin" "$pub/state" "$pub/build/Polycarp.app/Contents"
-cp scripts/publish-channel.sh scripts/semver-newer.py scripts/product.env scripts/write-feed.sh scripts/release-requirement.txt "$pub/scripts/"
-printf '#!/bin/bash\n[ -z "${STUB_VERIFY_FAIL:-}" ]\n' > "$pub/scripts/verify-release.sh"
+cp scripts/publish.sh scripts/semver-newer.py scripts/product.env scripts/write-feed.sh scripts/release-requirement.txt "$pub/scripts/"
+# STUB_VERIFY_FAIL=N: the Nth check, and every one after it, fails.
+printf '#!/bin/bash\nn=$(( $(cat "$STUB_STATE/verifies" 2>/dev/null || echo 0) + 1 )); echo $n > "$STUB_STATE/verifies"\n[ -z "${STUB_VERIFY_FAIL:-}" ] || [ "$n" -lt "$STUB_VERIFY_FAIL" ]\n' > "$pub/scripts/verify-release.sh"
 pv=$(scripts/channel-version.sh nightly); pdate=2026-11-21T12:00:00Z
 python3 -I -c 'import plistlib,sys; plistlib.dump({"PolycarpVersion": sys.argv[2], "PolycarpChannel": "nightly", "PolycarpCommit": sys.argv[3], "PolycarpCommitDate": sys.argv[4], "PolycarpCommitDirty": "0"}, open(sys.argv[1], "wb"))' \
   "$pub/build/Polycarp.app/Contents/Info.plist" "$pv" "$c" "$pdate"
 for f in Polycarp.zip Polycarp.zip.sha256 Polycarp.dmg; do printf '%s' "$f" > "$pub/build/$f"; done
 cat > "$pub/bin/gh" <<'GH'
 #!/bin/bash
-# Keeps each release as state/<id>/{tag,draft,body,assets/}. Only the calls publish-channel.sh makes.
+# Keeps each release as state/<id>/{tag,draft,body,assets/}. Only the calls publish.sh makes.
 S="$STUB_STATE"
 if [ "$1" = release ] && [ "$2" = delete ]; then
   for d in "$S"/r*; do [ -f "$d/tag" ] && [ "$(cat "$d/tag")" = "$3" ] && rm -rf "$d"; done; exit 0
@@ -109,23 +106,33 @@ val() { local f; for f in "${fields[@]}"; do [ "${f%%=*}" = "$1" ] && { printf '
 case "$url" in
   repos/*/releases)
     n=$(( $(ls -d "$S"/r* 2>/dev/null | wc -l) + 1 )); d="$S/r$n"; mkdir -p "$d/assets"
-    val tag_name > "$d/tag"; val draft > "$d/draft"; val body > "$d/body"; echo "r$n" ;;
+    val tag_name > "$d/tag"; val draft > "$d/draft"; val body > "$d/body"; val target_commitish > "$d/target"; echo "r$n" ;;
   https://uploads.github.com/*) id=${url#*/releases/}; id=${id%%/*}; cp "$input" "$S/$id/assets/${url##*name=}" ;;
   repos/*/releases/*/assets) id=${url#*/releases/}; id=${id%/assets}; for a in "$S/$id"/assets/*; do printf '%s\t%s\n' "$id/assets/${a##*/}" "${a##*/}"; done ;;
   repos/*/releases/assets/*) cat "$S/${url#*/releases/assets/}" ;;
+  repos/*/git/ref/tags/*)
+    # STUB_TAG_STUCK=<tag>: that tag survived the delete and still names an older commit.
+    t=${url##*/}; [ "$t" != "${STUB_TAG_STUCK:-}" ] || { echo 0000000000000000000000000000000000000000; exit 0; }
+    for d in "$S"/r*; do [ "$(cat "$d/tag")" = "$t" ] && [ "$(cat "$d/draft")" = false ] && { cat "$d/target"; exit 0; }; done
+    echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
   repos/*/releases/*)
     d="$S/${url##*/}"; t=$(val tag_name) && echo "$t" > "$d/tag"; v=$(val draft) && echo "$v" > "$d/draft"
-    [ "$(cat "$d/tag")" != nightly ] || [ "$(cat "$d/draft")" != false ] || cp "$d/assets/latest.json" "$S/nightly.json" ;;
+    v=$(val target_commitish) && echo "$v" > "$d/target"
+    t=$(cat "$d/tag"); case "$t" in nightly|dev) [ "$(cat "$d/draft")" != false ] || cp "$d/assets/latest.json" "$S/$t.json" ;; esac ;;
   *) echo "gh stand-in: $url" >&2; exit 1 ;;
 esac
 GH
 cat > "$pub/bin/curl" <<'CURL'
 #!/bin/bash
 # Honors -o and -w '%{http_code}' like curl -sSL. STUB_CURL: neterr (no answer), 500, badjson; otherwise the feed
-# when one was published, else 404. STUB_FEED_LAG=N: the first N reads after the publish answer 404, as GitHub's
-# download cache did for the first nightly.
-out=/dev/stdout
-while [ $# -gt 0 ]; do [ "$1" = -o ] && { out=$2; shift; }; shift; done
+# the url names (nightly or dev) when one was published, else 404. STUB_FEED_LAG=N: the first N reads after the
+# publish answer 404, as GitHub's download cache did for the first nightly.
+out=/dev/stdout; feed=nightly
+while [ $# -gt 0 ]; do
+  case "$1" in -o) out=$2; shift ;; */download/dev/*) feed=dev ;; esac; shift
+done
+# STUB_DEV_404: the dev feed never turns up.
+[ "$feed" = dev ] && [ -n "${STUB_DEV_404:-}" ] && { printf 404; exit 0; }
 if [ -n "${STUB_FEED_LAG:-}" ] && [ -f "$STUB_STATE/nightly.json" ]; then
   n=$(cat "$STUB_STATE/lag" 2>/dev/null || echo 0)
   [ "$n" -ge "$STUB_FEED_LAG" ] || { echo $((n + 1)) > "$STUB_STATE/lag"; printf 404; exit 0; }
@@ -134,15 +141,36 @@ case "${STUB_CURL:-}" in
   neterr) exit 6 ;;
   500) printf 'oops' > "$out"; printf 500 ;;
   badjson) printf '{"channel": "nightly"}' > "$out"; printf 200 ;;
-  *) if [ -f "$STUB_STATE/nightly.json" ]; then cat "$STUB_STATE/nightly.json" > "$out"; [ "$out" = /dev/stdout ] || printf 200; else printf 404; fi ;;
+  *) if [ -f "$STUB_STATE/$feed.json" ]; then cat "$STUB_STATE/$feed.json" > "$out"; [ "$out" = /dev/stdout ] || printf 200; else printf 404; fi ;;
 esac
 CURL
 chmod +x "$pub/bin/gh" "$pub/bin/curl" "$pub/scripts/"*.sh
-out=$(STUB_STATE="$pub/state" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" bash "$pub/scripts/publish-channel.sh" nightly 2>&1) \
-  || bad "publish-channel.sh nightly failed against the stand-in: $out"
-rolling=$(for d in "$pub"/state/r*; do [ "$(cat "$d/tag" 2>/dev/null)" = nightly ] && echo "$d"; done)
-if [ -z "$rolling" ]; then bad "publish-channel.sh left no release tagged nightly"
-else
+out=$(STUB_STATE="$pub/state" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" bash "$pub/scripts/publish.sh" 2>&1) \
+  || bad "publish.sh failed against the stand-in: $out"
+release() { for d in "$pub"/state/r*; do [ "$(cat "$d/tag" 2>/dev/null)" = "$1" ] && echo "$d"; done; }
+# One build, three releases: the immutable nightly-<time> the feed names, the rolling nightly, and the dev release
+# that copies still reading the dev feed install from (docs/releases.md, "One stream").
+for tag in nightly-20261118070000 nightly dev; do
+  r=$(release "$tag")
+  [ -n "$r" ] || { bad "publish.sh left no release tagged $tag"; continue; }
+  expect "$tag is published" "$(cat "$r/draft")" false
+  for f in Polycarp.zip Polycarp.zip.sha256 Polycarp.dmg latest.json; do
+    [ -f "$r/assets/$f" ] || bad "$tag has no $f"
+    [ "$f" = latest.json ] || cmp -s "$pub/build/$f" "$r/assets/$f" || bad "$tag's $f isn't the build's"
+  done
+done
+# Each feed in the form the copies that read it take: a nightly copy wants channel nightly and a -nightly.<time>
+# version, a dev copy channel dev and a -dev.<time> version newer than its own (Updates.swift's Feed before the one
+# stream). Both name this build's commit, and each zip url is a release that holds it.
+for tag in nightly dev; do
+  r=$(release "$tag"); [ -n "$r" ] || continue
+  url=https://github.com/baney75/polycarp/releases/download/nightly-20261118070000/Polycarp.zip
+  [ "$tag" = nightly ] || url=https://github.com/baney75/polycarp/releases/download/dev/Polycarp.zip
+  expect "the $tag feed" "$(python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["channel"], d["version"], d["commit"], d["platforms"]["darwin-aarch64"]["url"])' "$r/assets/latest.json")" \
+    "$tag ${pv/-nightly./-$tag.} $c $url"
+done
+rolling=$(release nightly)
+if [ -n "$rolling" ]; then
   expect "the rolling nightly is published" "$(cat "$rolling/draft")" false
   for f in Polycarp.zip Polycarp.zip.sha256 latest.json; do [ -f "$rolling/assets/$f" ] || bad "the rolling nightly has no $f"; done
   # Release.marker, Updates.isNewer and Updates.candidates from main before #456, for a nightly-channel copy
@@ -169,8 +197,8 @@ fi
 # version guard can't run. Each must exit non-zero and leave no published release.
 refuses() { # <what> <env...>
   local what=$1 st="$tmp/refuse-$RANDOM" o; shift; mkdir -p "$st"
-  if o=$(env "$@" STUB_STATE="$st" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" bash "$pub/scripts/publish-channel.sh" nightly 2>&1); then
-    bad "publish-channel.sh went ahead when $what: $o"
+  if o=$(env "$@" STUB_STATE="$st" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" bash "$pub/scripts/publish.sh" 2>&1); then
+    bad "publish.sh went ahead when $what: $o"
   fi
   for d in "$st"/r*; do [ "$(cat "$d/draft" 2>/dev/null)" != false ] || bad "$what, yet $(cat "$d/tag") was published"; done
 }
@@ -178,13 +206,25 @@ refuses "verify-release.sh failed" STUB_VERIFY_FAIL=1
 refuses "the feed didn't answer" STUB_CURL=neterr
 refuses "the feed answered HTTP 500" STUB_CURL=500
 refuses "the feed named no version" STUB_CURL=badjson
+# sol-F2: every draft is checked before any release is published, and dev moves before nightly, so a run that stops
+# at dev leaves nightly where it was and release.yml builds the commit again.
+refuses "the last draft failed its check" STUB_VERIFY_FAIL=3
+st="$tmp/dev-stuck"; mkdir -p "$st"
+STUB_DEV_404=1 POLYCARP_FEED_RETRY_SECS=0 STUB_STATE="$st" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" \
+  bash "$pub/scripts/publish.sh" >/dev/null 2>&1 && bad "publish.sh succeeded though the dev feed never turned up"
+[ ! -f "$st/nightly.json" ] || bad "nightly moved although dev's move failed, so a second run would stop at the gate"
+# sol-sol-F5: a rolling tag the delete left on an older commit fails the publish before nightly moves.
+st="$tmp/tag-stuck"; mkdir -p "$st"
+STUB_TAG_STUCK=dev POLYCARP_FEED_RETRY_SECS=0 STUB_STATE="$st" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" \
+  bash "$pub/scripts/publish.sh" >/dev/null 2>&1 && bad "publish.sh succeeded though the dev tag stayed on an older commit"
+[ ! -f "$st/nightly.json" ] || bad "nightly moved although the dev tag didn't"
 
 # The read-back after the move waits out a download cache that answers 404 for a while, and gives up, saying what it
 # last saw, when the feed never turns up.
 lag() { # <reads that answer 404>; sets $code and $o
   local st="$tmp/lag-$1"; mkdir -p "$st"
   o=$(STUB_FEED_LAG=$1 POLYCARP_FEED_RETRY_SECS=0 STUB_STATE="$st" POLYCARP_FEED_ARCHS=arm64 PATH="$pub/bin:$PATH" \
-    bash "$pub/scripts/publish-channel.sh" nightly 2>&1); code=$?
+    bash "$pub/scripts/publish.sh" 2>&1); code=$?
 }
 lag 3; [ "$code" = 0 ] || bad "a feed the cache held back for three reads failed the publish: $o"
 lag 99; [ "$code" != 0 ] && [[ "$o" == *"last answer: HTTP 404"* ]] || bad "a feed that never turned up wasn't reported with its last answer: $o"
@@ -227,7 +267,7 @@ POLYCARP_SIGNING_IDENTITY=nobody POLYCARP_SIGNING_KEYCHAIN="$tmp/none.keychain-d
 grep -q 'POLYCARP_SIGNING_IDENTITY:-}" ] || { echo "bundle: the signing identity' scripts/bundle.sh || bad "bundle.sh can fall back to ad-hoc with a CI identity named"
 # Workflows: a build step runs only once signed, and no workflow ever publishes a stable release (the Mac does,
 # after the soak).
-for wf in channel-build stable-build; do
+for wf in release stable-build; do
   f=../.github/workflows/$wf.yml
   # Each step (a "      - " line and what follows it) that runs release.sh carries the signed condition.
   awk -v want="        if: steps.sign.outputs.signed == 'true'" '
@@ -239,8 +279,12 @@ for wf in channel-build stable-build; do
 done
 # This repository is public: no job runs on a self-hosted runner, and the builds run on GitHub's hosted macOS.
 if grep -nE 'runs-on:.*self-hosted|^ *- *self-hosted' ../.github/workflows/*.yml; then bad "a workflow uses a self-hosted runner"; fi
-for wf in channel-build stable-build; do
-  [ "$(grep -E '^ +runs-on:' "../.github/workflows/$wf.yml" | sed 's/^ *runs-on: *//' | sort -u)" = macos-15 ] || bad "$wf.yml doesn't build on macos-15"
+# Every job that runs release.sh runs on macos-15.
+for wf in release stable-build; do
+  awk '/^  [a-z_-]+:$/ { if (rel && os != "macos-15") bad = 1; rel = 0; os = "" }
+       /^    runs-on:/ { os = $2 }
+       /scripts\/release\.sh/ && !/^ *#/ && !/echo / { rel = 1; n++ }
+       END { if (rel && os != "macos-15") bad = 1; exit !(n && !bad) }' "../.github/workflows/$wf.yml" || bad "$wf.yml doesn't build on macos-15"
 done
 # Comments and echoed advice may name the Mac's publish step; a command may not.
 if grep -nE -- '--soak|draft=false|--draft=false|make_latest=true|--latest( |$)' ../.github/workflows/*.yml \

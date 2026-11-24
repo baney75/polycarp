@@ -68,7 +68,7 @@ Who builds it:
 - CI (`spaces-terminal` in `ci.yml`): fetches the pinned zig (`scripts/fetch-zig.sh`, checksum checked), gets the
   Metal Toolchain if the runner lacks it, builds the library once per pin (cached), then builds, tests and bundles
   Polycarp with it linked.
-- Channel builds (`channel-build.yml`): the same, then `bundle.sh` links it, since nightly and dev builds are Apple
+- Release builds (`release.yml`): the same, then `bundle.sh` links it, since release builds are Apple
   silicon only.
 - Universal and Intel builds, and any Mac without the library: no terminal and no terminal rows in the launcher.
   `bundle.sh` says so once, with the real reason.
