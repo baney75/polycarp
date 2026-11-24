@@ -1,18 +1,17 @@
 //! Upgrading from a Polycarp that carried the browser helper. That helper installed launchd jobs (remote access,
-//! the hub, the link, the Cloudflare tunnel). The browser moved to Tychicus, and two kinds of job are left behind:
+//! the hub, the link, the Cloudflare tunnel). The browser extension was removed from Polycarp, and two kinds of job
+//! are left behind:
 //!
 //! - The remote connector's jobs (`com.polycarp.serve`, `.cloudflared`, `.hub`, `.link`) may still be live: their
 //!   launcher can exec a working tree outside the app, so they keep serving a claude.ai connector after the update.
-//!   Each is retired only once Tychicus runs its counterpart (`com.tychicus.serve` for serve and cloudflared,
-//!   `com.tychicus.hub`, `com.tychicus.link`) and `~/.config/tychicus/remote.json` exists. Until then it is left running
-//!   and one line says how to move it, unless the Polycarp program it runs (itself, or what its link or launcher leads
-//!   to) is no longer on disk, as the helper inside a replaced Polycarp.app is not: launchd could only restart it
-//!   forever. It is retired then, and one line says the connector is off until Tychicus runs it.
+//!   Each is left running, and one line says so, unless the Polycarp program it runs (itself, or what its link or
+//!   launcher leads to) is no longer on disk, as the helper inside a replaced Polycarp.app is not: launchd could only
+//!   restart it forever. It is retired then, and one line says the connector is off.
 //! - Any other of the helper's labels (`com.polycarp.browser`, `com.tabkyra.*`) is retired only when its program is
 //!   inside Polycarp.app or a folder this move removed, since that program is gone and launchd would restart it forever.
 //!
-//! `com.tychicus.*` jobs (only asked whether they are loaded), `com.baney.polycarp` (the app), `~/.config/polycarp/browser/`
-//! and `~/.config/tabkyra/` are never touched. `install-app.sh` runs this through `polycarp update --retire-old-browser` on
+//! Every other label, `com.baney.polycarp` (the app) among them, `~/.config/polycarp/browser/` and `~/.config/tabkyra/`
+//! are never touched. `install-app.sh` runs this through `polycarp update --retire-old-browser` on
 //! every install: the install script, `make install`, the app's updater and the first launch of a dragged-in copy.
 
 use std::fs;
@@ -30,21 +29,19 @@ pub const LABELS: [&str; 5] = [
 ];
 /// The helper's labels from before it was renamed: `com.tabkyra.serve`, `.hub`, `.link`.
 const LEGACY_PREFIX: &str = "com.tabkyra.";
-/// Tychicus's own labels. Never booted out or removed, whatever their program is; only asked whether they are loaded.
-const TYCHICUS_PREFIX: &str = "com.tychicus.";
-/// The remote connector's jobs, and the Tychicus job that must be running before each one goes.
-const GATED: [(&str, &str); 4] = [
-    ("com.polycarp.serve", "com.tychicus.serve"),
-    ("com.polycarp.cloudflared", "com.tychicus.serve"),
-    ("com.polycarp.hub", "com.tychicus.hub"),
-    ("com.polycarp.link", "com.tychicus.link"),
+/// The remote connector's jobs: each stays while the program it runs is still on disk.
+const CONNECTOR: [&str; 4] = [
+    "com.polycarp.serve",
+    "com.polycarp.cloudflared",
+    "com.polycarp.hub",
+    "com.polycarp.link",
 ];
-/// Tychicus writes this once it has taken the remote connector over.
-const TYCHICUS_REMOTE: &str = ".config/tychicus/remote.json";
-/// Printed once when a connector job's program is gone and Tychicus does not run the connector yet.
-pub const CONNECTOR_OFF: &str = "Your remote connector ran on the browser helper that left Polycarp, so it is off now; install Tychicus (https://github.com/baney75/tychicus) and run `tychicus remote import-polycarp` to turn it back on.";
-/// Printed once when a connector job waits for Tychicus.
-pub const CONNECTOR_STAYS: &str = "Your remote connector still runs on Polycarp's helper; run `tychicus remote import-polycarp` to move it to Tychicus.";
+/// Printed once when a connector job's program is gone.
+pub const CONNECTOR_OFF: &str =
+    "Your remote connector ran on the browser helper that left Polycarp, so it is off now.";
+/// Printed once when a connector job is left running.
+pub const CONNECTOR_STAYS: &str =
+    "Your remote connector still runs on the old browser helper, outside Polycarp, so its jobs were left running.";
 
 #[derive(Debug, PartialEq)]
 pub enum Verdict {
@@ -54,12 +51,10 @@ pub enum Verdict {
     Kept { why: String },
     /// Polycarp's, but launchd still lists it after the bootout, so its plist stays.
     Failed { why: String },
-    /// A remote connector job Tychicus runs now: booted out and its plist removed.
-    HandedOver,
-    /// A remote connector job left running until Tychicus runs its counterpart.
+    /// A remote connector job whose program is still on disk: left running.
     Waiting,
-    /// A remote connector job whose program left with the helper, before Tychicus runs its counterpart: booted out and
-    /// its plist removed, so launchd stops restarting a program that is gone.
+    /// A remote connector job whose program left with the helper: booted out and its plist removed, so launchd stops
+    /// restarting a program that is gone.
     Stranded { program: String },
 }
 
@@ -72,9 +67,8 @@ pub struct Job {
 
 /// Every job in `home`/Library/LaunchAgents under one of the old helper's labels, retired or left alone.
 /// `launchctl` is the program run for `bootout` and `print`; `uid` names the `gui/<uid>` domain.
-/// Only plists directly in that folder count: one Tychicus moved to a folder inside it (`retired-tabkyra/`) stays where it
-/// is. Nothing under `~/.config/polycarp/browser/` or `~/.config/tabkyra/` is ever deleted, since Tychicus migrates its
-/// settings from there.
+/// Only plists directly in that folder count: one moved to a folder inside it (`retired-tabkyra/`) stays where it is.
+/// Nothing under `~/.config/polycarp/browser/` or `~/.config/tabkyra/` is ever deleted.
 pub fn retire(home: &Path, uid: &str, launchctl: &Path) -> Vec<Job> {
     let dir = home.join("Library/LaunchAgents");
     let mut plists: Vec<PathBuf> = fs::read_dir(&dir)
@@ -90,13 +84,10 @@ pub fn retire(home: &Path, uid: &str, launchctl: &Path) -> Vec<Job> {
         .into_iter()
         .map(|plist| {
             let label = label_of(&plist);
-            let verdict = match gate_of(&label) {
-                Some(tychicus) if tychicus_runs(home, uid, launchctl, tychicus) => {
-                    stop(uid, launchctl, &label, &plist)
-                        .map_or_else(|f| f, |()| Verdict::HandedOver)
-                }
-                Some(_) => strand(home, uid, launchctl, &label, &plist),
-                None => judge(home, uid, launchctl, &label, &plist),
+            let verdict = if is_connector(&label) {
+                strand(home, uid, launchctl, &label, &plist)
+            } else {
+                judge(home, uid, launchctl, &label, &plist)
             };
             Job {
                 label,
@@ -107,21 +98,14 @@ pub fn retire(home: &Path, uid: &str, launchctl: &Path) -> Vec<Job> {
         .collect()
 }
 
-/// One of the old helper's labels, and never one of Tychicus's.
+/// One of the old helper's labels.
 fn is_old_helpers(label: &str) -> bool {
-    !label.starts_with(TYCHICUS_PREFIX)
-        && (LABELS.contains(&label) || label.starts_with(LEGACY_PREFIX))
+    LABELS.contains(&label) || label.starts_with(LEGACY_PREFIX)
 }
 
-/// The Tychicus job a remote connector job waits for, or None for a label that goes by its program.
-fn gate_of(label: &str) -> Option<&'static str> {
-    GATED.iter().find(|(l, _)| *l == label).map(|(_, t)| *t)
-}
-
-/// Tychicus has taken the connector over: its job is loaded and its remote settings exist.
-fn tychicus_runs(home: &Path, uid: &str, launchctl: &Path, tychicus: &str) -> bool {
-    home.join(TYCHICUS_REMOTE).is_file()
-        && run(launchctl, &["print", &format!("gui/{uid}/{tychicus}")]) == Some(0)
+/// A remote connector job, which stays while its program does; every other label goes by `judge`.
+fn is_connector(label: &str) -> bool {
+    CONNECTOR.contains(&label)
 }
 
 fn label_of(plist: &Path) -> String {
@@ -131,8 +115,7 @@ fn label_of(plist: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// A connector job whose gate is unmet: retired when the Polycarp program it runs is gone from disk, else left
-/// waiting. A helper still in `~/.local/share/polycarp/browser` serves the connector, so that job waits.
+/// A connector job: retired when the Polycarp program it runs is gone from disk, else left waiting. A helper still in `~/.local/share/polycarp/browser` serves the connector, so that job waits.
 fn strand(home: &Path, uid: &str, launchctl: &Path, label: &str, plist: &Path) -> Verdict {
     match fs::read_to_string(plist).ok().and_then(|t| program_of(&t)) {
         Some(program) if gone(home, &program) => stop(uid, launchctl, label, plist)
@@ -253,7 +236,7 @@ fn unescape(s: &str) -> String {
 
 /// Whether `program` is Polycarp's own: inside a Polycarp.app, in the folder only Polycarp put the helper in, or a
 /// launcher or link in the helper's folders that leads to one of those. A launcher that execs anything else (node on a
-/// working tree, Tychicus) or is gone is not.
+/// working tree, another app) or is gone is not.
 fn polycarps(home: &Path, program: &str) -> bool {
     if inside(home, program) {
         return true;
@@ -310,18 +293,14 @@ pub fn command(home: &Path) -> i32 {
     for job in retire(home, &uid, &launchctl) {
         match job.verdict {
             Verdict::Retired { program } => println!(
-                "retired {}: it ran {program}, which left Polycarp with the browser (now Tychicus)",
-                job.label
-            ),
-            Verdict::HandedOver => println!(
-                "retired {}: Tychicus runs the remote connector now",
+                "retired {}: it ran {program}, which left Polycarp with the browser extension",
                 job.label
             ),
             Verdict::Waiting => waiting = true,
             Verdict::Stranded { program } => {
                 off = true;
                 println!(
-                    "retired {}: it ran {program}, which left Polycarp with the browser (now Tychicus)",
+                    "retired {}: it ran {program}, which left Polycarp with the browser extension",
                     job.label
                 );
             }
@@ -367,33 +346,34 @@ mod tests {
     }
 
     #[test]
-    fn tychicus_labels_are_never_the_old_helpers() {
+    fn other_labels_are_never_the_old_helpers() {
         assert!(is_old_helpers("com.polycarp.serve"));
         assert!(is_old_helpers("com.tabkyra.hub"));
-        assert!(!is_old_helpers("com.tychicus.serve"));
-        assert!(!is_old_helpers("com.tychicus.hub"));
+        assert!(!is_old_helpers("com.example.serve"));
+        assert!(!is_old_helpers("com.example.hub"));
         assert!(!is_old_helpers("com.example.thing"));
         assert!(!is_old_helpers("com.baney.polycarp"));
     }
 
     #[test]
-    fn the_connector_jobs_wait_for_their_tychicus_job() {
-        assert_eq!(gate_of("com.polycarp.serve"), Some("com.tychicus.serve"));
-        assert_eq!(
-            gate_of("com.polycarp.cloudflared"),
-            Some("com.tychicus.serve")
-        );
-        assert_eq!(gate_of("com.polycarp.hub"), Some("com.tychicus.hub"));
-        assert_eq!(gate_of("com.polycarp.link"), Some("com.tychicus.link"));
-        assert_eq!(gate_of("com.polycarp.browser"), None);
-        assert_eq!(gate_of("com.tabkyra.serve"), None);
+    fn only_the_four_connector_labels_are_connector_jobs() {
+        for label in [
+            "com.polycarp.serve",
+            "com.polycarp.cloudflared",
+            "com.polycarp.hub",
+            "com.polycarp.link",
+        ] {
+            assert!(is_connector(label), "{label}");
+        }
+        assert!(!is_connector("com.polycarp.browser"));
+        assert!(!is_connector("com.tabkyra.serve"));
     }
 
-    /// A connector job whose program was inside Polycarp.app is retired before Tychicus runs the connector, since
-    /// that program is gone; one whose program is elsewhere (Homebrew's cloudflared) keeps waiting, plist and all.
+    /// A connector job whose program was inside Polycarp.app is retired, since that program is gone; one whose
+    /// program is elsewhere (Homebrew's cloudflared) keeps waiting, plist and all.
     #[cfg(unix)]
     #[test]
-    fn a_connector_job_whose_program_left_with_the_app_is_retired_without_tychicus() {
+    fn a_connector_job_whose_program_left_with_the_app_is_retired() {
         use std::os::unix::fs::PermissionsExt;
         let root = std::env::temp_dir().join(format!("retire-strand-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -489,11 +469,11 @@ mod tests {
         assert!(!polycarps(home, "/Users/d/.config/tabkyra/tabkyra"));
         assert!(!polycarps(
             home,
-            "/Users/d/.local/share/tychicus/release/tychicus"
+            "/Users/d/.local/share/other/release/other"
         ));
         assert!(!polycarps(
             home,
-            "/Applications/Tychicus.app/Contents/MacOS/tychicus"
+            "/Applications/Other.app/Contents/MacOS/other"
         ));
         assert!(!polycarps(home, "/opt/homebrew/bin/cloudflared"));
     }
