@@ -1,7 +1,7 @@
 # The agent API
 
 One contract for reading and driving the window manager from a program: queries, commands and events. The Windows
-daemon follows it. The Mac app no longer does (2026-11-18): computer use moved to Tychicus, and the Mac keeps only the
+daemon follows it. The Mac app no longer does (2026-11-18): computer use was removed, and the Mac keeps only the
 agent workspace API in [../docs/agent-workspace-api.md](../docs/agent-workspace-api.md); Linux follows it when its daemon catches up. The shapes are in
 [agent-api.schema.json](agent-api.schema.json) (JSON Schema 2020-12, one `$defs` entry per result and event).
 

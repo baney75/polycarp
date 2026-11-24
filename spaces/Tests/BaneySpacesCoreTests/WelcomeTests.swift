@@ -27,7 +27,7 @@ final class WelcomeTests: XCTestCase {
         XCTAssertTrue(Welcome.shouldShow(hasFinished: true, granted: [.accessibility], forced: true))
     }
 
-    /// Computer use lives in Tychicus: Polycarp's words promise agents nothing in your apps.
+    /// Polycarp does no computer use: its words promise agents nothing in your apps.
     func testThePermissionWordsAreTrueOfWhatPolycarpDoes() {
         let ax = Welcome.step(.accessibility).why
         XCTAssertFalse(ax.contains("Agents"), ax)

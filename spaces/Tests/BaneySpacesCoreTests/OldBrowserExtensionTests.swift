@@ -3,7 +3,7 @@ import XCTest
 
 /// Polycarp's browser extension is the one in extension/, staged into Contents/Resources/extension. The old agent side
 /// panel (its copy in ~/Library/Application Support/Polycarp/Extension, the bundled polycarp-browser host and its
-/// native messaging manifests) belongs to Tychicus; nothing here may install or update any of it again.
+/// native messaging manifests) was removed; nothing here may install or update any of it again.
 final class OldBrowserExtensionTests: XCTestCase {
     private let old = ["Polycarp/Extension", "Extension.stamp", "ExtensionCopy", "Resources/browser", "polycarp-browser",
                        "com.polycarp.browser", "ai.tabkyra.bridge"]

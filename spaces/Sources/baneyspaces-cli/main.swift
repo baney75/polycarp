@@ -257,8 +257,8 @@ case "remote":
     out("remote: \(info["remote"] ?? "?")" + (info["listening"].map { " (\($0))" } ?? ""))
 
 case "sandbox":
-    // The throwaway macOS VM left Polycarp for Tychicus (Donovan, 2026-11-21): one line, nothing runs.
-    fail(AgentWorkspace.sandboxMoved, code: 2)
+    // The throwaway macOS VM was removed from Polycarp (2026-11-21): one line, nothing runs.
+    fail(AgentWorkspace.sandboxRemoved, code: 2)
 
 case "phone", "phones":
     PhoneCommand.run(rest)

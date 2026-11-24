@@ -43,7 +43,7 @@ final class SettingsSidebarTests: XCTestCase {
     func testSectionsAreGroupedAsDesigned() throws {
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
         XCTAssertTrue(kit.contains(#"tabs: [.general, .keys, .dock, .appearance, .launcher]"#))
-        // Settings > Agents held only the sandbox, which is Tychicus's now (Donovan, 2026-11-21): the tab and its group are gone.
+        // Settings > Agents held only the sandbox, which was removed (2026-11-21): the tab and its group are gone.
         XCTAssertFalse(kit.contains("Your tools"))
         XCTAssertFalse(try tabCases().contains("agents"))
         XCTAssertTrue(kit.contains(#"header: "System", tabs: [.permissions, .automation, .updates]"#))
