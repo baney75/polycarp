@@ -116,6 +116,10 @@ try {
   await sp.locator('#fLocal input[data-toggle]').first().focus();
   await sp.keyboard.press('Space');
   ok(await until(() => shown('bob')), 'Settings: switching your rule off shows the post again');
+  ok(await until(() => sp.evaluate(() => !!document.activeElement && document.activeElement.matches('#fLocal input[data-toggle]'))),
+    'Settings: the switch keeps keyboard focus after the list redraws');
+  await sp.keyboard.press('Space');
+  ok(await until(async () => !(await shown('bob'))), 'Settings: Space again switches the rule back on');
   await sp.locator('#fLocal [data-del]').first().focus();
   await sp.keyboard.press('Enter');
   ok(await until(() => sp.evaluate(() => /No filters yet/.test(document.getElementById('fLocal').textContent))), 'Settings: delete removes your rule');
