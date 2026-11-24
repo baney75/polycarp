@@ -44,7 +44,7 @@ The page asks the host once typing pauses (60 ms), one `find` at a time; a reply
 the list still shows this browser's tabs and the search, and the bangs from the last answer the page cached (none
 before the host has ever answered).
 
-To load it in Helium (or Chrome): open `chrome://extensions`, turn on Developer mode, choose Load unpacked, and pick
+To load it in Helium (or Chrome): open `chrome://extensions`, turn on Developer mode, choose Load unpacked, press ⌘⇧G in the file picker and paste
 `~/Applications/Polycarp.app/Contents/Resources/extension`. Polycarp writes the host manifest on its next launch. App
 updates update the extension too: it reloads itself when the copy in the app has a new `version_name`.
 A new tab opens with the keyboard in the address bar, as Chrome does for every extension's new tab; click the field to type there.
