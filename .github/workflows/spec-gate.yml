@@ -1,0 +1,22 @@
+name: Spec gate
+# A behavior change under spaces/Sources, spaces/crates or spaces/platforms/windows ships with a spec edit,
+# a `Spec: R-..` line naming existing rule ids, or `Spec: none (reason)` (rules S-G1 to S-G7 in
+# scripts/spec-gate.py). Editing the PR body reruns it. It never runs on a push to main.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+permissions:
+  contents: read
+jobs:
+  spec:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The gate's own tests
+        run: bash scripts/tests/spec-gate-test.sh
+      - name: Spec gate
+        run: python3 scripts/spec-gate.py
