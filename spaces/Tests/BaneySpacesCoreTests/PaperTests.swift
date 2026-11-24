@@ -319,6 +319,38 @@ final class PaperTests: XCTestCase {
         XCTAssertEqual(FileManager.default.contents(atPath: store.url(name).path), png)
     }
 
+    /// A link to /dev/zero, a pipe with no writer and a folder are refused at once; reading any of them used to wait
+    /// forever (the size of /dev/zero reads 0, so the limit never applied).
+    func testADeviceAPipeOrAFolderIsRefusedWithoutReading() throws {
+        let zero = dir.appendingPathComponent("zero.png")
+        try FileManager.default.createSymbolicLink(atPath: zero.path, withDestinationPath: "/dev/zero")
+        let pipe = dir.appendingPathComponent("pipe.jpg")
+        XCTAssertEqual(mkfifo(pipe.path, 0o600), 0)
+        let folder = dir.appendingPathComponent("folder.png")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for (path, code) in [(zero.path, "not_a_picture"), (pipe.path, "not_a_picture"), (folder.path, "not_found")] {
+            let done = expectation(description: path)
+            var got: String?
+            DispatchQueue.global().async {
+                if case .failure(let f) = PaperOps.read(path) { got = f.code }
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 2)
+            XCTAssertEqual(got, code, path)
+        }
+        XCTAssertEqual(store.pictures(), [])
+    }
+
+    func testAFileOverTheLimitIsRefusedBeforeItIsRead() throws {
+        let big = dir.appendingPathComponent("big.jpg")
+        XCTAssertTrue(FileManager.default.createFile(atPath: big.path, contents: nil))
+        let h = try FileHandle(forWritingTo: big)
+        try h.truncate(atOffset: UInt64(PaperStore.maxBytes + 1))
+        try h.close()
+        guard case .failure(let f) = PaperOps.read(big.path) else { return XCTFail("over the cap") }
+        XCTAssertEqual(f.code, "too_large")
+    }
+
     func testOverTwentyFiveMegabytesIsRefused() {
         guard case .failure(let f) = store.add(Data(count: PaperStore.maxBytes + 1)) else { return XCTFail("over the cap") }
         XCTAssertEqual(f.code, "too_large")

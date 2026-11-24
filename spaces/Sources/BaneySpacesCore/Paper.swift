@@ -643,17 +643,29 @@ public enum PaperOps {
         return .object(out)
     }
 
-    /// A picture file's bytes, refusing a missing one, a folder or one over the limit before reading it.
+    /// A picture file's bytes, refusing a missing one, a folder, anything that is not a plain file, or one over the limit.
+    /// The file is opened without waiting and checked on the open file itself, so a pipe or a device (`/dev/zero`, or a
+    /// link to it) is refused at once instead of read forever, and a file that grows after the check is still cut off at
+    /// the limit.
     static func read(_ path: String) -> Swift.Result<Data, PaperFailure> {
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue else {
-            return .failure(PaperFailure("not_found", "no picture at \(SurfacesOps.display(path))"))
+        let shown = SurfacesOps.display(path)
+        let missing = PaperFailure("not_found", "no picture at \(shown)")
+        let tooLarge = PaperFailure("too_large", "\(shown) is over 25 MB, the most a paper may be")
+        let unreadable = PaperFailure("io_error", "can't read \(shown)")
+        let fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return .failure(errno == ENOENT || errno == ENOTDIR ? missing : unreadable) }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        var st = stat()
+        guard fstat(fd, &st) == 0 else { return .failure(unreadable) }
+        switch st.st_mode & S_IFMT {
+        case S_IFREG: break
+        case S_IFDIR: return .failure(missing)
+        default: return .failure(PaperFailure("not_a_picture", "\(shown) is not a file"))
         }
-        if let size = (try? fm.attributesOfItem(atPath: path))?[.size] as? NSNumber, size.intValue > PaperStore.maxBytes {
-            return .failure(PaperFailure("too_large", "\(SurfacesOps.display(path)) is over 25 MB, the most a paper may be"))
-        }
-        guard let data = fm.contents(atPath: path) else { return .failure(PaperFailure("io_error", "can't read \(SurfacesOps.display(path))")) }
+        guard st.st_size <= off_t(PaperStore.maxBytes) else { return .failure(tooLarge) }
+        guard let read = try? handle.read(upToCount: PaperStore.maxBytes + 1) else { return .failure(unreadable) }
+        let data = read ?? Data()
+        guard data.count <= PaperStore.maxBytes else { return .failure(tooLarge) }
         return .success(data)
     }
 
