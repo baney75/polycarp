@@ -8,7 +8,7 @@ An edit stays with the sites it names and applies each time you open them. It ch
 
 Agents' edits are in `edits.json`, beside `filters.json` in `~/Library/Application Support/Polycarp/`. The extension asks Polycarp for them through its native host, so they work on a Mac with Polycarp installed. The edits you make in the browser stay in the browser.
 
-Open pages pick a change up within 30 seconds, new pages at once.
+Open pages pick a change up within 30 seconds, new pages at once. The first time an agent's edit reaches a page, the page says so and offers Undo.
 
 ## From a terminal
 

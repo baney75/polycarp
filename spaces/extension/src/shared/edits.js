@@ -319,7 +319,7 @@
   function summary(e) {
     const parts = e.changes.slice(0, 3).map(describe);
     if (e.changes.length > 3) parts.push((e.changes.length - 3) + " more");
-    if (e.css) parts.push("Its own stylesheet");
+    if (e.css) parts.push(parts.length ? "its own stylesheet" : "A stylesheet");
     return parts.join(" · ");
   }
 

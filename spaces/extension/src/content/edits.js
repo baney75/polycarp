@@ -12,8 +12,8 @@
 (function () {
   "use strict";
   const P = globalThis.Polycarp || (globalThis.Polycarp = {});
-  const E = globalThis.PolycarpEdits;
-  if (!E || P.pageEdits || !/html/.test(document.contentType) || window !== window.top) return;
+  const E = globalThis.PolycarpEdits, S = globalThis.PolycarpEditsStore;
+  if (!E || !S || P.pageEdits || !/html/.test(document.contentType) || window !== window.top) return;
 
   const NOTE = "polycarp-note";
   const MOVED = "polycarp-moved", AWAY = "data-polycarp-moved";
@@ -368,21 +368,15 @@
   // Settings and edits come from storage: the app's (kept fresh by the service worker) and this browser's own. A change
   // there, or a new address on a page that doesn't reload, reaches this page at once.
   const page = create(document);
-  const KEYS = [P.SETTINGS_KEY, E.APP_KEY, E.LOCAL_KEY, E.OFF_KEY];
   const alive = () => { try { return !!chrome.runtime.id; } catch (e) { return false; } };
-  let applied = "", turn = 0, watching = true;
+  let applied = "", turn = 0, watching = true, here = [], onapply = [];
 
-  async function load() {
-    const got = await chrome.storage.local.get([E.APP_KEY, E.LOCAL_KEY, E.OFF_KEY]);
-    const app = got[E.APP_KEY] && Array.isArray(got[E.APP_KEY].edits) ? got[E.APP_KEY].edits : [];
-    return E.merge(app, got[E.LOCAL_KEY], got[E.OFF_KEY]);
-  }
   async function apply() {
     if (!alive()) return end();
     const mine = ++turn;
     let edits = [];
     try {
-      const [settings, all] = await Promise.all([P.getSettings(), load()]);
+      const [settings, all] = await Promise.all([P.getSettings(), S.load()]);
       // Off only where the person turned Polycarp off: an edit names its sites, so the restyle default isn't asked.
       if (settings.enabled && !P.paused(settings) && settings.sites[P.hostOf(location.href)] !== "off") edits = E.active(all.edits, location.hostname, location.pathname);
     } catch (e) { return; }
@@ -390,9 +384,11 @@
     const sig = JSON.stringify(edits);
     if (sig === applied) return;
     applied = sig;
+    here = edits;
     try { page.update(edits); } catch (e) { /* a broken edit never breaks the page */ }
+    for (const f of onapply) f(edits);
   }
-  const onStorage = (changes, area) => { if (area === "local" && KEYS.some((k) => changes[k])) apply(); };
+  const onStorage = (changes, area) => { if (S.changed(changes, area) || (area === "local" && changes[P.SETTINGS_KEY])) apply(); };
   const onUrl = () => { if (alive()) apply(); else end(); };
   const onShow = (e) => { if (e.persisted) onUrl(); }; // back from the page cache, which hears no storage changes
   function onMessage(msg, _sender, reply) {
@@ -401,6 +397,7 @@
   function end() {
     watching = false;
     page.stop();
+    for (const f of onapply) f([]);
     applied = "";
     try { chrome.storage.onChanged.removeListener(onStorage); chrome.runtime.onMessage.removeListener(onMessage); } catch (e) {}
     if (globalThis.navigation) navigation.removeEventListener("currententrychange", onUrl);
@@ -409,7 +406,7 @@
     document.removeEventListener("DOMContentLoaded", page.flush);
     removeEventListener("load", page.flush);
   }
-  P.pageEdits = { apply, report: page.report };
+  P.pageEdits = { apply, report: page.report, watch: (f) => { onapply.push(f); f(here); } };
 
   // A copy from before an extension update is still on the page with its edits made: it takes them back first, so this
   // copy starts from the page as the site made it. All a page could do with this is ask for itself unedited.

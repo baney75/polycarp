@@ -129,6 +129,72 @@ try {
   ok(rep[0].hits > 0 && /read that selector/.test(rep[2].note) && /form field/.test(rep[7].note), `report: what matched, and why not (${JSON.stringify(rep.map((r) => r.note || r.hits))})`);
   await page.screenshot({ path: path.join(here, 'out', 'edits-page.png') });
 
+  // ---------- The notice, the popup and Settings ----------
+  ok(await until(() => page.evaluate(() => !!document.querySelector('polycarp-edits'))) && (await page.evaluate(() => !document.querySelector('polycarp-edits').shadowRoot)), 'notice: an agent edit says so, closed to the page');
+  await page.screenshot({ path: path.join(here, 'out', 'edits-notice.png') });
+  const press = async (key) => { // closed to scripts, so reached as a person would: by keyboard, from the page's end
+    await page.evaluate(() => { document.querySelector('#editor').focus(); });
+    for (let i = 0; i < 4; i++) { await page.keyboard.press('Tab'); if (await page.evaluate(() => document.activeElement && document.activeElement.localName === 'polycarp-edits')) break; }
+    if (key === 'Undo') await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+  };
+  await press('Keep');
+  ok(await until(() => page.evaluate(() => !document.querySelector('polycarp-edits'))) && (await text('#title')) === 'New title', 'notice: Keep puts it away and leaves the edit');
+  await page.reload();
+  await until(async () => (await text('#title')) === 'New title');
+  await sleep(300);
+  ok(await page.evaluate(() => !document.querySelector('polycarp-edits')), 'notice: a kept edit is not announced again');
+  setAnswer([{ ...EDIT, name: 'Shop, calmer' }]);
+  await tick();
+  await sleep(400);
+  ok(await page.evaluate(() => !document.querySelector('polycarp-edits')), 'notice: a new name alone is not a change');
+  setAnswer([{ ...EDIT, name: 'Shop, calmer', css: '#foot{letter-spacing:4px}' }]);
+  await tick();
+  ok(await until(() => page.evaluate(() => !!document.querySelector('polycarp-edits'))), 'notice: a changed edit is announced again');
+  await press('Undo');
+  ok(await until(async () => (await text('#title')) === 'Old title'), 'notice: Undo takes the edit back');
+  const tab = await sw.evaluate(async () => (await chrome.tabs.query({ url: 'https://shop.test/*' }))[0].id);
+  const pop = await ctx.newPage();
+  await pop.setViewportSize({ width: 360, height: 760 });
+  await pop.addInitScript((id) => { const q = chrome.tabs.query; chrome.tabs.query = (o) => (o.active ? chrome.tabs.get(id).then((t) => [t]) : q.call(chrome.tabs, o)); }, tab);
+  pop.on('pageerror', (e) => errors.push('popup: ' + e));
+  await pop.goto(`chrome-extension://${ID}/src/popup/popup.html`);
+  await pop.waitForSelector('#editsList li');
+  ok(/Shop, calmer/.test(await pop.textContent('#editsList')) && /By your agent/.test(await pop.textContent('#editsList')) && !(await pop.isChecked('#editsList input')), 'popup: the edit for this page, off');
+  await pop.locator('#editsList input').focus();
+  await pop.keyboard.press('Space');
+  ok(await until(async () => (await text('#title')) === 'New title'), 'popup: the switch brings the edit back on the open page');
+  ok(await until(() => pop.evaluate(() => document.activeElement && document.activeElement.matches('#editsList input'))), 'popup: the switch keeps the focus');
+  await pop.screenshot({ path: path.join(here, 'out', 'edits-popup.png') });
+  await pop.close();
+  const set = await ctx.newPage();
+  set.on('pageerror', (e) => errors.push('settings: ' + e));
+  await set.goto(`chrome-extension://${ID}/src/pages/settings.html`);
+  await set.waitForSelector('#eList li .fsum');
+  ok((await set.locator('#eList [data-del]').count()) === 0 && (await set.locator('#eList input').count()) === 1, "settings: the app's edit has a switch and no delete");
+  await set.fill('#eSites', 'shop.test');
+  await set.fill('#eCss', 'a{background:url(https://evil.test)}');
+  await set.click('#eAdd button');
+  ok(await until(async () => /Not added: css may not use url\(/.test(await set.textContent('#eNote'))), `settings: a stylesheet that loads is refused (${await set.textContent('#eNote')})`);
+  await set.fill('#eCss', '#foot{word-spacing:9px}');
+  await set.click('#eAdd button');
+  ok(await until(async () => (await css('#foot', 'wordSpacing')) === '9px'), 'settings: a stylesheet reaches the open page');
+  const mine = set.locator('#eList li', { hasText: 'shop.test' }).filter({ has: set.locator('[data-del]') }).locator('input');
+  await mine.focus();
+  await mine.press('Space');
+  ok(await until(async () => (await css('#foot', 'wordSpacing')) === '0px'), 'settings: its switch takes it off the open page');
+  ok(await until(async () => set.evaluate(() => document.activeElement.matches('[data-on]') && !document.activeElement.checked)), 'settings: the switch keeps the keyboard');
+  await set.keyboard.press('Space');
+  ok(await until(async () => (await css('#foot', 'wordSpacing')) === '9px'), 'settings: and puts it back');
+  await set.locator('#editsBox').screenshot({ path: path.join(here, 'out', 'edits-settings.png') });
+  await set.locator('#eList [data-del]').click();
+  ok(await until(async () => (await css('#foot', 'wordSpacing')) === '0px'), 'settings: delete takes it away');
+  await set.close();
+  setAnswer([EDIT]);
+  await tick();
+  await page.reload();
+  await until(async () => (await text('#title')) === 'New title');
+
   // ---------- A page that changes under the edit ----------
   await page.evaluate(() => { const p = document.createElement('p'); p.className = 'ad'; p.id = 'late'; p.textContent = 'late'; document.querySelector('#main').append(p); });
   ok((await css('#late', 'display')) === 'none', 'hide: holds for a part added later');

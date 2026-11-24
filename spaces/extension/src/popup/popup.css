@@ -57,3 +57,11 @@ body.resting .spec, body.resting .ctl { opacity: .55; }
 .find input { flex: 1; min-width: 0; height: 40px; border: 0; background: none; color: var(--ink); font: inherit; font-size: var(--t-md, 16px); outline: none; }
 .find input::placeholder { color: var(--muted); }
 .find .btn { min-height: 32px; padding: 0 var(--s2); font-size: var(--t-sm); white-space: nowrap; }
+
+/* Edits on this page */
+.elbl { margin: 0 0 var(--s1); font-size: var(--t-sm); font-weight: 700; color: var(--muted); }
+.elist { list-style: none; margin: 0; padding: 0; max-height: 168px; overflow: auto; }
+.elist label { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: 44px; cursor: pointer; }
+.elist label > span:first-child { min-width: 0; }
+.elist b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-sm); font-weight: 600; }
+.elist small { color: var(--muted); font-size: var(--t-xs); }
