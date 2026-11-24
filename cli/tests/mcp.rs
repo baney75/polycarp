@@ -132,7 +132,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 35] = [
+const TOOLS: [&str; 36] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -168,6 +168,7 @@ const TOOLS: [&str; 35] = [
     "style_unset",
     "style_preset",
     "style_restore",
+    "keys_list",
 ];
 
 #[test]
@@ -1417,5 +1418,61 @@ fn style_tools_check_their_arguments_and_say_when_the_command_is_missing() {
         r["structuredContent"]["error"]["message"],
         "this Polycarp has no style command"
     );
+    assert_eq!(s.finish(), 0);
+}
+
+/// keys_list reads `polycarp-spaces keys --json`, a bare array, and hands it on in the envelope every tool uses. It
+/// only reads, takes no arguments, and says so when the app is too old to have the command.
+#[cfg(unix)]
+#[test]
+fn keys_list_runs_the_spaces_keys_command_and_wraps_its_rows() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let rows = json!([{"id": "workspace.switch", "keys": ["mod", "1...9"], "display": "⌃1...9",
+        "title": "Go to workspace 1 to 9", "group": "workspaces", "scope": "global"}]);
+    fs::write(sb.root.join("spaces/reply"), rows.to_string()).unwrap();
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    let list = s.request("tools/list", json!({}));
+    let tool = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "keys_list")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        tool["annotations"],
+        json!({"readOnlyHint": true, "openWorldHint": false})
+    );
+    let r = s.tool("keys_list", json!({}));
+    assert_eq!(r["isError"], false);
+    assert_eq!(r["structuredContent"], json!({"ok": true, "data": rows}));
+    assert_eq!(stub_args(&sb), ["keys", "--json"]);
+
+    // It takes no arguments, and a bad one runs nothing.
+    fs::remove_file(sb.root.join("spaces/args")).unwrap();
+    let r = s.tool("keys_list", json!({"group": "launcher"}));
+    assert_eq!(r["structuredContent"]["error"]["code"], "invalid_args");
+    assert!(
+        !sb.root.join("spaces/args").exists(),
+        "the command never ran"
+    );
+
+    // An app from before keys prints its usage and exits 2.
+    fs::write(sb.root.join("spaces/reply"), "").unwrap();
+    fs::write(
+        sb.root.join("spaces/stderr"),
+        "usage: polycarp-spaces <command>\n",
+    )
+    .unwrap();
+    fs::write(sb.root.join("spaces/code"), "2").unwrap();
+    let r = s.tool("keys_list", json!({}));
+    assert_eq!(r["isError"], true);
+    assert_eq!(r["structuredContent"]["error"]["code"], "spaces_too_old");
+    assert!(r["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("keys"));
     assert_eq!(s.finish(), 0);
 }

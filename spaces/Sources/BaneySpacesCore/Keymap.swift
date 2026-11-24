@@ -73,8 +73,9 @@ public struct KeyBinding: Equatable {
     }
 }
 
-/// Every Polycarp shortcut, in one table. `KeymapTests` fails when the code takes a key that has no row here or a row
-/// outlives its key.
+/// Every Polycarp shortcut, in one table. `polycarp-spaces keys`, the `keys_list` MCP tool and docs/keys.md all read
+/// it. `KeymapTests` fails when the code takes a key that has no row here, a row outlives its
+/// key, or docs/keys.md says something else.
 public enum Keymap {
     public static let all: [KeyBinding] = [
         // Launcher
@@ -148,4 +149,69 @@ public enum Keymap {
 
     /// The row with this id.
     public static func binding(_ id: String) -> KeyBinding? { all.first { $0.id == id } }
+
+    /// The symbol for the app's "modifier" setting (`Modifier` in the app: command, control, option, controlOption).
+    /// Anything else, or no setting, is ⌘, as in the app.
+    public static func modifierSymbol(setting: String?) -> String {
+        switch setting {
+        case "control": "⌃"
+        case "option": "⌥"
+        case "controlOption": "⌃⌥"
+        default: "⌘"
+        }
+    }
+
+    /// The groups in sheet order, each with its rows in table order. Empty groups are left out.
+    public static var grouped: [(group: KeyBinding.Group, rows: [KeyBinding])] {
+        KeyBinding.Group.allCases.compactMap { g in
+            let rows = all.filter { $0.group == g }
+            return rows.isEmpty ? nil : (g, rows)
+        }
+    }
+
+    /// `polycarp-spaces keys`: a cheat sheet, grouped, with the keys in macOS symbols.
+    public static func cheatSheet(modifierSymbol: String) -> String {
+        let keyWidth = all.map { $0.display(modifierSymbol: modifierSymbol).count }.max() ?? 0
+        let titleWidth = all.map(\.title.count).max() ?? 0
+        let scopeWidth = all.map(\.scope.title.count).max() ?? 0
+        func pad(_ s: String, _ n: Int) -> String { s + String(repeating: " ", count: max(0, n - s.count)) }
+        var lines = ["Polycarp shortcuts. Your modifier is \(modifierSymbol) (Settings > Keys); docs/keys.md has the same list."]
+        for (g, rows) in grouped {
+            lines.append("")
+            lines.append(g.title)
+            for r in rows {
+                let line = "  " + pad(r.display(modifierSymbol: modifierSymbol), keyWidth) + "  " + pad(r.title, titleWidth) + "  "
+                lines.append(r.note.map { line + pad(r.scope.title, scopeWidth) + "  " + $0 } ?? line + r.scope.title)
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// `polycarp-spaces keys --json`: an array of {id, keys, display, title, group, scope, note}, in table order; note
+    /// is null when the keys always work in their scope.
+    public static func json(modifierSymbol: String) -> String {
+        let rows: [[String: Any]] = all.map { r in
+            ["id": r.id, "keys": r.keys, "display": r.display(modifierSymbol: modifierSymbol), "title": r.title,
+             "group": r.group.rawValue, "scope": r.scope.rawValue, "note": r.note.map { $0 as Any } ?? NSNull()]
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("[]".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The tables docs/keys.md holds between its `keys:begin` and `keys:end` markers, with the default modifier ⌘.
+    /// `polycarp-spaces keys --markdown` prints it.
+    public static func markdown() -> String {
+        var lines: [String] = []
+        for (g, rows) in grouped {
+            if !lines.isEmpty { lines.append("") }
+            lines.append("## \(g.title)")
+            lines.append("")
+            lines.append("| Keys | What it does | Where it works | When |")
+            lines.append("| --- | --- | --- | --- |")
+            for r in rows {
+                lines.append("| \(r.display(modifierSymbol: "⌘")) | \(r.title) | \(r.scope.title) | \(r.note ?? "Always") |")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
 }

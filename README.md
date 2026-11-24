@@ -14,6 +14,9 @@ On a Mac it lives in `Polycarp.app`, with one Settings window, one set of permis
 version is on the way; see [the plan](PLAN.md). It grew from [BaneySpaces](https://github.com/baney75/baneyspaces)
 (`spaces/`). That repo stays up, so you can keep using the independent app.
 
+Every keyboard shortcut, by group and with where it works, is in [docs/keys.md](docs/keys.md); `polycarp-spaces keys`
+prints the same list with your modifier.
+
 Dictation is not part of Polycarp. [Silas](https://github.com/baney75/silas) is its own app: install and update it on its own.
 
 ## Install on a Mac

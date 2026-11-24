@@ -2,8 +2,8 @@ import BaneySpacesCore
 import Foundation
 import XCTest
 
-/// `Keymap.all` is the one list of Polycarp's shortcuts. These fail when the code takes a key with no row or a row
-/// outlives its key.
+/// `Keymap.all` is the one list of Polycarp's shortcuts. These fail when the code takes a key with no row, a row
+/// outlives its key, the CLI stops printing the table, or docs/keys.md says something else.
 final class KeymapTests: XCTestCase {
     // MARK: Every key the code takes has a row
 
@@ -268,5 +268,99 @@ final class KeymapTests: XCTestCase {
         XCTAssertEqual(Keymap.binding("workspace.switch")?.display(modifierSymbol: "⌘"), "⌘1...9")
         XCTAssertEqual(Keymap.binding("window.move")?.display(modifierSymbol: "⌃⌥"), "⌃⌥⇧1...9")
         XCTAssertEqual(KeyBinding(id: "x", keys: ["opt", "shift", "Return"], title: "x", group: .bar, scope: .global).display(modifierSymbol: "⌘"), "⌥⇧Return")
+    }
+
+    // MARK: The modifier, read the way the app reads it
+
+    func testTheModifierSymbolsMatchTheAppsModifier() throws {
+        let keys = try SourceText.code("Sources/BaneySpaces/Keys.swift")
+        let symbol = try XCTUnwrap(SourceText.block(after: "var symbol: String", in: keys))
+        for (raw, sym) in [("command", "⌘"), ("control", "⌃"), ("option", "⌥"), ("controlOption", "⌃⌥")] {
+            XCTAssertTrue(symbol.contains("case .\(raw): \"\(sym)\""), "the app's Modifier.\(raw) is no longer \(sym)")
+            XCTAssertEqual(Keymap.modifierSymbol(setting: raw), sym)
+        }
+        XCTAssertEqual(Keymap.modifierSymbol(setting: nil), "⌘")
+        XCTAssertEqual(Keymap.modifierSymbol(setting: "nonsense"), "⌘")
+        // The app reads "modifier" from its own defaults; the command reads the same key in the app's domain.
+        XCTAssertTrue(keys.contains("UserDefaults.standard.string(forKey: \"modifier\")"))
+        let cli = try SourceText.code("Sources/baneyspaces-cli/Keys.swift")
+        XCTAssertTrue(cli.contains("CFPreferencesCopyAppValue(\"modifier\" as CFString, Product.bundleID as CFString)"))
+        let plist = try String(contentsOf: SourceText.root.appendingPathComponent("Resources/Info.plist"), encoding: .utf8)
+        XCTAssertTrue(plist.contains("<key>CFBundleIdentifier</key><string>\(Product.bundleID)</string>"))
+    }
+
+    // MARK: polycarp-spaces keys
+
+    func testTheCommandIsWiredAndPrintsTheTable() throws {
+        let main = try SourceText.code("Sources/baneyspaces-cli/main.swift")
+        XCTAssertTrue(main.contains("case \"keys\":\n    KeysCommand.run(rest, remote: remoteHost != nil)"))
+        XCTAssertTrue(main.contains("  keys [--json]"), "the usage lists keys")
+        let cli = try SourceText.code("Sources/baneyspaces-cli/Keys.swift")
+        XCTAssertTrue(cli.contains("case []: print(Keymap.cheatSheet(modifierSymbol: symbol))"))
+        XCTAssertTrue(cli.contains("case [\"--json\"]: print(Keymap.json(modifierSymbol: symbol))"))
+        XCTAssertTrue(cli.contains("case [\"--markdown\"]: print(Keymap.markdown())"))
+    }
+
+    func testTheCheatSheetGroupsEveryRowWithTheModifier() {
+        let text = Keymap.cheatSheet(modifierSymbol: "⌃")
+        let lines = text.components(separatedBy: "\n")
+        XCTAssertTrue(lines[0].contains("Your modifier is ⌃"))
+        // Groups in order, each heading once, empty groups left out.
+        let headings = lines.filter { KeyBinding.Group.allCases.map(\.title).contains($0) }
+        XCTAssertEqual(headings, Keymap.grouped.map(\.group.title))
+        for b in Keymap.all {
+            let row = "  " + b.display(modifierSymbol: "⌃")
+            XCTAssertTrue(lines.contains { $0.hasPrefix(row) && $0.contains(b.title) && $0.contains(b.scope.title) && $0.hasSuffix(b.note ?? b.scope.title) }, b.id)
+        }
+        XCTAssertTrue(lines.contains { $0.hasPrefix("  ⌃1...9 ") && $0.contains("Go to workspace 1 to 9") })
+        // Each row sits under its own group's heading.
+        var current = ""
+        for line in lines {
+            if headings.contains(line) { current = line; continue }
+            guard line.hasPrefix("  ") else { continue }
+            let b = Keymap.all.first { line.hasPrefix("  " + $0.display(modifierSymbol: "⌃") + " ") && line.contains($0.title) }
+            XCTAssertEqual(b?.group.title, current, line)
+        }
+    }
+
+    func testTheJSONIsAnArrayOfEveryRow() throws {
+        let data = Data(Keymap.json(modifierSymbol: "⌥").utf8)
+        let rows = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        XCTAssertEqual(rows.count, Keymap.all.count)
+        for (row, b) in zip(rows, Keymap.all) {
+            XCTAssertEqual(Set(row.keys), ["id", "keys", "display", "title", "group", "scope", "note"])
+            if let note = b.note { XCTAssertEqual(row["note"] as? String, note) } else { XCTAssertTrue(row["note"] is NSNull, b.id) }
+            XCTAssertEqual(row["id"] as? String, b.id)
+            XCTAssertEqual(row["keys"] as? [String], b.keys)
+            XCTAssertEqual(row["display"] as? String, b.display(modifierSymbol: "⌥"))
+            XCTAssertEqual(row["title"] as? String, b.title)
+            XCTAssertEqual(row["group"] as? String, b.group.rawValue)
+            XCTAssertEqual(row["scope"] as? String, b.scope.rawValue)
+        }
+        let move = try XCTUnwrap(rows.first { $0["id"] as? String == "window.move" })
+        XCTAssertEqual(move["display"] as? String, "⌥⇧1...9")
+        XCTAssertEqual(move["keys"] as? [String], ["mod", "shift", "1...9"])
+    }
+
+    // MARK: docs/keys.md
+
+    static let docsBegin = "<!-- keys:begin -->\n"
+    static let docsEnd = "\n<!-- keys:end -->"
+
+    func testDocsKeysMatchesTheKeymap() throws {
+        let doc = try String(contentsOf: Repo.root.deletingLastPathComponent().appendingPathComponent("docs/keys.md"), encoding: .utf8)
+        let begin = try XCTUnwrap(doc.range(of: Self.docsBegin), "docs/keys.md lost its keys:begin marker")
+        let end = try XCTUnwrap(doc.range(of: Self.docsEnd, range: begin.upperBound..<doc.endIndex), "docs/keys.md lost its keys:end marker")
+        XCTAssertEqual(String(doc[begin.upperBound..<end.lowerBound]), Keymap.markdown(),
+                       "docs/keys.md disagrees with Keymap.all: put `swift run baneyspaces-cli keys --markdown` between its markers")
+        XCTAssertFalse(doc.contains("\u{2014}") || doc.contains("\u{2013}"), "no em or en dashes")
+    }
+
+    func testTheGuideAndTheReadmeLinkTheKeys() throws {
+        let top = Repo.root.deletingLastPathComponent()
+        let guide = try String(contentsOf: top.appendingPathComponent("docs/guide.md"), encoding: .utf8)
+        let readme = try String(contentsOf: top.appendingPathComponent("README.md"), encoding: .utf8)
+        XCTAssertTrue(guide.contains("(keys.md)") || guide.contains("docs/keys.md"), "docs/guide.md links docs/keys.md")
+        XCTAssertTrue(readme.contains("(docs/keys.md)"), "README.md links docs/keys.md")
     }
 }
