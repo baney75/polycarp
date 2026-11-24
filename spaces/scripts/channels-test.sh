@@ -262,6 +262,38 @@ for args in "--channel stable" "--channel" "--channel nightly --soak x" "--bogus
   out=$(scripts/release.sh $args 2>&1 </dev/null); code=$?
   [ $code = 1 ] && [[ "$out" == usage:* ]] || bad "release.sh $args: got exit $code \"$out\", want the usage line"
 done
+# No workflow starts on a pushed tag (publish.sh makes tags on every run). A push trigger takes tags too unless it names
+# branches and nothing else, and `create` fires for a new tag. Prints what starts <workflow>; nothing means it is fine.
+tag_start() {
+  npx -y js-yaml@4.1.0 "$1" 2>/dev/null | python3 -I -c '
+import json, sys
+on = json.load(sys.stdin)["on"]
+on = on if isinstance(on, dict) else dict.fromkeys([on] if isinstance(on, str) else on)
+push = on.get("push") or {}
+if "push" in on and (not {"branches", "branches-ignore"} & set(push) or {"tags", "tags-ignore"} & set(push)): print("push")
+if "create" in on: print("create")' 2>/dev/null || echo unreadable
+}
+for wf in ../.github/workflows/*.y*ml; do
+  t=$(tag_start "$wf"); [ -z "$t" ] || bad "${wf#../} starts on a pushed tag ($t)"
+done
+while IFS='|' read -r want yaml; do
+  printf '%s\n' "$yaml" > "$tmp/wf.yml"; expect "tag start: $yaml" "$(tag_start "$tmp/wf.yml")" "$want"
+done <<'CASES'
+|on: {push: {branches: [main], paths: [a]}}
+|on: {push: {branches-ignore: [x]}}
+|on: {pull_request: null, workflow_dispatch: null}
+|on: [pull_request]
+push|on: {push: {tags: ["nightly-*"]}}
+push|on: {push: {branches: [main], tags: [nightly]}}
+push|on: {push: {tags-ignore: [dev]}}
+push|on: {push: {paths: [a]}}
+push|on: {push: null}
+push|on: [pull_request, push]
+push|on: push
+create|on: {create: null}
+unreadable|on: {push
+unreadable|jobs: {}
+CASES
 # This repository is public: no job runs on a self-hosted runner, and the builds run on GitHub's hosted macOS.
 if grep -nE 'runs-on:.*self-hosted|^ *- *self-hosted' ../.github/workflows/*.yml; then bad "a workflow uses a self-hosted runner"; fi
 # Every job that runs release.sh runs on macos-15.
