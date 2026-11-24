@@ -369,7 +369,7 @@ if [ -n "$LEGACY_APP" ] && [ -x "$LEGACY_APP/Contents/Resources/bin/baneyspaces"
     [ -e "$HOME/.local/bin/$name" ] || [ -L "$HOME/.local/bin/$name" ] || ln -s "$LEGACY_APP/Contents/Resources/bin/baneyspaces" "$HOME/.local/bin/$name"
   done
 else
-  rm -rf "$HOME/.claude/skills/baneyspaces"
+  rm -rf "$HOME/.claude/skills/polycarp-spaces" "$HOME/.claude/skills/baneyspaces"
 fi
 
 step "Removing settings and the local signing key"

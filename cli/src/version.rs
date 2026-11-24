@@ -458,11 +458,7 @@ pub fn gather(d: &Device) -> Vec<Part> {
         },
         None => Part::absent("spaces command", "not installed"),
     });
-    let skill = d
-        .home
-        .as_ref()
-        .map(|h| h.join(".claude/skills/baneyspaces/SKILL.md"))
-        .filter(|p| p.is_file());
+    let skill = d.home.as_ref().and_then(|h| installed_skill(h));
     parts.push(match (skill, &app) {
         (None, _) => Part::absent("agent skill", "not installed"),
         (Some(path), Some((app_path, (_, build)))) => {
@@ -687,9 +683,49 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
     }
 }
 
+/// The installed agent skill: `polycarp-spaces`, or the `baneyspaces` copy an install from before the rename left,
+/// which the next `polycarp spaces skill install` replaces.
+pub(crate) fn installed_skill(home: &Path) -> Option<PathBuf> {
+    ["polycarp-spaces", "baneyspaces"]
+        .iter()
+        .map(|name| home.join(".claude/skills").join(name).join("SKILL.md"))
+        .find(|p| p.is_file())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_skill_is_found_under_its_new_name_first() {
+        let home = std::env::temp_dir().join(format!("polycarp-skill-{}", std::process::id()));
+        let skill = |name: &str| home.join(".claude/skills").join(name).join("SKILL.md");
+        let put = |name: &str| {
+            fs::create_dir_all(skill(name).parent().unwrap()).unwrap();
+            fs::write(skill(name), "x").unwrap();
+        };
+        let _ = fs::remove_dir_all(&home);
+        assert_eq!(installed_skill(&home), None, "none installed");
+        put("baneyspaces");
+        assert_eq!(
+            installed_skill(&home),
+            Some(skill("baneyspaces")),
+            "only the old copy"
+        );
+        put("polycarp-spaces");
+        assert_eq!(
+            installed_skill(&home),
+            Some(skill("polycarp-spaces")),
+            "both: the new one wins"
+        );
+        fs::remove_dir_all(home.join(".claude/skills/baneyspaces")).unwrap();
+        assert_eq!(
+            installed_skill(&home),
+            Some(skill("polycarp-spaces")),
+            "only the new one"
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
 
     const A: &str = "aaaaaaa1111111111111111111111111111111aa";
     const B: &str = "bbbbbbb2222222222222222222222222222222bb";
