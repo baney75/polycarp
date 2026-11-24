@@ -5,8 +5,8 @@
 //! `polycarp-spaces surfaces ... --json` and passes its envelope on as is, for the same reason
 //! (spaces/docs/surfaces.md); each style tool does the same with `polycarp-spaces style ... --json`
 //! (spaces/docs/style.md), the search tools with `polycarp-spaces search ... --json`, each paper tool with
-//! `polycarp-spaces paper ... --json`, and `keys_list` with `polycarp-spaces keys --json`, whose array it puts in the
-//! same envelope (docs/keys.md).
+//! `polycarp-spaces paper ... --json`, `keys_list` with `polycarp-spaces keys --json`, whose array it puts in the
+//! same envelope (docs/keys.md), and each filter tool with `polycarp-spaces filters ... --json`.
 
 use crate::theme::{self, ApiErr, Ctx};
 use serde_json::{json, Map, Value as Json};
@@ -60,6 +60,10 @@ Polycarp's launcher and new tab page do (bangs like !yt and the engine in search
 nothing. search_open performs the top result: it brings an open tab or window forward, or opens the page in the \
 default browser. Call it only when the person asked to go there.
 To tell the person which keys do what in Polycarp, read keys_list; it changes nothing.
+To hide posts in the person's feeds (X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn, Mastodon) by words, \
+patterns, accounts or kinds (shorts, promoted, reposts), or to hide parts of a named site's pages by CSS selector, \
+call filters_list, then filter_set one rule by id; filter_remove takes one away. Polycarp's own browser extension \
+applies them, behind a one-click Show bar.
 Every result is {ok, data} or {ok:false, error:{code, message, suggestion, data:{errors}}}.";
 
 fn obj(props: Json, required: &[&str]) -> Json {
@@ -463,6 +467,45 @@ pub(crate) fn tools() -> Vec<Tool> {
             destructive: false,
             idempotent: true,
         },
+        Tool {
+            name: "filters_list",
+            description: "The feed filters and page edits Polycarp's browser extension applies, from filters.json: each rule with its id, enabled, sites (empty is every site), words, patterns, accounts, kinds and hide. Read this before filter_set to see the ids in use.",
+            schema: obj(json!({}), &[]),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "filter_set",
+            description: "Add a feed filter or page edit, or replace the rule with the same id. Polycarp's browser extension hides matching posts on X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn and Mastodon behind a one-click Show bar; `hide` selectors hide page parts on the named sites. A rule needs at least one of words, patterns, accounts, kinds or hide; at most 200 rules, 200 entries a list, 200 characters an entry. Open pages pick the change up within 30 seconds, new pages at once. A refused rule wrote nothing; error.data.errors names the field.",
+            schema: obj(
+                json!({
+                    "id": {"type":"string","description":"1 to 64 of a-z, 0-9 and -, as no-shorts. An existing id is replaced."},
+                    "enabled": {"type":"boolean","description":"false keeps the rule but stops it. Default true."},
+                    "sites": {"type":"array","items":{"type":"string"},"description":"Hosts it applies to, as youtube.com or x.com; empty or left out is every site. Needed for hide."},
+                    "words": {"type":"array","items":{"type":"string"},"description":"Hide posts that contain any of these words or phrases."},
+                    "patterns": {"type":"array","items":{"type":"string"},"description":"Hide posts that match any of these JavaScript regular expressions (the source, no slashes). Refused: one that does not compile, a repeated group that holds a quantifier as (a+)+, a count over {20}, a backreference or a lookbehind."},
+                    "accounts": {"type":"array","items":{"type":"string"},"description":"Hide posts by these handles, as @name."},
+                    "kinds": {"type":"array","items":{"type":"string","enum":["shorts","promoted","reposts"]},"description":"Hide these kinds of post: shorts, promoted, reposts."},
+                    "hide": {"type":"array","items":{"type":"string"},"description":"CSS selectors of page parts to hide on the named sites, as #sidebar or [data-testid=trend]. Refused: { } ; \\ @ < /* */ or a line break, or a quote, bracket or parenthesis left open."}
+                }),
+                &["id"],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
+            name: "filter_remove",
+            description: "Remove one feed filter or page edit by its id from filters_list. Open pages show what it hid again within 30 seconds. To undo, filter_set the rule filters_list gave before.",
+            schema: obj(
+                json!({"id": {"type":"string","description":"The rule's id, from filters_list."}}),
+                &["id"],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
     ]
 }
 
@@ -636,6 +679,12 @@ pub(crate) fn call(
             Ok(a) => style_call(name, &a),
         });
     }
+    if name.starts_with("filter") {
+        return Some(match Args::new(&tool, args) {
+            Err(e) => theme::envelope(&Err(e)),
+            Ok(a) => filters_call(name, &a),
+        });
+    }
     if name == "search" || name == "search_open" {
         return Some(match Args::new(&tool, args) {
             Err(e) => theme::envelope(&Err(e)),
@@ -781,6 +830,26 @@ fn paper_call(name: &str, a: &Args) -> theme::Envelope {
     };
     match built() {
         Ok(argv) => spaces_run_within(argv, "paper get", PAPER_LIMIT),
+        Err(e) => theme::envelope(&Err(e)),
+    }
+}
+
+/// Runs one filter tool through `polycarp-spaces filters ... --json` (no shell) and passes its envelope on. The rule
+/// goes as one JSON argument; the command checks every field.
+fn filters_call(name: &str, a: &Args) -> theme::Envelope {
+    let built = || -> Result<Vec<String>, ApiErr> {
+        Ok(match name {
+            "filters_list" => vec!["filters".into(), "ls".into()],
+            "filter_set" => vec![
+                "filters".into(),
+                "set".into(),
+                Json::Object(a.map.clone()).to_string(),
+            ],
+            _ => vec!["filters".into(), "rm".into(), a.need("id")?.into()],
+        })
+    };
+    match built() {
+        Ok(argv) => spaces_run(argv, "filters ls"),
         Err(e) => theme::envelope(&Err(e)),
     }
 }

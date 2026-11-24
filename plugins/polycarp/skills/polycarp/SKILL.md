@@ -1,6 +1,6 @@
 ---
 name: polycarp
-description: Use when the person asks about their Polycarp desk on this Mac, such as workspaces, windows, the top bar, the desktop picture, the theme, the launcher or finding a file.
+description: Use when the person asks about their Polycarp desk on this Mac, such as workspaces, windows, the top bar, the desktop picture, the theme, the launcher, finding a file or filtering their feeds.
 ---
 
 # Drive Polycarp
@@ -13,6 +13,7 @@ Call one tool per step. Read the answer before the next step.
 - "List my workspaces", "what windows are open", "bring Safari forward", "go to workspace 2".
 - "Change the desktop picture", "make the clock 24 hour", "switch to a dark theme".
 - "Open the launcher", "find my tax letter".
+- "Hide YouTube Shorts", "hide posts about the election on X".
 
 ## Steps
 
@@ -24,16 +25,16 @@ Call one tool per step. Read the answer before the next step.
 3. Make a change.
    - Window, workspace and launcher tools need the running app: call `app_status` first. If it is not running, say
      so and stop.
-   - Surface, paper, theme and file tools work without the app. Do not call `app_status` for them.
+   - Surface, paper, filter, theme and file tools work without the app. Do not call `app_status` for them.
    - To act on a window, call `app_items` to find it, then the change tool.
    - Call the one change tool from the list below.
 4. Check the change.
    - After `app_focus`, call `app_items`. After `surfaces_set`, call `surfaces_get`. After `theme_set`, call
-     `theme_current`. After `paper_set`, the tool's own answer is the check.
+     `theme_current`. After `paper_set` or `filter_set`, the tool's own answer is the check.
    - After `launcher_open` or `workspace_switch`, the tool's own answer is the check. Call nothing more.
 5. Tell the person in one short sentence what changed.
 
-## The 12 calls
+## The 13 calls
 
 | Goal | Tool | Arguments |
 | --- | --- | --- |
@@ -49,6 +50,7 @@ Call one tool per step. Read the answer before the next step.
 | Which theme is on? | `theme_current` | `{}` |
 | Switch theme | `theme_set` | `{"name": "polycarp", "mode": "dark"}` |
 | Find a file | `files_search` | `{"query": "tax letter"}` |
+| Hide YouTube Shorts | `filter_set` | `{"id": "no-shorts", "sites": ["youtube.com"], "kinds": ["shorts"]}` |
 
 More surface examples, each a `surfaces_set` call:
 

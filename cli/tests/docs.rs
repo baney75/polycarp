@@ -118,6 +118,8 @@ fn the_guide_and_the_server_list_the_same_mcp_tools() {
         "style_",
         "search_",
         "keys_",
+        "filters_",
+        "filter_",
     ]
     .iter()
     .flat_map(|prefix| guide.match_indices(prefix))

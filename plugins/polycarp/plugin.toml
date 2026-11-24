@@ -3,7 +3,7 @@
 # `local-studio plugin grant polycarp mcp-server`. Docs: docs/agents.md, "Local Studio".
 id = "polycarp"
 version = "0.4.0"
-description = "Drive Polycarp: workspaces, windows, surfaces, paper, theme, search, launcher."
+description = "Drive Polycarp: workspaces, windows, surfaces, paper, feed filters, theme, search, launcher."
 skills = "skills"
 capabilities = ["mcp-server"]
 
