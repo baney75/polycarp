@@ -99,7 +99,7 @@ invalid) and the person's own choice is back, as they left it. `baneyspaces set 
 still stores its value while a Polycarp theme is in force; it draws once the file is gone. The answer says
 so: a `note` line, "saved, but not drawn until the Polycarp theme is removed ...".
 
-**Reading.** Strictly, from one file handle: a regular file of at most 256 KB; `schema` 1 (a newer one is refused with a line that says to update the app); colors `#rrggbb`;
+**Reading.** Strictly, from one file handle: a regular file of at most 256 KB; `schema` 1 or 2 (2 only adds keys; a newer one is refused with a line that says to update the app, an older or non-whole one is refused); colors `#rrggbb`;
 numbers in range and really numbers; known enums; font stacks without CSS; and the pairs the UI
 draws text on at 4.5:1 in both modes: every pair `polycarp theme` checks (foreground, strong and muted
 on background, surface and sunken; foreground and strong on selection; urgent, working, done and
