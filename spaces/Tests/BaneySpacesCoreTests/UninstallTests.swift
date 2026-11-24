@@ -55,6 +55,7 @@ final class UninstallTests: XCTestCase {
         try write("Library/Application Support/Polycarp/state.json", "{}")
         try write("Library/Caches/com.baney.polycarp/x", "")
         try write(".claude/skills/baneyspaces/SKILL.md", "skill")
+        try write(".claude/skills/polycarp-spaces/SKILL.md", "skill")
         try write(".claude/skills/other/SKILL.md", "theirs")
         try write(".grok/hooks/baneyspaces.json", "{}")
         try write(".grok/hooks/theirs.json", "{}")
@@ -84,7 +85,7 @@ final class UninstallTests: XCTestCase {
 
         // Gone: the app, its data, its command, its skill, Grok's hook file.
         for gone in [app, "Library/Application Support/Polycarp", "Library/Caches/com.baney.polycarp",
-                     ".claude/skills/baneyspaces", ".grok/hooks/baneyspaces.json", ".local/bin/baneyspaces", ".local/bin/polycarp-spaces", ".local/bin/ghostdeck"] {
+                     ".claude/skills/baneyspaces", ".claude/skills/polycarp-spaces", ".grok/hooks/baneyspaces.json", ".local/bin/baneyspaces", ".local/bin/polycarp-spaces", ".local/bin/ghostdeck"] {
             XCTAssertNil(try? fm.attributesOfItem(atPath: path(gone).path), "\(gone) is still there")
         }
         // Kept: other skills, other Grok hooks, other commands.

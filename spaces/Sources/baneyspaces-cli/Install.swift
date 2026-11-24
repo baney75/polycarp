@@ -94,9 +94,7 @@ enum Hooks {
 
 /// The agent skill: tells Claude Code, Grok or any agent that reads skills how to use BaneySpaces.
 enum Skill {
-    static var dest: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/skills/baneyspaces/SKILL.md")
-    }
+    static var dest: URL { SkillInstall.dest(home: FileManager.default.homeDirectoryForCurrentUser) }
 
     /// The copy in the app bundle, next to this binary (Contents/Resources/bin/baneyspaces).
     static var source: URL? {
@@ -106,14 +104,9 @@ enum Skill {
         return FileManager.default.fileExists(atPath: c.path) ? c : nil
     }
 
+    /// Writes the bundle's copy and removes the product's old `baneyspaces` copy (rules in SkillInstall).
     static func install() -> String {
-        guard let src = source, let data = FileManager.default.contents(atPath: src.path) else {
-            return "couldn't find SKILL.md beside the binary; install Polycarp with make install"
-        }
-        do {
-            try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: dest, options: .atomic)
-        } catch { return "couldn't write \(dest.path): \(error.localizedDescription)" }
-        return "installed \(dest.path)"
+        SkillInstall.install(bundle: source.flatMap { FileManager.default.contents(atPath: $0.path) },
+                             home: FileManager.default.homeDirectoryForCurrentUser)
     }
 }

@@ -63,7 +63,7 @@ fi
 # (`skill print`) or this checkout's. A copy someone edited, or the Mac's, stays.
 REF="$(mktemp -d)"
 if [ -n "$BS" ]; then "$BS" skill print > "$REF/binary" 2>/dev/null || rm -f "$REF/binary"; fi
-for skill in "$HOME/.claude/skills/baneyspaces/SKILL.md" "$HOME/.agents/skills/baneyspaces/SKILL.md"; do
+for skill in "$HOME"/.claude/skills/{polycarp-spaces,baneyspaces}/SKILL.md "$HOME"/.agents/skills/{polycarp-spaces,baneyspaces}/SKILL.md; do
   [ -f "$skill" ] || continue
   if { [ -s "$REF/binary" ] && cmp -s "$REF/binary" "$skill"; } || cmp -s "$HERE/../skill/SKILL.md" "$skill"; then
     say "remove the agent skill $skill"

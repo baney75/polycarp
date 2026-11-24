@@ -59,7 +59,7 @@ usage: \(me) <command>
                               --at SECS: when it happened (unix seconds, default now;
                               how long a prompt counts is timed from when the app gets it)
   hooks install|uninstall|status   Claude Code and Grok hooks
-  skill install               the agent skill into ~/.claude/skills/baneyspaces
+  skill install               the agent skill into ~/.claude/skills/polycarp-spaces
   doctor                      what's working and what isn't
   newtab-host                 the new tab page's native messaging host: one framed request on stdin,
                               one framed reply on stdout (docs/newtab.md)
