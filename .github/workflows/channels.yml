@@ -21,6 +21,6 @@ jobs:
           persist-credentials: false
       - name: Version strings, the feed and the Info.plist template
         run: bash spaces/scripts/channels-test.sh && bash spaces/scripts/tests/channel-gates-test.sh \
-          && bash spaces/scripts/tests/install-arch-test.sh
+          && bash spaces/scripts/tests/install-arch-test.sh && bash spaces/scripts/tests/install-source-test.sh
       - name: Setting the signing secrets from the owner's Mac
         run: bash spaces/scripts/tests/set-ci-signing-test.sh

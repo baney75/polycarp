@@ -141,8 +141,8 @@ main() {
     if [ "$(uname -m)" = arm64 ]; then export BANEYSPACES_ARM64_ONLY=1; fi
     cd "$SRC/spaces"
     step "Building the hands engine" scripts/build-engine.sh
-    # A build here is a local build (bundle.sh), whatever the environment says.
-    step "Building Polycarp (a few minutes the first time)" env -u POLYCARP_RELEASE scripts/bundle.sh
+    # A build here is a local build (bundle.sh), whatever the environment says. An older checkout reads POLYCARP_CHANNEL.
+    step "Building Polycarp (a few minutes the first time)" env -u POLYCARP_RELEASE -u POLYCARP_CHANNEL scripts/bundle.sh
     NEW_APP="$PWD/build/Polycarp.app"
   fi
 

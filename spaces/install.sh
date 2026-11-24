@@ -146,6 +146,13 @@ fi
 
 # The release's tag: the newest build of main, unless BANEYSPACES_REF names another.
 REF="$TAG"
+# While a publish replaces the rolling release its tag is gone for a moment, so a default install builds main, where it
+# comes from. ls-remote exits 2 only when GitHub answered without that ref; any other failure keeps it. A ref or commit
+# asked for is never swapped for another.
+if [ -z "${BANEYSPACES_REF:-}" ] && [ -z "${BANEYSPACES_COMMIT:-}" ]; then
+  absent=0; git ls-remote --exit-code "$REPO_URL" "refs/tags/$REF" "refs/heads/$REF" >/dev/null 2>&1 || absent=$?
+  if [ "$absent" = 2 ]; then REF=main; fi
+fi
 
 step "Downloading Polycarp ($REF)"
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$WORK/baneyspaces"
@@ -157,6 +164,8 @@ step "Building (about a minute the first time)"
 # The whole build log is kept, so a failure shows its real cause instead of the last few lines.
 LOG="${TMPDIR:-/tmp}/baneyspaces-install.log"
 SRC="$WORK/baneyspaces/spaces"
+# A build here is a local build (bundle.sh), whatever the environment says. An older checkout reads POLYCARP_CHANNEL.
+unset POLYCARP_RELEASE POLYCARP_CHANNEL
 if [ -f "$SRC/scripts/install-app.sh" ]; then
   # Build, then place the app with that build's own install step, which knows where to put it.
   if ! { "$SRC/scripts/bundle.sh" && bash "$SRC/build/Polycarp.app/Contents/Resources/install-app.sh" "$SRC/build/Polycarp.app" </dev/null; } >"$LOG" 2>&1; then

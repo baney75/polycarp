@@ -290,7 +290,6 @@ put download/nightly nightly-zip
 expect "install: nightly" "$(pick)" "file://$rel/download/nightly nightly-zip"
 expect "install: POLYCARP_CHANNEL is ignored" "$(pick POLYCARP_CHANNEL=dev)" "file://$rel/download/nightly nightly-zip"
 grep -qF 'want=$(curl -fsSL "$FROM/Polycarp.zip.sha256"' ../install.sh || bad "install.sh takes the checksum from another release than the zip"
-grep -qF 'env -u POLYCARP_RELEASE scripts/bundle.sh' ../install.sh || bad "a source build in install.sh can come out as a release build"
 # A fetch that fails for any reason but a missing file (a blip, a 5xx) stops; it never builds main instead.
 ib="$tmp/install-bin"; mkdir -p "$ib"
 real_curl=$(command -v curl)
