@@ -19,8 +19,7 @@ stub codesign 'exit "${STUB_CODESIGN:-0}"'
 stub curl 'printf 404'
 # The checkout both installers build: its bundle.sh records the release variables it was given.
 src="$tmp/src/spaces"; mkdir -p "$src/scripts"
-printf '#!/bin/bash\nexit 0\n' > "$src/scripts/build-engine.sh"
-cp "$src/scripts/build-engine.sh" "$src/scripts/install-app.sh"
+printf '#!/bin/bash\nexit 0\n' > "$src/scripts/install-app.sh"
 cat > "$src/scripts/bundle.sh" <<'SH'
 #!/bin/bash
 cd "$(dirname "$0")/.."

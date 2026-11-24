@@ -79,9 +79,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check the install scripts
-        run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh && bash -n scripts/build-ghostty.sh && bash -n scripts/fetch-zig.sh
-      - name: Build the hands engine
-        run: BANEYSPACES_ARM64_ONLY=1 scripts/build-engine.sh
+        run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-ghostty.sh && bash -n scripts/fetch-zig.sh
       - name: Test
         run: swift test
 
@@ -112,8 +110,6 @@ jobs:
           xcrun -sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
       - name: Build libghostty
         run: scripts/build-ghostty.sh
-      - name: Build the hands engine
-        run: BANEYSPACES_ARM64_ONLY=1 scripts/build-engine.sh
       - name: Build with the terminal linked
         run: |
           POLYCARP_TERMINAL=1 swift build
@@ -271,13 +267,11 @@ jobs:
           key: spaces-bundle
       - name: Bundle the app
         run: BANEYSPACES_ADHOC=1 BANEYSPACES_ARM64_ONLY=1 scripts/bundle.sh
-      - name: The licence of ported code is in the bundle
-        run: |
-          test -s build/Polycarp.app/Contents/Resources/licenses/cua-driver-MIT.txt
-      - name: The app is signed and carries no browser helper (it was removed)
+      - name: The app is signed and carries no browser helper or computer use engine (they were removed)
         run: |
           codesign --verify --deep --strict build/Polycarp.app
           test ! -e build/Polycarp.app/Contents/Resources/browser
+          test ! -e build/Polycarp.app/Contents/Frameworks
   ci-ok:
     if: always()
     needs: [changes, cli, spaces, spaces-terminal, spaces-windows, spaces-windows-live, spaces-windows-speed, spaces-bundle]
