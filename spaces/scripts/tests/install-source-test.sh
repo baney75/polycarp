@@ -27,13 +27,14 @@ cd "$(dirname "$0")/.."
 echo "release=${POLYCARP_RELEASE-unset} channel=${POLYCARP_CHANNEL-unset}" > "$STUB_OUT/bundle"
 mkdir -p build/Polycarp.app/Contents/Resources
 cp scripts/install-app.sh build/Polycarp.app/Contents/Resources/install-app.sh
+echo "built Polycarp"
 SH
 chmod +x "$src"/scripts/*.sh
-# STUB_LSREMOTE: what ls-remote exits with (2: no such ref). clone records the ref and copies the checkout.
+# STUB_LSREMOTE: what ls-remote exits with when asked for the nightly tag (2: no such ref; without --exit-code git says 0). clone records the ref and copies the checkout.
 stub git '
 while [ "$1" = -c ]; do shift 2; done
 case "$1" in
-  ls-remote) exit "${STUB_LSREMOTE:-0}" ;;
+  ls-remote) case " $* " in *" --exit-code "*" refs/tags/nightly "*) exit "${STUB_LSREMOTE:-0}" ;; *) exit 0 ;; esac ;;
   clone) while [ $# -gt 1 ]; do [ "$1" != --branch ] || echo "$2" > "$STUB_OUT/ref"; shift; done; cp -R "$STUB_SRC" "$1" ;;
   rev-parse|-C) echo "$STUB_HEAD" ;;
 esac'
@@ -41,7 +42,7 @@ esac'
 ref() {
   local o; o=$(mktemp -d "$tmp/run.XXXX"); mkdir -p "$o/dest" "$o/t"
   env -u BANEYSPACES_ZIP -u BANEYSPACES_FROM_SOURCE -u BANEYSPACES_COMMIT -u BANEYSPACES_REF HOME="$o" TMPDIR="$o/t" STUB_OUT="$o" \
-    STUB_SRC="$tmp/src" BANEYSPACES_DEST_DIR="$o/dest" PATH="$b:$PATH" "$@" bash install.sh </dev/null >"$o/out" 2>&1
+    STUB_SRC="$tmp/src" BANEYSPACES_DEST_DIR="$o/dest" PATH="$b:$PATH" "$@" bash install.sh </dev/null >"$o/out" 2>&1 || bad "spaces/install.sh${*:+ with $*}: $(tail -3 "$o/out")"
   out=$o; got=$(cat "$o/ref" 2>/dev/null || cat "$o/out")
 }
 ref; expect "nightly is there" "$got" nightly
@@ -55,8 +56,8 @@ ref POLYCARP_RELEASE=1 POLYCARP_CHANNEL=nightly
 expect "spaces/install.sh: the build's variables" "$(cat "$out/bundle" 2>/dev/null)" "release=unset channel=unset"
 
 # The root install.sh on a checkout, in its test mode.
-o="$tmp/root"; mkdir -p "$o/dest"
-env -u POLYCARP_ZIP -u POLYCARP_REF HOME="$o" STUB_OUT="$o" BANEYSPACES_DEST_DIR="$o/dest" POLYCARP_SOURCE="$tmp/src" \
+o="$tmp/root"; mkdir -p "$o/dest"; touch "$o/config.toml"   # a config of its own, so it sets no theme
+env -u POLYCARP_ZIP -u POLYCARP_REF HOME="$o" POLYCARP_CONFIG_DIR="$o" STUB_OUT="$o" BANEYSPACES_DEST_DIR="$o/dest" POLYCARP_SOURCE="$tmp/src" \
   POLYCARP_RELEASE=1 POLYCARP_CHANNEL=nightly PATH="$b:$PATH" bash ../install.sh </dev/null >"$o/out" 2>&1 || bad "install.sh: $(cat "$o/out")"
 expect "install.sh: the build's variables" "$(cat "$o/bundle" 2>/dev/null)" "release=unset channel=unset"
 
