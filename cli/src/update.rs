@@ -749,6 +749,11 @@ fn git_line(dir: &Path, args: &[&str]) -> Option<String> {
 
 const SOURCE_FILE: &str = "source.toml";
 
+// A `polycarp` that follows a nightly or stable ref saved in source.toml first checks that this file at that
+// ref contains the text on the next line, then builds it and hands the update to it. Keep the line: without
+// it those installs stop at that check on every update.
+// fn recorded_channel(
+
 /// The checkout recorded by an earlier `polycarp update --source`. Any other key in the file is ignored.
 fn recorded_source(config: &Path) -> Option<PathBuf> {
     toml::from_str::<toml::Table>(&fs::read_to_string(config.join(SOURCE_FILE)).ok()?)
@@ -805,12 +810,15 @@ is asked to update itself. On Windows this is not supported yet.
 struct Args {
     options: Options,
     source: Option<PathBuf>,
+    /// `--channel <c>` was given. It changes nothing: every install updates from main.
+    channel_ignored: bool,
 }
 
 fn parse(args: &[OsString]) -> Result<Args, String> {
     let mut out = Args {
         options: Options::default(),
         source: None,
+        channel_ignored: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -822,6 +830,11 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
             Some("--finish") => {
                 out.options.finish = true;
                 out.options.yes = true;
+            }
+            // Not in the usage text: a script or job that passes it keeps updating.
+            Some("--channel") => {
+                it.next();
+                out.channel_ignored = true;
             }
             Some("--source") => {
                 let path = it.next().ok_or("--source needs the path of a checkout")?;
@@ -1042,6 +1055,9 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
             return 2;
         }
     };
+    if parsed.channel_ignored {
+        eprintln!("polycarp update: --channel is ignored. Every install updates from main.");
+    }
     let Some(home) = device.home.clone() else {
         eprintln!(
             "polycarp update: the home folder is not set, so there is nowhere to install to."
@@ -1497,13 +1513,21 @@ mod tests {
     }
 
     #[test]
-    fn channel_is_an_unknown_option() {
+    fn channel_is_ignored() {
         let parsed = |a: &[&str]| parse(&a.iter().map(OsString::from).collect::<Vec<_>>());
-        assert!(parsed(&[]).is_ok());
-        assert_eq!(
-            parsed(&["--channel", "nightly"]).err().as_deref(),
-            Some("unknown option --channel")
-        );
+        assert!(!parsed(&[]).unwrap().channel_ignored);
+        let p = parsed(&["--yes", "--channel", "dev", "--check"]).unwrap();
+        assert!(p.channel_ignored);
+        assert!(p.options.yes && p.options.check);
+        assert!(parsed(&["--stable"]).is_err());
+    }
+
+    /// An older `polycarp` following a saved nightly or stable ref greps the ref's copy of this file for the
+    /// marker before it builds it. Without the marker those installs stop on every update.
+    #[test]
+    fn an_older_polycarp_on_a_saved_ref_can_still_build_this_file() {
+        let marker = concat!("fn recorded", "_channel(");
+        assert!(include_str!("update.rs").contains(marker));
     }
 
     #[test]
