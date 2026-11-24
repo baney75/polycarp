@@ -151,7 +151,13 @@ REF="$TAG"
 # asked for is never swapped for another.
 if [ -z "${BANEYSPACES_REF:-}" ] && [ -z "${BANEYSPACES_COMMIT:-}" ]; then
   absent=0; git ls-remote --exit-code "$REPO_URL" "refs/tags/$REF" "refs/heads/$REF" >/dev/null 2>&1 || absent=$?
-  if [ "$absent" = 2 ]; then REF=main; fi
+  if [ "$absent" = 2 ]; then
+    # A build here would take a ready-made copy's place with another signature, and macOS would ask again.
+    if [ "$FROM_SOURCE" != 1 ] && [ -n "$EXISTING" ]; then
+      fail "a new build is being published right now. Nothing was changed; try again in a minute."
+    fi
+    REF=main
+  fi
 fi
 
 step "Downloading Polycarp ($REF)"

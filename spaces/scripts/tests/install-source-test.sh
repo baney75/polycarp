@@ -1,6 +1,6 @@
 #!/bin/bash
 # What the two installers build from source. spaces/install.sh takes the nightly tag, or main while a publish has that tag
-# down, and never swaps a ref or commit it was given. Neither installer passes a release variable on to bundle.sh. Runs the
+# down, and never swaps a ref or commit it was given, or a ready-made copy for a local build. Neither installer passes a release variable on to bundle.sh. Runs the
 # real installers with stand-ins for the Mac's tools, curl and git (CI: channels.yml). Exit 0 only when every check passed.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -15,7 +15,7 @@ stub sw_vers 'echo 15.0'
 stub xcode-select 'exit 0'
 stub xcrun 'exit 0'
 stub cargo 'exit 0'
-stub codesign 'exit 0'
+stub codesign 'exit "${STUB_CODESIGN:-0}"'
 stub curl 'printf 404'
 # The checkout both installers build: its bundle.sh records the release variables it was given.
 src="$tmp/src/spaces"; mkdir -p "$src/scripts"
@@ -30,24 +30,30 @@ cp scripts/install-app.sh build/Polycarp.app/Contents/Resources/install-app.sh
 echo "built Polycarp"
 SH
 chmod +x "$src"/scripts/*.sh
-# STUB_LSREMOTE: what ls-remote exits with when asked for the nightly tag (2: no such ref; without --exit-code git says 0). clone records the ref and copies the checkout.
+# STUB_LSREMOTE: what ls-remote exits with when asked for a tag (2: no such ref; without --exit-code git says 0). clone records the ref and copies the checkout.
 stub git '
 while [ "$1" = -c ]; do shift 2; done
 case "$1" in
-  ls-remote) case " $* " in *" --exit-code "*" refs/tags/nightly "*) exit "${STUB_LSREMOTE:-0}" ;; *) exit 0 ;; esac ;;
+  ls-remote) case " $* " in *" --exit-code "*" refs/tags/"*) exit "${STUB_LSREMOTE:-0}" ;; *) exit 0 ;; esac ;;
   clone) while [ $# -gt 1 ]; do [ "$1" != --branch ] || echo "$2" > "$STUB_OUT/ref"; shift; done; cp -R "$STUB_SRC" "$1" ;;
   rev-parse|-C) echo "$STUB_HEAD" ;;
 esac'
-# The ref spaces/install.sh clones, under the environment given.
+# The ref spaces/install.sh clones, under the environment given. app=1: a copy is installed. want: the exit status.
 ref() {
-  local o; o=$(mktemp -d "$tmp/run.XXXX"); mkdir -p "$o/dest" "$o/t"
+  local o rc=0; o=$(mktemp -d "$tmp/run.XXXX"); mkdir -p "$o/dest" "$o/t"
+  [ -z "${app:-}" ] || mkdir "$o/dest/Polycarp.app"
   env -u BANEYSPACES_ZIP -u BANEYSPACES_FROM_SOURCE -u BANEYSPACES_COMMIT -u BANEYSPACES_REF HOME="$o" TMPDIR="$o/t" STUB_OUT="$o" \
-    STUB_SRC="$tmp/src" BANEYSPACES_DEST_DIR="$o/dest" PATH="$b:$PATH" "$@" bash install.sh </dev/null >"$o/out" 2>&1 || bad "spaces/install.sh${*:+ with $*}: $(tail -3 "$o/out")"
-  out=$o; got=$(cat "$o/ref" 2>/dev/null || cat "$o/out")
+    STUB_SRC="$tmp/src" BANEYSPACES_DEST_DIR="$o/dest" PATH="$b:$PATH" "$@" bash install.sh </dev/null >"$o/out" 2>&1 || rc=$?
+  [ $rc = "${want:-0}" ] || bad "spaces/install.sh${*:+ with $*} exited $rc: $(tail -3 "$o/out")"
+  out=$o; got=$(cat "$o/ref" 2>/dev/null || tail -1 "$o/out")
 }
 ref; expect "nightly is there" "$got" nightly
 ref STUB_LSREMOTE=2; expect "nightly is being replaced" "$got" main
 ref STUB_LSREMOTE=2 BANEYSPACES_FROM_SOURCE=1; expect "a source build while nightly is being replaced" "$got" main
+app=1 want=1 ref STUB_LSREMOTE=2; expect "a ready-made copy while nightly is being replaced" "$got" \
+  "Polycarp install failed: a new build is being published right now. Nothing was changed; try again in a minute."
+app=1 ref STUB_LSREMOTE=2 STUB_CODESIGN=1; expect "a local copy while nightly is being replaced" "$got" main
+app=1 ref; expect "a ready-made copy and nightly is there" "$got" nightly
 ref STUB_LSREMOTE=128; expect "GitHub didn't answer" "$got" nightly
 ref STUB_LSREMOTE=2 BANEYSPACES_REF=nightly; expect "nightly asked for by name" "$got" nightly
 ref STUB_LSREMOTE=2 BANEYSPACES_REF=v0.2.0; expect "another tag" "$got" v0.2.0
