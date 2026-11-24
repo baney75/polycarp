@@ -71,7 +71,6 @@ final class InstallScriptTests: XCTestCase {
     func testTheDownloadUsesNoAPIAndTellsAMissingAppFromAFailure() throws {
         let install = try read("install.sh")
         XCTAssertFalse(install.contains("api.github.com"))
-        XCTAssertTrue(install.contains("$BASE/latest"))
         XCTAssertTrue(install.contains("$BASE/download/$TAG/Polycarp.zip"))
         XCTAssertTrue(install.contains("%{http_code}"))
         XCTAssertTrue(install.contains("404) echo"))
@@ -164,14 +163,14 @@ final class InstallScriptTests: XCTestCase {
         XCTAssertLessThan(guardAt, try index(of: "rm -rf \"$DEST\"", in: script))
     }
 
-    func testTheLatestReleaseIsReadFromTheRedirectBeforeDownloading() throws {
+    /// One stream (docs/releases.md): with no tag named, the download and the source build are both the `nightly`
+    /// release, the newest build of main. Nothing looks up a stable release any more.
+    func testTheDownloadAndTheSourceBuildAreTheNightlyRelease() throws {
         let install = try read("install.sh")
-        XCTAssertTrue(install.contains("%{redirect_url}"))
-        XCTAssertTrue(install.contains("/releases/tag/"))
-        XCTAssertFalse(install.contains("url_effective"))
-        XCTAssertLessThan(try index(of: "%{redirect_url}", in: install), try index(of: #"ZIP_URL="$BASE/download/$TAG/Polycarp.zip""#, in: install))
-        // The source build uses that tag too.
-        XCTAssertTrue(install.contains(#"REF="${BANEYSPACES_REF:-$LATEST_TAG}""#))
+        XCTAssertTrue(install.contains(#"TAG="${BANEYSPACES_REF:-nightly}""#))
+        XCTAssertTrue(install.contains(#"REF="$TAG""#))
+        XCTAssertFalse(install.contains("$BASE/latest"))
+        XCTAssertFalse(install.contains("%{redirect_url}"))
     }
 
     func testABackgroundUpdateNeverOpensAppleInstallerAndTheSourceBuildUsesItsOwnInstallStep() throws {
@@ -204,16 +203,6 @@ final class InstallScriptTests: XCTestCase {
         XCTAssertLessThan(try index(of: failed, in: updater), try index(of: compared, in: updater))
         XCTAssertLessThan(try index(of: compared, in: updater), try index(of: "self.available = release", in: updater))
         XCTAssertEqual(updater.components(separatedBy: "self.checking = false").count - 1, 2)
-    }
-
-    func testReleaseRefusesAPublishedReleaseAndAnUnpushedTag() throws {
-        let release = try read("scripts/release.sh")
-        let upload = try index(of: "gh release upload", in: release)
-        XCTAssertLessThan(try index(of: ".draft", in: release), upload)
-        XCTAssertLessThan(try index(of: "git ls-remote origin", in: release), upload)
-        XCTAssertTrue(release.contains("is already published"))
-        // No workflow starts on a pushed tag (docs/releases.md); the old tag-started one is gone.
-        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".github/workflows/release.yml").path))
     }
 
     private func runSigningRestore(home: URL) throws -> String {
@@ -301,31 +290,6 @@ final class InstallScriptTests: XCTestCase {
         _ = try runSigningRestore(home: home)
         XCTAssertEqual(restored(home, "polycarp-signing.keychain-db"), "new")
         XCTAssertTrue(FileManager.default.fileExists(atPath: home.appendingPathComponent("Library/Polycarp Release Signing 20261030-101010").path), "the older one is left alone")
-    }
-
-    func testReleaseIsADraftUntilTheUploadIsCheckedAndPublished() throws {
-        let release = try read("scripts/release.sh")
-        let build = try index(of: #"step "Building $TAG""#, in: release)
-        let before = try index(of: "scripts/verify-release.sh build", in: release)
-        let upload = try index(of: "gh release upload", in: release)
-        let after = try index(of: #"cmp -s "build/$f" "$BACK/$f""#, in: release)
-        XCTAssertLessThan(build, before)
-        XCTAssertLessThan(before, upload)
-        XCTAssertLessThan(upload, after)
-        // Latest is published once, only by --soak, only after a real soak receipt for this commit, and only
-        // after the uploaded files are checked again (spaces/AGENTS.md "Stable releases").
-        XCTAssertEqual(release.components(separatedBy: "--draft=false --latest").count, 2)
-        let soak = try index(of: #"if [ -n "$SOAK" ]; then"#, in: release)
-        let passed = try index(of: #"= "SOAK PASSED" ]"#, in: release)
-        let commit = try index(of: #"commit=$TAG_COMMIT" "$SOAK""#, in: release)
-        let recheck = try index(of: #"scripts/verify-release.sh "$BACK""#, in: release)
-        let publish = try index(of: "--draft=false --latest", in: release)
-        XCTAssertLessThan(soak, passed)
-        XCTAssertLessThan(passed, commit)
-        XCTAssertLessThan(commit, recheck)
-        XCTAssertLessThan(recheck, publish)
-        XCTAssertLessThan(publish, build, "--soak publishes what was uploaded and builds nothing")
-        XCTAssertTrue(release.contains("a --ci receipt never counts"))
     }
 
     func testDiskImageToolIsPinnedByHashAndLivesOutsideBuild() throws {

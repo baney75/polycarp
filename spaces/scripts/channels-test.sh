@@ -1,5 +1,5 @@
 #!/bin/bash
-# Checks scripts/channel-version.sh and scripts/write-feed.sh against docs/releases.md. Runs anywhere with bash,
+# Checks scripts/build-version.sh, scripts/write-feed.sh, scripts/publish.sh and install.sh against docs/releases.md. Runs anywhere with bash,
 # python3 and npx (CI: channels.yml). Exit 0 only when every check passed.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -8,13 +8,11 @@ bad() { echo "channels-test: $*"; status=1; }
 expect() { [ "$2" = "$3" ] || bad "$1: got \"$2\", want \"$3\""; }
 export POLYCARP_BUILD_TIME=20261118070000 POLYCARP_COMMIT=1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
 base=$(cat VERSION)
-expect stable "$(scripts/channel-version.sh stable)" "$base"
-expect nightly "$(scripts/channel-version.sh nightly)" "$base-nightly.20261118070000+1a2b3c4"
-expect dev "$(scripts/channel-version.sh dev)" "$base-dev.20261118070000+1a2b3c4"
-expect local "$(scripts/channel-version.sh local)" "$base-dev.0+local.1a2b3c4"
-expect bundle "$(scripts/channel-version.sh --bundle-version)" "20261118.070000"
-POLYCARP_BUILD_TIME=2026111807 scripts/channel-version.sh nightly >/dev/null 2>&1 && bad "a short build time was taken"
-scripts/channel-version.sh preview >/dev/null 2>&1 && bad "preview is not a channel any more"
+expect release "$(scripts/build-version.sh release)" "$base-nightly.20261118070000+1a2b3c4"
+expect local "$(scripts/build-version.sh local)" "$base-dev.0+local.1a2b3c4"
+expect bundle "$(scripts/build-version.sh --bundle-version)" "20261118.070000"
+POLYCARP_BUILD_TIME=2026111807 scripts/build-version.sh release >/dev/null 2>&1 && bad "a short build time was taken"
+for old in stable nightly dev preview; do scripts/build-version.sh $old >/dev/null 2>&1 && bad "$old is not a kind of build any more"; done
 
 # The rename: a preview build carries the plain base version (0.3.0), and the first nightly must sort above it,
 # so main's base went up at the rename. A 0.3.0 nightly would sort below the 0.3.0 preview build.
@@ -46,26 +44,21 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 printf 'zip' > "$tmp/Polycarp.zip"
 sha=$(shasum -a 256 "$tmp/Polycarp.zip" | awk '{print $1}')
 c=$POLYCARP_COMMIT
-feed() { POLYCARP_FEED_ARCHS="$1" scripts/write-feed.sh "$2" "$3" "$c" "$tmp/Polycarp.zip" "$tmp/latest.json" "notes" >/dev/null 2>&1; }
+feed() { POLYCARP_FEED_ARCHS="$1" scripts/write-feed.sh "$2" "$c" "$tmp/Polycarp.zip" "$tmp/latest.json" "notes" >/dev/null 2>&1; }
 field() { python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2], {"d": d}))' "$tmp/latest.json" "$1"; }
-for ch in stable nightly dev; do
-  v=$(scripts/channel-version.sh "$ch")
-  feed arm64 "$ch" "$v" || { bad "write-feed refused $ch $v"; continue; }
-  case $ch in stable) url="https://github.com/baney75/polycarp/releases/download/v$v/Polycarp.zip" ;;
-              nightly) url="https://github.com/baney75/polycarp/releases/download/nightly-20261118070000/Polycarp.zip" ;;
-              *) url="https://github.com/baney75/polycarp/releases/download/$ch/Polycarp.zip" ;; esac
-  expect "$ch feed" "$(field '[d["product"], d["channel"], d["version"], d["commit"], d["protocol"]]')" "['polycarp', '$ch', '$v', '$c', 1]"
-  expect "$ch url" "$(field 'd["platforms"]["darwin-aarch64"]["url"]')" "$url"
-  expect "$ch sha256" "$(field 'd["platforms"]["darwin-aarch64"]["sha256"]')" "$sha"
-  expect "$ch requirement" "$(field 'd["platforms"]["darwin-aarch64"]["requirement"]')" "$(cat scripts/release-requirement.txt)"
-done
-feed "x86_64 arm64" stable "$base" && expect "universal" "$(field 'sorted(d["platforms"])')" "['darwin-aarch64', 'darwin-x86_64']"
-feed arm64 nightly "$base" && bad "a nightly feed took a stable version"
-feed arm64 stable "$base-nightly.20261118070000+1a2b3c4" && bad "a stable feed took a nightly version"
-feed arm64 dev "$base-nightly.20261118070000+1a2b3c4" && bad "a dev feed took a nightly version"
-feed arm64 preview "$base" && bad "write-feed took the preview channel"
-feed arm64 nightly "$base-nightly.2026111807+1a2b3c4" && bad "write-feed took a nightly version with no build time"
-POLYCARP_FEED_ARCHS=ppc scripts/write-feed.sh nightly "$(scripts/channel-version.sh nightly)" "$c" "$tmp/Polycarp.zip" "$tmp/x.json" >/dev/null 2>&1 \
+v=$(scripts/build-version.sh release)
+if feed arm64 "$v"; then
+  expect "feed" "$(field '[d["product"], d["channel"], d["version"], d["commit"], d["protocol"]]')" "['polycarp', 'nightly', '$v', '$c', 1]"
+  expect "url" "$(field 'd["platforms"]["darwin-aarch64"]["url"]')" "https://github.com/baney75/polycarp/releases/download/nightly-20261118070000/Polycarp.zip"
+  expect "sha256" "$(field 'd["platforms"]["darwin-aarch64"]["sha256"]')" "$sha"
+  expect "requirement" "$(field 'd["platforms"]["darwin-aarch64"]["requirement"]')" "$(cat scripts/release-requirement.txt)"
+else bad "write-feed refused $v"; fi
+feed "x86_64 arm64" "$v" && expect "universal" "$(field 'sorted(d["platforms"])')" "['darwin-aarch64', 'darwin-x86_64']"
+feed arm64 "$base" && bad "the feed took a version with no build time"
+feed arm64 "$base-dev.20261118070000+1a2b3c4" && bad "the feed took a dev version"
+feed arm64 "$(scripts/build-version.sh local)" && bad "the feed took a local build's version"
+feed arm64 "$base-nightly.2026111807+1a2b3c4" && bad "the feed took a version with a short build time"
+POLYCARP_FEED_ARCHS=ppc scripts/write-feed.sh "$v" "$c" "$tmp/Polycarp.zip" "$tmp/x.json" >/dev/null 2>&1 \
   && bad "a feed with no Mac architecture was written"
 # The rolling nightly must be found by a build from before the channels, such as a 0.3.0 copy built from main on
 # the Nightly channel. That updater (Updates.swift before #456) reads GitHub's release list, takes the release
@@ -77,7 +70,7 @@ pub="$tmp/pub"; mkdir -p "$pub/scripts" "$pub/bin" "$pub/state" "$pub/build/Poly
 cp scripts/publish.sh scripts/semver-newer.py scripts/product.env scripts/write-feed.sh scripts/release-requirement.txt "$pub/scripts/"
 # STUB_VERIFY_FAIL=N: the Nth check, and every one after it, fails.
 printf '#!/bin/bash\nn=$(( $(cat "$STUB_STATE/verifies" 2>/dev/null || echo 0) + 1 )); echo $n > "$STUB_STATE/verifies"\n[ -z "${STUB_VERIFY_FAIL:-}" ] || [ "$n" -lt "$STUB_VERIFY_FAIL" ]\n' > "$pub/scripts/verify-release.sh"
-pv=$(scripts/channel-version.sh nightly); pdate=2026-11-21T12:00:00Z
+pv=$(scripts/build-version.sh release); pdate=2026-11-21T12:00:00Z
 python3 -I -c 'import plistlib,sys; plistlib.dump({"PolycarpVersion": sys.argv[2], "PolycarpChannel": "nightly", "PolycarpCommit": sys.argv[3], "PolycarpCommitDate": sys.argv[4], "PolycarpCommitDirty": "0"}, open(sys.argv[1], "wb"))' \
   "$pub/build/Polycarp.app/Contents/Info.plist" "$pv" "$c" "$pdate"
 for f in Polycarp.zip Polycarp.zip.sha256 Polycarp.dmg; do printf '%s' "$f" > "$pub/build/$f"; done
@@ -229,22 +222,6 @@ lag() { # <reads that answer 404>; sets $code and $o
 lag 3; [ "$code" = 0 ] || bad "a feed the cache held back for three reads failed the publish: $o"
 lag 99; [ "$code" != 0 ] && [[ "$o" == *"last answer: HTTP 404"* ]] || bad "a feed that never turned up wasn't reported with its last answer: $o"
 
-# sol-F3: release.sh --soak publishes only the build the receipt soaked, by binary sha256 and build stamp.
-sk="$tmp/soak"; mkdir -p "$sk/app/Polycarp.app/Contents/MacOS" "$sk/rel"
-printf 'build A' > "$sk/app/Polycarp.app/Contents/MacOS/Polycarp"
-python3 -I -c 'import plistlib,sys; plistlib.dump({"CFBundleVersion": "412"}, open(sys.argv[1], "wb"))' "$sk/app/Polycarp.app/Contents/Info.plist"
-ditto -c -k --keepParent "$sk/app/Polycarp.app" "$sk/rel/Polycarp.zip"
-shaA=$(shasum -a 256 "$sk/app/Polycarp.app/Contents/MacOS/Polycarp" | awk '{print $1}')
-printf 'candidate version=0.4.0 commit=%s sha256=%s build=412\nSOAK PASSED\n' "$c" "$shaA" > "$sk/a.receipt"
-scripts/soak-matches.sh "$sk/a.receipt" "$sk/rel" "$c" 2>/dev/null || bad "soak-matches.sh refused the build its receipt soaked"
-scripts/soak-matches.sh "$sk/a.receipt" "$sk/rel" 0000000 2>/dev/null && bad "soak-matches.sh took a receipt for another commit"
-printf 'candidate version=0.4.0 commit=%s sha256=%s build=411\nSOAK FAILED\n%s' "$c" "$shaA" "$(cat "$sk/a.receipt")" > "$sk/b.receipt"
-scripts/soak-matches.sh "$sk/b.receipt" "$sk/rel" "$c" 2>/dev/null || bad "soak-matches.sh should read the receipt's last soak"
-printf 'build B' > "$sk/app/Polycarp.app/Contents/MacOS/Polycarp"; rm "$sk/rel/Polycarp.zip"
-ditto -c -k --keepParent "$sk/app/Polycarp.app" "$sk/rel/Polycarp.zip"
-scripts/soak-matches.sh "$sk/a.receipt" "$sk/rel" "$c" 2>/dev/null && bad "soak-matches.sh took build A's receipt for build B (sol-F3)"
-grep -q 'scripts/soak-matches.sh "$SOAK" "$BACK" "$TAG_COMMIT"' scripts/release.sh || bad "release.sh --soak must run soak-matches.sh on the downloaded draft"
-
 # CI signing fails closed: no secrets is "publish nothing" (exit 3), a bad secret or a named identity that isn't
 # there stops the build, and neither falls back to ad-hoc or makes a key.
 env -u POLYCARP_SIGNING_P12 -u POLYCARP_SIGNING_P12_PASSWORD scripts/ci-signing.sh >/dev/null 2>&1; code=$?
@@ -265,9 +242,8 @@ security delete-keychain "$ek" 2>/dev/null; [ -n "$placed" ] && security delete-
 POLYCARP_SIGNING_IDENTITY=nobody POLYCARP_SIGNING_KEYCHAIN="$tmp/none.keychain-db" scripts/signing-identity.sh >/dev/null 2>&1 \
   && bad "signing-identity.sh accepted a CI identity that isn't in its keychain"
 grep -q 'POLYCARP_SIGNING_IDENTITY:-}" ] || { echo "bundle: the signing identity' scripts/bundle.sh || bad "bundle.sh can fall back to ad-hoc with a CI identity named"
-# Workflows: a build step runs only once signed, and no workflow ever publishes a stable release (the Mac does,
-# after the soak).
-for wf in release stable-build; do
+# Workflows: a build step runs only once signed.
+for wf in release; do
   f=../.github/workflows/$wf.yml
   # Each step (a "      - " line and what follows it) that runs release.sh carries the signed condition.
   awk -v want="        if: steps.sign.outputs.signed == 'true'" '
@@ -280,61 +256,54 @@ done
 # This repository is public: no job runs on a self-hosted runner, and the builds run on GitHub's hosted macOS.
 if grep -nE 'runs-on:.*self-hosted|^ *- *self-hosted' ../.github/workflows/*.yml; then bad "a workflow uses a self-hosted runner"; fi
 # Every job that runs release.sh runs on macos-15.
-for wf in release stable-build; do
+for wf in release; do
   awk '/^  [a-z_-]+:$/ { if (rel && os != "macos-15") bad = 1; rel = 0; os = "" }
        /^    runs-on:/ { os = $2 }
        /scripts\/release\.sh/ && !/^ *#/ && !/echo / { rel = 1; n++ }
        END { if (rel && os != "macos-15") bad = 1; exit !(n && !bad) }' "../.github/workflows/$wf.yml" || bad "$wf.yml doesn't build on macos-15"
 done
-# Comments and echoed advice may name the Mac's publish step; a command may not.
-if grep -nE -- '--soak|draft=false|--draft=false|make_latest=true|--latest( |$)' ../.github/workflows/*.yml \
+# No workflow publishes a release by itself or marks one Latest: publish.sh does, after every check.
+if grep -nE -- 'draft=false|--draft=false|make_latest=true|--latest( |$)' ../.github/workflows/*.yml \
   | grep -vE '^[^:]+:[0-9]+: *(#|echo )'; then bad "a workflow publishes a release by itself"; fi
 
-# The root install.sh downloads from stable, else nightly, else preview (the old channel, which keeps serving the
-# bridge build), or from POLYCARP_CHANNEL only; the checksum comes from the same release.
+# The root install.sh downloads the nightly release; the checksum comes from the same release.
 rel="$tmp/releases"
 pick() {
-  env -u POLYCARP_CHANNEL "$@" POLYCARP_INSTALL_FUNCTIONS_ONLY=1 RELEASES="file://$rel/download" LOG=/dev/null \
+  env "$@" POLYCARP_INSTALL_FUNCTIONS_ONLY=1 RELEASES="file://$rel/download" LOG=/dev/null \
     bash -c 'source ../install.sh && fetch_app "$1" && cat "$1"' _ "$tmp/got.zip" 2>/dev/null | tr '\n' ' '
 }
 put() { mkdir -p "$rel/$1"; printf '%s' "$2" > "$rel/$1/Polycarp.zip"; }
 expect "install: nothing published" "$(pick)" ""
 put download/preview preview-zip
-expect "install: preview only" "$(pick)" "preview file://$rel/download/preview preview-zip"
+put download/dev dev-zip
+expect "install: only nightly counts" "$(pick)" ""
 put download/nightly nightly-zip
-expect "install: nightly over preview" "$(pick)" "nightly file://$rel/download/nightly nightly-zip"
-put latest/download stable-zip
-expect "install: stable first" "$(pick)" "stable file://$rel/latest/download stable-zip"
-expect "install: POLYCARP_CHANNEL=nightly" "$(pick POLYCARP_CHANNEL=nightly)" "nightly file://$rel/download/nightly nightly-zip"
-expect "install: POLYCARP_CHANNEL=dev, none published" "$(pick POLYCARP_CHANNEL=dev)" ""
+expect "install: nightly" "$(pick)" "file://$rel/download/nightly nightly-zip"
+expect "install: POLYCARP_CHANNEL is ignored" "$(pick POLYCARP_CHANNEL=dev)" "file://$rel/download/nightly nightly-zip"
 grep -qF 'want=$(curl -fsSL "$FROM/Polycarp.zip.sha256"' ../install.sh || bad "install.sh takes the checksum from another release than the zip"
-grep -qF 'env -u POLYCARP_CHANNEL scripts/bundle.sh' ../install.sh || bad "a source build in install.sh takes POLYCARP_CHANNEL as its build channel"
-# A stable fetch that fails for any reason but a missing file (a blip, a 5xx) stops; it never drops to Nightly.
+grep -qF 'env -u POLYCARP_RELEASE scripts/bundle.sh' ../install.sh || bad "a source build in install.sh can come out as a release build"
+# A fetch that fails for any reason but a missing file (a blip, a 5xx) stops; it never builds main instead.
 ib="$tmp/install-bin"; mkdir -p "$ib"
 real_curl=$(command -v curl)
 cat > "$ib/curl" <<EOF
 #!/bin/bash
-for a in "\$@"; do case \$a in */latest/download/*) echo "curl: (56) Recv failure" >&2; exit 56 ;; esac; done
+for a in "\$@"; do case \$a in */download/nightly/*) echo "curl: (56) Recv failure" >&2; exit 56 ;; esac; done
 exec "$real_curl" "\$@"
 EOF
 gb="$tmp/git-bin"; mkdir -p "$gb"
 printf '#!/bin/sh\necho "git $*" >> "%s/git-ran"\nexit 1\n' "$tmp" > "$gb/git"
 chmod +x "$ib/curl" "$gb/git"
-rc=0; env -u POLYCARP_CHANNEL PATH="$ib:$PATH" POLYCARP_INSTALL_FUNCTIONS_ONLY=1 RELEASES="file://$rel/download" LOG=/dev/null \
+rc=0; env PATH="$ib:$PATH" POLYCARP_INSTALL_FUNCTIONS_ONLY=1 RELEASES="file://$rel/download" LOG=/dev/null \
   bash -c 'source ../install.sh && fetch_app "$1"' _ "$tmp/got.zip" >/dev/null 2>&1 || rc=$?
-expect "install: a stable blip isn't 'no stable'" "$rc" 2
+expect "install: a blip isn't 'no build'" "$rc" 2
 # main() itself, in test mode against stand-in releases: what it says and that it never builds main instead.
 run_install() {
   local h="$tmp/home-$1" bins=$2; shift 2; mkdir -p "$h/dest"; rm -f "$tmp/git-ran"
-  env -u POLYCARP_CHANNEL HOME="$h" BANEYSPACES_DEST_DIR="$h/dest" PATH="$bins:$PATH" "$@" bash ../install.sh </dev/null 2>&1
+  env HOME="$h" BANEYSPACES_DEST_DIR="$h/dest" PATH="$bins:$PATH" "$@" bash ../install.sh </dev/null 2>&1
 }
-empty="$tmp/empty-releases"; mkdir -p "$empty/download"
-out=$(run_install named "$gb" POLYCARP_RELEASES="file://$empty/download" POLYCARP_CHANNEL=stable) && bad "install: POLYCARP_CHANNEL=stable with none published succeeded"
-case $out in *"There's no stable build to download yet"*) ;; *) bad "install: POLYCARP_CHANNEL=stable with none published didn't say so: $out" ;; esac
-[ ! -e "$tmp/git-ran" ] || bad "install: POLYCARP_CHANNEL=stable fell back to building main"
-out=$(run_install blip "$gb:$ib" POLYCARP_RELEASES="file://$rel/download") && bad "install: a stable blip still installed something"
-case $out in *"Couldn't reach the Polycarp release"*) ;; *) bad "install: a stable blip didn't stop the install: $out" ;; esac
-[ ! -e "$tmp/git-ran" ] || bad "install: a stable blip fell back to building main"
+out=$(run_install blip "$gb:$ib" POLYCARP_RELEASES="file://$rel/download") && bad "install: a blip still installed something"
+case $out in *"Couldn't reach the Polycarp release"*) ;; *) bad "install: a blip didn't stop the install: $out" ;; esac
+[ ! -e "$tmp/git-ran" ] || bad "install: a blip fell back to building main"
 
 [ $status = 0 ] && echo "channels-test: pass"
 exit $status

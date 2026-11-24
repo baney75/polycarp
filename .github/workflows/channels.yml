@@ -1,7 +1,6 @@
 name: Channels
-# The release channel rules a machine can check (docs/releases.md): no workflow starts on a pushed tag, the
-# stable environment runs only from workflow_call or workflow_dispatch, versions sort dev < nightly < stable,
-# and the version, feed and Info.plist scripts do what docs/releases.md says. Every pull request, no path filter.
+# The release rules a machine can check (docs/releases.md): the version, feed, publish, install and Info.plist
+# scripts and the release gate do what docs/releases.md says. Every pull request, no path filter.
 on:
   pull_request:
   push:
@@ -20,8 +19,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: The channel rules (copied from baney75/local-studio)
-        run: bash scripts/check-channels.sh && bash scripts/tests/check-channels-test.sh
       - name: Version strings, the feed and the Info.plist template
         run: bash spaces/scripts/channels-test.sh && bash spaces/scripts/tests/channel-gates-test.sh
       - name: Setting the signing secrets from the owner's Mac

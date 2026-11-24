@@ -4,8 +4,8 @@
 # Mac: downloads the signed app, which holds workspaces and the `polycarp` command, and opens it. No developer
 # tools needed. POLYCARP_FROM_SOURCE=1 builds it on this Mac instead.
 # It asks macOS for nothing itself: Polycarp's welcome window walks you through each permission.
-# Run it again any time to update. POLYCARP_REF picks a branch or tag. The download is the stable release, or the
-# newest Nightly build until there is one; POLYCARP_CHANNEL=stable|nightly|dev asks for one channel only.
+# Run it again any time to update. POLYCARP_REF picks a branch or tag. The download is the newest build of main, from
+# the `nightly` release.
 # POLYCARP_SOURCE=/path/to/checkout builds that checkout instead of downloading.
 # Linux: the Linux and Omarchy desktop is retired. Run there, this prints one line saying so and installs nothing.
 # Polycarp has no parts to choose: workspaces always run. POLYCARP_FEATURES is read only for the parts that left. One that
@@ -90,7 +90,6 @@ main() {
   [ -z "${POLYCARP_REF:-}" ] || from_source=1
   # The ready-made app is for Apple silicon for now.
   [ "$(uname -m)" = arm64 ] || from_source=1
-  case "${POLYCARP_CHANNEL:-}" in ""|stable|nightly|dev|preview) ;; *) fail "POLYCARP_CHANNEL is stable, nightly or dev." ;; esac
   local FROM="" got
   if [ "$from_source" != 1 ]; then
     if [ -z "$ZIP" ]; then
@@ -98,16 +97,9 @@ main() {
       local fetched=0
       got=$(fetch_app "$ZIP") || fetched=$?
       case $fetched in
-        0)
-          FROM=${got#* }
-          case ${got%% *} in
-            nightly) [ -n "${POLYCARP_CHANNEL:-}" ] || say "  ${dim}There's no stable release yet, so this installs the newest Nightly build.${reset}" ;;
-            preview) [ -n "${POLYCARP_CHANNEL:-}" ] || say "  ${dim}There's no stable or Nightly build yet, so this installs the Preview build.${reset}" ;;
-          esac ;;
+        0) FROM=$got ;;
         2) fail "Couldn't reach the Polycarp release (see $LOG). Nothing was changed; try again in a minute." ;;
         *)
-          # A channel asked for by name is that channel or nothing: never an unreleased build of main.
-          [ -z "${POLYCARP_CHANNEL:-}" ] || fail "There's no ${POLYCARP_CHANNEL} build to download yet. Nothing was changed."
           say "  ${dim}No ready-made app to download right now, so this builds it here.${reset}"
           ZIP=""; from_source=1 ;;
       esac
@@ -150,8 +142,8 @@ main() {
     if [ "$(uname -m)" = arm64 ]; then export BANEYSPACES_ARM64_ONLY=1; fi
     cd "$SRC/spaces"
     step "Building the hands engine" scripts/build-engine.sh
-    # POLYCARP_CHANNEL above picks a download; a build here is a local build (bundle.sh), whatever it says.
-    step "Building Polycarp (a few minutes the first time)" env -u POLYCARP_CHANNEL scripts/bundle.sh
+    # A build here is a local build (bundle.sh), whatever the environment says.
+    step "Building Polycarp (a few minutes the first time)" env -u POLYCARP_RELEASE scripts/bundle.sh
     NEW_APP="$PWD/build/Polycarp.app"
   fi
 
@@ -273,27 +265,18 @@ connector_notice() {
   return 0
 }
 
-# fetch_app <zip>: downloads the ready-made app to <zip> from the first channel that has one, and prints
-# "<channel> <release folder>" so the checksum comes from the same release. POLYCARP_CHANNEL asks for one channel;
-# otherwise stable, then nightly, then preview (docs/releases.md). Preview is the old channel: it keeps serving the
-# bridge build until every install has moved to nightly. Only a missing file (HTTP 404, or no file at a file://
-# stand-in) moves on to the next channel. Returns 1 when no channel has the app, 2 when a channel couldn't be read
-# (a network error, a 5xx), so a stable install never drops to Nightly because of a blip.
+# fetch_app <zip>: downloads the ready-made app to <zip> from the `nightly` release and prints that release's
+# folder, so the checksum comes from the same release (docs/releases.md). Returns 1 when it has no app (HTTP 404, or
+# no file at a file:// stand-in), 2 when it couldn't be read (a network error, a 5xx), so a blip never turns into a
+# source build.
 fetch_app() {
-  local zip=$1 c url code rc
-  for c in ${POLYCARP_CHANNEL:-stable nightly preview}; do
-    case $c in
-      stable) url="${RELEASES%/download}/latest/download" ;;
-      *) url="$RELEASES/$c" ;;
-    esac
-    rc=0; code=$(curl -sSL -o "$zip" -w '%{http_code}' "$url/Polycarp.zip" </dev/null 2>>"$LOG") || rc=$?
-    case "$rc:$code" in
-      0:200|0:000) printf '%s %s\n' "$c" "$url"; return 0 ;;
-      0:404|37:*) rm -f "$zip" ;;
-      *) rm -f "$zip"; printf 'fetch_app: %s answered %s (curl exit %s)\n' "$url" "$code" "$rc" >>"$LOG"; return 2 ;;
-    esac
-  done
-  return 1
+  local zip=$1 url="$RELEASES/nightly" code rc=0
+  code=$(curl -sSL -o "$zip" -w '%{http_code}' "$url/Polycarp.zip" </dev/null 2>>"$LOG") || rc=$?
+  case "$rc:$code" in
+    0:200|0:000) printf '%s\n' "$url"; return 0 ;;
+    0:404|37:*) rm -f "$zip"; return 1 ;;
+    *) rm -f "$zip"; printf 'fetch_app: %s answered %s (curl exit %s)\n' "$url" "$code" "$rc" >>"$LOG"; return 2 ;;
+  esac
 }
 
 # The companions, in the order the question lists them.

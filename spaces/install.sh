@@ -1,16 +1,16 @@
 #!/bin/bash
 # Installs Polycarp on macOS:
 #   curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/spaces/install.sh | bash
-# A stable release carries the finished app (a few MB). This downloads it, checks that it is
-# signed with Polycarp's release key (it refuses anything else), and puts it in the folder the
+# The `nightly` release carries the newest build of main (a few MB). This downloads it, checks that
+# it is signed with Polycarp's release key (it refuses anything else), and puts it in the folder the
 # current copy is in (~/Applications on a first install). No developer tools are needed.
 # It builds from source instead, with Apple's free command line tools, when the release has no
-# ready-made app (the Nightly build, an old release), when BANEYSPACES_FROM_SOURCE=1, or when the
+# ready-made app (an old release), when BANEYSPACES_FROM_SOURCE=1, or when the
 # copy already installed was built on this Mac and the tools are here: that keeps its signature,
 # so macOS keeps the Accessibility permission. Without the tools that copy is replaced by the
 # ready-made app and macOS asks for the permission once more. A source build has no "unidentified
 # developer" warning either.
-# Set BANEYSPACES_REF to install a specific tag (or, building from source, a branch).
+# Set BANEYSPACES_REF to install another release by its tag (or, building from source, a branch).
 # BANEYSPACES_COMMIT (the updater sets it) pins the exact commit; a different build is refused.
 # BANEYSPACES_INSTALL_DIR (the updater sets it) is the folder to install into.
 # BANEYSPACES_ZIP=/path/to/Polycarp.zip uses that file instead of downloading (for tests; pair
@@ -57,52 +57,23 @@ fi
 # The prebuilt app: the release's Polycarp.zip, straight from GitHub's download address (no API,
 # no JSON to read, which stock macOS has no good tool for).
 ZIP="${BANEYSPACES_ZIP:-}"
-TAG="${BANEYSPACES_REF:-}"
+TAG="${BANEYSPACES_REF:-nightly}"
 SHA_URL=""
 # BANEYSPACES_RELEASES_BASE is for tests: a stand-in for GitHub's releases address.
 BASE="${BANEYSPACES_RELEASES_BASE:-https://github.com/baney75/polycarp/releases}"
 # Prints the HTTP status; a connection that fails prints 000.
 fetch() { curl -sSL -w '%{http_code}' -o "$2" "$1" 2>/dev/null || true; }
 
-# Which release is the latest stable: GitHub's /releases/latest answers with a redirect to
-# /releases/tag/<tag>. The tag is read from that redirect alone, before anything is downloaded, so
-# the zip, its checksum and the version check all name the same release.
-LATEST_TAG=""
-LATEST_STATE=""   # ok, none (no releases yet) or error
-if [ -z "$TAG" ] && [ -z "$ZIP" ]; then
-  for attempt in 1 2; do
-    reply=$(curl -sSI -o /dev/null -w '%{http_code} %{redirect_url}' "$BASE/latest" 2>/dev/null || true)
-    code=${reply%% *}; target=${reply#* }
-    if [ "$code" = 404 ]; then LATEST_STATE=none; break; fi
-    if [[ "$code" =~ ^30[0-9]$ ]]; then
-      found=$(printf '%s' "$target" | sed -n 's#.*/releases/tag/\([A-Za-z0-9._-]*\)$#\1#p')
-      if [ -n "$found" ]; then LATEST_TAG=$found; LATEST_STATE=ok; break; fi
-      case "$target" in */releases|*/releases/) LATEST_STATE=none; break ;; esac
-    fi
-    [ "$attempt" = 2 ] || sleep 2
-  done
-  [ -n "$LATEST_STATE" ] || LATEST_STATE=error
-fi
-
 if [ -z "$ZIP" ] && [ "$FROM_SOURCE" != 1 ] && [[ "$TAG" =~ ^[A-Za-z0-9._-]*$ ]]; then
-  if [ -z "$TAG" ]; then
-    case "$LATEST_STATE" in
-      ok) TAG="$LATEST_TAG" ;;
-      none) echo "  There are no releases yet; building it." ;;
-      *) fail "couldn't tell which release is the latest. Try again, or build it on this Mac with BANEYSPACES_FROM_SOURCE=1." ;;
-    esac
-  fi
-  if [ -n "$TAG" ]; then
-    step "Downloading Polycarp ($TAG)"
-    ZIP_URL="$BASE/download/$TAG/Polycarp.zip"
-    reply=$(fetch "$ZIP_URL" "$WORK/Polycarp.zip")
-    [ "$reply" = 200 ] || [ "$reply" = 404 ] || { sleep 2; reply=$(fetch "$ZIP_URL" "$WORK/Polycarp.zip"); }
-    case "$reply" in
-      200) ZIP="$WORK/Polycarp.zip"; SHA_URL="$BASE/download/$TAG/Polycarp.zip.sha256" ;;
-      404) echo "  There is no ready-made app for this release; building it." ;;
-      *) fail "the download didn't work (HTTP $reply). Try again, or build it on this Mac with BANEYSPACES_FROM_SOURCE=1." ;;
-    esac
-  fi
+  step "Downloading Polycarp ($TAG)"
+  ZIP_URL="$BASE/download/$TAG/Polycarp.zip"
+  reply=$(fetch "$ZIP_URL" "$WORK/Polycarp.zip")
+  [ "$reply" = 200 ] || [ "$reply" = 404 ] || { sleep 2; reply=$(fetch "$ZIP_URL" "$WORK/Polycarp.zip"); }
+  case "$reply" in
+    200) ZIP="$WORK/Polycarp.zip"; SHA_URL="$BASE/download/$TAG/Polycarp.zip.sha256" ;;
+    404) echo "  There is no ready-made app for this release; building it." ;;
+    *) fail "the download didn't work (HTTP $reply). Try again, or build it on this Mac with BANEYSPACES_FROM_SOURCE=1." ;;
+  esac
 fi
 
 if [ -n "$ZIP" ] && [ "$FROM_SOURCE" != 1 ]; then
@@ -167,10 +138,8 @@ if ! have_tools; then
   exit 1
 fi
 
-# The latest release's tag (looked up above), else the newest v* tag, else main if there isn't one yet.
-REF="${BANEYSPACES_REF:-$LATEST_TAG}"
-[ -n "$REF" ] || REF=$(git ls-remote --tags --refs --sort=-v:refname "$REPO_URL" 'v*' 2>/dev/null | head -1 | sed 's#.*refs/tags/##' || true)
-REF="${REF:-main}"
+# The release's tag: the newest build of main, unless BANEYSPACES_REF names another.
+REF="$TAG"
 
 step "Downloading Polycarp ($REF)"
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$WORK/baneyspaces"

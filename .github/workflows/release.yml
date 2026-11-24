@@ -136,7 +136,7 @@ jobs:
         if: steps.sign.outputs.signed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/release.sh --channel nightly
+        run: scripts/release.sh
   prune:
     needs: [gate, build]
     if: always() && needs.gate.result == 'success' && needs.gate.outputs.go == 'true'
