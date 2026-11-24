@@ -3,7 +3,7 @@
   "name": "Polycarp",
   "short_name": "Polycarp",
   "version": "2.0.0",
-  "description": "Readable text on any page, a Reader for pages, PDFs and ebooks, read-aloud, a linked library of notes, and Polycarp's new tab.",
+  "description": "Readable text on any page, a Reader for pages, PDFs and ebooks, read-aloud, calmer feeds, a linked library, and Polycarp's new tab.",
   "minimum_chrome_version": "120",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmHhHeWGBcLy8UAZgo+fqEyMGxOWDaCnaNBGPa2ezC/FGaDhZgElVaWAfF/R9R98KKTv9o2KnD7vnyQ7fIEFmDXKIR0XGZ6/AoKSSEBkxAINNH9HXPtRetAopzbsZc4Zdpwil1dBm8+AdxMy7/hYi2ulfprM7qvSmlfinN9iLyMx+HdpLHBJqLDDxtUooONyzBpETzIJnzoKx1Z2520zLTBB4bCF/AAhTPHh2ARQmb+/Ebv+z5870YPEKjShirFd43hs2BEoSzonioqO8HHxwO4q8tz8WPHLPOec9iLg0CqWT/gMqCtLma1RGBreBZyPop1DJuBw4nMOeQDRC9MFZNwIDAQAB",
   "icons": {

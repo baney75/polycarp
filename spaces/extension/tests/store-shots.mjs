@@ -1,5 +1,6 @@
 // Chrome Web Store screenshots (1280x800) and the small promo tile (440x280), made from the real pages.
 // Each screenshot is a page captured at 1120 wide, set in a frame with one headline, as the store shows them.
+// The store takes five screenshots at most.
 // Writes tests/out/store/*.png. Run: node tests/store-shots.mjs
 import { loadPlaywright } from './pw.mjs';
 import path from 'node:path';
@@ -39,7 +40,26 @@ const PRESS = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" 
 <g fill="none" stroke="#5b4630" stroke-width="10" stroke-linecap="round"><path d="M220 270V60M420 270V60M200 60h240M230 150h180"/><path d="M320 60v60M290 120h60"/></g>
 <rect x="250" y="190" width="140" height="18" fill="#8a6a45"/><rect x="262" y="174" width="116" height="16" fill="#fbf8f0" stroke="#b9ab8e"/>
 <path d="M180 270h280" stroke="#5b4630" stroke-width="12" stroke-linecap="round"/></svg>`;
+// A demo feed for the calmer-feeds shot: made-up people and posts, two of which a filter hides.
+const post = (who, name, when, text, boost) => `<article class="post">${boost ? `<div class="status__prepend">${boost} boosted</div>` : ''}
+<header><a href="/@${who}"><span class="av">${name[0]}</span><b>${name}</b> <span class="h">@${who}</span></a> · <a href="/@${who}/${when}"><time>${when}h</time></a></header><p>${text}</p></article>`;
+const FEED = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Commons</title><style>
+body{margin:0;font:16px/1.5 system-ui,sans-serif;color:#1d1f23;background:#f3f4f6}
+.top{background:#fff;border-bottom:1px solid #e3e5e8;padding:12px 32px;font-weight:700;font-size:18px}
+main{max-width:600px;margin:18px auto;display:grid;gap:10px}
+.post{background:#fff;border:1px solid #e3e5e8;border-radius:10px;padding:12px 16px}
+.post header{font-size:14px;color:#6b7280}.post header a{color:inherit;text-decoration:none}
+.post b{color:#1d1f23}.av{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#dfe3ea;color:#334;font-weight:700;margin-right:6px}
+.post p{margin:6px 0 0}.status__prepend{font-size:13px;color:#6b7280;margin-bottom:4px}
+</style></head><body><div class="top">Commons</div><main>
+${post('maria', 'Maria Lopez', 2, 'Finished The Federalist No. 10 tonight. Madison on factions still reads like this morning’s paper.')}
+${post('prizebot', 'Prize Bot', 3, 'GIVEAWAY!! Follow, repost and tag three friends to win a free phone. Ends tonight!!')}
+${post('jonah', 'Jonah Reed', 4, 'Our library’s book sale starts Saturday at nine. Hardcovers are a dollar, paperbacks fifty cents.')}
+${post('hotdeals', 'Hot Deals', 5, 'You won’t believe what this one trick does. Click before it’s gone.', 'Sam')}
+${post('ellen', 'Ellen Park', 6, 'Morning walk by the creek. The geese are back, and so is the fog.')}
+</main></body></html>`;
 const server = http.createServer((req, res) => {
+  if (req.url.startsWith('/feed')) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(FEED); }
   if (req.url.startsWith('/press.svg')) { res.writeHead(200, { 'content-type': 'image/svg+xml' }); return res.end(PRESS); }
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(ARTICLE);
 });
@@ -56,8 +76,6 @@ const raw = {};
 async function grab(page, name, scheme = 'light') {
   await page.emulateMedia({ colorScheme: scheme });
   await sleep(300);
-  // A reading milestone's toast is not part of what a shot shows.
-  await page.evaluate(() => { for (const el of document.querySelectorAll('body *')) if (/^First steps/.test(el.textContent || '') && getComputedStyle(el).position === 'fixed') el.style.display = 'none'; });
   raw[name] = await page.screenshot({ type: 'png' });
 }
 
@@ -72,6 +90,8 @@ try {
   const X = (p) => `chrome-extension://${id}/${p}`;
   await sleep(800);
   for (const p of ctx.pages()) if (p.url().includes('welcome')) await p.close();
+  // Every milestone counts as earned already, so no milestone toast lands in a shot.
+  await sw.evaluate(() => chrome.storage.local.set({ [Polycarp.STATS_KEY]: { badges: Object.fromEntries(Polycarp.BADGES.map((b) => [b.id, '2026-01-01'])) } }));
   const tabOf = (prefix) => sw.evaluate(async (u) => { const t = (await chrome.tabs.query({})).find((x) => (x.url || '').startsWith(u)); return t ? t.id : null; }, prefix);
   const send = (tabId, msg) => sw.evaluate(([i, m]) => chrome.tabs.sendMessage(i, m, { frameId: 0 }).catch((e) => ({ error: String(e) })), [tabId, msg]);
 
@@ -87,21 +107,20 @@ try {
   if (!styled) errors.push('article: no readable text');
   await grab(art, 'page');
 
-  // 2. Search the page.
-  await art.bringToFront();
-  await send(tid, { type: 'polycarp:find' });
-  await sleep(500);
-  await art.keyboard.type('read');
-  await sleep(600);
-  await grab(art, 'find');
-  await art.keyboard.press('Escape');
+  // 2. Calmer feeds: a rule made in this browser hides two posts behind one-line bars.
+  await sw.evaluate(() => chrome.storage.local.set({ 'polycarp.filters.local': [
+    { id: 'local-store-shot', enabled: true, words: ['giveaway'], accounts: [], sites: [], kinds: ['reposts'] }] }));
+  const feed = watch(await ctx.newPage(), 'feed');
+  await feed.goto(LOCAL + '/feed');
+  const hid = await feed.waitForFunction(() => [...document.querySelectorAll('article')].filter((a) => [...a.querySelectorAll('[data-polycarp-skip]')].some((h) => h.shadowRoot && /Hidden:/.test(h.shadowRoot.textContent))).length === 2, null, { timeout: 10000 }).then(() => true, () => false);
+  if (!hid) errors.push('feed: the filter did not hide two posts');
+  await grab(feed, 'feeds');
 
   // 3. The Reader.
   const rp = watch(await ctx.newPage(), 'reader');
   await rp.goto(X('src/reader/reader.html') + '?src=' + encodeURIComponent(LOCAL + '/article'));
   await sleep(2500);
   await grab(rp, 'reader');
-  await grab(rp, 'reader-dark', 'dark');
 
   // 4. The library, with notes.
   const lp = watch(await ctx.newPage(), 'library');
@@ -140,10 +159,9 @@ try {
   const frames = [
     ['1-readable', 'page', 'Text that is easier to follow', 'Polycarp sets any site in clearer type and marks the start of each word, so your eyes keep their place.', 'light'],
     ['2-reader', 'reader', 'Read any page your way', 'The Reader opens articles, PDFs and ebooks in your font, size and spacing, without the clutter.', 'light'],
-    ['3-find', 'find', 'Find anything on the page', 'One search box for the text, headings, links and media. Alt+Shift+S opens it on any site.', 'light'],
+    ['3-feeds', 'feeds', 'Calmer feeds', 'Hide posts by word, account or kind, each behind a one-line bar you can open. Your rules stay in your browser.', 'light'],
     ['4-library', 'library', 'A library that links your reading', 'Save pages and files, keep highlights and notes, and see what connects. It all stays on your computer.', 'dark'],
-    ['5-listen', 'listen', 'Listen while you read', 'Read-aloud follows along word by word, with a voice that runs on your computer.', 'light'],
-    ['6-dark', 'reader-dark', 'Easy on the eyes at night', 'Light and dark themes for every page Polycarp shows.', 'dark']
+    ['5-listen', 'listen', 'Listen while you read', 'Read-aloud follows along word by word, with a voice that runs on your computer.', 'light']
   ];
   const fp = await ctx.newPage();
   await fp.setViewportSize({ width: 1280, height: 800 });
