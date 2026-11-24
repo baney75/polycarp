@@ -210,7 +210,7 @@ fn child_exit_code_comes_back() {
 }
 
 #[cfg(unix)]
-const BROWSER_LINE: &str = "The browser extension was removed from Polycarp.\n";
+const BROWSER_LINE: &str = "The agent browser extension was removed from Polycarp.\n";
 
 /// The browser extension was removed. `polycarp browser`, with any arguments, says so on stderr and exits 2, and never runs an
 /// old helper still on the machine, nor `features on|off browser`, which writes nothing.
@@ -616,7 +616,7 @@ fn windows_finds_the_exe_on_path_passes_args_and_returns_its_exit_code() {
     let o = run(&["browser", "--version"]);
     assert_eq!(code(&o), 2, "{}", err(&o));
     assert!(
-        err(&o).contains("The browser extension was removed from Polycarp."),
+        err(&o).contains("The agent browser extension was removed from Polycarp."),
         "{}",
         err(&o)
     );
@@ -1809,7 +1809,7 @@ fn a_build_in_a_checkout_judges_the_installed_command_not_itself() {
 
 /// What `polycarp update --retire-old-browser` prints, once, while a remote connector job is left running.
 #[cfg(target_os = "macos")]
-const CONNECTOR_STAYS: &str = "Your remote connector still runs on the old browser helper, outside Polycarp, so its jobs were left running.\n";
+const CONNECTOR_STAYS: &str = "Your remote connector still runs on the old browser helper, outside Polycarp, so its jobs were left running; to stop one, run `launchctl bootout gui/$(id -u)/<label>` and delete its plist from ~/Library/LaunchAgents.\n";
 
 /// A LaunchAgents plist in the form the old helper wrote.
 #[cfg(target_os = "macos")]

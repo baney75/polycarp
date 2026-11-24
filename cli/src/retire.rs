@@ -41,7 +41,7 @@ pub const CONNECTOR_OFF: &str =
     "Your remote connector ran on the browser helper that left Polycarp, so it is off now.";
 /// Printed once when a connector job is left running.
 pub const CONNECTOR_STAYS: &str =
-    "Your remote connector still runs on the old browser helper, outside Polycarp, so its jobs were left running.";
+    "Your remote connector still runs on the old browser helper, outside Polycarp, so its jobs were left running; to stop one, run `launchctl bootout gui/$(id -u)/<label>` and delete its plist from ~/Library/LaunchAgents.";
 
 #[derive(Debug, PartialEq)]
 pub enum Verdict {
