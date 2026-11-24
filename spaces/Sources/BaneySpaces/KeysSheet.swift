@@ -1,0 +1,230 @@
+import AppKit
+import BaneySpacesCore
+import SwiftUI
+
+/// Hold the Polycarp modifier alone and every shortcut shows, grouped, in the modifier you picked; let go and it goes.
+/// Like vim's which-key, it never takes the keyboard or the mouse, so the key you press next still goes where it was
+/// going. `KeysHold` (Core) decides when a hold counts; the launcher's Shortcuts menu (⌘K there) is the searchable copy.
+final class KeysHoldWatcher {
+    private var hold = KeysHold(modifier: [.command])
+    private var tap: CFMachPort?
+    private var source: CFRunLoopSource?
+    private var timer: DispatchWorkItem?
+    private let sheet = KeysSheetPanel()
+    /// False while something else owns the moment: the launcher or the overview is open, a ⌘Tab gesture runs.
+    var allowed: () -> Bool = { true }
+
+    private static weak var current: KeysHoldWatcher?
+
+    /// Watches with a listen-only event tap: it sees keys that become Polycarp's own shortcuts and macOS's ⌘Tab, which
+    /// never reach an app's event monitors, so a hold that was really a shortcut never shows the sheet. It needs
+    /// Accessibility; without it nothing is watched.
+    func start(modifier: Modifier) {
+        stop()
+        hold = KeysHold(modifier: Self.mods(modifier))
+        let mask = [CGEventType.flagsChanged, .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
+            .reduce(CGEventMask(0)) { $0 | CGEventMask(1 << $1.rawValue) }
+        guard let t = CGEvent.tapCreate(tap: .cghidEventTap, place: .tailAppendEventTap, options: .listenOnly,
+                                        eventsOfInterest: mask, callback: Self.callback, userInfo: nil)
+            ?? CGEvent.tapCreate(tap: .cgSessionEventTap, place: .tailAppendEventTap, options: .listenOnly,
+                                 eventsOfInterest: mask, callback: Self.callback, userInfo: nil)
+        else { return Trace.log("keys: no event tap, so holding the modifier shows nothing") }
+        tap = t
+        let s = CFMachPortCreateRunLoopSource(nil, t, 0)
+        source = s
+        CFRunLoopAddSource(CFRunLoopGetMain(), s, .commonModes)
+        CGEvent.tapEnable(tap: t, enable: true)
+        Self.current = self
+    }
+
+    func stop() {
+        timer?.cancel()
+        timer = nil
+        if let s = source { CFRunLoopRemoveSource(CFRunLoopGetMain(), s, .commonModes) }
+        if let t = tap { CGEvent.tapEnable(tap: t, enable: false); CFMachPortInvalidate(t) }
+        tap = nil
+        source = nil
+        dismiss()
+    }
+
+    /// Something else came up (the launcher opened): the sheet goes and this hold is spent.
+    func dismiss() {
+        sheet.hide()
+        hold.dismissed()
+    }
+
+    private static let callback: CGEventTapCallBack = { _, type, event, _ in
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let t = KeysHoldWatcher.current?.tap { CGEvent.tapEnable(tap: t, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
+        let flags = event.flags
+        // The tap runs on the main run loop, so the watcher is touched on the main thread only.
+        KeysHoldWatcher.current?.handle(type, flags)
+        return Unmanaged.passUnretained(event)
+    }
+
+    private func handle(_ type: CGEventType, _ flags: CGEventFlags) {
+        let now = ProcessInfo.processInfo.systemUptime
+        switch type {
+        case .flagsChanged: apply(hold.flags(Self.mods(flags), at: now))
+        case .keyDown: apply(hold.key())
+        default: apply(hold.mouse())
+        }
+        timer?.cancel()
+        timer = nil
+        guard hold.waiting else { return }
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, NSEvent.pressedMouseButtons == 0, self.allowed() else { return }
+            self.apply(self.hold.tick(at: ProcessInfo.processInfo.systemUptime))
+        }
+        timer = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + hold.delay, execute: item)
+    }
+
+    private func apply(_ change: KeysHold.Change) {
+        switch change {
+        case .show: sheet.show()
+        case .hide: sheet.hide()
+        case .none: break
+        }
+    }
+
+    static func mods(_ m: Modifier) -> Set<KeysHold.Mod> {
+        switch m {
+        case .command: [.command]
+        case .control: [.control]
+        case .option: [.option]
+        case .controlOption: [.control, .option]
+        }
+    }
+
+    static func mods(_ f: CGEventFlags) -> Set<KeysHold.Mod> {
+        var out: Set<KeysHold.Mod> = []
+        if f.contains(.maskCommand) { out.insert(.command) }
+        if f.contains(.maskControl) { out.insert(.control) }
+        if f.contains(.maskAlternate) { out.insert(.option) }
+        if f.contains(.maskShift) { out.insert(.shift) }
+        return out
+    }
+}
+
+/// The sheet's window: over everything, on every desktop, never key, never in the way of a click.
+final class KeysSheetPanel {
+    private var panel: NSPanel?
+
+    func show() {
+        let p = panel ?? make()
+        panel = p
+        let host = NSHostingView(rootView: KeysSheetView(modifier: Modifier.current.symbol).environment(\.colorScheme, Chrome.scheme))
+        p.contentView = host
+        let size = host.fittingSize
+        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main ?? NSScreen.screens[0]
+        let area = screen.visibleFrame
+        p.setFrame(NSRect(x: area.midX - size.width / 2, y: area.midY - size.height / 2, width: size.width, height: size.height),
+                   display: false)
+        p.alphaValue = 0
+        p.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = Chrome.duration(0.12, .panelIn)
+            p.animator().alphaValue = 1
+        }
+    }
+
+    func hide() {
+        guard let p = panel, p.isVisible else { return }
+        p.orderOut(nil)
+    }
+
+    private func make() -> NSPanel {
+        let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.hasShadow = true
+        p.level = .modalPanel
+        p.ignoresMouseEvents = true
+        p.hidesOnDeactivate = false
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        p.setAccessibilityLabel("Polycarp shortcuts")
+        return p
+    }
+}
+
+/// Every shortcut in three columns, by group: what it does at the left, the keys as caps at the right, and where it
+/// works under it when that is not everywhere.
+struct KeysSheetView: View {
+    let modifier: String
+
+    private var columns: [[KeyBinding.Group]] { KeysSheetLayout.columns(Keymap.all, count: 3) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Shortcuts").font(Chrome.font(17, .semibold)).foregroundStyle(Chrome.wash())
+                Spacer(minLength: 24)
+                Text("Let go of \(modifier) to close. ⌘K in the launcher searches them.")
+                    .font(Chrome.font(11.5)).foregroundStyle(Chrome.muted)
+            }
+            HStack(alignment: .top, spacing: 28) {
+                ForEach(columns.indices, id: \.self) { i in
+                    VStack(alignment: .leading, spacing: 16) {
+                        ForEach(columns[i], id: \.self) { group in section(group) }
+                    }
+                    .frame(width: 252, alignment: .topLeading)
+                }
+            }
+        }
+        .padding(22)
+        .background(Chrome.panelBackground(.launcherPanel))
+        .clipShape(Chrome.shape(.launcherPanel))
+        .overlay(Chrome.shape(.launcherPanel).strokeBorder(Chrome.edge(0.1), lineWidth: Chrome.width(.launcherPanel)))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Polycarp shortcuts")
+    }
+
+    private func section(_ group: KeyBinding.Group) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(group.title.uppercased()).font(Chrome.font(10.5, .semibold)).kerning(0.6).foregroundStyle(Chrome.muted)
+            ForEach(Keymap.all.filter { $0.group == group }, id: \.id) { row($0) }
+        }
+    }
+
+    /// Where a key works and when, under its title: the scope unless it works everywhere, then the binding's note.
+    static func where_(_ b: KeyBinding) -> String? {
+        let parts = [b.scope == .global ? nil : b.scope.title, b.note].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: ". ")
+    }
+
+    private func row(_ b: KeyBinding) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(b.title).font(Chrome.font(12.5)).foregroundStyle(Chrome.wash(0.92)).fixedSize(horizontal: false, vertical: true)
+                if let where_ = Self.where_(b) {
+                    Text(where_).font(Chrome.font(10.5)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 6)
+            KeyCaps(parts: KeysSheetLayout.caps(b, modifier: modifier))
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Keys as separate caps: ⌃ ⌘ K, not one run of symbols.
+struct KeyCaps: View {
+    let parts: [String]
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(parts.indices, id: \.self) { i in
+                Text(parts[i])
+                    .font(Chrome.font(11, .semibold, rounded: true))
+                    .foregroundStyle(Chrome.wash(0.9))
+                    .padding(.horizontal, 5).padding(.vertical, 1.5)
+                    .frame(minWidth: 18)
+                    .background(Chrome.shape(.launcherKey, continuous: false).fill(Chrome.wash(0.1)))
+            }
+        }
+        .fixedSize()
+    }
+}
