@@ -86,7 +86,8 @@
   //   end is fine, and so is one with a few small choices beside it, like https?://\S+;
   // - back-references (\1, \k<name>) and lookbehind ((?<= and (?<!), which this count cannot bound.
   // Escapes and character classes are read whole: [a*+] holds characters, not repeats.
-  function riskyPattern(source) {
+  // unicode: whether the pattern runs with the u flag. Without it \p and \u are plain letters, so \p{1,} repeats a p.
+  function riskyPattern(source, unicode = true) {
     const src = String(source);
     let i = 0;
     const refuse = (why) => { throw { why }; };
@@ -109,7 +110,7 @@
         if (c === "\\") {
           const d = src[i + 1];
           if (/[1-9]/.test(d || "") || (d === "k" && src[i + 2] === "<")) refuse("refers back to a group (\\1 or \\k<name>)");
-          if (/[pPu]/.test(d || "") && src[i + 2] === "{") { const e = src.indexOf("}", i); i = e < 0 ? src.length : e + 1; }
+          if (unicode && /[pPu]/.test(d || "") && src[i + 2] === "{") { const e = src.indexOf("}", i); i = e < 0 ? src.length : e + 1; }
           else i += 2;
         } else if (c === "[") {
           for (i++; i < src.length && src[i] !== "]"; i++) if (src[i] === "\\") i++;
@@ -157,11 +158,13 @@
     const src = String(source);
     if (!src.trim()) return { why: "is empty" };
     if (src.length > MAX_TERM) return { why: "is longer than " + MAX_TERM + " characters" };
-    const risky = riskyPattern(src);
+    // Pick the mode first (building a RegExp never runs it), then check the pattern as that mode reads it.
+    let re = null, err = null;
+    for (const flags of ["iu", "i"]) { try { re = new RegExp(src, flags); break; } catch (e) { err = e; } }
+    if (!re) return { why: "is not a pattern the browser can read (" + err.message + ")" };
+    const risky = riskyPattern(src, re.unicode);
     if (risky) return { why: risky + ", which could freeze the page" };
-    let err = null;
-    for (const flags of ["iu", "i"]) { try { return { re: new RegExp(src, flags) }; } catch (e) { err = e; } }
-    return { why: "is not a pattern the browser can read (" + err.message + ")" };
+    return { re };
   }
 
   // "@Name", "u/Name", "/user/name", "https://x.com/Name?s=21", "https://x.com/Name/with_replies" and "name" are all
@@ -171,6 +174,8 @@
   function normalizeHandle(raw) {
     let h = String(raw == null ? "" : raw).trim().toLowerCase().normalize("NFC");
     h = h.replace(/^https?:\/\/[^/?#]+/, "").replace(/[?#].*$/, "");
+    // "x.com/Jack" or "www.reddit.com/r/Politics": a first segment with a dot is a host, not a name.
+    if (/^[^/@]*\.[^/]*\//.test(h)) h = h.slice(h.indexOf("/"));
     const parts = h.split("/").filter(Boolean);
     if (parts.length > 1 && parts[0] === "r") return "r/" + parts[1];
     h = (parts.length > 1 && ACCOUNT_PREFIX.has(parts[0]) ? parts[1] : parts[0]) || "";
@@ -225,9 +230,23 @@
     return out;
   }
 
+  // Every quote, [ and ( closed in order, and no lone backslash at the end. The browser closes them silently, so
+  // "a:not(.ad" would parse and then swallow the selector after it.
+  function balanced(sel) {
+    const open = [];
+    for (let k = 0; k < sel.length; k++) {
+      const c = sel[k], top = open[open.length - 1];
+      if (c === "\\") { if (k === sel.length - 1) return false; k++; continue; }
+      if (top === '"' || top === "'") { if (c === top) open.pop(); continue; }
+      if (c === '"' || c === "'" || c === "[" || c === "(") open.push(c);
+      else if (c === "]" || c === ")") { if (top !== (c === "]" ? "[" : "(")) return false; open.pop(); }
+    }
+    return open.length === 0;
+  }
   // A hide selector the page can take: it must parse (checkSelector, from a page with a DOM) and stay one selector list.
   function hideProblem(sel, checkSelector) {
     if (/[{};]|\/\*|<\//.test(sel)) return "holds characters a selector never needs ({, }, ; or a comment)";
+    if (!balanced(sel)) return "leaves a quote, bracket or parenthesis open, or ends in a backslash";
     if (checkSelector && !checkSelector(sel)) return "is not a CSS selector this browser can read";
     return "";
   }

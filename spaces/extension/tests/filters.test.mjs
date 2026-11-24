@@ -283,3 +283,33 @@ test("a long post costs one bounded scan, and a word past the limit is not read"
   assert.equal(runs, 2 * 2000, "2,000 posts against 100 words and a pattern: two runs each");
   assert.equal(F.summary(rule({ words: ["a"], accounts: ["b"], kinds: ["shorts"] })), "Words: a · Accounts: @b · Kinds: Shorts");
 });
+
+test("review round 2: \\p{1,} and \\u{1,} without the u flag are repeats, and are checked as the browser reads them", () => {
+  for (const p of ["(\\p{1,})+$", "(\\u{1,})+$", "(\\P{1,})+x"]) {
+    const c = F.compilePattern(p);
+    assert.ok(c.why && /freeze/.test(c.why), p + " is refused: " + JSON.stringify(c.why));
+  }
+  for (const p of ["\\p{L}+", "\\u{1F600}", "\\p{Script=Greek}+"]) assert.ok(F.compilePattern(p).re, p + " still compiles");
+  const c = F.compile([rule({ id: "p", patterns: ["(\\p{1,})+$"] })], "x.com");
+  assert.equal(c.refused.length, 1);
+  const t0 = performance.now();
+  assert.equal(c.test({ text: "p".repeat(30) + "x" }), null);
+  assert.ok(performance.now() - t0 < 1000, "returns at once");
+});
+
+test("review round 2: a selector the browser would close for us is refused, so it cannot swallow the next one", () => {
+  const ok = () => true;
+  const bad = ["a:not(.ad", '[aria-label="Promo', ".x\\", "a]", "a)"];
+  const good = [".promo", 'a[title="it\\"s"]', "a:not(.ad)", "[data-x='a(b']"];
+  const c = F.compile([rule({ id: "h", sites: ["x.com"], hide: [...bad, ...good] })], "x.com", { checkSelector: ok });
+  assert.deepEqual(c.hide, good);
+  assert.deepEqual(c.refused.map((r) => r.value), bad);
+});
+
+test("review round 2: a profile link without its scheme is the same account", () => {
+  assert.equal(F.normalizeHandle("x.com/Jack"), "jack");
+  assert.equal(F.normalizeHandle("www.reddit.com/r/Politics"), "r/politics");
+  assert.equal(F.normalizeHandle("bsky.app/profile/alice.bsky.social"), "alice.bsky.social");
+  assert.equal(F.normalizeHandle("alice.bsky.social"), "alice.bsky.social");
+  assert.equal(F.normalizeHandle("@jack.smith"), "jack.smith");
+});
