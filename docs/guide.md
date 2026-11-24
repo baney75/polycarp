@@ -6,7 +6,7 @@ description: Install Polycarp, use its one command, choose or build a theme, and
 
 ## Where things stand
 
-Polycarp is Spaces and themes for macOS and Windows. The browser extension, its CLI helper, MCP server and computer-use tools moved to Tychicus: https://github.com/baney75/tychicus. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
+Polycarp is Spaces and themes for macOS and Windows, with its own browser extension for reading, a library and calmer feeds (`spaces/extension`). The browser-driving extension, its CLI helper, MCP server and computer-use tools are a separate project, Tychicus: https://github.com/baney75/tychicus. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 - **Mac, Apple silicon:** workspaces are inside `Polycarp.app`, with one Settings window and one set of permissions.
 - **Dictation** is not part of Polycarp. [Silas](https://github.com/baney75/silas) is its own app, on its own release schedule.
@@ -372,7 +372,7 @@ The routes, the scopes and the threat model are in [docs/agents.md](https://gith
 
 ## Use your browser from Claude, ChatGPT and Grok
 
-This moved to Tychicus with the browser extension: https://github.com/baney75/tychicus.
+This is Tychicus, a separate extension: https://github.com/baney75/tychicus. Polycarp's own extension doesn't let an assistant drive your browser.
 
 ## Keys, motion and behavior
 
@@ -409,7 +409,7 @@ Polycarp won't run a tool inside your current folder, including `node_modules/.b
 
 On a Mac, Polycarp follows your theme live. On other devices the Silas app may not read theme files yet.
 
-The browser extension, now [Tychicus](https://github.com/baney75/tychicus), reads the same theme. Its side panel takes a new theme within 5 seconds while it is open. An approval or hub page that is already open keeps the colors it opened with; reload it to see the new ones. It doesn't reload on its own, so a passcode you are typing isn't lost.
+[Tychicus](https://github.com/baney75/tychicus), the browser-driving extension, reads the same theme. Its side panel takes a new theme within 5 seconds while it is open. An approval or hub page that is already open keeps the colors it opened with; reload it to see the new ones. It doesn't reload on its own, so a passcode you are typing isn't lost.
 
 If you want apps to show their own look, run `polycarp theme off`. It removes the theme files; an app that reads them is expected to use its own look when it next checks. If a file can't be removed, `off` fails and names it.
 
@@ -427,4 +427,4 @@ This always works.
 
 ## Credits and license
 
-The command and Spaces are MIT. The browser extension, with its AGPL-3.0 license and credits, is in [Tychicus](https://github.com/baney75/tychicus). The name and logo aren't covered by those licenses. Newsreader is under the SIL Open Font License.
+The command and Spaces are MIT. Polycarp's browser extension is GPL-3.0-or-later, because it bundles the eSpeak NG phonemizer; its libraries and fonts keep their own licenses, listed in `spaces/extension`. Tychicus, the browser-driving extension, carries its own AGPL-3.0 license in [its repo](https://github.com/baney75/tychicus). The name and logo aren't covered by those licenses. Newsreader is under the SIL Open Font License.
