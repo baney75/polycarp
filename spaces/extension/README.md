@@ -63,6 +63,7 @@ node tests/library.spec.mjs
 node tests/package.spec.mjs      # the staged copy installs, carries the app version and updates itself
 node tests/store.spec.mjs        # the Chrome Web Store copy: no key, no new tab, optional app link, store updates
 node tests/sites.spec.mjs        # YouTube, X, Audible and feed fixtures, finder and pause
+node tests/filters.spec.mjs      # feed filters: collapse, Show, hide selectors, live rule changes
 node tests/sources.spec.mjs      # Search sources against saved fixtures
 node tests/nas.spec.mjs          # NAS against a local WebDAV fake
 node tests/contact.mjs [piece]   # screenshots of every surface to tests/out/contact

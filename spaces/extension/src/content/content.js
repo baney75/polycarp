@@ -375,9 +375,11 @@
     if (tracker && engine) tracker.observeHolders(engine.takeFresh());
     if (isTop) applyOverlays();
     if (isPdf && isTop) showPdfButton();
+    if (isTop && !isPdf && P.feedFilter) P.feedFilter.start();
   }
 
   function remove() {
+    if (P.feedFilter) P.feedFilter.stop();
     if (engine) { engine.stop(); engine = null; }
     if (tracker) { tracker.stop(); tracker = null; }
     clearCss();
@@ -431,7 +433,7 @@
     if (!msg || typeof msg.type !== "string") return;
     if (!isTop) return;
     if (msg.type === "polycarp:state") {
-      reply({ active, host, isPdf, url: location.href, title: document.title, site: site ? site.id : null, library: !!(S && S.capturerFor(location.hostname)), stats: engine ? engine.stats() : null });
+      reply({ active, host, isPdf, url: location.href, title: document.title, site: site ? site.id : null, library: !!(S && S.capturerFor(location.hostname)), stats: engine ? engine.stats() : null, filters: P.feedFilter ? P.feedFilter.stats() : null });
     } else if (msg.type === "polycarp:snapshot") {
       sitePage().then(reply, () => reply(snapshotPage()));
       return true;
@@ -463,6 +465,7 @@
     try { chrome.runtime.onMessage.removeListener(onMessage); } catch (e) {}
     if (tracker) { clearInterval(tracker.tick); clearInterval(tracker.flushT); tracker = null; }
     watchPage(false);
+    if (P.feedFilter) P.feedFilter.stop();
     // Leave the rendered page as is; a fresh content script takes over after an update.
     if (engine && engine.observer) { engine.observer.disconnect(); engine.observer = null; }
   }

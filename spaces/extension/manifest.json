@@ -53,7 +53,9 @@
       "js": [
         "src/shared/core.js",
         "src/shared/bionic.js",
+        "src/shared/filters.js",
         "src/content/sites.js",
+        "src/content/filters.js",
         "src/content/finder.js",
         "src/content/content.js"
       ],
