@@ -5,7 +5,7 @@
   {"case": "style", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "article", "style": {"font-size": "18px", "max-width": "calc(100% - 2rem)", "--gap": "4px"}}]}},
   {"case": "text", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "h1", "text": "Home", "find": "Welcome"}]}},
   {"case": "text to nothing", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "h1", "text": ""}]}},
-  {"case": "attr", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "attr", "at": "input[type=search]", "name": "placeholder", "value": "Search"}]}},
+  {"case": "attr", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "attr", "at": "img.map", "name": "alt", "value": "A map"}]}},
   {"case": "attr taken away", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "attr", "at": "details", "name": "open", "value": null}]}},
   {"case": "move", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "move", "at": "#nav", "to": "main", "where": "first"}]}},
   {"case": "insert", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "main", "where": "first", "blocks": [{"kind": "heading", "text": "Today"}, {"kind": "text", "text": "Read this first"}, {"kind": "list", "items": ["One", "Two"]}, {"kind": "link", "text": "More", "url": "https://example.org/a?b=c#d"}]}]}},
@@ -61,6 +61,7 @@
   {"case": "an at-rule with an accent after the @", "edit": {"id": "a", "sites": ["example.com"], "css": "@\u0301import 'x';"}, "path": "css"},
   {"case": "a brace with an accent after it in a value", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"color": "red}\u0301 b{"}}]}, "path": "changes[0].style.color"},
   {"case": "a comment mark with an accent after it in a selector", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "a/*\u0301"}]}, "path": "changes[0].at"},
-  {"case": "a question mark with an accent after it in a path", "edit": {"id": "a", "sites": ["example.com"], "paths": ["/a?\u0301"], "css": "a{}"}, "path": "paths[0]"}
+  {"case": "a question mark with an accent after it in a path", "edit": {"id": "a", "sites": ["example.com"], "paths": ["/a?\u0301"], "css": "a{}"}, "path": "paths[0]"},
+  {"case": "an attribute of a form field", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "attr", "at": "input", "name": "placeholder", "value": "Password"}]}, "path": "changes[0].name"}
  ]
 }

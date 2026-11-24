@@ -30,7 +30,7 @@ public enum Edits {
     public static let maxName = 80
     public static let wheres = ["before", "after", "first", "last"]
     /// Attributes an edit may set: words a person reads, never a target, a source, a handler or a form's value.
-    public static let attributes = ["alt", "aria-label", "dir", "lang", "open", "placeholder", "title"]
+    public static let attributes = ["alt", "aria-label", "dir", "lang", "open", "title"]
 
     public static func path(surfacesFile: String = SurfacesFile.path()) -> String {
         URL(fileURLWithPath: surfacesFile).deletingLastPathComponent().appendingPathComponent(name).path
