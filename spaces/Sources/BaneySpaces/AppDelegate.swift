@@ -1176,3 +1176,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 }
+// spec-gate live proof, do not merge
