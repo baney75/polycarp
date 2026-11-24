@@ -85,12 +85,11 @@ final class ThemeTests: XCTestCase {
     }
 
     func testTheBaneySpacesThemeLeavesDurationsFontsAndGrowthAsTheyWere() {
-        for k in [MotionKind.panelIn, .panelOut, .listIn, .listOut, .row] {
+        for k in [MotionKind.panelIn, .panelOut, .row] {
             XCTAssertEqual(t.motion.seconds(0.12, k), 0.12)
         }
         XCTAssertEqual(t.font.size(10.5), 10.5)
         XCTAssertEqual(t.font.weight(.semibold), .semibold)
-        XCTAssertTrue(t.motion.slides)
     }
 
     /// The Mac app has no Workspace Dock since 2026-11-23, but the spec is shared: other platforms still read the switch.

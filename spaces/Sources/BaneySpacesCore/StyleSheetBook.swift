@@ -1,6 +1,6 @@
 import Foundation
 
-/// The sheet as the top bar and the Workspace Dock read it: one `StyleLookup` for a sheet, a mode and the theme's roles,
+/// The sheet as the top bar reads it: one `StyleLookup` for a sheet, a mode and the theme's roles,
 /// so each part's style is worked out once per change and kept, never once per frame. Nil in a `ComputedStyle` still
 /// means the view draws what it drew before the sheet, so an empty sheet changes nothing. Not thread safe: the app
 /// keeps one on the main thread and builds a new one when the sheet or the theme changes.
@@ -59,25 +59,6 @@ public final class StyleBook {
         }
     }
 
-    // MARK: The dock
-
-    public var dock: ComputedStyle { lookup.computed(surface: .dock) }
-
-    public func tile(current: Bool, hover: Bool = false) -> ComputedStyle {
-        lookup.computed(surface: .dock, part: "tile", states: Self.states(current: current, hover: hover))
-    }
-
-    public func label(current: Bool, hover: Bool = false) -> ComputedStyle {
-        lookup.computed(surface: .dock, part: "label", states: Self.states(current: current, hover: hover))
-    }
-
-    public func badge(current: Bool, hover: Bool = false) -> ComputedStyle {
-        lookup.computed(surface: .dock, part: "badge", states: Self.states(current: current, hover: hover))
-    }
-
-    public func icon(current: Bool, hover: Bool = false) -> ComputedStyle {
-        lookup.computed(surface: .dock, part: "icon", states: Self.states(current: current, hover: hover))
-    }
 }
 
 extension ComputedStyle {

@@ -209,14 +209,6 @@ extension Rooms {
         return out
     }
 
-    /// What a dock tile for `room` does with what is dropped on it: file it there and answer with what happened.
-    /// The dock calls it on the main thread with the drop's file URLs; a drop of a few files moves in milliseconds,
-    /// one across drives copies first, so a caller that may get large drops runs it off the main thread.
-    public static func dropHandler(_ room: Room, rooms: @escaping () -> Rooms = { Rooms.configured },
-                                   fm: FileManager = .default) -> ([URL]) -> Filing {
-        { urls in rooms().file(urls.filter(\.isFileURL), into: room, fm: fm) }
-    }
-
     /// bes's id: 12 hex digits of a random UUID (`uuid.uuid4().hex[:12]`).
     public static func newID() -> String {
         String(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "").prefix(12))

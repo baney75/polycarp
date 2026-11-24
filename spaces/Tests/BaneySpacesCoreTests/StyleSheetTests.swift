@@ -124,14 +124,14 @@ final class StyleSheetTests: XCTestCase {
         ("bar", "height", ["18px", "64px", "28pt"], ["17px", "65px", "28", "0"]),
         ("bar .clock", "padding", ["0", "4px", "0 8px", "1px 2px 3px", "1px 2px 3px 4px", "40px"], ["1px 2px 3px 4px 5px", "41px", "-1px", "8", "auto"]),
         ("bar", "gap", ["0", "40px", "8pt"], ["41px", "-1px", "8"]),
-        ("dock .tile", "border-radius", ["0", "40px", "6pt"], ["-1px", "41px", "50%"]),
-        ("dock .tile", "border", ["none", "1px solid red", "solid 2px var(--border)", "1px solid", "0 solid red", "8px solid red"],
+        ("bar .workspace", "border-radius", ["0", "40px", "6pt"], ["-1px", "41px", "50%"]),
+        ("bar .workspace", "border", ["none", "1px solid red", "solid 2px var(--border)", "1px solid", "0 solid red", "8px solid red"],
          ["9px solid red", "1px dashed red", "1px red", "solid", "1px solid red blue", "thin solid red"]),
         ("bar", "border-bottom", ["none", "1px solid var(--border)", "0.5px solid rgba(255, 255, 255, 0.2)"], ["1px", "2px dotted red"]),
-        ("dock .tile", "box-shadow", ["none", "0 4px 12px black", "red 1px 2px 3px", "-40px 40px 64px rgba(0, 0, 0, 0.3)"],
+        ("bar .island", "box-shadow", ["none", "0 4px 12px black", "red 1px 2px 3px", "-40px 40px 64px rgba(0, 0, 0, 0.3)"],
          ["0 4px 12px 2px black", "41px 0 0 black", "0 0 65px black", "0 0 -1px black", "inset 0 0 4px black", "0 4px 12px", "0 4px black"]),
         ("bar .clock", "display", ["none", "flex"], ["block", "hidden", "inline"]),
-        ("dock .tile", "transition-duration", ["0", "0ms", "2000ms", "2s", "150ms", "0.25s"], ["2001ms", "3s", "150", "-1ms", "fast"]),
+        ("bar .workspace", "transition-duration", ["0", "0ms", "2000ms", "2s", "150ms", "0.25s"], ["2001ms", "3s", "150", "-1ms", "fast"]),
         ("bar", "color", ["red", "var(--foreground)"], ["12px", "none"]),
     ]
 
@@ -168,7 +168,7 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertEqual(s.borderRadius, 4)
         XCTAssertEqual(s.border, .solid(width: 2, color: Self.black))
         XCTAssertEqual(s.borderBottom, StyleLine.none)
-        XCTAssertEqual(style("dock .tile { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5) }", .dock, "tile").boxShadow,
+        XCTAssertEqual(style("bar .island { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5) }", .bar, "island").boxShadow,
                        .drop(x: 0, y: 2, blur: 6, color: StyleColor(red: 0, green: 0, blue: 0, alpha: 0.5)))
         XCTAssertTrue(s.isHidden)
         XCTAssertEqual(s.transitionDuration, 0.25)
@@ -178,19 +178,18 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertEqual(style("bar { height: 30px }").height, 30)
         XCTAssertEqual(style("bar { padding: 1px 2px 3px 4px }").padding, StyleInsets(top: 1, right: 2, bottom: 3, left: 4))
         XCTAssertEqual(style("bar { padding: 5px 6px }").padding, StyleInsets(top: 5, right: 6, bottom: 5, left: 6))
-        XCTAssertEqual(style("dock .tile { transition-duration: 1.5s }", .dock, "tile").transitionDuration, 1.5)
+        XCTAssertEqual(style("bar .workspace { transition-duration: 1.5s }", .bar, "workspace").transitionDuration, 1.5)
         XCTAssertEqual(style("bar { font-weight: normal }").fontWeight, 400)
     }
 
     func testAPropertyASelectorCantUseIsAProblemNotIgnored() {
-        let e = errors("dock .tile { height: 30px; }")
+        let e = errors("bar .workspace { height: 30px; }")
         XCTAssertEqual(e.count, 1)
-        XCTAssertTrue(e[0].contains("`height` doesn't apply to `dock .tile`") && e[0].contains("applies to bar"), e[0])
+        XCTAssertTrue(e[0].contains("`height` doesn't apply to `bar .workspace`") && e[0].contains("applies to bar"), e[0])
         XCTAssertTrue(errors("bar { display: none }")[0].contains("bar.enabled"), "the bar is turned off in surfaces.json")
-        XCTAssertEqual(errors("dock .icon { color: red }").count, 1, "an app icon has no text color")
-        XCTAssertEqual(errors("dock .tile { gap: 4px }").count, 1)
+        XCTAssertEqual(errors("bar .workspace { gap: 4px }").count, 1)
         // In a list, it still applies where it can.
-        let (s, p) = StyleSheet.parse("bar, dock .tile { height: 30px }")
+        let (s, p) = StyleSheet.parse("bar, bar .workspace { height: 30px }")
         XCTAssertEqual(p.count, 1)
         XCTAssertEqual(s.computed(surface: .bar, dark: false, roles: Self.roles(false)).height, 30)
     }
@@ -218,16 +217,16 @@ final class StyleSheetTests: XCTestCase {
         }
         XCTAssertEqual(StyleTarget.barModule.parts, ["mark", "workspaces", "app-menus", "status", "hour", "clock", "date", "verse",
                                                      "battery", "network", "notifications"])
-        XCTAssertEqual(problems("dock .tile.current:hover { color: red } dock .label:hover.current { color: red } :root { --x: 1px }"), [])
+        XCTAssertEqual(problems("bar .workspace.current:hover { color: red } bar .workspace:hover.current { color: red } :root { --x: 1px }"), [])
         XCTAssertEqual(problems("BAR { color: red }"), [], "a type selector is case-insensitive")
     }
 
     func testABadSelectorDropsItsRuleAndNamesTheChoices() {
         let cases: [(String, String)] = [
-            ("baz { color: red }", "the surfaces are `bar` and `dock`"),
+            ("baz { color: red }", "the surfaces are `bar`"),
             ("bar .clok { color: red }", "`.clock`"),
             ("bar .clok { color: red }", "`.hour`"),
-            ("dock .tile.active { color: red }", "takes `.current` and `:hover`"),
+            ("bar .workspace.active { color: red }", "takes `.current` and `:hover`"),
             ("bar .left:hover { color: red }", "takes no states"),
             ("bar:hover { color: red }", "takes no states"),
             ("* { color: red }", "`*` isn't supported"),
@@ -236,11 +235,11 @@ final class StyleSheetTests: XCTestCase {
             ("#clock { color: red }", "ids"),
             ("bar > .clock { color: red }", "isn't supported"),
             (".clock { color: red }", "write `bar .clock`"),
-            (".tile { color: red }", "write `dock .tile`"),
+            (".workspace { color: red }", "write `bar .workspace`"),
             (":root, bar { --x: red }", "must be alone"),
             ("bar ::before { color: red }", "pseudo-elements"),
             ("bar .clock::after { color: red }", "pseudo-elements"),
-            ("dock .tile[x] { color: red }", "attribute"),
+            ("bar .workspace[x] { color: red }", "attribute"),
             ("bar, { color: red }", "empty selector"),
         ]
         for (css, says) in cases {
@@ -337,10 +336,10 @@ final class StyleSheetTests: XCTestCase {
                             ("@keyframes spin { from { opacity: 0 } to { opacity: 1 } }", "`@keyframes` isn't supported"),
                             ("@media (prefers-color-scheme: dark) { @media (prefers-color-scheme: dark) { bar { color: red } } }", "can't go inside"),
                             ("@media (prefers-color-scheme: dark);", "needs a `{ ... }` block")] {
-            let (s, p) = StyleSheet.parse(bad + "\ndock { opacity: 0.5 }")
+            let (s, p) = StyleSheet.parse(bad + "\nbar .clock { opacity: 0.5 }")
             XCTAssertTrue(p.contains { $0.message.contains(says) }, "\(bad): \(p)")
             XCTAssertNil(s.computed(surface: .bar, dark: true, roles: Self.roles(true)).color, bad)
-            XCTAssertEqual(s.computed(surface: .dock, dark: true, roles: Self.roles(true)).opacity, 0.5, "the rule after \(bad) still applies")
+            XCTAssertEqual(s.computed(surface: .bar, part: "clock", dark: true, roles: Self.roles(true)).opacity, 0.5, "the rule after \(bad) still applies")
         }
     }
 
@@ -348,19 +347,19 @@ final class StyleSheetTests: XCTestCase {
 
     func testSpecificityThenOrder() {
         let css = """
-        dock .tile.current { color: blue }
-        dock .tile { color: red; border-radius: 2px }
-        dock .tile:hover { color: lime }
-        dock .tile { border-radius: 4px }
-        dock .tile.current:hover { color: yellow }
+        bar .workspace.current { color: blue }
+        bar .workspace { color: red; border-radius: 2px }
+        bar .workspace:hover { color: lime }
+        bar .workspace { border-radius: 4px }
+        bar .workspace.current:hover { color: yellow }
         """
-        XCTAssertEqual(style(css, .dock, "tile").color, StyleColor(red: 1, green: 0, blue: 0))
-        XCTAssertEqual(style(css, .dock, "tile").borderRadius, 4, "a tie: the later rule wins")
-        XCTAssertEqual(style(css, .dock, "tile", states: [.current]).color, StyleColor(red: 0, green: 0, blue: 1), "a class beats an earlier type")
-        XCTAssertEqual(style(css, .dock, "tile", states: [.hover]).color, StyleColor(red: 0, green: 1, blue: 0))
-        XCTAssertEqual(style(css, .dock, "tile", states: [.current, .hover]).color, StyleColor(red: 1, green: 1, blue: 0), "two states beat one")
-        let tie = "dock .tile:hover { color: lime } dock .tile.current { color: blue }"
-        XCTAssertEqual(style(tie, .dock, "tile", states: [.current, .hover]).color, StyleColor(red: 0, green: 0, blue: 1), "equal: later wins")
+        XCTAssertEqual(style(css, .bar, "workspace").color, StyleColor(red: 1, green: 0, blue: 0))
+        XCTAssertEqual(style(css, .bar, "workspace").borderRadius, 4, "a tie: the later rule wins")
+        XCTAssertEqual(style(css, .bar, "workspace", states: [.current]).color, StyleColor(red: 0, green: 0, blue: 1), "a class beats an earlier type")
+        XCTAssertEqual(style(css, .bar, "workspace", states: [.hover]).color, StyleColor(red: 0, green: 1, blue: 0))
+        XCTAssertEqual(style(css, .bar, "workspace", states: [.current, .hover]).color, StyleColor(red: 1, green: 1, blue: 0), "two states beat one")
+        let tie = "bar .workspace:hover { color: lime } bar .workspace.current { color: blue }"
+        XCTAssertEqual(style(tie, .bar, "workspace", states: [.current, .hover]).color, StyleColor(red: 0, green: 0, blue: 1), "equal: later wins")
         XCTAssertEqual(style("bar .clock { color: red; color: blue }", .bar, "clock").color, StyleColor(red: 0, green: 0, blue: 1))
         XCTAssertEqual(style("bar .clock { color: blue; color: 12px }", .bar, "clock").color, StyleColor(red: 0, green: 0, blue: 1),
                        "a bad later declaration leaves the good one")
@@ -371,8 +370,8 @@ final class StyleSheetTests: XCTestCase {
         bar { color: red; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; padding: 9px; background: navy; font-family: Georgia, serif }
         bar .right { color: blue; gap: 4px }
         bar .clock { font-weight: bold }
-        dock { color: lime; font-style: italic }
-        dock .tile.current { color: yellow }
+        bar .workspaces { color: lime; font-style: italic }
+        bar .workspace.current { color: yellow }
         """
         let inLeft = style(css, .bar, "clock", region: "left")
         XCTAssertEqual(inLeft.color, StyleColor(red: 1, green: 0, blue: 0))
@@ -386,10 +385,9 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertEqual(style(css, .bar, "clock", region: "right").color, StyleColor(red: 0, green: 0, blue: 1), "the region passes its color on")
         XCTAssertNil(style(css, .bar, "clock", region: "right").gap)
         XCTAssertEqual(style(css, .bar, "clock").color, StyleColor(red: 1, green: 0, blue: 0), "no region: from the bar")
-        XCTAssertEqual(style(css, .dock, "label").color, StyleColor(red: 0, green: 1, blue: 0))
-        XCTAssertEqual(style(css, .dock, "label", states: [.current]).color, StyleColor(red: 1, green: 1, blue: 0), "a current tile's label")
-        XCTAssertEqual(style(css, .dock, "badge").fontStyle, .italic)
-        XCTAssertNil(style(css, .dock, "icon").color, "an icon has no text color")
+        XCTAssertEqual(style(css, .bar, "workspace").color, StyleColor(red: 0, green: 1, blue: 0), "a number takes its module's color")
+        XCTAssertEqual(style(css, .bar, "workspace", states: [.current]).color, StyleColor(red: 1, green: 1, blue: 0), "the current number")
+        XCTAssertEqual(style(css, .bar, "workspace").fontStyle, .italic)
         XCTAssertEqual(style("bar .clock { border: 1px solid currentColor }", .bar, "clock").border,
                        .solid(width: 1, color: Self.roles(false)["foreground"]!), "currentColor with no color set is the theme's text")
         XCTAssertEqual(style("bar .clock { border: 1px solid }", .bar, "clock").border, .solid(width: 1, color: Self.roles(false)["foreground"]!))
@@ -398,7 +396,6 @@ final class StyleSheetTests: XCTestCase {
     func testAnUnknownPartIsTheEmptyStyle() {
         let s = sheet("bar { color: red }")
         XCTAssertEqual(s.computed(surface: .bar, part: "nope", dark: false, roles: [:]), .empty)
-        XCTAssertEqual(s.computed(surface: .dock, part: "clock", dark: false, roles: [:]), .empty)
         XCTAssertEqual(s.computed(surface: .bar, part: "clock", region: "nowhere", dark: false, roles: [:]).color, StyleColor(red: 1, green: 0, blue: 0))
     }
 
@@ -413,7 +410,7 @@ final class StyleSheetTests: XCTestCase {
           colr: blue;
           font-size: 99px;
         }
-        dock .nope { color: red }
+        bar .nope { color: red }
           @import "x.css";
         bar .clock { height: 30px }
         """
@@ -443,7 +440,7 @@ final class StyleSheetTests: XCTestCase {
         let css = """
         bar { background: #111; }
         bar .clock { color: #222; }
-        dock .tile.current { background: var(--accent); color: var(--foreground) }
+        bar .workspace.current { background: var(--accent); color: var(--foreground) }
         bar .date { color: white }
         """
         let all = StyleOps.problems(css, roles: Self.roles).problems
@@ -460,11 +457,11 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertFalse(d.object?["warnings"]?.array?.isEmpty ?? true)
     }
 
-    // MARK: What the bar and the dock read
+    // MARK: What the bar reads
 
-    /// A rule reaches the values the bar and the dock draw with (`StyleBook`), and a part the sheet leaves alone stays nil,
+    /// A rule reaches the values the bar draws with (`StyleBook`), and a part the sheet leaves alone stays nil,
     /// so the view draws what it drew before (review of #604: the sheet was parsed but drawn nowhere).
-    func testASheetRuleReachesTheValuesTheBarAndTheDockDraw() {
+    func testASheetRuleReachesTheValuesTheBarDraws() {
         let css = """
         bar { height: 30px; font-family: monospace; gap: 18px }
         bar .right { color: #888888 }
@@ -472,8 +469,6 @@ final class StyleSheetTests: XCTestCase {
         bar .clock:hover { color: red }
         bar .workspace { color: var(--muted) }
         bar .workspace.current { color: var(--foreground); border-bottom: 2px solid var(--accent) }
-        dock .tile.current { border: 2px solid var(--accent) }
-        dock .badge { display: none }
         @media (prefers-color-scheme: light) { bar .clock { color: #8a6d1f } }
         """
         XCTAssertEqual(problems(css).filter(\.isError), [])
@@ -490,10 +485,6 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertEqual(dark.workspace(in: .left, current: true).borderBottom, .solid(width: 2, color: Self.gold))
         XCTAssertEqual(dark.workspace(in: .left, current: true).color, Self.white)
         XCTAssertNil(dark.workspace(in: .left, current: false).borderBottom)
-        XCTAssertEqual(dark.tile(current: true).border, .solid(width: 2, color: Self.gold))
-        XCTAssertNil(dark.tile(current: false).border)
-        XCTAssertTrue(dark.badge(current: false).isHidden)
-        XCTAssertNil(dark.dock.background, "the dock keeps the theme's panel")
         let light = StyleBook(sheet(css), dark: false, roles: Self.roles(false))
         XCTAssertEqual(light.module(.clock, in: .right).color, StyleColor(red: 0x8a / 255, green: 0x6d / 255, blue: 0x1f / 255))
         // The text helpers.
@@ -657,6 +648,53 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertLessThan(sync.lowerBound, compare.lowerBound, "the book is rebuilt before the bar compares heights")
     }
 
+    // MARK: A sheet from a build that had the Workspace Dock
+
+    /// The Workspace Dock was removed on 2026-11-23. A style.css written for it still loads: each `dock` selector is a
+    /// warning and is ignored, the rest of its list and every other rule apply, and `style check` passes.
+    func testAnOlderSheetWithDockRulesLoadsWithWarningsOnly() throws {
+        let css = """
+        bar .clock { color: #d4af37 }
+        dock { gap: 6px; box-shadow: 0 4px 12px black }
+        dock .tile.current:hover { border: 2px solid var(--accent) }
+        bar .date, dock .label { color: white }
+        """
+        let (s, p) = StyleSheet.parse(css)
+        XCTAssertTrue(p.allSatisfy { !$0.isError }, "\(p)")
+        XCTAssertEqual(p.filter { $0.message.contains("went with the Workspace Dock (removed 2026-11-23)") }.map(\.line), [2, 3, 4])
+        XCTAssertEqual(style(css, .bar, "clock").color, Self.gold)
+        XCTAssertEqual(style(css, .bar, "date").color, Self.white, "the list's other selector still applies")
+        XCTAssertFalse(s.isEmpty)
+        try css.write(toFile: file, atomically: true, encoding: .utf8)
+        guard case .success = StyleOps.check(file: file, roles: Self.roles) else { return XCTFail("an older sheet still checks") }
+        // A new rule for it is refused, so nothing writes one again.
+        guard case .failure = StyleOps.set("dock .tile", "opacity", "1", file: file, roles: Self.roles) else { return XCTFail() }
+    }
+
+    /// Review of PR #624 first-F4: `style unset 'dock .tile'` takes out an older sheet's rule for the retired surface, so
+    /// the warning `style check` gives for it can be cleared with the tool. Other rules stay as written.
+    func testUnsetRemovesARetiredDockRule() throws {
+        let css = """
+        bar .clock { color: #d4af37 }
+        dock  .TILE { opacity: 0.5; gap: 2px }
+        dock { gap: 6px }
+        @media (prefers-color-scheme: dark) {
+          dock .tile { opacity: 1 }
+        }
+        """
+        try css.write(toFile: file, atomically: true, encoding: .utf8)
+        let one = try StyleOps.unset("dock .tile", "opacity", file: file).get().object
+        XCTAssertEqual(one?["removed"], .number(1))
+        XCTAssertEqual(one?["selector"], .string("dock .tile"))
+        XCTAssertEqual(try StyleOps.unset("dock .tile", nil, media: "dark", file: file).get().object?["removed"], .number(1))
+        XCTAssertEqual(try StyleOps.unset("dock .tile", nil, file: file).get().object?["removed"], .number(1))
+        XCTAssertEqual(try StyleOps.unset("dock", nil, file: file).get().object?["removed"], .number(1))
+        XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), "bar .clock { color: #d4af37 }\n")
+        let (_, p) = StyleSheet.parse(try String(contentsOfFile: file, encoding: .utf8))
+        XCTAssertTrue(p.isEmpty, "\(p)")
+        XCTAssertEqual(try StyleOps.unset("dock .tile", nil, file: file).get().object?["removed"], .number(0))
+    }
+
     // MARK: The docs and the starter sheet can't drift from the table
 
     func testTheDocsHoldTheGeneratedTables() throws {
@@ -709,12 +747,12 @@ final class StyleSheetTests: XCTestCase {
           padding: 2px;
         }
 
-        dock .tile { opacity: 0.9 }
+        bar .workspace { opacity: 0.9 }
         """
         try start.write(toFile: file, atomically: true, encoding: .utf8)
         XCTAssertNoThrow(try StyleOps.set("bar", "color", "var(--accent)", file: file, roles: Self.roles).get())
         XCTAssertNoThrow(try StyleOps.set("bar", "height", "30px", file: file, roles: Self.roles).get())
-        XCTAssertNoThrow(try StyleOps.set("dock .tile", "border-radius", "0", file: file, roles: Self.roles).get())
+        XCTAssertNoThrow(try StyleOps.set("bar .workspace", "border-radius", "0", file: file, roles: Self.roles).get())
         XCTAssertNoThrow(try StyleOps.set("bar .clock", "color", "#d4af37", file: file, roles: Self.roles).get())
         XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), """
         /* my sheet */
@@ -725,7 +763,7 @@ final class StyleSheetTests: XCTestCase {
           height: 30px;
         }
 
-        dock .tile { opacity: 0.9; border-radius: 0; }
+        bar .workspace { opacity: 0.9; border-radius: 0; }
 
         bar .clock {
           color: #d4af37;
@@ -733,9 +771,9 @@ final class StyleSheetTests: XCTestCase {
 
         """)
         // The same selector written another way is the same rule.
-        XCTAssertNoThrow(try StyleOps.set("dock .tile:hover.current", "opacity", "1", file: file, roles: Self.roles).get())
-        XCTAssertNoThrow(try StyleOps.set("dock   .tile.current:hover", "opacity", "0.5", file: file, roles: Self.roles).get())
-        XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8).components(separatedBy: "dock .tile.current:hover {").count, 2)
+        XCTAssertNoThrow(try StyleOps.set("bar .workspace:hover.current", "opacity", "1", file: file, roles: Self.roles).get())
+        XCTAssertNoThrow(try StyleOps.set("bar   .workspace.current:hover", "opacity", "0.5", file: file, roles: Self.roles).get())
+        XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8).components(separatedBy: "bar .workspace.current:hover {").count, 2)
         XCTAssertTrue(try String(contentsOfFile: file, encoding: .utf8).contains("opacity: 0.5;"))
         // A custom property on :root, and a value set in dark mode.
         XCTAssertNoThrow(try StyleOps.set(":root", "--gold", "#d4af37", file: file, roles: Self.roles).get())
@@ -762,24 +800,24 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertEqual(StyleEdit.set("bar { color: red /* why */ ; }", selector: StyleSelector(surface: .bar), property: "color", value: "blue", media: nil),
                        "bar { color: blue /* why */ ; }")
         // A rule in a list isn't the selector alone: a new rule is added.
-        XCTAssertEqual(StyleEdit.set("bar, dock { opacity: 1 }", selector: StyleSelector(surface: .bar), property: "opacity", value: "0.5", media: nil),
-                       "bar, dock { opacity: 1 }\n\nbar {\n  opacity: 0.5;\n}\n")
+        XCTAssertEqual(StyleEdit.set("bar, bar .clock { opacity: 1 }", selector: StyleSelector(surface: .bar), property: "opacity", value: "0.5", media: nil),
+                       "bar, bar .clock { opacity: 1 }\n\nbar {\n  opacity: 0.5;\n}\n")
     }
 
     func testASetThatWouldAddAnErrorWritesNothingAndSaysWhy() throws {
         let start = "bar { color: red }\n"
         try start.write(toFile: file, atomically: true, encoding: .utf8)
-        for (sel, prop, value, code) in [("dock .tile", "height", "30px", "invalid_value"), ("bar", "font-size", "99px", "invalid_value"),
-                                         ("bar", "color", "red; height: 99px", "invalid_value"), ("bar", "color", "red } dock { opacity: 0", "invalid_value"),
+        for (sel, prop, value, code) in [("bar .workspace", "height", "30px", "invalid_value"), ("bar", "font-size", "99px", "invalid_value"),
+                                         ("bar", "color", "red; height: 99px", "invalid_value"), ("bar", "color", "red } bar .clock { opacity: 0", "invalid_value"),
                                          ("bar", "color", "/* x */ red", "invalid_value"), ("bar", "colr", "red", "unknown_property"),
-                                         ("bar .clok", "color", "red", "invalid_selector"), ("bar, dock", "color", "red", "invalid_selector"),
+                                         ("bar .clok", "color", "red", "invalid_selector"), ("bar, bar .clock", "color", "red", "invalid_selector"),
                                          ("bar", "--x", "red", "invalid_value"), ("bar", "color", "var(--nope)", "invalid_value"),
                                          ("bar", "color", "", "invalid_value")] {
             guard case .failure(let f) = StyleOps.set(sel, prop, value, file: file, roles: Self.roles) else { XCTFail("\(sel) \(prop) \(value)"); continue }
             XCTAssertEqual(f.code, code, "\(sel) \(prop) \(value): \(f.message)")
             XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), start, "nothing written for \(sel) \(prop) \(value)")
         }
-        guard case .failure(let f) = StyleOps.set("dock .tile", "height", "30px", file: file, roles: Self.roles) else { return XCTFail() }
+        guard case .failure(let f) = StyleOps.set("bar .workspace", "height", "30px", file: file, roles: Self.roles) else { return XCTFail() }
         XCTAssertTrue(f.message.contains("doesn't apply"), f.message)
         XCTAssertEqual(f.problems.first?.line, 4, "the problem's place in the sheet it would have made")
         XCTAssertEqual(StyleOps.set("bar", "color", "red", media: "dim", file: file, roles: Self.roles).failure?.exit, 2)
@@ -797,7 +835,7 @@ final class StyleSheetTests: XCTestCase {
           height: 30px; /* tall */
         }
         bar .clock { color: blue }
-        dock .tile {
+        bar .workspace {
           /* a note */
           opacity: 1;
         }
@@ -808,7 +846,7 @@ final class StyleSheetTests: XCTestCase {
         try start.write(toFile: file, atomically: true, encoding: .utf8)
         XCTAssertEqual(try StyleOps.unset("bar", "color", file: file).get().object?["removed"], .number(1))
         XCTAssertEqual(try StyleOps.unset("bar .clock", "color", file: file).get().object?["removed"], .number(1))
-        XCTAssertEqual(try StyleOps.unset("dock .tile", "opacity", file: file).get().object?["removed"], .number(1))
+        XCTAssertEqual(try StyleOps.unset("bar .workspace", "opacity", file: file).get().object?["removed"], .number(1))
         XCTAssertEqual(try StyleOps.unset("bar", "color", media: "dark", file: file).get().object?["removed"], .number(1))
         XCTAssertEqual(try StyleOps.unset("bar", "gap", file: file).get().object?["removed"], .number(0))
         XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), """
@@ -816,20 +854,20 @@ final class StyleSheetTests: XCTestCase {
         bar {
           height: 30px; /* tall */
         }
-        dock .tile {
+        bar .workspace {
           /* a note */
         }
 
         """)
         XCTAssertEqual(try StyleOps.unset("bar", nil, file: file).get().object?["removed"], .number(1))
-        XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), "/* keep me */\ndock .tile {\n  /* a note */\n}\n")
+        XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), "/* keep me */\nbar .workspace {\n  /* a note */\n}\n")
         XCTAssertEqual(StyleOps.unset("nope", nil, file: file).failure?.code, "invalid_selector")
     }
 
     func testSetThenUnsetRoundTripsToTheSameText() throws {
         let start = "/* a */\nbar {\n  color: red; /* b */\n}\n/* c */\n"
         try start.write(toFile: file, atomically: true, encoding: .utf8)
-        for (sel, prop, value) in [("bar", "gap", "4px"), ("dock .badge", "color", "white"), ("bar .hour", "font-style", "italic")] {
+        for (sel, prop, value) in [("bar", "gap", "4px"), ("bar .workspace", "color", "white"), ("bar .hour", "font-style", "italic")] {
             _ = try StyleOps.set(sel, prop, value, file: file, roles: Self.roles).get()
             _ = try StyleOps.unset(sel, prop, file: file).get()
         }
@@ -878,7 +916,7 @@ final class StyleSheetTests: XCTestCase {
         ]
         for h in hostile {
             let (sheet, problems) = StyleSheet.parse(h)
-            _ = sheet.computed(surface: .dock, part: "label", states: [.current], dark: false, roles: Self.roles(false))
+            _ = sheet.computed(surface: .bar, part: "workspace", states: [.current], dark: false, roles: Self.roles(false))
             _ = sheet.contrastWarnings(roles: Self.roles)
             XCTAssertTrue(sheet.ruleCount >= 0 && problems.count >= 0)
         }

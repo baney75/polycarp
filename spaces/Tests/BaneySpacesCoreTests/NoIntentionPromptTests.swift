@@ -50,12 +50,11 @@ final class NoIntentionPromptTests: XCTestCase {
                        [.separator, .showAll, .find, .separator, .update(.check), .settings, .quit])
     }
 
-    /// surfaces.json has no alarm and nothing the bar or dock could ask with; the socket has no purpose request.
+    /// surfaces.json has no alarm and nothing the bar could ask with; the socket has no purpose request.
     func testNoSettingOrRequestCarriesThem() {
         XCTAssertFalse(SurfaceField.all.contains { $0.path.hasPrefix("alarm") || $0.path.hasPrefix("rhythm") })
         XCTAssertNil(Surfaces.BarModule(id: "purpose"))
         XCTAssertNil(Surfaces.BarModule(id: "one-" + "thing"))
-        XCTAssertNil(Surfaces.TileLabel(rawValue: "purpose"))
         XCTAssertNil(Wire.Request.Op(rawValue: "purpose"))
         XCTAssertFalse(Surfaces.defaults.newtab.question.hasSuffix("?"), "the new tab's field asks nothing")
     }

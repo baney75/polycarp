@@ -77,7 +77,7 @@ public enum Permissions {
             id: .accessibility, title: "Accessibility",
             purpose: "Lets Polycarp show, hide and move windows.",
             never: "It never reads what you type.",
-            uses: [PermissionUse(.workspaces, "Workspaces, the dock and the overview")],
+            uses: [PermissionUse(.workspaces, "Workspaces and the overview")],
             kind: .list, settingsName: "Accessibility", settingsURL: pane + "Privacy_Accessibility",
             blocksStart: true, niceToHave: false),
         PermissionEntry(

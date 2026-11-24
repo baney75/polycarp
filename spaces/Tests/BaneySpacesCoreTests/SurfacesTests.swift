@@ -52,8 +52,6 @@ final class SurfacesTests: XCTestCase {
         XCTAssertTrue(d.desktop.verse)
         XCTAssertEqual(d.desktop.versePosition, .bottomRight)
         XCTAssertEqual(d.desktop.verseRotation, .daily)
-        XCTAssertEqual(d.dock.tileLabel, .number)
-        XCTAssertTrue(d.dock.restTile)
         XCTAssertEqual(d.menu.rows, Surfaces.MenuRow.allCases)
         XCTAssertEqual(d.menu.hidden, [])
         XCTAssertEqual(d.newtab.question, "Search or type an address", "a placeholder, never a question about your hour")
@@ -103,7 +101,6 @@ final class SurfacesTests: XCTestCase {
             ("bar.clockFormat", "\"24h\""), ("bar.hourNames", "false"),
             ("desktop.scene", "\"image:dawn-field.heic\""), ("desktop.followDaylight", "false"), ("desktop.verse", "false"),
             ("desktop.versePosition", "\"top-center\""), ("desktop.verseRotation", "\"fixed:1 Corinthians 13:4-7\""),
-            ("dock.tileLabel", "\"number\""), ("dock.restTile", "false"),
             ("menu.order", #"["quit","settings"]"#), ("menu.hidden", #"["update","agents"]"#),
             ("newtab.question", "\"Find it.\""), ("newtab.verse", "false"),
             ("newtab.searchURL", "\"https://search.brave.com/search?q={query}&source=web\""),
@@ -120,8 +117,7 @@ final class SurfacesTests: XCTestCase {
                                     right: [.clock], clockFormat: .twentyFourHour, hourNames: false))
         XCTAssertEqual(s.desktop, .init(scene: .image("dawn-field.heic"), followDaylight: false, verse: false, versePosition: .topCenter,
                                         verseRotation: .fixed("1 Corinthians 13:4-7")))
-        XCTAssertEqual(s.dock, .init(tileLabel: .number, restTile: false))
-        XCTAssertEqual(s.menu.rows, [.quit, .settings, .workspaces, .showAll, .find, .dock], "left-out rows follow; hidden ones go")
+        XCTAssertEqual(s.menu.rows, [.quit, .settings, .workspaces, .showAll, .find], "left-out rows follow; hidden ones go")
         XCTAssertEqual(s.newtab, .init(question: "Find it.", verse: false, searchURL: "https://search.brave.com/search?q={query}&source=web"))
         XCTAssertEqual(s.idle, .init(enabled: true, style: .verse, effects: false, showMachineName: false, showVerse: false, showKierkegaard: false, startAfterMinutes: 5))
         XCTAssertEqual(s.text, .init(translation: .bsb, verseSource: .file("psalms.json")))
@@ -146,12 +142,12 @@ final class SurfacesTests: XCTestCase {
 
     func testResetTakesOnePathBackOrTheWholeFile() throws {
         _ = SurfacesOps.set("bar.height", .number(36), file: file)
-        _ = SurfacesOps.set("dock.restTile", .bool(false), file: file)
+        _ = SurfacesOps.set("newtab.verse", .bool(false), file: file)
         let r = try SurfacesOps.reset("bar.height", file: file).get()
         XCTAssertEqual(r.object?["value"], .number(26))
         guard case .document(let d) = SurfacesFile.load(path: file) else { return XCTFail() }
         XCTAssertNil(d.tree.at(["bar"]), "an emptied group leaves the file")
-        XCTAssertEqual(d.tree.at(["dock", "restTile"]), .bool(false))
+        XCTAssertEqual(d.tree.at(["newtab", "verse"]), .bool(false))
         _ = try SurfacesOps.reset(nil, file: file).get()
         guard case .document(let all) = SurfacesFile.load(path: file) else { return XCTFail() }
         XCTAssertEqual(all.tree, .object(["version": .number(1)]))
@@ -188,7 +184,7 @@ final class SurfacesTests: XCTestCase {
             (#"{"desktop":{"versePosition":"middle"}}"#, "desktop.versePosition", #"not "middle""#),
             (#"{"desktop":{"verseRotation":"weekly"}}"#, "desktop.verseRotation", "fixed:<...>"),
             (#"{"desktop":{"verseRotation":"fixed:3:16"}}"#, "desktop.verseRotation", #""3:16" is not a valid fixed value"#),
-            (#"{"dock":{"tileLabel":"name"}}"#, "dock.tileLabel", #"not "name""#),
+            (#"{"bar":{"clockFormat":"name"}}"#, "bar.clockFormat", #"not "name""#),
             (#"{"idle":{"startAfterMinutes":0}}"#, "idle.startAfterMinutes", "not 0"),
             (#"{"menu":{"order":["workspaces","help"]}}"#, "menu.order[1]", #""help" is not a known id"#),
             (#"{"menu":{"order":["custom:x"]}}"#, "menu.order[0]", "is not a known id"),
@@ -217,8 +213,8 @@ final class SurfacesTests: XCTestCase {
     }
 
     func testEveryErrorInAFileIsListedInPathOrder() {
-        let got = errors(#"{"idle":{"style":"x"},"bar":{"height":99,"style":"x"},"dock":{"restTile":"no"}}"#)
-        XCTAssertEqual(got.map(\.path), ["bar.height", "bar.style", "dock.restTile", "idle.style"])
+        let got = errors(#"{"idle":{"style":"x"},"bar":{"height":99,"style":"x"},"newtab":{"verse":"no"}}"#)
+        XCTAssertEqual(got.map(\.path), ["bar.height", "bar.style", "idle.style", "newtab.verse"])
     }
 
     func testNotJSONIsAnErrorAtTheRoot() {
@@ -243,7 +239,7 @@ final class SurfacesTests: XCTestCase {
         XCTAssertEqual(d.surfaces.desktop.scene, .olive)
         XCTAssertEqual(d.warnings.map(\.path), ["bar.blur", "journal", "version"])
 
-        let set = try SurfacesOps.set("dock.restTile", .bool(false), file: file).get()
+        let set = try SurfacesOps.set("newtab.verse", .bool(false), file: file).get()
         XCTAssertEqual(set.object?["warnings"]?.array?.count, 3, "set says what it kept and didn't know")
         _ = try SurfacesOps.reset("desktop.scene", file: file).get()
         guard case .document(let after) = SurfacesFile.load(path: file) else { return XCTFail() }
@@ -481,11 +477,29 @@ final class SurfacesTests: XCTestCase {
         XCTAssertEqual(c.surfaces.bar.left, [.mark, .workspaces, .appMenus])
         XCTAssertEqual(c.surfaces.bar.center, [])
         XCTAssertEqual(c.surfaces.bar.right, [.status, .clock])
-        XCTAssertEqual(c.surfaces.dock.tileLabel, .number)
-        XCTAssertEqual(Set(c.warnings.map(\.path)), ["alarm", "bar.hideSystemMenuBar", "bar.modules.center", "bar.modules.left", "dock.tileLabel", "newtab.chips"])
+        XCTAssertEqual(Set(c.warnings.map(\.path)), ["alarm", "bar.hideSystemMenuBar", "bar.modules.center", "bar.modules.left", "dock", "newtab.chips"])
         // A new write of a retired value is refused like any unknown one.
         guard case .failure = SurfacesOps.set("bar.modules.left", tree(#"["mark","purpose"]"#), file: file) else { return XCTFail("purpose is no module now") }
         guard case .failure = SurfacesOps.set("dock.tileLabel", .string("purpose"), file: file) else { return XCTFail("purpose is no tile label now") }
+    }
+
+    /// 2026-11-23: the Workspace Dock is gone. A file a build with it wrote still reads with no error: its `dock` group
+    /// and the status menu's `dock` row are warned about and left out, and the rest applies. A new write of either is refused.
+    func testAFileWrittenWithTheDockStillReads() throws {
+        let json = #"{"version":1,"bar":{"height":30},"dock":{"tileLabel":"icons","restTile":false},"menu":{"order":["dock","quit","settings"],"hidden":["dock","update"]}}"#
+        try json.write(toFile: file, atomically: true, encoding: .utf8)
+        guard case .document(let d) = SurfacesFile.load(path: file) else { return XCTFail("a file from a build with the dock must read") }
+        XCTAssertEqual(d.surfaces.bar.height, 30, "the rest of the file still applies")
+        XCTAssertEqual(d.surfaces.menu.order, [.quit, .settings])
+        XCTAssertEqual(d.surfaces.menu.hidden, [.update])
+        XCTAssertFalse(d.surfaces.menu.rows.map(\.rawValue).contains("dock"))
+        XCTAssertEqual(Set(d.warnings.map(\.path)), ["dock", "menu.hidden", "menu.order"])
+        XCTAssertTrue(d.warnings.allSatisfy { $0.message.contains("went with the Workspace Dock (removed 2026-11-23)") }, "\(d.warnings)")
+        guard case .failure(let f) = SurfacesOps.set("dock.restTile", .bool(true), file: file) else { return XCTFail("the dock group is gone") }
+        XCTAssertTrue(f.message.contains("Workspace Dock"), f.message)
+        guard case .failure = SurfacesOps.set("menu.hidden", tree(#"["dock"]"#), file: file) else { return XCTFail("dock is no menu row now") }
+        // Another set still works on the old file, and keeps it readable.
+        XCTAssertNoThrow(try SurfacesOps.set("bar.height", .number(32), file: file).get())
     }
 
     /// The day forms of the clock are taken and read back; the 12h and 24h forms still read as they did.

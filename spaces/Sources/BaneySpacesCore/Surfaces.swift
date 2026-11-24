@@ -175,16 +175,9 @@ public struct Surfaces: Equatable, Sendable {
         public var paper: Paper?
     }
 
-    public enum TileLabel: String, CaseIterable, Sendable { case number, icons }
-
-    public struct Dock: Equatable, Sendable {
-        public var tileLabel: TileLabel
-        public var restTile: Bool
-    }
-
     /// The status menu's rows, by id.
     public enum MenuRow: String, CaseIterable, Sendable {
-        case workspaces, showAll = "show-all", find, agents, update, dock, settings, quit
+        case workspaces, showAll = "show-all", find, agents, update, settings, quit
         /// Rows that can never be hidden: without them there is no way to Settings or out.
         public static let required: [MenuRow] = [.settings, .quit]
     }
@@ -265,7 +258,6 @@ public struct Surfaces: Equatable, Sendable {
     public var paper: Paper?
     public var bar: Bar
     public var desktop: Desktop
-    public var dock: Dock
     public var menu: Menu
     public var search: Search
     public var newtab: NewTab
@@ -287,7 +279,6 @@ extension SurfaceField {
         ("bar", "The top bar that stands in for the macOS menu bar."),
         ("bar.modules", "What the top bar shows, left to right in each of its three places. Each module id may appear once in all three."),
         ("desktop", "The desktop scene behind every window, and its verse."),
-        ("dock", "The Workspace Dock's tiles."),
         ("menu", "The status menu (Polycarp's menu bar icon)."),
         ("search", "One web search for the launcher, the browser's new tab page and polycarp-spaces search."),
         ("newtab", "The browser's new tab page."),
@@ -328,10 +319,6 @@ extension SurfaceField {
                      .string("daily"), "daily, hourly, or fixed:<reference> for one verse always."),
         SurfaceField("desktop.paper", .paper, .string(""),
                      "The desktop's own paper, over paper: #RRGGBB, a scene or picture:<name>. It wins over the theme's wallpaper and desktop.scene. Empty follows paper."),
-
-        SurfaceField("dock.tileLabel", .choice(Surfaces.TileLabel.allCases.map(\.rawValue)), .string("number"),
-                     "What each workspace tile says: its number, or only its apps' icons."),
-        SurfaceField("dock.restTile", .bool, .bool(true), "An \"At rest\" tile after the workspaces gathers apps running with no window."),
 
         SurfaceField("menu.order", .ids(known: Surfaces.MenuRow.allCases.map(\.rawValue), custom: false),
                      ids(Surfaces.MenuRow.allCases.map(\.rawValue)), "The rows in order. Rows left out follow in their default order."),
@@ -448,7 +435,6 @@ extension Surfaces {
         desktop = Desktop(scene: Scene(id: s("desktop.scene")), followDaylight: b("desktop.followDaylight"), verse: b("desktop.verse"),
                           versePosition: VersePosition(rawValue: s("desktop.versePosition")) ?? .bottomRight,
                           verseRotation: VerseRotation(id: s("desktop.verseRotation")), paper: Paper(id: s("desktop.paper")))
-        dock = Dock(tileLabel: TileLabel(rawValue: s("dock.tileLabel")) ?? .number, restTile: b("dock.restTile"))
         menu = Menu(order: list("menu.order").compactMap(MenuRow.init(rawValue:)), hidden: list("menu.hidden").compactMap(MenuRow.init(rawValue:)))
         search = Search(engine: s("search.engine"))
         newtab = NewTab(question: s("newtab.question"), verse: b("newtab.verse"), searchURL: s("newtab.searchURL"), paper: Paper(id: s("newtab.paper")))
@@ -474,12 +460,22 @@ public struct SurfacesErrors: Error, Equatable, Sendable, CustomStringConvertibl
 }
 
 enum SurfaceCheck {
-    /// Values only a build with workspace purposes wrote, removed with them (2026-11-22): a file that holds one still
-    /// reads, with a warning, as if it were left out. A new write of one is refused like any unknown value.
-    static let retired: [String: Set<String>] = [
-        "bar.modules.left": ["purpose", "one-thing"], "bar.modules.center": ["purpose", "one-thing"],
-        "bar.modules.right": ["purpose", "one-thing"], "dock.tileLabel": ["purpose"],
+    /// Why a retired value or group is gone. A file that holds one still reads, with a warning, as if it were left out.
+    static let purposesGone = "went with workspace purposes"
+    static let dockGone = "went with the Workspace Dock (removed 2026-11-23)"
+
+    /// Values only an older build wrote, each with why it went: workspace purposes (2026-11-22) and the
+    /// Workspace Dock's status menu row (2026-11-23). A new write of one is refused like any unknown value.
+    static let retired: [String: [String: String]] = [
+        "bar.modules.left": ["purpose": purposesGone, "one-thing": purposesGone],
+        "bar.modules.center": ["purpose": purposesGone, "one-thing": purposesGone],
+        "bar.modules.right": ["purpose": purposesGone, "one-thing": purposesGone],
+        "menu.order": ["dock": dockGone], "menu.hidden": ["dock": dockGone],
     ]
+
+    /// Groups only an older build had: a file that holds one reads, with a warning, and the group is ignored.
+    /// A write under one is refused, since no field is there.
+    static let retiredGroups: [String: String] = ["dock": dockGone]
 
     /// `doc` without its retired values: a list loses them, a field holding one is left out (its default).
     static func retire(_ doc: SurfaceValue, warnings: inout [SurfacesIssue]) -> SurfaceValue {
@@ -487,15 +483,19 @@ enum SurfaceCheck {
         for (path, gone) in retired.sorted(by: { $0.key < $1.key }) {
             let keys = path.split(separator: ".").map(String.init)
             guard let v = out.at(keys) else { continue }
-            if let s = v.string, gone.contains(s) {
-                warnings.append(SurfacesIssue(path, "\"\(s)\" went with workspace purposes; the default is used"))
+            if let s = v.string, let why = gone[s] {
+                warnings.append(SurfacesIssue(path, "\"\(s)\" \(why); the default is used"))
                 out = out.removing(keys)
             } else if let a = v.array {
-                let kept = a.filter { $0.string.map { !gone.contains($0) } ?? true }
+                let kept = a.filter { $0.string.map { gone[$0] == nil } ?? true }
                 guard kept.count != a.count else { continue }
-                for item in a { if let s = item.string, gone.contains(s) { warnings.append(SurfacesIssue(path, "\"\(s)\" went with workspace purposes; it is left out")) } }
+                for item in a { if let s = item.string, let why = gone[s] { warnings.append(SurfacesIssue(path, "\"\(s)\" \(why); it is left out")) } }
                 out = out.setting(keys, to: .array(kept))
             }
+        }
+        for (group, why) in retiredGroups.sorted(by: { $0.key < $1.key }) where out.at([group]) != nil {
+            warnings.append(SurfacesIssue(group, "\(why); it is ignored"))
+            out = out.removing([group])
         }
         return out
     }

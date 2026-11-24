@@ -8,8 +8,8 @@ import Foundation
 public enum Remote {
     public static let port: UInt16 = 47913
 
-    /// What a remote caller may do: look (ping, list, agent status) and read or change the three
-    /// settings (`.setting`: the theme, the palette and the dock switch; agents may customize how
+    /// What a remote caller may do: look (ping, list, agent status) and read or change the two
+    /// settings (`.setting`: the theme and the palette; agents may customize how
     /// this Mac looks, and each change is logged with its caller). Never focus, type into your
     /// terminals, open URLs, list or move windows, or turn the agent workspace on or off: those
     /// change what you do, not how it looks.

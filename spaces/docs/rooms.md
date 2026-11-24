@@ -12,8 +12,8 @@ you, into five folders under one root:
 | `4 Let Go` | Let Go | `x` | Everything else, held until you empty it. |
 
 Polycarp reads the same folders and files into them the way the `bes` command does. It never makes the rooms, never
-asks you anything about them, and never deletes: it offers the rooms where you already look (the launcher, the menu
-bar menu, and soon the dock) and does what you pick.
+asks you anything about them, and never deletes: it offers the rooms where you already look (the launcher and the menu
+bar menu) and does what you pick.
 
 ## Setting it up
 
@@ -72,19 +72,3 @@ bes checkout with `BES_REPO` (it looks in `~/Projects/baney-extended-system` oth
 
 Polycarp does not rename what you file. Renaming to `YYYY-MM-DD Title (People).ext` stays with `bes sort`, which
 works the Inbox; a file you put in a room yourself is your correction, and keeps the name you gave it.
-
-## Dock tiles (ready, not yet wired)
-
-`Rooms.dropHandler(_:)` is the drop action for a room tile:
-
-```swift
-let fileIntoKnow = Rooms.dropHandler(.know)   // ([URL]) -> Rooms.Filing, root read from surfaces.json at drop time
-let filing = fileIntoKnow(urls)
-Toast.show(filing.summary(.know), symbol: Room.know.symbol)   // "Filed 3 in Know", "Filed 2 in Keep, 1 could not move"
-Trace.log("rooms: \(filing.summary(.know)) by dock drop")
-```
-
-Non-file URLs (a link dragged from a browser) are left out. A drop of local files takes milliseconds; one from another
-drive copies first, so a drop handler that may see big drops calls it off the main thread and shows the toast on main.
-The dock's generic drop support is being built separately; once a tile can take a drop with a closure of URLs, a room
-tile passes this handler and draws `Room.symbol`, `Room.name` and, for the Inbox, `Rooms.count(.inbox)`.

@@ -237,16 +237,6 @@ final class RoomsTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: empty.path))
     }
 
-    func testTheDropHandlerFilesFileURLsIntoItsRoom() throws {
-        let r = try makeRoot()
-        let a = try write("a", tmp.appendingPathComponent("drop/a.txt"))
-        let handler = Rooms.dropHandler(.letGo, rooms: { r })
-        let filing = handler([a, URL(string: "https://example.com")!])
-        XCTAssertEqual(filing.moved.map(\.to.lastPathComponent), ["a.txt"])
-        XCTAssertEqual(names(r.url(.letGo)), ["a.txt"])
-        XCTAssertEqual(filing.failed, [], "a web link isn't a file and is left out, not failed")
-    }
-
     // MARK: bes undo reads Polycarp's journal
 
     /// The real `bes` (github.com/baney75/baney-extended-system) undoes a Polycarp drop. It runs from `$BES_REPO`, or
