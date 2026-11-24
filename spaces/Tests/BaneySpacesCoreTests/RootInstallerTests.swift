@@ -160,6 +160,77 @@ final class RootInstallerTests: XCTestCase {
         XCTAssertTrue(main[step.upperBound...].contains("\n  connector_notice \"$LOG\"\n"), "the notice comes after the install step")
     }
 
+    // Polycarp can install its companions, each from its own installer, only when asked (Donovan, 2026-11-24).
+    func testCompanionsAreChosenByNameOrNumberAndNothingIsTheDefault() throws {
+        let (said, code) = try functions("""
+            companion_list 'Tychicus, silas'; echo '|'; companion_list '4 1'; echo '|'; companion_list 'local studio'; echo '|'
+            companion_list ''; echo '|'; companion_list all; echo '|'; companion_list 'zoom' 2>&1; echo '|'
+            printf '\\n' | ask_companions 2>/dev/null; echo '|'
+            """)
+        XCTAssertEqual(code, 0, said)
+        let parts = said.components(separatedBy: "|\n")
+        XCTAssertEqual(parts[0], "tychicus silas")
+        XCTAssertEqual(parts[1], "tychicus local-studio", "the question's numbers, in the listed order")
+        XCTAssertEqual(parts[2], "local-studio")
+        XCTAssertEqual(parts[3], "", "nothing named, nothing installed")
+        XCTAssertEqual(parts[4], "tychicus silas shotate local-studio")
+        XCTAssertTrue(parts[5].contains("Not a companion: zoom"), parts[5])
+        XCTAssertEqual(parts[6], "", "Return alone at the question means none")
+    }
+
+    func testEachCompanionUsesItsOwnOfficialInstaller() throws {
+        let (said, code) = try functions("for c in $COMPANIONS; do companion_command $c; done")
+        XCTAssertEqual(code, 0, said)
+        XCTAssertEqual(said.split(separator: "\n").map(String.init), [
+            "curl -fsSL https://github.com/baney75/tychicus/releases/latest/download/install.sh | sh",
+            "curl -fsSL https://raw.githubusercontent.com/baney75/silas/main/install.sh | sh",
+            "curl -fsSL https://raw.githubusercontent.com/baney75/shotate/main/install.sh | bash",
+            "curl -fsSL https://raw.githubusercontent.com/baney75/local-studio/main/scripts/install.sh | bash -s -- --channel nightly",
+        ])
+        let main = try installer()
+        XCTAssertTrue(main.contains("step_soft \"Installing $(companion_name \"$c\")\""), "a companion failing never stops Polycarp's install")
+        XCTAssertTrue(main.contains("[ -z \"$asked_with\" ] && [ -z \"$test_mode\" ] && [ -t 1 ]"), "the question is asked only at a terminal, outside test mode, when nothing was named")
+    }
+
+    // Review of #646: a failed download must fail the companion, not run an empty script and report success.
+    func testACompanionWhoseDownloadFailsFailsAndOneThatDownloadsRuns() throws {
+        let stub = FileManager.default.temporaryDirectory.appendingPathComponent("polycarp-curl-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: stub, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stub) }
+        let curl = stub.appendingPathComponent("curl")
+        func stubCurl(_ body: String) throws {
+            try ("#!/bin/bash\n" + body + "\n").write(to: curl, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: curl.path)
+        }
+        try stubCurl("exit 22")
+        var (said, code) = try functions("PATH=\"\(stub.path):$PATH\"; if companion_install tychicus; then echo installed; else echo failed; fi")
+        XCTAssertEqual(code, 0, said)
+        XCTAssertEqual(said.trimmingCharacters(in: .whitespacesAndNewlines), "failed", "a 404 or no network is a failure")
+        try stubCurl("echo 'echo the installer ran'")
+        (said, code) = try functions("PATH=\"\(stub.path):$PATH\"; for c in $COMPANIONS; do companion_install $c || echo failed; done")
+        XCTAssertEqual(code, 0, said)
+        XCTAssertEqual(said.components(separatedBy: "the installer ran").count - 1, 4, said)
+        XCTAssertFalse(said.contains("failed"), said)
+    }
+
+    func testAnAnswerIsReadAsWordsNotFileNames() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("polycarp-glob-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        FileManager.default.createFile(atPath: dir.appendingPathComponent("all").path, contents: Data())
+        let (said, code) = try functions("cd \"\(dir.path)\"; companion_list '*' 2>/dev/null; echo '|'")
+        XCTAssertEqual(code, 0, said)
+        XCTAssertEqual(said, "|\n", "* is not a companion, even beside a file named all")
+    }
+
+    func testCompanionsInstallAfterPolycarpOpens() throws {
+        let main = try installer()
+        let open = try XCTUnwrap(main.range(of: "step \"Opening Polycarp\""))
+        let companions = try XCTUnwrap(main.range(of: "companion_install \"$c\""))
+        XCTAssertLessThan(open.lowerBound, companions.lowerBound, "Polycarp's own install finishes and opens first")
+        XCTAssertTrue(main.contains("polycarp install --local-studio (log: $LOG)"), "a failed Local Studio plugin step says how to retry")
+    }
+
     /// Runs `script` in bash with install.sh sourced for its functions only, under the script's own `set -euo pipefail`.
     private func functions(_ script: String) throws -> (String, Int32) {
         let p = Process()
