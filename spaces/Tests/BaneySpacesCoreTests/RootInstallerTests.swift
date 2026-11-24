@@ -84,14 +84,13 @@ final class RootInstallerTests: XCTestCase {
         let errors = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         p.waitUntilExit()
         XCTAssertEqual(p.terminationStatus, 0, errors)
-        XCTAssertEqual(said, "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus\n")
+        XCTAssertEqual(said, "Polycarp runs on macOS and Windows. The Linux desktop is retired.\n")
         XCTAssertEqual(errors, "")
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: home.path), [], "a Linux run wrote into HOME")
         XCTAssertFalse(try installer().contains("theme follow omarchy"), "the Omarchy theme follow left with Linux")
     }
 
-    /// The browser helper left Polycarp for Tychicus: asked for by name, the installer prints one line saying where to
-    /// get it, exits 0 and writes nothing, not even its log or the parts file, whatever else is named with it. A `uname`
+    /// The agent browser extension was removed from Polycarp: asked for by name, the installer prints one line saying so, exits 0 and writes nothing, not even its log or the parts file, whatever else is named with it. A `uname`
     /// that answers Darwin stands in for a Mac.
     func testAskingForTheBrowserNamesWhereItWentAndInstallsNothing() throws {
         let fm = FileManager.default
@@ -103,9 +102,9 @@ final class RootInstallerTests: XCTestCase {
         let uname = bin.appendingPathComponent("uname")
         try "#!/bin/sh\necho Darwin\n".write(to: uname, atomically: true, encoding: .utf8)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uname.path)
-        let tychicus = "The browser helper is now Tychicus: download tychicus-<version>-<platform> from https://github.com/baney75/tychicus/releases/latest, then `tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .`\n"
+        let removed = "The agent browser extension was removed from Polycarp.\n"
         let silas = "  voice is Silas now, its own app: https://github.com/baney75/silas\n"
-        for (features, line, note) in [("browser", tychicus, ""), ("browser,voice", tychicus, silas)] {
+        for (features, line, note) in [("browser", removed, ""), ("browser,voice", removed, silas)] {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/bash")
             p.arguments = [Repo.root.deletingLastPathComponent().appendingPathComponent("install.sh").path]
@@ -130,16 +129,16 @@ final class RootInstallerTests: XCTestCase {
     /// Only the browser stops the install: naming workspaces or voice carries on, voice with one line saying where Silas
     /// is. Sourced for its functions, so nothing is installed.
     func testOnlyTheBrowserStopsTheInstall() throws {
-        // `workspaces,browser` was the old documented non-interactive answer: it gets the Tychicus line and still installs.
-        let tychicus = "The browser helper is now Tychicus: download tychicus-<version>-<platform> from https://github.com/baney75/tychicus/releases/latest, then `tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .`\n"
+        // `workspaces,browser` was the old documented non-interactive answer: it gets the removed line and still installs.
+        let removed = "The agent browser extension was removed from Polycarp.\n"
         for both in ["workspaces,browser", "workspaces, browser", "browser workspaces"] {
             let (out, rc) = try functions("moved_notes '\(both)'; echo \"rc=$?\"")
             XCTAssertEqual(rc, 0, out)
-            XCTAssertEqual(out, tychicus + "rc=0\n", both)
+            XCTAssertEqual(out, removed + "rc=0\n", both)
         }
         let (said, code) = try functions("moved_notes 'workspaces,voice'; echo \"rc=$?\"; moved_notes browser || echo stop")
         XCTAssertEqual(code, 0, said)
-        XCTAssertEqual(said, "  voice is Silas now, its own app: https://github.com/baney75/silas\nrc=0\nThe browser helper is now Tychicus: download tychicus-<version>-<platform> from https://github.com/baney75/tychicus/releases/latest, then `tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .`\nstop\n")
+        XCTAssertEqual(said, "  voice is Silas now, its own app: https://github.com/baney75/silas\nrc=0\nThe agent browser extension was removed from Polycarp.\nstop\n")
         let main = try installer()
         XCTAssertTrue(main.contains("  moved_notes \"${POLYCARP_FEATURES:-}\" || return 0\n"), "main stops only when moved_notes says so")
     }
@@ -150,7 +149,7 @@ final class RootInstallerTests: XCTestCase {
         let fm = FileManager.default
         let log = fm.temporaryDirectory.appendingPathComponent("install-log-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: log) }
-        let off = "Your remote connector ran on the browser helper that left Polycarp, so it is off now; install Tychicus."
+        let off = "Your remote connector ran on the browser helper that left Polycarp, so it is off now."
         try "building\nretired com.polycarp.serve: it ran x\n\(off)\ndone\n".write(to: log, atomically: true, encoding: .utf8)
         let (said, code) = try functions("connector_notice '\(log.path)'; echo; connector_notice /nonexistent; echo end")
         XCTAssertEqual(code, 0, said)
@@ -160,20 +159,21 @@ final class RootInstallerTests: XCTestCase {
         XCTAssertTrue(main[step.upperBound...].contains("\n  connector_notice \"$LOG\"\n"), "the notice comes after the install step")
     }
 
-    // Polycarp can install its companions, each from its own installer, only when asked (Donovan, 2026-11-24).
+    // Polycarp can install its companions, Silas and Shotate, each from its own installer, only when asked (Donovan,
+    // 2026-11-24).
     func testCompanionsAreChosenByNameOrNumberAndNothingIsTheDefault() throws {
         let (said, code) = try functions("""
-            companion_list 'Tychicus, silas'; echo '|'; companion_list '4 1'; echo '|'; companion_list 'local studio'; echo '|'
+            companion_list 'Shotate, silas'; echo '|'; companion_list '2 1'; echo '|'; companion_list 'silas,Silas 1'; echo '|'
             companion_list ''; echo '|'; companion_list all; echo '|'; companion_list 'zoom' 2>&1; echo '|'
             printf '\\n' | ask_companions 2>/dev/null; echo '|'
             """)
         XCTAssertEqual(code, 0, said)
         let parts = said.components(separatedBy: "|\n")
-        XCTAssertEqual(parts[0], "tychicus silas")
-        XCTAssertEqual(parts[1], "tychicus local-studio", "the question's numbers, in the listed order")
-        XCTAssertEqual(parts[2], "local-studio")
+        XCTAssertEqual(parts[0], "silas shotate")
+        XCTAssertEqual(parts[1], "silas shotate", "the question's numbers, in the listed order")
+        XCTAssertEqual(parts[2], "silas", "each companion once")
         XCTAssertEqual(parts[3], "", "nothing named, nothing installed")
-        XCTAssertEqual(parts[4], "tychicus silas shotate local-studio")
+        XCTAssertEqual(parts[4], "silas shotate")
         XCTAssertTrue(parts[5].contains("Not a companion: zoom"), parts[5])
         XCTAssertEqual(parts[6], "", "Return alone at the question means none")
     }
@@ -182,10 +182,8 @@ final class RootInstallerTests: XCTestCase {
         let (said, code) = try functions("for c in $COMPANIONS; do companion_command $c; done")
         XCTAssertEqual(code, 0, said)
         XCTAssertEqual(said.split(separator: "\n").map(String.init), [
-            "curl -fsSL https://github.com/baney75/tychicus/releases/latest/download/install.sh | sh",
             "curl -fsSL https://raw.githubusercontent.com/baney75/silas/main/install.sh | sh",
             "curl -fsSL https://raw.githubusercontent.com/baney75/shotate/main/install.sh | bash",
-            "curl -fsSL https://raw.githubusercontent.com/baney75/local-studio/main/scripts/install.sh | bash -s -- --channel nightly",
         ])
         let main = try installer()
         XCTAssertTrue(main.contains("step_soft \"Installing $(companion_name \"$c\")\""), "a companion failing never stops Polycarp's install")
@@ -203,13 +201,13 @@ final class RootInstallerTests: XCTestCase {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: curl.path)
         }
         try stubCurl("exit 22")
-        var (said, code) = try functions("PATH=\"\(stub.path):$PATH\"; if companion_install tychicus; then echo installed; else echo failed; fi")
+        var (said, code) = try functions("PATH=\"\(stub.path):$PATH\"; if companion_install silas; then echo installed; else echo failed; fi")
         XCTAssertEqual(code, 0, said)
         XCTAssertEqual(said.trimmingCharacters(in: .whitespacesAndNewlines), "failed", "a 404 or no network is a failure")
         try stubCurl("echo 'echo the installer ran'")
         (said, code) = try functions("PATH=\"\(stub.path):$PATH\"; for c in $COMPANIONS; do companion_install $c || echo failed; done")
         XCTAssertEqual(code, 0, said)
-        XCTAssertEqual(said.components(separatedBy: "the installer ran").count - 1, 4, said)
+        XCTAssertEqual(said.components(separatedBy: "the installer ran").count - 1, 2, said)
         XCTAssertFalse(said.contains("failed"), said)
     }
 
@@ -228,7 +226,7 @@ final class RootInstallerTests: XCTestCase {
         let open = try XCTUnwrap(main.range(of: "step \"Opening Polycarp\""))
         let companions = try XCTUnwrap(main.range(of: "companion_install \"$c\""))
         XCTAssertLessThan(open.lowerBound, companions.lowerBound, "Polycarp's own install finishes and opens first")
-        XCTAssertTrue(main.contains("polycarp install --local-studio (log: $LOG)"), "a failed Local Studio plugin step says how to retry")
+        XCTAssertTrue(main.contains("didn't install; Polycarp is fine. Try it alone: $(companion_command \"$c\")"), "a failed companion says how to retry")
     }
 
     /// Runs `script` in bash with install.sh sourced for its functions only, under the script's own `set -euo pipefail`.

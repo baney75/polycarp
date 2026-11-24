@@ -274,7 +274,7 @@ jobs:
       - name: The licence of ported code is in the bundle
         run: |
           test -s build/Polycarp.app/Contents/Resources/licenses/cua-driver-MIT.txt
-      - name: The app is signed and carries no browser helper (it moved to Tychicus)
+      - name: The app is signed and carries no browser helper (it was removed)
         run: |
           codesign --verify --deep --strict build/Polycarp.app
           test ! -e build/Polycarp.app/Contents/Resources/browser

@@ -17,10 +17,10 @@
 # BANEYSPACES_DEST_DIR: test mode. Install into this folder and change nothing else: the running
 # copy, AeroSpace, Ghostdeck, Launch Services and ~/.local/bin are left alone and the app isn't
 # opened. (With --in-place, test mode leaves AeroSpace and Ghostdeck alone but makes the links.)
-# The browser helper moved to Tychicus (https://github.com/baney75/tychicus) and this app no longer carries it. A
+# The browser helper was removed from Polycarp and this app no longer carries it. A
 # ~/.local/bin/polycarp-browser or ~/.local/bin/tabkyra that links into a Polycarp.app (one an older install made) is removed
 # (a tabkyra an earlier install took the name from is put back), and its launchd jobs are retired. Anything else under
-# those names (an npm link, Homebrew, a file, Tychicus) is never touched.
+# those names (an npm link, Homebrew, a file, another app) is never touched.
 # BANEYSPACES_NO_LAUNCH=1: install as usual but don't open the app.
 # The app's name, identifier and command names come from product.env, which sits beside this script
 # (scripts/ in the repo, Contents/Resources in the app).
@@ -153,7 +153,7 @@ for name in $CLI_NAME $CLI_ALIASES; do
 done
 # The `polycarp` command comes with the app.
 ln -sf "$DEST/Contents/Resources/bin/polycarp" "$HOME/.local/bin/polycarp"
-# The browser moved to Tychicus. An older Polycarp left launchd jobs (remote access, hub, link, tunnel) running its
+# The agent browser extension was removed. An older Polycarp left launchd jobs (remote access, hub, link, tunnel) running its
 # helper, which this app no longer carries: they are booted out and their plists removed. A job whose program isn't
 # Polycarp's is left alone. Never in test mode.
 if [ -z "$TEST" ] && [ -x "$DEST/Contents/Resources/bin/polycarp" ]; then

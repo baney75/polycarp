@@ -1,8 +1,8 @@
 import Foundation
 
 /// The agent workspace API (docs/agent-workspace-api.md): two operations on the session socket, for the helpers of an
-/// agent app (Tychicus) that run apps on Polycarp's agent workspace. `windows` lists the windows there; `move` sends one
-/// window there. Nothing else: computer use (reading, clicking, typing into apps) lives in Tychicus, not Polycarp.
+/// agent (a computer-use client) that run apps on Polycarp's agent workspace. `windows` lists the windows there; `move`
+/// sends one window there. Nothing else: computer use (reading, clicking, typing into apps) is the client's, not Polycarp's.
 /// Pure: the app answers with these replies, and the command and the tests decode them the same way.
 public enum AgentAPI {
     public static let version = 2
@@ -60,7 +60,7 @@ public enum AgentAPI {
         public init(workspace: Int, pid: Int32, started: Date?) { self.workspace = workspace; self.pid = pid; self.started = started }
     }
 
-    /// How new a process must be for `move` to take one of its windows off another workspace. Tychicus moves an app it has
+    /// How new a process must be for `move` to take one of its windows off another workspace. An agent moves an app it has
     /// just started; Donovan's own apps, running longer, stay where he put them.
     public static let freshProcess: TimeInterval = 60
 

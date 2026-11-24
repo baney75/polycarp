@@ -1,7 +1,7 @@
 import Foundation
 
-/// The agent workspace: one workspace for agents' apps (Tychicus drives them; Polycarp only places
-/// their windows) while you work somewhere else. Three rules keep it from ever taking over your screen:
+/// The agent workspace: one workspace for agents' apps (a computer-use client drives them; Polycarp only
+/// places their windows) while you work somewhere else. Three rules keep it from ever taking over your screen:
 ///
 /// 1. Its apps are parked out of view instead of hidden, because macOS refuses background clicks
 ///    and keystrokes to a hidden app.
@@ -10,9 +10,9 @@ import Foundation
 ///    tile, or a row in the launcher.
 /// 3. A window an agent opens in the background joins the agent workspace, not yours.
 public enum AgentWorkspace {
-    /// What `polycarp-spaces sandbox ...` prints (on stderr, exit 2): the throwaway macOS VM for agent work is Tychicus's now
-    /// (Donovan, 2026-11-21). Nothing runs and nothing is written.
-    public static let sandboxMoved = "The sandbox is now Tychicus: https://github.com/baney75/tychicus"
+    /// What `polycarp-spaces sandbox ...` prints (on stderr, exit 2): the throwaway macOS VM for agent work was removed
+    /// from Polycarp (2026-11-21). Nothing runs and nothing is written.
+    public static let sandboxRemoved = "The sandbox was removed from Polycarp."
 
     /// The workspace number, or nil when it's off.
     public static func number(setting: Int) -> Int? { Workspaces.range.contains(setting) ? setting : nil }

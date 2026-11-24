@@ -302,7 +302,7 @@ for link in "$HOME/.local/bin/polycarp-spaces" "$HOME/.local/bin/baneyspaces" "$
     case "$(readlink "$link")" in *Polycarp.app/*) rm -f "$link" ;; esac
   fi
 done
-# The browser helper moved to Tychicus. What an older Polycarp made for it still goes, and only what points into a
+# The browser helper was removed from Polycarp. What an older Polycarp made for it still goes, and only what points into a
 # Polycarp.app: the browser command, only if it links into Polycarp's helper.
 browser_link="$HOME/.local/bin/polycarp-browser"
 if [ -L "$browser_link" ]; then

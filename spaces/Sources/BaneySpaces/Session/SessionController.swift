@@ -502,7 +502,7 @@ final class SessionController {
     // MARK: agent workspace
 
     /// `polycarp-spaces agent …`: the agent workspace (on, off, status) and its API's two operations, `windows` and `move`
-    /// (docs/agent-workspace-api.md). Computer use (reading and driving apps) is Tychicus's, not Polycarp's.
+    /// (docs/agent-workspace-api.md). Computer use (reading and driving apps) is not Polycarp's.
     func agent(_ sub: String, _ args: [String]) -> Wire.Reply {
         let h = agentHost
         switch sub {

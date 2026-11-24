@@ -1,8 +1,8 @@
 import Foundation
 
 /// The words "Use Polycarp from Claude, ChatGPT and Grok" shares with the side panel and the helper. Each literal below is
-/// the same as src/connect/remote-copy.ts in baney75/tychicus (`STEP_COPY`, `ASSISTANT_STEPS`, `APPROVAL_STEP`, `RESULT_COPY`,
-/// `CHECK_LABELS`), so edit both together.
+/// the same as the helper's own copy (`STEP_COPY`, `ASSISTANT_STEPS`, `APPROVAL_STEP`, `RESULT_COPY`, `CHECK_LABELS`), so
+/// edit both together.
 public struct RemoteStepCopy: Equatable {
     public let title: String
     /// Nil only for `unknown`, whose body is the helper's own message.
