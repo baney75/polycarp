@@ -11,6 +11,10 @@
 # Polycarp has no parts to choose: workspaces always run. POLYCARP_FEATURES is read only for the parts that left. One that
 # names browser prints where the helper went (BROWSER_MOVED below) and installs nothing; one that names voice prints where
 # Silas is and carries on. Anything else in it is ignored, and so is an old features.toml.
+# Companion apps, each from its own official installer and only when asked: Tychicus (agents drive the browser and apps),
+# Silas (dictation), Shotate (screenshots and recordings) and Local Studio (local models; Polycarp's plugin is added to
+# it). `curl ... | bash -s -- --with tychicus,silas` or POLYCARP_WITH=tychicus,silas picks them; at a terminal with
+# neither, the installer asks once and Return means none. A companion that fails is named; Polycarp stays installed.
 # Everything is inside main(), called on the last line: run through a pipe (curl | bash), a download that
 # stops halfway runs nothing, and no step can read the script's own text from stdin.
 set -euo pipefail
@@ -24,6 +28,15 @@ main() {
     return 0
   fi
   moved_notes "${POLYCARP_FEATURES:-}" || return 0
+  local WITH="${POLYCARP_WITH:-}" asked_with=""
+  [ -n "${POLYCARP_WITH+x}" ] && asked_with=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --with) WITH="${2:-}"; asked_with=1; shift 2 || shift ;;
+      --with=*) WITH="${1#--with=}"; asked_with=1; shift ;;
+      *) shift ;;
+    esac
+  done
   local REPO="https://github.com/baney75/polycarp.git"
   local REF="${POLYCARP_REF:-main}"
   # Where the ready-made app comes from (fetch_app), and the signature every release has to carry.
@@ -54,6 +67,14 @@ main() {
     printf '  %s…' "$label"
     if "$@" </dev/null >>"$LOG" 2>&1; then printf '\r  %s✓%s %s %s(%ss)%s\033[K\n' "$green" "$reset" "$label" "$dim" "$((SECONDS - start))" "$reset"
     else printf '\r  ✗ %s\033[K\n' "$label"; fail "${STEP_FAIL:-That step did not finish.}"; fi
+  }
+
+  # step_soft: as step, but a failure returns 1 instead of stopping the install (for companions).
+  step_soft() {
+    local label=$1 start=$SECONDS; shift
+    printf '  %s…' "$label"
+    if "$@" </dev/null >>"$LOG" 2>&1; then printf '\r  %s✓%s %s %s(%ss)%s\033[K\n' "$green" "$reset" "$label" "$dim" "$((SECONDS - start))" "$reset"
+    else printf '\r  ✗ %s\033[K\n' "$label"; return 1; fi
   }
 
   say ""; say "${bold}Polycarp${reset}  ${dim}Bear much fruit.${reset}"; say ""
@@ -183,6 +204,26 @@ main() {
     say "  ${dim}The theme wasn't set; Polycarp uses its own look. Try: polycarp theme set polycarp${reset}"
   fi
 
+  # Companions: what --with or POLYCARP_WITH named, else one question at a terminal. Each runs its own installer.
+  local picked
+  if [ -z "$asked_with" ] && [ -z "$test_mode" ] && [ -t 1 ] && { : </dev/tty; } 2>/dev/null; then
+    WITH=$(ask_companions </dev/tty)
+  fi
+  picked=$(companion_list "$WITH")
+  if [ -n "$picked" ]; then
+    local c
+    for c in $picked; do
+      if [ -n "$test_mode" ]; then say "  ${dim}Would install $(companion_name "$c"): $(companion_command "$c")${reset}"; continue; fi
+      if (step_soft "Installing $(companion_name "$c")" bash -c "$(companion_command "$c")"); then
+        if [ "$c" = local-studio ]; then
+          step_soft "Adding Polycarp to Local Studio" "$installed/Contents/Resources/bin/polycarp" install --local-studio || true
+        fi
+      else
+        say "  ${dim}$(companion_name "$c") didn't install; Polycarp is fine. Try it alone: $(companion_command "$c")${reset}"
+      fi
+    done
+  fi
+
   # 5. Open it, last. (Test mode never opens anything.)
   if [ -z "$test_mode" ]; then
     local dest
@@ -250,6 +291,57 @@ fetch_app() {
     esac
   done
   return 1
+}
+
+# The companions, in the order the question lists them.
+COMPANIONS="tychicus silas shotate local-studio"
+companion_name() {
+  case "$1" in tychicus) echo Tychicus ;; silas) echo Silas ;; shotate) echo Shotate ;; local-studio) echo "Local Studio" ;; esac
+}
+companion_blurb() {
+  case "$1" in
+    tychicus) echo "agents drive your browser and apps" ;;
+    silas) echo "dictation anywhere" ;;
+    shotate) echo "screenshots and screen recordings" ;;
+    local-studio) echo "local AI models; Polycarp's agent can run on them" ;;
+  esac
+}
+# Each companion's own official installer, exactly as its README gives it.
+companion_command() {
+  case "$1" in
+    tychicus) echo 'curl -fsSL https://github.com/baney75/tychicus/releases/latest/download/install.sh | sh' ;;
+    silas) echo 'curl -fsSL https://raw.githubusercontent.com/baney75/silas/main/install.sh | sh' ;;
+    shotate) echo 'curl -fsSL https://raw.githubusercontent.com/baney75/shotate/main/install.sh | bash' ;;
+    local-studio) echo 'curl -fsSL https://raw.githubusercontent.com/baney75/local-studio/main/scripts/install.sh | bash -s -- --channel nightly' ;;
+  esac
+}
+# companion_list "<list>": the companions a comma- or space-separated list names, each once, in COMPANIONS order.
+# Accepts names (any case, "local studio", "localstudio", "ls") and the question's numbers 1 to 4, and "all". Prints
+# one line naming anything it doesn't know, on stderr.
+companion_list() {
+  local raw words w c out="" n
+  raw=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's/local[ _]studio/local-studio/g; s/localstudio/local-studio/g')
+  words=$(printf '%s' "$raw" | tr ',' ' ')
+  for w in $words; do
+    case "$w" in all) out="$COMPANIONS"; continue ;; ls) w=local-studio ;; esac
+    if [[ "$w" =~ ^[1-4]$ ]]; then n=0; for c in $COMPANIONS; do n=$((n + 1)); if [ "$n" = "$w" ]; then w=$c; fi; done; fi
+    if names_part "$w" "${COMPANIONS// /,}"; then out="$out $w"
+    else printf '  Not a companion: %s (choose from %s)\n' "$w" "${COMPANIONS// /, }" >&2; fi
+  done
+  local picked=""
+  for c in $COMPANIONS; do if names_part "$c" "${out// /,}"; then picked="$picked $c"; fi; done
+  printf '%s' "${picked# }"
+}
+# One question at a terminal; prints the answer for companion_list. Return alone means none.
+ask_companions() {
+  local c n=0 answer=""
+  {
+    printf '\n  Also install (optional, each is its own app):\n'
+    for c in $COMPANIONS; do n=$((n + 1)); printf '    %s  %-13s %s\n' "$n" "$(companion_name "$c")" "$(companion_blurb "$c")"; done
+    printf '  Numbers to add, like 1 3 (Return for none): '
+  } >&2
+  read -r answer || answer=""
+  printf '%s' "$answer"
 }
 
 # True when a comma- or space-separated list of parts ($2) names the part $1.

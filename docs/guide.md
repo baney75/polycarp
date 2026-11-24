@@ -26,6 +26,8 @@ curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | 
 
 This downloads the signed app for Apple silicon, puts `polycarp` in `~/.local/bin` and opens the app, with no developer tools needed. A welcome window walks you through the permissions. Accessibility is the only one Polycarp can't run without. For the browser extension, install [Tychicus](https://github.com/baney75/tychicus).
 
+To add Polycarp's companions in the same run, name them: `curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash -s -- --with tychicus,silas,shotate,local-studio` (or `--with all`). Tychicus lets agents drive your browser and apps, Silas is dictation, Shotate takes screenshots and recordings, and Local Studio runs AI models on your Mac, with Polycarp's plugin added to it. Each installs from its own installer and stays its own app; Tychicus's browser extension is separate from Polycarp's. Run at a terminal without `--with`, the installer asks once, and Return means none.
+
 If you have BaneySpaces, it goes to the Trash, because the two can't run together, and Polycarp copies its settings. `baneyspaces` keeps working as a name for `polycarp-spaces`.
 
 On an Intel Mac, or with `POLYCARP_FROM_SOURCE=1`, it builds on your Mac instead. That needs Apple's command line tools, and [Rust](https://rustup.rs).
