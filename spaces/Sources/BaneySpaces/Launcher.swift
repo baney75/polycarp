@@ -301,8 +301,9 @@ final class LauncherPanel: NSPanel {
     var onKeys: (() -> Void)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if mods == .command, event.keyCode == UInt16(kVK_ANSI_K), let onKeys {
+        // ⌘ alone among ⌘⇧⌃⌥, so Caps Lock, fn and the keypad flag never stop it.
+        let flags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
+        if KeysHold.commandOnly(flags), event.keyCode == UInt16(kVK_ANSI_K), let onKeys {
             onKeys()
             return true
         }

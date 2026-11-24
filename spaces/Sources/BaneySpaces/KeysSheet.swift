@@ -1,5 +1,6 @@
 import AppKit
 import BaneySpacesCore
+import Carbon
 import SwiftUI
 
 /// Hold the Polycarp modifier alone and every shortcut shows, grouped, in the modifier you picked; let go and it goes.
@@ -10,6 +11,9 @@ final class KeysHoldWatcher {
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var timer: DispatchWorkItem?
+    /// While the sheet is up, checks `allowed` ten times a second: the launcher opened by a link, the overview from the
+    /// dock or a hot corner, or the ⌘Tab switcher can come up with no key or click this tap sees.
+    private var watch: Timer?
     private let sheet = KeysSheetPanel()
     /// False while something else owns the moment: the launcher or the overview is open, a ⌘Tab gesture runs.
     var allowed: () -> Bool = { true }
@@ -17,12 +21,13 @@ final class KeysHoldWatcher {
     private static weak var current: KeysHoldWatcher?
 
     /// Watches with a listen-only event tap: it sees keys that become Polycarp's own shortcuts and macOS's ⌘Tab, which
-    /// never reach an app's event monitors, so a hold that was really a shortcut never shows the sheet. It needs
-    /// Accessibility; without it nothing is watched.
+    /// never reach an app's event monitors, so a hold that was really a shortcut never shows the sheet. Pointer moves
+    /// and drags count too (⌘-hover, a ⌘-drag). It needs Accessibility; without it nothing is watched.
     func start(modifier: Modifier) {
         stop()
         hold = KeysHold(modifier: Self.mods(modifier))
-        let mask = [CGEventType.flagsChanged, .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
+        let mask = [CGEventType.flagsChanged, .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel,
+                    .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
             .reduce(CGEventMask(0)) { $0 | CGEventMask(1 << $1.rawValue) }
         guard let t = CGEvent.tapCreate(tap: .cghidEventTap, place: .tailAppendEventTap, options: .listenOnly,
                                         eventsOfInterest: mask, callback: Self.callback, userInfo: nil)
@@ -49,6 +54,7 @@ final class KeysHoldWatcher {
 
     /// Something else came up (the launcher opened): the sheet goes and this hold is spent.
     func dismiss() {
+        stopWatching()
         sheet.hide()
         hold.dismissed()
     }
@@ -59,6 +65,9 @@ final class KeysHoldWatcher {
             return Unmanaged.passUnretained(event)
         }
         let flags = event.flags
+        // A move event that didn't move (a wake, a warp to the same point) is not the pointer at work.
+        if type == .mouseMoved, event.getDoubleValueField(.mouseEventDeltaX) == 0,
+           event.getDoubleValueField(.mouseEventDeltaY) == 0 { return Unmanaged.passUnretained(event) }
         // The tap runs on the main run loop, so the watcher is touched on the main thread only.
         KeysHoldWatcher.current?.handle(type, flags)
         return Unmanaged.passUnretained(event)
@@ -67,8 +76,9 @@ final class KeysHoldWatcher {
     private func handle(_ type: CGEventType, _ flags: CGEventFlags) {
         let now = ProcessInfo.processInfo.systemUptime
         switch type {
-        case .flagsChanged: apply(hold.flags(Self.mods(flags), at: now))
+        case .flagsChanged: apply(hold.flags(KeysHold.mods(flags), at: now, secure: IsSecureEventInputEnabled()))
         case .keyDown: apply(hold.key())
+        case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged: apply(hold.move())
         default: apply(hold.mouse())
         }
         timer?.cancel()
@@ -76,7 +86,7 @@ final class KeysHoldWatcher {
         guard hold.waiting else { return }
         let item = DispatchWorkItem { [weak self] in
             guard let self, NSEvent.pressedMouseButtons == 0, self.allowed() else { return }
-            self.apply(self.hold.tick(at: ProcessInfo.processInfo.systemUptime))
+            self.apply(self.hold.tick(at: ProcessInfo.processInfo.systemUptime, secure: IsSecureEventInputEnabled()))
         }
         timer = item
         DispatchQueue.main.asyncAfter(deadline: .now() + hold.delay, execute: item)
@@ -84,10 +94,29 @@ final class KeysHoldWatcher {
 
     private func apply(_ change: KeysHold.Change) {
         switch change {
-        case .show: sheet.show()
-        case .hide: sheet.hide()
+        case .show:
+            sheet.show()
+            startWatching()
+        case .hide:
+            stopWatching()
+            sheet.hide()
         case .none: break
         }
+    }
+
+    private func startWatching() {
+        stopWatching()
+        let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self, !self.allowed() else { return }
+            self.dismiss()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        watch = t
+    }
+
+    private func stopWatching() {
+        watch?.invalidate()
+        watch = nil
     }
 
     static func mods(_ m: Modifier) -> Set<KeysHold.Mod> {
@@ -99,14 +128,6 @@ final class KeysHoldWatcher {
         }
     }
 
-    static func mods(_ f: CGEventFlags) -> Set<KeysHold.Mod> {
-        var out: Set<KeysHold.Mod> = []
-        if f.contains(.maskCommand) { out.insert(.command) }
-        if f.contains(.maskControl) { out.insert(.control) }
-        if f.contains(.maskAlternate) { out.insert(.option) }
-        if f.contains(.maskShift) { out.insert(.shift) }
-        return out
-    }
 }
 
 /// The sheet's window: over everything, on every desktop, never key, never in the way of a click.
@@ -116,11 +137,19 @@ final class KeysSheetPanel {
     func show() {
         let p = panel ?? make()
         panel = p
-        let host = NSHostingView(rootView: KeysSheetView(modifier: Modifier.current.symbol).environment(\.colorScheme, Chrome.scheme))
+        let view = KeysSheetView(modifier: Modifier.current.symbol).environment(\.colorScheme, Chrome.scheme)
+        let host = NSHostingView(rootView: AnyView(view))
         p.contentView = host
-        let size = host.fittingSize
+        let full = host.fittingSize
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main ?? NSScreen.screens[0]
         let area = screen.visibleFrame
+        // A display too small for every row (a narrow or short visible frame, larger text) gets the whole sheet, smaller.
+        let scale = KeysSheetLayout.fitScale(full, in: area.size)
+        let size = NSSize(width: (full.width * scale).rounded(.up), height: (full.height * scale).rounded(.up))
+        if scale < 1 {
+            host.rootView = AnyView(view.fixedSize().scaleEffect(scale, anchor: .topLeading)
+                .frame(width: size.width, height: size.height, alignment: .topLeading))
+        }
         p.setFrame(NSRect(x: area.midX - size.width / 2, y: area.midY - size.height / 2, width: size.width, height: size.height),
                    display: false)
         p.alphaValue = 0

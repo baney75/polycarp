@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// How the shortcut sheet lays the keymap out. Pure, so the split and the caps are tested without a screen.
@@ -28,5 +29,13 @@ public enum KeysSheetLayout {
             guard token.contains(" ") else { return [token] }
             return token.split(separator: " ").flatMap { $0 == "mod" ? mod : [String($0)] }
         }
+    }
+
+    /// How much the sheet shrinks to fit `area` with `margin` on every side: 1 when it fits, never more. The sheet
+    /// ignores the mouse, so nothing off screen could be scrolled into view.
+    public static func fitScale(_ content: CGSize, in area: CGSize, margin: CGFloat = 16) -> CGFloat {
+        guard content.width > 0, content.height > 0 else { return 1 }
+        let w = max(1, area.width - 2 * margin), h = max(1, area.height - 2 * margin)
+        return min(1, w / content.width, h / content.height)
     }
 }

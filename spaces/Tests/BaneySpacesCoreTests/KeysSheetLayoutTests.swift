@@ -31,4 +31,15 @@ final class KeysSheetLayoutTests: XCTestCase {
         XCTAssertEqual(KeysSheetLayout.caps(row("c", ["hold mod"], .launcher), modifier: "⌥"), ["hold", "⌥"])
         XCTAssertEqual(KeysSheetLayout.caps(row("d", ["Return"], .launcher), modifier: "⌘"), ["Return"])
     }
+
+    /// The sheet is about 856 points wide: on a display narrower or shorter than that it shrinks to fit with a margin,
+    /// and it never grows.
+    func testTheSheetShrinksToFitASmallDisplay() {
+        XCTAssertEqual(KeysSheetLayout.fitScale(CGSize(width: 856, height: 600), in: CGSize(width: 800, height: 900), margin: 16),
+                       (800 - 32) / 856, accuracy: 0.0001)
+        XCTAssertEqual(KeysSheetLayout.fitScale(CGSize(width: 856, height: 800), in: CGSize(width: 1440, height: 700), margin: 16),
+                       (700 - 32) / 800, accuracy: 0.0001)
+        XCTAssertEqual(KeysSheetLayout.fitScale(CGSize(width: 856, height: 600), in: CGSize(width: 1440, height: 900)), 1)
+        XCTAssertGreaterThan(KeysSheetLayout.fitScale(CGSize(width: 856, height: 600), in: CGSize(width: 10, height: 10)), 0)
+    }
 }
