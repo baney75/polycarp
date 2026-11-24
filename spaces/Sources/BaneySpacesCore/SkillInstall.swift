@@ -41,8 +41,10 @@ public enum SkillInstall {
         } catch { return "couldn't write \(dest.path): \(error.localizedDescription)" }
         var lines = ["installed \(dest.path)"]
         let old = oldDir(home: home)
-        // A real folder only (attributesOfItem doesn't follow a symlink), holding the product's own SKILL.md.
+        // A real folder only (attributesOfItem doesn't follow a symlink), holding the product's own SKILL.md and
+        // nothing else: a file someone put beside it means the folder is partly theirs, so it stays.
         if (try? fm.attributesOfItem(atPath: old.path)[.type]) as? FileAttributeType == .typeDirectory,
+           (try? fm.contentsOfDirectory(atPath: old.path)) == ["SKILL.md"],
            let text = try? String(contentsOf: old.appendingPathComponent("SKILL.md"), encoding: .utf8),
            isOldProductCopy(text),
            (try? fm.removeItem(at: old)) != nil {

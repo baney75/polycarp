@@ -48,6 +48,16 @@ final class SkillInstallTests: XCTestCase {
         XCTAssertEqual(out, "installed \(path(newSkill).path)\nremoved \(path(oldDir).path)")
     }
 
+    // R-K2: the product's text, but with a file the user added beside it: the folder stays.
+    func testAnOldCopyWithTheUsersOwnFilesBesideItIsKept() throws {
+        try write("\(oldDir)/SKILL.md", "---\nname: baneyspaces\n---\n")
+        try write("\(oldDir)/notes.md", "mine")
+        let out = install(bundle)
+        XCTAssertEqual(try read(newSkill), bundle)
+        XCTAssertEqual(try read("\(oldDir)/notes.md"), "mine")
+        XCTAssertFalse(out.contains("removed"), out)
+    }
+
     // C3
     func testAnOldDirUnderAnotherNameIsKept() throws {
         try write("\(oldDir)/SKILL.md", "---\nname: something-else\n---\n")

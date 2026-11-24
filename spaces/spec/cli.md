@@ -78,7 +78,7 @@ macOS only. The app bundle carries the agent skill at `Contents/Resources/skill/
 - **R-K1** `skill install` writes it to `~/.claude/skills/polycarp-spaces/SKILL.md`, replacing any file there, and
   prints `installed <path>`.
 - **R-K2** After that write succeeds, it removes `~/.claude/skills/baneyspaces/` only when that folder is a real
-  directory whose `SKILL.md` names itself `baneyspaces` (the copy installs before the rename wrote), and prints
+  directory holding only a `SKILL.md` that names itself `baneyspaces` (the copy installs before the rename wrote), and prints
   `removed <path>`. Any other folder there is someone else's and stays. A failed write removes nothing.
 - **R-K3** Without the bundled copy it prints an error and changes nothing.
 - **R-K4** `polycarp version` and `polycarp update` count the skill as installed when either folder holds a
