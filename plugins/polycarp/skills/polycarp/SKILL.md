@@ -19,17 +19,21 @@ Call one tool per step. Read the answer before the next step.
 1. Pick the kind of request.
    - A question ("list my workspaces", "list themes", "find my tax letter"): go to step 2.
    - A change ("go to workspace 2", "switch to a dark theme", "make the clock 24 hour"): go to step 3.
-2. Answer a question. Call the one read tool from the list below (`app_items`, `theme_list`, `files_search`,
-   `surfaces_get`). Tell the person the answer in a few short lines. Stop.
+2. Answer a question. Call the one read tool from the list below (`app_items`, `theme_list`, `theme_current`,
+   `files_search`, `surfaces_get`). Tell the person the answer in a few short lines. Stop.
 3. Make a change.
-   - Window, workspace, launcher and surface tools need the app: call `app_status` first. If it is not running, say so
-     and stop. Theme and file tools work without it.
+   - Window, workspace and launcher tools need the running app: call `app_status` first. If it is not running, say
+     so and stop.
+   - Surface, paper, theme and file tools work without the app. Do not call `app_status` for them.
    - To act on a window, call `app_items` to find it, then the change tool.
    - Call the one change tool from the list below.
-4. Read it back with the matching read tool (`app_items`, `surfaces_get`, `theme_current`).
+4. Check the change.
+   - After `app_focus`, call `app_items`. After `surfaces_set`, call `surfaces_get`. After `theme_set`, call
+     `theme_current`. After `paper_set`, the tool's own answer is the check.
+   - After `launcher_open` or `workspace_switch`, the tool's own answer is the check. Call nothing more.
 5. Tell the person in one short sentence what changed.
 
-## The 10 calls
+## The 12 calls
 
 | Goal | Tool | Arguments |
 | --- | --- | --- |
@@ -38,16 +42,22 @@ Call one tool per step. Read the answer before the next step.
 | Bring a window forward | `app_focus` | `{"target": "Safari"}` |
 | Go to workspace 3 | `workspace_switch` | `{"workspace": 3}` |
 | Open the launcher | `launcher_open` | `{}` |
-| Read a surface setting | `surfaces_get` | `{"path": "desktop.scene"}` |
-| Change a surface setting | `surfaces_set` | `{"path": "desktop.scene", "value": "olive"}` |
+| Read a surface setting | `surfaces_get` | `{"path": "bar.clockFormat"}` |
+| Change a surface setting | `surfaces_set` | `{"path": "bar.clockFormat", "value": "24h"}` |
+| Change the paper (desktop, new tab, idle screen) | `paper_set` | `{"what": "olive"}` |
 | List themes | `theme_list` | `{}` |
+| Which theme is on? | `theme_current` | `{}` |
 | Switch theme | `theme_set` | `{"name": "polycarp", "mode": "dark"}` |
 | Find a file | `files_search` | `{"query": "tax letter"}` |
 
 More surface examples, each a `surfaces_set` call:
 
-- Desktop paper: `{"path": "desktop.scene", "value": "parchment"}`. Choices: `field`, `olive`, `water`, `parchment`, `solid`.
 - Clock: `{"path": "bar.clockFormat", "value": "day-24h"}`.
+- No verse on the desktop: `{"path": "desktop.verse", "value": false}`.
+
+The desktop picture, the new tab background and the idle screen background are always `paper_set`, never a
+`surfaces_set`. `what` is a scene (`field`, `olive`, `water`, `parchment`, `solid`), a color as `#RRGGBB`, a picture's
+full path, or an https link to a picture. Add `"on": "desktop"` to change only the desktop.
 
 Not sure of a path or value? Call `surfaces_schema` once, then try again.
 
@@ -61,4 +71,4 @@ Not sure of a path or value? Call `surfaces_schema` once, then try again.
 
 ## Done when
 
-You answered the question, or the read-back in step 4 shows the change, or you told the person why it could not be done.
+You answered the question, or the check in step 4 shows the change, or you told the person why it could not be done.

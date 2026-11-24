@@ -276,6 +276,70 @@ fn the_installed_server_script_runs_the_agent_gateway() {
         .env("PATH", s.dir("bin"))
         .output()
         .unwrap();
+    // A machine with Polycarp in /Applications runs that one before PATH; only check PATH where it is reached.
+    if Path::new("/Applications/Polycarp.app/Contents/Resources/bin/polycarp").exists() {
+        eprintln!("skipped: /Applications/Polycarp.app is installed, so the script never reaches PATH here");
+        return;
+    }
     assert!(o.status.success(), "{}", err(&o));
     assert_eq!(out(&o), "agent serve --stdio\n");
+}
+
+#[test]
+fn the_installed_server_script_runs_the_installed_link_before_the_app_and_path() {
+    let s = Sandbox::new();
+    assert!(s
+        .cmd(&["install", "--local-studio"], "empty")
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let fake = |p: &Path, says: &str| {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, format!("#!/bin/sh\necho \"{says} $*\"\n")).unwrap();
+        fs::set_permissions(p, fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    fake(&s.dir("home").join(".local/bin/polycarp"), "link");
+    fake(&s.dir("bin").join("polycarp"), "path");
+    let o = Command::new("/bin/sh")
+        .arg(s.plugin().join("bin/polycarp-mcp"))
+        .env_clear()
+        .env("HOME", s.dir("home"))
+        .env("PATH", s.dir("bin"))
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", err(&o));
+    assert_eq!(out(&o), "link agent serve --stdio\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_installed_server_script_never_runs_a_polycarp_in_the_working_folder() {
+    if Path::new("/Applications/Polycarp.app/Contents/Resources/bin/polycarp").exists() {
+        eprintln!("skipped: /Applications/Polycarp.app is installed and would be found first");
+        return;
+    }
+    let s = Sandbox::new();
+    assert!(s
+        .cmd(&["install", "--local-studio"], "empty")
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let here = s.dir("project");
+    fs::create_dir_all(&here).unwrap();
+    let planted = here.join("polycarp");
+    fs::write(&planted, "#!/bin/sh\necho planted\n").unwrap();
+    fs::set_permissions(&planted, fs::Permissions::from_mode(0o755)).unwrap();
+    // "." on PATH: sh resolves it to the working folder, where a project could hold a file named polycarp.
+    let o = Command::new("/bin/sh")
+        .arg(s.plugin().join("bin/polycarp-mcp"))
+        .current_dir(&here)
+        .env_clear()
+        .env("HOME", s.dir("home"))
+        .env("PATH", ".:/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(127), "{}", out(&o));
+    assert!(!out(&o).contains("planted"));
 }
