@@ -54,6 +54,12 @@ if [ "$FROM_SOURCE" != 1 ] && [ -n "$EXISTING" ] && ! codesign -v -R "=$REQUIREM
   fi
 fi
 
+# Releases are built for Apple silicon only (release.sh), so an Intel Mac builds its own copy.
+if [ "$FROM_SOURCE" != 1 ] && [ -z "${BANEYSPACES_ZIP:-}" ] && [ "$(uname -m)" != arm64 ]; then
+  step "The ready-made app is for Apple silicon and this Mac has an Intel chip, so it is built here"
+  FROM_SOURCE=1
+fi
+
 # The prebuilt app: the release's Polycarp.zip, straight from GitHub's download address (no API,
 # no JSON to read, which stock macOS has no good tool for).
 ZIP="${BANEYSPACES_ZIP:-}"
