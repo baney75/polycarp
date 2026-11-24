@@ -4,8 +4,9 @@
 //! calls and returns the same envelope, so the two cannot drift. Each surfaces tool runs
 //! `polycarp-spaces surfaces ... --json` and passes its envelope on as is, for the same reason
 //! (spaces/docs/surfaces.md); each style tool does the same with `polycarp-spaces style ... --json`
-//! (spaces/docs/style.md), the search tools with `polycarp-spaces search ... --json`, and each paper tool with
-//! `polycarp-spaces paper ... --json`.
+//! (spaces/docs/style.md), the search tools with `polycarp-spaces search ... --json`, each paper tool with
+//! `polycarp-spaces paper ... --json`, and `keys_list` with `polycarp-spaces keys --json`, whose array it puts in the
+//! same envelope (docs/keys.md).
 
 use crate::theme::{self, ApiErr, Ctx};
 use serde_json::{json, Map, Value as Json};
@@ -58,6 +59,7 @@ To find something the person has open (a browser tab, a window, a terminal split
 Polycarp's launcher and new tab page do (bangs like !yt and the engine in search.engine), call search; it changes \
 nothing. search_open performs the top result: it brings an open tab or window forward, or opens the page in the \
 default browser. Call it only when the person asked to go there.
+To tell the person which keys do what in Polycarp, read keys_list; it changes nothing.
 Every result is {ok, data} or {ok:false, error:{code, message, suggestion, data:{errors}}}.";
 
 fn obj(props: Json, required: &[&str]) -> Json {
@@ -453,6 +455,14 @@ pub(crate) fn tools() -> Vec<Tool> {
             destructive: true,
             idempotent: false,
         },
+        Tool {
+            name: "keys_list",
+            description: "Every Polycarp keyboard shortcut on this Mac, from the one table the app, docs/keys.md and `polycarp-spaces keys` use. Each row has id, keys (display parts; \"mod\" is the person's Polycarp modifier, picked in Settings > Keys), display (the keys as macOS symbols with their modifier filled in, as \"⌘1...9\" or \"⌃⌘K\"), title (what it does), group (launcher, workspaces, windows, terminal, agents, player, bar), scope (global: anywhere; launcher; terminal: while a terminal app is in front; newTab: the browser's new tab page; overview; switcher: while the ⌘Tab switcher is up; player; menu: the Polycarp menu in the menu bar) and note (when it works beyond its scope, as \"When Settings has it on\", or null when it always does). Read-only.",
+            schema: obj(json!({}), &[]),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
     ]
 }
 
@@ -612,6 +622,12 @@ pub(crate) fn call(
         return Some(match Args::new(&tool, args) {
             Err(e) => theme::envelope(&Err(e)),
             Ok(a) => paper_call(name, &a),
+        });
+    }
+    if name == "keys_list" {
+        return Some(match Args::new(&tool, args) {
+            Err(e) => theme::envelope(&Err(e)),
+            Ok(_) => spaces_run(vec!["keys".into()], "keys"),
         });
     }
     if name.starts_with("style_") {
@@ -870,6 +886,8 @@ fn spaces_run_within(mut argv: Vec<String>, probe: &str, limit: Duration) -> the
         }
     };
     match serde_json::from_slice::<Json>(&out) {
+        // `keys --json` prints the bare array of shortcuts; it goes out in the envelope every tool uses.
+        Ok(Json::Array(rows)) if what == "keys" => (json!({"ok": true, "data": rows}), true),
         Ok(env) if env.get("ok").and_then(Json::as_bool).is_some() => {
             let ok = env["ok"] == json!(true);
             (env, ok)

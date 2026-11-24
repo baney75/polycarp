@@ -46,6 +46,7 @@ usage: \(me) <command>
   style path|show|check [file]|example|set '<sel>' <prop> <value>|unset '<sel>' [prop]|reset [--json]
                               style.css: restyle the bar and the dock on top of the theme
                               (style help, docs/style.md)
+  keys [--json]               every Polycarp shortcut, grouped, with your modifier (docs/keys.md)
   update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it;
                               --channel stable|nightly|dev chooses the channel first (update --help)
   --version                   this command's version and the commit it was built from
@@ -268,6 +269,8 @@ case "paper":
     PaperCommand.run(rest, remote: remoteHost != nil)
 case "style":
     StyleCommand.run(rest, remote: remoteHost != nil)
+case "keys":
+    KeysCommand.run(rest, remote: remoteHost != nil)
 case "contacts", "contact":
     // Asked of the running app, which holds the Contacts permission and the index the launcher uses. Local only.
     guard remoteHost == nil else { fail("contacts are read on this Mac only", code: 2) }
