@@ -123,7 +123,7 @@
     ]],
     ["About", "", [
       raw('<div class="row"><span class="lbl"><b id="ver"></b><span id="updText">With the Polycarp app installed, this extension updates with it. A new version starts as soon as no Reader tab is open.</span></span><button class="btn" id="checkUpd">' + I("rotate") + '<span>Check for updates</span></button></div><p class="note" id="updNote" aria-live="polite"></p>' +
-        '<div class="row" id="appRow" hidden><span class="lbl"><b>Polycarp app</b><span id="appText">If the Polycarp app is on this computer, connect to it so its filters and settings reach this browser.</span></span><button class="btn" id="appConnect">' + I("link") + '<span>Connect to the Polycarp app</span></button></div>' +
+        '<div class="row" id="appRow" hidden><span class="lbl"><b>Polycarp app</b><span id="appText">If the Polycarp app is on this computer, connect to it so its feed filters reach this browser.</span></span><button class="btn" id="appConnect">' + I("link") + '<span>Connect to the Polycarp app</span></button></div>' +
         '<div class="acts"><a class="btn quiet" href="welcome.html#science">The research behind Polycarp</a><a class="btn quiet" href="welcome.html#new">What is new</a><a class="btn quiet" href="welcome.html">Welcome page</a></div>', bindAbout)
     ]]
   ];
@@ -330,8 +330,8 @@
         const has = await chrome.permissions.contains({ permissions: ["nativeMessaging"] }).catch(() => false);
         $("appRow").hidden = !optional;
         $("appConnect").hidden = has;
-        if (!has) { $("appText").textContent = "If the Polycarp app is on this computer, connect to it so its filters and settings reach this browser."; return; }
-        $("appText").textContent = (await answers()) ? "Connected. The Polycarp app on this computer answers, and its filters and settings reach this browser."
+        if (!has) { $("appText").textContent = "If the Polycarp app is on this computer, connect to it so its feed filters reach this browser."; return; }
+        $("appText").textContent = (await answers()) ? "Connected. The Polycarp app on this computer answers, and its feed filters reach this browser."
           : "Allowed, but the Polycarp app did not answer. Install it, or update it to a version that knows this extension, and it connects on its own.";
       };
       $("appConnect").addEventListener("click", async () => {

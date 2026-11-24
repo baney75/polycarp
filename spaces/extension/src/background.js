@@ -71,9 +71,7 @@ async function tryApplyUpdate() {
   chrome.runtime.reload();
 }
 // A Chrome Web Store copy (its manifest has an update_url) is updated by the store; there is no disk copy to watch.
-const fromStore = !!chrome.runtime.getManifest().update_url;
-if (fromStore) chrome.alarms.clear("polycarp-update");
-else {
+if (!chrome.runtime.getManifest().update_url) {
   chrome.runtime.onStartup.addListener(checkDisk);
   chrome.alarms.get("polycarp-update").then((a) => { if (!a) chrome.alarms.create("polycarp-update", { periodInMinutes: 15 }); });
 }

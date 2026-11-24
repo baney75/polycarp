@@ -19,7 +19,7 @@ const m = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
 ok(!('key' in m), 'no fixed key: the store assigns the ID');
 ok(!m.chrome_url_overrides && !listing.some((f) => f.startsWith('newtab/')), 'no new tab override and no new tab files');
 ok(!m.permissions.includes('nativeMessaging') && (m.optional_permissions || []).includes('nativeMessaging'), 'nativeMessaging is optional only');
-ok(!m.permissions.includes('activeTab'), 'no activeTab (host permissions already cover it)');
+ok(m.permissions.includes('activeTab'), 'activeTab stays, so a click still works when site access is set to On click');
 ok(!/new tab/i.test(m.description) && m.description.length <= 132 && /, and /.test(m.description), `description reads well: ${m.description}`);
 ok(!listing.some((f) => /(^|\/)\./.test(f)), 'no hidden files');
 const zipBytes = Number(execFileSync('sh', ['-c', `cd "${dir}" && zip -qr - . | wc -c`], { encoding: 'utf8' }).trim());
