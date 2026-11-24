@@ -43,12 +43,17 @@ Call one tool per step. Read the answer before the next step.
 | Go to workspace 3 | `workspace_switch` | `{"workspace": 3}` |
 | Open the launcher | `launcher_open` | `{}` |
 | Read a surface setting | `surfaces_get` | `{"path": "bar.clockFormat"}` |
-| Change a surface setting | `surfaces_set` | `{"path": "bar.clockFormat", "value": "day-24h"}` |
+| Change a surface setting | `surfaces_set` | `{"path": "bar.clockFormat", "value": "24h"}` |
 | Change the paper (desktop, new tab, idle screen) | `paper_set` | `{"what": "olive"}` |
 | List themes | `theme_list` | `{}` |
 | Which theme is on? | `theme_current` | `{}` |
 | Switch theme | `theme_set` | `{"name": "polycarp", "mode": "dark"}` |
 | Find a file | `files_search` | `{"query": "tax letter"}` |
+
+More surface examples, each a `surfaces_set` call:
+
+- Clock: `{"path": "bar.clockFormat", "value": "day-24h"}`.
+- No verse on the desktop: `{"path": "desktop.verse", "value": false}`.
 
 The desktop picture, the new tab background and the idle screen background are always `paper_set`, never a
 `surfaces_set`. `what` is a scene (`field`, `olive`, `water`, `parchment`, `solid`), a color as `#RRGGBB`, a picture's
