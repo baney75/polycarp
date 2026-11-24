@@ -333,7 +333,7 @@ ask_companions() {
   {
     printf '\n  Also install (optional, each is its own app):\n'
     for c in $COMPANIONS; do n=$((n + 1)); printf '    %s  %-13s %s\n' "$n" "$(companion_name "$c")" "$(companion_blurb "$c")"; done
-    printf '  Numbers to add, like 1 3 (Return for none): '
+    printf '  Numbers to add, like 1 2 (Return for none): '
   } >&2
   read -r -t 120 answer || answer="" # no answer in two minutes means none
   printf '%s' "$answer"
