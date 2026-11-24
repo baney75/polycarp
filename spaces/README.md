@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/baney75/polycarp/actions/workflows/ci.yml"><img src="https://github.com/baney75/polycarp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/baney75/polycarp/releases/latest"><img src="https://img.shields.io/github/v/release/baney75/polycarp?color=e8434a" alt="Latest release"></a>
+  <a href="https://github.com/baney75/polycarp/releases/tag/nightly"><img src="https://img.shields.io/github/v/release/baney75/polycarp?include_prereleases&color=e8434a" alt="Latest build"></a>
   <img src="https://img.shields.io/badge/macOS-13%2B-1f2937" alt="macOS 13 or later">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3b82f6" alt="MIT license"></a>
 </p>
@@ -330,14 +330,14 @@ curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | 
 ```
 
 **From your browser**: download `Polycarp.dmg` from the
-[latest release](https://github.com/baney75/polycarp/releases/latest) and drag Polycarp to
+[newest build](https://github.com/baney75/polycarp/releases/tag/nightly) and drag Polycarp to
 Applications. The first time you open it, macOS asks you to confirm in **System Settings ›
 Privacy & Security › Open Anyway**, because Polycarp isn't notarized. The Terminal line
 doesn't ask: a file downloaded by `curl` never gets that prompt. On its first launch from
 Applications, Polycarp also does what the installer does: it turns AeroSpace's open-at-login
 off, adds the `polycarp-spaces` command to `~/.local/bin` and moves Ghostdeck to the Trash.
 
-A release without the ready-made app (the Nightly build, old releases), or
+An old release without the ready-made app, or
 `POLYCARP_FROM_SOURCE=1`, builds from source instead with Apple's free command line tools. If
 the tools are missing, the installer opens Apple's installer for them first (about 1 GB, usually
 5 to 15 minutes); paste the command again when that finishes. If the build fails, the installer
@@ -390,31 +390,21 @@ Spotlight.
 
 One command updates every part of Polycarp together, the app included: `polycarp update`. See
 [Updating](../README.md#updating) in the main README. For an app installed from the download it uses the app's own
-updater, described here; `polycarp-spaces update --check` and `--now` reach the same updater from a terminal, and
-`--channel stable|nightly|dev` chooses the channel first.
+updater, described here; `polycarp-spaces update --check` and `--now` reach the same updater from a terminal.
 
 Polycarp looks for a new version once a day and, when there is one, the menu bar menu's update row reads **Update to Polycarp …** (otherwise it
 reads **Check for Updates…**) and so does **Settings > Updates**. Check by hand from that row or with **Check for Updates Now…** in Settings. Nothing installs until you press **Update Now** in the window that
 shows what changed. The update installs the same way the first install did, into the folder the
-app is in. Every channel downloads the ready-made app, signed with the one release key, so the
+app is in. Every update downloads the ready-made app, signed with the one release key, so the
 Accessibility permission carries over; only a copy that was built on your Mac (while the command
 line tools are installed) is updated by building on your Mac, which keeps its own signature. Then Polycarp restarts and shows the release notes. If
 the update fails, Polycarp keeps running as it was and offers the log.
 
-Pick what you follow under **Settings > Updates**:
+Every update is built from main: each change on main that passes CI is signed and published as the next build
+(Apple silicon), and every copy follows it ([releases](../docs/releases.md)). An update is offered only when it
+contains the build you have, so you never go backwards.
 
-- **Stable**: tagged releases, each one tested and described in the
-  [changelog](CHANGELOG.md).
-- **Nightly**: a build of the newest code, published each night something changed (Apple silicon).
-  It replaced the old Preview channel, and a copy installed from Preview follows it.
-- **Dev**: every change on main as CI passes it (Apple silicon), for testing. It is listed only on a
-  dev build or a copy already following Dev; `polycarp-spaces update --channel dev` refuses it elsewhere.
-
-A copy follows the channel it was installed from until you pick another ([releases](../docs/releases.md)). Switching
-to a channel offers that channel's build only when it contains the one you have, so you never go
-backwards.
-
-The daily check reads the channel's public `latest.json` on GitHub and sends nothing about your Mac. Turn it off
+The daily check reads the public `latest.json` on GitHub and sends nothing about your Mac. Turn it off
 under **Settings > Updates > Check for updates daily** and use **Check for Updates Now…** instead.
 
 ### If the permission won't take
