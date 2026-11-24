@@ -34,7 +34,7 @@ Polycarp connects to other services only in these cases, each one started by you
 - **YouTube and X pages.** To show a video's transcript in the Reader, Polycarp reads the transcript YouTube already sends to your browser. To search posts on X, Polycarp reads the posts you have scrolled past in that tab. Nothing is kept unless you save it.
 - **Your NAS.** If you connect a NAS or home server, Polycarp talks only to the address you gave, to list, open and save files and, if you turn it on, to write a daily backup. Outside your home network it requires an https address, so your NAS password is never sent unencrypted.
 - **Pictures in search results and the library.** Video thumbnails and book covers load from the sites that host them: i.ytimg.com (YouTube), covers.openlibrary.org (Open Library) and archive.org (the Internet Archive). Your browser sends those sites the usual request for an image, as it would on their own pages.
-- **The Polycarp app.** If the Polycarp desktop app is on your computer and you connect to it in Settings, the extension and the app talk to each other directly on your computer through your browser's native messaging. The app sends your filters, theme and search settings; nothing leaves your computer this way.
+- **The Polycarp app.** In the copy that comes with the Polycarp app, the extension and the app talk to each other on their own. In the Chrome Web Store copy, they talk only after you press Connect to the Polycarp app in Settings. Either way, the extension and the app talk to each other directly on your computer through your browser's native messaging. The app sends your filters, theme and search settings; nothing leaves your computer this way.
 - **The new tab page (only in the copy that comes with the Polycarp app).** What you type there is matched against your open windows and tabs by the Polycarp app on your computer. Pressing Return on a web search sends your words to the search engine set in Polycarp, DuckDuckGo by default. The Chrome Web Store copy does not change your new tab page.
 
 Exporting to Obsidian writes Markdown files to a folder you choose on your computer, or to a zip file you download. Nothing is uploaded.
@@ -47,8 +47,9 @@ Summaries and key ideas use the AI built into Chrome, which runs on your device,
 - It does not sell or share your data, or use it for advertising or credit decisions.
 - It does not use or transfer your data for any purpose other than the reading features described here.
 
-The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy, including the Limited Use requirements.
 - It does not load code from the internet. All of its code ships inside the extension.
+
+The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy, including the Limited Use requirements. Polycarp uses the data it handles only for the reading features described here.
 
 ## Children
 

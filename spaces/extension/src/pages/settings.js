@@ -320,12 +320,19 @@
       $("updText").textContent = "The Chrome Web Store keeps this extension up to date.";
       $("checkUpd").hidden = true;
       const optional = (m.optional_permissions || []).includes("nativeMessaging");
+      // "Connected" only after the app answers; a grant alone says the browser allows it, not that the app is there.
+      const answers = () => new Promise((resolve) => {
+        try {
+          chrome.runtime.sendNativeMessage("com.polycarp.newtab", { op: "page" }, (r) => resolve(!chrome.runtime.lastError && !!r && r.ok !== false));
+        } catch (e) { resolve(false); }
+      });
       const showApp = async () => {
         const has = await chrome.permissions.contains({ permissions: ["nativeMessaging"] }).catch(() => false);
         $("appRow").hidden = !optional;
         $("appConnect").hidden = has;
-        $("appText").textContent = has ? "Connected. If the Polycarp app is on this computer, its filters and settings reach this browser."
-          : "If the Polycarp app is on this computer, connect to it so its filters and settings reach this browser.";
+        if (!has) { $("appText").textContent = "If the Polycarp app is on this computer, connect to it so its filters and settings reach this browser."; return; }
+        $("appText").textContent = (await answers()) ? "Connected. The Polycarp app on this computer answers, and its filters and settings reach this browser."
+          : "Allowed, but the Polycarp app did not answer. Install it, or update it to a version that knows this extension, and it connects on its own.";
       };
       $("appConnect").addEventListener("click", async () => {
         await chrome.permissions.request({ permissions: ["nativeMessaging"] }).catch(() => false);

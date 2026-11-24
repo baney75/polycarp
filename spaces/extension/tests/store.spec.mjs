@@ -58,12 +58,33 @@ try {
   const nas = await st.evaluate(async () => {
     const out = {};
     for (const u of ['http://nas.example.com:5005', 'nas.example.com:5006', 'http://192.168.1.20:5005']) {
-      try { await PolycarpNAS.setConfig({ url: u }); out[u] = (await chrome.storage.local.get(null)); out[u] = 'ok'; } catch (e) { out[u] = e.code; }
+      try { await PolycarpNAS.setConfig({ url: u }); out[u] = 'ok'; } catch (e) { out[u] = e.code; }
     }
     return out;
   });
   ok(nas['http://nas.example.com:5005'] === 'insecure', 'NAS: plain http to a public host is refused ' + JSON.stringify(nas));
   ok(nas['nas.example.com:5006'] === 'ok' && nas['http://192.168.1.20:5005'] === 'ok', 'NAS: a bare public host gets https, a home address keeps http');
+  // An address already in storage (saved before the rule, or from an old backup) is refused before any request goes.
+  const stored = await st.evaluate(async () => {
+    const key = Object.keys(await chrome.storage.local.get(null)).find((k) => /nas/i.test(k) && !/session/i.test(k)) || 'polycarp.nas';
+    const prev = (await chrome.storage.local.get(key))[key] || {};
+    await chrome.storage.local.set({ [key]: Object.assign({}, prev, { url: 'http://nas.example.com:5005', user: '' }) });
+    let code = 'none';
+    try { await PolycarpNAS.list(''); } catch (e) { code = e.code; }
+    await chrome.storage.local.set({ [key]: prev });
+    return code;
+  });
+  ok(stored === 'insecure', 'NAS: a stored plain http public address is refused at use (review first-F1): ' + stored);
+  const hosts = await st.evaluate(async () => {
+    const out = {};
+    for (const u of ['http://10.nas-provider.com', 'http://192.168.example.net', 'http://nas.tail1234.ts.net:5005', 'http://100.101.102.103:5005']) {
+      try { await PolycarpNAS.setConfig({ url: u }); out[u] = 'ok'; } catch (e) { out[u] = e.code; }
+    }
+    await PolycarpNAS.setConfig({ url: 'http://192.168.1.20:5005' });
+    return out;
+  });
+  ok(hosts['http://10.nas-provider.com'] === 'insecure' && hosts['http://192.168.example.net'] === 'insecure', 'NAS: a public name that starts like a private IP is public (review first-F3) ' + JSON.stringify(hosts));
+  ok(hosts['http://nas.tail1234.ts.net:5005'] === 'ok' && hosts['http://100.101.102.103:5005'] === 'ok', 'NAS: a tailnet name and a tailnet address are treated alike (review second-F6)');
   const conf = await st.evaluate(() => PolycarpNAS.getConfig ? PolycarpNAS.getConfig() : null);
   if (conf) ok(conf.url === 'http://192.168.1.20:5005', 'NAS: the home address is saved as given');
   await st.close();

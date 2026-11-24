@@ -45,7 +45,8 @@ it has no fixed `key`, since the store assigns the ID; it leaves out the new tab
 because a store new tab must keep the user's own search engine; and it asks for `nativeMessaging` only when the user
 presses **Connect to the Polycarp app** in Settings. The store updates that copy, so its Settings shows no update
 button. The Polycarp app's native messaging host must list the store item's ID in `allowed_origins` before the
-connection works.
+connection works. The store refuses an upload whose `version` is not above the last one it took, so raise `version`
+in `manifest.json` before each store upload; `version_name` alone is not enough.
 
 ## Tests
 
