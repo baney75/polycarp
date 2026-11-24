@@ -37,6 +37,7 @@ if [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ]; then
   cp build/cli-target/release/polycarp "$APP/Contents/Resources/bin/polycarp"
 else
   for t in aarch64-apple-darwin x86_64-apple-darwin; do
+    ! command -v rustup >/dev/null || rustup --quiet target add "$t"
     cargo build --quiet --release --locked --target "$t" --manifest-path ../cli/Cargo.toml --target-dir build/cli-target
   done
   lipo -create build/cli-target/aarch64-apple-darwin/release/polycarp build/cli-target/x86_64-apple-darwin/release/polycarp \
@@ -109,7 +110,7 @@ fi
 codesign --verify --deep --strict "$APP"
 [ -s "$APP/Contents/Resources/licenses/polycarp-rust-crates.txt" ] || { echo "bundle: the Rust crates' licences are missing from the bundle" >&2; exit 1; }
 # A library the bundle doesn't carry, or a path on the machine that built it, is an app that won't start elsewhere.
-if otool -L "$APP/Contents/MacOS/$EXECUTABLE" | grep '^	' | grep -Ev '^	(/usr/lib/|/System/Library/|@rpath/libswift)'; then echo "bundle: Polycarp links the library above, which the bundle doesn't carry" >&2; exit 1; fi
+if otool -arch all -L "$APP/Contents/MacOS/$EXECUTABLE" | grep '^	' | grep -Ev '^	(/usr/lib/|/System/Library/)'; then echo "bundle: Polycarp links the library above, which the bundle doesn't carry" >&2; exit 1; fi
 if [ "$POLYCARP_TERMINAL" = 1 ]; then
   [ -s "$APP/Contents/Resources/licenses/ghostty-MIT.txt" ] || { echo "bundle: Ghostty's licence is missing from the bundle" >&2; exit 1; }
   [ -f "$APP/Contents/Resources/terminfo/78/xterm-ghostty" ] || { echo "bundle: the terminal's terminfo is missing from the bundle" >&2; exit 1; }
