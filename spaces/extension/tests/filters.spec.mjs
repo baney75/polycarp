@@ -1,5 +1,5 @@
-// Feed filters end to end (src/content/filters.js): feed pages served at their real addresses through Playwright
-// routes, with rules written to the extension's storage. A matching post
+// Feed filters end to end (src/content/filters.js): X, YouTube Shorts, new and old Reddit and Mastodon pages served
+// at their real addresses through Playwright routes, with rules written to the extension's storage. A matching post
 // collapses to a bar that says why, Show reveals it for good, a post that matches nothing is untouched, a hide selector
 // hides its element but never the page, and a rule change reaches an open page without a reload.
 // Run: node tests/filters.spec.mjs   (screenshots to tests/out/)
@@ -8,7 +8,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { XFEED } from './fixtures/filters.mjs';
+import { XFEED, YTHOME, REDDIT, OLDREDDIT, MASTODON, HN, BSKY, LINKEDIN } from './fixtures/filters.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(here, '..');
@@ -23,6 +23,13 @@ const ctx = await chromium.launchPersistentContext(profile, {
 });
 const html = (body) => ({ status: 200, contentType: 'text/html; charset=utf-8', body });
 await ctx.route('https://x.com/**', (r) => r.fulfill(html(XFEED)));
+await ctx.route('https://www.youtube.com/**', (r) => r.fulfill(html(YTHOME)));
+await ctx.route('https://www.reddit.com/**', (r) => r.fulfill(html(REDDIT)));
+await ctx.route('https://old.reddit.com/**', (r) => r.fulfill(html(OLDREDDIT)));
+await ctx.route('https://mastodon.social/**', (r) => r.fulfill(html(MASTODON)));
+await ctx.route('https://news.ycombinator.com/**', (r) => r.fulfill(html(HN)));
+await ctx.route('https://bsky.app/**', (r) => r.fulfill(html(BSKY)));
+await ctx.route('https://www.linkedin.com/**', (r) => r.fulfill(html(LINKEDIN)));
 
 let fails = 0;
 const ok = (cond, msg) => { console.log((cond ? 'PASS ' : 'FAIL ') + msg); if (!cond) fails++; };
@@ -32,6 +39,14 @@ async function until(fn, ms = 5000) {
   while (Date.now() - t0 < ms) { const v = await fn(); if (v) return v; await sleep(100); }
   return fn();
 }
+// What the page shows for each post: collapsed (with the bar's words) or not, and whether its text is visible.
+const view = (page, sel) => page.evaluate((sel) => [...document.querySelectorAll(sel)].map((el) => {
+  const target = el.closest('.polycarp-filtered') || el;
+  const bar = target.querySelector(':scope > polycarp-filter-bar, :scope > td > polycarp-filter-bar');
+  return { id: el.id, collapsed: target.classList.contains('polycarp-filtered'), bar: bar ? bar.shadowRoot.textContent : '',
+    h: Math.round(el.getBoundingClientRect().height), w: Math.round(el.getBoundingClientRect().width) };
+}), sel);
+const byId = (list) => Object.fromEntries(list.map((v) => [v.id, v]));
 
 try {
   let [sw] = ctx.serviceWorkers();
@@ -63,7 +78,10 @@ try {
   const OTHER = [
     { id: 'y1', sites: ['youtube.com'], kinds: ['shorts', 'promoted'] },
     { id: 'r1', sites: ['reddit.com'], words: ['nba'], accounts: ['r/politics', 'u/spez'] },
-    { id: 'm1', sites: ['mastodon.social'], accounts: ['bob'] }
+    { id: 'm1', sites: ['mastodon.social'], accounts: ['bob'] },
+    { id: 'h1', sites: ['news.ycombinator.com'], words: ['crypto'], accounts: ['tptacek'] },
+    { id: 'b1', sites: ['bsky.app'], accounts: ['bob.bsky.social'], kinds: ['reposts'] },
+    { id: 'l1', sites: ['linkedin.com'], kinds: ['promoted'] }
   ];
   await setRules([X_RULE, ...OTHER]);
   const xs = await until(async () => { const t = Object.fromEntries((await tweets()).map((v) => [v.who, v])); return t.alice.collapsed && t.shop.collapsed ? t : null; });
@@ -116,6 +134,55 @@ try {
   await sw.evaluate(async () => { const s = await Polycarp.getSettings(); s.pausedUntil = 0; await Polycarp.setSettings(s); });
   ok(await until(async () => (await tweets()).find((v) => v.who === 'spammer').collapsed), 'X: resuming brings them back');
   ok(errors.length === 0 && (await xp.evaluate(() => window.errors.length)) === 0, 'X: no page errors' + (errors.length ? ': ' + errors.join(' | ') : ''));
+
+  // ---------- YouTube: Shorts is the format, not the word ----------
+  const yp = await ctx.newPage();
+  await yp.goto('https://www.youtube.com/');
+  const yt = await until(async () => { const v = byId(await view(yp, 'ytd-rich-item-renderer[id^=v], #shelf, #ad1')); return v.v2?.collapsed && v.shelf?.collapsed && v.ad1?.collapsed ? v : null; });
+  ok(yt && /Hidden: Shorts/.test(yt.v2.bar), 'YouTube: a Shorts tile collapses');
+  ok(yt && /Hidden: Shorts/.test(yt.shelf.bar), 'YouTube: the Shorts shelf collapses');
+  ok(yt && /Hidden: Promoted/.test(yt.ad1.bar), 'YouTube: an ad in the feed collapses as promoted');
+  ok(yt && !yt.v1.collapsed && !yt.v3.collapsed, 'YouTube: "running shorts" in a title is not a Short, and other videos are untouched');
+  ok(yt && yt.v2.w === yt.v1.w, `YouTube: a collapsed tile keeps its place in the grid (${yt && yt.v2.w} = ${yt && yt.v1.w})`);
+  await yp.screenshot({ path: path.join(OUT, 'filters-youtube.png') });
+
+  // ---------- Reddit, new and old ----------
+  const rp = await ctx.newPage();
+  await rp.goto('https://www.reddit.com/');
+  const rd = await until(async () => { const v = byId(await view(rp, 'article')); return v.a1?.collapsed && v.a2?.collapsed && v.a4?.collapsed ? v : null; });
+  ok(rd && /@spez/.test(rd.a1.bar) && /@r\/politics/.test(rd.a2.bar) && /nba/i.test(rd.a4.bar), 'Reddit: posts by a user, in a subreddit and with a word collapse, the article around each');
+  ok(rd && !rd.a3.collapsed, 'Reddit: a post that matches nothing is untouched');
+  const op = await ctx.newPage();
+  await op.goto('https://old.reddit.com/');
+  const od = await until(async () => { const v = byId(await view(op, 'div.thing')); return v.t1?.collapsed && v.t3?.collapsed ? v : null; });
+  ok(od && !od.t2.collapsed, 'Old Reddit: the same rule collapses its posts and leaves the rest');
+
+  // ---------- Mastodon: a boost is not the booster's post ----------
+  const mp = await ctx.newPage();
+  await mp.goto('https://mastodon.social/home');
+  const md = await until(async () => { const v = byId(await view(mp, 'article')); return v.m2?.collapsed ? v : null; });
+  ok(md && /@bob/.test(md.m2.bar), "Mastodon: bob's own post collapses");
+  ok(md && !md.m1.collapsed && !md.m3.collapsed && !md.m4.collapsed, 'Mastodon: a mention of bob and a post bob boosted are not his');
+  await setRules([X_RULE, ...OTHER, { id: 'm2', sites: ['mastodon.social'], kinds: ['reposts'] }]);
+  ok(await until(async () => /Hidden: Repost/.test(byId(await view(mp, 'article')).m3.bar)), 'Mastodon: a reposts rule collapses the boost');
+  await mp.screenshot({ path: path.join(OUT, 'filters-mastodon.png') });
+
+  // ---------- Hacker News, Bluesky, LinkedIn ----------
+  const hp = await ctx.newPage();
+  await hp.goto('https://news.ycombinator.com/');
+  const hd = await until(async () => { const v = byId(await view(hp, 'tr')); return v['1']?.collapsed && v['3']?.collapsed ? v : null; });
+  ok(hd && /crypto/.test(hd['1'].bar) && /@tptacek/.test(hd['3'].bar) && !hd['2'].collapsed, 'Hacker News: a title word and a poster collapse their story; another stays');
+  ok(hd && hd['1s'].h === 0 && hd['1p'].h === 0 && hd['2s'].h > 0, 'Hacker News: the byline and spacer rows go with the story');
+  await hp.screenshot({ path: path.join(OUT, 'filters-hn.png') });
+  const bp = await ctx.newPage();
+  await bp.goto('https://bsky.app/');
+  const bd = await until(async () => { const v = byId(await view(bp, '[data-testid^=feedItem-by-]')); return v.b2?.collapsed && v.b3?.collapsed ? v : null; });
+  ok(bd && !bd.b1.collapsed && /@bob/.test(bd.b2.bar), "Bluesky: bob's post collapses; a post mentioning him does not");
+  ok(bd && /Repost/.test(bd.b3.bar), 'Bluesky: a repost collapses by kind');
+  const lp = await ctx.newPage();
+  await lp.goto('https://www.linkedin.com/feed/');
+  const ld = await until(async () => { const v = byId(await view(lp, '.feed-shared-update-v2')); return v.l2?.collapsed ? v : null; });
+  ok(ld && /Promoted/.test(ld.l2.bar) && !ld.l1.collapsed && !ld.l3.collapsed, 'LinkedIn: a promoted post collapses; others stay');
 } catch (e) {
   console.log('FAIL crashed: ' + (e && e.stack || e));
   fails++;

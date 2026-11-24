@@ -66,6 +66,7 @@
     for (const a of root.querySelectorAll(sel)) { const h = (!keep || keep(a)) ? linkHandle(a, re) : ""; if (h) return [h]; }
     return [];
   }
+  const has = (item, sel) => item.matches(sel) || !!item.querySelector(sel);
   const textIs = (item, sel, re, skip) => [...item.querySelectorAll(sel)].some((e) => (!skip || !e.closest(skip)) && re.test((e.textContent || "").trim()));
 
   const X = {
@@ -88,6 +89,88 @@
       if (textIs(item, "span", /^(Ad|Promoted)$/, '[data-testid="tweetText"]')) out.push("promoted");
       const ctx = item.querySelector('[data-testid="socialContext"]');
       if (ctx && /repost|retweet/i.test(ctx.textContent)) out.push("reposts");
+      return out;
+    }
+  };
+
+  const YT_SHELF = "ytd-reel-shelf-renderer,ytd-rich-shelf-renderer[is-shorts],ytm-reel-shelf-renderer";
+  const YT_ADS = "ytd-ad-slot-renderer,ytd-in-feed-ad-layout-renderer,ytd-promoted-video-renderer,ytd-promoted-sparkles-web-renderer,ytd-display-ad-renderer,ytd-search-pyv-renderer";
+  const YOUTUBE = {
+    id: "youtube",
+    items: ["ytd-rich-item-renderer", "ytd-video-renderer", "ytd-compact-video-renderer", "ytd-grid-video-renderer",
+      "ytd-playlist-renderer", "ytd-radio-renderer", "ytd-reel-item-renderer", "yt-lockup-view-model", YT_SHELF,
+      "ytm-rich-item-renderer", "ytm-video-with-context-renderer", "ytm-compact-video-renderer",
+      "ytm-shorts-lockup-view-model", "ytm-shorts-lockup-view-model-v2", YT_ADS].join(","),
+    shelf: YT_SHELF,
+    // A shelf is matched by its title, never by the videos in it: one title in a row of ten must not hide all ten.
+    text: (item) => item.matches(YT_SHELF) ? (((item.querySelector("#title, h2") || {}).textContent) || "") : itemText(item),
+    accounts: (item) => firstHandle(item, 'a[href^="/@"], a[href^="/channel/"]', /^\/(?:@|channel\/)([^/?#]+)/),
+    kinds(item) {
+      const out = [];
+      // "Shorts" is the format: the shelves and the tiles, not every title with the word.
+      if (item.matches(YT_SHELF + ",ytd-reel-item-renderer,ytm-shorts-lockup-view-model,ytm-shorts-lockup-view-model-v2") ||
+        item.querySelector('a[href^="/shorts/"]')) out.push("shorts");
+      if (has(item, YT_ADS)) out.push("promoted");
+      return out;
+    }
+  };
+
+  const REDDIT = {
+    id: "reddit",
+    // Posts only: a comment's text holds its replies, so a reply's word would hide the thread above it.
+    items: "shreddit-post,shreddit-ad-post,div.thing.link",
+    target: (item) => (item.parentElement && item.parentElement.tagName === "ARTICLE" ? item.parentElement : item),
+    text: (item) => [item.getAttribute("post-title") || "", itemText(item)].join("\n"),
+    accounts(item) {
+      const out = [];
+      const author = item.getAttribute("author") || item.getAttribute("data-author");
+      if (author) out.push(F.normalizeHandle(author));
+      const sub = item.getAttribute("subreddit-prefixed-name") || item.getAttribute("data-subreddit-prefixed");
+      const bare = item.getAttribute("data-subreddit");
+      if (sub) out.push(F.normalizeHandle(sub)); else if (bare) out.push(F.normalizeHandle("r/" + bare));
+      return out.length ? out : firstHandle(item, 'a[href*="/user/"], a[href*="/u/"]', /\/(?:user|u)\/([^/?#]+)/);
+    },
+    kinds(item) {
+      const out = [];
+      if (item.matches("shreddit-ad-post,[promoted],.promoted,.promotedlink")) out.push("promoted");
+      if (item.getAttribute("post-type") === "crosspost" || item.hasAttribute("data-crosspost-root-author")) out.push("reposts");
+      return out;
+    }
+  };
+
+  const HN = {
+    id: "hn",
+    items: "tr.athing",
+    also(item) {
+      if (item.classList.contains("comtr")) return [];
+      const sub = item.nextElementSibling;
+      const spacer = sub && sub.nextElementSibling;
+      return [sub, spacer && spacer.classList.contains("spacer") ? spacer : null].filter(Boolean);
+    },
+    accounts(item) {
+      const row = item.classList.contains("comtr") ? item : item.nextElementSibling;
+      const u = row && row.querySelector(".hnuser");
+      return u ? [F.normalizeHandle(u.textContent)] : [];
+    }
+  };
+
+  const BLUESKY = {
+    id: "bluesky",
+    items: '[data-testid^="feedItem-by-"]',
+    // The author is named on the item; links in the body are mentions, replies and quotes.
+    accounts: (item) => [F.normalizeHandle(item.getAttribute("data-testid").slice("feedItem-by-".length))],
+    kinds: (item) => (item.querySelector('[aria-label^="Reposted by" i]') || textIs(item, "a,span", /^Reposted by\b/i) ? ["reposts"] : [])
+  };
+
+  const LINKEDIN = {
+    id: "linkedin",
+    items: 'div.feed-shared-update-v2,div[data-urn^="urn:li:activity"]',
+    accounts: (item) => firstHandle(item.querySelector(".update-components-actor") || item, 'a[href*="/in/"], a[href*="/company/"]', /\/(?:in|company)\/([^/?#]+)/),
+    kinds(item) {
+      const out = [];
+      if (textIs(item, ".update-components-actor__sub-description, .update-components-actor__description, span", /^Promoted\b/)) out.push("promoted");
+      const head = item.querySelector(".update-components-header");
+      if (head && /reposted|reshared/i.test(head.textContent)) out.push("reposts");
       return out;
     }
   };
@@ -121,11 +204,14 @@
       return pre && (/boost|reblog|shared/i.test(pre.textContent) || pre.querySelector("[class*=retweet],[class*=repeat],[class*=boost]")) ? ["reposts"] : [];
     }
   };
+  const MASTODON = Object.assign({}, GENERIC, { id: "mastodon" });
 
-  const SITES = [[/(^|\.)(x|twitter)\.com$/, X]];
+  const SITES = [[/(^|\.)(x|twitter)\.com$/, X], [/(^|\.)youtube\.com$/, YOUTUBE], [/(^|\.)reddit\.com$/, REDDIT],
+    [/^news\.ycombinator\.com$/, HN], [/(^|\.)bsky\.app$/, BLUESKY], [/(^|\.)linkedin\.com$/, LINKEDIN]];
   function adapterFor(hostname, doc) {
     const h = String(hostname || "").toLowerCase();
     for (const [re, a] of SITES) if (re.test(h)) return a;
+    if (/(^|\.)mastodon\./.test(h) || (doc && doc.getElementById("mastodon"))) return MASTODON;
     return GENERIC;
   }
 
