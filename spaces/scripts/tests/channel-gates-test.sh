@@ -1,5 +1,5 @@
 #!/bin/bash
-# The release gates in dev.yml, nightly.yml and promote.yml, run as written against a stand-in gh. Runs anywhere with
+# The release gate in release.yml, run as written against a stand-in gh. Runs anywhere with
 # bash and python3 (CI: channels.yml). Exit 0 only when every check passed.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
@@ -8,8 +8,8 @@ bad() { echo "channel-gates-test: $*"; status=1; }
 expect() { [ "$2" = "$3" ] || bad "$1: got \"$2\", want \"$3\""; }
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
-# The gates run the real Decide scripts from dev.yml and nightly.yml against a stand-in gh. A channel only moves to a
-# commit that passed its own CI and is ahead of the one it offers (CI runs can finish out of order or be re-run).
+# The gate runs the real Decide script from release.yml against a stand-in gh. The release only moves to a commit that
+# passed its own CI and is ahead of the one it offers (CI runs can finish out of order or be re-run).
 decide() { # <workflow> -> the Decide step's script
   python3 -I - "../.github/workflows/$1.yml" <<'PY'
 import sys
@@ -44,18 +44,15 @@ gate() { # <workflow> <env...>: prints go and commit
     || { echo "error"; return; }
   printf '%s %s\n' "$(sed -n 's/^go=//p' "$g/out")" "$(sed -n 's/^commit=//p' "$g/out")"
 }
-# first-F1: B is on dev; A's CI finishes later (or is re-run). Dev must not move back to A.
-expect "dev, an older commit's CI" "$(gate dev RUN_SHA=aaa STUB_LAST=bbb STUB_REL_bbb_aaa=behind)" "false "
-expect "dev, a newer commit's CI" "$(gate dev RUN_SHA=ccc STUB_LAST=bbb STUB_REL_bbb_ccc=ahead)" "true ccc"
-expect "dev, the first build" "$(gate dev RUN_SHA=ccc STUB_LAST=)" "true ccc"
-expect "dev, the same commit again" "$(gate dev RUN_SHA=bbb STUB_LAST=bbb STUB_REL_bbb_bbb=identical)" "false "
-# sol-F1: main moved to ddd, whose CI hasn't finished. The nightly builds ccc, the newest tested commit, never ddd.
-expect "nightly, untested head" "$(gate nightly EVENT=schedule STUB_MAIN=ddd STUB_GREEN=ccc STUB_REL_ccc_main=ahead STUB_LAST=bbb STUB_REL_bbb_ccc=ahead)" "true ccc"
-expect "nightly, nothing new tested" "$(gate nightly EVENT=schedule STUB_GREEN=bbb STUB_REL_bbb_main=ahead STUB_LAST=bbb STUB_REL_bbb_bbb=identical)" "false "
-expect "nightly, no green run" "$(gate nightly EVENT=schedule STUB_GREEN= STUB_LAST=bbb)" "false "
-expect "nightly, tested commit left main" "$(gate nightly EVENT=schedule STUB_GREEN=eee STUB_REL_eee_main=diverged STUB_LAST=bbb)" "false "
-expect "nightly, first (bridge) run" "$(gate nightly EVENT=workflow_dispatch STUB_GREEN=ccc STUB_REL_ccc_main=identical STUB_LAST=)" "true ccc"
-expect "dev, started by hand" "$(gate dev RUN_SHA= REF=refs/heads/main STUB_MAIN=ddd STUB_GREEN=ccc STUB_LAST=bbb STUB_REL_bbb_ccc=ahead)" "true ccc"
+# first-F1: B is offered; A's CI finishes later (or is re-run). The release must not move back to A.
+expect "an older commit's CI" "$(gate release RUN_SHA=aaa STUB_LAST=bbb STUB_REL_bbb_aaa=behind)" "false "
+expect "a newer commit's CI" "$(gate release RUN_SHA=ccc STUB_LAST=bbb STUB_REL_bbb_ccc=ahead)" "true ccc"
+expect "the first build" "$(gate release RUN_SHA=ccc STUB_LAST=)" "true ccc"
+expect "the same commit again" "$(gate release RUN_SHA=bbb STUB_LAST=bbb STUB_REL_bbb_bbb=identical)" "false "
+# Started by hand: the newest commit with a green CI run, never main's untested head (ddd).
+expect "started by hand" "$(gate release RUN_SHA= REF=refs/heads/main STUB_MAIN=ddd STUB_GREEN=ccc STUB_LAST=bbb STUB_REL_bbb_ccc=ahead)" "true ccc"
+expect "by hand, no green run" "$(gate release RUN_SHA= REF=refs/heads/main STUB_GREEN= STUB_LAST=bbb)" "false "
+[ "$(gate release RUN_SHA= REF=refs/heads/feature STUB_GREEN=ccc)" = error ] || bad "a release was started from a branch other than main"
 # A job's own permissions replace the workflow's, so each job that lists issues or runs must grant reading them.
 python3 -I - ../.github/workflows/*.yml <<'PY' || bad "a workflow job calls gh issue list or gh run list without the permission to read them"
 import re, sys
@@ -86,7 +83,7 @@ for path in sys.argv[1:]:
                 print(f"{path}: job {name} runs {call} without {scope}: read"); bad = True
 sys.exit(1 if bad else 0)
 PY
-grep -q "if: needs.gate.outputs.go == 'true'" ../.github/workflows/dev.yml || bad "dev.yml builds without the gate's go"
+grep -q "if: needs.gate.outputs.go == 'true'" ../.github/workflows/release.yml || bad "release.yml builds without the gate's go"
 
 [ $status = 0 ] && echo "channel-gates-test: pass"
 exit $status

@@ -44,6 +44,9 @@ if [ -f "$DIR/latest.json" ]; then
     "$(plutil -extract PolycarpCommit raw -o - "$TMP/zip/Polycarp.app/Contents/Info.plist")" <<'PY' || fail "latest.json doesn't describe Polycarp.zip."
 import json, sys
 feed, sha, version, commit = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3], sys.argv[4]
+# The dev release carries the same build with its version said the old dev way (publish.sh, docs/releases.md).
+if feed.get("channel") == "dev":
+    version = version.replace("-nightly.", "-dev.", 1)
 ok = feed.get("product") == "polycarp" and feed.get("version") == version and feed.get("commit") == commit \
     and feed.get("platforms") and all(p.get("sha256") == sha for p in feed["platforms"].values())
 sys.exit(0 if ok else 1)

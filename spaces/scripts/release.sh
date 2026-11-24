@@ -7,29 +7,25 @@
 #                                              uploaded and leaves the draft for the soak
 #   scripts/release.sh --soak <receipt>        publishes the draft as Latest, only with a scripts/soak-check.sh
 #                                              receipt that says SOAK PASSED for this commit (spaces/AGENTS.md)
-# Nightly and dev: built from main for Apple silicon with the same signing identity, and published by
-# scripts/publish-channel.sh. HEAD must already be on origin. --bridge (nightly) also replaces the old preview
-# release's files, once, so copies that read preview move to nightly.
-#   scripts/release.sh --channel nightly|dev [--bridge] [--dry-run]
+# Nightly: built from main for Apple silicon with the same signing identity, and published by scripts/publish.sh.
+# HEAD must already be on origin.
+#   scripts/release.sh --channel nightly [--dry-run]
 # --dry-run does everything except the tag check, the upload and the publish, so it can run on a branch.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DRY=0
 CHANNEL=stable
-BRIDGE=""
 SOAK=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
     --channel) CHANNEL=${2:-}; shift ;;
-    --bridge) BRIDGE=--bridge ;;
     --soak) SOAK=${2:-}; shift ;;
-    *) echo "usage: scripts/release.sh [--channel nightly|dev [--bridge]] [--soak <receipt>] [--dry-run]" >&2; exit 1 ;;
+    *) echo "usage: scripts/release.sh [--channel nightly] [--soak <receipt>] [--dry-run]" >&2; exit 1 ;;
   esac
   shift
 done
-case "$CHANNEL" in stable|nightly|dev) ;; *) echo "release.sh: the channel is nightly or dev (stable is the default)" >&2; exit 1 ;; esac
-[ -z "$BRIDGE" ] || [ "$CHANNEL" = nightly ] || { echo "release.sh: --bridge goes with --channel nightly" >&2; exit 1; }
+case "$CHANNEL" in stable|nightly) ;; *) echo "release.sh: the channel is nightly (stable is the default)" >&2; exit 1 ;; esac
 PREVIEW=0
 [ "$CHANNEL" = stable ] || PREVIEW=1
 export POLYCARP_CHANNEL=$CHANNEL
@@ -50,7 +46,7 @@ if [ "$PREVIEW" = 1 ]; then
   unset BANEYSPACES_ADHOC
   if [ "$DRY" = 0 ]; then
     git fetch --quiet origin || fail "couldn't reach origin."
-    # Nightly and dev are built from main only.
+    # Release builds are built from main only.
     git merge-base --is-ancestor HEAD origin/main || fail "HEAD isn't on origin/main. $CHANNEL is built from main only."
   fi
 elif [ "$DRY" = 0 ]; then
@@ -109,8 +105,8 @@ if [ "$DRY" = 1 ]; then
   echo "dry run: $TAG not uploaded. The files are in build/."
   exit 0
 fi
-# Nightly and dev have their own publish: the files are verified above, scripts/publish-channel.sh uploads them.
-[ "$PREVIEW" = 0 ] || exec scripts/publish-channel.sh "$CHANNEL" $BRIDGE
+# Nightly has its own publish: the files are verified above, scripts/publish.sh uploads them.
+[ "$PREVIEW" = 0 ] || exec scripts/publish.sh
 scripts/write-feed.sh stable "$VERSION" "$TAG_COMMIT" build/Polycarp.zip build/latest.json "Polycarp $VERSION"
 scripts/verify-release.sh build
 # The release is a draft until the files are up and checked again; the updater never offers a draft.

@@ -1,0 +1,148 @@
+name: Release
+# Polycarp's one stream of updates (docs/releases.md): every main commit whose CI passed on a push is built, signed
+# and published to the rolling `nightly` release, with an immutable `nightly-YYYYMMDDHHMMSS` copy kept 14 days.
+# The build runs on GitHub's hosted macOS runner (never a self-hosted one: this repository is public), with
+# spaces/scripts/release.sh, the same script the owner's Mac runs. It signs only with the release identity from the
+# POLYCARP_SIGNING_P12 secrets; without them nothing is built or published, the run says so, and the Mac publishes
+# instead. An ad-hoc build never ships (spaces/AGENTS.md). A run that is publishing is never cancelled (the rolling
+# release would be left half moved): a newer commit waits, and GitHub keeps only the newest waiting one.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: release
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  gate:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      go: ${{ steps.decide.outputs.go }}
+      commit: ${{ steps.decide.outputs.commit }}
+      time: ${{ steps.decide.outputs.time }}
+    steps:
+      - name: Decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          stop() { echo "::notice title=No release::$1"; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          if [ -n "$RUN_SHA" ]; then SHA=$RUN_SHA; else
+            [ "$REF" = refs/heads/main ] || { echo "releases are built from main only, not $REF" >&2; exit 1; }
+            # Started by hand: the newest main commit with a green CI run of its own, never an untested head.
+            SHA=$(gh run list -R "$REPO" --workflow ci.yml --branch main --event push --status success --limit 1 \
+              --json headSha --jq '.[0].headSha // empty')
+            [ -n "$SHA" ] || stop "no CI run on main has passed."
+          fi
+          # CI runs can finish out of order, and an old one can be re-run. Only a commit ahead of the one the release
+          # already offers moves it, so an update never goes back to older code.
+          if LAST=$(gh api "repos/$REPO/git/ref/tags/nightly" --jq .object.sha 2>"$RUNNER_TEMP/last.err"); then
+            REL=$(gh api "repos/$REPO/compare/$LAST...$SHA" --jq .status)
+            [ "$REL" = ahead ] || stop "$SHA is $REL of $LAST, the commit the release already offers."
+          else
+            grep -q 'HTTP 404' "$RUNNER_TEMP/last.err" || { cat "$RUNNER_TEMP/last.err" >&2; exit 1; }
+          fi
+          { echo "go=true"; echo "commit=$SHA"; echo "time=$(date -u +%Y%m%d%H%M%S)"; } >> "$GITHUB_OUTPUT"
+  build:
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: spaces
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - name: The signing identity
+        id: sign
+        env:
+          POLYCARP_SIGNING_P12: ${{ secrets.POLYCARP_SIGNING_P12 }}
+          POLYCARP_SIGNING_P12_PASSWORD: ${{ secrets.POLYCARP_SIGNING_P12_PASSWORD }}
+        run: |
+          set +e
+          scripts/ci-signing.sh; code=$?
+          set -e
+          if [ $code = 3 ]; then
+            echo "::warning title=not published::The signing secrets are not set, so nothing is built or published here. Publish from the owner's Mac: spaces/scripts/release.sh (docs/releases.md)."
+            echo "signed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          [ $code = 0 ] && echo "signed=true" >> "$GITHUB_OUTPUT"
+          exit $code
+      # The built-in terminal (libghostty, spaces/ghostty/PIN), built once per pin. Release builds are Apple silicon
+      # only, so bundle.sh links it when it is there. A runner that can't build it (exit 3) ships without the
+      # terminal and says so; a bad checksum or a failed build (exit 1) stops the run.
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        if: steps.sign.outputs.signed == 'true'
+        id: ghostty
+        with:
+          path: spaces/ghostty/lib
+          key: ghostty-${{ runner.arch }}-${{ hashFiles('spaces/ghostty/PIN', 'spaces/scripts/build-ghostty.sh') }}
+      - name: Build libghostty
+        if: steps.sign.outputs.signed == 'true'
+        env:
+          CACHED: ${{ steps.ghostty.outputs.cache-hit }}
+        run: |
+          set +e
+          if [ "$CACHED" != true ]; then
+            zig=$(scripts/fetch-zig.sh); code=$?
+            if [ $code = 0 ]; then
+              PATH="$zig:$PATH"
+              xcrun -sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
+            fi
+          else
+            code=0
+          fi
+          # fetch-zig.sh: 3 is a download that failed (ship without the terminal), 1 a checksum that didn't match.
+          [ $code = 0 ] && { scripts/build-ghostty.sh; code=$?; }
+          set -e
+          if [ $code = 3 ]; then
+            echo "::warning title=terminal not built::This build ships without the built-in terminal (see the log above)."
+            exit 0
+          fi
+          exit $code
+      - name: Build, sign, package, verify and publish
+        if: steps.sign.outputs.signed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLYCARP_BUILD_TIME: ${{ needs.gate.outputs.time }}
+        run: scripts/release.sh --channel nightly
+  prune:
+    needs: [gate, build]
+    if: always() && needs.gate.result == 'success' && needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Delete nightly-<time> prereleases older than 14 days, keeping the newest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          CUT=$(date -u -d '14 days ago' +%Y%m%d%H%M%S)
+          gh api --paginate "repos/$REPO/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name' \
+            | { grep -E '^nightly-[0-9]{14}$' || true; } | sort -r | tail -n +2 \
+            | while read -r t; do
+                [ "${t#nightly-}" \< "$CUT" ] || continue
+                echo "deleting $t"
+                gh release delete "$t" -R "$REPO" --cleanup-tag --yes
+              done
