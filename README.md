@@ -7,7 +7,7 @@ Polycarp is its own OS on a Mac or a Windows PC: workspaces, the dock, the top b
 The Polycarp browser extension ([`spaces/extension`](spaces/extension)) is the reading and accessibility extension that was
 Phont. It works on its own in Helium, Chrome and other Chromium browsers. With Polycarp installed on the same computer it
 also gives the browser Polycarp's new tab and updates with the app. The browser-driving extension, its CLI helper, MCP
-server and computer-use tools are in Tychicus: https://github.com/baney75/tychicus.
+server and computer-use tools were removed from Polycarp.
 The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 On a Mac it lives in `Polycarp.app`, with one Settings window, one set of permissions and one command. The Windows
@@ -44,7 +44,7 @@ copied first.
 ## Linux
 
 The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces. Run on Linux, the install
-line above says so, points to Tychicus for browser and computer use, and installs nothing, and so does
+line above says so and installs nothing, and so does
 `polycarp update`.
 
 An earlier install that is still in place keeps its block in `~/.config/hypr/hyprland.lua`, which binds your
@@ -59,8 +59,8 @@ bears much fruit, for apart from me you can do nothing."
 ## The command
 
 `polycarp` is one command for Polycarp Spaces and themes. It comes with the Mac app and with the install
-script; [Updating](#updating) keeps it current with everything else. `polycarp browser` only says where the browser
-went (Tychicus) and exits 2.
+script; [Updating](#updating) keeps it current with everything else. `polycarp browser` only says the agent browser
+extension was removed and exits 2.
 
 ```
 polycarp spaces ls          # runs baneyspaces ls
@@ -144,10 +144,9 @@ A source build needs what the first build needed: Rust and Apple's command line 
 browser's packages. That script is gone from `main`, so the update stops at that step and nothing installed changes.
 Install once from a checkout of `main` (`make -C spaces install`, or the install line with `POLYCARP_SOURCE` set to the
 checkout), and updates work again. A remote connector the old helper set up (`com.polycarp.serve`, `.cloudflared`,
-`.hub`, `.link`) keeps running until Tychicus runs it: run `tychicus remote import-polycarp`, and the next install
-retires the old jobs once Tychicus's own job is loaded and `~/.config/tychicus/remote.json` exists. Every install also
-retires `com.polycarp.browser` and `com.tabkyra.*` jobs whose program was inside Polycarp.app or in a folder only
-Polycarp wrote. Install Tychicus for the browser: https://github.com/baney75/tychicus.
+`.hub`, `.link`) keeps running while the program it runs is still on disk; an install retires a job whose program is
+gone. Every install also retires `com.polycarp.browser` and `com.tabkyra.*` jobs whose program was inside Polycarp.app
+or in a folder only Polycarp wrote.
 
 The app's **Settings > Updates** ([spaces/README.md](spaces/README.md#updates)) still updates the app on its own.
 

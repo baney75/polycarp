@@ -6,7 +6,7 @@ description: Install Polycarp, use its one command, choose or build a theme, and
 
 ## Where things stand
 
-Polycarp is Spaces and themes for macOS and Windows, with its own browser extension for reading, a library and calmer feeds (`spaces/extension`). The browser-driving extension, its CLI helper, MCP server and computer-use tools are a separate project, Tychicus: https://github.com/baney75/tychicus. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
+Polycarp is Spaces and themes for macOS and Windows, with its own browser extension for reading, a library and calmer feeds (`spaces/extension`). The agent browser extension, its CLI helper, MCP server and computer-use tools were removed from Polycarp. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 - **Mac, Apple silicon:** workspaces are inside `Polycarp.app`, with one Settings window and one set of permissions.
 - **Dictation** is not part of Polycarp. [Silas](https://github.com/baney75/silas) is its own app, on its own release schedule.
@@ -24,9 +24,9 @@ The [plan](https://github.com/baney75/polycarp/blob/main/PLAN.md) lists every st
 curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
 ```
 
-This downloads the signed app for Apple silicon, puts `polycarp` in `~/.local/bin` and opens the app, with no developer tools needed. A welcome window walks you through the permissions. Accessibility is the only one Polycarp can't run without. Polycarp's browser extension comes inside the app: in `helium://extensions` (or `chrome://extensions`), turn on Developer mode, click **Load unpacked** and pick `~/Applications/Polycarp.app/Contents/Resources/extension`. After that it updates with the app ([spaces/extension/README.md](https://github.com/baney75/polycarp/blob/main/spaces/extension/README.md)). For an assistant that drives your browser, install [Tychicus](https://github.com/baney75/tychicus), a separate extension.
+This downloads the signed app for Apple silicon, puts `polycarp` in `~/.local/bin` and opens the app, with no developer tools needed. A welcome window walks you through the permissions. Accessibility is the only one Polycarp can't run without. Polycarp's browser extension comes inside the app: in `helium://extensions` (or `chrome://extensions`), turn on Developer mode, click **Load unpacked** and pick `~/Applications/Polycarp.app/Contents/Resources/extension`. After that it updates with the app ([spaces/extension/README.md](https://github.com/baney75/polycarp/blob/main/spaces/extension/README.md)).
 
-To add Polycarp's companions in the same run, name them: `curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash -s -- --with tychicus,silas,shotate,local-studio` (or `--with all`). Tychicus lets agents drive your browser and apps, Silas is dictation, Shotate takes screenshots and recordings, and Local Studio runs AI models on your Mac, with Polycarp's plugin added to it. Each installs from its own installer and stays its own app; Tychicus's browser extension is separate from Polycarp's. Run at a terminal without `--with`, the installer asks once, and Return means none.
+To add Polycarp's companions in the same run, name them: `curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash -s -- --with silas,shotate` (or `--with all`). Silas is dictation and Shotate takes screenshots and recordings. Each installs from its own installer and stays its own app. Run at a terminal without `--with`, the installer asks once, and Return means none.
 
 If you have BaneySpaces, it goes to the Trash, because the two can't run together, and Polycarp copies its settings. `baneyspaces` keeps working as a name for `polycarp-spaces`.
 
@@ -34,7 +34,7 @@ On an Intel Mac, or with `POLYCARP_FROM_SOURCE=1`, it builds on your Mac instead
 
 ### On Linux
 
-Polycarp no longer installs on Linux. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces. Run on Linux, the install script says so, points to Tychicus for browser and computer use, and exits.
+Polycarp no longer installs on Linux. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces. Run on Linux, the install script says so and exits.
 
 An earlier install that is still in place keeps its block in `~/.config/hypr/hyprland.lua`, which binds your workspace keys to the retired daemon. `spaces/platforms/linux/omarchy/uninstall.sh` takes it out and gives Omarchy its own keys back; run it with `--dry-run` first to see what it does. Nothing runs it for you.
 
@@ -67,7 +67,7 @@ polycarp doctor
 | `polycarp --version` | Prints the version |
 | `polycarp --help` | Prints the usage |
 
-`polycarp spaces` passes your arguments, input, output and exit code straight through. `polycarp browser` only says where the browser went, Tychicus, and exits with code 2. `polycarp voice` only says Silas is its own app, and exits with code 1.
+`polycarp spaces` passes your arguments, input, output and exit code straight through. `polycarp browser` only says the agent browser extension was removed, and exits with code 2. `polycarp voice` only says Silas is its own app, and exits with code 1.
 
 ### How it finds an app
 
@@ -387,13 +387,9 @@ polycarp-spaces filters reset       # every rule gone
 
 A rule has an `id` (1 to 64 of a-z, 0-9 and -; `set` with an id in use replaces that rule), `enabled` (true unless set false), `sites` (hosts such as `youtube.com`; none means every site), and at least one of `words`, `patterns` (JavaScript regular expressions), `accounts` (handles such as `@name`), `kinds` (`shorts`, `promoted`, `reposts`) and `hide` (CSS selectors of page parts, only with `sites`). A pattern must compile, and may not repeat a group that holds a quantifier (`(a+)+`), count past `{20}`, or use a backreference or lookbehind, since any of those can stall a page on a long post. A selector may not hold `{ } ; \ @ <`, `/*`, `*/` or a line break, or leave a quote, bracket or parenthesis open. Limits: 200 rules, 200 entries a list, 200 characters an entry, 256 KiB for the file. A rule past one, or with a bad field, is refused with the field named, and nothing is written. Every command takes `--json`.
 
-## Use your browser from Claude, ChatGPT and Grok
-
-This is Tychicus, a separate extension: https://github.com/baney75/tychicus. Polycarp's own extension doesn't let an assistant drive your browser.
-
 ## Keys, motion and behavior
 
-Themes cover the look. On a Mac, keys, the dock and the launcher are all in Polycarp's Settings. Every shortcut, by group and with where it works, is in [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md); `polycarp-spaces keys` prints the same list with your modifier. Browser access is [Tychicus](https://github.com/baney75/tychicus)'s, and dictation is the [Silas](/projects/silas/docs/) app's, each with its own settings.
+Themes cover the look. On a Mac, keys, the dock and the launcher are all in Polycarp's Settings. Every shortcut, by group and with where it works, is in [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md); `polycarp-spaces keys` prints the same list with your modifier. Dictation is the [Silas](/projects/silas/docs/) app's, with its own settings.
 
 One file for all of them, with undo and a recovery key, is on the plan. Its contract is [`spaces/spec/config.md`](https://github.com/baney75/polycarp/blob/main/spaces/spec/config.md).
 
@@ -426,8 +422,6 @@ Polycarp won't run a tool inside your current folder, including `node_modules/.b
 
 On a Mac, Polycarp follows your theme live. On other devices the Silas app may not read theme files yet.
 
-[Tychicus](https://github.com/baney75/tychicus), the browser-driving extension, reads the same theme. Its side panel takes a new theme within 5 seconds while it is open. An approval or hub page that is already open keeps the colors it opened with; reload it to see the new ones. It doesn't reload on its own, so a passcode you are typing isn't lost.
-
 If you want apps to show their own look, run `polycarp theme off`. It removes the theme files; an app that reads them is expected to use its own look when it next checks. If a file can't be removed, `off` fails and names it.
 
 ### My accent is refused
@@ -444,4 +438,4 @@ This always works.
 
 ## Credits and license
 
-The command and Spaces are MIT. Polycarp's browser extension is GPL-3.0-or-later, because it bundles the eSpeak NG phonemizer; its libraries and fonts keep their own licenses, listed in `spaces/extension`. Tychicus, the browser-driving extension, carries its own AGPL-3.0 license in [its repo](https://github.com/baney75/tychicus). The name and logo aren't covered by those licenses. Newsreader is under the SIL Open Font License.
+The command and Spaces are MIT. Polycarp's browser extension is GPL-3.0-or-later, because it bundles the eSpeak NG phonemizer; its libraries and fonts keep their own licenses, listed in `spaces/extension`. The old agent browser extension, AGPL-3.0 with its credits, was removed; its code stays in the git history under that license. The name and logo aren't covered by those licenses. Newsreader is under the SIL Open Font License.

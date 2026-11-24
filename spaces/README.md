@@ -465,9 +465,8 @@ hidden, so tools can still click and type in them from behind. Nothing on it com
 you there: you go with ⌘9, its Dock tile or a launcher row. And a window an app on it opens in the
 background lands there, not on your workspace.
 
-Polycarp doesn't read, click or type into apps. Computer use lives in
-[Tychicus](https://github.com/baney75/tychicus), which keeps the windows it works in on the agent
-workspace through two calls on Polycarp's socket: list the windows there, and move a window there.
+Polycarp doesn't read, click or type into apps. A computer-use client keeps the windows it works in
+on the agent workspace through two calls on Polycarp's socket: list the windows there, and move a window there.
 They are documented in [docs/agent-workspace-api.md](docs/agent-workspace-api.md).
 
 **Phones.** Android phones (USB debugging on) and iPhones show in `polycarp-spaces ls` and the launcher the moment they're
