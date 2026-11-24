@@ -434,7 +434,7 @@
   // ---------------------------------------------------------------- wiring for content.js
   // Rules come from storage: the app's (kept fresh by the service worker) and this browser's own. A change there
   // reaches this page through storage.onChanged, with no reload.
-  let page = null, listening = false, want = false;
+  let page = null, listening = false, want = false, asked = false;
   async function load() {
     const got = await chrome.storage.local.get([F.APP_KEY, F.LOCAL_KEY]);
     const app = got[F.APP_KEY] && Array.isArray(got[F.APP_KEY].rules) ? got[F.APP_KEY].rules : [];
@@ -452,6 +452,8 @@
   }
   P.feedFilter = {
     start() {
+      // The first start on a page asks the service worker to check the app's rules if its copy is over 5 seconds old.
+      if (!asked) { asked = true; try { chrome.runtime.sendMessage({ type: "polycarp:filtersFresh" }).catch(() => {}); } catch (e) {} }
       want = true;
       if (!listening) { chrome.storage.onChanged.addListener(onStorage); listening = true; }
       return apply();

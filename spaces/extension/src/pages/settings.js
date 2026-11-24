@@ -56,6 +56,9 @@
       toggle("helpers.kindle", "Kindle", "Offer to make your Kindle library searchable in Polycarp"),
       toggle("helpers.web", "Every other site", "Search headings, links, images and video on any page")
     ]],
+    ["Feed filters", "Hide posts you don't want to see on X, YouTube, Reddit and other feeds. A hidden post shows as one line with a Show button.", [
+      raw('<div id="filtersBox"></div>', () => globalThis.PolycarpFiltersUI && PolycarpFiltersUI.bind($("filtersBox")))
+    ]],
     ["Search and your NAS", "", [
       raw('<div class="row"><span class="lbl"><b>Polycarp Search</b><span>Your library, YouTube, free books and papers, and any site you add, in one search. Type pc and a space in the address bar to search from anywhere.</span></span><a class="btn" href="search.html">' + I("search") + '<span>Open Search</span></a></div>' +
         '<div class="row"><span class="lbl"><b>Your NAS</b><span id="nasNote">Not connected</span></span><a class="btn quiet" href="search.html#nasBlock">Set up</a></div>', bindNas)

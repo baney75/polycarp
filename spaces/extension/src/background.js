@@ -3,6 +3,7 @@ importScripts("shared/core.js");
 try { importScripts("shared/memory.js"); } catch (e) { /* memory engine optional at load */ }
 try { importScripts("shared/library.js"); } catch (e) { /* library optional at load */ }
 try { importScripts("shared/backup.js", "shared/nas.js"); } catch (e) { /* NAS optional at load */ }
+try { importScripts("shared/filters.js"); } catch (e) { /* feed filters optional at load */ }
 
 const P = globalThis.Polycarp;
 const READER = "src/reader/reader.html";
@@ -395,6 +396,70 @@ chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "polycarp-badge") refreshBadge();
   else if (a.name === "polycarp-resume") resume();
   else if (globalThis.PolycarpNAS && a.name === globalThis.PolycarpNAS.ALARM) globalThis.PolycarpNAS.onAlarm(a).catch(() => {});
+});
+
+// ---------- Feed filters from the Polycarp app ----------
+// The app's rules come over native messaging ({op:"filters"} to the new tab's host) and are kept in storage, where
+// content scripts read them with this browser's own rules (src/shared/filters.js merge). Asked at browser start, every
+// 30 seconds, when the app connection is granted, and when a page starts filtering with an answer older than 5 seconds.
+// Storage is written only when the answer changes, so open pages hear only real changes. With no app (the host
+// missing, or the nativeMessaging permission not granted) there are no app rules and nothing to report: the extension's
+// own rules still work.
+const FILTERS_HOST = "com.polycarp.newtab";
+const FILTERS_ALARM = "polycarp-filters";
+const FILTERS_AT = "polycarp.filters.appAt"; // session storage: when the app was last asked
+let filtersAsking = null;
+async function appConnected() {
+  if (!chrome.runtime.sendNativeMessage || !chrome.permissions) return false;
+  try { return await chrome.permissions.contains({ permissions: ["nativeMessaging"] }); } catch (e) { return false; }
+}
+function askFiltersHost() {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendNativeMessage(FILTERS_HOST, { op: "filters" }, (reply) => {
+        const err = chrome.runtime.lastError;
+        resolve(err ? { failed: String(err.message || err) } : reply);
+      });
+    } catch (e) { resolve({ failed: String(e && e.message || e) }); }
+  });
+}
+function refreshAppFilters() {
+  const F = globalThis.PolycarpFilters;
+  if (!F) return Promise.resolve();
+  if (filtersAsking) return filtersAsking;
+  filtersAsking = (async () => {
+    const cur = (await chrome.storage.local.get(F.APP_KEY))[F.APP_KEY] || null;
+    let next;
+    if (!(await appConnected())) next = { rules: [], connected: false };
+    else {
+      const r = await askFiltersHost();
+      if (r && r.ok === true && Array.isArray(r.filters)) next = { rules: r.filters.slice(0, 500), connected: true };
+      // No Polycarp on this computer (or not allowed to talk to it): no app rules, and no error to show.
+      else if (r && r.failed && /not found|forbidden/i.test(r.failed)) next = { rules: [], connected: false };
+      // The app answered with an error, or the call broke: keep the last rules it sent and say why on the Settings page.
+      else next = { rules: (cur && cur.rules) || [], connected: true, error: (r && (r.error || r.failed)) ? String(r.error || r.failed).slice(0, 300) : "Polycarp gave no answer" };
+    }
+    await chrome.storage.session.set({ [FILTERS_AT]: Date.now() }).catch(() => {});
+    if (JSON.stringify(next) !== JSON.stringify(cur)) await chrome.storage.local.set({ [F.APP_KEY]: next });
+  })().catch(() => {}).finally(() => { filtersAsking = null; });
+  return filtersAsking;
+}
+async function filtersFresh(maxAge) {
+  const at = (await chrome.storage.session.get(FILTERS_AT).catch(() => ({})))[FILTERS_AT] || 0;
+  if (Date.now() - at > maxAge) await refreshAppFilters();
+}
+chrome.alarms.get(FILTERS_ALARM).then((a) => { if (!a) chrome.alarms.create(FILTERS_ALARM, { periodInMinutes: 0.5 }); });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === FILTERS_ALARM) refreshAppFilters(); });
+chrome.runtime.onStartup.addListener(() => refreshAppFilters());
+chrome.runtime.onInstalled.addListener(() => refreshAppFilters());
+if (chrome.permissions && chrome.permissions.onAdded) {
+  chrome.permissions.onAdded.addListener(() => refreshAppFilters());
+  chrome.permissions.onRemoved.addListener(() => refreshAppFilters());
+}
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (!msg || msg.type !== "polycarp:filtersFresh") return;
+  filtersFresh(5000).then(() => reply({ ok: true }), () => reply({ ok: false }));
+  return true;
 });
 
 // ---------- Address bar: type "pc" then a space to search with Polycarp ----------
