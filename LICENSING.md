@@ -11,8 +11,8 @@ GPL-3.0-or-later because it bundles the eSpeak NG phonemizer (GPL-3.0); its font
 licenses next to each file. The Polycarp app carries it as a separate work in `Contents/Resources/extension`. The root has no
 license of its own in this step.
 
-The agent browser extension, AGPL-3.0, moved to Tychicus (https://github.com/baney75/tychicus) with its credits to 0xSero's
-sitegeist and Mario Zechner's Sitegeist.
+The agent browser extension, AGPL-3.0, with its credits to 0xSero's sitegeist and Mario Zechner's Sitegeist, was removed
+from this repo; its code stays in the git history under that license.
 
 `spaces/` also carries third-party license texts in `spaces/LICENSES/`.
 

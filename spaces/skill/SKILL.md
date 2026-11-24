@@ -1,6 +1,11 @@
 ---
+<<<<<<< HEAD
 name: polycarp-spaces
 description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on), the agent workspace (list its windows, move a window there) and his Contacts (find a person, open a call, FaceTime, a Messages draft or an email to them). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, keep an agent's windows off his workspaces, or set up a call or message he asked for. Faster and safer than screenshots. Also use it to change what Polycarp's surfaces show (top bar, desktop scene and verse, dock tiles, status menu, new tab page, idle screen) through `surfaces get|set|reset`, and to set the wallpaper, new tab background or idle background (a picture, URL, color or scene) through `paper set|get|reset`. It does not click or type into apps: computer use is Tychicus.
+=======
+name: baneyspaces
+description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on), the agent workspace (list its windows, move a window there) and his Contacts (find a person, open a call, FaceTime, a Messages draft or an email to them). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, keep an agent's windows off his workspaces, or set up a call or message he asked for. Faster and safer than screenshots. Also use it to change what Polycarp's surfaces show (top bar, desktop scene and verse, dock tiles, status menu, new tab page, idle screen) through `surfaces get|set|reset`, and to set the wallpaper, new tab background or idle background (a picture, URL, color or scene) through `paper set|get|reset`. It does not click or type into apps.
+>>>>>>> fb86a81a (docs: say the browser and computer use were removed)
 ---
 
 # BaneySpaces
@@ -113,6 +118,6 @@ baneyspaces agent move 4127       # send a window there (a window number from ls
 Polycarp places; send one of his own windows only when he asked. Errors carry a code: `agent_workspace_off`,
 `no_such_window`, `bad_request` (docs/agent-workspace-api.md).
 
-BaneySpaces doesn't read, click or type into apps: use Tychicus for that. Don't drive an app through AppleScript, JXA or
-Shortcuts (`osascript`, `shortcuts run`) instead: they pick an app by name, not by window, so they can reach Donovan's own
+BaneySpaces doesn't read, click or type into apps. Don't drive an app through AppleScript, JXA or Shortcuts
+(`osascript`, `shortcuts run`) either: they pick an app by name, not by window, so they can reach Donovan's own
 copy of it or start one on his workspace. Never run anything that takes focus or raises a window.

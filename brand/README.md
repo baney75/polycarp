@@ -23,7 +23,7 @@ Tagline: **Bear much fruit.** When a line must explain the product: **Speak it. 
 | `icon-macos.svg` | Mac app icon, with the standard margin and corners |
 | `icon-full-bleed.svg` | iOS, Windows and web, as a square tile. iOS and other masked targets round its corners; Windows and favicons show the square as drawn, which is intended |
 | `icon-android-foreground.svg` | Android adaptive icon foreground, on a `#59693F` background layer |
-| `browser/icon.svg`, `browser/icon-16.svg` | The browser extension, now [Tychicus](https://github.com/baney75/tychicus), which reads them from here: the branch and a pointer at 48 px and up, and the bolder branch alone at 16 and 32, which is what a toolbar shows |
+| `browser/icon.svg`, `browser/icon-16.svg` | The old browser extension: the branch and a pointer at 48 px and up, and the bolder branch alone at 16 and 32, which is what a toolbar shows |
 | `export/` | PNG sets per platform, `windows/polycarp.ico`, and `tray/` black-on-transparent template images |
 | `tools/` | The scripts that draw the marks and wordmark. `gen.py` takes an output folder. `export.py` renders `export/` and `brand-sheet.png` from those SVGs (needs ImageMagick 7 with Inkscape or librsvg) |
 
