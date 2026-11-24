@@ -2,16 +2,16 @@ import Foundation
 import XCTest
 @testable import BaneySpacesCore
 
-/// The throwaway macOS VM for agent work is Tychicus's (Donovan, 2026-11-21: "sandbox and such is for that so that
-/// Tychicus is the best CUA and BUA"). Polycarp keeps one pointer to it and nothing else of it.
-final class TychicusPointerTests: XCTestCase {
-    func testTheSandboxCommandPrintsOnlyThePointer() throws {
-        XCTAssertEqual(AgentWorkspace.sandboxMoved, "The sandbox is now Tychicus: https://github.com/baney75/tychicus")
+/// The throwaway macOS VM for agent work was removed from Polycarp (2026-11-21). Polycarp keeps one line saying so and
+/// nothing else of it.
+final class SandboxRemovedTests: XCTestCase {
+    func testTheSandboxCommandPrintsOnlyThatItWasRemoved() throws {
+        XCTAssertEqual(AgentWorkspace.sandboxRemoved, "The sandbox was removed from Polycarp.")
         let cli = try Repo.code("Sources/baneyspaces-cli/main.swift")
         let verb = try XCTUnwrap(cli.range(of: "case \"sandbox\":"))
         let next = try XCTUnwrap(cli[verb.upperBound...].range(of: "case "))
         let body = cli[verb.upperBound..<next.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
-        XCTAssertEqual(body, "fail(AgentWorkspace.sandboxMoved, code: 2)", "one line on stderr, exit 2, nothing sent to the app")
+        XCTAssertEqual(body, "fail(AgentWorkspace.sandboxRemoved, code: 2)", "one line on stderr, exit 2, nothing sent to the app")
         XCTAssertFalse(cli.contains("sandbox up"), "the usage no longer offers it")
     }
 

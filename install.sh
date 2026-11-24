@@ -9,11 +9,10 @@
 # POLYCARP_SOURCE=/path/to/checkout builds that checkout instead of downloading.
 # Linux: the Linux and Omarchy desktop is retired. Run there, this prints one line saying so and installs nothing.
 # Polycarp has no parts to choose: workspaces always run. POLYCARP_FEATURES is read only for the parts that left. One that
-# names browser prints where the helper went (BROWSER_MOVED below) and installs nothing; one that names voice prints where
-# Silas is and carries on. Anything else in it is ignored, and so is an old features.toml.
-# Companion apps, each from its own official installer and only when asked: Tychicus (agents drive the browser and apps),
-# Silas (dictation), Shotate (screenshots and recordings) and Local Studio (local models; Polycarp's plugin is added to
-# it). `curl ... | bash -s -- --with tychicus,silas` or POLYCARP_WITH=tychicus,silas picks them; at a terminal with
+# names browser prints that the browser extension was removed (BROWSER_MOVED below) and installs nothing; one that names
+# voice prints where Silas is and carries on. Anything else in it is ignored, and so is an old features.toml.
+# Companion apps, each from its own official installer and only when asked: Silas (dictation) and Shotate (screenshots
+# and recordings). `curl ... | bash -s -- --with silas,shotate` or POLYCARP_WITH=silas,shotate picks them; at a terminal with
 # neither, the installer asks once and Return means none. A companion that fails is named; Polycarp stays installed.
 # Everything is inside main(), called on the last line: run through a pipe (curl | bash), a download that
 # stops halfway runs nothing, and no step can read the script's own text from stdin.
@@ -222,12 +221,7 @@ main() {
     local c
     for c in $picked; do
       if [ -n "$test_mode" ]; then say "  ${dim}Would install $(companion_name "$c"): $(companion_command "$c")${reset}"; continue; fi
-      if (step_soft "Installing $(companion_name "$c")" companion_install "$c"); then
-        if [ "$c" = local-studio ] && ! (PATH="$HOME/.local/bin:$HOME/.local-studio/bin:/opt/homebrew/bin:$PATH" \
-            step_soft "Adding Polycarp to Local Studio" "$installed/Contents/Resources/bin/polycarp" install --local-studio); then
-          say "  ${dim}Local Studio is installed, but Polycarp's plugin isn't in it yet. Try: polycarp install --local-studio (log: $LOG)${reset}"
-        fi
-      else
+      if ! (step_soft "Installing $(companion_name "$c")" companion_install "$c"); then
         say "  ${dim}$(companion_name "$c") didn't install; Polycarp is fine. Try it alone: $(companion_command "$c") (log: $LOG)${reset}"
       fi
     done
@@ -249,16 +243,12 @@ main() {
 }
 
 # The one line a Linux run prints (LINUX_MOVED in cli/src/update.rs says the same).
-LINUX_MOVED="Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus"
-# Where the browser helper is now, and the line it prints. The release asset names aren't final yet:
-# change them here and nowhere else.
-TYCHICUS_RELEASES="https://github.com/baney75/tychicus/releases/latest"
-TYCHICUS_ASSET="tychicus-<version>-<platform>"
-TYCHICUS_INSTALL='tar -xzf tychicus-*.tar.gz && ./tychicus-*/tychicus install --release .'
-BROWSER_MOVED="The browser helper is now Tychicus: download $TYCHICUS_ASSET from $TYCHICUS_RELEASES, then \`$TYCHICUS_INSTALL\`"
+LINUX_MOVED="Polycarp runs on macOS and Windows. The Linux desktop is retired."
+# The line a run that names the browser prints (BROWSER_MOVED in cli/src/main.rs says the same).
+BROWSER_MOVED="The browser extension was removed from Polycarp."
 
-# The parts POLYCARP_FEATURES ($1) names that left: one line each saying where they went. Returns 1 when the install must
-# stop there (only the browser was asked for, and it is all Tychicus now), 0 to carry on. `workspaces,browser`, the old
+# The parts POLYCARP_FEATURES ($1) names that left: one line each saying so. Returns 1 when the install must stop there
+# (only the browser was asked for, and it was removed), 0 to carry on. `workspaces,browser`, the old
 # non-interactive answer, still installs.
 moved_notes() {
   if names_part browser "$1"; then printf '%s\n' "$BROWSER_MOVED"; fi
@@ -297,25 +287,21 @@ fetch_app() {
 }
 
 # The companions, in the order the question lists them.
-COMPANIONS="tychicus silas shotate local-studio"
+COMPANIONS="silas shotate"
 companion_name() {
-  case "$1" in tychicus) echo Tychicus ;; silas) echo Silas ;; shotate) echo Shotate ;; local-studio) echo "Local Studio" ;; esac
+  case "$1" in silas) echo Silas ;; shotate) echo Shotate ;; esac
 }
 companion_blurb() {
   case "$1" in
-    tychicus) echo "agents drive your browser and apps" ;;
     silas) echo "dictation anywhere" ;;
     shotate) echo "screenshots and screen recordings" ;;
-    local-studio) echo "local AI models; Polycarp's agent can run on them" ;;
   esac
 }
 # Each companion's own official installer, exactly as its README gives it.
 companion_command() {
   case "$1" in
-    tychicus) echo 'curl -fsSL https://github.com/baney75/tychicus/releases/latest/download/install.sh | sh' ;;
     silas) echo 'curl -fsSL https://raw.githubusercontent.com/baney75/silas/main/install.sh | sh' ;;
     shotate) echo 'curl -fsSL https://raw.githubusercontent.com/baney75/shotate/main/install.sh | bash' ;;
-    local-studio) echo 'curl -fsSL https://raw.githubusercontent.com/baney75/local-studio/main/scripts/install.sh | bash -s -- --channel nightly' ;;
   esac
 }
 # companion_install <companion>: download its installer and run it. pipefail, so a download that fails (a 404, no
@@ -324,16 +310,16 @@ companion_install() {
   bash -o pipefail -c "$(companion_command "$1")" </dev/null
 }
 # companion_list "<list>": the companions a comma- or space-separated list names, each once, in COMPANIONS order.
-# Accepts names (any case, "local studio", "localstudio", "ls") and the question's numbers 1 to 4, and "all". Prints
+# Accepts names (any case), the question's numbers 1 and 2, and "all". Prints
 # one line naming anything it doesn't know, on stderr.
 companion_list() {
   local raw w c out="" n
-  raw=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's/local[ _]studio/local-studio/g; s/localstudio/local-studio/g')
+  raw=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
   local -a words=()
   read -r -a words <<<"$(printf '%s' "$raw" | tr ',' ' ')" || true # read splits without expanding * or ?
   for w in ${words[@]+"${words[@]}"}; do
-    case "$w" in all) out="$COMPANIONS"; continue ;; ls) w=local-studio ;; esac
-    if [[ "$w" =~ ^[1-4]$ ]]; then n=0; for c in $COMPANIONS; do n=$((n + 1)); if [ "$n" = "$w" ]; then w=$c; fi; done; fi
+    case "$w" in all) out="$COMPANIONS"; continue ;; esac
+    if [[ "$w" =~ ^[1-2]$ ]]; then n=0; for c in $COMPANIONS; do n=$((n + 1)); if [ "$n" = "$w" ]; then w=$c; fi; done; fi
     if names_part "$w" "${COMPANIONS// /,}"; then out="$out $w"
     else printf '  Not a companion: %s (choose from %s)\n' "$w" "${COMPANIONS// /, }" >&2; fi
   done

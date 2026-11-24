@@ -2,8 +2,8 @@
 import Foundation
 import PackageDescription
 
-// agent-desktop's C library, built by scripts/build-engine.sh into engine/lib. Nothing calls it since computer use moved
-// to Tychicus; it stays linked until the engine wiring (build, bundle, release, update) is taken out on its own.
+// agent-desktop's C library, built by scripts/build-engine.sh into engine/lib. Nothing calls it since computer use was
+// removed; it stays linked until the engine wiring (build, bundle, release, update) is taken out on its own.
 // An absolute path, because the linker's working directory isn't always the package's.
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 

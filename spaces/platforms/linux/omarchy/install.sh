@@ -3,7 +3,7 @@
 # stays as a stub: it installs nothing, changes nothing in your home folder and exits 0. If an earlier
 # install's block is still in hyprland.lua, it says how to take it out (uninstall.sh, beside it).
 # See ../README.md.
-echo "Polycarp runs on macOS and Windows. The Linux desktop is retired. For browser and computer use on Linux, install Tychicus: https://github.com/baney75/tychicus"
+echo "Polycarp runs on macOS and Windows. The Linux desktop is retired."
 main="$HOME/.config/hypr/hyprland.lua"
 if [ -f "$main" ] && grep -qF -- "-- >>> baneyspaces (managed by baneyspaces install.sh) >>>" "$main"; then
   here="$(cd "$(dirname "$0")" && pwd)"
