@@ -6,7 +6,8 @@
      it as the first child and the post's other children are hidden by one class. Nothing of the page is removed.
    - New posts (endless feeds) come through one MutationObserver whose added nodes are gathered and handled once per
      frame, before it is drawn. Each batch looks only under what was added, never the whole page again.
-   - Show reveals a post for good on this page, through later rule changes too. */
+   - Show reveals a post for good on this page, through later rule changes too, and when the site builds the post
+     anew (X drops posts that scroll away and makes new ones on the way back): a post is known by its permalink. */
 (function () {
   "use strict";
   const P = globalThis.Polycarp || (globalThis.Polycarp = {});
@@ -54,7 +55,7 @@
 
   // ---------------------------------------------------------------- site adapters
   // Each: items (one post), and optionally target (what collapses), also (rows that go with it), text, accounts, kinds,
-  // shelf (an item whose own items are posts too). Selectors are the sites' own stable hooks (data-testid, element names).
+  // shelf (an item whose own items are posts too), key (the post's permalink, the same when the site builds it again). Selectors are the sites' own stable hooks (data-testid, element names).
   function linkHandle(a, re) {
     const m = re.exec(a.getAttribute("href") || "");
     if (!m) return "";
@@ -70,6 +71,11 @@
   const X = {
     id: "x",
     items: 'article[data-testid="tweet"]',
+    key(item) {
+      const a = item.querySelector('[data-testid="User-Name"] a[href*="/status/"]');
+      const m = a && /^\/([^/]+)\/status\/(\d+)/.exec(a.getAttribute("href") || "");
+      return m ? "x:" + m[1].toLowerCase() + "/" + m[2] : "";
+    },
     // The author is the post's first name line; a quoted post below it names its own author.
     accounts(item) {
       const out = firstHandle(item.querySelector('[data-testid="User-Name"]'), "a[href]", /^\/([A-Za-z0-9_]{1,15})(?:[/?#]|$)/);
@@ -97,6 +103,14 @@
     items: ARTICLE,
     // Conservative: a long article is the page's own reading, not a post in a feed.
     maxText: 4000,
+    // The post's own time link (Mastodon's status link), not one in a post nested in it.
+    key(item) {
+      for (const t of item.querySelectorAll("a[href] time")) {
+        const a = t.closest("a[href]");
+        if (a.closest(ARTICLE) === item) return "web:" + a.href;
+      }
+      return "";
+    },
     accounts(item) {
       const own = (a) => { if (a.closest(PREPEND)) return false; const art = a.closest(ARTICLE); return !art || art.contains(item); };
       const byline = firstHandle(item, ':scope header a[href], a[rel~="author"][href]', AUTHOR_LINK, own);
@@ -124,6 +138,8 @@
     let barSheet = null, barMode = "pc-light";
     const hidden = new Map();        // item -> { target, bar, also }
     const revealed = new WeakSet();  // items the person chose to see
+    const revealedKeys = new Set();  // and their permalinks, for when the site builds the same post again
+    const keyOf = (item) => (site.key ? site.key(item) : "");
     const pending = new Set();
     let scheduled = false, observer = null, running = false;
     const stats = { hidden: 0, batches: 0, checked: 0, maxBatchMs: 0, rules: 0, refused: 0, hideSelectors: 0 };
@@ -210,10 +226,17 @@
       h.target.classList.remove(FILTERED);
       for (const a of h.also) a.classList.remove(ALSO);
     }
-    function reveal(item) { revealed.add(item); unhide(item); stats.hidden = hidden.size; }
+    function reveal(item) {
+      revealed.add(item);
+      const k = keyOf(item);
+      if (k) revealedKeys.add(k);
+      unhide(item);
+      stats.hidden = hidden.size;
+    }
 
     function check(item) {
       if (revealed.has(item) || item.matches(PAGE_ROOTS)) return;
+      if (revealedKeys.size && revealedKeys.has(keyOf(item))) { revealed.add(item); unhide(item); return; }
       // An item inside another item is the outer one's, unless the outer one is a shelf of posts.
       const outer = item.parentElement && item.parentElement.closest(site.items);
       if (outer && !(site.shelf && outer.matches(site.shelf))) return;

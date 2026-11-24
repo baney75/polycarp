@@ -85,6 +85,17 @@ try {
   let t = Object.fromEntries((await tweets()).map((v) => [v.who, v]));
   ok(!t.alice.collapsed && t.alice.textShown && !t.alice.bar, 'X: Show reveals the post with one click');
 
+  // X drops a post that scrolls away and builds a new one when it comes back: the new one stays revealed.
+  await xp.evaluate(() => { const a = document.querySelector('article[data-testid=tweet]'); const copy = a.cloneNode(true);
+    copy.querySelector(':scope > polycarp-filter-bar')?.remove(); copy.classList.remove('polycarp-filtered'); a.replaceWith(copy); });
+  await sleep(300);
+  t = Object.fromEntries((await tweets()).map((v) => [v.who, v]));
+  ok(!t.alice.collapsed && t.alice.textShown && !t.alice.bar, 'X: a revealed post the site builds again stays revealed');
+  ok(await xp.evaluate(() => { const c = document.querySelector('article[data-testid=tweet]').cloneNode(true); c.classList.remove('polycarp-filtered');
+    c.querySelector('[data-testid=User-Name] a[href*=status]').setAttribute('href', '/alice/status/2'); document.getElementById('tl').append(c); return true; })
+    && await until(async () => (await tweets()).filter((v) => v.who === 'alice').some((v) => v.collapsed)), 'X: another post by the same account still collapses');
+  await xp.evaluate(() => document.querySelector('a[href="/alice/status/2"]').closest('article').remove());
+
   await xp.evaluate(() => addPost('zed', 'More crypto talk from the feed'));
   ok(await until(async () => (await tweets()).find((v) => v.who === 'zed')?.collapsed), 'X: a post that arrives later (endless scroll) collapses too');
 
