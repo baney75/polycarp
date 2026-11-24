@@ -605,7 +605,7 @@ final class LauncherModel: ObservableObject {
             return
         }
         switch scope {
-        case .web: out = q.isEmpty ? bangDirectory() : searchEverywhere(q)
+        case .web: out = q.isEmpty ? bangDirectory() : siteItems(q) + searchEverywhere(q)
         case .root:
             if q.isEmpty {
                 out += actions.sessionItems("")
@@ -617,6 +617,9 @@ final class LauncherModel: ObservableObject {
                 out += fileItems()
             } else {
                 let provided = LauncherProviders.results(providers, for: q)
+                // "x.com" is a website: it opens in the main browser before any app or file that happens to match.
+                let site = OneSearch.typedSite(q)
+                if site?.sure == true { out += siteItems(q) }
                 out += provided.top.map(providedItem)
                 out += appItems(q, limit: 8)
                 out += actions.sessionItems(q).prefix(8)
@@ -628,6 +631,7 @@ final class LauncherModel: ObservableObject {
                 out += menuItems().filter { Fuzzy.score(q, $0.title) != nil }
                 // Files come in a moment after the rest, below them, so the row you're on stays put.
                 out += fileItems().prefix(5)
+                if site?.sure == false { out += siteItems(q) }
                 out += searchEverywhere(q).prefix(3)
                 out.append(LauncherItem(id: "find-install", section: "Install", title: "Install “\(q)”…",
                                         subtitle: "Search Homebrew and the App Store", icon: .symbol("arrow.down.circle"),
@@ -746,6 +750,19 @@ final class LauncherModel: ObservableObject {
         LauncherItem(id: "bang-ddg:\(trigger)", section: "Bang", title: "Search with !\(trigger)\(terms.isEmpty ? "" : " for “\(terms)”")",
                      subtitle: "Not a built-in bang; DuckDuckGo knows thousands more", icon: .symbol("globe"),
                      run: { [weak self] in self?.openWeb(Bangs.fallbackAddress(trigger: trigger, terms: terms)) })
+    }
+
+    /// A typed web address as one row that opens it in a new tab of the main browser (Helium, as a rule). The row names
+    /// the browser, so it is plain where Return goes.
+    private func siteItems(_ q: String) -> [LauncherItem] {
+        guard let site = OneSearch.typedSite(q) else { return [] }
+        let browser = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!)
+        let name = browser.map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? "your browser"
+        let shown = q.trimmingCharacters(in: .whitespacesAndNewlines)
+        return [LauncherItem(id: "site:\(site.url.absoluteString)", section: "Web", title: "Open \(shown)",
+                             subtitle: "\(site.url.absoluteString) · opens in \(name)",
+                             icon: browser.map { .file($0.path) } ?? .symbol("globe"),
+                             run: { [weak self] in self?.openWeb(site.url) })]
     }
 
     /// Plain words: your search engine (`search.engine`), images, and your agent first, then every other bang. In the
