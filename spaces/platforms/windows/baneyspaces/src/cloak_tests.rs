@@ -195,6 +195,68 @@ fn a_window_that_refuses_the_alpha_is_left_as_it_was() {
 }
 
 #[test]
+fn a_ghost_left_with_no_record_comes_back_as_an_ordinary_window() {
+    // The event thread ghosted it and the daemon died before the worker wrote it down: the next daemon reads only
+    // the ghost. Recorded from that, showing it must still give the window back, opaque and on the taskbar.
+    let d = Fake::with(&[(1, app([10, 20, 410, 320]))]);
+    ghost_on(&d, h(1)).expect("an ordinary window takes the ghost");
+    let undo = undo_unrecorded_ghost(d.win(1).ex_style);
+    let e = Hidden {
+        ex_style: Some(undo.ex_style),
+        alpha: undo.alpha,
+        ..entry(1, How::Ghost, None)
+    };
+    assert!(show_on(&d, &e));
+    let w = d.win(1);
+    assert_eq!(w.ex_style, 0x100, "the ghost's bits are off");
+    assert_ne!(w.alpha, Some(0), "it is not transparent");
+    assert!(w.on_taskbar);
+}
+
+/// Window 1 as the event thread's early ghost left it, and the worker's record of it (its own style and alpha).
+fn early_ghost(alpha_refused: bool) -> (Fake, Hidden) {
+    let d = Fake::with(&[(1, app([10, 20, 410, 320]))]);
+    let undo = ghost_on(&d, h(1)).expect("the early ghost takes");
+    let e = Hidden {
+        ex_style: Some(undo.ex_style),
+        alpha: undo.alpha,
+        ..entry(1, How::Ghost, Some([10, 20, 410, 320]))
+    };
+    (Fake { alpha_refused, ..d }, e)
+}
+
+#[test]
+fn a_window_the_early_ghost_hid_is_not_ghosted_again_and_comes_back_whole() {
+    // sol-sol-F5: the event thread ghosted it, then the worker's own ghost is refused (a test-ops title, or alpha
+    // Windows no longer takes). The worker must not park the ghost and call it parked: shown, it would come back
+    // where it was and still transparent.
+    let (d, mut e) = early_ghost(true);
+    e.how = ghost_or_park_on(&d, &e);
+    assert!(still_hidden_on(&d, &e), "it is hidden the way its record says");
+    assert!(show_on(&d, &e), "showing it reads back as shown");
+    let w = d.win(1);
+    assert_eq!(w.ex_style, 0x100, "its own style is back");
+    assert_ne!(w.alpha, Some(0), "it is not transparent");
+    assert!(w.on_taskbar);
+    assert_eq!(w.rect, [10, 20, 410, 320]);
+}
+
+#[test]
+fn a_half_shown_ghost_that_refuses_is_parked_as_itself() {
+    // The other half of sol-sol-F5: the window has the ghost's bits but is no longer transparent (an app reset its
+    // alpha), and the worker's ghost is refused. It is parked, and the ghost's bits come off first, so showing the
+    // parked record gives back the window as it was.
+    let (d, mut e) = early_ghost(true);
+    d.wins.borrow_mut().get_mut(&1).unwrap().alpha = Some(255);
+    e.how = ghost_or_park_on(&d, &e);
+    assert_eq!(e.how, How::Park);
+    assert!(show_on(&d, &e));
+    let w = d.win(1);
+    assert_eq!(w.ex_style, 0x100, "the ghost's bits are off");
+    assert_eq!(w.rect, [10, 20, 410, 320]);
+}
+
+#[test]
 fn a_ghost_whose_alpha_was_reset_reads_as_not_hidden() {
     let d = Fake::with(&[(1, app([10, 20, 410, 320]))]);
     let undo = ghost_on(&d, h(1)).unwrap();

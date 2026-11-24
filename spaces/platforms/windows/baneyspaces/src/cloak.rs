@@ -127,6 +127,7 @@ pub fn taskbar_button(h: HWND, visible: bool) {
 /// Hides one of your windows. Returns how it was hidden: cloaked, or parked if the cloak was
 /// refused or did not take. The caller has already recorded the window.
 pub fn hide_user(h: HWND, cloaker: Option<&Cloaker>) -> How {
+    let _turn = crate::hook::window_turn();
     hide_user_on(&Real(cloaker), h)
 }
 
@@ -139,7 +140,7 @@ pub fn hide_user_on(d: &impl Desk, h: HWND) -> How {
 }
 
 /// What a ghost needs to put a window back exactly: its extended style and constant alpha before.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct GhostUndo {
     pub ex_style: i64,
     pub alpha: Option<u8>,
@@ -149,10 +150,25 @@ pub struct GhostUndo {
 /// that already draws with per-pixel alpha cannot take a constant alpha): the style is put back and the
 /// caller parks the window instead.
 pub fn ghost(h: HWND) -> Option<GhostUndo> {
+    let _turn = crate::hook::window_turn();
     ghost_on(&Real(None), h)
 }
 
 const GHOST: i64 = (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE) as i64;
+
+/// Does the window have all the ghost's bits, whatever its alpha? A ghost, one half made or half shown (the
+/// style goes on before the alpha, and comes off after it), or one an app made layered, click-through and never
+/// activated itself, which is rare enough to be taken for ours.
+pub fn has_ghost_bits(h: HWND) -> bool {
+    Real(None).ex_style(h) & GHOST == GHOST
+}
+
+/// What to put back on a window that has the ghost's bits and no record of what it was: a daemon killed between
+/// the event thread's ghost and the worker's record, or between the ghost's style and its alpha, left it so.
+/// Only the daemon ghosts windows, so the ghost's own bits come off and the alpha goes back to opaque.
+pub fn undo_unrecorded_ghost(ex_style: i64) -> GhostUndo {
+    GhostUndo { ex_style: ex_style & !GHOST, alpha: None }
+}
 
 pub fn ghost_on(d: &impl Desk, h: HWND) -> Option<GhostUndo> {
     // Test builds only (the `test-ops` feature, and the variable set): a window titled "(refuses ghost)" refuses.
@@ -168,6 +184,22 @@ pub fn ghost_on(d: &impl Desk, h: HWND) -> Option<GhostUndo> {
     }
     d.taskbar_button(h, false);
     Some(GhostUndo { ex_style: ex, alpha })
+}
+
+/// The worker's hide of an agent's window recorded as `entry` (a ghost): a ghost, or parked when the window refuses
+/// one. Returns how it is hidden now.
+pub fn ghost_or_park(entry: &Hidden) -> How {
+    let _turn = crate::hook::window_turn();
+    ghost_or_park_on(&Real(None), entry)
+}
+
+pub fn ghost_or_park_on(d: &impl Desk, entry: &Hidden) -> How {
+    let h = winapi::hwnd(entry.hwnd);
+    if ghost_on(d, h).is_some() {
+        return How::Ghost;
+    }
+    d.set_pos(h, PARK, PARK);
+    How::Park
 }
 
 /// Does the window still look hidden the way the entry says? Reality, not the daemon's memory:
@@ -250,6 +282,7 @@ impl Drop for Desktops {
 /// are both undone whichever of them had happened, so an entry written just before a crash is fine. Safe to
 /// call on a window that is not hidden.
 pub fn show(entry: &Hidden, cloaker: Option<&Cloaker>) -> bool {
+    let _turn = crate::hook::window_turn();
     show_on(&Real(cloaker), entry)
 }
 

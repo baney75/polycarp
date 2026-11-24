@@ -49,6 +49,13 @@ fn register() {
     });
 }
 
+/// One turn at the event thread's list of agents (`hook::share_agents`), which is process-wide: a test that
+/// names its own agents holds this.
+pub fn agents_turn() -> std::sync::MutexGuard<'static, ()> {
+    static AGENTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    AGENTS.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// One window, closed when dropped.
 pub struct TestWin {
     pub hwnd: HWND,
