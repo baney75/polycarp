@@ -42,7 +42,7 @@ sh scripts/stage.sh <dest> [version_name]   # the shipped copy: no tests, script
 The browser tests load the unpacked extension in headless Chromium through Playwright (`npm i -g playwright`, or set `POLYCARP_PLAYWRIGHT`).
 
 ```sh
-node --test tests/library.test.mjs tests/memory.test.mjs
+node --test tests/library.test.mjs tests/memory.test.mjs tests/filters.test.mjs
 node tests/pages.spec.mjs
 node tests/reader.spec.mjs
 node tests/importers.spec.mjs
