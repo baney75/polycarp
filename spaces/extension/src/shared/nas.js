@@ -31,6 +31,7 @@
     config: "Connect your NAS first: add its WebDAV address in Settings.",
     password: "Polycarp needs your NAS password again. Enter it in Settings.",
     address: "That does not look like a web address. Try one like http://192.168.1.20:5005",
+    insecure: "Use an https address for a NAS outside your home network. Plain http, which sends your password unencrypted, works only for home and private network addresses.",
     unreachable: "Polycarp could not reach your NAS at that address. Check the address, that this computer is on the same network as the NAS, and that WebDAV is turned on in the NAS settings.",
     auth: "Your NAS did not accept that user name or password.",
     forbidden: "That NAS account does not have permission to use this folder.",
@@ -68,11 +69,16 @@
     const h = String(host || "").toLowerCase().replace(/^\[|\]$/g, "");
     if (!h) return false;
     if (h === "localhost" || h === "::1") return true;
-    if (/^(127|10)\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
-    let m = /^172\.(\d+)\./.exec(h); if (m && +m[1] >= 16 && +m[1] <= 31) return true;
-    m = /^100\.(\d+)\./.exec(h); if (m && +m[1] >= 64 && +m[1] <= 127) return true;
+    // Number ranges only for an IPv4 literal: "10.nas-provider.com" is a public name, not a home address.
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) {
+      if (/^(127|10)\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
+      let m = /^172\.(\d+)\./.exec(h); if (m && +m[1] >= 16 && +m[1] <= 31) return true;
+      m = /^100\.(\d+)\./.exec(h); if (m && +m[1] >= 64 && +m[1] <= 127) return true;
+      return false;
+    }
     if (/^(fc|fd|fe8|fe9|fea|feb)[0-9a-f]*:/.test(h)) return true;
-    if (/\.(local|lan|home|internal|home\.arpa|localdomain)$/.test(h)) return true;
+    // ts.net: Tailscale names, which ride the same encrypted tailnet as its 100.64/10 addresses.
+    if (/\.(local|lan|home|internal|home\.arpa|localdomain|ts\.net)$/.test(h)) return true;
     return !h.includes(".") && !h.includes(":");
   }
 
@@ -134,10 +140,15 @@
   function normUrl(raw) {
     let u = String(raw || "").trim();
     if (!u) return { url: "", user: "", pass: "" };
-    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = "http://" + u;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) {
+      let host = "";
+      try { host = new URL("http://" + u).hostname; } catch (e) { throw new NASError("address"); }
+      u = (isLocalHost(host) ? "http://" : "https://") + u;
+    }
     let p;
     try { p = new URL(u); } catch (e) { throw new NASError("address"); }
     if (p.protocol !== "http:" && p.protocol !== "https:") throw new NASError("address");
+    if (p.protocol === "http:" && !isLocalHost(p.hostname)) throw new NASError("insecure");
     const user = safeDecode(p.username), pass = safeDecode(p.password);
     p.username = ""; p.password = ""; p.hash = ""; p.search = "";
     return { url: p.href.replace(/\/+$/, ""), user, pass };
@@ -171,6 +182,10 @@
       if (override.password !== undefined) pass = String(override.password);
     }
     if (!url) throw new NASError("config");
+    // An address saved before the https rule, or written by an old backup, is checked here too, before any password goes.
+    let host = "";
+    try { host = new URL(url).hostname; } catch (e) { throw new NASError("address"); }
+    if (/^http:/i.test(url) && !isLocalHost(host)) throw new NASError("insecure");
     if (pass === undefined) pass = await readPass();
     if (user && (pass === null || pass === undefined)) throw new NASError("password");
     return { url, user, folder, pass: pass || "", key: url + "|" + folder };

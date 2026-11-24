@@ -1,6 +1,6 @@
 # Polycarp
 
-Polycarp's browser extension makes any page easier to read and helps you remember what you read. It is the reading and accessibility extension that was Phont, and it works on its own in Helium, Chrome and other Chromium browsers, with or without the Polycarp app. When Polycarp is installed on the same computer, the extension also joins it: the new tab (`newtab/`, see `../docs/newtab.md`) gets the day's verse and Polycarp's search settings, and the extension updates with the app. It takes every color, face, radius and duration from the Polycarp theme (`src/shared/theme.css`, written by `polycarp theme export css polycarp --surface browser`).
+Polycarp's browser extension makes any page easier to read and helps you remember what you read. It works on its own in Helium, Chrome and other Chromium browsers, with or without the Polycarp app. When Polycarp is installed on the same computer, the extension also joins it: the new tab (`newtab/`, see `../docs/newtab.md`) gets the day's verse and Polycarp's search settings, and the extension updates with the app. It takes every color, face, radius and duration from the Polycarp theme (`src/shared/theme.css`, written by `polycarp theme export css polycarp --surface browser`).
 
 - **Read:** bold word anchors, reading fonts (Lexend, Atkinson Hyperlegible, OpenDyslexic), spacing, tints and a focus ruler on every site.
 - **Reader:** web pages, PDF, EPUB, DOCX, Markdown, HTML, FB2 and text in a clean reader, with read-aloud and word highlighting, sprint mode and printing.
@@ -35,7 +35,18 @@ For work on the extension itself, load this folder instead.
 
 ```sh
 sh scripts/stage.sh <dest> [version_name]   # the shipped copy: no tests, scripts, docs or dev pages; checks every file it names
+sh scripts/stage.sh --store <dest>          # the Chrome Web Store copy (below)
 ```
+
+### From the Chrome Web Store
+
+`scripts/stage.sh --store <dest>` makes the copy for the Chrome Web Store. It differs from the app's copy in three ways:
+it has no fixed `key`, since the store assigns the ID; it leaves out the new tab page, which stays with the Polycarp app
+because a store new tab must keep the user's own search engine; and it asks for `nativeMessaging` only when the user
+presses **Connect to the Polycarp app** in Settings. The store updates that copy, so its Settings shows no update
+button. The Polycarp app's native messaging host must list the store item's ID in `allowed_origins` before the
+connection works. The store refuses an upload whose `version` is not above the last one it took, so raise `version`
+in `manifest.json` before each store upload; `version_name` alone is not enough.
 
 ## Tests
 
@@ -48,6 +59,7 @@ node tests/reader.spec.mjs
 node tests/importers.spec.mjs
 node tests/library.spec.mjs
 node tests/package.spec.mjs      # the staged copy installs, carries the app version and updates itself
+node tests/store.spec.mjs        # the Chrome Web Store copy: no key, no new tab, optional app link, store updates
 node tests/sites.spec.mjs        # YouTube, X, Audible and feed fixtures, finder and pause
 node tests/sources.spec.mjs      # Search sources against saved fixtures
 node tests/nas.spec.mjs          # NAS against a local WebDAV fake

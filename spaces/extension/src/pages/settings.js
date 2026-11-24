@@ -122,7 +122,8 @@
         '<button class="btn quiet" id="resetSettings">Reset settings</button></div><p class="note" id="dataNote"></p>', bindData)
     ]],
     ["About", "", [
-      raw('<div class="row"><span class="lbl"><b id="ver"></b><span>With the Polycarp app installed, this extension updates with it. A new version starts as soon as no Reader tab is open.</span></span><button class="btn" id="checkUpd">' + I("rotate") + '<span>Check for updates</span></button></div><p class="note" id="updNote" aria-live="polite"></p>' +
+      raw('<div class="row"><span class="lbl"><b id="ver"></b><span id="updText">With the Polycarp app installed, this extension updates with it. A new version starts as soon as no Reader tab is open.</span></span><button class="btn" id="checkUpd">' + I("rotate") + '<span>Check for updates</span></button></div><p class="note" id="updNote" aria-live="polite"></p>' +
+        '<div class="row" id="appRow" hidden><span class="lbl"><b>Polycarp app</b><span id="appText">If the Polycarp app is on this computer, connect to it so its filters and settings reach this browser.</span></span><button class="btn" id="appConnect">' + I("link") + '<span>Connect to the Polycarp app</span></button></div>' +
         '<div class="acts"><a class="btn quiet" href="welcome.html#science">The research behind Polycarp</a><a class="btn quiet" href="welcome.html#new">What is new</a><a class="btn quiet" href="welcome.html">Welcome page</a></div>', bindAbout)
     ]]
   ];
@@ -314,6 +315,31 @@
   function bindAbout() {
     const m = chrome.runtime.getManifest();
     $("ver").textContent = "Polycarp " + (m.version_name || m.version);
+    if (m.update_url) {
+      // A Chrome Web Store copy: the store updates it, and talking to the Polycarp app is a permission the user grants here.
+      $("updText").textContent = "The Chrome Web Store keeps this extension up to date.";
+      $("checkUpd").hidden = true;
+      const optional = (m.optional_permissions || []).includes("nativeMessaging");
+      // "Connected" only after the app answers; a grant alone says the browser allows it, not that the app is there.
+      const answers = () => new Promise((resolve) => {
+        try {
+          chrome.runtime.sendNativeMessage("com.polycarp.newtab", { op: "page" }, (r) => resolve(!chrome.runtime.lastError && !!r && r.ok !== false));
+        } catch (e) { resolve(false); }
+      });
+      const showApp = async () => {
+        const has = await chrome.permissions.contains({ permissions: ["nativeMessaging"] }).catch(() => false);
+        $("appRow").hidden = !optional;
+        $("appConnect").hidden = has;
+        if (!has) { $("appText").textContent = "If the Polycarp app is on this computer, connect to it so its filters and settings reach this browser."; return; }
+        $("appText").textContent = (await answers()) ? "Connected. The Polycarp app on this computer answers, and its filters and settings reach this browser."
+          : "Allowed, but the Polycarp app did not answer. Install it, or update it to a version that knows this extension, and it connects on its own.";
+      };
+      $("appConnect").addEventListener("click", async () => {
+        await chrome.permissions.request({ permissions: ["nativeMessaging"] }).catch(() => false);
+        showApp();
+      });
+      showApp();
+    }
     $("checkUpd").addEventListener("click", async () => {
       $("updNote").textContent = "Checking for updates...";
       const r = await chrome.runtime.sendMessage({ type: "polycarp:checkUpdate" }).catch((e) => ({ status: "error", message: e.message }));

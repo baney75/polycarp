@@ -70,8 +70,13 @@ async function tryApplyUpdate() {
   } catch (e) { /* older Chrome: fall through */ }
   chrome.runtime.reload();
 }
-chrome.runtime.onStartup.addListener(checkDisk);
-chrome.alarms.get("polycarp-update").then((a) => { if (!a) chrome.alarms.create("polycarp-update", { periodInMinutes: 15 }); });
+// A Chrome Web Store copy (its manifest has an update_url) is updated by the store; there is no disk copy to watch.
+const fromStore = !!chrome.runtime.getManifest().update_url;
+if (fromStore) chrome.alarms.clear("polycarp-update");
+else {
+  chrome.runtime.onStartup.addListener(checkDisk);
+  chrome.alarms.get("polycarp-update").then((a) => { if (!a) chrome.alarms.create("polycarp-update", { periodInMinutes: 15 }); });
+}
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === "polycarp-update") checkDisk(); });
 
 async function injectIntoOpenTabs() {

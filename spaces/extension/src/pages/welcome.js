@@ -17,6 +17,11 @@
   $("openReader").innerHTML = I("upload") + "<span>Open a file</span>";
   const manifest = chrome.runtime.getManifest();
   $("ver").textContent = manifest.version_name || manifest.version;
+  if (manifest.update_url) {
+    // A Chrome Web Store copy: the store updates it, and the new tab stays with the Polycarp app.
+    $("newNote").textContent = "The Chrome Web Store keeps this extension up to date. When something changes, it is listed here.";
+    $("newOne").hidden = true;
+  }
   $("pin").textContent = "Keep Polycarp one click away: click the puzzle piece in your browser's toolbar, then the pin next to Polycarp.";
 
   // ---------- Evidence ----------
