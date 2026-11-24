@@ -77,8 +77,8 @@ public enum NewTabHost {
     /// How long `find` waits for the session engine before it answers with what it has.
     public static let findBudget: TimeInterval = 0.15
 
-    /// What a request needs from the world: surfaces.json, the bangs, the papers' pictures, the time, and the running
-    /// app's session engine.
+    /// What a request needs from the world: surfaces.json, the bangs, the papers' pictures, the filters, the time, and
+    /// the running app's session engine.
     public struct Source {
         /// surfaces.json as it is now (defaults when it is missing or invalid).
         public var surfaces: () -> Surfaces
@@ -95,6 +95,8 @@ public enum NewTabHost {
         public var browser: () -> String?
         /// Papers/, where a paper's picture is; nil sends no picture.
         public var papers: PaperStore?
+        /// filters.json's rules: none when it is missing, the issue when it doesn't read or check.
+        public var filters: () -> Result<[FilterRule], SurfacesIssue>
 
         public struct FocusFailure: Error, Equatable { public let message: String; public init(_ m: String) { message = m } }
 
@@ -103,10 +105,11 @@ public enum NewTabHost {
                     sessions: @escaping (TimeInterval) -> [Item]? = { _ in nil },
                     focus: @escaping (String) -> Result<String, FocusFailure> = { _ in .failure(.init("Polycarp isn't running")) },
                     browser: @escaping () -> String? = { nil },
-                    papers: PaperStore? = nil) {
+                    papers: PaperStore? = nil,
+                    filters: @escaping () -> Result<[FilterRule], SurfacesIssue> = { .success([]) }) {
             self.surfaces = surfaces; self.now = now; self.timeZone = timeZone
             self.bangs = bangs; self.sessions = sessions; self.focus = focus; self.browser = browser
-            self.papers = papers
+            self.papers = papers; self.filters = filters
         }
 
         /// The real one: surfaces.json and bangs.json from disk the way `polycarp-spaces surfaces get` reads them (the app
@@ -125,7 +128,8 @@ public enum NewTabHost {
                 guard let r = Wire.call(Wire.Request(op: .focus, target: id), timeout: 2) else { return .failure(.init("Polycarp isn't running")) }
                 return r.ok ? .success(r.info?["label"] ?? "") : .failure(.init(r.error ?? "nothing matches"))
             }, browser: { NewTabHost.appBundleID(of: getppid()) },
-            papers: PaperStore.beside(surfacesFile: SurfacesFile.path()))
+            papers: PaperStore.beside(surfacesFile: SurfacesFile.path()),
+            filters: { Filters.load(path: Filters.path()) })
         }
     }
 
@@ -138,6 +142,7 @@ public enum NewTabHost {
         case "page": return page(source)
         case "find": return find(object["q"], source)
         case "focus": return focus(object["id"], source)
+        case "filters": return filters(source)
         case let op?: return failure("there is no request called \(op)")
         case nil: return failure("the request has no op")
         }
@@ -211,6 +216,14 @@ public enum NewTabHost {
         switch source.focus(id) {
         case .success(let label): return json(["ok": true, "label": label])
         case .failure(let f): return failure(f.message)
+        }
+    }
+
+    /// `{"op":"filters"}`: filters.json's rules, normalized, for the extension to hide matching posts and page parts.
+    private static func filters(_ source: Source) -> Data {
+        switch source.filters() {
+        case .success(let rules): return json(["ok": true, "filters": rules.map { $0.value.any }])
+        case .failure(let issue): return failure("\(Filters.name) is invalid: \(issue)")
         }
     }
 

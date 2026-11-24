@@ -133,6 +133,15 @@ unsigned length, then that many bytes of UTF-8 JSON, on stdin and on stdout. A r
 Brings a row from `find` forward, as `polycarp-spaces focus <id>` does: `{"ok":true,"label":"Inbox - Gmail"}`, or
 `{"ok":false,"error":"Polycarp isn't running"}` (or the app's own reason). A missing `id` is an error.
 
+### `{"op":"filters"}`
+
+The feed filters and page edits in `filters.json` (beside `bangs.json`; `polycarp-spaces filters`, docs/guide.md),
+each rule normalized with every key: `{"ok":true,"filters":[{"id":"no-shorts","enabled":true,"sites":["youtube.com"],
+"words":[],"patterns":[],"accounts":[],"kinds":["shorts"],"hide":[]}]}`. No file is `{"ok":true,"filters":[]}`; a file
+that doesn't read or check is `{"ok":false,"error":...}` naming the field. Each pattern compiled as an
+NSRegularExpression and passed the slow-pattern rule in `Filters.pattern`; JavaScript's syntax differs at the edges, so
+the extension still skips a pattern its `RegExp` refuses.
+
 ### Anything else
 
 An unknown `op` (the retired `name` and `go` included), a missing `op`, or a request that isn't a JSON object gets

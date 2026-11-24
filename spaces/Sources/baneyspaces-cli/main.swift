@@ -43,6 +43,9 @@ usage: \(me) <command>
   paper set <what> [--on desktop,newtab,idle|all] | get | reset [--on ...] [--json]
                               what lies behind the desktop, the new tab and the idle screen: a picture,
                               an https URL, #RRGGBB or a scene (paper help, docs/surfaces.md)
+  filters ls | set '<json rule>' | rm <id> | reset [--json]
+                              feed filters and page edits for Polycarp's browser extension
+                              (filters help, docs/guide.md)
   style path|show|check [file]|example|set '<sel>' <prop> <value>|unset '<sel>' [prop]|reset [--json]
                               style.css: restyle the bar and the dock on top of the theme
                               (style help, docs/style.md)
@@ -266,6 +269,8 @@ case "surfaces":
     SurfacesCommand.run(rest, remote: remoteHost != nil)
 case "paper":
     PaperCommand.run(rest, remote: remoteHost != nil)
+case "filters", "filter":
+    FiltersCommand.run(rest, remote: remoteHost != nil)
 case "style":
     StyleCommand.run(rest, remote: remoteHost != nil)
 case "keys":
