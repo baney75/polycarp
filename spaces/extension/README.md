@@ -7,6 +7,7 @@ Polycarp's browser extension makes any page easier to read and helps you remembe
 - **Remember:** key ideas and a warm-up guess before you read, recall breaks while you read, and spaced review afterward.
 - **Library:** links, documents, audiobooks and notes that connect themselves, with a map, search, and export to Obsidian or Notion.
 - **Search:** one box for your library, YouTube, Wikipedia, free book catalogs and any site, feed or catalog you add by pasting a link. Audible and Kindle libraries become searchable from their own pages, and a NAS can be browsed, indexed and used for downloads and backups.
+- **Feed filters:** hide posts by word, pattern, account or kind (Shorts, promoted posts, reposts) on X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn, Mastodon and other feeds. A hidden post shrinks to one line that says why, with a Show button. Add your own in Settings; with the Polycarp app, its filters (set there or by your agents) apply too, and can hide parts of a site by CSS selector.
 - **Busy sites:** on YouTube, X and any page, Alt+Shift+S searches headings, links, media, a video's transcript or the posts you've scrolled past. Polycarp pauses for an hour or until tomorrow from the popup.
 
 Every feature cites the research behind it, rated by strength, on the welcome page. Polycarp has no server and no account; see [PRIVACY.md](PRIVACY.md).
@@ -64,6 +65,7 @@ node tests/package.spec.mjs      # the staged copy installs, carries the app ver
 node tests/store.spec.mjs        # the Chrome Web Store copy: no key, no new tab, optional app link, store updates
 node tests/sites.spec.mjs        # YouTube, X, Audible and feed fixtures, finder and pause
 node tests/filters.spec.mjs      # feed filters on X, YouTube, Reddit and Mastodon fixtures
+node tests/filters-sync.spec.mjs # filters from the Polycarp app through a fake native host, and Settings
 node tests/sources.spec.mjs      # Search sources against saved fixtures
 node tests/nas.spec.mjs          # NAS against a local WebDAV fake
 node tests/contact.mjs [piece]   # screenshots of every surface to tests/out/contact

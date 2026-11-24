@@ -5,6 +5,10 @@
 - `scripts/stage.sh --store` makes the Chrome Web Store copy: no fixed key, no new tab page, and the link to the Polycarp app only when the user connects it in Settings. A store install shows no update button, since the store updates it.
 - A NAS outside the home network needs an https address, so its password is never sent unencrypted.
 - The privacy policy lists every site Polycarp loads pictures from, the link to the Polycarp app, the new tab page and the Chrome Web Store Limited Use statement.
+- Feed filters: hide posts by word, pattern, account or kind (Shorts, promoted posts, reposts) on X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn, Mastodon and other feeds. A hidden post shrinks to one line that says why; Show brings it back for the rest of the visit.
+- Words match whole words in any language, including Chinese, Japanese, Thai and other scripts written without spaces. A pattern that could freeze a page is refused, and Settings says why.
+- Settings has a Feed filters section to add, switch off and delete your own filters. With the Polycarp app, its filters show there too, read-only, and reach open pages within 30 seconds, without a reload.
+- Filters pause with the rest of Polycarp and stay off on sites where Polycarp is off.
 
 ## 2.0.0 (2026-11-22)
 

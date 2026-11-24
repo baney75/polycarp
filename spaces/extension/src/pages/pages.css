@@ -47,3 +47,17 @@
 kbd { font: 700 11px/1 var(--font); padding: 3px 6px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--surface); }
 .meter { height: 6px; border-radius: var(--r-pill); background: var(--sunk); overflow: hidden; }
 .meter i { display: block; height: 100%; background: var(--ink); }
+
+/* Settings > Feed filters */
+.fadd { display: grid; gap: var(--s3); }
+.ffield { display: grid; gap: var(--s1); }
+.ffield span { color: var(--muted); font-size: var(--t-sm); }
+.ftext { min-height: 40px; padding: 0 var(--s3); border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--surface); }
+.fkinds { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--t-sm); }
+.fkinds legend { font-weight: 700; padding: 0; margin-bottom: var(--s2); font-size: var(--t-md); }
+.fkinds label { display: inline-flex; gap: var(--s2); align-items: center; min-height: 32px; }
+.fkinds input { accent-color: var(--accent); }
+.fhead { margin: var(--s2) 0 0; font-size: var(--t-md); }
+.flist li b { display: flex; flex-direction: column; font-weight: 400; }
+.flist .fsum { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flist small { color: var(--muted); }
