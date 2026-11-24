@@ -55,6 +55,21 @@ test("words in scripts written without spaces match mid-sentence; a side in a sp
   assert.ok(!hits({ words: ["ai"] }, "she said so"), "ai is still not in said");
 });
 
+test("a combining mark is part of its word, and words and posts are compared in NFC", () => {
+  assert.ok(!hits({ words: ["रत"] }, "भारत"), "a vowel sign before the word is a letter of the word before it");
+  assert.ok(!hits({ words: ["राम"] }, "रामायण"), "a vowel sign after the word makes a longer word");
+  assert.ok(hits({ words: ["भारत"] }, "मेरा भारत महान"));
+  assert.ok(hits({ words: ["राम"] }, "राम आए"));
+  assert.ok(hits({ words: ["भारती"] }, "नाम भारती है"), "a word that ends in a vowel sign");
+  assert.ok(!hits({ words: ["भारती"] }, "भारतीय"), "and keeps its edge");
+  assert.ok(!hits({ words: ["كتب"] }, "كتبَت"), "Arabic harakat after the word");
+  assert.ok(hits({ words: ["cafe\u0301"] }, "Le café ouvre"), "a decomposed word finds the composed text");
+  assert.ok(hits({ words: ["café"] }, "Le cafe\u0301 ouvre"), "and the other way round");
+  assert.ok(!hits({ words: ["cafe"] }, "Le cafe\u0301 ouvre"), "a combining accent does not end the word");
+  assert.deepEqual(rule({ words: ["cafe\u0301"] }).words, ["café"]);
+  assert.ok(hits({ words: ["บิตคอยน์"] }, "วันนี้บิตคอยน์ขึ้นอีกแล้ว"), "Thai marks still sit in an unspaced script");
+});
+
 test("patterns: any case, the same answer every time, and Unicode classes work", () => {
   assert.ok(hits({ patterns: ["airdrops?"] }, "Free AIRDROP now"));
   assert.ok(hits({ patterns: ["giveaway|raffle"] }, "weekly Raffle"));
@@ -69,19 +84,71 @@ test("patterns: any case, the same answer every time, and Unicode classes work",
 test("risky patterns are refused with a reason, safe ones are kept", () => {
   const risky = ["(a+)+", "(\\w*)*$", "(x{2,})+", "((a+))+$", "((\\w+\\s?))+$", "(x(y(z*)))*", "(a|a)+$", "(\\w|\\d)+x$",
     "(?:cat|dog){2,}", "(a|aa){1,100}$", "(\\w|\\d){1,60}x", "((a|a))+$", "(a+){0000000000000000000001,}$",
-    "(a|a){00000000000000000000001,}", ".*.{00000000000000000000001,}z", ".*.*.*z", "a+b*"];
+    "(a|a){00000000000000000000001,}", ".*.{00000000000000000000001,}z", ".*.*.*z", "a+b*",
+    // From the review: a ? is a repeat too, a bounded count is no safer than none, and nothing hides in a lazy marker.
+    "(\\d\\d?)+$", "(a?){25}a{25}", "\\w{0,99}\\w{0,99}\\w{0,99}x", "(a?){20}", "(a?){14}", "(?:\\d\\d??)+$",
+    "\\w{0,20}\\w{0,20}\\w{0,20}\\w{0,20}x", "a?a?a?a?a?a?a?a?a?a?\\w+x", "((a|a)s)+", "((cat|dog)s)+", "(?=.*a).*b",
+    // Back-references and lookbehind are refused whole.
+    "(a)\\1", "(a+)\\1x", "(?<n>a)\\k<n>", "(?<=a)b", "(?<!a)b"];
   for (const p of risky) assert.ok(F.riskyPattern(p), p);
   const safe = ["\\(a|b\\)+", "[(a+)]+", "(a)(b+)", "(cat|dog)?s", "(ab)+c", "colou?r", "\\d{2,4}", "moon+", "\\bcrypto\\w*",
-    "giveaway|raffle", "[a*+]+x"];
+    "giveaway|raffle", "[a*+]+x", "\\bcrypto\\b", "giveaway|airdrop", "^RT ", "https?://\\S+", "(https?://)?(www\\.)?x\\.com",
+    "(\\d{1,3}\\.){3}\\d{1,3}", "(a|b){2,9}", "(?<n>ab)c", "(?:ab)+?c", "\\p{Script=Han}{3}", "[\\1]x", "\\0", "a{20}"];
   for (const p of safe) assert.equal(F.riskyPattern(p), "", p);
   assert.match(F.riskyPattern("(a+)+"), /nests/);
+  assert.match(F.riskyPattern("(\\d\\d?)+$"), /nests/);
   assert.match(F.riskyPattern("(a|a)+"), /choice/);
-  assert.match(F.riskyPattern(".*.*"), /open-ended/);
-  // Quantifier parsing: a brace that is not a count is a literal.
-  assert.deepEqual(F.quantifierAt("a{2,}", 1), { length: 4, unbounded: true });
-  assert.deepEqual(F.quantifierAt("a{2,5}", 1), { length: 5, unbounded: false });
+  assert.match(F.riskyPattern("((cat|dog)s)+"), /choice/, "refused on purpose, and the reason names this shape");
+  assert.match(F.riskyPattern(".*.*"), /too many ways/);
+  assert.match(F.riskyPattern("\\w{0,99}"), /above 20/);
+  assert.match(F.riskyPattern("a{21}"), /above 20/);
+  assert.match(F.riskyPattern("(a)\\1"), /refers back/);
+  assert.match(F.riskyPattern("(?<=a)b"), /looks behind/);
+  // Quantifier parsing: ?, a lazy marker and counts; a brace that is not a count is a literal.
+  assert.deepEqual(F.quantifierAt("a{2,}", 1), { length: 4, min: 2, max: Infinity, unbounded: true });
+  assert.deepEqual(F.quantifierAt("a{2,5}", 1), { length: 5, min: 2, max: 5, unbounded: false });
+  assert.deepEqual(F.quantifierAt("a{3}?", 1), { length: 4, min: 3, max: 3, unbounded: false });
+  assert.deepEqual(F.quantifierAt("a?", 1), { length: 1, min: 0, max: 1, unbounded: false });
+  assert.deepEqual(F.quantifierAt("a+?", 1), { length: 2, min: 1, max: Infinity, unbounded: true });
   assert.equal(F.quantifierAt("a{x}", 1), null);
   assert.equal(F.riskyPattern("(a{x})+"), "", "a literal brace is no repeat");
+  for (const p of ["(", ")", "\\", "[", "(?", "(?<", "a{", "*", "(a|", "a)b(c"]) assert.equal(typeof F.riskyPattern(p), "string", "never throws: " + p);
+});
+
+test("the review's freezing patterns never run on a post, and ordinary patterns still hide what they should", () => {
+  const cases = [["(\\d\\d?)+$", "1".repeat(40) + "x"], ["(a?){25}a{25}", "a".repeat(25)], ["\\w{0,99}\\w{0,99}\\w{0,99}x", "w".repeat(10000)]];
+  for (const [p, text] of cases) {
+    const c = F.compile([rule({ id: "r", patterns: [p] })], "x.com");
+    assert.equal(c.refused.length, 1, p);
+    assert.match(c.refused[0].why, /freeze/, p);
+    const t0 = performance.now();
+    assert.equal(c.test({ text }), null, p);
+    assert.ok(performance.now() - t0 < 1000, "finishes at once: " + p);
+  }
+  assert.ok(hits({ patterns: ["\\bcrypto\\b"] }, "All about Crypto today"));
+  assert.ok(!hits({ patterns: ["\\bcrypto\\b"] }, "cryptography class"));
+  assert.ok(hits({ patterns: ["giveaway|airdrop"] }, "Huge AIRDROP now"));
+  assert.ok(hits({ patterns: ["^RT "] }, "RT @someone: hello"));
+  assert.ok(!hits({ patterns: ["^RT "] }, "an ART show"));
+  assert.ok(hits({ patterns: ["(\\d{1,3}\\.){3}\\d{1,3}"] }, "server at 10.0.0.1 is down"));
+});
+
+test("a pattern reads a post's first 2,000 characters, and one that runs slow is switched off for the page", () => {
+  assert.ok(!hits({ patterns: ["needle"] }, "hay ".repeat(600) + "needle"), "past 2,000 characters");
+  assert.ok(hits({ words: ["needle"] }, "hay ".repeat(600) + "needle"), "a word still reads the first 10,000");
+  assert.ok(!hits({ patterns: ["\\bbit\\b"] }, "a ".repeat(998) + " bitcoin"), "a word cut at the limit is dropped whole");
+  let clock = 0;
+  const c = F.compile([rule({ id: "slow", patterns: ["moon"], words: ["sun"] })], "x.com", { now: () => (clock += 1000) });
+  assert.equal(c.test({ text: "to the moon" }).reason, "/moon/", "the slow run still answers");
+  assert.equal(c.refused.length, 1);
+  assert.deepEqual([c.refused[0].rule, c.refused[0].what, c.refused[0].value], ["slow", "pattern", "moon"]);
+  assert.match(c.refused[0].why, /took 1000 ms on one post, so it is off on this page/);
+  assert.equal(c.test({ text: "to the moon" }), null, "then it is off");
+  assert.ok(c.test({ text: "the sun" }), "the rest of the rule still works");
+  let fast = 0;
+  const d = F.compile([rule({ patterns: ["moon"] })], "x.com", { now: () => (fast += 1) });
+  for (let i = 0; i < 5; i++) assert.ok(d.test({ text: "to the moon" }));
+  assert.equal(d.refused.length, 0, "a fast pattern stays on");
 });
 
 test("a refused or broken pattern skips only itself and says why; the rest of the rule still works", () => {
@@ -94,6 +161,9 @@ test("a refused or broken pattern skips only itself and says why; the rest of th
   assert.ok(c.test({ text: "to the moon" }));
   assert.ok(!c.test({ text: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaab" }));
   assert.equal(F.refusals([rule({ patterns: ["(a|a)+"] })]).length, 1, "the Settings page lists refusals on any site");
+  assert.equal(F.refusals([{ id: "d", enabled: false, patterns: ["["] }]).length, 1, "and on a rule that is off");
+  assert.equal(F.refusals([{ id: "d", enabled: false, sites: ["x.com"], hide: ["a}b"] }]).length, 1);
+  assert.deepEqual(F.refusals("nope"), []);
 });
 
 test("accounts: @name, u/name, a profile link and the bare name are one account; r/name is a subreddit", () => {
@@ -102,6 +172,20 @@ test("accounts: @name, u/name, a profile link and the bare name are one account;
   assert.equal(F.normalizeHandle("/user/abc/"), "abc");
   assert.equal(F.normalizeHandle("https://x.com/Jack"), "jack");
   assert.equal(F.normalizeHandle("r/Politics"), "r/politics");
+  // Profile links as people copy them: a share-sheet query, a tab after the name, www.
+  assert.equal(F.normalizeHandle("https://x.com/Jack?s=21&t=abc"), "jack");
+  assert.equal(F.normalizeHandle("https://x.com/Jack/with_replies"), "jack");
+  assert.equal(F.normalizeHandle("https://www.x.com/jack"), "jack");
+  assert.equal(F.normalizeHandle("https://x.com/jack#top"), "jack");
+  assert.equal(F.normalizeHandle("https://www.youtube.com/@Name/videos"), "name");
+  assert.equal(F.normalizeHandle("https://www.reddit.com/r/Politics/comments/abc/title/"), "r/politics");
+  assert.equal(F.normalizeHandle("https://www.reddit.com/user/Spez/submitted"), "spez");
+  assert.equal(F.normalizeHandle("https://www.linkedin.com/in/Some-Name/"), "some-name");
+  assert.equal(F.normalizeHandle("https://bsky.app/profile/Alice.bsky.social"), "alice.bsky.social");
+  assert.equal(F.normalizeHandle("https://mastodon.social/@Bob"), "bob");
+  assert.equal(F.normalizeHandle("@bob@mastodon.social"), "bob@mastodon.social");
+  for (const h of ["jack", "r/politics", "alice.bsky.social"]) assert.equal(F.normalizeHandle(F.normalizeHandle(h)), h, "normalizing twice changes nothing");
+  assert.ok(hits({ accounts: ["https://x.com/Jack?s=21"] }, "", ["jack"]), "a pasted link hides that author's posts");
   assert.ok(hits({ accounts: ["@Spammer"] }, "nothing about it", ["spammer"]));
   assert.ok(!hits({ accounts: ["@Spammer"] }, "spammer in the text", ["someone"]), "an account matches the author, not the text");
   assert.ok(hits({ accounts: ["r/politics"] }, "", ["alice", "r/politics"]));
@@ -118,6 +202,7 @@ test("kinds: a post's kind hides it when the rule names that kind, and only know
   assert.ok(!hits({ kinds: ["shorts"] }, "best running shorts", [], []), "the word is not the kind");
   assert.ok(hits({ kinds: ["promoted", "reposts"] }, "", [], ["reposts"]));
   assert.deepEqual(rule({ kinds: ["Shorts", "ads", "reposts", 3] }).kinds, ["shorts", "reposts"]);
+  assert.deepEqual(rule({ kinds: ["live", "stories", "polls", "shorts"] }).kinds, ["shorts"], "unknown kinds never crowd out a known one");
   const c = F.compile([rule({ kinds: ["promoted"] })], "x.com");
   assert.equal(c.test({ text: "", kinds: () => ["promoted"] }).reason, "Promoted");
   assert.ok(c.needKinds && !c.needAccounts);
@@ -134,6 +219,8 @@ test("sites scope a rule to a host and its subdomains; no sites means every site
   assert.ok(!on("notx.com") && !on("example.com"));
   assert.ok(F.compile([rule({ words: ["crypto"] })], "anything.org").test({ text: "crypto" }));
   assert.ok(!F.compile([rule({ words: ["crypto"], enabled: false })], "x.com").test({ text: "crypto" }));
+  for (const off of [false, 0, "false"]) assert.equal(rule({ enabled: off }).enabled, false, "off: " + JSON.stringify(off));
+  for (const on of [true, undefined, "yes", 1]) assert.equal(rule({ enabled: on }).enabled, true, "on: " + JSON.stringify(on));
 });
 
 test("hide selectors: only with sites, refused when unreadable or able to break out of a rule", () => {
@@ -150,19 +237,49 @@ test("merge: app rules first, marked as from Polycarp; garbage becomes an empty 
   assert.deepEqual(m.map((r) => [r.id, r.source]), [["a1", "app"], ["l1", "local"], ["", "local"], ["", "local"]]);
   assert.deepEqual(m[1].accounts, ["bob"]);
   assert.deepEqual(F.merge(undefined, { not: "a list" }), []);
-  const g = F.normalizeRule({ words: "crypto", sites: [1, null], kinds: "shorts", enabled: "yes" });
-  assert.deepEqual([g.words, g.sites, g.kinds, g.enabled], [[], [], [], true]);
+  const g = F.normalizeRule({ words: "crypto", sites: [1, null], kinds: "shorts", enabled: "yes", patterns: 7, accounts: { a: 1 } });
+  assert.deepEqual([g.words, g.sites, g.kinds, g.enabled, g.patterns, g.accounts], [["crypto"], [], ["shorts"], true, [], []],
+    "one string is a list of one; anything else that is not a list is none");
   const many = F.normalizeRule({ words: Array.from({ length: 150 }, (_, i) => "w" + i).concat(["W0"]) });
   assert.equal(many.words.length, F.MAX_TERMS, "at most 100 words a rule");
-  assert.equal(F.compile([g], "x.com").size, 0, "an empty rule is no rule");
+  assert.equal(F.compile([F.normalizeRule({ words: [1], sites: "x" })], "x.com").size, 0, "an empty rule is no rule");
+});
+
+test("compile normalizes every rule it is given, whatever its shape", () => {
+  const c = F.compile([{ sites: "x.com", words: "crypto" }], "x.com");
+  assert.ok(c.test({ text: "crypto news" }), "strings are lists of one, and nothing throws");
+  assert.doesNotThrow(() => F.compile([{ sites: [], words: ["a"] }], "x.com").test({ text: "a" }), "no patterns list");
+  const blank = { enabled: true, sites: [], words: ["  "], patterns: [], accounts: [], kinds: [], hide: [] };
+  assert.equal(F.compile([blank], "x.com").test({ text: "anything" }), null, "a blank word hides nothing");
+  const body = { enabled: true, sites: [], words: [], patterns: [], accounts: [], kinds: [], hide: ["body"] };
+  assert.deepEqual(F.compile([body], "x.com").hide, [], "a hide selector with no site is dropped");
+  assert.equal(F.compile([{ id: "s", sites: [], words: ["x"], source: "app" }], "x.com").test({ text: "x" }).rule.source, "app", "source survives");
+  assert.doesNotThrow(() => F.compile([null, 3, "x", { sites: 5, words: null, patterns: "(" }], "x.com"));
 });
 
 test("a long post costs one bounded scan, and a word past the limit is not read", () => {
   const c = F.compile([rule({ words: ["needle"] })], "x.com");
   assert.ok(!c.test({ text: "hay ".repeat(5000) + "needle" }), "past 10,000 characters");
-  const t0 = performance.now();
+  // A word the 10,000-character cut runs through is dropped whole: "bit" alone would read as a word.
+  const cut = "a ".repeat(4998) + " bitcoin";
+  assert.equal(cut.indexOf("bitcoin"), F.MAX_TEXT - 3);
+  assert.ok(!hits({ words: ["bit"] }, cut), "the front of a cut word is not that word");
+  assert.ok(hits({ words: ["bit"] }, "a ".repeat(4998) + " bit coin"), "a whole word at the cut still counts");
+  assert.ok(hits({ words: ["比特"] }, "比".repeat(F.MAX_TEXT - 2) + "比特币"), "an unspaced script keeps its text at the cut");
+  assert.equal(F.clip("ab cd", 4), "ab ");
+  assert.equal(F.clip("ab cd", 3), "ab ");
+  assert.equal(F.clip("abcd", 2), "");
+  assert.equal(F.clip("ab 😀😀", 4), "ab ", "never splits a surrogate pair");
+  // A post that matches nothing costs one scan for all the plain words and one run per pattern, however many words.
   const big = F.compile([rule({ words: Array.from({ length: 100 }, (_, i) => "word" + i), patterns: ["\\bcrypto\\w*"] })], "x.com");
-  for (let i = 0; i < 2000; i++) big.test({ text: "an ordinary post about gardening and the weather today ".repeat(20) });
-  assert.ok(performance.now() - t0 < 1500, "2,000 long posts against 100 words in well under the budget");
+  const realTest = RegExp.prototype.test;
+  let runs = 0;
+  RegExp.prototype.test = function (s) { runs++; return realTest.call(this, s); };
+  try {
+    for (let i = 0; i < 2000; i++) big.test({ text: "an ordinary post about gardening and the weather today ".repeat(20) });
+  } finally {
+    RegExp.prototype.test = realTest;
+  }
+  assert.equal(runs, 2 * 2000, "2,000 posts against 100 words and a pattern: two runs each");
   assert.equal(F.summary(rule({ words: ["a"], accounts: ["b"], kinds: ["shorts"] })), "Words: a · Accounts: @b · Kinds: Shorts");
 });
