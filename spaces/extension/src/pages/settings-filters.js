@@ -40,8 +40,12 @@
     const { local, app } = await read();
     const mine = local.map((r) => F.normalizeRule(r, "local"));
     const theirs = (app && Array.isArray(app.rules) ? app.rules : []).map((r) => F.normalizeRule(r, "app"));
+    // Rebuilding the list drops the focused switch, so a keyboard user who just pressed Space would land on the page body.
+    const held = document.activeElement && box.contains(document.activeElement) ? document.activeElement.getAttribute("data-toggle") : null;
     box.querySelector("#fLocal").innerHTML = mine.length ? mine.map((r, i) => row(r, i, true)).join("")
       : '<li class="empty"><span class="note">No filters yet. Add one above.</span></li>';
+    const again = held == null ? null : box.querySelector('#fLocal [data-toggle="' + held + '"]');
+    if (again) again.focus();
     box.querySelector("#fApp").innerHTML = theirs.map((r, i) => row(r, i, false)).join("");
     box.querySelector("#fAppNote").textContent = app && app.error ? "Polycarp did not answer: " + app.error + ". Its last filters still apply."
       : theirs.length ? "Set in the Polycarp app or by your agents. Change them there."
