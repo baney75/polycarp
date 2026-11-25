@@ -135,7 +135,9 @@
 
   async function putAccount(a) {
     if (!a || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(a.id || "")) throw new Error("an account id is 1 to 41 of a-z, 0-9 and -");
-    await queue(() => backend().put("accounts", [{ id: a.id, kind: String(a.kind || ""), label: String(a.label || a.id), address: String(a.address || ""), route: String(a.route || "") }]));
+    // `options` holds what the route needs to reach the account (a server, a port), never a password or token.
+    const options = a.options && typeof a.options === "object" ? JSON.parse(JSON.stringify(a.options)) : {};
+    await queue(() => backend().put("accounts", [{ id: a.id, kind: String(a.kind || ""), label: String(a.label || a.id), address: String(a.address || ""), route: String(a.route || ""), options }]));
     emit({ type: "accounts" });
   }
   const accounts = () => backend().all("accounts");

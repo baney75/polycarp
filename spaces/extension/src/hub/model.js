@@ -138,6 +138,7 @@
       snoozeUntil: Math.max(0, ...list.map((m) => m.snoozeUntil)),
       remindAt: Math.max(0, ...list.map((m) => m.remindAt)),
       hasAttachments: list.some((m) => m.attachments.length > 0),
+      replied: list.some((m) => m.folder === "sent"),
       headers: last.headers,
       from: last.from
     };
