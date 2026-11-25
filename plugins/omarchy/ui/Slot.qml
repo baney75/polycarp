@@ -11,7 +11,7 @@ Item {
   property real inset: 0
   // Held down by what it opened.
   property bool held: false
-  // The pill under it is the face; it draws none of its own.
+  // The pill under it is the face, so the pointer adds none.
   property bool plain: false
   property string tip: ""
   property string name: tip
@@ -38,14 +38,15 @@ Item {
 
   Accessible.role: Accessible.Button
   Accessible.name: name
-  Accessible.onPressAction: root.pressed(Qt.LeftButton)
+  Accessible.onPressAction: root.triggerPress(Qt.LeftButton)
 
   Rectangle {
     anchors.centerIn: parent
     width: root.vertical ? Geometry.face(root.host.barSize) : parent.width
     height: root.vertical ? parent.height : Geometry.face(root.host.barSize)
     radius: Geometry.radius
-    color: area.pressed ? Style.pressedFillFor(root.ink, root.accent)
+    color: root.plain ? Util.alpha(root.ink, 0)
+      : area.pressed ? Style.pressedFillFor(root.ink, root.accent)
       : root.held ? Style.selectedFillFor(root.ink, root.accent)
       : area.containsMouse && !root.plain ? Style.hoverFillFor(root.ink, root.accent)
       : Util.alpha(root.ink, 0)
@@ -82,6 +83,7 @@ Item {
   }
 
   onVisibleChanged: if (!visible && bar) bar.hideTooltip(root)
+  onTipChanged: if (bar && tooltipHovered) { if (tip) bar.showTooltip(root, tip); else bar.hideTooltip(root) }
 
   // A press on the bar while a panel is open reaches the bar's buttons through this list.
   property var registered: null
@@ -92,5 +94,8 @@ Item {
   }
   onBarChanged: register()
   Component.onCompleted: register()
-  Component.onDestruction: if (registered && registered.unregisterClickTarget) registered.unregisterClickTarget(root)
+  Component.onDestruction: {
+    if (bar) bar.hideTooltip(root)
+    if (registered && registered.unregisterClickTarget) registered.unregisterClickTarget(root)
+  }
 }

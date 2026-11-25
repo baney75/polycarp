@@ -20,6 +20,7 @@ Item {
   implicitHeight: Math.max(Style.space(26), label.implicitHeight + Style.space(6))
 
   Accessible.role: root.role
+  Accessible.checkable: root.role !== Accessible.Button
   Accessible.checked: root.held
   Accessible.name: name
   Accessible.onPressAction: root.clicked()

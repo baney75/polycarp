@@ -1,7 +1,7 @@
 .pragma library
 
-// Every word the plugin shows, in one place. `%1` and `%2` are filled in by `fill`. A translation is another table with
-// the same keys; a key it lacks falls back to English.
+// Every word the plugin shows, in one place. `%1`, `%2` and so on are filled in by `fill`. A translation is another table
+// with the same keys, under its language ("pt") or its language and region ("pt_BR"); a key it lacks falls back.
 var en = {
   workspace: "Workspace %1",
   wantsYou: "wants you",
@@ -75,13 +75,15 @@ var en = {
 var tables = { en: en }
 
 function table(locale) {
-  var lang = String(locale || "").split(/[_.-]/)[0]
-  var own = tables[lang] || {}
+  var whole = String(locale || "").split(/[.@]/)[0].replace("-", "_")
+  var own = [tables[whole] || {}, tables[whole.split("_")[0]] || {}, en]
   var out = {}
-  for (var key in en) out[key] = own[key] !== undefined ? own[key] : en[key]
+  for (var key in en) for (var i = 0; out[key] === undefined; i++) out[key] = own[i][key]
   return out
 }
 
-function fill(text, a, b) {
-  return String(text).replace("%1", a === undefined ? "" : a).replace("%2", b === undefined ? "" : b)
+// In one pass, so a value that holds a % or a $ is shown as it is.
+function fill(text) {
+  var values = arguments
+  return String(text).replace(/%(\d)/g, function(all, n) { return values[n] === undefined ? "" : String(values[n]) })
 }

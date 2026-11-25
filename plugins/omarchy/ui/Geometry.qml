@@ -16,9 +16,9 @@ QtObject {
   }
 
   // A quieter ink that still reads: as faint as asked, or as strong as it has to be for `least` to 1 on this ground. Small
-  // text asks for 4.5, a dot or a ring for 3.
+  // text asks for 4.5, a dot or a ring for 3. What shows through a glassy ground is unknown, so there it stays whole.
   function quiet(ink, ground, strength, least) {
-    for (var s = strength; s < 1; s += 0.04) {
+    for (var s = strength; s < 1 && ground.a === 1; s += 0.04) {
       var c = Qt.rgba(ground.r + (ink.r - ground.r) * s, ground.g + (ink.g - ground.g) * s, ground.b + (ink.b - ground.b) * s, 1)
       if (contrast(c, ground) >= least) return Util.alpha(ink, s)
     }
