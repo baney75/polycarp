@@ -56,6 +56,23 @@ final class TileDropTests: XCTestCase {
         XCTAssertEqual(l.dropFrame(.swap(2), 3, area: wide, gaps: none), CGRect(0, 0, 1600, 500))
     }
 
+    func testADropIsJudgedOnTheTilesMinimumsLeave() {
+        let l = layout(.main, 3, in: wide)  // 1 beside 2 over 3, and 3 takes 300...1000
+        let tall: [WindowID: CGSize] = [3: CGSize(width: 0, height: 700)]
+        XCTAssertEqual(l.drop(1, at: CGPoint(x: 1240, y: 650), area: wide, gaps: none, minimums: tall), .swap(3))
+        XCTAssertEqual(l.drop(1, at: CGPoint(x: 1240, y: 320), area: wide, gaps: none, minimums: tall), .beside(3, .up))
+        let d = layout(.dwindle, 3, in: wide), broad: [WindowID: CGSize] = [3: CGSize(width: 600, height: 0)]
+        XCTAssertEqual(d.dropFrame(.beside(1, .left), 3, area: wide, gaps: none, minimums: broad)?.width, 600)
+    }
+
+    func testTwoColumnsStillTurnWithTheDisplayAfterAnEdgeDrop() {
+        var l = layout(.columns, 2, in: wide)
+        l.apply(.edge(.left), to: 2, area: wide)
+        XCTAssertEqual(l.windows, [2, 1])
+        l.settle(tall)
+        XCTAssertEqual(l.frames(in: tall, gaps: none)[2], CGRect(0, 0, 1000, 800))
+    }
+
     func testDroppingBetweenSiblingsKeepsTheirSizes() {
         var l = layout(.columns, 3, in: wide)
         l.resize(1, axis: .horizontal, by: 267, area: wide, gaps: none)

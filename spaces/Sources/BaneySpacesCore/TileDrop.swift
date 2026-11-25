@@ -1,12 +1,12 @@
 import CoreGraphics
 
 /// What letting go of a dragged window does.
-public enum TileDrop: Codable, Equatable, Sendable {
+public enum TileDrop: Equatable, Sendable {
     /// Trade slots with this window.
     case swap(WindowID)
-    /// Take half of this window's tile, on this side.
+    /// Next to this window, on this side: half of its tile, unless the two are in a row that way already.
     case beside(WindowID, TileDirection)
-    /// Take half of the area, along this edge.
+    /// Along this edge of the area.
     case edge(TileDirection)
 }
 
@@ -19,9 +19,9 @@ extension TileLayout {
     /// What letting go of `id` with the pointer there would do: in the middle of a tile a swap, else beside it on the side
     /// the pointer leans to (as a share of the tile, so a wide tile isn't all top and bottom), and by the ends of the
     /// area's long side the whole edge. Nil over its own tile, outside the area, or with `full`.
-    public func drop(_ id: WindowID, at point: CGPoint, area: CGRect, gaps: TileGaps) -> TileDrop? {
+    public func drop(_ id: WindowID, at point: CGPoint, area: CGRect, gaps: TileGaps, minimums: [WindowID: CGSize] = [:]) -> TileDrop? {
         guard !full, contains(id), area.contains(point), let root, let box = gaps.inset(area) else { return nil }
-        let solver = TileSolver(root, in: box, gap: gaps.inner, minimums: [:])
+        let solver = TileSolver(root, in: box, gap: gaps.inner, minimums: minimums)
         let cells = solver.cells(root, in: solver.grown(box))
         // The gaps belong to the nearest cell, so there is no dead strip between tiles or along the area's edges.
         let x = min(max(point.x, box.x0), box.x1 - 1), y = min(max(point.y, box.y0), box.y1 - 1)
@@ -41,10 +41,10 @@ extension TileLayout {
 
     /// Where `id` would be after the drop, for the outline: worked out by doing it on a copy, so it can't promise
     /// anything else than `apply` does.
-    public func dropFrame(_ drop: TileDrop, _ id: WindowID, area: CGRect, gaps: TileGaps) -> CGRect? {
+    public func dropFrame(_ drop: TileDrop, _ id: WindowID, area: CGRect, gaps: TileGaps, minimums: [WindowID: CGSize] = [:]) -> CGRect? {
         var after = self
         after.apply(drop, to: id, area: area)
-        return after == self ? nil : after.frames(in: area, gaps: gaps)[id]
+        return after == self ? nil : after.frames(in: area, gaps: gaps, minimums: minimums)[id]
     }
 
     /// Does a drop. In `main` the windows trade slots so that `id` comes before or after the one it was dropped beside,
@@ -106,9 +106,11 @@ extension TileLayout {
     /// A window takes half the area along an edge. In `columns`, or where a person set the direction, a root along it
     /// takes the window in; a dwindle root that chose its own goes inside and chooses again for the half it has left.
     private mutating func wrap(_ id: WindowID, _ d: TileDirection, _ area: CGRect) {
+        // Two columns are one and a window now; their row still turns with the display.
+        let turns = style == .columns && (root?[split: []].map { $0.automatic && $0.axis == d.axis } ?? false)
         remove(id, area: area)
         guard let tree = root else { return }
-        var top = TileSplit(d.axis, automatic: false, [tree])
+        var top = TileSplit(d.axis, automatic: turns, [tree])
         if let s = tree[split: []], s.axis == d.axis, style == .columns || !s.automatic { top = s }
         top.parts.insert(TilePart(weight: top.total, node: .window(id)), at: d.back ? 0 : top.parts.count)
         if style == .dwindle { top.rechooseParts(in: TileBox(area)) }

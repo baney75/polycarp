@@ -49,10 +49,11 @@ func randomTileCall(_ l: inout TileLayout, _ there: inout Set<WindowID>, _ r: in
     case 13, 14:
         if r.below(3) == 0 {
             l.apply([.swap(other), .beside(other, d), .edge(d)][r.below(3)], to: id, area: area)
-        } else if let drop = l.drop(id, at: CGPoint(x: r.between(area.minX, area.maxX), y: r.between(area.minY, area.maxY)), area: area, gaps: gaps) {
-            let outline = l.dropFrame(drop, id, area: area, gaps: gaps), before = l
+        } else if let drop = l.drop(id, at: CGPoint(x: r.between(area.minX, area.maxX), y: r.between(area.minY, area.maxY)), area: area, gaps: gaps,
+                                     minimums: minimums) {
+            let outline = l.dropFrame(drop, id, area: area, gaps: gaps, minimums: minimums), before = l
             l.apply(drop, to: id, area: area)
-            XCTAssertEqual(outline, l == before ? nil : l.frames(in: area, gaps: gaps)[id], "the outline promised something else")
+            XCTAssertEqual(outline, l == before ? nil : l.frames(in: area, gaps: gaps, minimums: minimums)[id], "the outline promised something else")
         }
     case 15: l.flip(r.below(6) == 0 ? nil : id, area: area)
     default:
