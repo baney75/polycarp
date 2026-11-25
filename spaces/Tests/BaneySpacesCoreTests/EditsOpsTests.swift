@@ -51,7 +51,7 @@ final class EditsOpsTests: XCTestCase {
     // MARK: The page a person shares
 
     private var shared: String { dir.appendingPathComponent(SharedPage.name).path }
-    private let page = #"{"url":"https://example.com/inbox?token=s3cret#t","title":"In\u001bbox","parts":[{"at":"main > h1","is":"Heading","words":"Hello\nthere"},{"at":"li.row","is":"List item","count":12}],"edits":[{"id":"one","hits":[3,0]}]}"#
+    private let page = #"{"url":"https://example.com/inbox?token=s3cret#t","title":"In\u001bbox","parts":[{"at":"main > h1","is":"Heading","words":"Hello\nthere"},{"at":"#a\u200db","is":"Part"},{"at":"li.row","is":"List item","count":12}],"edits":[{"id":"one","hits":[3,0]}]}"#
 
     private func share(_ page: String) throws -> [String: Any] {
         let source = NewTabHost.Source(surfaces: { .defaults }, sharePage: { SharedPage.share($0, to: self.shared) })
@@ -65,6 +65,7 @@ final class EditsOpsTests: XCTestCase {
         let got = try EditsOps.page(file: shared).get().object?["page"]?.object
         XCTAssertEqual(got?["url"], .string("https://example.com/inbox"), "a query can hold a secret")
         XCTAssertEqual(got?["title"], .string("In box"), "no control character reaches a terminal")
+        XCTAssertEqual(got?["parts"]?.array?.count, 2, "a selector is never rewritten")
         XCTAssertEqual(got?["parts"]?.array?.first?.object?["words"], .string("Hello there"))
         XCTAssertEqual(got?["parts"]?.array?.last?.object?["count"], .number(12))
         XCTAssertEqual(got?["edits"]?.array?.first?.object?["hits"], .array([.number(3), .number(0)]))
@@ -79,7 +80,7 @@ final class EditsOpsTests: XCTestCase {
 
     func testStopSharingRemovesThePageAndABadOneLeavesIt() throws {
         _ = try share(page)
-        for bad in [#"{"url":"file:///etc/passwd","title":"","parts":[]}"#, #"{"url":"https://a.com","title":"","parts":[{"at":""}]}"#, "3",
+        for bad in [#"{"url":"file:///etc/passwd","title":"","parts":[]}"#, #"{"url":"https://me:secret@a.com/","title":"","parts":[]}"#, #"{"url":"https://a.com","title":"","parts":[{"at":""}]}"#, "3",
                     #"{"url":"https://a.com","title":"","parts":[\#((0...SharedPage.maxParts).map { _ in #"{"at":"a","is":"b"}"# }.joined(separator: ","))]}"#] {
             XCTAssertEqual(try share(bad)["ok"] as? Bool, false, bad)
         }

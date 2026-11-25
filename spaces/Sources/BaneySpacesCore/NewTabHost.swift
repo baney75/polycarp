@@ -112,7 +112,7 @@ public enum NewTabHost {
                     papers: PaperStore? = nil,
                     filters: @escaping () -> Result<[FilterRule], SurfacesIssue> = { .success([]) },
                     edits: @escaping () -> Result<[SurfaceValue], SurfacesIssue> = { .success([]) },
-                    sharePage: @escaping (SurfaceValue) -> Result<Void, SurfacesIssue> = { _ in .success(()) }) {
+                    sharePage: @escaping (SurfaceValue) -> Result<Void, SurfacesIssue> = { _ in .failure(SurfacesIssue("page", "can't be shared here")) }) {
             self.surfaces = surfaces; self.now = now; self.timeZone = timeZone
             self.bangs = bangs; self.sessions = sessions; self.focus = focus; self.browser = browser
             self.papers = papers; self.filters = filters; self.edits = edits; self.sharePage = sharePage

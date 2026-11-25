@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 pub const INSTRUCTIONS: &str = "\
 Polycarp, the owner's Mac workspace, through one gateway. What you may do depends on what the owner granted this \
-connection: read (look), files (search, fetch and send the owner's files), act (change settings, themes and \
+connection: read (look), files (search, fetch and send the owner's files, and read a web page they share), act (change settings, themes and \
 workspaces) and contacts. tools/list shows only the tools you may call.
 
 - theme_* tools customize Polycarp's look: read theme_schema first, change the smallest thing, preview, then show \

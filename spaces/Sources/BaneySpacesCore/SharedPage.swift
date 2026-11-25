@@ -7,7 +7,7 @@ import Foundation
 public enum SharedPage {
     public static let name = "shared-page.json"
     public static let keptFor: TimeInterval = 3600
-    public static let maxBytes = 256 * 1024
+    public static let maxBytes = 1024 * 1024
     public static let maxParts = 300
     public static let maxTitle = 300
     public static let maxIs = 30
@@ -32,7 +32,9 @@ public enum SharedPage {
             guard let p = p.object, let at = p["at"]?.string, !at.isEmpty, at.utf16.count <= Edits.maxSelector, let what = p["is"]?.string else {
                 return .failure(SurfacesIssue("page.parts[\(i)]", "has at, a selector, and is, what it is"))
             }
-            var part: [String: SurfaceValue] = ["at": .string(cut(at, Edits.maxSelector)), "is": .string(cut(what, maxIs))]
+            // A selector with one taken out would name something else.
+            guard !at.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { continue }
+            var part: [String: SurfaceValue] = ["at": .string(at), "is": .string(cut(what, maxIs))]
             if let words = p["words"]?.string, !words.isEmpty { part["words"] = .string(cut(words, maxWords)) }
             if let n = p["count"]?.integer, n > 1 { part["count"] = .number(Double(n)) }
             out.append(.object(part))

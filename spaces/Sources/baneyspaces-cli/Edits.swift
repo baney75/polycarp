@@ -82,7 +82,10 @@ enum EditsCommand {
             let parts = (page["parts"]?.array ?? []).compactMap(\.object).map { p in
                 "\(p["is"]?.string ?? "")\((p["count"]?.integer).map { " x\($0)" } ?? "")  \(p["at"]?.string ?? "")  \(p["words"]?.string ?? "")"
             }
-            return ([page["url"]?.string ?? "", page["title"]?.string ?? ""] + parts).joined(separator: "\n")
+            let edits = (page["edits"]?.array ?? []).compactMap(\.object).map { e in
+                "edit \(e["id"]?.string ?? ""): matched \((e["hits"]?.array ?? []).map { String($0.integer ?? 0) }.joined(separator: ", "))"
+            }
+            return ([page["url"]?.string ?? "", page["title"]?.string ?? "", "shared \(d.object?["sharedAt"]?.string ?? "")"] + parts + edits).joined(separator: "\n")
         }
         let edits = d.object?["edits"]?.array ?? []
         return edits.isEmpty ? "no edits" : edits.map(line).joined(separator: "\n")
