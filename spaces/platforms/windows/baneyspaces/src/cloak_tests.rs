@@ -325,7 +325,7 @@ fn real_a_ghost_is_transparent_and_comes_back_opaque() {
     assert_eq!(
         winapi::cloaked(w.hwnd),
         0,
-        "a ghost is never cloaked: the engine skips cloaked windows"
+        "a ghost is never cloaked: UI Automation skips cloaked windows"
     );
     let e = Hidden {
         ex_style: Some(undo.ex_style),

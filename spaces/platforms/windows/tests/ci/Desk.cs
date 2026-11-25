@@ -48,6 +48,7 @@ public static class Desk {
     [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr h, int c);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowW(string c, string t);
     [DllImport("user32.dll")] static extern IntPtr SendMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern bool PostMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint c);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
@@ -106,6 +107,7 @@ public static class Desk {
     // The window's own thread hides it (SW_HIDE) or shows it without taking the front (SW_SHOWNA), as a tray app
     // does with its window: ShowWindowAsync posts the call to the thread that owns the window.
     public static bool AppShow(long h, bool show) { return ShowWindowAsync((IntPtr)h, show ? 8 : 0); }
+    public static bool Post(long h, uint m) { return PostMessageW((IntPtr)h, m, IntPtr.Zero, IntPtr.Zero); }
 
     // Keys pressed in order and released in reverse, as one SendInput batch. marked: as a person (see Mark).
     public static uint Keys(ushort[] vks, bool marked) {

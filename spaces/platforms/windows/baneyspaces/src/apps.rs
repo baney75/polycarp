@@ -1,6 +1,6 @@
 //! Which apps an agent may start on Windows: none, until there is a sandbox.
 //!
-//! The line is drawn by process: an agent drives only a process BaneySpaces started for it as a new
+//! The line is drawn by process: an agent gets only a process BaneySpaces started for it as a new
 //! instance. On Windows no app is known to be safe to hand an agent:
 //!
 //! * Notepad forwards a second launch into a copy of yours that is already running (seen live), and
@@ -11,8 +11,8 @@
 //! answer is a Windows sandbox phase (Windows Sandbox or a Hyper-V VM) where the agent's apps run
 //! apart from your session; that is a follow-up, not part 1.
 //!
-//! The live tests need something to drive. `bs-testapp` (platforms/windows/testapp) is a window with a
-//! text box, its own process every time, nothing remembered. A daemon started with
+//! The live tests need something to start. `bs-testapp` (platforms/windows/testapp) is a plain window,
+//! its own process every time, nothing remembered. A daemon started with
 //! `BANEYSPACES_TEST_OPS` set, **built with the `test-ops` feature**, may start it (and `cmd`, for the tests'
 //! agent-peer check). A release build made without the feature ignores the variable.
 

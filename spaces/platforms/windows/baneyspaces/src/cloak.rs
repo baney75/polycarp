@@ -9,8 +9,8 @@
 //!   if the call fails the window is **parked** instead.
 //! - **Park** (the fallback): moved to (-32000, -32000), where Windows itself puts minimized windows.
 //! - **Ghost** (the agent workspace only): fully transparent, click-through, unable to take focus,
-//!   still on screen and *not* cloaked. The hands engine skips cloaked windows, so an agent's window
-//!   must not be one; a ghost is invisible to you and still drivable.
+//!   still on screen and *not* cloaked. UI Automation skips cloaked windows, so an agent's window
+//!   must not be one: a ghost is invisible to you and its agent's own tools can still read it.
 //!
 //! Callers write the window to `state.json` before calling anything here, and take it out after.
 

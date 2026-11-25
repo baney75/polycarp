@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["crates/baneyspaces-core", "platforms/windows/baneyspaces", "platforms/windows/testapp", "platforms/linux"]
-# The pinned agent-desktop checkout (fetched by platforms/windows/scripts/build-engine.ps1) is its own workspace.
-exclude = ["platforms/windows/third_party"]
 
 [workspace.package]
 edition = "2021"

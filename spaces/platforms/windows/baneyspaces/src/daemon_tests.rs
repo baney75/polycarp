@@ -32,7 +32,6 @@ fn rig() -> Rig {
         hidden: HiddenSet::default(),
         info: HashMap::new(),
         job: None,
-        snaps: HashMap::new(),
         overview_shown: false,
         events_seen: 0,
         closed_at: None,
@@ -372,6 +371,7 @@ fn the_agent_workspace_takes_your_window_and_gives_it_back() {
     let st = r.req("agent_status", json!({})).data.unwrap();
     assert_eq!(st["shown"], false);
     assert_eq!(st["windows"][0]["window"], json!(id));
+    assert_eq!(st["windows"][0]["agent_owned"], false, "parked here, and still yours");
 
     let e = r.req("agent_show", json!({}));
     assert_eq!(e.data.unwrap()["shown"], true);

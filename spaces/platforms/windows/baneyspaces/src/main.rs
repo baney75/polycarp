@@ -6,13 +6,12 @@
 //! and prints the envelope; `baneyspaces mcp` serves the agent tools over stdio.
 //!
 //! Everything that touches Windows is behind `cfg(windows)`; the rest (request parsing, the key
-//! map, the persisted hidden list, the engine's envelope mapping) builds and is tested anywhere.
+//! map, the persisted hidden list) builds and is tested anywhere.
 
 mod apps;
 mod cause;
 mod cmdline;
 mod displays;
-mod engine;
 mod feed;
 mod focus;
 mod hidden;
@@ -59,15 +58,9 @@ const HELP: &str = "baneyspaces (Windows)
   agent status|windows           what is on the agent workspace
   agent open <app> [args...]     start an app as its own process on the agent workspace
   agent run [--dir D] -- CMD...  run a command in a console window on the agent workspace
-  agent move <window>            park one of your windows there (not drivable)
+  agent move <window>            park one of your windows there
   agent bring <window>           bring a window you parked back
-  agent snapshot --window W [-i] [--compact]
-  agent find --window W [--role R] [--name N] [--text T]
-  agent get <ref> <property>     agent click <ref>      agent toggle <ref>
-  agent set-value <ref> <value>  agent type <ref> <text>
-  agent select <ref> <value>     agent scroll <ref> <up|down|left|right> [amount]
-  agent shot --window W          agent log [--since SECS]
-  agent press|key|pointer ...    not supported yet (phase 3-4)
+  agent log [--since SECS]       what agents asked for
   keys                           the key map for this platform
   daemon [--trace] [--log FILE]  run the daemon in this console
   daemon --background            run it with no console window (the Startup shortcut runs this)
@@ -195,24 +188,34 @@ fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
     }
 }
 
-const HANDS: &[&str] = &[
-    "snapshot",
-    "find",
-    "get",
-    "click",
-    "set-value",
-    "type",
-    "toggle",
-    "select",
-    "scroll",
-    "shot",
+/// Computer use, removed from Polycarp: each verb answers one line and the daemon hears nothing.
+const REMOVED: &[&str] = &[
+    "snapshot", "find", "get", "click", "set-value", "type", "toggle", "select", "scroll", "shot", "press", "key", "pointer", "click-at", "mouse",
+    "lend", "return",
 ];
+
+fn removed(verb: &str) -> Envelope {
+    fail(
+        "not_supported",
+        &format!("agent {verb} was removed from Polycarp."),
+        "Polycarp does no computer use. It keeps the agent workspace: agent status, windows, open, run, move, bring and log.",
+    )
+}
+
+/// The daemon's operation for an MCP tool, which has the tool's name. Only these reach it: `agent_toggle` was a tool that
+/// pressed a checkbox, and is the operation that shows or hides the agent workspace.
+fn mcp_op(tool: &str) -> Result<&str, Envelope> {
+    match tool {
+        "agent_status" | "agent_windows" | "agent_open" => Ok(tool),
+        _ => Err(removed(&tool.trim_start_matches("agent_").replace('_', "-"))),
+    }
+}
 
 fn agent_request(mut a: Vec<String>) -> Result<Value, Envelope> {
     let Some(sub) = (!a.is_empty()).then(|| a.remove(0)) else {
         return Err(fail(
             "invalid_args",
-            "usage: agent <status|open|run|snapshot|...>",
+            "usage: agent <status|windows|open|run|move|bring|log>",
             "Run `baneyspaces help`.",
         ));
     };
@@ -222,7 +225,7 @@ fn agent_request(mut a: Vec<String>) -> Result<Value, Envelope> {
         // cli.md lists these for Windows as "not supported yet": they exist on the Mac and Linux, so an agent hears that
         // they are not on this platform, not that they are unknown. `agent move --window W` is the agent's own move,
         // never the park command that `agent move W` is.
-        "workspaces" | "arrange" | "frames" | "close" => Err(not_yet(&sub)),
+        "workspaces" | "arrange" | "frames" | "focus" | "close" => Err(not_yet(&sub)),
         "move" if a.iter().any(|x| x == "--window" || x == "--frame" || x.starts_with("--window=") || x.starts_with("--frame=")) => Err(not_yet("move --window")),
         "open" if a.iter().any(|x| x == "--wait" || x.starts_with("--wait=") || x.starts_with("--new_window")) => Err(not_yet("open --wait/--new_window")),
         "open" => {
@@ -246,13 +249,7 @@ fn agent_request(mut a: Vec<String>) -> Result<Value, Envelope> {
             let since = take(&mut a, "--since").and_then(|s| s.parse::<u64>().ok());
             req("agent_log", json!({ "since": since }))
         }
-        "press" | "key" | "pointer" | "click-at" | "mouse" | "focus" | "lend" | "return" => Err(Envelope::err(
-            "not_supported",
-            format!("agent {sub} is not available on Windows in part 1"),
-            Retry::Never,
-            "Keys and pointer arrive in phase 3-4, and only for the agent workspace. Use set-value or type on a ref instead.",
-        )),
-        v if HANDS.contains(&v) => hands_request(v, a),
+        v if REMOVED.contains(&v) => Err(removed(v)),
         _ => Err(fail("invalid_args", &format!("unknown agent command {sub:?}"), "Run `baneyspaces help`.")),
     }
 }
@@ -262,66 +259,8 @@ fn not_yet(what: &str) -> Envelope {
         "not_supported",
         format!("agent {what} is not supported on Windows yet"),
         Retry::Never,
-        "See spec/cli.md for what Windows has today: agent status, windows, open, run, move, bring and the hands verbs.",
+        "See spec/cli.md for what Windows has today: agent status, windows, open, run, move, bring and log.",
     )
-}
-
-fn hands_request(verb: &str, mut a: Vec<String>) -> Result<Value, Envelope> {
-    let window = take(&mut a, "--window");
-    let mut args = json!({ "verb": verb });
-    if let Some(w) = window {
-        args["window"] = json!(w);
-    }
-    match verb {
-        "snapshot" => {
-            if let Some(e) = baneyspaces_core::mcp::rows_flags_refusal(&a) {
-                return Err(e);
-            }
-            args["interactive"] =
-                json!(take_switch(&mut a, "-i") | take_switch(&mut a, "--interactive"));
-            args["compact"] = json!(take_switch(&mut a, "--compact"));
-        }
-        "find" => {
-            for k in ["role", "name", "text"] {
-                if let Some(v) = take(&mut a, &format!("--{k}")) {
-                    args[k] = json!(v);
-                }
-            }
-        }
-        "get" => {
-            need(&a, 2, "agent get <ref> <property>")?;
-            args["ref"] = json!(a[0]);
-            args["property"] = json!(a[1]);
-        }
-        "click" | "toggle" => {
-            baneyspaces_core::envelope::click_flags(verb, &mut a, &mut args)?;
-            need(&a, 1, &format!("agent {verb} <ref>"))?;
-            args["ref"] = json!(a[0]);
-        }
-        "set-value" | "select" => {
-            need(&a, 2, &format!("agent {verb} <ref> <value>"))?;
-            args["ref"] = json!(a[0]);
-            args["value"] = json!(a[1..].join(" "));
-        }
-        "type" => {
-            need(&a, 2, "agent type <ref> <text>")?;
-            args["ref"] = json!(a[0]);
-            args["text"] = json!(a[1..].join(" "));
-        }
-        "scroll" => {
-            need(&a, 2, "agent scroll <ref> <direction> [amount]")?;
-            args["ref"] = json!(a[0]);
-            args["direction"] = json!(a[1]);
-            if let Some(n) = a.get(2).and_then(|s| s.parse::<u64>().ok()) {
-                args["amount"] = json!(n);
-            }
-        }
-        _ => {}
-    }
-    if let Some(e) = args.get("ref").and_then(Value::as_str).and_then(baneyspaces_core::mcp::bare_ref_refusal) {
-        return Err(e);
-    }
-    Ok(json!({ "op": "hands", "args": args }))
 }
 
 fn print(env: &Envelope, text: bool) -> i32 {
@@ -342,23 +281,6 @@ fn print(env: &Envelope, text: bool) -> i32 {
     }
 }
 
-fn mcp_tool_to_request(name: &str, args: &Value, agent: &str) -> Value {
-    let verb = name
-        .strip_prefix("agent_")
-        .unwrap_or(name)
-        .replace('_', "-");
-    match verb.as_str() {
-        "status" | "windows" => json!({ "op": format!("agent_{verb}"), "agent": agent }),
-        "open" => json!({ "op": "agent_open", "agent": agent, "args": if args.is_object() { args.clone() } else { json!({}) } }),
-        v => {
-            // Tool arguments that are not an object (a client's mistake) are no arguments, not a panic.
-            let mut a = if args.is_object() { args.clone() } else { json!({}) };
-            a["verb"] = json!(v);
-            json!({ "op": "hands", "agent": agent, "args": a })
-        }
-    }
-}
-
 fn doctor(paths: &paths::Paths) -> Envelope {
     let mut checks = vec![];
     let mut add = |name: &str, ok: bool, detail: String| {
@@ -373,14 +295,6 @@ fn doctor(paths: &paths::Paths) -> Envelope {
             .map(|e| e.message)
             .unwrap_or_else(|| "running".into()),
     );
-    match engine::locate() {
-        Some(p) => add("hands engine", true, p.display().to_string()),
-        None => add(
-            "hands engine",
-            false,
-            "not built: platforms/windows/scripts/build-engine.ps1".into(),
-        ),
-    }
     add("state directory", paths.state.exists(), paths.state.display().to_string());
     let ok = checks.iter().all(|c| c["ok"] == true);
     Envelope::ok(json!({ "healthy": ok, "checks": checks }))
@@ -539,8 +453,10 @@ fn main() {
         "mcp" => {
             let stdin = std::io::stdin();
             let mut out = std::io::stdout();
-            let mut call =
-                |name: &str, a: &Value| ipc::call(&paths, &mcp_tool_to_request(name, a, &agent));
+            let mut call = |name: &str, a: &Value| match mcp_op(name) {
+                Ok(op) => ipc::call(&paths, &json!({ "op": op, "agent": agent, "args": a })),
+                Err(e) => e,
+            };
             let r = mcp::serve(stdin.lock(), &mut out, &mut call);
             let _ = out.flush();
             if r.is_ok() {
@@ -588,17 +504,6 @@ mod tests {
         assert_eq!(request(v(&["switch", "3", "--monitor"])).unwrap_err().error.unwrap().code, "invalid_args");
         let r = request(v(&["move", "2", "--stay", "--app", "notepad"])).unwrap();
         assert_eq!(r["args"], json!({"n":"2","stay":true,"window":null,"app":"notepad"}));
-    }
-
-    /// 231 r1 second-S2, second-S3: a right click in either spelling is refused, never pressed as a left click, and toggle
-    /// takes neither flag.
-    #[test]
-    fn a_right_click_on_a_ref_is_refused_in_either_spelling() {
-        for words in [&["agent", "click", "@w:e3", "--button=right"][..], &["agent", "click", "@w:e3", "--button", "right"]] {
-            assert_eq!(request(v(words)).unwrap_err().error.unwrap().code, "not_supported", "{words:?}");
-        }
-        assert_eq!(request(v(&["agent", "toggle", "@w:e1", "--button", "right"])).unwrap_err().error.unwrap().code, "invalid_args");
-        assert!(request(v(&["agent", "click", "@w:e3"])).is_ok());
     }
 
     #[test]
@@ -660,10 +565,22 @@ mod tests {
     }
 
     #[test]
-    fn keys_and_pointer_are_not_supported_in_part_one() {
-        for sub in ["press", "key", "pointer", "lend", "return"] {
-            assert_eq!(request(v(&["agent", sub])).unwrap_err().error.unwrap().code, "not_supported");
+    fn computer_use_verbs_say_they_were_removed() {
+        for verb in REMOVED {
+            let e = request(v(&["agent", verb, "@s8f3k2p9:e8"])).unwrap_err().error.unwrap();
+            assert_eq!((e.code.as_str(), e.message), ("not_supported", format!("agent {verb} was removed from Polycarp.")));
         }
+    }
+
+    #[test]
+    fn only_the_kept_mcp_tools_reach_the_daemon() {
+        for tool in ["agent_status", "agent_windows", "agent_open"] {
+            assert_eq!(mcp_op(tool).unwrap(), tool);
+        }
+        for tool in ["agent_toggle", "agent_click", "agent_set_value", "agent_show", "quit"] {
+            assert_eq!(mcp_op(tool).unwrap_err().error.unwrap().code, "not_supported");
+        }
+        assert_eq!(mcp_op("agent_set_value").unwrap_err().error.unwrap().message, "agent set-value was removed from Polycarp.");
     }
 
     /// cli.md: "not supported yet" on Windows is `not_supported`, and `agent move --window` is never the park command.
@@ -672,6 +589,7 @@ mod tests {
         for words in [
             &["agent", "workspaces"][..],
             &["agent", "arrange", "halves"],
+            &["agent", "focus", "--window", "w-1"],
             &["agent", "close", "--window", "w-1"],
             &["agent", "move", "--window", "w-1"],
             &["agent", "move", "--window=w-1", "--frame", "0,0,800,600"],
@@ -682,20 +600,5 @@ mod tests {
         }
         assert_eq!(request(v(&["agent", "move", "w-1"])).unwrap()["op"], "agent_move", "the park command still works");
         assert_eq!(request(v(&["agent", "open", "notepad", "a.txt"])).unwrap()["op"], "agent_open");
-    }
-
-    #[test]
-    fn hands_requests_carry_their_window_and_ref() {
-        let r = request(v(&["agent", "type", "@s8f3k2p9:e8", "hello", "world"])).unwrap();
-        assert_eq!(r["args"], json!({"verb":"type","ref":"@s8f3k2p9:e8","text":"hello world"}));
-        let r = request(v(&["agent", "snapshot", "--window", "w-1", "-i"])).unwrap();
-        assert_eq!(r["args"]["window"], "w-1");
-        assert_eq!(r["args"]["interactive"], true);
-        let e = request(v(&["agent", "snapshot", "--window", "W", "--query", "Save"])).unwrap_err();
-        assert_eq!(e.error.as_ref().map(|e| e.code.as_str()), Some("not_supported"), "rows are macOS only for now");
-        let e = request(v(&["agent", "click", "5"])).unwrap_err();
-        assert_eq!(e.error.as_ref().map(|e| e.code.as_str()), Some("not_supported"), "a bare row number is macOS only for now");
-        let e = request(v(&["agent", "snapshot", "--window", "W", "--format=rows"])).unwrap_err();
-        assert_eq!(e.error.as_ref().map(|e| e.code.as_str()), Some("not_supported"));
     }
 }

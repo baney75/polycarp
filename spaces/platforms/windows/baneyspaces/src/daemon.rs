@@ -24,7 +24,6 @@ use crate::cause;
 use crate::cloak::{self, Cloaker};
 use crate::cmdline;
 use crate::displays;
-use crate::engine::{self, snapshot_of};
 use crate::focus;
 use crate::hidden::{self, Hidden, HiddenSet, How, Recovery};
 use crate::hook::{self, EndSession, Msg};
@@ -32,7 +31,7 @@ use crate::keys;
 use crate::paths::Paths;
 use crate::settings;
 use crate::winapi::{self, hwnd as to_hwnd, id_of, window_name};
-use baneyspaces_core::agent::{check_scope, ActionRecord, WindowFacts};
+use baneyspaces_core::agent::ActionRecord;
 use baneyspaces_core::envelope::{Envelope, Retry};
 use baneyspaces_core::model::{Cause, Effect, Event, Home, Model, ModelError};
 use serde_json::{json, Value};
@@ -60,13 +59,6 @@ pub struct WinInfo {
     pub app: String,
 }
 
-#[derive(Clone, Debug)]
-pub struct SnapInfo {
-    pub window: String,
-    pub pid: u32,
-    pub start: u64,
-}
-
 pub struct Core {
     pub model: Model,
     pub paths: Paths,
@@ -74,7 +66,6 @@ pub struct Core {
     pub info: HashMap<String, WinInfo>,
     /// The user's agent job (named, so a restarted daemon opens the same one).
     pub job: Option<agent::Job>,
-    pub snaps: HashMap<String, SnapInfo>,
     pub overview_shown: bool,
     pub events_seen: u64,
     /// When a tracked window last closed (GetTickCount): the next activation may be Windows handing on the front.
@@ -499,8 +490,8 @@ impl Core {
                 continue;
             }
             let Some(mut e) = self.hidden.get(*hwnd).cloned() else { continue };
-            // An agent's window starts minimized (so it never draws) and is ghosted that way; the engine cannot
-            // read a minimized window, so once it is tracked and invisible it is restored.
+            // An agent's window starts minimized (so it never draws) and is ghosted that way. Once it is
+            // tracked and invisible it is restored, so showing the agent workspace has a window to show.
             if *w == Want::HideAgent && e.how == How::Ghost && tracked.contains(hwnd) && winapi::is_iconic(h) && cloak::still_hidden(&e) {
                 winapi::restore_minimized_no_activate(h);
             }
@@ -1213,7 +1204,7 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
             let mut c = lock(shared);
             let ev = if op == "agent_move" { Event::AgentSend { window: w } } else { Event::AgentBring { window: w } };
             match c.apply_checked(ev) {
-                Ok(fx) => Envelope::ok(json!({ "effects": effects_json(&fx), "drivable": false })),
+                Ok(fx) => Envelope::ok(json!({ "effects": effects_json(&fx) })),
                 Err(e) => e,
             }
         }
@@ -1221,7 +1212,6 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
         "agent_open" => agent_open(shared, &agent, &args),
         "agent_run" => agent_run(shared, &agent, &args),
         "agent_log" => agent_log(&lock(shared), &args),
-        "hands" => hands(shared, &agent, &args),
         _ => Envelope::err("invalid_args", format!("unknown operation {op:?}"), Retry::Never, "Run `baneyspaces help`."),
     }
 }
@@ -1278,7 +1268,9 @@ fn agent_status(c: &Core) -> Value {
         .map(|w| {
             let i = c.info.get(w);
             let pid = c.model.pid_of(w);
-            json!({ "window": w, "app": i.map(|i| i.app.clone()).unwrap_or_default(), "title": i.map(|i| i.title.clone()).unwrap_or_default(), "pid": pid, "drivable": pid.is_some_and(|p| c.model.agent_proc(p).is_some()) })
+            // Whether an agent started it, or it is one of yours parked here.
+            let owned = pid.is_some_and(|p| c.model.agent_proc(p).is_some());
+            json!({ "window": w, "app": i.map(|i| i.app.clone()).unwrap_or_default(), "title": i.map(|i| i.title.clone()).unwrap_or_default(), "pid": pid, "agent_owned": owned })
         })
         .collect();
     json!({ "workspace": AGENT_WORKSPACE, "shown": c.model.agent_shown(), "windows": windows, "processes": c.model.agent_pids().len(), "refused": c.model.refused() })
@@ -1387,165 +1379,6 @@ fn agent_run(shared: &Shared, agent: &str, _args: &Value) -> Envelope {
     )
     .with_data(json!({ "allowed": apps::allowed() }));
     record(&lock(shared), agent, "run", None, None, None, "preflight", &env);
-    env
-}
-
-// ---- hands --------------------------------------------------------------------------------
-
-/// What you can see, so an action can prove it changed none of it: the front window, the pointer,
-/// and which of your windows are showing.
-fn screen_state(c: &Core) -> Value {
-    // What an agent's action could change on your screen: which of your windows are showing, whether an
-    // agent window is showing, and whether the front window is an agent's. Not the pointer and not which
-    // of your windows has focus: those move when you do, and would drown the real violations.
-    let mut showing: Vec<i64> = c
-        .info
-        .iter()
-        .filter(|(id, i)| !c.model.is_agent_window(id) && !c.hidden.contains(i.hwnd) && winapi::exists(to_hwnd(i.hwnd)) && winapi::is_visible(to_hwnd(i.hwnd)))
-        .map(|(_, i)| i.hwnd)
-        .collect();
-    showing.sort();
-    let mut agent_visible: Vec<i64> = c.info.iter().filter(|(id, i)| c.model.is_agent_window(id) && !c.hidden.contains(i.hwnd) && winapi::exists(to_hwnd(i.hwnd))).map(|(_, i)| i.hwnd).collect();
-    agent_visible.sort();
-    let front_is_agent = c.is_agent_pid(winapi::pid_of(winapi::foreground()));
-    json!({ "showing": showing, "agent_visible": agent_visible, "front_is_agent": front_is_agent, "agent_shown": c.model.agent_shown() })
-}
-
-struct Plan {
-    window: String,
-    pid: u32,
-    start: u64,
-}
-
-/// The scope guard against the model and against Windows' own word on who owns the window now.
-fn guard(c: &Core, window: &str, expect: Option<&SnapInfo>) -> Result<Plan, Envelope> {
-    let Some(i) = c.info.get(window) else {
-        return Err(Envelope::err("not_found", format!("no window {window}"), Retry::AfterSnapshot, "Run `baneyspaces agent status` for the agent workspace's windows."));
-    };
-    let h = to_hwnd(i.hwnd);
-    if !winapi::exists(h) {
-        return Err(Envelope::err("not_found", format!("window {window} is gone"), Retry::AfterSnapshot, "Run `baneyspaces agent status`."));
-    }
-    if !matches!(c.model.home(window), Some(Home::Agent)) {
-        return Err(Envelope::err("not_in_scope", "that window is not on the agent workspace", Retry::Never, "Agents act only on windows on the agent workspace. Start the app with `baneyspaces agent open`."));
-    }
-    let pid = winapi::real_pid(h);
-    let start = winapi::process_start(pid);
-    if let Some(s) = expect {
-        if s.pid != pid || (s.start != 0 && s.start != start) {
-            return Err(Envelope::err("stale_ref", "the window now belongs to a different process than the snapshot", Retry::AfterSnapshot, "Take a new snapshot."));
-        }
-    }
-    check_scope(&c.model, &WindowFacts { window: window.into(), pid, pid_start: start }).map_err(|r| r.envelope())?;
-    Ok(Plan { window: window.into(), pid, start })
-}
-
-fn hands(shared: &Shared, agent: &str, args: &Value) -> Envelope {
-    let verb = args["verb"].as_str().unwrap_or("").to_string();
-    if let Some(e) = baneyspaces_core::envelope::refuse_right_click(&verb, args) {
-        return e;
-    }
-    let invalid = |m: &str| Envelope::err("invalid_args", m, Retry::Never, "Run `baneyspaces help`.");
-    let Some(eng) = engine::locate() else {
-        return Envelope::err("engine_missing", "the hands engine (agent-desktop, pinned) is not built", Retry::Never, "Run platforms/windows/scripts/build-engine.ps1, or set BANEYSPACES_ENGINE.");
-    };
-    let window_verb = matches!(verb.as_str(), "snapshot" | "find" | "shot");
-    let ref_verb = matches!(verb.as_str(), "get" | "click" | "set-value" | "type" | "toggle" | "select" | "scroll");
-    if !window_verb && !ref_verb {
-        return Envelope::err("not_supported", format!("agent {verb} is not available on Windows in part 1"), Retry::Never, "Use snapshot, find, get, click, set-value, type, toggle, select, scroll or shot.");
-    }
-    let s = |k: &str| args[k].as_str().map(String::from);
-    let reference = s("ref");
-    if let Some(r) = &reference {
-        if snapshot_of(r).is_none() {
-            return invalid("a ref looks like @s8f3k2p9:e8, from a snapshot");
-        }
-    }
-    // 1. Guard, under the lock.
-    let (plan, before) = {
-        let c = lock(shared);
-        let r = if window_verb {
-            match s("window").and_then(|w| winapi::parse_window_name(&w)) {
-                Some(n) => guard(&c, &window_name(n), None),
-                None => Err(invalid("--window <id> is required (see `baneyspaces agent status`)")),
-            }
-        } else {
-            let sid = snapshot_of(reference.as_deref().unwrap_or("")).unwrap_or("").to_string();
-            match c.snaps.get(&sid).cloned() {
-                None => Err(Envelope::err("stale_ref", "this ref is not from a snapshot BaneySpaces took", Retry::AfterSnapshot, "Take a snapshot with `baneyspaces agent snapshot` and use its refs.")),
-                Some(info) => guard(&c, &info.window, Some(&info)),
-            }
-        };
-        match r {
-            Ok(p) => {
-                let b = screen_state(&c);
-                (p, b)
-            }
-            Err(env) => {
-                record(&c, agent, &verb, None, s("window").as_deref(), reference.as_deref(), "uia", &env);
-                return env;
-            }
-        }
-    };
-    // 2. The engine, without the lock. Never headed: no SendInput, no cursor, no overlay.
-    let t = Duration::from_secs(40);
-    let raw: Result<Value, Envelope> = if window_verb {
-        engine::run_engine(&eng, &engine::window_argv(&verb, &plan.window, args), t)
-    } else if verb == "type" {
-        // The engine's `type` is keystroke synthesis. Insert through UI Automation instead: read, then set.
-        let cur = engine::run_engine(&eng, &engine::ref_argv("get", &json!({"ref": reference, "property": "value"})), t);
-        match cur {
-            Err(e) => Err(e),
-            Ok(cur) if cur["ok"] != json!(true) => Ok(cur),
-            Ok(cur) => match engine::type_value(&cur, args["text"].as_str().unwrap_or("")) {
-                Some(v) => {
-                    // Scope again, right before the write: the window must still be the agent's, on the agent workspace.
-                    let still = {
-                        let c = lock(shared);
-                        let info = c.snaps.get(snapshot_of(reference.as_deref().unwrap_or("")).unwrap_or("")).cloned();
-                        guard(&c, &plan.window, info.as_ref())
-                    };
-                    match still {
-                        Ok(_) => engine::run_engine(&eng, &engine::ref_argv("set-value", &json!({"ref": reference, "value": v})), t),
-                        Err(env) => Err(env),
-                    }
-                }
-                None => Err(Envelope::err("not_supported", "this element does not expose a text value to insert into", Retry::Never, "Take a snapshot and pick a text field; or use set-value on a ref that has a value.")),
-            },
-        }
-    } else {
-        engine::run_engine(&eng, &engine::ref_argv(&verb, args), t)
-    };
-    // 3. Read back, record, answer.
-    let mut c = lock(shared);
-    let mapped_verb = if verb == "type" { "set-value" } else { verb.as_str() };
-    let mut env = match raw {
-        Ok(v) => engine::map_engine(mapped_verb, &v),
-        Err(e) => e,
-    };
-    if env.ok && matches!(verb.as_str(), "snapshot" | "find") {
-        if let Some(sid) = env.data.as_ref().and_then(|d| d["result"]["snapshot_id"].as_str()).map(String::from) {
-            if c.snaps.len() > 256 {
-                c.snaps.clear();
-            }
-            c.snaps.insert(sid, SnapInfo { window: plan.window.clone(), pid: plan.pid, start: plan.start });
-        }
-    }
-    let changed = screen_state(&c) != before;
-    let same = guard(&c, &plan.window, None).is_ok();
-    if let Some(d) = env.data.as_mut() {
-        d["screen_changed"] = json!(changed);
-        d["window"] = json!(plan.window);
-        d["pid"] = json!(plan.pid);
-        if !same {
-            d["scope_changed"] = json!(true);
-        }
-    }
-    let mut rec = ActionRecord::from_result(now(), agent, &verb, Some(plan.pid), Some(&plan.window), reference.as_deref(), "uia", &env);
-    if changed {
-        rec.result = "screen_changed".into();
-    }
-    c.paths.append_action(&rec.to_line(), now(), &c.last_prune);
     env
 }
 
@@ -1918,7 +1751,6 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
         hidden: HiddenSet::default(),
         info: HashMap::new(),
         job: agent::open_job(&format!("Local\\BaneySpaces-Agents-{}", crate::paths::user_key())),
-        snaps: HashMap::new(),
         overview_shown: false,
         events_seen: 0,
         closed_at: None,
@@ -2123,7 +1955,6 @@ mod feed_tests {
             hidden: HiddenSet::default(),
             info: HashMap::new(),
             job: None,
-            snaps: HashMap::new(),
             overview_shown: false,
             events_seen: 0,
             closed_at: None,

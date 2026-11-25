@@ -162,7 +162,6 @@ https://github.com/baney75/polycarp (see spaces/platforms/windows/README.md):
   cargo install --locked --path cli
   cd spaces
   cargo build --release --locked -p baneyspaces-windows
-  platforms/windows/scripts/build-engine.ps1 -Install
 
 `polycarp version` works on Windows and shows what is installed.";
 

@@ -18,8 +18,8 @@ pub enum How {
     /// Moved off every screen: the fallback when the cloak call is refused.
     Park,
     /// Fully transparent, click-through and unable to take focus, but still on screen and not
-    /// cloaked. Used only for the agent workspace: the hands engine (UI Automation) skips cloaked
-    /// windows, so an agent's window has to stay un-cloaked to be drivable.
+    /// cloaked. Used only for the agent workspace: UI Automation skips cloaked windows, so an agent's
+    /// window stays un-cloaked for the agent's own tools to read.
     Ghost,
 }
 
