@@ -16,7 +16,8 @@
 #
 # BANEYSPACES_DEST_DIR: test mode. Install into this folder and change nothing else: the running
 # copy, AeroSpace, Ghostdeck, Launch Services and ~/.local/bin are left alone and the app isn't
-# opened. (With --in-place, test mode leaves AeroSpace and Ghostdeck alone but makes the links.)
+# opened. (With --in-place, test mode leaves AeroSpace and Ghostdeck alone but makes the links
+# and refreshes an installed skill.)
 # The browser helper was removed from Polycarp and this app no longer carries it. A
 # ~/.local/bin/polycarp-browser or ~/.local/bin/tabkyra that links into a Polycarp.app (one an older install made) is removed
 # (a tabkyra an earlier install took the name from is put back), and its launchd jobs are retired. Anything else under
@@ -176,6 +177,10 @@ fi
 if { [ -z "$TEST" ] || [ "$IN_PLACE" = 1 ]; } && [ -x "$DEST/Contents/Resources/bin/polycarp" ] \
    && [ ! -e "${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}/config.toml" ]; then
   "$DEST/Contents/Resources/bin/polycarp" theme set polycarp </dev/null >/dev/null 2>&1 || true
+fi
+# An installed agent skill is the app's, so it is brought up to this build before the check below compares it.
+if [ -f "$HOME/.claude/skills/polycarp-spaces/SKILL.md" ] || [ -f "$HOME/.claude/skills/baneyspaces/SKILL.md" ]; then
+  "$DEST/Contents/Resources/bin/$CLI_NAME" skill install </dev/null || echo "warning: the installed agent skill was not refreshed" >&2
 fi
 if [ "$IN_PLACE" = 0 ] && [ "${BANEYSPACES_NO_LAUNCH:-}" != 1 ]; then open "$DEST"; fi
 echo "installed $DEST and ~/.local/bin/$CLI_NAME"
