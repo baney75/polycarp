@@ -114,10 +114,12 @@
   };
 
   // ---------- Settings ----------
+  let pinned = "";
   function themeOf(s) {
     const t = s.reader.theme;
-    if (t === "auto" || !THEMES.some((x) => x.id === t)) return matchMedia("(prefers-color-scheme: dark)").matches ? "night" : "paper";
-    return t;
+    if (t !== "auto" && THEMES.some((x) => x.id === t)) return t;
+    // The mode a Polycarp theme pins, else the system's.
+    return (pinned || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark" ? "night" : "paper";
   }
   function applySettings(prev) {
     const s = R.settings;
@@ -125,6 +127,8 @@
     const theme = themeOf(s);
     root.dataset.rt = theme;
     root.dataset.themeMode = THEMES.find((x) => x.id === theme).mode;
+    // What theme-live.js puts there before the first paint next time.
+    try { localStorage.setItem("polycarp.reader.surface", s.reader.theme === theme ? theme + " " + root.dataset.themeMode : ""); } catch (e) { /* none */ }
     const f = P.FONTS[s.type.font];
     root.style.setProperty("--r-font", (f && f.family) || BOOK_STACK);
     root.style.setProperty("--r-size", s.reader.size + "px");
@@ -184,7 +188,8 @@
   function buildTypeSheet() {
     $("themes").innerHTML = '<button class="theme auto" role="radio" data-id="auto" title="Light or dark, the same as your system">Auto</button>' + THEMES.map((t) =>
       '<button class="theme" role="radio" data-id="' + t.id + '">' + t.label + "</button>").join("");
-    P.themeCss().then((css) => {
+    P.watchTheme((css) => {
+      if (pinned !== P.themeMode(css)) { pinned = P.themeMode(css); applySettings(R.settings); }
       for (const t of THEMES) {
         const v = P.themeVars(css, t.mode), b = $("themes").querySelector('[data-id="' + t.id + '"]');
         if (b) { b.style.background = v[t.bg]; b.style.color = v.foreground; }
@@ -705,6 +710,7 @@
   // ---------- Boot ----------
   async function boot() {
     R.settings = await P.getSettings();
+    pinned = P.themeMode(await P.themeCss());
     $("tToc").innerHTML = I("list") + "<span>Contents</span>";
     $("tListen").innerHTML = I("headphones") + "<span>Listen</span>";
     $("tSprint").innerHTML = I("zap") + "<span>Speed read</span>";

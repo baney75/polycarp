@@ -17,6 +17,7 @@
   let active = false;
   let engine = null;
   let ui = null;
+  const unwatch = []; // stops each watch on the theme
   let sheet = null;       // constructed stylesheet: page CSP cannot block it
   let styleEl = null;     // fallback for very old engines
   let fontsLoaded = false;
@@ -163,7 +164,10 @@
     const root = hostEl.attachShadow({ mode: "closed" });
     root.innerHTML = '<style class="theme"></style><style>' + UI_CSS + '</style><div class="tint"></div><div class="ruler pc-light"><div class="top"></div><div class="bot"></div></div><div class="stack pc-dark"></div>';
     document.documentElement.appendChild(hostEl);
-    P.themeCss().then((css) => { root.querySelector("style.theme").textContent = P.shadowThemeCss(css); });
+    unwatch.push(P.watchTheme((css) => {
+      root.querySelector("style.theme").textContent = P.shadowThemeCss(css);
+      ui.stack.className = "stack " + P.themeClass(css, "dark");
+    }));
     ui = {
       host: hostEl, root,
       tint: root.querySelector(".tint"),
@@ -341,15 +345,15 @@
 
   // ---------- Apply / remove ----------
   // Theme colors for page CSS (read marks, forced contrast), in the mode that matches the page's own darkness.
-  // Read once, and only when a setting that needs them is on.
+  // Read, and followed, only once a setting that needs them is on.
   let pageTheme = null;
   function loadPageTheme() {
     if (pageTheme) return;
     pageTheme = {};
-    P.themeCss().then((css) => {
+    unwatch.push(P.watchTheme((css) => {
       pageTheme = P.themeVars(css, pageIsDark() ? "dark" : "light");
       if (active) setCss(pageCss(settings));
-    });
+    }));
   }
 
   function apply() {
@@ -462,6 +466,7 @@
 
   function teardown() {
     try { chrome.storage.onChanged.removeListener(onStorage); } catch (e) {}
+    for (const stop of unwatch) stop();
     try { chrome.runtime.onMessage.removeListener(onMessage); } catch (e) {}
     if (tracker) { clearInterval(tracker.tick); clearInterval(tracker.flushT); tracker = null; }
     watchPage(false);

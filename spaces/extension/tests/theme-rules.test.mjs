@@ -30,6 +30,7 @@ test('a theme of one mode pins it, and leaves a part that picked its own mode al
   for (const mode of ['light', 'dark']) {
     const css = P.themeRules(theme({ mode }));
     assert.equal(P.themeMode(css), mode);
+    assert.equal(P.themeClass(css, mode === 'dark' ? 'light' : 'dark'), 'pc-' + mode);
     assert.doesNotMatch(css, /@media/);
     assert.match(css, new RegExp(':root:not\\(\\[data-theme-mode\\]\\) \\{\\n  color-scheme: ' + mode + ';\\n  --pc-background: ' + THEME[mode]['--pc-background']));
     assert.match(css, /:root\[data-theme-mode="light"\] \{\n  color-scheme: light;\n  --pc-background: #f6f3e8/);
@@ -38,6 +39,7 @@ test('a theme of one mode pins it, and leaves a part that picked its own mode al
   }
   assert.equal(P.themeMode(P.themeRules(THEME)), '');
   assert.equal(P.themeMode(shipped), '');
+  assert.equal(P.themeClass(shipped, 'dark'), 'pc-dark');
 });
 
 test('no theme is no rules', () => {

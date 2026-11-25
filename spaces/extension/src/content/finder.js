@@ -264,11 +264,12 @@
     CSS.highlights.set("polycarp-find", new Highlight(...ranges));
   }
   let hlSheet = null;
+  const highlightCss = () => "::highlight(polycarp-find){background-color:color-mix(in srgb," + (findTheme.working || "currentColor") + " 45%,transparent);color:inherit}";
   function ensureHighlightCss() {
     if (hlSheet) return true;
     try {
       hlSheet = new CSSStyleSheet();
-      hlSheet.replaceSync("::highlight(polycarp-find){background-color:color-mix(in srgb," + (findTheme.working || "currentColor") + " 45%,transparent);color:inherit}");
+      hlSheet.replaceSync(highlightCss());
       document.adoptedStyleSheets = [...document.adoptedStyleSheets, hlSheet];
       return true;
     } catch (e) { return false; }
@@ -320,19 +321,24 @@
   async function open(opts) {
     const themeText = await P.themeCss();
     if (F) { F.input.focus(); F.input.select(); return; }
-    findTheme = P.themeVars(themeText, pageDark() ? "dark" : "light");
+    const own = pageDark() ? "dark" : "light";
     opts = opts || {};
     const site = S.siteFor(location.hostname);
     const host = document.createElement("polycarp-find");
     host.setAttribute("data-polycarp-skip", "");
     const root = host.attachShadow({ mode: "closed" });
     const themeStyle = document.createElement("style");
-    themeStyle.textContent = P.shadowThemeCss(themeText);
     const style = document.createElement("style");
     style.textContent = CSS;
     root.append(themeStyle, style);
     const panel = document.createElement("div");
-    panel.className = "panel " + (pageDark() ? "pc-dark" : "pc-light");
+    const dress = (css) => {
+      themeStyle.textContent = P.shadowThemeCss(css);
+      panel.className = "panel " + P.themeClass(css, own);
+      findTheme = P.themeVars(css, own); // what is drawn on the page itself follows the page
+      if (hlSheet) hlSheet.replaceSync(highlightCss());
+    };
+    dress(themeText);
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-label", "Search this page with Polycarp");
     root.appendChild(panel);
@@ -394,7 +400,7 @@
     panel.appendChild(live);
 
     document.documentElement.appendChild(host);
-    F = { host, root, panel, input, chips, list, count, live, menu, site, group: opts.group || "all", rows: [], groups: [], siteGroups: [], back: document.activeElement };
+    F = { host, root, panel, input, chips, list, count, live, menu, site, unwatch: P.watchTheme(dress), group: opts.group || "all", rows: [], groups: [], siteGroups: [], back: document.activeElement };
     F.hint = site === S.youtube && S.youtube.isWatch() ? "Type to search what is said in this video, its description and the comments. Pick Transcript to read along." :
       site === S.x ? "Type to search every post you've scrolled past in this tab, even ones X has unloaded." :
       "Type to search this page. Pick Headings for an outline, Links for every link, or Media for images and video.";
@@ -449,6 +455,7 @@
     for (const ev of ["keydown", "keyup", "keypress"]) removeEventListener(ev, guard, true);
     try { CSS.highlights && CSS.highlights.delete("polycarp-find"); } catch (e) { /* none */ }
     const back = F.back;
+    F.unwatch();
     F.host.remove();
     F = null;
     if (back && back.focus) try { back.focus({ preventScroll: true }); } catch (e) { /* gone */ }

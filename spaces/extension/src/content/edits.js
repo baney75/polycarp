@@ -36,7 +36,7 @@
   function create(doc) {
     const win = doc.defaultView;
     let edits = [], sheets = [], undo = [], notes = [];
-    let room = KEPT, observer = null, timer = 0, frame = 0, lastMs = 0, themeCss = null, inert = null, more = false;
+    let room = KEPT, observer = null, timer = 0, frame = 0, lastMs = 0, themeCss = null, unwatch = null, inert = null, more = false;
     let state = new Map(); // a change -> { tries: WeakMap, last: WeakMap, count, did, note, host, at, el, html }
     let wrote = new WeakMap(); // a text node -> { orig, now }: the page's words, and ours
 
@@ -339,11 +339,12 @@
         ...(verbs.has("move") ? { attributes: true } : named.length ? { attributes: true, attributeFilter: named } : {}) });
       // A theme switch marks the page itself, and may set its own list of sheets.
       if (doc.documentElement) observer.observe(doc.documentElement, { attributes: true });
-      if (verbs.has("insert") && themeCss === null && P.themeCss) P.themeCss().then((css) => { themeCss = css; for (const n of notes) n.replaceSync(P.shadowThemeCss(css) + NOTE_CSS); });
+      if (verbs.has("insert") && P.watchTheme) unwatch = P.watchTheme((css) => { themeCss = css; for (const n of notes) n.replaceSync(P.shadowThemeCss(css) + NOTE_CSS); });
       pass();
     }
     function stop() {
       if (observer) { observer.disconnect(); observer = null; }
+      if (unwatch) { unwatch(); unwatch = null; }
       if (timer) win.clearTimeout(timer);
       if (frame) win.cancelAnimationFrame(frame);
       timer = frame = 0;

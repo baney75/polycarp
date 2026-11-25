@@ -55,7 +55,7 @@
   const bar = $(".bar"), layer = $(".layer"), marks = $(".marks"), tools = $(".tools"), tool = $(".tool"), scope = $(".scope"), what = $(".what"), say = $(".say");
   const which = $("[data-scope=which]"), where = $("[data-scope=where]");
   let sel = null, open = "", raf = 0, over = null, history = [], off = "", color = null, wait = 0;
-  P.themeCss().then((css) => { $("style").textContent = P.shadowThemeCss(css) + CSS_TEXT; });
+  const unwatch = P.watchTheme((css) => { $("style").textContent = P.shadowThemeCss(css) + CSS_TEXT; });
 
   // ---------------------------------------------------------------- pointing
   const ours = (el) => !!el.closest(E.OURS);
@@ -331,6 +331,7 @@
   }
   function close() {
     flush();
+    unwatch();
     cancelAnimationFrame(raf);
     removeEventListener("scroll", draw, true);
     removeEventListener("resize", draw);
