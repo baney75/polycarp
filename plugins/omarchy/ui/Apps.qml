@@ -9,11 +9,14 @@ Item {
   property var rows: []
   property string busy: ""
   property bool failed: false
+  // As in Looks.qml: a read asked for while one runs is followed by another, and only a read after a change ends it.
+  property bool again: false
 
   readonly property string script: decodeURIComponent(String(Qt.resolvedUrl("../scripts/apps")).replace("file://", ""))
 
   function look() {
-    reader.running = true
+    if (reader.running) again = true
+    else reader.running = true
   }
 
   function set(kind, id) {
@@ -28,16 +31,26 @@ Item {
     id: reader
     command: ["bash", root.script, "list"]
     stdout: StdioCollector { id: out }
-    onExited: {
-      root.rows = Model.parse(out.text)
-      root.busy = ""
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.rows = Model.parse(out.text)
+      if (root.again) {
+        root.again = false
+        Qt.callLater(root.look)
+        return
+      }
+      if (writer.done) {
+        writer.done = false
+        root.busy = ""
+      }
     }
   }
 
   Process {
     id: writer
+    property bool done: false
     onExited: function(exitCode) {
       root.failed = exitCode !== 0
+      done = true
       root.look()
     }
   }

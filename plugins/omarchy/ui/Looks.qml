@@ -19,11 +19,14 @@ Item {
   property string busy: ""
   // What the last action came to.
   property string said: ""
+  // A read asked for while one runs: that one may have started before a change finished, so another follows it.
+  property bool again: false
 
   readonly property string script: decodeURIComponent(String(Qt.resolvedUrl("../scripts/looks")).replace("file://", ""))
 
   function look() {
-    reader.running = true
+    if (reader.running) again = true
+    else reader.running = true
   }
 
   function apply(look) {
@@ -67,8 +70,14 @@ Item {
     id: reader
     command: ["bash", root.script, "list"]
     stdout: StdioCollector { id: out }
-    onExited: {
-      root.list = Model.parseList(out.text)
+    onExited: function(exitCode) {
+      // A list that could not be read keeps the last one, rather than showing no looks.
+      if (exitCode === 0) root.list = Model.parseList(out.text)
+      if (root.again) {
+        root.again = false
+        Qt.callLater(root.look)
+        return
+      }
       if (writer.done) {
         root.said = root.say(writer.what, writer.target, writer.code)
         writer.done = false
