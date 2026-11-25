@@ -5,7 +5,7 @@ set -euo pipefail
 script=$(cd "$(dirname "$0")" && pwd)/publish-omarchy.sh
 tmp=$(mktemp -d)
 trap 'rm -rf -- "${tmp:?}"' EXIT
-export GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 git init -q --bare -b main "$tmp/to.git"
 git init -q -b main "$tmp/src"
 cd "$tmp/src"
@@ -33,8 +33,12 @@ echo else >other
 commit elsewhere
 run >/dev/null
 is "a change outside the plugin is not a release" "$(there rev-parse main)" "$first"
+version() { printf '{\n  "id": "x.y",\n  "version": %s\n}\n' "$1" >plugins/omarchy/manifest.json; }
 echo more >>plugins/omarchy/ui/A.qml
 commit more
+refuses "still says 1.2.3"
+version '"1.2.4"'
+commit bump
 run >/dev/null
 is "the next one is on top of the last" "$(there rev-parse main^)" "$first"
 is "it says where it came from" "$(there log -1 --format=%b main)" "From plugins/omarchy in baney75/polycarp at $(git rev-parse HEAD)."
@@ -54,7 +58,10 @@ git checkout -q HEAD~1 -- plugins/omarchy/README.md
 echo '{ "version": ' >plugins/omarchy/manifest.json
 commit broken
 refuses "not JSON"
-printf '{\n  "id": "x.y",\n  "version": "1.2.4"\n}\n' >plugins/omarchy/manifest.json
+version null
+commit null
+refuses "no version"
+version '"1.2.5"'
 head -c 2200000 /dev/zero >plugins/omarchy/big
 commit big
 refuses "over 2 MB"
@@ -66,7 +73,7 @@ commit small
 git clone -q --bare "$tmp/to.git" "$tmp/hand.git"
 git --git-dir="$tmp/hand.git" update-ref refs/heads/main "$(git --git-dir="$tmp/hand.git" commit-tree "main^{tree}" -p main -m "by hand")"
 refuses "not made by this script" --to "$tmp/hand.git"
-git --git-dir="$tmp/hand.git" branch -q -m main other
+git --git-dir="$tmp/hand.git" branch -q -m main mainline
 refuses "commits but no main" --to "$tmp/hand.git"
 run >/dev/null
 is "a newer source goes on top" "$(there rev-parse main^)" "$last"

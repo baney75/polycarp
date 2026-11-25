@@ -27,7 +27,7 @@ function shown(workspaces, monitor, activeId, empty) {
     if (w.monitor !== monitor) continue
     if (w.windows.length > 0 || w.id === activeId || w.urgent || (w.id >= first && w.id < first + empty)) out.push(w)
   }
-  for (i = 0; i < empty; i++) {
+  for (i = 0; i < empty && first > 0; i++) {
     var id = first + i
     if (seen[id] !== undefined) continue
     out.push({ id: id, name: String(id), monitor: monitor, windows: [], urgent: false, layout: "" })
@@ -44,14 +44,15 @@ function order(a, b) {
 }
 
 // Omarchy gives each monitor ten numbers: 1 to 10, 11 to 20 and so on. The monitor's ten are the ones it is on now; on a
-// named workspace, the ones its lowest number is in.
+// named workspace, the ones its lowest number is in. On a named workspace with no number at all it has none (0): any ten
+// guessed could be another monitor's.
 function blockStart(workspaces, monitor, activeId) {
   var id = activeId
   for (var i = 0; i < workspaces.length && activeId <= 0; i++) {
     var w = workspaces[i]
     if (w.monitor === monitor && w.id > 0 && (id <= 0 || w.id < id)) id = w.id
   }
-  return id > 0 ? Math.floor((id - 1) / 10) * 10 + 1 : 1
+  return id > 0 ? Math.floor((id - 1) / 10) * 10 + 1 : 0
 }
 
 // What the mark says. A number in the monitor's ten (from `first`) is its place there, as the number keys are: 12 is "2",
@@ -61,7 +62,7 @@ function label(workspace, style, first) {
   var named = workspace.name !== "" && workspace.name !== String(workspace.id)
   if (workspace.id <= 0) return workspace.name
   if (style === "names" && named) return workspace.name
-  return String(workspace.id >= first && workspace.id < first + 10 ? workspace.id - first + 1 : workspace.id)
+  return String(first > 0 && workspace.id >= first && workspace.id < first + 10 ? workspace.id - first + 1 : workspace.id)
 }
 
 // The apps on a workspace as icons: each app once, in the order its first window came, up to `max`, then how many apps
