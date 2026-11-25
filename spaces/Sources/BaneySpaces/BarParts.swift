@@ -85,19 +85,29 @@ extension EnvironmentValues {
     }
 }
 
-/// Says when the pointer comes and goes, in an app that isn't in front, and takes no clicks itself.
+/// Says when the pointer comes and goes, in an app that isn't in front, and takes no clicks itself. With `onScroll` it
+/// also hears the wheel over it.
 struct PointerArea: NSViewRepresentable {
+    var onScroll: ((NSEvent) -> Void)?
     let onOver: (Bool) -> Void
+
+    init(onScroll: ((NSEvent) -> Void)? = nil, onOver: @escaping (Bool) -> Void) {
+        self.onScroll = onScroll
+        self.onOver = onOver
+    }
 
     func makeNSView(context: Context) -> Area { Area() }
     func updateNSView(_ view: Area, context: Context) {
         view.onOver = onOver
+        view.onScroll = onScroll
     }
     static func dismantleNSView(_ view: Area, coordinator: ()) { view.forget() }
 
     final class Area: NSView {
         var onOver: (Bool) -> Void = { _ in }
+        var onScroll: ((NSEvent) -> Void)?
         private var area: NSTrackingArea?
+        private var wheel: Any?
         private var inside = false
 
         override func updateTrackingAreas() {
@@ -126,9 +136,22 @@ struct PointerArea: NSViewRepresentable {
             guard on != inside else { return }
             inside = on
             onOver(on)
+            if !on { stopWheel() } else if onScroll != nil, wheel == nil {
+                wheel = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                    guard let self, event.window === self.window else { return event }
+                    self.onScroll?(event)
+                    return nil
+                }
+            }
+        }
+
+        private func stopWheel() {
+            if let wheel { NSEvent.removeMonitor(wheel) }
+            wheel = nil
         }
 
         func forget() {
+            stopWheel()
             guard inside else { return }
             inside = false
             let onOver = onOver

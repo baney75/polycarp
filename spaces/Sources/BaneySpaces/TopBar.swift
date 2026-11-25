@@ -385,9 +385,8 @@ struct TopBarView: View {
     @ObservedObject private var appearance = Appearance.shared
     /// style.css: what the sheet says for the bar, its regions, modules and workspace numbers (docs/style.md).
     @ObservedObject private var styles = Styles.shared
-    /// The module and the workspace number under the pointer, for `:hover`.
+    /// The module under the pointer, for `:hover`.
     @State private var hovered: String?
-    @State private var hoveredNumber: Int?
     let display: CGDirectDisplayID
     let screen: NSScreen
     let sides: (left: CGFloat, right: CGFloat)?
@@ -551,15 +550,15 @@ struct TopBarView: View {
         switch m {
         case .mark:
             BarButton(label: "Polycarp menu", help: "Polycarp", action: { model.onMark() }) {
-                VineMark().frame(width: 14, height: 14)
+                OliveMark().fill(s.ink(Chrome.accent)).frame(width: 15, height: 15)
             }
         case .workspaces:
-            numbers(s, region)
+            WorkspaceStrip(shown: BarWorkspaces.shown(occupied: model.occupied, current: here), here: here, style: s, region: region,
+                           book: styles.book) { model.onPick($0, screen) }
         case .hour:
             words(BarText.hour(model.now, names: model.bar.hourNames), s).foregroundStyle(quiet).modifier(BarInset())
         case .clock:
-            words(BarText.clock(model.now, format: model.bar.clockFormat), s).monospacedDigit().foregroundStyle(s.ink(Chrome.wash()))
-                .fixedSize().modifier(BarInset())
+            ClockFace(now: model.now, format: model.bar.clockFormat, style: s).modifier(BarInset())
         case .date:
             words(BarText.date(model.now), s).foregroundStyle(quiet).modifier(BarInset())
         case .verse:
@@ -602,39 +601,6 @@ struct TopBarView: View {
             EmptyView()
         }
     }
-
-    /// A number for each workspace with windows and the one you're on (`BarWorkspaces.shown`), as Omarchy's bar has them:
-    /// the one you're on in full over an accent line (or on an accent block, `BarWorkspaces.marker`), the rest muted.
-    /// The line sits under the digit without moving it, so the numbers stay centered. Click one to go there.
-    /// The sheet's `bar .workspace` (with `.current` and `:hover`) styles each number; a `border-bottom` it sets is the
-    /// line in place of the accent one, and the module's `gap` spaces them.
-    private func numbers(_ module: ComputedStyle, _ region: StyleBook.Region) -> some View {
-        let marker = BarWorkspaces.marker(Chrome.spec.indicator)
-        return HStack(spacing: module.gap.map { CGFloat($0) } ?? 0) {
-            ForEach(BarWorkspaces.shown(occupied: model.occupied, current: here), id: \.self) { n in
-                let on = n == here
-                let w = styles.book.workspace(in: region, current: on, hover: hoveredNumber == n)
-                if !w.isHidden {
-                    BarButton(width: 23, label: on ? "Workspace \(n), you're here" : "Workspace \(n)", help: "Workspace \(n)",
-                              action: { model.onPick(n, screen) }) {
-                        if on, marker == .block, w.color == nil, !w.hasBox {
-                            words("\(n)", w, .semibold).foregroundStyle(Chrome.onAccent)
-                                .padding(.horizontal, 4)
-                                .background(Rectangle().fill(Chrome.accent))
-                        } else {
-                            words("\(n)", w, on ? .semibold : .regular).foregroundStyle(w.ink(on ? Chrome.wash() : Chrome.wash(0.5)))
-                                .modifier(StyledText(style: w))
-                                .overlay(alignment: .bottom) {
-                                    if on, w.borderBottom == nil { Rectangle().fill(Chrome.accent).frame(height: 2).offset(y: 3) }
-                                }
-                                .modifier(StyledBox(style: w))
-                        }
-                    }
-                    .background { PointerArea { inside in if inside { hoveredNumber = n } else if hoveredNumber == n { hoveredNumber = nil } } }
-                }
-            }
-        }
-    }
 }
 
 /// Tells the buttons of a module the sheet draws a box round to keep the box's own height.
@@ -646,26 +612,6 @@ private struct BarBoxed: ViewModifier {
 /// The room either side of a module that is only words, the same as a title's.
 private struct BarInset: ViewModifier {
     func body(content: Content) -> some View { content.padding(.horizontal, CGFloat(BarGeometry.textInset)) }
-}
-
-/// Polycarp's vine mark: a stem with two leaves, in the theme's foreground and warm color.
-private struct VineMark: View {
-    var body: some View {
-        Canvas { ctx, size in
-            let s = size.width / 16
-            var stem = Path()
-            stem.move(to: CGPoint(x: 3 * s, y: 13 * s))
-            stem.addCurve(to: CGPoint(x: 13 * s, y: 3 * s), control1: CGPoint(x: 6 * s, y: 10 * s), control2: CGPoint(x: 9 * s, y: 7 * s))
-            ctx.stroke(stem, with: .color(Chrome.accent), lineWidth: s * 1.4)
-            func leaf(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ deg: Double, _ c: Color) {
-                let r = CGRect(x: -w * s, y: -h * s, width: 2 * w * s, height: 2 * h * s)
-                let t = CGAffineTransform(translationX: x * s, y: y * s).rotated(by: deg * .pi / 180)
-                ctx.fill(Path(ellipseIn: r).applying(t), with: .color(c))
-            }
-            leaf(6.5, 8, 2.2, 1.2, -40, Chrome.accent)
-            leaf(10, 6.4, 2, 1.1, 30, Chrome.gold)
-        }
-    }
 }
 
 /// An island's face: the theme's surface, a hairline edge and a soft shadow, each replaced by what the sheet's

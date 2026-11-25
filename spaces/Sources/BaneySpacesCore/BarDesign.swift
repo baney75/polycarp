@@ -11,6 +11,8 @@ public enum BarGeometry {
     public static let symbol = 13.0
     /// A title's room either side, inside its face.
     public static let textInset = 6.0
+    /// A workspace number's slot, across.
+    public static let number = 23.0
     /// Between two groups (`|` in a module list) of a bar with no islands.
     public static let group = 8.0
     /// From the screen's edge to the first slot.
@@ -38,5 +40,45 @@ public enum BarSides {
         if lead + trail <= space { return (lead, trail) }
         let kept = min(lead, max(space * BarLayout.middleShare, space - trail))
         return (kept, max(0, space - kept))
+    }
+}
+
+/// The wheel over the workspaces: one workspace a step, however the wheel reports itself.
+public struct BarScroll: Equatable, Sendable {
+    private var carried = 0.0
+    private var last = -Double.infinity
+    private var seen = -Double.infinity
+    private var done = false
+    /// A trackpad's points for one workspace.
+    static let points = 28.0
+    /// The least time between two steps.
+    static let pause = 0.14
+    /// A trackpad quiet this long has begun another gesture, where it doesn't say so itself.
+    static let rest = 0.3
+
+    public init() {}
+
+    /// -1 for the workspace before, 1 for the next, 0 to stay. `precise` is a trackpad's points rather than a wheel's
+    /// clicks, one step a gesture, which `began` starts; `momentum` is the glide after the fingers lift, which never
+    /// switches, and neither does a swipe more `across` than down.
+    public mutating func step(_ delta: Double, across: Double = 0, precise: Bool, began: Bool = false, momentum: Bool = false,
+                              at time: Double) -> Int {
+        if began || time - seen > Self.rest { (carried, done) = (0, false) }
+        seen = time
+        guard !momentum, delta != 0, abs(delta) >= abs(across), !(precise && done) else { return 0 }
+        if carried * delta < 0 { carried = 0 }
+        carried += precise ? delta : delta.sign == .minus ? -Self.points : Self.points
+        guard abs(carried) >= Self.points else { return 0 }
+        let way = carried < 0 ? 1 : -1
+        carried = 0
+        guard time - last >= Self.pause else { return 0 }
+        (last, done) = (time, true)
+        return way
+    }
+
+    /// The workspace `way` along from `n` among the ones drawn, or nil at either end.
+    public static func target(from n: Int, way: Int, shown: [Int]) -> Int? {
+        guard way != 0, let i = shown.firstIndex(of: n), shown.indices.contains(i + way) else { return nil }
+        return shown[i + way]
     }
 }

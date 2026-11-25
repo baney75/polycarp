@@ -12,6 +12,89 @@ enum BarWords {
     }
 }
 
+/// A number for each workspace with windows and the one you're on (`BarWorkspaces.shown`), each in a slot of one size,
+/// with one marker that slides to the one you're on (`BarWorkspaces.marker`). Click a number to go there, or turn the
+/// wheel over them for the one before or after.
+/// The sheet's `bar .workspace` (with `.current` and `:hover`) styles each number; a background or line it sets for
+/// `.current` is the marker in place of this one, and the module's `gap` spaces them.
+struct WorkspaceStrip: View {
+    let shown: [Int]
+    let here: Int
+    let style: ComputedStyle
+    let region: StyleBook.Region
+    let book: StyleBook
+    let pick: (Int) -> Void
+    @Namespace private var space
+    @State private var over: Int?
+    @State private var wheel = BarScroll()
+
+    private var marker: BarWorkspaces.Marker? {
+        guard shown.contains(here) else { return nil }
+        return BarWorkspaces.marker(Chrome.spec.indicator, current: book.workspace(in: region, current: true),
+                                    other: book.workspace(in: region, current: false))
+    }
+
+    var body: some View {
+        HStack(spacing: style.gap.map { CGFloat($0) } ?? 0) {
+            ForEach(shown, id: \.self) { n in number(n) }
+        }
+        .background { if let marker, marker != .underline { mark(marker) } }
+        .overlay { if marker == .underline { mark(.underline).allowsHitTesting(false) } }
+        .animation(Chrome.reduceMotion ? nil : Chrome.spring(0.26, damping: 0.84), value: here)
+        .background {
+            PointerArea(onScroll: { event in
+                let way = wheel.step(Double(event.scrollingDeltaY), across: Double(event.scrollingDeltaX),
+                                     precise: event.hasPreciseScrollingDeltas, began: event.phase.contains(.began),
+                                     momentum: !event.momentumPhase.isEmpty, at: event.timestamp)
+                if let n = BarScroll.target(from: here, way: way, shown: shown) { pick(n) }
+            }) { _ in }
+        }
+    }
+
+    @ViewBuilder private func number(_ n: Int) -> some View {
+        let on = n == here
+        let w = book.workspace(in: region, current: on, hover: over == n)
+        if !w.isHidden {
+            BarButton(width: CGFloat(BarGeometry.number), label: on ? "Workspace \(n), you're here" : "Workspace \(n)",
+                      help: "Workspace \(n)", action: { pick(n) }) {
+                BarWords.text("\(n)", w, on ? .semibold : .regular)
+                    .monospacedDigit()
+                    .foregroundStyle(w.ink(ink(n, on: on)))
+                    .modifier(StyledText(style: w))
+                    .modifier(StyledBox(style: w))
+            }
+            .background { PointerArea { inside in if inside { over = n } else if over == n { over = nil } } }
+            .matchedGeometryEffect(id: n, in: space)
+        }
+    }
+
+    private func ink(_ n: Int, on: Bool) -> Color {
+        if on { return marker == .block ? Chrome.onAccent : Chrome.wash() }
+        return over == n ? Chrome.wash() : Chrome.wash(0.62)
+    }
+
+    /// One marker for the strip, so it slides. The sheet's own face for the current number takes its place.
+    private func mark(_ kind: BarWorkspaces.Marker) -> some View {
+        WorkspaceMarker(kind: kind).matchedGeometryEffect(id: here, in: space, isSource: false)
+    }
+}
+
+private struct WorkspaceMarker: View {
+    let kind: BarWorkspaces.Marker
+    @Environment(\.barFace) private var face
+
+    var body: some View {
+        Group {
+            switch kind {
+            case .pill: BarShape.face.fill(Chrome.accent.opacity(0.26)).frame(height: face)
+            case .block: Rectangle().fill(Chrome.accent).frame(height: min(face, 18)).padding(.horizontal, 3)
+            case .underline: Capsule().fill(Chrome.accent).frame(width: 12, height: 2).frame(height: face, alignment: .bottom)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 /// Every app's status items, as many as fit from the right: macOS's as symbols in the bar's ink, an app's own as its icon.
 struct StatusRow: View {
     @Environment(\.barBoxed) private var boxed
@@ -82,5 +165,30 @@ struct MenuRow: View {
                 .fixedSize(horizontal: true, vertical: false)
             }
         }
+    }
+}
+
+/// The clock in two tones: the time in full, the day before it and the AM or PM after it a step quieter. The digits
+/// keep one width and roll on the minute.
+struct ClockFace: View {
+    let now: Date
+    let format: Surfaces.ClockFormat
+    let style: ComputedStyle
+
+    var body: some View {
+        let parts = BarText.clockParts(now, format: format)
+        let quiet = style.ink(Chrome.muted, dim: 0.7)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if let day = parts.day { BarWords.text(day, style).foregroundStyle(quiet) }
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                BarWords.text(parts.time, style, .medium).monospacedDigit().foregroundStyle(style.ink(Chrome.wash()))
+                    .contentTransition(.numericText())
+                    .animation(Chrome.ease(0.25, .panelIn), value: parts.time)
+                if let half = parts.half { BarWords.text(half, style).foregroundStyle(quiet) }
+            }
+        }
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(BarText.clock(now, format: format))
     }
 }

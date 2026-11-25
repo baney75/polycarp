@@ -238,6 +238,12 @@ enum Chrome {
         reduceMotion ? nil : .easeOut(duration: seconds(shipped, k))
     }
 
+    /// A spring whose response is `shipped` seconds as the theme times rows. A theme with no row motion gets the
+    /// shortest spring rather than a zero response.
+    static func spring(_ shipped: Double, damping: Double) -> Animation {
+        .spring(response: max(0.01, seconds(shipped, .row)), dampingFraction: damping)
+    }
+
     /// The scale a picked-up tile grows to (1 where the theme only fades).
     static var lift: CGFloat { CGFloat(spec.motion.lift) }
 }
