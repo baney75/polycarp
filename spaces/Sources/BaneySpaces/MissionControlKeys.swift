@@ -19,30 +19,11 @@ final class MissionControlKeys {
         self.onPress = onPress
     }
 
-    /// What ⌘Tab does. Off (macOS's own switcher) unless chosen in setup.
-    enum CmdTabMode: String, CaseIterable, Identifiable {
-        /// macOS's app switcher, untouched.
-        case off
-        /// Every app with a window, on any workspace, most recent first; picking one goes there.
-        case apps
-        /// Workspaces, most recent first.
-        case workspaces
-
-        var id: String { rawValue }
-        var title: String {
-            switch self {
-            case .off: "macOS"
-            case .apps: "Apps on every workspace"
-            case .workspaces: "Workspaces"
-            }
-        }
-    }
-
+    /// What ⌘Tab does: windows unless another was chosen in setup.
     static var cmdTabMode: CmdTabMode {
         get {
-            if let raw = UserDefaults.standard.string(forKey: "cmdTabMode"), let m = CmdTabMode(rawValue: raw) { return m }
-            // 0.2 had one switch: ⌘Tab switches workspaces.
-            return UserDefaults.standard.bool(forKey: "cmdTabSwitchesWorkspaces") ? .workspaces : .off
+            CmdTabMode.resolve(stored: UserDefaults.standard.string(forKey: "cmdTabMode"),
+                               legacy: UserDefaults.standard.object(forKey: "cmdTabSwitchesWorkspaces") as? Bool)
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "cmdTabMode") }
     }
@@ -70,8 +51,8 @@ final class MissionControlKeys {
     var onTabUp: () -> Void = {}
     var onCmdReleased: () -> Void = {}
     var onCancel: () -> Void = {}
-    /// An arrow pressed during a gesture: right or down is forward, left or up is back.
-    var onArrow: (_ forward: Bool) -> Void = { _ in }
+    /// An arrow pressed during a gesture: right or down is forward, left or up is back; up and down go by row.
+    var onArrow: (_ forward: Bool, _ byRow: Bool) -> Void = { _, _ in }
     /// Read on the tap thread; set when a ⌘Tab gesture starts, cleared when it ends.
     private static let gestureLock = NSLock()
     private static var _inGesture = false
@@ -227,7 +208,7 @@ final class MissionControlKeys {
         }
         // Arrows step the same way Tab does; a held arrow keeps stepping.
         if inGesture, let forward = SwitcherSelection.arrow(keyCode: code) {
-            if type == .keyDown { DispatchQueue.main.async { me.onArrow(forward) } }
+            if type == .keyDown { DispatchQueue.main.async { me.onArrow(forward, SwitcherSelection.goesByRow(keyCode: code)) } }
             return nil
         }
         // Any other key while the switcher is up is swallowed, as the system switcher does:

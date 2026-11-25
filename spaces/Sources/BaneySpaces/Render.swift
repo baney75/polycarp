@@ -192,6 +192,19 @@ enum Render {
                                         .init(id: 3, title: "Gmail — Inbox", workspace: 1)], selected: 1)
         guard save(SwitcherView(model: bar).padding(30), "switcher-windows.png", CGSize(width: 820, height: 0)) else { return 1 }
 
+        // ⌘Tab across windows: thirty on a small screen, so the cards are on one line.
+        bar.windowBar = nil
+        bar.mode = .windows
+        bar.windows = (0..<30).map { i in
+            let app = [("Safari", "/Applications/Safari.app"), ("Mail", "/System/Applications/Mail.app"), ("Notes", "/System/Applications/Notes.app")][i % 3]
+            return .init(id: WindowID(i + 1), title: "\(app.0) window \(i + 1)", workspace: i % 9 + 1, app: app.0, icon: icon(app.1))
+        }
+        for (count, name) in [(30, "switcher-all-windows.png"), (7, "switcher-few-windows.png")] {
+            bar.windows = Array(bar.windows.prefix(count))
+            bar.selected = 1
+            guard save(SwitcherView(model: bar), name, bar.grid.size) else { return 1 }
+        }
+
         // The launcher: the opening menu, then a search.
         let launcher = LauncherModel(actions: LauncherActions())
         launcher.prepare(scope: .root)

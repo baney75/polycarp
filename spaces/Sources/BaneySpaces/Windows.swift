@@ -430,16 +430,17 @@ enum Windows {
     /// both are listed (windows not parked at the hiding spot). For the main thread.
     static func front(in windows: [WindowID: Window], preferring keep: (WindowID) -> Bool = { _ in true }) -> Window? {
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }
+        let mine = stacking(of: windows).filter { $0.pid == pid }
+        return mine.first { keep($0.id) } ?? mine.first
+    }
+
+    /// The ones of `windows` on screen, front to back, from the window server, which answers without asking any app.
+    static func stacking(of windows: [WindowID: Window]) -> [Window] {
         let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-        var fallback: Window?
-        for w in info {
-            guard (w[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
-                  (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
-                  let id = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value, let win = windows[id] else { continue }
-            if keep(id) { return win }
-            if fallback == nil { fallback = win }
+        return info.compactMap { w in
+            guard (w[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 else { return nil }
+            return (w[kCGWindowNumber as String] as? NSNumber).flatMap { windows[$0.uint32Value] }
         }
-        return fallback
     }
 
     static func alive() -> Set<WindowID> { snapshot(apps: RunningApps.regular).alive }

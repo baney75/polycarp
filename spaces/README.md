@@ -203,12 +203,14 @@ next time the pointer rests on its edge.
 
 ## ⌘Tab across workspaces
 
-macOS's ⌘Tab only reaches apps on the workspace you're on. In setup, set **⌘Tab switches** to
-**Apps on every workspace** and it steps through every app with a window, most recently used
-first, each marked with the workspace it's on. Let go of ⌘ and you're on that app's window,
-wherever it is. **Workspaces** steps through workspaces instead. ⌘⇧Tab steps back; Esc cancels.
+macOS's ⌘Tab only reaches apps on the workspace you're on. Polycarp's steps through every window on
+every workspace, the one you used last first, each with its app's icon, its title and the workspace
+it's on. A quick ⌘Tab goes back to the last window, and no panel comes up for it, so two windows are always one
+tap apart, the same app's two included. Hold ⌘ to see the cards: Tab and → go on, ⌘⇧Tab and ← go
+back, ↑ and ↓ move by a row, Esc cancels, and letting go of ⌘ takes you to the window.
 
-On an app with more than one window, **hold Tab** to open its window bar (the highlight stays put; a tap steps when you let go): each window by title
+**Settings › ⌘Tab switches** can step through **Apps on every workspace** or **Workspaces** instead,
+or leave ⌘Tab to **macOS**. Among apps, on one with more than one window, **hold Tab** to open its window bar (the highlight stays put; a tap steps when you let go): each window by title
 (a browser's tab, a player's video) and workspace. Tab through it and let go to land on that
 window; hold Tab again to go back to the apps.
 

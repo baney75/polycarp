@@ -260,7 +260,7 @@ final class SwitcherWiringTests: XCTestCase {
     func testTabShiftTabAndArrowsShareOneStepper() throws {
         let switcher = try Repo.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
         XCTAssertEqual(switcher.components(separatedBy: "SwitcherSelection.advance(").count - 1, 2, "list and window bar")
-        XCTAssertTrue(switcher.contains("SwitcherSelection.first(count: model.count, forward: forward)"))
+        XCTAssertTrue(switcher.contains("SwitcherSelection.first(count: model.count, forward: forward, inFront: inFront)"))
         XCTAssertFalse(switcher.contains("% c"), "no hand-rolled wrap left")
         let keys = try Repo.code("Sources/BaneySpaces/MissionControlKeys.swift")
         XCTAssertTrue(keys.contains("SwitcherSelection.arrow(keyCode: code)"))
@@ -268,6 +268,42 @@ final class SwitcherWiringTests: XCTestCase {
         let arrow = try XCTUnwrap(keys.range(of: "SwitcherSelection.arrow(keyCode: code)")).lowerBound
         XCTAssertLessThan(escape, arrow, "Esc still cancels before arrows are looked at")
         let app = try Repo.code("Sources/BaneySpaces/AppDelegate.swift")
-        XCTAssertTrue(app.contains("keys.onArrow = { [weak self] forward in self?.switcher.arrow(forward: forward) }"))
+        XCTAssertTrue(app.contains("keys.onArrow = { [weak self] forward, byRow in self?.switcher.arrow(forward: forward, byRow: byRow) }"))
+        XCTAssertTrue(keys.contains("me.onArrow(forward, SwitcherSelection.goesByRow(keyCode: code))"))
+        XCTAssertEqual(switcher.components(separatedBy: "SwitcherSelection.row(").count - 1, 1)
+    }
+
+    /// The gesture is what the keys act on, with its panel up or not; only the panel's own look and its clock ask for it.
+    func testEveryKeyActsOnTheGestureWhetherThePanelIsUpOrNot() throws {
+        let s = try SourceText.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
+        for m in ["func tabReleased()", "func arrow(forward", "func commit()", "func titlesChanged()", "private func held("] {
+            XCTAssertTrue(try XCTUnwrap(SourceText.block(after: m, in: s), m).contains("guard isActive"), m)
+        }
+        let step = try XCTUnwrap(SourceText.block(after: "func step(forward", in: s))
+        XCTAssertTrue(step.contains("guard !isActive else"))
+        XCTAssertTrue(step.contains("reveal.begin(at: time)\n        awaitReveal()\n        watchCommand()"), "the delay counts from the key press")
+        XCTAssertFalse(step.contains("show()"), "a tap shows the panel at once, so every quick one flashes it")
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "scheduledTimer(withTimeInterval: 0.25, repeats: true)", in: s)).contains("self.isActive"),
+                      "⌘ let go unseen before the panel is up")
+        for m in ["func commit()", "func cancel()"] { XCTAssertTrue(try XCTUnwrap(SourceText.block(after: m, in: s)).contains("end()"), m) }
+        let end = try XCTUnwrap(SourceText.block(after: "private func end()", in: s))
+        for part in ["reveal.end()", "revealCheck?.cancel()", "watchdog?.invalidate()", "panel?.orderOut(nil)"] { XCTAssertTrue(end.contains(part), part) }
+        XCTAssertTrue(s.contains("self.shows == showing, self.isShowing, self.panel === p, !p.isOnScreenNow"), "a late look judges another panel")
+    }
+
+    func testWindowCardsComeFromCoreAndLearnEveryFocus() throws {
+        let spaces = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "private func noteFocus(_ id", in: spaces)).contains("windowOrder.note(id)"))
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "private func apply(_ plan", in: spaces)).contains("windowOrder.note(target.id)"), "where a switch lands")
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "private func prune(", in: spaces)).contains("windowOrder.forget(except: alive)"))
+        let cards = try XCTUnwrap(SourceText.block(after: "func switcherWindows()", in: spaces))
+        XCTAssertTrue(cards.contains("Windows.stacking(of: windows).filter { saved.frames[$0.id] == nil"), "a parked window is never in front")
+        let s = try SourceText.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
+        XCTAssertTrue(s.contains("if model.mode == .windows { return model.grid.size }"), "the panel is framed from WindowGrid")
+        let rows = try XCTUnwrap(SourceText.block(after: "private var windowRows: some View", in: s))
+        XCTAssertTrue(rows.contains("windowCard(") && !rows.contains("LazyVGrid"))
+        let keys = try SourceText.code("Sources/BaneySpaces/MissionControlKeys.swift")
+        XCTAssertTrue(keys.contains("CmdTabMode.resolve(stored:"))
+        XCTAssertTrue(try SourceText.code("Sources/BaneySpaces/Setup.swift").contains("ForEach(CmdTabMode.allCases) { Text($0.title).tag($0) }"))
     }
 }

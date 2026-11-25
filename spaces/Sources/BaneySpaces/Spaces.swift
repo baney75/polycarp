@@ -107,6 +107,8 @@ final class Spaces {
     /// When each app last had the focus on each workspace, by process id: the dock's tiles and
     /// ⌘Tab's cards put the one used last first.
     private(set) var activations = AppActivations()
+    /// Windows in the order they were last in front, for ⌘Tab's window cards.
+    private var windowOrder = WindowSwitchOrder()
     /// Windows claimed for a workspace: the next window each
     /// process opens goes to that workspace, until the time runs out.
     private var claims: [pid_t: [Claim]] = [:]
@@ -805,6 +807,7 @@ final class Spaces {
         }
         windows = windows.filter { alive.contains($0.key) }
         model.sync(seen: [], alive: alive)
+        windowOrder.forget(except: alive)
         saved.frames = saved.frames.filter { alive.contains($0.key) }
         saved.hiddenApps = saved.hiddenApps.filter { NSRunningApplication(processIdentifier: $0).map { !$0.isTerminated } ?? false }
         refusedFullScreen.formIntersection(alive)
@@ -1194,6 +1197,7 @@ final class Spaces {
     /// The window in focus on its workspace, and its app the one used there last.
     private func noteFocus(_ id: WindowID) {
         model.noteFocus(id)
+        windowOrder.note(id)
         guard let pid = windows[id]?.pid, let n = model.workspace(of: id) else { return }
         activations.note("\(pid)", on: n, at: Date().timeIntervalSinceReferenceDate)
     }
@@ -1554,7 +1558,7 @@ final class Spaces {
     }
 
     /// A window's title as the last background read found it (`details`); "" before the first.
-    private func title(of id: WindowID) -> String { details[id]?.title ?? "" }
+    func title(of id: WindowID) -> String { details[id]?.title ?? "" }
 
     /// The windows on workspace `n`, for the viewer, the dock and the switcher. Titles are the last background read's
     /// (`refreshDetails`): nothing here asks an app.
@@ -1822,8 +1826,24 @@ final class Spaces {
         // asked which windows it has before one is picked: going to one it closed would bring nothing forward. Any
         // other app's closed window left the screen, which a scan notices. The scan runs in the background; other
         // requests wait their turn meanwhile.
-        let hidden = NSRunningApplication(processIdentifier: pid)?.isHidden == true
-        holdUntilFresh(asking: hidden ? [pid] : []) { [self] in pickApp(pid, on: only, announce: announce) }
+        holdUntilFresh(asking: askIfHidden(pid)) { [self] in pickApp(pid, on: only, announce: announce) }
+    }
+
+    private func askIfHidden(_ pid: pid_t) -> Set<pid_t> {
+        NSRunningApplication(processIdentifier: pid)?.isHidden == true ? [pid] : []
+    }
+
+    /// Goes to one window wherever it is by then (⌘Tab's pick); closed meanwhile, its app is still the choice. Like
+    /// `focusApp`, it waits for a fresh window list without holding the main thread.
+    func focusWindow(_ id: WindowID, pid: pid_t) {
+        guard active else { NSRunningApplication(processIdentifier: pid)?.activate(options: []); return }
+        windowOrder.pick(id, at: ProcessInfo.processInfo.systemUptime)
+        if switching { return enqueue { [weak self] in self?.focusWindow(id, pid: pid) } }
+        holdUntilFresh(asking: askIfHidden(pid)) { [self] in
+            if let n = model.workspace(of: id) { return focus(id, on: n) }
+            Trace.log("cmdTab commit window gone")
+            pickApp(pid, on: nil, announce: true)
+        }
     }
 
     private func pickApp(_ pid: pid_t, on only: Int?, announce: Bool) {
@@ -1915,6 +1935,24 @@ final class Spaces {
         )
     }
 
+    /// ⌘Tab's window cards in order (`WindowSwitchOrder`), each with its workspace, and whether the first is the window
+    /// you're in. The stacking order is the window server's, so nothing here asks an app.
+    func switcherWindows() -> (cards: [(entry: Entry, workspace: Int)], inFront: Bool) {
+        refresh()
+        let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        // A window parked in the corner is on screen to the window server, not to you.
+        let inSight = Windows.stacking(of: windows).filter { saved.frames[$0.id] == nil && model.workspace(of: $0.id).map(model.isShown) == true }
+        let here = inSight.filter { model.workspace(of: $0.id) == model.current }
+        let stacking = ([inSight.first { $0.pid == pid }].compactMap { $0 } + here).map(\.id)
+        var cards: [WindowID: (entry: Entry, workspace: Int)] = [:]
+        for n in Workspaces.range { for e in entries(on: n) { cards[e.id] = (e, n) } }
+        let list = windowOrder.list(stacking: stacking, windows: cards.map { id, c in
+            .init(id: id, workspace: c.workspace, minimized: details[id]?.minimized ?? false)
+        }, current: model.current, recent: recent, at: ProcessInfo.processInfo.systemUptime)
+        if let front = list.front { windowOrder.note(front) }
+        return (list.ids.compactMap { cards[$0] }, list.front != nil)
+    }
+
     /// App names on workspace `n`, for the menu.
     func apps(on n: Int) -> [String] {
         var seen = Set<String>()
@@ -1997,6 +2035,8 @@ final class Spaces {
         if moveFocus {
             if let target {
                 emptyHolder.orderOut(nil)
+                // The activation this causes is Polycarp's own and noted nowhere else.
+                windowOrder.note(target.id)
                 raised = target.focus()
                 if raised { lastKey[target.pid] = target.id; intended[target.pid] = nil } else {
                     // The app may come forward on its own a moment later, focusing whatever window

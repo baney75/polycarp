@@ -17,7 +17,7 @@ final class SetupModel: ObservableObject {
     @Published var topDrag = TopDragWatcher.enabled
     var onTopDragChange: ((Bool) -> Void)?
     @Published var cmdTab = MissionControlKeys.cmdTabMode
-    var onCmdTabChange: ((MissionControlKeys.CmdTabMode) -> Void)?
+    var onCmdTabChange: ((CmdTabMode) -> Void)?
     /// Whether Claude Code and Grok report to BaneySpaces; the launcher's agent rows need it.
     enum HookState { case on, off, noClaudeCode, unreadable }
     var hooksInstalled: () -> HookState = { .on }
@@ -342,7 +342,7 @@ final class SetupModel: ObservableObject {
         onTopDragChange?(on)
     }
 
-    func setCmdTab(_ mode: MissionControlKeys.CmdTabMode) {
+    func setCmdTab(_ mode: CmdTabMode) {
         cmdTab = mode
         onCmdTabChange?(mode)
     }
@@ -602,7 +602,7 @@ struct SetupView: View {
         SettingsGroup("⌘Tab") {
             SettingsRow("⌘Tab switches") {
                 Picker("⌘Tab switches", selection: binding({ model.cmdTab }, { model.setCmdTab($0) })) {
-                    ForEach(MissionControlKeys.CmdTabMode.allCases) { Text($0.title).tag($0) }
+                    ForEach(CmdTabMode.allCases) { Text($0.title).tag($0) }
                 }
                 .labelsHidden()
             }
@@ -946,6 +946,7 @@ struct SetupView: View {
 
     private var cmdTabNote: String {
         switch model.cmdTab {
+        case .windows: "Hold ⌘ and tap Tab to step through every window, on any workspace, the one you used last first; let go to go straight to it. One quick tap goes back to the last window. The arrows move by card and by row, ⌘⇧Tab steps back and Esc cancels."
         case .off: "macOS's own app switcher. It only reaches apps on the workspace you're on."
         case .apps: "Hold ⌘ and tap Tab to step through every app with a window, on any workspace, most recent first; let go to go straight to it. ⌘⇧Tab steps back and Esc cancels."
         case .workspaces: "Hold ⌘ and tap Tab to step through your workspaces, most recent first; let go to go there. ⌘⇧Tab steps back and Esc cancels."

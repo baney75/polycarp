@@ -13,6 +13,14 @@ final class OpenClockTests: XCTestCase {
         }
     }
 
+    /// The switcher waits 120 ms on purpose, so its clock starts when its panel is asked to show, not at the key.
+    func testTheSwitcherTimesItsPanelFromTheShow() throws {
+        let s = try SourceText.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
+        let show = try XCTUnwrap(SourceText.block(after: "private func show(retried", in: s))
+        XCTAssertTrue(show.contains("OpenClock(panel == nil ? \"switcher-first\" : \"switcher\")\n        defer { clock?.shown() }"))
+        XCTAssertEqual(s.components(separatedBy: "OpenClock(").count - 1, 1)
+    }
+
     func testTheLogKeepsWhatTheSwitchBenchReads() throws {
         // scripts/bench.sh reads `done=` from timing.log. An `open` line must not look like one.
         let spaces = try SourceText.code("Sources/BaneySpaces/Spaces.swift")

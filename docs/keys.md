@@ -56,9 +56,9 @@ only while a Settings switch is on; Always means it always works there.
 | Keys | What it does | Where it works | When |
 | --- | --- | --- | --- |
 | ⌘⇧1...9 | Move the window in front to workspace 1 to 9 | Anywhere | Always |
-| ⌘Tab | Switch apps or workspaces | Anywhere | When Settings has ⌘Tab switch apps or workspaces |
-| ⌘⇧Tab | Step back in the ⌘Tab switcher | Anywhere | When Settings has ⌘Tab switch apps or workspaces |
-| ←→↑↓ | Step through the switcher: → and ↓ forward, ← and ↑ back | While the ⌘Tab switcher is up | Always |
+| ⌘Tab | Switch windows, apps or workspaces | Anywhere | Unless Settings leaves ⌘Tab to macOS |
+| ⌘⇧Tab | Step back in the ⌘Tab switcher | Anywhere | Unless Settings leaves ⌘Tab to macOS |
+| ←→↑↓ | Step through the switcher: → and ↓ forward, ← and ↑ back; among windows, ↑ and ↓ move by a row | While the ⌘Tab switcher is up | Always |
 | Esc | Close the switcher without switching | While the ⌘Tab switcher is up | Always |
 
 ## Terminal
