@@ -480,6 +480,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // style.css (`polycarp-spaces style set ...`, docs/style.md): the bar draws from `Styles.shared`, which
         // follows `StyleSheetStore.didChange`. Waits up to 0.1 s for the first read, so the first panels draw with it.
         StyleSheetStore.shared.start(log: { Trace.log($0) })
+        // [defaults] in config.toml: which app does each job (docs/default-apps.md).
+        DefaultAppsStore.shared.start(log: { Trace.log($0) })
         Styles.shared.sync()
         // Settings › Appearance › "Theme sets the desktop picture" (off by default): looks once now, then on each change.
         ThemeWallpaperApplier.shared.start()
