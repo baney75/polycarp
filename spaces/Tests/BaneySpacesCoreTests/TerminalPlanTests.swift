@@ -129,11 +129,23 @@ final class TerminalPlanTests: XCTestCase {
         }
         XCTAssertEqual(AgentLaunch.argv("pi", at: "/b/pi", prompt: "@file").clipboard, "@file")
         XCTAssertEqual(AgentLaunch.argv("claude", at: "/b/c", prompt: "fix the build").argv, ["/b/c", "--", "fix the build"])
+        XCTAssertEqual(AgentLaunch.argv("pi", at: "/b/pi", prompt: "fix the build").argv, ["/b/pi", "fix the build"])
+    }
+
+    /// `claude -- update` runs its updater: a command's first word is read as one of its commands, `--` or not.
+    func testOneWordIsNeverACommand() {
+        for id in ["claude", "codex", "cursor-agent", "pi"] {
+            for word in ["update", "mcp", "doctor", "login", "-rf"] {
+                XCTAssertEqual(AgentLaunch.argv(id, at: "/b/x", prompt: word).argv, ["/b/x"], "\(id) \(word)")
+                XCTAssertEqual(AgentLaunch.argv(id, at: "/b/x", prompt: word).clipboard, word)
+            }
+        }
+        XCTAssertEqual(AgentLaunch.argv("opencode", at: "/b/o", prompt: "update").argv, ["/b/o", "--prompt=update"], "joined to its option")
     }
 
     func testNoAgentIsStartedWithItsQuestionsOff() {
         for c in DefaultAppCatalog.commands(.agent) {
-            for word in AgentLaunch.argv(c.id, at: "/b/x", prompt: "p").argv {
+            for word in AgentLaunch.argv(c.id, at: "/b/x", prompt: "fix it").argv {
                 for flag in ["skip", "danger", "yolo", "bypass", "auto", "allow", "trust", "force", "approve", "sandbox", "-y"] {
                     XCTAssertFalse(word.lowercased().contains(flag), "\(c.id) \(word)")
                 }
