@@ -1,5 +1,5 @@
 import XCTest
-import BrowserMatch
+@testable import BrowserMatch
 
 /// The launcher's matcher for a browser's rows (R-B1, R-B2): what ranks where, and that a key press over 2,000 tabs and
 /// 50,000 pages stays inside one frame. Every row is made up.
@@ -24,6 +24,11 @@ final class BrowserTableTests: XCTestCase {
         XCTAssertNil(score("pa rk", "a.example", "park"), "letters apart are no match")
         XCTAssertEqual(score("unparked park", "a.example", "park"), 700 - 13, "the best place in the row counts, not the first")
         XCTAssertEqual(score(String(repeating: "x", count: 300) + " park", "", "park"), 700 - 99, "a long title costs no more than 99")
+        XCTAssertEqual(score("парк в лесу", "", "парк"), 900 - 11, "characters, not bytes")
+        for before in ["a \u{201C}", "news\u{2014}", "a\u{A0}", "\u{300C}"] { XCTAssertEqual(score(before + "park", "", "park"), 700 - before.count - 4, before) }
+        XCTAssertEqual(score("\u{43A}park", "", "park"), 500 - 5, "a letter of another script is a letter")
+        XCTAssertNotNil(score("a", String(repeating: "x", count: 295) + "/park", "park"))
+        XCTAssertNil(score("a", String(repeating: "x", count: 296) + "/park", "park"), "an address is matched 300 bytes far")
     }
 
     func testWordsApartMustAllBeThereAndRankAsTheWeakest() {
@@ -34,6 +39,8 @@ final class BrowserTableTests: XCTestCase {
         XCTAssertNil(score("park maps", "a.example", "park zebra"))
         XCTAssertNil(score("park maps", "a.example", "   "))
         XCTAssertEqual(score("park maps", "a.example", "p a r m zebra"), 500 - 9, "a fifth word isn't looked for")
+        let long = table([("how to train a dog", ""), ("how to train a dragon", "")])
+        XCTAssertEqual(slots(long, "how to train a dragon"), [1, 0], "but a title typed whole is the whole title")
     }
 
     func testWeightAddsAndALateTieGoesFirst() {
@@ -58,6 +65,9 @@ final class BrowserTableTests: XCTestCase {
         let heavy = table((0..<20).map { ("a park, number \($0)", "") })
         let last = heavy.add(title: "a very long title that has a park in it somewhere", address: "", weight: 60)
         XCTAssertEqual(slots(heavy, "park", limit: 1), [last], "weight can lift a longer title over the rest")
+        XCTAssertEqual(slots(table([("xpark xrun", ""), ("run, then over a park", "")]), "park run", limit: 1), [1], "words apart, late")
+        let phrase = table([("run, then a park", ""), ("park run, and a long list of what there was", "")])
+        XCTAssertEqual(slots(phrase, "park run", limit: 1), [1], "the phrase, late")
     }
 
     func testARemovedRowAnswersNothingAndTheOthersStay() {
@@ -67,6 +77,7 @@ final class BrowserTableTests: XCTestCase {
         t.remove(9)
         XCTAssertEqual(slots(t, "garden"), [1])
         XCTAssertEqual(slots(t, "a"), [1], "found by letters of its own only")
+        XCTAssertEqual(Set(t.text(0)), [0], "its text is gone from memory")
         XCTAssertEqual([t.live, t.slots], [1, 2])
     }
 
@@ -75,21 +86,27 @@ final class BrowserTableTests: XCTestCase {
                      "bridge", "coffee", "planet", "silver", "travel", "window", "yellow", "orchard"]
         let t = BrowserTable()
         for i in 0..<52_000 {
+            // Every eighth address is as long as one is matched.
+            let key = i % 8 == 0 ? String(repeating: "k\(i % 977)e4rtqz\(i % 13)-", count: 24) : ""
             _ = t.add(title: "\(words[i % 20]) \(words[(i / 20) % 20]) \(words[(i / 400) % 20]) number \(i)",
-                      address: "\(words[(i / 7) % 20])\(i % 97).example/\(words[(i / 3) % 20])/\(i)?page=\(i % 31)", weight: i % 40)
+                      address: "\(words[(i / 7) % 20])\(i % 97).example/\(words[(i / 3) % 20])/\(i)?page=\(i % 31)&\(key)", weight: i % 40)
         }
         // A word typed letter by letter, words apart, an address, letters that are everywhere and nothing like any row.
         let queries = ["g", "ga", "gar", "garden", "garden ri", "river garden number 4", "e", "er", "number", "example", "garden3.ex", "zzzz", "weather 1", "a e", "page=3"]
-        var times: [Double] = []
-        for _ in 0..<8 {
-            for q in queries {
-                let from = DispatchTime.now().uptimeNanoseconds
+        var all: [Double] = [], worst = (query: "", ms: 0.0)
+        for q in queries {
+            var times: [Double] = []
+            for _ in 0..<20 {
+                let from = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) // not the time other work on this Mac takes
                 _ = t.search(q, limit: 6)
-                times.append(Double(DispatchTime.now().uptimeNanoseconds - from) / 1e6)
+                times.append(Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - from) / 1e6)
             }
+            times.sort()
+            if times[17] > worst.ms { worst = (q, times[17]) }
+            all += times
         }
-        times.sort()
-        print("browser table: p50 \(times[times.count / 2]) ms, p90 \(times[times.count * 9 / 10]) ms, max \(times[times.count - 1]) ms")
-        XCTAssertLessThan(times[times.count * 9 / 10], 16, "a key press has one frame")
+        all.sort()
+        print("browser table: p50 \(all[all.count / 2]) ms, p90 \(all[all.count * 9 / 10]) ms; the slowest query's p90 \(worst.ms) ms")
+        XCTAssertLessThan(worst.ms, 16, "a key press has one frame; \(worst.query) took the longest")
     }
 }
