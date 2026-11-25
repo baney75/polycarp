@@ -1,0 +1,122 @@
+#!/bin/bash
+# Polycarp's themes in Omarchy, and Omarchy's in Polycarp.
+#   looks list            what is there now, in sections that start with a record separator
+#   looks apply <id>      stdin: the background in base64 on one line, then colors.toml
+#   looks undo            back to the theme before the last apply
+#   looks import <id>     stdin: a Polycarp theme; the background in use is copied beside it
+#   looks forget <id>     takes an imported theme away again
+# Only what this script wrote, and nobody changed since, is ever replaced or removed. Exit 3 means it was left alone.
+set -u
+home=${HOME:?}
+themes=$home/.config/omarchy/themes
+current=$home/.local/state/omarchy/current
+polycarp=${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$home/.config}/polycarp}/themes
+state=${XDG_STATE_HOME:-$home/.local/state}/polycarp-omarchy
+
+valid() { [[ $1 =~ ^[a-z][a-z0-9-]{0,47}$ ]]; }
+
+# What a file or a folder holds, as one line.
+sum() {
+  if [[ -d $1 ]]; then (cd "$1" && find . ! -type d -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) | sha256sum
+  else sha256sum <"$1"; fi | cut -d' ' -f1
+}
+
+ours() { [[ -e $2 && ! -L $2 && -f $state/$1 && $(<"$state/$1") == "$(sum "$2")" ]]; }
+keep() { mkdir -p "$state" && sum "$2" >"$state/$1"; }
+# Takes away something `ours` has just said yes to, and the note of it.
+drop() { local note=${1:?} path=${2:?}; rm -rf -- "${path:?}" && rm -f -- "${state:?}/${note:?}"; }
+now() { cat "$current/theme.name" 2>/dev/null; }
+
+# The last apply: the theme before it, its background, the theme it set, and whether that theme was new.
+top() { [[ -s $state/undo ]] && tail -n 1 "$state/undo"; }
+field() { cut -f"$1" <<<"$2"; }
+can_undo() { local t; t=$(top) && [[ $(field 3 "$t") == "$(now)" ]]; }
+
+case ${1:-} in
+list)
+  printf '\036theme %s\n\036font %s\n\036colors\n' "$(now)" "$(omarchy-font-current 2>/dev/null)"
+  cat "$current/theme/colors.toml" 2>/dev/null
+  for f in "$polycarp"/*.toml; do
+    name=$(basename "$f" .toml)
+    [[ -f $f ]] && valid "$name" && (($(wc -c <"$f") <= 65536)) || continue
+    printf '\n\036user %s\n' "$name"
+    tr -d '\036' <"$f"
+    [[ $name != omarchy-* ]] || ours "polycarp.$name" "$f" || printf '\n\036taken %s\n' "$name"
+  done
+  for d in "$themes"/polycarp*; do
+    name=$(basename "$d")
+    [[ -e $d || -L $d ]] && ! ours "omarchy.$name" "$d" && printf '\n\036taken %s\n' "$name"
+  done
+  if can_undo; then printf '\n\036undo\n'; fi
+  ;;
+
+apply)
+  id=${2:-} new=0
+  valid "$id" && [[ $id == polycarp* ]] || exit 1
+  dir=$themes/$id
+  [[ ! -e ${OMARCHY_PATH:-/usr/share/omarchy}/themes/$id ]] || exit 3
+  if [[ -e $dir || -L $dir ]]; then ours "omarchy.$id" "$dir" || exit 3; else new=1; fi
+  before=$(now) background=$(readlink "$current/background" 2>/dev/null)
+  mkdir -p "$themes" || exit 1
+  tmp=$(mktemp -d "$themes/.polycarp.XXXXXX") || exit 1
+  trap 'rm -rf -- "${tmp:?}"' EXIT
+  mkdir "$tmp/backgrounds"
+  read -r image && base64 -d <<<"$image" >"$tmp/backgrounds/polycarp.bmp" && cat >"$tmp/colors.toml" && [[ -s $tmp/colors.toml ]] || exit 1
+  chmod 755 "$tmp"
+  if ((new)) || [[ $(sum "$tmp") != "$(sum "$dir")" ]]; then
+    ((new)) || drop "omarchy.$id" "$dir" || exit 1
+    mv "$tmp" "$dir" && keep "omarchy.$id" "$dir" || exit 1
+  fi
+  if ! omarchy theme set "$id" >/dev/null 2>&1 && [[ $(now) != "$id" ]]; then
+    ((new)) && drop "omarchy.$id" "$dir"
+    exit 1
+  fi
+  if [[ $before != "$id" ]]; then
+    last=$(top) && [[ $(field 3 "$last") == "$before" ]] || rm -f -- "${state:?}/undo"
+    printf '%s\t%s\t%s\t%s\n' "$before" "$background" "$id" "$new" >>"$state/undo"
+  fi
+  ;;
+
+undo)
+  can_undo || exit 3
+  last=$(top)
+  before=$(field 1 "$last") background=$(field 2 "$last") id=$(field 3 "$last")
+  omarchy theme set "$before" >/dev/null 2>&1 || [[ $(now) == "$before" ]] || exit 1
+  [[ -f $background ]] && omarchy theme bg set "$background" >/dev/null 2>&1
+  sed '$d' "$state/undo" >"$state/undo.next" && mv "$state/undo.next" "$state/undo"
+  [[ -s $state/undo ]] || rm -f -- "${state:?}/undo"
+  if [[ $(field 4 "$last") == 1 ]] && ours "omarchy.$id" "$themes/$id"; then drop "omarchy.$id" "$themes/$id"; fi
+  rmdir "$state" 2>/dev/null
+  exit 0
+  ;;
+
+import)
+  id=${2:-}
+  valid "$id" && [[ $id == omarchy-* ]] || exit 1
+  file=$polycarp/$id.toml
+  if [[ -e $file || -L $file ]]; then ours "polycarp.$id" "$file" || exit 3; fi
+  mkdir -p "$polycarp" || exit 1
+  tmp=$(mktemp "$polycarp/.omarchy.XXXXXX") || exit 1
+  trap 'rm -f -- "${tmp:?}"' EXIT
+  cat >"$tmp" && [[ -s $tmp ]] && chmod 644 "$tmp" && mv "$tmp" "$file" && keep "polycarp.$id" "$file" || exit 1
+  picture=$(readlink -f "$current/background" 2>/dev/null)
+  ext=${picture##*.}
+  copy=$polycarp/$id.$ext
+  if [[ -f $picture && $ext =~ ^[a-z]{3,4}$ && ! -e $copy && ! -L $copy ]]; then cp "$picture" "$copy" && keep "picture.$id.$ext" "$copy"; fi
+  ;;
+
+forget)
+  id=${2:-}
+  valid "$id" && [[ $id == omarchy-* ]] || exit 3
+  file=$polycarp/$id.toml
+  ours "polycarp.$id" "$file" || exit 3
+  drop "polycarp.$id" "$file"
+  for copy in "$polycarp/$id".*; do
+    if ours "picture.$id.${copy##*.}" "$copy"; then drop "picture.$id.${copy##*.}" "$copy"; fi
+  done
+  rmdir "$state" 2>/dev/null
+  exit 0
+  ;;
+
+*) exit 1 ;;
+esac
