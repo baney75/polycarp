@@ -18,7 +18,9 @@ function parseToml(text) {
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i].trim()
     if (line === "" || line.charAt(0) === "#") continue
-    var m = line.match(/^\[([A-Za-z0-9_.-]+)\]\s*(#.*)?$/)
+    var m = line.match(/^\[\s*([A-Za-z0-9_.-]+)\s*\]\s*(#.*)?$/)
+    // A table this reader does not know ("x", [[x]]): its keys go nowhere rather than into the table before it.
+    if (!m && line.charAt(0) === "[") { table = {}; continue }
     if (m) {
       table = out
       var path = m[1].split(".")
@@ -124,7 +126,8 @@ function resolve(name, themes) {
   var out = { name: name, title: "", description: "", light: {}, dark: {}, type: {} }
   for (i = chain.length - 1; i >= 0; i--) {
     var t = chain[i]
-    if (t.title) out.title = String(t.title)
+    // Its own title and description, not the theme's it extends.
+    if (i === 0 && t.title) out.title = String(t.title)
     if (i === 0 && t.description) out.description = String(t.description)
     var tables = ["light", "dark", "type"]
     for (var j = 0; j < tables.length; j++) for (var key in t[tables[j]] || {}) out[tables[j]][key] = t[tables[j]][key]

@@ -12,12 +12,14 @@ test('the TOML a theme uses is read, and nothing reaches past the table', (t) =>
   const check = (m) => {
     eq(m.parseToml('# a theme\nname = "x"\nsize = 12.5 # points\non = true\n[light]\nbackground = "#FFFFFF" # paper\n[surface.bar]\nfill = \'a # b\'\nquote = "say \\"hi\\""\n'),
       { name: 'x', size: 12.5, on: true, light: { background: '#FFFFFF' }, surface: { bar: { fill: 'a # b', quote: 'say "hi"' } } })
+    eq(m.parseToml('[dark]\na = "1"\n[ light ]\na = "2"\n["x"]\na = "3"\n[[y]]\na = "4"\n'), { dark: { a: '1' }, light: { a: '2' } })
     m.parseToml('[__proto__]\nowned = true\n[constructor.prototype]\nowned = true\n')
     assert.equal(m.parseToml('').owned, undefined)
   }
   check(L)
   control(t, 'Looks.js', 'return key === "__proto__" ||', 'return false &&', check)
   control(t, 'Looks.js', '"((?:[^"\\\\]|\\\\.)*)"', '"([^"]*)"', check)
+  control(t, 'Looks.js', 'if (!m && line.charAt(0) === "[") { table = {}; continue }', '', check)
 })
 
 test('contrast is WCAG contrast', (t) => {
@@ -42,10 +44,12 @@ test('a theme takes what it extends, and a loop or a missing piece is no theme',
     assert.equal(mine.dark.accent, '#ffffff')
     assert.equal(mine.dark.background, themes.polycarp.dark.background)
     assert.equal(mine.description, '', 'a description is not inherited')
+    assert.equal(mine.title, 'mine', 'nor a title')
   }
   check(L)
   control(t, 'Looks.js', 'for (i = chain.length - 1; i >= 0; i--)', 'for (i = 0; i < chain.length; i++)', check)
   control(t, 'Looks.js', 'if (!isHex(out[MODES[j]][ROLES[i]])) return null', ';', check)
+  control(t, 'Looks.js', 'if (i === 0 && t.title)', 'if (t.title)', check)
 })
 
 test('every built-in theme becomes an Omarchy theme that reads, in both modes', (t) => {
