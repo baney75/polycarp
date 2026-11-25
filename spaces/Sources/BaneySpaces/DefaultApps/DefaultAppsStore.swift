@@ -69,6 +69,22 @@ final class DefaultAppsStore: ObservableObject {
         }
     }
 
+    /// Changes a job's key, unless somebody has the chord. `done` gets what went wrong, on the main thread.
+    func setKey(_ role: AppRole, _ change: RoleKeysFile.Change, done: @escaping (String?) -> Void) {
+        let plan = keys
+        queue.async {
+            var problem: String?
+            if case .chord(let c) = change {
+                problem = RoleKeysText.refusal(c, role, plan, owner: RoleKeys.owner(modifier: Modifier.current.rawValue))
+            }
+            if problem == nil {
+                do { try RoleKeysFile.set(role, change, modifier: Modifier.current.rawValue, path: DefaultAppsFile.path()) } catch { problem = "Not saved: \(error)" }
+                self.read()
+            }
+            DispatchQueue.main.async { done(problem) }
+        }
+    }
+
     /// An install writes a folder many times: one look, a moment later.
     private func look(after seconds: Double) {
         guard !due, !still else { return }
