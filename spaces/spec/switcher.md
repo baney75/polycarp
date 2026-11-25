@@ -14,8 +14,8 @@ are last. No window is listed twice, a closed one is dropped, and the same input
 picked counts as in front for 0.5 s while its app comes forward.
 
 ### R-W2 One tap is the window used last
-The selection starts on the second card, or on the last for ⌘⇧Tab. With no window in front (an empty workspace) the
-first card is the window used last, so it starts there. One card alone is selected.
+The selection starts on the second card, or on the last for ⌘⇧Tab. With no window in front (an empty workspace, or the
+desktop clicked) the first card is the window used last, so it starts there. One card alone is selected.
 
 ### R-W3 A tap shows nothing
 The panel comes up once the gesture has lasted 120 ms, counted from the key press, or at its second step (Tab or an

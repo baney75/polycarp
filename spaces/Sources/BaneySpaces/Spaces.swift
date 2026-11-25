@@ -1943,10 +1943,11 @@ final class Spaces {
         // A window parked in the corner is on screen to the window server, not to you.
         let inSight = Windows.stacking(of: windows).filter { saved.frames[$0.id] == nil && model.workspace(of: $0.id).map(model.isShown) == true }
         let here = inSight.filter { model.workspace(of: $0.id) == model.current }
-        let stacking = ([inSight.first { $0.pid == pid }].compactMap { $0 } + here).map(\.id)
+        // The app in front with no window here (the desktop clicked) leaves nothing in front.
+        let front = inSight.first { $0.pid == pid }?.id
         var cards: [WindowID: (entry: Entry, workspace: Int)] = [:]
         for n in Workspaces.range { for e in entries(on: n) { cards[e.id] = (e, n) } }
-        let list = windowOrder.list(stacking: stacking, windows: cards.map { id, c in
+        let list = windowOrder.list(front: front, stacking: here.map(\.id), windows: cards.map { id, c in
             .init(id: id, workspace: c.workspace, minimized: details[id]?.minimized ?? false)
         }, current: model.current, recent: recent, at: ProcessInfo.processInfo.systemUptime)
         if let front = list.front { windowOrder.note(front) }

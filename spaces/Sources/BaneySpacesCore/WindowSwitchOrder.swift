@@ -76,13 +76,13 @@ public struct WindowSwitchOrder: Sendable {
         if let p = picked, !alive.contains(p.id) { picked = nil }
     }
 
-    /// `stacking` is what the window server draws front to back, the window in front first, then the `current`
-    /// workspace's others. `recent` is workspaces, most recent first.
-    public func list(stacking: [WindowID], windows: [Window], current: Int, recent: [Int], at time: Double) -> List {
+    /// `front` is the window you're in, as the window server has it, and `stacking` the `current` workspace's windows
+    /// front to back. `recent` is workspaces, most recent first.
+    public func list(front drawn: WindowID?, stacking: [WindowID], windows: [Window], current: Int, recent: [Int], at time: Double) -> List {
         let known = Dictionary(windows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let depth = Dictionary(stacking.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
         let landed = picked.flatMap { time - $0.at < Self.landing && known[$0.id] != nil ? $0.id : nil }
-        let front = landed ?? stacking.first { known[$0] != nil }
+        let front = landed ?? drawn.flatMap { known[$0] != nil ? $0 : nil }
         func rank(_ w: Window) -> (Int, Int, WindowID) {
             let place = w.workspace == current ? -1 : recent.firstIndex(of: w.workspace) ?? recent.count + w.workspace
             return (place, w.workspace == current ? depth[w.id] ?? Int.max : 0, w.id)

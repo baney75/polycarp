@@ -25,7 +25,7 @@ final class WindowSwitchOrderTests: XCTestCase {
 
     private func list(_ order: WindowSwitchOrder, _ stacking: [WindowID], _ windows: [WindowSwitchOrder.Window],
                       current: Int = 1, recent: [Int] = [1], at time: Double = 100) -> [WindowID] {
-        order.list(stacking: stacking, windows: windows, current: current, recent: recent, at: time).ids
+        order.list(front: stacking.first, stacking: stacking, windows: windows, current: current, recent: recent, at: time).ids
     }
 
     private func noted(_ ids: WindowID...) -> WindowSwitchOrder {
@@ -41,8 +41,9 @@ final class WindowSwitchOrderTests: XCTestCase {
 
     func testTheWindowInFrontIsFirstWithNoFocusEvent() {
         XCTAssertEqual(list(noted(11, 10), [12, 10, 11], on(1, 10, 11, 12)), [12, 10, 11])
-        // One the model doesn't hold (a panel of Polycarp's own) is passed over.
-        XCTAssertEqual(list(noted(11, 10), [99, 11, 10], on(1, 10, 11)), [11, 10])
+        // One the model doesn't hold (a panel of Polycarp's own) is nothing in front.
+        XCTAssertEqual(noted(11, 10).list(front: 99, stacking: [99, 11], windows: on(1, 10, 11), current: 1, recent: [1], at: 0),
+                       .init(ids: [10, 11], front: nil))
     }
 
     func testNeverFocusedWindowsGoByStackingThenRecentWorkspaceThenId() {
@@ -83,8 +84,11 @@ final class WindowSwitchOrderTests: XCTestCase {
     }
 
     func testWithNothingInFrontTheFirstCardIsTheOneUsedLast() {
-        let l = noted(30, 20).list(stacking: [], windows: on(2, 20) + on(3, 30), current: 1, recent: [1, 2], at: 0)
+        let l = noted(30, 20).list(front: nil, stacking: [], windows: on(2, 20) + on(3, 30), current: 1, recent: [1, 2], at: 0)
         XCTAssertEqual(l, .init(ids: [20, 30], front: nil))
+        // The desktop clicked: the windows drawn there aren't in front, and the one used last is a tap away.
+        XCTAssertEqual(noted(11, 10).list(front: nil, stacking: [11, 10], windows: on(1, 10, 11), current: 1, recent: [1], at: 0),
+                       .init(ids: [10, 11], front: nil))
         XCTAssertEqual(SwitcherSelection.first(count: 2, forward: true, inFront: false), 0)
         XCTAssertEqual(SwitcherSelection.first(count: 2, forward: false, inFront: false), 1)
         XCTAssertEqual(SwitcherSelection.first(count: 2, forward: true, inFront: true), 1)
