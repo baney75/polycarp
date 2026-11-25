@@ -56,10 +56,24 @@ public enum SwitcherSelection: Sendable {
         return (from + (forward ? 1 : count - 1)) % count
     }
 
-    /// Where a fresh gesture starts: the card after the current one, like the app switcher.
-    public static func first(count: Int, forward: Bool) -> Int {
-        advance(selected: 0, count: count, forward: forward)
+    /// Where a fresh gesture starts: the card after the current one, like the app switcher. With nothing in front the
+    /// first card is already another one.
+    public static func first(count: Int, forward: Bool, inFront: Bool = true) -> Int {
+        forward && !inFront ? 0 : advance(selected: 0, count: count, forward: forward)
     }
+
+    /// One row down (forward) or up among cards in rows, the same column, wrapping at both ends; a short last row
+    /// gives its last card. One row steps like the other arrows.
+    public static func row(selected: Int, count: Int, columns: Int, forward: Bool) -> Int {
+        guard count > columns, columns > 0 else { return advance(selected: selected, count: count, forward: forward) }
+        let rows = (count + columns - 1) / columns
+        let from = min(max(selected, 0), count - 1)
+        let to = advance(selected: from / columns, count: rows, forward: forward)
+        return min(to * columns + from % columns, count - 1)
+    }
+
+    /// Up and down go by row where the cards are in rows.
+    public static func goesByRow(keyCode: Int64) -> Bool { keyCode == upArrow || keyCode == downArrow }
 
     /// Right and down step forward, left and up step back; any other key is not a step.
     public static func arrow(keyCode: Int64) -> Bool? {
