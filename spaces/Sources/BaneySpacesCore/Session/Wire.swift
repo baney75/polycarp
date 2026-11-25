@@ -81,6 +81,10 @@ public enum Wire {
             /// once it is done, with a `TilingStatus`. Never over the remote socket (`Remote.allows`); the gateway runs it on this Mac
             /// for a caller with the act scope.
             case tile
+            /// What an agent may see of the browser (`BrowserAgents`): `text` is tabs, `target` a few words to look
+            /// for, `args` the most to answer. Off until the person turns it on in Settings. Local callers only
+            /// (`Remote.allows` never lets it through).
+            case browser
         }
         public var op: Op
         public var target: String?

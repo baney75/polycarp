@@ -67,8 +67,9 @@ To make a local model the default, set Eukhe's `defaultProvider` and `defaultMod
 | files | Search, fetch and send your files across your devices, and read a page you share from the browser |
 | act | Change themes and settings, move windows to the agent workspace, switch workspaces, open the launcher |
 | contacts | Reserved for the contacts feature; no tool uses it yet |
+| browser:read | List your open browser tabs' titles and addresses (`browser_tabs`), only while "Let agents see my tabs" is on in Polycarp's Settings, which is off until you turn it on. Never a page's text, a private window or a click |
 
-There is no wildcard. stdio has every scope, because it is your own process.
+There is no wildcard, and no scope implies another. stdio has every scope, because it is your own process; `browser_tabs` still answers it only while the Settings switch is on.
 
 ## Approving a web assistant
 

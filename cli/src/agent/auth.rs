@@ -21,7 +21,7 @@ use serde_json::{json, Value as Json};
 use std::collections::BTreeMap;
 
 /// What a grant or token may do. No wildcard.
-pub const SCOPES: [&str; 4] = ["read", "files", "act", "contacts"];
+pub const SCOPES: [&str; 5] = ["read", "files", "act", "contacts", "browser:read"];
 
 /// What a scope lets through, for `approve` and the docs.
 pub fn scope_meaning(s: &str) -> &'static str {
@@ -30,6 +30,7 @@ pub fn scope_meaning(s: &str) -> &'static str {
         "files" => "search the owner's files on every device, fetch one here, send one with Taildrop",
         "act" => "change the theme and settings, switch workspaces, open the launcher, focus and move windows",
         "contacts" => "the owner's contacts (no tools use it yet)",
+        "browser:read" => "the titles and addresses of the owner's open browser tabs, only while the owner allows it in Polycarp's Settings; never a page's text, a private window or a click",
         _ => "unknown",
     }
 }

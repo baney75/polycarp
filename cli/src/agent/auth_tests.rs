@@ -581,6 +581,12 @@ fn local_bearer_tokens_are_hashed_scoped_revocable_and_stay_off_tunnels_unless_a
 #[test]
 fn scopes_parse_strictly() {
     assert_eq!(parse_scopes("act, read").unwrap(), vec!["read", "act"]);
+    assert_eq!(
+        parse_scopes("browser:read read").unwrap(),
+        vec!["read", "browser:read"]
+    );
+    assert!(parse_scopes("browser").is_err());
+    assert!(parse_scopes("browser:*").is_err());
     assert_eq!(parse_scopes("read files act contacts").unwrap().len(), 4);
     assert!(parse_scopes("").is_err());
     assert!(parse_scopes("read,admin").is_err());

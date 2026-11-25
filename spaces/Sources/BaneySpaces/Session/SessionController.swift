@@ -359,6 +359,10 @@ final class SessionController {
         return RoleOpener.open(request)
     }
 
+    private func browser(_ r: Wire.Request) -> Wire.Reply {
+        BrowserAgents.reply(r, on: UserDefaults.standard.bool(forKey: BrowserAgents.key), rows: BrowserHub.shared.book.rows(.tabs))
+    }
+
     func handle(_ r: Wire.Request) -> Wire.Reply {
         // Looks need no Accessibility, so they answer before the session engine has started.
         if r.op == .setting { return setting(r) }
@@ -379,6 +383,8 @@ final class SessionController {
         // People in Contacts need no Accessibility either; another machine never gets here (`Remote.allows`).
         if r.op == .contacts { return ContactsLibrary.shared.handle(r) }
         if r.op == .role { return role(r) }
+        // The browser's tabs need no Accessibility; another machine never gets here (`Remote.allows`).
+        if r.op == .browser { return browser(r) }
         guard started else { return .init(ok: false, error: "Polycarp hasn't finished starting (it needs Accessibility)") }
         switch r.op {
         case .ping:
@@ -431,6 +437,8 @@ final class SessionController {
         case .tile:
             // Answered above (`later`), once it is done.
             return .init(ok: false, error: "Polycarp isn't placing windows now")
+        case .browser:
+            return browser(r)
         case .remote:
             switch r.text ?? "status" {
             case "on":

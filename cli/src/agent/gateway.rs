@@ -406,6 +406,25 @@ mod tests {
     }
 
     #[test]
+    fn browser_tabs_needs_its_own_scope_that_no_other_scope_implies() {
+        let f = Arc::new(Fake::new(true));
+        let gw = Gateway::new(f.clone());
+        let everything_else = caller(&["read", "files", "act", "contacts"]);
+        assert!(!names(&gw, &everything_else).contains(&"browser_tabs".to_string()));
+        let mut s = Session::default();
+        let (code, m) = gw
+            .call("browser_tabs", None, &everything_else, &mut s)
+            .unwrap_err();
+        assert_eq!(code, -32602);
+        assert!(m.contains("browser:read"), "{m}");
+        assert!(f.sent.lock().unwrap().is_empty(), "nothing reaches the app");
+        let only = caller(&["browser:read"]);
+        assert_eq!(names(&gw, &only), vec!["browser_tabs".to_string()]);
+        let (r, ok) = gw.call("browser_tabs", None, &only, &mut s).unwrap();
+        assert!(ok, "{r}");
+    }
+
+    #[test]
     fn a_caller_sees_and_calls_only_what_its_scopes_allow() {
         let f = Arc::new(Fake::new(true));
         let gw = Gateway::new(f.clone());

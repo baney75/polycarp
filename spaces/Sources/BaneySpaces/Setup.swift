@@ -636,6 +636,11 @@ struct SetupView: View {
             }
         }
 
+        SettingsGroup("What agents may see") {
+            SettingsRow("Let agents see my tabs", help: "Assistants you gave the browser:read scope can list your open tabs' titles and addresses. Never a page's text, never a private window, and they can't click. Needs Open tabs on in Launcher.") {
+                Toggle("Let agents see my tabs", isOn: binding({ UserDefaults.standard.bool(forKey: BrowserAgents.key) }, { UserDefaults.standard.set($0, forKey: BrowserAgents.key); model.objectWillChange.send() })).labelsHidden()
+            }
+        }
         SettingsGroup("Agent hooks") {
             switch model.hooks {
             case .noClaudeCode:
