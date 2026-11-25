@@ -16,8 +16,10 @@ enum OpenTiming {
         launcher.query = "a"
         let switcher = SwitcherModel()
         switcher.mode = .apps
-        switcher.apps = (1...12).map { n in
-            SwitcherModel.AppTile(pid: pid_t(n), name: "App \(n)", icon: icon, workspace: (n - 1) % 9 + 1, windows: n % 3 + 1, isSplit: n % 4 == 0)
+        // Typed out: a slower compiler gave up inferring the closure.
+        switcher.apps = (1...12).map { (n: Int) -> SwitcherModel.AppTile in
+            let workspace: Int = (n - 1) % 9 + 1, windows: Int = n % 3 + 1
+            return SwitcherModel.AppTile(pid: pid_t(n), name: "App \(n)", icon: icon, workspace: workspace, windows: windows, isSplit: n % 4 == 0)
         }
         // One unmeasured round of each warms the fonts and the icons.
         for _ in 0..<2 {
