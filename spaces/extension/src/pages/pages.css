@@ -61,3 +61,6 @@ kbd { font: 700 11px/1 var(--font); padding: 3px 6px; border-radius: var(--r-sm)
 .flist li b { display: flex; flex-direction: column; font-weight: 400; }
 .flist .fsum { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flist small { color: var(--muted); }
+
+/* Settings > Page edits */
+.emono { min-height: 96px; padding: var(--s2) var(--s3); font: 400 var(--t-sm)/1.5 var(--font-mono); resize: vertical; }

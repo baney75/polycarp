@@ -12,8 +12,8 @@
 (function () {
   "use strict";
   const P = globalThis.Polycarp || (globalThis.Polycarp = {});
-  const E = globalThis.PolycarpEdits;
-  if (!E || P.pageEdits || !/html/.test(document.contentType) || window !== window.top) return;
+  const E = globalThis.PolycarpEdits, S = globalThis.PolycarpEditsStore;
+  if (!E || !S || P.pageEdits || !/html/.test(document.contentType) || window !== window.top) return;
 
   const NOTE = "polycarp-note";
   const MOVED = "polycarp-moved", AWAY = "data-polycarp-moved";
@@ -37,7 +37,7 @@
     const win = doc.defaultView;
     let edits = [], sheets = [], undo = [], notes = [];
     let room = KEPT, observer = null, timer = 0, frame = 0, lastMs = 0, themeCss = null, inert = null, more = false;
-    let state = new Map(); // a change -> { tries: WeakMap, last: WeakMap, count, note, host, at, el, html }
+    let state = new Map(); // a change -> { tries: WeakMap, last: WeakMap, count, did, note, host, at, el, html }
     let wrote = new WeakMap(); // a text node -> { orig, now }: the page's words, and ours
 
     const tagIs = (el, sel) => { try { return el.matches(sel); } catch (e) { return false; } };
@@ -46,7 +46,7 @@
     const ok = (sel) => { try { doc.querySelector(sel); return true; } catch (e) { return false; } };
     const all = (sel) => { try { return [...doc.querySelectorAll(sel)]; } catch (e) { return []; } };
     const first = (sel, not) => all(sel).find((el) => !el.closest(E.OURS) && !(not && not(el))) || null;
-    const st = (c) => { let s = state.get(c); if (!s) state.set(c, s = { tries: new WeakMap(), last: new WeakMap(), count: 0, note: "", host: null, at: null, el: null, html: "" }); return s; };
+    const st = (c) => { let s = state.get(c); if (!s) state.set(c, s = { tries: new WeakMap(), last: new WeakMap(), count: 0, did: false, note: "", host: null, at: null, el: null, html: "" }); return s; };
     // Whether a change may act on this part again. New words each time (a price, a counter) aren't a page fighting back.
     function again(s, el, was = "") {
       const t = s.tries.get(el), now = win.performance.now();
@@ -129,7 +129,7 @@
           reword(t, was, now);
           did = true;
         });
-        if (did) work++;
+        if (did) { work++; s.did = true; }
         if (!end) s.last.set(el, el.textContent);
       }
     }
@@ -145,6 +145,7 @@
         if (work >= MOST) { more = true; continue; }
         if (!again(s, el)) continue;
         work++;
+        s.did = true;
         const set = (v) => (v === null ? el.removeAttribute(c.name) : el.setAttribute(c.name, v));
         set(c.value);
         keep(el, () => { if (el.getAttribute(c.name) === c.value) set(had); });
@@ -351,11 +352,12 @@
       for (const u of undo.reverse()) { try { u.back(); } catch (e) { /* the page took that part away */ } }
       edits = []; sheets = []; undo = []; notes = []; state = new Map(); wrote = new WeakMap(); room = KEPT;
     }
-    // What each edit in force did here: how many parts each change found, and why one didn't.
+    // What each edit in force did here: how many parts each change found, whether it changed any, and why one didn't.
     function report() {
       return edits.map((e) => ({ id: e.id, source: e.source, name: e.name, css: !!e.css, changes: e.changes.map((c) => {
         const s = state.get(c);
-        const out = { do: c.do, hits: s ? s.count : all(c.at).length, note: s ? s.note : "" };
+        const out = { do: c.do, hits: s ? s.count : all(c.at).length, did: false, note: s ? s.note : "" };
+        out.did = c.do === "hide" ? all(c.at).some((el) => !isRoot(el) && !tagIs(el, E.OURS)) : c.do === "text" || c.do === "attr" ? !!s && s.did : out.hits > 0;
         if (!ok(c.at) || (c.to && !ok(c.to))) out.note = "this browser can't read that selector";
         else if (!out.hits && !out.note) out.note = "nothing on this page matches";
         return out;
@@ -368,21 +370,15 @@
   // Settings and edits come from storage: the app's (kept fresh by the service worker) and this browser's own. A change
   // there, or a new address on a page that doesn't reload, reaches this page at once.
   const page = create(document);
-  const KEYS = [P.SETTINGS_KEY, E.APP_KEY, E.LOCAL_KEY, E.OFF_KEY];
   const alive = () => { try { return !!chrome.runtime.id; } catch (e) { return false; } };
-  let applied = "", turn = 0, watching = true;
+  let applied = "", turn = 0, watching = true, here = [], onapply = [];
 
-  async function load() {
-    const got = await chrome.storage.local.get([E.APP_KEY, E.LOCAL_KEY, E.OFF_KEY]);
-    const app = got[E.APP_KEY] && Array.isArray(got[E.APP_KEY].edits) ? got[E.APP_KEY].edits : [];
-    return E.merge(app, got[E.LOCAL_KEY], got[E.OFF_KEY]);
-  }
   async function apply() {
     if (!alive()) return end();
     const mine = ++turn;
     let edits = [];
     try {
-      const [settings, all] = await Promise.all([P.getSettings(), load()]);
+      const [settings, all] = await Promise.all([P.getSettings(), S.load()]);
       // Off only where the person turned Polycarp off: an edit names its sites, so the restyle default isn't asked.
       if (settings.enabled && !P.paused(settings) && settings.sites[P.hostOf(location.href)] !== "off") edits = E.active(all.edits, location.hostname, location.pathname);
     } catch (e) { return; }
@@ -390,9 +386,11 @@
     const sig = JSON.stringify(edits);
     if (sig === applied) return;
     applied = sig;
+    here = edits;
     try { page.update(edits); } catch (e) { /* a broken edit never breaks the page */ }
+    for (const f of onapply) f(edits);
   }
-  const onStorage = (changes, area) => { if (area === "local" && KEYS.some((k) => changes[k])) apply(); };
+  const onStorage = (changes, area) => { if (S.changed(changes, area) || (area === "local" && changes[P.SETTINGS_KEY])) apply(); };
   const onUrl = () => { if (alive()) apply(); else end(); };
   const onShow = (e) => { if (e.persisted) onUrl(); }; // back from the page cache, which hears no storage changes
   function onMessage(msg, _sender, reply) {
@@ -401,6 +399,7 @@
   function end() {
     watching = false;
     page.stop();
+    for (const f of onapply) f([]);
     applied = "";
     try { chrome.storage.onChanged.removeListener(onStorage); chrome.runtime.onMessage.removeListener(onMessage); } catch (e) {}
     if (globalThis.navigation) navigation.removeEventListener("currententrychange", onUrl);
@@ -409,7 +408,7 @@
     document.removeEventListener("DOMContentLoaded", page.flush);
     removeEventListener("load", page.flush);
   }
-  P.pageEdits = { apply, report: page.report };
+  P.pageEdits = { apply, report: page.report, watch: (f) => { onapply.push(f); f(here); } };
 
   // A copy from before an extension update is still on the page with its edits made: it takes them back first, so this
   // copy starts from the page as the site made it. All a page could do with this is ask for itself unedited.

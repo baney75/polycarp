@@ -74,7 +74,9 @@
       "js": [
         "src/shared/core.js",
         "src/shared/edits.js",
-        "src/content/edits.js"
+        "src/shared/edits-store.js",
+        "src/content/edits.js",
+        "src/content/edits-notice.js"
       ],
       "run_at": "document_start"
     }

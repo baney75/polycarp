@@ -1,6 +1,6 @@
 # Page edits
 
-Polycarp's browser extension can change web pages for you: hide parts, restyle them, reword them, move them, or add a note. You make edits in the browser, and the agents on your computer make them through Polycarp. Both kinds show in the extension's Settings, where you turn each one off or remove it.
+Polycarp's browser extension can change web pages for you: hide parts, restyle them, reword them, move them, or add a note. You make edits in the browser, and the agents on your computer make them through Polycarp. Both kinds show in the extension's Settings, with a switch; your own can be deleted there. A switch is this browser's: it leaves the agent's edit in Polycarp, where `polycarp-spaces edits rm` removes it.
 
 An edit stays with the sites it names and applies each time you open them. It changes how a page looks and reads in your browser and nothing else. It can't click, type, submit a form, load anything from the network or run a script, and it leaves form fields, text editors, frames and stylesheet links alone. Agents never drive the browser through it.
 
@@ -8,7 +8,7 @@ An edit stays with the sites it names and applies each time you open them. It ch
 
 Agents' edits are in `edits.json`, beside `filters.json` in `~/Library/Application Support/Polycarp/`. The extension asks Polycarp for them through its native host, so they work on a Mac with Polycarp installed. The edits you make in the browser stay in the browser.
 
-Open pages pick a change up within 30 seconds, new pages at once.
+Open pages pick a change up within 30 seconds, new pages at once. The first time an agent's edit changes a page, the page says so and offers Undo.
 
 ## From a terminal
 

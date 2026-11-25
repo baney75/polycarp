@@ -58,6 +58,11 @@
     <span class="switch"><input type="checkbox" id="ruler"></span>
   </section>
 
+  <section id="edits" aria-labelledby="editsLbl" hidden>
+    <h2 class="elbl" id="editsLbl">Edits on this page</h2>
+    <ul class="elist" id="editsList"></ul>
+  </section>
+
   <button class="btn primary block" id="read"></button>
   <nav class="more">
     <button class="btn quiet" id="openFile"></button>
@@ -76,6 +81,9 @@
 <script src="../shared/bionic.js"></script>
 <script src="../shared/icons.js"></script>
 <script src="../shared/memory.js"></script>
+<script src="../shared/edits.js"></script>
+<script src="../shared/edits-store.js"></script>
+<script src="popup-edits.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>
