@@ -80,6 +80,8 @@ final class DefaultAppsPaneTests: XCTestCase {
         let store = try SourceText.code("Sources/BaneySpaces/DefaultApps/DefaultAppsStore.swift")
         let show = try XCTUnwrap(SourceText.block(after: "func showIcons() ", in: store))
         XCTAssertTrue(show.contains("queue.async {"))
+        XCTAssertTrue(show.contains("self.drawn = [:]"), "icons are drawn from then on")
+        XCTAssertTrue(try SourceText.code("Sources/BaneySpaces/Setup.swift").contains("case .defaults: DefaultAppsPane()"))
         XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "func refresh() ", in: store)).contains("queue.async {"))
         let pane = try SourceText.code("Sources/BaneySpaces/DefaultApps/DefaultAppsPane.swift")
         XCTAssertFalse(pane.contains("urlForApplication"))
