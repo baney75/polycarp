@@ -36,8 +36,11 @@ is "a change outside the plugin is not a release" "$(there rev-parse main)" "$fi
 version() { printf '{\n  "id": "x.y",\n  "version": %s\n}\n' "$1" >plugins/omarchy/manifest.json; }
 echo more >>plugins/omarchy/ui/A.qml
 commit more
-refuses "still says 1.2.3"
-version '"1.2.4"'
+refuses "1.2.3, which is not above 1.2.3"
+version '"1.2.0"'
+commit lower
+refuses "1.2.0, which is not above 1.2.3"
+version '"1.2.10"'
 commit bump
 run >/dev/null
 is "the next one is on top of the last" "$(there rev-parse main^)" "$first"
@@ -61,7 +64,10 @@ refuses "not JSON"
 version null
 commit null
 refuses "no version"
-version '"1.2.5"'
+version 3
+commit number
+refuses "no version"
+version '"1.2.11"'
 head -c 2200000 /dev/zero >plugins/omarchy/big
 commit big
 refuses "over 2 MB"

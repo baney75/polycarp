@@ -32,15 +32,23 @@ links=$(git ls-tree -r "$tree" | awk '$1 != "100644" && $1 != "100755"')
 size=$(git ls-tree -r -l "$tree" | awk '{ n += $4 } END { print n + 0 }')
 ((size < 2 * 1024 * 1024)) || fail "$size bytes is over 2 MB"
 command -v node >/dev/null || fail "needs node"
-# The manifest's version, or nothing when it is not JSON or has no version that is text.
+# The manifest's version; nothing when it has none that is text, and a failure when it is not JSON.
 versionOf() {
   git cat-file blob "$1:manifest.json" | node -e '
     let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
-      try { const v = JSON.parse(s).version; if (v.trim()) console.log(v) } catch {}
+      let m; try { m = JSON.parse(s) } catch { process.exit(3) }
+      const v = m && m.version; if (typeof v === "string" && v.trim()) console.log(v)
     })'
 }
-version=$(versionOf "$tree")
-[[ $version ]] || fail "manifest.json has no version, or is not JSON"
+# Whether version $1 is above $2, number by number: 1.10.0 is above 1.9.3.
+above() {
+  node -e '
+    const [a, b] = process.argv.slice(1).map((v) => v.split(".").map((n) => parseInt(n, 10)))
+    for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = (a[i] || 0) - (b[i] || 0); if (d) process.exit(d > 0 ? 0 : 1) }
+    process.exit(1)' "$1" "$2"
+}
+version=$(versionOf "$tree") || fail "manifest.json is not JSON"
+[[ $version ]] || fail "manifest.json has no version"
 
 heads=$(git ls-remote "$to") || fail "could not reach $to"
 parent=
@@ -59,8 +67,11 @@ if [[ $parent ]] && [[ $(git rev-parse "$parent^{tree}") == "$tree" ]]; then
   echo "publish-omarchy: $to already has this ($version)"
   exit 0
 fi
-# Omarchy shows the version, so new content under an old one would look like no update.
-[[ -z $parent || $(versionOf "$parent") != "$version" ]] || fail "manifest.json still says $version; raise it"
+# Omarchy shows the version, so new content under the same one or a lower one would look like no update, or a step back.
+if [[ $parent ]]; then
+  old=$(versionOf "$parent" || true)
+  [[ -z $old ]] || above "$version" "$old" || fail "manifest.json says $version, which is not above $old; raise it"
+fi
 
 message="Polycarp for Omarchy $version
 
