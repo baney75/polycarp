@@ -1,0 +1,190 @@
+import Foundation
+
+/// One element of Notification Center as Accessibility reads it. Nothing here calls Accessibility, so tests can hold a tree.
+public struct NoticeNode: Equatable, Sendable {
+    public var subrole, identifier, text, label, stacking: String
+    public var actions: [String]
+    public var children: [NoticeNode]
+
+    public init(subrole: String = "", identifier: String = "", text: String = "", label: String = "", stacking: String = "",
+                actions: [String] = [], children: [NoticeNode] = []) {
+        self.subrole = subrole; self.identifier = identifier; self.text = text; self.label = label; self.stacking = stacking
+        self.actions = actions; self.children = children
+    }
+}
+
+/// A banner or alert on screen, read from its element. Its words come from other people: shown, never acted on.
+public struct NoticeBanner: Equatable, Sendable {
+    public var app: String
+    /// The bundle id, when macOS gives one.
+    public var bundle: String?
+    public var title, subtitle, body: String
+    /// The child indexes from the windows down to its element, and the action that closes it, for pressing.
+    public var path: [Int]
+    public var close: String?
+
+    /// What makes two reads the same notification: who sent it and every word of it.
+    var same: [String] { [bundle ?? app, title, subtitle, body] }
+    public func matches(_ other: NoticeBanner) -> Bool { same == other.same }
+}
+
+public enum NoticeReader {
+    public static let maxDepth = 14, maxNodes = 800, maxText = 400
+    static let subroles: Set = ["AXNotificationCenterBanner", "AXNotificationCenterBannerStack",
+                                "AXNotificationCenterAlert", "AXNotificationCenterAlertStack"]
+
+    public struct Reading: Equatable, Sendable {
+        /// Notification Center itself is open, with the history and the widgets: what it lists is not new.
+        public var centerOpen: Bool
+        public var banners: [NoticeBanner]
+    }
+
+    /// Every banner and alert under Notification Center's windows, first to last. A banner's own children are its words,
+    /// so nothing under one is a second banner. A tree too deep or too large is read as far as the limits.
+    public static func read(_ windows: [NoticeNode]) -> Reading {
+        var out: [NoticeBanner] = [], open = false, left = maxNodes
+        func walk(_ n: NoticeNode, _ path: [Int]) {
+            guard path.count <= maxDepth, left > 0 else { return }
+            left -= 1
+            if n.identifier.hasPrefix("widget") { open = true }
+            if subroles.contains(n.subrole) {
+                if let b = banner(n, path) { out.append(b) }
+                return
+            }
+            for (i, c) in n.children.enumerated() { walk(c, path + [i]) }
+        }
+        for (i, w) in windows.enumerated() { walk(w, [i]) }
+        return Reading(centerOpen: open, banners: out)
+    }
+
+    private static func banner(_ n: NoticeNode, _ path: [Int]) -> NoticeBanner? {
+        var words: [String: String] = [:]
+        func gather(_ e: NoticeNode, _ depth: Int) {
+            guard depth <= maxDepth else { return }
+            if ["title", "subtitle", "body"].contains(e.identifier), words[e.identifier] == nil {
+                let t = clean(e.text.isEmpty ? e.label : e.text)
+                if !t.isEmpty { words[e.identifier] = t }
+            }
+            e.children.forEach { gather($0, depth + 1) }
+        }
+        n.children.forEach { gather($0, 1) }
+        let label = clean(n.label, most: maxText * 4)
+        var title = words["title"] ?? "", body = words["body"] ?? "", app = ""
+        if !title.isEmpty, let r = label.range(of: ", " + title) {
+            app = String(label[..<r.lowerBound])
+        } else if title.isEmpty {
+            // No named parts: the label is "App, Title, Body".
+            let parts = label.components(separatedBy: ", ")
+            app = parts.first ?? ""
+            if parts.count > 1 { title = clean(parts[1]) }
+            if parts.count > 2, body.isEmpty { body = clean(parts[2...].joined(separator: ", ")) }
+        }
+        let bundle = bundle(n.stacking)
+        app = clean(app, most: 80)
+        if app.isEmpty { app = bundle ?? "Notification" }
+        guard !title.isEmpty || !body.isEmpty else { return nil }
+        return NoticeBanner(app: app, bundle: bundle, title: title, subtitle: words["subtitle"] ?? "", body: body, path: path,
+                            close: n.actions.first { actionName($0) == "Close" })
+    }
+
+    /// `bundleIdentifier=com.apple.mail,threadIdentifier=...` gives `com.apple.mail`.
+    static func bundle(_ stacking: String) -> String? {
+        guard let r = stacking.range(of: "bundleIdentifier=") else { return nil }
+        let id = stacking[r.upperBound...].unicodeScalars.prefix { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "." || $0 == "-" || $0 == "_") }
+        return id.isEmpty || id.count > 200 ? nil : String(String.UnicodeScalarView(id))
+    }
+
+    /// The name in a custom action, which reads `Name:Close` and then lines for its target and selector.
+    public static func actionName(_ action: String) -> String {
+        guard action.hasPrefix("Name:") else { return action }
+        return String(action.dropFirst(5).prefix { !$0.isNewline })
+    }
+
+    /// Text as it may be shown: on one line, with no control characters and none that turn the reading order around.
+    static func clean(_ s: String, most: Int = maxText) -> String {
+        let turns: Set<Unicode.Scalar> = ["\u{200E}", "\u{200F}", "\u{061C}", "\u{202A}", "\u{202B}", "\u{202C}", "\u{202D}", "\u{202E}", "\u{2066}", "\u{2067}", "\u{2068}", "\u{2069}"]
+        var text = String.UnicodeScalarView()
+        for u in s.unicodeScalars {
+            if text.count == most { break }
+            if CharacterSet.newlines.contains(u) || u == "\t" { text.append(" "); continue }
+            // The joiners emoji and some scripts need are format characters, and stay.
+            if turns.contains(u) || CharacterSet.controlCharacters.contains(u) && u != "\u{200D}" && u != "\u{200C}" { continue }
+            text.append(u)
+        }
+        return String(text).trimmingCharacters(in: .whitespaces)
+    }
+}
+
+/// The notifications Polycarp has seen since it started, newest first. Kept in memory only and never written or logged.
+public struct NoticeShelf: Equatable, Sendable {
+    public static let most = 200
+
+    public struct Notice: Equatable, Sendable, Identifiable {
+        public var id: Int
+        public var banner: NoticeBanner
+        public var at: Date
+        public var seen: Bool
+        /// On screen as of the last read, at `banner.path`.
+        public var live: Bool
+        public var key: String { banner.bundle ?? banner.app }
+    }
+
+    public struct Group: Equatable, Sendable, Identifiable {
+        public var id: String
+        public var app: String
+        public var notices: [Notice]
+    }
+
+    public private(set) var notices: [Notice] = []
+    /// Apps whose banners Polycarp closes and files without counting, by `Notice.key`.
+    public var quiet: Set<String> = []
+    private var next = 1
+
+    public init() {}
+
+    /// Takes one read of the screen. Gives back the notices that just came, and leaves each gone banner on the shelf.
+    /// A notification sent again word for word moves to the top instead of being listed twice.
+    @discardableResult
+    public mutating func take(_ r: NoticeReader.Reading, at now: Date) -> [Notice] {
+        if r.centerOpen {
+            for i in notices.indices { notices[i].live = false; notices[i].seen = true }
+            return []
+        }
+        let before = notices.filter(\.live).map(\.banner.same)
+        for i in notices.indices { notices[i].live = false }
+        var came: [Notice] = []
+        for b in r.banners.reversed() {
+            if before.contains(b.same), let i = notices.firstIndex(where: { $0.banner.same == b.same }) {
+                notices[i].banner = b
+                notices[i].live = true
+                continue
+            }
+            notices.removeAll { $0.banner.same == b.same }
+            let n = Notice(id: next, banner: b, at: now, seen: quiet.contains(b.bundle ?? b.app), live: true)
+            next += 1
+            notices.insert(n, at: 0)
+            came.append(n)
+        }
+        if notices.count > Self.most { notices.removeLast(notices.count - Self.most) }
+        return came
+    }
+
+    public var unread: Int { notices.filter { !$0.seen }.count }
+
+    /// What the bar's count reads: nothing for none.
+    public var count: String { unread == 0 ? "" : unread > 99 ? "99+" : String(unread) }
+
+    /// By app, the app with the newest first.
+    public var groups: [Group] {
+        var out: [Group] = []
+        for n in notices {
+            if let i = out.firstIndex(where: { $0.id == n.key }) { out[i].notices.append(n) } else { out.append(Group(id: n.key, app: n.banner.app, notices: [n])) }
+        }
+        return out
+    }
+
+    public mutating func see() { for i in notices.indices { notices[i].seen = true } }
+    public mutating func dismiss(_ id: Int) { notices.removeAll { $0.id == id } }
+    public mutating func clear(key: String) { notices.removeAll { $0.key == key } }
+    public mutating func clearAll() { notices.removeAll() }
+}
