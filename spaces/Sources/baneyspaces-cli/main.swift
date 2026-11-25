@@ -51,6 +51,9 @@ usage: \(me) <command>
   style path|show|check [file]|example|set '<sel>' <prop> <value>|unset '<sel>' [prop]|reset [--json]
                               style.css: restyle the top bar on top of the theme
                               (style help, docs/style.md)
+  defaults [get|candidates|set|reset] [--json]
+                              which app does each job: agent, browser, terminal and more
+                              (defaults help, docs/default-apps.md)
   keys [--json]               every Polycarp shortcut, grouped, with your modifier (docs/keys.md)
   update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it
   --version                   this command's version and the commit it was built from
@@ -277,6 +280,9 @@ case "edits", "edit":
     EditsCommand.run(rest, remote: remoteHost != nil)
 case "style":
     StyleCommand.run(rest, remote: remoteHost != nil)
+case "defaults":
+    DefaultsCommand.run(rest, remote: remoteHost != nil)
+
 case "keys":
     KeysCommand.run(rest, remote: remoteHost != nil)
 case "contacts", "contact":

@@ -32,6 +32,10 @@ What is installed is read from Launch Services and the disk. No program, shell o
 A program opens in your terminal when that terminal can be told what to run, else in the first installed one that can.
 A terminal that can't says so where it is offered.
 
+### R-D8 macOS's own defaults change only by a person's click
+Choosing an app here changes what Polycarp opens. Making a browser or a mail app the whole Mac's is a button a person
+presses in Settings, and macOS asks them. The CLI, MCP, agents, updates and timers can't do it.
+
 ### R-D9 The file
 The choices are the `[defaults]` table of the configuration file (config.md), a role to an id, only for roles you chose:
 
