@@ -54,18 +54,6 @@
         },
         "target": "P2: p90 under 150"
       },
-      "dock": {
-        "p50": 60,
-        "p90": 100,
-        "p99": 150,
-        "measured": {
-          "n": 301,
-          "p50": 68,
-          "p90": 122,
-          "max": 1621
-        },
-        "target": "P3: p99 under 150"
-      },
       "launcher": {
         "p50": 60,
         "p90": 100,
@@ -76,7 +64,7 @@
           "p90": 103,
           "max": 563
         },
-        "target": "same as the dock: a panel already built"
+        "target": "a panel already built"
       },
       "launcher-first": {
         "p50": 150,
@@ -90,7 +78,7 @@
         "p90": 100,
         "p99": 150,
         "measured": null,
-        "target": "same as the dock: a panel already built"
+        "target": "a panel already built"
       },
       "overview-first": {
         "p50": 150,
@@ -104,7 +92,7 @@
         "p90": 100,
         "p99": 150,
         "measured": null,
-        "target": "same as the dock: a window already built"
+        "target": "a window already built"
       },
       "settings-first": {
         "p50": 150,

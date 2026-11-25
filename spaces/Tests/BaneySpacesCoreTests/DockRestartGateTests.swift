@@ -27,12 +27,12 @@ final class DockRestartGateTests: XCTestCase {
         XCTAssertEqual(DockRestartGate.decide(onFullScreenSpace: false, switching: false, dockUptime: 60, sinceSpaceChange: 5), .restartNow)
     }
 
-    func testAQuitGivesItsRestartToAHelperAndAnInstallRestoresNothing() throws {
+    func testAQuitGivesItsRestartToAHelper() throws {
         let app = try source("Sources/BaneySpaces/AppDelegate.swift")
         let quit = try XCTUnwrap(app.range(of: "func applicationWillTerminate").map { String(app[$0.lowerBound...].prefix(2000)) })
-        XCTAssertTrue(quit.contains("dock.stop(restoreSystemDock: !forInstall)"))
         XCTAssertTrue(quit.contains("DockRestart.handOffBeforeQuit()"), "what the quit owes outlives it")
-        XCTAssertLessThan(try XCTUnwrap(quit.range(of: "DockRestart.isQuitting = true")).lowerBound, try XCTUnwrap(quit.range(of: "dock.stop")).lowerBound)
+        XCTAssertLessThan(try XCTUnwrap(quit.range(of: "DockRestart.isQuitting = true")).lowerBound,
+                          try XCTUnwrap(quit.range(of: "DockRestart.handOffBeforeQuit()")).lowerBound)
         XCTAssertFalse(EntryPoint.runsBesideAnotherCopy.contains(DockRestartHelper.argument), "the app no longer runs as the helper")
     }
 
@@ -177,7 +177,7 @@ final class DockRestartGateTests: XCTestCase {
     }
 
     func testNothingKillsTheDockWithoutTheGate() throws {
-        for file in ["Sources/BaneySpaces/WorkspaceDock.swift", "Sources/BaneySpaces/MissionControlOverride.swift", "Sources/BaneySpaces/TopDragWatcher.swift"] {
+        for file in ["Sources/BaneySpaces/SystemDock.swift", "Sources/BaneySpaces/MissionControlOverride.swift", "Sources/BaneySpaces/TopDragWatcher.swift"] {
             XCTAssertFalse(try source(file).contains("/usr/bin/killall"), "\(file) kills a process by itself")
         }
         XCTAssertTrue(try source("Sources/BaneySpaces/DockRestart.swift").contains("DockRestartGate.decide"))

@@ -288,7 +288,7 @@ final class AppearanceTests: XCTestCase {
     }
 
     func testEveryPanelDrawsItsBackgroundFromChromeAndWatchesAppearance() throws {
-        for (file, view) in [("WorkspaceDock.swift", "struct DockView"), ("WorkspaceSwitcher.swift", "struct SwitcherView"),
+        for (file, view) in [("WorkspaceSwitcher.swift", "struct SwitcherView"),
                              ("Launcher.swift", "struct LauncherView"), ("SwitchHUD.swift", "struct HUDView"),
                              ("Viewer.swift", "struct ViewerView"), ("WorkspaceSwitcher.swift", "struct WorkspaceBadge")] {
             let text = try appSource(file)
@@ -297,13 +297,6 @@ final class AppearanceTests: XCTestCase {
             XCTAssertTrue(head.contains("@ObservedObject private var appearance = Appearance.shared"), "\(view) must redraw when the look changes")
         }
         XCTAssertFalse(try appSource("Viewer.swift").contains("Color(red: 0.91"), "the overview's accent must follow Settings")
-    }
-
-    func testTheDockScalesFromTheDockSizeSetting() throws {
-        let text = try appSource("WorkspaceDock.swift")
-        XCTAssertTrue(text.contains("appearance.settings.dockSize.scale"))
-        XCTAssertTrue(text.contains("private var tileSize: CGFloat { Chrome.tileBase * k }"))
-        XCTAssertTrue(text.contains("forName: Appearance.didChange"), "a new size must re-frame the dock's panel")
     }
 
     func testBothColorPickersIgnoreAnEchoOfTheColorShown() throws {
@@ -319,13 +312,6 @@ final class AppearanceTests: XCTestCase {
         let body = String(swatch[changed.lowerBound...].prefix(500))
         XCTAssertLessThan(try XCTUnwrap(body.range(of: "<= 0.01 { return }"), "an echo of the shown color must not switch to Custom").lowerBound,
                           try XCTUnwrap(body.range(of: "apply?(rgb)")).lowerBound)
-    }
-
-    func testTheDockKeepsAndRemovesItsAppearanceObserver() throws {
-        let text = try appSource("WorkspaceDock.swift")
-        XCTAssertTrue(text.contains("appearanceObserver = NotificationCenter.default.addObserver(forName: Appearance.didChange"))
-        // The style sheet's observer goes with it (style.css, `StyleSheetStore.didChange`).
-        XCTAssertTrue(text.contains("deinit {\n        appearanceObserver.map(NotificationCenter.default.removeObserver)\n        styleObserver.map(NotificationCenter.default.removeObserver)\n    }"))
     }
 
     func testSystemColorChangesAlwaysRefreshTheSettingsTab() throws {
@@ -349,12 +335,9 @@ final class AppearanceTests: XCTestCase {
         XCTAssertEqual(RGB(hex: "#FF0000"), RGB(r: 1, g: 0, b: 0))
     }
 
-    func testTheDockReframesOnTheSameKeyAppearancePosts() throws {
+    func testAPendingSaveIsFlushedOnQuit() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let app = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/Appearance.swift"), encoding: .utf8)
-        let dock = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/WorkspaceDock.swift"), encoding: .utf8)
-        XCTAssertTrue(app.contains("userInfo: [Appearance.dockSizeChangedKey:"), "Appearance posts the shared key")
-        XCTAssertTrue(dock.contains("note.userInfo?[Appearance.dockSizeChangedKey]"), "the dock reads the shared key")
         XCTAssertTrue(app.contains("NSApplication.willTerminateNotification"), "a pending save is flushed on quit")
     }
 }

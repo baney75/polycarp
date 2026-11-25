@@ -28,7 +28,6 @@ final class DockAppOrderTests: XCTestCase {
     /// Apps never used on the workspace keep their windows' order, after the ones that were.
     func testAppsNeverUsedThereKeepTheirWindowOrder() {
         XCTAssertEqual(DockAppOrder.sort(space1, activatedAt: [:]), space1)
-        XCTAssertEqual(DockTiles.make(current: 1, windows: [1: space1]).first?.apps.map(\.key), space1)
         var used = AppActivations()
         used.note("t3", on: 1, at: 5)
         XCTAssertEqual(DockAppOrder.sort(space1, activatedAt: used.on(1)), ["t3", "word", "obsidian", "silas", "grok"])
@@ -45,26 +44,6 @@ final class DockAppOrderTests: XCTestCase {
         XCTAssertEqual(DockAppOrder.sort(["ghostty", "helium"], activatedAt: used.on(2)), ["helium", "ghostty"])
     }
 
-    func testWhileHoveringTheHeldOrderStaysAndAReplayIsOwed() {
-        let held = DockAppOrder.held(proposed: ["b", "a", "c"], previous: ["a", "b", "c"], hovering: true)
-        XCTAssertEqual(held.order, ["a", "b", "c"])
-        XCTAssertTrue(held.replayOwed)
-        XCTAssertFalse(DockAppOrder.held(proposed: ["a", "b"], previous: ["a", "b"], hovering: true).replayOwed)
-    }
-
-    func testWhenHoveringEndsTheProposedOrderIsUsed() {
-        let shown = DockAppOrder.held(proposed: ["b", "a", "c"], previous: ["a", "b", "c"], hovering: false)
-        XCTAssertEqual(shown.order, ["b", "a", "c"])
-        XCTAssertFalse(shown.replayOwed)
-    }
-
-    func testAChangedSetOfAppsIsNeverHeld() {
-        let shown = DockAppOrder.held(proposed: ["b", "a", "d"], previous: ["a", "b", "c"], hovering: true)
-        XCTAssertEqual(shown.order, ["b", "a", "d"])
-        XCTAssertFalse(shown.replayOwed)
-        XCTAssertEqual(DockAppOrder.held(proposed: ["a"], previous: nil, hovering: true).order, ["a"])
-    }
-
     func testAnAppThatQuitLosesItsPlace() {
         var used = AppActivations()
         used.note("4242", on: 1, at: 9)
@@ -75,20 +54,12 @@ final class DockAppOrderTests: XCTestCase {
     }
 }
 
-/// ⌘Tab's workspace cards sort by `Spaces.activations`; the dock's tiles don't.
+/// ⌘Tab's workspace cards sort by `Spaces.activations`.
 final class DockAppOrderWiringTests: XCTestCase {
-    func testTheSwitcherSortsByUseAndTheDockByJoinOrder() throws {
-        let dock = try Repo.code("Sources/BaneySpaces/WorkspaceDock.swift")
-        // Donovan, 2026-11-16: the tile re-sorted after each switch, so his next click hit another app.
-        XCTAssertFalse(dock.contains("activations"), "focus must not reorder the dock's tiles")
-        XCTAssertTrue(dock.contains("joinOrder.update("), "the dock must keep each workspace's join order")
-        XCTAssertTrue(dock.contains("joined: joinOrder"), "the dock's tiles must follow the join order")
+    func testTheSwitcherSortsByUse() throws {
         let switcher = try Repo.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
         XCTAssertTrue(switcher.contains("DockAppOrder.sort(keys, activatedAt: spaces.activations.on(n))"), "⌘Tab's cards still put the app used last first")
         let spaces = try Repo.code("Sources/BaneySpaces/Spaces.swift")
         XCTAssertTrue(spaces.contains("activations.note("), "focus must stamp the app")
-        XCTAssertTrue(dock.contains("DockAppOrder.held("), "the dock must take its hold-still decision from the Core helper")
-        XCTAssertTrue(dock.contains("onReplayOrder()"), "the pointer leaving a held tile must replay the order")
-        XCTAssertTrue(dock.contains("model.onReplayOrder = { [weak self] in self?.reload() }"), "the replay must reload the dock")
     }
 }

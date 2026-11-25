@@ -95,8 +95,7 @@ public enum MenuUpdate: Equatable, Sendable {
 
 /// The menu bar menu, as a list of what it holds. The app builds exactly these and nothing else, so
 /// a test can read what a person would see (Donovan, 2026-10-31: five kinds of rows). It stays short (2026-11-21,
-/// "minimally cluttered"), and it never asks what you are doing (2026-11-22): the dock's switch lives in the dock and
-/// Settings. A row for finished agents is there only while there is something to act on; the update row is always
+/// "minimally cluttered"), and it never asks what you are doing (2026-11-22): switches live in Settings. A row for finished agents is there only while there is something to act on; the update row is always
 /// there.
 public enum MenuEntry: Equatable, Sendable {
     case workspace(MenuLayout.Row)

@@ -425,7 +425,7 @@ struct ThemeCard: View {
         let look = Look(theme: theme, palette: appearance.settings.colorPalette, accent: appearance.accentRGB)
         let bar = SurfaceStyle.make(.dockBar, theme: theme, spec: look.spec)
         let tile = SurfaceStyle.make(.dockTile, theme: theme, spec: look.spec)
-        // A fifth of the real dock, which is 64 pt tiles in the BaneySpaces theme.
+        // The theme's bar and tiles drawn small; a tile is 64 pt in the BaneySpaces theme.
         let s: CGFloat = 0.42
         Button(action: action) {
             VStack(spacing: 6) {

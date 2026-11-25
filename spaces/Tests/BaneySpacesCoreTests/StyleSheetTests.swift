@@ -629,32 +629,32 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertNotEqual(try? String(contentsOfFile: file, encoding: .utf8), b)
     }
 
-    /// The app starts the store and both surfaces redraw on its notification (review of #604).
-    func testTheAppStartsTheSheetAndTheBarAndTheDockFollowIt() throws {
+    /// The app starts the store and the bar redraws on its notification (review of #604).
+    func testTheAppStartsTheSheetAndTheBarFollowsIt() throws {
         let app = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(app.contains("StyleSheetStore.shared.start("), "AppDelegate starts the style sheet store")
-        for file in ["TopBar", "WorkspaceDock"] {
-            let code = try SourceText.code("Sources/BaneySpaces/\(file).swift")
-            XCTAssertTrue(code.contains("StyleSheetStore.didChange"), "\(file) redraws when the sheet changes")
-            XCTAssertTrue(code.contains("Styles.shared"), "\(file) draws from the sheet")
-        }
         let top = try SourceText.code("Sources/BaneySpaces/TopBar.swift")
+        XCTAssertTrue(top.contains("StyleSheetStore.didChange"), "the bar redraws when the sheet changes")
+        XCTAssertTrue(top.contains("Styles.shared"), "the bar draws from the sheet")
         XCTAssertTrue(top.contains("barHeight("), "the bar's height comes from the sheet")
-        let dock = try SourceText.code("Sources/BaneySpaces/WorkspaceDock.swift")
-        XCTAssertTrue(SourceText.block(after: "StyleSheetStore.didChange", in: dock)?.contains("scheduleResize()") ?? false,
-                      "a sheet change that moves the dock's gap or padding re-frames the panel")
-        // A mode change can switch an `@media (prefers-color-scheme)` rule's gap, padding or border (reviews of #604 and
-        // #609): the dock rebuilds the book, then re-frames when its whole dock style differs from what it last framed.
-        let mode = SourceText.block(after: "Appearance.didChange", in: dock) ?? ""
-        XCTAssertTrue(mode.contains("Styles.shared.sync()"), "the dock's Appearance observer rebuilds the book first")
-        XCTAssertTrue(mode.contains("!= self.framedDock") && mode.contains("scheduleResize()"),
-                      "and re-frames the panel when the sheet's dock style changed with the mode")
-        if let sync = mode.range(of: "Styles.shared.sync()"), let check = mode.range(of: "framedDock") {
-            XCTAssertLessThan(sync.lowerBound, check.lowerBound, "the book is rebuilt before the dock style is compared")
-        }
-        XCTAssertTrue(dock.contains("let styled = Styles.shared.book.dock") && !dock.contains("DockSpacing"),
-                      "the style compared is the sheet's whole dock style, border included, not gap and padding alone")
         XCTAssertTrue(top.contains("!= self.placedHeight"), "the bar re-places on a mode change that moves its height")
+    }
+
+    /// Review of PR #624 second-F7: the dock's Appearance observer used to rebuild the book. With the dock gone, a mode
+    /// switch must still rebuild it on main, so `@media (prefers-color-scheme)` rules follow Light and Dark: `Styles`
+    /// does on its own, and the bar's observer does before it compares heights.
+    func testAModeChangeRebuildsTheBookWithoutTheDock() throws {
+        let styled = try SourceText.code("Sources/BaneySpaces/Styled.swift")
+        let initBlock = try XCTUnwrap(SourceText.block(after: "private init()", in: styled))
+        XCTAssertTrue(initBlock.contains("Appearance.didChange"), "Styles follows the mode itself")
+        XCTAssertTrue(initBlock.contains("queue: .main"), "on the main thread")
+        XCTAssertTrue(initBlock.contains("self?.sync()"))
+        let top = try SourceText.code("Sources/BaneySpaces/TopBar.swift")
+        let start = try XCTUnwrap(SourceText.block(after: "func start()", in: top))
+        let mode = try XCTUnwrap(SourceText.block(after: "forName: Appearance.didChange, object: nil, queue: .main)", in: start))
+        let sync = try XCTUnwrap(mode.range(of: "Styles.shared.sync()"), "the bar's Appearance observer rebuilds the book")
+        let compare = try XCTUnwrap(mode.range(of: "!= self.placedHeight"))
+        XCTAssertLessThan(sync.lowerBound, compare.lowerBound, "the book is rebuilt before the bar compares heights")
     }
 
     // MARK: The docs and the starter sheet can't drift from the table

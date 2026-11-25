@@ -1,8 +1,7 @@
 import BaneySpacesCore
 import XCTest
 
-/// Donovan, 2026-10-14: the menu bar menu and the dock's right-click menus were "way too
-/// cluttered". These hold the trimmed shape.
+/// Donovan, 2026-10-14: the menu bar menu was "way too cluttered". These hold the trimmed shape.
 final class MenuLayoutTests: XCTestCase {
     func testListsOnlyWorkspacesInUseThenOneEmpty() {
         let rows = MenuLayout.rows(current: 1, apps: [1: ["Helium", "Ghostty"], 2: ["Grok Bot"]])
@@ -63,7 +62,7 @@ final class MenuLayoutTests: XCTestCase {
         for gone in ["optionsItem()", "channelItem()", "updateItem()", "parkedAppsItem()", "\"About BaneySpaces\"", "session.menuItems()", "toolTip = updater"] {
             XCTAssertFalse(text.contains(gone), "\(gone) moved into Settings (Donovan, 2026-10-31)")
         }
-        // 2026-11-21: the dock's switch left the menu bar menu; the dock's own menu and Settings > Dock keep it.
+        // The Workspace Dock and its switch went on 2026-11-23.
         XCTAssertFalse(text.contains("Turn Off Workspace Dock"))
         XCTAssertFalse(text.contains("toggleDockFromMenu"))
         XCTAssertFalse(text.contains("\"Name This Hour…\""), "the head names the hour")
@@ -182,9 +181,7 @@ final class MenuLayoutTests: XCTestCase {
         let setup = try code("Sources/BaneySpaces/Setup.swift")
         let wired = try code("Sources/BaneySpaces/AppDelegate.swift")
         // Each used to be a menu item; each is now a control in Settings, wired in the app delegate.
-        for control in ["Workspace Dock in place of the macOS Dock", "Position on screen",
-                        "Show what coding agents are doing on their app icons",
-                        "⌘Space opens the Polycarp launcher instead of Spotlight",
+        for control in ["⌘Space opens the Polycarp launcher instead of Spotlight",
                         "Keep usable by automation", "Bring Every Window Back", "Uninstall Polycarp…",
                         "Check for updates daily", "Check for Updates Now…",
                         "Button(notice.menuTitle)", "About Polycarp…", "Finished while you were away"] {
@@ -194,31 +191,6 @@ final class MenuLayoutTests: XCTestCase {
                      "onSetCheckDaily", "onFocusFinished", "onUninstall"] {
             XCTAssertTrue(wired.contains("c.model.\(wire) ="), "\(wire) isn't wired")
         }
-    }
-
-    func testDockMenusAreShortAndForceQuitHidesBehindOption() throws {
-        let text = try code("Sources/BaneySpaces/WorkspaceDock.swift")
-        XCTAssertTrue(text.contains("quit.modifierKeyAlternate(.option) { force }"), "Force Quit shows only while ⌥ is held")
-        XCTAssertTrue(text.contains(".contextMenu { appMenu(app, in: tile) }"))
-        // The dock's own buttons do these; the menus don't repeat them.
-        let start = try XCTUnwrap(text.range(of: "private func tileMenu("))
-        let end = try XCTUnwrap(text.range(of: "private func icons("))
-        let menus = text[start.lowerBound..<end.lowerBound]
-        XCTAssertFalse(menus.contains("Find or Install an App"))
-        XCTAssertFalse(menus.contains("Show All Workspaces"))
-        XCTAssertFalse(menus.contains("Send Front Window"))
-    }
-}
-
-/// Review of #100 round 2 (first-F1, first-F3, first-F4), read from the source: the app target
-/// can't be imported.
-final class SettingsFollowUpTests: XCTestCase {
-    private func code(_ path: String) throws -> String {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent(path)
-        return try String(contentsOf: url, encoding: .utf8)
-            .split(separator: "\n").map { $0.components(separatedBy: "//")[0] }.joined(separator: "\n")
     }
 
     func testTheBadgeAndTheMenuCountOnlyAgentsTheListCanShow() throws {

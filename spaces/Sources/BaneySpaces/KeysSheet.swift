@@ -11,8 +11,8 @@ final class KeysHoldWatcher {
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var timer: DispatchWorkItem?
-    /// While the sheet is up, checks `allowed` ten times a second: the launcher opened by a link, the overview from the
-    /// dock or a hot corner, or the ⌘Tab switcher can come up with no key or click this tap sees.
+    /// While the sheet is up, checks `allowed` ten times a second: the launcher opened by a link, the overview from a
+    /// hot corner, or the ⌘Tab switcher can come up with no key or click this tap sees.
     private var watch: Timer?
     private let sheet = KeysSheetPanel()
     /// False while something else owns the moment: the launcher or the overview is open, a ⌘Tab gesture runs.

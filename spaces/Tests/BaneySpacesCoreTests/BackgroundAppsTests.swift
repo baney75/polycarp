@@ -1,7 +1,7 @@
 import XCTest
 @testable import BaneySpacesCore
 
-/// The dock's "Background" tile: running apps with no window to see on any workspace.
+/// The launcher's "Running, no window" rows: running apps with no window to see on any workspace.
 final class BackgroundAppsTests: XCTestCase {
     let me: Int32 = 1
 
@@ -123,14 +123,43 @@ final class BackgroundAppsTests: XCTestCase {
                       "backgroundApps reads the pruned entries")
     }
 
-    func testTheXAsksAnAppToQuitTheOrdinaryWay() throws {
+    func testTheLauncherQuitsAnAppTheOrdinaryWay() throws {
         // An app with something unsaved must get to ask, so never a force quit.
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let dock = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/WorkspaceDock.swift"), encoding: .utf8)
-        let quit = try XCTUnwrap(dock.range(of: "model.onQuitBackground = { app in").map { String(dock[$0.lowerBound...].prefix(300)) })
-        XCTAssertTrue(quit.contains("NSRunningApplication(processIdentifier: app.pid)?.terminate()"))
+        let app = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/AppDelegate.swift"), encoding: .utf8)
+        let quit = try XCTUnwrap(SourceText.block(after: "a.quitResting = ", in: app))
+        XCTAssertTrue(quit.contains("NSRunningApplication(processIdentifier: pid)?.terminate()"))
         XCTAssertFalse(quit.contains("forceTerminate"))
-        XCTAssertTrue(dock.contains("accessibilityAction(named: \"Quit \\(app.name)\")"), "VoiceOver can reach it too")
-        XCTAssertTrue(dock.contains(".padding(.trailing, apps.count > 10 ? 12 : 0)"), "the scroller doesn't cover the X")
+        XCTAssertTrue(quit.contains("isTerminated"), "the row goes when the app has")
+    }
+
+    /// Review of PR #624 first-F6: a hidden app typed into the launcher showed twice, as an app row and a resting row.
+    /// Review of #681 first-F1: taken out of the ranked apps it lost its place, so "mail" and Return opened Proton Mail
+    /// with Mail running. Round 2 sol-F3: its ⌘Return turned from Reveal into Quit when the answer joined. It keeps its
+    /// row, its id, its place and its ⌘Return, and quitting it is a row of its own.
+    func testTheLauncherListsARestingAppOnceAndInItsPlace() throws {
+        let resting = [BackgroundApps.Entry(pid: 7, name: "Helium", state: .hidden), BackgroundApps.Entry(pid: 8, name: "Mail", state: .noWindow)]
+        func rows(_ listed: Set<pid_t>, _ matches: @escaping (String) -> Bool) -> [String] {
+            BackgroundApps.launcherRows(resting, listed: listed, matches: matches).map { "\($0.1) \($0.0.name)" }
+        }
+        XCTAssertEqual(rows([8, 9]) { _ in true }, ["app Helium", "quit Mail"])
+        XCTAssertEqual(rows([]) { _ in true }, ["app Helium", "app Mail"])
+        XCTAssertEqual(rows([8]) { $0.contains("Mail") }, ["quit Mail"])
+        XCTAssertEqual(rows([]) { $0 == "Quit Mail" }, ["quit Mail"], "\"quit mail\" quits it")
+        XCTAssertEqual(rows([]) { _ in false }, [])
+        let l = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        for m in ["private func recentApps()", "private func appItems("] {
+            let b = try XCTUnwrap(SourceText.block(after: m, in: l))
+            XCTAssertTrue(b.contains("appItem("))
+            XCTAssertFalse(b.contains("resting.contains") || b.contains("filter { $0.pid"), "\(m) takes a resting app out of its place")
+        }
+        let item = try XCTUnwrap(SourceText.block(after: "private func appItem(", in: l))
+        XCTAssertEqual(item.components(separatedBy: "id: \"app:\\(a.path)\"").count, 3, "the row's id stays, so the selection does")
+        XCTAssertEqual(item.components(separatedBy: "reveal: URL(fileURLWithPath: a.path)").count, 3, "⌘Return reveals it, resting or not")
+        XCTAssertFalse(item.contains("alternate") || item.contains("quit(resting:"), "no key on an app's row turns into Quit")
+        XCTAssertTrue(item.contains("restingListed.insert(pid)"))
+        let rest = try XCTUnwrap(SourceText.block(after: "private func restingItems(", in: l))
+        XCTAssertTrue(rest.contains("BackgroundApps.launcherRows(resting, listed: restingListed"))
+        XCTAssertTrue(rest.contains("\"Quit \\(e.name)\""))
     }
 }

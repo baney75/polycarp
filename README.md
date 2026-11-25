@@ -2,7 +2,11 @@
 
 # Polycarp
 
-Polycarp is its own OS on a Mac or a Windows PC: workspaces, the dock, the top bar, the launcher and one theme over all of them.
+Polycarp is its own OS on a Mac or a Windows PC: workspaces, the top bar, the launcher and one theme over all of them.
+
+The Workspace Dock was removed on 2026-11-23: workspaces are on ⌘1 to ⌘9 and the top bar's numbers, the overview is on the
+Mission Control key, the hot corner and the status menu, and apps running with no window are in the launcher (⌃⌘K) under
+"Running, no window".
 
 It is a personal tool: Donovan Baney builds it for his own machines. The code and the releases are public.
 

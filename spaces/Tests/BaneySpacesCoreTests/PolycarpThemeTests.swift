@@ -753,7 +753,6 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertEqual(ThemeCenter.spec, t.spec)
         XCTAssertEqual(ThemeCenter.id, PolycarpTheme.carrier)
         XCTAssertEqual(ThemeCenter.polycarp, "blocks")
-        XCTAssertEqual(DockMotion.dockIn, 0.1, "code with no view reads the Polycarp motion")
         ThemeCenter.use(.omarchy)
         XCTAssertEqual(ThemeCenter.spec, before)
         XCTAssertEqual(ThemeCenter.id, .omarchy)
@@ -894,7 +893,6 @@ final class PolycarpWiringTests: XCTestCase {
             XCTAssertTrue(note.contains("saved") && note.contains("not drawn until the Polycarp theme is removed"), note)
             XCTAssertNil(key.polycarpNote(inForce: false), "no Polycarp theme, no note")
         }
-        XCTAssertNil(SettingKey.dockEnabled.polycarpNote(inForce: true), "the dock switch is drawn either way")
         // The stored value still changes: the answer carries it, and the app writes it as before.
         let code = try Repo.code("Sources/BaneySpaces/Session/SessionController.swift")
         XCTAssertTrue(code.contains("info[\"note\"] = note"))
