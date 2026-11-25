@@ -195,8 +195,8 @@ fn ok(data: Json) -> Json {
 /// Settings an older Polycarp had, with where their features went. Setting one gets this answer, not the app's.
 const RETIRED_SETTINGS: &[(&str, &str, &str)] = &[(
     "dock.enabled",
-    "dock.enabled is gone: the Workspace Dock was removed on 2026-11-23",
-    "Workspaces are on ⌘1-9 and the top bar, the overview on the Mission Control key, and apps running with no window in the launcher (⌃⌘K).",
+    "dock.enabled is gone on the Mac: the Workspace Dock was removed on 2026-11-23",
+    "Workspaces are on your modifier with 1 to 9 (keys_list has it) and on the top bar when it is on (surfaces bar.enabled), the overview on the Mission Control key, and apps running with no window in the launcher.",
 )];
 
 fn retired_setting(name: &str) -> Option<Json> {

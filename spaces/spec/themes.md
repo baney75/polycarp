@@ -10,7 +10,7 @@ contract; this file says how to read them.
 | --- | --- | --- |
 | `appearance.theme` | `baneyspaces`, `omarchy`, `minimal` | `omarchy` on Omarchy, `baneyspaces` elsewhere |
 | `appearance.palette` | `auto`, or any name in `palettes.json` | `auto` |
-| `dock.enabled` | `true`, `false` | `true`; `false` on macOS (`default_by_platform`) |
+| `dock.enabled` | `true`, `false`; refused on macOS | `true`; `false` on macOS (`default_by_platform`) |
 
 They are in Settings on every platform (on macOS only the first two) and apply live: no restart, and the next frame
 after the change already shows them (budget: 200 ms). The CLI sets them too:
@@ -119,7 +119,7 @@ the main queue. The command renames a temp file into place, so every event re-ar
 command writes five files) is one or two looks, queued behind the events already in, with no timer. A file that reads bad on an event is looked at again 150 ms later and drops the theme only if it is unchanged and still bad, so an edit in place never flashes your own look mid-write. A stat every 30 s is only a safety net. A file that
 changed while it was read is read again on the next event or look, and one whose read failed for now (out of file
 handles, an I/O error) is read again after 1 s: the theme in force stays and one line says so. A change of mode
-(`chmod`) counts as a change. Budget: `polycarp theme set` to the first dock frame in the new theme under 200 ms
+(`chmod`) counts as a change. Budget: `polycarp theme set` to the first frame of an open panel or the top bar in the new theme under 200 ms
 (`BANEYSPACES_RENDER_THEME_RELOAD=20 Polycarp --render <folder>` measures it; `PolycarpThemeReloadTests` holds the
 watcher to it).
 
@@ -167,7 +167,7 @@ back the theme's picture while the switch is on, else each Space's own.
 
 ## Every surface uses the theme
 
-The dock, the "+N" list and window strip, the window switcher (⌘Tab or Alt+Tab), the launcher,
+Where the platform has a dock, the dock, its "+N" list and window strip; everywhere, the window switcher (⌘Tab or Alt+Tab), the launcher,
 the overview, the workspace indicator (menu bar, Omarchy bar module or tray) and Settings all
 take radius, border, fill, font, spacing, indicator and motion from the theme, and color from the
 palette. No surface hard-codes a color, radius or duration. The agent cursor and the agent

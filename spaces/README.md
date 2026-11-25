@@ -126,12 +126,12 @@ the update controls and About live in Settings, one click away.
 
 ## The Workspace Dock is gone
 
-The Workspace Dock was removed on 2026-11-23. Workspaces are on ⌘1 to ⌘9 and the top bar's numbers; the overview is on
+The Workspace Dock was removed on 2026-11-23. Workspaces are on ⌘1 to ⌘9 and, when it is on, the top bar's numbers; the overview is on
 the Mission Control key, the hot corner and **Show All Workspaces** in the menu bar menu; apps running with no window are
 in the launcher (⌃⌘K) under **Running, no window**. If an older build had hidden the macOS Dock for it, the next launch
 puts the Dock back as it was, once.
 
-### Colors and looks
+## Colors and looks
 
 **Settings › Appearance** changes how every panel looks, and the open ones change as you click. Pick
 an accent (nine colors, **System** to follow macOS, or any color of your own), a palette for the

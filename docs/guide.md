@@ -391,7 +391,7 @@ A rule has an `id` (1 to 64 of a-z, 0-9 and -; `set` with an id in use replaces 
 
 ## Keys, motion and behavior
 
-Themes cover the look. On a Mac, keys, the top bar and the launcher are all in Polycarp's Settings. Every shortcut, by group and with where it works, is in [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md); `polycarp-spaces keys` prints the same list with your modifier. Dictation is the [Silas](/projects/silas/docs/) app's, with its own settings.
+Themes cover the look. On a Mac, keys and the launcher are in Polycarp's Settings, and the top bar is in `polycarp-spaces surfaces` (`bar.*`). Every shortcut, by group and with where it works, is in [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md); `polycarp-spaces keys` prints the same list with your modifier. Dictation is the [Silas](/projects/silas/docs/) app's, with its own settings.
 
 One file for all of them, with undo and a recovery key, is on the plan. Its contract is [`spaces/spec/config.md`](https://github.com/baney75/polycarp/blob/main/spaces/spec/config.md).
 
@@ -404,7 +404,7 @@ One file for all of them, with undo and a recovery key, is on the plan. Its cont
 
 ### The top bar
 
-Replacing the top bar is planned. On a Mac, a Polycarp bar will replace the menu bar. On Windows, a bar will reserve space across the top of the screen. Phones don't allow it.
+On a Mac, Polycarp's top bar stands where a hidden menu bar was: `polycarp-spaces surfaces set bar.enabled true` turns it on. On Windows a bar is planned. Phones don't allow it.
 
 ## Troubleshooting
 
