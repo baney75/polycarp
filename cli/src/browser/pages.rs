@@ -14,6 +14,9 @@ use super::{refuse, Place, Refused};
 const CHECK: &str = "built-in pages";
 /// Tells the extension it is part of this browser.
 pub const BUILT_IN: &str = "builtin.txt";
+/// The id Chromium gives the extension, from the key in its manifest.
+const EXTENSION: &str = "kdaddaaobomjfjcgjeabgbenfddkcfcl";
+const HOST: &str = "com.polycarp.newtab";
 
 /// Puts the extension and the program that loads it into the app, which starts through that program from then on.
 pub fn put_in(
@@ -70,6 +73,39 @@ pub fn first_run(data: &Path) -> io::Result<bool> {
     Ok(true)
 }
 
+/// Lets the new tab page ask Polycarp, at `host`, for the Mac's theme, paper and verse.
+fn register_host(data: &Path, host: &Path) -> io::Result<()> {
+    let dir = data.join("NativeMessagingHosts");
+    fs::create_dir_all(&dir)?;
+    let file = dir.join(format!("{HOST}.json"));
+    let text = json!({
+        "name": HOST,
+        "description": "Polycarp's new tab page",
+        "path": host,
+        "type": "stdio",
+        "allowed_origins": [format!("chrome-extension://{EXTENSION}/")],
+    });
+    fs::write(file, format!("{text:#}\n"))
+}
+
+/// What the browser's own data folder needs. The app is in by now, so a failure is a line to print.
+pub fn set_up(data: &Path, host: Option<&Path>) -> Vec<String> {
+    let mut lines = Vec::new();
+    match first_run(data) {
+        Ok(true) => lines.push(
+            "Helium's online services stay off until you choose them at helium://settings/privacy/services.".into(),
+        ),
+        Ok(false) => {}
+        Err(e) => lines.push(format!("Its first profile could not be prepared: {e}")),
+    }
+    if let Some(Err(e)) = host.map(|host| register_host(data, host)) {
+        lines.push(format!(
+            "Its new tab can't ask Polycarp for your theme: {e}"
+        ));
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::change::plist_string;
@@ -119,5 +155,18 @@ mod tests {
         fs::remove_file(data.join("Local State")).unwrap();
         assert!(!first_run(&data).unwrap());
         assert_eq!(read("Default/Preferences"), "mine");
+    }
+
+    #[test]
+    fn only_polycarps_extension_may_ask_the_host() {
+        let t = Fake::new();
+        register_host(&t.work(), Path::new("/x/polycarp-spaces")).unwrap();
+        let hosts = t.work().join("NativeMessagingHosts");
+        let file = hosts.join("com.polycarp.newtab.json");
+        let value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(file).unwrap()).unwrap();
+        assert_eq!(value["path"], "/x/polycarp-spaces");
+        let origin = format!("chrome-extension://{EXTENSION}/");
+        assert_eq!(value["allowed_origins"], json!([origin]));
     }
 }

@@ -86,7 +86,21 @@ impl Fake {
             cache: self.root.join("cache"),
             parts: self.parts(),
             extension: self.extension(),
+            spot: self.spot(),
+            data: self.root.join("Support/Polycarp/Browser"),
+            host: Some("/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces".into()),
         }
+    }
+
+    /// Every file under `dir`, with what is in it.
+    pub fn listing(&self, dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let files = super::change::files(dir).unwrap();
+        let mut all: Vec<_> = files
+            .into_iter()
+            .map(|f| (f.clone(), fs::read(f).unwrap()))
+            .collect();
+        all.sort();
+        all
     }
 
     /// A folder that says it is a build, and no more.
@@ -248,7 +262,7 @@ pub fn feed(digest: &str) -> String {
         )
     };
     format!(
-        "{{\"tag_name\":\"{VERSION}\",\"draft\":false,\"prerelease\":false,\"assets\":[{},{}]}}",
+        "{{\"tag_name\":\"{VERSION}\",\"draft\":false,\"prerelease\":false,\"published_at\":\"2026-11-20T10:00:00Z\",\"assets\":[{},{}]}}",
         asset("arm64"),
         asset("x86_64")
     )
@@ -385,6 +399,37 @@ fn said(out: &str) -> io::Result<Ran> {
         out: out.into(),
         err: String::new(),
     })
+}
+
+type Broken = fn(&mut Scene);
+
+/// Each check a build must pass, with what makes it fail.
+pub fn failing_scenes() -> [(&'static str, Broken); 11] {
+    [
+        ("release", |s| {
+            s.fail = Some(("curl", "releases/latest", Failure::SaysNo))
+        }),
+        ("download", |s| {
+            s.fail = Some(("curl", "--output", Failure::SaysNo))
+        }),
+        ("digest", |s| s.digest = Some("00".repeat(32))),
+        ("disk image", |s| {
+            s.fail = Some(("hdiutil", "attach", Failure::SaysNo))
+        }),
+        ("code signature", |s| {
+            s.fail = Some(("codesign", "--deep", Failure::SaysNo))
+        }),
+        ("Team ID", |s| {
+            s.fail = Some(("codesign", "-R", Failure::SaysNo))
+        }),
+        ("Gatekeeper", |s| s.gatekeeper = "x: rejected"),
+        ("version", |s| s.version_inside = "0.0.1"),
+        ("signing", |s| {
+            s.fail = Some(("codesign", "--sign", Failure::SaysNo))
+        }),
+        ("headless start", |s| s.page = ""),
+        ("headless start", |s| s.page = "<title>New Tab</title>"),
+    ]
 }
 
 impl Tools for Fake {

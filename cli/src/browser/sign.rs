@@ -41,6 +41,10 @@ impl Identity {
         }
     }
 
+    pub fn certificate(&self) -> bool {
+        self.keychain.is_some()
+    }
+
     /// The identity Polycarp is signed with. Without one, ad hoc and the line to print. One that exists but can't be
     /// used now stops the build, so a passing keychain fault never changes the app's signature.
     pub fn find(

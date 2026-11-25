@@ -21,6 +21,8 @@ pub struct Release {
     pub url: String,
     /// Lowercase hex, from the release itself.
     pub sha256: String,
+    /// The day it came out, counted from 1970.
+    pub published: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -30,6 +32,7 @@ struct Listed {
     draft: bool,
     #[serde(default)]
     prerelease: bool,
+    published_at: Option<String>,
     assets: Vec<ListedAsset>,
 }
 
@@ -94,7 +97,20 @@ pub fn parse(json: &str, arch: &str) -> Result<Release, Refused> {
         name,
         url,
         sha256,
+        published: listed.published_at.as_deref().and_then(day),
     })
+}
+
+/// `2026-11-20T17:03:00Z` as days since 1970.
+fn day(stamp: &str) -> Option<i64> {
+    let mut parts = stamp.get(..10)?.split('-').map(|p| p.parse::<i64>().ok());
+    let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
+    if !(1970..3000).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    // March first: leap days fall at the end of a year counted this way.
+    let (y, m) = if m > 2 { (y, m - 3) } else { (y - 1, m + 9) };
+    Some(365 * y + y / 4 - y / 100 + y / 400 + (153 * m + 2) / 5 + d - 719_469)
 }
 
 /// `0.22.4.1` as numbers; None for anything else.
@@ -126,6 +142,20 @@ pub fn this_arch() -> &'static str {
 mod tests {
     use super::super::testing::{feed, VERSION};
     use super::*;
+
+    #[test]
+    fn the_day_a_release_came_out() {
+        for (stamp, n) in [
+            ("1970-01-01T00:00:00Z", Some(0)),
+            ("2024-02-29T10:00:00Z", Some(19_782)),
+            ("2026-11-25", Some(20_782)),
+            ("2026-13-25", None),
+            ("soon", None),
+            ("\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}", None),
+        ] {
+            assert_eq!(day(stamp), n, "{stamp}");
+        }
+    }
 
     #[test]
     fn the_newest_release_for_each_processor() {
