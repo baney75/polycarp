@@ -22,7 +22,7 @@ polycarp-spaces edits rm quiet-news
 polycarp-spaces edits reset        # every edit gone
 ```
 
-`--json` prints the `{ok, data}` envelope. An agent uses the same commands through `polycarp mcp`: `edits_list`, `edit_set` and `edit_remove`.
+`--json` prints the `{ok, data}` envelope. An agent on your computer runs the same commands.
 
 ## An edit
 
