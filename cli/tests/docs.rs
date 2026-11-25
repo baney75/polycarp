@@ -124,6 +124,7 @@ fn the_guide_and_the_server_list_the_same_mcp_tools() {
         "filter_",
         "edits_",
         "edit_",
+        "defaults_",
     ]
     .iter()
     .flat_map(|prefix| guide.match_indices(prefix))
