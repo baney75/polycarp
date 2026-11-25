@@ -84,7 +84,7 @@ async function injectIntoOpenTabs() {
   const tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
   for (const tab of tabs) {
     if (tab.discarded) continue;
-    for (const cs of manifest.content_scripts) {
+    for (const cs of manifest.content_scripts) { // each runs on every page
       if (cs.css) chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: cs.css }).catch(() => {});
       chrome.scripting.executeScript({ target: { tabId: tab.id }, files: cs.js }).catch(() => {});
     }
@@ -447,9 +447,11 @@ function refreshAppFilters() {
   if (filtersAsking) return filtersAsking;
   filtersAsking = Promise.allSettled([
     F ? keepAppList("filters", F.APP_KEY, "rules", 500) : null,
-    E ? keepAppList("edits", E.APP_KEY, "edits", E.MAX.edits) : null,
-    chrome.storage.session.set({ [FILTERS_AT]: Date.now() })
-  ]).finally(() => { filtersAsking = null; });
+    E ? keepAppList("edits", E.APP_KEY, "edits", E.MAX.edits) : null
+  ])
+    // Only once both answers are kept: a page that asks before then waits for them.
+    .then(() => chrome.storage.session.set({ [FILTERS_AT]: Date.now() })).catch(() => {})
+    .finally(() => { filtersAsking = null; });
   return filtersAsking;
 }
 async function filtersFresh(maxAge) {

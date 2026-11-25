@@ -28,7 +28,7 @@ process.stdin.on('data', (c) => {
   fs.appendFileSync(${JSON.stringify(asked)}, buf.subarray(4, 4 + buf.readUInt32LE(0)).toString() + '\\n');
   const out = Buffer.from(fs.readFileSync(${JSON.stringify(answer)}, 'utf8'));
   const len = Buffer.alloc(4); len.writeUInt32LE(out.length);
-  process.stdout.write(Buffer.concat([len, out]), () => process.exit(0));
+  setTimeout(() => process.stdout.write(Buffer.concat([len, out]), () => process.exit(0)), JSON.parse(out).wait || 0);
 });`);
 const wrapper = path.join(hostDir, 'host.sh');
 fs.writeFileSync(wrapper, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(hostDir, 'host.mjs'))}\n`, { mode: 0o755 });
@@ -87,6 +87,17 @@ try {
   await xp2.goto('https://x.com/explore');
   ok(await until(async () => (await app()).rules[0].words.includes('river')), 'Background: a page loading with a stale copy gets the app asked again');
   await xp2.close();
+
+  // Two pages at once: the second waits for the answer the first asked for.
+  setAnswer({ ok: true, wait: 700, filters: [{ ...APP_RULE, words: ['crypto', 'gardening', 'river', 'slow'] }] });
+  const waited = await sw.evaluate(async () => {
+    await chrome.storage.session.set({ 'polycarp.filters.appAt': 0 });
+    refreshAppFilters();
+    await new Promise((r) => setTimeout(r, 100));
+    await filtersFresh(5000);
+    return (await chrome.storage.local.get('polycarp.filters.app'))['polycarp.filters.app'].rules[0].words;
+  });
+  ok(waited.includes('slow'), 'Background: a page that asks while the app is answering waits for the answer');
 
   setAnswer({ ok: false, error: 'filters store is locked' });
   await tick();

@@ -26,7 +26,7 @@ test('the cases shared with the app', () => {
 });
 
 test('a prototype name is not a verb or a field', () => {
-  for (const verb of ['constructor', '__proto__', 'toString']) assert.equal(E.check({ id: 'a', sites: ['x.com'], changes: [{ do: verb, at: 'a' }] }).path, 'changes[0].do');
+  for (const verb of ['constructor', '__proto__', 'toString', ['insert']]) assert.equal(E.check({ id: 'a', sites: ['x.com'], changes: [{ do: verb, at: 'a' }] }).path, 'changes[0].do');
 });
 
 test('sites cover their subdomains and nothing else', () => {
@@ -40,6 +40,7 @@ test('sites cover their subdomains and nothing else', () => {
 test('paths are globs', () => {
   const on = (paths, p) => E.onPath(edit({ paths, css: 'a{}' }), p);
   assert.ok(on([], '/anything') && on(['/home'], '/home/') && on(['/'], '/') && on(['/watch/*'], '/watch/1/2') && on(['/a/*/c'], '/a/b/c'));
+  assert.ok(on(['/wiki/Zürich'], '/wiki/Z%C3%BCrich') && on(['/wiki/東*'], '/wiki/%e6%9d%b1%E4%BA%AC') && on(['/wiki/Z%c3%bcrich'], '/wiki/Z%C3%BCrich'));
   assert.ok(!on(['/home'], '/home/x') && !on(['/watch/*'], '/watc') && !on(['/a/*/c'], '/a/c') && !on(['/'], '/x') && !on(['/ab*ab'], '/ab'));
 });
 
@@ -47,6 +48,13 @@ test('the stylesheet never hides the page itself or Polycarp', () => {
   const css = E.sheet([edit({ changes: [{ do: 'hide', at: '*' }, { do: 'style', at: 'p', style: { color: 'red', 'font-size': '18px' } }] })]);
   assert.match(css, /:is\(\*\):not\(html,body,head,polycarp-ui,[a-z,-]+\)\{display:none !important\}/);
   assert.match(css, /:is\(p\):not\(polycarp-ui,[a-z,-]+\)\{color:red !important;font-size:18px !important\}/);
+});
+
+test('a property that resets others goes before them', () => {
+  const css = (style) => /\{(.*)\}/.exec(E.sheet([edit({ changes: [{ do: 'style', at: 'p', style }] })]))[1].replaceAll(' !important', '');
+  assert.equal(css({ bottom: '0', inset: 'auto' }), 'inset:auto;bottom:0');
+  assert.equal(css({ 'align-items': 'center', all: 'unset' }), 'all:unset;align-items:center');
+  assert.equal(css({ 'border-left': '3px solid red', 'border-width': '0', border: '1px solid' }), 'border:1px solid;border-width:0;border-left:3px solid red');
 });
 
 test('an app edit switched off here stays off until its agent changes it', () => {

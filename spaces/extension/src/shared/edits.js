@@ -15,7 +15,7 @@
   "use strict";
 
   const LOCAL_KEY = "polycarp.edits.local"; // the edits made in this browser
-  const APP_KEY = "polycarp.edits.app";     // { edits, at, error } from the Polycarp app, kept by the service worker
+  const APP_KEY = "polycarp.edits.app";     // { edits, connected, error } from the Polycarp app, kept by the service worker
   const OFF_KEY = "polycarp.edits.off";     // app edits the person switched off here: { id: hash of the edit }
   const MAX = { edits: 100, changes: 50, sites: 50, paths: 50, selector: 500, text: 2000, css: 20000, blocks: 20, items: 30, url: 2000, name: 80 };
   const WHERES = ["before", "after", "first", "last"];
@@ -45,6 +45,8 @@
     if (low.includes("</")) return "may not hold </";
     const plain = bare(low);
     if (stringInCustomProperty(prop && prop.startsWith("--") ? prop + ":" + plain : plain)) return "may not keep a quoted string in a custom property";
+    // A page's own function could load the string it is given.
+    if (/--[^\s:;{}()]*\(/.test(plain)) return "may not call a function the page defines (--name(...))";
     for (const m of plain.matchAll(/@([a-z-]*)/g)) if (!AT_RULES.includes(m[1])) return "may not use @" + m[1] + "; only " + AT_RULES.map((r) => "@" + r).join(", ");
     return "";
   }
@@ -88,6 +90,9 @@
     if (bad) return "may not hold " + bad[0];
     if (CONTROL.test(sel)) return "may not hold a line break";
     if (sel.includes("/*") || sel.includes("*/")) return "may not hold a comment mark";
+    const low = sel.toLowerCase();
+    if (low.includes("url(")) return "may not hold url("; // CSS reads what follows by other quote rules than `unbalanced`
+    if (/::|:(before|after|first-line|first-letter)(?![a-z0-9_-])/.test(bare(low))) return "names a pseudo-element; use css for that";
     return unbalanced(sel);
   }
   // "https://X.com/home" and "X.com:443" are "x.com"; "" when it is not a whole host. "www.x.com" stays itself.
@@ -158,7 +163,7 @@
   }
   function change(o, p, opts) {
     if (!isObject(o)) refuse(p.slice(0, -1), "a change is a JSON object");
-    const own = Object.prototype.hasOwnProperty.call(FIELDS, o.do) ? FIELDS[o.do] : refuse(p + "do", "must be " + Object.keys(FIELDS).join(", "));
+    const own = typeof o.do === "string" && Object.prototype.hasOwnProperty.call(FIELDS, o.do) ? FIELDS[o.do] : refuse(p + "do", "must be " + Object.keys(FIELDS).join(", "));
     known(o, ["do", "at", ...own], p, "a " + o.do + " change");
     const out = { do: o.do, at: selector(o, "at", p, opts) };
     if (o.do === "style") {
@@ -264,8 +269,11 @@
   function onPath(edit, pathname) {
     if (!edit.paths.length) return true;
     const trim = (p) => (p.length > 1 ? p.replace(/\/+$/, "") || "/" : p);
-    return edit.paths.some((glob) => {
-      const parts = glob.split("*");
+    // As a browser writes it: "/wiki/Zürich" is "/wiki/Z%C3%BCrich".
+    const coded = (p) => p.replace(/[^\x00-\x7f]+/g, (s) => new URLSearchParams({ s }).toString().slice(2)).replace(/%[0-9a-f]{2}/gi, (s) => s.toUpperCase());
+    pathname = coded(pathname);
+    return edit.paths.some((path) => {
+      const glob = coded(path), parts = glob.split("*");
       if (parts.length === 1) return trim(pathname) === trim(glob);
       if (!pathname.startsWith(parts[0])) return false;
       let i = parts[0].length;
@@ -276,7 +284,11 @@
   }
   const active = (edits, hostname, pathname) => edits.filter((e) => e.enabled && onSite(e, hostname) && onPath(e, pathname));
 
-  // The stylesheet the active edits make. Polycarp's own parts and the page's root are never hidden. `ok` says whether
+  // Properties that reset others go first, so {"inset": "auto", "bottom": "0"} keeps its bottom.
+  const BROAD = [["all"], ["border"], ["border-color", "border-image", "border-radius", "border-style", "border-width", "gap", "inset", "place-content", "place-items", "place-self"]];
+  const rank = (prop) => { const i = BROAD.findIndex((r) => r.includes(prop)); return i < 0 ? BROAD.length : i; };
+  // The stylesheet the active edits' hide and style changes make; an edit's own css is a sheet of its own. Hide leaves
+  // Polycarp's own parts and the page's root. `ok` says whether
   // this browser reads a selector: one it can't is left out, so it doesn't take the rest with it.
   function sheet(edits, ok) {
     const out = [];
@@ -284,7 +296,7 @@
       for (const c of e.changes) {
         if (ok && !ok(c.at)) continue;
         if (c.do === "hide") out.push(":is(" + c.at + "):not(html,body,head," + OURS + "){display:none !important}");
-        else if (c.do === "style") out.push(":is(" + c.at + "):not(" + OURS + "){" + Object.entries(c.style).map(([k, v]) => k + ":" + v + " !important").join(";") + "}");
+        else if (c.do === "style") out.push(":is(" + c.at + "):not(" + OURS + "){" + Object.entries(c.style).sort((x, y) => rank(x[0]) - rank(y[0])).map(([k, v]) => k + ":" + v + " !important").join(";") + "}");
       }
     }
     return out.join("\n");
