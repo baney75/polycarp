@@ -62,12 +62,12 @@ nothing. search_open performs the top result: it brings an open tab or window fo
 default browser. Call it only when the person asked to go there.
 To tell the person which keys do what in Polycarp, read keys_list; it changes nothing.
 To hide posts in the person's feeds (X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn, Mastodon) by words, \
-patterns, accounts or kinds (shorts, promoted, reposts), or to hide parts of a named site's pages by CSS selector, \
+patterns, accounts or kinds (shorts, promoted, reposts), \
 call filters_list, then filter_set one rule by id; filter_remove takes one away. Polycarp's own browser extension \
 applies them, behind a one-click Show bar.
-To change how a website looks or reads in the person's browser (restyle, reword, move, hide, add a note), call \
-edits_list, then edit_set one edit by id, named for what it does; edit_remove takes one away. Change only the sites \
-the person asked about. Polycarp's extension applies it, says so on the page and offers Undo. It can't click, type, \
+To change how a website looks or reads in the person's browser (hide a part, restyle, reword, move, add a note), call \
+edits_list, then edit_set one edit by id, named for what it does; edit_remove takes one away. Pick an id not in use \
+unless you are changing that edit. Change only the sites the person asked about. Polycarp's extension applies it, says so on the page and offers Undo. It can't click, type, \
 load anything or run a script, and you can't see the page through it: ask the person how it looks.
 Every result is {ok, data} or {ok:false, error:{code, message, suggestion, data:{errors}}}.";
 
@@ -474,7 +474,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "filters_list",
-            description: "The feed filters and page edits Polycarp's browser extension applies, from filters.json: each rule with its id, enabled, sites (empty is every site), words, patterns, accounts, kinds and hide. Read this before filter_set to see the ids in use.",
+            description: "The feed filters Polycarp's browser extension applies, from filters.json: each rule with its id, enabled, sites (empty is every site), words, patterns, accounts, kinds and hide. Read this before filter_set to see the ids in use.",
             schema: obj(json!({}), &[]),
             read_only: true,
             destructive: false,
@@ -482,7 +482,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "filter_set",
-            description: "Add a feed filter or page edit, or replace the rule with the same id. Polycarp's browser extension hides matching posts on X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn and Mastodon behind a one-click Show bar; `hide` selectors hide page parts on the named sites. A rule needs at least one of words, patterns, accounts, kinds or hide; at most 200 rules, 200 entries a list, 200 characters an entry. Open pages pick the change up within 30 seconds, new pages at once. A refused rule wrote nothing; error.data.errors names the field.",
+            description: "Add a feed filter, or replace the rule with the same id. Polycarp's browser extension hides matching posts on X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn and Mastodon behind a one-click Show bar; `hide` selectors hide page parts on the named sites; for any other change to a page use edit_set. A rule needs at least one of words, patterns, accounts, kinds or hide; at most 200 rules, 200 entries a list, 200 characters an entry. Open pages pick the change up within 30 seconds, new pages at once. A refused rule wrote nothing; error.data.errors names the field.",
             schema: obj(
                 json!({
                     "id": {"type":"string","description":"1 to 64 of a-z, 0-9 and -, as no-shorts. An existing id is replaced."},
@@ -502,7 +502,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "filter_remove",
-            description: "Remove one feed filter or page edit by its id from filters_list. Open pages show what it hid again within 30 seconds. To undo, filter_set the rule filters_list gave before.",
+            description: "Remove one feed filter by its id from filters_list. Open pages show what it hid again within 30 seconds. To undo, filter_set the rule filters_list gave before.",
             schema: obj(
                 json!({"id": {"type":"string","description":"The rule's id, from filters_list."}}),
                 &["id"],
@@ -521,14 +521,14 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "edit_set",
-            description: "Add a page edit, or replace the one with the same id. Polycarp's browser extension applies it on the sites it names each time the person opens them; open pages pick it up within 30 seconds, and a page says so and offers Undo the first time. An edit needs changes or css. It changes how a page looks and reads only: no clicks, scripts, form fields or network. hide and insert hold up best; an app that rebuilds its page can undo a move. Prefer a filter for hiding posts in a feed. A refused edit wrote nothing; error.data.errors names the field.",
+            description: "Add a page edit, or replace the one with the same id. Polycarp's browser extension applies it on the sites it names each time the person opens them; open pages pick it up within 30 seconds, and a page says so and offers Undo the first time. An edit needs changes or css; at most 100 edits. It changes how a page looks and reads only: no clicks, scripts, form fields or network. hide and insert hold up best; an app that rebuilds its page can undo a move. Prefer a filter for hiding posts in a feed. A refused edit wrote nothing; error.data.errors names the field.",
             schema: obj(
                 json!({
                     "id": {"type":"string","description":"1 to 64 of a-z, 0-9 and -, as quiet-news. An existing id is replaced whole."},
                     "name": {"type":"string","description":"What the person sees it called, up to 80 characters, as Quiet news."},
-                    "enabled": {"type":"boolean","description":"false keeps the edit but stops it. Default true."},
+                    "enabled": {"type":"boolean","description":"false keeps the edit but stops it. Default true, when replacing too: keep an edit the person stopped at false unless they want it back."},
                     "sites": {"type":"array","items":{"type":"string"},"description":"1 to 50 hosts, as news.example.com. A host covers its subdomains."},
-                    "paths": {"type":"array","items":{"type":"string"},"description":"Pages of those sites, as /home or /watch/*; empty or left out is every page."},
+                    "paths": {"type":"array","items":{"type":"string"},"description":"Up to 50 pages of those sites, as /home or /watch/*; empty or left out is every page."},
                     "changes": {"type":"array","items": {"type":"object","properties": {
                         "do": {"type":"string","enum":["hide","style","text","attr","move","insert"]},
                         "at": {"type":"string","description":"A CSS selector: what to change, or where to insert."},
@@ -541,7 +541,7 @@ pub(crate) fn tools() -> Vec<Tool> {
                         "where": {"type":"string","enum":["before","after","first","last"],"description":"move and insert: before or after the part, or inside it as its first or last."},
                         "blocks": {"type":"array","items":{"type":"object"},"description":"insert: up to 20 blocks, as {\"kind\": \"heading\", \"text\": \"Today\"}, {\"kind\": \"text\", \"text\": \"...\"}, {\"kind\": \"list\", \"items\": [\"one\", \"two\"]} or {\"kind\": \"link\", \"text\": \"...\", \"url\": \"https://...\"}. Plain words, never HTML."}
                     },"required":["do","at"]},"description":"Up to 50 changes, made in order. Each takes do, at and the fields its do names."},
-                    "css": {"type":"string","description":"A stylesheet for those pages, up to 20000 characters. Nothing that loads (url(), image(), @import, @font-face) and no backslash."}
+                    "css": {"type":"string","description":"A stylesheet for those pages, up to 20000 characters. Nothing that loads (url(), image()) and no backslash, here or in style; at-rules: @media, @supports, @container, @keyframes, @layer, @starting-style."}
                 }),
                 &["id", "sites"],
             ),
