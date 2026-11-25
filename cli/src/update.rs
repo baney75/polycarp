@@ -690,7 +690,7 @@ pub fn render(summary: &str, steps: &[Step], notes: &[String]) -> String {
 // ---- Reading the device ----------------------------------------------------------------------------
 
 /// Where the clean copy lives: POLYCARP_CACHE_DIR (an absolute path), else the platform's cache folder.
-fn cache_dir(home: &Path) -> PathBuf {
+pub fn cache_dir(home: &Path) -> PathBuf {
     let nonempty = |k: &str| {
         std::env::var_os(k)
             .filter(|v| !v.is_empty())
