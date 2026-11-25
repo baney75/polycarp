@@ -149,6 +149,8 @@ public struct TilingEngine: Equatable, Sendable {
     /// The size a window rounded its last one up to: no minimum, and only in force for a tile that size.
     var rounded: [WindowID: CGSize] = [:]
     var lessons: [WindowID: Int] = [:]
+    /// Times it rounded anew since a look last wrote nothing: more room for one can be what makes the next tile round.
+    var roundings: [WindowID: Int] = [:]
     var asked: [WindowID: Asked] = [:]
     /// The windows at the last look: a tab swap is told by one that went as another came in its place.
     var seen: [WindowID: TilingWindow] = [:]
@@ -218,6 +220,7 @@ public struct TilingEngine: Equatable, Sendable {
             }
         }
         seen = windows
+        if moves.isEmpty { roundings = [:] }
         return moves
     }
 
@@ -246,17 +249,12 @@ public struct TilingEngine: Equatable, Sendable {
             a.landed = now
             asked[id] = a
             var least = minimums[id] ?? .zero, round = rounded[id] ?? .zero
-            let was = (least, round)
-            if over.width > Self.grid { least.width = max(least.width, now.width) } else if over.width > Self.close { round.width = now.width }
-            if over.height > Self.grid { least.height = max(least.height, now.height) } else if over.height > Self.close { round.height = now.height }
-            // Rounding one tile size says nothing of the next, so it isn't counted; not keeping to its own rounding is.
-            let fickle = round.width != was.1.width && abs(was.1.width - a.target.width) <= Self.close
-                || round.height != was.1.height && abs(was.1.height - a.target.height) <= Self.close
+            let was = (least, round), learns = lessons[id, default: 0] < Self.mostLessons, rounds = roundings[id, default: 0] < Self.mostLessons
+            if over.width > Self.grid { if learns { least.width = max(least.width, now.width) } } else if over.width > Self.close, rounds { round.width = now.width }
+            if over.height > Self.grid { if learns { least.height = max(least.height, now.height) } } else if over.height > Self.close, rounds { round.height = now.height }
             guard (least, round) != was else { continue }
-            if least != was.0 || fickle {
-                guard lessons[id, default: 0] < Self.mostLessons else { continue }
-                lessons[id, default: 0] += 1
-            }
+            if least != was.0 { lessons[id, default: 0] += 1 }
+            if round != was.1 { roundings[id, default: 0] += 1 }
             minimums[id] = least == .zero ? nil : least
             rounded[id] = round == .zero ? nil : round
             learned = true
@@ -349,13 +347,32 @@ public struct TilingEngine: Equatable, Sendable {
     /// neighbor's tile until there is room again; the tree stays as it was asked for.
     public func frames(_ workspace: Int) -> [WindowID: CGRect] {
         guard let key = key(workspace), let slot = slots[key] else { return [:] }
+        var (out, stacked) = tiles(workspace)
+        let order = slot.layout.windows
+        for id in stacked {
+            let i = order.firstIndex(of: id)!
+            let host = order[..<i].last { out[$0] != nil && !stacked.contains($0) } ?? order[i...].first { out[$0] != nil && !stacked.contains($0) }
+            guard let host, var f = out[host] else { continue }
+            // One wider or higher than that tile lies over the next, and not off the display.
+            if let m = minimums[id], let box = options.gaps.inset(slot.area) {
+                f.size = CGSize(width: max(f.width, min(m.width, box.width)), height: max(f.height, min(m.height, box.height)))
+                f.origin = CGPoint(x: min(f.minX, box.x0 + box.width - f.width), y: min(f.minY, box.y0 + box.height - f.height))
+            }
+            out[id] = f
+        }
+        return out
+    }
+
+    /// The tiles of the windows that have one of their own, and the windows that share another's.
+    func tiles(_ workspace: Int) -> (own: [WindowID: CGRect], stacked: [WindowID]) {
+        guard let key = key(workspace), let slot = slots[key] else { return ([:], []) }
         let lone = options.lone.width(in: slot.area).map { CGSize(width: $0, height: .infinity) }
         func solve(_ l: TileLayout) -> [WindowID: CGRect] {
             let out = l.frames(in: slot.area, gaps: options.gaps, minimums: minimums, loneMax: lone)
             guard !l.full, let least = roundedUp(l, out, slot.area) else { return out }
             return l.frames(in: slot.area, gaps: options.gaps, minimums: least, loneMax: lone)
         }
-        guard !slot.layout.full, !fits(slot.layout, slot.area, minimums) else { return solve(slot.layout) }
+        guard !slot.layout.full, !fits(slot.layout, slot.area, minimums) else { return (solve(slot.layout), []) }
         var out = Set<WindowID>()
         func left() -> TileLayout {
             var l = slot.layout
@@ -369,21 +386,7 @@ public struct TilingEngine: Equatable, Sendable {
             out.remove(id)
             if !fits(left(), slot.area, minimums) { out.insert(id) }
         }
-        let room = left(), stacked = byUse.filter(out.contains)
-        var frames = solve(room)
-        let order = slot.layout.windows
-        for id in stacked {
-            let i = order.firstIndex(of: id)!
-            let host = order[..<i].last { room.contains($0) } ?? order[i...].first { room.contains($0) }
-            guard let host, var f = frames[host] else { continue }
-            // One wider or higher than that tile lies over the next, and not off the display.
-            if let m = minimums[id], let box = options.gaps.inset(slot.area) {
-                f.size = CGSize(width: max(f.width, min(m.width, box.width)), height: max(f.height, min(m.height, box.height)))
-                f.origin = CGPoint(x: min(f.minX, box.x0 + box.width - f.width), y: min(f.minY, box.y0 + box.height - f.height))
-            }
-            frames[id] = f
-        }
-        return frames
+        return (solve(left()), byUse.filter(out.contains))
     }
 
     /// The minimums with what windows rounded these tiles up to, as far as there is room. Nil when none did.
@@ -471,14 +474,14 @@ public struct TilingEngine: Equatable, Sendable {
         choice[new] = choice[old]
         // A window owed nothing is where the person has it, its other tabs too.
         if before[old] == nil { before[new] = nil }
-        carry(&before); carry(&minimums); carry(&rounded); carry(&lessons); carry(&asked); carry(&landing)
+        carry(&before); carry(&minimums); carry(&rounded); carry(&lessons); carry(&roundings); carry(&asked); carry(&landing)
         recent = recent.map { $0 == old ? new : $0 }
     }
 
     /// Drops what is known of windows that closed, and their places on workspaces they left.
     private mutating func forget(_ now: [WindowID: TilingWindow]) {
         func alive<T>(_ d: inout [WindowID: T]) { if d.keys.contains(where: { now[$0] == nil }) { d = d.filter { now[$0.key] != nil } } }
-        alive(&before); alive(&choice); alive(&minimums); alive(&rounded); alive(&lessons); alive(&asked); alive(&landing)
+        alive(&before); alive(&choice); alive(&minimums); alive(&rounded); alive(&lessons); alive(&roundings); alive(&asked); alive(&landing)
         recent.removeAll { now[$0] == nil }
         for key in slots.keys {
             for id in slots[key]!.layout.windows where now[id]?.workspace != key.workspace {
