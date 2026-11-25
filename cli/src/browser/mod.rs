@@ -5,7 +5,12 @@
 mod change;
 mod pak;
 mod release;
+// The install step that uses these two comes next.
+#[cfg_attr(not(test), allow(dead_code))]
+mod running;
 mod source;
+#[cfg_attr(not(test), allow(dead_code))]
+mod spot;
 #[cfg(test)]
 mod testing;
 mod tools;

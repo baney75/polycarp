@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use super::pak;
+use super::spot::{Built, Spot};
 use super::tools::{Call, Ran, System, Tools};
 use super::Place;
 
@@ -65,11 +66,42 @@ impl Fake {
         change(&mut self.scene.borrow_mut());
     }
 
+    pub fn spot(&self) -> Spot {
+        Spot {
+            folder: self.root.join("Applications"),
+        }
+    }
+
     pub fn place(&self) -> Place {
         Place {
             cache: self.root.join("cache"),
             parts: self.parts(),
         }
+    }
+
+    /// A folder that says it is a build, and no more.
+    pub fn built_app(&self, at: &Path, version: &str, built: u64) {
+        fs::create_dir_all(at.join("Contents/Resources/polycarp")).unwrap();
+        fs::create_dir_all(at.join("Contents/MacOS")).unwrap();
+        let built = Built {
+            helium: version.into(),
+            published: Some(20_000),
+            built,
+            parts: String::new(),
+            certificate: false,
+        };
+        built.write(at).unwrap();
+    }
+
+    /// A program that stays running from inside `app`.
+    pub fn start_inside(&self, app: &Path) -> std::process::Child {
+        let copy = app.join("Contents/MacOS/sleeper");
+        fs::copy("/bin/sleep", &copy).unwrap();
+        // Signed again: macOS won't run a moved copy of its own.
+        let mut codesign = std::process::Command::new("/usr/bin/codesign");
+        let signed = codesign.args(["--force", "--sign", "-"]).arg(&copy);
+        assert!(signed.output().unwrap().status.success());
+        std::process::Command::new(&copy).arg("60").spawn().unwrap()
     }
 
     /// Every call so far, as `program arguments`.
@@ -91,6 +123,12 @@ impl Fake {
             fs::write(parts.join(icon), icon).unwrap();
         }
         parts
+    }
+
+    pub fn work(&self) -> PathBuf {
+        let work = self.root.join("work");
+        fs::create_dir_all(&work).unwrap();
+        work
     }
 
     /// A small real app bundle, signed by nobody.
