@@ -312,6 +312,54 @@ screen saver, lock or display sleep has the screen; those still come in their ti
 
 What the rooms do in the launcher and the menu: [rooms.md](rooms.md).
 
+### `tiling`: windows side by side
+
+Off until you turn it on. Nothing reads these fields yet.
+
+| Path | Default | Takes |
+| --- | --- | --- |
+| `tiling.enabled` | `false` | Tile every workspace that isn't in `tiling.off`. A workspace in `tiling.on` tiles either way. |
+| `tiling.on` | `[]` | Workspaces, `"1"` to `"9"`, that tile while `tiling.enabled` is off. |
+| `tiling.off` | `[]` | Workspaces that don't tile while `tiling.enabled` is on. |
+| `tiling.style` | `"dwindle"` | `dwindle` splits the window you are in, `columns` puts windows side by side, `main` keeps one large window beside a stack. |
+| `tiling.gaps.inner` | `8` | Points between tiled windows, 0 to 64. |
+| `tiling.gaps.outer` | `8` | Points around them, 0 to 64. |
+| `tiling.gaps.top` | `0` | Points more at the top edge, 0 to 400, for something that stays there. |
+| `tiling.gaps.bottom` | `0` | Points more at the bottom edge, 0 to 400, for something that stays there. |
+| `tiling.gaps.left` | `0` | Points more at the left edge, 0 to 400, for something that stays there. |
+| `tiling.gaps.right` | `0` | Points more at the right edge, 0 to 400, for something that stays there. |
+| `tiling.loneWidth` | `"smart"` | How wide a workspace's only window gets: `smart` (a 16:10 shape on a wide display, all of any other), `fill`, or `points:<width>`. |
+| `tiling.newWindow` | `"after"` | Which side of the window you are in a new one goes on: `after` (right or below) or `before`. |
+| `tiling.float` | `["com.apple.calculator","com.apple.Stickies"]` | Apps whose windows are never tiled, by bundle id. |
+| `tiling.floatModifier` | `"shift"` | The key held while a tiled window is let go that leaves it floating: `shift`, `control`, `option`, `command` or `none`. |
+| `tiling.keys.toggle` | `"ctrl+opt+T"` | Tile this workspace, or stop. |
+| `tiling.keys.focus-left` | `"ctrl+opt+Left"` | Focus the window to the left. |
+| `tiling.keys.focus-right` | `"ctrl+opt+Right"` | Focus the window to the right. |
+| `tiling.keys.focus-up` | `"ctrl+opt+Up"` | Focus the window above. |
+| `tiling.keys.focus-down` | `"ctrl+opt+Down"` | Focus the window below. |
+| `tiling.keys.focus-next` | `"ctrl+opt+]"` | Focus the next tiled window. |
+| `tiling.keys.focus-previous` | `"ctrl+opt+["` | Focus the previous tiled window. |
+| `tiling.keys.move-left` | `"ctrl+opt+shift+Left"` | Move the tiled window left. |
+| `tiling.keys.move-right` | `"ctrl+opt+shift+Right"` | Move the tiled window right. |
+| `tiling.keys.move-up` | `"ctrl+opt+shift+Up"` | Move the tiled window up. |
+| `tiling.keys.move-down` | `"ctrl+opt+shift+Down"` | Move the tiled window down. |
+| `tiling.keys.grow-left` | `"ctrl+opt+cmd+Left"` | Move the tiled window's edge left. |
+| `tiling.keys.grow-right` | `"ctrl+opt+cmd+Right"` | Move the tiled window's edge right. |
+| `tiling.keys.grow-up` | `"ctrl+opt+cmd+Up"` | Move the tiled window's edge up. |
+| `tiling.keys.grow-down` | `"ctrl+opt+cmd+Down"` | Move the tiled window's edge down. |
+| `tiling.keys.balance` | `"ctrl+opt+B"` | Even out every split. |
+| `tiling.keys.flip` | `"ctrl+opt+R"` | Turn the window's split. |
+| `tiling.keys.style` | `"ctrl+opt+S"` | Next tiling style: dwindle, columns, main. |
+| `tiling.keys.promote` | `"ctrl+opt+Return"` | Make the window the main one. |
+| `tiling.keys.float` | `"ctrl+opt+F"` | Float the window, or tile it again. |
+| `tiling.keys.full` | `"ctrl+opt+M"` | Give the window the whole area, or put it back. |
+| `tiling.keys.next-display` | `"ctrl+opt+N"` | Send the window to the next display. |
+| `tiling.keys.style-dwindle` | `""` | Tile in the dwindle style. |
+| `tiling.keys.style-columns` | `""` | Tile in the columns style. |
+| `tiling.keys.style-main` | `""` | Tile in the main style. |
+
+A key is modifiers and one key joined with `+`: `ctrl`, `opt`, `shift`, `cmd`, then a letter, an arrow, `F1` to `F20`, `Return`, `Space`, `Tab`, `Delete`, `Home`, `End`, `PageUp`, `PageDown` or one of `0 - = [ ] ; ' , . / \` and the backtick. A key takes `ctrl` and another modifier, or `cmd` and `opt`, so none is taken from the app in front; 1 to 9 are the workspaces'. Empty is no key. A key you give one command leaves the command that has it by default without one; two commands in the file can't share a key.
+
 ## Examples
 
 ```sh

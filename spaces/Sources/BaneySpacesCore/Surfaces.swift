@@ -33,6 +33,10 @@ public enum SurfaceKind: Equatable, Sendable {
     case ids(known: [String], custom: Bool)
     /// A paper (Paper.swift): empty (none), `#RRGGBB`, a scene name, or `picture:<name>` for a picture in Papers/.
     case paper
+    /// App bundle ids, each once.
+    case bundles
+    /// A shortcut (`KeyChord`), or empty for none.
+    case chord
 }
 
 /// One field of surfaces.json.
@@ -253,6 +257,30 @@ public struct Surfaces: Equatable, Sendable {
         public var menu: Bool
     }
 
+    /// Windows laid out side by side, workspace by workspace (docs/tiling.md).
+    public struct Tiling: Equatable, Sendable {
+        public enum LoneWidth: Equatable, Sendable { case fill, smart, points(Int) }
+        /// The key held during a drag that leaves the window floating.
+        public enum FloatModifier: String, CaseIterable, Sendable { case shift, control, option, command, none }
+
+        /// Whether a workspace tiles that is in neither list.
+        public var enabled: Bool
+        public var on: Set<Int>
+        public var off: Set<Int>
+        public var style: String
+        public var inner, outer, top, bottom, left, right: Int
+        public var loneWidth: LoneWidth
+        public var newWindow: String
+        /// Apps whose windows float, by bundle id.
+        public var float: [String]
+        public var floatModifier: FloatModifier
+        /// The key of each command that has one, by its name in `TilingKeys`.
+        public var keys: [String: KeyChord]
+
+        /// Whether any workspace could tile: while not, its keys but the toggle's stay the other apps'.
+        public var anywhere: Bool { enabled || !on.isEmpty }
+    }
+
     /// What lies behind the desktop, the new tab page and the idle screen (Paper.swift); each place's own overrides it.
     /// Nil leaves every place as it was before paper.
     public var paper: Paper?
@@ -264,6 +292,7 @@ public struct Surfaces: Equatable, Sendable {
     public var idle: Idle
     public var text: Text
     public var rooms: RoomsSettings
+    public var tiling: Tiling
 
     /// Every default, as compiled in.
     public static let defaults = Surfaces(resolved: SurfaceField.defaultTree)
@@ -285,6 +314,9 @@ extension SurfaceField {
         ("idle", "The idle screen (Martyr Night)."),
         ("text", "Where verses come from."),
         ("rooms", "The Baney Extended System's rooms: 0 Inbox, 1 Do, 2 Keep, 3 Know, 4 Let Go under one root."),
+        ("tiling", "Windows laid out side by side, workspace by workspace."),
+        ("tiling.gaps", "The points between tiled windows and around them."),
+        ("tiling.keys", "The key for each tiling command, as ctrl+opt+T; empty is none."),
     ]
 
     public static let all: [SurfaceField] = [
@@ -355,7 +387,28 @@ extension SurfaceField {
         SurfaceField("rooms.root", .text(max: 1024), .string(Rooms.defaultRoot),
                      "The folder that holds the five rooms (bes init makes them). ~/ starts at your home folder. Polycarp shows the rooms only once this folder has .bes/ or 0 Inbox/ in it; it never makes them."),
         SurfaceField("rooms.menu", .bool, .bool(true), "A Rooms section in the status menu: the five rooms and what waits in the Inbox."),
-    ]
+
+        SurfaceField("tiling.enabled", .bool, .bool(false), "Tile every workspace that isn't in tiling.off. Off until you turn it on; a workspace in tiling.on tiles either way."),
+        SurfaceField("tiling.on", .ids(known: workspaces, custom: false), ids([]), "Workspaces that tile while tiling.enabled is off."),
+        SurfaceField("tiling.off", .ids(known: workspaces, custom: false), ids([]), "Workspaces that don't tile while tiling.enabled is on."),
+        SurfaceField("tiling.style", .choice(["dwindle", "columns", "main"]), .string("dwindle"),
+                     "dwindle splits the window you are in, columns puts windows side by side, main keeps one large window beside a stack."),
+        SurfaceField("tiling.gaps.inner", .integer(0...64), .number(8), "Points between tiled windows, 0 to 64."),
+        SurfaceField("tiling.gaps.outer", .integer(0...64), .number(8), "Points around the tiled windows, 0 to 64."),
+    ] + ["top", "bottom", "left", "right"].map {
+        SurfaceField("tiling.gaps.\($0)", .integer(0...400), .number(0), "Points more at the \($0) edge, 0 to 400, for something that stays there.")
+    } + [
+        SurfaceField("tiling.loneWidth", .tagged(choices: ["smart", "fill"], prefix: "points", pattern: "^[1-9][0-9]{2,3}$", example: "points:1400"),
+                     .string("smart"), "How wide a workspace's only window gets: smart (a 16:10 shape on a wide display, all of any other), fill, or points:<width>."),
+        SurfaceField("tiling.newWindow", .choice(["after", "before"]), .string("after"), "Which side of the window you are in a new one goes on: after (right or below) or before."),
+        SurfaceField("tiling.float", .bundles, ids(["com.apple.calculator", "com.apple.Stickies"]), "Apps whose windows are never tiled, by bundle id."),
+        SurfaceField("tiling.floatModifier", .choice(Surfaces.Tiling.FloatModifier.allCases.map(\.rawValue)), .string("shift"),
+                     "The key held while a tiled window is let go that leaves it floating: shift, control, option, command or none."),
+    ] + TilingKeys.all.map {
+        SurfaceField("tiling.keys.\($0.name)", .chord, .string($0.key), "\($0.title).")
+    }
+
+    private static let workspaces = (1...9).map(String.init)
 
     static let byPath: [String: SurfaceField] = Dictionary(uniqueKeysWithValues: all.map { ($0.path, $0) })
     static let groupPaths: Set<String> = Set(groups.map(\.path))
@@ -407,6 +460,10 @@ extension Surfaces {
         if !own.contains("left") { surfaces.bar.left.removeAll { taken.contains($0.id) } }
         if !own.contains("center") { surfaces.bar.center.removeAll { taken.contains($0.id) } }
         if !own.contains("right") { surfaces.bar.right.removeAll { taken.contains($0.id) } }
+        // A key the file gives one command leaves the command that has it by default without one.
+        let chosen = TilingKeys.all.compactMap { k in doc.at(["tiling", "keys", k.name]).map { _ in (k.name, surfaces.tiling.keys[k.name]) } }
+        let names = Set(chosen.map(\.0)), chords = Set(chosen.compactMap(\.1))
+        surfaces.tiling.keys = surfaces.tiling.keys.filter { names.contains($0.key) || !chords.contains($0.value) }
         // The clock's default place is the middle now; a file that sets the middle without it, written when the
         // clock sat at the right, keeps it at the end of the default right instead of losing it.
         if own.contains("center"), !own.contains("right"), !taken.contains(BarModule.clock.id) {
@@ -444,6 +501,15 @@ extension Surfaces {
         paper = Paper(id: s("paper"))
         text = Text(translation: Translation(rawValue: s("text.translation")) ?? .bsb, verseSource: VerseSource(id: s("text.verseSource")))
         rooms = RoomsSettings(root: s("rooms.root"), menu: b("rooms.menu"))
+        func numbers(_ p: String) -> Set<Int> { Set(list(p).compactMap(Int.init)) }
+        let lone = s("tiling.loneWidth")
+        tiling = Tiling(enabled: b("tiling.enabled"), on: numbers("tiling.on"), off: numbers("tiling.off"), style: s("tiling.style"),
+                        inner: n("tiling.gaps.inner"), outer: n("tiling.gaps.outer"), top: n("tiling.gaps.top"), bottom: n("tiling.gaps.bottom"),
+                        left: n("tiling.gaps.left"), right: n("tiling.gaps.right"),
+                        loneWidth: lone == "fill" ? .fill : lone.hasPrefix("points:") ? .points(Int(lone.dropFirst(7)) ?? 1400) : .smart,
+                        newWindow: s("tiling.newWindow"), float: list("tiling.float"),
+                        floatModifier: .init(rawValue: s("tiling.floatModifier")) ?? .shift,
+                        keys: Dictionary(uniqueKeysWithValues: TilingKeys.all.compactMap { k in KeyChord(s("tiling.keys." + k.name)).map { (k.name, $0) } }))
     }
 }
 
@@ -507,6 +573,7 @@ enum SurfaceCheck {
     /// A Bible reference: an optional book number, the book's name, a chapter, optionally a verse or a range.
     static let referencePattern = "^([1-3] )?[A-Za-z]+( [A-Za-z]+){0,3} [0-9]{1,3}(:[0-9]{1,3}(-[0-9]{1,3})?)?$"
     static let maxTemplate = 512
+    static let bundlePattern = "^[A-Za-z0-9][A-Za-z0-9._-]{0,154}$"
     /// A bang trigger as `search.engine` names one: lowercase, no "!".
     static let triggerPattern = "^[a-z0-9][a-z0-9._-]{0,31}$"
 
@@ -591,10 +658,24 @@ enum SurfaceCheck {
             if s.isEmpty || Paper(id: s) != nil { return nil }
             if s.hasPrefix("picture:") { return (nil, "\"\(s.dropFirst(8))\" is not a name paper set gives; use polycarp-spaces paper set <picture>") }
             return (nil, "must be \(want), not \"\(s)\"")
+        case .bundles:
+            guard let a = v.array else { return (nil, "must be a list of app bundle ids, not \(v.kind)") }
+            var seen = Set<String>()
+            for (i, item) in a.enumerated() {
+                guard let id = item.string else { return ("[\(i)]", "must be an app's bundle id (a string), not \(item.kind)") }
+                guard matches(id, bundlePattern) else { return ("[\(i)]", "\"\(id)\" is not an app's bundle id (as \"com.apple.Stickies\")") }
+                if !seen.insert(id).inserted { return ("[\(i)]", "\"\(id)\" is listed twice") }
+            }
+            return nil
+        case .chord:
+            guard let s = v.string else { return (nil, "must be a shortcut such as \"ctrl+opt+T\", or empty, not \(v.kind)") }
+            if s.isEmpty { return nil }
+            if case .failure(let p) = KeyChord.read(s) { return (nil, p.message) }
+            return nil
         }
     }
 
-    /// Rules across fields: a bar module in one place only, and the menu rows that can't be hidden.
+    /// Rules across fields: a bar module in one place only, a tiling key for one command only, and the menu rows that can't be hidden.
     static func crossChecks(_ doc: SurfaceValue, errors: inout [SurfacesIssue]) {
         // Only lists that passed on their own are compared, so one mistake is one error.
         func list(_ p: String) -> [String]? {
@@ -618,6 +699,12 @@ enum SurfaceCheck {
                     placed[id] = (place, j, true)
                 }
             }
+        }
+        var taken: [KeyChord: String] = [:]
+        for k in TilingKeys.all {
+            guard let chord = doc.at(["tiling", "keys", k.name])?.string.flatMap(KeyChord.init) else { continue }
+            if let other = taken[chord] { errors.append(SurfacesIssue("tiling.keys." + k.name, "\(chord.symbols) is already tiling.keys.\(other)'s")) }
+            else { taken[chord] = k.name }
         }
         if let hidden = list("menu.hidden") {
             for (i, id) in hidden.enumerated() where Surfaces.MenuRow.required.map(\.rawValue).contains(id) {
@@ -689,6 +776,12 @@ extension Surfaces {
                                      .object(["pattern": .string(Paper.colorPattern)]),
                                      .object(["pattern": .string("^picture:" + Paper.picturePattern.dropFirst())])])
                 o["examples"] = .array([.string(""), .string("#2B2E26"), .string("olive"), .string("picture:paper-0123456789abcdef.jpg")])
+            case .bundles:
+                o["type"] = .string("array"); o["uniqueItems"] = .bool(true)
+                o["items"] = .object(["type": .string("string"), "pattern": .string(SurfaceCheck.bundlePattern)])
+            case .chord:
+                o["type"] = .string("string"); o["maxLength"] = .number(40)
+                o["examples"] = .array([.string("ctrl+opt+T"), .string("ctrl+opt+shift+Left"), .string("")])
             }
             return .object(o)
         }
