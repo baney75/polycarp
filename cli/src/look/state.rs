@@ -239,13 +239,15 @@ impl Drop for Work {
 pub struct Now {
     pub theme: theme::ThemeLook,
     pub live: Option<Live>,
+    pub notes: Vec<String>,
 }
 
 pub fn now(c: &Ctx) -> Result<Now, ApiErr> {
-    let (theme, _) = theme::capture(c)?;
+    let (theme, notes) = theme::capture(c)?;
     Ok(Now {
         theme,
         live: read()?,
+        notes,
     })
 }
 

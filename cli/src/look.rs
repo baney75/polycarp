@@ -22,6 +22,7 @@ usage: polycarp look <command> [--json]
 
   list                                  the shipped look and yours, and which is in force
   show <name|file|->                    what a look holds, and what it would change
+  save <name> [--title T] [--force]     keep how everything looks now under a name
   export <name> <file|-> [--force]      write a look to one file to share (<name>.polycarp-look)
   import <file|-> [--name N] [--force]  check someone's look and save it; nothing on screen changes
 
@@ -38,6 +39,10 @@ pub fn run(args: &[OsString]) -> i32 {
         "show" => theme::cmd(rest, &[], &[], |c, p| {
             exactly(p, 1, "one look name or file")?;
             op_show(c, &p.pos[0])
+        }),
+        "save" => theme::cmd(rest, &["title"], &["force"], |c, p| {
+            exactly(p, 1, "one look name")?;
+            op_save(c, &p.pos[0], p.val("title"), p.flag("force"))
         }),
         "export" => theme::cmd(rest, &[], &["force"], |c, p| {
             exactly(p, 2, "a look name, and a file or -")?;
@@ -269,6 +274,45 @@ fn left_for_spaces(now: &state::Now) -> Option<String> {
     })
 }
 
+pub(crate) fn op_save(c: &Ctx, name: &str, title: Option<&str>, force: bool) -> Res {
+    own_name(name)?;
+    let _held = theme::hold(c)?;
+    refuse_taken(c, name, force)?;
+    let now = state::now(c)?;
+    let mut notes = now.notes.clone();
+    // Saving over a look keeps what it is called unless a new title comes with it.
+    let was = store::read_look(&store::path(c, name)).ok().map(|(l, _)| l);
+    let title = match (title, &was) {
+        (Some(t), _) => t.to_string(),
+        (None, Some(w)) => w.title.clone(),
+        (None, None) => theme::title_case(name),
+    };
+    let mut look = Look {
+        name: name.into(),
+        title,
+        description: was.and_then(|w| w.description),
+        theme: now.theme.clone(),
+        style: None,
+        surfaces: None,
+        paper: None,
+        pictures: Default::default(),
+    };
+    match &now.live {
+        Some(live) => {
+            look.style = Some(live.style.clone());
+            let s = live.look_surfaces(&mut notes);
+            look.surfaces =
+                Some(s.map_err(|p| store::refused("a setting can't go in a look", &[p]))?);
+            look.paper = Some(live.paper.clone());
+            look.pictures = live.pictures.clone();
+            state::check(c, &look)?;
+        }
+        None => notes
+            .push("Polycarp Spaces isn't installed here, so the look holds the theme alone".into()),
+    }
+    keep(c, &look, "saved", notes)
+}
+
 /// Writes a look to the looks folder, read back first as anyone else would read it.
 fn keep(c: &Ctx, look: &Look, did: &str, notes: Vec<String>) -> Res {
     let text = look.to_text();
@@ -278,6 +322,10 @@ fn keep(c: &Ctx, look: &Look, did: &str, notes: Vec<String>) -> Res {
     let replaced = exists(c, &look.name);
     store::write_plain(&p, text.as_bytes())?;
     let mut data = about(c, look, &look.name, false);
+    // Which look is in force is `list`'s and `show`'s to say.
+    if let Some(o) = data.as_object_mut() {
+        o.remove("current");
+    }
     data["replaced"] = json!(replaced);
     let line = format!("{did} the look {} in {}\n", look.name, p.display());
     Ok(Out::new(data, line).noting(notes))
