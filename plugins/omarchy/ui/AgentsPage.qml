@@ -15,9 +15,16 @@ Item {
   readonly property color ink: Color.popups.text
   readonly property string family: host.bar ? host.bar.fontFamily : Style.font.family
   property int cursor: 0
+  // The agent the cursor is on, so it stays on that agent when the list reorders under it.
+  property string picked: ""
+
+  function pick(at) {
+    cursor = at
+    picked = agents[at] ? agents[at].id : ""
+  }
 
   function move(dx, dy) {
-    if (agents.length > 0) cursor = Math.max(0, Math.min(agents.length - 1, cursor + (dy || dx)))
+    if (agents.length > 0) pick(Math.max(0, Math.min(agents.length - 1, cursor + (dy || dx))))
   }
 
   function activate() {
@@ -26,8 +33,10 @@ Item {
 
   function go(agent) {
     if (!agent) return
+    // Closing can unload this page, so the service is read first.
+    var to = service
     host.close()
-    service.focusAgent(agent)
+    to.focusAgent(agent)
   }
 
   function sectionOf(kind) {
@@ -36,7 +45,10 @@ Item {
 
   implicitWidth: Style.space(340)
   implicitHeight: list.implicitHeight
-  onAgentsChanged: if (cursor >= agents.length) cursor = Math.max(0, agents.length - 1)
+  onAgentsChanged: {
+    for (var i = 0; i < agents.length; i++) if (agents[i].id === picked) { cursor = i; return }
+    pick(Math.max(0, Math.min(cursor, agents.length - 1)))
+  }
   Component.onCompleted: service.lookForAgents()
 
   Column {
@@ -177,7 +189,7 @@ Item {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onEntered: root.cursor = entry.index
+            onEntered: root.pick(entry.index)
             onClicked: root.go(entry.modelData)
           }
         }

@@ -21,9 +21,11 @@ Item {
     return parts.join(", ")
   }
 
-  visible: any
-  implicitWidth: any ? slot.implicitWidth : 0
-  implicitHeight: any ? slot.implicitHeight : 0
+  // Stays while its page is open, so the popup keeps its place when the last agent closes.
+  readonly property bool shown: any || slot.held
+  visible: shown
+  implicitWidth: shown ? slot.implicitWidth : 0
+  implicitHeight: shown ? slot.implicitHeight : 0
 
   Slot {
     id: slot
