@@ -133,6 +133,27 @@ final class BrowserBookTests: XCTestCase {
         XCTAssertLessThan(b.slots(.tabs, Self.browser), 2_100, "the rows it was are let go")
     }
 
+    func testAChangeWhileAListComesInIsNotUndoneByItsLaterPieces() {
+        let b = book(Self.all(.tabs, [Self.tab(1, "One", "https://a.example/")]))
+        let change: (([[String: Any]], [Any]) -> BrowserMessage) = { Self.message(["op": "browser.change", "source": "tabs", "rows": $0, "gone": $1])! }
+        b.take(Self.all(.tabs, [Self.tab(5, "Five", "https://e.example/"), Self.tab(6, "Six then", "https://f.example/")], last: false), from: Self.browser)
+        b.take(change([Self.tab(6, "Six now", "https://f.example/")], [5]), from: Self.browser)
+        b.take(Self.all(.tabs, [Self.tab(5, "Five", "https://e.example/"), Self.tab(6, "Six then", "https://f.example/"), Self.tab(7, "Seven", "https://g.example/")], first: false), from: Self.browser)
+        XCTAssertEqual(Set(b.rows(.tabs).map(\.row.title)), ["Six now", "Seven"], "closed and renamed while the list came")
+        b.take(Self.all(.tabs, [Self.tab(5, "Five again", "https://e.example/")]), from: Self.browser)
+        XCTAssertEqual(b.rows(.tabs).map(\.row.title), ["Five again"], "a new list holds nothing back")
+        let fresh = book(Self.all(.history, [["url": "https://a.example/", "title": "Page one"]], last: false))
+        fresh.take(Self.message(["op": "browser.change", "source": "history", "rows": [], "gone": ["https://a.example/"]])!, from: Self.browser)
+        fresh.take(Self.all(.history, [["url": "https://a.example/", "title": "Page one"], ["url": "https://b.example/", "title": "Page two"]], first: false), from: Self.browser)
+        XCTAssertEqual(fresh.rows(.history).map(\.row.title), ["Page two"], "the first list too")
+        let many = book(Self.all(.tabs, (1...2_100).map { Self.tab($0, "Tab \($0)", "https://a.example/\($0)") }, last: false))
+        many.take(change([], [5]), from: Self.browser)
+        many.take(change([], Array(6...1_106)), from: Self.browser)
+        many.take(Self.all(.tabs, [Self.tab(5, "Tab 5", "https://a.example/5")], first: false), from: Self.browser)
+        XCTAssertEqual(many.rows(.tabs).count, 998, "most closed while it came, and the list was held anew")
+        XCTAssertNil(many.rows(.tabs).first { $0.row.key == "5" })
+    }
+
     func testNoMoreRowsAreKeptThanASourcesMost() {
         let rows = (0..<600).map { Self.tab($0 + 1, "File \($0).zip", "https://a.example/\($0)") }
         XCTAssertEqual(book(Self.all(.downloads, rows)).rows(.downloads).count, 500)
@@ -147,6 +168,20 @@ final class BrowserBookTests: XCTestCase {
                      Self.all(.tabs, [Self.tab(11, "Soup recipe", page), Self.tab(12, "Soup recipe", page)]))
         XCTAssertEqual(b.search("soup").map(\.id).sorted(), ["tab:org.example.browser:7:11", "tab:org.example.browser:7:12"],
                        "two tabs of a page are two places; the id is the session engine's")
+    }
+
+    func testAPageOpenInATabIsOfferedAsThatTabWhateverMatched() {
+        let page = "https://bank.example/account"
+        let other = BrowserPeer("org.example.other")
+        let b = book(Self.all(.bookmarks, [["id": "4", "url": page, "title": "Bills"]]),
+                     Self.all(.tabs, [Self.tab(11, "Account overview", page + "#top", ["front": false]), Self.tab(12, "Account overview", page, ["front": true])]))
+        XCTAssertEqual(b.search("bills").map(\.id), ["tab:org.example.browser:7:12"], "the bookmark matched; the tab is where to go")
+        XCTAssertEqual(b.search("bills").first?.score, book(Self.all(.bookmarks, [["id": "4", "url": page, "title": "Bills"]])).search("bills").first?.score, "as well as the bookmark matched")
+        b.take(Self.message(["op": "browser.change", "source": "tabs", "rows": [], "gone": [11, 12]])!, from: Self.browser)
+        b.take(Self.all(.tabs, [Self.tab(21, "Account overview", page)]), from: other)
+        XCTAssertEqual(b.search("bills").map(\.id), ["tab:org.example.other:7:21"], "in another browser if this one hasn't it open")
+        b.take(Self.all(.tabs, []), from: other)
+        XCTAssertEqual(b.search("bills").map(\.row.source), [.bookmarks], "closed: the bookmark again")
     }
 
     func testATitlesStartBeatsAWordBeatsInsideAndWordsApartMustAllBeThere() {
@@ -171,6 +206,9 @@ final class BrowserBookTests: XCTestCase {
         XCTAssertEqual(b.search("garden").count, 6)
         XCTAssertEqual(b.search("xgardens").count, 1, "its address has a word that starts so")
         XCTAssertEqual(b.search("ardens").count, 0)
+        let often = book(Self.all(.history, [["url": "https://c.example/xgardens", "title": String(repeating: "long ", count: 30), "visits": 90, "last": Self.now.timeIntervalSince1970 * 1000]]))
+        XCTAssertEqual(often.search("xgardens").count, 1)
+        XCTAssertEqual(often.search("ardens").count, 0, "visits make a row rank higher, not match better")
     }
 
     func testAPageVisitedOftenAndLatelyComesFirst() {

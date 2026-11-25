@@ -41,6 +41,10 @@ public final class BrowserBook {
         var table = BrowserTable()
         var slots: [String: Int] = [:]
         var rows: [Int: BrowserRow] = [:]
+        /// A tab shelf's open pages, by address, so nothing else offers one again.
+        var open: [String: Set<Int>] = [:]
+        /// While a list comes in, the rows a change has told of since: a later piece, read before the change, doesn't undo it.
+        var newer: Set<String> = []
 
         mutating func put(_ row: BrowserRow, _ folded: (title: String, address: String)) {
             if slots[row.key] == nil, slots.count >= row.source.most { return }
@@ -48,17 +52,23 @@ public final class BrowserBook {
             let slot = table.add(title: folded.title, address: folded.address, weight: row.weight)
             slots[row.key] = slot
             rows[slot] = row
+            if row.source == .tabs, !row.url.isEmpty { open[BrowserBook.address(row.url), default: []].insert(slot) }
         }
         mutating func drop(_ key: String) {
             guard let slot = slots.removeValue(forKey: key) else { return }
             table.remove(slot)
-            rows[slot] = nil
+            if let row = rows.removeValue(forKey: slot), row.source == .tabs, !row.url.isEmpty {
+                let a = BrowserBook.address(row.url)
+                open[a]?.remove(slot)
+                if open[a]?.isEmpty == true { open[a] = nil }
+            }
             // Rows that came and went (a tab's title changing all day) are let go once they outnumber what is held.
             if table.slots > 2_000, table.live * 2 < table.slots { rebuild() }
         }
         private mutating func rebuild() {
-            let kept = rows.sorted { $0.key < $1.key }.map(\.value)
+            let (kept, told) = (rows.sorted { $0.key < $1.key }.map(\.value), newer)
             self = Shelf()
+            newer = told
             for r in kept { put(r, (Fuzzy.fold(r.title), Fuzzy.fold(BrowserMessage.shown(r.url)))) }
         }
     }
@@ -96,7 +106,7 @@ public final class BrowserBook {
         case .rows(let rows, let first, let last):
             // A piece with no beginning belongs to a list that was dropped (the switch went off and on).
             guard var shelf = first ? Shelf() : coming[peer]?[m.source] else { return [] }
-            for (r, f) in zip(rows, m.folded) { shelf.put(r, f) }
+            for (r, f) in zip(rows, m.folded) where !shelf.newer.contains(r.key) { shelf.put(r, f) }
             coming[peer, default: [:]][m.source] = last ? nil : shelf
             if last {
                 browsers[peer, default: [:]][m.source] = shelf
@@ -104,6 +114,13 @@ public final class BrowserBook {
                 if m.source == .downloads { filed[peer] = filed[peer]?.filter { shelf.slots[$0] != nil } }
             }
         case .change(let rows, let gone):
+            if var next = coming[peer]?[m.source] {
+                coming[peer]?[m.source] = nil
+                for k in gone { next.drop(k) }
+                for (r, f) in zip(rows, m.folded) { next.put(r, f) }
+                next.newer.formUnion(gone + rows.map(\.key))
+                coming[peer]?[m.source] = next
+            }
             // The whole list comes first; a change before it would look like all there is.
             guard var shelf = browsers[peer]?[m.source] else { return [] }
             browsers[peer]?[m.source] = nil
@@ -167,21 +184,40 @@ public final class BrowserBook {
             var hits: [BrowserHit] = []
             for (b, shelves) in browsers {
                 guard let shelf = shelves[source] else { continue }
-                for h in shelf.table.search(q, limit: each) where h.score >= Self.floor {
-                    guard let row = shelf.rows[h.slot] else { continue }
-                    let id = source == .tabs ? "tab:\(b.bundleID):\(row.window):\(row.key)" : "browser:\(source.rawValue):\(b.bundleID):\(b.number):\(h.slot)"
+                // The floor is for the match: a page visited often still has to match as well as one visited once.
+                for h in shelf.table.search(q, limit: each) {
+                    guard let row = shelf.rows[h.slot], h.score - row.weight >= Self.floor else { continue }
+                    let id = source == .tabs ? Self.id(row, b) : "browser:\(source.rawValue):\(b.bundleID):\(b.number):\(h.slot)"
                     hits.append(BrowserHit(row: row, peer: b, score: h.score, id: id))
                 }
             }
             hits.sort { $0.score != $1.score ? $0.score > $1.score : $0.id < $1.id }
-            // Two tabs of one page are two places to go; anything else with that address isn't.
-            for h in hits.prefix(each) {
-                let address = h.row.url.isEmpty ? h.id : BrowserMessage.shown(String(h.row.url.prefix { $0 != "#" }))
+            // Two tabs of one page are two places to go; anything else with that address isn't, and is offered as the tab.
+            for var h in hits.prefix(each) {
+                let address = h.row.url.isEmpty ? h.id : Self.address(h.row.url)
+                if source != .tabs, !h.row.url.isEmpty, let t = tab(at: address, first: h.peer) {
+                    h = BrowserHit(row: t.row, peer: t.peer, score: h.score, id: Self.id(t.row, t.peer))
+                }
                 if source == .tabs { seen.insert(address) } else if !seen.insert(address).inserted { continue }
                 found.append(h)
             }
         }
         return Array(found.sorted { $0.score != $1.score ? $0.score > $1.score : $0.id < $1.id }.prefix(limit))
+    }
+
+    /// A page's address without its fragment, as the launcher shows it.
+    static func address(_ url: String) -> String { BrowserMessage.shown(String(url.prefix { $0 != "#" })) }
+    private static func id(_ row: BrowserRow, _ peer: BrowserPeer) -> String { "tab:\(peer.bundleID):\(row.window):\(row.key)" }
+
+    /// An open tab on `address`: in `peer`'s browser if it has one, its front tab before another.
+    private func tab(at address: String, first peer: BrowserPeer) -> (peer: BrowserPeer, row: BrowserRow)? {
+        let peers = [peer] + browsers.keys.sorted().filter { $0 != peer }
+        for b in peers {
+            guard let shelf = browsers[b]?[.tabs], let slots = shelf.open[address] else { continue }
+            let rows = slots.sorted().compactMap { shelf.rows[$0] }
+            if let r = rows.first(where: \.front) ?? rows.first { return (b, r) }
+        }
+        return nil
     }
 
     /// The least a row must match to be offered: the letters together, in a title or address of a fair length.
