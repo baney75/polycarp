@@ -18,7 +18,7 @@ pub fn id_of(h: HWND) -> i64 {
     h as isize as i64
 }
 
-/// The window id BaneySpaces and the engine share: `w-<hwnd in decimal>`.
+/// A window's id: `w-<hwnd in decimal>`.
 pub fn window_name(id: i64) -> String {
     format!("w-{id}")
 }

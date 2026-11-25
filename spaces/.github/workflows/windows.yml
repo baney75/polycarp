@@ -30,18 +30,3 @@ jobs:
         with:
           name: baneyspaces-windows-pr
           path: target/release/baneyspaces.exe
-  engine:
-    # The pinned agent-desktop (platforms/windows/engine.pin) still builds with --locked on Windows.
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build the hands engine
-        shell: pwsh
-        run: platforms/windows/scripts/build-engine.ps1
-      - name: The engine is the pinned commit
-        shell: pwsh
-        run: |
-          $pin = (Get-Content platforms/windows/engine.pin | Where-Object { $_ -match '^commit=' }) -replace 'commit=', ''
-          if ((Get-Content platforms/windows/engine/COMMIT) -ne $pin.Trim()) { throw 'engine is not the pinned commit' }
-          platforms/windows/engine/agent-desktop.exe version

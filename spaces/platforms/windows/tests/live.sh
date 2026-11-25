@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # The live test of BaneySpaces for Windows, driven from seat-a against the win11-bs VM.
 # Needs: the VM up with the toolchain provisioned (platforms/windows/vm/provision-toolchain.ps1) and
-# the engine built (platforms/windows/scripts/build-engine.ps1), the tree synced to C:\bs\baneyspaces
-# and built in release. Prints PASS or FAIL with counts; screenshots go to $OUT.
+# the tree synced to C:\bs\baneyspaces and built in release. Prints PASS or FAIL with counts; screenshots go to $OUT.
 # Usage: live.sh [outdir]
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,7 +22,7 @@ daemon_start() { scp "${SSH_OPTS[@]}" -q "$HERE/daemon-task.ps1" baney@192.168.1
 
 say "== 0. clean start"
 scp "${SSH_OPTS[@]}" -q "$HERE/readback.ps1" "$HERE/watch.ps1" baney@192.168.122.50:C:/
-vmx 'C:\bs\baneyspaces\target\release\baneyspaces.exe stop | Out-Null; Start-Sleep 1; taskkill /F /IM baneyspaces.exe 2>&1 | Out-Null; Get-Process notepad,CalculatorApp,Calculator -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 1; Remove-Item -Recurse -Force $env:LOCALAPPDATA\BaneySpaces -ErrorAction SilentlyContinue; $n="$env:LOCALAPPDATA\Packages\Microsoft.WindowsNotepad_8wekyb3d8bbwe\LocalState"; Remove-Item -Recurse -Force "$n\TabState","$n\WindowState" -ErrorAction SilentlyContinue; Remove-Item -Recurse -Force C:\bs\harness-state -ErrorAction SilentlyContinue' >/dev/null
+vmx 'C:\bs\baneyspaces\target\release\baneyspaces.exe stop | Out-Null; Start-Sleep 1; taskkill /F /IM baneyspaces.exe 2>&1 | Out-Null; Get-Process notepad,CalculatorApp,Calculator -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 1; Remove-Item -Recurse -Force $env:LOCALAPPDATA\BaneySpaces -ErrorAction SilentlyContinue; $n="$env:LOCALAPPDATA\Packages\Microsoft.WindowsNotepad_8wekyb3d8bbwe\LocalState"; Remove-Item -Recurse -Force "$n\TabState","$n\WindowState" -ErrorAction SilentlyContinue' >/dev/null
 sleep 2
 daemon_start
 cli doctor | grep -q '"healthy":true' && ok "doctor is healthy with the daemon up" || bad "doctor"
@@ -179,37 +178,12 @@ AW=$(sed -n 's/.*"window":"\(w-[0-9]*\)".*/\1/p' <<<"$O")
 wait $WATCH
 grep -q 'NEW none' "$OUT/watch-open.txt" && bad "the watcher never saw the agent window" || { grep -q 'visible_polls=0' "$OUT/watch-open.txt" && ok "the agent window was never visible in $(sed -n 's/polls=\([0-9]*\).*/\1/p' "$OUT/watch-open.txt") polls while it opened" || bad "the agent window was visible: $(cat "$OUT/watch-open.txt")"; }
 S=$(seen_now); shot 07-agent-open >/dev/null
-SN=$(cli agent snapshot --window "$AW" -i); REF=$(python3 -c "
-import sys,json
-d=json.loads(sys.stdin.read()); 
-def w(n):
-    if n.get('role')=='textfield': return n['ref_id']
-    for c in n.get('children',[]):
-        r=w(c)
-        if r: return r
-print(w(d['data']['result']['tree']) or '')" <<<"$SN")
-[[ -n "$REF" ]] && ok "agent snapshot found a text field ($REF)" || bad "agent snapshot: ${SN:0:300}"
-echo "$SN" | grep -q '"screen_changed":false' && ok "snapshot changed nothing you can see" || bad "snapshot changed the screen"
-S=$(seen_now); shot 08-agent-snapshot >/dev/null
-T=$(cli agent type "'$REF'" "hello from the agent")
-echo "$T" | grep -q '"verified":true' && ok "agent type landed and the engine read it back (verified)" || bad "agent type: ${T:0:300}"
-echo "$T" | grep -q '"screen_changed":false' && ok "typing changed nothing you can see" || bad "typing changed the screen"
 # A dialog the agent's app opens belongs on the agent workspace too, ghosted the moment it appears.
-BTN=$(python3 -c "
-import sys,json
-d=json.loads(sys.stdin.read())
-def w(n):
-    if n.get('role')=='button' and n.get('name')=='Open dialog': return n['ref_id']
-    for c in n.get('children',[]):
-        r=w(c)
-        if r: return r
-print(w(d['data']['result']['tree']) or '')" <<<"$SN")
-[[ -n "$BTN" ]] && ok "the snapshot has the test app's Open dialog button ($BTN)" || bad "no Open dialog button in the snapshot"
 vmx 'Remove-Item C:\bs\watch-ready -ErrorAction SilentlyContinue' >/dev/null
 (vmi 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\watch.ps1 -Seconds 12 -All' > "$OUT/watch-dialog.txt" 2>&1) &
 WATCH2=$!
 for _ in $(seq 40); do vmx 'Test-Path C:\bs\watch-ready' | grep -q True && break; sleep 1; done
-C=$(cli agent click "'$BTN'"); echo "$C" | grep -q '"ok":true' && ok "agent click on Open dialog" || bad "click: ${C:0:300}"
+helper post "${AW#w-}" 0x8000 | grep -q True && ok "the test app was asked for its dialog" || bad "WM_APP was not posted"
 wait $WATCH2
 DL=$(grep "Test dialog" "$OUT/watch-dialog.txt")
 VP=$(sed -n 's/.*visible_polls=\([0-9]*\).*/\1/p' <<<"$DL"); EX=$(sed -n 's/.*exposed_ms=\([0-9]*\).*/\1/p' <<<"$DL")
@@ -222,24 +196,12 @@ import sys,json
 d=json.loads(sys.stdin.read())
 for w in d['data']['windows']:
     if w['window']!='$AW': print(w['window'])" <<<"$AS")
-DS=$(cli agent snapshot --window "$DW" -i)
-OK=$(python3 -c "
-import sys,json
-d=json.loads(sys.stdin.read())
-def w(n):
-    if n.get('role')=='button' and n.get('name')=='OK': return n['ref_id']
-    for c in n.get('children',[]):
-        r=w(c)
-        if r: return r
-print(w(d['data']['result']['tree']) or '')" <<<"$DS")
-[[ -n "$OK" ]] && cli agent click "'$OK'" | grep -q '"ok":true' && ok "the agent dismissed the dialog through its own window (OK)" || bad "could not click OK: ${DS:0:200}"
+helper post "${DW#w-}" 0x10 >/dev/null
 sleep 2; AS=$(cli agent status); [[ "$(grep -o '"window":"w-' <<<"$AS" | wc -l)" == 1 ]] && ok "the dialog is gone from the agent workspace" || bad "dialog still listed"
-RB=$(readback); echo "$RB" >> "$LOG"; shot 09-agent-typed >/dev/null
-grep "^$AW " <<<"$RB" | grep -q 'SEEN=False' && ok "the agent's window is still invisible after typing" || bad "agent window is visible"
-[[ "$(grep 'class=Notepad ' <<<"$RB" | grep -c "title='\*")" == 0 ]] && ok "your Notepad windows still say 'Untitled' (not modified)" || bad "a Notepad title shows unsaved changes"
-U=$(vmi '$env:AGENT_DESKTOP_HOME="C:\bs\harness-state"; $e="C:\bs\baneyspaces\platforms\windows\engine\agent-desktop.exe"; foreach($w in "'"${NOTEPADS// /\",\"}"'"){ if($w){ $s=(& $e snapshot --window-id $w | ConvertFrom-Json); $v=(& $e get "@$($s.data.snapshot_id):e1" --property value | ConvertFrom-Json).data.value; "[$w] value=[$v]" } }')
-echo "$U" >> "$LOG"; grep -q 'agent' <<<"$U" && bad "your Notepad has the agent's text: $U" || ok "your Notepad windows hold none of the agent's text"
-cli agent log --since 120 | grep -q '"verb":"type"' && ok "the action log recorded the type (no content)" || bad "no log record"
+RB=$(readback); echo "$RB" >> "$LOG"; shot 09-agent-dialog-closed >/dev/null
+grep "^$AW " <<<"$RB" | grep -q 'SEEN=False' && ok "the agent's window is still invisible after its dialog" || bad "agent window is visible"
+cli agent snapshot | grep -q 'agent snapshot was removed from Polycarp' && ok "agent snapshot says it was removed" || bad "agent snapshot"
+cli agent log --since 120 | grep -q '"verb":"open"' && ok "the action log recorded the open" || bad "no log record"
 
 # The ghost restores exactly: alpha opaque and the styles back while shown, a ghost again when hidden.
 cli agent-workspace show >/dev/null; sleep 1

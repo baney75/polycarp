@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn old_action_records_go_while_the_daemon_runs() {
         use baneyspaces_core::envelope::Envelope;
-        let line = |at: u64| baneyspaces_core::ActionRecord::from_result(at, "agent", "click", Some(1), Some("w-1"), None, "uia", &Envelope::ok(serde_json::json!({}))).to_line();
+        let line = |at: u64| baneyspaces_core::ActionRecord::from_result(at, "agent", "open", Some(1), Some("w-1"), None, "createprocess", &Envelope::ok(serde_json::json!({}))).to_line();
         let dir = std::env::temp_dir().join(format!("bsw-prune-{}", std::process::id()));
         let p = Paths { state: dir.clone() };
         p.ensure().unwrap();
@@ -161,7 +161,7 @@ mod tests {
     fn the_daemon_writes_records_through_the_pruning_append() {
         let src = include_str!("daemon.rs");
         assert!(!src.contains(".append(\"actions.jsonl\""), "a record written past the prune");
-        assert!(src.matches(".append_action(").count() >= 3, "record(), hands() and set all prune");
+        assert!(src.matches(".append_action(").count() >= 2, "record() and set both prune");
     }
 
     #[test]

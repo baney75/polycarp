@@ -176,19 +176,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: spaces, key: spaces-windows-live }
-      # The hands engine at the pinned commit, built once per pin.
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: spaces/platforms/windows/engine
-          key: windows-engine-${{ hashFiles('spaces/platforms/windows/engine.pin') }}
-      - name: Build the daemon with the test hooks, the test app and the engine
-        shell: bash
-        run: |
-          cargo build --release --locked -p baneyspaces-windows --features baneyspaces-windows/test-ops -p baneyspaces-testapp
-          test -f platforms/windows/engine/agent-desktop.exe || pwsh -NoProfile -File platforms/windows/scripts/build-engine.ps1
-          dest="$(cygpath -u "$LOCALAPPDATA")/BaneySpaces/engine"
-          mkdir -p "$dest"
-          cp platforms/windows/engine/* "$dest/"
+      - name: Build the daemon with the test hooks and the test app
+        run: cargo build --release --locked -p baneyspaces-windows --features baneyspaces-windows/test-ops -p baneyspaces-testapp
       # Off a runner the live suite, the switch bench and the keymap check must refuse before they touch anything: no -Disposable, exit 2,
       # Notepad left open, state.json kept.
       - name: Live suite, switch bench and keymap check refuse a desktop that isn't disposable

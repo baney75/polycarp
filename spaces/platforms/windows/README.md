@@ -1,12 +1,11 @@
 # BaneySpaces for Windows
 
-Part 1: the workspace model on Windows 11, the keys, the agent workspace, the agent hands and the top bar. No dock,
+Part 1: the workspace model on Windows 11, the keys, the agent workspace and the top bar. No dock,
 launcher or overview yet (part 2). The shared contract is `spec/`; the model, the scope guard and the
 envelope are `crates/baneyspaces-core`, the same code the Linux daemon runs.
 
 ```
 platforms/windows/baneyspaces/   the `baneyspaces` binary: CLI, `daemon`, `mcp`
-platforms/windows/scripts/       build-engine.ps1: the pinned agent-desktop, built with --locked
 platforms/windows/tests/         live.sh (the live test in the VM), readback.ps1, watch.ps1, evidence/
 platforms/windows/tests/ci/      live.ps1 and Desk.cs: the live test on a GitHub Actions Windows runner
 platforms/windows/vm/            provision-toolchain.ps1: Rust + the MSVC build tools inside the test VM
@@ -32,12 +31,11 @@ interfaces are undocumented, so if the call is refused (a Windows build changes 
 take (the window reads back as not cloaked), the window is **parked** at (-32000, -32000) instead, the
 place Windows itself puts minimized windows. Nothing is ever hidden with `SW_HIDE`.
 
-**The agent workspace: a ghost, not a cloak.** The hands engine (UI Automation) skips cloaked windows:
-`list-windows` does not list them and `snapshot` returns `WINDOW_NOT_FOUND` (measured). An agent's window
-must stay drivable, so it is made fully transparent (`WS_EX_LAYERED`, alpha 0), click-through
+**The agent workspace: a ghost, not a cloak.** UI Automation skips cloaked windows (measured). An agent's
+window must stay readable to the agent's own tools, so it is made fully transparent (`WS_EX_LAYERED`, alpha 0), click-through
 (`WS_EX_TRANSPARENT`) and unable to take focus (`WS_EX_NOACTIVATE`), and its taskbar button is removed.
 It is still on screen and un-cloaked, and you cannot see or touch it. (`WS_EX_TOOLWINDOW` would also
-hide it from the engine, so it is not used.)
+hide it from UI Automation, so it is not used.)
 
 **Never losing a window.** Three rules, all in `daemon.rs`:
 
@@ -144,20 +142,20 @@ uses a launch token in the environment; a job answers "is this process one we st
 one?" directly), minimized and without focus, so a window that honors the show command is never drawn
 on your screen. The model registers the pid and its start time (read from the process handle before it runs) before the first window can be seen. A registration only holds for that process: the live start time must still match, and a process that exits is unregistered within one full look (3 s), so a pid Windows hands to another program is never taken for an agent's. Every window of an
 agent's process is ghosted, owned or not: a dialog or popup its app opens is caught from the WinEvent when it is
-created (if it has a frame) or shown, and is an agent window like the first, so the agent can still drive it. This
+created (if it has a frame) or shown, and is an agent window like the first. This
 is measured, not claimed away: one dialog was visible in 1 of ~110,000 polls (under a frame) before the ghost took.
-Every action runs the scope guard first (`check_scope`: on the agent workspace, a registered process,
-the same pid and start time), and the engine is run as a child process with no `--headed`: it sends
-no `SendInput`, never moves the cursor and never draws the cursor overlay. The engine's own `type` is
-`SendInput`, so **`agent type` is a UI Automation insert instead**: it reads the field's value and
-sets it to value + text, and the engine reads that back (`verified` is true only then). `shot` passes
-through to the engine. `press`, `key` and `pointer` are `not_supported` (phase 3-4).
+
+Polycarp does not read, click or type into apps on Windows either: computer use was removed (Donovan, 2026-11-24).
+`agent snapshot`, `find`, `get`, `click`, `set-value`, `type`, `toggle`, `select`, `scroll`, `shot`, `press`, `key`,
+`pointer`, `click-at`, `mouse`, `lend` and `return` answer `not_supported` with "agent <verb> was removed from
+Polycarp.", and the daemon hears nothing. `%LOCALAPPDATA%\BaneySpaces\engine` and `engine-state` from an older build
+are unused and can be deleted.
 
 - **In production, `agent open` on Windows refuses every app with `needs_sandbox`, before launch.** No
   Windows app is safe to hand an agent yet. Notepad restores your unsaved tabs into a new process, so an
   agent's Notepad could show text you never saved, and it also forwards a second launch into a copy you
   already run (seen live). Explorer, the Store apps and browsers forward too. Until there is a
-  Windows sandbox, an agent can drive nothing on Windows except through a test daemon (below).
+  Windows sandbox, an agent can start nothing on Windows except through a test daemon (below).
   **Follow-up: a Windows sandbox phase**, where the agent's apps run apart from your session
   (Windows Sandbox or a Hyper-V VM). Single-instance forwarding is handled there as well; the
   `single_instance` error, with `windows_that_appeared`, stays as the backstop if an app forwards anyway.
@@ -165,7 +163,7 @@ through to the engine. `press`, `key` and `pointer` are `not_supported` (phase 3
   parked, recorded as parked, and left alone: it is not tried again on every read-back. If it later takes the ghost it is
   recorded as a ghost with the styles to put back. `agent move` of one of *your* windows hides it the way yours
   are hidden (recorded first, `agent: false`), not as an agent's ghost.
-- **Tests only: `bs-testapp`** (`platforms/windows/testapp`) is a window with a text box: its own exe,
+- **Tests only: `bs-testapp`** (`platforms/windows/testapp`) is a plain window: its own exe,
   its own process every time, nothing remembered, no forwarding. A daemon **built with the
   `test-ops` feature** and started with `BANEYSPACES_TEST_OPS` set may start it (and `cmd`, for the agent-peer
   check). A release build made without the feature ignores the variable, whatever the environment holds. `live.sh` starts a test daemon for the agent flow.
@@ -176,14 +174,9 @@ through to the engine. `press`, `key` and `pointer` are `not_supported` (phase 3
   client pid decides, never the request. The control pipe is `\\.\pipe\baneyspaces-<your SID>` (not the user name, which can collide), with an ACL for you and
   SYSTEM only and remote clients rejected; the client checks that the server process runs as you and opens the pipe for
   identification only.
-- The engine is found in `%LOCALAPPDATA%\BaneySpaces\engine` only. A test build (`test-ops`, debug) also honors
-  `BANEYSPACES_ENGINE` and looks in the source tree above the exe; a release build never walks up directories (they
-  reach the drive root, where another account may have planted a file).
 - The job and the peer check are **advisory**: any process of your own user can open the job by name or start a
   process outside it, so this stops an agent's own app and its children by accident, not a hostile process of your user.
   Only the sandbox phase makes it a boundary.
-- The engine keeps its snapshots in `%LOCALAPPDATA%\BaneySpaces\engine-state` (`AGENT_DESKTOP_HOME`),
-  because it refuses a directory an elevated process created.
 
 ## Settings
 
@@ -222,17 +215,16 @@ the right. The rules are `spec/bar.md`; the code is `baneyspaces/src/bar.rs`.
 cargo test -p baneyspaces-core -p baneyspaces-windows --locked   # the Linux crate is unix-only, so test by package
 cargo build --release --locked -p baneyspaces-windows
 cargo build --release -p baneyspaces-windows --features baneyspaces-windows/test-ops -p baneyspaces-testapp   # what live.sh runs
-platforms/windows/scripts/build-engine.ps1 -Install              # the pinned agent-desktop (platforms/windows/engine.pin), copied to %LOCALAPPDATA%\BaneySpaces\engine
 baneyspaces daemon --background                                  # no console window; --log FILE, --trace
 ```
 
-On seat-a the test VM is `/home/alex/Projects/_work/win11-vm`. `vm/provision-toolchain.ps1` installs Rust,
-the Build Tools and MinGit in it (about 10 minutes, redo after `reset`); the tree is built there. The
+On seat-a the test VM is `/home/alex/Projects/_work/win11-vm`. `vm/provision-toolchain.ps1` installs Rust and
+the Build Tools in it (about 10 minutes, redo after `reset`); the tree is built there. The
 Windows crate also cross-checks on Linux with `cargo xwin check --target x86_64-pc-windows-msvc`.
 `tests/live.sh` is the live test: it opens Notepad, Explorer and Calculator at normal level, moves
 and switches with the CLI and with real Win+n keys (`virsh send-key`), kills the daemon with
 `taskkill /F` and starts it again, and runs the agent flow with `bs-testapp` (after checking that production refuses every launch), reading back the windows (EnumWindows,
-visibility, DWM cloak state, layered alpha) after every step. `tests/evidence/` has its log and screenshots.
+visibility, DWM cloak state, layered alpha) after every step. `tests/evidence/` has screenshots and watch logs of an earlier run.
 
 
 ### CI live suite
@@ -244,8 +236,8 @@ the keyboard hook fed with SendInput. It reads the windows back after every step
 `RESULT: PASS|FAIL passed= failed= skipped=`, lists failures and skips in the job summary, and uploads `live.log`,
 `daemon.log` and the screenshots as the `windows-live` artifact. It kills BaneySpaces, deletes its recovery record
 (`state.json`, what puts hidden windows back) and force-closes every Notepad, so off a CI runner it refuses (exit 2)
-unless given `-Disposable`. By hand only on a disposable Windows desktop (a VM), after the test-ops build and
-`build-engine.ps1 -Install`: `powershell -File platforms/windows/tests/ci/live.ps1 -Bin target/release -Out <dir> -Disposable`.
+unless given `-Disposable`. By hand only on a disposable Windows desktop (a VM), after the test-ops build:
+`powershell -File platforms/windows/tests/ci/live.ps1 -Bin target/release -Out <dir> -Disposable`.
 The CLI helper in the script is `bsc`: `cli` is a built-in PowerShell alias for Clear-Item, and aliases win over
 functions.
 

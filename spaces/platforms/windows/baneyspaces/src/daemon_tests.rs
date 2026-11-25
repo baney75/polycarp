@@ -32,7 +32,6 @@ fn rig() -> Rig {
         hidden: HiddenSet::default(),
         info: HashMap::new(),
         job: None,
-        snaps: HashMap::new(),
         overview_shown: false,
         events_seen: 0,
         closed_at: None,

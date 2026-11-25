@@ -3,11 +3,6 @@ Copyright (c) 2026 Donovan Baney (@baney75). MIT License (see LICENSE).
 
 This product includes software developed by others.
 
-agent-desktop (Apache License 2.0)
-  https://github.com/vercel-labs/agent-desktop, built from commit
-  5261b5287b5208e7c4bf3713df6f66faaaf2c4cc (see platforms/windows/engine.pin) as agent-desktop.exe for the
-  Windows build only. The license text is in LICENSES/agent-desktop-Apache-2.0.txt.
-
 Ghostty (MIT License, Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors)
   https://github.com/ghostty-org/ghostty, v1.3.1, built from commit
   332b2aefc6e72d363aa93ab6ecfc86eeeeb5ed28 (see ghostty/PIN) by scripts/build-ghostty.sh.

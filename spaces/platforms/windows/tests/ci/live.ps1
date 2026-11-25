@@ -2,8 +2,8 @@
 # runner's own interactive desktop (session 1+, WinSta0\Default, explorer.exe and DWM running), real windows, the
 # real keyboard hook. It ports tests/live.sh, which drove the win11-bs VM over ssh; README.md "CI live suite" lists
 # what the runner cannot run and why. Reads back Win32 state after every step and saves screenshots.
-# Needs: a release build with the test-ops feature (baneyspaces.exe, bs-testapp.exe) and the engine installed in
-# %LOCALAPPDATA%\BaneySpaces\engine (build-engine.ps1 -Install). Prints PASS or FAIL with counts; exits 1 on any FAIL.
+# Needs: a release build with the test-ops feature (baneyspaces.exe, bs-testapp.exe). Prints PASS or FAIL with counts;
+# exits 1 on any FAIL.
 # Usage (Windows PowerShell 5.1): live.ps1 -Bin <target\release> -Out <evidence dir> [-Disposable]
 # It kills BaneySpaces, deletes its recovery record (state.json, what puts hidden windows back) and force-closes every
 # Notepad, so it runs only on a desktop nobody needs: a CI runner (GITHUB_ACTIONS=true), or by hand with -Disposable.
@@ -57,10 +57,6 @@ function daemon_stop { [void](bsc stop); for ($i = 0; $i -lt 40 -and (Get-Proces
 function hidden_entry($st, $h) { @($st.data.hidden | ? { $_.hwnd -eq [long]$h })[0] }
 function acl_deny { icacls $state /deny "$($env:USERNAME):(OI)(CI)(WD,AD)" | Out-Null }
 function acl_allow { icacls $state /remove:d "$($env:USERNAME)" | Out-Null }
-function find_ref($node, $role, $name) {
-  if ($node.role -eq $role -and (-not $name -or $node.name -eq $name)) { return $node.ref_id }
-  foreach ($c in @($node.children)) { if ($c) { $r = find_ref $c $role $name; if ($r) { return $r } } }
-}
 
 say "== runner: $([Environment]::OSVersion.VersionString), session $((Get-Process -Id $PID).SessionId), displays $([Desk]::Displays()), user $env:USERNAME"
 
@@ -70,7 +66,7 @@ Get-Process notepad, bs-testapp -ErrorAction SilentlyContinue | Stop-Process -Fo
 Remove-Item -Recurse -Force (Join-Path $state 'state.json'), (Join-Path $state 'actions.jsonl'), (Join-Path $state 'settings.json') -ErrorAction SilentlyContinue
 daemon_start -Test
 $doc = j (bsc doctor)
-check ($doc.data.healthy -eq $true) 'doctor is healthy with the daemon up (daemon, engine, state directory)' (bsc doctor)
+check ($doc.data.healthy -eq $true) 'doctor is healthy with the daemon up (daemon, state directory)' (bsc doctor)
 
 say '== 1. open Notepad, Explorer and two test app windows'
 Start-Process notepad; Start-Sleep 2
@@ -232,19 +228,11 @@ check ($o -match '"ok":true') 'agent open bs-testapp' $o
 $aw = if ($o -match '"window":"(w-\d+)"') { $Matches[1] } else { '' }
 check (($wr -join "`n") -notmatch 'NEW none' -and ($wr -join "`n") -match 'visible_polls=0' -and ($wr -join "`n") -notmatch 'visible_polls=[1-9]') "the agent window was never visible while it opened ($($wr[0]))" ($wr -join ' | ')
 shot '08-agent-open'
-$sn = bsc agent snapshot --window $aw -i; $snj = j $sn
-$ref = if ($snj) { find_ref $snj.data.result.tree 'textfield' $null }
-check ([bool]$ref) "agent snapshot found a text field ($ref)" $sn.Substring(0, [Math]::Min(300, $sn.Length))
-check ($sn -match '"screen_changed":false') 'snapshot changed nothing you can see'
-$t = bsc agent type $ref 'hello from the agent'
-check ($t -match '"verified":true') 'agent type landed and the engine read it back (verified)' $t
-check ($t -match '"screen_changed":false') 'typing changed nothing you can see'
-$btn = if ($snj) { find_ref $snj.data.result.tree 'button' 'Open dialog' }
-check ([bool]$btn) "the snapshot has the test app's Open dialog button ($btn)"
+$awh = [long]($aw -replace 'w-', '')
 [Desk]::WatchStart($true)
-$c = bsc agent click $btn
+$posted = [Desk]::Post($awh, 0x8000) # WM_APP: the test app opens its dialog
 Start-Sleep 5; $wr = [Desk]::WatchStop(); $wr | % { Add-Content $log "    $_" }
-check ($c -match '"ok":true') 'agent click on Open dialog' $c
+check $posted 'the test app was asked for its dialog'
 $dl = @($wr | ? { $_ -match 'Test dialog' })[0]
 $vp = if ($dl -match 'visible_polls=(\d+)') { [int]$Matches[1] } else { -1 }; $exms = if ($dl -match 'exposed_ms=(\d+)') { [int]$Matches[1] } else { 99 }
 # The watch polls tens of thousands of times a second, so the poll count says little; the time between the first
@@ -253,13 +241,12 @@ check ($vp -ge 0 -and $exms -le 33) "the dialog the app opened was ghosted at on
 $as = j (bsc agent status)
 check (@($as.data.windows).Count -eq 2) 'the dialog is an agent window (agent status lists both)'
 $dw = @($as.data.windows | ? { $_.window -ne $aw })[0].window
-$ds = j (bsc agent snapshot --window $dw -i); $okb = if ($ds) { find_ref $ds.data.result.tree 'button' 'OK' }
-check ($okb -and ((bsc agent click $okb) -match '"ok":true')) 'the agent dismissed the dialog through its own window (OK)'
+[void][Desk]::Post([long]($dw -replace 'w-', ''), 0x10) # WM_CLOSE
 Start-Sleep 2; check (@((j (bsc agent status)).data.windows).Count -eq 1) 'the dialog is gone from the agent workspace'
-$awh = [long]($aw -replace 'w-', ''); shot '09-agent-typed'
-check (-not (win $awh).Seen) 'the agent''s window is still invisible after typing' (win $awh)
-check (-not ((win $np.Hwnd).Title -match '^\*')) 'your Notepad still says Untitled (not modified)' (win $np.Hwnd).Title
-check ((bsc agent log --since 300) -match '"verb":"type"') 'the action log recorded the type (no content)'
+shot '09-agent-dialog-closed'
+check (-not (win $awh).Seen) 'the agent''s window is still invisible after its dialog' (win $awh)
+check ((bsc agent snapshot) -match 'agent snapshot was removed from Polycarp') 'agent snapshot says it was removed'
+check ((bsc agent log --since 300) -match '"verb":"open"') 'the action log recorded the open'
 [void](bsc agent-workspace show); Start-Sleep 1; $w = win $awh
 check ($w.Alpha -eq 255 -and $w.Seen) 'agent-workspace show: the agent''s window is opaque and showing' $w
 [void](bsc agent-workspace hide); Start-Sleep 1
