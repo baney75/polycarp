@@ -582,6 +582,7 @@ final class ToastPanel: NSPanel {
     var onPick: (String) -> Void = { _ in }
     private var hideTimer: Timer?
     private var itemID = ""
+    static let radius: CGFloat = 12
     private let text = NSHostingView(rootView: ToastView(title: "", detail: "", bundleID: ""))
 
     init() {
@@ -595,7 +596,7 @@ final class ToastPanel: NSPanel {
         title = "Polycarp Agent Notice"
         setAccessibilityIdentifier("session.toast")
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        contentView = Self.chrome(text, radius: 12)
+        contentView = Self.chrome(text, radius: Self.radius)
     }
 
     override var canBecomeKey: Bool { false }
@@ -629,8 +630,13 @@ final class ToastPanel: NSPanel {
         let who = item.agent.isEmpty ? item.appName : item.agent.capitalized
         text.rootView = ToastView(title: "\(who): \(what)", detail: item.label + (more > 0 ? "  +\(more) more" : ""), bundleID: item.bundleID)
         let v = screen.visibleFrame
-        setFrame(NSRect(x: v.maxX - 332, y: v.maxY - 76, width: 320, height: 64), display: true)
-        alphaValue = 1
+        // The sheet's corners, and room for its larger text.
+        let sheet = Styles.shared.book.hud.panel
+        contentView?.subviews.first?.layer?.cornerRadius = sheet.borderRadius.map { CGFloat($0) } ?? Self.radius
+        let height = max(64, text.fittingSize.height)
+        setFrame(NSRect(x: v.maxX - 332, y: v.maxY - 12 - height, width: 320, height: height), display: true)
+        invalidateShadow()
+        alphaValue = sheet.opacity ?? 1
         orderFrontRegardless()
         hideTimer?.invalidate()
         hideTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in self?.fade() }
@@ -651,20 +657,36 @@ struct ToastView: View {
     let title: String
     let detail: String
     let bundleID: String
+    @ObservedObject private var styles = Styles.shared
+
     var body: some View {
+        let sheet = styles.book.hud, label = sheet.label, small = sheet.text, icon = sheet.icon
         HStack(spacing: 10) {
-            if !bundleID.isEmpty { Image(nsImage: Icons.app(bundleID)).resizable().frame(width: 28, height: 28) }
+            if !bundleID.isEmpty, !icon.isHidden {
+                Image(nsImage: Icons.app(bundleID)).resizable().frame(width: 28, height: 28).corners(icon).opacity(icon.opacity ?? 1)
+            }
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Text(label.cased(title)).spaced(label).font(label.hasFont ? Styled.font(label, .ui, 12, .semibold) : .system(size: 12, weight: .semibold))
+                    .foregroundStyle(ink(label, .primary)).opacity(label.opacity ?? 1).lineLimit(1)
+                if !small.isHidden {
+                    Text(small.cased(detail)).spaced(small).font(small.hasFont ? Styled.font(small, .ui, 11) : .system(size: 11))
+                        .foregroundStyle(ink(small, .secondary)).opacity(small.opacity ?? 1).lineLimit(1)
+                }
             }
             Spacer(minLength: 0)
-            Text("⌃⌘U").font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary)
+            if !small.isHidden {
+                Text("⌃⌘U").spaced(small).font(small.hasFont ? Styled.font(small, .ui, 10, .medium) : .system(size: 10, weight: .medium))
+                    .foregroundStyle(ink(small, .tertiary)).opacity(small.opacity ?? 1)
+            }
         }
-        .padding(.horizontal, 12)
+        .padding(sheet.panel, else: EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Over the card's blur, which shows through a background that isn't opaque.
+        .background { if sheet.panel.hasBox { StyledFace(style: sheet.panel, shape: Styled.shape(sheet.panel, else: ToastPanel.radius)) } }
         .accessibilityElement(children: .combine)
     }
+
+    private func ink<S: ShapeStyle>(_ c: ComputedStyle, _ own: S) -> AnyShapeStyle { c.color.map { AnyShapeStyle($0.swiftUI) } ?? AnyShapeStyle(own) }
 }
 
 enum Icons {
