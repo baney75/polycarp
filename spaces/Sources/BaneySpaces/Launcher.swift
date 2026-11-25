@@ -245,6 +245,8 @@ struct LauncherActions {
     var webApps = WebAppStore.shared
     var openWebApp: (WebApp) -> Void = { _ in }
     var frontPage: () -> BrowserWindows.Front? = { nil }
+    /// A page to its browser's Reader or library; false when that browser is gone.
+    var sharePage: (BrowserWindows.Front, BrowserShare.Place) -> Bool = { _, _ in false }
     /// The launcher is opening: read every app's tabs and splits again, since the session engine
     /// reads background tabs only now and then (`Sweep`). They arrive through `rowsChanged`.
     var willShow: () -> Void = {}
@@ -270,6 +272,12 @@ final class LauncherController: NSObject, NSWindowDelegate {
     var isShown: Bool { panel?.isVisible == true }
 
     func toggle() { isShown ? hide() : show() }
+
+    /// Opened on text the person chose on a page.
+    func find(_ text: String) {
+        show()
+        model.setQuery(text)
+    }
 
     func rowsChanged() { if isShown { model.rowsChanged() } }
 
@@ -922,7 +930,7 @@ final class LauncherModel: ObservableObject {
         Launcher.openInBrowser(url)
     }
 
-    private func setQuery(_ q: String) {
+    func setQuery(_ q: String) {
         field?.stringValue = q
         query = q
     }
@@ -983,6 +991,38 @@ final class LauncherModel: ObservableObject {
         name.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
         guard ask("Make This an App", "It opens \(row.site) in a window of its own in \(Self.appName(peer.bundleID)). Its name in the launcher:", button: "Make App", entry: name) else { return }
         done(actions.webApps.add(name.stringValue, url: row.url, browser: peer.bundleID, icon: actions.siteIcon(hit)), "\(name.stringValue) is an app")
+    }
+
+    private func share(_ place: BrowserShare.Place) {
+        guard let f = actions.frontPage(), actions.sharePage(f, place) else {
+            return Toast.show("That browser isn't open", symbol: "exclamationmark.triangle.fill")
+        }
+    }
+
+    static let notesCommand = "Add Page to Notes File"
+    /// The person's notes file, chosen the first time; nothing else writes this key.
+    static let notesKey = "browserNotesFile"
+    private var notesFile: URL? { UserDefaults.standard.string(forKey: Self.notesKey).map { URL(fileURLWithPath: $0) } }
+
+    /// A line for the page in front at the end of the person's notes file, which they choose the first time.
+    private func addToNotes(choose: Bool) {
+        guard let f = actions.frontPage(), let line = BrowserShare.line(f.tab, on: Date()) else { return }
+        var file = choose ? nil : notesFile
+        if file == nil {
+            let panel = NSSavePanel()
+            panel.title = "Choose a Notes File"
+            panel.message = "Polycarp adds a line for each page you send to it, and never changes what is there."
+            panel.nameFieldStringValue = notesFile?.lastPathComponent ?? "Saved Pages.md"
+            panel.allowedContentTypes = [.init(filenameExtension: "md") ?? .plainText]
+            panel.canCreateDirectories = true
+            NSApp.activate(ignoringOtherApps: true)
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            UserDefaults.standard.set(url.path, forKey: Self.notesKey)
+            file = url
+        }
+        guard let file else { return }
+        let wrong = BrowserShare.append(line, to: file)
+        Toast.show(wrong ?? "Added to \(file.lastPathComponent)", symbol: wrong == nil ? "note.text" : "exclamationmark.triangle.fill")
     }
 
     private func removeApp(_ app: WebApp) {
@@ -1248,6 +1288,12 @@ final class LauncherModel: ObservableObject {
              { [weak self] in if let peer = self?.actions.searcher() { self?.actions.newTab(peer) } }),
             ("Make This Page an App", "macwindow.badge.plus", "The page in front on this workspace, in a window of its own",
              { [weak self] in if let f = self?.actions.frontPage() { self?.makeApp(of: f.tab, in: f.peer) } }),
+            ("Send Page to Reader", "doc.plaintext", "The page in front on this workspace, in Polycarp Reader",
+             { [weak self] in self?.share(.reader) }),
+            ("Save Page to Library", "books.vertical", "The page in front on this workspace, in your Polycarp library",
+             { [weak self] in self?.share(.library) }),
+            (Self.notesCommand, "note.text.badge.plus", notesFile.map { "A line in \($0.lastPathComponent)" } ?? "A line in a Markdown file you choose",
+             { [weak self] in self?.addToNotes(choose: false) }),
             ("Show All Workspaces", "square.grid.3x3", "", { [weak self] in self?.actions.showOverview() }),
             ("Bring Every Window Back", "arrow.uturn.backward.circle", "Gathers every window onto workspace 1", { [weak self] in self?.actions.bringBack() }),
             ("Polycarp Settings", "slider.horizontal.3", "", { [weak self] in self?.actions.showSetup() }),
@@ -1256,12 +1302,16 @@ final class LauncherModel: ObservableObject {
             switch name {
             case "New Tab Here": actions.searcher() != nil
             case "Make This Page an App": actions.frontPage().map { WebApps.fits($0.tab) } ?? false
+            case "Send Page to Reader", "Save Page to Library": actions.frontPage().map { BrowserShare.send($0.tab, to: .reader) != nil } ?? false
+            case Self.notesCommand: actions.frontPage().map { BrowserShare.line($0.tab, on: Date()) != nil } ?? false
             default: true
             }
         }
         return all.filter { (q.isEmpty || Fuzzy.score(q, $0.0) != nil) && here($0.0) }.map { c in
             LauncherItem(id: "cmd:\(c.0)", section: "System", title: c.0, subtitle: c.2, icon: .symbol(c.1),
-                         run: { [weak self] in self?.close(); DispatchQueue.main.async(execute: c.3) })
+                         run: { [weak self] in self?.close(); DispatchQueue.main.async(execute: c.3) },
+                         alternate: c.0 == Self.notesCommand ? { [weak self] in self?.close(); DispatchQueue.main.async { self?.addToNotes(choose: true) } } : nil,
+                         alternateTitle: c.0 == Self.notesCommand ? "Choose Another File" : "")
         }
     }
 

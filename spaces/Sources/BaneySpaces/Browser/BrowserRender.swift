@@ -8,6 +8,7 @@ enum BrowserRender {
         let book = book()
         var a = LauncherActions()
         a.browserHits = { book.search($0) }
+        a.frontPage = { book.fronts(of: "com.apple.Safari").first }
         let made = WebApps.adding("Orchard Post", url: "https://post.example/", browser: "com.apple.Safari", icon: nil, to: [])
         a.webApps = WebAppStore(at: URL(fileURLWithPath: "/dev/null/webapps.json"), list: made?.list ?? [])
         return a

@@ -305,7 +305,7 @@ enum Render {
         // What the browsers running the Polycarp extension have open, beside the apps: a better match goes above them.
         let pages = LauncherModel(actions: BrowserRender.actions())
         pages.prepare(scope: .root)
-        for (typed, name) in [("orchard", "launcher-browser.png"), ("map", "launcher-browser-below.png")] {
+        for (typed, name) in [("orchard", "launcher-browser.png"), ("map", "launcher-browser-below.png"), ("page", "launcher-share.png")] {
             pages.query = typed
             guard save(LauncherView(model: pages).frame(height: 512).padding(30).background(Color(white: 0.3)), name, launcherShot) else { return 1 }
         }

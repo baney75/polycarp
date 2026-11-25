@@ -235,6 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         a.openWebApp = { [weak self] in self?.open($0) }
         a.frontPage = { [weak self] in self.flatMap { $0.page(on: $0.spaces.model.current)?.now.front } }
+        a.sharePage = { BrowserHub.shared.share($0, to: $1) }
         Launcher.openHere = { [weak self] url, orElse in
             guard let browser = SessionController.mainBrowser() else { return false }
             return self?.openHere(["url": url.absoluteString], in: browser, orElse: orElse) ?? false
@@ -1131,6 +1132,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.spaces.focus(id, on: n)
                 return true
             }
+            // Set here, not in the launcher's lazy start: chosen text may come before the launcher was ever opened.
+            BrowserHub.shared.onFind = { [weak self] in self?.launcher.find($0) }
             BrowserHub.shared.start()
             self.session.start(workspaceOf: { [weak self] in self?.spaces.model.workspace(of: $0).flatMap { $0 == Workspaces.scratchpad ? nil : $0 } },
                             currentWorkspace: { [weak self] in self?.spaces.model.current ?? 1 })

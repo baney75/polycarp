@@ -16,6 +16,8 @@ final class BrowserHub {
     var onChange: () -> Void = {}
     /// A download finished.
     var onDone: (BrowserWindows.Front) -> Void = { _ in }
+    /// The person chose text on a page and asked the launcher to find it.
+    var onFind: (String) -> Void = { _ in }
     private var saying = false
     /// A web app waiting for its browser to start, until then.
     private var waiting: (app: WebApp, until: Date)?
@@ -38,6 +40,10 @@ final class BrowserHub {
         server.icon = { [weak self] i, link in
             guard let self, self.links[link.peer] != nil, let image = NSImage(data: i.png) else { return }
             if self.icons.take(image, for: i.url) { self.changed() }
+        }
+        server.find = { [weak self] text, link in
+            guard let self, self.links[link.peer] != nil else { return }
+            self.onFind(text)
         }
         server.gone = { [weak self] link in
             // A profile's line that came back before the old one was let go keeps its place.
@@ -154,6 +160,13 @@ final class BrowserHub {
             self?.waiting = nil
             orElse()
         }
+    }
+
+    /// The tab to its browser's Reader or library. False when that browser is gone.
+    func share(_ f: BrowserWindows.Front, to place: BrowserShare.Place) -> Bool {
+        guard let message = BrowserShare.send(f.tab, to: place), let link = links[f.peer] else { return false }
+        link.send(message)
+        return true
     }
 
     /// Asks the row's browser for what it can only do itself. False when that browser is gone.
