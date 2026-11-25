@@ -98,7 +98,7 @@ fn a_deletion_beats_the_older_value_and_loses_to_a_newer_one() {
     let mut at = |value: Option<&[u8]>| Record {
         kind: Kind::Bookmark,
         key: "b".into(),
-        stamp: clock.tick(5),
+        stamp: clock.tick(5).unwrap(),
         value: value.map(|v| Secret::new(v.to_vec())),
     };
     let (first, gone, back) = (at(Some(b"1")), at(None), at(Some(b"2")));
@@ -112,4 +112,41 @@ fn a_deletion_beats_the_older_value_and_loses_to_a_newer_one() {
     assert!(set.merge(back.clone()));
     assert!(!set.merge(gone));
     assert_eq!(set.get(Kind::Bookmark, "b").unwrap().value, back.value);
+}
+
+/// The wall clock was a year ahead for one edit, then right again, with and without a restart between.
+#[test]
+fn a_clock_that_was_wrong_once_is_not_wrong_for_good() {
+    let (now, year) = (1_000_000_000_000, 365 * 86_400_000);
+    let record = |key: &str, stamp| Record {
+        kind: Kind::Setting,
+        key: key.into(),
+        stamp,
+        value: None,
+    };
+    for restart in [false, true] {
+        let mut clock = Clock::new([1; 32]);
+        let mut set = Records::new();
+        set.merge(record("before", clock.tick(now + 1000).unwrap()));
+        set.merge(record("wrong", clock.tick(now + year).unwrap()));
+        if restart {
+            clock = Clock::new([1; 32]);
+            set.iter().for_each(|r| clock.restore(&r.stamp));
+        }
+        assert!(clock.tick(now).is_err());
+        // With another device's stamp ahead too, the wall clock may be behind: nothing changes.
+        let theirs = Clock::new([2; 32]).tick(now + year).unwrap();
+        let (mut both, mut held) = (set.clone(), clock.clone());
+        both.merge(record("theirs", theirs));
+        let before = both.clone();
+        assert!(both.restamp(&mut held, now).is_err() && held.tick(now).is_err());
+        assert_eq!(both, before);
+        let again = set.restamp(&mut clock, now).unwrap();
+        assert_eq!(set.get(Kind::Setting, "wrong"), again.first());
+        // Another device takes it all, and this one can write over it all.
+        for r in set.clone().iter() {
+            Clock::new([2; 32]).see(&r.stamp, now).unwrap();
+            assert!(set.merge(record(&r.key, clock.tick(now).unwrap())));
+        }
+    }
 }

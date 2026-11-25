@@ -50,6 +50,7 @@ impl<'de> Deserialize<'de> for Secret {
             }
         }
         d.deserialize_string(Text)
+            .map_err(|_| Error::custom("expected text"))
     }
 }
 
@@ -64,5 +65,13 @@ mod tests {
             format!("{s:?} {:#?}", Some(&s)).matches("planted").count(),
             0
         );
+    }
+
+    #[test]
+    fn a_wrong_type_is_not_repeated() {
+        for bad in ["738291", "738.291", "true"] {
+            let e = serde_json::from_str::<Secret>(bad).unwrap_err().to_string();
+            assert!(e.starts_with("expected text") && !e.contains(bad), "{e}");
+        }
     }
 }
