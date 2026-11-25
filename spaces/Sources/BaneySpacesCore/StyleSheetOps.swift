@@ -606,6 +606,9 @@ extension StyleSheet {
            transparent, currentColor, the 16 basic named colors, or var(--role).
            Specificity: each part, .class and :hover counts one; on a tie the later rule wins.
            color, font-*, letter-spacing and text-transform pass from a surface and region down to its parts.
+
+           What each property does (a rule below lists the ones it takes):
+        \(StyleProperty.all.map { "   \($0.name): \($0.help) Takes \($0.takes).\($0.inherited ? " Inherited." : "")" }.joined(separator: "\n"))
         */
 
         :root {
@@ -621,10 +624,7 @@ extension StyleSheet {
             if target.selectors.count > 1 { out += "\n   Selectors: " + target.selectors.joined(separator: ", ") + "." }
             if !target.states.isEmpty { out += "\n   States: " + target.states.map(\.selector).joined(separator: " ") + "." }
             out += " */\n\(target.selectors[target == .barModule ? target.selectors.firstIndex(of: "bar .clock")! : 0]) {\n"
-            for p in props {
-                out += "  /* \(p.name): \(p.example); */\n"
-                out += "  /*   \(p.help) Takes \(p.takes).\(p.inherited ? " Inherited." : "") */\n"
-            }
+            for p in props { out += "  /* \(p.name): \(p.example); */\n" }
             out += "}\n"
             for state in target.states {
                 let sel = StyleSelector(surface: target.surface, part: target == .barModule ? "clock" : target.parts[0], states: [state])

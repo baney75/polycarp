@@ -1002,7 +1002,12 @@ final class StyleSheetTests: XCTestCase {
         let (s, p) = StyleSheet.parse(ex)
         XCTAssertEqual(p, [], "the starter sheet checks clean")
         XCTAssertTrue(s.isEmpty, "and applies nothing until a line is uncommented")
-        for prop in StyleProperty.all { XCTAssertTrue(ex.contains("/* \(prop.name): "), prop.name) }
+        for prop in StyleProperty.all {
+            XCTAssertTrue(ex.contains("/* \(prop.name): "), prop.name)
+            XCTAssertEqual(ex.components(separatedBy: prop.help).count, 2, "\(prop.name) is explained once")
+        }
+        // Saved as style.css it loads, with room left for a sheet of your own.
+        XCTAssertLessThan(ex.utf8.count, StyleSheetFile.maxBytes / 2)
         for t in StyleTarget.allCases {
             for sel in t.selectors { XCTAssertTrue(ex.contains(sel), sel) }
             XCTAssertTrue(ex.contains(t.help), t.rawValue)
