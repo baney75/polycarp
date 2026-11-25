@@ -2,12 +2,13 @@ import Foundation
 
 /// What the Polycarp extension may tell the app about a browser (spec/browser.md). Each has its own switch.
 public enum BrowserSource: String, CaseIterable, Sendable {
-    case tabs, bookmarks, history, downloads
+    case tabs, groups, bookmarks, history, downloads
 
     /// The most rows kept from one browser; rows past it are dropped.
     public var most: Int {
         switch self {
         case .tabs: return 5_000
+        case .groups: return 500
         case .bookmarks: return 20_000
         case .history: return 50_000
         case .downloads: return 500
@@ -93,13 +94,13 @@ public struct BrowserMessage: Sendable, CustomStringConvertible, CustomDebugStri
         var progress: BrowserRow.Progress?
         let name: String
         switch source {
-        case .tabs, .downloads:
-            // A private window's tab or download never gets in: the extension must say outright that it is neither.
+        case .tabs, .groups, .downloads:
+            // A private window's tab, group or download never gets in: the extension must say outright that it isn't one.
             guard flag(o["incognito"]) == false, let k = key(o["id"]) else { return nil }
             name = k
-            if source == .tabs {
+            if source != .downloads {
                 guard flag(o["window"]) == nil, let w = o["window"] as? Int, w > 0 else { return nil }
-                (window, weight) = (w, 25)
+                (window, weight) = (w, source == .tabs ? 25 : 30)
             } else if o["state"] as? String == "in_progress" {
                 let total = (o["total"] as? NSNumber)?.int64Value ?? -1
                 progress = .init(done: max(0, (o["received"] as? NSNumber)?.int64Value ?? 0), total: total > 0 ? total : nil)

@@ -221,6 +221,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let there = { _ = BrowserHub.shared.open(["text": text], in: peer) }
             if self?.openHere(["text": text], in: peer.bundleID, orElse: there) != true { there() }
         }
+        a.tabGroup = { BrowserHub.shared.book.group($0) }
+        a.sendGroup = { [weak self] peer, group, n in self?.sendGroup(group, in: peer, to: n) }
         a.newTab = { [weak self] peer in
             let there = { _ = BrowserHub.shared.open([:], in: peer) }
             if self?.openHere([:], in: peer.bundleID, orElse: there) != true { there() }
@@ -925,6 +927,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return true
     }
 
+    /// A tab group to a workspace: into the browser's window there, else a window of its own, taken there once it opens.
+    private func sendGroup(_ group: BrowserRow, in peer: BrowserPeer, to n: Int) {
+        let app = peer.bundleID
+        guard started, let pid = NSRunningApplication.runningApplications(withBundleIdentifier: app).first?.processIdentifier else { return NSSound.beep() }
+        func windows() -> [Spaces.Entry] { Workspaces.range.flatMap { spaces.entries(on: $0) }.filter { $0.pid == pid } }
+        let all = windows()
+        let known = BrowserHub.shared.fronts(of: app, all.map { (id: $0.id, title: $0.title) }, items: session.engine.items)
+        if let there = spaces.entries(on: n).compactMap({ known[$0.id] }).first(where: { $0.peer == peer }) {
+            if !BrowserHub.shared.send(group, in: peer, to: there.tab.window) { NSSound.beep() }
+            return
+        }
+        guard BrowserHub.shared.send(group, in: peer, to: "new") else { return NSSound.beep() }
+        let before = Set(all.map(\.id))
+        func look(_ left: Int) {
+            let new = windows().filter { !before.contains($0.id) }
+            if new.count == 1 { return spaces.move(new[0].id, to: n) }
+            if left > 0, new.isEmpty { DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { look(left - 1) } }
+        }
+        look(20)
+    }
+
     /// Goes to what a browser's row names: the exact tab, the download in Finder, or the page in that browser.
     private func openBrowser(_ hit: BrowserHit) {
         let app = hit.peer.bundleID
@@ -938,7 +961,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if !openHere(["url": hit.row.url], in: app, orElse: there) { there() }
         case .downloads:
             if !BrowserHub.shared.ask(hit) { NSSound.beep() }
-        case .tabs:
+        case .tabs, .groups:
             // The session engine knows the tab's window too, so the switch is Polycarp's own.
             if let item = session.engine.item(hit.id) { return session.focus(item) }
             guard BrowserHub.shared.ask(hit), let pid = NSRunningApplication.runningApplications(withBundleIdentifier: app).first?.processIdentifier

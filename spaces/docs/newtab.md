@@ -193,10 +193,11 @@ message, and turns away a host that no Chromium browser it knows started. `spec/
 
 | From the app | Means |
 | --- | --- |
-| `{"op":"browser.want","sources":[...]}` | Send these, whole first and then what changes: `tabs`, `bookmarks`, `history`, `downloads`. Sent on joining and when a switch changes. |
+| `{"op":"browser.want","sources":[...]}` | Send these, whole first and then what changes: `tabs`, `groups`, `bookmarks`, `history`, `downloads`. Sent on joining and when a switch changes. |
 | `{"op":"browser.go","tab":4}` | Bring that tab and its window forward. |
 | `{"op":"browser.show","download":7}` | Show that download in Finder. |
 | `{"op":"browser.open","url":...}` | Open an address, or with `text` search with the browser's engine, or neither for a new tab, in the window `window` names, `"new"`, or the one in front. Never in a private window. |
+| `{"op":"browser.group","group":...,"window":...}` | Move a tab group to that window, or to one of its own (`"new"`). `browser.go` takes a group too. |
 | `{"op":"browser.icon","url":...}` | Send that page's site icon. |
 | `{"op":"browser.away"}` | From the host itself: the app isn't there, on joining or when it goes. Nothing sent now is kept; wait for the next `browser.want`. |
 

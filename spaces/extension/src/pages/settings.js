@@ -40,6 +40,7 @@
 
   const BRIDGE = [
     ["tabs", "Open tabs", "Titles, sites and which one is in front"],
+    ["groups", "Tab groups", "Names, and moving a group to another workspace. Your browser asks first"],
     ["bookmarks", "Bookmarks", "Your browser asks before Polycarp can read them"],
     ["history", "Recent history", "The last 90 days. Your browser asks first"],
     ["downloads", "Downloads", "File names and how far along they are. Your browser asks first"]

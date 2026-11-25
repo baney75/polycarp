@@ -5,12 +5,12 @@
 (function (root) {
   "use strict";
   const HOST = "com.polycarp.newtab";
-  const SOURCES = ["tabs", "bookmarks", "history", "downloads"];
+  const SOURCES = ["tabs", "groups", "bookmarks", "history", "downloads"];
   // What each needs from the browser; tabs come with the site access the extension has.
-  const NEEDS = { tabs: [], bookmarks: ["bookmarks"], history: ["history"], downloads: ["downloads"] };
-  const KEY = "polycarp.bridge"; // { tabs: true, bookmarks: false, ... }: what this browser's Settings page allows
+  const NEEDS = { tabs: [], groups: ["tabGroups"], bookmarks: ["bookmarks"], history: ["history"], downloads: ["downloads"] };
+  const KEY = "polycarp.bridge"; // { tabs: true, groups: false, bookmarks: false, ... }: what this browser's Settings page allows
   const DEFAULTS = { tabs: true, bookmarks: false, history: false, downloads: false };
-  const MOST = { tabs: 5000, bookmarks: 20000, history: 50000, downloads: 500 };
+  const MOST = { tabs: 5000, groups: 500, bookmarks: 20000, history: 50000, downloads: 500 };
   const HISTORY_DAYS = 90;
   const PIECE = 500; // rows in a message, which the host caps at 1 MB
   const PIECE_BYTES = 700000;
@@ -29,6 +29,11 @@
     if (t.pinned) row.pinned = true;
     if (typeof t.groupId === "number" && t.groupId >= 0) row.group = t.groupId;
     return row;
+  }
+  // A group doesn't say whether it is private; its window does.
+  function groupRow(g, open) {
+    if (!g || !open.some((w) => w.id === g.windowId)) return null;
+    return { id: g.id, window: g.windowId, title: cut(g.title, 300) || "Tab group (" + g.color + ")", incognito: false };
   }
   function bookmarkRows(tree) {
     const out = [];
@@ -69,7 +74,7 @@
     let wanted = []; // what the app asked for
     let sending = []; // of those, what this browser gives
     let refused = false; // an app from before the line, or none on this computer: asked again at the next start
-    const dirty = { tabs: new Map(), bookmarks: false, history: new Map(), downloads: new Map() };
+    const dirty = { tabs: new Map(), groups: false, bookmarks: false, history: new Map(), downloads: new Map() };
     let timer = false;
     const told = new Set(); // the tabs the app knows of: one that goes away is news only then
 
@@ -83,6 +88,10 @@
     }
     async function all(source) {
       if (source === "tabs") return (await chrome.tabs.query({})).map(tabRow);
+      if (source === "groups") {
+        const open = await openWindows();
+        return (await chrome.tabGroups.query({})).map((g) => groupRow(g, open));
+      }
       if (source === "bookmarks") return bookmarkRows(await chrome.bookmarks.getTree());
       if (source === "history") {
         const got = await chrome.history.search({ text: "", startTime: now() - HISTORY_DAYS * 86400000, maxResults: MOST.history });
@@ -96,6 +105,7 @@
       if (!sending.includes(source)) return; // switched off while it was read
       for (const m of pieces(source, rows)) post(m);
     }
+    const openWindows = async () => (await chrome.windows.getAll({ windowTypes: ["normal"] })).filter((w) => w.incognito === false);
     async function refresh() {
       const give = (await allowed()).filter((s) => wanted.includes(s));
       const before = sending;
@@ -140,6 +150,11 @@
         return refresh();
       }
       if (m.op === "browser.away") { wanted = []; sending = []; return; }
+      if (m.op === "browser.group" && Number.isInteger(m.group) && sending.includes("groups")) return move(m);
+      if (m.op === "browser.go" && Number.isInteger(m.group) && sending.includes("groups")) {
+        const [first] = await chrome.tabs.query({ groupId: m.group });
+        if (first) return take({ op: "browser.go", tab: first.id });
+      }
       if (m.op === "browser.go" && Number.isInteger(m.tab)) {
         const there = await chrome.tabs.get(m.tab);
         if (there.incognito !== false) return;
@@ -162,12 +177,22 @@
       for (const b of bytes) s += String.fromCharCode(b);
       post({ op: "browser.icon", url, png: btoa(s) });
     }
+    // A tab group to another window, or one of its own, as it is: its name, its color, its order.
+    async function move(m) {
+      const open = await openWindows(), has = (id) => open.some((w) => w.id === id);
+      const g = await chrome.tabGroups.get(m.group);
+      if (!has(g.windowId) || (m.window !== "new" && !has(m.window)) || m.window === g.windowId) return;
+      if (m.window !== "new") { await chrome.tabGroups.move(g.id, { windowId: m.window, index: -1 }); return; }
+      const made = await chrome.windows.create({ focused: false });
+      await chrome.tabGroups.move(g.id, { windowId: made.id, index: -1 });
+      await chrome.tabs.remove(made.tabs[0].id); // the new window's own empty tab
+    }
     // A new tab in a window that isn't private: an address, a search with this browser's engine, or its new tab page.
     async function open(m) {
       const url = typeof m.url === "string" && /^https?:\/\//i.test(m.url) ? m.url : undefined;
       const text = typeof m.text === "string" && m.text.trim() ? cut(m.text.trim(), 2000) : undefined;
       if (m.url !== undefined && !url) return;
-      const windows = (await chrome.windows.getAll({ windowTypes: ["normal"] })).filter((w) => w.incognito === false);
+      const windows = await openWindows();
       const named = windows.find((w) => w.id === m.window);
       if (Number.isInteger(m.window) && !named) return;
       const w = named || (m.window === "new" ? null : windows.find((x) => x.focused) || windows[0]);
@@ -200,6 +225,7 @@
         for (const [k, v] of entries) { if (v) rows.push(v); else gone.push(k); }
         for (let i = 0; i < Math.max(rows.length, gone.length); i += CHANGED) post({ op: "browser.change", source, rows: rows.slice(i, i + CHANGED), gone: gone.slice(i, i + CHANGED) });
       }
+      if (dirty.groups) { dirty.groups = false; if (sending.includes("groups")) await send("groups"); }
       if (dirty.bookmarks) { dirty.bookmarks = false; if (sending.includes("bookmarks")) await send("bookmarks"); }
     }
     const mark = (source, key, row) => {
@@ -221,6 +247,9 @@
     const on = new Set();
     function listen() {
       const once = (source, fn) => { if (sending.includes(source) && !on.has(source)) { on.add(source); fn(); } };
+      once("groups", () => {
+        for (const e of ["onCreated", "onUpdated", "onMoved", "onRemoved"]) chrome.tabGroups[e].addListener(() => { dirty.groups = true; soon(); });
+      });
       once("bookmarks", () => {
         const b = () => { dirty.bookmarks = true; soon(); };
         for (const e of ["onCreated", "onRemoved", "onChanged", "onMoved", "onImportEnded"]) if (chrome.bookmarks[e]) chrome.bookmarks[e].addListener(b);
@@ -255,7 +284,7 @@
     return { start, stop, connect, refresh, listenTabs, again: () => { refused = false; return start(); }, get open() { return !!port; }, get sending() { return [...sending]; } };
   }
 
-  const api = { HOST, SOURCES, NEEDS, KEY, DEFAULTS, MOST, tabRow, bookmarkRows, historyRow, downloadRow, pieces, make };
+  const api = { HOST, SOURCES, NEEDS, KEY, DEFAULTS, MOST, tabRow, groupRow, bookmarkRows, historyRow, downloadRow, pieces, make };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.PolycarpBridge = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
