@@ -238,7 +238,8 @@
   }
 
   // Every edit that checks, the app's first; the rest in `refused` with the reason. An id may be in both lists.
-  // off: the app edits switched off here, by the fingerprint they had, so an edit its agent changed comes back on.
+  // off: the app edits switched off here, by the fingerprint they had, so an edit its agent changed comes back on. One
+  // switched off in the app has `appOff`: only the app turns it on.
   function merge(app, local, off) {
     const edits = [], refused = [];
     for (const [list, source] of [[app, "app"], [local, "local"]]) {
@@ -246,6 +247,7 @@
         const r = check(raw);
         if (!r.edit) { refused.push({ id: isObject(raw) && typeof raw.id === "string" ? raw.id : "", source, why: r.path + " " + r.why }); continue; }
         const e = Object.assign(r.edit, { source });
+        if (source === "app" && !e.enabled) e.appOff = true;
         if (source === "app" && isObject(off) && off[e.id] === fingerprint(e)) e.enabled = false;
         edits.push(e);
       }

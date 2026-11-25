@@ -33,7 +33,7 @@
     h2{font-size:17px;line-height:1.3;margin:0 0 4px;color:var(--pc-strong)} p,ul{margin:0 0 6px} ul{padding-inline-start:20px}
     a{color:var(--pc-accent)} a:focus-visible{outline:2px solid var(--pc-strong);outline-offset:2px} :last-child{margin-bottom:0}`;
 
-  function create(doc) {
+  function create(doc, passed) {
     const win = doc.defaultView;
     let edits = [], sheets = [], undo = [], notes = [];
     let room = KEPT, observer = null, timer = 0, frame = 0, lastMs = 0, themeCss = null, inert = null, more = false;
@@ -289,6 +289,7 @@
       dress();
       if (observer) observer.takeRecords(); // our own changes
       lastMs = win.performance.now() - t0;
+      passed();
       if (more) schedule();
     }
     // Before the next frame is drawn; a pass that took long waits ten times as long, so it costs a tenth of the time at most.
@@ -367,9 +368,9 @@
   // ---------------------------------------------------------------- wiring
   // Settings and edits come from storage: the app's (kept fresh by the service worker) and this browser's own. A change
   // there, or a new address on a page that doesn't reload, reaches this page at once.
-  const page = create(document);
+  const page = create(document, () => { for (const f of onpass) f(); });
   const alive = () => { try { return !!chrome.runtime.id; } catch (e) { return false; } };
-  let applied = "", turn = 0, watching = true, here = [], onapply = [];
+  let applied = "", turn = 0, watching = true, here = [], onapply = [], onpass = [];
 
   async function apply() {
     if (!alive()) return end();
@@ -406,7 +407,7 @@
     document.removeEventListener("DOMContentLoaded", page.flush);
     removeEventListener("load", page.flush);
   }
-  P.pageEdits = { apply, report: page.report, watch: (f) => { onapply.push(f); f(here); } };
+  P.pageEdits = { apply, report: page.report, watch: (f, passed) => { onapply.push(f); if (passed) onpass.push(passed); f(here); } };
 
   // A copy from before an extension update is still on the page with its edits made: it takes them back first, so this
   // copy starts from the page as the site made it. All a page could do with this is ask for itself unedited.

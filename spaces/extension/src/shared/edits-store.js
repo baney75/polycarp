@@ -24,7 +24,7 @@
     const at = all.findIndex((e) => e && e.id === id);
     if (!edit) { if (at >= 0) { all.splice(at, 1); await set(E.LOCAL_KEY, all); } return ""; }
     const r = E.check(edit);
-    if (!r.edit) return r.path + " " + r.why;
+    if (!r.edit) return (r.path === "$" ? "" : r.path + " ") + r.why;
     if (at < 0 && all.length >= E.MAX.edits) return "there are " + E.MAX.edits + " edits already; delete one first";
     if (at < 0) all.push(r.edit); else all[at] = r.edit;
     await set(E.LOCAL_KEY, all);
@@ -37,8 +37,11 @@
       if (e) { e.enabled = on; await set(E.LOCAL_KEY, all); }
       return;
     }
+    await turnApp([edit], on);
+  }
+  async function turnApp(edits, on) {
     const off = object((await get(E.OFF_KEY))[E.OFF_KEY]);
-    if (on) delete off[edit.id]; else off[edit.id] = E.fingerprint(edit);
+    for (const e of edits) if (on) delete off[e.id]; else off[e.id] = E.fingerprint(e);
     await set(E.OFF_KEY, off);
   }
   async function unseen(edits) {
@@ -53,5 +56,5 @@
   const KEYS = [E.APP_KEY, E.LOCAL_KEY, E.OFF_KEY];
   const changed = (changes, area) => area === "local" && KEYS.some((k) => changes[k]);
 
-  globalThis.PolycarpEditsStore = { SEEN_KEY, KEYS, load, put, turn, unseen, keep, changed };
+  globalThis.PolycarpEditsStore = { SEEN_KEY, KEYS, load, put, turn, turnApp, unseen, keep, changed };
 })();
