@@ -95,13 +95,18 @@ impl Fake {
 
     /// A program that stays running from inside `app`.
     pub fn start_inside(&self, app: &Path) -> std::process::Child {
+        // This test program itself, plain arm64: a copy of a system tool is arm64e, which macOS 15 stops soon after
+        // it starts when someone other than Apple signed it.
         let copy = app.join("Contents/MacOS/sleeper");
-        fs::copy("/bin/sleep", &copy).unwrap();
-        // Signed again: macOS won't run a moved copy of its own.
-        let mut codesign = std::process::Command::new("/usr/bin/codesign");
-        let signed = codesign.args(["--force", "--sign", "-"]).arg(&copy);
-        assert!(signed.output().unwrap().status.success());
-        std::process::Command::new(&copy).arg("60").spawn().unwrap()
+        fs::copy(std::env::current_exe().unwrap(), &copy).unwrap();
+        let mut sleeper = std::process::Command::new(&copy);
+        sleeper.args([
+            "--exact",
+            "browser::testing::sleeps_when_asked",
+            "--test-threads=1",
+        ]);
+        sleeper.env(SLEEP, "60").stdout(std::process::Stdio::null());
+        sleeper.spawn().unwrap()
     }
 
     /// Every call so far, as `program arguments`.
@@ -343,5 +348,15 @@ impl Tools for Fake {
             other => panic!("no fake for {other}"),
         }
         said("")
+    }
+}
+
+const SLEEP: &str = "POLYCARP_TEST_SLEEP_SECONDS";
+
+/// The program `Fake::start_inside` runs: it waits when asked to and does nothing otherwise.
+#[test]
+fn sleeps_when_asked() {
+    if let Some(seconds) = std::env::var(SLEEP).ok().and_then(|s| s.parse().ok()) {
+        std::thread::sleep(std::time::Duration::from_secs(seconds));
     }
 }
