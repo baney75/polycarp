@@ -23,7 +23,7 @@
       name.textContent = e.name || E.summary(e);
       const idle = r && !r.css && r.changes.every((c) => !c.hits) && r.changes.find((c) => c.note);
       const why = e.appOff ? "off in the Polycarp app" : away ? "Polycarp is off here" : idle ? idle.note : "";
-      small.textContent = (e.source === "app" ? "By your agent" : "By you") + " · " + E.summary(e) + (why ? " · " + why : "");
+      small.textContent = (e.source === "app" ? "By your agent" : "By you") + (e.name ? " · " + E.summary(e) : "") + (why ? " · " + why : "");
       sw.className = "switch";
       input.type = "checkbox";
       input.checked = e.enabled;

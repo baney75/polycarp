@@ -157,10 +157,10 @@ try {
   const up = (p) => p.evaluate(() => !!document.querySelector('polycarp-edits'));
   const inSight = (p) => p.evaluate(() => { const e = document.elementFromPoint(innerWidth - 60, innerHeight - 40); return !!e && e.localName === 'polycarp-edits'; });
   const shop = { ...EDIT, name: 'Shop, calmer', css: '#foot{letter-spacing:4px}' };
-  const part = { id: 'late', name: 'Late', sites: ['late.test'], changes: [{ do: 'hide', at: '.late' }] };
+  const lazy = { id: 'late', name: 'Late', sites: ['late.test'], changes: [{ do: 'hide', at: '.late' }] };
   const away = { id: 'away', name: 'Away', enabled: false, sites: ['late.test'], changes: [{ do: 'hide', at: '#foot' }] };
   const app = { id: 'app', sites: ['app.test'], css: 'html{transform:translate(0)} #foot{height:3000px}', changes: [] };
-  setAnswer([shop, part, away, app, { ...part, id: 'bad', changes: [{ do: 'run', at: 'p' }] }]);
+  setAnswer([shop, lazy, away, app, { ...lazy, id: 'bad', changes: [{ do: 'run', at: 'p' }] }]);
   await tick();
   const p2 = await ctx.newPage();
   await p2.goto('https://late.test/');
