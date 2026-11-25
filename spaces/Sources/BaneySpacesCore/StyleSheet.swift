@@ -149,11 +149,12 @@ public enum StyleSurface: String, CaseIterable, Sendable {
     static let retired: [String: String] = ["dock": "went with the Workspace Dock (removed 2026-11-23)"]
 }
 
-/// A state a part can be in: the workspace you're on (`.current`) and the pointer over it (`:hover`).
+/// A state a part can be in: the workspace you're on (`.current`), the one the keyboard is on (`.selected`) and the
+/// pointer over it (`:hover`).
 public enum StyleState: String, CaseIterable, Sendable {
-    case current, hover
+    case current, selected, hover
     /// As written in a selector.
-    public var selector: String { self == .current ? ".current" : ":hover" }
+    public var selector: String { self == .hover ? ":hover" : ".\(rawValue)" }
 }
 
 /// One kind of thing a selector names. Properties say which of these they apply to.
@@ -206,6 +207,9 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .barWorkspace: "One number in the workspaces module; .current is the workspace you're on, :hover the one under the pointer."
         }
     }
+
+    /// Every state that can change what it looks like: its own and those of what it inherits from.
+    var reach: Set<StyleState> { Set(states).union(parent?.reach ?? []) }
 
     /// Every selector form, as the docs show it: `bar .left`, `bar .center`, `bar .right`.
     public var selectors: [String] {
