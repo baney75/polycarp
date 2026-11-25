@@ -84,6 +84,9 @@ struct ViewerView: View {
     @ObservedObject var model: ViewerModel
     /// Redraws when Settings › Appearance changes.
     @ObservedObject private var appearance = Appearance.shared
+    @ObservedObject private var styles = Styles.shared
+    /// Every part's style, worked out once for the sheet in force (`StyleBook.overview`).
+    private var sheet: OverviewStyles { styles.book.overview }
     /// Rendered images can't capture a live blur, so they draw a still backdrop instead.
     var stillBackdrop = false
     private var accent: Color { Chrome.accent }
@@ -93,19 +96,33 @@ struct ViewerView: View {
     // The body is split into small pieces so every Swift compiler type-checks it quickly.
     var body: some View {
         ZStack {
-            backdrop
-            // Clicking the backdrop closes the viewer, like clicking the desktop in Mission Control.
-            Chrome.black(adjustable ? appearance.settings.overviewDim : AppearanceSettings().overviewDim)
-                .ignoresSafeArea().onTapGesture { model.onClose() }
-            if adjustable && appearance.settings.panelStyle == .tinted {
-                Chrome.accent.opacity(AppearanceSettings.tintWash).ignoresSafeArea().allowsHitTesting(false)
-            }
+            if let own = sheet.panel.background { styledBackdrop(own) } else { themeBackdrop }
             GeometryReader { g in grid(in: g.size) }
             liftedCard
         }
         .coordinateSpace(name: "viewer")
+        .opacity(sheet.panel.opacity ?? 1)
         .environment(\.colorScheme, Chrome.scheme)
         .onPreferenceChange(TileFrames.self) { model.tileFrames = $0 }
+    }
+
+    // Clicking the backdrop closes the viewer, like clicking the desktop in Mission Control.
+    @ViewBuilder private var themeBackdrop: some View {
+        backdrop
+        Chrome.black(adjustable ? appearance.settings.overviewDim : AppearanceSettings().overviewDim)
+            .ignoresSafeArea().onTapGesture { model.onClose() }
+        if adjustable && appearance.settings.panelStyle == .tinted {
+            Chrome.accent.opacity(AppearanceSettings.tintWash).ignoresSafeArea().allowsHitTesting(false)
+        }
+    }
+
+    /// The sheet's background: `glass` is the same blur the theme's is, with nothing over it.
+    @ViewBuilder private func styledBackdrop(_ own: StyleBackground) -> some View {
+        if own == .glass {
+            if stillBackdrop { Chrome.stillBackdrop } else { Backdrop().ignoresSafeArea() }
+        }
+        Rectangle().fill(own == .glass ? AnyShapeStyle(Color.clear) : Styled.fill(own) ?? AnyShapeStyle(Color.clear))
+            .contentShape(Rectangle()).ignoresSafeArea().onTapGesture { model.onClose() }
     }
 
     @ViewBuilder private var backdrop: some View {
@@ -140,11 +157,15 @@ struct ViewerView: View {
     private func slot(_ n: Int, size: CGFloat) -> some View {
         let isTarget = model.dropTarget == n
         let isHovered = model.drag == nil && model.highlighted == n
-        return Text("\(n)")
-            .font(Chrome.font(17, .semibold, rounded: true))
-            .foregroundStyle(isTarget || isHovered ? accent : Chrome.muted)
+        let c = sheet.tile(current: false, hover: isHovered)
+        return Text("\(n)").spaced(c.number)
+            .font(Styled.font(c.number, .ui, 17, .semibold, rounded: true))
+            .foregroundStyle(isTarget ? accent : c.number.ink(isHovered ? accent : Chrome.muted))
+            .minimumScaleFactor(c.number.fontSize == nil ? 1 : 0.4)
+            .opacity(c.number.opacity ?? 1)
             .frame(width: size, height: size)
-            .background(tileShape(isCurrent: false, isTarget: isTarget, isHovered: isHovered))
+            .background(tileShape(c, isCurrent: false, isTarget: isTarget, isHovered: isHovered))
+            .opacity(isTarget ? 1 : c.box.opacity ?? 1)
             .scaleEffect(isTarget ? Chrome.grow(1.08) : 1)
             .animation(Chrome.ease(0.12, .row), value: isTarget)
             .background(GeometryReader { g in
@@ -168,15 +189,26 @@ struct ViewerView: View {
         }
     }
 
-    private var footer: some View {
-        Text(model.drag == nil
+    @ViewBuilder private var footer: some View {
+        let c = sheet.hint
+        if !c.isHidden {
+            Text(c.cased(hint)).spaced(c)
+                .font(Styled.font(c, .ui, 12))
+                .foregroundStyle(c.ink(Chrome.wash(0.7)))
+                .lineLimit(c.fontSize == nil ? nil : 1).minimumScaleFactor(c.fontSize == nil ? 1 : 0.4)
+                .padding(c, else: EdgeInsets())
+                .frame(height: c.padding == nil && c.fontSize == nil ? 40 : nil)
+                .background { StyledBack(c) }
+                .opacity(c.opacity ?? 1)
+        }
+    }
+
+    private var hint: String {
+        model.drag == nil
                      ? "Click a workspace or press its number  ·  Arrow keys and Return work too  ·  Drag a window to another workspace  ·  Esc to close"
                      : model.carrying
                      ? "Let go over a workspace to move the window there  ·  Anywhere else leaves it here"
-                     : "Drop on a workspace to move the window there")
-            .font(Chrome.font(12))
-            .foregroundStyle(Chrome.wash(0.7))
-            .frame(height: 40)
+                     : "Drop on a workspace to move the window there"
     }
 
     private func tile(_ n: Int, height: CGFloat) -> some View {
@@ -184,14 +216,16 @@ struct ViewerView: View {
         let isCurrent = n == model.current
         let isTarget = model.dropTarget == n
         let isHovered = model.drag == nil && model.highlighted == n
+        let c = sheet.tile(current: isCurrent, hover: isHovered)
         let content = VStack(alignment: .leading, spacing: 8) {
-            tileHeader(n, count: entries.count, isCurrent: isCurrent)
-            tileBody(n, entries: entries, isTarget: isTarget)
+            tileHeader(n, c, count: entries.count, isCurrent: isCurrent)
+            tileBody(n, c, entries: entries, isTarget: isTarget)
         }
         return content
-            .padding(14)
+            .padding(c.box, else: EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14))
             .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
-            .background(tileShape(isCurrent: isCurrent, isTarget: isTarget, isHovered: isHovered))
+            .background(tileShape(c, isCurrent: isCurrent, isTarget: isTarget, isHovered: isHovered))
+            .opacity(isTarget ? 1 : c.box.opacity ?? 1)
             .scaleEffect(isTarget ? Chrome.grow(1.02) : 1)
             .animation(Chrome.ease(0.12, .row), value: isTarget)
             .background(GeometryReader { g in
@@ -205,59 +239,70 @@ struct ViewerView: View {
             .accessibilityAddTraits(.isButton)
     }
 
-    private func tileHeader(_ n: Int, count: Int, isCurrent: Bool) -> some View {
+    private func label(_ text: String, _ c: ComputedStyle, _ size: Double, _ own: Color, _ weight: TextWeight = .regular) -> some View {
+        Text(c.cased(text)).spaced(c).font(Styled.font(c, .ui, size, weight)).foregroundStyle(c.ink(own)).opacity(c.opacity ?? 1)
+    }
+
+    private func tileHeader(_ n: Int, _ c: OverviewStyles.Tile, count: Int, isCurrent: Bool) -> some View {
         // On one baseline: centered, the small caption floats above the big number's foot.
         HStack(alignment: .firstTextBaseline) {
-            Text("\(n)").font(Chrome.font(22, .bold, rounded: true))
-            if count > 0 {
-                Text(count == 1 ? "1 window" : "\(count) windows").font(Chrome.font(12)).foregroundStyle(Chrome.muted)
+            Text("\(n)").spaced(c.number).font(Styled.font(c.number, .ui, 22, .bold, rounded: true))
+                .foregroundStyle(c.number.ink(.primary)).opacity(c.number.opacity ?? 1)
+            if count > 0, !c.label.isHidden {
+                label(count == 1 ? "1 window" : "\(count) windows", c.label, 12, Chrome.muted).lineLimit(c.label.hasFont ? 1 : nil)
             }
             Spacer()
-            if isCurrent { Text("You're here").font(Chrome.font(12, .semibold)).foregroundStyle(accent) }
+            if isCurrent, !c.label.isHidden { label("You're here", c.label, 12, accent, .semibold).lineLimit(c.label.hasFont ? 1 : nil) }
         }
     }
 
-    @ViewBuilder private func tileBody(_ n: Int, entries: [Spaces.Entry], isTarget: Bool) -> some View {
+    @ViewBuilder private func tileBody(_ n: Int, _ c: OverviewStyles.Tile, entries: [Spaces.Entry], isTarget: Bool) -> some View {
         if entries.isEmpty {
             Spacer()
-            emptyLabel(isTarget: isTarget)
+            emptyLabel(c.label, isTarget: isTarget)
             Spacer()
         } else {
-            windowList(n, entries: entries)
+            windowList(n, c, entries: entries)
             if isTarget {
                 Text("Move here").font(Chrome.font(10, .semibold)).foregroundStyle(accent)
             }
         }
     }
 
-    @ViewBuilder private func emptyLabel(isTarget: Bool) -> some View {
+    @ViewBuilder private func emptyLabel(_ c: ComputedStyle, isTarget: Bool) -> some View {
         if isTarget {
             Text("Move here").font(Chrome.font(12)).foregroundStyle(accent).frame(maxWidth: .infinity)
-        } else {
-            Text("Empty").font(Chrome.font(13)).foregroundStyle(Chrome.muted).frame(maxWidth: .infinity)
+        } else if !c.isHidden {
+            label("Empty", c, 13, Chrome.muted).frame(maxWidth: .infinity)
         }
     }
 
     /// Every window has a card, and the cards fill the tile. They shrink as it fills, so none is ever hidden.
-    private func windowList(_ n: Int, entries: [Spaces.Entry]) -> some View {
+    private func windowList(_ n: Int, _ c: OverviewStyles.Tile, entries: [Spaces.Entry]) -> some View {
         GeometryReader { g in
             let grid = OverviewLayout.cards(entries.count, in: g.size)
             let columns = Array(repeating: GridItem(.fixed(grid.cardSize.width), spacing: OverviewLayout.cardGap), count: grid.columns)
             LazyVGrid(columns: columns, alignment: .leading, spacing: OverviewLayout.cardGap) {
-                ForEach(entries) { e in draggableCard(e, from: n, size: grid.cardSize) }
+                ForEach(entries) { e in draggableCard(e, c, from: n, size: grid.cardSize) }
             }
         }
     }
 
-    private func tileShape(isCurrent: Bool, isTarget: Bool, isHovered: Bool) -> some View {
+    /// The drop target is the theme's, whatever the sheet draws: a place to let go is never hidden.
+    private func tileShape(_ c: OverviewStyles.Tile, isCurrent: Bool, isTarget: Bool, isHovered: Bool) -> some View {
         let border: Color
         if isTarget { border = Chrome.focusEdge(accent) } else if isCurrent { border = Chrome.focusEdge(accent.opacity(0.85)) }
         else if isHovered { border = Chrome.theme == .baneyspaces ? Chrome.wash(0.6) : Chrome.focusEdge(accent) } else { border = Chrome.edge(0.08) }
         let width = Chrome.width(.overviewTile, focused: isTarget || isCurrent || isHovered)
         let dash: [CGFloat] = isTarget ? [8, 5] : []
-        return Chrome.shape(.overviewTile, continuous: false)
+        return StyledBack(isTarget ? c.target : c.box, .overviewTile, continuous: false)
             .fill(Chrome.tileFill(target: isTarget))
-            .overlay(Chrome.shape(.overviewTile, continuous: false).strokeBorder(border, style: StrokeStyle(lineWidth: width, dash: dash)))
+            .overlay {
+                if isTarget || c.box.border == nil || ((isCurrent || isHovered) && !c.marked) {
+                    Styled.shape(c.box, else: Chrome.radius(.overviewTile), continuous: false)
+                        .strokeBorder(border, style: StrokeStyle(lineWidth: width, dash: dash))
+                }
+            }
     }
 
     private func tileLabel(_ n: Int, entries: [Spaces.Entry], isCurrent: Bool) -> String {
@@ -266,9 +311,9 @@ struct ViewerView: View {
     }
 
     /// A window card in a tile. Click it to go to that window; drag it to another workspace.
-    private func draggableCard(_ e: Spaces.Entry, from n: Int, size: CGSize) -> some View {
+    private func draggableCard(_ e: Spaces.Entry, _ c: OverviewStyles.Tile, from n: Int, size: CGSize) -> some View {
         let beingDragged = model.drag?.entry.id == e.id
-        return bigCard(e, size: size)
+        return bigCard(e, c, size: size)
             .opacity(beingDragged ? 0.3 : 1)
             .onHover { inside in (inside ? NSCursor.openHand : NSCursor.arrow).set() }
             .gesture(
@@ -287,34 +332,42 @@ struct ViewerView: View {
 
     /// A window in its tile: the app's icon large in the middle, with the app and title below. The title goes first when a
     /// card gets small, then the app's name.
-    private func bigCard(_ e: Spaces.Entry, size: CGSize) -> some View {
+    private func bigCard(_ e: Spaces.Entry, _ c: OverviewStyles.Tile, size: CGSize) -> some View {
+        // Larger text in the sheet needs a larger card before it shows.
+        let name = max(1, (c.window.fontSize ?? 0) / 13), line = max(name, (c.title.fontSize ?? 0) / 12)
         let icon = min(56, max(18, size.height * 0.42))
         let title = e.title.isEmpty || e.title == e.app ? "" : e.title
         return VStack(spacing: max(2, min(8, size.height * 0.05))) {
-            Image(nsImage: model.icons[e.id] ?? NSRunningApplication(processIdentifier: e.pid)?.icon ?? NSImage())
-                .resizable().frame(width: icon, height: icon)
-            if size.height >= 52 {
-                Text(e.app).font(Chrome.font(13, .semibold)).lineLimit(1).truncationMode(.middle)
+            if !c.icon.isHidden {
+                Image(nsImage: model.icons[e.id] ?? NSRunningApplication(processIdentifier: e.pid)?.icon ?? NSImage())
+                    .resizable().frame(width: icon, height: icon).corners(c.icon).opacity(c.icon.opacity ?? 1)
             }
-            if size.height >= 84, !title.isEmpty {
-                Text(title).font(Chrome.font(12)).foregroundStyle(Chrome.muted).lineLimit(size.height >= 130 ? 2 : 1)
+            if size.height >= 52 * name {
+                Text(c.window.cased(e.app)).spaced(c.window).font(Styled.font(c.window, .ui, 13, .semibold))
+                    .foregroundStyle(c.window.ink(.primary)).lineLimit(1).truncationMode(.middle)
+            }
+            if size.height >= 84 * line, !title.isEmpty, !c.title.isHidden {
+                label(title, c.title, 12, Chrome.muted).lineLimit(size.height >= 130 * line ? 2 : 1)
                     .multilineTextAlignment(.center).truncationMode(.middle)
             }
         }
         .padding(.horizontal, 8)
         .frame(width: size.width, height: size.height)
-        .background(Chrome.shape(.overviewChip, continuous: false).fill(Chrome.cell(0.06)))
+        .background(StyledBack(c.window, .overviewChip, continuous: false).fill(Chrome.cell(0.06)))
+        .opacity(c.window.opacity ?? 1)
         .contentShape(Chrome.shape(.overviewChip, continuous: false))
         .help(title.isEmpty ? e.app : "\(e.app): \(title)")
     }
 
     private func card(_ e: Spaces.Entry, lifted: Bool) -> some View {
-        HStack(spacing: 8) {
+        let c = sheet.tile(current: false, hover: false)
+        return HStack(spacing: 8) {
             Image(nsImage: model.icons[e.id] ?? NSRunningApplication(processIdentifier: e.pid)?.icon ?? NSImage())
                 .resizable().frame(width: 24, height: 24)
             // One line per window: the app, then its title, trimmed in the middle if long.
-            (Text(e.app).font(Chrome.font(14, .semibold))
-             + Text(e.title.isEmpty || e.title == e.app ? "" : "  \(e.title)").font(Chrome.font(14)).foregroundColor(Chrome.muted))
+            (Text(c.window.cased(e.app)).spaced(c.window).font(Styled.font(c.window, .ui, 14, .semibold)).foregroundColor(c.window.ink(.primary))
+             + Text(e.title.isEmpty || e.title == e.app || c.title.isHidden ? "" : "  \(c.title.cased(e.title))").spaced(c.title)
+                .font(Styled.font(c.title, .ui, 14)).foregroundColor(c.title.ink(Chrome.muted)))
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 0)
@@ -322,8 +375,13 @@ struct ViewerView: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Chrome.shape(.overviewChip, continuous: false).fill(lifted ? Chrome.liftedFill : Chrome.cell(0.06)))
-        .overlay(Chrome.shape(.overviewChip, continuous: false).strokeBorder(Chrome.edge(lifted ? 0.25 : 0), lineWidth: Chrome.width(.overviewChip)))
+        .background(StyledBack(c.window, .overviewChip, continuous: false).fill(lifted ? Chrome.liftedFill : Chrome.cell(0.06)))
+        .overlay {
+            if c.window.border == nil {
+                Styled.shape(c.window, else: Chrome.radius(.overviewChip), continuous: false)
+                    .strokeBorder(Chrome.edge(lifted ? 0.25 : 0), lineWidth: Chrome.width(.overviewChip))
+            }
+        }
         .shadow(color: Chrome.shadow(lifted ? 0.5 : 0), radius: 14, y: 6)
         .scaleEffect(lifted ? Chrome.grow(1.04) : 1)
     }

@@ -776,24 +776,62 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertTrue(styled.contains("if c.border == nil || marking {"), "a sheet's border takes the place of the theme's edge, but not of its mark")
     }
 
+    func testTheOverviewBookHoldsEveryPartInEveryState() {
+        let o = StyleBook(sheet("""
+        overview { color: #010101; }
+        overview .tile.current { color: #020202; }
+        overview .tile:hover { border: 2px solid #030303; border-radius: 5px; }
+        overview .label.current { color: #040404; }
+        overview .window { color: #050505; }
+        overview .hint { display: none; }
+        """), dark: true, roles: [:]).overview
+        func hex(_ t: OverviewStyles.Tile) -> [String?] { [t.box, t.number, t.label, t.window, t.title].map { $0.color?.hex } }
+        XCTAssertEqual(hex(o.tile(current: false, hover: false)), ["#010101", "#010101", "#010101", "#050505", "#050505"])
+        XCTAssertEqual(hex(o.tile(current: true, hover: false)), ["#020202", "#020202", "#040404", "#050505", "#050505"])
+        XCTAssertNil(o.tile(current: true, hover: false).box.border)
+        XCTAssertEqual(o.tile(current: true, hover: true).box.border, .solid(width: 2, color: StyleColor(rgb: 0x030303)))
+        XCTAssertEqual(o.tile(current: false, hover: true).box.border, .solid(width: 2, color: StyleColor(rgb: 0x030303)))
+        XCTAssertTrue(o.hint.isHidden)
+        XCTAssertTrue(o.tile(current: true, hover: true) === o.tile(current: true, hover: true), "worked out once")
+        // Where a window can be dropped, only the corners are the sheet's.
+        let target = o.tile(current: false, hover: true).target
+        XCTAssertEqual(target.borderRadius, 5)
+        XCTAssertNil(target.border)
+        XCTAssertNil(target.background)
+    }
+
     /// `launcher .row { background: ... }` alone paints every row alike: the theme's mark must still say which is selected.
     func testAStateTheSheetSaysNothingAboutKeepsTheThemesMark() throws {
         func book(_ css: String) -> StyleBook { StyleBook(sheet(css), dark: true, roles: [:]) }
         for plain in ["background: #222222;", "border: 1px solid #333333;", "border-bottom: 1px solid #333333;"] {
-            let b = book("launcher .row { \(plain) } switcher .item { \(plain) } launcher .row.selected { color: #ffffff; }")
+            let b = book("launcher .row { \(plain) } switcher .item { \(plain) } overview .tile { \(plain) } launcher .row.selected { color: #ffffff; }")
             XCTAssertFalse(b.launcher.row(selected: true).marked, plain)
             XCTAssertFalse(b.launcher.row(selected: true, hover: true).marked, plain)
             XCTAssertFalse(b.switcher.item(selected: true).marked, plain)
-            let own = book("launcher .row.selected { \(plain) } switcher .item.selected { \(plain) }")
+            XCTAssertFalse(b.overview.tile(current: true, hover: false).marked, plain)
+            XCTAssertFalse(b.overview.tile(current: false, hover: true).marked, plain)
+            let own = book("launcher .row.selected { \(plain) } switcher .item.selected { \(plain) } overview .tile.current { \(plain) }")
             XCTAssertTrue(own.launcher.row(selected: true).marked, plain)
             XCTAssertTrue(own.launcher.row(selected: true, hover: true).marked, plain)
             XCTAssertTrue(own.switcher.item(selected: true).marked, plain)
+            XCTAssertTrue(own.overview.tile(current: true, hover: false).marked, plain)
+            XCTAssertFalse(own.overview.tile(current: false, hover: true).marked, plain)
         }
         XCTAssertFalse(book("launcher .row:hover { background: #222222; }").launcher.row(selected: true, hover: true).marked, "hover's fill is not the selection's")
         let launcher = try SourceText.code("Sources/BaneySpaces/Launcher.swift"), switcher = try SourceText.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
         XCTAssertTrue(launcher.contains(".marking(selected && !c.marked)") && launcher.contains("if selected, !c.marked ||"))
         XCTAssertEqual(switcher.components(separatedBy: ".marking(on && !c.marked)").count, 4, "apps, windows and workspaces")
         XCTAssertEqual(switcher.components(separatedBy: "marking: on && !c.marked)").count, 4, "their edges too")
+    }
+
+    func testTheOverviewDrawsFromTheSheet() throws {
+        let code = try SourceText.code("Sources/BaneySpaces/Viewer.swift")
+        let view = try XCTUnwrap(SourceText.block(after: "struct ViewerView", in: code))
+        for part in ["@ObservedObject private var styles = Styles.shared", "sheet.panel", "sheet.hint", "c.box", "c.number", "c.label", "c.window", "c.title", "c.icon",
+                     "StyledBack(isTarget ? c.target : c.box,", "if isTarget || c.box.border == nil || ((isCurrent || isHovered) && !c.marked)", ".opacity(isTarget ? 1 : c.box.opacity ?? 1)"] {
+            XCTAssertTrue(view.contains(part), part)
+        }
+        XCTAssertFalse(view.contains("lookup") || view.contains("computed("), "no tile asks the cascade")
     }
 
     func testTheAppStartsTheSheetAndTheBarFollowsIt() throws {

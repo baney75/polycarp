@@ -71,6 +71,40 @@ public final class StyleBook {
 
     public private(set) lazy var launcher = LauncherStyles(lookup)
     public private(set) lazy var switcher = SwitcherStyles(lookup)
+    public private(set) lazy var overview = OverviewStyles(lookup)
+}
+
+/// The overview of every workspace.
+public final class OverviewStyles {
+    /// A tile and what it holds, in one state.
+    public final class Tile {
+        public let box, number, label, window, title, icon: ComputedStyle
+        /// The sheet marks this state itself (`ComputedStyle.marks`).
+        public let marked: Bool
+        /// A tile a window can be dropped on: its corners, and nothing else of the sheet's over the theme's highlight.
+        public let target: ComputedStyle
+
+        init(_ l: StyleLookup, _ states: Set<StyleState>) {
+            func part(_ name: String) -> ComputedStyle { l.computed(surface: .overview, part: name, states: states) }
+            box = part("tile"); number = part("number"); label = part("label")
+            window = part("window"); title = part("title"); icon = part("icon")
+            marked = box.marks(over: l.computed(surface: .overview, part: "tile"))
+            var t = ComputedStyle()
+            t.borderRadius = box.borderRadius
+            target = t
+        }
+    }
+
+    public let panel, hint: ComputedStyle
+    private let tiles: [Tile]
+
+    init(_ l: StyleLookup) {
+        panel = l.computed(surface: .overview)
+        hint = l.computed(surface: .overview, part: "hint")
+        tiles = [[], [.current], [.hover], [.current, .hover]].map { Tile(l, $0) }
+    }
+
+    public func tile(current: Bool, hover: Bool) -> Tile { tiles[(current ? 1 : 0) + (hover ? 2 : 0)] }
 }
 
 /// The ⌘Tab panel.

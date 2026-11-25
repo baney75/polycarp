@@ -169,8 +169,8 @@ enum Styled {
         return .easeOut(duration: t)
     }
 
-    static func shape(_ c: ComputedStyle, else fallback: CGFloat = 0) -> RoundedRectangle {
-        RoundedRectangle(cornerRadius: c.borderRadius.map { CGFloat($0) } ?? fallback, style: .continuous)
+    static func shape(_ c: ComputedStyle, else fallback: CGFloat = 0, continuous: Bool = true) -> RoundedRectangle {
+        RoundedRectangle(cornerRadius: c.borderRadius.map { CGFloat($0) } ?? fallback, style: continuous ? .continuous : .circular)
     }
 }
 
@@ -197,10 +197,13 @@ struct StyledBack: View {
     let style: ComputedStyle
     /// Whose corners it has when the sheet sets none; square without one.
     let surface: Surface?
+    let continuous: Bool
     var own = AnyShapeStyle(Color.clear)
     private var over = false
 
-    init(_ style: ComputedStyle, _ surface: Surface? = nil) { self.style = style; self.surface = surface }
+    init(_ style: ComputedStyle, _ surface: Surface? = nil, continuous: Bool = true) {
+        self.style = style; self.surface = surface; self.continuous = continuous
+    }
 
     func fill(_ color: Color) -> StyledBack { var b = self; b.own = AnyShapeStyle(color); return b }
 
@@ -208,7 +211,7 @@ struct StyledBack: View {
     func marking(_ on: Bool) -> StyledBack { var b = self; b.over = on; return b }
 
     var body: some View {
-        let shape = Styled.shape(style, else: surface.map(Chrome.radius) ?? 0)
+        let shape = Styled.shape(style, else: surface.map(Chrome.radius) ?? 0, continuous: continuous)
         if style.isEmpty {
             shape.fill(own)
         } else {

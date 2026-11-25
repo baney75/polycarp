@@ -14,7 +14,7 @@ enum StyleProof {
         "color": ["#ff00ff"], "background": ["#00ff00"], "opacity": ["0.3"], "font-family": ["Zapfino, serif"], "font-size": ["19px"],
         "font-weight": ["900", "100"], "font-style": ["italic"], "letter-spacing": ["6px"], "text-transform": ["uppercase", "lowercase"],
         "font-variant-numeric": ["tabular-nums"], "width": ["901px"], "height": ["33px"], "padding": ["7px 23px 9px 31px"], "gap": ["19px"],
-        "border-radius": ["17px", "0"], "border": ["3px solid #ff00ff"], "border-bottom": ["3px solid #ff00ff"],
+        "border-radius": ["17px", "0", "28px"], "border": ["3px solid #ff00ff"], "border-bottom": ["3px solid #ff00ff"],
         "box-shadow": ["0 4px 30px #ff00ff"], "display": ["none"],
     ]
     /// A part whose corners show only on a fill or a line.
@@ -24,7 +24,8 @@ enum StyleProof {
     private static func cannotShow(_ t: StyleTarget, _ p: StyleProperty) -> Bool {
         p.name == "transition-duration" || (p.name == "font-variant-numeric" && !digits.contains(t))
     }
-    private static let digits: Set<StyleTarget> = [.launcher, .launcherRow, .launcherTitle, .switcher, .switcherItem, .switcherNumber, .switcherLabel, .switcherHint]
+    private static let digits: Set<StyleTarget> = [.launcher, .launcherRow, .launcherTitle, .switcher, .switcherItem, .switcherNumber, .switcherLabel, .switcherHint,
+                                              .overview, .overviewTile, .overviewNumber, .overviewLabel, .overviewWindow, .overviewTitle]
 
     static func run() -> Int32 {
         var failed: [String] = [], tried = 0
@@ -74,6 +75,15 @@ enum StyleProof {
             windows.windowBar = .init(pid: 1, name: "Mail", icon: icon, windows: (1...2).map { .init(id: $0, title: "Inbox \($0)", workspace: 1) }, selected: 0)
             workspaces.tiles = [.init(n: 1, icons: [icon], count: 11, isCurrent: true), .init(n: 2, icons: [icon], count: 1, isCurrent: false)]
             return [apps, windows, cards, workspaces].map { model in { AnyView(SwitcherView(model: model)) } }
+        case .overview:
+            // The workspace you're on, another with windows, and the empty ones' slots.
+            let model = ViewerModel()
+            let icon = NSWorkspace.shared.icon(forFile: "/System/Applications/Mail.app")
+            model.tiles = Dictionary(uniqueKeysWithValues: (1...2).map { n in
+                model.icons[WindowID(n)] = icon
+                return (n, [Spaces.Entry(id: WindowID(n), pid: 0, app: "Mail", title: "Inbox 1171")])
+            })
+            return [{ AnyView(ViewerView(model: model, stillBackdrop: true).frame(width: 900, height: 560)) }]
         }
     }
 
