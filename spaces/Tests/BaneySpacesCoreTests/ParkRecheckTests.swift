@@ -25,4 +25,13 @@ final class ParkRecheckTests: XCTestCase {
         XCTAssertLessThan(unhide.lowerBound, recheck.lowerBound)
         XCTAssertTrue(code.contains("guard !UnhideUndoesMoves.contains(w.pid) else { return false }"), "not hidden first, since the unhide is what undoes it")
     }
+
+    /// Parking stops waiting once a window reaches the spot; one its app puts back within the old 50 ms is caught after.
+    func testWindowsParkedInPlaceAreLookedAtAgainPastTheSwitch() throws {
+        let park = try XCTUnwrap(SourceText.block(after: "private func park(", in: try SourceText.code("Sources/BaneySpaces/Spaces.swift")))
+        let then = try XCTUnwrap(park.range(of: "then()", options: .backwards, range: park.startIndex..<park.range(of: "recheckParked(")!.lowerBound))
+        let again = try XCTUnwrap(park.range(of: "hide(cameBack(inPlace"))
+        XCTAssertLessThan(then.lowerBound, again.lowerBound, "the switch must not wait for it")
+        XCTAssertTrue(park.contains(".now() + Settling.still"))
+    }
 }

@@ -62,5 +62,12 @@ final class LanesTests: XCTestCase {
         let bounds = try XCTUnwrap(SourceText.block(after: "static func bounds(of", in: moves))
         XCTAssertTrue(bounds.contains("CGWindowListCreateDescriptionFromArray("))
         XCTAssertFalse(bounds.contains("serverWindows("), "the whole list is read at every look")
+        let spaces = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
+        for (f, calls) in ["private func park(": ["WindowMoves.states(", "WindowMoves.move("],
+                           "private func bringHome(": ["WindowMoves.targets(", "WindowMoves.place("]] {
+            let body = try XCTUnwrap(SourceText.block(after: f, in: spaces))
+            for call in calls { XCTAssertTrue(body.contains(call), "\(f) lost \(call)") }
+            for old in ["serverWindows(", ".setOrigin("] { XCTAssertFalse(body.contains(old), "\(f) is back to \(old)") }
+        }
     }
 }

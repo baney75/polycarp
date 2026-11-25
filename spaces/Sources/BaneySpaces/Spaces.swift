@@ -2217,8 +2217,39 @@ final class Spaces {
                 }
                 then()
                 recheckParked(todo.filter { reshown.contains($0.pid) }, spot: spot, screens: screens, gen: gen)
+                // The wait ends when a window reaches the spot, and its app can still put it back just after. Looked at
+                // again past the switch, so the switch doesn't wait for it.
+                let inPlace = todo.filter { !reshown.contains($0.pid) && !unparked.contains($0.pid) }
+                guard !inPlace.isEmpty else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Settling.still) { [self] in
+                    guard gen == generation, active else { return }
+                    hide(cameBack(inPlace, screens: screens), why: "put back after parking")
+                }
             }
         }
+    }
+
+    /// Windows parked for a workspace not shown that are in sight again.
+    private func cameBack(_ list: [Window], screens: [CGRect]) -> [Window] {
+        let bounds = WindowMoves.bounds(of: Set(list.map(\.id)))
+        return list.filter { w in
+            guard let b = bounds[w.id] else { return false }
+            return ParkRecheck.cameBack(b, screens: screens, wantedAway: model.workspace(of: w.id).map { !model.isShown($0) } == true)
+        }
+    }
+
+    /// Windows that won't stay parked: their apps are hidden instead.
+    private func hide(_ stubborn: [Window], why: String) {
+        guard !stubborn.isEmpty else { return }
+        Trace.log("parked: \(why); hiding")
+        let pids = Set(stubborn.map(\.pid))
+        ownHides.formUnion(pids)
+        ownHidesUntil = Date().addingTimeInterval(1)
+        for pid in pids {
+            NSRunningApplication(processIdentifier: pid)?.hide()
+            saved.hiddenApps.insert(pid)
+        }
+        persist()
     }
 
     /// The read-back above is from before the unhide, and unhiding can undo the move: T3 Code's window jumped back 20 ms later and
@@ -2226,32 +2257,16 @@ final class Spaces {
     /// remembered so it never goes through this again. One that still won't stay is hidden after all.
     private func recheckParked(_ moved: [Window], spot: CGPoint, screens: [CGRect], gen: Int) {
         guard !moved.isEmpty else { return }
-        func back(_ list: [Window]) -> [Window] {
-            let bounds = Windows.serverWindows()
-            return list.filter { w in
-                guard let b = bounds[w.id]?.bounds else { return false }
-                return ParkRecheck.cameBack(b, screens: screens, wantedAway: model.workspace(of: w.id).map { !model.isShown($0) } == true)
-            }
-        }
         DispatchQueue.main.asyncAfter(deadline: .now() + ParkRecheck.afterUnhide) { [self] in
             guard gen == generation, active else { return }
-            let returned = back(moved)
+            let returned = cameBack(moved, screens: screens)
             guard !returned.isEmpty else { return }
             for pid in Set(returned.map(\.pid)) { UnhideUndoesMoves.remember(pid) }
             Trace.log("parked: \(Set(returned.map(\.appName)).sorted().joined(separator: ", ")) came back when unhidden; moving in plain sight")
             returned.forEach { $0.setOrigin(spot) }
             DispatchQueue.main.asyncAfter(deadline: .now() + ParkRecheck.afterPlainMove) { [self] in
                 guard gen == generation, active else { return }
-                let stubborn = Set(back(returned).map(\.pid))
-                guard !stubborn.isEmpty else { return }
-                Trace.log("parked: still in sight after a plain move; hiding")
-                ownHides.formUnion(stubborn)
-                ownHidesUntil = Date().addingTimeInterval(1)
-                for pid in stubborn {
-                    NSRunningApplication(processIdentifier: pid)?.hide()
-                    saved.hiddenApps.insert(pid)
-                }
-                persist()
+                hide(cameBack(returned, screens: screens), why: "still in sight after a plain move")
             }
         }
     }
