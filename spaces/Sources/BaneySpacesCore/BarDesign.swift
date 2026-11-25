@@ -31,14 +31,18 @@ public enum BarSides {
         return (middle, max(0, (room - middle) / 2 - (middle > 0 ? gap : gap / 2)))
     }
 
-    /// Beside a notch: the middle's modules (the clock) at the notch, the side's own at the screen's edge. The widths of both rows in `room`: the side's own row is whole while it fits, and the middle's gives way to it
-    /// down to `BarLayout.middleShare` of the room, so a long verse shortens instead of pushing icons off.
+    /// The least the middle's row is shortened to before icons go.
+    static let least = 120.0
+
+    /// Beside a notch: the middle's modules (the clock) at the notch, the side's own at the screen's edge. The widths of both rows in `room`: the side's own row
+    /// is whole while the middle's keeps `least`, so a long verse shortens instead of pushing icons off. When even that
+    /// doesn't fit, icons go and the middle's keeps `BarLayout.middleShare` of the room.
     public static func widths(lead: Double, trail: Double, gap: Double, room: Double) -> (lead: Double, trail: Double) {
         guard lead > 0 else { return (0, min(trail, room)) }
         guard trail > 0 else { return (min(lead, room), 0) }
         let space = max(0, room - gap)
         if lead + trail <= space { return (lead, trail) }
-        let kept = min(lead, max(space * BarLayout.middleShare, space - trail))
+        let kept = min(lead, trail <= space - least ? space - trail : space * BarLayout.middleShare)
         return (kept, max(0, space - kept))
     }
 }
