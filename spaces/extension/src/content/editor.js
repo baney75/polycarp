@@ -1,13 +1,14 @@
 /* Change this page by hand: point at a part, then hide, reword, restyle, move it or leave a note by it. Put on the page
-   when asked for (popup, menu, shortcut), and again to close. Every change is a page edit kept in this browser
-   (src/shared/edits-store.js), which src/content/edits.js applies: nothing here changes the page itself.
+   when asked for (popup, menu, shortcut), and again to close; the script's value says whether the page took it. Every
+   change is a page edit kept in this browser (src/shared/edits-store.js), which src/content/edits.js applies: nothing
+   here changes the page itself.
    A clear layer over the page takes the pointer, so the page hears no click meant for the editor. */
 (function () {
   "use strict";
   const P = globalThis.Polycarp, E = globalThis.PolycarpEdits, S = globalThis.PolycarpEditsStore, K = globalThis.PolycarpEditsPick;
-  if (P.editor) { const on = P.editor.on(); P.editor.close(); if (on) return; } // a page may have taken it away
+  if (P.editor) { const on = P.editor.on(); P.editor.close(); if (on) return true; } // a page may have taken it away
   const site = E.site(location.hostname);
-  if (!site || !P.pageEdits) return;
+  if (!site || !P.pageEdits) return false;
   const STAYS = E.EDITORS + "," + E.CARRY; // what may not be moved, nor be in what is
 
   const CSS_TEXT = `
@@ -15,7 +16,7 @@
     *{box-sizing:border-box} [hidden]{display:none !important}
     /* In the top layer: over the page, and out of reach of its transforms. */
     .top{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;background:none;overflow:visible;pointer-events:none}
-    .layer{position:fixed;inset:0;pointer-events:auto;cursor:crosshair;touch-action:none}
+    .layer{position:fixed;inset:0;pointer-events:auto;cursor:crosshair;touch-action:pan-x pan-y pinch-zoom}
     .mark{position:fixed;pointer-events:none;border:2px solid var(--pc-accent);border-radius:var(--pc-radius-small);outline:1px solid var(--pc-on-accent)}
     .mark.like{border-style:dashed}
     .bar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);pointer-events:auto;width:min(560px,calc(100vw - 24px));max-height:60vh;overflow:auto;padding:8px;
@@ -53,7 +54,7 @@
   const $ = (sel) => root.querySelector(sel);
   const bar = $(".bar"), layer = $(".layer"), marks = $(".marks"), tools = $(".tools"), tool = $(".tool"), scope = $(".scope"), what = $(".what"), say = $(".say");
   const which = $("[data-scope=which]"), where = $("[data-scope=where]");
-  let sel = null, open = "", raf = 0, over = null, history = [];
+  let sel = null, open = "", raf = 0, over = null, history = [], off = "", color = null, wait = 0;
   P.themeCss().then((css) => { $("style").textContent = P.shadowThemeCss(css) + CSS_TEXT; });
 
   // ---------------------------------------------------------------- pointing
@@ -74,7 +75,7 @@
     raf = 0;
     const at = [];
     if (sel && sel.isConnected) {
-      if (which.value === "all") for (const el of document.querySelectorAll(selector())) if (el !== sel && at.length < 100) at.push([el, "mark like"]);
+      if (which.value === "all") for (const el of K.all(document, selector())) if (el !== sel && at.length < 100) at.push([el, "mark like"]);
       at.push([sel, "mark"]);
     }
     if (over && over !== sel && over.isConnected) at.push([over, "mark like"]);
@@ -90,12 +91,18 @@
     bar.classList.toggle("up", !!r && r.bottom > innerHeight - tall && r.top > tall);
   }
   const draw = () => { if (!raf) raf = requestAnimationFrame(drawMarks); };
+  // What the panel says under its tools; with nothing to say, whether Polycarp is off here.
+  const tell = (text) => { say.textContent = text || off; };
+  // Clearing a tool takes the focused button with it: the panel keeps the keyboard.
+  function clear() { const held = tool.contains(root.activeElement); tool.textContent = ""; if (held) bar.focus(); }
   function choose(el) {
+    flush();
     sel = el;
     over = null;
     tools.hidden = scope.hidden = !el;
     openTool("");
-    say.textContent = "";
+    tell(el && moved(el) && el.firstElementChild ? "A moved part is changed as one. Take the move back to change what is in it." : "");
+    page.textContent = location.search ? "Every page at " + location.pathname : "This page";
     if (!el) { what.textContent = "Click a part of the page to change it."; draw(); return; }
     const words = (el.innerText || el.getAttribute("alt") || "").trim().replace(/\s+/g, " ");
     what.textContent = "";
@@ -107,9 +114,11 @@
     which.dataset.one = one;
     which.dataset.all = like;
     which.hidden = !one && !like;
-    if (!one && !like) { tools.querySelectorAll("[data-tool],[data-do=hide]").forEach((b) => { b.disabled = true; }); say.textContent = "This part can't be named. Try a wider one."; } else tools.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+    for (const b of tools.querySelectorAll("[data-tool],[data-do=hide]")) b.disabled = !one && !like;
+    if (!one && !like) tell("This part can't be named. Try a wider one.");
     draw();
   }
+  const page = new Option("This page", "page");
   const selector = () => which.dataset[which.value] || "";
   function step(key) {
     const next = (el, dir) => { do el = el[dir]; while (el && !fit(el)); return el; };
@@ -120,47 +129,81 @@
 
   // ---------------------------------------------------------------- changing
   const hash = (s) => { let h = 5381; for (const c of s) h = (Math.imul(h, 33) ^ c.codePointAt(0)) >>> 0; return h.toString(36); };
-  function draft() {
-    const path = where.value === "page" ? (location.pathname.length > 180 ? location.pathname.slice(0, 180) + "*" : location.pathname) : "";
+  // One record for this page and one for the site hold every change made by hand there.
+  function draft(scope) {
+    const path = scope === "page" ? (location.pathname.length > 180 ? location.pathname.slice(0, 180) + "*" : location.pathname) : "";
     return { id: "mine-" + hash(site + " " + path), name: ("My changes on " + site + path).slice(0, 80), sites: [site], paths: path ? [path] : [], changes: [], css: "" };
   }
+  const mine = async (id) => (await S.load()).edits.find((e) => e.source === "local" && e.id === id) || null;
+  const plain = (e, changes = e.changes) => ({ id: e.id, name: e.name, enabled: e.enabled !== false, sites: e.sites, paths: e.paths, changes, css: e.css });
+  const store = (e, changes) => S.put(e.id, changes.length || e.css ? plain(e, changes) : null);
   // One at a time: each starts from what the one before it kept.
   let last = Promise.resolve();
   const turn = (act) => (last = last.then(act).catch(() => {
-    say.textContent = "Not changed: this browser could not save it.";
+    tell("Not changed: this browser could not save it.");
     P.pageEdits.apply(); // with the extension gone, this takes the edits back
     return false;
   }));
-  // Adds one change; one that only adjusts the change before it takes its place.
-  async function keep(change) {
-    if (!sel || !sel.isConnected) { choose(null); say.textContent = "That part is gone from the page."; return false; }
-    const base = draft();
-    const before = (await S.load()).edits.find((e) => e.source === "local" && e.id === base.id) || null;
-    const next = before ? { ...before, enabled: true, changes: before.changes.slice() } : base;
-    delete next.source;
-    if (change.do === "move") next.changes = next.changes.filter((c) => c.do !== "move" || c.at !== change.at);
-    const same = next.changes[next.changes.length - 1];
-    if (same && same.do === change.do && same.at === change.at && (change.do === "style" || change.do === "text")) {
-      next.changes[next.changes.length - 1] = change.do === "style" ? { ...same, style: { ...same.style, ...change.style } } : change;
-    } else next.changes.push(change);
-    const why = await S.put(base.id, next);
-    say.textContent = why ? "Not changed: " + why + "." : "";
-    if (why) return false;
-    if (before) delete before.source;
-    history.push({ id: base.id, before });
-    $("[data-do=undo]").disabled = false;
-    setTimeout(draw, 120);
+  // Why the page didn't take a change that is in force, or "".
+  async function refused(id, i) {
+    await P.pageEdits.settle();
+    const e = document.readyState !== "loading" && P.pageEdits.report().find((x) => x.source === "local" && x.id === id);
+    const c = e && e.changes[i];
+    return c && !c.hits && c.note ? c.note[0].toUpperCase() + c.note.slice(1) + "." : "";
+  }
+  // Adds one change. One that adjusts the change before it takes its place, and a color picked on the way is one step.
+  async function keep(change, picking) {
+    if (!sel || !sel.isConnected) { choose(null); tell("That part is gone from the page."); return false; }
+    const base = draft(where.value), { edits } = await S.load();
+    const before = edits.find((e) => e.source === "local" && e.id === base.id) || null;
+    if (before && !before.enabled) { tell("Your changes here are off. Turn them on in Polycarp's popup first."); return false; }
+    const changes = before ? before.changes.slice() : [], was = [];
+    const drop = (f) => { for (let i = changes.length - 1; i >= 0; i--) if (f(changes[i])) was.unshift(...changes.splice(i, 1)); };
+    if (change.do === "move") {
+      const it = (c) => c.do === "move" && K.all(document, c.at)[0] === sel;
+      const other = E.active(edits, location.hostname, location.pathname).find((e) => (e.source !== "local" || e.id !== base.id) && e.changes.some(it));
+      if (other) { tell((other.source === "app" ? "Your agent's edit" : "\u201c" + other.name + "\u201d") + " already moves this part. Take that back first."); return false; }
+      drop(it);
+    }
+    if (change.do === "text") drop((c) => c.do === "text" && c.at === change.at && !c.find);
+    const same = changes[changes.length - 1];
+    if (change.do === "style" && same && same.do === "style" && same.at === change.at) { was.push(changes.pop()); change = { ...same, style: { ...same.style, ...change.style } }; }
+    changes.push(change);
+    const why = await store(before || base, changes);
+    if (why) { tell("Not changed: " + why + "."); return false; }
+    const no = await refused(base.id, changes.length - 1);
+    if (no) { await S.put(base.id, before ? plain(before) : null); tell(no); return false; }
+    const now = JSON.stringify((await mine(base.id)).changes.at(-1)), top = history.at(-1);
+    if (picking && top && top.picking && top.id === base.id && was.length === 1 && JSON.stringify(was[0]) === top.now) top.now = now;
+    else history.push({ id: base.id, now, was, picking });
+    tell("");
+    await steps();
     return true;
   }
-  const add = (change) => turn(() => keep(change));
-  const undo = () => turn(async () => {
-    const h = history[history.length - 1];
-    if (!h) return;
-    await S.put(h.id, h.before);
-    history.pop();
-    $("[data-do=undo]").disabled = !history.length;
-    say.textContent = "Taken back.";
+  const add = (change, picking) => turn(() => keep(change, picking));
+  // Undo takes back what was done since the panel opened, then what this page and this site already had.
+  async function older() {
+    for (const scope of ["page", "site"]) { const e = await mine(draft(scope).id); if (e && e.changes.length) return { id: e.id, now: JSON.stringify(e.changes.at(-1)), was: [] }; }
+    return null;
+  }
+  async function steps() {
+    const b = $("[data-do=undo]"), none = !history.length && !(await older());
+    if (none && root.activeElement === b) bar.focus();
+    b.disabled = none;
     setTimeout(draw, 120);
+  }
+  const undo = () => turn(async () => {
+    const h = history.at(-1) || (await older());
+    if (!h) return;
+    const e = await mine(h.id), i = e ? e.changes.findLastIndex((c) => JSON.stringify(c) === h.now) : -1;
+    const changes = e ? e.changes.slice() : [];
+    if (i >= 0) changes.splice(i, 1, ...h.was);
+    const why = i >= 0 ? await store(e, changes) : "";
+    if (why) { tell("Not taken back: " + why + "."); return; }
+    history.pop();
+    await P.pageEdits.settle();
+    tell(i >= 0 ? "Taken back: " + E.describe(JSON.parse(h.now)) + "." : "That change was already gone.");
+    await steps();
   });
 
   const px = (v) => parseFloat(v) || 16;
@@ -171,7 +214,7 @@
     text() {
       if (sel.isContentEditable || sel.querySelector(STAYS + ",video,audio,canvas") || sel.matches(E.NEVER + ",img,video,audio,canvas")) { tool.textContent = "Choose a smaller part, one that holds only words."; return; }
       tool.innerHTML = '<textarea aria-label="Words"></textarea><div class="row"><button class="main" data-do="text">Change words</button></div>';
-      tool.querySelector("textarea").value = sel.textContent.trim().replace(/\s+/g, " ").slice(0, E.MAX.text);
+      tool.querySelector("textarea").value = (sel.innerText || sel.textContent).trim().replace(/\s+/g, " ").slice(0, E.MAX.text);
     },
     note() { tool.innerHTML = '<textarea aria-label="Note" placeholder="A note to yourself, shown under this part"></textarea><div class="row"><button class="main" data-do="note">Add note</button></div>'; },
     move() { tool.innerHTML = '<div class="row"><button data-do="before">Up</button><button data-do="after">Down</button></div>'; },
@@ -185,7 +228,10 @@
   };
   function openTool(name) {
     open = name === open ? "" : name;
-    tool.textContent = "";
+    clear();
+    // Moving and noting are about one part.
+    const like = [...which.options].find((o) => o.value === "all");
+    if (like) { like.disabled = /move|note/.test(open) && which.options.length > 1; if (like.disabled) which.value = "one"; }
     tool.hidden = !open;
     for (const b of tools.querySelectorAll("[data-tool]")) b.setAttribute("aria-expanded", String(b.dataset.tool === open));
     if (open) TOOLS[open]();
@@ -201,8 +247,8 @@
     async text() { await add({ do: "text", at: selector(), text: tool.querySelector("textarea").value }); },
     async note() {
       const blocks = tool.querySelector("textarea").value.split(/\n+/).map((t) => t.trim()).filter(Boolean).slice(0, E.MAX.blocks).map((text) => ({ kind: "text", text }));
-      if (!blocks.length) { say.textContent = "Write the note first."; return; }
-      if (moved(sel)) { say.textContent = "This part was moved. Leave the note by another one."; return; }
+      if (!blocks.length) { tell("Write the note first."); return; }
+      if (moved(sel)) { tell("This part was moved. Leave the note by another one."); return; }
       if (await add({ do: "insert", at: which.dataset.one || selector(), where: "after", blocks })) openTool("");
     },
     smaller: () => add({ do: "style", at: selector(), style: { "font-size": Math.max(6, Math.round(px(getComputedStyle(sel).fontSize) / 1.1)) + "px" } }),
@@ -214,11 +260,13 @@
   async function shift(dir, put) {
     const el = sel;
     let to = (moved(el) || el)[dir];
-    while (to && !fit(to)) to = to[dir];
+    // What a moved part left behind, this one's own included, isn't a place; the copy of one can't be named, so not passed.
+    const copy = (n) => { const p = P.pageEdits.part(n); return p && p !== el && box(p).width > 0; };
+    while (to && !copy(to) && (to === el || moved(to) || !fit(to))) to = to[dir];
+    if (to && copy(to)) { tell("It can't pass a part that was moved. Move that one instead."); return; }
     const at = which.dataset.one, next = to && K.one(to);
-    if (!to) { say.textContent = put === "before" ? "It is already first here. Try a wider part." : "It is already last here. Try a wider part."; return; }
-    if (sel.matches(STAYS) || sel.querySelector(STAYS)) { say.textContent = "It holds a button or a field, so it stays where it is."; return; }
-    if (!at || !next) { say.textContent = "This part can't be moved. Try a wider one."; return; }
+    if (!to) { tell("It is already " + (put === "before" ? "first" : "last") + " here. Try a wider part."); return; }
+    if (!at || !next) { tell("This part can't be moved. Try a wider one."); return; }
     if (await add({ do: "move", at, to: next, where: put })) setTimeout(() => { if (sel === el) { choose(el); openTool("move"); tool.querySelector("[data-do=" + put + "]").focus(); (moved(el) || el).scrollIntoView({ block: "nearest" }); } }, 150);
   }
 
@@ -228,8 +276,10 @@
   layer.addEventListener("click", (e) => { if (e.isTrusted) { choose(under(e.clientX, e.clientY)); bar.focus(); } });
   layer.addEventListener("contextmenu", (e) => e.preventDefault());
   layer.addEventListener("wheel", (e) => { // the part under the layer scrolls, as it would without it
-    for (let el = under(e.clientX, e.clientY); el; el = el.parentElement) {
-      if (el.scrollHeight > el.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(el).overflowY) && el !== document.body) { el.scrollBy(e.deltaX, e.deltaY); e.preventDefault(); return; }
+    if (e.ctrlKey) return;
+    for (let el = under(e.clientX, e.clientY); el && el !== document.body; el = el.parentElement) {
+      const room = e.deltaY < 0 ? el.scrollTop : el.scrollHeight - el.clientHeight - el.scrollTop;
+      if (room > 1 && /auto|scroll/.test(getComputedStyle(el).overflowY)) { el.scrollBy(e.deltaX, e.deltaY); e.preventDefault(); return; }
     }
   }, { passive: false });
   bar.addEventListener("click", (e) => {
@@ -237,42 +287,60 @@
     if (!b) return;
     if (b.dataset.tool) openTool(b.dataset.tool); else ACTS[b.dataset.do]();
   });
-  let wait = 0;
-  bar.addEventListener("input", (e) => {
-    const prop = e.target.dataset.color, v = e.target.value;
-    if (!prop || !sel) return;
+  // A color goes to the part it was picked for, once the picking rests or another part is chosen.
+  function flush() {
     clearTimeout(wait);
-    wait = setTimeout(() => add({ do: "style", at: selector(), style: { [prop]: v } }), 150);
-  });
+    const c = color;
+    color = null;
+    if (c) add(c, true);
+  }
+  function picking(field) {
+    const prop = field && field.dataset.color, at = selector();
+    if (!prop || !sel) return;
+    if (color && color.at !== at) flush();
+    color = { do: "style", at, style: { ...(color && color.style), [prop]: field.value } };
+    clearTimeout(wait);
+    wait = setTimeout(flush, 150);
+  }
   which.addEventListener("change", draw);
-  // Nor do its handlers for clicks anywhere, such as those that close a menu.
-  for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "dblclick", "auxclick", "touchstart", "touchend"]) root.addEventListener(type, (e) => e.stopPropagation());
-  // The page's own shortcuts don't fire on keys typed in the editor.
-  for (const type of ["keydown", "keyup", "keypress"]) root.addEventListener(type, (e) => {
-    e.stopPropagation();
-    if (type !== "keydown" || !e.isTrusted) return;
-    if (e.key === "Escape") { e.preventDefault(); if (open) openTool(""); else if (sel) choose(null); else close(); bar.focus(); return; }
-    if (/^Arrow/.test(e.key) && !e.target.matches("textarea,select,input")) { e.preventDefault(); step(e.key); }
-  });
-  function escape(e) { if (e.isTrusted && e.key === "Escape" && e.target !== host) { e.preventDefault(); close(); } }
+  // The page's handlers for clicks anywhere, such as those that close a menu, don't hear the panel's.
+  for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "dblclick", "auxclick", "contextmenu", "touchstart", "touchend", "change"]) root.addEventListener(type, (e) => e.stopPropagation());
+  // Nor its shortcuts and focus traps what is typed in it. Caught first at the window: only a listener the page put there
+  // itself, before the panel opened, comes sooner.
+  const TYPING = ["keydown", "keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut", "compositionstart", "compositionupdate", "compositionend", "focusin", "focusout"];
+  function typing(e) {
+    if (e.target !== host) { if (e.type === "keydown" && e.isTrusted && e.key === "Escape") { e.preventDefault(); close(); } return; }
+    e.stopImmediatePropagation();
+    if (e.type === "input") picking(root.activeElement);
+    if (e.type !== "keydown" || !e.isTrusted) return;
+    const on = root.activeElement;
+    if (e.key === "Escape") { e.preventDefault(); if (open) openTool(""); else if (sel) choose(null); else return close(); bar.focus(); return; }
+    if (/^Arrow/.test(e.key) && !(on && on.matches("textarea,select,input"))) { e.preventDefault(); step(e.key); }
+  }
   function close() {
+    flush();
     cancelAnimationFrame(raf);
     removeEventListener("scroll", draw, true);
     removeEventListener("resize", draw);
-    removeEventListener("keydown", escape, true);
+    for (const type of TYPING) removeEventListener(type, typing, true);
     host.remove();
     P.editor = null;
   }
   addEventListener("scroll", draw, true);
   addEventListener("resize", draw);
-  addEventListener("keydown", escape, true);
-  P.editor = { close, on: () => host.isConnected };
-  where.append(new Option("This page", "page"), new Option("All of " + site, "site"));
+  for (const type of TYPING) addEventListener(type, typing, true);
+  P.editor = { close, on: () => host.isConnected && bar.offsetWidth > 0 }; // the dialog it is in may have closed
+  where.append(page, new Option("All of " + site, "site"));
   choose(null);
-  document.documentElement.append(host);
+  // All but an open modal dialog is out of reach: the panel goes in it.
+  ([...document.querySelectorAll("dialog:modal")].pop() || document.documentElement).append(host);
   $(".top").showPopover();
   bar.focus();
+  steps();
   P.getSettings().then((s) => {
-    if (!s.enabled || P.paused(s) || s.sites[P.hostOf(location.href)] === "off") say.textContent = "Polycarp is off here, so changes show once it is on.";
+    if (s.enabled && !P.paused(s) && s.sites[P.hostOf(location.href)] !== "off") return;
+    off = "Polycarp is off here, so changes show once it is on.";
+    tell(say.textContent);
   });
+  return true;
 })();

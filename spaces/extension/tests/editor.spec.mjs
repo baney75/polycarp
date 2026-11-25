@@ -21,12 +21,17 @@ const PAGE = `<!doctype html><html lang="en"><head><meta name="viewport" content
 <form id="form"><label id="label">Email <input id="email" value="me"></label><button id="send" type="button" onclick="window.sent=1">Send</button></form>
 <div style="height:1200px"></div></body></html>`;
 
+const MOVES = `<!doctype html><html lang="en"><head><title>Moves</title><style>.card{border:1px solid #ccc;padding:8px;margin:8px}</style></head><body><div id="list">
+<aside class="card alpha"><p>Alpha words</p></aside><aside class="card beta">Beta words</aside><aside class="card gamma">Gamma words</aside><aside class="card delta">Delta words</aside></div>
+<form><input id="email"></form><button id="ask" onclick="document.querySelector('dialog').showModal()">Ask</button><dialog><p id="inside">In the dialog</p><button>Yes</button></dialog><div style="height:2000px"></div></body></html>`;
+
 const { chromium } = await loadPlaywright();
 const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'polycarp-editor-')), {
   channel: 'chromium', headless: true, viewport: { width: 1280, height: 800 },
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`]
 });
-await ctx.route('https://*.test/**', (r) => r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: PAGE }));
+await ctx.route('https://*.test/**', (r) => r.fulfill(r.request().url().endsWith('.svg') ? { status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg"><rect width="9" height="9"/></svg>' }
+  : { status: 200, contentType: 'text/html; charset=utf-8', body: r.request().url().includes('/moves') ? MOVES : PAGE }));
 
 let fails = 0;
 const ok = (cond, msg) => { console.log((cond ? 'PASS ' : 'FAIL ') + msg); if (!cond) fails++; };
@@ -139,7 +144,7 @@ try {
   await point('#label');
   await tool('move');
   await act('after');
-  ok(/stays where it is/.test(await until(() => read('.say'))), 'a part that holds a field is not moved');
+  ok(await until(async () => /form field/.test(await read('.say'))) && !JSON.stringify(await locals()).includes('#label'), 'a part that holds a field is not moved, and nothing is kept');
 
   await point('.promo');
   for (let i = 0; i < 2 && !/^Section/.test(await read('.what')); i++) await act('wider');
@@ -152,7 +157,124 @@ try {
   ok(await until(() => page.evaluate(() => [...document.querySelectorAll('.promo')].every((e) => getComputedStyle(e).display === 'none'))), 'Hide: all like it');
   ok((await locals()).some((e) => !e.paths.length && e.changes[0].do === 'hide'), 'kept for the whole site when asked');
 
+  // ---------- Moving past what was moved ----------
+  const open = async (url) => { await page.goto(url); await toggle(); await until(() => inside('.bar')); };
+  // What a person sees, top to bottom.
+  const order = () => page.evaluate(() => [...document.querySelectorAll('#list > *')].flatMap((e) => (e.localName === 'polycarp-moved' ? [e.firstElementChild] : [e])).filter((e) => e && e.offsetWidth).map((e) => e.textContent.trim()[0]).join(''));
+  const said = (re) => until(async () => re.test(await read('.say')));
+  const shows = async (want, msg) => ok(await until(async () => (await order()) === want), `${msg} (${await order()})`);
+  await open('https://reef.test/moves');
+  await point('.gamma');
+  await tool('move');
+  await act('before');
+  await shows('AGBD', 'Move: a part with only a class goes up');
+  await act('before');
+  await shows('GABD', 'and up again');
+  await act('after');
+  await shows('AGBD', 'and back down');
+  await act('after');
+  await shows('ABGD', 'past the place it left');
+  const atMoves = async () => ((await locals()).find((e) => e.paths[0] === '/moves') || { changes: [] }).changes;
+  ok((await atMoves()).length === 1 && !JSON.stringify(await atMoves()).includes('polycarp'), `its moves stay one change (${JSON.stringify(await atMoves())})`);
+  await point('.delta');
+  await tool('move');
+  await act('before');
+  await shows('ABGD', 'a part that shows beside a moved one stays');
+  ok(await said(/can't pass a part that was moved/), 'and says why');
+  await point('.beta');
+  await tool('move');
+  await act('before');
+  await shows('BAGD', 'a second part moves past where nothing hidden counts');
+
+  const local = (edit) => sw.evaluate(async (e) => { const k = 'polycarp.edits.local', all = (await chrome.storage.local.get(k))[k] || []; await chrome.storage.local.set({ [k]: all.filter((x) => x.id !== e.id).concat(e.changes.length ? e : []) }); }, edit);
+  const site = (await locals()).find((e) => !e.paths.length);
+  await local({ ...site, changes: [] }); // put back below
+
+  // ---------- Undo, after a reload and beside another change ----------
+  await open('https://reef.test/moves');
+  await shows('BAGD', 'a reload keeps what was moved');
+  await until(async () => !(await read('[data-do=undo]', 'return this.disabled')));
+  await act('undo');
+  await shows('ABGD', 'Undo takes back what was done before the reload');
+  await act('undo');
+  ok(await until(async () => !(await atMoves()).length) && await until(() => read('[data-do=undo]', 'return this.disabled')), 'with nothing left to take back, Undo is off');
+  await point('.alpha');
+  await page.keyboard.press('ArrowUp');
+  await act('hide');
+  await shows('BGD', 'Hide');
+  ok(await page.evaluate(() => document.activeElement.localName === 'polycarp-edits'), 'the panel keeps the keyboard');
+  await sw.evaluate(async () => { const k = 'polycarp.edits.local', all = (await chrome.storage.local.get(k))[k], e = all.find((x) => x.paths[0] === '/moves'); e.changes.push({ do: 'hide', at: '.delta' }); await chrome.storage.local.set({ [k]: all }); });
+  await act('undo');
+  await shows('ABG', 'Undo leaves a change made meanwhile');
+  await act('undo');
+  await shows('ABGD', 'until it is its turn');
+
+  // ---------- What another edit holds ----------
+  const other = { id: 'other', name: 'Other', enabled: true, sites: ['reef.test'], paths: ['/moves'], changes: [{ do: 'move', at: '.gamma', to: '.alpha', where: 'before' }], css: '' };
+  await local(other);
+  await shows('GABD', 'another edit moves a part');
+  await page.evaluate(() => scrollTo(0, 0));
+  const g = await page.evaluate(() => { const b = document.querySelector('polycarp-moved').firstElementChild.getBoundingClientRect(); return { x: b.x + 20, y: b.y + 15 }; });
+  await page.mouse.click(g.x, g.y);
+  await tool('move');
+  await act('after');
+  ok(await said(/already moves this part/), `its part is not moved a second time (${await read('.say')})`);
+  await local({ ...other, changes: [] });
+  await point('.beta');
+  await act('hide');
+  await local({ ...(await locals()).find((e) => e.paths[0] === '/moves'), enabled: false });
+  await shows('ABGD', 'the changes are turned off elsewhere');
+  await point('.delta');
+  await act('hide');
+  ok(await said(/are off/) && (await locals()).find((e) => e.paths[0] === '/moves').enabled === false, 'a change made then does not turn them on');
+  await local({ ...(await locals()).find((e) => e.paths[0] === '/moves'), changes: [] });
+
+  // ---------- Pages that hold on ----------
+  await page.evaluate(() => { const i = document.querySelector('#email'); window.heard = 0; document.addEventListener('focusin', () => i.focus()); for (const t of ['beforeinput', 'input', 'paste', 'keyup', 'contextmenu']) document.addEventListener(t, () => { window.heard++; }, true); });
+  await point('.alpha');
+  await tool('note');
+  await page.keyboard.type('Mine');
+  ok((await read('.tool textarea', 'return this.value')) === 'Mine' && (await page.evaluate(() => document.querySelector('#email').value + window.heard)) === '0', "a page's focus trap and typing handlers hear nothing");
+  await point('.beta');
+  await tool('style');
+  const color = (v) => read('[data-color=color]', `this.focus(); this.value = '${v}'; this.dispatchEvent(new Event('input', { bubbles: true, composed: true }))`);
+  for (const v of ['#111111', '#770000', '#ff0000']) { await color(v); await sleep(250); }
+  await color('#00ff00');
+  await point('.delta');
+  const ink = (sel) => page.evaluate((x) => getComputedStyle(document.querySelector(x)).color, sel);
+  ok(await until(async () => (await ink('.beta')) === 'rgb(0, 255, 0)') && (await ink('.delta')) !== 'rgb(0, 255, 0)', 'a color goes to the part it was picked for');
+  await act('undo');
+  ok(await until(async () => (await ink('.beta')) === 'rgb(0, 0, 0)'), `and is one step to undo, however many were tried (${await ink('.beta')})`);
+  await open('https://reef.test/moves?q=1');
+  await point('.beta');
+  ok(/^Every page at \/moves$/.test(await read('[data-scope=where]', 'return this.options[0].textContent')), 'a page with a query says what it changes');
+  await toggle();
+  await page.click('#ask');
+  await toggle();
+  await until(() => inside('.bar'));
+  await point('#inside');
+  await act('hide');
+  ok(await until(async () => !(await shown('#inside'))), 'a part of an open dialog is changed');
+  await act('undo');
+  await until(() => shown('#inside'));
+  ok((await read('.say')) !== '' && await act('done') === undefined && await until(() => page.evaluate(() => !document.querySelector('polycarp-edits') && document.querySelector('dialog').open)), 'and the dialog stays open');
+  await page.goto('https://reef.test/drawing.svg');
+  ok((await toggle()) === false, 'a page it cannot edit is refused');
+
+  // ---------- Touch ----------
+  await open('https://reef.test/moves');
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+  const at = await page.locator('.beta').boundingBox();
+  await cdp.send('Input.synthesizeTapGesture', { x: at.x + 30, y: at.y + 15, gestureSourceType: 'touch' });
+  ok(await until(async () => /Beta/.test(await read('.what'))), `a tap chooses a part (${await read('.what')})`);
+  await cdp.send('Input.synthesizeScrollGesture', { x: 600, y: 400, yDistance: -300, gestureSourceType: 'touch' });
+  ok(await until(() => page.evaluate(() => scrollY > 100)), 'a finger scrolls the page');
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await toggle();
+
   // ---------- Closing, another page, phone width ----------
+  await local(site);
+  await open('https://reef.test/a');
   await page.keyboard.press('Escape');
   ok(await until(() => page.evaluate(() => !document.querySelector('polycarp-edits'))), 'Escape closes it');
   await page.evaluate(() => document.querySelector('#send').click());

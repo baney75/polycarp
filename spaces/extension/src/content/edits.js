@@ -377,7 +377,11 @@
   const alive = () => { try { return !!chrome.runtime.id; } catch (e) { return false; } };
   let applied = "", turn = 0, watching = true, here = [], onapply = [];
 
-  async function apply() {
+  let running = null;
+  const apply = () => (running = run());
+  // Once what storage holds now is in force.
+  async function settle() { apply(); for (let r = null; r !== running;) { r = running; await r; } }
+  async function run() {
     if (!alive()) return end();
     const mine = ++turn;
     let edits = [];
@@ -412,7 +416,7 @@
     document.removeEventListener("DOMContentLoaded", page.flush);
     removeEventListener("load", page.flush);
   }
-  P.pageEdits = { apply, report: page.report, shown: page.shown, part: page.part, watch: (f) => { onapply.push(f); f(here); } };
+  P.pageEdits = { apply, settle, report: page.report, shown: page.shown, part: page.part, watch: (f) => { onapply.push(f); f(here); } };
 
   // A copy from before an extension update is still on the page with its edits made: it takes them back first, so this
   // copy starts from the page as the site made it. All a page could do with this is ask for itself unedited.

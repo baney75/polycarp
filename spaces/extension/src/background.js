@@ -95,8 +95,8 @@ async function injectIntoOpenTabs() {
 // Asked for again, it closes. Answers whether the page could take it.
 async function editPage(tab) {
   try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["src/shared/core.js", "src/shared/edits.js", "src/shared/edits-store.js", "src/shared/edits-pick.js", "src/content/editor.js"] });
-    return true;
+    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["src/shared/core.js", "src/shared/edits.js", "src/shared/edits-store.js", "src/shared/edits-pick.js", "src/content/editor.js"] });
+    return !!(res && res.result);
   } catch (e) { return false; }
 }
 

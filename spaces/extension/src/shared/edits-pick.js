@@ -12,10 +12,12 @@
   const quote = (s) => (/["\\<@{};\n]/.test(s) || s.length > 80 ? "" : '"' + s + '"');
   const tag = (el) => CSS.escape(el.localName);
 
-  function count(doc, sel) {
-    if (!sel || E.selectorProblem(sel)) return 0;
-    try { return doc.querySelectorAll(sel).length; } catch (e) { return 0; }
+  // What a selector finds on the page itself: the copy of a moved part isn't another part.
+  function all(doc, sel) {
+    if (!sel || E.selectorProblem(sel)) return [];
+    try { return [...doc.querySelectorAll(sel)].filter((el) => !el.closest(E.OURS)); } catch (e) { return []; }
   }
+  const count = (doc, sel) => all(doc, sel).length;
   // What sets this element apart by itself, the surest first.
   function marks(el) {
     const out = [];
@@ -36,7 +38,7 @@
     if (el.getRootNode() !== doc) return "";
     let tail = "";
     for (let e = el; e && e.nodeType === 1; e = e.parentElement) {
-      for (const m of marks(e)) if (count(doc, m + tail) === 1 && doc.querySelector(m + tail) === el) return m + tail;
+      for (const m of marks(e)) { const on = all(doc, m + tail); if (on.length === 1 && on[0] === el) return m + tail; }
       let n = 1;
       for (let s = e.previousElementSibling; s; s = s.previousElementSibling) if (s.localName === e.localName) n++;
       tail = " > " + tag(e) + ":nth-of-type(" + n + ")" + tail;
@@ -59,5 +61,5 @@
     for (const t of tries) { const n = count(doc, t); if (n > 1 && n <= 500 && el.matches(t)) return t; }
     return "";
   }
-  globalThis.PolycarpEditsPick = { name, one, like, count };
+  globalThis.PolycarpEditsPick = { name, one, like, all, count };
 })();
