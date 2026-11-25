@@ -205,6 +205,35 @@ final class InstallScriptTests: XCTestCase {
         XCTAssertEqual(updater.components(separatedBy: "self.checking = false").count - 1, 2)
     }
 
+    /// A browser update runs with nobody watching. A key it can't use just then is not made again: that would be a new
+    /// app to macOS, and on the Mac that signs releases the key could not be made again at all.
+    func testKeepLeavesAnUnusableSigningKeyAlone() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("signing-keep-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: home) }
+        let dir = home.appendingPathComponent("Library/Application Support/Polycarp/Signing"), bin = home.appendingPathComponent("bin")
+        for d in [dir, bin] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+        // A `security` that always fails and writes down what it was asked, so no keychain is ever touched.
+        let stub = bin.appendingPathComponent("security")
+        try "#!/bin/bash\necho \"$@\" >> '\(home.path)/asked'\nexit 1\n".write(to: stub, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+        let key = dir.appendingPathComponent("polycarp-signing.keychain-db"), pass = dir.appendingPathComponent("keychain-password")
+        try "the key".write(to: key, atomically: true, encoding: .utf8)
+        try "made up".write(to: pass, atomically: true, encoding: .utf8)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = [root.appendingPathComponent("scripts/signing-identity.sh").path, "--keep"]
+        p.environment = ["HOME": home.path, "PATH": "\(bin.path):/usr/bin:/bin"]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try p.run()
+        p.waitUntilExit()
+        XCTAssertEqual(p.terminationStatus, 1)
+        XCTAssertEqual(try String(contentsOf: key, encoding: .utf8), "the key")
+        XCTAssertEqual(try String(contentsOf: pass, encoding: .utf8), "made up")
+        XCTAssertFalse(try String(contentsOf: home.appendingPathComponent("asked"), encoding: .utf8).contains("delete-keychain"))
+    }
+
     private func runSigningRestore(home: URL) throws -> String {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")

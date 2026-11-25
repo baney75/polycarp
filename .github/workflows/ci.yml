@@ -68,6 +68,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: cli }
       - run: cargo test
+      # Makes a throwaway certificate and keychain, so only here: two builds of Polycarp Browser must look like one app.
+      - if: runner.os == 'macOS'
+        run: cargo test --bin polycarp -- --ignored --exact browser::sign::tests::two_builds_have_the_same_designated_requirement
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo fmt --check
       # Polycarp Browser's launcher, a program of its own (GPL).

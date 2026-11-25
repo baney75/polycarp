@@ -32,6 +32,10 @@ pub struct Scene {
     pub gatekeeper: &'static str,
     pub version_inside: &'static str,
     pub app_is_a_link: bool,
+    /// What signing-identity.sh prints.
+    pub identity: &'static str,
+    /// Run the real tool for anything that isn't made to fail.
+    pub real: bool,
 }
 
 pub struct Fake {
@@ -56,6 +60,8 @@ impl Fake {
                 gatekeeper: "x: accepted\nsource=Notarized Developer ID",
                 version_inside: VERSION,
                 app_is_a_link: false,
+                identity: "",
+                real: false,
             }),
             calls: RefCell::default(),
             mounted: Cell::default(),
@@ -134,6 +140,51 @@ impl Fake {
         let work = self.root.join("work");
         fs::create_dir_all(&work).unwrap();
         work
+    }
+
+    pub fn file(&self, name: &str, text: &str) -> PathBuf {
+        let path = self.root.join(name);
+        fs::write(&path, text).unwrap();
+        path
+    }
+
+    /// A self-signed code signing certificate in a keychain of its own. Only for CI: `security` may add the keychain
+    /// to the person's list.
+    pub fn throwaway_identity(&self) -> (String, PathBuf) {
+        let name = "Polycarp Browser Test";
+        let keychain = self.root.join("test.keychain-db");
+        let config = format!(
+            "[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN={name}\n[ext]\n\
+             basicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\n\
+             extendedKeyUsage=critical,codeSigning\n"
+        );
+        let config = self.file("req.cfg", &config);
+        let (key, cert) = (self.root.join("key.pem"), self.root.join("cert.pem"));
+        let p12 = self.root.join("id.p12");
+        let (openssl, security) = ("/usr/bin/openssl", "/usr/bin/security");
+        let run = |program: &str, words: &str, paths: &[&Path]| {
+            let mut paths = paths.iter();
+            let mut call = Call::new(program, &[]);
+            for word in words.split(' ') {
+                call.args.push(match word {
+                    "@" => paths.next().unwrap().as_os_str().to_owned(),
+                    word => word.into(),
+                });
+            }
+            let ran = System.run(&call).unwrap();
+            assert!(ran.ok(), "{program} {words}: {}", ran.last_line());
+        };
+        let request = "req -x509 -newkey rsa:2048 -nodes -days 2 -keyout @ -out @ -config @";
+        run(openssl, request, &[&key, &cert, &config]);
+        let export = "pkcs12 -export -inkey @ -in @ -out @ -passout pass:test";
+        run(openssl, export, &[&key, &cert, &p12]);
+        run(security, "create-keychain -p test @", &[&keychain]);
+        run(security, "unlock-keychain -p test @", &[&keychain]);
+        let import = "import @ -k @ -P test -T /usr/bin/codesign";
+        run(security, import, &[&p12, &keychain]);
+        let partitions = "set-key-partition-list -S apple-tool:,apple: -s -k test @";
+        run(security, partitions, &[&keychain]);
+        (name.into(), keychain)
     }
 
     /// A small real app bundle, signed by nobody.
@@ -317,6 +368,9 @@ impl Tools for Fake {
                 };
             }
         }
+        if scene.real {
+            return System.run(call);
+        }
         let after = |word: &str| args.iter().position(|a| *a == word).map(|i| args[i + 1]);
         match name {
             "curl" => match after("--output") {
@@ -338,13 +392,15 @@ impl Tools for Fake {
             }
             // The real copy of a made-up app.
             "ditto" => return System.run(call),
+            "bash" => return said(scene.identity),
             "spctl" => return said(scene.gatekeeper),
             "plutil" if line.contains("CFBundleShortVersionString") => {
                 return said(scene.version_inside);
             }
             "hdiutil" => self.mounted.set(false),
-            "codesign" => {}
-            "plutil" => return System.run(call),
+            // No one but the made-up app's maker could sign it, so the checks of their signature are answered here.
+            "codesign" if line.contains("--verify") => {}
+            "codesign" | "plutil" => return System.run(call),
             other => panic!("no fake for {other}"),
         }
         said("")

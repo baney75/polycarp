@@ -5,6 +5,7 @@
 # certificate keeps it. The key lives in its own keychain under Application Support. It never
 # touches the login keychain and is not trusted for anything else.
 #   scripts/signing-identity.sh   ->  "Polycarp Local Signing<TAB>/path/to/polycarp-signing.keychain-db"
+#   scripts/signing-identity.sh --keep   fails instead of replacing a key that can't be used: for updates nobody watches
 # A key made for BaneySpaces is reused as it is: it is the key every release is pinned to
 # (release-requirement.txt), and macOS ties the Accessibility permission to it. It keeps its old
 # name and folder until a Polycarp release key is made; that is the owner's decision, so this script
@@ -90,6 +91,10 @@ if ! healthy && [ -f "$KC" ] && [ -s "$PASS_FILE" ]; then
 fi
 
 if ! healthy; then
+  if [ "${1:-}" = --keep ] && { [ -f "$KC" ] || [ -s "$PASS_FILE" ]; }; then
+    echo "signing-identity.sh: the $NAME key can't be used now, and it was left alone" >&2
+    exit 1
+  fi
   if [ -f "$KC" ] || [ -s "$PASS_FILE" ]; then
     echo "note: the $NAME key was unusable and has been replaced. macOS will treat the" >&2
     echo "      new build as a different app: open setup and click Fix Permission to allow it again." >&2
