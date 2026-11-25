@@ -11,6 +11,26 @@ public enum BrowserShare {
         return ["op": "browser.send", "tab": id, "to": place.rawValue]
     }
 
+    /// Asks the tab's browser for the page's readable text, for a quick look; nil for a row with no web page.
+    public static func read(_ tab: BrowserRow) -> [String: Any]? {
+        guard let id = send(tab, to: .reader)?["tab"] else { return nil }
+        return ["op": "browser.read", "tab": id]
+    }
+
+    /// The text asked for: from the browser asked, of the tab asked about, and in time. Anything else is dropped.
+    public struct Asked: Equatable, Sendable {
+        public let peer: BrowserPeer
+        public let tab: Int
+        public let until: Date
+        public init?(_ tab: BrowserRow, in peer: BrowserPeer, at now: Date = Date(), wait: TimeInterval = 10) {
+            guard let id = read(tab)?["tab"] as? Int else { return nil }
+            (self.peer, self.tab, until) = (peer, id, now.addingTimeInterval(wait))
+        }
+        public func takes(_ text: BrowserText, from peer: BrowserPeer, at now: Date = Date()) -> Bool {
+            peer == self.peer && text.tab == tab && now <= until
+        }
+    }
+
     /// `- [Title](address) 2026-11-25` and a line's end, as Markdown reads it; nil for a row with no web page.
     public static func line(_ tab: BrowserRow, on day: Date, calendar: Calendar = .current) -> String? {
         guard BrowserMessage.web(tab.url) else { return nil }

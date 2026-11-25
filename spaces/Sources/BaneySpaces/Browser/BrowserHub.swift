@@ -18,6 +18,9 @@ final class BrowserHub {
     var onDone: (BrowserWindows.Front) -> Void = { _ in }
     /// The person chose text on a page and asked the launcher to find it.
     var onFind: (String) -> Void = { _ in }
+    /// The text of the page the person asked to look at.
+    var onText: (BrowserText, String) -> Void = { _, _ in }
+    private var asked: (BrowserShare.Asked, site: String)?
     private var saying = false
     /// A web app waiting for its browser to start, until then.
     private var waiting: (app: WebApp, until: Date)?
@@ -44,6 +47,11 @@ final class BrowserHub {
         server.find = { [weak self] text, link in
             guard let self, self.links[link.peer] != nil else { return }
             self.onFind(text)
+        }
+        server.text = { [weak self] text, link in
+            guard let self, let a = self.asked, a.0.takes(text, from: link.peer) else { return }
+            self.asked = nil
+            self.onText(text, a.site)
         }
         server.gone = { [weak self] link in
             // A profile's line that came back before the old one was let go keeps its place.
@@ -165,6 +173,14 @@ final class BrowserHub {
     /// The tab to its browser's Reader or library. False when that browser is gone.
     func share(_ f: BrowserWindows.Front, to place: BrowserShare.Place) -> Bool {
         guard let message = BrowserShare.send(f.tab, to: place), let link = links[f.peer] else { return false }
+        link.send(message)
+        return true
+    }
+
+    /// Asks the tab's browser for the page's text, for a quick look. False when that browser is gone.
+    func read(_ f: BrowserWindows.Front) -> Bool {
+        guard let message = BrowserShare.read(f.tab), let a = BrowserShare.Asked(f.tab, in: f.peer), let link = links[f.peer] else { return false }
+        asked = (a, f.tab.site)
         link.send(message)
         return true
     }

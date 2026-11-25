@@ -309,6 +309,9 @@ enum Render {
             pages.query = typed
             guard save(LauncherView(model: pages).frame(height: 512).padding(30).background(Color(white: 0.3)), name, launcherShot) else { return 1 }
         }
+        // A quick look at a page's text.
+        guard save(PagePeekView(page: BrowserRender.text(), site: "guide.example").frame(width: 680, height: 420).padding(30)
+            .background(Color(white: 0.3)), "page-peek.png", CGSize(width: 740, height: 0)) else { return 1 }
         // A coding agent by name, offered in your terminal.
         launcher.agents = ["claude": "/usr/local/bin/claude", "codex": "/usr/local/bin/codex"]
         launcher.query = "claude"
