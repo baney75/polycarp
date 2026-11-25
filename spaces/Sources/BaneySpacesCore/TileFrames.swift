@@ -199,6 +199,10 @@ extension TileLayout {
     public func frames(in area: CGRect, gaps: TileGaps, minimums: [WindowID: CGSize] = [:],
                        loneMax: CGSize? = nil) -> [WindowID: CGRect] {
         guard let root, let box = gaps.inset(area) else { return [:] }
+        if full {
+            let all = CGRect(x: box.x0, y: box.y0, width: box.width, height: box.height)
+            return Dictionary(uniqueKeysWithValues: windows.map { ($0, all) })
+        }
         if case .window(let id) = root { return [id: lone(id, in: box, minimums: minimums, loneMax: loneMax)] }
         let solver = TileSolver(root, in: box, gap: gaps.inner, minimums: minimums)
         var out: [WindowID: CGRect] = [:]

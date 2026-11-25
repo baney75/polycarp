@@ -21,16 +21,20 @@ public struct TileLayout: Codable, Equatable, Sendable {
     public static let mainShare = 0.55
 
     public internal(set) var style: TileStyle
+    /// Every window gets the whole area and the app raises the focused one. The tree stays as it is, so turning this off
+    /// puts everything back; only windows coming and going change it meanwhile.
+    public var full = false
     var root: TileNode?
 
     public init(style: TileStyle = .dwindle) { self.style = style }
 
-    private enum CodingKeys: String, CodingKey { case style, root }
+    private enum CodingKeys: String, CodingKey { case style, full, root }
 
     /// A saved layout can have been edited or cut short, so the tree is repaired before anything walks it.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         style = try c.decode(TileStyle.self, forKey: .style)
+        full = try c.decodeIfPresent(Bool.self, forKey: .full) ?? false
         var seen: Set<WindowID> = []
         root = try c.decodeIfPresent(TileNode.self, forKey: .root)?.repaired(&seen)
     }

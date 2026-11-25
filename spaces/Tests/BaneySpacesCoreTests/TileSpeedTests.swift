@@ -1,5 +1,5 @@
 import XCTest
-import BaneySpacesCore
+@testable import BaneySpacesCore
 
 /// The layout runs on the main thread in the same breath as a window opening or a key press.
 final class TileSpeedTests: XCTestCase {
@@ -26,5 +26,17 @@ final class TileSpeedTests: XCTestCase {
             print(String(format: "tiles: frames for 30 windows, %@, p90 %.4f ms (no minimums %.4f ms)", style.rawValue, ms, plain))
             XCTAssertLessThan(max(ms, plain), 0.5, "\(style)")
         }
+    }
+
+    func testSixtyCallsStayUnderFiveMilliseconds() {
+        let area = CGRect(x: 0, y: 0, width: 1728, height: 1079), gaps = TileGaps(inner: 8, outer: 8)
+        let minimums: [WindowID: CGSize] = [2: CGSize(width: 400, height: 300), 5: CGSize(width: 500, height: 200)]
+        var r = TileRandom(state: 7)
+        let ms = p90(300) {
+            var l = TileLayout(style: TileStyle.allCases[r.below(3)]), there: Set<WindowID> = []
+            for _ in 0..<60 { randomTileCall(&l, &there, &r, area: area, gaps: gaps, minimums: minimums) }
+        }
+        print(String(format: "tiles: 60 random calls, p90 %.4f ms", ms))
+        XCTAssertLessThan(ms, 5)
     }
 }
