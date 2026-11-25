@@ -85,10 +85,6 @@ impl Spot {
         Built::read(&self.app())
     }
 
-    pub fn running(&self) -> bool {
-        !running::inside(&self.app()).is_empty()
-    }
-
     /// An app of that name that this command did not build is never replaced or removed.
     pub fn ours(&self) -> Result<(), Refused> {
         if exists(&self.app()) && self.installed().is_none() {
@@ -134,6 +130,8 @@ impl Spot {
 
     /// Moves a finished build beside the app, to wait there.
     pub fn stage(&self, tools: &dyn Tools, built: &Path) -> Result<(), Refused> {
+        // An old build an interrupted swap left waiting is kept, not deleted.
+        self.tidy()?;
         let part = self.part();
         fs::create_dir_all(&self.folder).map_err(refuse(CHECK, "making the app folder"))?;
         clear(&part).map_err(refuse(CHECK, "clearing half a copy"))?;
@@ -155,6 +153,9 @@ impl Spot {
     pub fn swap(&self) -> Result<(), Refused> {
         let (app, next) = (self.app(), self.next());
         self.ours()?;
+        if self.waiting().is_none() {
+            return Err(Refused::new(CHECK, "no newer build is waiting"));
+        }
         self.not_running()?;
         if !exists(&app) {
             return rename(&next, &app, libc::RENAME_EXCL)
@@ -190,30 +191,37 @@ impl Spot {
         let swap = || rename(with, &self.app(), libc::RENAME_SWAP);
         swap().map_err(refuse(CHECK, "putting the build in"))?;
         // It started in the moment between the check and the swap: it goes back, whole, where it was.
-        if !running::inside(with).is_empty() {
+        // Can't be told is taken as started. Always an error after: what was done is undone.
+        if running::inside(with).map_or(true, |pids| !pids.is_empty()) {
             swap().map_err(refuse(CHECK, "putting the running build back"))?;
-            return self.not_running();
-        }
-        Ok(())
-    }
-
-    pub fn not_running(&self) -> Result<(), Refused> {
-        if self.running() {
-            let why = "Polycarp Browser is open. Quit it first, or use `polycarp browser update --when-quit`";
+            let why =
+                "Polycarp Browser started during the swap; the build it runs is back in place";
             return Err(Refused::new("running", why));
         }
         Ok(())
     }
 
+    pub fn not_running(&self) -> Result<(), Refused> {
+        self.quit_first(
+            "Polycarp Browser is open. Quit it first, or use `polycarp browser update --when-quit`",
+        )
+    }
+
+    fn quit_first(&self, why: &str) -> Result<(), Refused> {
+        match running::inside(&self.app()) {
+            Ok(pids) if pids.is_empty() => Ok(()),
+            Ok(_) => Err(Refused::new("running", why)),
+            Err(e) => Err(Refused::new(
+                "running",
+                format!("the list of running programs could not be read: {e}"),
+            )),
+        }
+    }
+
     /// Removes the app and the builds beside it, and says what went.
     pub fn remove(&self) -> Result<Vec<PathBuf>, Refused> {
         self.ours()?;
-        if self.running() {
-            return Err(Refused::new(
-                "running",
-                "Polycarp Browser is open. Quit it first",
-            ));
-        }
+        self.quit_first("Polycarp Browser is open. Quit it first")?;
         let mut gone = Vec::new();
         for path in [self.next(), self.part(), self.previous(), self.app()] {
             if exists(&path) {
@@ -254,6 +262,7 @@ mod tests {
         }
         assert_eq!(version(&s.previous()).unwrap(), "2.0");
         assert_eq!(s.held(), None);
+        assert_eq!(s.swap().unwrap_err().why, "no newer build is waiting");
         build(&t, &s.next(), "4.0", 4);
         assert_eq!(s.roll_back(&t).unwrap().helium, "2.0");
         assert_eq!(version(&s.app()).unwrap(), "2.0");
@@ -289,6 +298,45 @@ mod tests {
         assert_eq!(version(&s.app()).unwrap(), "2.0");
         assert_eq!(version(&s.previous()).unwrap(), "1.0");
         assert!(!s.next().exists());
+        // Swapped again with the old build still beside it: a new build keeps it, and the old one never goes back in.
+        build(&t, &s.next(), "3.0", 3);
+        rename(&s.next(), &s.app(), libc::RENAME_SWAP).unwrap();
+        assert_eq!(s.swap().unwrap_err().why, "no newer build is waiting");
+        assert_eq!(version(&s.app()).unwrap(), "3.0");
+        let made = t.work().join("made");
+        build(&t, &made, "4.0", 4);
+        s.stage(&t, &made).unwrap();
+        assert_eq!(version(&s.previous()).unwrap(), "2.0");
+        assert_eq!(s.waiting().unwrap().helium, "4.0");
+    }
+
+    #[test]
+    fn a_build_from_another_disk_is_copied_and_its_signature_checked() {
+        let t = Fake::new();
+        let s = t.spot();
+        let away = t.work().join("away");
+        let made = away.join("made");
+        build(&t, &made, "1.0", 1);
+        // A folder the build can't be moved out of takes the copy's way, as another disk does.
+        let mode = |m| fs::set_permissions(&away, fs::Permissions::from_mode(m)).unwrap();
+        mode(0o555);
+        t.set(|s| s.fail = Some(("codesign", "--verify", Failure::SaysNo)));
+        let refused = s.stage(&t, &made);
+        assert_eq!(refused.unwrap_err().check, "swap");
+        assert!(
+            !s.next().exists(),
+            "a copy that failed its check was placed"
+        );
+        t.set(|s| s.fail = None);
+        s.stage(&t, &made).unwrap();
+        mode(0o755);
+        assert_eq!(s.waiting().unwrap().helium, "1.0");
+        let calls = t.calls();
+        let verified = calls
+            .iter()
+            .filter(|c| c.starts_with("codesign --verify --deep --strict"));
+        assert_eq!(verified.count(), 2, "{calls:?}");
+        assert!(calls.iter().any(|c| c.starts_with("ditto ")), "{calls:?}");
     }
 
     #[test]
@@ -318,7 +366,7 @@ mod tests {
         assert_eq!(s.roll_back(&t).unwrap_err().check, "running");
         assert_eq!(s.remove().unwrap_err().check, "running");
         assert_eq!(version(&s.app()).unwrap(), "1.0");
-        // One that started between the check and the swap goes back where it was.
+        // One that started between the check and the swap goes back where it was, and that is an error.
         assert_eq!(s.exchange(&s.next()).unwrap_err().check, "running");
         assert_eq!(version(&s.app()).unwrap(), "1.0");
         assert_eq!(s.waiting().unwrap().helium, "2.0");
