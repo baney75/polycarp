@@ -22,8 +22,8 @@ const PAGE = `<!doctype html><html lang="en"><head><meta name="viewport" content
 <div style="height:1200px"></div></body></html>`;
 
 const MOVES = `<!doctype html><html lang="en"><head><title>Moves</title><style>.card{border:1px solid #ccc;padding:8px;margin:8px}</style></head><body><div id="list">
-<aside class="card alpha"><p>Alpha words</p></aside><aside class="card beta">Beta words</aside><aside class="card gamma">Gamma words</aside><aside class="card delta">Delta words</aside></div>
-<form><input id="email"></form><button id="ask" onclick="document.querySelector('dialog').showModal()">Ask</button><dialog><p id="inside">In the dialog</p><button>Yes</button></dialog><div style="height:2000px"></div></body></html>`;
+<aside class="card alpha"><p class="card__Ab12c card__title">Alpha words</p></aside><aside class="card beta">Beta words</aside><aside class="card gamma">Gamma words</aside><aside class="card delta">Delta words</aside></div>
+<form><input id="email"></form><button id="ask" onclick="document.querySelector('dialog').showModal()">Ask</button><dialog><p id="inside" class="say">In the dialog</p><button>Yes</button></dialog><div style="height:2000px"></div></body></html>`;
 
 const { chromium } = await loadPlaywright();
 const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'polycarp-editor-')), {
@@ -184,8 +184,12 @@ try {
   await point('.beta');
   await tool('move');
   await act('before');
-  await shows('BAGD', 'a second part moves past where nothing hidden counts');
-
+  ok(await said(/moved beside this one/) && (await order()) === 'ABGD', 'a part another one was moved beside stays');
+  await point('.alpha');
+  await page.keyboard.press('ArrowUp');
+  await tool('move');
+  await act('after');
+  await shows('BAGD', 'a second part moves');
   const local = (edit) => sw.evaluate(async (e) => { const k = 'polycarp.edits.local', all = (await chrome.storage.local.get(k))[k] || []; await chrome.storage.local.set({ [k]: all.filter((x) => x.id !== e.id).concat(e.changes.length ? e : []) }); }, edit);
   const site = (await locals()).find((e) => !e.paths.length);
   await local({ ...site, changes: [] }); // put back below
@@ -208,6 +212,21 @@ try {
   await shows('ABG', 'Undo leaves a change made meanwhile');
   await act('undo');
   await shows('ABGD', 'until it is its turn');
+  await point('.alpha p');
+  await act('hide');
+  ok(await until(async () => ((await atMoves())[0] || {}).at === 'p.card__title'), `a part goes by the name its author gave it (${JSON.stringify(await atMoves())})`);
+  await act('undo');
+  await until(async () => !(await atMoves()).length);
+  await point('.delta');
+  await tool('note');
+  await page.keyboard.type('Keep');
+  await act('note');
+  await until(() => page.evaluate(() => document.querySelector('polycarp-note')));
+  await tool('move');
+  await act('before');
+  ok(await said(/note hangs on/) && await page.evaluate(() => !!document.querySelector('polycarp-note')), 'a part with a note keeps it');
+  await act('undo');
+  await until(() => page.evaluate(() => !document.querySelector('polycarp-note')));
 
   // ---------- What another edit holds ----------
   const other = { id: 'other', name: 'Other', enabled: true, sites: ['reef.test'], paths: ['/moves'], changes: [{ do: 'move', at: '.gamma', to: '.alpha', where: 'before' }], css: '' };
@@ -222,15 +241,19 @@ try {
   await local({ ...other, changes: [] });
   await point('.beta');
   await act('hide');
+  await until(async () => (await atMoves()).length);
   await local({ ...(await locals()).find((e) => e.paths[0] === '/moves'), enabled: false });
   await shows('ABGD', 'the changes are turned off elsewhere');
   await point('.delta');
   await act('hide');
-  ok(await said(/are off/) && (await locals()).find((e) => e.paths[0] === '/moves').enabled === false, 'a change made then does not turn them on');
+  ok(await said(/are off/) && await read('[data-do=undo]', 'return !this.disabled') && (await locals()).find((e) => e.paths[0] === '/moves').enabled === false, 'a change made then does not turn them on');
+  await act('undo');
+  await sleep(300);
+  ok((await atMoves()).length === 1 && /are off/.test(await read('.say')), 'nor does Undo take any');
   await local({ ...(await locals()).find((e) => e.paths[0] === '/moves'), changes: [] });
 
   // ---------- Pages that hold on ----------
-  await page.evaluate(() => { const i = document.querySelector('#email'); window.heard = 0; document.addEventListener('focusin', () => i.focus()); for (const t of ['beforeinput', 'input', 'paste', 'keyup', 'contextmenu']) document.addEventListener(t, () => { window.heard++; }, true); });
+  await page.evaluate(() => { const i = document.querySelector('#email'); window.heard = 0; document.addEventListener('focusin', () => i.focus()); document.addEventListener('focusout', (e) => e.relatedTarget !== i && i.focus()); i.focus(); window.heard = 0; for (const t of ['beforeinput', 'input', 'paste', 'keyup', 'mousedown']) document.addEventListener(t, () => { window.heard++; }, true); });
   await point('.alpha');
   await tool('note');
   await page.keyboard.type('Mine');
@@ -243,6 +266,12 @@ try {
   await point('.delta');
   const ink = (sel) => page.evaluate((x) => getComputedStyle(document.querySelector(x)).color, sel);
   ok(await until(async () => (await ink('.beta')) === 'rgb(0, 255, 0)') && (await ink('.delta')) !== 'rgb(0, 255, 0)', 'a color goes to the part it was picked for');
+  await point('.delta');
+  await tool('style');
+  await color('#0000ff');
+  await page.mouse.click(1200, 700);
+  ok(await until(async () => (await ink('.delta')) === 'rgb(0, 0, 255)'), 'even when nothing is chosen next');
+  await act('undo');
   await act('undo');
   ok(await until(async () => (await ink('.beta')) === 'rgb(0, 0, 0)'), `and is one step to undo, however many were tried (${await ink('.beta')})`);
   await open('https://reef.test/moves?q=1');
@@ -257,9 +286,19 @@ try {
   ok(await until(async () => !(await shown('#inside'))), 'a part of an open dialog is changed');
   await act('undo');
   await until(() => shown('#inside'));
-  ok((await read('.say')) !== '' && await act('done') === undefined && await until(() => page.evaluate(() => !document.querySelector('polycarp-edits') && document.querySelector('dialog').open)), 'and the dialog stays open');
+  await point('#inside');
+  await page.keyboard.press('ArrowUp');
+  await act('hide');
+  await sleep(300);
+  ok(await page.evaluate(() => document.querySelector('dialog').offsetWidth > 0) && await box('.bar'), 'the dialog that holds the panel is not');
+  await act('done');
+  ok(await until(() => page.evaluate(() => !document.querySelector('polycarp-edits') && document.querySelector('dialog').open)), 'and the dialog stays open');
   await page.goto('https://reef.test/drawing.svg');
   ok((await toggle()) === false, 'a page it cannot edit is refused');
+
+  await open('https://reef.test/moves');
+  await page.evaluate(() => document.dispatchEvent(new Event('polycarp:edits-handover')));
+  ok(await page.evaluate(() => !document.querySelector('polycarp-edits')), 'an updated extension finds no old panel');
 
   // ---------- Touch ----------
   await open('https://reef.test/moves');

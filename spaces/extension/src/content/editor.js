@@ -61,7 +61,7 @@
   const ours = (el) => !!el.closest(E.OURS);
   const moved = (el) => P.pageEdits.shown(el);
   const box = (el) => { const m = moved(el); return ((m && m.firstElementChild) || el).getBoundingClientRect(); };
-  const fit = (el) => !!el && el.nodeType === 1 && !/^(HTML|BODY|HEAD|SCRIPT|STYLE|LINK|META|NOSCRIPT|TEMPLATE)$/.test(el.tagName) && !ours(el) && box(el).width > 0;
+  const fit = (el) => !!el && el.nodeType === 1 && !/^(HTML|BODY|HEAD|SCRIPT|STYLE|LINK|META|NOSCRIPT|TEMPLATE)$/.test(el.tagName) && !ours(el) && !el.contains(host) && box(el).width > 0;
   function under(x, y) {
     layer.style.pointerEvents = "none";
     let el = document.elementFromPoint(x, y);
@@ -102,7 +102,7 @@
     tools.hidden = scope.hidden = !el;
     openTool("");
     tell(el && moved(el) && el.firstElementChild ? "A moved part is changed as one. Take the move back to change what is in it." : "");
-    page.textContent = location.search ? "Every page at " + location.pathname : "This page";
+    page.textContent = location.search || path() !== location.pathname ? "Every page at " + path() : "This page";
     if (!el) { what.textContent = "Click a part of the page to change it."; draw(); return; }
     const words = (el.innerText || el.getAttribute("alt") || "").trim().replace(/\s+/g, " ");
     what.textContent = "";
@@ -129,14 +129,16 @@
 
   // ---------------------------------------------------------------- changing
   const hash = (s) => { let h = 5381; for (const c of s) h = (Math.imul(h, 33) ^ c.codePointAt(0)) >>> 0; return h.toString(36); };
+  const path = () => (location.pathname.length > 180 ? location.pathname.slice(0, 180) + "*" : location.pathname);
   // One record for this page and one for the site hold every change made by hand there.
   function draft(scope) {
-    const path = scope === "page" ? (location.pathname.length > 180 ? location.pathname.slice(0, 180) + "*" : location.pathname) : "";
-    return { id: "mine-" + hash(site + " " + path), name: ("My changes on " + site + path).slice(0, 80), sites: [site], paths: path ? [path] : [], changes: [], css: "" };
+    const at = scope === "page" ? path() : "";
+    return { id: "mine-" + hash(site + " " + at), name: ("My changes on " + site + at).slice(0, 80), sites: [site], paths: at ? [at] : [], changes: [], css: "" };
   }
   const mine = async (id) => (await S.load()).edits.find((e) => e.source === "local" && e.id === id) || null;
   const plain = (e, changes = e.changes) => ({ id: e.id, name: e.name, enabled: e.enabled !== false, sites: e.sites, paths: e.paths, changes, css: e.css });
   const store = (e, changes) => S.put(e.id, changes.length || e.css ? plain(e, changes) : null);
+  const OFF = "Your changes here are off. Turn them on in Polycarp's popup first.";
   // One at a time: each starts from what the one before it kept.
   let last = Promise.resolve();
   const turn = (act) => (last = last.then(act).catch(() => {
@@ -152,16 +154,20 @@
     return c && !c.hits && c.note ? c.note[0].toUpperCase() + c.note.slice(1) + "." : "";
   }
   // Adds one change. One that adjusts the change before it takes its place, and a color picked on the way is one step.
-  async function keep(change, picking) {
-    if (!sel || !sel.isConnected) { choose(null); tell("That part is gone from the page."); return false; }
-    const base = draft(where.value), { edits } = await S.load();
+  async function keep(change, picking, part, scope) {
+    if (!part || !part.isConnected) { if (sel === part) choose(null); tell("That part is gone from the page."); return false; }
+    const base = draft(scope), { edits } = await S.load();
     const before = edits.find((e) => e.source === "local" && e.id === base.id) || null;
-    if (before && !before.enabled) { tell("Your changes here are off. Turn them on in Polycarp's popup first."); return false; }
+    if (before && !before.enabled) { tell(OFF); return false; }
+    if (/hide|move/.test(change.do) && K.all(document, change.at).some((el) => el.contains(host))) { tell("This panel is in that dialog. Close the dialog with its own button."); return false; }
     const changes = before ? before.changes.slice() : [], was = [];
     const drop = (f) => { for (let i = changes.length - 1; i >= 0; i--) if (f(changes[i])) was.unshift(...changes.splice(i, 1)); };
     if (change.do === "move") {
-      const it = (c) => c.do === "move" && K.all(document, c.at)[0] === sel;
-      const other = E.active(edits, location.hostname, location.pathname).find((e) => (e.source !== "local" || e.id !== base.id) && e.changes.some(it));
+      const it = (c) => c.do === "move" && K.all(document, c.at)[0] === part;
+      const on = E.active(edits, location.hostname, location.pathname), by = (at) => part.contains(K.all(document, at).find((el) => !el.closest("[data-polycarp-moved]")) || null);
+      const held = on.flatMap((e) => e.changes).find((c) => (c.do === "insert" && by(c.at)) || (c.do === "move" && !it(c) && by(c.to)));
+      if (held) { tell(held.do === "insert" ? "A note hangs on this part. Take the note back first." : "Another part was moved beside this one. Move that one instead."); return false; }
+      const other = on.find((e) => (e.source !== "local" || e.id !== base.id) && e.changes.some(it));
       if (other) { tell((other.source === "app" ? "Your agent's edit" : "\u201c" + other.name + "\u201d") + " already moves this part. Take that back first."); return false; }
       drop(it);
     }
@@ -180,10 +186,10 @@
     await steps();
     return true;
   }
-  const add = (change, picking) => turn(() => keep(change, picking));
+  function add(change, picking) { const part = sel, scope = where.value; return turn(() => keep(change, picking, part, scope)); }
   // Undo takes back what was done since the panel opened, then what this page and this site already had.
   async function older() {
-    for (const scope of ["page", "site"]) { const e = await mine(draft(scope).id); if (e && e.changes.length) return { id: e.id, now: JSON.stringify(e.changes.at(-1)), was: [] }; }
+    for (const scope of ["page", "site"]) { const e = await mine(draft(scope).id); if (e && e.enabled && e.changes.length) return { id: e.id, now: JSON.stringify(e.changes.at(-1)), was: [] }; }
     return null;
   }
   async function steps() {
@@ -196,6 +202,7 @@
     const h = history.at(-1) || (await older());
     if (!h) return;
     const e = await mine(h.id), i = e ? e.changes.findLastIndex((c) => JSON.stringify(c) === h.now) : -1;
+    if (e && !e.enabled) { tell(OFF); return; }
     const changes = e ? e.changes.slice() : [];
     if (i >= 0) changes.splice(i, 1, ...h.was);
     const why = i >= 0 ? await store(e, changes) : "";
@@ -213,8 +220,10 @@
   const TOOLS = {
     text() {
       if (sel.isContentEditable || sel.querySelector(STAYS + ",video,audio,canvas") || sel.matches(E.NEVER + ",img,video,audio,canvas")) { tool.textContent = "Choose a smaller part, one that holds only words."; return; }
+      const words = (sel.innerText || sel.textContent).trim().replace(/\s+/g, " ");
+      if (words.length > E.MAX.text) { tool.textContent = "Choose a smaller part. This one has too many words."; return; }
       tool.innerHTML = '<textarea aria-label="Words"></textarea><div class="row"><button class="main" data-do="text">Change words</button></div>';
-      tool.querySelector("textarea").value = (sel.innerText || sel.textContent).trim().replace(/\s+/g, " ").slice(0, E.MAX.text);
+      tool.querySelector("textarea").value = words;
     },
     note() { tool.innerHTML = '<textarea aria-label="Note" placeholder="A note to yourself, shown under this part"></textarea><div class="row"><button class="main" data-do="note">Add note</button></div>'; },
     move() { tool.innerHTML = '<div class="row"><button data-do="before">Up</button><button data-do="after">Down</button></div>'; },
@@ -249,7 +258,8 @@
       const blocks = tool.querySelector("textarea").value.split(/\n+/).map((t) => t.trim()).filter(Boolean).slice(0, E.MAX.blocks).map((text) => ({ kind: "text", text }));
       if (!blocks.length) { tell("Write the note first."); return; }
       if (moved(sel)) { tell("This part was moved. Leave the note by another one."); return; }
-      if (await add({ do: "insert", at: which.dataset.one || selector(), where: "after", blocks })) openTool("");
+      if (!which.dataset.one) { tell("This part can't be told from others. Try a wider one."); return; }
+      if (await add({ do: "insert", at: which.dataset.one, where: "after", blocks })) openTool("");
     },
     smaller: () => add({ do: "style", at: selector(), style: { "font-size": Math.max(6, Math.round(px(getComputedStyle(sel).fontSize) / 1.1)) + "px" } }),
     larger: () => add({ do: "style", at: selector(), style: { "font-size": Math.round(px(getComputedStyle(sel).fontSize) * 1.1 + 0.5) + "px" } }),
@@ -303,16 +313,18 @@
     wait = setTimeout(flush, 150);
   }
   which.addEventListener("change", draw);
-  // The page's handlers for clicks anywhere, such as those that close a menu, don't hear the panel's.
-  for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "dblclick", "auxclick", "contextmenu", "touchstart", "touchend", "change"]) root.addEventListener(type, (e) => e.stopPropagation());
-  // Nor its shortcuts and focus traps what is typed in it. Caught first at the window: only a listener the page put there
-  // itself, before the panel opened, comes sooner.
-  const TYPING = ["keydown", "keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut", "compositionstart", "compositionupdate", "compositionend", "focusin", "focusout"];
+  // The page's handlers for clicks anywhere don't hear the panel's.
+  for (const type of ["click", "dblclick", "auxclick", "contextmenu", "change"]) root.addEventListener(type, (e) => e.stopPropagation());
+  // Nor do its shortcuts, focus traps and closing menus hear what is typed or pressed in it. Caught first at the window:
+  // only a listener the page put there itself, before the panel opened, comes sooner.
+  const TYPING = ["keydown", "keyup", "keypress", "beforeinput", "input", "paste", "copy", "cut", "compositionstart", "compositionupdate", "compositionend", "focusin", "focusout",
+    "pointerdown", "pointerup", "mousedown", "mouseup", "touchstart", "touchend"];
   function typing(e) {
+    if (e.type === "focusout" && e.relatedTarget === host) e.stopImmediatePropagation();
     if (e.target !== host) { if (e.type === "keydown" && e.isTrusted && e.key === "Escape") { e.preventDefault(); close(); } return; }
     e.stopImmediatePropagation();
     if (e.type === "input") picking(root.activeElement);
-    if (e.type !== "keydown" || !e.isTrusted) return;
+    if (e.type !== "keydown" || !e.isTrusted || e.isComposing) return;
     const on = root.activeElement;
     if (e.key === "Escape") { e.preventDefault(); if (open) openTool(""); else if (sel) choose(null); else return close(); bar.focus(); return; }
     if (/^Arrow/.test(e.key) && !(on && on.matches("textarea,select,input"))) { e.preventDefault(); step(e.key); }
@@ -323,12 +335,14 @@
     removeEventListener("scroll", draw, true);
     removeEventListener("resize", draw);
     for (const type of TYPING) removeEventListener(type, typing, true);
+    document.removeEventListener("polycarp:edits-handover", close);
     host.remove();
     P.editor = null;
   }
   addEventListener("scroll", draw, true);
   addEventListener("resize", draw);
   for (const type of TYPING) addEventListener(type, typing, true);
+  document.addEventListener("polycarp:edits-handover", close); // a newer copy of the extension takes over
   P.editor = { close, on: () => host.isConnected && bar.offsetWidth > 0 }; // the dialog it is in may have closed
   where.append(page, new Option("All of " + site, "site"));
   choose(null);

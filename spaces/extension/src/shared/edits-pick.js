@@ -7,7 +7,7 @@
     BUTTON: "Button", FORM: "Form", INPUT: "Field", TEXTAREA: "Field", SELECT: "Field", TABLE: "Table", TR: "Row", TD: "Cell", TH: "Cell", IFRAME: "Frame", FIGURE: "Figure", BLOCKQUOTE: "Quote" };
   const name = (el) => NAMES[el.tagName.toUpperCase()] || "Part";
   // Names a build made up (css-1x2y3z, sc-bdVaJa, _3kx9, button__Ab12c) change with the site's next release.
-  const made = (s) => s.length > 40 || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(s) || /\d{2,}|^(css|sc|jsx|emotion|svelte|ng)-|[a-z]\d[a-zA-Z]|(__|--|_)[A-Za-z0-9]{5,}$/.test(s);
+  const made = (s) => s.length > 40 || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(s) || /\d{2,}|^(css|sc|jsx|emotion|svelte|ng)-|[a-z]\d[a-zA-Z]|(__|--|_)(?=[A-Za-z0-9]{5,}$)[A-Za-z0-9]*?(\d|[a-z][A-Z]|[A-Z][a-zA-Z]*[A-Z])/.test(s);
   const classes = (el) => [...el.classList].filter((c) => !made(c) && !/^(is|has|js)-|active|hover|focus|open|selected|polycarp/i.test(c)).slice(0, 4);
   const quote = (s) => (/["\\<@{};\n]/.test(s) || s.length > 80 ? "" : '"' + s + '"');
   const tag = (el) => CSS.escape(el.localName);
