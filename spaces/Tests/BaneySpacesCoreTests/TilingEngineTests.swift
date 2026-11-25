@@ -2,13 +2,16 @@ import XCTest
 @testable import BaneySpacesCore
 
 /// A window server with no windows behind it: it does what apps do with the frames tiling writes. A window keeps its
-/// minimum, rounds its size down to its own grid, or doesn't move at all.
+/// minimum, rounds its size to its own grid, is busy for a while, or doesn't move at all.
 struct FakeWindows {
     struct Win {
         var w: TilingWindow
         var least = CGSize(width: 100, height: 80)
         var grid: CGFloat = 1
+        var roundsUp = false
         var stuck = false
+        /// Writes it misses before it answers again.
+        var busy = 0
         /// Its app puts it back at once, whatever it is told.
         var stubborn: CGRect?
     }
@@ -50,10 +53,12 @@ struct FakeWindows {
             log.append((m, win))
             if let back = win.stubborn {
                 win.w.frame = back
+            } else if win.busy > 0 {
+                win.busy -= 1
             } else if !win.stuck {
-                let g = win.grid
-                let size = CGSize(width: max(win.least.width, (m.to.width / g).rounded(.down) * g),
-                                  height: max(win.least.height, (m.to.height / g).rounded(.down) * g))
+                let g = win.grid, how: FloatingPointRoundingRule = win.roundsUp ? .up : .down
+                let size = CGSize(width: max(win.least.width, (m.to.width / g).rounded(how) * g),
+                                  height: max(win.least.height, (m.to.height / g).rounded(how) * g))
                 win.w.frame = CGRect(origin: m.to.origin, size: size)
             }
             wins[m.id] = win
@@ -247,6 +252,17 @@ final class TilingEngineTests: XCTestCase {
         f.rest()
         XCTAssertEqual(f.engine.slots[f.engine.key(1)!]!.layout, layout)
         XCTAssertEqual(f.writes, writes)
+        // Wherever the focus is.
+        f.focused = 2; f.open(7); f.focused = 7; f.rest()
+        let order = f.tiled(1)
+        for (old, new) in [(WindowID(1), WindowID(8)), (8, 1)] {
+            if f.wins[new] == nil { f.open(new) }
+            f.wins[new]!.w.frame = f.wins[old]!.w.frame; f.wins[new]!.w.away = false; f.wins[old]!.w.away = true
+            f.rest()
+            XCTAssertEqual(f.tiled(1), order.map { $0 == 1 && old == 1 ? new : $0 })
+        }
+        f.wins[7] = nil; f.wins[8] = nil; f.rest(); f.focused = 1
+        f.rest()
         // On another workspace it is no tab.
         f.open(5); f.wins[3] = nil; f.rest()
         XCTAssertEqual(f.tiled(1), [1, 5, 2])
@@ -276,6 +292,97 @@ final class TilingEngineTests: XCTestCase {
         f.rest()
         XCTAssertEqual(f.tiled(1), [1])
         XCTAssertEqual(f.tiled(2), [5, 2])
+    }
+
+    func testTabsMergedWhileOneWasBehindTakeOnePlace() {
+        var f = two()
+        f.open(3); f.focused = 3; f.rest()
+        let home = f.shown[1]!
+        f.shown = [1: .init(display: "D2", area: CGRect(x: 2000, y: 0, width: 1200, height: 900))]
+        f.rest()
+        // The first display's layout still has 1 and 2 side by side when 2 comes up as a tab at 1's place.
+        f.wins[3]!.w.away = true; f.wins[2]!.w.away = true; f.rest()
+        f.wins[2]!.w.frame = f.wins[1]!.w.frame
+        f.wins[1]!.w.away = true; f.wins[2]!.w.away = false
+        f.rest()
+        XCTAssertEqual(f.tiled(1), [2])
+        for slot in f.engine.slots.values {
+            XCTAssertEqual(slot.layout.windows.filter { $0 == 2 }, [2])
+            for a in slot.away.values { XCTAssertEqual(a.whole.windows.filter { $0 == 2 }.count, 1) }
+        }
+        f.shown = [1: home]
+        f.rest()
+        XCTAssertEqual(f.tiled(1), [2])
+    }
+
+    func testEachTabKeepsItsOwnFrameFromBefore() {
+        var f = two()
+        let before = f.engine.before
+        f.wins[2]!.w.away = true; f.rest()
+        f.wins[2]!.w.frame = f.wins[1]!.w.frame
+        f.wins[1]!.w.away = true; f.wins[2]!.w.away = false; f.rest()
+        // Pulled out of the window again.
+        f.wins[1]!.w.frame = CGRect(x: 300, y: 300, width: 600, height: 400)
+        f.wins[1]!.w.away = false; f.rest()
+        XCTAssertEqual(f.tiled(1).count, 2)
+        f.engine.apply(TilingOptions())
+        f.rest()
+        XCTAssertEqual(f.wins.mapValues(\.w.frame), before)
+        // One that closes passes its frame on only to a tab that has none.
+        f = two()
+        let first = f.engine.before[1]!
+        f.open(9, frame: f.wins[1]!.w.frame); f.wins[1] = nil; f.rest()
+        XCTAssertEqual(f.engine.before[9], first)
+        XCTAssertNil(f.engine.before[1])
+    }
+
+    func testATabFloatsAsTheWindowItIsIn() {
+        var f = two()
+        f.open(3); f.focused = 3; f.rest()
+        f.engine.choice[2] = true; f.rest()
+        f.wins[2]!.w.away = true; f.rest()
+        // Put into a tiled window, it has that one's tile.
+        f.wins[2]!.w.frame = f.wins[1]!.w.frame; f.wins[2]!.w.away = false
+        f.wins[1]!.w.away = true
+        f.writes = 0
+        f.rest()
+        XCTAssertEqual(f.tiled(1), [2, 3])
+        XCTAssertEqual(f.writes, 0)
+        // One that floats passes it on to its next tab.
+        f.engine.choice[2] = true; f.rest()
+        f.open(8, frame: f.wins[2]!.w.frame); f.wins[2] = nil
+        f.rest()
+        XCTAssertEqual(f.engine.choice, [8: true])
+        XCTAssertEqual(f.tiled(1), [3])
+    }
+
+    func testAFrameFromBeforeIsPutOnTheDisplayTheWindowIsOnNow() {
+        var f = FakeWindows()
+        let second = TilingShot.Place(display: "D2", area: CGRect(x: 1728, y: 0, width: 1600, height: 900))
+        f.engine.apply(FakeWindows.options { $0.everywhere = false; $0.on = [1] })
+        f.open(1); f.open(2); f.rest()
+        f.shown[2] = second
+        f.wins[2]!.w.workspace = 2
+        f.wins[2]!.w.frame = CGRect(x: 1800, y: 100, width: 700, height: 500)
+        f.rest()
+        XCTAssertTrue(second.area.contains(f.wins[2]!.w.frame), "\(f.wins[2]!.w.frame)")
+        XCTAssertNil(f.engine.before[2])
+        // Floated on another display than it was tiled on.
+        f.engine.apply(FakeWindows.options())
+        f.rest()
+        f.engine.before[2] = CGRect(x: 100, y: 100, width: 700, height: 500)
+        f.engine.choice[2] = true
+        f.rest()
+        XCTAssertTrue(second.area.contains(f.wins[2]!.w.frame), "\(f.wins[2]!.w.frame)")
+    }
+
+    func testTheAgentWorkspaceIsNeverWrittenNotEvenToPutAFrameBack() {
+        var f = two()
+        f.writes = 0
+        f.engine.apply(FakeWindows.options { $0.agentWorkspace = 1 })
+        f.rest()
+        XCTAssertEqual(f.writes, 0)
+        XCTAssertFalse(f.engine.wanted(on: [1]), "and nothing is owed there")
     }
 
     func testNewWindowsGoOnTheChosenSide() {

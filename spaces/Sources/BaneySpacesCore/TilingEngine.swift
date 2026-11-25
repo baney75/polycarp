@@ -107,6 +107,8 @@ public struct TilingEngine: Equatable, Sendable {
     public static let mostLessons = 3
     /// Frames this close are the same frame: apps round to their own grid of points.
     public static let close = 1.0
+    /// A window this much over its target at most rounded up to its own grid, as a terminal does to whole cells.
+    public static let grid = 24.0
 
     /// A window that left the tree but not the workspace.
     struct Away: Equatable, Sendable {
@@ -124,9 +126,13 @@ public struct TilingEngine: Equatable, Sendable {
 
     /// What was last asked of a window.
     struct Asked: Equatable, Sendable {
+        /// Where it was when it was asked.
+        var from: CGRect
         var target: CGRect
         var landed: CGRect?
         var tries: Int
+        /// It is on its way back to its frame from before tiling.
+        var back: Bool
     }
 
     public internal(set) var options = TilingOptions()
@@ -138,6 +144,8 @@ public struct TilingEngine: Equatable, Sendable {
     /// Windows a person floated (true) or tiled against a rule (false).
     var choice: [WindowID: Bool] = [:]
     var minimums: [WindowID: CGSize] = [:]
+    /// The size a window rounded its last one up to: no minimum, and only in force for a tile that size.
+    var rounded: [WindowID: CGSize] = [:]
     var lessons: [WindowID: Int] = [:]
     var asked: [WindowID: Asked] = [:]
     /// The windows at the last look: a tab swap is told by one that went as another came in its place.
@@ -186,18 +194,22 @@ public struct TilingEngine: Equatable, Sendable {
             let here = shot.windows.filter { $0.workspace == workspace }
             if options.tiles(workspace) {
                 arrange(workspace, place, here, focused: shot.focused)
+                for w in here { disprove(w) }
                 let targets = frames(workspace)
                 for w in here { if let t = targets[w.id], let m = move(w, to: t) { moves.append(m) } }
             }
             // A window that isn't tiled any more, on a workspace in sight, goes back where it was before.
             let tiled = options.tiles(workspace)
-            let screens = shot.shown.values.map(\.area)
             for w in here where !w.away && (!tiled || floats(w)) {
                 guard let was = before[w.id] else { continue }
-                before[w.id] = nil
-                asked[w.id] = nil
-                let to = Geometry.restoreFrame(saved: was, size: was.size, screens: screens)
-                if !Self.near(w.frame, to) { moves.append(TilingMove(id: w.id, pid: w.pid, from: w.frame, to: to)) }
+                // On the display it is on now. The frame is owed until the window is there, or won't go there.
+                let to = Geometry.restoreFrame(saved: was, size: was.size, screens: [place.area])
+                if workspace != options.agentWorkspace, let m = move(w, to: to, back: true) {
+                    moves.append(m)
+                } else {
+                    before[w.id] = nil
+                    asked[w.id] = nil
+                }
             }
             if !tiled, slots.keys.contains(where: { $0.workspace == workspace }) {
                 slots = slots.filter { $0.key.workspace != workspace }
@@ -207,27 +219,47 @@ public struct TilingEngine: Equatable, Sendable {
         return moves
     }
 
-    /// Where the windows ended up after a write. True when a minimum was learned, so the layouts are solved once more.
+    /// Where the windows ended up after a write. True when something was learned, so the layouts are solved once more, or
+    /// when one didn't move at all: its app may have been busy, so it is asked again.
     public mutating func landed(_ frames: [WindowID: CGRect]) -> Bool {
         var learned = false
         for (id, now) in frames {
             guard var a = asked[id] else { continue }
+            if Self.near(now, a.from), !Self.near(now, a.target), a.tries < Self.mostTries {
+                if a.tries < 2 { learned = true }
+                continue
+            }
+            if a.back {
+                before[id] = nil
+                asked[id] = nil
+                continue
+            }
             a.landed = now
             asked[id] = a
-            var least = minimums[id] ?? .zero
-            let was = least
-            if now.width > a.target.width + Self.close { least.width = max(least.width, now.width) }
-            if now.height > a.target.height + Self.close { least.height = max(least.height, now.height) }
-            guard least != was, lessons[id, default: 0] < Self.mostLessons else { continue }
-            lessons[id, default: 0] += 1
-            minimums[id] = least
+            let over = CGSize(width: now.width - a.target.width, height: now.height - a.target.height)
+            var least = minimums[id] ?? .zero, round = rounded[id] ?? .zero
+            let was = (least, round)
+            if over.width > Self.grid { least.width = max(least.width, now.width) } else if over.width > Self.close { round.width = now.width }
+            if over.height > Self.grid { least.height = max(least.height, now.height) } else if over.height > Self.close { round.height = now.height }
+            // Rounding one tile size says nothing of the next, so it isn't counted; not keeping to its own rounding is.
+            let fickle = round.width != was.1.width && abs(was.1.width - a.target.width) <= Self.close
+                || round.height != was.1.height && abs(was.1.height - a.target.height) <= Self.close
+            guard (least, round) != was else { continue }
+            if least != was.0 || fickle {
+                guard lessons[id, default: 0] < Self.mostLessons else { continue }
+                lessons[id, default: 0] += 1
+            }
+            minimums[id] = least == .zero ? nil : least
+            rounded[id] = round == .zero ? nil : round
             learned = true
         }
         return learned
     }
 
-    /// The person took hold of a window: what was asked of it before no longer counts.
-    public mutating func touched(_ id: WindowID) { asked[id] = nil }
+    /// The person took hold of a window: what was asked of it before no longer counts, its way back neither.
+    public mutating func touched(_ id: WindowID) {
+        if asked.removeValue(forKey: id)?.back == true { before[id] = nil }
+    }
 
     // MARK: The layouts
 
@@ -310,23 +342,48 @@ public struct TilingEngine: Equatable, Sendable {
     public func frames(_ workspace: Int) -> [WindowID: CGRect] {
         guard let key = key(workspace), let slot = slots[key] else { return [:] }
         let lone = options.lone.width(in: slot.area).map { CGSize(width: $0, height: .infinity) }
-        func solve(_ l: TileLayout) -> [WindowID: CGRect] { l.frames(in: slot.area, gaps: options.gaps, minimums: minimums, loneMax: lone) }
-        guard !slot.layout.full, !fits(slot.layout, slot.area) else { return solve(slot.layout) }
-        var room = slot.layout
-        var stacked: [WindowID] = []
-        let byUse = slot.layout.windows.sorted { rank($0, slot) > rank($1, slot) }
-        for id in byUse where room.windows.count > 1 && !fits(room, slot.area) {
-            room.remove(id, area: slot.area)
-            stacked.append(id)
+        func solve(_ l: TileLayout) -> [WindowID: CGRect] {
+            let out = l.frames(in: slot.area, gaps: options.gaps, minimums: minimums, loneMax: lone)
+            guard !l.full, let least = roundedUp(l, out, slot.area) else { return out }
+            return l.frames(in: slot.area, gaps: options.gaps, minimums: least, loneMax: lone)
         }
-        var out = solve(room)
+        guard !slot.layout.full, !fits(slot.layout, slot.area, minimums) else { return solve(slot.layout) }
+        var out = Set<WindowID>()
+        func left() -> TileLayout {
+            var l = slot.layout
+            for id in slot.layout.windows where out.contains(id) { l.remove(id, area: slot.area) }
+            return l
+        }
+        let byUse = slot.layout.windows.sorted { rank($0, slot) > rank($1, slot) }
+        for id in byUse where !fits(left(), slot.area, minimums) { out.insert(id) }
+        // One that left before it did any good has a tile after all.
+        for id in byUse.reversed() where out.contains(id) {
+            out.remove(id)
+            if !fits(left(), slot.area, minimums) { out.insert(id) }
+        }
+        let room = left(), stacked = byUse.filter(out.contains)
+        var frames = solve(room)
         let order = slot.layout.windows
         for id in stacked {
             let i = order.firstIndex(of: id)!
             let host = order[..<i].last { room.contains($0) } ?? order[i...].first { room.contains($0) }
-            if let host, let f = out[host] { out[id] = f }
+            if let host, let f = frames[host] { frames[id] = f }
         }
-        return out
+        return frames
+    }
+
+    /// The minimums with what windows rounded these tiles up to, as far as there is room. Nil when none did.
+    private func roundedUp(_ layout: TileLayout, _ tiles: [WindowID: CGRect], _ area: CGRect) -> [WindowID: CGSize]? {
+        var out = minimums
+        for (id, r) in rounded.sorted(by: { $0.key < $1.key }) {
+            guard let t = tiles[id] else { continue }
+            for (side, length, tile) in [(\CGSize.width, r.width, t.width), (\.height, r.height, t.height)] where length > tile && length - tile <= Self.grid {
+                var more = out
+                more[id, default: .zero][keyPath: side] = length
+                if fits(layout, area, more) { out = more }
+            }
+        }
+        return out == minimums ? nil : out
     }
 
     /// How long ago a window had the focus: the layout's own focused window first, one never seen focused last.
@@ -335,7 +392,7 @@ public struct TilingEngine: Equatable, Sendable {
         return recent.firstIndex(of: id) ?? recent.count + (slot.layout.windows.firstIndex(of: id) ?? 0)
     }
 
-    private func fits(_ layout: TileLayout, _ area: CGRect) -> Bool {
+    private func fits(_ layout: TileLayout, _ area: CGRect, _ minimums: [WindowID: CGSize]) -> Bool {
         guard let root = layout.root, let box = options.gaps.inset(area), layout.windows.contains(where: { minimums[$0] != nil }) else { return true }
         if case .window = root { return true }
         let solver = TileSolver(root, in: box, gap: options.gaps.inner, minimums: minimums)
@@ -345,18 +402,20 @@ public struct TilingEngine: Equatable, Sendable {
 
     /// The write that puts a window on its tile, or nil when it is there, stays where it landed when asked, or has been
     /// asked often enough.
-    private mutating func move(_ w: TilingWindow, to target: CGRect) -> TilingMove? {
-        if let m = minimums[w.id], w.frame.width < m.width - Self.close || w.frame.height < m.height - Self.close {
-            // Seen smaller than the minimum learned: it was busy then, not at its least.
-            minimums[w.id] = CGSize(width: min(m.width, w.frame.width), height: min(m.height, w.frame.height))
-        }
+    private mutating func move(_ w: TilingWindow, to target: CGRect, back: Bool = false) -> TilingMove? {
         let a = asked[w.id].flatMap { Self.near($0.target, target) ? $0 : nil }
         if Self.near(w.frame, target) { return nil }
         if let a, let landed = a.landed, Self.near(w.frame, landed) { return nil }
         let tries = a?.tries ?? 0
         guard tries < Self.mostTries else { return nil }
-        asked[w.id] = Asked(target: target, landed: nil, tries: tries + 1)
+        asked[w.id] = Asked(from: w.frame, target: target, landed: nil, tries: tries + 1, back: back)
         return TilingMove(id: w.id, pid: w.pid, from: w.frame, to: target)
+    }
+
+    /// Seen smaller than the minimum learned: it was busy then, not at its least.
+    private mutating func disprove(_ w: TilingWindow) {
+        guard let m = minimums[w.id], w.frame.width < m.width - Self.close || w.frame.height < m.height - Self.close else { return }
+        minimums[w.id] = CGSize(width: min(m.width, w.frame.width), height: min(m.height, w.frame.height))
     }
 
     // MARK: Windows that come and go
@@ -375,6 +434,8 @@ public struct TilingEngine: Equatable, Sendable {
         }
     }
 
+    /// `new` has the place of `old`, and floats as it did: to a person they are one window. What else is known of `new`
+    /// stays, and of `old` too, which can be a tab that isn't in front and comes out again.
     mutating func rename(_ old: WindowID, to new: WindowID) {
         for key in slots.keys {
             slots[key]!.away[new] = nil
@@ -390,15 +451,16 @@ public struct TilingEngine: Equatable, Sendable {
                 if slots[key]!.away[id]!.beside == old { slots[key]!.away[id]!.beside = new }
             }
         }
-        func carry<T>(_ d: inout [WindowID: T]) { if let v = d.removeValue(forKey: old) { d[new] = v } }
-        carry(&before); carry(&choice); carry(&minimums); carry(&lessons); carry(&asked); carry(&landing)
+        func carry<T>(_ d: inout [WindowID: T]) { if d[new] == nil, let v = d[old] { d[new] = v } }
+        choice[new] = choice[old]
+        carry(&before); carry(&minimums); carry(&rounded); carry(&lessons); carry(&asked); carry(&landing)
         recent = recent.map { $0 == old ? new : $0 }
     }
 
     /// Drops what is known of windows that closed, and their places on workspaces they left.
     private mutating func forget(_ now: [WindowID: TilingWindow]) {
         func alive<T>(_ d: inout [WindowID: T]) { if d.keys.contains(where: { now[$0] == nil }) { d = d.filter { now[$0.key] != nil } } }
-        alive(&before); alive(&choice); alive(&minimums); alive(&lessons); alive(&asked); alive(&landing)
+        alive(&before); alive(&choice); alive(&minimums); alive(&rounded); alive(&lessons); alive(&asked); alive(&landing)
         recent.removeAll { now[$0] == nil }
         for key in slots.keys {
             for id in slots[key]!.layout.windows where now[id]?.workspace != key.workspace {
