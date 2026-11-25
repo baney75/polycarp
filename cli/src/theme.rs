@@ -22,7 +22,7 @@ mod png;
 mod preview;
 mod schema;
 
-pub(crate) use part::ThemeLook;
+pub(crate) use part::{hold, ThemeDoc, ThemeLook};
 
 /// What `theme off` can say: the state of the files, which it checked. Whether an app changes,
 /// and when, is up to that app, so the text says only what the apps are expected to do.
@@ -2023,6 +2023,16 @@ impl ApiErr {
             lines: problems.to_vec(),
             usage: false,
         }
+    }
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+    /// The problems one by one, as a person reads them.
+    pub(crate) fn problem_list(&self) -> Vec<String> {
+        if !self.lines.is_empty() {
+            return self.lines.clone();
+        }
+        vec![self.message.clone()]
     }
     /// `group` is the command a usage error is about: theme or look.
     fn human(&self, group: &str) -> String {

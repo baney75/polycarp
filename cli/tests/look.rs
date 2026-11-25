@@ -27,6 +27,9 @@ impl Sandbox {
     fn at(&self, p: &str) -> PathBuf {
         self.root.join(p)
     }
+    fn text(&self, p: &str) -> Option<String> {
+        fs::read_to_string(self.at(p)).ok()
+    }
     fn run(&self, args: &[&str], input: &str) -> Output {
         use std::io::Write;
         let mut c = Command::new(env!("CARGO_BIN_EXE_polycarp"));
@@ -83,10 +86,11 @@ impl Sandbox {
         assert_eq!(v["ok"], false, "{args:?}: {v}");
         v["error"]["code"].as_str().unwrap().to_string()
     }
-    /// The paths a look file is refused for.
+    /// The paths a look file is refused for. Nothing may be saved.
     fn refused(&self, look: &str) -> Vec<String> {
-        let v = self.json_in(&["look", "show", "-"], look);
+        let v = self.json_in(&["look", "import", "-"], look);
         assert_eq!(v["ok"], false, "not refused: {look}");
+        assert!(!self.at("cfg/looks/hostile.polycarp-look").exists());
         let errors = v["error"]["data"]["errors"].as_array().unwrap();
         errors
             .iter()
@@ -121,6 +125,26 @@ fn with(key: &str, v: Value) -> String {
 }
 
 // Reading a look someone sent -------------------------------------------------------------------------------------
+
+#[test]
+fn a_look_that_is_fine_is_imported_and_nothing_on_screen_changes() {
+    let sb = Sandbox::new();
+    let v = sb.json_in(&["look", "import", "-"], &hostile().to_string());
+    assert_eq!(v["ok"], true, "{v}");
+    assert!(sb.at("cfg/looks/hostile.polycarp-look").exists());
+    assert_eq!(sb.ok(&["theme", "current"])["theme"], "polycarp");
+    assert!(sb.text("cfg/config.toml").is_none());
+    // Not over one that is there, unless asked to.
+    let v = sb.json_in(&["look", "import", "-"], &hostile().to_string());
+    assert_eq!(v["error"]["code"], "exists");
+    let v = sb.json_in(&["look", "import", "-", "--force"], &hostile().to_string());
+    assert_eq!(v["ok"], true);
+    let v = sb.json_in(
+        &["look", "import", "-", "--name", "other"],
+        &hostile().to_string(),
+    );
+    assert_eq!(v["data"]["name"], "other");
+}
 
 #[test]
 fn unknown_keys_are_refused_with_their_path() {
@@ -175,7 +199,19 @@ fn names_that_could_leave_the_folder_are_refused() {
         "a\u{0}b",
     ] {
         assert_eq!(sb.refused(&with("name", json!(n))), ["name"], "{n:?}");
+        let v = sb.json_in(
+            &["look", "import", "-", "--name", &n.replace('\u{0}', "/")],
+            &hostile().to_string(),
+        );
+        assert_eq!(v["ok"], false, "{n:?}");
+        // The file's own name is checked however the file is read, not only when it is imported.
+        let f = sb.at("bad.polycarp-look");
+        fs::write(&f, with("name", json!(n))).unwrap();
+        let f = f.display().to_string();
+        assert_eq!(sb.no(&["look", "show", &f]), "invalid_look", "{n:?}");
     }
+    assert_eq!(sb.refused(&with("name", json!("polycarp"))), ["name"]);
+    assert!(!sb.at("cfg/looks").exists(), "nothing was written");
     let doc = json!({"document": {"name": "../evil", "title": "x"}});
     assert!(sb
         .refused(&with("theme", doc))
@@ -199,12 +235,12 @@ fn a_theme_is_held_to_every_theme_rule() {
     let mut j = serde_json::to_value(toml::from_str::<toml::Table>(toml).unwrap()).unwrap();
     j["name"] = json!("theirs");
     let good = with("theme", json!({"document": j}));
-    let v = sb.json_in(&["look", "show", "-"], &good);
+    let v = sb.json_in(&["look", "import", "-", "--name", "good"], &good);
     assert_eq!(v["ok"], true, "{v}");
     // Text that can't be read on its background.
     j["light"]["foreground"] = j["light"]["background"].clone();
     let v = sb.json_in(
-        &["look", "show", "-"],
+        &["look", "import", "-"],
         &with("theme", json!({"document": j})),
     );
     assert_eq!(v["error"]["code"], "contrast", "{v}");
@@ -227,6 +263,42 @@ fn a_theme_is_held_to_every_theme_rule() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn links_are_never_followed() {
+    use std::os::unix::fs::symlink;
+    let sb = Sandbox::new();
+    let f = sb.at("real.polycarp-look");
+    fs::write(&f, hostile().to_string()).unwrap();
+    symlink(&f, sb.at("link.polycarp-look")).unwrap();
+    let link = sb.at("link.polycarp-look").display().to_string();
+    assert_eq!(sb.no(&["look", "import", &link]), "io_error");
+    assert_eq!(sb.no(&["look", "show", &link]), "io_error");
+    let f = f.display().to_string();
+    sb.ok(&["look", "import", &f]);
+    // Not through a link in the looks folder, nor out through one.
+    fs::write(sb.at("secret"), "keep me").unwrap();
+    let out = sb.at("out.polycarp-look");
+    symlink(sb.at("secret"), &out).unwrap();
+    let out = out.display().to_string();
+    assert_eq!(
+        sb.no(&["look", "export", "hostile", &out, "--force"]),
+        "io_error"
+    );
+    symlink(sb.at("secret"), sb.at("cfg/looks/two.polycarp-look")).unwrap();
+    let two = ["look", "import", &f, "--name", "two", "--force"];
+    assert_eq!(sb.no(&two), "io_error");
+    assert_eq!(sb.no(&["look", "show", "two"]), "io_error");
+    assert_eq!(sb.text("secret").unwrap(), "keep me");
+    fs::remove_dir_all(sb.at("cfg/looks")).unwrap();
+    symlink(sb.at("empty"), sb.at("cfg/looks")).unwrap();
+    assert_eq!(
+        sb.no(&["look", "import", &f, "--name", "three"]),
+        "io_error"
+    );
+    assert_eq!(fs::read_dir(sb.at("empty")).unwrap().count(), 0);
+}
+
 #[test]
 fn a_file_over_the_limit_is_refused() {
     let sb = Sandbox::new();
@@ -236,36 +308,104 @@ fn a_file_over_the_limit_is_refused() {
         .set_len(32 * 1024 * 1024 + 1)
         .unwrap();
     assert_eq!(
-        sb.no(&["look", "show", &f.display().to_string()]),
+        sb.no(&["look", "import", &f.display().to_string()]),
         "io_error"
     );
 }
 
+// Keeping and sharing one's own ------------------------------------------------------------------------------------
+
 #[test]
-fn a_look_that_is_fine_is_shown_and_nothing_changes() {
+fn export_writes_over_nothing_unasked() {
     let sb = Sandbox::new();
-    let v = sb.json_in(&["look", "show", "-"], &hostile().to_string());
+    let one = ["look", "import", "-", "--name", "one"];
+    assert_eq!(sb.json_in(&one, &hostile().to_string())["ok"], true);
+    let f = sb.at("one.polycarp-look").display().to_string();
+    sb.ok(&["look", "export", "one", &f]);
+    let saved = sb.text("cfg/looks/one.polycarp-look");
+    assert_eq!(sb.text("one.polycarp-look"), saved);
+    assert_eq!(sb.no(&["look", "export", "one", &f]), "exists");
+    sb.ok(&["look", "export", "one", &f, "--force"]);
     assert_eq!(
-        (&v["data"]["theme"], &v["data"]["mode"]),
-        (&json!("Evening"), &json!("auto"))
+        sb.no(&["look", "export", "one", "/tmp/x.txt"]),
+        "invalid_args"
     );
-    assert_eq!(sb.ok(&["theme", "current"])["theme"], "polycarp");
-    assert!(!sb.at("cfg/looks").exists() && !sb.at("cfg/config.toml").exists());
+    let o = sb.run(&["look", "export", "one", "-"], "");
+    assert_eq!(String::from_utf8(o.stdout).ok(), saved);
+    assert_eq!(sb.no(&["look", "show", "nope"]), "unknown_look");
 }
 
-#[cfg(unix)]
 #[test]
-fn links_are_never_followed() {
+fn a_damaged_look_is_listed_and_not_used() {
     let sb = Sandbox::new();
-    let f = sb.at("real.polycarp-look");
-    fs::write(&f, hostile().to_string()).unwrap();
-    sb.ok(&["look", "show", &f.display().to_string()]);
-    let link = sb.at("link.polycarp-look");
-    std::os::unix::fs::symlink(&f, &link).unwrap();
+    let one = ["look", "import", "-", "--name", "one"];
+    assert_eq!(sb.json_in(&one, &hostile().to_string())["ok"], true);
+    fs::write(sb.at("cfg/looks/bad.polycarp-look"), "{").unwrap();
+    fs::write(sb.at("cfg/looks/Not A Name.polycarp-look"), "{}").unwrap();
+    let d = sb.ok(&["look", "list"]);
+    let rows = d["looks"].as_array().unwrap();
     assert_eq!(
-        sb.no(&["look", "show", &link.display().to_string()]),
-        "io_error"
+        rows.iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["polycarp", "bad", "one"]
     );
+    let why = rows[1]["problems"][0].as_str().unwrap();
+    let o = sb.run(&["look", "list"], "");
+    let text = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        text.contains("can't be used") && text.contains(why),
+        "{text}"
+    );
+    assert_eq!(sb.no(&["look", "show", "bad"]), "invalid_look");
+}
+
+#[test]
+fn show_says_what_a_look_holds_and_where_it_was_read() {
+    let sb = Sandbox::new();
+    let mut l = hostile();
+    l["mode"] = json!("dark");
+    l["accent"] = json!({"dark": "#a9bb8a"});
+    let f = sb.at("sent.polycarp-look");
+    fs::write(&f, l.to_string()).unwrap();
+    let path = f.display().to_string();
+    let here = |d: &Value, source: &str, file: Option<&Path>| {
+        assert_eq!(d["source"], source, "{d}");
+        assert_eq!(d["file"].as_str().map(Path::new), file, "{d}");
+        assert_eq!(
+            (&d["theme"], &d["mode"]),
+            (&json!("Evening"), &json!("dark"))
+        );
+        assert_eq!(d["accent"], json!({"light": null, "dark": "#a9bb8a"}));
+    };
+    // A file that was sent is a file, whatever it calls itself.
+    here(&sb.ok(&["look", "show", &path]), "file", Some(&f));
+    let saved = sb.at("cfg/looks/hostile.polycarp-look");
+    sb.ok(&["look", "import", &path]);
+    here(&sb.ok(&["look", "show", &path]), "file", Some(&f));
+    here(&sb.ok(&["look", "show", "hostile"]), "saved", Some(&saved));
+    let v = sb.json_in(&["look", "show", "-"], &l.to_string());
+    here(&v["data"], "stdin", None);
+    l["name"] = json!("polycarp");
+    fs::write(&f, l.to_string()).unwrap();
+    here(&sb.ok(&["look", "show", &path]), "file", Some(&f));
+    let d = sb.ok(&["look", "show", "polycarp"]);
+    assert_eq!(
+        (&d["source"], &d["file"]),
+        (&json!("shipped"), &json!(null))
+    );
+    let o = sb.run(&["look", "show", "hostile"], "");
+    let text = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        text.contains("theme: Evening, mode: dark, dark accent: #a9bb8a"),
+        "{text}"
+    );
+    // A file renamed by hand is called what it is listed as.
+    let two = sb.at("cfg/looks/two.polycarp-look");
+    fs::rename(saved, &two).unwrap();
+    let d = sb.ok(&["look", "show", "two"]);
+    assert_eq!(d["name"], "two");
+    here(&d, "saved", Some(&two));
 }
 
 #[cfg(unix)]
