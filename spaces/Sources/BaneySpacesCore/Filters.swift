@@ -113,13 +113,16 @@ public enum Filters {
 
     /// A host: lowercased, any scheme, path and port dropped, then a leading "www." dropped.
     static func site(_ s: String) -> Result<String, Why> {
+        host(s).map { $0.hasPrefix("www.") ? String($0.dropFirst(4)) : $0 }
+    }
+
+    static func host(_ s: String) -> Result<String, Why> {
         var t = s.trimmingCharacters(in: .whitespaces).lowercased()
         if let r = t.range(of: "://") { t = String(t[r.upperBound...]) }
         if let end = t.firstIndex(where: { "/?#".contains($0) }) { t = String(t[..<end]) }
         if let colon = t.lastIndex(of: ":"), t[t.index(after: colon)...].allSatisfy({ $0.isASCII && $0.isNumber }) {
             t = String(t[..<colon])
         }
-        if t.hasPrefix("www.") { t = String(t.dropFirst(4)) }
         let labels = t.split(separator: ".", omittingEmptySubsequences: false)
         guard !t.isEmpty, labels.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") } }) else {
             return .failure(Why("\"\(s)\" is not a host such as x.com or youtube.com"))
@@ -248,7 +251,13 @@ public enum Filters {
         if let bad = t.unicodeScalars.first(where: { "{};\\@<".unicodeScalars.contains($0) || CharacterSet.controlCharacters.contains($0) }) {
             return refused(CharacterSet.controlCharacters.contains(bad) ? "it may not hold a line break" : "it may not hold \(bad)")
         }
-        if t.contains("/*") || t.contains("*/") { return refused("it may not hold a comment mark, /* or */") }
+        if t.holds("/*") || t.holds("*/") { return refused("it may not hold a comment mark, /* or */") }
+        if let why = unbalanced(t) { return refused(why) }
+        return .success(t)
+    }
+
+    /// Why the quotes, brackets and parentheses in it don't pair up, or nil.
+    static func unbalanced(_ t: String) -> String? {
         var quote: Unicode.Scalar?
         var open: [Unicode.Scalar] = []
         for ch in t.unicodeScalars {
@@ -257,13 +266,13 @@ public enum Filters {
             case "\"", "'": quote = ch
             case "[", "(": open.append(ch)
             case "]", ")":
-                guard open.popLast() == (ch == "]" ? "[" : "(") else { return refused("it closes \(ch) without opening it") }
+                guard open.popLast() == (ch == "]" ? "[" : "(") else { return "it closes \(ch) without opening it" }
             default: break
             }
         }
-        if let q = quote { return refused("its \(q) is never closed") }
-        if let o = open.last { return refused("its \(o) is never closed") }
-        return .success(t)
+        if let q = quote { return "its \(q) is never closed" }
+        if let o = open.last { return "its \(o) is never closed" }
+        return nil
     }
 
     /// A whole file: `{"version":1,"filters":[rule...]}`, as `checked`.
