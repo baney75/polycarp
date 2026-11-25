@@ -255,7 +255,7 @@ final class TopBar {
         readingStatus = true
         let me = getpid()
         let apps = NSWorkspace.shared.runningApplications.filter { $0.processIdentifier != me }
-        let targets = apps.map { (pid: $0.processIdentifier, bundle: $0.bundleIdentifier ?? "") }
+        let targets = apps.map { (pid: $0.processIdentifier, bundle: $0.bundleIdentifier ?? "", launched: $0.launchDate) }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let read = BarReader.status(of: targets)
             DispatchQueue.main.async {

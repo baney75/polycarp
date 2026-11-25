@@ -6,7 +6,32 @@ import SwiftUI
 /// Reads what the `app-menus` and `status` modules draw, through Accessibility, and presses what you click. No pixels are
 /// copied, so neither needs Screen Recording. Both are read off the main thread, since a busy app can take its whole
 /// timeout to answer (the launcher's menu read on main was one cause of the lag fixed 11-21).
+///
+/// What the bar draws is extra, so no read here benches its app for window tracking (`Windows.markUnresponsive`). Until
+/// 2026-11-24 one did: an idle Excel or Ghostty takes over the 0.1 s the status read allows (105 ms, measured), every
+/// 15 s, and while an app is benched its new window gets no workspace and its parked ones aren't brought back.
 enum BarReader {
+    /// One app's reads. A timeout is kept here (`missed`) and nowhere else.
+    private struct Quiet {
+        var missed = false
+
+        mutating func value<T>(_ element: AXUIElement, _ attribute: String) -> T? {
+            var raw: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &raw)
+            if error == .cannotComplete { missed = true }
+            return error == .success ? raw as? T : nil
+        }
+
+        mutating func string(_ element: AXUIElement, _ attribute: String) -> String? { value(element, attribute) }
+
+        mutating func point(_ element: AXUIElement) -> CGPoint? {
+            guard let raw: AnyObject = value(element, kAXPositionAttribute), CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+            var at = CGPoint.zero
+            return AXValueGetValue(raw as! AXValue, .cgPoint, &at) ? at : nil
+        }
+    }
+
+
     /// Where the front app's menus are read, one at a time, so the last app to come forward is the last one read.
     static let queue = DispatchQueue(label: "polycarp.bar.menus", qos: .userInitiated)
     private static let lock = NSLock()
@@ -35,13 +60,13 @@ enum BarReader {
 
     /// Another app's menus through Accessibility. On `queue`.
     static func menus(of pid: pid_t) -> Menus {
-        let titles = menuBar(of: pid).map { $0.string(kAXTitleAttribute) ?? "" }
+        let titles = menuTitles(menuBar(of: pid))
         return Menus(items: BarMenus.items(titles)) { i in
             guard titles.indices.contains(i) else { return }
             // Read again on the click: an app that rebuilt its menus since would otherwise get the wrong one pressed.
             queue.async {
                 let now = menuBar(of: pid)
-                let fresh = now.map { $0.string(kAXTitleAttribute) ?? "" }
+                let fresh = menuTitles(now)
                 guard let at = BarMenus.place(of: i, titles: titles, in: fresh) else { return }
                 AXUIElementPerformAction(now[at], kAXPressAction as CFString)
             }
@@ -49,8 +74,14 @@ enum BarReader {
     }
 
     private static func menuBar(of pid: pid_t) -> [AXUIElement] {
-        let bar: AXUIElement? = AX.app(pid).value(kAXMenuBarAttribute)
-        return bar?.value(kAXChildrenAttribute) ?? []
+        var ask = Quiet()
+        guard let bar: AXUIElement = ask.value(AX.app(pid), kAXMenuBarAttribute) else { return [] }
+        return ask.value(bar, kAXChildrenAttribute) ?? []
+    }
+
+    private static func menuTitles(_ bar: [AXUIElement]) -> [String] {
+        var ask = Quiet()
+        return bar.map { ask.string($0, kAXTitleAttribute) ?? "" }
     }
 
     /// One status item, with the element a click presses.
@@ -59,29 +90,56 @@ enum BarReader {
         var element: AXUIElement
     }
 
-    /// Every other app's status items (`AXExtrasMenuBar`), in the order read. Any thread.
-    static func status(of apps: [(pid: pid_t, bundle: String)]) -> [Status] {
-        apps.flatMap { app -> [Status] in
-            let ax = AX.app(app.pid, timeout: 0.1)
-            let bar: AXUIElement? = ax.value("AXExtrasMenuBar")
-            let children: [AXUIElement] = bar?.value(kAXChildrenAttribute) ?? []
-            return children.compactMap { read -> Status? in
-                let role = read.string(kAXRoleAttribute)
-                let kids: [AXUIElement] = role == "AXGroup" ? read.value(kAXChildrenAttribute) ?? [] : []
-                let el: AXUIElement
-                switch BarStatus.pick(role: role, childRoles: kids.map { $0.string(kAXRoleAttribute) }) {
-                case .itself: el = read
-                case .child(let i): el = kids[i]
-                case .skip: return nil
-                }
-                let label = [kAXDescriptionAttribute, kAXTitleAttribute, kAXHelpAttribute]
-                    .lazy.compactMap { el.string($0) }.first { !$0.isEmpty }
-                let at: CGPoint? = el.value(kAXPositionAttribute, .cgPoint) ?? read.value(kAXPositionAttribute, .cgPoint)
-                return Status(item: BarStatus.Item(owner: app.bundle, identifier: el.string(kAXIdentifierAttribute),
-                                                   label: label, x: at.map { Double($0.x) }, y: at.map { Double($0.y) }),
-                              element: el)
+    /// The bar's own waits for apps that didn't answer it, and what each showed last. Read one at a time
+    /// (`TopBar.readingStatus`), so nothing guards them.
+    private static var statusBench = AXBench()
+    private static var lastStatus: [pid_t: [Status]] = [:]
+
+    /// Every other app's status items (`AXExtrasMenuBar`), in the order read. An app that doesn't answer keeps the items
+    /// it had and is asked again later each time, so a frozen one doesn't cost its timeout at every read. One read at a
+    /// time, any thread.
+    static func status(of apps: [(pid: pid_t, bundle: String, launched: Date?)]) -> [Status] {
+        let running = Set(apps.map(\.pid))
+        statusBench.keep(running)
+        lastStatus = lastStatus.filter { running.contains($0.key) }
+        for app in apps where !statusBench.isBenched(app.pid, now: Date()) {
+            var ask = Quiet()
+            let items = status(of: app.pid, bundle: app.bundle, ask: &ask)
+            if ask.missed {
+                statusBench.missed(app.pid, age: app.launched.map { -$0.timeIntervalSinceNow }, now: Date())
+            } else {
+                statusBench.answered(app.pid)
+                lastStatus[app.pid] = items
             }
         }
+        return apps.flatMap { lastStatus[$0.pid] ?? [] }
+    }
+
+    private static func status(of pid: pid_t, bundle: String, ask: inout Quiet) -> [Status] {
+        guard let bar: AXUIElement = ask.value(AX.app(pid, timeout: 0.1), "AXExtrasMenuBar") else { return [] }
+        let children: [AXUIElement] = ask.value(bar, kAXChildrenAttribute) ?? []
+        var out: [Status] = []
+        for read in children {
+            let role = ask.string(read, kAXRoleAttribute)
+            let kids: [AXUIElement] = role == "AXGroup" ? ask.value(read, kAXChildrenAttribute) ?? [] : []
+            var roles: [String?] = []
+            for kid in kids { roles.append(ask.string(kid, kAXRoleAttribute)) }
+            let el: AXUIElement
+            switch BarStatus.pick(role: role, childRoles: roles) {
+            case .itself: el = read
+            case .child(let i): el = kids[i]
+            case .skip: continue
+            }
+            var label: String?
+            for attribute in [kAXDescriptionAttribute, kAXTitleAttribute, kAXHelpAttribute] where label == nil {
+                if let text = ask.string(el, attribute), !text.isEmpty { label = text }
+            }
+            let at = ask.point(el) ?? ask.point(read)
+            out.append(Status(item: BarStatus.Item(owner: bundle, identifier: ask.string(el, kAXIdentifierAttribute),
+                                                   label: label, x: at.map { Double($0.x) }, y: at.map { Double($0.y) }),
+                              element: el))
+        }
+        return out
     }
 
     /// Presses a menu or a status item off the main thread: an app can hold the call until its menu closes.

@@ -238,7 +238,7 @@ enum RunningApps {
 
 enum Windows {
     /// Apps that stopped answering Accessibility, and when to ask them again (`AXBench`): one hung app costs a full
-    /// timeout per call, so skipping it keeps every switch quick; one still starting is asked again within a second.
+    /// timeout per call, so skipping it keeps every switch quick.
     private static var bench = AXBench()
     private static let unresponsiveLock = NSLock()
 
@@ -251,12 +251,10 @@ enum Windows {
     static func markUnresponsive(_ pid: pid_t, call: String, error: AXError) {
         let app = NSRunningApplication(processIdentifier: pid)
         let age = app?.launchDate.map { -$0.timeIntervalSinceNow }
-        // No app is waited on for its first window now (`AXBench`, review 157 F8): every miss takes the hung back-off.
-        let waitedOn = false
         unresponsiveLock.lock()
         let now = Date()
         let already = bench.isBenched(pid, now: now)
-        let delay = bench.missed(pid, age: age, waitedOn: waitedOn, now: now)
+        let delay = bench.missed(pid, age: age, now: now)
         unresponsiveLock.unlock()
         // Which app went unseen and for how long: a window it opens meanwhile isn't placed until it answers.
         if !already { Trace.log(AXBench.missLine(app: app?.localizedName ?? "app", pid: pid, call: call, error: error.rawValue, delay: delay)) }

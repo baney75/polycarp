@@ -3,44 +3,34 @@ import Foundation
 /// Apps that didn't answer Accessibility, and when to ask them again. A hung app costs a full timeout on every call, so
 /// each miss in a row waits longer (5 s, 30 s, 2 min, 10 min) and a frozen app costs a timeout rarely.
 ///
-/// An app that is still starting is not hung. For its first second or so it answers `cannotComplete` or runs out the
-/// timeout while its Accessibility server comes up (measured: Font Book at +0.58 s and again at +3.40 s, Calculator at
-/// +0.58 s, each a 0.25 s timeout). Benching it like a hung app hid its first window for 35 s, past the 8 s claim an
-/// agent's `open` holds on it, so the window stayed where macOS drew it: on your screen. A young app is asked again within
-/// a second, and those misses don't count toward the hung back-off.
+/// Only a miss by an app that was free to be asked counts. One that lands while its app is already benched (a call
+/// already on its way, or one that doesn't look at the bench) is the same hang seen again. Until 2026-11-24 those counted,
+/// and said nothing in trace.log: a read every 15 s that kept missing (the bar's status items) reached the 10 minute wait
+/// in four misses and started it again each time, so a scan never got to ask. trace.log that day: Word launched at
+/// 22:14:17, one 5 s bench at 22:14:18, no line after it, and at 22:22:07 its window still had no workspace.
 ///
-/// Only an app Polycarp is waiting on (one an agent's launch started) gets the young schedule. Any other app that just
-/// launched and hangs at once keeps the hung back-off, so it can't cost a timeout every 0.3 s on each switch for 15 s
-/// (review 157 F8).
+/// An app in its first minute is starting, not hung: each miss waits the shortest time and none add up. Word and Excel
+/// time out while they load; 30 s for the second miss left their first window unplaced long after they were ready.
 public struct AXBench: Equatable, Sendable {
-    /// Seconds benched after each miss in a row by an app past `launching`; the last repeats.
+    /// Seconds benched after each miss in a row by an app past `starting`; the last repeats.
     public static let hung: [TimeInterval] = [5, 30, 120, 600]
-    /// Seconds benched after each miss by an app younger than `launching`.
-    public static let young: [TimeInterval] = [0.3, 0.6, 1.2, 2.5]
     /// How long after its launch an app counts as still starting.
-    public static let launching: TimeInterval = 15
+    public static let starting: TimeInterval = 60
 
     private var strikes: [Int32: Int] = [:]
-    private var youngMisses: [Int32: Int] = [:]
     private var until: [Int32: Date] = [:]
 
     public init() {}
 
-    /// Records a miss. `age` is the seconds since the app launched, nil when unknown (it counts as an old app).
-    /// `waitedOn`: Polycarp is waiting for this app's first window (an agent's launch started it). Returns how long it is
-    /// benched.
+    /// Records a miss. `age` is the seconds since the app launched, nil when unknown (it counts as an old app). Returns
+    /// how long it is benched from `now`.
     @discardableResult
-    public mutating func missed(_ pid: Int32, age: TimeInterval?, waitedOn: Bool, now: Date) -> TimeInterval {
-        let delay: TimeInterval
-        if waitedOn, let age, age >= 0, age < Self.launching {
-            let n = youngMisses[pid, default: 0]
-            youngMisses[pid] = n + 1
-            delay = Self.young[min(n, Self.young.count - 1)]
-        } else {
-            let n = strikes[pid, default: 0]
-            strikes[pid] = n + 1
-            delay = Self.hung[min(n, Self.hung.count - 1)]
-        }
+    public mutating func missed(_ pid: Int32, age: TimeInterval?, now: Date) -> TimeInterval {
+        if let t = until[pid], t > now { return t.timeIntervalSince(now) }
+        let young = age.map { $0 >= 0 && $0 < Self.starting } ?? false
+        let n = young ? 0 : strikes[pid, default: 0]
+        if !young { strikes[pid] = n + 1 }
+        let delay = Self.hung[min(n, Self.hung.count - 1)]
         until[pid] = now.addingTimeInterval(delay)
         return delay
     }
@@ -48,7 +38,6 @@ public struct AXBench: Equatable, Sendable {
     /// The app answered, or you brought it forward: a clean slate.
     public mutating func answered(_ pid: Int32) {
         strikes[pid] = nil
-        youngMisses[pid] = nil
         until[pid] = nil
     }
 
@@ -72,14 +61,12 @@ public struct AXBench: Equatable, Sendable {
     /// Every app asked again at once: after the Mac wakes, an app that missed while it slept isn't hung (`Spaces.didWake`).
     public mutating func clear() {
         strikes = [:]
-        youngMisses = [:]
         until = [:]
     }
 
     /// Forgets apps that quit.
     public mutating func keep(_ alive: Set<Int32>) {
         strikes = strikes.filter { alive.contains($0.key) }
-        youngMisses = youngMisses.filter { alive.contains($0.key) }
         until = until.filter { alive.contains($0.key) }
     }
 
