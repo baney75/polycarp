@@ -8,6 +8,10 @@ const L = load('Looks.js')
 const { themes } = load('Builtin.js')
 const eq = (a, b, why) => assert.deepEqual(plain(a), b, why)
 
+// Two real shapes from Omarchy: a dark one whose muted is faint, a light one whose colors are pastel.
+const faint = { mode: 'dark', accent: '#81a1c1', selection: '#4c566a', muted: '#4c566a', background: '#2e3440', dark_background: '#242933', lighter_background: '#3b4252', foreground: '#d8dee9', bright_foreground: '#eceff4', red: '#bf616a', yellow: '#ebcb8b', green: '#a3be8c' }
+const pastel = { mode: 'light', accent: '#1e66f5', selection: '#ccd0da', muted: '#acb0be', background: '#eff1f5', dark_background: '#e6e9ef', lighter_background: '#ffffff', foreground: '#4c4f69', red: '#d20f39', yellow: '#df8e1d', green: '#40a02b' }
+
 test('the TOML a theme uses is read, and nothing reaches past the table', (t) => {
   const check = (m) => {
     eq(m.parseToml('# a theme\nname = "x"\nsize = 12.5 # points\non = true\n[light]\nbackground = "#FFFFFF" # paper\n[surface.bar]\nfill = \'a # b\'\nquote = "say \\"hi\\""\n'),
@@ -70,6 +74,20 @@ test('every built-in theme becomes an Omarchy theme that reads, in both modes', 
   control(t, 'Looks.js', '["bright_red", "bright_yellow", "bright_green"', '["bright_yellow", "bright_green"', check)
 })
 
+test('dim text is quiet but still reads at 3 to 1, even from a theme whose ink is only just dark enough', (t) => {
+  const check = (m) => {
+    const grey = m.resolve('grey', { ...themes, grey: { extends: 'polycarp', light: { foreground: '#6b6b64' } } })
+    assert.ok(m.contrast(grey.light.foreground, grey.light.background) >= 4.5)
+    for (const theme of [grey, ...Object.keys(themes).map((name) => m.resolve(name, themes))]) for (const mode of ['dark', 'light']) {
+      const c = m.toOmarchy(theme, mode).colors
+      assert.ok(m.contrast(c.dark_foreground, c.background) >= 3, `${theme.name} ${mode}`)
+      assert.ok(m.contrast(c.dark_foreground, c.background) < m.contrast(c.foreground, c.background), `${theme.name} ${mode} stays quieter`)
+    }
+  }
+  check(L)
+  control(t, 'Looks.js', 'dark_foreground: fit(mix(r.foreground, r.background, 0.45), ground, MARK, r.foreground)', 'dark_foreground: mix(r.foreground, r.background, 0.45)', check)
+})
+
 test('a theme that cannot be read is reported by the pair that misses', (t) => {
   const check = (m) => {
     const look = m.toOmarchy(m.resolve('dim', { ...themes, dim: { extends: 'polycarp', dark: { muted: '#4a4d45' } } }), 'dark')
@@ -87,6 +105,57 @@ test('Omarchy names are the theme and its mode, and Polycarp alone is not said t
   control(t, 'Looks.js', '(mode === "light" ? "-light" : "")', '""', check)
 })
 
+test('an Omarchy theme becomes a Polycarp theme that Polycarp would accept, and says what moved', (t) => {
+  const check = (m) => {
+    for (const [id, colors, mode] of [['nord', faint, 'dark'], ['catppuccin-latte', pastel, 'light']]) {
+      const made = m.fromOmarchy(id, colors, 'JetBrainsMono Nerd Font')
+      assert.equal(made.mode, mode)
+      eq(made.misses, [], id)
+      for (const role of m.ROLES) assert.ok(m.isHex(made.colors[role]), role)
+      assert.equal(made.colors.background, colors.background, 'the page is the theme\'s own')
+      assert.equal(made.colors.foreground, colors.foreground)
+      const muted = made.fitted.find((f) => f.role === 'muted')
+      assert.equal(muted.was, colors.muted)
+      assert.ok(muted.ratio < 4.5)
+      assert.ok(!made.fitted.some((f) => f.role === 'foreground'))
+    }
+    assert.equal(m.fromOmarchy('x', { mode: 'dark', background: 'red' }, ''), null)
+  }
+  check(L)
+  control(t, 'Looks.js', 'out.muted = fit(want.muted, grounds, TEXT, out.strong)', ';', check)
+  control(t, 'Looks.js', 'colors.mode === "light" ? "light" : "dark"', '"dark"', check)
+})
+
+test('the Polycarp theme written is one Polycarp reads: names, mode, font', (t) => {
+  const check = (m) => {
+    const made = m.fromOmarchy('Tokyo Night!', faint, 'JetBrainsMono Nerd Font')
+    const toml = m.parseToml(m.themeToml(made))
+    assert.equal(toml.name, 'omarchy-tokyo-night')
+    assert.equal(toml.title, 'Tokyo Night')
+    assert.equal(toml.extends, 'polycarp')
+    assert.equal(toml.dark.background, '#2e3440')
+    assert.equal(toml.light, undefined)
+    assert.equal(toml.type.mono, "'JetBrainsMono Nerd Font', monospace")
+    assert.equal(m.parseToml(m.themeToml(m.fromOmarchy('x', faint, 'bad"; font'))).type, undefined)
+    assert.match(m.fromOmarchy('a'.repeat(90), faint, '').id, /^[a-z][a-z0-9-]{0,47}$/)
+  }
+  check(L)
+  control(t, 'Looks.js', 'if (/^[A-Za-z0-9 _-]{1,60}$/.test(made.font))', 'if (made.font)', check)
+  control(t, 'Looks.js', '.slice(0, 39)', '', check)
+})
+
+test('a round trip keeps the colors both sides name', (t) => {
+  const check = (m) => {
+    const calm = m.resolve('parchment', themes)
+    const back = m.fromOmarchy('p', m.parseToml(m.colorsToml(m.toOmarchy(calm, 'light'))), '')
+    for (const role of ['background', 'surface', 'sunken', 'foreground', 'strong', 'muted', 'accent', 'selection', 'urgent', 'working', 'done'])
+      assert.equal(back.colors[role], calm.light[role].toLowerCase(), role)
+    eq(back.fitted, [])
+  }
+  check(L)
+  control(t, 'Looks.js', 'lighter_background: r.surface', 'lighter_background: r.sunken', check)
+})
+
 test('the background is a picture Omarchy accepts, in the theme\'s colors', (t) => {
   const check = (m) => {
     const look = m.toOmarchy(m.resolve('polycarp', themes), 'dark')
@@ -102,6 +171,55 @@ test('the background is a picture Omarchy accepts, in the theme\'s colors', (t) 
   check(L)
   control(t, 'Looks.js', 'put(54 + row * h, 4)', 'put(54, 4)', check)
   control(t, 'Looks.js', 'for (var y = h - 1; y >= 0; y--)', 'for (var y = 0; y < h; y++)', check)
+})
+
+test('the list on disk is read by section', (t) => {
+  const check = (m) => {
+    const list = m.parseList('\u001etheme nord\n\u001efont JetBrainsMono Nerd Font\n\u001ecolors\nmode = "dark"\nred = "#ff0000"\n\u001euser mine\ntitle = "Mine"\n[dark]\naccent = "#ffffff"\n\u001etaken polycarp-calm\n\u001eundo\n')
+    assert.equal(list.theme, 'nord')
+    assert.equal(list.font, 'JetBrainsMono Nerd Font')
+    eq(list.colors, { mode: 'dark', red: '#ff0000' })
+    eq(list.user, { mine: { title: 'Mine', dark: { accent: '#ffffff' } } })
+    eq(list.taken, { 'polycarp-calm': true })
+    assert.equal(list.undo, true)
+    assert.equal(m.parseList('').undo, false)
+  }
+  check(L)
+  control(t, 'Looks.js', 'if (section === "undo") out.undo = true', ';', check)
+})
+
+test('the looks offered: built-ins first, the user\'s own that are whole, never one that came from Omarchy', (t) => {
+  const check = (m) => {
+    const all = m.offer(themes, {
+      mine: { extends: 'polycarp', title: 'Mine', dark: { accent: '#ffffff' } }, broken: { extends: 'gone' },
+      polycarp: { title: 'Not this', extends: 'evening', dark: { accent: '#dddddd' } }, 'omarchy-nord': { extends: 'polycarp', dark: { accent: '#eeeeee' } }
+    }, { 'polycarp-evening': true })
+    eq(all.map((x) => x.name), ['polycarp', 'still-water', 'evening', 'parchment', 'mine'], 'blocks and calm are the default in other shapes')
+    assert.equal(all[0].title, 'Polycarp')
+    eq(all.map((x) => x.own), [false, false, false, false, true])
+    eq(all[2].taken, { dark: true, light: false })
+  }
+  check(L)
+  control(t, 'Looks.js', ' && key.indexOf("omarchy-") !== 0', '', check)
+  control(t, 'Looks.js', 'if (!builtin.hasOwnProperty(key) &&', 'if (', check)
+  control(t, 'Looks.js', 'if (seen[colors] || seen[ids[0]]', 'if (seen[ids[0]]', check)
+})
+
+test('no two looks offered share an Omarchy id; the one listed first keeps it', (t) => {
+  const check = (m) => {
+    const all = m.offer(themes, {
+      mine: { extends: 'polycarp', dark: { accent: '#ffffff' } }, 'mine-light': { extends: 'polycarp', dark: { accent: '#eeeeee' } },
+      light: { extends: 'polycarp', dark: { accent: '#dddddd' } }
+    }, {})
+    const names = all.map((x) => x.name)
+    assert.ok(names.includes('mine'))
+    assert.ok(!names.includes('mine-light'), 'mine-light in dark would overwrite mine in light')
+    assert.ok(!names.includes('light'), 'light in dark would overwrite the built-in polycarp in light')
+    const ids = all.flatMap((x) => [x.dark.id, x.light.id])
+    eq(ids.length, new Set(ids).size)
+  }
+  check(L)
+  control(t, 'Looks.js', 'if (seen[colors] || seen[ids[0]] || seen[ids[1]]) continue', 'if (seen[colors]) continue', check)
 })
 
 test('the bundled themes are the repo\'s themes', { skip: !existsSync(`${folder}/polycarp.toml`) && 'not in the Polycarp repo' }, () => {
