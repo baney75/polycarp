@@ -94,6 +94,106 @@ final class NoticesTests: XCTestCase {
         XCTAssertEqual(r.banners.map(\.path), [[1, 0]])
     }
 
+    func testAWindowFullOfWidgetsDoesNotHideTheNextWindowsBanner() {
+        let widgets = NoticeNode(children: (0..<2_000).map { _ in NoticeNode(children: [NoticeNode(identifier: "widget-x", children: [NoticeNode(), NoticeNode()])]) })
+        let r = NoticeReader.read([widgets, NoticeNode(children: [banner("Mail", "Ann", "Lunch")])])
+        XCTAssertEqual(r.banners.map(\.title), ["Ann"])
+        XCTAssertFalse(r.centerOpen)
+        XCTAssertEqual(r.banners.first?.path, [1, 0])
+    }
+
+    func testAnAlertThatCountsDownInPlaceIsOneNotice() {
+        var s = NoticeShelf()
+        func alert(_ body: String, _ title: String = "Class") -> NoticeNode { banner("Calendar", title, body, subrole: "AXNotificationCenterAlert") }
+        XCTAssertEqual(s.take(screen(alert("in 10 minutes")), at: now).count, 1)
+        s.see()
+        XCTAssertEqual(s.take(screen(alert("in 9 minutes")), at: now).count, 0)
+        XCTAssertEqual(s.take(screen(alert("in 1 minute")), at: now).count, 0, "a plural is the same words")
+        XCTAssertEqual(s.notices.map(\.banner.body), ["in 1 minute"])
+        XCTAssertEqual(s.notices.map(\.live), [true])
+        XCTAssertEqual(s.unread, 0)
+        XCTAssertEqual(s.take(screen(alert("now")), at: now).count, 1, "other words are a new one")
+        // A banner with new words is another message, whatever changed in it.
+        var m = NoticeShelf()
+        m.take(screen(banner("Messages", "Ann", "meet at 6")), at: now)
+        XCTAssertEqual(m.take(screen(banner("Messages", "Ann", "meet at 5")), at: now).count, 1)
+        XCTAssertEqual(m.notices.count, 2)
+    }
+
+    func testAnotherAlertInTheSamePlaceIsNotATick() {
+        func alert(_ body: String, _ title: String = "T", subrole: String = "AXNotificationCenterAlert") -> NoticeNode { banner("App", title, body, subrole: subrole) }
+        for (a, b) in [("Your code is 987654", "Your code is 123456"), ("in 9 minutes", "in 10 minutes"), ("Room 5 in 9 minutes", "Room 4 in 8 minutes"), ("in 5 minutes", "for 4 minutes")] {
+            var s = NoticeShelf()
+            s.take(screen(alert(a)), at: now)
+            XCTAssertEqual(s.take(screen(alert(b)), at: now).count, 1, b)
+            XCTAssertEqual(s.notices.count, 2, b)
+        }
+        var s = NoticeShelf()
+        s.take(screen(alert("in 5 minutes", "One")), at: now)
+        XCTAssertEqual(s.take(screen(alert("in 4 minutes", "Two")), at: now).count, 1)
+        s = NoticeShelf()
+        s.take(screen(alert("in 5 minutes", subrole: "AXNotificationCenterAlertStack")), at: now)
+        XCTAssertEqual(s.take(screen(alert("in 4 minutes", subrole: "AXNotificationCenterAlertStack")), at: now).count, 1, "a stack shows another one")
+    }
+
+    func testACountdownTicksBesideAnotherNumberAndWithoutSpaces() {
+        func alert(_ body: String) -> NoticeNode { banner("Calendar", "Class", body, subrole: "AXNotificationCenterAlert") }
+        for (a, b) in [("3:00 PM, in 10 minutes", "3:00 PM, in 9 minutes"), ("10\u{5206}\u{5F8C}", "9\u{5206}\u{5F8C}")] {
+            var s = NoticeShelf()
+            s.take(screen(alert(a)), at: now)
+            XCTAssertEqual(s.take(screen(alert(b)), at: now).count, 0, b)
+        }
+        // Notification Center opened on it, where it sits elsewhere, and closed two ticks later.
+        var s = NoticeShelf()
+        s.take(screen(alert("in 5 minutes")), at: now)
+        for body in ["in 4 minutes", "in 3 minutes"] {
+            s.take(NoticeReader.Reading(centerOpen: true, banners: screen(banner("Mail", "Ann", "Hi"), alert(body)).banners), at: now)
+        }
+        XCTAssertEqual(s.take(screen(alert("in 2 minutes")), at: now).count, 0)
+        XCTAssertEqual(s.notices.map(\.banner.body), ["in 2 minutes"])
+    }
+
+    func testEveryBannerToPressComesFromOneRead() {
+        let one = banner("Mail", "Ann", "Hi"), two = banner("Mail", "Bea", "Yo"), clock = banner("Calendar", "Class", "in 9 minutes", subrole: "AXNotificationCenterAlert")
+        let r = screen(two, one, clock, one)
+        let old = screen(banner("Calendar", "Class", "in 10 minutes", subrole: "AXNotificationCenterAlert")).banners
+        func paths(_ wanted: [NoticeBanner], copies: Bool) -> [[Int]] { NoticeReader.find(wanted, in: r, copies: copies).map(\.path) }
+        let (a, b, c, d) = (r.banners[0].path, r.banners[1].path, r.banners[2].path, r.banners[3].path)
+        XCTAssertEqual(paths(screen(one, two).banners, copies: true), [b, d, a])
+        XCTAssertEqual(paths(screen(one, one).banners, copies: true), [b, d], "each once")
+        XCTAssertEqual(paths(screen(one).banners, copies: false), [b])
+        XCTAssertEqual(paths(old, copies: false), [c], "a countdown that ticked since")
+        XCTAssertEqual(paths(screen(banner("Mail", "Cal", "Hi")).banners, copies: true), [])
+    }
+
+    func testAStackSaysSoAndAnUnnamedAppIsNotQuieted() {
+        XCTAssertEqual(screen(banner("Mail", "Ann", "Hi", subrole: "AXNotificationCenterBannerStack"), banner("Mail", "Bea", "Yo")).banners.map(\.stack), [true, false])
+        var s = NoticeShelf()
+        s.take(screen(banner("", "Ann", "Hi"), banner("Mail", "Bea", "Yo")), at: now)
+        XCTAssertEqual(Set(s.notices.map { "\($0.key) \($0.named)" }), ["Notification false", "Mail true"])
+    }
+
+    func testADismissedCountdownStaysGoneAsItTicks() {
+        func alert(_ body: String) -> NoticeNode { banner("Calendar", "Class", body, subrole: "AXNotificationCenterAlert") }
+        var s = NoticeShelf()
+        s.take(screen(alert("in 10 minutes")), at: now)
+        s.dismiss(s.notices[0].id)
+        XCTAssertTrue(s.watching)
+        XCTAssertEqual(s.take(screen(alert("in 9 minutes")), at: now).count, 0)
+        XCTAssertEqual(s.take(screen(alert("in 8 minutes")), at: now).count, 0)
+        XCTAssertEqual(s.notices, [])
+        s.take(screen(), at: now)
+        XCTAssertFalse(s.watching)
+    }
+
+    func testCloseIsFoundInTheMacsLanguageAndAStackIsNeverClosed() {
+        func node(_ actions: [String]) -> NoticeNode { var n = banner("Mail", "Ann", "Hi"); n.actions = actions; return n }
+        let german = NoticeNode(children: [node(["AXPress", "Name:Schlie\u{DF}en\nTarget:0x0\nSelector:(null)"])])
+        XCTAssertNil(NoticeReader.read([german]).banners[0].close)
+        XCTAssertNotNil(NoticeReader.read([german], close: ["Close", "Schlie\u{DF}en"]).banners[0].close)
+        XCTAssertNil(NoticeReader.read([NoticeNode(children: [node(["Name:Clear All\nTarget:0x0"])])]).banners[0].close)
+    }
+
     func testWhatIsClearedWhileItsBannerIsUpStaysGone() {
         let up = screen(banner("Mail", "Ann", "Hi", bundle: "m"))
         for clear: (inout NoticeShelf) -> Void in [{ $0.dismiss($0.notices[0].id) }, { $0.clear(key: "m") }, { $0.clearAll() }] {

@@ -22,10 +22,33 @@ public struct NoticeBanner: Equatable, Sendable {
     /// The child indexes from the windows down to its element, and the action that closes it, for pressing.
     public var path: [Int]
     public var close: String?
+    /// An alert stays until you answer it, and can count down in place.
+    public var alert = false
+    /// Several as one: pressing it spreads them out, and it opens none.
+    public var stack = false
 
     /// What makes two reads the same notification: who sent it and every word of it.
     var same: [String] { [bundle ?? app, title, subtitle, body] }
     public func matches(_ other: NoticeBanner) -> Bool { same == other.same }
+    /// Whether this is `old` a tick later, in its place ("in 10 minutes", "in 9 minutes"): one small number in its body went
+    /// down, and nothing else changed but a plural. "Your code is 987654" is another notification.
+    public func ticks(from old: NoticeBanner, moved: Bool = false) -> Bool {
+        guard alert, old.alert, moved || path == old.path, same.dropLast() == old.same.dropLast() else { return false }
+        let a = Self.counted(old.body), b = Self.counted(body)
+        guard a.text == b.text, a.numbers.count == b.numbers.count else { return false }
+        let changed = zip(a.numbers, b.numbers).filter { $0 != $1 }
+        return changed.count == 1 && changed[0].1 < changed[0].0 && changed[0].0 <= 120
+    }
+    /// The numbers in it, and the words around them without a plural's s.
+    private static func counted(_ s: String) -> (numbers: [Int], text: [String]) {
+        var numbers: [Int] = [], text = "", inside = false
+        for c in s {
+            guard let d = c.wholeNumberValue, d < 10 else { text.append(c); inside = false; continue }
+            if inside { numbers[numbers.count - 1] = min(1_000_000, numbers[numbers.count - 1] * 10 + d) } else { numbers.append(d); text += "#" }
+            inside = true
+        }
+        return (numbers, text.split(separator: " ").map { $0.hasSuffix("s") ? String($0.dropLast()) : String($0) })
+    }
 }
 
 public enum NoticeReader {
@@ -43,29 +66,49 @@ public enum NoticeReader {
     /// Every banner and alert under Notification Center's windows, first to last. A banner's own children are its words,
     /// so nothing under one is a second banner. Its process also draws the desktop's widgets, in windows that hold no
     /// banner: only a window with both, or with a header over its notifications, is Notification Center open.
-    public static func read(_ windows: [NoticeNode]) -> Reading {
-        var out: [NoticeBanner] = [], open = false, left = maxNodes
+    /// `close` is what macOS calls closing one, in English and in this Mac's language.
+    public static func read(_ windows: [NoticeNode], close: Set<String> = ["Close"]) -> Reading {
+        var out: [NoticeBanner] = [], open = false
         for (i, w) in windows.enumerated() {
+            // Each window has its own limit, so one full of widgets doesn't hide the banners in the next.
             let before = out.count
-            var marked = false
+            var marked = false, left = maxNodes
             func walk(_ n: NoticeNode, _ path: [Int]) {
                 guard left > 0 else { return }
                 left -= 1
-                if n.identifier.hasPrefix("widget") || n.identifier == "header" { marked = true }
+                if n.identifier == "header" { marked = true }
+                if isWidget(n) { marked = true; return }
                 guard path.count <= maxDepth else { return }
                 if subroles.contains(n.subrole) {
-                    if let b = banner(n, path, &left) { out.append(b) }
+                    if let b = banner(n, path, close, &left) { out.append(b) }
                     return
                 }
                 for (j, c) in n.children.enumerated() { walk(c, path + [j]) }
             }
             walk(w, [i])
-            if marked, out.count > before { open = true }
+            if out.count > before ? marked || left <= 0 : !marked && left <= 0 { open = true }
         }
-        return Reading(centerOpen: open || left <= 0, banners: out)
+        return Reading(centerOpen: open, banners: out)
     }
 
-    private static func banner(_ n: NoticeNode, _ path: [Int], _ left: inout Int) -> NoticeBanner? {
+    /// The banners of one read that `wanted` are: every copy of each with `copies`, else the first.
+    public static func find(_ wanted: [NoticeBanner], in r: Reading, copies: Bool) -> [NoticeBanner] {
+        var out: [NoticeBanner] = []
+        for w in wanted {
+            var here = r.banners.filter { $0.matches(w) }
+            if here.isEmpty { here = r.banners.filter { $0.ticks(from: w, moved: true) } }
+            for b in copies ? here : Array(here.prefix(1)) where !out.contains(where: { $0.path == b.path }) { out.append(b) }
+        }
+        return out
+    }
+
+    /// The name of a notification that doesn't say whose it is.
+    public static let unknown = "Notification"
+
+    /// A widget, under which nothing is read.
+    public static func isWidget(_ n: NoticeNode) -> Bool { n.identifier.hasPrefix("widget") }
+
+    private static func banner(_ n: NoticeNode, _ path: [Int], _ names: Set<String>, _ left: inout Int) -> NoticeBanner? {
         var words: [String: String] = [:]
         func gather(_ e: NoticeNode, _ depth: Int) {
             guard depth <= maxDepth, left > 0 else { return }
@@ -90,10 +133,11 @@ public enum NoticeReader {
         }
         let bundle = bundle(n.stacking)
         app = clean(app, most: 80)
-        if app.isEmpty { app = bundle ?? "Notification" }
+        if app.isEmpty { app = bundle ?? unknown }
         guard !title.isEmpty || !body.isEmpty else { return nil }
         return NoticeBanner(app: app, bundle: bundle, title: title, subtitle: words["subtitle"] ?? "", body: body, path: path,
-                            close: n.actions.first { actionName($0) == "Close" })
+                            // A stack has no Close, only Clear All, which takes older ones too: it is never closed from here.
+                            close: n.actions.first { names.contains(actionName($0)) }, alert: n.subrole == "AXNotificationCenterAlert", stack: n.subrole.hasSuffix("Stack"))
     }
 
     /// `bundleIdentifier=com.apple.mail,threadIdentifier=...` gives `com.apple.mail`.
@@ -138,6 +182,8 @@ public struct NoticeShelf: Equatable, Sendable {
         /// On screen as of the last read, at `banner.path`.
         public var live: Bool
         public var key: String { banner.bundle ?? banner.app }
+        /// Whether it says whose it is: quieting one that doesn't would quiet every app like it.
+        public var named: Bool { key != NoticeReader.unknown }
     }
 
     public struct Group: Equatable, Sendable, Identifiable {
@@ -152,6 +198,10 @@ public struct NoticeShelf: Equatable, Sendable {
     private var next = 1
     /// What the last read saw, and how many of each: apart from `notices`, so clearing one doesn't make it new again.
     private var onScreen: [[String]: Int] = [:]
+    /// The alerts among them.
+    private var alerts: [NoticeBanner] = []
+    /// Whether the last read saw anything up, on the shelf or not.
+    public var watching: Bool { !onScreen.isEmpty }
 
     public init() {}
 
@@ -162,6 +212,20 @@ public struct NoticeShelf: Equatable, Sendable {
     public mutating func take(_ r: NoticeReader.Reading, at now: Date) -> [Notice] {
         var up: [[String]: Int] = [:]
         for b in r.banners { up[b.same, default: 0] += 1 }
+        // Ticked against what the last read saw, not the shelf: a countdown dismissed here stays gone as it ticks.
+        for b in r.banners where !alerts.contains(where: { $0.same == b.same }) {
+            guard let k = alerts.firstIndex(where: { up[$0.same] == nil && b.ticks(from: $0, moved: r.centerOpen) }) else { continue }
+            let old = alerts[k], was = onScreen.removeValue(forKey: old.same) ?? 1
+            alerts[k] = b
+            // Notification Center's own list is not where its banner is.
+            if r.centerOpen { alerts[k].path = old.path }
+            onScreen[b.same] = max(was, onScreen[b.same, default: 0])
+            guard let i = notices.firstIndex(where: { $0.banner.same == old.same }) else { continue }
+            notices[i].banner = b
+            let id = notices[i].id
+            notices.removeAll { $0.banner.same == b.same && $0.id != id }
+        }
+        if !r.centerOpen { alerts = r.banners.filter(\.alert) }
         for i in notices.indices { notices[i].live = false }
         if r.centerOpen {
             see()

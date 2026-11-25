@@ -12,16 +12,20 @@ import SwiftUI
 /// 15 s, and while an app is benched its new window gets no workspace and its parked ones aren't brought back.
 enum BarReader {
     /// One app's reads. A timeout is kept here (`missed`) and nowhere else; after one, nothing more is asked of the app.
-    private struct Quiet {
+    struct Quiet {
         var missed = false
+        /// An element that went away mid-read is a miss too: it leaves a tree with parts missing.
+        var strict = false
 
         mutating func value<T>(_ element: AXUIElement, _ attribute: String) -> T? {
             guard !missed else { return nil }
             var raw: CFTypeRef?
             let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &raw)
-            if error == .cannotComplete { missed = true }
+            if strict ? Self.gone(error) : error == .cannotComplete { missed = true }
             return error == .success ? raw as? T : nil
         }
+
+        static func gone(_ error: AXError) -> Bool { error == .cannotComplete || error == .invalidUIElement || error == .apiDisabled }
 
         mutating func string(_ element: AXUIElement, _ attribute: String) -> String? { value(element, attribute) }
 
@@ -118,7 +122,7 @@ enum BarReader {
         return pids.flatMap { lastStatus[$0] ?? [] }
     }
 
-    private static func status(of pid: pid_t, bundle: String, ask: inout Quiet) -> [Status] {
+    static func status(of pid: pid_t, bundle: String, ask: inout Quiet) -> [Status] {
         guard let bar: AXUIElement = ask.value(AX.app(pid, timeout: 0.1), "AXExtrasMenuBar") else { return [] }
         let children: [AXUIElement] = ask.value(bar, kAXChildrenAttribute) ?? []
         var out: [Status] = []
