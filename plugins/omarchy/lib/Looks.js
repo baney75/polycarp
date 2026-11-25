@@ -190,7 +190,8 @@ function toOmarchy(theme, mode) {
     darker_background: mix(r.sunken, deep, dark ? 0.3 : 0.08),
     lighter_background: r.surface,
     foreground: r.foreground,
-    dark_foreground: mix(r.foreground, r.background, 0.45),
+    // Dim and disabled text in Omarchy's templates: quiet, but held to the 3:1 a mark needs.
+    dark_foreground: fit(mix(r.foreground, r.background, 0.45), ground, MARK, r.foreground),
     light_foreground: fit(mix(r.foreground, r.muted, 0.6), ground, TEXT, r.strong),
     bright_foreground: r.strong,
     red: r.urgent,
@@ -258,6 +259,145 @@ function base64(bytes) {
   for (var i = 0; i < bytes.length; i += 3) {
     var n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0)
     out += abc[n >> 18] + abc[(n >> 12) & 63] + (i + 1 < bytes.length ? abc[(n >> 6) & 63] : "=") + (i + 2 < bytes.length ? abc[n & 63] : "=")
+  }
+  return out
+}
+
+// ---- From Omarchy
+
+// An Omarchy palette as a Polycarp theme. Polycarp refuses a theme that is hard to read, so a color that misses goes
+// toward the foreground until it reads; `fitted` says which, and how they read before.
+function fromOmarchy(id, colors, font) {
+  var mode = colors.mode === "light" ? "light" : "dark"
+  var bg = colors.background
+  var fg = colors.foreground
+  if (!isHex(bg) || !isHex(fg)) return null
+  var strong = isHex(colors.bright_foreground) ? colors.bright_foreground : fg
+  // Ink that reads on all three grounds, whatever the theme calls its brightest.
+  var far = contrast("#ffffff", bg) > contrast("#000000", bg) ? "#ffffff" : "#000000"
+  var pick = function(keys, fallback) {
+    for (var i = 0; i < keys.length; i++) if (isHex(colors[keys[i]])) return colors[keys[i]]
+    return fallback
+  }
+  var want = {
+    background: bg,
+    surface: pick(["lighter_background"], mix(bg, fg, 0.06)),
+    sunken: pick(["dark_background"], mix(bg, fg, 0.04)),
+    foreground: fg,
+    strong: strong,
+    muted: pick(["muted"], mix(fg, bg, 0.35)),
+    border: mix(bg, fg, 0.2),
+    accent: pick(["accent", "blue"], fg),
+    selection: pick(["selection"], mix(bg, fg, 0.16)),
+    urgent: pick(["red"], fg),
+    working: pick(["yellow", "orange"], fg),
+    done: pick(["green"], fg)
+  }
+  var grounds = [want.background, want.surface, want.sunken]
+  var out = {}
+  for (var key in want) out[key] = want[key]
+  out.foreground = fit(want.foreground, grounds, TEXT, far)
+  out.strong = fit(want.strong, grounds, TEXT, far)
+  out.muted = fit(want.muted, grounds, TEXT, out.strong)
+  out.selection = fit2(want.selection, [out.foreground, out.strong], TEXT, want.background)
+  var status = ["urgent", "working", "done", "accent"]
+  for (var i = 0; i < status.length; i++)
+    out[status[i]] = fit(want[status[i]], [want.background, want.surface], TEXT, far)
+  out.on_accent = contrast(bg, out.accent) >= TEXT ? bg : contrast("#ffffff", out.accent) > contrast("#000000", out.accent) ? "#ffffff" : "#000000"
+  var fitted = []
+  for (key in want) {
+    if (want[key].toLowerCase() === out[key].toLowerCase()) continue
+    var ratio = key === "selection" ? worst(want[key], [out.foreground, out.strong]) : worst(want[key], grounds)
+    fitted.push({ role: key, was: want[key], ratio: Math.floor(ratio * 10) / 10 })
+  }
+  return { id: "omarchy-" + slug(id), title: titled(id), mode: mode, colors: out, fitted: fitted, misses: misses(out, PAIRS), font: font || "" }
+}
+
+// The ground moves here, not the ink.
+function fit2(ground, inks, least, to) {
+  for (var t = 0; t < 1; t += 0.05) {
+    var c = mix(ground, to, t)
+    if (worst(c, inks) >= least) return c
+  }
+  return to
+}
+
+function slug(id) {
+  return String(id).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 39) || "theme"
+}
+
+function titled(id) {
+  return String(id).replace(/[^A-Za-z0-9]+/g, " ").trim().replace(/(^| )([a-z])/g, function(all, gap, c) { return gap + c.toUpperCase() })
+}
+
+function themeToml(made) {
+  var lines = [
+    "# From the Omarchy theme " + made.title + ". Polycarp wrote this file.",
+    "name = \"" + made.id + "\"",
+    "title = \"" + made.title + "\"",
+    "description = \"" + made.title + ", from Omarchy\"",
+    "extends = \"polycarp\"",
+    "",
+    "[" + made.mode + "]"
+  ]
+  for (var i = 0; i < ROLES.length; i++) lines.push(ROLES[i] + " = \"" + made.colors[ROLES[i]] + "\"")
+  // A font name Polycarp's format takes: letters, digits, spaces, hyphens and underscores.
+  if (/^[A-Za-z0-9 _-]{1,60}$/.test(made.font)) lines.push("", "[type]", "mono = \"'" + made.font + "', monospace\"")
+  return lines.join("\n") + "\n"
+}
+
+// ---- What scripts/look list prints
+
+function parseList(text) {
+  var out = { theme: "", colors: {}, font: "", user: {}, undo: false, taken: {} }
+  var section = ""
+  var name = ""
+  var body = []
+  var close = function() {
+    var t = body.join("\n")
+    if (section === "colors") out.colors = parseToml(t)
+    if (section === "user" && name && !unsafe(name)) out.user[name] = parseToml(t)
+    body = []
+  }
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var m = lines[i].match(/^\u001e(\w+) ?(.*)$/)
+    if (!m) { body.push(lines[i]); continue }
+    close()
+    section = m[1]
+    name = m[2]
+    if (section === "theme") out.theme = name
+    if (section === "font") out.font = name
+    if (section === "undo") out.undo = true
+    if (section === "taken") out.taken[name] = true
+  }
+  close()
+  return out
+}
+
+// The looks to offer: the built-in themes, then the user's own that are whole, each in both modes. A theme that differs
+// from one before it only in what Omarchy has no place for, its shapes or its motion, is not offered twice. Nor is one
+// whose Omarchy id another look already has: "x-light" in dark and "x" in light are both polycarp-x-light, and the
+// first one keeps it.
+function offer(builtin, user, taken) {
+  var all = {}
+  var key
+  for (key in builtin) all[key] = builtin[key]
+  for (key in user) if (!builtin.hasOwnProperty(key) && key.indexOf("omarchy-") !== 0) all[key] = user[key]
+  var out = []
+  var seen = {}
+  for (key in all) {
+    var theme = resolve(key, all)
+    if (!theme) continue
+    var colors = JSON.stringify([theme.light, theme.dark]).toLowerCase()
+    var ids = [omarchyId(key, "dark"), omarchyId(key, "light")]
+    if (seen[colors] || seen[ids[0]] || seen[ids[1]]) continue
+    seen[colors] = seen[ids[0]] = seen[ids[1]] = true
+    out.push({
+      name: key, title: theme.title, description: theme.description, own: !builtin.hasOwnProperty(key),
+      dark: toOmarchy(theme, "dark"), light: toOmarchy(theme, "light"),
+      taken: { dark: taken[ids[0]] === true, light: taken[ids[1]] === true }
+    })
   }
   return out
 }
