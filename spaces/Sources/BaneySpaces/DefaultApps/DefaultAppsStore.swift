@@ -11,12 +11,18 @@ final class DefaultAppsStore {
         var resolved: [AppRole: ResolvedDefault] = [:]
         /// Where a program opens (`DefaultAppResolver.terminalForCommands`).
         var programs: DefaultCandidate?
+        /// The keys that open them.
+        var keys = RoleKeys.Plan()
         /// What is wrong in the file, one line each.
         var warnings: [String] = []
     }
 
     /// Main thread.
     private(set) var now = Now()
+    /// Chords macOS wouldn't give us when they were registered. Main thread.
+    var refused: Set<Chord> = []
+    /// The keys as they are now, for the shortcut lists.
+    var keys: RoleKeys.Plan { now.keys.leaving(refused) }
     private var log: (String) -> Void = { _ in }
     private let queue = DispatchQueue(label: "com.baney.polycarp.default-apps", qos: .userInitiated)
     // Only on `queue`.
@@ -62,7 +68,8 @@ final class DefaultAppsStore {
         var next = Now()
         for role in AppRole.allCases { next.resolved[role] = DefaultAppResolver.resolve(role, choice: choices.apps[role], installed: installed) }
         next.programs = DefaultAppResolver.terminalForCommands(choice: choices.apps[.terminal], installed: installed)
-        next.warnings = choices.warnings + (problem.map { [$0] } ?? [])
+        next.keys = RoleKeys.now(modifier: Modifier.current.rawValue)
+        next.warnings = choices.warnings + next.keys.warnings + (problem.map { [$0] } ?? [])
         DispatchQueue.main.async {
             guard next != self.now else { return }
             if next.warnings != self.now.warnings { next.warnings.forEach { self.log("default apps: \($0)") } }

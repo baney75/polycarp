@@ -72,12 +72,12 @@ public enum DefaultAppsFile {
         out.apps[role] = app
     }
 
-    /// The lines of `[defaults]`, with their numbers in the file.
-    private static func lines(in text: String) -> [(Int, Substring)] {
+    /// The lines of a table, with their numbers in the file.
+    static func lines(of table: String = section, in text: String) -> [(Int, Substring)] {
         var inside = false
         var out: [(Int, Substring)] = []
         for (i, line) in text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).enumerated() {
-            if let h = header(line) { inside = h == section } else if inside { out.append((i + 1, line)) }
+            if let h = header(line) { inside = h == table } else if inside { out.append((i + 1, line)) }
         }
         return out
     }

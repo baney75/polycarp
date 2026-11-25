@@ -1,8 +1,9 @@
 import BaneySpacesCore
 import Foundation
 
-/// `polycarp-spaces keys`: every Polycarp shortcut, with this Mac's modifier read where the app keeps it (the "modifier"
-/// default in the app's domain) and the tiling keys as surfaces.json has them. Works with the app running or not. `--json` is an array of
+/// `polycarp-spaces keys`: every Polycarp shortcut, with the tiling keys as surfaces.json has them, your keys for the
+/// default apps (`RoleKeys`) and this Mac's modifier read where the app keeps it (the "modifier" default in the app's
+/// domain). Works with the app running or not. `--json` is an array of
 /// {id, keys, display, title, group, scope}, which `polycarp mcp`'s `keys_list` wraps in its envelope.
 enum KeysCommand {
     static let usage = """
@@ -27,6 +28,7 @@ enum KeysCommand {
     static func run(_ args: [String], remote: Bool) -> Never {
         if remote { fail("keys reads this Mac's settings; run it on the other machine", code: 2) }
         let symbol = Keymap.modifierSymbol(setting: modifierSetting)
+        let rows = Keymap.rows(RoleKeys.now(modifier: modifierSetting), in: rows)
         switch args {
         case []: print(Keymap.cheatSheet(modifierSymbol: symbol, rows: rows))
         case ["--json"]: print(Keymap.json(modifierSymbol: symbol, rows: rows))
