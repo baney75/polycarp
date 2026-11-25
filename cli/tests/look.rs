@@ -2,6 +2,7 @@
 //! changed.
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -113,6 +114,34 @@ fn v_exit(v: &Value) -> i32 {
     }
 }
 
+fn base64(b: &[u8]) -> String {
+    let abc = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in b.chunks(3) {
+        let n = c
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, x)| n | (*x as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            out.push(if i <= c.len() {
+                abc[(n >> (18 - 6 * i)) as usize & 63] as char
+            } else {
+                '='
+            });
+        }
+    }
+    out
+}
+
+fn sha(b: &[u8]) -> String {
+    Sha256::digest(b)
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect()
+}
+
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnot much of a picture, but its own bytes say PNG";
+
 /// A look that is fine, for a test to spoil.
 fn hostile() -> Value {
     json!({"schema": 1, "name": "hostile", "theme": {"builtin": "evening"}})
@@ -161,6 +190,10 @@ fn unknown_keys_are_refused_with_their_path() {
     assert_eq!(
         sb.refused(&with("surfaces", json!({"plugins": true}))),
         ["surfaces.plugins"]
+    );
+    assert_eq!(
+        sb.refused(&with("paper", json!({"lock": "olive"}))),
+        ["paper.lock"]
     );
     let doc = json!({"document": {"name": "x", "extends": "evening", "surprise": 1}});
     assert_eq!(sb.refused(&with("theme", doc)), ["theme.document.extends"]);
@@ -300,6 +333,73 @@ fn values_that_name_a_place_or_are_not_values_are_refused() {
     assert_eq!(sb.refused(&with("schema", json!(2))), ["schema"]);
     assert_eq!(sb.refused("[]"), ["$"]);
     assert_eq!(sb.refused("not json"), ["$"]);
+    for p in ["https://evil.example/x.png", "/etc/passwd", "#12", "nebula"] {
+        assert_eq!(
+            sb.refused(&with("paper", json!({"all": p}))),
+            ["paper.all"],
+            "{p}"
+        );
+    }
+}
+
+#[test]
+fn pictures_are_checked_by_their_own_bytes() {
+    let sb = Sandbox::new();
+    let look = |pics: Value, paper: &str| {
+        let mut l = hostile();
+        l["paper"] = json!({"all": {"picture": paper}});
+        l["pictures"] = pics;
+        l.to_string()
+    };
+    let one = |kind: &str, b: &[u8]| json!({sha(b): {"type": kind, "base64": base64(b)}});
+    let v = sb.json_in(
+        &["look", "import", "-", "--name", "good"],
+        &look(one("image/png", PNG), &sha(PNG)),
+    );
+    assert_eq!(v["ok"], true, "{v}");
+    let script = b"#!/bin/sh\nrm -rf ~\n";
+    let at = |b: &[u8]| format!("pictures.{}", sha(b));
+    assert!(sb
+        .refused(&look(one("image/png", script), &sha(script)))
+        .contains(&at(script)));
+    let svg = b"<svg onload='x()'/>";
+    assert!(sb
+        .refused(&look(one("image/svg+xml", svg), &sha(svg)))
+        .contains(&at(svg)));
+    assert!(sb
+        .refused(&look(one("image/jpeg", PNG), &sha(PNG)))
+        .contains(&format!("{}.type", at(PNG))));
+    let wrong = json!({"0".repeat(64): {"type": "image/png", "base64": base64(PNG)}});
+    assert!(sb
+        .refused(&look(wrong, &"0".repeat(64)))
+        .contains(&format!("pictures.{}", "0".repeat(64))));
+    for b64 in ["****", "AAA", "AA=A", "A===", "iVBORw0K Ggo="] {
+        let p = json!({sha(PNG): {"type": "image/png", "base64": b64}});
+        assert!(sb.refused(&look(p, &sha(PNG))).contains(&at(PNG)), "{b64}");
+    }
+    // Padding in the middle reads as zeros in a loose decoder, which would give these very bytes.
+    let zeros = [PNG, &[0, 0, 0]].concat();
+    let loose = base64(&zeros).replacen('A', "=", 1);
+    assert_ne!(loose, base64(&zeros));
+    let p = json!({sha(&zeros): {"type": "image/png", "base64": loose}});
+    assert!(sb.refused(&look(p, &sha(&zeros))).contains(&at(&zeros)));
+    let mut extra = one("image/png", PNG);
+    extra[sha(PNG)]["path"] = json!("/etc/passwd");
+    assert!(sb
+        .refused(&look(extra, &sha(PNG)))
+        .contains(&format!("{}.path", at(PNG))));
+    // One no paper uses has no business in the file.
+    assert_eq!(
+        sb.refused(&with("pictures", one("image/png", PNG))),
+        [at(PNG)]
+    );
+    let mut big = PNG.to_vec();
+    big.resize(25 * 1024 * 1024 + 1, 0);
+    assert!(
+        sb.refused(&look(one("image/png", &big), &sha(&big)))
+            .contains(&"$".to_string()),
+        "over 32 MB in all"
+    );
 }
 
 #[test]

@@ -4,6 +4,7 @@
 
 mod fields;
 mod format;
+mod paper;
 mod store;
 
 pub(crate) use format::{plain, shown};
@@ -232,6 +233,7 @@ fn leaves_alone(look: &Look) -> Vec<&'static str> {
     let has = [
         (look.style.is_some(), "style"),
         (look.surfaces.is_some(), "surfaces"),
+        (look.paper.is_some(), "paper"),
     ];
     has.iter().filter(|(h, _)| !h).map(|(_, n)| *n).collect()
 }
