@@ -3,6 +3,7 @@
 
 pub mod chrome;
 pub mod http;
+pub mod vaults;
 
 use polycarp_sync::passkey::{self, Passkey, Proof};
 use serde_json::{json, Value};

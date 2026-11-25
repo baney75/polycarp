@@ -10,6 +10,7 @@ pub mod record;
 pub mod seal;
 pub mod secret;
 pub mod store;
+pub mod vault;
 
 #[cfg(test)]
 extern crate self as polycarp_sync;
