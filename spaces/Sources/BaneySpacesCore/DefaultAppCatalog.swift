@@ -35,7 +35,7 @@ public enum DefaultAppCatalog {
     ]
 
     static func note(_ bundle: String, for role: AppRole) -> String? {
-        role == .terminal && !runsCommands.contains(bundle) ? "Can't be told what to run, so agents open in another terminal" : nil
+        role == .terminal && !runsCommands.contains(bundle) ? "Can't be told what to run, so programs open in another terminal" : nil
     }
 
     public static func commands(_ role: AppRole) -> [Command] {

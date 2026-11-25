@@ -7,8 +7,10 @@ and agents. Built on the Mac. Windows and Linux: unchanged, and the file format 
 
 ### R-D1 Who does the job
 Your choice, if it is installed. Then the system's own default for the job, if that is installed: on the Mac what opens
-`http`, `mailto`, `webcal`, plain text, folders, and shell scripts. Then the first app of the catalog that is installed.
-Terminal opening shell scripts, as it does on every new Mac, is no choice of a terminal, so it comes after the others.
+`http`, `mailto`, `webcal`, plain text, folders, and programs
+(`public.unix-executable`). Then the first app of the catalog that is installed.
+Terminal opening programs, as it does on every new Mac, is no choice of a terminal, so it comes after the others,
+and for a terminal only an app the catalog lists counts as the system's. An identifier is one app in any case.
 
 ### R-D2 A choice that is gone stays yours
 A choice that isn't installed falls through to the next answer, which says so, and is not erased.

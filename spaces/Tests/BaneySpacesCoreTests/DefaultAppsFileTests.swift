@@ -42,7 +42,7 @@ final class DefaultAppsFileTests: XCTestCase {
         XCTAssertEqual(c.apps, [.mail: .app("com.apple.mail")])
         XCTAssertEqual(c.warnings.count, 2)
         XCTAssertTrue(c.warnings[0].hasPrefix("defaults.terminal (line 2): "), c.warnings[0])
-        XCTAssertEqual(c.warnings[1], "defaults.mail (line 4) is set twice; the first one counts")
+        XCTAssertEqual(c.warnings.last, "defaults.mail (line 4) is set twice; the first one counts")
     }
 
     func testATroubleElsewhereInTheFileDoesNotReachTheChoices() {

@@ -23,7 +23,7 @@ public enum AppRole: String, CaseIterable, Codable, Sendable {
         case .calendar: .scheme("webcal")
         case .editor: .type("public.plain-text")
         case .files: .type("public.folder")
-        case .terminal: .type("com.apple.terminal.shell-script")
+        case .terminal: .type("public.unix-executable")
         case .agent, .messages, .notes, .music, .passwords: nil
         }
     }
@@ -52,7 +52,12 @@ public enum DefaultApp: Hashable, Sendable {
         if DefaultAppCatalog.command(id, for: role) != nil { self = .command(id); return }
         guard id.contains("."), !id.hasPrefix("."), !id.hasSuffix("."), id.utf8.count <= 255,
               id.utf8.allSatisfy(DefaultApp.bundleCharacters.contains) else { return nil }
-        self = .app(id)
+        self = DefaultApp.app(bundle: id, for: role)
+    }
+
+    /// An app spelled as the catalog spells it. macOS reads a bundle identifier in any case, so every spelling is one app.
+    static func app(bundle: String, for role: AppRole) -> DefaultApp {
+        DefaultAppCatalog.entries(role).map(\.app).first { $0 == .app($0.id) && $0.id.lowercased() == bundle.lowercased() } ?? .app(bundle)
     }
 
     private static let bundleCharacters = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.".utf8)
@@ -133,8 +138,7 @@ public enum DefaultAppResolver {
     /// nil only where no such terminal is installed, which no Mac is: Terminal is part of macOS.
     public static func terminalForCommands(choice: DefaultApp?, installed: InstalledApps) -> DefaultCandidate? {
         let r = resolve(.terminal, choice: choice, installed: installed)
-        if let app = r.app, app.note == nil { return app }
-        return r.candidates.first { $0.note == nil }
+        return ([r.app].compactMap { $0 } + r.candidates).first { DefaultAppCatalog.runsCommands.contains($0.app.id) }
     }
 
     /// The app or program, or nil when it isn't installed or can't do this job.
@@ -149,13 +153,15 @@ public enum DefaultAppResolver {
         }
     }
 
-    /// macOS's answer, when it is an app that is installed. Terminal opens shell scripts on every Mac until someone
-    /// moves them, so Terminal there says nothing about what you'd rather use; nor does an editor that opens them.
+    /// macOS's answer, when it is an app that is installed. Terminal opens programs (what iTerm2 and Ghostty's own
+    /// "default terminal" menu items change) on every Mac until someone moves them, so Terminal there says nothing about
+    /// what you'd rather use; nor does an app the catalog doesn't know as a terminal.
     private static func systemDefault(_ role: AppRole, _ installed: InstalledApps) -> DefaultCandidate? {
         guard let q = role.systemQuestion, let bundle = installed.systemDefault(q) else { return nil }
-        if role == .terminal, bundle == TerminalChoice.terminal || !DefaultAppCatalog.entries(.terminal).contains(where: { $0.app == .app(bundle) }) {
+        let app = DefaultApp.app(bundle: bundle, for: role)
+        if role == .terminal, app.id == TerminalChoice.terminal || !DefaultAppCatalog.entries(.terminal).contains(where: { $0.app == app }) {
             return nil
         }
-        return candidate(.app(bundle), role, installed)
+        return candidate(app, role, installed)
     }
 }

@@ -39,7 +39,7 @@ final class DefaultAppsTests: XCTestCase {
     func testEachRoleAsksMacOSItsOwnQuestion() {
         let mac = FakeInstalledApps(["x.http": "H", "x.mail": "M", "x.cal": "C", "x.text": "T", "x.dir": "D", "com.googlecode.iterm2": "iTerm2"],
             system: [.scheme("http"): "x.http", .scheme("mailto"): "x.mail", .scheme("webcal"): "x.cal", .type("public.plain-text"): "x.text",
-                     .type("public.folder"): "x.dir", .type("com.apple.terminal.shell-script"): "com.googlecode.iterm2"])
+                     .type("public.folder"): "x.dir", .type("public.unix-executable"): "com.googlecode.iterm2"])
         let want: [AppRole: String] = [.browser: "H", .mail: "M", .calendar: "C", .editor: "T", .files: "D", .terminal: "iTerm2"]
         for role in AppRole.allCases { XCTAssertEqual(resolve(role, nil, mac).app?.name, want[role], role.rawValue) }
     }
@@ -94,11 +94,13 @@ final class DefaultAppsTests: XCTestCase {
     }
 
     func testTerminalAsMacOSShipsItIsNoChoice() {
-        let shell = AppRole.SystemQuestion.type("com.apple.terminal.shell-script")
+        let shell = AppRole.SystemQuestion.type("public.unix-executable")
         let mac = FakeInstalledApps(["com.apple.Terminal": "Terminal", "net.kovidgoyal.kitty": "kitty", "x.editor": "Ed"], system: [shell: "com.apple.Terminal"])
         XCTAssertEqual(resolve(.terminal, nil, mac).app?.name, "kitty")
         mac.system[shell] = "x.editor"
         XCTAssertEqual(resolve(.terminal, nil, mac).app?.name, "kitty", "an editor that opens scripts is no terminal")
+        mac.system[shell] = "NET.kovidgoyal.kitty"
+        XCTAssertEqual(resolve(.terminal, nil, mac).source, .system)
         mac.apps["net.kovidgoyal.kitty"] = nil
         XCTAssertEqual(resolve(.terminal, nil, mac).app?.name, "Terminal")
         XCTAssertEqual(resolve(.terminal, "com.apple.Terminal", mac).source, .you)
@@ -110,8 +112,14 @@ final class DefaultAppsTests: XCTestCase {
         XCTAssertEqual(pick("com.apple.Terminal"), "Terminal")
         XCTAssertEqual(pick("dev.warp.Warp-Stable"), "Alacritty")
         let warp = resolve(.terminal, "dev.warp.Warp-Stable", mac)
-        XCTAssertEqual(warp.app?.note, "Can't be told what to run, so agents open in another terminal")
+        XCTAssertEqual(warp.app?.note, "Can't be told what to run, so programs open in another terminal")
         XCTAssertEqual(warp.candidates.filter { $0.note == nil }.map(\.name), ["Alacritty", "Terminal"])
+        mac.apps["x.term"] = "Own"
+        XCTAssertEqual(pick("x.term"), "Alacritty", "nor one the catalog doesn't know")
+        mac.apps["com.googlecode.iterm2"] = "iTerm2"
+        mac.apps["com.mitchellh.ghostty"] = "Ghostty"
+        mac.system[.type("public.unix-executable")] = "com.googlecode.iterm2"
+        XCTAssertEqual(pick("x.gone"), "iTerm2", "macOS's own terminal before the first installed one")
     }
 
     func testSpellings() {
@@ -122,6 +130,8 @@ final class DefaultAppsTests: XCTestCase {
         for bad in ["", "Ghostty", ".x", "x.", "a b.c", "a/b.c", "$(x).y", "com.x\n", "com.\u{e9}"] {
             XCTAssertNil(DefaultApp(id: bad, role: .terminal), bad.debugDescription)
         }
+        XCTAssertEqual(DefaultApp(id: "COM.apple.terminal", role: .terminal), .app("com.apple.Terminal"), "one app in any case")
+        XCTAssertEqual(DefaultApp(id: "com.apple.terminal", role: .browser), .app("com.apple.terminal"))
         XCTAssertEqual(DefaultApp(id: "dev.warp.Warp-Stable", role: .terminal)?.id, "dev.warp.Warp-Stable")
     }
 
