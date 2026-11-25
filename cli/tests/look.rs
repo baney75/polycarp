@@ -263,6 +263,7 @@ fn names_that_could_leave_the_folder_are_refused() {
         fs::write(&f, with("name", json!(n))).unwrap();
         let f = f.display().to_string();
         assert_eq!(sb.no(&["look", "show", &f]), "invalid_look", "{n:?}");
+        assert_eq!(sb.no(&["look", "apply", &f]), "invalid_look", "{n:?}");
     }
     assert_eq!(sb.refused(&with("name", json!("polycarp"))), ["name"]);
     assert!(!sb.at("cfg/looks").exists(), "nothing was written");
@@ -807,6 +808,26 @@ fn dress(sb: &Sandbox) {
     put("live/paper.idle", "olive");
 }
 
+/// Everything a look can change, byte for byte (a picture by what is in it).
+#[cfg(unix)]
+fn whole(sb: &Sandbox) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    for f in ["cfg/config.toml", "cfg/style.css", "cfg/current/theme.json"] {
+        out.push((f.to_string(), fs::read(sb.at(f)).unwrap_or_default()));
+    }
+    for d in ["live", "cfg/themes"] {
+        for e in fs::read_dir(sb.at(d)).into_iter().flatten().flatten() {
+            let mut b = fs::read(e.path()).unwrap();
+            if b.starts_with(b"/") {
+                b = fs::read(String::from_utf8(b).unwrap()).unwrap();
+            }
+            out.push((format!("{d}/{}", e.file_name().to_string_lossy()), b));
+        }
+    }
+    out.sort();
+    out
+}
+
 #[cfg(unix)]
 #[test]
 fn save_reads_everything_and_leaves_out_what_is_the_persons_own() {
@@ -919,4 +940,155 @@ fn a_look_is_in_force_only_when_every_part_of_it_is() {
         v["data"]["warnings"].to_string().contains("can't be read"),
         "{v}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_look_comes_back_byte_for_byte() {
+    let sb = with_spaces();
+    dress(&sb);
+    let was = whole(&sb);
+    sb.ok(&["look", "save", "mine"]);
+    let file = sb.at("sent.polycarp-look").display().to_string();
+    sb.ok(&["look", "export", "mine", &file]);
+    // Change everything.
+    let d = sb.ok(&["look", "apply", "polycarp"]);
+    assert_eq!(d["changed"], true);
+    assert_eq!(sb.current(), ["polycarp"]);
+    assert_eq!(sb.text("cfg/style.css"), None);
+    assert_eq!(
+        sb.text("live/search.engine").unwrap(),
+        "\"kagi\"",
+        "not a look's to change"
+    );
+    assert_eq!(
+        sb.text("live/bar.modules.left").unwrap(),
+        r#"["mark","custom:me","workspaces"]"#,
+        "theirs stays"
+    );
+    assert!(!sb.at("live/paper.all").exists() && !sb.at("live/paper.idle").exists());
+    fs::remove_file(sb.at("pic.png")).unwrap();
+    // And put it on again, from the file.
+    sb.ok(&["look", "apply", &file]);
+    fs::write(sb.at("pic.png"), PNG).unwrap();
+    assert_eq!(whole(&sb), was);
+    sb.ok(&["look", "save", "again", "--title", "Mine"]);
+    let again = sb
+        .text("cfg/looks/again.polycarp-look")
+        .unwrap()
+        .replace("\"again\"", "\"mine\"");
+    assert_eq!(Some(again), sb.text("cfg/looks/mine.polycarp-look"));
+}
+
+#[cfg(unix)]
+#[test]
+fn someone_elses_look_brings_its_theme_and_never_replaces_yours() {
+    let (a, b) = (with_spaces(), with_spaces());
+    dress(&a);
+    a.ok(&["look", "save", "mine"]);
+    let file = a.at("cfg/looks/mine.polycarp-look").display().to_string();
+    b.ok(&["look", "apply", &file]);
+    assert_eq!(b.ok(&["theme", "current"])["theme"], "mine");
+    // Their own theme of that name stays as it is.
+    let b = with_spaces();
+    b.ok(&["theme", "create", "mine", "--extends", "parchment"]);
+    let own = b.text("cfg/themes/mine.toml");
+    let d = b.ok(&["look", "apply", &file]);
+    assert!(d["notes"].to_string().contains("mine-look"), "{d}");
+    assert_eq!(b.ok(&["theme", "current"])["theme"], "mine-look");
+    assert_eq!(b.text("cfg/themes/mine.toml"), own);
+    // Once is enough: the same look again finds the theme it brought.
+    b.ok(&["theme", "set", "evening"]);
+    b.ok(&["look", "apply", &file]);
+    assert!(!b.at("cfg/themes/mine-look-2.toml").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_step_that_fails_puts_everything_back() {
+    let sb = with_spaces();
+    dress(&sb);
+    let was = whole(&sb);
+    let history = sb.ok(&["theme", "history"]);
+    for (fail, step) in [
+        ("style reset", "style"),
+        ("surfaces reset", "surfaces"),
+        ("paper reset", "paper"),
+    ] {
+        fs::write(sb.at("fail"), fail).unwrap();
+        let v = sb.json(&["look", "apply", "polycarp"]);
+        assert_eq!(v["error"]["code"], "step_failed", "{v}");
+        let m = v["error"]["message"].as_str().unwrap();
+        assert!(
+            m.starts_with(&format!(
+                "the {step} step failed, so everything was put back"
+            )),
+            "{m}"
+        );
+        assert_eq!(whole(&sb), was, "after {step}");
+        assert_eq!(
+            sb.ok(&["theme", "history"]),
+            history,
+            "the theme change is not in history"
+        );
+    }
+    // A sheet that is a link, such as into a person's dotfiles, is neither replaced nor followed.
+    fs::rename(sb.at("cfg/style.css"), sb.at("sheet.css")).unwrap();
+    std::os::unix::fs::symlink(sb.at("sheet.css"), sb.at("cfg/style.css")).unwrap();
+    assert_eq!(sb.no(&["look", "apply", "polycarp"]), "step_failed");
+    assert!(sb.at("cfg/style.css").is_symlink());
+    assert_eq!(whole(&sb), was);
+    fs::remove_file(sb.at("cfg/style.css")).unwrap();
+    fs::rename(sb.at("sheet.css"), sb.at("cfg/style.css")).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_look_is_checked_whole_before_anything_changes() {
+    let sb = with_spaces();
+    dress(&sb);
+    let was = whole(&sb);
+    let calls = |sb: &Sandbox| sb.text("calls").unwrap_or_default();
+    for (key, v) in [
+        ("surfaces", json!({"bar": {"style": "bogus"}})),
+        ("style", json!("bar { color: url(x); }")),
+    ] {
+        let f = sb.at("bad.polycarp-look");
+        fs::write(&f, with(key, v)).unwrap();
+        assert_eq!(
+            sb.no(&["look", "apply", &f.display().to_string()]),
+            "invalid_look"
+        );
+        assert_eq!(whole(&sb), was);
+    }
+    assert!(!calls(&sb).contains(" set ") && !calls(&sb).contains(" reset"));
+    // A dry run says what would change, and changes nothing.
+    let d = sb.ok(&["look", "apply", "polycarp", "--dry-run"]);
+    assert_eq!(
+        (&d["dry_run"], &d["changed"]),
+        (&json!(true), &json!(false))
+    );
+    assert!(
+        d["changes"].to_string().contains("style sheet: none"),
+        "{d}"
+    );
+    assert_eq!(whole(&sb), was);
+    // What is already in force is left alone.
+    sb.ok(&["look", "save", "mine"]);
+    assert_eq!(sb.ok(&["look", "apply", "mine"])["changed"], false);
+}
+
+#[test]
+fn without_spaces_the_theme_part_still_applies() {
+    let sb = Sandbox::new();
+    let l = json!({"schema": 1, "name": "full", "theme": {"builtin": "evening"}, "style": "bar { color: #fff; }",
+        "surfaces": {"bar": {"height": 30}}, "paper": {"all": "olive"}});
+    let v = sb.json_in(&["look", "import", "-"], &l.to_string());
+    assert!(
+        v["data"]["notes"].to_string().contains("were not checked"),
+        "{v}"
+    );
+    let d = sb.ok(&["look", "apply", "full"]);
+    assert!(d["notes"].to_string().contains("wait for it"), "{d}");
+    assert_eq!(sb.ok(&["theme", "current"])["theme"], "evening");
 }
