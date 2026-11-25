@@ -27,7 +27,7 @@
   const FIELDS = { hide: [], style: ["style"], text: ["text", "find"], attr: ["name", "value"], move: ["to", "where"], insert: ["where", "blocks"] };
   const FETCHES = ["url(", "src(", "image(", "image-set(", "image-rect(", "filter(", "cross-fade(", "element(", "paint(", "expression("];
   const AT_RULES = ["container", "keyframes", "layer", "media", "starting-style", "supports"];
-  const OURS = "polycarp-ui,polycarp-find,polycarp-filter-bar,polycarp-edits,polycarp-note"; // Polycarp's own parts of a page
+  const OURS = "polycarp-ui,polycarp-find,polycarp-filter-bar,polycarp-edits,polycarp-note,polycarp-moved"; // Polycarp's own parts of a page
   const CONTROL = /[\p{Cc}\p{Cf}]/u;
 
   class Refusal extends Error { constructor(path, why) { super(why); this.path = path; } }
@@ -46,7 +46,7 @@
     const plain = bare(low);
     if (stringInCustomProperty(prop && prop.startsWith("--") ? prop + ":" + plain : plain)) return "may not keep a quoted string in a custom property";
     // A page's own function could load the string it is given.
-    if (/--[-\w\u0080-￿]*\(/.test(plain)) return "may not call a function the page defines (--name(...))";
+    if (/--[-\w\u0080-\uffff]*\(/.test(plain)) return "may not call a function the page defines (--name(...))";
     for (const m of plain.matchAll(/@([a-z-]*)/g)) if (!AT_RULES.includes(m[1])) return "may not use @" + m[1] + "; only " + AT_RULES.map((r) => "@" + r).join(", ");
     return "";
   }
@@ -288,6 +288,7 @@
   const BROAD = [["all"], ["border"], ["border-block", "border-inline", "border-color", "border-image", "border-radius", "border-style", "border-width", "columns", "flex-flow", "gap", "grid-gap", "inset", "place-content", "place-items", "place-self"],
     ["border-block-color", "border-block-style", "border-block-width", "border-inline-color", "border-inline-style", "border-inline-width", "inset-block", "inset-inline"]];
   const rank = (prop) => { const i = BROAD.findIndex((r) => r.includes(prop)); return i < 0 ? BROAD.length : i; };
+  const declared = (style) => Object.entries(style).sort((x, y) => rank(x[0]) - rank(y[0]));
   // The stylesheet the active edits' hide and style changes make; an edit's own css is a sheet of its own. Hide leaves
   // Polycarp's own parts and the page's root. `ok` says whether
   // this browser reads a selector: one it can't is left out, so it doesn't take the rest with it.
@@ -297,7 +298,7 @@
       for (const c of e.changes) {
         if (ok && !ok(c.at)) continue;
         if (c.do === "hide") out.push(":is(" + c.at + "):not(html,body,head," + OURS + "){display:none !important}");
-        else if (c.do === "style") out.push(":is(" + c.at + "):not(" + OURS + "){" + Object.entries(c.style).sort((x, y) => rank(x[0]) - rank(y[0])).map(([k, v]) => k + ":" + v + " !important").join(";") + "}");
+        else if (c.do === "style") out.push(":is(" + c.at + "):not(" + OURS + "){" + declared(c.style).map(([k, v]) => k + ":" + v + " !important").join(";") + "}");
       }
     }
     return out.join("\n");
@@ -322,5 +323,5 @@
     return parts.join(" · ");
   }
 
-  globalThis.PolycarpEdits = { LOCAL_KEY, APP_KEY, OFF_KEY, MAX, WHERES, ATTRS, NEVER, EDITORS, CARRY, OURS, check, merge, fingerprint, cssProblem, selectorProblem, site, onSite, onPath, active, sheet, describe, summary };
+  globalThis.PolycarpEdits = { LOCAL_KEY, APP_KEY, OFF_KEY, MAX, WHERES, ATTRS, NEVER, EDITORS, CARRY, OURS, check, merge, fingerprint, cssProblem, selectorProblem, site, onSite, onPath, active, declared, sheet, describe, summary };
 })();
