@@ -34,6 +34,7 @@
   const DEFAULTS = {
     schema: SCHEMA,
     enabled: true,
+    matchTheme: true,
     autoApply: true,
     sites: {},
     pausedUntil: 0,
@@ -322,23 +323,170 @@
   }
 
   // ---------- Theme ----------
-  // theme.css is the Polycarp theme as `polycarp theme export css` writes it. Extension pages link it; the content
-  // script, the service worker and canvas drawing read values from its text with these helpers.
+  // theme.css is the shipped Polycarp theme as `polycarp theme export css` writes it; extension pages link it. Where the
+  // Polycarp app has a theme in force, its values (soundTheme) are kept in storage under THEME_KEY as {theme, stamp}, and
+  // rules built here go after the shipped ones, unless the person switched that off (settings.matchTheme).
   const THEME_FILE = "src/shared/theme.css";
+  const THEME_KEY = "polycarp.theme";
+  const THEME_HOST = "com.polycarp.newtab";
+
+  // What each value may be. A check gives the text to write, or null for a value to leave out; nothing else of what the
+  // app sent reaches a stylesheet. `tests/theme-rules.test.mjs` holds these names to those in theme.css.
+  const COLORS = ["background", "surface", "sunken", "foreground", "strong", "muted", "border", "accent", "on-accent", "selection", "urgent", "working", "done"];
+  const color = (v) => (/^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : null);
+  const amount = (unit, lo, hi) => (v) => {
+    const m = /^(\d{1,4}(?:\.\d{1,4})?)(px|ms)?$/.exec(v);
+    return m && (m[2] || "") === unit && Number(m[1]) >= lo && Number(m[1]) <= hi ? v : null;
+  };
+  const oneOf = (...words) => (v) => (words.includes(v) ? v : null);
+  const easing = (v) => {
+    if (oneOf("linear", "ease", "ease-in", "ease-out", "ease-in-out")(v)) return v;
+    const m = /^cubic-bezier\(([^()]{1,60})\)$/.exec(v);
+    const n = m ? m[1].split(",").map((x) => x.trim()) : [];
+    if (n.length !== 4 || !n.every((x) => /^-?(?:\d{1,2}(?:\.\d{1,6})?|\.\d{1,6})$/.test(x))) return null;
+    return [n[0], n[2]].every((x) => x >= 0 && x <= 1) ? "cubic-bezier(" + n.join(", ") + ")" : null;
+  };
+  // Family names with commas between: plain, or in quotes when they hold no character CSS gives a meaning to. A stack with
+  // no generic name of its own gets one, so a font that isn't on this computer never falls to the browser's default.
+  const FONT_PLAIN = /^-?[\p{L}_][\p{L}\p{N} _-]*$/u;
+  const FONT_QUOTED = /^(["'])(?!\s*\1)[^"'\\<>;{}()\p{C}\p{Zl}\p{Zp}]+\1$/u;
+  const FONT_GENERIC = /^(?:serif|sans-serif|monospace|system-ui|ui-(?:serif|sans-serif|monospace|rounded))$/i;
+  const FONT_NOT = /^(?:inherit|initial|unset|revert|revert-layer|default|none)$/i;
+  const stack = (generic) => (v) => {
+    if (v.length > 300 || /\/\*/.test(v)) return null;
+    const names = [];
+    let rest = v;
+    do {
+      const m = /^\s*("[^"]*"|'[^']*'|[^,"']+?)\s*(,|$)/u.exec(rest);
+      if (!m || !(FONT_QUOTED.test(m[1]) || (FONT_PLAIN.test(m[1]) && !FONT_NOT.test(m[1])))) return null;
+      names.push(m[1]);
+      rest = rest.slice(m[0].length);
+      if (!rest && m[2]) return null;
+    } while (rest);
+    return names.concat(names.some((n) => FONT_GENERIC.test(n)) ? [] : generic).join(", ");
+  };
+  const SHARED = {
+    "radius-small": amount("px", 0, 64), radius: amount("px", 0, 64), "radius-large": amount("px", 0, 64),
+    "border-width": amount("px", 0, 8), blur: amount("px", 0, 80), shadow: amount("", 0, 1),
+    density: oneOf("compact", "regular", "spacious"), indicator: oneOf("dot", "bar", "number-block"),
+    "font-display": stack("serif"), "font-ui": stack(["system-ui", "sans-serif"]), "font-mono": stack(["ui-monospace", "monospace"]),
+    "font-size": amount("px", 10, 24), "font-weight": amount("", 300, 800), "line-height": amount("", 1, 2),
+    "motion-fast": amount("ms", 0, 1000), "motion-normal": amount("ms", 0, 1000), "motion-slow": amount("ms", 0, 1000),
+    "motion-easing": easing, "motion-scale-from": amount("", 0.5, 1)
+  };
+
+  // The theme with only known names and checked values, or null. Colors come whole: a theme with one color missing or odd
+  // in either mode would put some of its colors on some of the shipped ones, which nobody checked for contrast. Any
+  // other value that fails is left out, so the shipped one stays.
+  function soundTheme(theme) {
+    if (!isObj(theme) || !["auto", "light", "dark"].includes(theme.mode)) return null;
+    const take = (from, names, check) => {
+      const out = {};
+      if (!isObj(from)) return out;
+      for (const n of names) {
+        const raw = Object.prototype.hasOwnProperty.call(from, "--pc-" + n) ? from["--pc-" + n] : null;
+        const v = typeof raw === "string" ? check(n)(raw) : null;
+        if (v !== null) out["--pc-" + n] = v;
+      }
+      return out;
+    };
+    const t = { mode: theme.mode, shared: take(theme.shared, Object.keys(SHARED), (n) => SHARED[n]) };
+    for (const mode of ["light", "dark"]) {
+      t[mode] = take(theme[mode], COLORS, () => color);
+      if (Object.keys(t[mode]).length !== COLORS.length) return null;
+    }
+    return t;
+  }
+
+  // The rules for such a theme, to go after the shipped ones: "" for anything that is no theme. A theme of one mode pins
+  // it wherever nothing else picked one, over the shipped rule for a system in dark mode.
+  function themeRules(theme) {
+    const t = soundTheme(theme);
+    if (!t) return "";
+    const lines = (o) => Object.entries(o).map(([k, v]) => "  " + k + ": " + v + ";\n").join("");
+    const block = (sel, mode, o) => sel + " {\n  color-scheme: " + mode + ";\n" + lines(o) + "}\n";
+    const own = ["light", "dark"].map((m) => block(':root[data-theme-mode="' + m + '"]', m, t[m])).join("");
+    if (t.mode !== "auto") return ":root {\n" + lines(t.shared) + "}\n" + block(":root:not([data-theme-mode])", t.mode, t[t.mode]) + own;
+    return block(":root", "light dark", { ...t.shared, ...t.light }) + own +
+      "@media (prefers-color-scheme: dark) {\n" + block(':root:not([data-theme-mode="light"])', "dark", t.dark) + "}\n";
+  }
+  // The mode a theme's rules pin, "light" or "dark", or "" when it follows the system.
+  function themeMode(css) {
+    const m = /:root:not\(\[data-theme-mode\]\)\s*\{\s*color-scheme:\s*(light|dark)\s*;/.exec(String(css || ""));
+    return m ? m[1] : "";
+  }
+  const matches = (settings) => !(isObj(settings) && settings.matchTheme === false);
+
+  // The rules for the theme in force from storage, "" when there is none or the person switched it off.
+  async function liveTheme() {
+    try {
+      const got = await store().get([SETTINGS_KEY, THEME_KEY]);
+      return matches(got[SETTINGS_KEY]) && isObj(got[THEME_KEY]) ? themeRules(got[THEME_KEY].theme) : "";
+    } catch (e) { return ""; }
+  }
   let themeText = null;
-  async function themeCss() {
+  async function shippedTheme() {
     if (themeText !== null) return themeText;
     try { themeText = await (await fetch(chrome.runtime.getURL(THEME_FILE))).text(); } catch (e) { themeText = ""; }
     return themeText;
   }
-  // The values in force for one mode ("light" or "dark"): the shared block, then that mode's colors. Keys drop "--pc-".
+  const both = (shipped, live) => (live ? shipped + "\n" + live : shipped);
+  // Every rule in force: the shipped theme, then the live one.
+  async function themeCss() { return both(await shippedTheme(), await liveTheme()); }
+  // Calls fn(css, live) now and whenever the theme in force changes. Returns a function that stops it.
+  function watchTheme(fn) {
+    let last = null, asked = 0, on = true;
+    const look = async () => {
+      const mine = ++asked;
+      const live = await liveTheme(), css = both(await shippedTheme(), live);
+      if (!on || mine !== asked || css === last) return;
+      last = css;
+      fn(css, live);
+    };
+    const changed = (ch, area) => { if (area === "local" && (ch[THEME_KEY] || ch[SETTINGS_KEY])) look(); };
+    try { chrome.storage.onChanged.addListener(changed); } catch (e) { /* the extension was reloaded under this page */ }
+    look();
+    return () => { on = false; try { chrome.storage.onChanged.removeListener(changed); } catch (e) { /* gone */ } };
+  }
+
+  // Keeps the theme in the app's answer to `page` or `theme`. No app, an app from before this, and no theme in force all
+  // leave the shipped one; an answer that broke keeps what there was. Written only when it changed.
+  async function keepTheme(reply) {
+    let next = null;
+    if (reply && reply.ok === true) {
+      const theme = soundTheme(reply.theme);
+      if (theme) next = { theme, stamp: String(reply.stamp || "").slice(0, 64) };
+    } else if (reply && !/not found|forbidden|no request called theme/i.test(String(reply.failed || reply.error || ""))) return;
+    const cur = (await store().get(THEME_KEY))[THEME_KEY] || null;
+    if (JSON.stringify(cur) === JSON.stringify(next)) return;
+    await (next ? store().set({ [THEME_KEY]: next }) : store().remove(THEME_KEY));
+  }
+  // Asks the app for its theme, from the extension's own pages and its worker. With the connection not granted there is
+  // nobody to ask, and no theme.
+  async function askTheme() {
+    if (!matches((await store().get(SETTINGS_KEY))[SETTINGS_KEY])) return;
+    let may = false;
+    try { may = !!chrome.runtime.sendNativeMessage && await chrome.permissions.contains({ permissions: ["nativeMessaging"] }); } catch (e) { /* no */ }
+    if (!may) return keepTheme(null);
+    return keepTheme(await new Promise((resolve) => {
+      try {
+        chrome.runtime.sendNativeMessage(THEME_HOST, { op: "theme" }, (reply) => {
+          const err = chrome.runtime.lastError;
+          resolve(err ? { failed: String(err.message || err) } : reply || { failed: "no answer" });
+        });
+      } catch (e) { resolve({ failed: String(e && e.message || e) }); }
+    }));
+  }
+
+  // The values in force for one mode ("light" or "dark"): the shared values, then that mode's colors, the later block
+  // over the earlier. Keys drop "--pc-".
   function themeVars(css, mode) {
-    const out = {};
-    const take = (body) => { for (const m of body.matchAll(/--pc-([a-z-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim(); };
-    const base = String(css || "").match(/:root\s*\{([^}]*)\}/);
-    if (base) take(base[1]);
-    const own = String(css || "").match(new RegExp(':root\\[data-theme-mode="' + mode + '"\\]\\s*\\{([^}]*)\\}'));
-    if (own) take(own[1]);
+    const out = {}, text = String(css || "");
+    for (const sel of [":root", ':root\\[data-theme-mode="' + mode + '"\\]']) {
+      for (const block of text.matchAll(new RegExp("(?:^|[\\s}])" + sel + "\\s*\\{([^}]*)\\}", "g"))) {
+        for (const m of block[1].matchAll(/--pc-([a-z-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim();
+      }
+    }
     return out;
   }
   // The same rules for a shadow root on a web page: :host takes the page-wide values, and .pc-light or .pc-dark pins
@@ -346,7 +494,7 @@
   function shadowThemeCss(css) {
     return String(css || "")
       .replace(/:root\[data-theme-mode="(light|dark)"\]/g, ".pc-$1")
-      .replace(/:root:not\(\[data-theme-mode="light"\]\)/g, ":host")
+      .replace(/:root:not\(\[data-theme-mode(?:="light")?\]\)/g, ":host")
       .replace(/:root/g, ":host");
   }
   const ms = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? (/ms$/.test(v) ? n : n * 1000) : 0; };
@@ -357,6 +505,6 @@
     merge, clone, migrate, applyProfile, paused, getSettings, setSettings, patchSettings,
     hostOf, activeFor, levelFor, getStats, recordReading, summary, dayKey, prevDay,
     countWords, fontFaceCss, STATS_DEFAULTS, STREAK_MIN,
-    THEME_FILE, themeCss, themeVars, shadowThemeCss, ms
+    THEME_FILE, THEME_KEY, soundTheme, themeRules, themeMode, themeCss, watchTheme, keepTheme, askTheme, themeVars, shadowThemeCss, ms
   });
 })();

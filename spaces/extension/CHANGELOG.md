@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The stylesheet for a Polycarp theme is built here from the theme's values: only the names in `theme.css`, each checked by its kind, with all 13 colors of both modes or none of them. Nothing the app sends reaches a page as CSS text.
 - `scripts/stage.sh --store` makes the Chrome Web Store copy: no fixed key, no new tab page, and the link to the Polycarp app only when the user connects it in Settings. A store install shows no update button, since the store updates it.
 - A NAS outside the home network needs an https address, so its password is never sent unencrypted.
 - The privacy policy lists every site Polycarp loads pictures from, the link to the Polycarp app, the new tab page and the Chrome Web Store Limited Use statement.
