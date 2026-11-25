@@ -101,6 +101,16 @@ impl Sandbox {
             .map(|e| e["path"].as_str().unwrap_or_default().to_string())
             .collect()
     }
+    fn current(&self) -> Vec<String> {
+        let d = self.ok(&["look", "list"]);
+        let on = d["looks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|l| l["current"] == true);
+        on.map(|l| l["name"].as_str().unwrap().to_string())
+            .collect()
+    }
 }
 
 impl Drop for Sandbox {
@@ -721,6 +731,26 @@ esac
     sb
 }
 
+/// A whole look of the person's: their own theme, sheet, bar, dock and paper, and things a look leaves alone.
+#[cfg(unix)]
+fn dress(sb: &Sandbox) {
+    sb.ok(&["theme", "create", "mine", "--extends", "evening"]);
+    sb.ok(&["theme", "set", "mine", "--mode", "dark"]);
+    sb.ok(&["theme", "accent", "#7aa2f7"]);
+    let put = |f: &str, v: &str| fs::write(sb.at(f), v).unwrap();
+    put(
+        "cfg/style.css",
+        "/* \"mine\" */\nbar { border-radius: 6px; }\n",
+    );
+    put("live/bar.height", "32");
+    put("live/bar.style", "\"solid\"");
+    put("live/bar.modules.left", "[\"mark\",\"custom:me\"]");
+    put("live/search.engine", "\"kagi\"");
+    fs::write(sb.at("pic.png"), PNG).unwrap();
+    put("live/paper.all", &sb.at("pic.png").display().to_string());
+    put("live/paper.idle", "olive");
+}
+
 #[cfg(unix)]
 #[test]
 fn polycarps_own_checks_run_before_a_look_is_kept() {
@@ -756,4 +786,25 @@ fn polycarps_own_checks_run_before_a_look_is_kept() {
         .map(|e| e.file_name())
         .collect();
     assert!(left.is_empty(), "work files are gone: {left:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn show_says_what_would_change_and_list_what_is_in_force() {
+    let sb = with_spaces();
+    assert_eq!(sb.current(), ["polycarp"]);
+    dress(&sb);
+    assert!(sb.current().is_empty());
+    let d = sb.ok(&["look", "show", "polycarp"]);
+    let changes = d["changes"].to_string();
+    for c in [
+        "theme: Polycarp (now ",
+        "mode: auto (now dark)",
+        "style sheet: none (now one of 2 lines)",
+        "bar.height: its default (now 32)",
+        "paper: none (now a png picture",
+        "paper on the idle screen: none (now olive)",
+    ] {
+        assert!(changes.contains(c), "{c} in {changes}");
+    }
 }

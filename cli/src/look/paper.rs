@@ -7,6 +7,12 @@ use std::collections::BTreeMap;
 
 pub const MAX_PICTURE: usize = 25 * 1024 * 1024;
 const SCENES: [&str; 5] = ["field", "olive", "water", "parchment", "solid"];
+const TYPES: [(&str, &str); 4] = [
+    ("image/png", "png"),
+    ("image/jpeg", "jpg"),
+    ("image/heic", "heic"),
+    ("image/webp", "webp"),
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Wall {
@@ -52,6 +58,12 @@ impl Picture {
             return Err("not a PNG, JPEG, HEIC or WebP picture".into());
         };
         Ok(Picture { kind, bytes })
+    }
+    pub fn ext(&self) -> &'static str {
+        TYPES
+            .iter()
+            .find(|(t, _)| *t == self.kind)
+            .map_or("png", |(_, e)| e)
     }
     pub fn sha256(&self) -> String {
         sha256(&self.bytes)

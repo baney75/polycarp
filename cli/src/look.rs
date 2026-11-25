@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 pub const USAGE: &str = "\
 usage: polycarp look <command> [--json]
 
-  list                                  the shipped look and yours
-  show <name|file|->                    what a look holds
+  list                                  the shipped look and yours, and which is in force
+  show <name|file|->                    what a look holds, and what it would change
   export <name> <file|-> [--force]      write a look to one file to share (<name>.polycarp-look)
   import <file|-> [--name N] [--force]  check someone's look and save it; nothing on screen changes
 
@@ -145,7 +145,7 @@ fn refuse_taken(c: &Ctx, name: &str, force: bool) -> Result<(), ApiErr> {
 }
 
 /// What `list` and `show` say of the look `find` read for `arg`.
-fn about(c: &Ctx, look: &Look, arg: &str) -> Json {
+fn about(c: &Ctx, look: &Look, arg: &str, current: bool) -> Json {
     let (source, file) = place(c, arg);
     let t = &look.theme;
     let (theme, colors) = t.swatches(c).unzip();
@@ -155,6 +155,7 @@ fn about(c: &Ctx, look: &Look, arg: &str) -> Json {
         "description": look.description,
         "source": source,
         "file": file.map(|f| f.display().to_string()),
+        "current": current,
         "theme": theme,
         "mode": t.mode,
         "accent": {"light": t.accent_light, "dark": t.accent_dark},
@@ -164,13 +165,23 @@ fn about(c: &Ctx, look: &Look, arg: &str) -> Json {
 }
 
 pub(crate) fn op_list(c: &Ctx) -> Res {
+    // A list is still a list when what is in force can't be read; nothing is marked then.
+    let (now, warnings) = match state::now(c) {
+        Ok(n) => (Some(n), Vec::new()),
+        Err(e) => (
+            None,
+            vec![format!("what is in force can't be read: {}", e.message())],
+        ),
+    };
     let mut rows = Vec::new();
     let mut text = String::new();
     for name in std::iter::once(format::SHIPPED.to_string()).chain(store::names(c)) {
         match find(c, &name) {
             Ok((look, _)) => {
-                text.push_str(&format!("  {:<20} {}\n", look.name, look.title));
-                rows.push(about(c, &look, &name));
+                let current = now.as_ref().is_some_and(|n| n.same_as(&look));
+                let mark = if current { '*' } else { ' ' };
+                text.push_str(&format!("{mark} {:<20} {}\n", look.name, look.title));
+                rows.push(about(c, &look, &name, current));
             }
             Err(e) => {
                 let problems = e.problem_list();
@@ -180,7 +191,7 @@ pub(crate) fn op_list(c: &Ctx) -> Res {
                 }
                 rows.push(json!({
                     "name": name, "title": theme::title_case(&name), "description": null, "source": "saved",
-                    "file": store::path(c, &name).display().to_string(), "colors": null,
+                    "file": store::path(c, &name).display().to_string(), "current": false, "colors": null,
                     "problems": problems,
                 }));
             }
@@ -189,21 +200,34 @@ pub(crate) fn op_list(c: &Ctx) -> Res {
     let data = json!({
         "looks": rows, "folder": store::dir(c).display().to_string(),
     });
-    Ok(Out::new(data, text))
+    Ok(warnings
+        .into_iter()
+        .fold(Out::new(data, text), Out::caution))
 }
 
 pub(crate) fn op_show(c: &Ctx, arg: &str) -> Res {
-    let (look, notes) = find(c, arg)?;
+    let (look, mut notes) = find(c, arg)?;
+    let now = state::now(c)?;
+    let changes = now.changes(c, &look);
     let mut text = format!("{} ({})\n", look.title, look.name);
     if let Some(d) = &look.description {
         text.push_str(&format!("{d}\n"));
     }
     let alone = leaves_alone(&look);
-    let mut data = about(c, &look, arg);
+    let mut data = about(c, &look, arg, changes.is_empty() && now.same_as(&look));
     text.push_str(&holds(&data));
+    match changes.is_empty() {
+        true => text.push_str("this is how everything looks now\n"),
+        false => text.push_str(&format!(
+            "applying it would change:\n  {}\n",
+            changes.join("\n  ")
+        )),
+    }
     if !alone.is_empty() {
         text.push_str(&format!("it leaves alone: {}\n", alone.join(", ")));
     }
+    notes.extend(left_for_spaces(&now));
+    data["changes"] = json!(changes);
     data["leaves_alone"] = json!(alone);
     Ok(Out::new(data, text).noting(notes))
 }
@@ -239,6 +263,12 @@ fn leaves_alone(look: &Look) -> Vec<&'static str> {
     has.iter().filter(|(h, _)| !h).map(|(_, n)| *n).collect()
 }
 
+fn left_for_spaces(now: &state::Now) -> Option<String> {
+    now.live.is_none().then(|| {
+        "Polycarp Spaces isn't installed here, so this is about the theme; the style sheet, surfaces and paper wait for it".into()
+    })
+}
+
 /// Writes a look to the looks folder, read back first as anyone else would read it.
 fn keep(c: &Ctx, look: &Look, did: &str, notes: Vec<String>) -> Res {
     let text = look.to_text();
@@ -247,7 +277,7 @@ fn keep(c: &Ctx, look: &Look, did: &str, notes: Vec<String>) -> Res {
     let p = store::path(c, &look.name);
     let replaced = exists(c, &look.name);
     store::write_plain(&p, text.as_bytes())?;
-    let mut data = about(c, look, &look.name);
+    let mut data = about(c, look, &look.name, false);
     data["replaced"] = json!(replaced);
     let line = format!("{did} the look {} in {}\n", look.name, p.display());
     Ok(Out::new(data, line).noting(notes))
