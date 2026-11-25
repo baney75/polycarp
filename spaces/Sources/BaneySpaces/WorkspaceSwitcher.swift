@@ -20,6 +20,9 @@ final class WorkspaceSwitcher {
     /// Its panel sits at the pop-up menu level without being a menu; the dock doesn't count it as one.
     var windowNumber: Int? { panel?.windowNumber }
     private var watchdog: Timer?
+    /// The page in front in each of a browser's windows (pid, its windows), where its extension says: its title and its
+    /// site's icon, if there is one yet.
+    var pages: (pid_t, [(id: UInt32, title: String)]) -> [UInt32: (title: String, icon: NSImage?)] = { _, _ in [:] }
     /// Apps in the order they were last brought forward, most recent first.
     private var appOrder: [pid_t] = []
     private var hold = TabHold()
@@ -83,6 +86,7 @@ final class WorkspaceSwitcher {
                 icons[e.pid] = icon
                 return .init(id: e.id, title: WindowTitle.clean(e.title, app: e.app), workspace: n, pid: e.pid, app: e.app, icon: icon)
             }
+            for pid in icons.keys { name(&model.windows, of: pid) }
             Trace.log("cmdTab show windows=\(model.windows.count) current=\(spaces.model.current)")
         case .workspaces:
             let order = spaces.switcherOrder()
@@ -172,6 +176,19 @@ final class WorkspaceSwitcher {
             let w = model.windows[i], title = WindowTitle.clean(spaces.title(of: w.id), app: w.app)
             if !title.isEmpty, title != w.title { model.windows[i].title = title }
         }
+        for pid in Set(model.windows.map(\.pid)) { name(&model.windows, of: pid) }
+    }
+
+    /// A browser's windows by the page in front, with its site's icon.
+    private func name(_ tiles: inout [SwitcherModel.WindowTile], of pid: pid_t) {
+        let mine = tiles.filter { $0.pid == pid }
+        let said = pages(pid, mine.map { (id: $0.id, title: spaces.title(of: $0.id)) })
+        guard !said.isEmpty else { return }
+        for i in tiles.indices {
+            guard let page = said[tiles[i].id] else { continue }
+            if !page.title.isEmpty, page.title != tiles[i].title { tiles[i].title = page.title }
+            if page.icon !== tiles[i].site { tiles[i].site = page.icon }
+        }
     }
 
     /// One step through the window bar if it's open, otherwise through the cards as drawn.
@@ -237,8 +254,9 @@ final class WorkspaceSwitcher {
             // The window used last on each workspace leads that workspace's group.
             let last = spaces.model.lastFocused[n]
             let mine = spaces.entries(on: n).filter { $0.pid == app.pid }.sorted { $0.id == last && $1.id != last }
-            for e in mine { windows.append(.init(id: e.id, title: WindowTitle.clean(e.title, app: e.app), workspace: n)) }
+            for e in mine { windows.append(.init(id: e.id, title: WindowTitle.clean(e.title, app: e.app), workspace: n, pid: e.pid)) }
         }
+        name(&windows, of: app.pid)
         guard windows.count > 1 else { return }
         Trace.log("cmdTab window bar opened windows=\(windows.count)")
         // The first one is the window that tapping would land on; a tap from here moves on.
@@ -419,13 +437,15 @@ final class SwitcherModel: ObservableObject {
         var pid: pid_t = 0
         var app = ""
         var icon: NSImage?
+        /// A browser window's front page's site icon.
+        var site: NSImage?
     }
     /// The window bar: one app's windows, open while Tab was held on it.
     struct WindowBar {
         let pid: pid_t
         let name: String
         let icon: NSImage
-        let windows: [WindowTile]
+        var windows: [WindowTile]
         var selected: Int
     }
     @Published var windowBar: WindowBar?
@@ -554,12 +574,20 @@ struct SwitcherView: View {
                             width: CGFloat, height: CGFloat? = nil, stacked: Bool = true) -> some View {
         let tint = Chrome.workspace(w.workspace)
         let text = Text(title).font(Chrome.font(12, .medium)).foregroundStyle(Chrome.wash(on ? 1 : 0.75)).multilineTextAlignment(.leading)
-        let image = Image(nsImage: icon ?? NSImage()).resizable()
+        let image = { (size: CGFloat) in
+            Image(nsImage: icon ?? NSImage()).resizable().frame(width: size, height: size).overlay(alignment: .bottomTrailing) {
+                if let site = w.site {
+                    Image(nsImage: site).resizable().interpolation(.high).frame(width: size * 0.5, height: size * 0.5)
+                        .padding(1.5).background(Chrome.shape(.launcherKey).fill(Chrome.panel()))
+                        .offset(x: 4, y: 4)
+                }
+            }
+        }
         return Group {
             if stacked {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        image.frame(width: 30, height: 30)
+                        image(30)
                         Spacer()
                         WorkspaceBadge(n: w.workspace)
                     }
@@ -568,7 +596,7 @@ struct SwitcherView: View {
                 .padding(12)
             } else {
                 HStack(spacing: 8) {
-                    image.frame(width: 22, height: 22)
+                    image(22)
                     text.lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                     WorkspaceBadge(n: w.workspace, size: 18)
                 }

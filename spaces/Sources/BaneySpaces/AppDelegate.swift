@@ -19,7 +19,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var viewer = ViewerController(spaces: spaces)
     /// The top bar (`bar.*` in surfaces.json); draws nothing until `bar.enabled`.
     private lazy var topBar = TopBar(spaces: spaces)
-    private lazy var switcher = WorkspaceSwitcher(spaces: spaces)
+    private lazy var switcher: WorkspaceSwitcher = {
+        let s = WorkspaceSwitcher(spaces: spaces)
+        s.pages = { [weak self] pid, windows in
+            guard let self, let app = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return [:] }
+            return BrowserHub.shared.fronts(of: app, windows, items: self.session.engine.items)
+                .mapValues { ($0.tab.title, BrowserHub.shared.icon($0.tab, $0.peer)) }
+        }
+        return s
+    }()
     /// Windows side by side (`tiling.*` in surfaces.json); reads and moves nothing until a workspace tiles.
     private lazy var tiling = Tiling(spaces: spaces)
     /// Carried windows let go over a workspace, each waiting for its drop to settle. Picking
@@ -209,7 +217,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.openBrowser = { [weak self] in self?.openBrowser($0) }
         a.siteIcon = { BrowserHub.shared.icon($0) }
         a.searcher = { BrowserHub.shared.searcher(main: SessionController.mainBrowser()) }
-        a.searchIn = { BrowserHub.shared.search($0, in: $1) }
+        a.searchIn = { [weak self] text, peer in
+            let there = { _ = BrowserHub.shared.open(["text": text], in: peer) }
+            if self?.openHere(["text": text], in: peer.bundleID, orElse: there) != true { there() }
+        }
+        a.newTab = { [weak self] peer in
+            let there = { _ = BrowserHub.shared.open([:], in: peer) }
+            if self?.openHere([:], in: peer.bundleID, orElse: there) != true { there() }
+        }
+        Launcher.openHere = { [weak self] url, orElse in
+            guard let browser = SessionController.mainBrowser() else { return false }
+            return self?.openHere(["url": url.absoluteString], in: browser, orElse: orElse) ?? false
+        }
         a.browserTab = { [weak self] q in self?.session.browserTabItem(q) }
         a.willShow = { [weak self] in
             guard let self else { return }
@@ -571,7 +590,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         // ⌃⌘K (registered in `registerShortcuts`) opens the launcher, which searches the session rows.
         session.onSearch = { [weak self] in self?.launcher.toggle() }
-        BrowserHub.shared.onChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
+        BrowserHub.shared.onChange = { [weak self] in
+            self?.switcher.titlesChanged()
+            if self?.launcherBuilt == true { self?.launcher.rowsChanged() }
+        }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
         // People for the launcher: read now only when Contacts access is already on. Nothing asks for it here.
         ContactsLibrary.shared.onChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
@@ -869,14 +891,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.imagePosition = .imageLeading
     }
 
+    /// A new tab on the workspace the person is on: in the browser's window here, else in a new one. False when its
+    /// extension isn't on the line, or it can't say which profile's window that would be.
+    /// True once the open is Polycarp's to finish; `orElse` is the caller's own way, run if a new window here can't be had.
+    private func openHere(_ what: [String: Any], in app: String, orElse: @escaping () -> Void) -> Bool {
+        guard started, let pid = NSRunningApplication.runningApplications(withBundleIdentifier: app).first?.processIdentifier else { return false }
+        let hub = BrowserHub.shared, n = spaces.model.current
+        let all = Workspaces.range.flatMap { spaces.entries(on: $0) }.filter { $0.pid == pid }
+        let last = spaces.model.lastFocused[n]
+        let here = spaces.entries(on: n).filter { $0.pid == pid }.map(\.id).sorted { (a: WindowID, b: WindowID) in a == last && b != last }
+        let known = hub.fronts(of: app, all.map { (id: $0.id, title: $0.title) }, items: session.engine.items)
+        switch BrowserWindows.place(here: here, all: all.map(\.id), known: known, peers: hub.peers(of: app)) {
+        case nil: return false
+        case .tab(let peer, let window, let id)?:
+            guard hub.open(what, in: peer, window: window) else { return false }
+            spaces.focusWindow(id, pid: pid)
+        case .front(let peer)?:
+            guard hub.open(what, in: peer) else { return false }
+            spaces.focusApp(pid, on: n)
+        case .window(let peer)?:
+            spaces.openWindowHere(pid, by: { DispatchQueue.main.sync { hub.open(what, in: peer, window: "new") } }, orElse: orElse)
+        }
+        return true
+    }
+
     /// Goes to what a browser's row names: the exact tab, the download in Finder, or the page in that browser.
     private func openBrowser(_ hit: BrowserHit) {
         let app = hit.peer.bundleID
         switch hit.row.source {
         case .bookmarks, .history:
-            guard let url = URL(string: hit.row.url), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-                  let at = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app) else { return NSSound.beep() }
-            NSWorkspace.shared.open([url], withApplicationAt: at, configuration: NSWorkspace.OpenConfiguration())
+            guard let url = URL(string: hit.row.url), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return NSSound.beep() }
+            let there = {
+                guard let at = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app) else { return NSSound.beep() }
+                NSWorkspace.shared.open([url], withApplicationAt: at, configuration: NSWorkspace.OpenConfiguration())
+            }
+            if !openHere(["url": hit.row.url], in: app, orElse: there) { there() }
         case .downloads:
             if !BrowserHub.shared.ask(hit) { NSSound.beep() }
         case .tabs:

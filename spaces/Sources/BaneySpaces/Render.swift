@@ -242,6 +242,13 @@ enum Render {
                                         .init(id: 2, title: "baney75/polycarp pull request 3 · GitHub", workspace: 4),
                                         .init(id: 3, title: "Gmail — Inbox", workspace: 1)], selected: 1)
         guard save(SwitcherView(model: bar).padding(30), "switcher-windows.png", CGSize(width: 820, height: 0)) else { return 1 }
+        // The same from a browser with the extension: each window's site icon on the browser's.
+        for (i, symbol) in ["play.rectangle.fill", "chevron.left.forwardslash.chevron.right", "envelope.fill"].enumerated() {
+            var w = bar.windowBar!.windows[i]
+            w.site = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            bar.windowBar!.windows[i] = w
+        }
+        guard save(SwitcherView(model: bar).padding(30), "switcher-sites.png", CGSize(width: 820, height: 0)) else { return 1 }
 
         // ⌘Tab across windows: thirty on a small screen, so the cards are on one line.
         bar.windowBar = nil

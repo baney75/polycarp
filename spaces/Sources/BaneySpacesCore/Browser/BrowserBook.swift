@@ -99,6 +99,13 @@ public final class BrowserBook {
         }
     }
 
+    /// The front tab of each window of a browser, all its profiles together.
+    public func fronts(of bundleID: String) -> [BrowserWindows.Front] {
+        browsers.sorted { $0.key < $1.key }.filter { $0.key.bundleID == bundleID }.flatMap { peer, shelves in
+            (shelves[.tabs]?.rows.values.filter(\.front) ?? []).sorted { $0.window < $1.window }.map { BrowserWindows.Front(peer, $0) }
+        }
+    }
+
     /// A source's rows ever added since its last rebuild, for the tests.
     func slots(_ source: BrowserSource, _ peer: BrowserPeer) -> Int { browsers[peer]?[source]?.table.slots ?? 0 }
 

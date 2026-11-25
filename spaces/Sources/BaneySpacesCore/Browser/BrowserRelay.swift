@@ -173,7 +173,8 @@ public final class BrowserServer {
         let bound = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
-        guard bound == 0, chmod(path, 0o600) == 0, listen(fd, 8) == 0 else { close(fd); return false }
+        // Room for every profile to knock at once, as they do when the app starts; one refused waits for its host's retry.
+        guard bound == 0, chmod(path, 0o600) == 0, listen(fd, Int32(Self.most) + 4) == 0 else { close(fd); return false }
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: io)
         source.setEventHandler { [weak self] in
