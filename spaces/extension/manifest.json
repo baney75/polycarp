@@ -116,6 +116,9 @@
         "default": "Alt+Shift+S"
       },
       "description": "Search this page (and a video's transcript or the posts you've seen)"
+    },
+    "edit-page": {
+      "description": "Edit this page: hide, reword, restyle, move or add a note"
     }
   },
   "omnibox": {

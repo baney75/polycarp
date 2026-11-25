@@ -91,6 +91,15 @@ async function injectIntoOpenTabs() {
   }
 }
 
+// ---------- The page editor (src/content/editor.js) ----------
+// Asked for again, it closes. Answers whether the page could take it.
+async function editPage(tab) {
+  try {
+    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["src/shared/core.js", "src/shared/edits.js", "src/shared/edits-store.js", "src/shared/edits-pick.js", "src/content/editor.js"] });
+    return !!(res && res.result);
+  } catch (e) { return false; }
+}
+
 // ---------- Menus ----------
 function buildMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -100,6 +109,7 @@ function buildMenus() {
     chrome.contextMenus.create({ id: "note-selection", title: "Highlight in Polycarp", contexts: ["selection"] });
     chrome.contextMenus.create({ id: "save-page", title: "Save page to your Polycarp library", contexts: ["page"] });
     chrome.contextMenus.create({ id: "save-link", title: "Save link to your Polycarp library", contexts: ["link"] });
+    chrome.contextMenus.create({ id: "edit-page", title: "Edit this page with Polycarp", contexts: ["page"], documentUrlPatterns: ["http://*/*", "https://*/*"] });
     chrome.contextMenus.create({ id: "site", title: "Turn Polycarp on or off for this site", contexts: ["page"] });
   });
 }
@@ -108,6 +118,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "reader") openReaderForTab(tab);
   else if (info.menuItemId === "reader-link") openReader({ src: info.linkUrl });
   else if (info.menuItemId === "site") toggleSite(tab);
+  else if (info.menuItemId === "edit-page") editPage(tab);
   else if (info.menuItemId === "remember") rememberFromTab(info.selectionText, tab);
   else if (info.menuItemId === "save-page") saveTab(tab).then((it) => tell(tab, it ? "Saved to your library" : "Could not save this page", it ? it.title : ""));
   else if (info.menuItemId === "save-link") saveLinkOnly(info.linkUrl, info.selectionText || "").then((it) => tell(tab, it ? "Link saved to your library" : "Could not save that link", it ? it.title : ""));
@@ -195,6 +206,7 @@ chrome.commands.onCommand.addListener(async (cmd, tab) => {
   if (cmd === "toggle-page") toggleSite(tab);
   else if (cmd === "open-reader") openReaderForTab(tab);
   else if (cmd === "open-finder") openFinder(tab);
+  else if (cmd === "edit-page") editPage(tab);
   else if (cmd === "toggle-ruler") {
     const s = await P.getSettings();
     await P.patchSettings({ ruler: { on: !s.ruler.on } }, { keepProfile: true });
@@ -337,6 +349,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true;
   }
   if (msg.type === "polycarp:resume") { resume().then(() => reply({ ok: true })); return true; }
+  if (msg.type === "polycarp:editPage") { if (!String(sender.url).startsWith(chrome.runtime.getURL("src/popup/"))) return; editPage({ id: msg.tabId }).then((ok) => reply({ ok })); return true; }
   if (msg.type === "polycarp:openSettings") { chrome.runtime.openOptionsPage(); return; }
   if (msg.type === "polycarp:openSearch") { openSearch(msg.q || "", msg.extra); return; }
   if (msg.type === "polycarp:find") {
