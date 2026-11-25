@@ -181,7 +181,7 @@ struct ClockFace: View {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 BarWords.text(parts.time, style, .medium).monospacedDigit().foregroundStyle(style.ink(Chrome.wash()))
                     .contentTransition(.numericText())
-                    .animation(Chrome.ease(0.25, .listIn), value: parts.time)
+                    .animation(Chrome.ease(0.25, .panelIn), value: parts.time)
                 if let half = parts.half { BarWords.text(half, style).foregroundStyle(quiet) }
             }
         }
