@@ -3,6 +3,7 @@
 //! that can't run is a refusal.
 
 mod change;
+mod pak;
 mod release;
 mod source;
 #[cfg(test)]

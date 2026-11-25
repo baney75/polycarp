@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use super::pak;
 use super::tools::{Call, Ran, System, Tools};
 use super::Place;
 
@@ -162,6 +163,21 @@ fn make_app(app: &Path) {
         "Contents/Resources/en.lproj/InfoPlist.strings",
         strings.as_bytes(),
     );
+    let strings = "CFBundleGetInfoString = \"Helium 158, Copyright Die Helium-Autoren.\";\n\
+         NSHumanReadableCopyright = \"Copyright Die Helium-Autoren.\";\n\
+         NSCameraUsageDescription = \"Wenn Helium Zugriff hat\";\n";
+    put(
+        "Contents/Resources/de.lproj/InfoPlist.strings",
+        strings.as_bytes(),
+    );
+    let strings = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n\
+         \t<key>CFBundleGetInfoString</key>\n\t<string>Helium 158, Copyright Les auteurs de Helium.</string>\n\
+         \t<key>NSHumanReadableCopyright</key>\n\t<string>Copyright Les auteurs de Helium.</string>\n\
+         \t<key>NSCameraUsageDescription</key>\n\t<string>Si Helium a acc\u{e8}s</string>\n</dict>\n</plist>\n";
+    put(
+        "Contents/Resources/fr.lproj/InfoPlist.strings",
+        strings.as_bytes(),
+    );
 
     for name in ["Helium Helper (Alerts)", "Helium Helper (Aperitif Alerts)"] {
         let at = format!("{FRAMEWORK}/Helpers/{name}.app/Contents");
@@ -190,6 +206,17 @@ fn make_app(app: &Path) {
         &format!("{FRAMEWORK}/Resources/product_logo_32.png"),
         b"an icon",
     );
+    for (lang, about, services) in [
+        ("en", "About Helium", "Allow Helium services"),
+        ("de", "Info zu Helium", "Dienste von Helium erlauben"),
+    ] {
+        let pak = pak::made_up(&[(1, about), (2, services)]);
+        put(
+            &format!("{FRAMEWORK}/Resources/{lang}.lproj/locale.pak"),
+            &pak,
+        );
+    }
+
     let sparkle = format!("{FRAMEWORK}/Frameworks/Sparkle.framework");
     let info = plist("org.sparkle-project.Sparkle", "Sparkle", "FMWK", "");
     put(

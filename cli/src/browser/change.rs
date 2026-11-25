@@ -1,5 +1,6 @@
 //! Turns a checked Helium app into Polycarp Browser, as `changes.toml` (shipped beside this command, GPL) says.
 
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -7,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use super::pak::Pak;
 use super::tools::{must, Call, Tools};
 use super::{refuse, Refused};
 
@@ -90,6 +92,11 @@ impl Changes {
         out + rest
     }
 
+    fn keeps(&self, text: &[u8]) -> bool {
+        let has = |k: &String| text.windows(k.len()).any(|w| w == k.as_bytes());
+        self.strings.keep.iter().any(has)
+    }
+
     fn path(&self, app: &Path, framework: &str, listed: &str) -> PathBuf {
         app.join(listed.replace("{framework}", framework))
     }
@@ -164,6 +171,7 @@ pub fn apply(
         }
     }
     main_plist(tools, &app.join("Contents/Info.plist"), changes)?;
+    rename_paks(&all, changes)?;
     let copies = [
         ("icon.icns", &changes.icons.icns),
         ("icon-32.png", &changes.icons.png32),
@@ -252,7 +260,55 @@ fn rename_strings(tools: &dyn Tools, file: &Path, changes: &Changes) -> Result<(
         .ok()
         .filter(|t| !t.contains('\0'))
         .ok_or_else(|| Refused::new(CHECK, "InfoPlist.strings is not plain text"))?;
-    fs::write(file, changes.renamed(&text)).map_err(refuse(CHECK, "writing InfoPlist.strings"))
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let mut renamed = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        // An entry is one line; in a property list its value is the line after its key.
+        let before = match line.trim_start().starts_with("<string>") {
+            true => lines[..i].last().copied().unwrap_or_default(),
+            false => "",
+        };
+        let of = |key| line.contains(key) || before.contains(key);
+        // The copyright names Helium's authors in each language's own words, so it stays, and so does what follows the name
+        // and version in the line that repeats it.
+        renamed += &match (of("NSHumanReadableCopyright"), of("CFBundleGetInfoString")) {
+            (true, _) => line.to_string(),
+            (_, true) => line.replacen(&changes.from.name, &changes.to.name, 1),
+            _ => changes.renamed(line),
+        };
+    }
+    fs::write(file, renamed).map_err(refuse(CHECK, "writing InfoPlist.strings"))
+}
+
+/// The interface's text, in every language. What stays is chosen by the English text and kept in each language.
+fn rename_paks(all: &[PathBuf], changes: &Changes) -> Result<(), Refused> {
+    let packs = all.iter().filter(|f| f.ends_with("locale.pak"));
+    let mut read = Vec::new();
+    for file in packs {
+        let bytes = fs::read(file).map_err(refuse(CHECK, "reading its text"))?;
+        let pak = Pak::parse(&bytes)
+            .ok_or_else(|| Refused::new(CHECK, "its text is in a form this version can't read"))?;
+        read.push((file, pak));
+    }
+    let english = read
+        .iter()
+        .find(|(f, _)| f.ends_with("en.lproj/locale.pak"));
+    let Some((_, english)) = english else {
+        return Err(Refused::new(CHECK, "it has no English text"));
+    };
+    let kept = english.entries.iter().filter(|(_, t)| changes.keeps(t));
+    let stays: HashSet<u16> = kept.map(|(id, _)| *id).collect();
+    for (file, mut pak) in read {
+        for (id, text) in &mut pak.entries {
+            if let (false, Ok(old)) = (stays.contains(id), std::str::from_utf8(text)) {
+                *text = changes.renamed(old).into_bytes();
+            }
+        }
+        let bytes = pak.bytes();
+        let bytes = bytes.ok_or_else(|| Refused::new(CHECK, "its text grew too large"))?;
+        fs::write(file, bytes).map_err(refuse(CHECK, "writing its text"))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -379,6 +435,25 @@ mod tests {
             "{strings}"
         );
         assert!(strings.contains("\"Polycarp Browser 158, Copyright The Helium Authors"));
+        let german = app.join("Contents/Resources/de.lproj/InfoPlist.strings");
+        let german = fs::read_to_string(german).unwrap();
+        for line in [
+            "CFBundleGetInfoString = \"Polycarp Browser 158, Copyright Die Helium-Autoren.\";",
+            "NSHumanReadableCopyright = \"Copyright Die Helium-Autoren.\";",
+            "NSCameraUsageDescription = \"Wenn Polycarp Browser Zugriff hat\";",
+        ] {
+            assert!(german.contains(line), "{german}");
+        }
+        // The same three entries as a property list, where a value is on the line after its key.
+        let french = app.join("Contents/Resources/fr.lproj/InfoPlist.strings");
+        let french = fs::read_to_string(french).unwrap();
+        for line in [
+            "<string>Polycarp Browser 158, Copyright Les auteurs de Helium.</string>",
+            "<string>Copyright Les auteurs de Helium.</string>",
+            "<string>Si Polycarp Browser a acc\u{e8}s</string>",
+        ] {
+            assert!(french.contains(line), "{french}");
+        }
         let helper = format!("{FRAMEWORK}/Helpers/Helium Helper (Alerts).app/Contents");
         let binary = format!("{helper}/Resources/base.lproj/InfoPlist.strings");
         let name = value(&app, &binary, "CFBundleDisplayName");
@@ -386,9 +461,31 @@ mod tests {
     }
 
     #[test]
+    fn the_interface_names_polycarp_in_every_language() {
+        let (_t, app) = changed();
+        for (lang, about, kept) in [
+            ("en", "About Polycarp Browser", "Allow Helium services"),
+            // Kept by its id: this language's text does not hold the English phrase.
+            (
+                "de",
+                "Info zu Polycarp Browser",
+                "Dienste von Helium erlauben",
+            ),
+        ] {
+            let pak = fs::read(
+                app.join(FRAMEWORK)
+                    .join(format!("Resources/{lang}.lproj/locale.pak")),
+            );
+            let pak = Pak::parse(&pak.unwrap()).unwrap();
+            let text = |i: usize| String::from_utf8(pak.entries[i].1.clone()).unwrap();
+            assert_eq!((text(0).as_str(), text(1).as_str()), (about, kept));
+        }
+    }
+
+    #[test]
     fn an_app_laid_out_some_other_way_is_refused() {
         type Spoil = fn(&Path);
-        let cases: [Spoil; 4] = [
+        let cases: [Spoil; 6] = [
             |app| fs::create_dir(app.join(FRAMEWORK).with_file_name("9.9")).unwrap(),
             |app| fs::remove_dir_all(app.join("Contents/Frameworks")).unwrap(),
             |app| fs::remove_file(app.join("Contents/Resources/app.icns")).unwrap(),
@@ -397,6 +494,14 @@ mod tests {
                 let text = fs::read_to_string(&info).unwrap();
                 fs::write(info, text.replace("net.imput.helium", "org.example")).unwrap();
             },
+            |app| {
+                fs::write(
+                    app.join(FRAMEWORK).join("Resources/de.lproj/locale.pak"),
+                    "x",
+                )
+                .unwrap()
+            },
+            |app| fs::remove_dir_all(app.join(FRAMEWORK).join("Resources/en.lproj")).unwrap(),
         ];
         for (i, spoil) in cases.iter().enumerate() {
             let t = Fake::new();
