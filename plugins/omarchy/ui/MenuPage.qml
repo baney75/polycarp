@@ -11,7 +11,6 @@ Item {
   required property var host
   required property var view
 
-  readonly property var strings: host.service ? host.service.strings : ({})
   readonly property color ink: Color.popups.text
   readonly property string family: host.bar ? host.bar.fontFamily : Style.font.family
   // The submenus entered, outermost first. A child belongs to its parent's opener, so every level keeps its own.
@@ -32,7 +31,8 @@ Item {
   function move(dx, dy) {
     if (dx > 0 && at(cursor) && at(cursor).hasChildren) return enter(at(cursor))
     if (dx < 0) return back()
-    for (var i = cursor + (dy > 0 ? 1 : -1); dy !== 0 && i >= 0 && i < count; i += dy > 0 ? 1 : -1) {
+    var from = cursor < 0 && dy < 0 ? count : cursor
+    for (var i = from + (dy > 0 ? 1 : -1); dy !== 0 && i >= 0 && i < count; i += dy > 0 ? 1 : -1) {
       if (!pickable(i)) continue
       cursor = i
       return true
@@ -71,6 +71,15 @@ Item {
   implicitWidth: Style.space(260)
   implicitHeight: list.implicitHeight
   Component.onDestruction: { while (levels.length > 0) back() }
+
+  // Another app's menu starts at its own top.
+  Connections {
+    target: root.host
+    function onTrayItemChanged() {
+      while (root.levels.length > 0) root.back()
+      root.cursor = -1
+    }
+  }
 
   QsMenuOpener {
     id: top

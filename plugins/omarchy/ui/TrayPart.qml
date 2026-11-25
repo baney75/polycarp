@@ -41,13 +41,15 @@ Item {
   }
 
   function place() {
-    var window = host.QsWindow.window
+    var window = root.QsWindow.window
     if (!window) return
-    var at = host.mapToItem(window.contentItem, 0, 0)
+    var at = root.mapToItem(window.contentItem, 0, 0)
     far = vertical ? at.y > window.height / 2 : at.x > window.width / 2
   }
 
   onAnyChanged: Qt.callLater(place)
+  // An app that leaves the tray takes its open menu with it.
+  onItemsChanged: if (holding && items.indexOf(host.trayItem) < 0) host.close()
   Component.onCompleted: Qt.callLater(place)
 
   HoverHandler {
