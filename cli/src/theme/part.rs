@@ -183,4 +183,63 @@ impl ApiErr {
     pub(crate) fn recode(&mut self, code: &'static str) {
         self.code = code;
     }
+
+    /// A refusal `polycarp-spaces` gave.
+    pub(crate) fn from_spaces(env: &Json) -> ApiErr {
+        let e = &env["error"];
+        let code = match e["code"].as_str() {
+            Some("spaces_not_found") => "spaces_not_found",
+            Some("spaces_too_old") => "spaces_too_old",
+            Some("spaces_failed") => "spaces_failed",
+            _ => "refused",
+        };
+        // It may quote the look it refuses.
+        let plain = |s: &str| crate::look::plain(&[s.to_string()]).concat();
+        let mut out = ApiErr::new(
+            code,
+            plain(e["message"].as_str().unwrap_or("polycarp-spaces refused")),
+        );
+        if let Some(s) = e["suggestion"].as_str().filter(|s| !s.is_empty()) {
+            out = out.suggest(s);
+        }
+        if let Some(a) = e["data"]["errors"].as_array().filter(|a| !a.is_empty()) {
+            out.items = a.clone();
+            for i in &mut out.items {
+                for k in ["path", "message"] {
+                    if let Some(s) = i[k].as_str().map(plain) {
+                        i[k] = json!(s);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The refusal of one part of a look: its paths start with the part's name.
+    pub(crate) fn under(mut self, part: &str, what: &str) -> ApiErr {
+        if self.code != "refused" {
+            return self;
+        }
+        for i in &mut self.items {
+            let path = match i["path"].as_str() {
+                None | Some("$") => part.to_string(),
+                Some(p) => format!("{part}.{p}"),
+            };
+            i["path"] = json!(path);
+        }
+        self.lines = self
+            .items
+            .iter()
+            .map(|i| {
+                format!(
+                    "{}: {}",
+                    i["path"].as_str().unwrap_or(part),
+                    i["message"].as_str().unwrap_or("refused")
+                )
+            })
+            .collect();
+        self.code = "invalid_look";
+        self.message = what.to_string();
+        self
+    }
 }

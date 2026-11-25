@@ -1,7 +1,7 @@
 # Looks
 
 A look is how all of Polycarp looks, as one thing: the theme with its mode and accents, your `style.css`, how the
-bar and the other surfaces are drawn, in one file a friend can send you.
+bar and the other surfaces are drawn, and the paper, in one file a friend can send you.
 
 ```sh
 polycarp look export evening-desk ~/Desktop/evening-desk.polycarp-look
@@ -24,6 +24,8 @@ Yours are in `<config>/looks/`. `polycarp` is the shipped look: it can't be repl
 
 Error codes, beside the theme's: `invalid_look`, `unknown_look`, `exists`, `builtin_read_only` (the name `polycarp`).
 
+Without Polycarp Spaces (Linux, Windows) the theme part is checked, and the output says the rest waits for it.
+
 ## The file
 
 `<name>.polycarp-look` is JSON, whole in itself, at most 32 MB.
@@ -38,13 +40,18 @@ Error codes, beside the theme's: `invalid_look`, `unknown_look`, `exists`, `buil
   "mode": "auto",
   "accent": {"light": "#59693f", "dark": "#a9bb8a"},
   "style": "bar { border-radius: 6px; }\n",
-  "surfaces": {"bar": {"height": 32, "style": "solid"}}
+  "surfaces": {"bar": {"height": 32, "style": "solid"}},
+  "paper": {"all": {"picture": "<sha256>"}, "idle": "olive"},
+  "pictures": {"<sha256>": {"type": "image/png", "base64": "..."}}
 }
 ```
 
 - `theme` is `{"builtin": name}`, or `{"document": {...}}`: a whole theme that extends nothing.
 - `style` is a sheet's text, or `null` for none. `surfaces` holds only what isn't at its default.
-- Leave out `style` or `surfaces` and the look leaves that part as it is.
+- `paper` has `all`, `desktop`, `newtab` and `idle`: a `#RRGGBB` color, a scene, or a picture in `pictures`, named by
+  its sha256. A picture is PNG, JPEG, HEIC or WebP, at most 25 MB (about 23 MB in practice, since the file holds it as
+  base64).
+- Leave out `style`, `surfaces` or `paper` and applying the look leaves that part as it is.
 
 ## What a look can't do
 
@@ -56,7 +63,7 @@ A look from a stranger may change only how things look. The list of settings it 
 | --- | --- |
 | `bar.height`, `bar.style`, `bar.modules`, `bar.clockFormat`, `bar.hourNames` | `bar.enabled`; a `custom:` module |
 | `desktop.scene`, `followDaylight`, `verse`, `versePosition`, `verseRotation` | an `image:` scene, which names a file |
-| `dock.tileLabel`, `dock.restTile` | `menu.*`, which could hide a control |
+| | `menu.*`, which could hide a control; `dock.*`, which went with the Workspace Dock |
 | `newtab.verse` | `newtab.question`, `newtab.searchURL`, `search.engine` |
 | `idle.style`, `idle.effects`, `idle.showVerse`, `idle.showKierkegaard` | `idle.enabled`, `idle.showMachineName`, `idle.startAfterMinutes` |
 | | `text.*`, `rooms.*` |

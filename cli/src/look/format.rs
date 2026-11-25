@@ -1,9 +1,10 @@
 //! The look file, schema 1: what it may hold, reading one, and writing one (docs/looks.md).
 //!
 //! A look comes from anyone, so reading it is the safety check: it may change only how things look. Every key is
-//! known or refused with its path, and settings come from `FIELDS` alone.
+//! known or refused with its path, settings come from `FIELDS` alone, and a picture is checked by its own bytes.
 
 use super::fields;
+use super::paper::{self, Paper, Picture, Wall};
 use crate::theme::{self, ThemeDoc, ThemeLook};
 use serde_json::{json, Map, Value as Json};
 use std::collections::BTreeMap;
@@ -27,6 +28,8 @@ pub struct Look {
     pub style: Option<Option<String>>,
     /// By path; a path in `FIELDS` that isn't here is at its default.
     pub surfaces: Option<BTreeMap<String, Json>>,
+    pub paper: Option<Paper>,
+    pub pictures: BTreeMap<String, Picture>,
 }
 
 impl Look {
@@ -43,6 +46,8 @@ impl Look {
             },
             style: Some(None),
             surfaces: Some(BTreeMap::new()),
+            paper: Some(Paper::new()),
+            pictures: BTreeMap::new(),
         }
     }
 
@@ -60,6 +65,12 @@ impl Look {
         }
         if let Some(s) = &self.surfaces {
             o.insert("surfaces".into(), fields::tree(s));
+        }
+        if let Some(p) = &self.paper {
+            o.insert("paper".into(), paper::to_json(p));
+        }
+        if !self.pictures.is_empty() {
+            o.insert("pictures".into(), paper::pictures_json(&self.pictures));
         }
         Json::Object(o)
     }
@@ -93,6 +104,8 @@ impl Look {
                 "accent",
                 "style",
                 "surfaces",
+                "paper",
+                "pictures",
             ]
             .contains(&k.as_str())
             {
@@ -132,6 +145,17 @@ impl Look {
             fields::read(v, "", &mut out, &mut notes, &mut bad);
             out
         });
+        let pictures = paper::pictures(o.get("pictures"), &mut bad);
+        let paper = o.get("paper").map(|v| paper::read(v, &pictures, &mut bad));
+        for h in pictures.keys() {
+            let used = paper
+                .iter()
+                .flat_map(Paper::values)
+                .any(|w| *w == Wall::Picture(h.clone()));
+            if !used {
+                bad.push(format!("pictures.{h}: no paper uses it"));
+            }
+        }
         match theme {
             Some(theme) if bad.is_empty() => Ok((
                 Look {
@@ -141,6 +165,8 @@ impl Look {
                     theme,
                     style,
                     surfaces,
+                    paper,
+                    pictures,
                 },
                 notes,
             )),

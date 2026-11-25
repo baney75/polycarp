@@ -1,7 +1,8 @@
-//! Integration tests for `polycarp look`. Every run gets its own home and config folder, so nothing real is read or
-//! changed.
+//! Integration tests for `polycarp look`. Every run gets its own home, config folder and (on Unix) a stand-in for
+//! `polycarp-spaces` that keeps its state in files, so nothing real is read or changed.
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -50,6 +51,9 @@ impl Sandbox {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if self.at("polycarp-spaces").exists() {
+            c.env("POLYCARP_SPACES_BIN", self.at("polycarp-spaces"));
+        }
         if let Some(r) = std::env::var_os("SystemRoot") {
             c.env("SystemRoot", r);
         }
@@ -113,6 +117,34 @@ fn v_exit(v: &Value) -> i32 {
     }
 }
 
+fn base64(b: &[u8]) -> String {
+    let abc = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in b.chunks(3) {
+        let n = c
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, x)| n | (*x as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            out.push(if i <= c.len() {
+                abc[(n >> (18 - 6 * i)) as usize & 63] as char
+            } else {
+                '='
+            });
+        }
+    }
+    out
+}
+
+fn sha(b: &[u8]) -> String {
+    Sha256::digest(b)
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect()
+}
+
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnot much of a picture, but its own bytes say PNG";
+
 /// A look that is fine, for a test to spoil.
 fn hostile() -> Value {
     json!({"schema": 1, "name": "hostile", "theme": {"builtin": "evening"}})
@@ -161,6 +193,10 @@ fn unknown_keys_are_refused_with_their_path() {
     assert_eq!(
         sb.refused(&with("surfaces", json!({"plugins": true}))),
         ["surfaces.plugins"]
+    );
+    assert_eq!(
+        sb.refused(&with("paper", json!({"lock": "olive"}))),
+        ["paper.lock"]
     );
     let doc = json!({"document": {"name": "x", "extends": "evening", "surprise": 1}});
     assert_eq!(sb.refused(&with("theme", doc)), ["theme.document.extends"]);
@@ -234,6 +270,7 @@ fn settings_that_are_not_looks_are_dropped_with_a_note() {
         "search": {"engine": "https://evil.example/?q=%s"}, "newtab": {"searchURL": "https://evil.example", "question": "Password?"},
         "menu": {"hidden": ["update"]}, "rooms": {"root": "/"}, "text": {"verseSource": "/etc/passwd"},
         "desktop": {"scene": "image:/etc/passwd"}, "idle": {"enabled": true, "showMachineName": true},
+        "dock": {"tileLabel": "purpose", "restTile": false},
     });
     let v = sb.json_in(&["look", "import", "-"], &with("surfaces", s));
     assert_eq!(v["ok"], true, "{v}");
@@ -250,6 +287,8 @@ fn settings_that_are_not_looks_are_dropped_with_a_note() {
         "desktop.scene",
         "idle.enabled",
         "idle.showMachineName",
+        "dock.tileLabel",
+        "dock.restTile",
     ] {
         assert!(notes.contains(left), "{left} in {notes}");
     }
@@ -285,6 +324,19 @@ fn values_that_name_a_place_or_are_not_values_are_refused() {
             "{v:?}"
         );
     }
+    for v in [
+        json!("custom:steal"),
+        json!("image:x.png"),
+        json!(true),
+        json!(5),
+    ] {
+        let s = json!({"bar": {"modules": {"left": v}}});
+        assert_eq!(
+            sb.refused(&with("surfaces", s)),
+            ["surfaces.bar.modules.left"],
+            "{v}"
+        );
+    }
     assert_eq!(
         sb.refused(&with("surfaces", json!({"bar": {"height": {"a": 1}}}))),
         ["surfaces.bar.height"]
@@ -300,6 +352,73 @@ fn values_that_name_a_place_or_are_not_values_are_refused() {
     assert_eq!(sb.refused(&with("schema", json!(2))), ["schema"]);
     assert_eq!(sb.refused("[]"), ["$"]);
     assert_eq!(sb.refused("not json"), ["$"]);
+    for p in ["https://evil.example/x.png", "/etc/passwd", "#12", "nebula"] {
+        assert_eq!(
+            sb.refused(&with("paper", json!({"all": p}))),
+            ["paper.all"],
+            "{p}"
+        );
+    }
+}
+
+#[test]
+fn pictures_are_checked_by_their_own_bytes() {
+    let sb = Sandbox::new();
+    let look = |pics: Value, paper: &str| {
+        let mut l = hostile();
+        l["paper"] = json!({"all": {"picture": paper}});
+        l["pictures"] = pics;
+        l.to_string()
+    };
+    let one = |kind: &str, b: &[u8]| json!({sha(b): {"type": kind, "base64": base64(b)}});
+    let v = sb.json_in(
+        &["look", "import", "-", "--name", "good"],
+        &look(one("image/png", PNG), &sha(PNG)),
+    );
+    assert_eq!(v["ok"], true, "{v}");
+    let script = b"#!/bin/sh\nrm -rf ~\n";
+    let at = |b: &[u8]| format!("pictures.{}", sha(b));
+    assert!(sb
+        .refused(&look(one("image/png", script), &sha(script)))
+        .contains(&at(script)));
+    let svg = b"<svg onload='x()'/>";
+    assert!(sb
+        .refused(&look(one("image/svg+xml", svg), &sha(svg)))
+        .contains(&at(svg)));
+    assert!(sb
+        .refused(&look(one("image/jpeg", PNG), &sha(PNG)))
+        .contains(&format!("{}.type", at(PNG))));
+    let wrong = json!({"0".repeat(64): {"type": "image/png", "base64": base64(PNG)}});
+    assert!(sb
+        .refused(&look(wrong, &"0".repeat(64)))
+        .contains(&format!("pictures.{}", "0".repeat(64))));
+    for b64 in ["****", "AAA", "AA=A", "A===", "iVBORw0K Ggo="] {
+        let p = json!({sha(PNG): {"type": "image/png", "base64": b64}});
+        assert!(sb.refused(&look(p, &sha(PNG))).contains(&at(PNG)), "{b64}");
+    }
+    // Padding in the middle reads as zeros in a loose decoder, which would give these very bytes.
+    let zeros = [PNG, &[0, 0, 0]].concat();
+    let loose = base64(&zeros).replacen('A', "=", 1);
+    assert_ne!(loose, base64(&zeros));
+    let p = json!({sha(&zeros): {"type": "image/png", "base64": loose}});
+    assert!(sb.refused(&look(p, &sha(&zeros))).contains(&at(&zeros)));
+    let mut extra = one("image/png", PNG);
+    extra[sha(PNG)]["path"] = json!("/etc/passwd");
+    assert!(sb
+        .refused(&look(extra, &sha(PNG)))
+        .contains(&format!("{}.path", at(PNG))));
+    // One no paper uses has no business in the file.
+    assert_eq!(
+        sb.refused(&with("pictures", one("image/png", PNG))),
+        [at(PNG)]
+    );
+    let mut big = PNG.to_vec();
+    big.resize(25 * 1024 * 1024 + 1, 0);
+    assert!(
+        sb.refused(&look(one("image/png", &big), &sha(&big)))
+            .contains(&"$".to_string()),
+        "over 32 MB in all"
+    );
 }
 
 #[test]
@@ -531,4 +650,104 @@ fn the_fields_table_covers_the_surfaces_page() {
         );
     }
     assert!(seen > 25, "the page's tables were not read: {seen}");
+    // And a kept field is one Polycarp still has: reading one that is gone fails, and takes `save` with it.
+    let tight: String = table.split_whitespace().collect();
+    let kept: Vec<&str> = tight
+        .split("(\"")
+        .filter_map(|r| r.split_once("\",true,"))
+        .map(|(path, _)| path)
+        .collect();
+    assert!(kept.len() > 15, "the table was not read: {kept:?}");
+    for path in kept {
+        assert!(
+            page.contains(&format!("| `{path}`")),
+            "a look holds {path}, which spaces/docs/surfaces.md doesn't have"
+        );
+    }
+}
+
+// With Polycarp Spaces ---------------------------------------------------------------------------------------------
+
+/// A stand-in for `polycarp-spaces` that keeps each setting and paper in a file of its own under `live/`, and the
+/// style sheet in the config folder. A line in `fail` such as `paper set` refuses that command once.
+#[cfg(unix)]
+fn with_spaces() -> Sandbox {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let script = r#"#!/bin/sh
+PATH=/usr/bin:/bin
+S='@ROOT@/live'; C='@ROOT@/cfg/style.css'
+no() { printf '{"ok":false,"error":{"code":"%s","message":"%s","data":{"errors":[{"path":"$","message":"%s"}]}}}' "$1" "$2" "$2"; exit 1; }
+ok() { printf '{"ok":true,"data":%s}' "$1"; exit 0; }
+echo "$*" >> '@ROOT@/calls'
+if [ -f '@ROOT@/fail' ] && [ "$1 $2" = "$(cat '@ROOT@/fail')" ]; then rm '@ROOT@/fail'; no write_failed "told to fail"; fi
+case "$1 $2" in
+"style path") ok "{\"file\":\"$C\"}" ;;
+"style show") if [ -f "$C" ]; then ok "{\"exists\":true,\"text\":\"$(sed 's/"/\\"/g' "$C" | awk '{printf "%s\\n", $0}')\"}"; else ok '{"exists":false,"text":""}'; fi ;;
+"style check") grep -q 'url(' "$3" && no invalid_style "line 1: \u001b[2Jnot a color"; ok '{}' ;;
+"style reset") mv "$C" "$C.bak"; ok "{\"backup\":\"$C.bak\"}" ;;
+"surfaces get") if [ -f "$S/$3" ]; then ok "{\"set\":true,\"value\":$(cat "$S/$3")}"; else ok '{"set":false,"value":null}'; fi ;;
+"surfaces set")
+  if [ "$3" = bar.modules ]; then
+    rm -f "$S"/bar.modules.*
+    for r in left center right; do
+      v=$(printf '%s' "$4" | sed -n "s/.*\"$r\":\(\[[^]]*\]\).*/\1/p"); [ -n "$v" ] && printf '%s' "$v" > "$S/bar.modules.$r"
+    done
+  else printf '%s' "$4" > "$S/$3"; fi; ok '{}' ;;
+"surfaces reset") rm -f "$S/$3" "$S/$3".*; ok '{}' ;;
+"surfaces validate") grep -q 'bogus' "$3" && no invalid_value "bar.style must be islands"; grep -q 'newer' "$3" && ok '{"warnings":[{"path":"bar.hourNames","message":"not a field this build knows"}]}'; ok '{"warnings":[]}' ;;
+"surfaces schema") ok '{"properties":{"bar":{"properties":{"modules":{"properties":{"left":{"default":["mark","workspaces"]},"center":{"default":["clock"]},"right":{"default":["status"]}}}}}}}' ;;
+"paper get")
+  one() { v=$(cat "$S/paper.$1"); case "$v" in /*) printf '{"value":"picture:p","picture":"%s","from":"%s"}' "$v" "$2" ;; *) printf '{"value":"%s","from":"%s"}' "$v" "$2" ;; esac; }
+  place() { if [ -f "$S/paper.$1" ]; then one "$1" "$1.paper"; elif [ -f "$S/paper.all" ]; then one all paper; else printf '{"value":null,"from":null}'; fi; }
+  if [ -f "$S/paper.all" ]; then all=$(one all paper); else all=null; fi
+  ok "{\"paper\":$all,\"desktop\":$(place desktop),\"newtab\":$(place newtab),\"idle\":$(place idle)}" ;;
+"paper set")
+  v=$3; case "$v" in /*) mkdir -p '@ROOT@/store'; cp "$v" '@ROOT@/store/' || no io "copy"; v="@ROOT@/store/$(basename "$v")" ;; esac
+  if [ "$4" = --on ]; then printf '%s' "$v" > "$S/paper.$5"; else rm -f "$S"/paper.*; printf '%s' "$v" > "$S/paper.all"; fi; ok '{}' ;;
+"paper reset") rm -f "$S"/paper.*; ok '{}' ;;
+*) echo "usage: polycarp-spaces" >&2; exit 2 ;;
+esac
+"#;
+    let script = script.replace("@ROOT@", &sb.root.display().to_string());
+    fs::write(sb.at("polycarp-spaces"), script).unwrap();
+    fs::set_permissions(sb.at("polycarp-spaces"), fs::Permissions::from_mode(0o755)).unwrap();
+    sb
+}
+
+#[cfg(unix)]
+#[test]
+fn polycarps_own_checks_run_before_a_look_is_kept() {
+    let sb = with_spaces();
+    let v = sb.json_in(
+        &["look", "import", "-"],
+        &with("style", json!("bar { color: url(https://x); }")),
+    );
+    assert_eq!(
+        (
+            &v["error"]["code"],
+            &v["error"]["data"]["errors"][0]["path"]
+        ),
+        (&json!("invalid_look"), &json!("style"))
+    );
+    // Nor does a refusal that quotes the sheet print its escapes.
+    let o = sb.run(
+        &["look", "import", "-"],
+        &with("style", json!("bar { color: url(https://x); }")),
+    );
+    let out = String::from_utf8([o.stdout, o.stderr].concat()).unwrap();
+    assert!(
+        out.contains("not a color") && !out.contains('\u{1b}'),
+        "{out:?}"
+    );
+    let s = json!({"bar": {"style": "bogus"}});
+    assert_eq!(sb.refused(&with("surfaces", s)), ["surfaces"]);
+    let s = json!({"bar": {"style": "newer"}});
+    assert_eq!(sb.refused(&with("surfaces", s)), ["surfaces.bar.hourNames"]);
+    let left: Vec<_> = fs::read_dir(sb.at("cfg/looks"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert!(left.is_empty(), "work files are gone: {left:?}");
 }

@@ -4,6 +4,8 @@
 
 mod fields;
 mod format;
+mod paper;
+mod state;
 mod store;
 
 pub(crate) use format::{plain, shown};
@@ -232,6 +234,7 @@ fn leaves_alone(look: &Look) -> Vec<&'static str> {
     let has = [
         (look.style.is_some(), "style"),
         (look.surfaces.is_some(), "surfaces"),
+        (look.paper.is_some(), "paper"),
     ];
     has.iter().filter(|(h, _)| !h).map(|(_, n)| *n).collect()
 }
@@ -289,7 +292,7 @@ pub(crate) fn op_export(c: &Ctx, name: &str, file: &Path, force: bool) -> Res {
 }
 
 pub(crate) fn op_import(c: &Ctx, bytes: &[u8], name: Option<&str>, force: bool) -> Res {
-    let (mut look, notes) = parse(bytes)?;
+    let (mut look, mut notes) = parse(bytes)?;
     if let Some(n) = name {
         look.name = n.into();
     }
@@ -297,5 +300,11 @@ pub(crate) fn op_import(c: &Ctx, bytes: &[u8], name: Option<&str>, force: bool) 
     look.theme.check(c)?;
     let _held = theme::hold(c)?;
     refuse_taken(c, &look.name, force)?;
+    match state::check(c, &look) {
+        Err(e) if state::no_spaces(&e) => notes.push(
+            "Polycarp Spaces isn't installed here, so the style sheet and settings were not checked; they are when the look is applied".into(),
+        ),
+        r => r?,
+    }
     keep(c, &look, "imported", notes)
 }
