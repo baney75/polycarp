@@ -5,7 +5,6 @@ import XCTest
 /// the real support folders and the real preferences are never read or written.
 final class SettingsImportTests: XCTestCase {
     private var root: URL!
-    private var suites: [String] = []
 
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("import-\(UUID().uuidString)")
@@ -18,13 +17,6 @@ final class SettingsImportTests: XCTestCase {
             for case let u as URL in e { chmod(u.path, 0o700) }
         }
         try? FileManager.default.removeItem(at: root)
-        for s in suites { UserDefaults(suiteName: s)?.removePersistentDomain(forName: s) }
-    }
-
-    private func suite() -> (UserDefaults, String) {
-        let name = "com.baney.test.\(UUID().uuidString)"
-        suites.append(name)
-        return (UserDefaults(suiteName: name)!, name)
     }
 
     private var oldDir: URL { root.appendingPathComponent("BaneySpaces") }
@@ -41,14 +33,14 @@ final class SettingsImportTests: XCTestCase {
         SettingsImport.run(legacyDir: oldDir, newDir: newDir, legacyDefaults: old.0, legacyDomain: old.1, newDefaults: new)
     }
 
-    func testFreshMacWritesNothing() {
-        let old = suite(), (new, _) = suite()
+    func testFreshMacWritesNothing() throws {
+        let old = try defaultsSuite(), (new, _) = try defaultsSuite()
         XCTAssertEqual(run(old, new), .nothingToImport)
         XCTAssertFalse(FileManager.default.fileExists(atPath: newDir.path), "a fresh Mac gets no folder from the import")
     }
 
     func testNormalImportCopiesSettingsAndFilesAndLeavesTheOldOnesAlone() throws {
-        let old = suite(), (new, _) = suite()
+        let old = try defaultsSuite(), (new, _) = try defaultsSuite()
         old.0.set(3, forKey: "modifierChoice")
         old.0.set("dark", forKey: "look")
         try put("bangs.json", #"{"jira":"x"}"#)
@@ -78,7 +70,7 @@ final class SettingsImportTests: XCTestCase {
     /// Copied, these would tell Polycarp its login item was handled, and with the old app in the Trash nothing would start
     /// at login. The saved window frames do come across: a crash can leave windows hidden on another workspace.
     func testTheOldAppsSetupStaysBehindAndSavedFramesComeAcross() throws {
-        let old = suite(), (new, _) = suite()
+        let old = try defaultsSuite(), (new, _) = try defaultsSuite()
         for key in ["loginItemOffered", "loginItemChosen", "setupShown"] { old.0.set(true, forKey: key) }
         old.0.set(3, forKey: "modifierChoice")
         try put("frames.json", "{}")
@@ -90,7 +82,7 @@ final class SettingsImportTests: XCTestCase {
 
     func testTheSavedDockSettingsCopyWithTheirTypes() throws {
         // What uninstalling puts back: the Dock's autohide as it was, a bool, and its delay, a number.
-        let old = suite(), (new, _) = suite()
+        let old = try defaultsSuite(), (new, _) = try defaultsSuite()
         old.0.set(["autohide": false, "autohide-delay": 0.5] as [String: Any], forKey: "systemDockSaved")
         old.0.set(["com.apple.dock/mcx-expose-disabled": 1] as [String: Any], forKey: "systemMissionControlSaved")
         old.0.set(true, forKey: "dockEnabled")
@@ -105,7 +97,7 @@ final class SettingsImportTests: XCTestCase {
     }
 
     func testASecondLaunchDoesNotImportAgain() throws {
-        let old = suite(), (new, _) = suite()
+        let old = try defaultsSuite(), (new, _) = try defaultsSuite()
         old.0.set("one", forKey: "k")
         try put("bangs.json", "first")
         _ = run(old, new)
@@ -121,14 +113,14 @@ final class SettingsImportTests: XCTestCase {
 
     func testPartialDataImportsWhatThereIs() throws {
         // Only files, no preferences.
-        let a = suite(), (newA, _) = suite()
+        let a = try defaultsSuite(), (newA, _) = try defaultsSuite()
         try put("layout.json", "L")
         guard case .imported(let r1) = run(a, newA) else { return XCTFail("files alone import") }
         XCTAssertEqual(r1.copiedFiles, ["layout.json"])
         XCTAssertEqual(r1.copiedPreferences, 0)
         // Only preferences, no folder at all.
         try FileManager.default.removeItem(at: oldDir); try FileManager.default.removeItem(at: newDir)
-        let b = suite(), (newB, _) = suite()
+        let b = try defaultsSuite(), (newB, _) = try defaultsSuite()
         b.0.set(1, forKey: "k")
         guard case .imported(let r2) = run(b, newB) else { return XCTFail("preferences alone import") }
         XCTAssertEqual(r2.copiedFiles, [])
@@ -136,7 +128,7 @@ final class SettingsImportTests: XCTestCase {
     }
 
     func testAnUnreadableFileIsReportedAndTheRestStillCopies() throws {
-        let old = suite(), (new, _) = suite()
+        let old = try defaultsSuite(), (new, _) = try defaultsSuite()
         old.0.set(7, forKey: "k")
         try put("bangs.json", "ok")
         try put("layout.json", "locked")
@@ -152,7 +144,7 @@ final class SettingsImportTests: XCTestCase {
     }
 
     func testAFailedNameIsRetriedNextLaunchWithoutOverwritingAnythingEdited() throws {
-        let old = suite(), (new, _) = suite()
+        let old = try defaultsSuite(), (new, _) = try defaultsSuite()
         old.0.set("old", forKey: "k")
         try put("bangs.json", "from old")
         try put("layout.json", "locked")
@@ -175,7 +167,7 @@ final class SettingsImportTests: XCTestCase {
     }
 
     func testTheAeroSpaceAndMissionControlRecordsCopyAndTheOriginalsStay() throws {
-        let old = suite(), (new, _) = suite()
+        let old = try defaultsSuite(), (new, _) = try defaultsSuite()
         try put("aerospace-start-at-login", "")
         try put("aerospace-login-item", "/Applications/AeroSpace.app")
         try put(DurableRecord.fileName, "<plist/>")
@@ -187,8 +179,8 @@ final class SettingsImportTests: XCTestCase {
         }
     }
 
-    func testAKeyPolycarpAlreadyHasIsKept() {
-        let old = suite(), (new, _) = suite()
+    func testAKeyPolycarpAlreadyHasIsKept() throws {
+        let old = try defaultsSuite(), (new, _) = try defaultsSuite()
         old.0.set("old", forKey: "k"); new.set("new", forKey: "k")
         _ = run(old, new)
         XCTAssertEqual(new.string(forKey: "k"), "new")
