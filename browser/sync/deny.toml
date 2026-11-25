@@ -13,6 +13,9 @@ exceptions = [
 
 [advisories]
 yanked = "deny"
+# A timing leak of an RSA private key. webauthn-rs-core only checks signatures with a passkey's public RSA key, and no
+# RSA private key is ever here.
+ignore = ["RUSTSEC-2023-0071"]
 
 [bans]
 multiple-versions = "allow"

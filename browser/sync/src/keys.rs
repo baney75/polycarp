@@ -248,6 +248,10 @@ mod tests {
         assert_eq!(a.id(), b.id());
         assert_eq!(a.storage.expose(), b.storage.expose());
         assert_ne!(a.signing.to_bytes(), *a.storage.expose());
+        assert_eq!(
+            format!("{a:?}"),
+            format!("Identity({})", a.id().fmt_short())
+        );
         assert_ne!(
             Identity::load_or_create(&Memory::default()).unwrap().id(),
             a.id()

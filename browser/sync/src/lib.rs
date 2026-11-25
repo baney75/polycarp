@@ -2,6 +2,7 @@
 
 pub mod hlc;
 pub mod keys;
+pub mod passkey;
 pub mod policy;
 pub mod record;
 pub mod seal;
