@@ -24,7 +24,8 @@
           ms.createIndex("threadId", "threadId");
           ms.createIndex("messageId", "messageId");
           ms.createIndex("account", "account");
-          d.createObjectStore("threads", { keyPath: "id" }).createIndex("folderDate", ["folder", "lastDate"]);
+          // The id ends the key so threads with the same date still have one order, and a page can start after any of them.
+          d.createObjectStore("threads", { keyPath: "id" }).createIndex("folderDate", ["folder", "lastDate", "id"]);
           d.createObjectStore("drafts", { keyPath: "id" });
           d.createObjectStore("meta", { keyPath: "key" });
         };
@@ -51,10 +52,10 @@
       put: (s, list) => run(s, "readwrite", (st) => { for (const v of list) st.put(v); }),
       del: (s, keys) => run(s, "readwrite", (st) => { for (const k of keys) st.delete(k); }),
       byIndex: (s, i, v) => run(s, "readonly", (st) => st.index(i).getAll(v)).then((v2) => v2 || []),
-      // Newest first within [lower, upper] on a compound index, at most `limit`.
+      // Newest first from just below `upper` down to `lower` on a compound index, at most `limit`.
       page: (s, i, lower, upper, limit) => run(s, "readonly", (st, set) => {
         const out = [];
-        const c = st.index(i).openCursor(IDBKeyRange.bound(lower, upper), "prev");
+        const c = st.index(i).openCursor(IDBKeyRange.bound(lower, upper, false, true), "prev");
         c.onsuccess = () => {
           const cur = c.result;
           if (!cur || out.length >= limit) { set(out); return; }
@@ -70,7 +71,8 @@
     const keyOf = (s, v) => (s === "meta" ? v.key : v.id);
     const copy = (v) => structuredClone(v);
     const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-    const tuple = (a, b) => { for (let i = 0; i < a.length; i++) { const c = cmp(a[i], b[i]); if (c) return c; } return 0; };
+    // IndexedDB's order for array keys: element by element, then the shorter first.
+    const tuple = (a, b) => { for (let i = 0; i < Math.min(a.length, b.length); i++) { const c = cmp(a[i], b[i]); if (c) return c; } return a.length - b.length; };
     return {
       open: () => Promise.resolve(true),
       get: async (s, k) => { const v = stores[s].get(k); return v === undefined ? undefined : copy(v); },
@@ -79,10 +81,10 @@
       del: async (s, keys) => { for (const k of keys) stores[s].delete(k); },
       byIndex: async (s, i, val) => Array.from(stores[s].values()).filter((v) => v[i] === val).map(copy),
       page: async (s, i, lower, upper, limit) => {
-        const fields = i === "folderDate" ? ["folder", "lastDate"] : [i];
+        const fields = i === "folderDate" ? ["folder", "lastDate", "id"] : [i];
         return Array.from(stores[s].values())
-          .map((v) => [fields.map((f) => v[f]).concat(keyOf(s, v)), v])
-          .filter(([k]) => tuple(k.slice(0, -1), lower) >= 0 && tuple(k.slice(0, -1), upper) <= 0)
+          .map((v) => [fields.map((f) => v[f]), v])
+          .filter(([k]) => tuple(k, lower) >= 0 && tuple(k, upper) < 0)
           .sort((a, b) => tuple(b[0], a[0]))
           .slice(0, limit)
           .map(([, v]) => copy(v));
@@ -110,10 +112,11 @@
   const listeners = new Set();
   let channel = null;
   function emit(ev) {
+    openChannel();
     for (const fn of Array.from(listeners)) { try { fn(ev); } catch (e) { /* one bad listener must not stop the rest */ } }
     if (channel) { try { channel.postMessage(ev); } catch (e) { /* closed */ } }
   }
-  function onChange(fn) {
+  function openChannel() {
     if (!channel && typeof BroadcastChannel !== "undefined") {
       try {
         channel = new BroadcastChannel(DB_NAME);
@@ -121,6 +124,9 @@
         if (typeof channel.unref === "function") channel.unref();
       } catch (e) { channel = null; }
     }
+  }
+  function onChange(fn) {
+    openChannel();
     listeners.add(fn);
     return () => listeners.delete(fn);
   }
@@ -219,10 +225,17 @@
     }).then((r) => { emit({ type: "messages", threads: r.threads }); return r; });
   }
 
-  // Puts messages back exactly as `update` returned them.
-  function restore(before) {
+  // Puts back the fields `keys` (all of them when none are named) of messages as `update` returned them, so a change
+  // made since to other fields stays.
+  function restore(before, keys) {
     return queue(async () => {
-      await backend().put("messages", before);
+      const put = [];
+      for (const old of before) {
+        const now = await backend().get("messages", old.id);
+        if (!now) continue;
+        put.push(keys ? Object.assign(now, Object.fromEntries(keys.map((k) => [k, old[k]]))) : old);
+      }
+      await backend().put("messages", put);
       const touched = new Set(before.map((m) => m.threadId));
       await resummarize(touched);
       return Array.from(touched);
@@ -238,18 +251,23 @@
     return { summary, messages };
   }
 
-  // Thread summaries in a folder, newest first, older than `before` when given. `account` narrows to one account.
+  // Where the next page starts: just after this thread.
+  const after = (t) => ({ date: t.lastDate, id: t.id });
+
+  // Thread summaries in a folder, newest first. `before` is a date (older than it) or `after(thread)` (everything after
+  // that thread, ties on its date included). `account` narrows to one account.
   async function threads(opts) {
     const o = Object.assign({ folder: "inbox", limit: 50, before: Infinity, account: "" }, opts || {});
-    const upper = [o.folder, Number.isFinite(o.before) ? o.before - 1 : Number.MAX_SAFE_INTEGER];
-    if (!o.account) return backend().page("threads", "folderDate", [o.folder, 0], upper, o.limit);
+    const lower = [o.folder];
+    let upper = o.before && typeof o.before === "object" ? [o.folder, o.before.date, o.before.id] : [o.folder, o.before];
+    if (!o.account) return backend().page("threads", "folderDate", lower, upper, o.limit);
     const out = [];
-    let cursor = upper;
     while (out.length < o.limit) {
-      const batch = await backend().page("threads", "folderDate", [o.folder, 0], cursor, 200);
+      const batch = await backend().page("threads", "folderDate", lower, upper, 200);
       for (const t of batch) if (t.account === o.account && out.length < o.limit) out.push(t);
       if (batch.length < 200) break;
-      cursor = [o.folder, batch[batch.length - 1].lastDate - 1];
+      const last = batch[batch.length - 1];
+      upper = [o.folder, last.lastDate, last.id];
     }
     return out;
   }
@@ -267,7 +285,7 @@
   globalThis.PolycarpHubStore = {
     DB_NAME, useMemoryStore, open: () => backend().open().then(() => true), onChange,
     putAccount, accounts, removeAccount,
-    upsert, remove, update, restore, message, thread, threads, allMessages, allThreads,
+    upsert, remove, update, restore, message, thread, threads, after, allMessages, allThreads,
     getMeta, setMeta, cursor, setCursor
   };
 })();

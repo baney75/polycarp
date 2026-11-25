@@ -45,7 +45,7 @@
     try {
       await call(adapter, remoteIds);
     } catch (e) {
-      await S.restore(before);
+      await S.restore(before, Object.keys(patch));
       throw e;
     }
   }

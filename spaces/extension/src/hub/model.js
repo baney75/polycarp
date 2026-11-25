@@ -88,12 +88,13 @@
     };
   }
 
-  // Small stable hash for thread ids (FNV-1a, 32 bits, base 36). Not for security.
-  function hash(s) {
-    let h = 0x811c9dc5;
+  // Stable hash for thread ids: two FNV-1a passes from different starts, 64 bits in base 36, so a mailbox of a million
+  // threads has about one chance in 36,000 of two sharing an id. Not for security.
+  function fnv(s, h) {
     for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
-    return (h >>> 0).toString(36);
+    return (h >>> 0).toString(36).padStart(7, "0");
   }
+  function hash(s) { return fnv(s, 0x811c9dc5) + fnv(s, 0x2b8f1d3a); }
 
   // The thread a message joins. A provider's own thread id wins; then any message already stored that this one names
   // or that names it (`known` maps a Message-ID to its thread id); then the root of its References, so replies whose

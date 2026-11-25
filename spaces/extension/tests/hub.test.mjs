@@ -66,6 +66,17 @@ test("the store lists threads newest first, by folder and account, with counts",
   assert.deepEqual(t.messages.map((m) => m.remoteId), ["1", "2"]);
 });
 
+test("threads with the same date page without a gap or a repeat", async () => {
+  S.useMemoryStore();
+  await S.upsert("home", Array.from({ length: 7 }, (_, i) => msg("t" + i, { messageId: `<t${i}@x>`, subject: "Same " + i, date: 5000 })));
+  const seen = [];
+  let page = await S.threads({ limit: 3 });
+  for (let n = 0; page.length && n < 10; n++) { seen.push(...page.map((t) => t.id)); page = await S.threads({ limit: 3, before: S.after(page[page.length - 1]) }); }
+  assert.equal(seen.length, 7);
+  assert.equal(new Set(seen).size, 7);
+  assert.equal((await S.threads({ before: 5000 })).length, 0);
+});
+
 test("a thread leaves the inbox only when its last inbox message does", async () => {
   S.useMemoryStore();
   await S.upsert("home", [msg("1"), msg("2", { date: 2000, inReplyTo: "<1@x>", references: ["<1@x>"] })]);
@@ -123,6 +134,13 @@ test("a change shows at once and goes back when the account refuses it", async (
   await A.actions.flag("home", fake, null, ids, true);
   assert.equal((await S.thread(t.id)).summary.flagged, true);
   assert.equal((await fake.read(ids[0])).flagged, true);
+  // A refused change puts back only what it changed: a read made meanwhile stays.
+  const slow = F.create({ size: 20, fail: ["flag"] });
+  const flagging = A.actions.flag("home", slow, null, ids, false);
+  await S.update(ids.map((id) => "home:" + id), { unread: false });
+  await assert.rejects(flagging, /refused flag/);
+  assert.equal((await S.thread(t.id)).summary.unread, 0);
+  assert.equal((await S.thread(t.id)).summary.flagged, true);
   const sulky = F.create({ size: 20, fail: ["archive"] });
   await assert.rejects(A.actions.archive("home", sulky, null, ids), /refused archive/);
   assert.equal((await S.thread(t.id)).summary.folder, t.folder);

@@ -45,7 +45,13 @@ const scenario = async (memory) => {
   await S.restore(before);
   const back = (await S.threads({ limit: 1 }))[0].id === top[0].id;
   await S.removeAccount('work');
+  await S.upsert('ties', Array.from({ length: 7 }, (_, i) => ({ remoteId: 't' + i, messageId: `<t${i}@x>`, from: 'a@example.com', subject: 'Same ' + i, date: 4102444800000 })));
+  const ties = [];
+  let pg = await S.threads({ limit: 3 });
+  while (pg.length && ties.length < 20) { ties.push(...pg.filter((x) => x.account === 'ties').map((x) => x.id)); if (ties.length >= 7) break; pg = await S.threads({ limit: 3, before: S.after(pg[pg.length - 1]) }); }
+  await S.removeAccount('ties');
   return {
+    ties: ties.length, tiesUnique: new Set(ties).size,
     top: top.map((x) => x.id), older: older.map((x) => x.id), work: work.map((x) => x.id), sent: sent.length,
     sorted: top.every((x, i) => i === 0 || top[i - 1].lastDate >= x.lastDate),
     workOnly: work.every((x) => x.account === 'work'), archived, back,
@@ -62,6 +68,7 @@ try {
   check(idb.work.length > 0 && idb.workOnly, 'one account alone', idb.work);
   check(!idb.archived && idb.back, 'archive and its undo move the thread out and back', idb);
   check(idb.left, 'removing an account removes its mail', idb);
+  check(idb.ties === 7 && idb.tiesUnique === 7, 'threads with the same date page without a gap or a repeat', idb);
   check(JSON.stringify(idb) === JSON.stringify(mem), 'IndexedDB and the memory store give the same answers', { idb, mem });
   await p.close();
   const again = await page();
