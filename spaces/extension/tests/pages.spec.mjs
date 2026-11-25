@@ -23,6 +23,8 @@ const ARTICLE = `<!doctype html><html><head><meta charset="utf-8"><title>Sample 
 <p>Rivers carry much of that water back to the sea, and the loop begins again.</p>
 <div id="ce" contenteditable="true"><p>First paragraph inside the editor box.</p></div>
 <div id="ce2" contenteditable="true"></div>
+<div data-polycarp-skip><p id="kept">Words a site keeps plain.</p></div><pre><span id="code">let words = 1;</span></pre>
+<div role="toolbar"><span id="tool">Tool bar label</span></div><p id="words">Words that may change.</p>
 <div id="late"><p>This block turns into an editor after the page loads.</p></div></body></html>`;
 const server = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(ARTICLE); });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -285,6 +287,15 @@ try {
   const typed = await web.evaluate(() => ({ html: document.getElementById('ce2').innerHTML, text: document.getElementById('ce2').innerText, pre: document.getElementById('ce').innerHTML }));
   ok(typed.text === 'Hello there friends, this is a message I am writing', 'typing in an editor keeps the text in order ' + JSON.stringify(typed.text));
   ok(!/polycarp/i.test(typed.html) && !/polycarp/i.test(typed.pre), 'no Polycarp markup inside editors');
+  // Text changed in place stays plain wherever the first walk left it plain.
+  const changed = await web.evaluate(async () => {
+    const ids = ['kept', 'code', 'tool', 'words'];
+    for (const id of ids) document.getElementById(id).firstChild.nodeValue = 'Several words the page just changed';
+    const bold = (id) => (document.querySelector(`#${id} polycarp-t`) || { textContent: '' }).textContent.startsWith('Several');
+    for (let i = 0; i < 40 && !bold('words'); i++) await new Promise((r) => setTimeout(r, 50));
+    return ids.map(bold);
+  });
+  ok(String(changed) === 'false,false,false,true', 'changed text is bolded only where text may be ' + changed);
   // A block styled first and made editable later gets its plain text back on focus.
   const lateStyled = await web.evaluate(() => document.querySelectorAll('#late polycarp-b').length);
   await web.evaluate(() => document.getElementById('late').setAttribute('contenteditable', 'true'));
