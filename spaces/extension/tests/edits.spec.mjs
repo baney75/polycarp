@@ -36,7 +36,8 @@ const manifestFile = path.join(manifestDir, 'com.polycarp.newtab.json');
 fs.mkdirSync(manifestDir, { recursive: true });
 fs.writeFileSync(manifestFile, JSON.stringify({ name: 'com.polycarp.newtab', description: 'test', path: wrapper, type: 'stdio', allowed_origins: [`chrome-extension://${ID}/`] }));
 const OLD_APP = { ok: false, error: 'there is no request called edits' };
-const setAnswer = (edits) => fs.writeFileSync(answer, JSON.stringify({ filters: { ok: true, filters: [] }, edits: Array.isArray(edits) ? { ok: true, edits } : edits }));
+let shareAnswer; // what it answers to {op:"sharePage"}
+const setAnswer = (edits) => fs.writeFileSync(answer, JSON.stringify({ filters: { ok: true, filters: [] }, edits: Array.isArray(edits) ? { ok: true, edits } : edits, sharePage: shareAnswer }));
 setAnswer(OLD_APP);
 
 const PAGE = `<!doctype html><html lang="en"><head><title>Shop</title><style>body{font:16px sans-serif} .ad{height:40px}</style></head><body>
@@ -209,8 +210,49 @@ try {
   await pop.keyboard.press('Space');
   ok(await until(async () => (await text('#title')) === 'New title'), 'popup: the switch brings the edit back on the open page');
   ok(await until(() => pop.evaluate(() => document.activeElement && document.activeElement.matches('#editsList input'))), 'popup: the switch keeps the focus');
+
+  // ---------- Sharing the page with an agent ----------
+  const sent = () => fs.readFileSync(asked, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((m) => m.op === 'sharePage');
+  const note2 = () => pop.textContent('#shareNote');
+  const share = async (answerTo, button = '#shareGo') => {
+    shareAnswer = answerTo;
+    setAnswer([{ ...EDIT, name: 'Shop, calmer', css: '#foot{letter-spacing:4px}' }]);
+    const n = sent().length;
+    await pop.click(button);
+    await until(async () => sent().length > n && !(await pop.isDisabled('#shareGo')));
+    return sent().at(-1);
+  };
+  ok(sent().length === 0 && /Nothing you typed is sent/.test(await note2()) && !(await pop.isVisible('#shareStop')), 'share: nothing is sent before the button is pressed');
+  await page.evaluate(() => {
+    history.replaceState(null, '', '/a?token=secret#secret');
+    document.querySelector('#main').insertAdjacentHTML('beforeend', '<ul id="posts"><li class="post">One</li><li class="post">Two</li><li class="post">Three</li></ul><p id="gone" style="display:none">unseen words</p><div id="code" class="cm-editor"><div>typed code</div></div><h2 id="odd">' + '\u{1F600}'.repeat(300) + '</h2>');
+    document.querySelector('#name').value = 'typed name';
+  });
+  await share({ ok: false, error: 'there is no request called sharePage' });
+  ok(/Update Polycarp/.test(await note2()) && !(await pop.isVisible('#shareStop')), `share: an older app says to update (${await note2()})`);
+  await share(undefined);
+  ok(/didn't answer/.test(await note2()), `share: no answer is said (${await note2()})`);
+  const got = (await share({ ok: true })).page, all = JSON.stringify(got), part = (at) => got.parts.find((x) => x.at === at);
+  ok(got.url === 'https://shop.test/a' && got.title === 'Shop', `share: the address without its query (${got.url})`);
+  ok(!/typed|my words|my draft|mine|unseen|secret|polycarp-/.test(all), 'share: nothing typed, hidden or in the query is sent');
+  ok(part('#title').is === 'Heading' && part('#title').words === 'New title' && part('#foot').words === 'End', `share: parts with their selector and words (${all})`);
+  ok(part('li.post') && part('li.post').count === 3 && part('li.post').words === 'One' && !/Two/.test(JSON.stringify(got.parts.filter((x) => x.is === 'List item'))), 'share: parts alike are one, with how many');
+  ok(await page.evaluate((list) => list.every((x) => document.querySelectorAll(x.at).length === (x.count || 1)), got.parts), 'share: every selector finds what it says');
+  ok(got.parts.every((x) => x.at.length <= 500 && x.is.length <= 30 && (x.words || '').length <= 160) && part('#odd').words.length === 160, 'share: within what the app takes');
+  ok(got.edits.length === 1 && got.edits[0].id === 'shop' && got.edits[0].hits.length === EDIT.changes.length && got.edits[0].hits[1] === 1, `share: what the agent's edit matched here (${JSON.stringify(got.edits)})`);
+  ok(/^Shared until .*this page$/.test(await note2()) && (await pop.textContent('#shareGo')) === 'Share again', `share: says until when (${await note2()})`);
   await pop.screenshot({ path: path.join(here, 'out', 'edits-popup.png') });
+  const stop = await share({ ok: true }, '#shareStop');
+  ok(stop.page === null && /Nothing you typed/.test(await note2()) && !(await pop.isVisible('#shareStop')), 'share: Stop sharing takes it back');
+  await page.evaluate(() => { document.body.contentEditable = 'true'; });
+  await pop.click('#shareGo');
+  ok(await until(async () => /Nothing on this page/.test(await note2())), 'share: a page that is one editor is not sent');
+  const asks = sent().length;
+  await sw.evaluate(async () => { const [t] = await chrome.tabs.query({ url: 'https://shop.test/*' }); await chrome.scripting.executeScript({ target: { tabId: t.id }, func: (id) => { chrome.runtime.sendMessage({ type: 'polycarp:sharePage', tabId: id }); }, args: [t.id] }); });
+  await sleep(600);
+  ok(sent().length === asks && asks === 4, `share: only the popup may ask (${asks})`);
   await pop.close();
+  await page.goto('https://shop.test/a');
   const set = await ctx.newPage();
   set.on('pageerror', (e) => errors.push('settings: ' + e));
   await set.goto(`chrome-extension://${ID}/src/pages/settings.html`);

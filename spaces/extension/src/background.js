@@ -100,6 +100,34 @@ async function editPage(tab) {
   } catch (e) { return false; }
 }
 
+// "Share with my agent" in the popup: the page's parts go to the Polycarp app on this computer, which keeps them for an
+// hour for the person's agents. `tabId` null takes back what was shared. Answers { ok } or { ok: false, error }.
+const SHARED_KEY = "polycarp.shared"; // session storage: { url, title, at } of the page last shared
+async function sharePage(tabId) {
+  let page = null;
+  if (tabId !== null) {
+    try {
+      const target = { tabId };
+      await chrome.scripting.executeScript({ target, files: ["src/shared/edits.js", "src/shared/edits-pick.js", "src/shared/edits-outline.js"] });
+      const [res] = await chrome.scripting.executeScript({ target, func: () => {
+        const p = globalThis.Polycarp && globalThis.Polycarp.pageEdits;
+        return globalThis.PolycarpEditsOutline.page(document, p ? p.report() : []);
+      } });
+      page = res && res.result;
+    } catch (e) { page = null; }
+    if (!page) return { ok: false, error: "This page can't be shared" };
+    if (!page.parts.length) return { ok: false, error: "Nothing on this page to share" };
+  }
+  const r = await askFiltersHost({ op: "sharePage", page });
+  if (!r || r.ok !== true) {
+    const why = String((r && (r.error || r.failed)) || "");
+    return { ok: false, error: why === "there is no request called sharePage" ? "Update Polycarp on this computer to share pages" : r && r.failed ? "Polycarp on this computer didn't answer" : "Polycarp refused it: " + (why || "no reason given").slice(0, 200) };
+  }
+  if (page) await chrome.storage.session.set({ [SHARED_KEY]: { url: page.url, title: page.title, at: Date.now() } });
+  else await chrome.storage.session.remove(SHARED_KEY);
+  return { ok: true };
+}
+
 // ---------- Menus ----------
 function buildMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -350,6 +378,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
   if (msg.type === "polycarp:resume") { resume().then(() => reply({ ok: true })); return true; }
   if (msg.type === "polycarp:editPage") { if (!String(sender.url).startsWith(chrome.runtime.getURL("src/popup/"))) return; editPage({ id: msg.tabId }).then((ok) => reply({ ok })); return true; }
+  if (msg.type === "polycarp:sharePage") { if (!String(sender.url).startsWith(chrome.runtime.getURL("src/popup/"))) return; sharePage(msg.tabId === null ? null : +msg.tabId).then(reply); return true; }
   if (msg.type === "polycarp:openSettings") { chrome.runtime.openOptionsPage(); return; }
   if (msg.type === "polycarp:openSearch") { openSearch(msg.q || "", msg.extra); return; }
   if (msg.type === "polycarp:find") {
@@ -428,10 +457,10 @@ async function appConnected() {
   if (!chrome.runtime.sendNativeMessage || !chrome.permissions) return false;
   try { return await chrome.permissions.contains({ permissions: ["nativeMessaging"] }); } catch (e) { return false; }
 }
-function askFiltersHost(op) {
+function askFiltersHost(request) {
   return new Promise((resolve) => {
     try {
-      chrome.runtime.sendNativeMessage(FILTERS_HOST, { op }, (reply) => {
+      chrome.runtime.sendNativeMessage(FILTERS_HOST, request, (reply) => {
         const err = chrome.runtime.lastError;
         resolve(err ? { failed: String(err.message || err) } : reply);
       });
@@ -444,7 +473,7 @@ async function keepAppList(op, key, field, most) {
   let next;
   if (!(await appConnected())) next = { [field]: [], connected: false };
   else {
-    const r = await askFiltersHost(op);
+    const r = await askFiltersHost({ op });
     if (r && r.ok === true && Array.isArray(r[op])) next = { [field]: r[op].slice(0, most), connected: true };
     // No Polycarp on this computer (or not allowed to talk to it): nothing from it, and no error to show.
     else if (r && r.failed && /not found|forbidden/i.test(r.failed)) next = { [field]: [], connected: false };

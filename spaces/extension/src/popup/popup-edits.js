@@ -45,6 +45,32 @@
     if (r && r.ok) window.close();
     else document.getElementById("editPage").textContent = "This page can't be edited";
   });
+
+  // Sharing this page with the person's agents, through the app on this computer: shown only when there is one.
+  const row = document.getElementById("share"), note = document.getElementById("shareNote"), go = document.getElementById("shareGo"), halt = document.getElementById("shareStop");
+  const HOUR = 3600e3, KEY = "polycarp.shared";
+  async function share(error) {
+    row.hidden = !(await S.load()).app.connected;
+    const got = (await chrome.storage.session.get(KEY))[KEY];
+    const on = got && Date.now() - got.at < HOUR ? got : null;
+    const until = on && new Date(on.at + HOUR).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const same = on && on.url === at.origin + at.pathname;
+    note.textContent = error || (on ? "Shared until " + until + ": " + (same ? "this page" : on.title || on.url) : "Lets agents on this computer see this page's parts and words for an hour. Nothing you typed is sent.");
+    go.textContent = same ? "Share again" : "Share with my agent";
+    halt.hidden = !on;
+  }
+  async function send(tabId) {
+    go.disabled = halt.disabled = true;
+    const r = await chrome.runtime.sendMessage({ type: "polycarp:sharePage", tabId }).catch(() => null);
+    go.disabled = halt.disabled = false;
+    await share(r && r.ok ? "" : (r && r.error) || "That didn't work. Try again");
+    go.focus();
+  }
+  go.addEventListener("click", () => send(tab.id));
+  halt.addEventListener("click", () => send(null));
+  chrome.storage.onChanged.addListener((ch, area) => { if (S.changed(ch, area)) share(); });
+
   box.hidden = false;
   render();
+  share();
 })();
