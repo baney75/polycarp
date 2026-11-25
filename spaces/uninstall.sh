@@ -401,11 +401,16 @@ if [ -n "$KEEP_SIGNING" ]; then
 elif [ -f "$SIGNING_KC" ]; then
   sys security delete-keychain "$SIGNING_KC" 2>/dev/null || true
 fi
-if [ -d "$DATA/Signing" ] && [ -n "$KEEP_SIGNING" ]; then
-  find "$DATA" -mindepth 1 -maxdepth 1 ! -name Signing -exec rm -rf {} +
-else
-  rm -rf "$DATA"
+# Polycarp Browser is an app of its own: its profile holds the person's bookmarks, passwords and tabs.
+keep=(! -name Browser)
+[ -z "$KEEP_SIGNING" ] || keep+=(! -name Signing)
+if [ -L "$DATA" ]; then
+  rm -f "$DATA"
+elif [ -d "$DATA" ]; then
+  find "$DATA" -mindepth 1 -maxdepth 1 "${keep[@]}" -exec rm -rf {} +
+  rmdir "$DATA" 2>/dev/null || true
 fi
+if [ -d "$DATA/Browser" ]; then echo "Kept Polycarp Browser's profile: $DATA/Browser"; fi
 rm -rf "$HOME/Library/Caches/$ID" "$HOME/Library/HTTPStorages/$ID" \
   "$HOME/Library/Saved Application State/$ID.savedState"
 # Its record of shortcuts it turned off stays while they're still off, so a reinstall can finish.

@@ -416,6 +416,16 @@ final class UninstallTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: path("Library/Application Support/Polycarp").path), "the rest of its data still goes")
     }
 
+    /// Polycarp Browser's profile is the person's own data, and `polycarp browser uninstall --profile` is what removes it.
+    func testPolycarpBrowsersProfileIsKept() throws {
+        try write("Library/Application Support/Polycarp/Browser/Default/Bookmarks", "theirs")
+        try write("Library/Application Support/Polycarp/state.json", "{}")
+        let out = try uninstall(extraPath: try fakeSecurity(sha1: "0000000000000000000000000000000000000000"))
+        XCTAssertTrue(out.contains("Kept Polycarp Browser's profile"), out)
+        XCTAssertTrue(fm.fileExists(atPath: path("Library/Application Support/Polycarp/Browser/Default/Bookmarks").path))
+        XCTAssertFalse(fm.fileExists(atPath: path("Library/Application Support/Polycarp/state.json").path))
+    }
+
     /// Any other person's local key is just deleted, as before.
     func testAnotherLocalSigningKeyIsStillDeleted() throws {
         try write("Library/Application Support/Polycarp/Signing/polycarp-signing.keychain-db", "keychain")
