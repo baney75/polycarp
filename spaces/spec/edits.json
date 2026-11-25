@@ -1,7 +1,7 @@
 {
  "about": "Page edits: what Edits.swift and the extension's src/shared/edits.js both take and both refuse. Each refused case names the field the refusal must point at.",
- "rules": {"about": "What any code that applies an edit must keep to, whatever a selector matches. text, attr, insert and move leave an element in never, or inside one, as it is. move also leaves one that is or holds an element in never or in carry, so no field or button lands in another form.",
-  "never": ["embed", "iframe", "input", "noscript", "object", "option", "script", "select", "style", "template", "textarea"], "carry": ["button"]},
+ "rules": {"about": "What any code that applies an edit must keep to, whatever a selector matches. text, attr, insert and move leave an element in never or in editors, or inside one, or any other a person types in (isContentEditable), as it is. move also leaves one that is or holds an element in never, editors or carry, so no field or button lands in another form.",
+  "never": ["embed", "iframe", "input", "noscript", "object", "option", "script", "select", "style", "template", "textarea"], "editors": ["[contenteditable]:not([contenteditable=false])", "[role=textbox]"], "carry": ["button"]},
  "accept": [
   {"case": "hide", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "#ads, .promo"}]}},
   {"case": "style", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "article", "style": {"font-size": "18px", "max-width": "calc(100% - 2rem)", "--gap": "4px"}}]}},
@@ -22,6 +22,7 @@
   {"case": "a www host stays one", "edit": {"id": "a", "sites": ["www.gov.uk"], "css": "a{}"}},
   {"case": "hide what only hide and style may name", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "div > iframe.ad"}]}},
   {"case": "text in a class named like a tag", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "style-guide .style, #textarea", "text": "x"}]}},
+  {"case": "a custom element named like a tag", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "main > style-guide, select-menu.x", "text": "x"}]}},
   {"case": "data in a word, not a fetch", "edit": {"id": "a", "sites": ["example.com"], "css": ".curl-up{color:red}"}}
  ],
  "refuse": [
@@ -85,6 +86,10 @@
   {"case": "style value left open", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"width": "calc(1px"}}]}, "path": "changes[0].style.width"},
   {"case": "a string in a custom property", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"--x": "'https://evil.example/a'"}}]}, "path": "changes[0].style.--x"},
   {"case": "css with a string in a custom property", "edit": {"id": "a", "sites": ["example.com"], "css": "a{--x /*;*/ : /*;*/ \"https://evil.example/a\" 1x}"}, "path": "css"},
-  {"case": "css at-rule after a string that a line break ends", "edit": {"id": "a", "sites": ["example.com"], "css": "a{content:\"\n} @import 'x';\""}, "path": "css"}
+  {"case": "css at-rule after a string that a line break ends", "edit": {"id": "a", "sites": ["example.com"], "css": "a{content:\"\n} @import 'x';\""}, "path": "css"},
+  {"case": "text in an editor", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "div[ContentEditable]", "text": "x"}]}, "path": "changes[0].at"},
+  {"case": "move into an editor", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "move", "at": "p", "to": "[contenteditable='']", "where": "last"}]}, "path": "changes[0].to"},
+  {"case": "css with a string past a bracketed semicolon in a custom property", "edit": {"id": "a", "sites": ["example.com"], "css": "a{--e:;--x:var(--e,[;])\"https://evil.example/a\" 1x}"}, "path": "css"},
+  {"case": "a link that ends in a line separator", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "p", "where": "after", "blocks": [{"kind": "link", "text": "x", "url": "https://example.org/\u2028"}]}]}, "path": "changes[0].blocks[0].url"}
  ]
 }

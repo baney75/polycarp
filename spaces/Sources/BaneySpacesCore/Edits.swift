@@ -4,8 +4,8 @@ import Foundation
 // reword, move or add on the pages of named sites. An edit only changes how a page looks and reads in this browser. It
 // cannot click, type, submit, load anything from the network or run a script. Checking the JSON is half of that rule.
 // A selector can match anything, so whatever applies an edit must also keep to spec/edits.json's `rules`: never reword,
-// relabel, add to or move an element in `never` or inside one (new words in a <style> are a stylesheet nobody checked),
-// and never move an element that is or holds one, or a button.
+// relabel, add to or move an element in `never`, an editor, or anything inside one (new words in a <style> are a stylesheet
+// nobody checked; in an editor they are a message someone sends), and never move an element that is or holds one, or a button.
 
 extension String {
     /// Whether these exact characters are in it. `contains` compares whole letters with their accents, so it misses
@@ -130,7 +130,11 @@ public enum Edits {
         default: break
         }
         if verb != "hide", verb != "style" {
-            for key in ["at", "to"] { if let s = out[key]?.string, let el = subjects(s).first(where: never.contains) { throw SurfacesIssue(p + key, "names a <\(el)>; only hide and style may") } }
+            for key in ["at", "to"] {
+                guard let s = out[key]?.string else { continue }
+                if let el = subjects(s).first(where: never.contains) { throw SurfacesIssue(p + key, "names a <\(el)>; only hide and style may") }
+                if s.lowercased().holds("contenteditable") { throw SurfacesIssue(p + key, "names an editor; only hide and style may") }
+            }
         }
         return .object(out)
     }
@@ -199,13 +203,33 @@ public enum Edits {
         while t != was { was = t; t = t.replacingOccurrences(of: "\\([^()\\[\\]]*\\)|\\[[^()\\[\\]]*\\]", with: "", options: .regularExpression) }
         return t.components(separatedBy: ",").map { part in
             let last = part.unicodeScalars.split(whereSeparator: { " \t>+~|".unicodeScalars.contains($0) }).last ?? []
-            return String(String.UnicodeScalarView(last.prefix { ("a"..."z").contains($0) }))
+            return String(String.UnicodeScalarView(last.prefix { !".#:[*&".unicodeScalars.contains($0) }))
         }
     }
 
     /// CSS with each string cut to its quote mark and each comment to a space. It holds no backslash to mind.
     private static func bare(_ css: String) -> String {
         css.replacingOccurrences(of: #"(")[^"\n\r\f]*"?|(')[^'\n\r\f]*'?|/\*[\s\S]*?(?:\*/|\z)"#, with: "$1$2 ", options: .regularExpression)
+    }
+
+    /// Whether a `--name:` value, to the semicolon or brace that ends it and not one in its own brackets, holds a string.
+    private static func stringInCustomProperty(_ plain: String) -> Bool {
+        var at = plain.startIndex
+        while let name = plain.range(of: #"(^|[;{}\s])--[^\s:;{}]*\s*:"#, options: .regularExpression, range: at..<plain.endIndex) {
+            var depth = 0
+            value: for ch in plain.unicodeScalars[name.upperBound...] {
+                switch ch {
+                case "\"", "'": return true
+                case "(", "[", "{": depth += 1
+                case ")", "]": depth -= 1
+                case "}": if depth == 0 { break value }; depth -= 1
+                case ";": if depth == 0 { break value }
+                default: break
+                }
+            }
+            at = name.upperBound
+        }
+        return false
     }
 
     private static func place(_ o: [String: SurfaceValue], _ p: String) throws -> String {
@@ -216,7 +240,7 @@ public enum Edits {
     private static func control(_ s: String) -> Bool { s.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) } }
 
     static func webURL(_ s: String) -> Bool {
-        guard s.range(of: "^https?://[A-Za-z0-9.-]+(:[0-9]+)?([/?#][^\\s\\\\]*)?$", options: .regularExpression) != nil, !control(s) else { return false }
+        guard s.range(of: "^https?://[A-Za-z0-9.-]+(:[0-9]+)?([/?#][^\\s\\\\]*)?\\z", options: .regularExpression) != nil, !control(s) else { return false }
         return URLComponents(string: s)?.host?.isEmpty == false
     }
 
@@ -233,7 +257,7 @@ public enum Edits {
         }
         if low.holds("</") { return "may not hold </" }
         let plain = bare(low)
-        if plain.range(of: #"(^|[;{}\s])--[^\s:;{}]*\s*:[^;{}]*["']"#, options: .regularExpression) != nil || (prop.hasPrefix("--") && plain.range(of: "[\"']", options: .regularExpression) != nil) {
+        if stringInCustomProperty(prop.hasPrefix("--") ? prop + ":" + plain : plain) {
             return "may not keep a quoted string in a custom property"
         }
         let allowed: Set = ["media", "supports", "container", "keyframes", "layer", "starting-style"]
