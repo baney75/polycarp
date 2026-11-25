@@ -47,6 +47,19 @@ public struct RoleRequest: Equatable, Sendable {
         }
         return .success(RoleRequest(role: role, new: new, prompt: prompt, folder: folder))
     }
+
+    // MARK: To the app
+
+    public func wire(caller: String?) -> Wire.Request {
+        Wire.Request(op: .role, target: role.rawValue, text: prompt, args: (new ? ["--new"] : []) + (folder.map { ["--in", $0] } ?? []), caller: caller)
+    }
+
+    /// The same rules as the command line's, whoever wrote to the socket.
+    public init?(wire r: Wire.Request) {
+        let words = [r.target ?? ""] + (r.args ?? []) + (r.text.map { ["--prompt", $0] } ?? [])
+        guard r.op == .role, case let .success(me)? = RoleRequest.parse(words, cwd: "/") else { return nil }
+        self = me
+    }
 }
 
 public extension AppRole {

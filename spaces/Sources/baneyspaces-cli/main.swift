@@ -14,6 +14,10 @@ usage: \(me) <command>
   ls [--json]                 everything the session engine wraps: terminals, agents, browser tabs
   focus <id | words>          bring it forward (an ID from ls, or a fuzzy search)
   open <url>                  open in your default browser
+  open <role> [--new] [--in DIR] [--prompt TEXT]
+                              the app for a job (agent, terminal, mail, ...; see defaults): goes to its window,
+                              or opens it; --new always opens a window. DIR for agent, terminal, editor and files,
+                              TEXT for the agent
   search [--open] [--json] [--] <text>
                               one search, as the launcher and the new tab page do it: open tabs and
                               windows that match, bang completions, then the web (search.engine); one
@@ -184,7 +188,20 @@ case "search":
     SearchCommand.run(rest, remote: remoteHost != nil)
 
 case "open":
-    guard let url = rest.first else { fail("usage: \(me) open <url>", code: 2) }
+    guard let url = rest.first else { fail("usage: \(me) open <url | role>", code: 2) }
+    if let parsed = RoleRequest.parse(rest, cwd: FileManager.default.currentDirectoryPath) {
+        guard remoteHost == nil else { fail("apps are opened on this machine only", code: 2) }
+        switch parsed {
+        case .failure(let f): fail([f.message, f.suggestion].compactMap { $0 }.joined(separator: "\n"), code: f.exit)
+        case .success(let request):
+            var isDir: ObjCBool = false
+            if let d = request.folder, !FileManager.default.fileExists(atPath: d, isDirectory: &isDir) || !isDir.boolValue { fail("no such folder: \(d)") }
+            let reply = call(request.wire(caller: launchingApp.isEmpty ? "cli" : launchingApp))
+            let app = reply.info?["app"] ?? ""
+            print([app, reply.info?["did"] ?? ""].filter { !$0.isEmpty }.joined(separator: ": "))
+        }
+        break
+    }
     _ = call(Wire.Request(op: .open, target: url))
 
 case "play":
