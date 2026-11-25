@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Makes what `polycarp browser install` reads: scripts/build-parts.sh DEST [--arm64-only]
-# spaces/scripts/bundle.sh runs it into Polycarp.app/Contents/Resources/browser. The launcher is a program of its own.
+# spaces/scripts/bundle.sh runs it into Polycarp.app/Contents/Resources/make-browser. The launcher is a program of its own.
 set -euo pipefail
 [ $# -ge 1 ] || { echo "usage: scripts/build-parts.sh DEST [--arm64-only]" >&2; exit 2; }
 HERE=$(cd "$(dirname "$0")/.." && pwd)
