@@ -1158,7 +1158,7 @@ pub fn handle(shared: &Shared, req: &Value) -> Envelope {
                     // Who asked: the agent id and the pipe peer's pid, never the value.
                     let peer = req["_peer_pid"].as_u64().map(|p| p as u32).filter(|p| *p != 0);
                     let env = Envelope::ok(json!({}));
-                    c.paths.append_action(&ActionRecord::from_result(now(), &agent, "set", peer, None, None, &format!("settings:{k}"), &env).to_line(), now(), &c.last_prune);
+                    c.paths.append_action(&ActionRecord::from_result(now(), &agent, "set", peer, None, &format!("settings:{k}"), &env).to_line(), now(), &c.last_prune);
                     if k == "bar.enabled" {
                         let on = val == json!(true);
                         crate::bar::set_enabled(on);
@@ -1276,10 +1276,8 @@ fn agent_status(c: &Core) -> Value {
     json!({ "workspace": AGENT_WORKSPACE, "shown": c.model.agent_shown(), "windows": windows, "processes": c.model.agent_pids().len(), "refused": c.model.refused() })
 }
 
-// Every field of one action-log row; a struct for them would be built at each call and used once.
-#[allow(clippy::too_many_arguments)]
-fn record(c: &Core, agent: &str, verb: &str, pid: Option<u32>, window: Option<&str>, reference: Option<&str>, route: &str, env: &Envelope) {
-    c.paths.append_action(&ActionRecord::from_result(now(), agent, verb, pid, window, reference, route, env).to_line(), now(), &c.last_prune);
+fn record(c: &Core, agent: &str, verb: &str, pid: Option<u32>, window: Option<&str>, route: &str, env: &Envelope) {
+    c.paths.append_action(&ActionRecord::from_result(now(), agent, verb, pid, window, route, env).to_line(), now(), &c.last_prune);
 }
 
 fn agent_log(c: &Core, args: &Value) -> Envelope {
@@ -1314,7 +1312,7 @@ fn launch_on_agent(shared: &Shared, agent: &str, label: &str, exe: PathBuf, args
             }
             Err(e) => {
                 let env = Envelope::err("internal", e, Retry::Safe, "Check the path and try again.");
-                record(&c, agent, "open", None, None, None, "createprocess", &env);
+                record(&c, agent, "open", None, None, "createprocess", &env);
                 return env;
             }
         }
@@ -1328,7 +1326,7 @@ fn launch_on_agent(shared: &Shared, agent: &str, label: &str, exe: PathBuf, args
         if let Some(w) = found {
             let i = c.info.get(&w).cloned();
             let env = Envelope::ok(json!({ "window": w, "pid": c.model.pid_of(&w), "app": label, "title": i.as_ref().map(|i| i.title.clone()), "workspace": "agent", "start": spawned.start }));
-            record(&c, agent, "open", Some(spawned.pid), Some(&w), None, "createprocess", &env);
+            record(&c, agent, "open", Some(spawned.pid), Some(&w), "createprocess", &env);
             return env;
         }
     }
@@ -1336,13 +1334,13 @@ fn launch_on_agent(shared: &Shared, agent: &str, label: &str, exe: PathBuf, args
     let alive = winapi::alive(spawned.pid, spawned.start);
     let appeared: Vec<String> = c.model.window_ids().into_iter().filter(|w| !known.contains(*w) && !c.model.is_agent_window(w)).map(String::from).collect();
     let env = if !appeared.is_empty() {
-        Envelope::err("single_instance", format!("{label} opened its window in a copy that was already running, not in a process of its own"), Retry::Never, "Nothing was driven. The window that opened is left where it is, on your workspace.").with_data(json!({ "windows_that_appeared": appeared }))
+        Envelope::err("single_instance", format!("{label} opened its window in a copy that was already running, not in a process of its own"), Retry::Never, "The window that opened is left where it is, on your workspace.").with_data(json!({ "windows_that_appeared": appeared }))
     } else if !alive {
-        Envelope::err("single_instance", format!("{label} exited without a window of its own: it most likely handed the request to an instance that was already running"), Retry::Never, "Agents only drive a process BaneySpaces started. Use the app's files or command line instead, or ask the user to lend it.")
+        Envelope::err("single_instance", format!("{label} exited without a window of its own: it most likely handed the request to an instance that was already running"), Retry::Never, "Use the app's files or command line instead.")
     } else {
         Envelope::err("timeout", format!("{label} is running (pid {}) but opened no window within 8 s", spawned.pid), Retry::Never, "Check `baneyspaces agent status`; the app may be slow to start.")
     };
-    record(&c, agent, "open", Some(spawned.pid), None, None, "createprocess", &env);
+    record(&c, agent, "open", Some(spawned.pid), None, "createprocess", &env);
     env
 }
 
@@ -1358,7 +1356,7 @@ fn agent_open(shared: &Shared, agent: &str, args: &Value) -> Envelope {
             "No Windows app is safe to hand an agent yet: Notepad would show it your unsaved tabs, and most apps forward a launch into the copy you already run. A Windows sandbox (Windows Sandbox or a Hyper-V VM) is a later part. Use files or the command line instead.",
         )
         .with_data(json!({ "allowed": apps::allowed() }));
-        record(&lock(shared), agent, "open", None, None, None, "preflight", &env);
+        record(&lock(shared), agent, "open", None, None, "preflight", &env);
         return env;
     }
     let Some(exe) = cmdline::find_program(app, &path_dirs(), |p| p.is_file()) else {
@@ -1378,7 +1376,7 @@ fn agent_run(shared: &Shared, agent: &str, _args: &Value) -> Envelope {
         "Use `agent open` for an app on the list, or run the command yourself. Terminals arrive with the sandbox in a later part.",
     )
     .with_data(json!({ "allowed": apps::allowed() }));
-    record(&lock(shared), agent, "run", None, None, None, "preflight", &env);
+    record(&lock(shared), agent, "run", None, None, "preflight", &env);
     env
 }
 

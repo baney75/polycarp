@@ -1,4 +1,4 @@
-//! BaneySpaces core: the workspace model, the agent scope guard, the JSON envelope and the MCP
+//! BaneySpaces core: the workspace model, the agent action log, the JSON envelope and the MCP
 //! types. Pure Rust, no compositor, no I/O beyond reading spec files in the conformance runner.
 //! Every non-macOS platform links this; `spec/` is the contract it implements.
 
@@ -13,6 +13,6 @@ pub mod mcp;
 pub mod model;
 pub mod shell;
 
-pub use agent::{check_scope, ActionLog, ActionRecord, Refusal, WindowFacts};
+pub use agent::{ActionLog, ActionRecord};
 pub use envelope::{Envelope, ErrorBody, Retry};
 pub use model::{Cause, Effect, Event, Home, Model, ModelError};

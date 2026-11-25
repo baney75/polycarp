@@ -4,15 +4,12 @@
 
 const WORDS: [&str; 2] = ["--help", "-h"];
 
-/// Flags that take a value, so `agent find --name -h` searches for "-h".
-const VALUED: [&str; 14] = [
-    "--window", "--frame", "--dir", "--since", "--role", "--name", "--text", "--out", "--session", "--wait", "--app",
-    "--button", "--item", "--log",
-];
+/// Flags that take a value, so `agent run --dir -h` runs in a folder named "-h".
+const VALUED: [&str; 8] = ["--window", "--frame", "--dir", "--since", "--session", "--wait", "--app", "--log"];
 
-/// Verbs whose words after their first positional are data: the app's own arguments (`open`), the
-/// command (`run`) or the text to enter (`type`, `set-value`, `select`).
-const DATA_AFTER_FIRST: [&str; 5] = ["open", "run", "type", "set-value", "select"];
+/// Verbs whose words after their first positional are data: the app's own arguments (`open`) or the
+/// command (`run`).
+const DATA_AFTER_FIRST: [&str; 2] = ["open", "run"];
 
 /// Whether `rest` (the words after `agent`) asks for help: `--help` or `-h` before any `--`, not as
 /// a flag's value, and not where the verb's data has started (`agent run claude --help`).
@@ -105,7 +102,7 @@ mod tests {
                                  lay out the agent workspace's windows
   agent move --window W [--frame x,y,w,h]   an agent window onto the agent workspace
   agent move <window>            park one of your windows there
-  agent get <ref> <property>     agent click <ref>      agent toggle <ref>
+  agent bring <window>           agent log [--since SECS]
   agent-workspace show|hide|toggle   show the agent workspace (you only)
   doctor                         what works and what does not
 ";
@@ -118,9 +115,7 @@ mod tests {
             &["move", "--help"],
             &["move", "--window", "4", "-h"],
             &["run", "--dir", "/tmp", "--help"],
-            &["find", "--window", "w", "--help"],
             &["status", "-h"],
-            &["type", "--help"],
             &["--help"],
             &["-h"],
         ] {
@@ -130,10 +125,6 @@ mod tests {
             &["run", "--", "claude", "--help"][..],
             &["run", "claude", "--help"],
             &["open", "code", "--help"],
-            &["type", "@s:e1", "--help"],
-            &["type", "--", "-h"],
-            &["set-value", "@s:e1", "-h"],
-            &["find", "--name", "-h"],
             &["run", "--dir", "-h", "ls"],
             &["move", "notes"],
             &["status"],
@@ -155,12 +146,12 @@ mod tests {
         assert!(!mv.contains("lay out"), "{mv}");
 
         assert!(text(Some("windows"), USAGE).contains("agent status|windows"));
-        assert!(text(Some("click"), USAGE).contains("agent click <ref>"), "a second column names a verb too");
+        assert!(text(Some("log"), USAGE).contains("agent log [--since SECS]"), "a second column names a verb too");
         assert!(text(Some("halves"), USAGE).starts_with("usage: baneyspaces agent <command>"), "an argument isn't a verb");
 
         let all = text(None, USAGE);
         assert!(all.starts_with("usage: baneyspaces agent <command>\n"), "{all}");
-        assert!(all.contains("agent open") && all.contains("agent toggle"), "{all}");
+        assert!(all.contains("agent open") && all.contains("agent log"), "{all}");
         assert!(!all.contains("doctor") && !all.contains("agent-workspace") && !all.contains("  ls"), "{all}");
         assert_eq!(text(Some("nope"), USAGE), all);
     }

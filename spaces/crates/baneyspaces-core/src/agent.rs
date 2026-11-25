@@ -1,80 +1,10 @@
-//! The agent scope guard and the action record.
-//!
-//! The line is drawn by process: an agent drives a process BaneySpaces started for it, in a window
-//! that sits on the agent workspace. Both facts are checked on every action, by pid (with its
-//! start time, so a reused pid does not pass) and by window.
+//! The agent action log: what agents asked Polycarp for.
 
-use crate::envelope::{Envelope, Retry};
-use crate::model::{Home, Model};
+use crate::envelope::Envelope;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// What the platform read about one window, just before an action.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WindowFacts {
-    pub window: String,
-    pub pid: u32,
-    /// The process start time (clock ticks since boot on Linux). 0 when unknown.
-    pub pid_start: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Refusal {
-    pub code: &'static str,
-    pub message: String,
-    pub suggestion: String,
-}
-
-impl Refusal {
-    pub fn envelope(&self) -> Envelope {
-        Envelope::err(self.code, self.message.clone(), Retry::Never, self.suggestion.clone())
-    }
-}
-
-/// Scope guard. An action may proceed only if the window is on the agent workspace AND its
-/// process is a registered agent process (same pid, same start time).
-pub fn check_scope(model: &Model, facts: &WindowFacts) -> Result<(), Refusal> {
-    match model.home(&facts.window) {
-        None => {
-            return Err(Refusal {
-                code: "not_found",
-                message: format!("no window {}", facts.window),
-                suggestion: "Run `baneyspaces agent status` to list the agent workspace's windows.".into(),
-            })
-        }
-        Some(Home::Agent) => {}
-        Some(Home::Workspace { .. }) => {
-            return Err(Refusal {
-                code: "not_in_scope",
-                message: "that window is on one of your workspaces".into(),
-                suggestion: "Agents act only on windows on the agent workspace. Start the app with `baneyspaces agent open`.".into(),
-            })
-        }
-    }
-    if model.pid_of(&facts.window) != Some(facts.pid) {
-        return Err(Refusal {
-            code: "stale_ref",
-            message: "the window now belongs to a different process".into(),
-            suggestion: "Take a new snapshot.".into(),
-        });
-    }
-    match model.agent_proc(facts.pid) {
-        None => Err(Refusal {
-            code: "needs_lend",
-            message: "BaneySpaces did not start this process for an agent".into(),
-            suggestion: "Open the app with `baneyspaces agent open <app>` so it runs as its own process, or ask the user to lend it.".into(),
-        }),
-        Some(start) if start != 0 && facts.pid_start != 0 && start != facts.pid_start => Err(Refusal {
-            code: "stale_ref",
-            message: "the process id was reused by another program".into(),
-            suggestion: "Take a new snapshot.".into(),
-        }),
-        Some(_) => Ok(()),
-    }
-}
-
-/// One line of the action log. It never holds snapshot text, values, typed text or captures:
-/// only who did what to which window and how it came out.
+/// One line of the action log. It never holds content: only who did what to which window and how it came out.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionRecord {
     /// Seconds since the Unix epoch.
@@ -83,15 +13,9 @@ pub struct ActionRecord {
     pub verb: String,
     pub pid: Option<u32>,
     pub window: Option<String>,
-    #[serde(rename = "ref")]
-    pub reference: Option<String>,
     pub route: String,
     pub result: String,
     pub refusal: Option<String>,
-    /// True when what the user sees changed while the action ran. A separate fact: it says nothing
-    /// about the outcome (`result`) and is not caused by the agent unless nothing else moved.
-    #[serde(default)]
-    pub screen_changed: bool,
 }
 
 /// The log keeps 30 days (`RETENTION_DAYS`).
@@ -120,47 +44,6 @@ impl ActionLog {
     }
 }
 
-/// R-W1: which accessible window is this compositor window. Exactly one candidate must carry its
-/// title. There is no fallback to "the only window of the process": that could be another window,
-/// even one outside the agent workspace.
-pub fn match_window(title: &str, candidates: &[(String, String)]) -> Result<String, Refusal> {
-    let same: Vec<&(String, String)> = candidates.iter().filter(|(_, t)| t == title).collect();
-    match same.as_slice() {
-        [(id, _)] => Ok(id.clone()),
-        [] => Err(Refusal {
-            code: "window_unmatched",
-            message: "no accessible window carries this window's title, so it cannot be told apart from the process's other windows".into(),
-            suggestion: "Wait a moment and take a new snapshot. If the title keeps changing, give the window a steady one.".into(),
-        }),
-        many => Err(Refusal {
-            code: "window_unmatched",
-            message: format!("{} accessible windows carry this title", many.len()),
-            suggestion: "Give the window a title of its own.".into(),
-        }),
-    }
-}
-
-/// R-W1 with what the accessibility bus says about the process. When no accessible window carries
-/// the title and the process has no application on the bus at all (`app_on_bus` false), it has no
-/// accessibility tree (foot, xterm, an app built without AT-SPI): no wait and no title changes that,
-/// so it is `no_accessibility`. `starting` (the process started a moment ago) keeps that case on
-/// `window_unmatched`, since an app may map its window before it registers.
-pub fn match_accessible(title: &str, candidates: &[(String, String)], app_on_bus: bool, starting: bool) -> Result<String, Refusal> {
-    match match_window(title, candidates) {
-        Err(_) if candidates.is_empty() && !app_on_bus && starting => Err(Refusal {
-            code: "window_unmatched",
-            message: "this app has not registered with the accessibility bus yet".into(),
-            suggestion: "Wait a moment and take a new snapshot. If it says no_accessibility, the app has no accessibility tree.".into(),
-        }),
-        Err(_) if candidates.is_empty() && !app_on_bus => Err(Refusal {
-            code: "no_accessibility",
-            message: "this app has no accessibility tree: its process has no application on the accessibility bus, so there is nothing to read or act on".into(),
-            suggestion: "Use `agent shot` to see the window. To act, use `agent run` for a command, or open another allowlisted app that has an accessibility tree (a GTK app such as zenity).".into(),
-        }),
-        r => r,
-    }
-}
-
 /// Drops records older than 30 days from the text of an action log. `None` when nothing was old
 /// enough, so the caller rewrites the file only when it must.
 pub fn prune_text(text: &str, now: u64) -> Option<String> {
@@ -177,19 +60,18 @@ impl ActionRecord {
     }
 
     /// Builds a record from an envelope result without ever copying `data`.
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_result(at: u64, agent: &str, verb: &str, pid: Option<u32>, window: Option<&str>, reference: Option<&str>, route: &str, env: &Envelope) -> Self {
+    pub fn from_result(at: u64, agent: &str, verb: &str, pid: Option<u32>, window: Option<&str>, route: &str, env: &Envelope) -> Self {
         let (result, refusal) = match (&env.ok, &env.error) {
             (true, _) => ("ok".to_string(), None),
-            (false, Some(e)) => (e.code.clone(), if matches!(e.code.as_str(), "not_in_scope" | "needs_lend" | "in_use" | "not_supported" | "stale_ref" | "single_instance" | "needs_sandbox" | "agent_window" | "window_unmatched" | "no_accessibility") { Some(e.code.clone()) } else { None }),
+            (false, Some(e)) => (e.code.clone(), if matches!(e.code.as_str(), "not_in_scope" | "in_use" | "not_supported" | "single_instance" | "needs_sandbox" | "agent_window") { Some(e.code.clone()) } else { None }),
             (false, None) => ("internal".into(), None),
         };
-        Self { at, agent: agent.into(), verb: verb.into(), pid, window: window.map(String::from), reference: reference.map(String::from), route: route.into(), result, refusal, screen_changed: false }
+        Self { at, agent: agent.into(), verb: verb.into(), pid, window: window.map(String::from), route: route.into(), result, refusal }
     }
 }
 
 /// Fields a record may carry, for the test that keeps content out of the log.
-pub const RECORD_FIELDS: &[&str] = &["at", "agent", "verb", "pid", "window", "ref", "route", "result", "refusal", "screen_changed"];
+pub const RECORD_FIELDS: &[&str] = &["at", "agent", "verb", "pid", "window", "route", "result", "refusal"];
 
 /// True when a JSON value is a record with exactly the allowed fields.
 pub fn is_content_free(v: &Value) -> bool {
@@ -199,110 +81,36 @@ pub fn is_content_free(v: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Event;
+    use crate::envelope::Retry;
     use serde_json::json;
-
-    fn model() -> Model {
-        let mut m = Model::new();
-        for e in [
-            json!({"do":"monitor_added","monitor":"A"}),
-            json!({"do":"agent_register","pid":500,"start":77}),
-            json!({"do":"open","window":"mine","pid":100}),
-            json!({"do":"open","window":"agent1","pid":500}),
-            json!({"do":"open","window":"stranger","pid":600}),
-            json!({"do":"agent_send","window":"stranger"}),
-        ] {
-            m.apply(serde_json::from_value::<Event>(e).unwrap()).unwrap();
-        }
-        m
-    }
-
-    fn facts(w: &str, pid: u32, start: u64) -> WindowFacts {
-        WindowFacts { window: w.into(), pid, pid_start: start }
-    }
-
-    #[test]
-    fn agent_process_on_agent_workspace_passes() {
-        assert!(check_scope(&model(), &facts("agent1", 500, 77)).is_ok());
-    }
-
-    #[test]
-    fn user_window_is_out_of_scope() {
-        assert_eq!(check_scope(&model(), &facts("mine", 100, 5)).unwrap_err().code, "not_in_scope");
-    }
-
-    #[test]
-    fn parked_user_window_needs_a_lend() {
-        assert_eq!(check_scope(&model(), &facts("stranger", 600, 5)).unwrap_err().code, "needs_lend");
-    }
-
-    #[test]
-    fn reused_pid_is_stale() {
-        assert_eq!(check_scope(&model(), &facts("agent1", 500, 99)).unwrap_err().code, "stale_ref");
-    }
-
-    #[test]
-    fn window_taken_over_by_another_pid_is_stale() {
-        assert_eq!(check_scope(&model(), &facts("agent1", 501, 77)).unwrap_err().code, "stale_ref");
-    }
 
     #[test]
     fn refusals_include_the_ones_added_this_round() {
-        for code in ["needs_sandbox", "agent_window", "window_unmatched"] {
+        for code in ["needs_sandbox", "agent_window", "single_instance"] {
             let env = Envelope::err(code, "m", Retry::Never, "s");
-            let r = ActionRecord::from_result(1, "a", "open", None, None, None, "preflight", &env);
+            let r = ActionRecord::from_result(1, "a", "open", None, None, "preflight", &env);
             assert_eq!(r.refusal.as_deref(), Some(code));
         }
         let env = Envelope::err("timeout", "m", Retry::Never, "s");
-        assert_eq!(ActionRecord::from_result(1, "a", "x", None, None, None, "r", &env).refusal, None);
-    }
-
-    #[test]
-    fn a_window_matches_only_by_its_own_unique_title() {
-        let c = |v: &[(&str, &str)]| v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
-        assert_eq!(match_window("A", &c(&[("w1", "A"), ("w2", "B")])).unwrap(), "w1");
-        // The only window of the process has another title: not a match, whatever it is.
-        assert_eq!(match_window("A", &c(&[("w2", "B")])).unwrap_err().code, "window_unmatched");
-        assert_eq!(match_window("A", &c(&[("w1", "A"), ("w2", "A")])).unwrap_err().code, "window_unmatched");
-        assert_eq!(match_window("A", &[]).unwrap_err().code, "window_unmatched");
-    }
-
-    #[test]
-    fn a_process_with_no_accessible_app_is_no_accessibility_not_a_title_mismatch() {
-        let c = |v: &[(&str, &str)]| v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
-        // foot: nothing of the process on the bus, long enough after it started.
-        let e = match_accessible("foot", &[], false, false).unwrap_err();
-        assert_eq!(e.code, "no_accessibility");
-        assert_eq!(e.envelope().error.unwrap().retry, Retry::Never);
-        assert!(e.suggestion.contains("agent shot") && e.suggestion.contains("agent run"), "{}", e.suggestion);
-        assert!(!e.message.contains("title"), "the title is not the problem: {}", e.message);
-        // Just started: it may not have registered yet, so waiting is still the advice.
-        assert_eq!(match_accessible("foot", &[], false, true).unwrap_err().code, "window_unmatched");
-        // On the bus but no window carries the title: the title is the problem, as before.
-        assert_eq!(match_accessible("Notes", &c(&[("w2", "Other")]), true, false).unwrap_err().code, "window_unmatched");
-        assert_eq!(match_accessible("Notes", &[], true, false).unwrap_err().code, "window_unmatched");
-        // A match is a match whatever the bus says.
-        assert_eq!(match_accessible("Notes", &c(&[("w1", "Notes")]), true, false).unwrap(), "w1");
-    }
-
-    #[test]
-    fn unknown_window_is_not_found() {
-        assert_eq!(check_scope(&model(), &facts("nope", 1, 1)).unwrap_err().code, "not_found");
+        assert_eq!(ActionRecord::from_result(1, "a", "x", None, None, "r", &env).refusal, None);
     }
 
     #[test]
     fn log_prunes_after_thirty_days_and_holds_no_content() {
         let day = 86_400;
-        let rec = |at| ActionRecord { at, agent: "a".into(), verb: "click".into(), pid: Some(1), window: Some("w".into()), reference: Some("@s1:e2".into()), route: "atspi".into(), result: "ok".into(), refusal: None, screen_changed: false };
+        let rec = |at| ActionRecord { at, agent: "a".into(), verb: "open".into(), pid: Some(1), window: Some("w".into()), route: "createprocess".into(), result: "ok".into(), refusal: None };
         let mut log = ActionLog { records: vec![rec(0), rec(31 * day), rec(40 * day)] };
         assert_eq!(log.prune(40 * day), 1);
         assert_eq!(log.records.len(), 2);
         let again = ActionLog::parse(&log.render());
         assert_eq!(again.records, log.records);
+        // A line an older build wrote, with fields that are gone.
+        let old = rec(1).to_line().replacen('{', r#"{"ref":"@s1:e2","screen_changed":false,"#, 1);
+        assert_eq!(ActionLog::parse(&old).records, [rec(1)]);
         let v: Value = serde_json::from_str(&rec(1).to_line()).unwrap();
         assert!(is_content_free(&v));
-        let env = Envelope::ok(json!({"tree": "SECRET TEXT"}));
-        let r = ActionRecord::from_result(1, "a", "snapshot", None, None, None, "atspi", &env);
+        let env = Envelope::ok(json!({"title": "SECRET TEXT"}));
+        let r = ActionRecord::from_result(1, "a", "open", None, None, "createprocess", &env);
         assert!(!r.to_line().contains("SECRET"));
     }
 }
