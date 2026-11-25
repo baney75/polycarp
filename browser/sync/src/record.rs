@@ -73,6 +73,51 @@ impl Record {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct Plain<'a> {
+    kind: Kind,
+    key: &'a str,
+    stamp: Stamp,
+    value: Option<&'a [u8]>,
+}
+
+impl Record {
+    /// For sealing: it goes to disk and to other devices in no other form.
+    pub fn to_bytes(&self) -> Secret {
+        let value = self.value.as_ref().map(Secret::expose);
+        let plain = Plain {
+            kind: self.kind,
+            key: &self.key,
+            stamp: self.stamp,
+            value,
+        };
+        Secret::new(postcard::to_stdvec(&plain).expect("a record is plain data"))
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Record, Invalid> {
+        let (p, rest) = postcard::take_from_bytes::<Plain>(bytes).map_err(|_| Invalid::Shape)?;
+        if !rest.is_empty() {
+            return Err(Invalid::Shape);
+        }
+        let value = p.value.map(|v| Secret::new(v.to_vec()));
+        Ok(Record {
+            kind: p.kind,
+            key: p.key.to_string(),
+            stamp: p.stamp,
+            value,
+        })
+    }
+
+    /// A record from another device: its key must be the one its value gives, or an item could stand under the name of
+    /// another.
+    pub fn check(&self) -> Result<(), Invalid> {
+        match &self.value {
+            Some(v) if key_of(self.kind, v.expose())? != self.key => Err(Invalid::Key),
+            _ => check_key(&self.key),
+        }
+    }
+}
+
 /// The records a device holds. `merge` is commutative, associative and idempotent.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct Records(BTreeMap<(Kind, String), Record>);

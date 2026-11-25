@@ -9,6 +9,7 @@ pub mod policy;
 pub mod record;
 pub mod seal;
 pub mod secret;
+pub mod store;
 
 #[cfg(test)]
 extern crate self as polycarp_sync;
