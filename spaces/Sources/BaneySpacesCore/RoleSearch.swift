@@ -63,7 +63,7 @@ public enum RoleSearch {
         let setting = "set".hasPrefix(first) && q.count > 1 || "default".hasPrefix(first) && first.count > 2 || first == "choose"
         for role in AppRole.allCases {
             let called = names[role] ?? [role.rawValue], r = resolved[role]
-            if !setting, r?.app != nil || role.asksWhenUnset, called.contains(where: { starts($0, q) || q.count > 1 && starts("open " + $0, q) }) {
+            if r?.app != nil || role.asksWhenUnset, called.contains(where: { starts($0, q) || q.count > 1 && starts("open " + $0, q) }) {
                 out.append(Row(id: "role:\(role.rawValue)", title: r?.app?.name ?? role.title,
                                subtitle: "Your \(role == .agent ? role.title : role.title.lowercased()) · \(r?.app == nil ? "asks which first" : r!.said)",
                                action: .open(role), app: r?.app))
