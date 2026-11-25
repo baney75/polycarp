@@ -142,6 +142,13 @@ that doesn't read or check is `{"ok":false,"error":...}` naming the field. Each 
 NSRegularExpression and passed the slow-pattern rule in `Filters.pattern`; JavaScript's syntax differs at the edges, so
 the extension still skips a pattern its `RegExp` refuses.
 
+### `{"op":"edits"}`
+
+The page edits in `edits.json` (`polycarp-spaces edits`, [edits.md](edits.md)), each normalized with every key:
+`{"ok":true,"edits":[{"id":"quiet-news","name":"","enabled":true,"sites":["news.example.com"],"paths":[],"changes":[
+{"do":"hide","at":".promo"}],"css":""}]}`. No file is `{"ok":true,"edits":[]}`; a file that doesn't read or check is
+`{"ok":false,"error":...}` naming the field. The extension checks each one again by the same rules.
+
 ### Anything else
 
 An unknown `op` (the retired `name` and `go` included), a missing `op`, or a request that isn't a JSON object gets
