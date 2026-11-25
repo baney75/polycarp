@@ -1,5 +1,6 @@
 //! Sync between one person's own devices. The design and what it protects are in `browser/docs/sync.md`.
 
+pub mod ceremony;
 pub mod group;
 pub mod hlc;
 pub mod keys;

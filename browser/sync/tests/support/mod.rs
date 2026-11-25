@@ -1,6 +1,9 @@
 //! A software passkey for the tests.
 #![allow(dead_code)]
 
+pub mod chrome;
+pub mod http;
+
 use polycarp_sync::passkey::{self, Passkey, Proof};
 use serde_json::{json, Value};
 use url::Url;
