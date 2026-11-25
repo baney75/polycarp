@@ -55,7 +55,7 @@
     const on = got && Date.now() - got.at < HOUR ? got : null;
     const until = on && new Date(on.at + HOUR).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     const same = on && on.url === at.origin + at.pathname;
-    note.textContent = error || (on ? "Shared until " + until + ": " + (same ? "this page" : on.title || on.url) : "Lets agents on this computer see this page's parts and words for an hour. Nothing you typed is sent.");
+    note.textContent = error || (on ? "Shared until " + until + ": " + (same ? "this page" : on.title || on.url) : "Lets your agents see this page's parts and words for an hour. Nothing you typed is sent.");
     go.textContent = same ? "Share again" : "Share with my agent";
     halt.hidden = !on;
   }
