@@ -20,7 +20,7 @@ polycarp browser uninstall          # remove the app; your profile stays
 | `install` | `--dry-run` downloads, checks, builds and starts it, then throws it away. `--rollback` puts back the build before this one |
 | `update` | `--when-quit`: if the browser is open, the new build goes in once you quit it. Without it, an open browser is a refusal |
 | `status` | `--json` for scripts |
-| `import` | `helium [--profile NAME] --yes` copies a Helium profile |
+| `import` | `helium [--profile NAME] --yes` copies a Helium profile. `chrome`, `brave`, `edge`, `vivaldi`, `arc` or `chromium` copies bookmarks and history |
 | `uninstall` | `--profile` names the folders your profile is in and removes nothing. `--profile --yes` removes them with the app |
 | all | `--app-dir DIR`, the folder the app is in |
 
@@ -46,6 +46,9 @@ The browser you import from is only ever read, and only while it is closed.
   takes the place of an empty first profile; after that each import is a profile of its own. Caches are left out.
   When Polycarp Browser next opens, macOS asks whether it may use `Helium Storage Key`. Say no and the copied
   passwords and sign-ins can't be read; the rest of the profile works.
+- **Chrome, Brave, Edge, Vivaldi, Arc, Chromium.** `polycarp browser import chrome --yes` makes a new profile with that
+  profile's bookmarks and web history. The command names your Web Store extensions with their links, for you to add
+  again. Passwords and sign-ins stay where they are. Polycarp Browser must be installed first.
 - **Firefox and Safari.** Open `chrome://settings/importData` in Polycarp Browser. Chromium's own importer reads them.
 
 Without an import the browser starts with an empty profile.

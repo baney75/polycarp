@@ -56,7 +56,7 @@ fn copy(from: &Path, to: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn first_prefs() -> String {
+pub fn first_prefs() -> String {
     json!({ "helium": { "completed_onboarding": true } }).to_string()
 }
 

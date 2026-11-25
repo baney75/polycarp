@@ -3,6 +3,7 @@
 //! that can't run is a refusal.
 
 mod change;
+mod chromium;
 mod gone;
 mod import;
 mod install;
@@ -277,6 +278,8 @@ Usage:
   polycarp browser import        list the browsers on this Mac and their profiles, by name
   polycarp browser import helium [--profile NAME] --yes
                                  copy a Helium profile; Helium's own stays as it is
+  polycarp browser import chrome|brave|edge|vivaldi|arc|chromium [--profile NAME] --yes
+                                 copy bookmarks and history into a new profile
   polycarp browser uninstall     remove the app; your profile stays unless you add --profile --yes
 
   --app-dir DIR                  where the app is, instead of beside Polycarp.app or in ~/Applications
@@ -373,7 +376,7 @@ fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String, Ref
             };
         }
         "open" => return gone::open(tools, &place.spot, asked.what.as_deref()),
-        "import" => return import::answer(place, asked),
+        "import" => return import::answer(tools, place, asked),
         "uninstall" => return gone::uninstall(place, flag("--profile")),
         "install" if flag("--dry-run") => return dry_run(tools, place, arch),
         "install" if flag("--rollback") => install::roll_back(tools, place)?,
