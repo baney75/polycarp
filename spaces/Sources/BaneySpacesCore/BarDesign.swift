@@ -47,24 +47,32 @@ public enum BarSides {
 public struct BarScroll: Equatable, Sendable {
     private var carried = 0.0
     private var last = -Double.infinity
+    private var seen = -Double.infinity
+    private var done = false
     /// A trackpad's points for one workspace.
     static let points = 28.0
-    /// The least time between two steps, so one flick is one workspace.
+    /// The least time between two steps.
     static let pause = 0.14
+    /// A trackpad quiet this long has begun another gesture, where it doesn't say so itself.
+    static let rest = 0.3
 
     public init() {}
 
     /// -1 for the workspace before, 1 for the next, 0 to stay. `precise` is a trackpad's points rather than a wheel's
-    /// clicks; `momentum` is the glide after the fingers lift, which never switches.
-    public mutating func step(_ delta: Double, precise: Bool, momentum: Bool = false, at time: Double) -> Int {
-        guard !momentum, delta != 0 else { return 0 }
+    /// clicks, one step a gesture, which `began` starts; `momentum` is the glide after the fingers lift, which never
+    /// switches, and neither does a swipe more `across` than down.
+    public mutating func step(_ delta: Double, across: Double = 0, precise: Bool, began: Bool = false, momentum: Bool = false,
+                              at time: Double) -> Int {
+        if began || time - seen > Self.rest { (carried, done) = (0, false) }
+        seen = time
+        guard !momentum, delta != 0, abs(delta) >= abs(across), !(precise && done) else { return 0 }
         if carried * delta < 0 { carried = 0 }
         carried += precise ? delta : delta.sign == .minus ? -Self.points : Self.points
         guard abs(carried) >= Self.points else { return 0 }
         let way = carried < 0 ? 1 : -1
         carried = 0
         guard time - last >= Self.pause else { return 0 }
-        last = time
+        (last, done) = (time, true)
         return way
     }
 

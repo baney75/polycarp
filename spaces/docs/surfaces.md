@@ -157,7 +157,7 @@ What each one draws:
 
 | Module | Shows |
 | --- | --- |
-| `mark` | Polycarp's vine mark. Click it for Polycarp's menu (Settings, Quit and the rest), which `status` leaves out. |
+| `mark` | Polycarp's olive branch mark. Click it for Polycarp's menu (Settings, Quit and the rest), which `status` leaves out. |
 | `workspaces` | A number for each workspace with windows and the one you're on, in order: `1 2 4`. The one you're on is bright on a soft accent pill (a `dot` theme), over a short accent line (`bar`) or on an accent block (`number-block`, such as Omarchy), which slides when you switch; the others are muted. Click one to go there, or turn the wheel over them for the one before or after. |
 | `hour` | The day and the hour in words: "Saturday, Terce". Sunday is the Lord's Day. |
 | `clock` | Saturday 10:04 PM by default, the time in full and the rest a step quieter; Saturday 22:04 with `clockFormat` day-24h, 3:05 with 12h, 15:05 with 24h. |

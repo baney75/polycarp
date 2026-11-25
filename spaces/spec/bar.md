@@ -52,7 +52,7 @@ On Windows the current workspace's number is drawn in `foreground` with a 2 px `
   take the width they need up to 44% and the sides get the rest; on a screen with a notch they sit on the camera's right
   (`BarGeometry`, `BarSides`). Windows: not yet.
 - macOS: the marker at the workspace you're on slides when you switch, and the wheel over the numbers goes to the
-  one before or after, one a step and none while a trackpad glides (`BarScroll`). Windows: not yet.
+  one before or after, one a trackpad gesture or wheel click and none while a trackpad glides (`BarScroll`). Windows: not yet.
 
 ## Colors and type
 

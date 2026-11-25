@@ -147,6 +147,19 @@ public enum BarWorkspaces {
         case .numberBlock: .block
         }
     }
+
+    /// The marker under a sheet's `.workspace.current` (`current`) and `.workspace` (`other`): none where the current
+    /// number has a face of its own, and the line where the sheet gives every number the same face, which would cover
+    /// a marker behind it, or inks the current one for itself, which the accent block might hide.
+    public static func marker(_ indicator: ThemeIndicator, current: ComputedStyle, other: ComputedStyle) -> Marker? {
+        if current.isHidden || current.background != other.background || current.border != other.border
+            || current.borderBottom != other.borderBottom || current.boxShadow != other.boxShadow { return nil }
+        if current.background != nil || current.border != nil || current.borderBottom != nil || current.boxShadow != nil {
+            return .underline
+        }
+        let kind = marker(indicator)
+        return kind == .block && current.color != nil ? .underline : kind
+    }
 }
 
 /// What the `app-menus` module draws: the front app's menu bar as Accessibility reads it (`AXMenuBar`), worked out apart

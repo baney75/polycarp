@@ -143,6 +143,13 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(pad.step(-20, precise: true, at: 3), 0)
         XCTAssertEqual(pad.step(20, precise: true, at: 3.1), 0, "turning back starts over")
         XCTAssertEqual(pad.step(0, precise: true, at: 4), 0)
+        XCTAssertEqual(pad.step(-20, precise: true, at: 5), 0)
+        XCTAssertEqual(pad.step(-20, precise: true, at: 65), 0, "a brush a minute ago does not count")
+        var swipe = BarScroll()
+        let steps = (0..<20).map { swipe.step(-20, precise: true, began: $0 == 0, at: 1 + Double($0) * 0.016) }
+        XCTAssertEqual(steps.reduce(0, +), 1, "one swipe is one workspace, however long")
+        XCTAssertEqual((0..<2).map { swipe.step(-20, precise: true, began: $0 == 0, at: 1.4 + Double($0) * 0.016) }, [0, 1], "the next swipe steps again")
+        XCTAssertEqual((0..<20).map { swipe.step(-30, across: 90, precise: true, began: $0 == 0, at: 3 + Double($0) * 0.016) }.reduce(0, +), 0, "a swipe along the row")
         XCTAssertEqual(BarScroll.target(from: 2, way: 1, shown: [1, 2, 5]), 5)
         XCTAssertNil(BarScroll.target(from: 5, way: 1, shown: [1, 2, 5]), "it stops at the end")
         XCTAssertNil(BarScroll.target(from: 1, way: -1, shown: [1, 2, 5]))
@@ -173,6 +180,16 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(BarWorkspaces.marker(.dot), .pill)
         XCTAssertEqual(BarWorkspaces.marker(.bar), .underline)
         XCTAssertEqual(BarWorkspaces.marker(.numberBlock), .block)
+        func marker(_ css: String, _ indicator: ThemeIndicator = .numberBlock) -> BarWorkspaces.Marker? {
+            let book = StyleBook(StyleSheet.parse(css).sheet, dark: true, roles: StyleSheetTests.roles(true))
+            return BarWorkspaces.marker(indicator, current: book.workspace(in: .left, current: true), other: book.workspace(in: .left, current: false))
+        }
+        XCTAssertEqual(marker(""), .block)
+        XCTAssertNil(marker("bar .workspace.current { border-bottom: 2px solid red }"), "the sheet's line is the marker")
+        XCTAssertNil(marker("bar .workspace { background: #222 } bar .workspace.current { background: #444 }", .dot))
+        XCTAssertEqual(marker("bar .workspace { background: #222 }", .dot), .underline, "a box on every number would cover the pill")
+        XCTAssertEqual(marker("bar .workspace { color: #aaa }"), .underline, "the sheet's ink is not the block's")
+        XCTAssertEqual(marker("bar .workspace { color: #aaa }", .dot), .pill)
     }
 
     func testTheSystemBarCoversOursUnlessHidden() {

@@ -28,17 +28,23 @@ struct WorkspaceStrip: View {
     @State private var over: Int?
     @State private var wheel = BarScroll()
 
-    private var marker: BarWorkspaces.Marker { BarWorkspaces.marker(Chrome.spec.indicator) }
+    private var marker: BarWorkspaces.Marker? {
+        guard shown.contains(here) else { return nil }
+        return BarWorkspaces.marker(Chrome.spec.indicator, current: book.workspace(in: region, current: true),
+                                    other: book.workspace(in: region, current: false))
+    }
 
     var body: some View {
         HStack(spacing: style.gap.map { CGFloat($0) } ?? 0) {
             ForEach(shown, id: \.self) { n in number(n) }
         }
-        .background(alignment: .center) { mark }
+        .background { if let marker, marker != .underline { mark(marker) } }
+        .overlay { if marker == .underline { mark(.underline).allowsHitTesting(false) } }
         .animation(Chrome.reduceMotion ? nil : Chrome.spring(0.26, damping: 0.84), value: here)
         .background {
             PointerArea(onScroll: { event in
-                let way = wheel.step(Double(event.scrollingDeltaY), precise: event.hasPreciseScrollingDeltas,
+                let way = wheel.step(Double(event.scrollingDeltaY), across: Double(event.scrollingDeltaX),
+                                     precise: event.hasPreciseScrollingDeltas, began: event.phase.contains(.began),
                                      momentum: !event.momentumPhase.isEmpty, at: event.timestamp)
                 if let n = BarScroll.target(from: here, way: way, shown: shown) { pick(n) }
             }) { _ in }
@@ -68,12 +74,8 @@ struct WorkspaceStrip: View {
     }
 
     /// One marker for the strip, so it slides. The sheet's own face for the current number takes its place.
-    @ViewBuilder private var mark: some View {
-        let w = book.workspace(in: region, current: true)
-        if !w.isHidden, w.background == nil, w.border == nil, w.borderBottom == nil, w.boxShadow == nil,
-           marker != .block || w.color == nil {
-            WorkspaceMarker(kind: marker).matchedGeometryEffect(id: here, in: space, isSource: false)
-        }
+    private func mark(_ kind: BarWorkspaces.Marker) -> some View {
+        WorkspaceMarker(kind: kind).matchedGeometryEffect(id: here, in: space, isSource: false)
     }
 }
 
