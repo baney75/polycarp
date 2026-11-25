@@ -167,7 +167,9 @@ public struct TilingEngine: Equatable, Sendable {
     public init() {}
 
     /// Whether anything is left to do for tiling: while false, the app takes no look at all.
-    public func wanted(on shown: [Int]) -> Bool { shown.contains { options.tiles($0) } || !before.isEmpty }
+    public func wanted(on shown: [Int]) -> Bool {
+        shown.contains { options.tiles($0) } || !before.isEmpty || waiting.values.contains { $0.before != nil }
+    }
 
     /// Takes new settings. A layout still in the old default style takes the new one.
     public mutating func apply(_ new: TilingOptions) {

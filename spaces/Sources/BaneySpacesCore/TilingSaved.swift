@@ -78,9 +78,12 @@ extension TilingEngine {
 
     /// Takes the layouts back. Their windows wait under numbers of their own until `claim` finds them.
     public mutating func restore(_ saved: TilingSaved) {
+        // A window still waiting when the file was written is saved under its stand-in number: no new one may be the same.
+        let used = Set(saved.windows.map(\.record.window)).union(saved.slots.flatMap(\.layout.windows))
         var number = WindowID.max
         var phantom: [WindowID: WindowID] = [:]
         for w in saved.windows where phantom[w.record.window] == nil {
+            while used.contains(number) { number -= 1 }
             phantom[w.record.window] = number
             waiting[number] = Waiting(record: w.record, before: w.before, floats: w.floats)
             number -= 1
@@ -128,11 +131,12 @@ extension TilingEngine {
         if let f = w.floats { choice[id] = f }
     }
 
-    /// Saved windows no layout, frame or choice needs any more aren't waited for.
+    /// Saved windows no layout, frame or choice needs any more aren't waited for. One owed its frame from before tiling
+    /// is, even after tiling is turned off: it gets that frame back when it turns up.
     mutating func dropUnneeded() {
         guard !waiting.isEmpty else { return }
         var placed = Set<WindowID>()
         for s in slots.values { placed.formUnion(s.layout.windows); placed.formUnion(s.away.keys) }
-        waiting = waiting.filter { placed.contains($0.key) || $0.value.floats != nil }
+        waiting = waiting.filter { placed.contains($0.key) || $0.value.floats != nil || $0.value.before != nil }
     }
 }

@@ -156,13 +156,65 @@ final class TilingSavedTests: XCTestCase {
         XCTAssertEqual(partial.slots.first?.layout.windows.contains(2), false)
     }
 
-    func testTurnedOffNothingIsWaitedFor() {
-        var g = restart(three())
-        XCTAssertTrue(g.engine.awaits)
+    /// Turned off while Polycarp wasn't running: each window still gets its frame from before tiling when it turns up.
+    func testTurnedOffWhileNotRunningFramesStillComeBack() {
+        let f = three()
+        var g = restart(f)
         g.engine.apply(TilingOptions())
+        XCTAssertTrue(g.engine.wanted(on: [1]), "frames are owed")
+        g.look()
+        XCTAssertTrue(g.engine.awaits, "a look before they turn up loses no frame")
+        g.engine.claim(titles.map { live($0.key, $0.value) })
+        g.rest()
+        XCTAssertEqual(g.wins.mapValues(\.w.frame), f.engine.before)
+        XCTAssertFalse(g.engine.awaits)
+        XCTAssertFalse(g.engine.wanted(on: [1]))
+    }
+
+    /// With nothing owed and no place kept, a saved window isn't waited for.
+    func testTurnedOffNothingElseIsWaitedFor() {
+        var g = restart(three())
+        g.engine.apply(TilingOptions())
+        g.engine.waiting = g.engine.waiting.mapValues { var w = $0; w.before = nil; return w }
         XCTAssertFalse(g.engine.wanted(on: [1]), "a saved place alone asks for nothing")
         g.look()
         XCTAssertFalse(g.engine.awaits)
+    }
+
+    /// Restarted twice while some windows hadn't come back: no number is used twice, and all three still find their places.
+    func testRestartedTwiceWhileSomeHadntComeBack() throws {
+        // Opened last first, so the window holding the first stand-in number is last in the tree.
+        var f = FakeWindows()
+        for id in [WindowID(3), 2, 1] { f.open(id); f.focused = id; f.rest() }
+        let was = f.wins.mapValues(\.w.frame)
+        var g = restart(f)
+        g.wins = [:]
+        // Notes and Inbox wait under stand-in numbers that a second restore hands out again.
+        for old in [WindowID(3)] {
+            g.open(old + 500, pid: 900)
+            g.focused = old + 500
+            g.engine.claim([live(old + 500, titles[old]!, pid: 900)])
+            g.rest()
+        }
+        XCTAssertEqual(Set(g.engine.waiting.values.map(\.record.order)), [1, 2], "Notes and Inbox haven't come back")
+        let data = try XCTUnwrap(g.engine.saved { self.record($0 > 500 ? $0 - 500 : $0) }.data())
+        var h = g
+        h.engine = TilingEngine()
+        h.engine.apply(g.engine.options)
+        h.engine.restore(try XCTUnwrap(TilingSaved.read(data, now: 2000)))
+        let placed = h.engine.slots.values.flatMap(\.layout.windows)
+        XCTAssertEqual(placed.count, 3)
+        XCTAssertEqual(Set(placed).count, 3, "no number twice")
+        XCTAssertEqual(Set(placed), Set(h.engine.waiting.keys), "each place waits for its window")
+        h.wins = [:]
+        for old in [WindowID(3), 1, 2] {
+            h.open(old + 700, pid: 950)
+            h.focused = old + 700
+            h.engine.claim([live(old + 700, titles[old]!, pid: 950)])
+            h.rest()
+        }
+        XCTAssertEqual(h.wins.mapValues(\.w.frame), Dictionary(uniqueKeysWithValues: was.map { ($0.key + 700, $0.value) }))
+        XCTAssertFalse(h.engine.awaits)
     }
 
     func testTheFileNamesNoWindow() {
