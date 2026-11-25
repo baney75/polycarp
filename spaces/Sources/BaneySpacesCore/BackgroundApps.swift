@@ -125,9 +125,15 @@ public enum BackgroundApps {
         return kept + fresh.filter { !keptPids.contains($0.pid) }
     }
 
-    /// The launcher lists a resting app once: in its place among the apps that match, or, when none of those rows is
-    /// it, under "Running, no window". `listed` are the apps that already have a row.
-    public static func unlisted(_ resting: [Entry], listed: Set<pid_t>) -> [Entry] {
-        resting.filter { !listed.contains($0.pid) }
+    public enum LauncherRow: Equatable, Sendable { case app, quit }
+
+    /// The rows under "Running, no window": a resting app is listed once, so one that already has its row among the apps
+    /// (`listed`) only gets a row that quits it, as does one asked for by "quit" and its name.
+    public static func launcherRows(_ resting: [Entry], listed: Set<pid_t>, matches: (String) -> Bool) -> [(Entry, LauncherRow)] {
+        resting.compactMap { e in
+            let named = matches(e.name)
+            guard named || matches("Quit \(e.name)") else { return nil }
+            return (e, named && !listed.contains(e.pid) ? .app : .quit)
+        }
     }
 }

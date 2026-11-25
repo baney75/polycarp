@@ -135,11 +135,18 @@ final class BackgroundAppsTests: XCTestCase {
 
     /// Review of PR #624 first-F6: a hidden app typed into the launcher showed twice, as an app row and a resting row.
     /// Review of #681 first-F1: taken out of the ranked apps it lost its place, so "mail" and Return opened Proton Mail
-    /// with Mail running. It keeps its row, its id and its place, and only what Return and ⌘Return do changes.
+    /// with Mail running. Round 2 sol-F3: its ⌘Return turned from Reveal into Quit when the answer joined. It keeps its
+    /// row, its id, its place and its ⌘Return, and quitting it is a row of its own.
     func testTheLauncherListsARestingAppOnceAndInItsPlace() throws {
         let resting = [BackgroundApps.Entry(pid: 7, name: "Helium", state: .hidden), BackgroundApps.Entry(pid: 8, name: "Mail", state: .noWindow)]
-        XCTAssertEqual(BackgroundApps.unlisted(resting, listed: [8, 9]).map(\.name), ["Helium"])
-        XCTAssertEqual(BackgroundApps.unlisted(resting, listed: []).map(\.name), ["Helium", "Mail"])
+        func rows(_ listed: Set<pid_t>, _ matches: @escaping (String) -> Bool) -> [String] {
+            BackgroundApps.launcherRows(resting, listed: listed, matches: matches).map { "\($0.1) \($0.0.name)" }
+        }
+        XCTAssertEqual(rows([8, 9]) { _ in true }, ["app Helium", "quit Mail"])
+        XCTAssertEqual(rows([]) { _ in true }, ["app Helium", "app Mail"])
+        XCTAssertEqual(rows([8]) { $0.contains("Mail") }, ["quit Mail"])
+        XCTAssertEqual(rows([]) { $0 == "Quit Mail" }, ["quit Mail"], "\"quit mail\" quits it")
+        XCTAssertEqual(rows([]) { _ in false }, [])
         let l = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
         for m in ["private func recentApps()", "private func appItems("] {
             let b = try XCTUnwrap(SourceText.block(after: m, in: l))
@@ -147,11 +154,12 @@ final class BackgroundAppsTests: XCTestCase {
             XCTAssertFalse(b.contains("resting.contains") || b.contains("filter { $0.pid"), "\(m) takes a resting app out of its place")
         }
         let item = try XCTUnwrap(SourceText.block(after: "private func appItem(", in: l))
-        XCTAssertTrue(item.contains("restingItem(e, id: \"app:\\(a.path)\""), "the row's id stays, so the selection does")
+        XCTAssertEqual(item.components(separatedBy: "id: \"app:\\(a.path)\"").count, 3, "the row's id stays, so the selection does")
+        XCTAssertEqual(item.components(separatedBy: "reveal: URL(fileURLWithPath: a.path)").count, 3, "⌘Return reveals it, resting or not")
+        XCTAssertFalse(item.contains("alternate") || item.contains("quit(resting:"), "no key on an app's row turns into Quit")
+        XCTAssertTrue(item.contains("restingListed.insert(pid)"))
         let rest = try XCTUnwrap(SourceText.block(after: "private func restingItems(", in: l))
-        XCTAssertTrue(rest.contains("BackgroundApps.unlisted(resting, listed: restingListed)"))
-        let row = try XCTUnwrap(SourceText.block(after: "private func restingItem(", in: l))
-        XCTAssertTrue(row.contains("restingListed.insert(pid)"))
-        XCTAssertTrue(row.contains("alternateTitle: \"Quit\""), "the one row keeps Quit as its alternate")
+        XCTAssertTrue(rest.contains("BackgroundApps.launcherRows(resting, listed: restingListed"))
+        XCTAssertTrue(rest.contains("\"Quit \\(e.name)\""))
     }
 }

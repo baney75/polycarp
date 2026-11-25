@@ -527,13 +527,12 @@ final class LauncherModel: ObservableObject {
         RoomsProvider.shared.refresh()
         rebuild()
         // The "Running, no window" rows join once the running apps are read off the main thread, as files and agents do.
-        if scope == .root {
-            let ask = restingAsk
-            actions.restingApps { [weak self] list in
-                guard let self, ask == self.restingAsk, !list.isEmpty else { return }
-                self.resting = list
-                self.rebuildKeepingSelection()
-            }
+        // Asked in every scope, since Esc goes back to the root from any of them.
+        let ask = restingAsk
+        actions.restingApps { [weak self] list in
+            guard let self, ask == self.restingAsk, !list.isEmpty else { return }
+            self.resting = list
+            self.rebuildKeepingSelection()
         }
         // Apps installed since the last look show up without a restart.
         rescanApps()
@@ -915,9 +914,14 @@ final class LauncherModel: ObservableObject {
     }
 
     private func appItem(_ a: AppEntry, section: String, look: Bool = false) -> LauncherItem {
-        // A resting app keeps its row and its place: only what Return and ⌘Return do changes when the answer joins.
+        // A resting app keeps its row, its place and its ⌘Return: only where Return opens it changes when the answer
+        // joins. Quit is a row of its own, so no key turns into Quit under your finger.
         if let e = restingEntry(a) {
-            return restingItem(e, id: "app:\(a.path)", section: section, title: a.name, icon: .file(a.path))
+            let pid = e.pid
+            restingListed.insert(pid)
+            return LauncherItem(id: "app:\(a.path)", section: section, title: a.name,
+                                subtitle: quitting.contains(pid) ? "Quitting…" : Self.restingSubtitle(e.state), icon: .file(a.path),
+                                run: { [weak self] in self?.close(); self?.actions.showResting(pid) }, reveal: URL(fileURLWithPath: a.path))
         }
         let on = running[a.path] ?? []
         var where_ = on.isEmpty ? a.folder : on.count == 1 ? "Open on workspace \(on[0])" : "Open on workspaces \(on.map(String.init).joined(separator: ", "))"
@@ -1028,31 +1032,30 @@ final class LauncherModel: ObservableObject {
         enter(scope == .keys ? .root : .keys)
     }
 
-    /// Apps running with no window to see that the list has no row for yet, under their own heading. With nothing typed
-    /// every one is listed; a query keeps the ones whose name matches.
+    /// Apps running with no window to see, under their own heading: a row that brings the app onto this workspace, or
+    /// that quits it when it has its row among the apps already. With nothing typed every one is listed; a query keeps
+    /// the ones it matches. A row stays until its app has gone.
     private func restingItems(_ q: String) -> [LauncherItem] {
-        BackgroundApps.unlisted(resting, listed: restingListed).filter { q.isEmpty || Fuzzy.score(q, $0.name) != nil }.map { e in
-            let icon: LauncherItem.Icon = NSRunningApplication(processIdentifier: e.pid)?.bundleURL.map { .file($0.path) } ?? .symbol("app.dashed")
-            return restingItem(e, id: "resting:\(e.pid)", section: Self.restingSection, title: e.name, icon: icon)
+        BackgroundApps.launcherRows(resting, listed: restingListed, matches: { q.isEmpty || Fuzzy.score(q, $0) != nil }).map { e, row in
+            let pid = e.pid
+            let icon: LauncherItem.Icon = NSRunningApplication(processIdentifier: pid)?.bundleURL.map { .file($0.path) } ?? .symbol("app.dashed")
+            if row == .quit {
+                return LauncherItem(id: "quit:\(pid)", section: Self.restingSection, title: "Quit \(e.name)",
+                                    subtitle: quitting.contains(pid) ? "Quitting…" : "Running with no window", icon: icon,
+                                    run: { [weak self] in self?.quit(resting: pid) })
+            }
+            return LauncherItem(id: "resting:\(pid)", section: Self.restingSection, title: e.name,
+                                subtitle: quitting.contains(pid) ? "Quitting…" : Self.restingSubtitle(e.state) + ", ⌘Return quits", icon: icon,
+                                run: { [weak self] in self?.close(); self?.actions.showResting(pid) },
+                                alternate: { [weak self] in self?.quit(resting: pid) }, alternateTitle: "Quit")
         }
-    }
-
-    /// A resting app's row: Return brings it forward onto this workspace, ⌘Return quits it. The row stays until it has gone.
-    private func restingItem(_ e: BackgroundApps.Entry, id: String, section: String, title: String, icon: LauncherItem.Icon) -> LauncherItem {
-        let pid = e.pid
-        restingListed.insert(pid)
-        return LauncherItem(id: id, section: section, title: title,
-                            subtitle: quitting.contains(pid) ? "Quitting…" : Self.restingSubtitle(e.state), icon: icon,
-                            run: { [weak self] in self?.close(); self?.actions.showResting(pid) },
-                            alternate: { [weak self] in self?.quit(resting: pid) }, alternateTitle: "Quit")
     }
 
     private func quit(resting pid: pid_t) {
         guard quitting.insert(pid).inserted else { return }
         rebuildKeepingSelection()
-        let ask = restingAsk
         actions.quitResting(pid) { [weak self] went in
-            guard let self, ask == self.restingAsk else { return }
+            guard let self else { return }
             self.quitting.remove(pid)
             if went {
                 self.resting.removeAll { $0.pid == pid }
@@ -1066,9 +1069,9 @@ final class LauncherModel: ObservableObject {
 
     static func restingSubtitle(_ state: BackgroundApps.State) -> String {
         switch state {
-        case .hidden: "Hidden, no window · Return shows it here, ⌘Return quits"
-        case .minimized: "Every window minimized · Return shows it here, ⌘Return quits"
-        case .noWindow: "No window · Return opens one here, ⌘Return quits"
+        case .hidden: "Hidden, no window · Return shows it here"
+        case .minimized: "Every window minimized · Return shows it here"
+        case .noWindow: "No window · Return opens one here"
         }
     }
 

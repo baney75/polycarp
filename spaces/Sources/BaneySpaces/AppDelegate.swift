@@ -179,11 +179,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         a.showOverview = { [weak self] in self?.viewer.open() }
         // The list waits for a scan from after the open that also asked the hidden apps, so a window just minimized or
-        // closed behind ⌘H counts. Every running app is then read off the main thread, and the list is built from both.
+        // closed behind ⌘H counts. Every running app is read off the main thread first, to know which are hidden, and
+        // again if that read has aged by the time the scan is in. The list is built from both.
         a.restingApps = { [weak self] done in
             guard let self, self.started else { return done([]) }
-            self.spaces.whenFreshWithHidden { [weak self] in
-                RunningApps.prepare { [weak self] in done(self?.spaces.backgroundApps() ?? []) }
+            RunningApps.prepare { [weak self] in
+                self?.spaces.whenFreshWithHidden { [weak self] in
+                    RunningApps.prepare { [weak self] in done(self?.spaces.backgroundApps() ?? []) }
+                }
             }
         }
         a.showResting = { [weak self] pid in self?.run { $0.showBackgroundApp(pid) } }

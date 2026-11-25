@@ -66,12 +66,16 @@ final class MainThreadScanTests: XCTestCase {
         let answer = try XCTUnwrap(SourceText.block(after: "actions.restingApps ", in: prepare))
         XCTAssertTrue(answer.contains("ask == self.restingAsk"), "an answer for an earlier open is dropped")
         XCTAssertTrue(answer.contains("rebuildKeepingSelection()"), "the row you're on stays put when the rows join")
+        XCTAssertFalse(prepare.contains("if scope == .root"), "Esc reaches the root from any scope, so every open asks")
         let d = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
         let resting = try XCTUnwrap(SourceText.block(after: "a.restingApps =", in: d))
-        XCTAssertTrue(resting.contains("RunningApps.prepare {"), "the running apps are read off main first")
+        // Round 2 of #681, first-F1: `whenFreshWithHidden` asks which apps are hidden, which read them all on main.
+        let first = try XCTUnwrap(resting.range(of: "RunningApps.prepare {"), "the running apps are read off main")
+        let scan = try XCTUnwrap(resting.range(of: "whenFreshWithHidden"), "and the windows are as new as the open")
+        XCTAssertLessThan(first.lowerBound, scan.lowerBound, "the read comes before anything that needs it")
+        XCTAssertNotNil(resting.range(of: "RunningApps.prepare {", range: scan.upperBound..<resting.endIndex), "and again if it has aged")
         for call in asksAnApp { XCTAssertFalse(resting.contains(call), "restingApps calls \(call)") }
         let w = try SourceText.code("Sources/BaneySpaces/Windows.swift")
-        XCTAssertTrue(resting.contains("whenFreshWithHidden"), "and the windows are as new as the open")
         let prep = try XCTUnwrap(SourceText.block(after: "static func prepare(then:", in: w))
         XCTAssertTrue(prep.contains("prepareNow(tries:"))
         let now = try XCTUnwrap(SourceText.block(after: "private static func prepareNow(", in: w))
