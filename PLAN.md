@@ -1,6 +1,6 @@
 # Polycarp plan
 
-Polycarp is its own OS on macOS and Windows: Spaces, the dock, the bar, the launcher and themes (Donovan, 2026-11-23). Its browser extension for reading and the new tab (`spaces/extension`, Donovan, 2026-11-21) is the accessibility extension that was Phont: it works on its own, with no Polycarp app, and joins Polycarp (new tab host, updates with the app) when Polycarp is installed on the same computer (Donovan, 2026-11-23). The agent browser extension (the side panel), its CLI helper, MCP server and computer-use tools were removed from Polycarp. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
+Polycarp is its own OS on macOS and Windows: Spaces, the bar, the launcher and themes (Donovan, 2026-11-23; the Workspace Dock was removed the same day). Its browser extension for reading and the new tab (`spaces/extension`, Donovan, 2026-11-21) is the accessibility extension that was Phont: it works on its own, with no Polycarp app, and joins Polycarp (new tab host, updates with the app) when Polycarp is installed on the same computer (Donovan, 2026-11-23). The agent browser extension (the side panel), its CLI helper, MCP server and computer-use tools were removed from Polycarp. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 
 The rest of this plan is Spaces and themes, on Mac and Windows first. Old apps keep working, and their repos stay up. A box is checked only when its check has passed.
 
@@ -12,7 +12,7 @@ The rest of this plan is Spaces and themes, on Mac and Windows first. Old apps k
 ## 2. One name, one command
 - [x] `polycarp spaces`, `polycarp browser` (now says the agent browser extension was removed). Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
 - Moved to Silas (baney75/silas), 2026-11-18: `polycarp voice` only says Silas is its own app and where to get it
-- [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
+- Dropped with the browser agents, 2026-11-18: one MCP server under the old `tabkyra` and `baneyspaces` names. Polycarp's servers are `polycarp mcp` and `polycarp agent` (`docs/agents.md`)
 
 ## 3. One core, a native app on each device
 - [ ] Shared Rust core for workspaces and sync, growing from `spaces/crates/baneyspaces-core`. Check: `spaces/spec/conformance` passes on every platform
@@ -31,7 +31,7 @@ Phones get no bar: iOS and Android don't let an app replace the status bar.
 
 ## Quality bar
 Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all hyper themable and customizable.
-- [ ] One theme file drives every product and the site. Check: `polycarp theme set still-water` changes Spaces, Voice, Browser and a local site build, read back from each
+- [ ] One theme file drives every product and the site. Check: `polycarp theme set still-water` changes Spaces and a local site build, read back from each
 - [ ] Agents can customize everything for their user. Check: from a schema read alone, an agent applies a change over MCP, previews it and undoes it, with its name in the history
 - [x] A person can get the apps' own look back from the command. Check: `polycarp theme off` removes the theme files, and `theme on` or `undo` brings them back
 - [ ] Spaces falls back to its own look when the theme files are gone. Check: a Spaces test that removes `current/theme.json` and reads back its own look
