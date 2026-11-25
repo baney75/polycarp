@@ -329,8 +329,7 @@ products and `polycarp theme current` use the default theme and say what was wro
 
 Following Omarchy's theme is retired with the Linux desktop. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 `polycarp theme follow` prints that and exits 0. Themes an earlier follow wrote (`omarchy`, `omarchy-overrides`)
-stay as ordinary user themes. [The Omarchy plugin](../plugins/omarchy) turns a theme of either kind into the other when
-someone asks for it, and follows nothing.
+stay as ordinary user themes.
 
 ## For agents
 
