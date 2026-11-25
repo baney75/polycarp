@@ -3,6 +3,7 @@
 //! that can't run is a refusal.
 
 mod change;
+mod gone;
 mod install;
 mod pages;
 mod pak;
@@ -12,6 +13,7 @@ mod sign;
 mod source;
 mod spot;
 mod start;
+mod status;
 #[cfg(test)]
 mod testing;
 mod tools;
@@ -64,6 +66,8 @@ pub struct Place {
     pub spot: spot::Spot,
     /// The browser's own data folder.
     pub data: PathBuf,
+    /// The pages Chromium keeps for that data folder.
+    pub page_cache: PathBuf,
     /// What answers the new tab page; None where Polycarp.app isn't installed.
     pub host: Option<PathBuf>,
 }
@@ -184,6 +188,7 @@ struct Asked {
     verb: String,
     flags: Vec<String>,
     app_dir: Option<PathBuf>,
+    url: Option<String>,
 }
 
 /// Err is the line to print.
@@ -201,6 +206,8 @@ fn read_args(args: &[OsString]) -> Result<Asked, String> {
             asked.flags.push(word.into());
         } else if asked.verb.is_empty() {
             asked.verb = word.into();
+        } else if asked.verb == "open" && asked.url.is_none() {
+            asked.url = Some(word.into());
         } else {
             return Err(format!("{word} is not an option"));
         }
@@ -208,19 +215,51 @@ fn read_args(args: &[OsString]) -> Result<Asked, String> {
     let allowed: &[&str] = match asked.verb.as_str() {
         "install" => &["--dry-run", "--rollback"],
         "update" => &["--when-quit"],
+        "status" => &["--json"],
+        "uninstall" => &["--profile", "--yes"],
         _ => &[],
     };
     if let Some(flag) = asked.flags.iter().find(|f| !allowed.contains(&f.as_str())) {
         return Err(format!("{flag} is not an option of {}", asked.verb));
     }
-    if asked.flags.len() > 1 {
+    let has = |f: &str| asked.flags.iter().any(|x| x == f);
+    if has("--yes") && !has("--profile") {
+        return Err("--yes goes with --profile".into());
+    }
+    if has("--dry-run") && has("--rollback") {
         return Err(format!("{} can't go together", asked.flags.join(" and ")));
     }
     Ok(asked)
 }
 
+/// Not `browser`: on a Mac that is Chromium's own cache folder for this browser, in other letters.
+fn own_cache(cache: &Path) -> PathBuf {
+    cache.join("browser-build")
+}
+
+/// The line `polycarp doctor` prints; None when the browser is not installed.
+pub fn doctor(home: &Path, cache: &Path, app: Option<&Path>) -> Option<String> {
+    let spot = install::spot_for(None, home, app).ok()?;
+    status::doctor(&own_cache(cache), &spot)
+}
+
 /// The first words this command answers. Anything else is the old agent browser's command.
-const VERBS: [&str; 3] = ["install", "update", "finish"];
+const VERBS: [&str; 6] = ["install", "update", "status", "open", "uninstall", "finish"];
+
+const HELP: &str = "\
+polycarp browser: Polycarp Browser, made on this Mac from Helium's own release
+
+Usage:
+  polycarp browser install       make it and put it in (--dry-run only checks; --rollback puts back the build before)
+  polycarp browser update        put in a newer one (--when-quit waits until you quit the browser)
+  polycarp browser status        which one you have, and how far behind it is (--json)
+  polycarp browser open [address]
+  polycarp browser uninstall     remove the app; your profile stays unless you add --profile --yes
+
+  --app-dir DIR                  where the app is, instead of beside Polycarp.app or in ~/Applications
+
+Nothing of a release is used before its signature, its maker and Gatekeeper's answer are checked. See docs/browser.md.
+";
 
 /// None when these arguments are not a browser command.
 pub fn run(
@@ -229,7 +268,11 @@ pub fn run(
     cache: Option<PathBuf>,
     app: Option<PathBuf>,
 ) -> Option<i32> {
-    let verb = args.first()?.to_str()?;
+    let verb = args.first().map_or(Some("--help"), |a| a.to_str())?;
+    if ["--help", "-h", "help"].contains(&verb) {
+        print!("{HELP}");
+        return Some(0);
+    }
     if !VERBS.contains(&verb) {
         return None;
     }
@@ -247,18 +290,25 @@ pub fn run(
     // For tests and for building from a checkout: a folder laid out as Polycarp.app's Resources.
     let resources = std::env::var_os("POLYCARP_BROWSER_RESOURCES").map(PathBuf::from);
     let resources = resources.or_else(|| app.as_ref().map(|a| a.join("Contents/Resources")));
-    let Some(resources) = resources else {
+    let builds = asked.verb == "install" || asked.verb == "update";
+    if builds && resources.is_none() {
         eprintln!("polycarp browser: Polycarp.app was not found, and the browser is built from parts inside it");
         return Some(1);
-    };
+    }
+    let resources = resources.unwrap_or_default();
+    if asked.verb == "uninstall" && asked.flags == ["--profile"] {
+        println!("{}", gone::would_remove(&home));
+        return Some(2);
+    }
     let done =
         install::spot_for(asked.app_dir.as_deref(), &home, app.as_deref()).and_then(|spot| {
             let place = Place {
-                cache: cache.join("browser"),
+                cache: own_cache(&cache),
                 parts: resources.join("make-browser"),
                 extension: resources.join("extension"),
                 spot,
-                data: home.join("Library/Application Support/Polycarp/Browser"),
+                data: gone::profile(&home)[0].clone(),
+                page_cache: gone::profile(&home)[1].clone(),
                 host: app.map(|a| a.join("Contents/Resources/bin/polycarp-spaces")),
             };
             answer(&System, &place, &asked)
@@ -289,6 +339,16 @@ fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String, Ref
             let wait = || std::thread::sleep(std::time::Duration::from_secs(2));
             return install::finish(place, wait).map(|_| String::new());
         }
+        "status" => {
+            let status = status::status(tools, place, arch);
+            return match flag("--json") {
+                true => serde_json::to_string_pretty(&status)
+                    .map_err(|e| Refused::new("status", e.to_string())),
+                false => Ok(status.text()),
+            };
+        }
+        "open" => return gone::open(tools, &place.spot, asked.url.as_deref()),
+        "uninstall" => return gone::uninstall(place, flag("--profile")),
         "install" if flag("--dry-run") => return dry_run(tools, place, arch),
         "install" if flag("--rollback") => install::roll_back(tools, place)?,
         _ => install::install(tools, place, arch, ask)?,
@@ -368,7 +428,7 @@ mod tests {
     #[test]
     fn anything_else_is_not_a_browser_command() {
         let words = |args: &[&str]| args.iter().map(OsString::from).collect::<Vec<_>>();
-        for args in [&[][..], &["mcp"], &["--version"], &["serve", "--port", "1"]] {
+        for args in [&["mcp"][..], &["--version"], &["serve", "--port", "1"]] {
             assert_eq!(run(&words(args), None, None, None), None);
         }
         for args in [
@@ -377,11 +437,39 @@ mod tests {
             &["install", "--dry-run", "--rollback"],
             &["update", "--rollback"],
             &["update", "--app-dir"],
+            &["uninstall", "--yes"],
+            &["status", "x"],
+            &["open", "https://a.example", "https://b.example"],
         ] {
             assert_eq!(run(&words(args), None, None, None), Some(2), "{args:?}");
         }
         let asked = read_args(&words(&["update", "--app-dir", "/x", "--when-quit"])).unwrap();
         assert_eq!(asked.app_dir.unwrap(), Path::new("/x"));
         assert_eq!(asked.flags, ["--when-quit"]);
+        let asked = read_args(&words(&["open", "https://a.example"])).unwrap();
+        assert_eq!(asked.url.unwrap(), "https://a.example");
+    }
+
+    /// Asked for the profile without --yes, it says what would go and removes nothing.
+    #[test]
+    fn a_profile_goes_only_with_a_yes() {
+        let t = Fake::new();
+        let home = t.work().join("home");
+        let profile = gone::profile(&home);
+        fs::create_dir_all(&profile[0]).unwrap();
+        let args: Vec<OsString> = ["uninstall", "--profile"].iter().map(Into::into).collect();
+        assert_eq!(run(&args, Some(home), Some(t.work()), None), Some(2));
+        assert!(profile[0].exists());
+    }
+
+    #[test]
+    fn the_build_cache_is_not_the_browsers_own_cache() {
+        let home = Path::new("/h");
+        let low = |p: &Path| PathBuf::from(p.to_string_lossy().to_lowercase());
+        let mine = low(&own_cache(&home.join("Library/Caches/polycarp")));
+        for theirs in gone::profile(home) {
+            let theirs = low(&theirs);
+            assert!(!mine.starts_with(&theirs) && !theirs.starts_with(&mine));
+        }
     }
 }

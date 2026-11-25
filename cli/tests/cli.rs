@@ -162,7 +162,6 @@ fn the_usage_text_has_no_voice_command() {
     assert!(t.contains("polycarp spaces"), "{t}");
     assert!(!t.contains("polycarp voice"), "{t}");
     assert!(!t.contains("POLYCARP_VOICE_BIN"), "{t}");
-    assert!(!t.contains("polycarp browser"), "{t}");
 }
 
 #[test]
@@ -227,7 +226,7 @@ fn browser_says_it_was_removed_runs_nothing_and_exits_2() {
     fs::create_dir_all(&local).unwrap();
     stub(&local, "polycarp-browser", &ran);
     for args in [
-        &["browser"][..],
+        &["browser", "serve"][..],
         &["browser", "mcp"],
         &["browser", "--version"],
         &["features", "on", "browser"],
@@ -256,6 +255,47 @@ fn browser_says_it_was_removed_runs_nothing_and_exits_2() {
     let help = s.run(&["--help"]);
     assert!(out(&help).contains(BROWSER_LINE), "{}", out(&help));
     assert!(!out(&help).contains("polycarp browser ["), "{}", out(&help));
+    // Off a Mac there is nothing else it could be.
+    let bare = s.run(&["browser"]);
+    if cfg!(target_os = "macos") {
+        assert!(out(&bare).starts_with("polycarp browser: Polycarp Browser"));
+    } else {
+        assert_eq!((code(&bare), err(&bare).as_str()), (2, BROWSER_LINE));
+    }
+}
+
+/// With nothing installed, the commands that need no network say so and write nothing into the home folder's own places.
+#[cfg(target_os = "macos")]
+#[test]
+fn polycarp_browser_with_nothing_installed() {
+    let s = Sandbox::new();
+    let apps = s.dir("apps");
+    let apps = apps.to_str().unwrap();
+    let cache = s.dir("cache");
+    let run = |args: &[&str]| {
+        let mut all = vec!["browser"];
+        all.extend(args);
+        all.extend(["--app-dir", apps]);
+        let mut cmd = s.cmd(&all);
+        cmd.env("POLYCARP_CACHE_DIR", &cache);
+        cmd.env("POLYCARP_BROWSER_RESOURCES", s.dir("none"));
+        cmd.output().unwrap()
+    };
+    let o = run(&["update", "--when-quit"]);
+    assert_eq!(code(&o), 1);
+    assert!(err(&o).contains("not installed"), "{}", err(&o));
+    let o = run(&["open", "https://example.com"]);
+    assert_eq!(code(&o), 1);
+    assert!(err(&o).contains("not installed"), "{}", err(&o));
+    let o = run(&["finish"]);
+    assert_eq!((code(&o), out(&o).as_str()), (0, ""));
+    let o = run(&["uninstall"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("not installed"), "{}", out(&o));
+    let o = run(&["uninstall", "--profile"]);
+    assert_eq!(code(&o), 2);
+    assert!(out(&o).contains("Add --yes"), "{}", out(&o));
+    assert!(!s.dir("home").join("Library").exists());
 }
 
 /// Polycarp has no parts to choose now: `polycarp features` says so in one line and never writes `features.toml`, and

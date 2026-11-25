@@ -86,6 +86,7 @@ Usage:
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
   polycarp look <command>      save, share and apply how all of Polycarp looks (polycarp look --help)
   polycarp mcp                 serve the theme and surfaces commands to an agent over MCP (stdio)
+  polycarp browser <command>   Polycarp Browser, made on a Mac from Helium's release (polycarp browser --help)
   polycarp files <command>     search, open and send your files across your devices (polycarp files --help)
   polycarp agent <command>     one MCP gateway for Claude, Codex, Grok Bot and web assistants (polycarp agent --help)
   polycarp install --local-studio [--uninstall]   add Polycarp's plugin to Local Studio and grant its tools
@@ -151,8 +152,7 @@ fn main() {
     std::process::exit(code);
 }
 
-/// Polycarp Browser is being built a part at a time, and only on a Mac. Anything it does not answer yet is the old agent
-/// browser's command: say where that went, with the exit code for a command used wrong.
+/// Polycarp Browser is made on a Mac only. Anything it does not answer is the old agent browser's command: say where that went, with the exit code for a command used wrong.
 fn browser(args: &[OsString]) -> i32 {
     #[cfg(target_os = "macos")]
     if let Some(code) = browser::run(
@@ -665,6 +665,13 @@ fn doctor() -> i32 {
         let _ = writeln!(out, "{}", verdict.line());
         // Under it, the one command that fixes each part that is missing or does not match.
         for line in version::fixes(&parts, &verdict, version::Os::current()) {
+            let _ = writeln!(out, "{line}");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = home().filter(|_| printing) {
+        let cache = update::cache_dir(&home);
+        if let Some(line) = browser::doctor(&home, &cache, polycarp_app().as_deref()) {
             let _ = writeln!(out, "{line}");
         }
     }

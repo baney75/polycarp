@@ -12,7 +12,7 @@ use super::change::files;
 use super::release::{self, Release};
 use super::spot::Spot;
 use super::tools::Tools;
-use super::{build, clear, pages, refuse, source, Place, Refused};
+use super::{build, clear, pages, refuse, source, status, Place, Refused};
 
 /// Part of every build's fingerprint: raised when the way a build is made changes, so installed ones are made again.
 const RECIPE: &str = "1";
@@ -136,6 +136,7 @@ pub fn install(tools: &dyn Tools, place: &Place, arch: &str, ask: Ask) -> Result
         spot.swap()?;
     }
     let newest = release::newest(tools, arch)?;
+    status::remember(&place.cache, &newest);
     if let Some(told) = nothing_to_do(place, &newest, ask)? {
         return Ok(told);
     }
