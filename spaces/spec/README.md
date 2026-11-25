@@ -15,6 +15,7 @@ not written here does not ship on one platform alone.
 | [shell.md](shell.md) | The shell's feed: what a bar or launcher hears from the daemon, and who may subscribe |
 | [switcher.md](switcher.md) | The ⌘Tab switcher: what it lists, in what order, when its panel comes up (`R-W1`, ...) |
 | [bar.md](bar.md) | The top bar: its switch, which workspaces it shows, the clock's words, its height and colors |
+| [browser.md](browser.md) | A browser's tabs, bookmarks, history and downloads in the launcher, and what Polycarp keeps of them (`R-B1`, ...) |
 | [conformance/](conformance/) | Cases as JSON: inputs, the effects they must produce, the state they must leave |
 
 ## Conformance cases
