@@ -23,15 +23,23 @@ public enum LeftAway {
         }
     }
 
-    /// The tries to remember: one more for each window `tried`, none for a window that has no parked record any more.
-    public static func counted(_ tries: [WindowID: Int], tried: Set<WindowID>, parked: Set<WindowID>) -> [WindowID: Int] {
-        var out = tries.filter { parked.contains($0.key) }
+    /// The ones a scan may bring home now: those whose app answered it. `fresh` says, for each app asked, whether it did.
+    public static func ready(_ away: Set<WindowID>, owner: [WindowID: Int32], fresh: [Int32: Bool]) -> Set<WindowID> {
+        away.filter { id in owner[id].flatMap { fresh[$0] } ?? false }
+    }
+
+    /// The tries to remember: one more for each window `tried`. A window that came home, or whose workspace went out of
+    /// sight, starts over: `waiting` are the parked windows of the workspaces in sight.
+    public static func counted(_ tries: [WindowID: Int], tried: Set<WindowID>, waiting: Set<WindowID>) -> [WindowID: Int] {
+        var out = tries.filter { waiting.contains($0.key) }
         for id in tried { out[id, default: 0] += 1 }
         return out
     }
 
     /// The trace line for windows a switch left away.
-    public static func line(apps: [String], windows: Int, workspace: Int) -> String {
-        "left away: \(windows) window(s) of \(apps.sorted().joined(separator: ", ")) on workspace \(workspace); asked again when they answer"
+    public static func line(apps: [String], windows: Int, workspaces: [Int], again: Bool) -> String {
+        let on = workspaces.sorted().map(String.init).joined(separator: ",")
+        let then = again ? "brought home when they answer" : "out of tries until the next visit"
+        return "left away: \(windows) window(s) of \(apps.sorted().joined(separator: ", ")) on workspace \(on); \(then)"
     }
 }

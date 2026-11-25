@@ -29,15 +29,24 @@ final class LeftAwayTests: XCTestCase {
         var tries: [WindowID: Int] = [:]
         for _ in 0..<LeftAway.most {
             XCTAssertEqual(away([1], shown: [1], frames: [1: parked], tries: tries), [1])
-            tries = LeftAway.counted(tries, tried: [1], parked: [1])
+            tries = LeftAway.counted(tries, tried: [1], waiting: [1])
         }
         XCTAssertEqual(away([1], shown: [1], frames: [1: parked], tries: tries), [])
-        XCTAssertEqual(LeftAway.counted(tries, tried: [], parked: []), [:], "home, so it starts over")
+        // Home, or you left for another workspace: the next visit starts over.
+        XCTAssertEqual(away([1], shown: [1], frames: [1: parked], tries: LeftAway.counted(tries, tried: [], waiting: [])), [1])
+    }
+
+    func testOnlyAnAppThatAnsweredThisScanBringsItsWindowsHome() {
+        let owner: [WindowID: Int32] = [1: 10, 2: 20, 3: 30]
+        XCTAssertEqual(LeftAway.ready([1, 2, 3], owner: owner, fresh: [10: true, 20: false]), [1], "20 missed, 30 wasn't asked")
+        XCTAssertEqual(LeftAway.ready([1, 4], owner: owner, fresh: [20: true]), [])
     }
 
     func testTheTraceLineNamesTheApps() {
-        XCTAssertEqual(LeftAway.line(apps: ["Microsoft Word", "Helium"], windows: 2, workspace: 2),
-                       "left away: 2 window(s) of Helium, Microsoft Word on workspace 2; asked again when they answer")
+        XCTAssertEqual(LeftAway.line(apps: ["Microsoft Word", "Helium"], windows: 2, workspaces: [2], again: true),
+                       "left away: 2 window(s) of Helium, Microsoft Word on workspace 2; brought home when they answer")
+        XCTAssertEqual(LeftAway.line(apps: ["Word"], windows: 1, workspaces: [3, 1], again: false),
+                       "left away: 1 window(s) of Word on workspace 1,3; out of tries until the next visit")
     }
 }
 
@@ -55,7 +64,8 @@ final class LeftAwayWiringTests: XCTestCase {
 
     func testAnAppThatAnswersBringsItsWindowHome() throws {
         let scan = try block("private func applyScan(_ plan: ScanStart")
-        XCTAssertTrue(scan.contains("leftAway()"))
+        XCTAssertTrue(scan.contains("LeftAway.ready(away"))
+        XCTAssertTrue(scan.contains("if back.count < away.count { scheduleRetry() }"), "one not asked yet keeps its turn")
         XCTAssertTrue(scan.contains("returned = returned || !back.isEmpty"), "the workspace applies again")
         XCTAssertTrue(scan.contains("LeftAway.counted("), "and the try is counted")
     }

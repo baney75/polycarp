@@ -471,9 +471,12 @@ final class Spaces {
         }
         // An app that answers now had a window the last switch couldn't bring home: the workspace applies again.
         if !switching {
-            let back = leftAway().filter { id in windows[id].map { fresh[$0.pid]?.answered == true } ?? false }
-            awayTries = LeftAway.counted(awayTries, tried: back, parked: Set(saved.frames.keys))
+            let away = leftAway()
+            let back = LeftAway.ready(away, owner: windows.mapValues(\.pid), fresh: fresh.mapValues(\.answered))
+            awayTries = LeftAway.counted(awayTries, tried: back, waiting: parkedInSight())
             returned = returned || !back.isEmpty
+            // One whose app wasn't asked by this scan (it waits longer) still has its turn coming.
+            if back.count < away.count { scheduleRetry() }
         }
         // A held window its app answered for in full without listing it as a window isn't one (an overlay): let it go.
         for id in Array(heldWindows) where pendingLayout[id].map({ answered.contains($0.pid) }) ?? true {
@@ -764,23 +767,29 @@ final class Spaces {
         }.keys)
     }
 
+    /// The parked windows of the workspaces in sight: home in a moment, or left away.
+    private func parkedInSight() -> Set<WindowID> {
+        Set(saved.frames.keys.filter { windows[$0] != nil && model.workspace(of: $0).map(model.isShown) == true })
+    }
+
     /// The windows of a workspace in sight that its switch couldn't bring home (`LeftAway`). It asks no app.
-    private func leftAway() -> Set<WindowID> {
-        guard !saved.frames.isEmpty else { return [] }
-        let shown = Set(saved.frames.keys.filter { windows[$0] != nil && model.workspace(of: $0).map(model.isShown) == true })
+    private func leftAway(evenOutOfTries: Bool = false) -> Set<WindowID> {
+        let shown = parkedInSight()
         guard !shown.isEmpty else { return [] }
         return LeftAway.windows(parked: Set(saved.frames.keys), shown: shown, frames: Windows.serverWindows().compactMapValues(\.bounds),
-                                screens: Windows.screens(), minimized: Set(details.filter(\.value.minimized).keys), tries: awayTries)
+                                screens: Windows.screens(), minimized: Set(details.filter(\.value.minimized).keys),
+                                tries: evenOutOfTries ? [:] : awayTries)
     }
 
     /// At the end of a switch: says which windows it left away, and asks their apps again when they may be asked.
     private func noteLeftAway() {
-        awayTries = LeftAway.counted(awayTries, tried: [], parked: Set(saved.frames.keys))
-        let away = leftAway()
+        awayTries = LeftAway.counted(awayTries, tried: [], waiting: parkedInSight())
+        let away = leftAway(evenOutOfTries: true)
         guard !away.isEmpty else { return }
-        let apps = Set(away.compactMap { windows[$0]?.appName })
-        Trace.log(LeftAway.line(apps: Array(apps), windows: away.count, workspace: model.current))
-        scheduleRetry()
+        let again = !leftAway().isEmpty
+        Trace.log(LeftAway.line(apps: Array(Set(away.compactMap { windows[$0]?.appName })), windows: away.count,
+                                workspaces: Array(Set(away.compactMap { model.workspace(of: $0) })), again: again))
+        if again { scheduleRetry() }
     }
 
     /// Re-reads apps that a scan couldn't, once they're willing to answer again, in the
