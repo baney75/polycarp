@@ -102,9 +102,9 @@ async function editPage(tab) {
 
 // "Share with my agent" in the popup: the page's parts go to the Polycarp app on this computer, which keeps them for an
 // hour for the person's agents. `tabId` null takes back what was shared. Answers { ok } or { ok: false, error }.
-const SHARED_KEY = "polycarp.shared"; // session storage: { url, title, at } of the page last shared
+const SHARED_KEY = "polycarp.shared"; // what is shared: { url, title, at } in local storage, its whole address in session storage
 async function sharePage(tabId) {
-  let page = null;
+  let page = null, href = "";
   if (tabId !== null) {
     try {
       const target = { tabId };
@@ -114,6 +114,7 @@ async function sharePage(tabId) {
         return globalThis.PolycarpEditsOutline.page(document, p ? p.report() : []);
       } });
       page = res && res.result;
+      href = page ? (await chrome.tabs.get(tabId)).url : "";
     } catch (e) { page = null; }
     if (!page) return { ok: false, error: "This page can't be shared" };
     if (!page.parts.length) return { ok: false, error: "Nothing on this page to share" };
@@ -123,8 +124,10 @@ async function sharePage(tabId) {
     const why = String((r && (r.error || r.failed)) || "");
     return { ok: false, error: why === "there is no request called sharePage" ? "Update Polycarp on this computer to share pages" : r && r.failed ? "Polycarp on this computer didn't answer" : "Polycarp refused it: " + (why || "no reason given").slice(0, 200) };
   }
-  if (page) await chrome.storage.session.set({ [SHARED_KEY]: { url: page.url, title: page.title, at: Date.now() } });
-  else await chrome.storage.session.remove(SHARED_KEY);
+  if (page) {
+    await chrome.storage.local.set({ [SHARED_KEY]: { url: page.url, title: page.title, at: Date.now() } });
+    await chrome.storage.session.set({ [SHARED_KEY]: href });
+  } else await Promise.all([chrome.storage.local.remove(SHARED_KEY), chrome.storage.session.remove(SHARED_KEY)]);
   return { ok: true };
 }
 

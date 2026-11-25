@@ -222,10 +222,15 @@ try {
     await until(async () => sent().length > n && !(await pop.isDisabled('#shareGo')));
     return sent().at(-1);
   };
-  ok(sent().length === 0 && /Nothing you typed is sent/.test(await note2()) && !(await pop.isVisible('#shareStop')), 'share: nothing is sent before the button is pressed');
+  ok(sent().length === 0 && /web assistants too/.test(await note2()) && !(await pop.isVisible('#shareStop')), 'share: nothing is sent before the button is pressed');
   await page.evaluate(() => {
     history.replaceState(null, '', '/a?token=secret#secret');
-    document.querySelector('#main').insertAdjacentHTML('beforeend', '<ul id="posts"><li class="post">One</li><li class="post">Two</li><li class="post">Three</li></ul><p id="gone" style="display:none">unseen words</p><div id="code" class="cm-editor"><div>typed code</div></div><h2 id="odd">' + '\u{1F600}'.repeat(300) + '</h2>');
+    document.querySelector('#main').insertAdjacentHTML('beforeend', '<ul id="posts"><li class="post">One</li><li class="post">Two</li><li class="post">Three</li></ul><p id="gone" style="display:none">unseen words</p><div id="code" class="cm-editor"><div>typed code</div></div><h2 id="odd">a' + '\u{1F600}'.repeat(300) + '</h2>'
+      + '<section id="apart"><div id="north"><b>North</b></div><div id="south"><b>South</b></div><div id="west"><b>West</b></div></section>'
+      + '<div style="display:contents"><p id="inside">Held</p></div><form id="ask"><input name="children"><p id="asked">Asked</p></form>'
+      + '<p id="shut" style="height:0;overflow:hidden">unseen</p><p id="off" style="position:absolute;left:-9999px">unseen</p><p id="sr" style="position:absolute;width:1px;height:1px;overflow:hidden">unseen</p>'
+      + '<div><textarea id="mirrored"></textarea><div id="drawn">typed mirror</div></div>');
+    document.querySelector('#mirrored').value = 'typed mirror';
     document.querySelector('#name').value = 'typed name';
   });
   await share({ ok: false, error: 'there is no request called sharePage' });
@@ -238,12 +243,20 @@ try {
   ok(part('#title').is === 'Heading' && part('#title').words === 'New title' && part('#foot').words === 'End', `share: parts with their selector and words (${all})`);
   ok(part('li.post') && part('li.post').count === 3 && part('li.post').words === 'One' && !/Two/.test(JSON.stringify(got.parts.filter((x) => x.is === 'List item'))), 'share: parts alike are one, with how many');
   ok(await page.evaluate((list) => list.every((x) => document.querySelectorAll(x.at).length === (x.count || 1)), got.parts), 'share: every selector finds what it says');
-  ok(got.parts.every((x) => x.at.length <= 500 && x.is.length <= 30 && (x.words || '').length <= 160) && part('#odd').words.length === 160, 'share: within what the app takes');
+  ok(got.parts.every((x) => x.at.length <= 500 && x.is.length <= 30 && (x.words || '').length <= 160) && part('#odd').words.length === 159 && !/[\uD800-\uDFFF]$/.test(part('#odd').words.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')), 'share: within what the app takes, cut between characters');
+  ok(['north', 'south', 'west', 'inside', 'asked'].every((id) => /^(North|South|West|Held|Asked)$/.test((got.parts.find((x) => x.at.includes('#' + id)) || {}).words)), `share: parts with names of their own, in a wrapper with no box and in a form with a field named children (${all})`);
   ok(got.edits.length === 1 && got.edits[0].id === 'shop' && got.edits[0].hits.length === EDIT.changes.length && got.edits[0].hits[1] === 1, `share: what the agent's edit matched here (${JSON.stringify(got.edits)})`);
   ok(/^Shared until .*this page$/.test(await note2()) && (await pop.textContent('#shareGo')) === 'Share again', `share: says until when (${await note2()})`);
   await pop.screenshot({ path: path.join(here, 'out', 'edits-popup.png') });
+  await page.evaluate(() => history.replaceState(null, '', '/a?q=2'));
+  await pop.reload();
+  ok(await until(async () => /^Shared until .*: Shop$/.test(await note2())), `share: another query is another page (${await note2()})`);
+  await page.evaluate(() => history.replaceState(null, '', '/a?token=secret#secret'));
+  await sw.evaluate(() => chrome.storage.session.clear());
+  await pop.reload();
+  ok(await until(() => pop.isVisible('#shareStop')) && /^Shared until .*: Shop$/.test(await note2()), `share: a browser restarted can still stop it, and doesn't claim this page (${await note2()})`);
   const stop = await share({ ok: true }, '#shareStop');
-  ok(stop.page === null && /Nothing you typed/.test(await note2()) && !(await pop.isVisible('#shareStop')), 'share: Stop sharing takes it back');
+  ok(stop.page === null && /web assistants too/.test(await note2()) && !(await pop.isVisible('#shareStop')), 'share: Stop sharing takes it back');
   await page.evaluate(() => { document.body.contentEditable = 'true'; });
   await pop.click('#shareGo');
   ok(await until(async () => /Nothing on this page/.test(await note2())), 'share: a page that is one editor is not sent');
