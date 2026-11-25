@@ -5,7 +5,8 @@ import Foundation
 // cannot click, type, submit, load anything from the network or run a script. Checking the JSON is half of that rule.
 // A selector can match anything, so whatever applies an edit must also keep to spec/edits.json's `rules`: never reword,
 // relabel, add to or move an element in `never`, an editor, or anything inside one (new words in a <style> are a stylesheet
-// nobody checked; in an editor they are a message someone sends), and never move an element that is or holds one, or a button.
+// nobody checked; in an editor they are a message someone sends), and never move an element that holds a
+// field, a button or a frame.
 
 extension String {
     /// Whether these exact characters are in it. `contains` compares whole letters with their accents, so it misses
