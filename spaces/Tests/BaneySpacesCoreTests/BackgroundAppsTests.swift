@@ -127,24 +127,31 @@ final class BackgroundAppsTests: XCTestCase {
         // An app with something unsaved must get to ask, so never a force quit.
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let app = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/AppDelegate.swift"), encoding: .utf8)
-        let quit = try XCTUnwrap(app.range(of: "a.quitResting = {").map { String(app[$0.lowerBound...].prefix(200)) })
+        let quit = try XCTUnwrap(SourceText.block(after: "a.quitResting = ", in: app))
         XCTAssertTrue(quit.contains("NSRunningApplication(processIdentifier: pid)?.terminate()"))
         XCTAssertFalse(quit.contains("forceTerminate"))
+        XCTAssertTrue(quit.contains("isTerminated"), "the row goes when the app has")
     }
 
     /// Review of PR #624 first-F6: a hidden app typed into the launcher showed twice, as an app row and a resting row.
-    /// It keeps one row, the resting one, where ⌘Return quits it; apps not running or not resting keep theirs.
-    func testTheLauncherListsARestingAppOnce() throws {
-        let resting = [BackgroundApps.Entry(pid: 7, name: "Helium", state: .hidden)]
-        let rows: [(name: String, pid: pid_t?)] = [("Helium", 7), ("Notes", 9), ("Maps", nil)]
-        XCTAssertEqual(BackgroundApps.withoutResting(rows, resting: resting) { $0.pid }.map(\.name), ["Notes", "Maps"])
-        XCTAssertEqual(BackgroundApps.withoutResting(rows, resting: []) { $0.pid }.map(\.name), ["Helium", "Notes", "Maps"])
+    /// Review of #681 first-F1: taken out of the ranked apps it lost its place, so "mail" and Return opened Proton Mail
+    /// with Mail running. It keeps its row, its id and its place, and only what Return and ⌘Return do changes.
+    func testTheLauncherListsARestingAppOnceAndInItsPlace() throws {
+        let resting = [BackgroundApps.Entry(pid: 7, name: "Helium", state: .hidden), BackgroundApps.Entry(pid: 8, name: "Mail", state: .noWindow)]
+        XCTAssertEqual(BackgroundApps.unlisted(resting, listed: [8, 9]).map(\.name), ["Helium"])
+        XCTAssertEqual(BackgroundApps.unlisted(resting, listed: []).map(\.name), ["Helium", "Mail"])
         let l = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
         for m in ["private func recentApps()", "private func appItems("] {
             let b = try XCTUnwrap(SourceText.block(after: m, in: l))
-            XCTAssertTrue(b.contains("BackgroundApps.withoutResting("), "\(m) lists a resting app a second time")
+            XCTAssertTrue(b.contains("appItem("))
+            XCTAssertFalse(b.contains("resting.contains") || b.contains("filter { $0.pid"), "\(m) takes a resting app out of its place")
         }
-        let rows2 = try XCTUnwrap(SourceText.block(after: "private func restingItems(", in: l))
-        XCTAssertTrue(rows2.contains("alternateTitle: \"Quit\""), "the one row keeps Quit as its alternate")
+        let item = try XCTUnwrap(SourceText.block(after: "private func appItem(", in: l))
+        XCTAssertTrue(item.contains("restingItem(e, id: \"app:\\(a.path)\""), "the row's id stays, so the selection does")
+        let rest = try XCTUnwrap(SourceText.block(after: "private func restingItems(", in: l))
+        XCTAssertTrue(rest.contains("BackgroundApps.unlisted(resting, listed: restingListed)"))
+        let row = try XCTUnwrap(SourceText.block(after: "private func restingItem(", in: l))
+        XCTAssertTrue(row.contains("restingListed.insert(pid)"))
+        XCTAssertTrue(row.contains("alternateTitle: \"Quit\""), "the one row keeps Quit as its alternate")
     }
 }

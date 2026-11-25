@@ -178,19 +178,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return out
         }
         a.showOverview = { [weak self] in self?.viewer.open() }
-        // Runs right after `workspacesByApp`, which just refreshed the windows. Hidden apps are asked
-        // again in the background, so a window closed behind ⌘H counts the next time the launcher opens.
+        // The list waits for a scan from after the open that also asked the hidden apps, so a window just minimized or
+        // closed behind ⌘H counts. Every running app is then read off the main thread, and the list is built from both.
         a.restingApps = { [weak self] done in
             guard let self, self.started else { return done([]) }
-            // Every running app is read off the main thread first; the list is then built from that read on main.
-            RunningApps.prepare { [weak self] in
-                guard let self else { return done([]) }
-                self.spaces.refreshHidden()
-                done(self.spaces.backgroundApps())
+            self.spaces.whenFreshWithHidden { [weak self] in
+                RunningApps.prepare { [weak self] in done(self?.spaces.backgroundApps() ?? []) }
             }
         }
         a.showResting = { [weak self] pid in self?.run { $0.showBackgroundApp(pid) } }
-        a.quitResting = { pid in NSRunningApplication(processIdentifier: pid)?.terminate() }
+        a.quitResting = { pid, done in
+            guard NSRunningApplication(processIdentifier: pid)?.terminate() == true else { return done(false) }
+            // It may ask about something unsaved first: looked at four times a second, for ten.
+            func look(_ left: Int) {
+                if NSRunningApplication(processIdentifier: pid)?.isTerminated ?? true { return done(true) }
+                if left == 0 { return done(false) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { look(left - 1) }
+            }
+            look(40)
+        }
         a.sessionItems = { [weak self] q in self?.session.launcherItems(q) ?? [] }
         a.browserTab = { [weak self] q in self?.session.browserTabItem(q) }
         a.willShow = { [weak self] in

@@ -204,8 +204,8 @@ struct LauncherActions {
     var restingApps: (@escaping ([BackgroundApps.Entry]) -> Void) -> Void = { $0([]) }
     /// Brings a resting app forward onto the workspace you're on (`Spaces.showBackgroundApp`).
     var showResting: (pid_t) -> Void = { _ in }
-    /// Quits a resting app the way its Quit menu would.
-    var quitResting: (pid_t) -> Void = { _ in }
+    /// Quits a resting app the way its Quit menu would, and says whether it went: one with something unsaved may stay.
+    var quitResting: (pid_t, @escaping (Bool) -> Void) -> Void = { $1(false) }
     var checkForUpdates: () -> Void = {}
     var showSetup: () -> Void = {}
     /// Another Claude Code session beside the ones running, in Ghostty.
@@ -435,6 +435,10 @@ final class LauncherModel: ObservableObject {
     private var runningPids: [String: pid_t] = [:]
     /// Apps running with no window to see, read when the launcher opens (`LauncherActions.restingApps`).
     private var resting: [BackgroundApps.Entry] = []
+    /// The resting apps this list has a row for, so each is listed once.
+    private var restingListed: Set<pid_t> = []
+    /// Resting apps asked to quit that haven't gone.
+    private var quitting: Set<pid_t> = []
     /// Bumped by every open, so an answer for an earlier open is dropped.
     private var restingAsk = 0
     private var recents = Recents(UserDefaults.standard.stringArray(forKey: "launcherRecents") ?? [])
@@ -512,6 +516,7 @@ final class LauncherModel: ObservableObject {
             runningPids[path] = app.processIdentifier
         }
         resting = []
+        quitting = []
         restingAsk += 1
         storeResults = []
         fileResults = []
@@ -618,6 +623,7 @@ final class LauncherModel: ObservableObject {
     private func rebuild() {
         let q = query
         var out: [LauncherItem] = []
+        restingListed = []
         // A bang or a question takes over the list, wherever you are: it's clearly for the web.
         if scope == .root || scope == .web, let web = webItems(q) {
             items = web
@@ -629,7 +635,7 @@ final class LauncherModel: ObservableObject {
         case .root:
             if q.isEmpty {
                 out += actions.sessionItems("")
-                out += recentApps().prefix(5)
+                out += recentApps()
                 out += restingItems("")
                 out += menuItems()
             } else if RoomsProvider.shared.filter(q) != nil {
@@ -850,9 +856,7 @@ final class LauncherModel: ObservableObject {
     }
 
     private func recentApps() -> [LauncherItem] {
-        let recent = recents.paths.compactMap { path in apps.first { $0.path == path } }
-        // A resting app has its one row under "Running, no window" (`restingItems`), where ⌘Return quits it.
-        return BackgroundApps.withoutResting(recent, resting: resting) { runningPids[$0.path] }.map { appItem($0, section: "Recent") }
+        recents.paths.lazy.compactMap { path in self.apps.first { $0.path == path } }.prefix(5).map { appItem($0, section: "Recent") }
     }
 
     private func appItems(_ q: String, limit: Int) -> [LauncherItem] {
@@ -868,14 +872,13 @@ final class LauncherModel: ObservableObject {
             .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.name < $1.0.name }
             .map(\.0)
         }
-        // A resting app has its one row under "Running, no window" (`restingItems`), where ⌘Return quits it.
-        let shown = scope == .root ? BackgroundApps.withoutResting(matches, resting: resting) { runningPids[$0.path] } : matches
         // An app open on more than one workspace also gets a row for each, to pick which, and so
         // does one that opens a new window here instead of going to its workspace.
-        return shown.prefix(limit).flatMap { a -> [LauncherItem] in
+        return matches.prefix(limit).flatMap { a -> [LauncherItem] in
             let on = running[a.path] ?? []
             let look = !q.isEmpty && limit <= 8
             let main = appItem(a, section: "Apps", look: look)
+            if restingEntry(a) != nil { return [main] }
             guard on.count > 1 || opensHere(a, look: look), !q.isEmpty else { return [main] }
             return [main] + on.map { n in
                 LauncherItem(id: "app:\(a.path):\(n)", section: "Apps", title: "\(a.name) on Workspace \(n)",
@@ -905,7 +908,17 @@ final class LauncherModel: ObservableObject {
         actions.focusApp(app.processIdentifier, n)
     }
 
+    /// The resting app behind an app's row, if it is one.
+    private func restingEntry(_ a: AppEntry) -> BackgroundApps.Entry? {
+        guard let pid = runningPids[a.path] else { return nil }
+        return resting.first { $0.pid == pid }
+    }
+
     private func appItem(_ a: AppEntry, section: String, look: Bool = false) -> LauncherItem {
+        // A resting app keeps its row and its place: only what Return and ⌘Return do changes when the answer joins.
+        if let e = restingEntry(a) {
+            return restingItem(e, id: "app:\(a.path)", section: section, title: a.name, icon: .file(a.path))
+        }
         let on = running[a.path] ?? []
         var where_ = on.isEmpty ? a.folder : on.count == 1 ? "Open on workspace \(on[0])" : "Open on workspaces \(on.map(String.init).joined(separator: ", "))"
         if opensHere(a, look: look) { where_ += " · Return opens a new window here" }
@@ -1015,22 +1028,37 @@ final class LauncherModel: ObservableObject {
         enter(scope == .keys ? .root : .keys)
     }
 
-    /// Apps running with no window to see, under their own heading: Return brings one forward onto
-    /// this workspace, ⌘Return quits it. With nothing typed every one is listed; a query keeps the ones whose name matches.
+    /// Apps running with no window to see that the list has no row for yet, under their own heading. With nothing typed
+    /// every one is listed; a query keeps the ones whose name matches.
     private func restingItems(_ q: String) -> [LauncherItem] {
-        resting.filter { q.isEmpty || Fuzzy.score(q, $0.name) != nil }.map { e in
-            let pid = e.pid
-            let icon: LauncherItem.Icon = NSRunningApplication(processIdentifier: pid)?.bundleURL.map { .file($0.path) } ?? .symbol("app.dashed")
-            return LauncherItem(id: "resting:\(pid)", section: Self.restingSection, title: e.name, subtitle: Self.restingSubtitle(e.state),
-                                icon: icon,
-                                run: { [weak self] in self?.close(); self?.actions.showResting(pid) },
-                                alternate: { [weak self] in
-                                    guard let self else { return }
-                                    self.actions.quitResting(pid)
-                                    self.resting.removeAll { $0.pid == pid }
-                                    self.rebuildKeepingSelection()
-                                },
-                                alternateTitle: "Quit")
+        BackgroundApps.unlisted(resting, listed: restingListed).filter { q.isEmpty || Fuzzy.score(q, $0.name) != nil }.map { e in
+            let icon: LauncherItem.Icon = NSRunningApplication(processIdentifier: e.pid)?.bundleURL.map { .file($0.path) } ?? .symbol("app.dashed")
+            return restingItem(e, id: "resting:\(e.pid)", section: Self.restingSection, title: e.name, icon: icon)
+        }
+    }
+
+    /// A resting app's row: Return brings it forward onto this workspace, ⌘Return quits it. The row stays until it has gone.
+    private func restingItem(_ e: BackgroundApps.Entry, id: String, section: String, title: String, icon: LauncherItem.Icon) -> LauncherItem {
+        let pid = e.pid
+        restingListed.insert(pid)
+        return LauncherItem(id: id, section: section, title: title,
+                            subtitle: quitting.contains(pid) ? "Quitting…" : Self.restingSubtitle(e.state), icon: icon,
+                            run: { [weak self] in self?.close(); self?.actions.showResting(pid) },
+                            alternate: { [weak self] in self?.quit(resting: pid) }, alternateTitle: "Quit")
+    }
+
+    private func quit(resting pid: pid_t) {
+        guard quitting.insert(pid).inserted else { return }
+        rebuildKeepingSelection()
+        let ask = restingAsk
+        actions.quitResting(pid) { [weak self] went in
+            guard let self, ask == self.restingAsk else { return }
+            self.quitting.remove(pid)
+            if went {
+                self.resting.removeAll { $0.pid == pid }
+                self.runningPids = self.runningPids.filter { $0.value != pid }
+            }
+            self.rebuildKeepingSelection()
         }
     }
 

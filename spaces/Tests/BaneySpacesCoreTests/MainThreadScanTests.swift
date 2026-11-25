@@ -71,8 +71,12 @@ final class MainThreadScanTests: XCTestCase {
         XCTAssertTrue(resting.contains("RunningApps.prepare {"), "the running apps are read off main first")
         for call in asksAnApp { XCTAssertFalse(resting.contains(call), "restingApps calls \(call)") }
         let w = try SourceText.code("Sources/BaneySpaces/Windows.swift")
+        XCTAssertTrue(resting.contains("whenFreshWithHidden"), "and the windows are as new as the open")
         let prep = try XCTUnwrap(SourceText.block(after: "static func prepare(then:", in: w))
-        let off = try XCTUnwrap(SourceText.block(after: "factsQueue.async", in: prep))
+        XCTAssertTrue(prep.contains("prepareNow(tries:"))
+        let now = try XCTUnwrap(SourceText.block(after: "private static func prepareNow(", in: w))
+        XCTAssertTrue(now.contains("if seed != started, tries > 1 { return prepareNow(tries: tries - 1) }"), "a stale read is read again off main")
+        let off = try XCTUnwrap(SourceText.block(after: "factsQueue.async", in: now))
         XCTAssertTrue(off.contains("readFacts()"), "the read runs on the facts queue")
         XCTAssertTrue(off.contains("DispatchQueue.main.async"), "and answers on main")
         XCTAssertTrue(prep.contains("DispatchQueue.main.async(execute: then)"), "a fresh read still answers after the open draws")

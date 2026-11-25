@@ -190,13 +190,19 @@ enum RunningApps {
         waiting.append(then)
         guard !preparing else { return }
         preparing = true
+        prepareNow(tries: 3)
+    }
+
+    /// An app that launched, quit, hid or unhid meanwhile makes the read stale: read again here, so `facts()` doesn't on
+    /// main. A third stale read is taken as it is; its age is what it would be had nothing been said.
+    private static func prepareNow(tries: Int) {
         let started = seed
         factsQueue.async {
             let facts = readFacts()
             DispatchQueue.main.async {
+                if seed != started, tries > 1 { return prepareNow(tries: tries - 1) }
                 preparing = false
-                // An app launched, quit, hid or unhid meanwhile: this read is stale, and `facts()` reads again.
-                if seed == started { prepared = (facts, ProcessInfo.processInfo.systemUptime, started) }
+                prepared = (facts, ProcessInfo.processInfo.systemUptime, seed)
                 let run = waiting
                 waiting = []
                 for w in run { w() }

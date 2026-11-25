@@ -68,7 +68,7 @@ final class Spaces {
     /// When titles were last read for the dock, and whether a read runs now (`refreshDetails`).
     private var detailsReadAt = Date.distantPast
     private var readingDetails = false
-    /// When hidden apps were last asked for their windows (`refreshHidden`).
+    /// When hidden apps were last asked for their windows (`whenFreshWithHidden`).
     private var hiddenAskedAt = Date.distantPast
     /// What the last scan listed that isn't a standard window, so a skipped refresh can tell a
     /// window the scan missed (see `ScanCheck`) from a sheet or panel; and the on-screen windows
@@ -372,14 +372,15 @@ final class Spaces {
         }
     }
 
-    /// A hidden app's window closing changes nothing the window server shows, so no scan notices it: the dock asks
-    /// hidden apps again, in the background, when it opens. At most every two seconds.
-    func refreshHidden() {
-        guard active, !switching, Date().timeIntervalSince(hiddenAskedAt) > 2 else { return }
-        let hidden = RunningApps.hidden(among: Set(windows.values.map(\.pid)))
-        guard !hidden.isEmpty else { return }
-        hiddenAskedAt = Date()
-        refresh(full: false, asking: hidden, then: nil)
+    /// `whenFresh`, having asked the hidden apps too: a hidden app's window closing changes nothing the window server
+    /// shows, so no scan notices it. They are asked at most every two seconds.
+    func whenFreshWithHidden(_ body: @escaping () -> Void) {
+        var hidden: Set<pid_t> = []
+        if Date().timeIntervalSince(hiddenAskedAt) > 2 {
+            hidden = RunningApps.hidden(among: Set(windows.values.map(\.pid)))
+            if !hidden.isEmpty { hiddenAskedAt = Date() }
+        }
+        whenFresh(asking: hidden, body)
     }
 
     /// One scan's answer, applied to the model. Main thread; it asks no app (frames come from the window server, titles
@@ -1539,7 +1540,7 @@ final class Spaces {
             // A hidden app's window closing doesn't prompt a scan, so its record can outlive it and
             // keep a windowless app off the list. Ask the app, as `focusApp` does; one on another
             // macOS desktop is never listed from here, so it still counts.
-            // The listing is the app's last scan answer (`refreshHidden` asks hidden apps again when the launcher opens).
+            // The listing is the app's last scan answer (`whenFreshWithHidden` asks hidden apps again when the launcher opens).
             if hiddenApps.contains(pid), let a = answers[pid], a.answered, !a.partial {
                 list = list.filter { a.listed.contains($0.id) || !Windows.onNoOtherDesktop($0.id) }
             }
