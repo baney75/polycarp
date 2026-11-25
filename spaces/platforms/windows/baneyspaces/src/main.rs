@@ -194,6 +194,23 @@ const REMOVED: &[&str] = &[
     "lend", "return",
 ];
 
+fn removed(verb: &str) -> Envelope {
+    fail(
+        "not_supported",
+        &format!("agent {verb} was removed from Polycarp."),
+        "Polycarp does no computer use. It keeps the agent workspace: agent status, windows, open, run, move, bring and log.",
+    )
+}
+
+/// The daemon's operation for an MCP tool, which has the tool's name. Only these reach it: `agent_toggle` was a tool that
+/// pressed a checkbox, and is the operation that shows or hides the agent workspace.
+fn mcp_op(tool: &str) -> Result<&str, Envelope> {
+    match tool {
+        "agent_status" | "agent_windows" | "agent_open" => Ok(tool),
+        _ => Err(removed(&tool.trim_start_matches("agent_").replace('_', "-"))),
+    }
+}
+
 fn agent_request(mut a: Vec<String>) -> Result<Value, Envelope> {
     let Some(sub) = (!a.is_empty()).then(|| a.remove(0)) else {
         return Err(fail(
@@ -232,11 +249,7 @@ fn agent_request(mut a: Vec<String>) -> Result<Value, Envelope> {
             let since = take(&mut a, "--since").and_then(|s| s.parse::<u64>().ok());
             req("agent_log", json!({ "since": since }))
         }
-        v if REMOVED.contains(&v) => Err(fail(
-            "not_supported",
-            &format!("agent {v} was removed from Polycarp."),
-            "Polycarp does no computer use. It keeps the agent workspace: agent status, windows, open, run, move, bring and log.",
-        )),
+        v if REMOVED.contains(&v) => Err(removed(v)),
         _ => Err(fail("invalid_args", &format!("unknown agent command {sub:?}"), "Run `baneyspaces help`.")),
     }
 }
@@ -440,8 +453,10 @@ fn main() {
         "mcp" => {
             let stdin = std::io::stdin();
             let mut out = std::io::stdout();
-            // Every MCP tool is named for the operation it asks for.
-            let mut call = |name: &str, a: &Value| ipc::call(&paths, &json!({ "op": name, "agent": agent, "args": a }));
+            let mut call = |name: &str, a: &Value| match mcp_op(name) {
+                Ok(op) => ipc::call(&paths, &json!({ "op": op, "agent": agent, "args": a })),
+                Err(e) => e,
+            };
             let r = mcp::serve(stdin.lock(), &mut out, &mut call);
             let _ = out.flush();
             if r.is_ok() {
@@ -555,6 +570,17 @@ mod tests {
             let e = request(v(&["agent", verb, "@s8f3k2p9:e8"])).unwrap_err().error.unwrap();
             assert_eq!((e.code.as_str(), e.message), ("not_supported", format!("agent {verb} was removed from Polycarp.")));
         }
+    }
+
+    #[test]
+    fn only_the_kept_mcp_tools_reach_the_daemon() {
+        for tool in ["agent_status", "agent_windows", "agent_open"] {
+            assert_eq!(mcp_op(tool).unwrap(), tool);
+        }
+        for tool in ["agent_toggle", "agent_click", "agent_set_value", "agent_show", "quit"] {
+            assert_eq!(mcp_op(tool).unwrap_err().error.unwrap().code, "not_supported");
+        }
+        assert_eq!(mcp_op("agent_set_value").unwrap_err().error.unwrap().message, "agent set-value was removed from Polycarp.");
     }
 
     /// cli.md: "not supported yet" on Windows is `not_supported`, and `agent move --window` is never the park command.

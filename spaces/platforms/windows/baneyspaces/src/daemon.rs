@@ -1267,7 +1267,10 @@ fn agent_status(c: &Core) -> Value {
         .into_iter()
         .map(|w| {
             let i = c.info.get(w);
-            json!({ "window": w, "app": i.map(|i| i.app.clone()).unwrap_or_default(), "title": i.map(|i| i.title.clone()).unwrap_or_default(), "pid": c.model.pid_of(w) })
+            let pid = c.model.pid_of(w);
+            // Whether an agent started it, or it is one of yours parked here.
+            let owned = pid.is_some_and(|p| c.model.agent_proc(p).is_some());
+            json!({ "window": w, "app": i.map(|i| i.app.clone()).unwrap_or_default(), "title": i.map(|i| i.title.clone()).unwrap_or_default(), "pid": pid, "agent_owned": owned })
         })
         .collect();
     json!({ "workspace": AGENT_WORKSPACE, "shown": c.model.agent_shown(), "windows": windows, "processes": c.model.agent_pids().len(), "refused": c.model.refused() })
