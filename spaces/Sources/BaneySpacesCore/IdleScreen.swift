@@ -90,6 +90,37 @@ public enum IdleScreen {
         public static let ember: UInt32 = 0xDFB866
     }
 
+    /// What the idle screen draws in: the sky from its top to its foot, the words, the quieter words, the faintest, the
+    /// name, the embers, and whether the sky has stars.
+    public struct Colors: Equatable, Sendable {
+        public let skyTop, skyFoot, text, muted, faint, name, ember: RGB
+        public let stars: Bool
+
+        public static let night: Colors = {
+            let hex = DesktopScene.hex
+            return Colors(skyTop: hex(Night.skyTop), skyFoot: hex(Night.skyFoot), text: hex(Night.text), muted: hex(Night.muted),
+                          faint: hex(Night.faint), name: hex(Night.gold), ember: hex(Night.ember), stars: true)
+        }()
+
+        /// The theme's own: `sunken` down to `background`, the words in `foreground` and `muted`, the name and the embers
+        /// in `accent`. A role that doesn't read on that sky gives way to `foreground`: no palette is checked for `accent`
+        /// or `muted` on `sunken`, and some ship at 3.7. A light theme has no stars.
+        public static func theme(_ look: Look) -> Colors {
+            let top = look.color("sunken"), foot = look.color("background")
+            func reads(_ role: String) -> RGB {
+                let c = look.color(role)
+                return [top, foot].allSatisfy { c.contrast(with: $0) >= PolycarpTheme.minContrast } ? c : look.color("foreground")
+            }
+            return Colors(skyTop: top, skyFoot: foot, text: look.color("foreground"), muted: reads("muted"), faint: reads("muted"),
+                          name: reads("accent"), ember: look.color("accent"), stars: look.palette.isDark)
+        }
+
+        /// The colors a style draws in. Over a picture every style keeps the night's, whose words read on its dark wash.
+        public static func of(_ style: Surfaces.IdleStyle, look: Look, overPicture: Bool) -> Colors {
+            style == .theme && !overPicture ? theme(look) : night
+        }
+    }
+
     /// How often the idle screen looks for its moment, and how often, once up, it looks for input.
     public static let watchInterval: TimeInterval = 15
     public static let wakeInterval: TimeInterval = 0.5

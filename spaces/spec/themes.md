@@ -142,7 +142,7 @@ with these values:
 
 No field in `themes.json` for: `radius` and `radius_large` stand in for four radii (there are no
 separate list and tile values), `blur` is a switch and not a radius, `type.display` and `type.mono`
-(checked, not drawn), `type.line_height`, `motion.slow` and `motion.easing` (checked, not used: panels
+(`mono` draws the top bar and the terminal, `display` the idle screen's `theme` style), `type.line_height`, `motion.slow` and `motion.easing` (checked, not used: panels
 ease out), and the panel opacity setting (a Polycarp panel is not adjustable).
 
 `baneyspaces doctor` prints `polycarp_theme:` as `none ...` or `in force: <title> (<name>, mode <m>)`.

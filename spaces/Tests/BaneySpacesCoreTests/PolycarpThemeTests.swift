@@ -172,6 +172,15 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertTrue(CTFontGetSymbolicTraits(font).contains(.traitMonoSpace))
     }
 
+    func testTheDisplayStackEndsAtItsFirstGenericName() throws {
+        func display(_ stack: String) throws -> [String] {
+            try parse(edited { var y = $0["type"] as! [String: Any]; y["display"] = stack; $0["type"] = y }).get().displayFamilies
+        }
+        XCTAssertEqual(try display(#"Newsreader, Georgia, serif, Menlo"#), ["Newsreader", "Georgia", FontFace.systemSerif])
+        XCTAssertEqual(try display("Avenir, sans-serif, Georgia"), ["Avenir"])
+        XCTAssertEqual(try display("ui-monospace"), [FontFace.systemMonospace])
+    }
+
     /// Font family names don't care about case in CSS, so a stack means the same thing here as in a browser.
     func testFontFamilyNamesMatchWithoutRegardToCase() throws {
         func family(_ names: [String]) throws -> String {
