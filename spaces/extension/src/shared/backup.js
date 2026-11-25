@@ -19,6 +19,7 @@
   async function make() {
     const all = await chrome.storage.local.get(null);
     for (const k of SECRET_KEYS) delete all[k];
+    delete all["polycarp.theme"]; // the app's, on this computer
     const L = globalThis.PolycarpLibrary;
     let library = null;
     try { library = L ? await L.exportData() : null; } catch (e) { library = null; }

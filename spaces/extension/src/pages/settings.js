@@ -20,7 +20,7 @@
   const get = (path) => path.split(".").reduce((o, k) => (o == null ? o : o[k]), s);
   const patchOf = (path, v) => path.split(".").reduceRight((acc, k) => ({ [k]: acc }), v);
   // Style changes move the profile to "custom"; housekeeping options keep it.
-  const KEEP = /^(enabled|autoApply|helpers\.|pausedUntil|goal|celebrate|reader\.|force\.unlockCopy|force\.frames)/;
+  const KEEP = /^(enabled|matchTheme|autoApply|helpers\.|pausedUntil|goal|celebrate|reader\.|force\.unlockCopy|force\.frames)/;
   async function set(path, v) { s = await P.patchSettings(patchOf(path, v), { keepProfile: KEEP.test(path) }); sync(); }
 
   // ---------- Row builders ----------
@@ -48,6 +48,9 @@
       raw('<div class="row stack"><span class="lbl"><b>Take a break</b><span id="pauseNote">Pause Polycarp on every site for a while. It comes back on its own.</span></span><div class="acts" id="pauseActs"></div></div>', bindPause),
       toggle("autoApply", "Start on every site", "Off means Polycarp runs only on sites you switch on from the toolbar."),
       raw('<div id="siteBox"></div>')
+    ]],
+    ["Look", "", [
+      toggle("matchTheme", "Match Polycarp's theme", "Polycarp's pages and panels take the colors and fonts of the theme set in the Polycarp app. Off, or without the app, they keep their own. A Reader surface or page tint you picked stays as you picked it.")
     ]],
     ["Site helpers", "Extra help on sites Polycarp knows well. Press Alt Shift S on any page to search it.", [
       toggle("helpers.youtube", "YouTube", "Search a video's transcript, chapters and comments, jump to the moment, and read the transcript in the Reader"),

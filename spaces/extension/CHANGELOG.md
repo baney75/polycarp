@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Settings has "Match Polycarp's theme", on at first. Off, Polycarp's pages and panels go back to their own look at once. A backup holds the choice and not the theme.
 - Every page of the extension (new tab, popup, Reader, Library, Search, Settings, Review, Welcome) follows the Polycarp theme in force, colors, faces, radii and durations, and changes with it while it is open: the app is asked on opening, on coming back to a page and every 30 seconds. The last theme is drawn before the page's first paint. A theme that is always light or always dark pins that mode, and the badge takes the theme's accent. With no app, no theme or the connection not granted, everything looks as it did.
 - The stylesheet for a Polycarp theme is built here from the theme's values: only the names in `theme.css`, each checked by its kind, with all 13 colors of both modes or none of them. Nothing the app sends reaches a page as CSS text.
 - `scripts/stage.sh --store` makes the Chrome Web Store copy: no fixed key, no new tab page, and the link to the Polycarp app only when the user connects it in Settings. A store install shows no update button, since the store updates it.

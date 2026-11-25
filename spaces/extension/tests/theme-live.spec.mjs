@@ -182,13 +182,19 @@ try {
   }
 
   // ---------- Switched off and on ----------
-  await B.sw.evaluate(() => Polycarp.patchSettings({ matchTheme: false }, { keepProfile: true }));
+  const box = settings.getByRole('checkbox', { name: /Match Polycarp's theme/ });
+  ok(await box.isChecked(), 'Settings: matching Polycarp\'s theme is on until switched off');
+  const held = () => B.sw.evaluate(() => Polycarp.getSettings().then((s) => [s.matchTheme, s.profile]));
+  await box.focus();
+  await settings.keyboard.press('Space');
   ok(await until(async () => await bg(settings) === rgb(SHIPPED.dark['--pc-background'])), 'switched off: the shipped theme at once');
   const off = await open('src/pages/search.html', 'light');
   ok((await off.evaluate(() => window.__seen)).body === SHIPPED.light['--pc-background'], 'and from the first paint of the next page');
   await off.close();
+  ok(String(await held()) === 'false,everyday' && !(await box.isChecked()), 'and the reading profile stays as it was');
+  ok(await settings.evaluate(() => PolycarpBackup.make().then((b) => !('polycarp.theme' in b.data) && b.data['polycarp.settings'].matchTheme === false)), 'a backup holds the choice, not the theme');
   app(on(CELLAR));
-  await B.sw.evaluate(() => Polycarp.patchSettings({ matchTheme: true }, { keepProfile: true }));
+  await box.click();
   ok(await until(async () => await bg(settings) === rgb(CELLAR.dark['--pc-background'])), 'switched on: the theme again, asked for anew');
 
   // ---------- What is not a theme ----------
