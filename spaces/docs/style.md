@@ -195,7 +195,9 @@ own look) and never to an older backup a `reset` put away.
 
 - `omarchy`: the top bar as Omarchy's Waybar draws it. A solid dark strip (`#1a1b26`) in both modes, one monospace face
   (JetBrains Mono when it is installed, else the system's), the workspace numbers muted with a 2 pt accent line under
-  the one you're on, the clock brighter, and the right side in a quiet gray. It checks clean, contrast included.
+  the one you're on, the clock brighter, and the right side in a quiet gray. The launcher, the switcher, the overview,
+  the notification list and the small notices match: the same solid dark fill and face, square corners and a thin accent
+  line. It checks clean, contrast included.
 
 The preset is an ordinary sheet: `polycarp-spaces style show` prints it and `style set` edits it like any other.
 

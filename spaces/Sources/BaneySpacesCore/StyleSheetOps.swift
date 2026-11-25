@@ -551,11 +551,13 @@ extension StyleSheet {
 
     public static let presets = [omarchy]
 
-    /// Omarchy's Waybar: a solid dark strip whatever the mode, one monospace face, numbered workspaces with an accent
-    /// line under the one you're on, and a quiet grayscale right side.
-    public static let omarchy = Preset(name: "omarchy", about: "a solid dark strip, monospace, numbered workspaces with an accent line, a quiet right side", text: """
+    /// Omarchy's Waybar and the panels that go with it: solid and dark whatever the mode, one monospace face, square
+    /// corners, numbered workspaces with an accent line under the one you're on, and a thin accent line around each panel.
+    public static let omarchy = Preset(name: "omarchy", about: "solid, dark, square and monospace: the bar with numbered workspaces and an accent line, and every panel to match", text: """
     /* Omarchy: the top bar as Omarchy's Waybar draws it. A solid dark strip in both modes, one monospace face,
        the workspace numbers muted with an accent line under the one you're on, and a quiet grayscale right side.
+       The launcher, the switcher, the overview, the notifications and the small notices match it: solid, square,
+       the same face, and a thin accent line.
        Written by `polycarp-spaces style preset omarchy`; `style restore` puts back the sheet that was here, and
        `style reset` the theme's own look. */
 
@@ -565,13 +567,16 @@ extension StyleSheet {
       --bright: #c0caf5;
       --quiet: #787c99;
       --alarm: #f7768e;
+      --raised: #24283b;
+      --lit: #292e42;
+      --face: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
     }
 
     bar {
       background: var(--strip);
       border-bottom: none;
       color: var(--ink);
-      font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
+      font-family: var(--face);
       font-size: 12px;
       font-weight: 400;
       height: 26px;
@@ -587,6 +592,58 @@ extension StyleSheet {
 
     bar .right { color: var(--quiet); }
     bar .network { color: var(--alarm); }
+
+    launcher, switcher, notifications, hud {
+      background: var(--strip);
+      border: 1px solid var(--accent);
+      border-radius: 0;
+      color: var(--ink);
+      font-family: var(--face);
+    }
+
+    launcher .field { color: var(--bright); border-bottom: 1px solid var(--lit); }
+    launcher .section { color: var(--quiet); }
+    launcher .row { border-radius: 0; }
+    launcher .row.selected { background: var(--lit); color: var(--bright); }
+    launcher .subtitle { color: var(--quiet); }
+    launcher .subtitle.selected { color: var(--ink); }
+    launcher .badge { background: var(--raised); color: var(--ink); border-radius: 0; }
+    launcher .badge.selected { background: var(--strip); }
+    launcher .icon { border-radius: 0; }
+    launcher .footer { color: var(--quiet); }
+
+    switcher .item { border-radius: 0; }
+    switcher .item.selected { background: var(--lit); border: 1px solid var(--accent); }
+    switcher .number { color: var(--bright); }
+    switcher .label { color: var(--quiet); }
+    switcher .label.selected { color: var(--bright); }
+    switcher .hint { color: var(--quiet); }
+
+    overview { background: var(--strip); color: var(--ink); font-family: var(--face); }
+    overview .tile { border: 1px solid var(--lit); border-radius: 0; background: var(--strip); }
+    overview .tile:hover { border: 1px solid var(--quiet); }
+    overview .tile.current { border: 1px solid var(--accent); }
+    overview .number { color: var(--bright); }
+    overview .label { color: var(--quiet); }
+    overview .label.current { color: var(--bright); }
+    overview .window { background: var(--raised); color: var(--bright); border-radius: 0; }
+    overview .title { color: var(--ink); }
+    overview .hint { color: var(--quiet); }
+
+    notifications .heading { color: var(--bright); }
+    notifications .section { color: var(--quiet); }
+    notifications .row { background: var(--raised); border-radius: 0; }
+    notifications .row:hover { background: var(--lit); }
+    notifications .title { color: var(--bright); }
+    notifications .time { color: var(--quiet); }
+    notifications .button { color: var(--quiet); border-radius: 0; }
+    notifications .button:hover { color: var(--bright); background: var(--lit); }
+    notifications .footer { color: var(--quiet); }
+
+    hud .cell { background: var(--raised); border: none; border-radius: 0; color: var(--quiet); }
+    hud .cell.current { background: var(--lit); border: 1px solid var(--accent); color: var(--bright); }
+    hud .label { color: var(--bright); }
+    hud .text { color: var(--quiet); }
 
     """)
 
