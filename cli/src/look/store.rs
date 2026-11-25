@@ -51,7 +51,7 @@ pub fn read_plain(p: &Path, limit: usize) -> Result<Vec<u8>, ApiErr> {
 
 /// A look that is not one, with every problem's path.
 pub fn refused(what: &str, problems: &[String]) -> ApiErr {
-    let mut e = ApiErr::problems(what, problems);
+    let mut e = ApiErr::problems(what, &super::format::plain(problems));
     e.recode("invalid_look");
     e.suggest(
         "Fix each path in `errors`. docs/looks.md in the Polycarp repo lists what a look may hold.",

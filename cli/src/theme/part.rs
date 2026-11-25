@@ -130,7 +130,7 @@ impl ThemeLook {
     pub(crate) fn check(&self, c: &Ctx) -> Result<(), ApiErr> {
         self.full(&c.cfg)
             .map(|_| ())
-            .map_err(|ps| bad_theme("the look's theme is refused", &ps))
+            .map_err(|ps| bad_theme("the look's theme is refused", &crate::look::plain(&ps)))
     }
 
     /// The theme's title and the few colors a picker shows, in each mode.

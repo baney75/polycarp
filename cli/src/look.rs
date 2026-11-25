@@ -3,7 +3,7 @@
 mod format;
 mod store;
 
-pub(crate) use format::shown;
+pub(crate) use format::{plain, shown};
 
 use crate::theme::{self, exactly, ApiErr, Ctx, Out, Res};
 use format::Look;

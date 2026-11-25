@@ -94,3 +94,9 @@ fn text(o: &Map<String, Json>, key: &str, max: usize, bad: &mut Vec<String>) -> 
 pub fn shown(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).take(80).collect()
 }
+
+/// Problems made safe to print, whole: a theme document's own keys are in them.
+pub fn plain(problems: &[String]) -> Vec<String> {
+    let line = |p: &String| p.chars().filter(|c| !c.is_control()).collect();
+    problems.iter().map(line).collect()
+}

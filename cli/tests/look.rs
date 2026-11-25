@@ -132,6 +132,31 @@ fn unknown_keys_are_refused_with_their_path() {
     );
     let doc = json!({"document": {"name": "x", "extends": "evening", "surprise": 1}});
     assert_eq!(sb.refused(&with("theme", doc)), ["theme.document.extends"]);
+    let doc = json!({"document": {"name": "x", "surprise": 1}});
+    assert!(sb
+        .refused(&with("theme", doc))
+        .contains(&"theme.document.surprise".to_string()));
+}
+
+#[test]
+fn a_refusal_never_prints_a_strangers_escapes() {
+    let sb = Sandbox::new();
+    for doc in [
+        json!({"name": "x", "\u{1b}[2Jkey": 1}),
+        json!({"name": "x", "\u{1b}[2Jkey": null}),
+        json!({"name": "x", "light": {"\u{1b}]52;c;eA==\u{7}": "#111111"}}),
+        json!({"name": "x", "title": "\u{1b}[2J"}),
+    ] {
+        let look = with("theme", json!({"document": doc}));
+        let o = sb.run(&["look", "show", "-"], &look);
+        assert_eq!(o.status.code(), Some(1), "{o:?}");
+        let out = [o.stdout, o.stderr].concat();
+        assert!(
+            !out.iter().any(|b| *b == 0x1b || *b == 7),
+            "{:?}",
+            String::from_utf8_lossy(&out)
+        );
+    }
 }
 
 #[test]
@@ -241,4 +266,19 @@ fn links_are_never_followed() {
         sb.no(&["look", "show", &link.display().to_string()]),
         "io_error"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_pipe_or_a_folder_is_not_waited_on() {
+    let sb = Sandbox::new();
+    let pipe = sb.at("pipe.polycarp-look");
+    let made = Command::new("mkfifo").arg(&pipe).status().unwrap();
+    assert!(made.success());
+    for p in [pipe, sb.at("empty")] {
+        assert_eq!(
+            sb.no(&["look", "show", &p.display().to_string()]),
+            "io_error"
+        );
+    }
 }
