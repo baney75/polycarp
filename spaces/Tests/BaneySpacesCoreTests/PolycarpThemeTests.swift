@@ -179,6 +179,9 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertEqual(try display(#"Newsreader, Georgia, serif, Menlo"#), ["Newsreader", "Georgia", FontFace.systemSerif])
         XCTAssertEqual(try display("Avenir, sans-serif, Georgia"), ["Avenir"])
         XCTAssertEqual(try display("ui-monospace"), [FontFace.systemMonospace])
+        let sans = try parse(edited { var y = $0["type"] as! [String: Any]; y["display"] = "No Such Font 123, sans-serif"; $0["type"] = y }).get()
+        let system = CTFontCreateUIFontForLanguage(.system, 40, nil)!
+        XCTAssertEqual(CTFontCopyPostScriptName(sans.displayFace(40)) as String, CTFontCopyPostScriptName(system) as String)
     }
 
     /// Font family names don't care about case in CSS, so a stack means the same thing here as in a browser.

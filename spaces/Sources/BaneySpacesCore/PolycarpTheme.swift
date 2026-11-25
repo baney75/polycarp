@@ -1,3 +1,4 @@
+import CoreText
 import Foundation
 
 // A Polycarp theme (`polycarp theme set ...`) as BaneySpaces reads it. The command writes
@@ -107,6 +108,12 @@ public struct PolycarpTheme: Equatable, Sendable {
             }
         }
         return out
+    }
+
+    /// The display stack as one face: the system's own font when the stack asks for it or nothing in it is installed.
+    public func displayFace(_ size: Double) -> CTFont {
+        FontFace.resolve(families: displayFamilies, weight: .regular, size: size)
+            ?? CTFontCreateUIFontForLanguage(.system, CGFloat(size), nil)!
     }
 
     public func look(systemDark: Bool) -> Look {

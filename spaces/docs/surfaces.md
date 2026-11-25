@@ -280,7 +280,7 @@ The page's finder, its keys and the host's `find` reply: [newtab.md](newtab.md).
 | Path | Default | Takes |
 | --- | --- | --- |
 | `idle.enabled` | `false` | Show Polycarp's idle screen. Off until you turn it on. |
-| `idle.style` | `"martyr-night"` | `martyr-night` (night sky and embers), `theme` (the same sky in your theme's colors, its words in the theme's display font), `field` (the desktop scene, dimmed) or `verse` (one verse on black). |
+| `idle.style` | `"martyr-night"` | `martyr-night` (night sky and embers), `theme` (the same sky in your theme's colors, its words in the theme's display font; with a paper in force, the night's colors), `field` (the desktop scene, dimmed) or `verse` (one verse on black). |
 | `idle.effects` | `true` | Motion on the idle screen. Reduce Motion turns it off regardless. |
 | `idle.showMachineName` | `true` | The Mac's name. |
 | `idle.showVerse` | `true` | A verse. |

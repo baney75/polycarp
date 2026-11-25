@@ -103,8 +103,9 @@ public enum IdleScreen {
         }()
 
         /// The theme's own: `sunken` down to `background`, the words in `foreground` and `muted`, the name and the embers
-        /// in `accent`. A role that doesn't read on that sky gives way to `foreground`: no palette is checked for `accent`
-        /// or `muted` on `sunken`, and some ship at 3.7. A light theme has no stars.
+        /// in `accent`. A role that doesn't read on that sky gives way to `foreground`: the bundled palettes aren't
+        /// checked on `sunken` (some are 3.7 there), and a Polycarp theme's accent is held only to 3.0. A light theme has
+        /// no stars.
         public static func theme(_ look: Look) -> Colors {
             let top = look.color("sunken"), foot = look.color("background")
             func reads(_ role: String) -> RGB {

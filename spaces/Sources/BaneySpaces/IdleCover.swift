@@ -242,8 +242,14 @@ struct IdleView: View {
     let backdrop: CGImage?
     /// A fixed time for renders; nil follows the clock.
     var at: Date?
+    /// Taken once, when the cover comes up, so the sky and the words never draw in two looks.
+    private let colors: IdleScreen.Colors
 
-    private var colors: IdleScreen.Colors { .of(settings.style, look: Chrome.look, overPicture: backdrop != nil) }
+    init(settings: Surfaces.Idle, machine: String, size: CGSize, backdrop: CGImage?, at: Date? = nil) {
+        (self.settings, self.machine, self.size, self.backdrop, self.at) = (settings, machine, size, backdrop, at)
+        colors = .of(settings.style, look: Chrome.look, overPicture: backdrop != nil)
+    }
+
     private var embers: Bool { settings.effects && [.martyrNight, .theme].contains(settings.style) }
     private var moving: Bool { embers && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && at == nil }
 

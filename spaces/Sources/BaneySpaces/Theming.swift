@@ -207,12 +207,8 @@ enum Chrome {
         return .system(size: CGFloat(pt), weight: w.swiftUI, design: .monospaced)
     }
 
-    /// The Polycarp theme's `type.display` face at a size in points, for words drawn large. Nil when no theme is in force
-    /// or none of its display fonts is installed.
-    static func display(_ points: Double) -> Font? {
-        guard let families = Appearance.shared.polycarp?.displayFamilies else { return nil }
-        return FontFace.resolve(families: families, weight: .regular, size: points).map { Font($0) }
-    }
+    /// The Polycarp theme's `type.display` face at a size in points, for words drawn large. Nil when no theme is in force.
+    static func display(_ points: Double) -> Font? { Appearance.shared.polycarp.map { Font($0.displayFace(points)) } }
 
     static func font(_ size: Double, _ weight: TextWeight = .regular, rounded: Bool = false) -> Font {
         let f = look.spec.font
