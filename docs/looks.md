@@ -24,6 +24,8 @@ Yours are in `<config>/looks/`. `polycarp` is the shipped look: it can't be repl
 
 Error codes, beside the theme's: `invalid_look`, `unknown_look`, `exists`, `builtin_read_only` (the name `polycarp`).
 
+Without Polycarp Spaces (Linux, Windows) the theme part is checked, and the output says the rest waits for it.
+
 ## The file
 
 `<name>.polycarp-look` is JSON, whole in itself, at most 32 MB.
@@ -61,7 +63,7 @@ A look from a stranger may change only how things look. The list of settings it 
 | --- | --- |
 | `bar.height`, `bar.style`, `bar.modules`, `bar.clockFormat`, `bar.hourNames` | `bar.enabled`; a `custom:` module |
 | `desktop.scene`, `followDaylight`, `verse`, `versePosition`, `verseRotation` | an `image:` scene, which names a file |
-| `dock.tileLabel`, `dock.restTile` | `menu.*`, which could hide a control |
+| | `menu.*`, which could hide a control; `dock.*`, which went with the Workspace Dock |
 | `newtab.verse` | `newtab.question`, `newtab.searchURL`, `search.engine` |
 | `idle.style`, `idle.effects`, `idle.showVerse`, `idle.showKierkegaard` | `idle.enabled`, `idle.showMachineName`, `idle.startAfterMinutes` |
 | | `text.*`, `rooms.*` |

@@ -1000,7 +1000,11 @@ fn spaces_run(argv: Vec<String>, probe: &str) -> theme::Envelope {
 }
 
 /// `spaces_run` with its own time limit.
-fn spaces_run_within(mut argv: Vec<String>, probe: &str, limit: Duration) -> theme::Envelope {
+pub(crate) fn spaces_run_within(
+    mut argv: Vec<String>,
+    probe: &str,
+    limit: Duration,
+) -> theme::Envelope {
     let what = argv[0].clone();
     match argv.iter().position(|a| a == "--") {
         Some(at) => argv.insert(at, "--json".into()),

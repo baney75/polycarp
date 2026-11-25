@@ -1,5 +1,5 @@
-//! Integration tests for `polycarp look`. Every run gets its own home and config folder, so nothing real is read or
-//! changed.
+//! Integration tests for `polycarp look`. Every run gets its own home, config folder and (on Unix) a stand-in for
+//! `polycarp-spaces` that keeps its state in files, so nothing real is read or changed.
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -51,6 +51,9 @@ impl Sandbox {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if self.at("polycarp-spaces").exists() {
+            c.env("POLYCARP_SPACES_BIN", self.at("polycarp-spaces"));
+        }
         if let Some(r) = std::env::var_os("SystemRoot") {
             c.env("SystemRoot", r);
         }
@@ -267,6 +270,7 @@ fn settings_that_are_not_looks_are_dropped_with_a_note() {
         "search": {"engine": "https://evil.example/?q=%s"}, "newtab": {"searchURL": "https://evil.example", "question": "Password?"},
         "menu": {"hidden": ["update"]}, "rooms": {"root": "/"}, "text": {"verseSource": "/etc/passwd"},
         "desktop": {"scene": "image:/etc/passwd"}, "idle": {"enabled": true, "showMachineName": true},
+        "dock": {"tileLabel": "purpose", "restTile": false},
     });
     let v = sb.json_in(&["look", "import", "-"], &with("surfaces", s));
     assert_eq!(v["ok"], true, "{v}");
@@ -283,6 +287,8 @@ fn settings_that_are_not_looks_are_dropped_with_a_note() {
         "desktop.scene",
         "idle.enabled",
         "idle.showMachineName",
+        "dock.tileLabel",
+        "dock.restTile",
     ] {
         assert!(notes.contains(left), "{left} in {notes}");
     }
@@ -316,6 +322,19 @@ fn values_that_name_a_place_or_are_not_values_are_refused() {
             sb.refused(&with("surfaces", s)),
             ["surfaces.bar.modules.left"],
             "{v:?}"
+        );
+    }
+    for v in [
+        json!("custom:steal"),
+        json!("image:x.png"),
+        json!(true),
+        json!(5),
+    ] {
+        let s = json!({"bar": {"modules": {"left": v}}});
+        assert_eq!(
+            sb.refused(&with("surfaces", s)),
+            ["surfaces.bar.modules.left"],
+            "{v}"
         );
     }
     assert_eq!(
@@ -631,4 +650,104 @@ fn the_fields_table_covers_the_surfaces_page() {
         );
     }
     assert!(seen > 25, "the page's tables were not read: {seen}");
+    // And a kept field is one Polycarp still has: reading one that is gone fails, and takes `save` with it.
+    let tight: String = table.split_whitespace().collect();
+    let kept: Vec<&str> = tight
+        .split("(\"")
+        .filter_map(|r| r.split_once("\",true,"))
+        .map(|(path, _)| path)
+        .collect();
+    assert!(kept.len() > 15, "the table was not read: {kept:?}");
+    for path in kept {
+        assert!(
+            page.contains(&format!("| `{path}`")),
+            "a look holds {path}, which spaces/docs/surfaces.md doesn't have"
+        );
+    }
+}
+
+// With Polycarp Spaces ---------------------------------------------------------------------------------------------
+
+/// A stand-in for `polycarp-spaces` that keeps each setting and paper in a file of its own under `live/`, and the
+/// style sheet in the config folder. A line in `fail` such as `paper set` refuses that command once.
+#[cfg(unix)]
+fn with_spaces() -> Sandbox {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let script = r#"#!/bin/sh
+PATH=/usr/bin:/bin
+S='@ROOT@/live'; C='@ROOT@/cfg/style.css'
+no() { printf '{"ok":false,"error":{"code":"%s","message":"%s","data":{"errors":[{"path":"$","message":"%s"}]}}}' "$1" "$2" "$2"; exit 1; }
+ok() { printf '{"ok":true,"data":%s}' "$1"; exit 0; }
+echo "$*" >> '@ROOT@/calls'
+if [ -f '@ROOT@/fail' ] && [ "$1 $2" = "$(cat '@ROOT@/fail')" ]; then rm '@ROOT@/fail'; no write_failed "told to fail"; fi
+case "$1 $2" in
+"style path") ok "{\"file\":\"$C\"}" ;;
+"style show") if [ -f "$C" ]; then ok "{\"exists\":true,\"text\":\"$(sed 's/"/\\"/g' "$C" | awk '{printf "%s\\n", $0}')\"}"; else ok '{"exists":false,"text":""}'; fi ;;
+"style check") grep -q 'url(' "$3" && no invalid_style "line 1: \u001b[2Jnot a color"; ok '{}' ;;
+"style reset") mv "$C" "$C.bak"; ok "{\"backup\":\"$C.bak\"}" ;;
+"surfaces get") if [ -f "$S/$3" ]; then ok "{\"set\":true,\"value\":$(cat "$S/$3")}"; else ok '{"set":false,"value":null}'; fi ;;
+"surfaces set")
+  if [ "$3" = bar.modules ]; then
+    rm -f "$S"/bar.modules.*
+    for r in left center right; do
+      v=$(printf '%s' "$4" | sed -n "s/.*\"$r\":\(\[[^]]*\]\).*/\1/p"); [ -n "$v" ] && printf '%s' "$v" > "$S/bar.modules.$r"
+    done
+  else printf '%s' "$4" > "$S/$3"; fi; ok '{}' ;;
+"surfaces reset") rm -f "$S/$3" "$S/$3".*; ok '{}' ;;
+"surfaces validate") grep -q 'bogus' "$3" && no invalid_value "bar.style must be islands"; grep -q 'newer' "$3" && ok '{"warnings":[{"path":"bar.hourNames","message":"not a field this build knows"}]}'; ok '{"warnings":[]}' ;;
+"surfaces schema") ok '{"properties":{"bar":{"properties":{"modules":{"properties":{"left":{"default":["mark","workspaces"]},"center":{"default":["clock"]},"right":{"default":["status"]}}}}}}}' ;;
+"paper get")
+  one() { v=$(cat "$S/paper.$1"); case "$v" in /*) printf '{"value":"picture:p","picture":"%s","from":"%s"}' "$v" "$2" ;; *) printf '{"value":"%s","from":"%s"}' "$v" "$2" ;; esac; }
+  place() { if [ -f "$S/paper.$1" ]; then one "$1" "$1.paper"; elif [ -f "$S/paper.all" ]; then one all paper; else printf '{"value":null,"from":null}'; fi; }
+  if [ -f "$S/paper.all" ]; then all=$(one all paper); else all=null; fi
+  ok "{\"paper\":$all,\"desktop\":$(place desktop),\"newtab\":$(place newtab),\"idle\":$(place idle)}" ;;
+"paper set")
+  v=$3; case "$v" in /*) mkdir -p '@ROOT@/store'; cp "$v" '@ROOT@/store/' || no io "copy"; v="@ROOT@/store/$(basename "$v")" ;; esac
+  if [ "$4" = --on ]; then printf '%s' "$v" > "$S/paper.$5"; else rm -f "$S"/paper.*; printf '%s' "$v" > "$S/paper.all"; fi; ok '{}' ;;
+"paper reset") rm -f "$S"/paper.*; ok '{}' ;;
+*) echo "usage: polycarp-spaces" >&2; exit 2 ;;
+esac
+"#;
+    let script = script.replace("@ROOT@", &sb.root.display().to_string());
+    fs::write(sb.at("polycarp-spaces"), script).unwrap();
+    fs::set_permissions(sb.at("polycarp-spaces"), fs::Permissions::from_mode(0o755)).unwrap();
+    sb
+}
+
+#[cfg(unix)]
+#[test]
+fn polycarps_own_checks_run_before_a_look_is_kept() {
+    let sb = with_spaces();
+    let v = sb.json_in(
+        &["look", "import", "-"],
+        &with("style", json!("bar { color: url(https://x); }")),
+    );
+    assert_eq!(
+        (
+            &v["error"]["code"],
+            &v["error"]["data"]["errors"][0]["path"]
+        ),
+        (&json!("invalid_look"), &json!("style"))
+    );
+    // Nor does a refusal that quotes the sheet print its escapes.
+    let o = sb.run(
+        &["look", "import", "-"],
+        &with("style", json!("bar { color: url(https://x); }")),
+    );
+    let out = String::from_utf8([o.stdout, o.stderr].concat()).unwrap();
+    assert!(
+        out.contains("not a color") && !out.contains('\u{1b}'),
+        "{out:?}"
+    );
+    let s = json!({"bar": {"style": "bogus"}});
+    assert_eq!(sb.refused(&with("surfaces", s)), ["surfaces"]);
+    let s = json!({"bar": {"style": "newer"}});
+    assert_eq!(sb.refused(&with("surfaces", s)), ["surfaces.bar.hourNames"]);
+    let left: Vec<_> = fs::read_dir(sb.at("cfg/looks"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert!(left.is_empty(), "work files are gone: {left:?}");
 }

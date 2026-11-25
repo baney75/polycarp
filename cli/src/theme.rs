@@ -2028,6 +2028,9 @@ impl ApiErr {
             usage: false,
         }
     }
+    pub(crate) fn code(&self) -> &'static str {
+        self.code
+    }
     pub(crate) fn message(&self) -> &str {
         &self.message
     }

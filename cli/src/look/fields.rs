@@ -37,12 +37,12 @@ pub const FIELDS: &[(&str, bool, &str)] = &[
         true,
         "which verse, by reference into the built-in text",
     ),
-    ("dock.tileLabel", true, "what a tile says"),
     (
-        "dock.restTile",
-        true,
-        "whether the dock draws its rest tile",
+        "dock.tileLabel",
+        false,
+        "went with the Workspace Dock; an older file may still have it",
     ),
+    ("dock.restTile", false, "as dock.tileLabel"),
     ("menu.order", false, "where the controls are"),
     ("menu.hidden", false, "could hide a control, such as Update"),
     ("search.engine", false, "a search engine or a URL"),
@@ -144,6 +144,9 @@ pub fn kept(path: &str, v: &Json, notes: &mut Vec<String>) -> Result<Option<Json
             shown(s)
         )),
     };
+    if path.starts_with(MODULES) && !v.is_array() {
+        return Err("must be a list of module names".into());
+    }
     match v {
         Json::Bool(_) | Json::Number(_) => Ok(Some(v.clone())),
         Json::String(s) if s.starts_with("image:") || s.starts_with("picture:") => {
