@@ -157,7 +157,7 @@ public enum DefaultAppResolver {
     /// macOS's answer, when it is an app that is installed. Terminal opens programs (what iTerm2 and Ghostty's own
     /// "default terminal" menu items change) on every Mac until someone moves them, so Terminal there says nothing about
     /// what you'd rather use; nor does an app the catalog doesn't know as a terminal.
-    private static func systemDefault(_ role: AppRole, _ installed: InstalledApps) -> DefaultCandidate? {
+    public static func systemDefault(_ role: AppRole, _ installed: InstalledApps) -> DefaultCandidate? {
         guard let q = role.systemQuestion, let bundle = installed.systemDefault(q) else { return nil }
         let app = DefaultApp.app(bundle: bundle, for: role)
         if role == .terminal, app.id == TerminalChoice.terminal || !DefaultAppCatalog.entries(.terminal).contains(where: { $0.app == app }) {

@@ -18,7 +18,7 @@ final class SettingsOpenClockTests: XCTestCase {
     func testAPaneSwitchInTheOpenWindowIsTimed() throws {
         let setup = try SourceText.code("Sources/BaneySpaces/Setup.swift")
         let tab = try XCTUnwrap(SourceText.block(after: "@Published var tab: SettingsTab = .general ", in: setup))
-        XCTAssertTrue(tab.contains(#"let clock = windowVisible() && tab != oldValue ? OpenClock("settings-" + tab.rawValue.lowercased()) : nil"#),
+        XCTAssertTrue(tab.contains(#"let clock = windowVisible() && tab != oldValue ? OpenClock("settings-" + tab.slug) : nil"#),
                       "only in the open window, never in the offscreen harness or before show")
         XCTAssertTrue(tab.contains("defer { clock?.shown() }"))
     }

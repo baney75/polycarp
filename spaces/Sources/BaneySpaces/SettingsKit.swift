@@ -153,7 +153,7 @@ private extension View {
 enum SettingsSidebar {
     struct Group { var header: String?; var tabs: [SettingsTab] }
     static let groups: [Group] = [
-        Group(header: nil, tabs: [.general, .keys, .windows, .agents, .appearance, .launcher]),
+        Group(header: nil, tabs: [.general, .keys, .windows, .defaults, .agents, .appearance, .launcher]),
         Group(header: "System", tabs: [.permissions, .automation, .updates]),
     ]
     static var order: [SettingsTab] { groups.flatMap(\.tabs) }

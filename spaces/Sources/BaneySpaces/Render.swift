@@ -24,6 +24,7 @@ enum Render {
             Appearance.shared.usePolycarp(theme)
         }
         PermissionsModel.shared.useRenderSample()
+        DefaultAppsStore.shared.useRenderSample()
         // BANEYSPACES_RENDER_THEME=omarchy|minimal draws the same shots in that theme (a check, saved nowhere).
         if let t = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME"], let id = ThemeID(rawValue: t) {
             Appearance.shared.settings.theme = id
@@ -141,7 +142,7 @@ enum Render {
         for tab in SettingsTab.allCases.dropFirst() {
             setup.tab = tab
             guard save(SetupView(model: setup, close: {}).background(Color(nsColor: .windowBackgroundColor)),
-                       "setup-\(tab.rawValue.lowercased()).png", SettingsSidebar.windowSize) else { return 1 }
+                       "setup-\(tab.slug).png", SettingsSidebar.windowSize) else { return 1 }
         }
         setup.tab = .general
         // The ⌘Tab workspace switcher, second tile selected.
