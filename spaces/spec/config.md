@@ -100,6 +100,15 @@ mod = "cmd"                        # cmd | ctrl | alt (macOS), super (Linux), wi
   `config validate` and in Settings, with what owns it. On Omarchy, chords BaneySpaces doesn't
   bind stay Omarchy's (BaneySpaces documents them).
 
+## Default apps
+
+```toml
+[defaults]
+terminal = "com.mitchellh.ghostty" # which app does a job; a role left out is the system's own answer
+```
+
+The roles, who decides and what a broken line costs are in [default-apps.md](default-apps.md).
+
 ## Themes
 
 ```toml

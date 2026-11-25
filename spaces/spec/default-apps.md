@@ -29,3 +29,16 @@ What is installed is read from Launch Services and the disk. No program, shell o
 ### R-D7 Terminals that take a command
 A program opens in your terminal when that terminal can be told what to run, else in the first installed one that can.
 A terminal that can't says so where it is offered.
+
+### R-D9 The file
+The choices are the `[defaults]` table of the configuration file (config.md), a role to an id, only for roles you chose:
+
+```toml
+[defaults]
+terminal = "com.mitchellh.ghostty"
+agent = "claude"
+```
+
+A bundle identifier is the Mac's id for an app; Windows and Linux put their own there (an AppUserModelID, a desktop
+file). A line that can't be read costs only itself: a warning names the key, and the rest applies, whatever else in the
+file is wrong. A write changes that role's line and nothing else.
