@@ -37,6 +37,8 @@ pub enum Msg {
     Press { x: i32, y: i32 },
     /// Look at every window again now: explorer.exe restarted, or the session was unlocked.
     Resync,
+    /// A line for the log (a Win+drag ended or was cancelled, drag.rs).
+    Note(String),
     /// Something changed in the config folder: read `config.toml` again. `at`: when the change was seen.
     Reload { at: std::time::Instant },
     Quit,
@@ -118,6 +120,7 @@ fn held(vk: u32) -> bool {
 /// Forget the modifiers and any chord being held: the input desktop changed or the session locked.
 pub fn reset_keys() {
     MODS.reset();
+    crate::drag::abandon();
     for s in SWALLOWED.iter() {
         s.store(false, Ordering::Relaxed);
     }
@@ -152,6 +155,11 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
                 if SWALLOWED[vk as usize].load(Ordering::Relaxed) {
                     return 1; // auto-repeat of a chord we took
                 }
+                // Escape during a Win+drag puts the window back (drag.rs); its key-up is swallowed too.
+                if vk == 0x1B && crate::drag::on_escape(TX.get()) {
+                    SWALLOWED[vk as usize].store(true, Ordering::Relaxed);
+                    return 1;
+                }
                 // A candidate chord: confirm the modifiers against the system's own state, so a key-up that
                 // was missed (the secure desktop, an elevated window) cannot leave one stuck.
                 if !MOD_KEYS.contains(&vk) {
@@ -179,11 +187,21 @@ unsafe extern "system" fn keyboard(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
     CallNextHookEx(std::ptr::null_mut(), code, wp, lp)
 }
 
-/// Reports each press and lets every mouse event through. Called for every move too, so it only compares and sends.
+/// Win+drag (drag.rs) takes the presses that start one and the release that ends it; every other event goes through,
+/// and each press is reported. Called for every move too, so it only compares and sends.
 unsafe extern "system" fn mouse(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let m = &*(lp as *const MSLLHOOKSTRUCT);
-        if crate::focus::is_a_press(wp as u32, injected_by_software(m.flags & LLMHF_INJECTED != 0, m.dwExtraInfo)) {
+        let injected = injected_by_software(m.flags & LLMHF_INJECTED != 0, m.dwExtraInfo);
+        let msg = wp as u32;
+        let win_only = (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN) && {
+            let mods = MODS.mods(m.time, held);
+            mods.win && !mods.ctrl && !mods.alt
+        };
+        if crate::drag::on_mouse(msg, m.pt, m.time, win_only, injected, TX.get()) {
+            return 1;
+        }
+        if crate::focus::is_a_press(msg, injected) {
             if let Some(tx) = TX.get() {
                 let _ = tx.send(Msg::Press { x: m.pt.x, y: m.pt.y });
             }
@@ -265,6 +283,7 @@ pub fn start(tx: Sender<Msg>, on_end: fn(EndSession)) -> Vec<String> {
     let _ = TX.set(tx);
     let _ = ON_END.set(on_end);
     TEST_INPUT.store(crate::apps::test_ops_enabled(), Ordering::Relaxed);
+    crate::drag::init();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
     let r1 = ready_tx.clone();
     let r3 = ready_tx.clone();

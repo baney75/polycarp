@@ -1884,6 +1884,9 @@ pub fn run(trace: bool, log: Option<PathBuf>) -> i32 {
             Ok(Msg::Press { x, y }) => {
                 lock(&shared).on_press(x, y);
             }
+            Ok(Msg::Note(line)) => {
+                say(&format!("baneyspaces daemon: {line}"));
+            }
             Ok(Msg::Reload { at }) => {
                 lock(&shared).load_keys(Some(at));
             }
