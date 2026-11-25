@@ -41,7 +41,7 @@ struct ListedAsset {
 }
 
 /// `curl`, https only, without the person's own curl settings.
-fn curl(limit: u64, more: &[&dyn AsRef<OsStr>]) -> Call {
+pub fn curl(limit: u64, more: &[&dyn AsRef<OsStr>]) -> Call {
     let options =
         "-q --fail --silent --show-error --location --proto =https --proto-redir =https --tlsv1.2 \
                    --retry 2 --connect-timeout 20 --user-agent polycarp-browser --max-filesize";
@@ -63,7 +63,7 @@ pub fn newest(tools: &dyn Tools, arch: &str) -> Result<Release, Refused> {
 
 /// The release for this processor. The address and file name are spelled out here and must match, so a changed
 /// listing can't point the download anywhere else.
-fn parse(json: &str, arch: &str) -> Result<Release, Refused> {
+pub fn parse(json: &str, arch: &str) -> Result<Release, Refused> {
     let listed: Listed = serde_json::from_str(json)
         .map_err(|e| Refused::new(CHECK, format!("GitHub's answer was not a release: {e}")))?;
     if listed.draft || listed.prerelease {
@@ -98,7 +98,7 @@ fn parse(json: &str, arch: &str) -> Result<Release, Refused> {
 }
 
 /// `0.22.4.1` as numbers; None for anything else.
-fn parts(version: &str) -> Option<Vec<u32>> {
+pub fn parts(version: &str) -> Option<Vec<u32>> {
     let short = version.len() <= 40 && version.contains('.');
     let digits = |p: &str| p.bytes().all(|b| b.is_ascii_digit());
     if !short || !version.split('.').all(digits) {

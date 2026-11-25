@@ -1,14 +1,17 @@
 //! A fake release, a made-up app and fake tools, so every test runs offline and touches nothing of the person's.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use super::tools::{Call, Ran, Tools};
+use sha2::{Digest, Sha256};
+
+use super::tools::{Call, Ran, System, Tools};
 use super::Place;
 
 pub const VERSION: &str = "0.22.4.1";
+const IMAGE: &str = "a made-up disk image";
 
 #[derive(Clone, Copy, Debug)]
 pub enum Failure {
@@ -17,14 +20,20 @@ pub enum Failure {
 }
 
 pub struct Scene {
+    /// The digest the release lists; None is the right one.
+    pub digest: Option<String>,
     /// The tool, a part of its arguments, and how it fails.
     pub fail: Option<(&'static str, &'static str, Failure)>,
+    pub gatekeeper: &'static str,
+    pub version_inside: &'static str,
+    pub app_is_a_link: bool,
 }
 
 pub struct Fake {
     root: PathBuf,
     scene: RefCell<Scene>,
     calls: RefCell<Vec<String>>,
+    mounted: Cell<bool>,
 }
 
 impl Fake {
@@ -36,8 +45,15 @@ impl Fake {
         fs::create_dir_all(&root).unwrap();
         Fake {
             root,
-            scene: RefCell::new(Scene { fail: None }),
+            scene: RefCell::new(Scene {
+                digest: None,
+                fail: None,
+                gatekeeper: "x: accepted\nsource=Notarized Developer ID",
+                version_inside: VERSION,
+                app_is_a_link: false,
+            }),
             calls: RefCell::default(),
+            mounted: Cell::default(),
         }
     }
 
@@ -54,6 +70,17 @@ impl Fake {
     /// Every call so far, as `program arguments`.
     pub fn calls(&self) -> Vec<String> {
         self.calls.borrow().clone()
+    }
+
+    pub fn mounted(&self) -> bool {
+        self.mounted.get()
+    }
+
+    /// A small real app bundle, signed by nobody.
+    pub fn fixture_app(&self) -> PathBuf {
+        let app = self.root.join("fixture/Helium.app");
+        make_app(&app);
+        app
     }
 }
 
@@ -77,6 +104,22 @@ pub fn feed(digest: &str) -> String {
         asset("arm64"),
         asset("x86_64")
     )
+}
+
+fn make_app(app: &Path) {
+    for dir in ["MacOS", "Resources"] {
+        fs::create_dir_all(app.join("Contents").join(dir)).unwrap();
+    }
+    fs::copy("/usr/bin/true", app.join("Contents/MacOS/Helium")).unwrap();
+    fs::write(app.join("Contents/Resources/page.txt"), "a page").unwrap();
+    let plist = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict>\
+         <key>CFBundleExecutable</key><string>Helium</string>\
+         <key>CFBundleIdentifier</key><string>net.imput.helium</string>\
+         <key>CFBundlePackageType</key><string>APPL</string>\
+         <key>CFBundleShortVersionString</key><string>{VERSION}</string></dict></plist>"
+    );
+    fs::write(app.join("Contents/Info.plist"), plist).unwrap();
 }
 
 fn said(out: &str) -> io::Result<Ran> {
@@ -105,9 +148,33 @@ impl Tools for Fake {
                 };
             }
         }
+        let after = |word: &str| args.iter().position(|a| *a == word).map(|i| args[i + 1]);
         match name {
-            "curl" => said(&feed(&"ab".repeat(32))),
+            "curl" => match after("--output") {
+                Some(part) => fs::write(part, IMAGE)?,
+                None => {
+                    let right = Sha256::digest(IMAGE);
+                    let right: String = right.iter().map(|b| format!("{b:02x}")).collect();
+                    return said(&feed(scene.digest.as_deref().unwrap_or(&right)));
+                }
+            },
+            "hdiutil" if args[0] == "attach" => {
+                self.mounted.set(true);
+                let app = Path::new(after("-mountpoint").unwrap()).join("Helium.app");
+                if scene.app_is_a_link {
+                    std::os::unix::fs::symlink("/Applications", &app)?;
+                } else {
+                    make_app(&app);
+                }
+            }
+            // The real copy of a made-up app.
+            "ditto" => return System.run(call),
+            "spctl" => return said(scene.gatekeeper),
+            "plutil" => return said(scene.version_inside),
+            "hdiutil" => self.mounted.set(false),
+            "codesign" => {}
             other => panic!("no fake for {other}"),
         }
+        said("")
     }
 }
