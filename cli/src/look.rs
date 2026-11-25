@@ -148,6 +148,22 @@ fn own_name(name: &str) -> Result<(), ApiErr> {
     Ok(())
 }
 
+/// An agent asked to replace a look it did not save in this session.
+pub(crate) fn not_yours(name: &str) -> ApiErr {
+    ApiErr::at(
+        "not_yours",
+        "name",
+        format!("{name:?} is a look this session did not save, so it was not replaced"),
+    )
+    .suggest("Pick another name. To replace it, ask the person first; if they agree, call again with force true.")
+}
+
+/// The name an import's look has in its own file, for a caller that asks whose it would replace.
+pub(crate) fn name_in(bytes: &[u8]) -> Option<String> {
+    let v: Json = serde_json::from_slice(bytes).ok()?;
+    v["name"].as_str().map(str::to_string)
+}
+
 /// Whether a look of the person's has this name.
 pub(crate) fn exists(c: &Ctx, name: &str) -> bool {
     theme::valid_name(name) && store::path(c, name).symlink_metadata().is_ok()

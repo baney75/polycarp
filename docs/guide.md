@@ -309,6 +309,10 @@ Any other MCP client can start the same command.
 | `theme_create`, `theme_delete` | Start a new theme file, or clean up one you made. A theme the agent didn't make in that session is refused unless it passes `force` |
 | `theme_off`, `theme_on` | Remove the theme files so apps that read them use their own look, or bring the theme back |
 | `theme_history`, `theme_undo`, `theme_reset` | See changes and go back |
+| `look_list`, `look_show` | See the looks there are and which is in force, or what one would change, in plain words |
+| `look_save` | Keep how everything looks now under a name, before a redesign or after a good one |
+| `look_apply`, `look_undo` | Put a whole look on, all of it or none, and go back |
+| `look_export`, `look_import` | Write a look to one file, or check and save someone else's. A look the agent didn't save in that session is replaced only with `force`. See [Looks](https://github.com/baney75/polycarp/blob/main/docs/looks.md) |
 | `surfaces_schema` | Read every surfaces field (top bar, desktop scene, status menu, new tab page, idle screen) with its default and rules. Start here for those |
 | `surfaces_get` | See what a surface shows now: the file over the defaults |
 | `surfaces_set` | Change one field or group; it's checked whole and a refusal writes nothing. Every field: [spaces/docs/surfaces.md](../spaces/docs/surfaces.md) |

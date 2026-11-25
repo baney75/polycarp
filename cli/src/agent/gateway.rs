@@ -16,7 +16,7 @@ connection: read (look), files (search, fetch and send the owner's files, and re
 workspaces) and contacts. tools/list shows only the tools you may call.
 
 - theme_* tools customize Polycarp's look: read theme_schema first, change the smallest thing, preview, then show \
-the owner.
+the owner. look_* tools keep, apply and undo the whole look at once.
 - files_* tools search and move files across the owner's devices over Tailscale.
 - app_* and workspace_* tools reach the running Polycarp app: what it tracks, its settings, and the agent workspace \
 (a workspace of its own where agent apps run without taking the owner's screen). workspace_switch and launcher_open \
@@ -129,9 +129,10 @@ impl Gateway {
                 name: t.name.into(),
                 description: t.description.into(),
                 annotations: crate::mcp::annotations(&t),
-                // A page's words are as private as a file's, so a client far away needs that scope for them.
+                // A page's words are as private as a file's, so a client far away needs that scope for them. A look
+                // is exported with the person's own picture, and to or from a file of theirs.
                 scope: match t.name {
-                    "edits_page" => "files",
+                    "edits_page" | "look_export" | "look_import" => "files",
                     _ if t.read_only => "read",
                     _ => "act",
                 },
@@ -417,6 +418,13 @@ mod tests {
         assert!(!seen.contains(&"theme_change".to_string()));
         assert!(seen.contains(&"edits_list".to_string()));
         assert!(!seen.contains(&"edits_page".to_string()));
+        assert!(seen.contains(&"look_show".to_string()));
+        let act = names(&gw, &caller(&["read", "act"]));
+        assert!(act.contains(&"look_apply".to_string()) && act.contains(&"look_save".to_string()));
+        for t in ["look_export", "look_import"] {
+            assert!(!act.contains(&t.to_string()), "{t} reads or writes files");
+            assert!(names(&gw, &caller(&["files"])).contains(&t.to_string()));
+        }
         assert!(names(&gw, &caller(&["files"])).contains(&"edits_page".to_string()));
         for t in ["edit_set", "edit_remove", "filter_set"] {
             assert!(!seen.contains(&t.to_string()), "{t}");

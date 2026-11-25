@@ -14,7 +14,9 @@ polycarp look show friend               # what applying it would change, in plai
 polycarp look apply friend
 ```
 
-Every command takes `--json` and answers as `polycarp theme` does (the same envelope and exit codes).
+Every command takes `--json` and answers as `polycarp theme` does (the same envelope and exit codes). Agents have
+`look_list`, `look_show`, `look_save`, `look_apply`, `look_undo`, `look_export` and `look_import` in `polycarp mcp`.
+In the Mac app it is Settings > Appearance > Looks.
 
 ## Commands
 
@@ -46,7 +48,7 @@ undo takes it away again unless you have edited it. Bar modules of your own (`cu
 sheet you wrote by hand is also kept in `style.css.bak`.
 
 Error codes, beside the theme's: `invalid_look`, `unknown_look`, `exists`, `builtin_read_only` (the name `polycarp`),
-`current_look`, `nothing_to_undo`, `step_failed`, `stuck`.
+`current_look`, `nothing_to_undo`, `step_failed`, `stuck`, `not_yours` (MCP only).
 
 Without Polycarp Spaces (Linux, Windows) the theme part still works, and the output says the rest waits for it.
 
