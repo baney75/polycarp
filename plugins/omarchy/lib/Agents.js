@@ -12,8 +12,8 @@ var NAMES = {
 }
 var RUNTIMES = /^(node|bun|deno|python3?(\.\d+)?|uv|uvx|npx|bunx)$/
 // Runs with nobody at the keyboard: one question in a script, or a server or other errand instead of a session.
-var HEADLESS_FLAGS = /^(-p|--print|--version|--help)$/
-var HEADLESS_COMMANDS = /^(exec|e|mcp|mcp-server|app-server|serve|server|acp|update|login|logout)$/
+var HEADLESS_FLAGS = /^(-p|--print|--prompt|--version|--help)$/
+var HEADLESS_COMMANDS = /^(exec|e|run|mcp|mcp-server|app-server|serve|server|acp|update|login|logout)$/
 
 function name(agent) {
   return NAMES[agent] || agent
@@ -58,11 +58,11 @@ function scriptName(path) {
   if (NAMES.hasOwnProperty(file)) return file
   if (/claude-code\//.test(path)) return "claude"
   if (/gemini-cli\//.test(path)) return "gemini"
-  // A folder named for an agent counts only inside a package install, not in somebody's own code.
-  if (!/(node_modules|site-packages)\//.test(path)) return ""
-  var parts = String(path).split("/")
-  for (var i = parts.length - 2; i >= 0 && i >= parts.length - 4; i--) if (NAMES.hasOwnProperty(parts[i])) return parts[i]
-  return ""
+  // Otherwise the installed package the script is in: only the name right after the last node_modules or
+  // site-packages, never a folder of somebody's own above it, and never .bin, which holds every package's commands.
+  var m = String(path).match(/.*\/(?:node_modules|site-packages)\/((?:@[^\/]+\/)?[^\/]+)\//)
+  var pkg = m ? base(m[1]) : ""
+  return NAMES.hasOwnProperty(pkg) ? pkg : ""
 }
 
 // The scan script's output: sections that start with a line of "#name".
@@ -94,7 +94,7 @@ function parse(text) {
     try {
       var answer = JSON.parse(rest)
       var list = answer.result && answer.result.agents ? answer.result.agents : answer.agents
-      if (list instanceof Array || (list && list.length !== undefined)) out.herdr = list
+      if (list instanceof Array) out.herdr = list.filter(function(h) { return h !== null && typeof h === "object" })
     } catch (e) {
       out.herdr = []
     }
@@ -265,10 +265,11 @@ function terminals(scan) {
 // What there is to see about one agent, from its place and the titles now.
 //   titles: { address: title }
 function read(row, titles, home) {
-  var title = row.paneTitle || (row.titled ? titles[row.address] || "" : "")
+  // A tmux pane speaks only for itself: the window's title may be another pane's.
+  var title = row.pane ? row.paneTitle : row.paneTitle || (row.titled ? titles[row.address] || "" : "")
   var plain = plainTitle(title)
   var folder = shortPath(row.cwd, home)
-  var quiet = plain === "" || plain === row.agent || plain === folder || plain === row.cwd || /^([~\/…]|[\w.-]+@[\w.-]+:)/.test(plain)
+  var quiet = plain === "" || plain === row.agent || plain === name(row.agent) || plain === folder || plain === row.cwd || /^([~\/…]|[\w.-]+@[\w.-]+:)/.test(plain)
   return {
     raw: row.raw || titleState(title),
     heading: quiet ? name(row.agent) : plain,

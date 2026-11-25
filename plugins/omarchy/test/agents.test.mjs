@@ -10,7 +10,8 @@ const commands = (m) => {
     'uv run aider': 'aider', 'uvx aider': 'aider', 'claude --resume abc': 'claude', 'aider -v': 'aider' }
   for (const [args, agent] of Object.entries(yes)) assert.equal(m.agentOf(args, 'pts/1'), agent, args)
   for (const args of ['claude -p hello', 'codex exec ls', 'codex app-server', 'claude mcp serve', 'vim claude', 'bash claude', 'node server.js', '/opt/claude/helper',
-    'claude --model sonnet -p hi', 'codex --full-auto exec ls', 'node /home/u/code/pi/server.js', 'python3 /home/u/code/hermes/manage.py runserver'])
+    'claude --model sonnet -p hi', 'codex --full-auto exec ls', 'node /home/u/code/pi/server.js', 'python3 /home/u/code/hermes/manage.py runserver',
+    'node /home/u/pi/node_modules/.bin/vite', 'node /home/u/pi/node_modules/vite/bin/vite.js', 'gemini --prompt hi', 'opencode run hi'])
     assert.equal(m.agentOf(args, 'pts/1'), '', args)
   assert.equal(m.agentOf('claude', '?'), '')
 }
@@ -19,7 +20,7 @@ test('an agent is a known command with a terminal, not one run by a script', (t)
   control(t, 'Agents.js', 'if (!tty || tty === "?") return ""', '', commands)
   control(t, 'Agents.js', 'if (HEADLESS_FLAGS.test(word) || HEADLESS_COMMANDS.test(word)) return true', '', commands)
   control(t, 'Agents.js', 'if (i > 0 && /^--[^=]+$/.test(words[i - 1])) continue', '', commands)
-  control(t, 'Agents.js', 'if (!/(node_modules|site-packages)\\//.test(path)) return ""', '', commands)
+  control(t, 'Agents.js', 'var pkg = m ? base(m[1]) : ""', 'var pkg = String(path).split("/").filter(function(p) { return NAMES.hasOwnProperty(p) })[0] || ""', commands)
   control(t, 'Agents.js', 'if (runs === "uv" && words[at] === "run")', 'if (false)', commands)
 })
 
@@ -99,7 +100,7 @@ test('an agent over ssh counts by its title, once', () => {
 })
 
 test('a broken scan finds nothing and does not throw', () => {
-  for (const text of ['', '#ps\nx y z', '#herdr\n{oops', '#panes\n1\t2', null]) assert.deepEqual(plain(A.find(A.parse(text), [])), [])
+  for (const text of ['', '#ps\nx y z', '#herdr\n{oops', '#herdr\n{"result":{"agents":[null,1]}}', '#herdr\n{"agents":"abc"}', '#panes\n1\t2', null]) assert.deepEqual(plain(A.find(A.parse(text), [])), [])
 })
 
 const states = (m) => {
@@ -128,10 +129,15 @@ const reading = (m) => {
   assert.deepEqual(plain(m.read({ ...row, titled: false }, { a: '⠐ Other split' }, '/home/u')), { raw: '', heading: 'Claude Code', detail: '~/app' })
   assert.equal(m.read({ ...row, paneTitle: '✳ In tmux' }, { a: '⠐ x' }, '').raw, 'ready')
   assert.equal(m.read({ ...row, raw: 'blocked' }, { a: '⠐ x' }, '').raw, 'blocked')
+  // A tmux pane with no title of its own does not take the window's, which another pane set.
+  assert.deepEqual(plain(m.read({ ...row, pane: '%1' }, { a: '⠐ Fix tests' }, '/home/u')), { raw: '', heading: 'Claude Code', detail: '~/app' })
+  assert.deepEqual(plain(m.read(row, { a: '✳ Claude Code' }, '/home/u')), { raw: 'ready', heading: 'Claude Code', detail: '~/app' })
 }
 test('a row reads its own title, and never another split\'s', (t) => {
   reading(A)
   control(t, 'Agents.js', '(row.titled ? titles[row.address] || "" : "")', 'titles[row.address]', reading)
+  control(t, 'Agents.js', 'var title = row.pane ? row.paneTitle : ', 'var title = ', reading)
+  control(t, 'Agents.js', '|| plain === name(row.agent) ', '', reading)
 })
 
 test('only terminals are watched for titles', () => {
