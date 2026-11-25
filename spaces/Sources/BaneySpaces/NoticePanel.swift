@@ -46,7 +46,7 @@ struct NoticeList: View {
                 VStack(alignment: .leading, spacing: 2) {
                     groupHeader(g)
                     ForEach(g.notices) { n in
-                        NoticeRow(notice: n, open: { watcher.open(n); close() }, dismiss: { watcher.dismiss(n) })
+                        NoticeRow(notice: n, icon: watcher.icon(n), open: { watcher.open(n); close() }, dismiss: { watcher.dismiss(n) })
                     }
                 }
             }
@@ -113,6 +113,8 @@ struct NoticeList: View {
 
 private struct NoticeRow: View {
     let notice: NoticeShelf.Notice
+    /// The site's, for a browser's.
+    let icon: NSImage?
     let open: () -> Void
     let dismiss: () -> Void
     @State private var over = false
@@ -125,6 +127,10 @@ private struct NoticeRow: View {
             Button(action: open) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        if let icon {
+                            Image(nsImage: icon).resizable().interpolation(.high).frame(width: 14, height: 14)
+                                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
+                        }
                         if !notice.seen { Chrome.mark().fill(Chrome.accent).frame(width: 6, height: 6) }
                         Text(heading).font(Chrome.font(13, .semibold)).foregroundStyle(Chrome.wash()).lineLimit(heading == b.body ? 3 : 1).multilineTextAlignment(.leading)
                         Spacer(minLength: 8)

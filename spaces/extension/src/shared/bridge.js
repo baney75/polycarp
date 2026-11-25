@@ -53,7 +53,9 @@
     if (!d || d.incognito !== false || d.byExtensionId) return null;
     const name = String(d.filename || "").split(/[\\/]/).pop(); // the file's name, never its folder
     if (!name) return null;
-    return { id: d.id, title: cut(name, 300), url: web(d.finalUrl || d.url), incognito: false, state: d.state, received: d.bytesReceived || 0, total: d.totalBytes || -1 };
+    const row = { id: d.id, title: cut(name, 300), url: web(d.finalUrl || d.url), incognito: false, state: d.state, received: d.bytesReceived || 0, total: d.totalBytes || -1 };
+    const ended = d.state === "complete" ? Date.parse(d.endTime || "") : NaN;
+    return ended ? { ...row, ended } : row;
   }
   // Rows in messages no bigger than the host takes.
   function pieces(source, rows) {

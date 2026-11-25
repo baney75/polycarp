@@ -46,3 +46,8 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   used there, or of the only one known there. The sound mark is the front page's when it plays, else the first tab's that does.
   Downloads are one percentage when every size is known, else their count. Clicking a part goes to that tab or shows the
   download. It shows nothing of a source that is off.
+- **R-B14 Notifications.** While the bar's `notifications` list is kept, a download that was not done before and ended in the last
+  minute is an entry in it: the file's name, the site and its icon; clicking it shows the file in Finder. Switching downloads
+  off drops those entries. A web notification is the browser's own banner, so only sites the person allowed have one: the site
+  its subtitle names (an ASCII host) gives the entry its icon. Clicking it presses the banner while it is up, as a click on it
+  does; after that it goes to a tab open on that site, else to the browser.

@@ -34,6 +34,8 @@ public struct BrowserRow: Equatable, Sendable, CustomStringConvertible, CustomDe
     public let front: Bool
     /// Downloads: done of total bytes while one is on its way.
     public let progress: Progress?
+    /// Downloads: when it finished, whole.
+    public let ended: Date?
     /// How much the person uses it, 0 to 60, for ranking.
     public let weight: Int
 
@@ -92,6 +94,7 @@ public struct BrowserMessage: Sendable, CustomStringConvertible, CustomDebugStri
         let title = NoticeReader.clean(o["title"] as? String ?? "", most: titleMost)
         var weight = 0, window = 0
         var progress: BrowserRow.Progress?
+        var ended: Date?
         let name: String
         switch source {
         case .tabs, .groups, .downloads:
@@ -104,6 +107,8 @@ public struct BrowserMessage: Sendable, CustomStringConvertible, CustomDebugStri
             } else if o["state"] as? String == "in_progress" {
                 let total = (o["total"] as? NSNumber)?.int64Value ?? -1
                 progress = .init(done: max(0, (o["received"] as? NSNumber)?.int64Value ?? 0), total: total > 0 ? total : nil)
+            } else if o["state"] as? String == "complete" {
+                ended = (o["ended"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
             }
         case .bookmarks:
             guard let k = key(o["id"]), web(url) else { return nil }
@@ -118,7 +123,7 @@ public struct BrowserMessage: Sendable, CustomStringConvertible, CustomDebugStri
         guard !title.isEmpty || !url.isEmpty else { return nil }
         return BrowserRow(source: source, key: name, title: title.isEmpty ? String(shown(url).prefix(titleMost)) : title, url: url, window: window,
                           group: (o["group"] as? Int).flatMap { $0 >= 0 ? $0 : nil }, audible: o["audible"] as? Bool ?? false,
-                          pinned: o["pinned"] as? Bool ?? false, front: o["front"] as? Bool ?? false, progress: progress, weight: weight)
+                          pinned: o["pinned"] as? Bool ?? false, front: o["front"] as? Bool ?? false, progress: progress, ended: ended, weight: weight)
     }
 
     /// A JSON true or false, and nothing else: `0` and `1` come out of `JSONSerialization` as numbers that cast to `Bool`.

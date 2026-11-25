@@ -208,7 +208,7 @@ message, and turns away a host that no Chromium browser it knows started. `spec/
 | `{"op":"browser.icon","url":...,"png":...}` | A site's icon that was asked for, base64, at most 64 KB. |
 
 A tab is `{id, window, title, url, incognito, group?, audible, pinned, front}`, a bookmark `{id, title, url}`, a visited
-page `{title, url, visits, last}` (milliseconds) and a download `{id, title, url, incognito, state, received, total}`. A tab or
+page `{title, url, visits, last}` (milliseconds) and a download `{id, title, url, incognito, state, received, total, ended}` (`ended` in milliseconds, once it is whole). A tab or
 download without `"incognito":false` is left out.
 
 ## Where the manifest goes

@@ -237,6 +237,8 @@ enum Render {
                 NoticeNode(identifier: "title", text: title), NoticeNode(identifier: "subtitle", text: subtitle), NoticeNode(identifier: "body", text: body)])
             shelf.take(NoticeReader.read([node]), at: topBar.now)
         }
+        shelf.add(BrowserRender.download(), opens: BrowserRender.page().now.downloads!.one, at: topBar.now)
+        notices.icon = { $0.place == nil ? nil : NSImage(systemSymbolName: "tree.fill", accessibilityDescription: nil) }
         notices.sample(shelf, quiet: ["com.apple.Music": "Music"])
         guard save(AgentsList(model: topBar, room: 620, open: { _ in }) {}.padding(20), "agents.png", CGSize(width: 380, height: 0)) else { return 1 }
         guard save(BarCalendar(model: CalendarModel(now: topBar.now)) {}.padding(20), "calendar.png", CGSize(width: 316, height: 0)) else { return 1 }

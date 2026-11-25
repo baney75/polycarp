@@ -15,7 +15,7 @@ import SwiftUI
 final class TopBar {
     let model = TopBarModel()
     private let spaces: Spaces
-    private let notices = NoticeWatcher()
+    let notices = NoticeWatcher()
     private let noticePanel = BarPanel("Notifications", anchor: .right, width: NoticeList.width)
     private let calendarPanel = BarPanel("Calendar", anchor: .middle, width: BarCalendar.width)
     private let calendar = CalendarModel()

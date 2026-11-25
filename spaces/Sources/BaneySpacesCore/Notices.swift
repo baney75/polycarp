@@ -181,6 +181,8 @@ public struct NoticeShelf: Equatable, Sendable {
         public var seen: Bool
         /// On screen as of the last read, at `banner.path`.
         public var live: Bool
+        /// What it opens, for an entry of Polycarp's own.
+        public var place: BrowserWindows.Front?
         public var key: String { banner.bundle ?? banner.app }
         /// Whether it says whose it is: quieting one that doesn't would quiet every app like it.
         public var named: Bool { key != NoticeReader.unknown }
@@ -249,6 +251,18 @@ public struct NoticeShelf: Equatable, Sendable {
         onScreen = up
         if notices.count > Self.most { notices.removeLast(notices.count - Self.most) }
         return came
+    }
+
+    /// Files an entry of Polycarp's own, which no banner stands for.
+    public mutating func add(_ b: NoticeBanner, opens place: BrowserWindows.Front, at now: Date) {
+        notices.insert(Notice(id: next, banner: b, at: now, seen: quiet.contains(b.bundle ?? b.app), live: false, place: place), at: 0)
+        next += 1
+        if notices.count > Self.most { notices.removeLast(notices.count - Self.most) }
+    }
+
+    /// Drops those entries but the ones `held` keeps: a download its browser still lists.
+    public mutating func dropOwn(unless held: (BrowserWindows.Front) -> Bool = { _ in false }) {
+        notices.removeAll { $0.place.map { !held($0) } ?? false }
     }
 
     public var unread: Int { notices.filter { !$0.seen }.count }
