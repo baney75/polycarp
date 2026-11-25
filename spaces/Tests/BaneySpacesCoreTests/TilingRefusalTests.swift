@@ -286,17 +286,51 @@ final class TilingRefusalTests: XCTestCase {
             var f = FakeWindows(area: CGRect(origin: .zero, size: size))
             f.open(1); f.open(2)
             f.rest()
-            for n in 0..<20 {
+            for n in 0..<9 {
                 // The area moves under it, so it is asked again each time.
                 f.shown[1]!.area.origin.y = CGFloat(n % 2) * 30
-                for m in f.engine.plan(f.shot) {
-                    f.wins[m.id]!.w.frame = m.to
-                    if m.id == 1 { size.width > size.height ? (f.wins[1]!.w.frame.size.width += 6) : (f.wins[1]!.w.frame.size.height += 6) }
+                var asked = 0
+                for _ in 0..<20 {
+                    let moves = f.engine.plan(f.shot)
+                    asked += moves.filter { $0.id == 1 }.count
+                    for m in moves {
+                        f.wins[m.id]!.w.frame = m.to
+                        if m.id == 1 { size.width > size.height ? (f.wins[1]!.w.frame.size.width += 6) : (f.wins[1]!.w.frame.size.height += 6) }
+                    }
+                    if moves.isEmpty || !f.engine.landed(f.wins.mapValues(\.w.frame)) { break }
                 }
-                _ = f.engine.landed(f.wins.mapValues(\.w.frame))
+                XCTAssertLessThanOrEqual(asked, TilingEngine.mostLessons + 1, "round \(n)")
+                XCTAssertEqual(f.engine.plan(f.shot), [])
             }
-            XCTAssertEqual(f.engine.lessons[1], TilingEngine.mostLessons)
             XCTAssertNil(f.engine.minimums[1])
+            XCTAssertNil(f.engine.lessons[1], "rounding never spends what a minimum may need")
+        }
+    }
+
+    func testOneThatGrowsPastEverySizeTeachesThreeMinimumsAtMost() {
+        for size in [CGSize(width: 1728, height: 1050), CGSize(width: 1050, height: 1728)] {
+            var f = FakeWindows(area: CGRect(origin: .zero, size: size))
+            f.open(1); f.open(2)
+            f.rest()
+            let wide = size.width > size.height
+            for n in 0..<9 {
+                // The area moves under it, so it is asked again each time, and it lands wider (or higher) than asked.
+                f.shown[1]!.area.origin.y = CGFloat(n % 2 + 1) * 30
+                var looks = 0
+                for _ in 0..<20 {
+                    looks += 1
+                    let moves = f.engine.plan(f.shot)
+                    for m in moves {
+                        f.wins[m.id]!.w.frame = m.to
+                        if m.id == 1 { wide ? (f.wins[1]!.w.frame.size.width += 40) : (f.wins[1]!.w.frame.size.height += 40) }
+                    }
+                    if moves.isEmpty || !f.engine.landed(f.wins.mapValues(\.w.frame)) { break }
+                }
+                XCTAssertLessThan(looks, 20, "\(size) round \(n): it never stops asking")
+            }
+            XCTAssertEqual(f.engine.lessons[1], TilingEngine.mostLessons, "\(size)")
+            let least = f.engine.minimums[1] ?? .zero
+            XCTAssertLessThanOrEqual(wide ? least.width : least.height, 852 + 40 * Double(TilingEngine.mostLessons), "\(size): \(least)")
         }
     }
 }
