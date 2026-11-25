@@ -31,7 +31,7 @@ test('a prototype name is not a verb or a field', () => {
 
 test('sites cover their subdomains and nothing else', () => {
   const e = edit({ sites: ['example.com'], css: 'a{}' });
-  for (const h of ['example.com', 'www.example.com', 'a.b.example.com']) assert.ok(E.onSite(e, h), h);
+  for (const h of ['example.com', 'www.example.com', 'a.b.example.com', 'my_app.example.com', 'example.com.']) assert.ok(E.onSite(e, h), h);
   const w = edit({ sites: ['www.gov.uk'], css: 'a{}' });
   assert.ok(E.onSite(w, 'www.gov.uk') && E.onSite(w, 'gov.uk') && !E.onSite(w, 'tax.service.gov.uk'));
   for (const h of ['notexample.com', 'example.com.evil.org', 'com', '']) assert.ok(!E.onSite(e, h), h);
@@ -53,6 +53,8 @@ test('the stylesheet never hides the page itself or Polycarp', () => {
 test('a property that resets others goes before them', () => {
   const css = (style) => /\{(.*)\}/.exec(E.sheet([edit({ changes: [{ do: 'style', at: 'p', style }] })]))[1].replaceAll(' !important', '');
   assert.equal(css({ bottom: '0', inset: 'auto' }), 'inset:auto;bottom:0');
+  assert.equal(css({ 'column-count': '2', columns: 'auto' }), 'columns:auto;column-count:2');
+  assert.equal(css({ 'flex-direction': 'column', 'flex-flow': 'row', bottom: '0', 'inset-block': '1px' }), 'flex-flow:row;inset-block:1px;bottom:0;flex-direction:column');
   assert.equal(css({ 'align-items': 'center', all: 'unset' }), 'all:unset;align-items:center');
   assert.equal(css({ 'border-left': '3px solid red', 'border-width': '0', border: '1px solid' }), 'border:1px solid;border-width:0;border-left:3px solid red');
 });

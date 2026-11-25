@@ -46,7 +46,7 @@
     const plain = bare(low);
     if (stringInCustomProperty(prop && prop.startsWith("--") ? prop + ":" + plain : plain)) return "may not keep a quoted string in a custom property";
     // A page's own function could load the string it is given.
-    if (/--[^\s:;{}()]*\(/.test(plain)) return "may not call a function the page defines (--name(...))";
+    if (/--[-\w\u0080-￿]*\(/.test(plain)) return "may not call a function the page defines (--name(...))";
     for (const m of plain.matchAll(/@([a-z-]*)/g)) if (!AT_RULES.includes(m[1])) return "may not use @" + m[1] + "; only " + AT_RULES.map((r) => "@" + r).join(", ");
     return "";
   }
@@ -262,7 +262,7 @@
 
   // A site covers its subdomains; "www.x.com" also covers "x.com", without the rest of its subdomains.
   function onSite(edit, hostname) {
-    const h = site(hostname);
+    const h = hostname.toLowerCase().replace(/\.$/, "");
     return !!h && edit.sites.some((s) => h === s || h.endsWith("." + s) || s === "www." + h);
   }
   // "/watch/*" covers "/watch/1"; a path with no * is that page, with or without a last slash.
@@ -285,7 +285,8 @@
   const active = (edits, hostname, pathname) => edits.filter((e) => e.enabled && onSite(e, hostname) && onPath(e, pathname));
 
   // Properties that reset others go first, so {"inset": "auto", "bottom": "0"} keeps its bottom.
-  const BROAD = [["all"], ["border"], ["border-color", "border-image", "border-radius", "border-style", "border-width", "gap", "inset", "place-content", "place-items", "place-self"]];
+  const BROAD = [["all"], ["border"], ["border-block", "border-inline", "border-color", "border-image", "border-radius", "border-style", "border-width", "columns", "flex-flow", "gap", "grid-gap", "inset", "place-content", "place-items", "place-self"],
+    ["border-block-color", "border-block-style", "border-block-width", "border-inline-color", "border-inline-style", "border-inline-width", "inset-block", "inset-inline"]];
   const rank = (prop) => { const i = BROAD.findIndex((r) => r.includes(prop)); return i < 0 ? BROAD.length : i; };
   // The stylesheet the active edits' hide and style changes make; an edit's own css is a sheet of its own. Hide leaves
   // Polycarp's own parts and the page's root. `ok` says whether

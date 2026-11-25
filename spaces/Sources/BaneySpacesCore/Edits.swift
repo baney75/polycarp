@@ -271,7 +271,7 @@ public enum Edits {
             return "may not keep a quoted string in a custom property"
         }
         // A page's own function could load the string it is given.
-        if plain.range(of: #"--[^\s:;{}()]*\("#, options: .regularExpression) != nil { return "may not call a function the page defines (--name(...))" }
+        if plain.range(of: #"--[-A-Za-z0-9_\x{80}-\x{10ffff}]*\("#, options: .regularExpression) != nil { return "may not call a function the page defines (--name(...))" }
         let allowed: Set = ["media", "supports", "container", "keyframes", "layer", "starting-style"]
         for part in plain.unicodeScalars.split(separator: "@", omittingEmptySubsequences: false).dropFirst() {
             let word = String(String.UnicodeScalarView(part.prefix { ("a"..."z").contains($0) || $0 == "-" }))

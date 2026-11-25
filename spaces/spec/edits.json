@@ -14,6 +14,7 @@
   {"case": "css", "edit": {"id": "a", "sites": ["example.com"], "css": "/* wide */ @media (width < 600px) { main { width: 100% } }"}},
   {"case": "paths and name", "edit": {"id": "a", "sites": ["example.com"], "name": "Calm", "paths": ["/home", "/watch/*"], "css": "a{color:red}"}},
   {"case": "pseudo-classes, and colons in a string", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "a:first-child:hover, [title='a::before']"}]}},
+  {"case": "a function as a variable's fallback", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"width": "var(--w,calc(100% - 2rem))"}}], "css": "a{color:var(--a,var(--b,rgb(0,0,0)))}"}},
   {"case": "two dashes that call nothing", "edit": {"id": "a", "sites": ["example.com"], "css": ".btn--big:not(.x){width:calc(var(--w) * 2);--y:calc(1px)}"}},
   {"case": "off", "edit": {"id": "a", "sites": ["example.com"], "enabled": false, "css": "a{color:red}"}},
   {"case": "site as a link", "edit": {"id": "a", "sites": ["https://www.Example.com/path"], "css": "a{color:red}"}},
@@ -101,6 +102,7 @@
   {"case": "a pseudo-element", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "input::placeholder", "style": {"color": "red"}}]}, "path": "changes[0].at"},
   {"case": "a pseudo-element with one colon", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "p:Before, a"}]}, "path": "changes[0].at"},
   {"case": "css that calls the page's function", "edit": {"id": "a", "sites": ["example.com"], "css": "input{background:--bg('https://evil.example/a')}"}, "path": "css"},
+  {"case": "css that calls the page's function after a comma", "edit": {"id": "a", "sites": ["example.com"], "css": "a{color:var(--a,--Zü('https://evil.example/a'))}"}, "path": "css"},
   {"case": "a style that calls the page's function", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"background": "--Bg('https://evil.example/a')"}}]}, "path": "changes[0].style.background"},
   {"case": "a verb in a list", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": ["hide"], "at": "a"}]}, "path": "changes[0].do"}
  ]
