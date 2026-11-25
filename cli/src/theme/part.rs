@@ -85,6 +85,25 @@ impl ThemeLook {
         })
     }
 
+    /// Writes the keys `parse` reads.
+    pub(crate) fn put(&self, o: &mut Map<String, Json>) {
+        let theme = match &self.theme {
+            ThemeDoc::Builtin(n) => json!({ "builtin": n }),
+            ThemeDoc::Document(t) => json!({ "document": t }),
+        };
+        o.insert("theme".into(), theme);
+        o.insert("mode".into(), json!(self.mode));
+        let mut a = Map::new();
+        for (k, v) in [("light", &self.accent_light), ("dark", &self.accent_dark)] {
+            if let Some(v) = v {
+                a.insert(k.into(), json!(v));
+            }
+        }
+        if !a.is_empty() {
+            o.insert("accent".into(), Json::Object(a));
+        }
+    }
+
     /// The theme resolved with its accents, held to every rule a theme is. A document must be whole in itself.
     fn full(&self, cfg: &Cfg) -> Result<Full, Vec<String>> {
         let full = match &self.theme {
@@ -121,12 +140,6 @@ impl ThemeLook {
         )
     }
 
-    /// The theme's own title, or its name.
-    pub(crate) fn theme_title(&self, c: &Ctx) -> String {
-        self.swatches(c)
-            .map_or_else(|| "a theme".into(), |(t, _)| t)
-    }
-
     pub(crate) fn check(&self, c: &Ctx) -> Result<(), ApiErr> {
         self.full(&c.cfg)
             .map(|_| ())
@@ -149,6 +162,20 @@ impl ThemeLook {
             json!({"light": of("light"), "dark": of("dark")}),
         ))
     }
+}
+
+/// Where the theme's files are; looks are kept beside them.
+impl Ctx {
+    pub(crate) fn dir(&self) -> &Path {
+        &self.cfg.dir
+    }
+}
+
+/// The lock every theme change takes, held for a whole look.
+pub(crate) struct Held(#[allow(dead_code)] Lock);
+
+pub(crate) fn hold(c: &Ctx) -> Result<Held, ApiErr> {
+    Lock::acquire(&c.cfg).map(Held)
 }
 
 /// What `polycarp look` adds to a refusal.

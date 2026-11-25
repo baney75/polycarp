@@ -1,13 +1,17 @@
-//! The look file, schema 1: what it may hold, and reading one (docs/looks.md).
+//! The look file, schema 1: what it may hold, reading one, and writing one (docs/looks.md).
 //!
 //! A look comes from anyone, so reading it is the safety check: it may change only how things look. Every key is
 //! known or refused with its path.
 
-use crate::theme::{self, ThemeLook};
+use crate::theme::{self, ThemeDoc, ThemeLook};
 use serde_json::{json, Map, Value as Json};
+
+pub const EXT: &str = "polycarp-look";
 pub const SCHEMA: i64 = 1;
 /// The largest look file.
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
+/// The shipped look: everything as Polycarp comes.
+pub const SHIPPED: &str = "polycarp";
 
 /// One look.
 #[derive(Clone, Debug, PartialEq)]
@@ -19,6 +23,39 @@ pub struct Look {
 }
 
 impl Look {
+    pub fn shipped() -> Look {
+        Look {
+            name: SHIPPED.into(),
+            title: "Polycarp".into(),
+            description: Some("Everything as Polycarp comes".into()),
+            theme: ThemeLook {
+                theme: ThemeDoc::Builtin(SHIPPED.into()),
+                mode: "auto".into(),
+                accent_light: None,
+                accent_dark: None,
+            },
+        }
+    }
+
+    pub fn to_json(&self) -> Json {
+        let mut o = Map::new();
+        o.insert("schema".into(), json!(SCHEMA));
+        o.insert("name".into(), json!(self.name));
+        o.insert("title".into(), json!(self.title));
+        if let Some(d) = &self.description {
+            o.insert("description".into(), json!(d));
+        }
+        self.theme.put(&mut o);
+        Json::Object(o)
+    }
+
+    pub fn to_text(&self) -> String {
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&self.to_json()).unwrap_or_default()
+        )
+    }
+
     /// Reads a look file. Problems are `path: why`, and any of them refuses the file.
     pub fn parse(bytes: &[u8]) -> Result<Look, Vec<String>> {
         if bytes.len() > MAX_BYTES {
