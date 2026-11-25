@@ -44,8 +44,10 @@ usage: \(me) <command>
                               what lies behind the desktop, the new tab and the idle screen: a picture,
                               an https URL, #RRGGBB or a scene (paper help, docs/surfaces.md)
   filters ls | set '<json rule>' | rm <id> | reset [--json]
-                              feed filters and page edits for Polycarp's browser extension
-                              (filters help, docs/guide.md)
+                              feed filters for Polycarp's browser extension (filters help, docs/guide.md)
+  edits ls | set '<json edit>' | on <id> | off <id> | rm <id> | reset [--json]
+                              what the extension changes on the pages of sites you name
+                              (edits help, docs/edits.md)
   style path|show|check [file]|example|set '<sel>' <prop> <value>|unset '<sel>' [prop]|reset [--json]
                               style.css: restyle the bar and the dock on top of the theme
                               (style help, docs/style.md)
@@ -271,6 +273,8 @@ case "paper":
     PaperCommand.run(rest, remote: remoteHost != nil)
 case "filters", "filter":
     FiltersCommand.run(rest, remote: remoteHost != nil)
+case "edits", "edit":
+    EditsCommand.run(rest, remote: remoteHost != nil)
 case "style":
     StyleCommand.run(rest, remote: remoteHost != nil)
 case "keys":

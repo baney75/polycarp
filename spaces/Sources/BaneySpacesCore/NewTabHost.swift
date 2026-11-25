@@ -97,6 +97,8 @@ public enum NewTabHost {
         public var papers: PaperStore?
         /// filters.json's rules: none when it is missing, the issue when it doesn't read or check.
         public var filters: () -> Result<[FilterRule], SurfacesIssue>
+        /// edits.json's edits, the same way.
+        public var edits: () -> Result<[SurfaceValue], SurfacesIssue>
 
         public struct FocusFailure: Error, Equatable { public let message: String; public init(_ m: String) { message = m } }
 
@@ -106,10 +108,11 @@ public enum NewTabHost {
                     focus: @escaping (String) -> Result<String, FocusFailure> = { _ in .failure(.init("Polycarp isn't running")) },
                     browser: @escaping () -> String? = { nil },
                     papers: PaperStore? = nil,
-                    filters: @escaping () -> Result<[FilterRule], SurfacesIssue> = { .success([]) }) {
+                    filters: @escaping () -> Result<[FilterRule], SurfacesIssue> = { .success([]) },
+                    edits: @escaping () -> Result<[SurfaceValue], SurfacesIssue> = { .success([]) }) {
             self.surfaces = surfaces; self.now = now; self.timeZone = timeZone
             self.bangs = bangs; self.sessions = sessions; self.focus = focus; self.browser = browser
-            self.papers = papers; self.filters = filters
+            self.papers = papers; self.filters = filters; self.edits = edits
         }
 
         /// The real one: surfaces.json and bangs.json from disk the way `polycarp-spaces surfaces get` reads them (the app
@@ -129,7 +132,8 @@ public enum NewTabHost {
                 return r.ok ? .success(r.info?["label"] ?? "") : .failure(.init(r.error ?? "nothing matches"))
             }, browser: { NewTabHost.appBundleID(of: getppid()) },
             papers: PaperStore.beside(surfacesFile: SurfacesFile.path()),
-            filters: { Filters.load(path: Filters.path()) })
+            filters: { Filters.load(path: Filters.path()) },
+            edits: { Edits.load(path: Edits.path()) })
         }
     }
 
@@ -143,6 +147,7 @@ public enum NewTabHost {
         case "find": return find(object["q"], source)
         case "focus": return focus(object["id"], source)
         case "filters": return filters(source)
+        case "edits": return edits(source)
         case let op?: return failure("there is no request called \(op)")
         case nil: return failure("the request has no op")
         }
@@ -216,6 +221,14 @@ public enum NewTabHost {
         switch source.focus(id) {
         case .success(let label): return json(["ok": true, "label": label])
         case .failure(let f): return failure(f.message)
+        }
+    }
+
+    /// `{"op":"edits"}`: edits.json's page edits, normalized, for the extension to apply.
+    private static func edits(_ source: Source) -> Data {
+        switch source.edits() {
+        case .success(let edits): return json(["ok": true, "edits": edits.map(\.any)])
+        case .failure(let issue): return failure("\(Edits.name) is invalid: \(issue)")
         }
     }
 
