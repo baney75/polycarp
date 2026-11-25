@@ -80,12 +80,12 @@ final class RoleKeysFileTests: XCTestCase {
     func testTheRow() {
         let p = plan("[keys.bindings]\n\"cmd+f6\" = \"open mail\"\n") { $0.text == "ctrl+shift+cmd+b" ? "macOS" : nil }
         XCTAssertEqual(RoleKeysText.key(.mail, p), "⌘F6")
-        XCTAssertEqual(RoleKeysText.line(.mail, p), "Goes to its window, or opens one. ⌥⌘F6 always opens one")
+        XCTAssertEqual(RoleKeysText.line(.mail, p), "⌥⌘F6 opens a new window")
         XCTAssertEqual(RoleKeysText.key(.terminal, p), "⌃⌘Return")
         XCTAssertNil(RoleKeysText.key(.browser, p))
         XCTAssertEqual(RoleKeysText.line(.browser, p), "⌃⇧⌘B is taken: macOS")
-        XCTAssertEqual(RoleKeysText.line(.notes, p), "No key")
-        XCTAssertEqual(RoleKeysText.line(.agent, plan("[keys.bindings]\n\"ctrl+shift+cmd+a\" = \"none\"\n")), "No key")
+        XCTAssertNil(RoleKeysText.line(.notes, p))
+        XCTAssertNil(RoleKeysText.line(.agent, plan("[keys.bindings]\n\"ctrl+shift+cmd+a\" = \"none\"\n")), "taken away by you")
         XCTAssertEqual(RoleKeysText.suggestion(.agent), .standard)
         XCTAssertEqual(RoleKeysText.suggestion(.mail), .chord(RoleKeys.suggested(.mail)))
     }

@@ -56,6 +56,8 @@ suggested chord and none bound. A line of `[keys.bindings]` whose action is `ope
 of yours: a job with one has no default key, and `none` on a chord leaves it alone. A chord that is macOS's, another
 Polycarp key's, another binding's of yours or another app's is left to it and said; it is never taken. The keys change
 when the file does, with no restart, and `polycarp-spaces keys`, the launcher and the shortcut sheet list the ones you have.
+Settings › Keys records a new one: it writes or removes the job's own lines and no other, refuses a chord somebody has,
+and while it records no key of Polycarp's acts.
 
 ### R-D13 Settings
 Settings › Default apps has a row for every job: its app, who decided, and the choices, with the system's own first and any

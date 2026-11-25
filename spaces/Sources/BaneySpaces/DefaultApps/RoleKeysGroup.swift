@@ -14,8 +14,8 @@ struct RoleKeysGroup: View {
 
     var body: some View {
         SettingsGroup("Default apps") {
-            ForEach(AppRole.allCases, id: \.self) { role in
-                SettingsRow(role.title, help: help(role)) { control(role) }
+            ForEach(DefaultAppsText.groups.flatMap(\.roles), id: \.self) { role in
+                SettingsRow(role.title, help: RoleKeysText.line(role, store.keys)) { control(role) }
                 if let p = problem[role] { SettingsNote(p, tone: .urgent) }
             }
             LearnMore("Click a key, then press the one you want. Escape leaves it as it was and Delete takes it away. A key macOS, another app or Polycarp has already is refused. Each is a line under [keys.bindings] in config.toml.")
@@ -23,10 +23,6 @@ struct RoleKeysGroup: View {
         .onDisappear(perform: stop)
         // Anywhere else the keys belong to the app in front.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in stop() }
-    }
-
-    private func help(_ role: AppRole) -> String {
-        recording == role ? "Press the key you want. Esc cancels, Delete takes it away" : RoleKeysText.line(role, store.keys)
     }
 
     private func control(_ role: AppRole) -> some View {
@@ -39,7 +35,7 @@ struct RoleKeysGroup: View {
             Menu {
                 Button(RoleKeysText.standard(role)) { change(role, RoleKeysText.suggestion(role)) }
                 Button("No Key") { change(role, .off) }
-            } label: { Image(systemName: "ellipsis") }
+            } label: { Image(systemName: "ellipsis").foregroundStyle(Chrome.muted) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 22)
                 .accessibilityLabel("More for \(role.title)")
         }

@@ -148,6 +148,9 @@ enum Render {
         setup.tab = .defaults
         guard save(SetupView(model: setup, close: {}, height: 860).background(Color(nsColor: .windowBackgroundColor)),
                    "setup-default-apps-all.png", CGSize(width: SettingsSidebar.windowSize.width, height: 860)) else { return 1 }
+        setup.tab = .keys
+        guard save(SetupView(model: setup, close: {}, height: 1300).background(Color(nsColor: .windowBackgroundColor)),
+                   "setup-keys-all.png", CGSize(width: SettingsSidebar.windowSize.width, height: 1300)) else { return 1 }
         setup.tab = .general
         // The ⌘Tab workspace switcher, second tile selected.
         let switcher = SwitcherModel()

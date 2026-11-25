@@ -148,6 +148,7 @@ final class DefaultAppsStore: ObservableObject {
         for (role, app) in chosen { sample.apps[role] = app }
         let installed = LaunchServicesApps()
         now = Self.answer(sample, installed)
+        now.keys = RoleKeys.plan("[keys.bindings]\n\"cmd+f6\" = \"open mail\"\n", mod: [.cmd]) { $0 == RoleKeys.suggested(.browser) ? "macOS" : nil }
         icons = Self.icons(now, installed, had: [:])
         queue.sync { still = true }
     }

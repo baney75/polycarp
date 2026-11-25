@@ -29,14 +29,12 @@ public enum RoleKeysText {
         return active.isEmpty ? nil : active.joined(separator: " ")
     }
 
-    /// Under the job: what its key does, or why it has none.
-    public static func line(_ role: AppRole, _ plan: RoleKeys.Plan) -> String {
+    /// Under the job: the key that always opens a window, or who has its key. Nothing for a job with none.
+    public static func line(_ role: AppRole, _ plan: RoleKeys.Plan) -> String? {
         if let b = plan.of(role).first(where: { $0.taken != nil && $0.taken != RoleKeys.yoursForNothing }), let who = b.taken {
             return "\(b.chord.display) is taken: \(who)"
         }
-        guard key(role, plan) != nil else { return "No key" }
-        guard let new = plan.of(role, new: true).first(where: { $0.taken == nil }) else { return "Goes to its window, or opens one" }
-        return "Goes to its window, or opens one. \(new.chord.display) always opens one"
+        return plan.of(role, new: true).first { $0.taken == nil }.map { "\($0.chord.display) opens a new window" }
     }
 
     /// What "go back" is called: the key it comes with, or no key.
