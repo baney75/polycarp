@@ -7,7 +7,7 @@ enum SystemDefault {
     /// `done` gets nil when macOS uses the app now, else a line that says what it kept. Main thread.
     static func set(_ role: AppRole, to bundle: String, done: @escaping (String?) -> Void) {
         guard role.canSetEverywhere, let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else {
-            return done("It isn’t installed.")
+            return done("It isn't installed.")
         }
         next(role == .browser ? ["http", "https"] : ["mailto"], app, role, done)
     }

@@ -22,7 +22,7 @@ struct DefaultAppsPane: View {
         }
         SettingsGroup {
             ForEach(store.now.warnings, id: \.self) { SettingsNote($0, tone: .urgent) }
-            LearnMore("A choice here is what Polycarp’s keys, launcher and commands use. Picking a browser or a mail app asks whether other apps should use it too; macOS asks you again before it changes that. Choices are lines under [defaults] in \(Self.file), and editing the file works as well. An app you remove keeps its place until it is back.")
+            LearnMore("A choice here is what Polycarp's keys, launcher and commands use. Picking a browser or a mail app asks whether other apps should use it too; macOS asks you again before it changes that. Choices are lines under [defaults] in \(Self.file), and editing the file works as well. An app you remove keeps its place until it is back.")
         }
         .onAppear { store.showIcons() }
         // macOS's own defaults change in System Settings, without a word.
@@ -34,7 +34,7 @@ struct DefaultAppsPane: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Everywhere changes macOS’s own default, for links in every app. macOS asks you too before it does.")
+            Text("Everywhere changes macOS's own default, for links in every app. macOS asks you too before it does.")
         }
     }
 
@@ -70,7 +70,9 @@ struct DefaultAppsPane: View {
 
     private func picker(_ role: AppRole, _ r: ResolvedDefault?) -> some View {
         Picker(role.title, selection: Binding(get: { picked(r) }, set: { pick(role, r, $0) })) {
-            Text(DefaultAppsText.automatic(role, r, system: store.now.system[role])).tag(Pick.automatic)
+            let auto = store.now.system[role] ?? (r?.source == .you ? nil : r?.app)
+            Label { Text(DefaultAppsText.automatic(role, r, system: store.now.system[role])) } icon: { if auto != nil { icon(auto, size: 16) } }
+                .tag(Pick.automatic)
             Divider()
             ForEach(r?.candidates ?? [], id: \.app.id) { c in
                 Label { Text(DefaultAppsText.item(c)) } icon: { icon(c, size: 16) }.tag(Pick.app(c.app))
@@ -82,7 +84,7 @@ struct DefaultAppsPane: View {
             Text("Other app…").tag(Pick.other)
         }
         .labelsHidden()
-        .frame(width: 190)
+        .frame(width: 215)
         .accessibilityLabel(role.title)
     }
 
@@ -133,7 +135,7 @@ struct DefaultAppsPane: View {
         panel.begin { answer in
             guard answer == .OK, let url = panel.url else { return }
             guard let id = Bundle(url: url)?.bundleIdentifier, let app = DefaultApp(id: id, role: role) else {
-                problem[role] = "\(url.lastPathComponent) can’t be chosen: it has no bundle identifier."
+                problem[role] = "\(url.lastPathComponent) can't be chosen: it has no bundle identifier."
                 return
             }
             take(role, app, LaunchServicesApps.name(url))

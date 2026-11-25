@@ -22,7 +22,7 @@ public enum DefaultAppsText {
     public static func automatic(_ role: AppRole, _ r: ResolvedDefault?, system: DefaultCandidate?) -> String {
         if role.asksWhenUnset { return "Ask me" }
         let name = system?.name ?? (r?.source == .you ? nil : r?.app?.name)
-        return (system == nil ? "Automatic" : "macOS’s") + (name.map { ": \($0)" } ?? "")
+        return (system == nil ? "Automatic" : "macOS default") + (name.map { ": \($0)" } ?? "")
     }
 
     /// One in the list: its name, and what it can't do.

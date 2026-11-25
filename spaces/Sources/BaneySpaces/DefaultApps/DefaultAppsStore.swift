@@ -35,6 +35,8 @@ final class DefaultAppsStore: ObservableObject {
     private var due = false
     /// What stops each watch. Kept: a watch whose stop is let go is freed, and hears nothing.
     private var stops: [() -> Void] = []
+    /// The product shots' sample stays.
+    private var still = false
     private var drawn: [DefaultApp: NSImage]?
 
     func start(log: @escaping (String) -> Void) {
@@ -69,7 +71,7 @@ final class DefaultAppsStore: ObservableObject {
 
     /// An install writes a folder many times: one look, a moment later.
     private func look(after seconds: Double) {
-        guard !due else { return }
+        guard !due, !still else { return }
         due = true
         queue.asyncAfter(deadline: .now() + seconds) { self.due = false; self.read() }
     }
@@ -131,5 +133,6 @@ final class DefaultAppsStore: ObservableObject {
         let installed = LaunchServicesApps()
         now = Self.answer(sample, installed)
         icons = Self.icons(now, installed, had: [:])
+        queue.sync { still = true }
     }
 }

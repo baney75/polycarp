@@ -33,7 +33,7 @@ final class DefaultAppsPaneTests: XCTestCase {
 
     func testTheFirstChoiceLeavesItToMacOS() {
         let safari = app("com.apple.Safari", "Safari"), other = app("org.example.browser", "Other")
-        XCTAssertEqual(DefaultAppsText.automatic(.browser, resolved(.browser, other, .you), system: safari), "macOS’s: Safari")
+        XCTAssertEqual(DefaultAppsText.automatic(.browser, resolved(.browser, other, .you), system: safari), "macOS default: Safari")
         XCTAssertEqual(DefaultAppsText.automatic(.notes, resolved(.notes, other, .firstInstalled), system: nil), "Automatic: Other")
         XCTAssertEqual(DefaultAppsText.automatic(.notes, resolved(.notes, other, .you), system: nil), "Automatic")
         XCTAssertEqual(DefaultAppsText.automatic(.agent, resolved(.agent, other, .you), system: nil), "Ask me")
