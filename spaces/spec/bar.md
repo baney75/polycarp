@@ -52,7 +52,8 @@ On Windows the current workspace's number is drawn in `foreground` with a 2 px `
   take the width they need up to 44% and the sides get the rest; on a screen with a notch they sit on the camera's right
   (`BarGeometry`, `BarSides`). Windows: not yet.
 - macOS: the marker at the workspace you're on slides when you switch, and the wheel over the numbers goes to the
-  one before or after, one a trackpad gesture or wheel click and none while a trackpad glides (`BarScroll`). Windows: not yet.
+  one before or after that no other display shows, one a trackpad gesture or wheel click (clicks within 0.14 s count as
+  one) and none while a trackpad glides (`BarScroll`). Windows: not yet.
 - macOS: two or more apps' status items fold behind a chevron that opens under the pointer, and stays open on a click
   (`bar.tray`; `BarTray`). Windows has no tray yet.
 - macOS: the clock and the date open a calendar under the bar: today, then one month in six weeks from the calendar's

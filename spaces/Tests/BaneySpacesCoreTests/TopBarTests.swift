@@ -166,7 +166,13 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(steps.reduce(0, +), 1, "one swipe is one workspace, however long")
         XCTAssertEqual((0..<2).map { swipe.step(-20, precise: true, began: $0 == 0, at: 1.4 + Double($0) * 0.016) }, [0, 1], "the next swipe steps again")
         XCTAssertEqual((0..<20).map { swipe.step(-30, across: 90, precise: true, began: $0 == 0, at: 3 + Double($0) * 0.016) }.reduce(0, +), 0, "a swipe along the row")
+        XCTAssertEqual(swipe.step(-30, precise: true, phased: true, began: true, at: 5), 1)
+        XCTAssertEqual(swipe.step(-30, precise: true, phased: true, at: 6), 0, "fingers held still are in the same swipe")
+        XCTAssertEqual(swipe.step(-30, precise: true, phased: true, began: true, at: 7), 1)
         XCTAssertEqual(BarScroll.target(from: 2, way: 1, shown: [1, 2, 5]), 5)
+        XCTAssertEqual(BarScroll.target(from: 1, way: 1, shown: [1, 2, 3], elsewhere: [2]), 3, "2 is on another display")
+        XCTAssertNil(BarScroll.target(from: 1, way: 1, shown: [1, 2], elsewhere: [2]))
+        XCTAssertEqual(BarScroll.target(from: 2, way: -1, shown: [1, 2], elsewhere: [2]), 1, "both displays on one")
         XCTAssertNil(BarScroll.target(from: 5, way: 1, shown: [1, 2, 5]), "it stops at the end")
         XCTAssertNil(BarScroll.target(from: 1, way: -1, shown: [1, 2, 5]))
         XCTAssertNil(BarScroll.target(from: 2, way: 0, shown: [1, 2, 5]))
@@ -196,10 +202,14 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(BarWorkspaces.marker(.dot), .pill)
         XCTAssertEqual(BarWorkspaces.marker(.bar), .underline)
         XCTAssertEqual(BarWorkspaces.marker(.numberBlock), .block)
-        func marker(_ css: String, _ indicator: ThemeIndicator = .numberBlock) -> BarWorkspaces.Marker? {
+        func marker(_ css: String, _ indicator: ThemeIndicator = .numberBlock, hover: Bool = false) -> BarWorkspaces.Marker? {
             let book = StyleBook(StyleSheet.parse(css).sheet, dark: true, roles: StyleSheetTests.roles(true))
-            return BarWorkspaces.marker(indicator, current: book.workspace(in: .left, current: true), other: book.workspace(in: .left, current: false))
+            return BarWorkspaces.marker(indicator, current: book.workspace(in: .left, current: true, hover: hover),
+                                        other: book.workspace(in: .left, current: false, hover: hover))
         }
+        XCTAssertEqual(marker("bar .workspace:hover { color: red }"), .block)
+        XCTAssertEqual(marker("bar .workspace:hover { color: red }", hover: true), .underline, "the sheet's ink on the accent block")
+        XCTAssertEqual(marker("bar .workspace:hover { background: #222 }", hover: true), .underline, "a box over the block")
         XCTAssertEqual(marker(""), .block)
         XCTAssertNil(marker("bar .workspace.current { border-bottom: 2px solid red }"), "the sheet's line is the marker")
         XCTAssertNil(marker("bar .workspace { background: #222 } bar .workspace.current { background: #444 }", .dot))
