@@ -153,7 +153,7 @@
     // never blocks the main thread.
     enqueue(root) {
       if (!root) return;
-      if (root.nodeType === 3) { if (this.ok(root)) this.queue.push(root); return; }
+      if (root.nodeType === 3) { if (this.ok(root) && !skippable(root.parentElement, this.skipSel)) this.queue.push(root); return; }
       if (root.nodeType !== 1 && root.nodeType !== 11) return;
       if (root.nodeType === 1 && skippable(root, this.skipSel)) return;
       if (root.nodeType === 1) { const sr = this.shadowOf(root); if (sr) this.pendingShadows.push(sr); }
