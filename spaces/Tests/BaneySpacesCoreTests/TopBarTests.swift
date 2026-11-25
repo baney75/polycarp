@@ -69,17 +69,52 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(BarText.battery(percent: 40, charging: true, onPower: true), "40% charging")
     }
 
-    func testANotchFoldsTheMiddleIntoTheLeft() {
-        let bar = Surfaces.defaults.bar
-        let flat = BarLayout.places(bar, notch: false)
-        XCTAssertEqual(flat.center, bar.center)
-        let notched = BarLayout.places(bar, notch: true)
-        XCTAssertEqual(notched.left, bar.left + [.split] + bar.center, "the middle keeps its own island")
-        XCTAssertEqual(BarLayout.islands(notched.left).last, bar.center)
-        XCTAssertTrue(notched.center.isEmpty)
-        var empty = bar; empty.center = []
-        XCTAssertEqual(BarLayout.places(empty, notch: true).left, bar.left)
-        XCTAssertEqual(notched.right, bar.right)
+    /// On a screen without a notch the sides get what the middle doesn't need: the menus once lost a title to the clock's
+    /// unused share.
+    func testTheMiddleTakesOnlyTheWidthItNeeds() {
+        let clock = BarSides.middle(ideal: 150, gap: 16, room: 1500)
+        XCTAssertEqual(clock.middle, 150)
+        XCTAssertEqual(clock.side, 659)
+        let verse = BarSides.middle(ideal: 5000, gap: 16, room: 1500)
+        XCTAssertEqual(verse.middle, 1500 * BarLayout.middleShare, accuracy: 0.01)
+        XCTAssertGreaterThan(verse.side, 300)
+        XCTAssertEqual(BarSides.middle(ideal: 0, gap: 16, room: 1500).side, 742, "no middle: half each")
+    }
+
+    /// Beside a notch the clock sits at the camera and the icons at the edge; the icons are whole while they fit.
+    func testBesideANotchTheClockAndTheIconsShareTheRight() {
+        let both = BarSides.widths(lead: 150, trail: 200, gap: 16, room: 656)
+        XCTAssertEqual(both.lead, 150); XCTAssertEqual(both.trail, 200)
+        let verse = BarSides.widths(lead: 900, trail: 200, gap: 16, room: 656)
+        XCTAssertEqual(verse.lead, 440, "the verse takes what the icons leave")
+        XCTAssertEqual(verse.trail, 200)
+        let crowded = BarSides.widths(lead: 900, trail: 900, gap: 16, room: 656)
+        XCTAssertEqual(crowded.lead, 640 * BarLayout.middleShare, accuracy: 0.01)
+        XCTAssertEqual(crowded.lead + crowded.trail, 640, accuracy: 0.01, "the two never overlap")
+        XCTAssertEqual(BarSides.widths(lead: 0, trail: 900, gap: 16, room: 656).trail, 656)
+        XCTAssertEqual(BarSides.widths(lead: 900, trail: 0, gap: 16, room: 656).lead, 656)
+    }
+
+    func testEveryIconHasOneSlotAndTheFaceFitsTheBar() {
+        XCTAssertGreaterThan(BarGeometry.slot, BarGeometry.canvas + 4)
+        for height in stride(from: 16.0, through: 64, by: 1) {
+            let face = BarGeometry.face(bar: height)
+            XCTAssertLessThanOrEqual(face, 24)
+            XCTAssertLessThanOrEqual(face, max(14, height))
+            XCTAssertGreaterThanOrEqual(face, 14)
+        }
+    }
+
+    /// Every part of the bar you click is the one button, whose hover works while Polycarp isn't in front.
+    func testTheBarsButtonsAreOne() throws {
+        for file in ["TopBar.swift", "BarModules.swift"] {
+            let source = try app(file)
+            XCTAssertFalse(source.contains(".onTapGesture"), "\(file): use BarButton")
+            XCTAssertFalse(source.contains(".onHover"), "\(file): SwiftUI's hover can sleep in an app that isn't in front")
+        }
+        let parts = try app("BarParts.swift")
+        XCTAssertTrue(parts.contains(".activeAlways"))
+        XCTAssertTrue(parts.contains("override func hitTest(_ point: NSPoint) -> NSView? { nil }"), "the hover area takes no clicks")
     }
 
     func testTheLedgerDefaults() {

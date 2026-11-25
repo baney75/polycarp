@@ -23,6 +23,11 @@ enum Render {
            case .theme(let theme) = PolycarpThemeFile.load(path: path) {
             Appearance.shared.usePolycarp(theme)
         }
+        // BANEYSPACES_RENDER_STYLE=<style.css> draws the bar and the dock with that sheet.
+        if let path = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_STYLE"] {
+            StyleSheetStore.shared.start(path: path, firstLookWithin: 2)
+            Styles.shared.sync()
+        }
         PermissionsModel.shared.useRenderSample()
         // BANEYSPACES_RENDER_THEME=omarchy|minimal draws the same shots in that theme (a check, saved nowhere).
         if let t = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME"], let id = ThemeID(rawValue: t) {
@@ -45,7 +50,10 @@ enum Render {
         let size = CGSize(width: 1512, height: 945)
         // Tile frames as the live layout places them, so the drag image can light its target.
         // Drawn by AppKit in an offscreen window (never shown), so colors match the live app.
+        // BANEYSPACES_RENDER_ONLY=<prefix> draws only the images whose names start with it.
+        let only = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_ONLY"] ?? ""
         func save(_ view: some View, _ name: String, _ size: CGSize) -> Bool {
+            guard name.hasPrefix(only) else { return true }
             let height: CGFloat? = size.height == 0 ? nil : size.height
             let framed = view.frame(width: size.width, height: height).environment(\.colorScheme, Chrome.scheme).environment(\.controlActiveState, .key)
             let host = NSHostingView(rootView: framed)
@@ -164,6 +172,25 @@ enum Render {
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: (left: 656, right: 656)).background(Color(white: 0.35)), "topbar-notch.png", CGSize(width: 1512, height: 37)) else { return 1 }
             topBar.notices = "3"
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar-notices.png", CGSize(width: 1512, height: 26)) else { return 1 }
+            // The bar as a working Mac has it: the front app's menus, its status items, the battery and a strip of workspaces.
+            topBar.bar.style = .solid
+            topBar.bar.left = [.mark, .workspaces, .split, .appMenus]
+            topBar.bar.center = [.clock]
+            topBar.bar.right = [.status, .split, .notifications]
+            topBar.occupied = [1, 2, 3, 5, 7]
+            topBar.notices = ""
+            topBar.charge = .init(percent: 82, charging: false, onPower: false, lowPower: false)
+            topBar.menus = BarMenus.items(["", "Ghostty", "File", "Edit", "View", "Window", "Help"])
+            let apps = ["/System/Applications/Music.app", "/System/Applications/Messages.app", "/System/Applications/Notes.app",
+                        "/System/Applications/Maps.app", "/System/Applications/Podcasts.app"]
+            for (i, path) in apps.enumerated() { topBar.icons["sample.\(i)"] = icon(path) }
+            topBar.status = apps.indices.map { BarStatus.Item(owner: "sample.\($0)", label: "App \($0)") }
+                + [("wifi", "Wi-Fi"), ("sound", "Sound"), ("battery", "Battery"), ("controlcenter", "Control Center")]
+                .map { BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra." + $0.0, label: $0.1) }
+            for (name, sides, height) in [("topbar-full.png", nil, 26.0), ("topbar-full-notch.png", (left: 656.0, right: 656.0), 37.0)]
+                as [(String, (left: CGFloat, right: CGFloat)?, CGFloat)] {
+                guard save(TopBarView(model: topBar, display: id, screen: screen, sides: sides).background(Color(white: 0.35)), name, CGSize(width: 1512, height: height)) else { return 1 }
+            }
         }
 
         // The bell's list: two apps with one quiet, then nothing new.

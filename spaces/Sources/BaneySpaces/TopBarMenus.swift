@@ -178,7 +178,8 @@ struct FitRow: Layout {
         let (widths, range) = shown(subviews, room: proposal.width)
         let width = range.reduce(0) { $0 + widths[$1] } + spacing * CGFloat(max(0, range.count - 1))
         let height = subviews.map { $0.sizeThatFits(.unspecified).height }.max() ?? 0
-        return CGSize(width: width, height: height)
+        // The whole height it is offered, so its buttons reach the screen's edge.
+        return CGSize(width: width, height: proposal.height.flatMap { $0.isFinite ? max($0, height) : nil } ?? height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -189,7 +190,8 @@ struct FitRow: Layout {
                 subviews[i].place(at: CGPoint(x: -10_000, y: -10_000), proposal: .zero)
                 continue
             }
-            subviews[i].place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: .unspecified)
+            subviews[i].place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading,
+                              proposal: ProposedViewSize(width: nil, height: bounds.height))
             x += widths[i] + spacing
         }
     }

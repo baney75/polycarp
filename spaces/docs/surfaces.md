@@ -171,8 +171,11 @@ desktop, as many Omarchy and Waybar setups draw theirs: the theme's surface colo
 island whose modules draw nothing (the battery on a desktop Mac, the network while online) isn't drawn. `solid` is
 Omarchy's own look: one strip in the theme's background color. Either way the bar has one monospace face for all
 of it (the Polycarp theme's `type.mono` stack when one is in force, else SF Mono) at 12 points, the app's name in
-semibold and its menus regular, modules 14 points apart with no separators, and no color but the accent under the
-workspace you're on. By default the bar shows the mark, the numbers, the app's menus, the clock, the status row and the bell,
+semibold and its menus regular, and no color but the accent at the workspace you're on. Every icon has one slot,
+27 points, whatever its own shape, and everything you can click lights a soft face under the pointer and presses in; the
+whole height of the bar takes the click, so the pointer can rest on the screen's edge. Groups between `"|"` are a little
+apart and there are no lines between them. On a screen with a notch the middle's modules sit beside the camera, on its
+right, and the right's at the screen's edge. By default the bar shows the mark, the numbers, the app's menus, the clock, the status row and the bell,
 nothing else.
 
 **Saved module lists are not changed.** The defaults above (the clock in the middle, the status row at the right, no
