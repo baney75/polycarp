@@ -6,7 +6,7 @@ import SwiftUI
 /// `BANEYSPACES_RENDER_OPEN_TIMING=<rounds> Polycarp --render <folder>` times what the launcher and the ⌘Tab switcher
 /// draw: a cold open (a new view, laid out, displayed and committed) and one step of the selection in an open one, in
 /// windows that are never shown. With `BANEYSPACES_RENDER_STYLE=<style.css>` it times the same with that sheet in force.
-/// It prints the median and p90 of each, for a before and after of a drawing change.
+/// It prints the median and p90 of each, and the median of the instructions it took (which a busy Mac does not change), for a before and after of a drawing change.
 @MainActor
 enum OpenTiming {
     static func run(rounds: Int) -> Int32 {
@@ -26,7 +26,7 @@ enum OpenTiming {
             _ = closing(open(LauncherView(model: launcher), NSSize(width: 700, height: 512)))
             _ = closing(open(SwitcherView(model: switcher), NSSize(width: 960, height: 280)))
         }
-        var times: [(String, [Double])] = []
+        var times: [(String, [Cost])] = []
         times.append(("launcher open", (0..<rounds).map { _ in closing(open(LauncherView(model: launcher), NSSize(width: 700, height: 512))) }))
         times.append(("switcher open", (0..<rounds).map { _ in closing(open(SwitcherView(model: switcher), NSSize(width: 960, height: 280))) }))
         let l = open(LauncherView(model: launcher), NSSize(width: 700, height: 512)).window
@@ -34,14 +34,31 @@ enum OpenTiming {
         times.append(("launcher step", (0..<rounds).map { r in step(l) { launcher.selected = (r + 1) % min(count, 6) } }))
         let s = open(SwitcherView(model: switcher), NSSize(width: 960, height: 280)).window
         times.append(("switcher step", (0..<rounds).map { r in step(s) { switcher.selected = (r + 1) % 12 } }))
-        for (name, ms) in times {
-            let sorted = ms.sorted()
-            print(String(format: "%@: median %.2f ms, p90 %.2f ms, n %d", name, sorted[sorted.count / 2], sorted[sorted.count * 9 / 10], sorted.count))
+        for (name, costs) in times {
+            let sorted = costs.map(\.ms).sorted()
+            let work = costs.map(\.work).sorted()
+            print(String(format: "%@: median %.2f ms, p90 %.2f ms, %.2f M instructions, n %d", name,
+                         sorted[sorted.count / 2], sorted[sorted.count * 9 / 10], work[work.count / 2], sorted.count))
         }
         return 0
     }
 
-    private static func now() -> Double { CACurrentMediaTime() * 1000 }
+    private struct Cost {
+        var ms = CACurrentMediaTime() * 1000
+        /// Millions of instructions this process has retired.
+        var work: Double = {
+            var info = rusage_info_v4()
+            let failed = withUnsafeMutablePointer(to: &info) {
+                $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0) }
+            }
+            return failed == 0 ? Double(info.ri_instructions) / 1_000_000 : 0
+        }()
+
+        static func since(_ start: Cost) -> Cost {
+            let now = Cost()
+            return Cost(ms: now.ms - start.ms, work: now.work - start.work)
+        }
+    }
 
     private static func draw(_ w: NSWindow) {
         w.contentView?.layoutSubtreeIfNeeded()
@@ -49,27 +66,27 @@ enum OpenTiming {
         CATransaction.flush()
     }
 
-    private static func open(_ view: some View, _ size: NSSize) -> (ms: Double, window: NSWindow) {
-        let start = now()
+    private static func open(_ view: some View, _ size: NSSize) -> (cost: Cost, window: NSWindow) {
+        let start = Cost()
         let w = RenderWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.contentView = NSHostingView(rootView: view.environment(\.controlActiveState, .key))
         draw(w)
-        return (now() - start, w)
+        return (.since(start), w)
     }
 
     /// Lets the window's view go, so it doesn't redraw with the next one (both watch the same model).
-    private static func closing(_ opened: (ms: Double, window: NSWindow)) -> Double {
+    private static func closing(_ opened: (cost: Cost, window: NSWindow)) -> Cost {
         opened.window.contentView = nil
-        return opened.ms
+        return opened.cost
     }
 
-    private static func step(_ w: NSWindow, _ change: () -> Void) -> Double {
-        let start = now()
+    private static func step(_ w: NSWindow, _ change: () -> Void) -> Cost {
+        let start = Cost()
         change()
         // `objectWillChange` reaches the hosting view in this turn's update.
         RunLoop.current.run(until: Date())
         draw(w)
-        return now() - start
+        return .since(start)
     }
 }
