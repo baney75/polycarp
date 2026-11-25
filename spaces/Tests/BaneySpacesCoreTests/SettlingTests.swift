@@ -28,6 +28,35 @@ final class SettlingTests: XCTestCase {
         XCTAssertNil(ended(&s, Array(repeating: [1: at(1511, 954)], count: 40)))
     }
 
+    func testAWindowAtTheHidingSpotIsParkedAtTheNextLook() {
+        var s = Settling([1], goal: .parked(at: spot), screens: screens, start: 100)
+        XCTAssertEqual(ended(&s, [[1: at(100, 50)], [1: at(1511, 981)], [1: at(1511, 981)]]), 20)
+    }
+
+    /// macOS keeps a title bar on screen: most windows sent to the spot stop a bar's height above it, so they still have to
+    /// hold still. One short of the spot may be on its way.
+    func testAWindowBesideTheHidingSpotIsNotYetThere() {
+        for beside in [at(1511, 954), at(1510, 981), at(1511, 980)] {
+            var s = Settling([1], goal: .parked(at: spot), screens: screens, start: 100)
+            XCTAssertEqual(ended(&s, Array(repeating: [1: beside], count: 20)), 60, "\(beside.origin)")
+        }
+    }
+
+    /// One window there doesn't end the wait for another on its way.
+    func testEveryWindowMustBeParked() {
+        var s = Settling([1, 2], goal: .parked(at: spot), screens: screens, start: 100)
+        XCTAssertEqual(ended(&s, [[1: at(1511, 981), 2: at(100, 50)], [1: at(1511, 981), 2: at(600, 400)],
+                                  [1: at(1511, 981), 2: at(1511, 981)]]), 30)
+    }
+
+    /// An animated move that ends exactly at the spot is still remembered.
+    func testASlideThatEndsAtTheSpotIsSlow() {
+        var s = Settling([1], goal: .parked(at: spot), screens: screens, start: 100)
+        let slide: [[WindowID: CGRect]] = (0..<20).map { i in [1: at(100 + 70 * CGFloat(i), 50 + 45 * CGFloat(i))] }
+        XCTAssertEqual(ended(&s, slide + [[1: at(1511, 981)]]), 210)
+        XCTAssertEqual(s.slow, [1])
+    }
+
     func testAParkedWindowSomewhereElseMustKeepStillFor50ms() {
         var s = Settling([1], goal: .parked(at: spot), screens: screens, start: 100)
         XCTAssertEqual(ended(&s, [[1: at(900, 500)], [1: at(1500, 800)]] + Array(repeating: [1: at(1480, 800)], count: 20)), 80)

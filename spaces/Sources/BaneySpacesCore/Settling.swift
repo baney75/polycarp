@@ -46,12 +46,15 @@ public struct Settling {
             guard let b = now[id] else { return true }
             let still = t - (stillSince[id] ?? start) >= Self.still
             let away = Geometry.isStranded(b, screens: screens)
+            // At its place, it has nowhere left to go. Away from it, only keeping still says it stopped.
             switch goal {
             case .home(let targets):
-                if let to = targets[id], abs(b.minX - to.x) < 1, abs(b.minY - to.y) < 1 { return true }
+                if let to = targets[id], Self.at(b, to) { return true }
                 return still && !away
-            case .parked: return still && away
+            case .parked(let spot): return Self.at(b, spot) || still && away
             }
         }
     }
+
+    private static func at(_ b: CGRect, _ p: CGPoint) -> Bool { abs(b.minX - p.x) < 1 && abs(b.minY - p.y) < 1 }
 }

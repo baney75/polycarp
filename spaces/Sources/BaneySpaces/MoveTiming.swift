@@ -5,7 +5,9 @@ import BaneySpacesCore
 /// (`WindowMoves`) on windows of its own: it starts `BANEYSPACES_RENDER_MOVE_APPS` helper copies of itself (4) with
 /// `BANEYSPACES_RENDER_MOVE_WINDOWS` windows each (2), each answering Accessibility `BANEYSPACES_RENDER_MOVE_DELAY` ms late
 /// (0), brings them home from the hiding spot and parks them again, and stops the helpers. Their windows are nearly clear,
-/// take no click and sit below the normal level, so nothing shows and Polycarp manages none of them. `live reads` times the
+/// take no click and sit below the normal level, so nothing shows and Polycarp manages none of them. AppKit keeps their title
+/// bars on screen, so they park a bar's height above the hiding spot; `BANEYSPACES_RENDER_MOVE_FREE=1` makes windows that
+/// go exactly there, as borderless ones do. `live reads` times the
 /// same reads on this Mac's real windows; it moves none of those. Exits 1 when a helper window isn't where it was sent.
 @MainActor
 enum MoveTiming {
@@ -109,6 +111,7 @@ enum MoveTiming {
         guard numbers.count == 2 else { return 64 }
         NSApp.setActivationPolicy(.accessory)
         LateWindow.delay = UInt32(numbers[1]) * 1000
+        LateWindow.free = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_MOVE_FREE"] == "1"
         let windows = (0..<numbers[0]).map { i in
             let w = LateWindow(contentRect: NSRect(x: 100 + 40 * i, y: 200, width: 400, height: 272),
                                styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
@@ -149,6 +152,8 @@ enum MoveTiming {
 /// A window whose app is slow to answer: each Accessibility read or move of it takes `delay` µs on the app's main thread.
 private final class LateWindow: NSWindow {
     static var delay: UInt32 = 0
+    static var free = false
+    override func constrainFrameRect(_ r: NSRect, to s: NSScreen?) -> NSRect { Self.free ? r : super.constrainFrameRect(r, to: s) }
     override func accessibilityFrame() -> NSRect { usleep(Self.delay); return super.accessibilityFrame() }
     override func setAccessibilityFrame(_ r: NSRect) { usleep(Self.delay); super.setAccessibilityFrame(r) }
     override func isAccessibilityMinimized() -> Bool { usleep(Self.delay); return super.isAccessibilityMinimized() }
