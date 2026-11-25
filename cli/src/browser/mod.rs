@@ -3,6 +3,7 @@
 //! that can't run is a refusal.
 
 mod release;
+mod source;
 #[cfg(test)]
 mod testing;
 mod tools;
@@ -12,7 +13,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tools::{System, Tools};
 
@@ -64,26 +65,53 @@ impl Place {
     /// One install or update at a time. The lock lasts as long as the file stays open.
     fn lock(&self) -> Result<fs::File, Refused> {
         let file = fs::File::create(self.cache.join("lock")).map_err(refuse("lock", "opening"))?;
-        file.try_lock().map_err(|_| {
-            Refused::new(
-                "lock",
-                "another polycarp browser command is already running",
-            )
-        })?;
-        Ok(file)
+        // A tool being started elsewhere holds a copy of the file for a moment, so one no is not yet an answer.
+        for _ in 0..20 {
+            match file.try_lock() {
+                Ok(()) => return Ok(file),
+                Err(fs::TryLockError::Error(e)) => return Err(refuse("lock", "taking it")(e)),
+                Err(fs::TryLockError::WouldBlock) => {}
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let why = "another polycarp browser command is already running";
+        Err(Refused::new("lock", why))
+    }
+
+    /// An empty folder for one build, replacing what an interrupted one left.
+    fn work(&self, tools: &dyn Tools) -> Result<PathBuf, Refused> {
+        let work = self.cache.join("work");
+        // A run that was killed may have left its disk image attached, and no folder in one can be removed.
+        source::let_go(tools, &work);
+        clear(&work).map_err(refuse("work folder", "clearing it"))?;
+        fs::create_dir(&work).map_err(refuse("work folder", "making it"))?;
+        Ok(work)
     }
 }
 
-/// `polycarp browser install --dry-run`: looks up the release an install would use.
+/// Removes a folder of this command's own; one that isn't there is fine.
+fn clear(dir: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(dir) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// `polycarp browser install --dry-run`: everything up to the install, then the work is thrown away.
 fn dry_run(tools: &dyn Tools, place: &Place, arch: &str) -> Result<String, Refused> {
     place.prepare()?;
     let _lock = place.lock()?;
     let release = release::newest(tools, arch)?;
-    let line = format!(
-        "Helium {} is the newest release: {} (sha256 {}). Nothing was downloaded.",
-        release.version, release.url, release.sha256
-    );
-    Ok(line)
+    let dmg = source::fetch(tools, &release, &place.cache)?;
+    let work = place.work(tools)?;
+    let checked = source::unpack(tools, &dmg, &work, &release.version);
+    let cleared = clear(&work).map_err(refuse("work folder", "clearing it"));
+    checked?;
+    cleared?;
+    Ok(format!(
+        "Helium {} was downloaded and passed its checks. Nothing was installed.",
+        release.version
+    ))
 }
 
 /// None when these arguments are not a browser command yet.
@@ -117,24 +145,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_dry_run_names_the_newest_release_and_downloads_nothing() {
+    fn a_dry_run_checks_the_release_and_leaves_no_work_behind() {
         let t = Fake::new();
         let line = dry_run(&t, &t.place(), "arm64").unwrap();
         assert!(line.contains(VERSION), "{line}");
-        let calls = t.calls();
-        assert_eq!(calls.len(), 1, "{calls:?}");
-        assert!(calls[0].starts_with("curl -q "), "{calls:?}");
-        assert!(calls[0].contains("--proto =https --proto-redir =https"));
-    }
-
-    #[test]
-    fn a_lookup_that_says_no_or_cannot_run_is_refused() {
-        for failure in [Failure::SaysNo, Failure::CannotRun] {
-            let t = Fake::new();
-            t.set(|s| s.fail = Some(("curl", "", failure)));
-            let e = dry_run(&t, &t.place(), "arm64").unwrap_err();
-            assert_eq!(e.check, "release", "{failure:?}");
-        }
+        assert!(!t.place().cache.join("work").exists());
+        assert!(!t.mounted(), "the disk image stayed mounted");
     }
 
     #[test]
