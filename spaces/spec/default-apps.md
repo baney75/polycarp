@@ -7,8 +7,10 @@ and agents. Built on the Mac. Windows and Linux: unchanged, and the file format 
 
 ### R-D1 Who does the job
 Your choice, if it is installed. Then the system's own default for the job, if that is installed: on the Mac what opens
-`http`, `mailto`, `webcal`, plain text, folders, and shell scripts. Then the first app of the catalog that is installed.
-Terminal opening shell scripts, as it does on every new Mac, is no choice of a terminal, so it comes after the others.
+`http`, `mailto`, `webcal`, plain text, folders, and programs
+(`public.unix-executable`). Then the first app of the catalog that is installed.
+Terminal opening programs, as it does on every new Mac, is no choice of a terminal, so it comes after the others,
+and for a terminal only an app the catalog lists counts as the system's. An identifier is one app in any case.
 
 ### R-D2 A choice that is gone stays yours
 A choice that isn't installed falls through to the next answer, which says so, and is not erased.
@@ -29,3 +31,16 @@ What is installed is read from Launch Services and the disk. No program, shell o
 ### R-D7 Terminals that take a command
 A program opens in your terminal when that terminal can be told what to run, else in the first installed one that can.
 A terminal that can't says so where it is offered.
+
+### R-D9 The file
+The choices are the `[defaults]` table of the configuration file (config.md), a role to an id, only for roles you chose:
+
+```toml
+[defaults]
+terminal = "com.mitchellh.ghostty"
+agent = "claude"
+```
+
+A bundle identifier is the Mac's id for an app; Windows and Linux put their own there (an AppUserModelID, a desktop
+file). A line that can't be read costs only itself: a warning names the key, and the rest applies, whatever else in the
+file is wrong. A write changes that role's line and nothing else.

@@ -60,10 +60,14 @@ public enum SurfacesFile {
     /// watcher, another agent) sees the old file or the new one and never half of one. Makes the folder if need be.
     /// `limit` is the largest file written (filters.json has its own).
     public static func write(_ tree: SurfaceValue, to path: String, limit: Int = maxBytes, mode: mode_t = 0o644) throws {
+        try write(text: tree.json(pretty: true) + "\n", to: path, limit: limit, mode: mode)
+    }
+
+    /// The same for text that is already what the file should hold.
+    static func write(text: String, to path: String, limit: Int, mode: mode_t) throws {
         let url = URL(fileURLWithPath: path)
         let dir = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let text = tree.json(pretty: true) + "\n"
         guard text.utf8.count <= limit else { throw WriteError("the file would be over \(limit) bytes") }
         let tmp = dir.appendingPathComponent(".\(url.lastPathComponent).\(getpid()).\(UInt32.random(in: 0...UInt32.max)).tmp").path
         let fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode)
