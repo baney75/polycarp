@@ -5,8 +5,8 @@ status menu, the browser's new tab page and the idle screen. Agents and the owne
 nothing restarts.
 
 Colors, fonts and the theme's wallpaper stay in the theme (`polycarp theme`, `themes/*.toml`). This file says what each
-surface shows; the theme says what it looks like. To restyle the bar past the theme (a glass bar, a gold
-clock), use the style sheet: [style.md](style.md). `polycarp look` saves, shares and applies these settings' looks with
+surface shows; the theme says what it looks like. To restyle the bar or a panel past the theme (a glass bar, a
+square launcher), use the style sheet: [style.md](style.md). `polycarp look` saves, shares and applies these settings' looks with
 the theme, the sheet and the paper: [looks.md](../../docs/looks.md) lists which fields.
 
 The Workspace Dock was removed on 2026-11-23. Workspaces are on ⌘1 to ⌘9 and the top bar's numbers; the overview is on

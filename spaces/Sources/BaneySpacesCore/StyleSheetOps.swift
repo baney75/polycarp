@@ -652,8 +652,9 @@ extension StyleSheet {
     public static var example: String {
         var out = """
         /* Polycarp style sheet: <config>/style.css (the folder `polycarp theme current` prints).
-           It restyles the top bar on top of the theme: the theme sets colors, shape, type and
-           motion everywhere; a rule here sets them for one surface or part, and anything left out is drawn as before.
+           It restyles the top bar, the launcher, the switcher, the overview, the notification list, the small
+           notices (hud) and the tiling outline on top of the theme: the theme sets colors, shape, type and motion everywhere;
+           a rule here sets them for one surface or part, and anything left out is drawn as before.
            Edits apply live. Change it with `polycarp-spaces style set '<selector>' <property> <value>`, then run
            `polycarp-spaces style check`. A bad line is dropped and listed with its line and column; the rest applies.
 
@@ -662,7 +663,7 @@ extension StyleSheet {
            Lengths are px or pt (both mean points). Colors: #rgb #rgba #rrggbb #rrggbbaa, rgb(), rgba(), hsl(), hsla(),
            transparent, currentColor, the 16 basic named colors, or var(--role).
            Specificity: each part, .class and :hover counts one; on a tie the later rule wins.
-           color, font-*, letter-spacing and text-transform pass from a surface and region down to its parts.
+           color, font-*, letter-spacing and text-transform pass from a surface, region, row, item or tile to its parts.
 
            What each property does (a rule below lists the ones it takes):
         \(StyleProperty.all.map { "   \($0.name): \($0.help) Takes \($0.takes).\($0.inherited ? " Inherited." : "")" }.joined(separator: "\n"))

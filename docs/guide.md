@@ -319,10 +319,10 @@ Any other MCP client can start the same command.
 | `surfaces_set` | Change one field or group; it's checked whole and a refusal writes nothing. Every field: [spaces/docs/surfaces.md](../spaces/docs/surfaces.md) |
 | `paper_set` | Change the wallpaper in one call: what lies behind the desktop, the new tab page and the idle screen. A picture path, an https URL to a picture, `#RRGGBB` or a scene; `on` limits it to some places |
 | `paper_get`, `paper_reset` | See each place's paper, or take it off so the theme's wallpaper and each place's old look come back |
-| `style_example` | Read every style sheet selector and property for the top bar and the tiling outline, with what each takes. Start here to restyle one part past the theme |
+| `style_example` | Read every style sheet selector and property (top bar, launcher, switcher, overview, notifications, small notices, tiling outline), with what each takes. Start here to restyle one part past the theme |
 | `style_get`, `style_check` | See the style sheet in use, or list its problems with line and column |
 | `style_set`, `style_unset` | Change or remove one declaration in place, keeping comments; a change that would add an error writes nothing. The grammar: [spaces/docs/style.md](../spaces/docs/style.md) |
-| `style_preset` | Replace the sheet with a whole look in one call (`omarchy`: a solid dark bar, monospace, numbered workspaces with an accent line); the old sheet is kept as the next backup (`style.css.bak`, `.bak.1` and on), never written over |
+| `style_preset` | Replace the sheet with a whole look in one call (`omarchy`: a solid dark bar with numbered workspaces and an accent line, and every panel square, dark and monospace to match); the old sheet is kept as the next backup (`style.css.bak`, `.bak.1` and on), never written over |
 | `style_restore` | Undo a preset: put the newest backup back; the sheet in force becomes the next backup, so a second call undoes the first |
 | `search` | Find what the person has open (tabs, windows, terminal splits) and the web, ranked as the launcher and the new tab page rank it, with the same bangs and `search.engine`. Changes nothing |
 | `search_open` | Go to the top `search` result: bring the open tab or window forward, or open the page in the default browser. Only when the person asked to go there |

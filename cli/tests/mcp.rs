@@ -1375,6 +1375,23 @@ fn the_instructions_send_surfaces_work_to_the_surfaces_tools() {
     assert!(at("paper_set") < at("paper_get") && at("paper_get") < at("paper_reset"));
     assert!(at("filters_list") < at("filter_set") && at("filter_set") < at("filter_remove"));
     assert!(at("edits_list") < at("edit_set") && at("edit_set") < at("edit_remove"));
+    // The style sheet covers every panel, and both the instructions and the tool say so.
+    let list = s.request("tools/list", json!({}));
+    let tools = list["result"]["tools"].as_array().unwrap();
+    let tool = tools.iter().find(|t| t["name"] == "style_example").unwrap();
+    let example = tool["description"].as_str().unwrap();
+    for surface in [
+        "bar",
+        "launcher",
+        "switcher",
+        "overview",
+        "notifications",
+        "tiling",
+    ] {
+        assert!(example.contains(surface), "style_example lacks {surface}");
+        assert!(ins.contains(surface), "the instructions lack {surface}");
+    }
+    assert!(example.contains("hud") && ins.contains("small notices"));
     assert_eq!(s.finish(), 0);
 }
 

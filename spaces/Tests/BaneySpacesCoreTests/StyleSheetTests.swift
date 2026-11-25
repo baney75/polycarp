@@ -1005,6 +1005,10 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertTrue(doc.contains(StyleSheet.propertyTable), "docs/style.md's property table differs from StyleProperty.all; paste StyleSheet.propertyTable:\n\(StyleSheet.propertyTable)")
         XCTAssertTrue(doc.contains(StyleSheet.selectorTable), "docs/style.md's selector table differs from StyleTarget; paste StyleSheet.selectorTable:\n\(StyleSheet.selectorTable)")
         for role in StyleProperty.roles { XCTAssertTrue(doc.contains("--\(role)"), role) }
+        // What agents are told names every surface too.
+        let mcp = try String(contentsOf: SourceText.root.deletingLastPathComponent().appendingPathComponent("cli/src/mcp.rs"), encoding: .utf8)
+        let tool = try XCTUnwrap(mcp.components(separatedBy: "\n").first { $0.contains("Returns a starter style.css") })
+        for surface in StyleSurface.allCases { XCTAssertTrue(tool.contains(surface.rawValue), "style_example lacks \(surface.rawValue)") }
         // Every example in the docs parses with no problem.
         var blocks = doc.components(separatedBy: "```css\n").dropFirst().map { $0.components(separatedBy: "```")[0] }
         XCTAssertGreaterThanOrEqual(blocks.count, 3)
