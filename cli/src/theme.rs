@@ -16,10 +16,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use toml::{Table, Value};
 
 mod edit;
+mod part;
 mod picture;
 mod png;
 mod preview;
 mod schema;
+
+pub(crate) use part::ThemeLook;
 
 /// What `theme off` can say: the state of the files, which it checked. Whether an app changes,
 /// and when, is up to that app, so the text says only what the apps are expected to do.
@@ -1294,7 +1297,7 @@ fn resolve_link(path: &Path) -> PathBuf {
 /// Writes to a temp file next to the real target, then renames it into place. If `path` is a
 /// symbolic link the target is written and the link stays. An existing file keeps its mode; a new
 /// one gets 0644 on Unix.
-fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
+pub(crate) fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
     let target = resolve_link(path);
     let dir = target.parent().ok_or("no parent folder")?;
     fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
@@ -1559,7 +1562,7 @@ fn civil(days: i64) -> (i64, i64, i64) {
 }
 
 /// (compact stamp for file names, ISO time) in UTC, to the millisecond.
-fn stamps() -> (String, String) {
+pub(crate) fn stamps() -> (String, String) {
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -1851,7 +1854,7 @@ impl Out {
     pub(crate) fn data(&self) -> &Json {
         &self.data
     }
-    fn new(data: Json, text: impl Into<String>) -> Out {
+    pub(crate) fn new(data: Json, text: impl Into<String>) -> Out {
         Out {
             data,
             text: text.into(),
@@ -1866,7 +1869,7 @@ impl Out {
         self
     }
     /// A warning that is not about falling back to the default theme.
-    fn caution(mut self, w: String) -> Out {
+    pub(crate) fn caution(mut self, w: String) -> Out {
         self.warnings.push(w);
         self
     }
@@ -1972,7 +1975,7 @@ fn is_contrast_item(i: &Json) -> bool {
 }
 
 impl ApiErr {
-    fn new(code: &'static str, message: impl Into<String>) -> ApiErr {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> ApiErr {
         let message = message.into();
         ApiErr {
             exit: 1,
@@ -1985,7 +1988,7 @@ impl ApiErr {
         }
     }
     /// A refusal that points at one path.
-    fn at(code: &'static str, path: &str, message: impl Into<String>) -> ApiErr {
+    pub(crate) fn at(code: &'static str, path: &str, message: impl Into<String>) -> ApiErr {
         let message = message.into();
         let mut e = ApiErr::new(code, message.clone());
         e.items = vec![item(path, &message)];
@@ -1997,12 +2000,12 @@ impl ApiErr {
         e.usage = true;
         e
     }
-    fn suggest(mut self, s: impl Into<String>) -> ApiErr {
+    pub(crate) fn suggest(mut self, s: impl Into<String>) -> ApiErr {
         self.suggestion = Some(s.into());
         self
     }
     /// A list of problems from the checker. The code says what kind they are.
-    fn problems(what: &str, problems: &[String]) -> ApiErr {
+    pub(crate) fn problems(what: &str, problems: &[String]) -> ApiErr {
         let items: Vec<Json> = problems.iter().map(|p| item_of(p)).collect();
         let code = if !items.is_empty() && items.iter().all(is_contrast_item) {
             "contrast"
@@ -2021,10 +2024,11 @@ impl ApiErr {
             usage: false,
         }
     }
-    fn human(&self) -> String {
+    /// `group` is the command a usage error is about: theme or look.
+    fn human(&self, group: &str) -> String {
         if self.usage {
             return format!(
-                "polycarp: theme: {}\nRun `polycarp theme --help`.",
+                "polycarp: {group}: {}\nRun `polycarp {group} --help`.",
                 self.message
             );
         }
@@ -2077,11 +2081,11 @@ impl ApiErr {
     }
 }
 
-fn io_err(msg: String) -> ApiErr {
+pub(crate) fn io_err(msg: String) -> ApiErr {
     ApiErr::new("io_error", msg)
 }
 
-fn pretty(v: &Json) -> String {
+pub(crate) fn pretty(v: &Json) -> String {
     serde_json::to_string_pretty(v).unwrap_or_default()
 }
 
@@ -2977,7 +2981,7 @@ fn mix(from: &str, to: &str, amount: f64) -> String {
     format!("#{:02x}{:02x}{:02x}", blend(1), blend(3), blend(5))
 }
 
-fn title_case(name: &str) -> String {
+pub(crate) fn title_case(name: &str) -> String {
     name.split('-')
         .filter(|w| !w.is_empty())
         .map(|w| {
@@ -4200,7 +4204,7 @@ pub(crate) fn op_schema() -> Res {
 }
 
 /// Creates `dir` for this user only (0700 on Unix).
-fn private_dir(dir: &Path) -> Result<(), String> {
+pub(crate) fn private_dir(dir: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -4412,17 +4416,17 @@ pub(crate) fn op_preview(
 // The command line
 // ---------------------------------------------------------------------------------------------
 
-struct Parsed {
-    pos: Vec<String>,
+pub(crate) struct Parsed {
+    pub(crate) pos: Vec<String>,
     vals: BTreeMap<String, String>,
     flags: BTreeSet<String>,
 }
 
 impl Parsed {
-    fn val(&self, k: &str) -> Option<&str> {
+    pub(crate) fn val(&self, k: &str) -> Option<&str> {
         self.vals.get(k).map(String::as_str)
     }
-    fn flag(&self, k: &str) -> bool {
+    pub(crate) fn flag(&self, k: &str) -> bool {
         self.flags.contains(k)
     }
 }
@@ -4467,7 +4471,7 @@ fn parse_args(args: &[String], valued: &[&str], bools: &[&str]) -> Result<Parsed
     Ok(p)
 }
 
-fn exactly(p: &Parsed, n: usize, what: &str) -> Result<(), ApiErr> {
+pub(crate) fn exactly(p: &Parsed, n: usize, what: &str) -> Result<(), ApiErr> {
     if p.pos.len() == n {
         Ok(())
     } else {
@@ -4479,7 +4483,7 @@ fn ctx() -> Result<Ctx, ApiErr> {
     Ctx::new(&env::var("POLYCARP_CALLER").unwrap_or_default())
 }
 
-fn first(p: &Parsed) -> Option<&str> {
+pub(crate) fn first(p: &Parsed) -> Option<&str> {
     p.pos.first().map(String::as_str)
 }
 
@@ -4487,12 +4491,22 @@ fn first(p: &Parsed) -> Option<&str> {
 pub(crate) const FOLLOW_MOVED: &str = "polycarp: following the Omarchy theme is retired with the Linux desktop. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.";
 
 pub fn run(args: &[OsString]) -> i32 {
+    run_group("theme", USAGE, args, run_command)
+}
+
+/// Runs one command of a group (`polycarp theme`, `polycarp look`) and prints its result.
+pub(crate) fn run_group(
+    group: &str,
+    usage: &str,
+    args: &[OsString],
+    command: impl FnOnce(&str, &[String]) -> Res,
+) -> i32 {
     let Some(args) = args
         .iter()
         .map(|a| a.to_str().map(str::to_string))
         .collect::<Option<Vec<_>>>()
     else {
-        eprintln!("polycarp: theme: arguments must be valid text");
+        eprintln!("polycarp: {group}: arguments must be valid text");
         return 2;
     };
     // `--json` works on every subcommand, so it is taken out before the rest is read.
@@ -4500,12 +4514,20 @@ pub fn run(args: &[OsString]) -> i32 {
     let args: Vec<String> = args.into_iter().filter(|a| a != "--json").collect();
     let Some((sub, rest)) = args.split_first() else {
         if json {
-            return present(Err(ApiErr::usage("expected a command")), true);
+            return present(group, Err(ApiErr::usage("expected a command")), true);
         }
-        eprint!("{USAGE}");
+        eprint!("{usage}");
         return 2;
     };
     let r = match sub.as_str() {
+        "--help" | "-h" | "help" => Ok(Out::new(json!({ "usage": usage }), usage)),
+        sub => command(sub, rest),
+    };
+    present(group, r, json)
+}
+
+fn run_command(sub: &str, rest: &[String]) -> Res {
+    match sub {
         "list" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;
             op_list(c)
@@ -4660,14 +4682,12 @@ pub fn run(args: &[OsString]) -> i32 {
                 p.val("format"),
             )
         }),
-        "--help" | "-h" | "help" => Ok(Out::new(json!({"usage": USAGE}), USAGE)),
         other => Err(ApiErr::usage(format!("unknown command {other}"))),
-    };
-    present(r, json)
+    }
 }
 
 /// Reads the arguments, finds the config folder, and runs one operation.
-fn cmd(
+pub(crate) fn cmd(
     args: &[String],
     valued: &[&str],
     bools: &[&str],
@@ -4691,7 +4711,7 @@ fn read_input(arg: &str) -> Result<String, ApiErr> {
 }
 
 /// Prints a result as a person or a program wants it, and returns the exit code.
-fn present(r: Res, json: bool) -> i32 {
+fn present(group: &str, r: Res, json: bool) -> i32 {
     if json {
         let (env, ok) = envelope(&r);
         println!("{}", pretty(&env));
@@ -4720,7 +4740,7 @@ fn present(r: Res, json: bool) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("{}", e.human());
+            eprintln!("{}", e.human(group));
             e.exit
         }
     }
