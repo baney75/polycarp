@@ -7,6 +7,7 @@ import SwiftUI
 @MainActor
 enum Render {
     static func run(into folder: URL) -> Int32 {
+        if let asked = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_MOVE_HELPER"] { return MoveTiming.help(asked) }
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Run from `swift build` rather than the app bundle, macOS hands out a generic folder for
         // the app icon; settings would show that. Use the repo's icon when it's there.
@@ -67,6 +68,9 @@ enum Render {
         }
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME_RELOAD"].flatMap(Int.init) {
             return ThemeReloadTiming.run(rounds: r)
+        }
+        if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_MOVE_TIMING"].flatMap(Int.init) {
+            return MoveTiming.run(rounds: r)
         }
         // BANEYSPACES_RENDER_SWATCHES=1 checks only what the workspace colors sit on in dark mode (scripts/swatch-check.sh).
         if ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SWATCHES"] == "1" { return SwatchCheck.run(into: folder) }

@@ -756,10 +756,11 @@ enum DragFrameTrace {
     private static var lastRelease: Double?
     private static var watches: [WindowID: Timer] = [:]
 
+    /// Any thread: a switch moves windows off the main one (`Lanes`), so the mouse button isn't read through AppKit.
     static func write(_ id: WindowID, _ kind: DragFrameLog.Write, origin: CGPoint?, size: CGSize?, file: String, line: Int) {
         lock.lock(); let last = lastRelease; lock.unlock()
-        guard DragFrameLog.logsWrite(now: ProcessInfo.processInfo.systemUptime, buttonDown: NSEvent.pressedMouseButtons & 1 != 0,
-                                     lastRelease: last) else { return }
+        let down = CGEventSource.buttonState(.combinedSessionState, button: .left)
+        guard DragFrameLog.logsWrite(now: ProcessInfo.processInfo.systemUptime, buttonDown: down, lastRelease: last) else { return }
         Trace.log(DragFrameLog.writeLine(window: UInt32(id), kind: kind, origin: origin, size: size, file: file, line: line))
     }
 
