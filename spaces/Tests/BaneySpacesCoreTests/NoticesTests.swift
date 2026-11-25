@@ -122,7 +122,7 @@ final class NoticesTests: XCTestCase {
 
     func testAnotherAlertInTheSamePlaceIsNotATick() {
         func alert(_ body: String, _ title: String = "T", subrole: String = "AXNotificationCenterAlert") -> NoticeNode { banner("App", title, body, subrole: subrole) }
-        for (a, b) in [("Your code is 987654", "Your code is 123456"), ("in 9 minutes", "in 10 minutes"), ("9 of 10 done", "8 of 10 done"), ("in 5 minutes", "for 4 minutes")] {
+        for (a, b) in [("Your code is 987654", "Your code is 123456"), ("in 9 minutes", "in 10 minutes"), ("Room 5 in 9 minutes", "Room 4 in 8 minutes"), ("in 5 minutes", "for 4 minutes")] {
             var s = NoticeShelf()
             s.take(screen(alert(a)), at: now)
             XCTAssertEqual(s.take(screen(alert(b)), at: now).count, 1, b)
@@ -134,6 +134,43 @@ final class NoticesTests: XCTestCase {
         s = NoticeShelf()
         s.take(screen(alert("in 5 minutes", subrole: "AXNotificationCenterAlertStack")), at: now)
         XCTAssertEqual(s.take(screen(alert("in 4 minutes", subrole: "AXNotificationCenterAlertStack")), at: now).count, 1, "a stack shows another one")
+    }
+
+    func testACountdownTicksBesideAnotherNumberAndWithoutSpaces() {
+        func alert(_ body: String) -> NoticeNode { banner("Calendar", "Class", body, subrole: "AXNotificationCenterAlert") }
+        for (a, b) in [("3:00 PM, in 10 minutes", "3:00 PM, in 9 minutes"), ("10\u{5206}\u{5F8C}", "9\u{5206}\u{5F8C}")] {
+            var s = NoticeShelf()
+            s.take(screen(alert(a)), at: now)
+            XCTAssertEqual(s.take(screen(alert(b)), at: now).count, 0, b)
+        }
+        // Notification Center opened on it, where it sits elsewhere, and closed two ticks later.
+        var s = NoticeShelf()
+        s.take(screen(alert("in 5 minutes")), at: now)
+        for body in ["in 4 minutes", "in 3 minutes"] {
+            s.take(NoticeReader.Reading(centerOpen: true, banners: screen(banner("Mail", "Ann", "Hi"), alert(body)).banners), at: now)
+        }
+        XCTAssertEqual(s.take(screen(alert("in 2 minutes")), at: now).count, 0)
+        XCTAssertEqual(s.notices.map(\.banner.body), ["in 2 minutes"])
+    }
+
+    func testEveryBannerToPressComesFromOneRead() {
+        let one = banner("Mail", "Ann", "Hi"), two = banner("Mail", "Bea", "Yo"), clock = banner("Calendar", "Class", "in 9 minutes", subrole: "AXNotificationCenterAlert")
+        let r = screen(two, one, clock, one)
+        let old = screen(banner("Calendar", "Class", "in 10 minutes", subrole: "AXNotificationCenterAlert")).banners
+        func paths(_ wanted: [NoticeBanner], copies: Bool) -> [[Int]] { NoticeReader.find(wanted, in: r, copies: copies).map(\.path) }
+        let (a, b, c, d) = (r.banners[0].path, r.banners[1].path, r.banners[2].path, r.banners[3].path)
+        XCTAssertEqual(paths(screen(one, two).banners, copies: true), [b, d, a])
+        XCTAssertEqual(paths(screen(one, one).banners, copies: true), [b, d], "each once")
+        XCTAssertEqual(paths(screen(one).banners, copies: false), [b])
+        XCTAssertEqual(paths(old, copies: false), [c], "a countdown that ticked since")
+        XCTAssertEqual(paths(screen(banner("Mail", "Cal", "Hi")).banners, copies: true), [])
+    }
+
+    func testAStackSaysSoAndAnUnnamedAppIsNotQuieted() {
+        XCTAssertEqual(screen(banner("Mail", "Ann", "Hi", subrole: "AXNotificationCenterBannerStack"), banner("Mail", "Bea", "Yo")).banners.map(\.stack), [true, false])
+        var s = NoticeShelf()
+        s.take(screen(banner("", "Ann", "Hi"), banner("Mail", "Bea", "Yo")), at: now)
+        XCTAssertEqual(Set(s.notices.map { "\($0.key) \($0.named)" }), ["Notification false", "Mail true"])
     }
 
     func testADismissedCountdownStaysGoneAsItTicks() {

@@ -30,6 +30,8 @@ final class NoticeWatcher: ObservableObject {
         shelf.quiet = Set(quiet.keys)
     }
 
+    deinit { detach() }
+
     /// For a rendered still.
     func sample(_ shelf: NoticeShelf, quiet: [String: String] = [:]) { self.shelf = shelf; self.quiet = quiet }
 
@@ -76,7 +78,7 @@ final class NoticeWatcher: ObservableObject {
                 self.attaching = false
                 // One it didn't answer is asked again in 15 seconds, with the rest.
                 guard self.check != nil, answers.contains(.success), !answers.contains(.cannotComplete) else { return }
-                CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(made), .defaultMode)
+                CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(made), .commonModes)
                 self.observer = made
                 self.pid = now
                 self.read()
@@ -85,7 +87,7 @@ final class NoticeWatcher: ObservableObject {
     }
 
     private func detach() {
-        if let observer { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode) }
+        if let observer { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes) }
         observer = nil
         pid = 0
     }
@@ -142,10 +144,9 @@ final class NoticeWatcher: ObservableObject {
     private func closeQuiet() {
         let up = shelf.notices.filter { $0.live && quiet[$0.key] != nil }
         closing = closing.filter { c in up.contains { $0.id == c.key } }
-        for n in up where closing[n.id, default: 0] < 3 {
-            closing[n.id, default: 0] += 1
-            close(n)
-        }
+        let ask = up.filter { closing[$0.id, default: 0] < 3 }
+        for n in ask { closing[n.id, default: 0] += 1 }
+        close(ask)
     }
 
     // MARK: What you do with them
@@ -155,47 +156,61 @@ final class NoticeWatcher: ObservableObject {
     /// Opens a notification: pressed while its banner is up, so its app shows what it is about; its app after that.
     func open(_ n: NoticeShelf.Notice) {
         shelf.dismiss(n.id)
-        guard n.live else { return openApp(n) }
-        press(n) { _ in kAXPressAction } missed: { [weak self] in self?.openApp(n) }
+        // A stack only spreads out when pressed.
+        guard n.live, !n.banner.stack else { return openApp(n) }
+        press([n.banner]) { _ in kAXPressAction } missed: { [weak self] in self?.openApp(n) }
     }
 
     func dismiss(_ n: NoticeShelf.Notice) {
-        close(n)
+        close([n])
         shelf.dismiss(n.id)
     }
 
     func clear(_ group: NoticeShelf.Group) {
-        group.notices.forEach(close)
+        close(group.notices)
         shelf.clear(key: group.id)
     }
 
     func clearAll() {
-        shelf.notices.forEach(close)
+        close(shelf.notices)
         shelf.clearAll()
     }
 
     /// Quiet: Polycarp closes the app's banners as they come and files them without counting them.
     func setQuiet(_ key: String, name: String, _ on: Bool) {
+        guard !on || key != NoticeReader.unknown else { return }
         quiet[key] = on ? name : nil
         shelf.quiet = Set(quiet.keys)
         UserDefaults.standard.set(quiet, forKey: Self.quietKey)
         if on { closeQuiet() }
     }
 
-    private func close(_ n: NoticeShelf.Notice) {
-        if n.live, n.banner.close != nil { press(n) { $0.close } }
+    private func close(_ notices: [NoticeShelf.Notice]) {
+        let up = notices.filter { $0.live && $0.banner.close != nil }.map(\.banner)
+        if !up.isEmpty { press(up, copies: true) { $0.close } }
     }
 
-    /// Presses the very element whose words still say the same, found by a read of its own: banners move up as others go.
-    /// `missed` is called on main when there is none. The press itself waits elsewhere: an app can hold it.
-    private func press(_ n: NoticeShelf.Notice, _ action: @escaping (NoticeBanner) -> String?, missed: @escaping () -> Void = {}) {
+    /// Presses the very elements whose words still say the same, all found by one read of its own before the first press:
+    /// banners move up as others go. A read Notification Center didn't answer in full is tried again. `missed` is called on
+    /// main when there is nothing to press. The presses themselves wait elsewhere: an app can hold one.
+    private func press(_ banners: [NoticeBanner], copies: Bool = false, tries: Int = 3, _ action: @escaping (NoticeBanner) -> String?, missed: @escaping () -> Void = {}) {
         let from = pid
         guard from > 0 else { return missed() }
-        queue.async {
-            guard let tree = NoticeTree.read(from), let b = tree.reading.banners.first(where: { $0.matches(n.banner) }),
-                  let name = action(b), let el = tree.elements[b.path] else { return DispatchQueue.main.async(execute: missed) }
+        queue.async { [weak self] in
+            guard let tree = NoticeTree.read(from) else {
+                return DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    guard tries > 1, let self else { return missed() }
+                    self.press(banners, copies: copies, tries: tries - 1, action, missed: missed)
+                }
+            }
+            let presses = NoticeReader.find(banners, in: tree.reading, copies: copies).compactMap { b in
+                action(b).flatMap { name in tree.elements[b.path].map { ($0, name) } }
+            }
+            guard !presses.isEmpty else { return DispatchQueue.main.async(execute: missed) }
             DispatchQueue.global(qos: .userInitiated).async {
-                if AXUIElementPerformAction(el, name as CFString) == .invalidUIElement { DispatchQueue.main.async(execute: missed) }
+                let answers = presses.map { AXUIElementPerformAction($0, $1 as CFString) }
+                // One that timed out was still asked.
+                if !answers.contains(where: { $0 == .success || $0 == .cannotComplete }) { DispatchQueue.main.async(execute: missed) }
             }
         }
     }
@@ -211,17 +226,21 @@ final class NoticeWatcher: ObservableObject {
     }
 
     /// Notification Center itself, as a click on macOS's clock opens it.
-    func openCenter() {
+    func openCenter(tries: Int = 3) {
         let apps = ["com.apple.controlcenter", "com.apple.systemuiserver"].flatMap { id in
             NSRunningApplication.runningApplications(withBundleIdentifier: id).map { (pid: $0.processIdentifier, bundle: id) }
         }
-        queue.async {
+        queue.async { [weak self] in
+            var missed = false
             for app in apps {
                 var ask = BarReader.Quiet()
+                defer { missed = missed || ask.missed }
                 let items = BarReader.status(of: app.pid, bundle: app.bundle, ask: &ask)
                 guard let clock = items.first(where: { ($0.item.identifier ?? "").hasSuffix("menuextra.clock") }) else { continue }
                 return BarReader.press(clock.element)
             }
+            guard missed, tries > 1 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.openCenter(tries: tries - 1) }
         }
     }
 
@@ -273,7 +292,7 @@ private struct NoticeTree {
         guard let data = FileManager.default.contents(atPath: path),
               let table = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
               let language = Bundle.preferredLocalizations(from: Array(table.keys), forPreferences: Locale.preferredLanguages).first,
-              let name = (table[language] as? [String: String])?["Close"] else { return ["Close"] }
+              let name = (table[language] as? [String: Any])?["Close"] as? String else { return ["Close"] }
         return ["Close", name]
     }()
 }
