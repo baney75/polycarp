@@ -1918,7 +1918,7 @@ struct LauncherView: View {
                 Text(item.title).font(Chrome.font(14, .semibold)).foregroundStyle(Chrome.wash()).lineLimit(1)
                 if !item.subtitle.isEmpty {
                     Text(item.subtitle).font(Chrome.font(11.5))
-                        .foregroundStyle(item.state == .failed ? Color.orange : Chrome.muted).lineLimit(1)
+                        .foregroundStyle(item.state == .failed ? Chrome.role(selected ? Chrome.look.roleOnSelection("urgent") : "urgent") : Chrome.muted).lineLimit(1)
                 }
             }
             Spacer(minLength: 8)
@@ -1929,7 +1929,7 @@ struct LauncherView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 46)
-        .background(Chrome.shape(.launcherRow).fill(selected ? Chrome.accent.opacity(0.22) : .clear))
+        .background(Chrome.shape(.launcherRow).fill(selected ? Chrome.lit(Chrome.accent, 0.22) : .clear))
         .overlay(alignment: .leading) {
             if selected { Chrome.pill().fill(Chrome.accent).frame(width: 3, height: 22).offset(x: 1) }
         }

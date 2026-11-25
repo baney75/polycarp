@@ -122,6 +122,17 @@ final class PolycarpThemeTests: XCTestCase {
         }
     }
 
+    /// A selected row is filled with `selection`, so a status color that doesn't read there gives way to the foreground.
+    func testASelectedRowsTextReadsOnTheSelection() throws {
+        func look(_ urgent: String) throws -> Look {
+            try parse(edited { var d = $0["dark"] as! [String: Any]; d["urgent"] = urgent; d["selection"] = "#3d4634"; $0["dark"] = d }).get().look(systemDark: true)
+        }
+        XCTAssertEqual(try look("#e58a76").roleOnSelection("urgent"), "foreground", "3.87 to 1")
+        XCTAssertEqual(try look("#ffd9d0").roleOnSelection("urgent"), "urgent")
+        XCTAssertEqual(Look(theme: .baneyspaces, palette: AppearanceSettings.autoPalette, accent: AccentPreset.red.rgb).roleOnSelection("urgent"), "urgent",
+                       "the BaneySpaces theme fills a row with a wash, not with the selection")
+    }
+
     func testShapeBlurFillAndDensity() throws {
         func theme(_ change: (inout [String: Any]) -> Void) throws -> PolycarpTheme { try parse(edited(PolycarpFixtures.still_water, change)).get() }
         let blurry = try theme { var sh = $0["shape"] as! [String: Any]; sh["blur"] = 12; sh["shadow"] = 0.3; sh["density"] = "compact"; $0["shape"] = sh }
