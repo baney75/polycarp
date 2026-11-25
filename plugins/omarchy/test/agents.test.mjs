@@ -6,17 +6,21 @@ const A = load('Agents.js')
 
 const commands = (m) => {
   const yes = { 'claude': 'claude', '/home/u/.local/bin/claude --resume': 'claude', 'node /x/@openai/codex/bin/codex.js': 'codex',
-    'node --no-warnings /x/@anthropic-ai/claude-code/cli.js': 'claude', 'bun /x/node_modules/opencode/bin/run.ts': 'opencode', 'codex fix the exec path': 'codex', 'claude what does -p do': 'claude' }
+    'node --no-warnings /x/@anthropic-ai/claude-code/cli.js': 'claude', 'bun /x/node_modules/opencode/bin/run.ts': 'opencode', 'codex fix the exec path': 'codex', 'claude what does -p do': 'claude',
+    'uv run aider': 'aider', 'uvx aider': 'aider', 'claude --resume abc': 'claude', 'aider -v': 'aider' }
   for (const [args, agent] of Object.entries(yes)) assert.equal(m.agentOf(args, 'pts/1'), agent, args)
-  for (const args of ['claude -p hello', 'codex exec ls', 'codex app-server', 'claude mcp serve', 'vim claude', 'bash claude', 'node server.js', '/opt/claude/helper'])
+  for (const args of ['claude -p hello', 'codex exec ls', 'codex app-server', 'claude mcp serve', 'vim claude', 'bash claude', 'node server.js', '/opt/claude/helper',
+    'claude --model sonnet -p hi', 'codex --full-auto exec ls', 'node /home/u/code/pi/server.js', 'python3 /home/u/code/hermes/manage.py runserver'])
     assert.equal(m.agentOf(args, 'pts/1'), '', args)
   assert.equal(m.agentOf('claude', '?'), '')
 }
 test('an agent is a known command with a terminal, not one run by a script', (t) => {
   commands(A)
   control(t, 'Agents.js', 'if (!tty || tty === "?") return ""', '', commands)
-  control(t, 'Agents.js', 'return HEADLESS.test(head) ? "" : runs', 'return runs', commands)
-  control(t, 'Agents.js', 'words.slice(at + 1, at + 3)', 'words.slice(at + 1)', commands)
+  control(t, 'Agents.js', 'if (HEADLESS_FLAGS.test(word) || HEADLESS_COMMANDS.test(word)) return true', '', commands)
+  control(t, 'Agents.js', 'if (i > 0 && /^--[^=]+$/.test(words[i - 1])) continue', '', commands)
+  control(t, 'Agents.js', 'if (!/(node_modules|site-packages)\\//.test(path)) return ""', '', commands)
+  control(t, 'Agents.js', 'if (runs === "uv" && words[at] === "run")', 'if (false)', commands)
 })
 
 const titles = (m) => {
@@ -25,6 +29,7 @@ const titles = (m) => {
   assert.equal(m.titleState('✦ Working (app)'), 'working')
   assert.equal(m.titleState('✋ Action Required (app)'), 'blocked')
   assert.equal(m.titleState('~/code'), '')
+  assert.equal(m.titleState('✳ Remove action required banner'), 'ready')
   assert.equal(m.plainTitle('⠐ Fix the bar'), 'Fix the bar')
   assert.equal(m.plainTitle('~/code'), '~/code')
   assert.equal(m.titleAgent('✳ On the server'), 'claude')
@@ -33,6 +38,7 @@ const titles = (m) => {
 test('a title says what its agent is doing', (t) => {
   titles(A)
   control(t, 'Agents.js', '[\\u2800-\\u28ff◐◓◑◒]/.test(t)', '[x]/.test(t)', titles)
+  control(t, 'Agents.js', '/^\\s*(✋|⚠|\\[ ?!|Action Required)/i.test(t)', '/action required/i.test(t)', titles)
 })
 
 const ps = (...rows) => '#ps\n' + rows.join('\n') + '\n'
@@ -60,18 +66,31 @@ test('with one process for every window, the title picks the window', (t) => {
 })
 
 const multiplexers = (m) => {
-  const scan = m.parse(ps('5 1 ? tmux: server', '6 5 pts/9 bash', '7 6 pts/9 claude', '10 1 ? foot', '11 10 pts/1 tmux attach', '30 1 ? foot --app-id=org.omarchy.herdr') +
+  const scan = m.parse(ps('5 1 ? tmux: server', '6 5 pts/9 bash', '7 6 pts/9 claude', '10 1 ? foot', '11 10 pts/1 tmux attach', '30 1 ? foot --app-id=org.omarchy.herdr', '40 1 ? herdr server', '41 40 pts/5 codex') +
     '#panes\n6\t%3\twork\t✳ Notes\n#clients\n11\twork\n#herdr\n' + JSON.stringify({ result: { agents: [
       { pane_id: 'w1:p2', agent: 'codex', agent_status: 'done', title: 'Tests', cwd: '/srv', terminal_id: 't' },
       { pane_id: 'w1:p3', agent: 'pi', agent_status: 'working' }] } }) + '\n')
   const rows = m.find(scan, [win('a', 10), win('h', 30, 'herdr', 'org.omarchy.herdr')])
   assert.deepEqual(plain(rows.map((r) => [r.agent, r.address, r.pane || r.herdr, r.raw, r.paneTitle])),
-    [['claude', 'a', '%3', '', '✳ Notes'], ['codex', 'h', 'w1:p2', 'blocked', 'Tests'], ['pi', 'h', 'w1:p3', 'working', '']])
+    [['claude', 'a', '%3', '', '✳ Notes'], ['codex', 'h', 'w1:p2', 'ready', 'Tests'], ['pi', 'h', 'w1:p3', 'working', '']])
 }
 test('tmux panes go to the window of their client, and herdr says for itself', (t) => {
   multiplexers(A)
   control(t, 'Agents.js', 'if (scan.clients[c].session !== pane.session) continue', 'continue', multiplexers)
   control(t, 'Agents.js', 'h.agent_status === "done"', 'false', multiplexers)
+  control(t, 'Agents.js', 'if (scan.herdr.length > 0 && under(p, byPid, /^herdr$/)) continue', '', multiplexers)
+})
+
+const sharing = (m) => {
+  const remote = m.find(m.parse(ps('10 1 ? foot', '11 10 pts/1 codex')), [win('a', 10, '✳ Remote'), win('b', 10, '⠐ Building')])
+  assert.deepEqual(plain(remote.map((r) => [r.agent, r.address])), [['codex', 'b'], ['claude', 'a']])
+  const folder = m.find(m.parse(ps('10 1 ? foot', '11 10 pts/1 codex') + '#cwd\n11\t/home/u/app\n'), [win('a', 10, 'Mapping tool'), win('b', 10, 'app')])
+  assert.deepEqual(plain(folder.map((r) => [r.agent, r.address])), [['codex', 'b']])
+}
+test('a window that one process shares goes to the agent its mark or folder names', (t) => {
+  sharing(A)
+  control(t, 'Agents.js', '(marked === "" || marked === rows[i].agent)', 'true', sharing)
+  control(t, 'Agents.js', '/[\\s\\/:~]/.test(before) && /[\\s\\/]/.test(after)', 'true', sharing)
 })
 
 test('an agent over ssh counts by its title, once', () => {
@@ -155,6 +174,30 @@ test('the scan finds this process under its parent', { skip: process.platform !=
     writeFileSync(broken, readFileSync(script, 'utf8').replace('pid=,ppid=', 'ppid=,pid='))
     assert.throws(() => mine(broken))
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// tmux on Linux, in a server of its own: panes come through whole without a UTF-8 locale, and a pane that set no title
+// (tmux then shows the host's name) comes through untitled.
+test('the scan reads tmux panes whole, without a locale', { skip: process.platform !== 'linux' && 'the scan reads /proc' }, async (t) => {
+  const { execFileSync } = await import('node:child_process')
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { root } = await import('./load.mjs')
+  try { execFileSync('tmux', ['-V']) } catch { t.skip('no tmux'); return }
+  const dir = mkdtempSync(join(tmpdir(), 'tmux-'))
+  const env = { PATH: process.env.PATH, HOME: dir, TMUX_TMPDIR: dir }
+  const run = (...args) => execFileSync('tmux', ['-f', '/dev/null', ...args], { env, encoding: 'utf8' })
+  try {
+    run('new-session', '-d', '-s', 'work', 'sleep 60')
+    run('split-window', '-t', 'work', 'sleep 60')
+    run('select-pane', '-t', 'work.0', '-T', '✳ Notes')
+    const scan = A.parse(execFileSync('bash', [join(root, 'scripts', 'agents-scan')], { env, encoding: 'utf8' }))
+    assert.deepEqual(plain(scan.panes.map((p) => [p.session, p.title])).sort(), [['work', ''], ['work', '✳ Notes']])
+  } finally {
+    try { run('kill-server') } catch {}
     rmSync(dir, { recursive: true, force: true })
   }
 })

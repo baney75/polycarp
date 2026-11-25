@@ -10,9 +10,10 @@ var NAMES = {
   openclaw: "OpenClaw", qwen: "Qwen Code", kimi: "Kimi", amp: "Amp", droid: "Droid", aider: "Aider", goose: "Goose",
   devin: "Devin", kilo: "Kilo", agy: "Antigravity"
 }
-var RUNTIMES = /^(node|bun|deno|python3?(\.\d+)?|uv|npx|bunx)$/
-// Runs with nobody at the keyboard: a server, or one question in a script.
-var HEADLESS = /\s(-p|--print|exec|e|mcp|mcp-server|app-server|serve|server|acp|update|login|logout|--version|-v|--help)(\s|$)/
+var RUNTIMES = /^(node|bun|deno|python3?(\.\d+)?|uv|uvx|npx|bunx)$/
+// Runs with nobody at the keyboard: one question in a script, or a server or other errand instead of a session.
+var HEADLESS_FLAGS = /^(-p|--print|--version|--help)$/
+var HEADLESS_COMMANDS = /^(exec|e|mcp|mcp-server|app-server|serve|server|acp|update|login|logout)$/
 
 function name(agent) {
   return NAMES[agent] || agent
@@ -31,12 +32,24 @@ function agentOf(args, tty) {
   if (RUNTIMES.test(runs)) {
     at = 1
     while (at < words.length && words[at].charAt(0) === "-") at++
+    if (runs === "uv" && words[at] === "run") for (at++; at < words.length && words[at].charAt(0) === "-"; at++) {}
     runs = scriptName(words[at] || "")
   }
   if (!NAMES.hasOwnProperty(runs)) return ""
-  // The first words only: what was asked may hold any of these.
-  var head = " " + words.slice(at + 1, at + 3).join(" ") + " "
-  return HEADLESS.test(head) ? "" : runs
+  return headless(words.slice(at + 1)) ? "" : runs
+}
+
+// The options, and the first word that is not one: what was asked comes after it and may hold any of these words.
+// A word after a long option is taken as its value, unless it is a command such as exec.
+function headless(words) {
+  for (var i = 0; i < words.length; i++) {
+    var word = words[i]
+    if (HEADLESS_FLAGS.test(word) || HEADLESS_COMMANDS.test(word)) return true
+    if (word.charAt(0) === "-") continue
+    if (i > 0 && /^--[^=]+$/.test(words[i - 1])) continue
+    return false
+  }
+  return false
 }
 
 // .../@openai/codex/bin/codex.js is codex, .../@anthropic-ai/claude-code/cli.js is claude.
@@ -45,6 +58,8 @@ function scriptName(path) {
   if (NAMES.hasOwnProperty(file)) return file
   if (/claude-code\//.test(path)) return "claude"
   if (/gemini-cli\//.test(path)) return "gemini"
+  // A folder named for an agent counts only inside a package install, not in somebody's own code.
+  if (!/(node_modules|site-packages)\//.test(path)) return ""
   var parts = String(path).split("/")
   for (var i = parts.length - 2; i >= 0 && i >= parts.length - 4; i--) if (NAMES.hasOwnProperty(parts[i])) return parts[i]
   return ""
@@ -90,7 +105,7 @@ function parse(text) {
 // What an agent's title says it is doing: "working", "blocked", "ready", or "" when it says nothing.
 function titleState(title) {
   var t = String(title || "")
-  if (/^\s*(✋|⚠|\[ ?!|Action Required)/.test(t) || /action required/i.test(t)) return "blocked"
+  if (/^\s*(✋|⚠|\[ ?!|Action Required)/i.test(t)) return "blocked"
   // A braille spinner, or one of the marks Gemini and Claude Code spin through.
   if (/^\s*[\u2800-\u28ff◐◓◑◒]/.test(t) || /^\s*✦\s/.test(t)) return "working"
   if (/^\s*(✳|◇)\s/.test(t)) return "ready"
@@ -123,6 +138,8 @@ function find(scan, windows) {
     var p = scan.processes[i]
     var agent = agentOf(p.args, p.tty)
     if (!agent || underAgent(p, byPid)) continue
+    // herdr lists its own agents below, with their state.
+    if (scan.herdr.length > 0 && under(p, byPid, /^herdr$/)) continue
     var pane = null
     var pids = []
     for (var q = p, n = 0; q && n < 40; q = byPid[q.ppid], n++) {
@@ -139,6 +156,7 @@ function find(scan, windows) {
     }
     rows.push({
       id: "p" + p.pid, agent: agent, cwd: scan.cwds[p.pid] || "", pane: pane ? pane.pane : "", herdr: "", titled: false,
+      // As fresh as the last scan: with tmux's set-titles off, a pane's new title raises no window event.
       paneTitle: pane ? pane.title : "", pids: pids, address: "", raw: ""
     })
   }
@@ -149,7 +167,7 @@ function find(scan, windows) {
     rows.push({
       id: "h" + h.pane_id, agent: String(h.agent || h.display_agent || "agent"), cwd: h.foreground_cwd || h.cwd || "", pane: "", herdr: h.pane_id, titled: false,
       paneTitle: h.title || h.name || h.terminal_title_stripped || "", pids: [], address: herdrWindow(windows),
-      raw: h.agent_status === "working" ? "working" : h.agent_status === "blocked" || h.agent_status === "done" ? "blocked" : h.agent_status === "idle" ? "ready" : ""
+      raw: h.agent_status === "working" ? "working" : h.agent_status === "blocked" ? "blocked" : h.agent_status === "done" || h.agent_status === "idle" ? "ready" : ""
     })
   }
 
@@ -169,6 +187,25 @@ function underAgent(p, byPid) {
   return false
 }
 
+// Has an ancestor whose command is the program named.
+function under(p, byPid, program) {
+  for (var q = byPid[p.ppid], n = 0; q && n < 40; q = byPid[q.ppid], n++) if (program.test(base(String(q.args).split(/\s+/)[0]))) return true
+  return false
+}
+
+// The folder's name as a whole word of the title: "app" is not in "Mapping", and "u" is not in "u@box".
+function names(title, cwd) {
+  var folder = base(cwd)
+  if (!folder) return false
+  var at = title.indexOf(folder)
+  for (; at >= 0; at = title.indexOf(folder, at + 1)) {
+    var before = at === 0 ? " " : title.charAt(at - 1)
+    var after = title.charAt(at + folder.length) || " "
+    if (/[\s\/:~]/.test(before) && /[\s\/]/.test(after)) return true
+  }
+  return false
+}
+
 function herdrWindow(windows) {
   for (var i = 0; i < windows.length; i++) if (/herdr/i.test(windows[i].app)) return windows[i].address
   return ""
@@ -183,8 +220,10 @@ function place(rows, windows) {
       var up = rows[i].pids.indexOf(windows[j].pid)
       if (up < 0) continue
       var score = -up
-      if (titleState(windows[j].title)) score += 200
-      if (rows[i].cwd && windows[j].title.indexOf(base(rows[i].cwd)) >= 0) score += 100
+      // A mark counts for the agent it belongs to: a remote Claude's window is not a local Codex's.
+      var marked = titleAgent(windows[j].title)
+      if (titleState(windows[j].title) && (marked === "" || marked === rows[i].agent)) score += 200
+      if (names(windows[j].title, rows[i].cwd)) score += 100
       pairs.push({ row: rows[i], window: windows[j], score: score, at: pairs.length })
     }
   }

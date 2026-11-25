@@ -9,10 +9,11 @@ echo "#cwd"
 mapfile -t dirs < <(awk '$3 != "?" { print "/proc/" $1 "/cwd" }' <<<"$ps")
 if ((${#dirs[@]})); then find "${dirs[@]}" -maxdepth 0 -printf '%h\t%l\n' 2>/dev/null | sed 's|^/proc/||'; fi
 if grep -qE '(^|/| )tmux' <<<"$ps" && command -v tmux >/dev/null; then
+  # -u: without a UTF-8 locale tmux writes tabs and marks as "_". A pane whose program set no title has the host's name.
   echo "#panes"
-  tmux list-panes -a -F $'#{pane_pid}\t#{pane_id}\t#{session_name}\t#{pane_title}' 2>/dev/null
+  tmux -u list-panes -a -F $'#{pane_pid}\t#{pane_id}\t#{session_name}\t#{?#{==:#{pane_title},#{host}},,#{pane_title}}' 2>/dev/null
   echo "#clients"
-  tmux list-clients -F $'#{client_pid}\t#{client_session}' 2>/dev/null
+  tmux -u list-clients -F $'#{client_pid}\t#{client_session}' 2>/dev/null
 fi
 if grep -qE '(^|/| )herdr' <<<"$ps" && command -v herdr >/dev/null; then
   echo "#herdr"
