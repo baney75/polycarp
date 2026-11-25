@@ -237,7 +237,7 @@
     const site = adapterFor(hostname, doc);
     let compiled = null;
     let sheet = null, styleEl = null;
-    let barSheet = null, barMode = "pc-light";
+    let barSheet = null, barMode = "pc-light", unwatch = null;
     const hidden = new Map();        // item -> { target, bar, also }
     const revealed = new WeakSet();  // items the person chose to see
     const revealedKeys = new Set();  // and their permalinks, for when the site builds the same post again
@@ -273,11 +273,18 @@
       return win.matchMedia("(prefers-color-scheme: dark)").matches;
     }
     function ensureBarSheet() {
-      if (barSheet) return;
-      barSheet = new win.CSSStyleSheet();
-      barSheet.replaceSync(BAR_CSS);
-      barMode = pageIsDark() ? "pc-dark" : "pc-light";
-      if (P.themeCss) P.themeCss().then((css) => { try { barSheet.replaceSync(P.shadowThemeCss(css) + BAR_CSS); } catch (e) {} });
+      if (!barSheet) {
+        barSheet = new win.CSSStyleSheet();
+        barSheet.replaceSync(BAR_CSS);
+      }
+      if (unwatch || !P.watchTheme) return;
+      const own = pageIsDark() ? "dark" : "light";
+      barMode = "pc-" + own;
+      unwatch = P.watchTheme((css) => {
+        try { barSheet.replaceSync(P.shadowThemeCss(css) + BAR_CSS); } catch (e) { return; }
+        barMode = P.themeClass(css, own);
+        for (const h of hidden.values()) h.box.className = "bar " + barMode;
+      });
     }
 
     function makeBar(item, reason) {
@@ -308,6 +315,7 @@
       if (had && had.reason === reason) return;
       if (had) unhide(item);
       let bar = makeBar(item, reason);
+      const box = bar.shadowRoot.querySelector(".bar");
       if (target.tagName === "TR") { // a table row takes a cell, across every column
         const td = doc.createElement("td");
         td.colSpan = 99;
@@ -318,7 +326,7 @@
       target.insertBefore(bar, target.firstChild);
       target.classList.add(FILTERED);
       for (const a of also) a.classList.add(ALSO);
-      hidden.set(item, { target, bar, also, reason });
+      hidden.set(item, { target, bar, box, also, reason });
     }
     function unhide(item) {
       const h = hidden.get(item);
@@ -420,6 +428,8 @@
     }
     function stop() {
       running = false;
+      if (unwatch) unwatch();
+      unwatch = null;
       disconnect();
       showAll();
       clearCss();

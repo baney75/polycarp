@@ -415,6 +415,8 @@
     const m = /:root:not\(\[data-theme-mode\]\)\s*\{\s*color-scheme:\s*(light|dark)\s*;/.exec(String(css || ""));
     return m ? m[1] : "";
   }
+  // The class for a panel on a web page: the mode the theme pins, else `own`, what the panel would pick by itself.
+  const themeClass = (css, own) => "pc-" + (themeMode(css) || own);
   const matches = (settings) => !(isObj(settings) && settings.matchTheme === false);
 
   // The rules for the theme in force from storage, "" when there is none or the person switched it off.
@@ -505,6 +507,6 @@
     merge, clone, migrate, applyProfile, paused, getSettings, setSettings, patchSettings,
     hostOf, activeFor, levelFor, getStats, recordReading, summary, dayKey, prevDay,
     countWords, fontFaceCss, STATS_DEFAULTS, STREAK_MIN,
-    THEME_FILE, THEME_KEY, soundTheme, themeRules, themeMode, themeCss, watchTheme, keepTheme, askTheme, themeVars, shadowThemeCss, ms
+    THEME_FILE, THEME_KEY, soundTheme, themeRules, themeMode, themeClass, themeCss, watchTheme, keepTheme, askTheme, themeVars, shadowThemeCss, ms
   });
 })();

@@ -19,7 +19,7 @@
   const BACK = 20; // times a page may take the box away before it stays away
   const LATE = 4000; // a page that is still loading this long after it was read is told anyway
   const key = (e) => e.id + E.fingerprint(e);
-  let host = null, box = null, shown = "", turn = 0, back = 0, edits = [], ready = document.readyState === "complete", timer = 0, wait = 500, forced = null;
+  let host = null, box = null, shown = "", turn = 0, back = 0, edits = [], ready = document.readyState === "complete", timer = 0, wait = 500, forced = null, unwatch = null;
   const said = new Set(); // what this page has announced: it stays up when what it changed goes away
   const watcher = new MutationObserver(() => { if (host && !(host.parentNode === document.documentElement && box.matches(":popover-open")) && back++ < BACK) attach(); });
   // An edit that has changed nothing yet may, when the page does: each look that finds nothing waits longer for the next.
@@ -27,6 +27,8 @@
 
   function hide() {
     watcher.disconnect();
+    if (unwatch) unwatch();
+    unwatch = null;
     if (host) host.remove();
     if (forced) forced.style.removeProperty("display");
     host = box = forced = null;
@@ -66,6 +68,7 @@
     const root = host.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
     style.textContent = P.shadowThemeCss(theme) + CSS;
+    unwatch = P.watchTheme((css) => { style.textContent = P.shadowThemeCss(css) + CSS; });
     const el = (tag, text) => { const n = document.createElement(tag); if (text) n.textContent = text; return n; };
     box = el("div");
     box.className = "box";

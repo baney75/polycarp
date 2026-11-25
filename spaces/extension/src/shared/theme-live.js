@@ -24,7 +24,22 @@
     try { rules = localStorage.getItem(KEPT) || ""; } catch (e) { /* no storage: the theme comes a moment later */ }
     return /^:root \{/.test(rules) && !/[<\\]|url\(|@import|image\(/i.test(rules) ? rules : "";
   }
-  draw(kept());
+  // The Reader's surface goes on <html> as reader.js will put it: the one the person picked, kept as "night dark", or
+  // the mode the theme pins, or the system's.
+  function surface(rules) {
+    const root = document.documentElement;
+    if (!root.dataset.rt) return;
+    let own = "";
+    try { own = localStorage.getItem("polycarp.reader.surface") || ""; } catch (e) { /* reader.js sets it a moment later */ }
+    const picked = /^([a-z]+) (light|dark)$/.exec(own);
+    const pin = /:root:not\(\[data-theme-mode\]\) \{\s*color-scheme: (light|dark)/.exec(rules);
+    const mode = picked ? picked[2] : pin ? pin[1] : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    root.dataset.themeMode = mode;
+    root.dataset.rt = picked ? picked[1] : mode === "dark" ? "night" : "paper";
+  }
+  const first = kept();
+  draw(first);
+  surface(first);
 
   function start() {
     const P = globalThis.Polycarp;

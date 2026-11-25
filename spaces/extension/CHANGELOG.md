@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- What Polycarp draws on web pages (the page finder, the editor, the notice about an agent's edits, notes, feed filter lines, messages, strong text) takes the theme and restyles when it changes, with no reload. Under a theme of one mode those panels take that mode. The Reader on Auto does too; a paper or night surface picked by hand stays, and is there from the first paint.
 - Settings has "Match Polycarp's theme", on at first. Off, Polycarp's pages and panels go back to their own look at once. A backup holds the choice and not the theme.
 - Every page of the extension (new tab, popup, Reader, Library, Search, Settings, Review, Welcome) follows the Polycarp theme in force, colors, faces, radii and durations, and changes with it while it is open: the app is asked on opening, on coming back to a page and every 30 seconds. The last theme is drawn before the page's first paint. A theme that is always light or always dark pins that mode, and the badge takes the theme's accent. With no app, no theme or the connection not granted, everything looks as it did.
 - The stylesheet for a Polycarp theme is built here from the theme's values: only the names in `theme.css`, each checked by its kind, with all 13 colors of both modes or none of them. Nothing the app sends reaches a page as CSS text.
