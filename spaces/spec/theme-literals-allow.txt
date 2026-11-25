@@ -6,3 +6,4 @@
 Sources/BaneySpaces/Render.swift | Color(white: 0.3 | render mode only: the gray behind a sample HUD or launcher in a screenshot, never drawn in the app
 Sources/BaneySpaces/SwatchCheck.swift | RGB(r: 1, g: 1, b: 1) | render check only (scripts/swatch-check.sh): a pixel it cannot read counts as white, the worst case for the dark-mode swatch check, never drawn in the app
 Sources/BaneySpacesCore/Surfaces.swift | .string("#2B2E26") | the JSON Schema's example of a paper color (surfaces schema), text an agent reads, never drawn
+Sources/BaneySpaces/Render.swift | Color(white: 0.2) | render mode only: the gray behind a sample agent notice in a screenshot, never drawn in the app
