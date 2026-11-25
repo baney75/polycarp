@@ -140,6 +140,24 @@ enum RunningApps {
         return set
     }
 
+    /// The workspaces each running app has windows on, by bundle path. `pids` gives a workspace's windows' apps. Paths come
+    /// from the last read of every app; only an app launched since then is asked. Main thread.
+    static func workspacesByPath(_ pids: (Int) -> [pid_t]) -> [String: [Int]] {
+        var out: [String: [Int]] = [:]
+        for n in Workspaces.range {
+            for pid in pids(n) {
+                guard let path = prepared?.facts[pid]?.path ?? NSRunningApplication(processIdentifier: pid)?.bundleURL?.path else { continue }
+                if out[path]?.contains(n) != true { out[path, default: []].append(n) }
+            }
+        }
+        return out
+    }
+
+    /// Each running app's pid by bundle path (the first copy's), as the last read of every app found them, whatever its age:
+    /// the launcher draws from it and reads again off the main thread (`prepare`), since walking every running app costs
+    /// it 7 to 25 ms. Empty before the first read. Main thread.
+    static var byPath: [String: pid_t] { prepared?.byPath ?? [:] }
+
     /// Which of `pids` are hidden (⌘H). Main thread.
     static func hidden(among pids: Set<pid_t>) -> Set<pid_t> {
         let facts = facts()
@@ -165,13 +183,19 @@ enum RunningApps {
         let name: String
         let bundleID: String?
         let launchedAt: Date?
+        let path: String?
+    }
+
+    private struct Read {
+        var facts: [pid_t: Facts] = [:]
+        var byPath: [String: pid_t] = [:]
     }
 
     /// Reading those for every running app (about 130) costs 25 to 30 ms: each `NSRunningApplication` fetches its
     /// state on first read, and name and launch date on every read. A read is used for `freshFor` seconds, and never
     /// after an app launched, quit, hid or unhid.
     static let freshFor: TimeInterval = 0.5
-    private static var prepared: (facts: [pid_t: Facts], at: TimeInterval, seed: Int)?
+    private static var prepared: (facts: [pid_t: Facts], byPath: [String: pid_t], at: TimeInterval, seed: Int)?
     /// Bumped by every launch, quit, hide and unhide: a read from before one is stale.
     private static var seed = 0
     private static var watchingFacts = false
@@ -198,11 +222,11 @@ enum RunningApps {
     private static func prepareNow(tries: Int) {
         let started = seed
         factsQueue.async {
-            let facts = readFacts()
+            let read = readFacts()
             DispatchQueue.main.async {
                 if seed != started, tries > 1 { return prepareNow(tries: tries - 1) }
                 preparing = false
-                prepared = (facts, ProcessInfo.processInfo.systemUptime, seed)
+                prepared = (read.facts, read.byPath, ProcessInfo.processInfo.systemUptime, seed)
                 let run = waiting
                 waiting = []
                 for w in run { w() }
@@ -221,18 +245,20 @@ enum RunningApps {
         watchFacts()
         let now = ProcessInfo.processInfo.systemUptime
         if let p = prepared, p.seed == seed, now - p.at < freshFor { return p.facts }
-        let facts = readFacts()
-        prepared = (facts, now, seed)
-        return facts
+        let read = readFacts()
+        prepared = (read.facts, read.byPath, now, seed)
+        return read.facts
     }
 
     /// NSRunningApplication's properties are safe to read from any thread (AppKit returns them atomically).
-    private static func readFacts() -> [pid_t: Facts] {
-        var out: [pid_t: Facts] = [:]
+    private static func readFacts() -> Read {
+        var out = Read()
         for a in NSWorkspace.shared.runningApplications {
-            out[a.processIdentifier] = Facts(pid: a.processIdentifier, regular: a.activationPolicy == .regular, terminated: a.isTerminated,
-                                             hidden: a.isHidden, name: a.localizedName ?? a.bundleIdentifier ?? "App",
-                                             bundleID: a.bundleIdentifier, launchedAt: a.launchDate)
+            let pid = a.processIdentifier, path = a.bundleURL?.path
+            out.facts[pid] = Facts(pid: pid, regular: a.activationPolicy == .regular, terminated: a.isTerminated,
+                                   hidden: a.isHidden, name: a.localizedName ?? a.bundleIdentifier ?? "App",
+                                   bundleID: a.bundleIdentifier, launchedAt: a.launchDate, path: path)
+            if let path, out.byPath[path] == nil { out.byPath[path] = pid }
         }
         return out
     }

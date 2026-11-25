@@ -167,15 +167,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.appsOn = { [weak self] n in self?.spaces.apps(on: n) ?? [] }
         a.workspacesByApp = { [weak self] in
             guard let self, self.started else { return [:] }
-            self.spaces.refresh()
-            var out: [String: [Int]] = [:]
-            for n in Workspaces.range {
-                for e in self.spaces.entries(on: n) {
-                    guard let path = NSRunningApplication(processIdentifier: e.pid)?.bundleURL?.path else { continue }
-                    if out[path]?.contains(n) != true { out[path, default: []].append(n) }
-                }
+            return RunningApps.workspacesByPath { n in self.spaces.entries(on: n).map(\.pid) }
+        }
+        a.lookAgain = { [weak self] done in
+            RunningApps.prepare {
+                if let self, self.started { self.spaces.refresh() }
+                done()
             }
-            return out
         }
         a.showOverview = { [weak self] in self?.viewer.open() }
         // The list waits for a scan from after the open that also asked the hidden apps, so a window just minimized or

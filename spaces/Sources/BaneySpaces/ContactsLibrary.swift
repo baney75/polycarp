@@ -42,9 +42,17 @@ final class ContactsLibrary {
 
     var state: PermissionState { Permissions.contactsState(CNContactStore.authorizationStatus(for: .contacts).rawValue) }
 
-    /// Reads macOS's answer (no prompt) and loads the people the first time it is yes. The launcher calls it each time
-    /// it opens, so a switch turned on in System Settings counts at once.
+    /// Numbers each look at macOS's answer, so one still being read never lands over a newer one. Main thread.
+    private var looks = 0
+    private let accessQueue = DispatchQueue(label: "polycarp.contacts.access", qos: .userInitiated)
+
+    /// Reads macOS's answer (no prompt) and loads the people the first time it is yes.
     func refreshAccess() {
+        looks += 1
+        apply(state)
+    }
+
+    private func apply(_ state: PermissionState) {
         var now = ContactsAccess(state, loaded: loaded)
         if now == .loading, retry.gaveUp { now = .failed }
         if now != provider.access { provider.access = now; onChange() }
@@ -61,10 +69,20 @@ final class ContactsLibrary {
         }
     }
 
-    /// The launcher opened: after reads that all failed, try once more from the start.
+    /// The launcher opened: a switch turned on in System Settings counts a moment later, and after reads that all failed,
+    /// try once more from the start. macOS takes about 30 ms to say whether access is on (measured 2026-11-25, most of an
+    /// open), so it is asked off the main thread and `onChange` redraws the rows if the answer is new.
     func launcherOpened() {
         if retry.gaveUp { retry.reset() }
-        refreshAccess()
+        looks += 1
+        let look = looks
+        accessQueue.async { [weak self] in
+            guard let state = self?.state else { return }
+            DispatchQueue.main.async {
+                guard let self, look == self.looks else { return }
+                self.apply(state)
+            }
+        }
     }
 
     /// Contacts changed: read again once it has been quiet for a second.
