@@ -132,7 +132,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 42] = [
+const TOOLS: [&str; 43] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -173,6 +173,7 @@ const TOOLS: [&str; 42] = [
     "filter_set",
     "filter_remove",
     "edits_list",
+    "edits_page",
     "edit_set",
     "edit_remove",
 ];
@@ -1191,6 +1192,9 @@ fn edit_tools_run_the_spaces_edits_command_and_take_every_field_an_edit_has() {
 
     s.tool("edits_list", json!({}));
     assert_eq!(stub_args(&sb), ["edits", "ls", "--json"]);
+    s.tool("edits_page", json!({}));
+    assert_eq!(stub_args(&sb), ["edits", "page", "--json"]);
+    assert_eq!(by("edits_page")["annotations"]["readOnlyHint"], true);
     s.tool("edit_remove", json!({"id": "quiet"}));
     assert_eq!(stub_args(&sb), ["edits", "rm", "quiet", "--json"]);
     assert_eq!(by("edits_list")["annotations"]["readOnlyHint"], true);
@@ -1207,6 +1211,7 @@ fn edit_tools_run_the_spaces_edits_command_and_take_every_field_an_edit_has() {
         ),
         ("edit_remove", json!({"id": 3})),
         ("edits_list", json!({"id": "a"})),
+        ("edits_page", json!({"url": "https://x.com"})),
     ] {
         fs::remove_file(sb.root.join("spaces/args")).unwrap_or_default();
         let r = s.tool(tool, args.clone());

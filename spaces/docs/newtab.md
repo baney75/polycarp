@@ -149,6 +149,13 @@ The page edits in `edits.json` (`polycarp-spaces edits`, [edits.md](edits.md)), 
 {"do":"hide","at":".promo"}],"css":""}]}`. No file is `{"ok":true,"edits":[]}`; a file that doesn't read or check is
 `{"ok":false,"error":...}` naming the field. The extension checks each one again by the same rules.
 
+### `{"op":"sharePage","page":{...}}`
+
+The page the person shared with their agents from the popup: `{"url":"https://...","title":"...","parts":[{"at":"main > h1",
+"is":"Heading","words":"...","count":3}],"edits":[{"id":"quiet-news","hits":[2,0]}]}`. It goes in `shared-page.json`
+beside `edits.json`, mode 0600, without the address's query and fragment, in place of the one before, and is removed an
+hour later; `"page":null` removes it now. `{"ok":true}`, or `{"ok":false,"error":...}` naming the field.
+
 ### Anything else
 
 An unknown `op` (the retired `name` and `go` included), a missing `op`, or a request that isn't a JSON object gets
