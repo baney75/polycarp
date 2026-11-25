@@ -86,7 +86,7 @@ final class TopBarTests: XCTestCase {
         let bar = Surfaces.defaults.bar
         XCTAssertEqual(bar.left, [.mark, .workspaces, .split, .appMenus])
         XCTAssertEqual(bar.center, [.clock])
-        XCTAssertEqual(bar.right, [.status])
+        XCTAssertEqual(bar.right, [.status, .split, .notifications])
         XCTAssertEqual(bar.height, 26)
         XCTAssertEqual(bar.clockFormat, .dayTwelveHour)
         XCTAssertTrue((bar.left + bar.center + bar.right).filter { $0 != .split }.allSatisfy(BarLayout.drawn))

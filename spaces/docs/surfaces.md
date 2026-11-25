@@ -141,12 +141,12 @@ for none, `from` `paper` or the place's own path). Error codes, beyond the surfa
 | `bar.style` | `"islands"` | `islands` (each group of modules floats in its own rounded island over the desktop; `"\|"` in a module list starts a new island; style them with `bar .island` in style.css), `solid` (the theme's background color), `glass` (blurred, see-through) or `hairline` (the desktop shows through, with a thin line under it). |
 | `bar.modules.left` | `["mark","workspaces","\|","app-menus"]` | Module ids, in order. `"\|"` starts a new island, as often as you like. |
 | `bar.modules.center` | `["clock"]` | Module ids, in order. |
-| `bar.modules.right` | `["status"]` | Module ids, in order. |
+| `bar.modules.right` | `["status","\|","notifications"]` | Module ids, in order. |
 | `bar.clockFormat` | `"day-12h"` | `day-12h` (Saturday 10:04 PM), `day-24h` (Saturday 22:04), `12h` (3:05) or `24h` (15:05). |
 | `bar.hourNames` | `true` | The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning). |
 
 Module ids: `mark`, `workspaces`, `app-menus`, `status`, `hour`, `clock`, `date`, `verse`,
-`battery`, `network`, and `custom:<name>` (lowercase letters, digits and hyphens, up to 32) for a module of your own.
+`battery`, `network`, `notifications`, and `custom:<name>` (lowercase letters, digits and hyphens, up to 32) for a module of your own.
 
 What each one draws:
 
@@ -162,6 +162,7 @@ What each one draws:
 | `network` | "Offline" when there is no connection; nothing when there is. |
 | `app-menus` | The front app's menus: the Apple logo, the app's name in bold, then File, Edit and the rest. Click one to open it, as from the macOS bar. Titles past the room are left out whole, from the end. |
 | `status` | The status items of macOS and your apps, in the macOS bar's order, in one row like Waybar's tray: Wi-Fi, the battery, Control Center and the like as symbols in the bar's text color, an app's own as its icon in its own colors. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark, and what macOS hid behind its "Show Hidden Menu Bar Items" button stays hidden. |
+| `notifications` | A bell, with how many notifications are new. Click it for the list, by app: open one, dismiss it, clear an app or all of them, keep an app quiet, or open Notification Center. |
 | `custom:<name>` | Kept in the file, not drawn yet. |
 
 **The look.** By default (`bar.style` islands) each group of modules floats in its own rounded island over the
@@ -171,7 +172,7 @@ island whose modules draw nothing (the battery on a desktop Mac, the network whi
 Omarchy's own look: one strip in the theme's background color. Either way the bar has one monospace face for all
 of it (the Polycarp theme's `type.mono` stack when one is in force, else SF Mono) at 12 points, the app's name in
 semibold and its menus regular, modules 14 points apart with no separators, and no color but the accent under the
-workspace you're on. By default the bar shows the mark, the numbers, the app's menus, the clock and the status row,
+workspace you're on. By default the bar shows the mark, the numbers, the app's menus, the clock, the status row and the bell,
 nothing else.
 
 **Saved module lists are not changed.** The defaults above (the clock in the middle, the status row at the right, no
@@ -185,6 +186,12 @@ and an `alarm` section are ignored as unknown keys. `surfaces set` refuses them.
 
 `app-menus` and `status` read through the Accessibility permission Polycarp already has; no pixels are copied, so
 they need no Screen Recording. A status item that macOS or its app doesn't show to Accessibility isn't drawn.
+
+**Notifications.** The list holds the banners macOS drew since the bar came up, at most 200, in memory only: nothing is
+written, logged or sent, and it is empty again when Polycarp quits. Opening one while its banner is up does what a
+click on the banner does; after that it brings its app forward. An app kept quiet has its banners closed as they come and filed
+without being counted (where macOS is in English, since its Close action is found by name). macOS draws no banner
+during a Focus, or for an app set to none, so those reach only Notification Center, which the list opens.
 
 **The macOS menu bar.** No app can remove it, so Polycarp's bar shows only where the macOS bar is hidden: System
 Settings > Menu Bar > "Automatically hide and show the menu bar" set to Always. While Polycarp's bar is up, Polycarp has the

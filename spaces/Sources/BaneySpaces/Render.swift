@@ -155,7 +155,26 @@ enum Render {
             topBar.current[id] = 2
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar.png", CGSize(width: 1512, height: 24)) else { return 1 }
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: (left: 656, right: 656)).background(Color(white: 0.35)), "topbar-notch.png", CGSize(width: 1512, height: 37)) else { return 1 }
+            topBar.notices = "3"
+            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar-notices.png", CGSize(width: 1512, height: 26)) else { return 1 }
         }
+
+        // The bell's list: two apps with one quiet, then nothing new.
+        let notices = NoticeWatcher()
+        var shelf = NoticeShelf()
+        for (app, bundle, title, subtitle, body) in [
+            ("Calendar", "com.apple.iCal", "Choir practice", "", "In 15 minutes"),
+            ("Mail", "com.apple.mail", "Anna Reed", "Saturday", "The hall is ours from nine, so bring the long table and the good coffee. I will have the keys and can let the others in if they come early."),
+            ("Mail", "com.apple.mail", "Library", "", "Two books are ready to pick up."),
+        ] {
+            let node = NoticeNode(subrole: "AXNotificationCenterBanner", label: app + ", " + title, stacking: "bundleIdentifier=" + bundle, children: [
+                NoticeNode(identifier: "title", text: title), NoticeNode(identifier: "subtitle", text: subtitle), NoticeNode(identifier: "body", text: body)])
+            shelf.take(NoticeReader.read([node]), at: topBar.now)
+        }
+        notices.sample(shelf, quiet: ["com.apple.Music": "Music"])
+        guard save(NoticeList(watcher: notices, room: 620) {}.padding(20), "notices.png", CGSize(width: 412, height: 0)) else { return 1 }
+        notices.sample(NoticeShelf())
+        guard save(NoticeList(watcher: notices, room: 620, trusted: true) {}.padding(20), "notices-empty.png", CGSize(width: 412, height: 0)) else { return 1 }
 
         // The switch HUD, landing on workspace 4.
         let hud = HUDModel()

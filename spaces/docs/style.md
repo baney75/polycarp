@@ -65,7 +65,7 @@ A warning (low contrast) still applies; `check` passes when there are only warni
 | `bar` | none | The top bar itself. |
 | `bar .left` `bar .center` `bar .right` | none | The bar's three regions; modules inherit text properties from their region. |
 | `bar .island` | none | One island of modules when bar.style is islands: its background, corners, line, shadow, padding and gap. Text inside takes its region's and module's styles. |
-| `bar .mark` `bar .workspaces` `bar .app-menus` `bar .status` `bar .hour` `bar .clock` `bar .date` `bar .verse` `bar .battery` `bar .network` | `:hover` | One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it. |
+| `bar .mark` `bar .workspaces` `bar .app-menus` `bar .status` `bar .hour` `bar .clock` `bar .date` `bar .verse` `bar .battery` `bar .network` `bar .notifications` | `:hover` | One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it. |
 | `bar .workspace` | `.current` `:hover` | One number in the workspaces module; .current is the workspace you're on, :hover the one under the pointer. |
 | `dock` | none | The Workspace Dock's bar. |
 | `dock .tile` | `.current` `:hover` | A workspace tile; .current is the workspace you're on, :hover the one under the pointer. |
