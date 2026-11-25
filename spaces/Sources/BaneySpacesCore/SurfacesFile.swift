@@ -193,9 +193,12 @@ public enum SurfacesOps {
         switch keys(path, allowUnknownIn: tree) {
         case .failure(let f): return .failure(f)
         case .success(let k):
-            let value = SurfaceField.defaultTree.merged(with: tree).at(k) ?? .null
+            // What the app reads: a retired value or group the file still holds isn't in force.
+            var gone: [SurfacesIssue] = []
+            let live = SurfaceCheck.retire(tree, warnings: &gone)
+            let value = SurfaceField.defaultTree.merged(with: live).at(k) ?? .null
             return .success(.object(["path": .string(k.isEmpty ? "$" : k.joined(separator: ".")), "value": value,
-                                     "set": .bool(!k.isEmpty && tree.at(k) != nil), "file": .string(display(file))]))
+                                     "set": .bool(!k.isEmpty && live.at(k) != nil), "file": .string(display(file))]))
         }
     }
 

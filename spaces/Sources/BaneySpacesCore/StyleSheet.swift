@@ -390,7 +390,7 @@ public struct StyleSheet: Equatable, Sendable {
     }
 
     /// The style for one surface (`part` nil), one region (`part` "left", "center" or "right") or one part (`part` a bar
-    /// module id or "tile", "label", "badge", "icon") in `states`, for dark or light mode, with `roles` (keys as
+    /// module id, "workspace" or "island") in `states`, for dark or light mode, with `roles` (keys as
     /// `StyleProperty.roles`: "accent", "on-accent") standing for the theme in force. A bar module inherits from its
     /// `region` when given. A part this build doesn't know is the empty style.
     public func computed(surface: StyleSurface, part: String? = nil, region: String? = nil, states: Set<StyleState> = [],

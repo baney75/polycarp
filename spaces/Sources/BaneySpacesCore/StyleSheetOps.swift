@@ -373,7 +373,7 @@ enum StyleEdit {
         rules(syntax, .selector(selector), media)
     }
 
-    /// What `unset` removes: the rules for a selector, or for a retired surface's selector by its text alone.
+    /// What `unset` removes: the rules for a selector, or a retired surface's selector by its text, from a list too.
     enum Target: CustomStringConvertible {
         case selector(StyleSelector)
         /// `StyleSyntax.plain` text, such as `dock .tile`.
@@ -392,7 +392,7 @@ enum StyleEdit {
             guard r.media == media else { return false }
             switch target {
             case .selector(let s): return r.selectors == [s]
-            case .retired(let t): return r.selectorText == t
+            case .retired(let t): return !r.items.isEmpty && r.items.allSatisfy { $0.key == StyleSyntax.key(t) }
             }
         }
     }
@@ -493,6 +493,17 @@ enum StyleEdit {
         var s = syntax.scalars
         var cuts: [Range<Int>] = []
         var removed = 0
+        // Out of a list, one at a time, with the comma on its right (its left when it is last): the rest of the rule stays.
+        if case .retired(let t) = target, property == nil {
+            let key = StyleSyntax.key(t)
+            for rule in syntax.rules where rule.media == media && rule.items.contains(where: { $0.key != key }) {
+                guard let k = rule.items.firstIndex(where: { $0.key == key }) else { continue }
+                let last = k == rule.items.count - 1
+                s.removeSubrange(last ? rule.items[k - 1].end..<rule.items[k].end : rule.items[k].start..<rule.items[k + 1].start)
+                let more = unset(string(s[...]), target: target, property: nil, media: media)
+                return (more.0, more.1 + 1)
+            }
+        }
         for rule in rules(syntax, target, media) {
             let ruleEnd = rule.close.map { $0 + 1 } ?? s.count
             guard let property else {

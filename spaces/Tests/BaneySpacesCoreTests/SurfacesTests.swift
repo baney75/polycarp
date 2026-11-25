@@ -500,6 +500,11 @@ final class SurfacesTests: XCTestCase {
         guard case .failure = SurfacesOps.set("menu.hidden", tree(#"["dock"]"#), file: file) else { return XCTFail("dock is no menu row now") }
         // Another set still works on the old file, and keeps it readable.
         XCTAssertNoThrow(try SurfacesOps.set("bar.height", .number(32), file: file).get())
+        // `get` gives what is in force, so it can be set back.
+        let order = try XCTUnwrap(SurfacesOps.get("menu.order", file: file).get().object?["value"])
+        XCTAssertEqual(order, tree(#"["quit","settings"]"#))
+        XCTAssertNoThrow(try SurfacesOps.set("menu.order", order, file: file).get())
+        XCTAssertNil(try SurfacesOps.get(nil, file: file).get().at(["value", "dock"]))
     }
 
     /// The day forms of the clock are taken and read back; the 12h and 24h forms still read as they did.

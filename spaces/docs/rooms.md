@@ -50,14 +50,15 @@ Finder. An empty Inbox shows no count. The section is there only while the root 
 
 ## Filing, and undo
 
-`Rooms.file(_:into:)` (`Sources/BaneySpacesCore/Rooms.swift`) moves files or folders into a room, the way `bes` moves:
+Nothing in the app files into a room since the Dock, whose tiles took drops, was removed. The code it used,
+`Rooms.file(_:into:)` (`Sources/BaneySpacesCore/Rooms.swift`), moves files or folders into a room, the way `bes` moves:
 
 - The name stays. A name the room already holds gets ` (2)`, ` (3)` and so on before its last extension, exactly as
   bes's `unique_path` does (`Paper.pdf` becomes `Paper (2).pdf`, a folder `Project` becomes `Project (2)`). Nothing is
   overwritten; nothing is deleted.
 - A room folder that isn't there is made, and recorded so an undo removes it again once it is empty.
 - What is already at the top of that room is left alone. A room itself, or the root, is never moved.
-- Every move is appended to `ROOT/.bes/journal.jsonl` in bes's own format, one batch per drop:
+- Every move is appended to `ROOT/.bes/journal.jsonl` in bes's own format, one batch a call:
 
   ```json
   {"id": "3f9c2a1b7e40", "batch": "a81d0c55e2f9", "ts": "2026-11-22T21:04:05-06:00", "op": "move", "from": "/Users/you/Downloads/Paper.pdf", "to": "3 Know/Paper.pdf", "rule": "polycarp:know", "made_dirs": []}
@@ -66,7 +67,7 @@ Finder. An empty Inbox shows no count. The section is there only while the root 
   Paths inside the root are relative to it and paths outside it are absolute, so a drive keeps a working journal
   wherever it mounts. If the journal can't be written, nothing moves.
 
-So `bes undo ~/BES` reverses the last drop, and `bes undo ~/BES --last N` the last N moves, Polycarp's and bes's alike.
+So `bes undo ~/BES` reverses the last batch, and `bes undo ~/BES --last N` the last N moves, Polycarp's and bes's alike.
 `RoomsTests.testBesUndoReversesAPolycarpDrop` runs the real `bes undo` against a temp root to prove it; point it at a
 bes checkout with `BES_REPO` (it looks in `~/Projects/baney-extended-system` otherwise, and is skipped without one).
 

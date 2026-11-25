@@ -195,6 +195,8 @@ struct StyleRawRule: Sendable {
     /// The selector as written, lowercased with each run of space made one (`StyleSyntax.plain`): how `style unset`
     /// finds a rule for a retired surface (`dock .tile`), which has no `StyleSelector`.
     var selectorText = ""
+    /// Each selector of the list, as `StyleSyntax.key` text, with its scalar offsets.
+    var items: [(key: String, start: Int, end: Int)] = []
 }
 
 struct StyleRawMedia: Sendable {
@@ -312,11 +314,15 @@ struct StyleSyntax {
         let end = close(of: j, limit: limit)
         if end == nil { problem(tokens[j], "the block opened here is never closed: a `}` is missing") }
         let selectors = selectorList(i, j)
+        let items = tokens[i..<j].split { $0.kind == .comma }.compactMap { part -> (key: String, start: Int, end: Int)? in
+            guard let a = part.firstIndex(where: { !$0.isSpace }), let b = part.lastIndex(where: { !$0.isSpace }) else { return nil }
+            return (Self.key(text(a, b + 1)), tokens[a].start, tokens[b].end)
+        }
         let declarations = declarationList(j + 1, end ?? limit)
         rules.append(StyleRawRule(selectors: selectors, media: media, nested: media != nil, declarations: declarations,
                                   line: tokens[i].line, column: tokens[i].column,
                                   start: tokens[i].start, open: tokens[j].start, close: end.map { tokens[$0].start },
-                                  selectorText: Self.plain(text(i, j))))
+                                  selectorText: Self.plain(text(i, j)), items: items))
         return end.map { $0 + 1 } ?? limit
     }
 
@@ -421,7 +427,7 @@ struct StyleSyntax {
                 ok = false
             }
         }
-        if ok, out.count > 1, out.contains(where: \.isRoot) {
+        if ok, parts.count > 1, out.contains(where: \.isRoot) {
             problem(tokens[a], "`:root` must be alone in its rule; the rule is dropped")
             return nil
         }
@@ -525,6 +531,17 @@ struct StyleSyntax {
     /// Selector text compared as written: lowercased, each run of space made one.
     static func plain(_ text: String) -> String {
         text.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    /// `plain` text with the states after a part in one order: `dock .tile.current:hover` is `dock .tile:hover.current`.
+    static func key(_ text: String) -> String {
+        plain(text).split(separator: " ").map { word in
+            var pieces: [String] = []
+            for c in word {
+                if c == "." || c == ":" || pieces.isEmpty { pieces.append(String(c)) } else { pieces[pieces.count - 1].append(c) }
+            }
+            return pieces[0] + pieces.dropFirst().sorted().joined()
+        }.joined(separator: " ")
     }
 
     /// One selector on its own, as `style set` takes it: the canonical selector or why not.

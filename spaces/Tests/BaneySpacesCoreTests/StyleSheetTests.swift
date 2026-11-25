@@ -693,6 +693,18 @@ final class StyleSheetTests: XCTestCase {
         let (_, p) = StyleSheet.parse(try String(contentsOfFile: file, encoding: .utf8))
         XCTAssertTrue(p.isEmpty, "\(p)")
         XCTAssertEqual(try StyleOps.unset("dock .tile", nil, file: file).get().object?["removed"], .number(0))
+
+        // From a list, whatever its place and the order of its states; what is live stays.
+        try """
+        dock .label, bar .date, dock .label { color: white }
+        dock .tile:hover.current, dock .label { gap: 2px }
+        :root, dock { --accent: red }
+        """.write(toFile: file, atomically: true, encoding: .utf8)
+        XCTAssertTrue(StyleSheet.parse(try String(contentsOfFile: file, encoding: .utf8)).problems.contains { $0.message.contains("`:root` must be alone") })
+        XCTAssertEqual(try StyleOps.unset("dock .label", nil, file: file).get().object?["removed"], .number(3))
+        XCTAssertEqual(try StyleOps.unset("dock .tile.current:hover", nil, file: file).get().object?["removed"], .number(1))
+        XCTAssertEqual(try StyleOps.unset("dock", nil, file: file).get().object?["removed"], .number(1))
+        XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), "bar .date { color: white }\n:root { --accent: red }")
     }
 
     // MARK: The docs and the starter sheet can't drift from the table
