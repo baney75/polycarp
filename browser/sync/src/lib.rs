@@ -3,4 +3,5 @@
 pub mod hlc;
 pub mod policy;
 pub mod record;
+pub mod seal;
 pub mod secret;
