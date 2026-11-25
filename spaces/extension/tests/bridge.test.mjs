@@ -8,11 +8,11 @@ const B = globalThis.PolycarpBridge;
 const event = () => { const fns = new Set(); return { addListener: (f) => fns.add(f), fire: (...a) => [...fns].map((f) => f(...a)) }; };
 const tab = (id, title, more = {}) => ({ id, windowId: 1, title, url: `https://site${id}.example/`, incognito: false, active: false, groupId: -1, ...more });
 
-function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [], downloads = [], marks = [], fails = '' } = {}) {
+function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [], downloads = [], marks = [], windows = [], fails = '' } = {}) {
   const ports = [], timers = [], did = [];
   const granted = new Set(perms);
   const chrome = {
-    runtime: { lastError: null, connectNative: (name) => {
+    runtime: { lastError: null, getURL: (p) => 'chrome-extension://x' + p, connectNative: (name) => {
       const port = { name, sent: [], onMessage: event(), onDisconnect: event(), disconnect() { port.off = true; }, postMessage: (m) => port.sent.push(structuredClone(m)) };
       ports.push(port);
       if (fails) queueMicrotask(() => { chrome.runtime.lastError = { message: fails }; port.onDisconnect.fire(); chrome.runtime.lastError = null; });
@@ -21,9 +21,11 @@ function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [
     permissions: { contains: async ({ permissions }) => permissions.every((p) => granted.has(p)) },
     storage: { local: { get: async (k) => ({ [k]: set }) } },
     tabs: { query: async (q) => tabs.filter((t) => q.windowId === undefined || t.windowId === q.windowId), get: async (id) => { const t = tabs.find((x) => x.id === id); if (!t) throw new Error('no tab'); return t; },
+      create: async (o) => { did.push(['newTab', o]); return { id: 400 }; },
       update: async (id, o) => { did.push(['tab', id, o]); return tabs.find((t) => t.id === id); },
       onCreated: event(), onUpdated: event(), onAttached: event(), onReplaced: event(), onRemoved: event(), onActivated: event() },
-    windows: { update: async (id, o) => did.push(['window', id, o]) },
+    search: { query: async (o) => did.push(['search', o]) },
+    windows: { getAll: async () => windows, create: async (o) => { did.push(['newWindow', o]); return { id: 50, tabs: [{ id: 500 }] }; }, update: async (id, o) => did.push(['window', id, o]) },
     bookmarks: { getTree: async () => marks, onCreated: event(), onRemoved: event(), onChanged: event(), onMoved: event() },
     history: { search: async () => history, onVisited: event(), onVisitRemoved: event() },
     downloads: { show: (id) => did.push(['show', id]), search: async (q) => (q.id === undefined ? downloads : downloads.filter((d) => d.id === q.id)), onCreated: event(), onChanged: event(), onErased: event() },
@@ -220,4 +222,41 @@ test('a list read while the app went away is not sent', async () => {
   give(x.tabs);
   await x.settle();
   assert.deepEqual(x.sent('browser.rows'), []);
+});
+
+test('a tab or a search opens in a window that is not private, the one named, or a new one', async () => {
+  const windows = [{ id: 9, incognito: true, focused: true }, { id: 1, incognito: false, focused: false }, { id: 2, incognito: false, focused: false }];
+  const x = browser({ windows });
+  await x.open(['tabs']);
+  const ask = async (m) => { x.did.length = 0; x.port().onMessage.fire({ op: 'browser.open', ...m }); await x.settle(); return structuredClone(x.did); };
+  assert.deepEqual(await ask({ url: 'https://a.example/' }), [['newTab', { windowId: 1, active: true, url: 'https://a.example/' }], ['window', 1, { focused: true }]]);
+  assert.deepEqual(await ask({ window: 2, text: ' cats ' }), [['newTab', { windowId: 2, active: true }], ['window', 2, { focused: true }], ['search', { text: 'cats', tabId: 400 }]]);
+  assert.deepEqual(await ask({ window: 'new' }), [['newWindow', { focused: true }]]);
+  assert.deepEqual(await ask({ window: 9 }), [], 'a private window is none of its business');
+  assert.deepEqual(await ask({ url: 'javascript:alert(1)' }), []);
+  windows[2].focused = true;
+  assert.equal((await ask({}))[0][1].windowId, 2);
+  windows.splice(1);
+  assert.deepEqual(await ask({ text: 'cats' }), [['newWindow', { focused: true }], ['search', { text: 'cats', tabId: 500 }]], 'only a private window is open');
+});
+
+test("a site's icon is the browser's own copy, and only once something is sent", async () => {
+  const x = browser({ tabs: [tab(1, 'One')] });
+  const asked = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (u) => { asked.push(u); return { ok: true, arrayBuffer: async () => new Uint8Array(asked.length > 1 ? 60000 : 3).fill(7).buffer }; };
+  try {
+    await x.b.start();
+    const ask = async (url) => { x.port().onMessage.fire({ op: 'browser.icon', url }); await x.settle(); };
+    await ask('https://a.example/');
+    assert.deepEqual(asked, [], 'the app has asked for nothing yet');
+    x.port().onMessage.fire({ op: 'browser.want', sources: ['tabs'] });
+    await x.settle();
+    await ask('https://a.example/?q=1&r=2');
+    await ask('file:///etc/hosts');
+    assert.deepEqual(asked, ['chrome-extension://x/_favicon/?size=32&pageUrl=https%3A%2F%2Fa.example%2F%3Fq%3D1%26r%3D2']);
+    assert.deepEqual(x.sent('browser.icon'), [{ op: 'browser.icon', url: 'https://a.example/?q=1&r=2', png: 'BwcH' }]);
+    await ask('https://b.example/');
+    assert.equal(x.sent('browser.icon').length, 1, 'a big one is left');
+  } finally { globalThis.fetch = real; }
 });

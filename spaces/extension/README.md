@@ -67,6 +67,7 @@ node tests/store.spec.mjs        # the Chrome Web Store copy: no key, no new tab
 node tests/sites.spec.mjs        # YouTube, X, Audible and feed fixtures, finder and pause
 node tests/filters.spec.mjs      # feed filters on X, YouTube, Reddit and Mastodon fixtures
 node tests/filters-sync.spec.mjs # filters from the Polycarp app through a fake native host, and Settings
+node tests/bridge.spec.mjs       # the line to the Polycarp app, through a fake native host
 node tests/theme-live.spec.mjs   # the person's Polycarp theme on every page, through a fake native host
 node tests/sources.spec.mjs      # Search sources against saved fixtures
 node tests/nas.spec.mjs          # NAS against a local WebDAV fake

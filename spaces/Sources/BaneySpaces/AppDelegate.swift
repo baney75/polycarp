@@ -203,6 +203,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.sessionItems = { [weak self] q in self?.session.launcherItems(q) ?? [] }
         a.browserHits = { BrowserHub.shared.book.search($0) }
         a.openBrowser = { [weak self] in self?.openBrowser($0) }
+        a.siteIcon = { BrowserHub.shared.icon($0) }
+        a.searcher = { BrowserHub.shared.searcher(main: SessionController.mainBrowser()) }
+        a.searchIn = { BrowserHub.shared.search($0, in: $1) }
         a.browserTab = { [weak self] q in self?.session.browserTabItem(q) }
         a.willShow = { [weak self] in
             guard let self else { return }

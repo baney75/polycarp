@@ -11,6 +11,7 @@ final class BrowserHub {
     let book = BrowserBook(allowed: BrowserListing.sources(off: UserDefaults.standard.stringArray(forKey: offKey) ?? []))
     private let server = BrowserServer()
     private var links: [BrowserPeer: BrowserServer.Link] = [:]
+    private var icons = BrowserIconBook<NSImage>()
     /// What is open changed; said at most ten times a second.
     var onChange: () -> Void = {}
     private var saying = false
@@ -26,11 +27,16 @@ final class BrowserHub {
             self.book.take(m, from: link.peer)
             self.changed()
         }
+        server.icon = { [weak self] i, link in
+            guard let self, self.links[link.peer] != nil, let image = NSImage(data: i.png) else { return }
+            if self.icons.take(image, for: i.url) { self.changed() }
+        }
         server.gone = { [weak self] link in
             // A profile's line that came back before the old one was let go keeps its place.
             guard let self, self.links[link.peer] === link else { return }
             self.links[link.peer] = nil
             self.book.forget(link.peer)
+            if self.links.isEmpty { self.icons.clear() }
             self.changed()
         }
         server.start()
@@ -41,6 +47,7 @@ final class BrowserHub {
         server.stop()
         for peer in links.keys { book.forget(peer) }
         links = [:]
+        icons.clear()
         changed()
     }
 
@@ -65,9 +72,21 @@ final class BrowserHub {
         if on { now.insert(s) } else { now.remove(s) }
         UserDefaults.standard.set(BrowserSource.allCases.filter { !now.contains($0) }.map(\.rawValue), forKey: Self.offKey)
         book.allow(now)
+        icons.clear()
         links.values.forEach(want)
         changed()
     }
+
+    /// A row's site's icon, as its browser has it. Asked for the first time it is wanted; `onChange` follows.
+    func icon(_ hit: BrowserHit) -> NSImage? {
+        let (image, ask) = icons.icon(hit.row.url)
+        if let ask { links[hit.peer]?.send(["op": "browser.icon", "url": ask]) }
+        return image
+    }
+
+    /// Searches with a browser's own engine, in a new tab there: the main browser if it is here, else the first that is.
+    func searcher(main: String?) -> BrowserPeer? { links.keys.sorted { ($0.bundleID != main ? 1 : 0, $0) < ($1.bundleID != main ? 1 : 0, $1) }.first }
+    func search(_ text: String, in peer: BrowserPeer) { links[peer]?.send(["op": "browser.open", "text": text]) }
 
     /// Asks the row's browser for what it can only do itself. False when that browser is gone.
     @discardableResult

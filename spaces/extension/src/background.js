@@ -5,6 +5,7 @@ try { importScripts("shared/library.js"); } catch (e) { /* library optional at l
 try { importScripts("shared/backup.js", "shared/nas.js"); } catch (e) { /* NAS optional at load */ }
 try { importScripts("shared/filters.js"); } catch (e) { /* feed filters optional at load */ }
 try { importScripts("shared/edits.js"); } catch (e) { /* page edits optional at load */ }
+try { importScripts("shared/bridge.js"); } catch (e) { /* the line to the app optional at load */ }
 
 const P = globalThis.Polycarp;
 const READER = "src/reader/reader.html";
@@ -522,6 +523,22 @@ chrome.alarms.get(FILTERS_ALARM).then((a) => { if (!a) chrome.alarms.create(FILT
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === FILTERS_ALARM) refreshAppFilters(); });
 chrome.runtime.onStartup.addListener(() => refreshAppFilters());
 chrome.runtime.onInstalled.addListener(() => refreshAppFilters());
+// ---------- The line to the Polycarp app (src/shared/bridge.js) ----------
+// Open while the worker lives (the open port keeps it alive), and looked for again with the filters' 30 second alarm.
+const bridge = globalThis.PolycarpBridge ? globalThis.PolycarpBridge.make(chrome) : null;
+if (bridge) {
+  bridge.listenTabs();
+  bridge.start();
+  chrome.runtime.onStartup.addListener(() => bridge.again());
+  chrome.alarms.onAlarm.addListener((a) => { if (a.name === FILTERS_ALARM) bridge.start(); });
+  chrome.storage.onChanged.addListener((c, area) => { if (area === "local" && c[globalThis.PolycarpBridge.KEY]) bridge.refresh(); });
+  const granted = () => bridge.again().then(() => bridge.refresh());
+  if (chrome.permissions && chrome.permissions.onAdded) {
+    chrome.permissions.onAdded.addListener(granted);
+    chrome.permissions.onRemoved.addListener(granted);
+  }
+}
+
 if (chrome.permissions && chrome.permissions.onAdded) {
   chrome.permissions.onAdded.addListener(() => refreshAppFilters());
   chrome.permissions.onRemoved.addListener(() => refreshAppFilters());

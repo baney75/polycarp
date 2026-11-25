@@ -27,3 +27,6 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
 - **R-B7 Limits.** At most 5,000 tabs, 20,000 bookmarks, 50,000 visited pages and 500 downloads are kept from one browser
   profile. A tab's use is 25 and a bookmark's 10; a visited page's is its visits, up to 30, and 20 for today, 12 for this
   week or 5 for this month.
+- **R-B8 Site icons.** A site's icon is the browser's own copy, asked for the first time a row shows it, once a site: a PNG of
+  at most 64 KB. One nobody asked for is dropped. The newest 400 sites' are held, in memory, until the last browser goes or a
+  switch changes.

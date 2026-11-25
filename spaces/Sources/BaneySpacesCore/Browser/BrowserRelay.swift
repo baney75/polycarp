@@ -128,6 +128,7 @@ public final class BrowserServer {
 
     public var joined: (Link) -> Void = { _ in }
     public var message: (BrowserMessage, Link) -> Void = { _, _ in }
+    public var icon: (BrowserIcon, Link) -> Void = { _, _ in }
     public var gone: (Link) -> Void = { _ in }
 
     private let path: String
@@ -213,7 +214,10 @@ public final class BrowserServer {
         var lines = BrowserRelay.Lines()
         while let got = lines.read(fd) {
             // Checked here, off the main thread; only what stands goes over.
-            for m in got.compactMap({ BrowserMessage($0) }) { DispatchQueue.main.async { self.message(m, link) } }
+            for line in got {
+                if let m = BrowserMessage(line) { DispatchQueue.main.async { self.message(m, link) } }
+                else if let i = BrowserIcon(line) { DispatchQueue.main.async { self.icon(i, link) } }
+            }
         }
         link.end()
         DispatchQueue.main.async {

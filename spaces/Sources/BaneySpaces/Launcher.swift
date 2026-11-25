@@ -223,6 +223,10 @@ struct LauncherActions {
     /// What the browsers running the Polycarp extension have that answers a query (`BrowserBook`), and going there.
     var browserHits: (String) -> [BrowserHit] = { _ in [] }
     var openBrowser: (BrowserHit) -> Void = { _ in }
+    var siteIcon: (BrowserHit) -> NSImage? = { _ in nil }
+    /// The browser that can search with its own engine, and doing it.
+    var searcher: () -> BrowserPeer? = { nil }
+    var searchIn: (String, BrowserPeer) -> Void = { _, _ in }
     /// The launcher is opening: read every app's tabs and splits again, since the session engine
     /// reads background tabs only now and then (`Sweep`). They arrive through `rowsChanged`.
     var willShow: () -> Void = {}
@@ -693,6 +697,14 @@ final class LauncherModel: ObservableObject {
                 out += fileItems().prefix(5)
                 if site?.sure == false { out += siteItems(q) }
                 out += searchEverywhere(q).prefix(3)
+                if let peer = actions.searcher() {
+                    let name = Self.appName(peer.bundleID)
+                    out.append(LauncherItem(id: "browser-search", section: "Web", title: "Search in \(name) for “\(q)”", subtitle: "With the browser's own search engine",
+                                            icon: .file(SessionController.appPath(peer.bundleID)), run: { [weak self] in
+                                                self?.close()
+                                                self?.actions.searchIn(q, peer)
+                                            }))
+                }
                 out.append(LauncherItem(id: "find-install", section: "Install", title: "Install “\(q)”…",
                                         subtitle: "Search Homebrew and the App Store", icon: .symbol("arrow.down.circle"),
                                         badge: "⇥", run: { [weak self] in self?.enter(.install); self?.setQuery(q) }))
@@ -895,7 +907,8 @@ final class LauncherModel: ObservableObject {
     private func browserItems(_ hits: [BrowserHit], listed: Set<String>) -> [LauncherItem] {
         BrowserListing.rows(hits, listed: listed, app: Self.appName).map { r in
             LauncherItem(id: "page:" + r.hit.id, section: "Browser", title: r.title, subtitle: r.subtitle,
-                         icon: r.symbol.map { .symbol($0) } ?? .file(SessionController.appPath(r.hit.peer.bundleID)), badge: r.badge,
+                         icon: (r.hit.row.source == .downloads ? nil : actions.siteIcon(r.hit)).map { .image($0) }
+                             ?? r.symbol.map { .symbol($0) } ?? .file(SessionController.appPath(r.hit.peer.bundleID)), badge: r.badge,
                          run: { [weak self] in
                              self?.close()
                              self?.actions.openBrowser(r.hit)
