@@ -70,6 +70,65 @@ public final class StyleBook {
     // read from there: no row asks the cascade anything.
 
     public private(set) lazy var launcher = LauncherStyles(lookup)
+    public private(set) lazy var switcher = SwitcherStyles(lookup)
+}
+
+/// The ⌘Tab panel.
+public final class SwitcherStyles {
+    /// A tile and what it holds, selected or not.
+    public final class Item {
+        public let box, number, label, icon: ComputedStyle
+        /// The sheet marks this state itself (`ComputedStyle.marks`).
+        public let marked: Bool
+
+        init(_ l: StyleLookup, _ states: Set<StyleState>) {
+            func part(_ name: String) -> ComputedStyle { l.computed(surface: .switcher, part: name, states: states) }
+            box = part("item"); number = part("number"); label = part("label"); icon = part("icon")
+            marked = box.marks(over: l.computed(surface: .switcher, part: "item"))
+        }
+    }
+
+    public let panel, hint: ComputedStyle
+    /// No rule names the switcher.
+    public let plain: Bool
+    public let padding: StyleInsets
+    /// Between workspace tiles.
+    public let gap: Double
+    /// A workspace tile's height: what the sheet's larger text adds, in either state, so no tile moves with the selection.
+    public let tileHeight: Double
+    private let items: [Item]
+
+    init(_ l: StyleLookup) {
+        plain = !l.named.contains(.switcher)
+        panel = l.computed(surface: .switcher)
+        hint = l.computed(surface: .switcher, part: "hint")
+        padding = panel.padding ?? StyleInsets(side: SwitcherLayout.padding / 2)
+        gap = panel.gap ?? SwitcherLayout.spacing
+        let items = [Item(l, []), Item(l, [.selected])]
+        func more(_ part: KeyPath<Item, ComputedStyle>, over own: Double) -> Double {
+            max(0, (items.compactMap { $0[keyPath: part].fontSize }.max() ?? 0) - own) * 1.2
+        }
+        tileHeight = SwitcherLayout.tileHeight + more(\.number, over: 34) + more(\.label, over: 10)
+        self.items = items
+    }
+
+    public func item(selected: Bool) -> Item { items[selected ? 1 : 0] }
+
+    /// The panel for this many workspace tiles, with the sheet's padding, gap and text.
+    public func panelSize(tileCount: Int, maxWidth: Double) -> CGSize {
+        SwitcherLayout.panelSize(tileCount: tileCount, maxWidth: maxWidth, tileHeight: tileHeight, spacing: gap,
+                                 across: padding.left + padding.right, down: padding.top + padding.bottom)
+    }
+
+    /// The panel around these window cards: the grid holds the theme's padding, and the sheet's may be more or less.
+    public func panelSize(_ grid: WindowGrid) -> CGSize {
+        CGSize(width: grid.size.width - WindowGrid.padding + padding.left + padding.right,
+               height: grid.size.height - WindowGrid.padding + padding.top + padding.bottom)
+    }
+
+    public func columns(tileCount: Int, maxWidth: Double) -> Int {
+        SwitcherLayout.workspaceColumns(tileCount: tileCount, maxWidth: maxWidth, spacing: gap, padding: padding.left + padding.right)
+    }
 }
 
 /// The launcher, every part in every state.

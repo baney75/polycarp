@@ -70,7 +70,8 @@ enum Styled {
         if let ct = resolved(stack.named, w, pt) {
             font = Font(ct)
         } else {
-            font = .system(size: CGFloat(pt), weight: w.swiftUI, design: stack.design ?? (rounded ? .rounded : .default))
+            font = .system(size: CGFloat(pt), weight: w.swiftUI, // The rounded face has no italic.
+                           design: stack.design ?? (rounded && !italic ? .rounded : .default))
         }
         return italic ? font.italic() : font
     }
