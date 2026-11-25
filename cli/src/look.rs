@@ -351,6 +351,7 @@ pub(crate) fn op_save(c: &Ctx, name: &str, title: Option<&str>, force: bool) -> 
                 Some(s.map_err(|p| store::refused("a setting can't go in a look", &[p]))?);
             look.paper = Some(live.paper.clone());
             look.pictures = live.pictures.clone();
+            fits(&look, live)?;
             state::check(c, &look)?;
         }
         None => notes
@@ -359,6 +360,34 @@ pub(crate) fn op_save(c: &Ctx, name: &str, title: Option<&str>, force: bool) -> 
     // Checked as `find` checks it, so what is saved can be read back.
     look.theme.check(c)?;
     keep(c, &look, "saved", notes)
+}
+
+/// A look file is at most 32 MB, and pictures are most of what fills one: each is named with its size.
+fn fits(look: &Look, live: &Live) -> Result<(), ApiErr> {
+    let size = look.to_text().len();
+    if size <= format::MAX_BYTES {
+        return Ok(());
+    }
+    let mb = |n: usize| format!("{:.1} MB", n as f64 / (1024.0 * 1024.0));
+    let pictures: Vec<String> = (look.paper.iter().flatten())
+        .filter_map(|(place, wall)| match wall {
+            paper::Wall::Picture(h) => Some(format!(
+                "paper.{place}: {} is {}",
+                live.files
+                    .get(h)
+                    .map_or(h.clone(), |f| f.display().to_string()),
+                mb(live.pictures.get(h).map_or(0, |p| p.bytes.len()))
+            )),
+            paper::Wall::Value(_) => None,
+        })
+        .collect();
+    let what = format!(
+        "the look would be {}, over the 32 MB a look file may be, and its pictures fill most of it",
+        mb(size)
+    );
+    Err(store::refused(&what, &pictures).suggest(
+        "Pick a smaller picture, or a color or scene for some places. Pictures that come to about 23 MB fit.",
+    ))
 }
 
 /// Writes a look to the looks folder, read back first as anyone else would read it.
