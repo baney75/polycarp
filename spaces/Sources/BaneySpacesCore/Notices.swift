@@ -34,50 +34,59 @@ public enum NoticeReader {
                                 "AXNotificationCenterAlert", "AXNotificationCenterAlertStack"]
 
     public struct Reading: Equatable, Sendable {
-        /// Notification Center itself is open, with the history and the widgets: what it lists is not new.
+        /// Notification Center itself is open, with its history, or the tree was cut at a limit, where that can't be told:
+        /// either way what it lists is not new.
         public var centerOpen: Bool
         public var banners: [NoticeBanner]
     }
 
     /// Every banner and alert under Notification Center's windows, first to last. A banner's own children are its words,
-    /// so nothing under one is a second banner. A tree too deep or too large is read as far as the limits.
+    /// so nothing under one is a second banner. Its process also draws the desktop's widgets, in windows that hold no
+    /// banner: only a window with both, or with a header over its notifications, is Notification Center open.
     public static func read(_ windows: [NoticeNode]) -> Reading {
         var out: [NoticeBanner] = [], open = false, left = maxNodes
-        func walk(_ n: NoticeNode, _ path: [Int]) {
-            guard path.count <= maxDepth, left > 0 else { return }
-            left -= 1
-            if n.identifier.hasPrefix("widget") { open = true }
-            if subroles.contains(n.subrole) {
-                if let b = banner(n, path) { out.append(b) }
-                return
+        for (i, w) in windows.enumerated() {
+            let before = out.count
+            var marked = false
+            func walk(_ n: NoticeNode, _ path: [Int]) {
+                guard left > 0 else { return }
+                left -= 1
+                if n.identifier.hasPrefix("widget") || n.identifier == "header" { marked = true }
+                guard path.count <= maxDepth else { return }
+                if subroles.contains(n.subrole) {
+                    if let b = banner(n, path, &left) { out.append(b) }
+                    return
+                }
+                for (j, c) in n.children.enumerated() { walk(c, path + [j]) }
             }
-            for (i, c) in n.children.enumerated() { walk(c, path + [i]) }
+            walk(w, [i])
+            if marked, out.count > before { open = true }
         }
-        for (i, w) in windows.enumerated() { walk(w, [i]) }
-        return Reading(centerOpen: open, banners: out)
+        return Reading(centerOpen: open || left <= 0, banners: out)
     }
 
-    private static func banner(_ n: NoticeNode, _ path: [Int]) -> NoticeBanner? {
+    private static func banner(_ n: NoticeNode, _ path: [Int], _ left: inout Int) -> NoticeBanner? {
         var words: [String: String] = [:]
         func gather(_ e: NoticeNode, _ depth: Int) {
-            guard depth <= maxDepth else { return }
+            guard depth <= maxDepth, left > 0 else { return }
+            left -= 1
             if ["title", "subtitle", "body"].contains(e.identifier), words[e.identifier] == nil {
                 let t = clean(e.text.isEmpty ? e.label : e.text)
                 if !t.isEmpty { words[e.identifier] = t }
             }
             e.children.forEach { gather($0, depth + 1) }
         }
-        n.children.forEach { gather($0, 1) }
+        n.children.forEach { gather($0, path.count + 1) }
         let label = clean(n.label, most: maxText * 4)
         var title = words["title"] ?? "", body = words["body"] ?? "", app = ""
-        if !title.isEmpty, let r = label.range(of: ", " + title) {
-            app = String(label[..<r.lowerBound])
-        } else if title.isEmpty {
+        if let first = words["title"] ?? words["subtitle"] ?? words["body"] {
+            if let r = label.range(of: ", " + first) { app = String(label[..<r.lowerBound]) }
+        } else {
             // No named parts: the label is "App, Title, Body".
             let parts = label.components(separatedBy: ", ")
             app = parts.first ?? ""
             if parts.count > 1 { title = clean(parts[1]) }
-            if parts.count > 2, body.isEmpty { body = clean(parts[2...].joined(separator: ", ")) }
+            if parts.count > 2 { body = clean(parts[2...].joined(separator: ", ")) }
         }
         let bundle = bundle(n.stacking)
         app = clean(app, most: 80)
@@ -104,12 +113,14 @@ public enum NoticeReader {
     static func clean(_ s: String, most: Int = maxText) -> String {
         let turns: Set<Unicode.Scalar> = ["\u{200E}", "\u{200F}", "\u{061C}", "\u{202A}", "\u{202B}", "\u{202C}", "\u{202D}", "\u{202E}", "\u{2066}", "\u{2067}", "\u{2068}", "\u{2069}"]
         var text = String.UnicodeScalarView()
-        for u in s.unicodeScalars {
-            if text.count == most { break }
-            if CharacterSet.newlines.contains(u) || u == "\t" { text.append(" "); continue }
+        var kept = 0
+        for u in s.unicodeScalars.prefix(most * 4) {
+            if kept == most { break }
+            if CharacterSet.newlines.contains(u) || u == "\t" { text.append(" "); kept += 1; continue }
             // The joiners emoji and some scripts need are format characters, and stay.
             if turns.contains(u) || CharacterSet.controlCharacters.contains(u) && u != "\u{200D}" && u != "\u{200C}" { continue }
             text.append(u)
+            kept += 1
         }
         return String(text).trimmingCharacters(in: .whitespaces)
     }
@@ -139,22 +150,28 @@ public struct NoticeShelf: Equatable, Sendable {
     /// Apps whose banners Polycarp closes and files without counting, by `Notice.key`.
     public var quiet: Set<String> = []
     private var next = 1
+    /// What the last read saw, and how many of each: apart from `notices`, so clearing one doesn't make it new again.
+    private var onScreen: [[String]: Int] = [:]
 
     public init() {}
 
     /// Takes one read of the screen. Gives back the notices that just came, and leaves each gone banner on the shelf.
-    /// A notification sent again word for word moves to the top instead of being listed twice.
+    /// A notification sent again word for word moves to the top instead of being listed twice. One dismissed or cleared
+    /// here while its banner is still up stays gone, and what was up before Notification Center opened is not new after.
     @discardableResult
     public mutating func take(_ r: NoticeReader.Reading, at now: Date) -> [Notice] {
+        var up: [[String]: Int] = [:]
+        for b in r.banners { up[b.same, default: 0] += 1 }
+        for i in notices.indices { notices[i].live = false }
         if r.centerOpen {
-            for i in notices.indices { notices[i].live = false; notices[i].seen = true }
+            see()
+            onScreen.merge(up) { max($0, $1) }
             return []
         }
-        let before = notices.filter(\.live).map(\.banner.same)
-        for i in notices.indices { notices[i].live = false }
-        var came: [Notice] = []
-        for b in r.banners.reversed() {
-            if before.contains(b.same), let i = notices.firstIndex(where: { $0.banner.same == b.same }) {
+        var came: [Notice] = [], done: Set<[String]> = []
+        for b in r.banners.reversed() where done.insert(b.same).inserted {
+            if up[b.same, default: 0] <= onScreen[b.same, default: 0] {
+                guard let i = notices.firstIndex(where: { $0.banner.same == b.same }) else { continue }
                 notices[i].banner = b
                 notices[i].live = true
                 continue
@@ -165,6 +182,7 @@ public struct NoticeShelf: Equatable, Sendable {
             notices.insert(n, at: 0)
             came.append(n)
         }
+        onScreen = up
         if notices.count > Self.most { notices.removeLast(notices.count - Self.most) }
         return came
     }

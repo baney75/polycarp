@@ -41,12 +41,22 @@ final class NoticesTests: XCTestCase {
         XCTAssertEqual(NoticeReader.bundle("bundleIdentifier=com.a-b.c_d;rm"), "com.a-b.c_d")
     }
 
+    func testOnlyNamedPartsAreUsedWhenAnyIs() {
+        let b = screen(NoticeNode(subrole: "AXNotificationCenterBanner", label: "Chat, Lunch, at noon?",
+                                  children: [NoticeNode(identifier: "body", text: "Lunch, at noon?")])).banners[0]
+        XCTAssertEqual([b.app, b.title, b.body], ["Chat", "", "Lunch, at noon?"])
+    }
+
     func testAHugeTreeStopsAtTheLimits() {
         var deep = banner("A", "t", "b")
         for _ in 0...NoticeReader.maxDepth { deep = NoticeNode(children: [deep]) }
         XCTAssertEqual(NoticeReader.read([deep]).banners, [])
         let wide = NoticeNode(children: (0..<2_000).map { banner("A", "t\($0)", "b") })
-        XCTAssertLessThan(NoticeReader.read([wide]).banners.count, NoticeReader.maxNodes)
+        let cut = NoticeReader.read([wide])
+        XCTAssertLessThan(cut.banners.count, NoticeReader.maxNodes)
+        XCTAssertTrue(cut.centerOpen, "a cut read can't tell, so nothing in it is new")
+        let one = NoticeNode(subrole: "AXNotificationCenterBanner", label: "A, t, b", children: (0..<5_000).map { _ in NoticeNode() })
+        XCTAssertTrue(NoticeReader.read([one]).centerOpen, "a banner's own parts count too")
     }
 
     func testABannerIsOneNoticeHoweverOftenItIsRead() {
@@ -64,13 +74,48 @@ final class NoticesTests: XCTestCase {
     }
 
     func testOpeningNotificationCenterReadsEverythingAndAddsNothing() {
+        for mark in ["widget-1", "header"] {
+            var s = NoticeShelf()
+            s.take(screen(banner("Mail", "Ann", "Hi")), at: now)
+            let open = NoticeReader.read([NoticeNode(children: [banner("Old", "a", "b"), NoticeNode(identifier: mark)])])
+            XCTAssertTrue(open.centerOpen)
+            XCTAssertEqual(s.take(open, at: now + 1), [])
+            XCTAssertEqual(s.notices.map(\.banner.app), ["Mail"])
+            XCTAssertEqual(s.unread, 0)
+            XCTAssertEqual(s.take(screen(banner("Mail", "Ann", "Hi")), at: now + 2), [], "an alert still up after")
+            XCTAssertEqual(s.unread, 0)
+            XCTAssertEqual(s.notices.map(\.live), [true])
+        }
+    }
+
+    func testTheDesktopsWidgetsAreNotNotificationCenterOpen() {
+        let r = NoticeReader.read([NoticeNode(children: [NoticeNode(identifier: "widget-1")]), NoticeNode(children: [banner("Mail", "Ann", "Hi")])])
+        XCTAssertFalse(r.centerOpen)
+        XCTAssertEqual(r.banners.map(\.path), [[1, 0]])
+    }
+
+    func testWhatIsClearedWhileItsBannerIsUpStaysGone() {
+        let up = screen(banner("Mail", "Ann", "Hi", bundle: "m"))
+        for clear: (inout NoticeShelf) -> Void in [{ $0.dismiss($0.notices[0].id) }, { $0.clear(key: "m") }, { $0.clearAll() }] {
+            var s = NoticeShelf()
+            s.take(up, at: now)
+            clear(&s)
+            XCTAssertEqual(s.take(up, at: now + 1), [])
+            XCTAssertEqual(s.notices, [])
+            s.take(screen(), at: now + 2)
+            XCTAssertEqual(s.take(up, at: now + 3).count, 1, "sent again later")
+        }
+    }
+
+    func testTheSameWordsTwiceOnScreenAreOneNoticeSentAgain() {
         var s = NoticeShelf()
-        s.take(screen(banner("Mail", "Ann", "Hi")), at: now)
-        let open = NoticeReader.read([NoticeNode(children: [banner("Old", "a", "b"), NoticeNode(identifier: "widget-1")])])
-        XCTAssertTrue(open.centerOpen)
-        XCTAssertEqual(s.take(open, at: now + 1), [])
-        XCTAssertEqual(s.notices.map(\.banner.app), ["Mail"])
-        XCTAssertEqual(s.unread, 0)
+        s.take(screen(banner("Mail", "Ann", "ok"), banner("Chat", "x", "y")), at: now)
+        s.see()
+        let came = s.take(screen(banner("Mail", "Ann", "ok"), banner("Mail", "Ann", "ok"), banner("Chat", "x", "y")), at: now + 1)
+        XCTAssertEqual(came.map(\.id), [s.notices[0].id])
+        XCTAssertEqual(s.notices.map(\.banner.app), ["Mail", "Chat"])
+        XCTAssertEqual(s.unread, 1)
+        XCTAssertEqual(s.take(screen(banner("Mail", "Ann", "ok")), at: now + 2), [])
     }
 
     func testGroupsNewestFirstAndClearing() {
