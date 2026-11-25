@@ -17,9 +17,18 @@ enum WindowMoves {
         let frame: CGRect?
     }
 
-    /// Where the window server has these windows now; one it doesn't list isn't in the answer. It asks no app.
+    /// Where the window server has these windows now; one it doesn't list isn't in the answer. It asks no app, and asks the
+    /// server for these alone: its whole list takes 5 ms, and a switch looks every 10.
     static func bounds(of ids: Set<WindowID>) -> [WindowID: CGRect] {
-        Windows.serverWindows().filter { ids.contains($0.key) }.compactMapValues(\.bounds)
+        // The window server wants the bare numbers in the array, not NSNumbers.
+        var raw = ids.map { UnsafeRawPointer(bitPattern: UInt($0)) }
+        guard !raw.isEmpty, let array = CFArrayCreate(nil, &raw, raw.count, nil) else { return [:] }
+        let list = CGWindowListCreateDescriptionFromArray(array) as? [[String: Any]] ?? []
+        return Dictionary(list.compactMap { w in
+            guard let id = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                  let b = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }) else { return nil }
+            return (id, b)
+        }) { $1 }
     }
 
     /// Where each parked window goes back to. A window whose app doesn't answer can't move now; it isn't in the answer.

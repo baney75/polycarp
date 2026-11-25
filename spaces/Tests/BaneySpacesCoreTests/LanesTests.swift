@@ -54,4 +54,13 @@ final class LanesTests: XCTestCase {
         let write = try XCTUnwrap(SourceText.block(after: "static func write(_ id: WindowID, _ kind", in: windows))
         XCTAssertFalse(write.contains("NSEvent"), "AppKit is main thread only")
     }
+
+    /// A switch asks where its windows are before, every 10 ms while they move and after: for those alone, since the window
+    /// server's whole list takes 5 ms.
+    func testASwitchAsksTheServerForItsOwnWindowsOnly() throws {
+        let moves = try SourceText.code("Sources/BaneySpaces/WindowMoves.swift")
+        let bounds = try XCTUnwrap(SourceText.block(after: "static func bounds(of", in: moves))
+        XCTAssertTrue(bounds.contains("CGWindowListCreateDescriptionFromArray("))
+        XCTAssertFalse(bounds.contains("serverWindows("), "the whole list is read at every look")
+    }
 }
