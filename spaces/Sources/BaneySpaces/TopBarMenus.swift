@@ -14,14 +14,18 @@ enum BarReader {
     /// One app's reads. A timeout is kept here (`missed`) and nowhere else; after one, nothing more is asked of the app.
     struct Quiet {
         var missed = false
+        /// An element that went away mid-read is a miss too: it leaves a tree with parts missing.
+        var strict = false
 
         mutating func value<T>(_ element: AXUIElement, _ attribute: String) -> T? {
             guard !missed else { return nil }
             var raw: CFTypeRef?
             let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &raw)
-            if error == .cannotComplete { missed = true }
+            if strict ? Self.gone(error) : error == .cannotComplete { missed = true }
             return error == .success ? raw as? T : nil
         }
+
+        static func gone(_ error: AXError) -> Bool { error == .cannotComplete || error == .invalidUIElement || error == .apiDisabled }
 
         mutating func string(_ element: AXUIElement, _ attribute: String) -> String? { value(element, attribute) }
 

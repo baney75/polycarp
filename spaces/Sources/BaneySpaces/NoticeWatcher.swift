@@ -18,7 +18,12 @@ final class NoticeWatcher: ObservableObject {
     private var pid: pid_t = 0
     private var check: Timer?
     private var again: Timer?
+    private var soonTimer: Timer?
     private var reading = false, dirty = false
+    private var misses = 0, polls = 0
+    /// How often each quiet notice's banner was asked to close.
+    private var closing: [Int: Int] = [:]
+    private var attaching = false
 
     init() {
         quiet = UserDefaults.standard.dictionary(forKey: Self.quietKey) as? [String: String] ?? [:]
@@ -35,6 +40,8 @@ final class NoticeWatcher: ObservableObject {
             detach()
             check?.invalidate(); check = nil
             again?.invalidate(); again = nil
+            soonTimer?.invalidate(); soonTimer = nil
+            misses = 0; polls = 0; closing = [:]
             shelf = NoticeShelf()
             shelf.quiet = Set(quiet.keys)
             return
@@ -49,23 +56,32 @@ final class NoticeWatcher: ObservableObject {
 
     private func attach() {
         let now = NSRunningApplication.runningApplications(withBundleIdentifier: Self.bundle).first?.processIdentifier ?? 0
-        guard now != pid || observer == nil else { return }
+        guard !attaching, now != pid || observer == nil else { return }
         detach()
         guard now > 0, AX.isTrusted else { return }
         var made: AXObserver?
         let callback: AXObserverCallback = { _, _, _, ref in
             guard let ref else { return }
-            Unmanaged<NoticeWatcher>.fromOpaque(ref).takeUnretainedValue().read()
+            Unmanaged<NoticeWatcher>.fromOpaque(ref).takeUnretainedValue().soon()
         }
         guard AXObserverCreate(now, callback, &made) == .success, let made else { return }
         let me = Unmanaged.passUnretained(self).toOpaque()
-        let app = AX.app(now)
-        let added = Self.events.filter { AXObserverAddNotification(made, app, $0 as CFString, me) == .success }
-        guard !added.isEmpty else { return }
-        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(made), .defaultMode)
-        observer = made
-        pid = now
-        read()
+        attaching = true
+        // Each is a call Notification Center must answer, so not on main.
+        queue.async { [weak self] in
+            let app = AX.app(now)
+            let answers = Self.events.map { AXObserverAddNotification(made, app, $0 as CFString, me) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.attaching = false
+                // One it didn't answer is asked again in 15 seconds, with the rest.
+                guard self.check != nil, answers.contains(.success), !answers.contains(.cannotComplete) else { return }
+                CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(made), .defaultMode)
+                self.observer = made
+                self.pid = now
+                self.read()
+            }
+        }
     }
 
     private func detach() {
@@ -74,14 +90,24 @@ final class NoticeWatcher: ObservableObject {
         pid = 0
     }
 
+    /// An event: read a quarter second later, so a burst of them (a widget updating) is one read.
+    private func soon() {
+        guard !reading else { dirty = true; return }
+        guard soonTimer == nil else { return }
+        let t = Timer(timeInterval: 0.25, repeats: false) { [weak self] _ in self?.read() }
+        RunLoop.main.add(t, forMode: .common)
+        soonTimer = t
+    }
+
     /// Reads the banners off the main thread, one read at a time; an event during a read is read after it.
     private func read() {
+        soonTimer?.invalidate(); soonTimer = nil
         guard pid > 0 else { return }
         guard !reading else { dirty = true; return }
         reading = true
         let from = pid
         queue.async { [weak self] in
-            let reading = NoticeTree.read(from)
+            let reading = NoticeTree.read(from)?.reading
             DispatchQueue.main.async { self?.took(reading, from: from) }
         }
     }
@@ -89,20 +115,37 @@ final class NoticeWatcher: ObservableObject {
     /// `r` is nil when Notification Center didn't answer in full: that says nothing about what is up, so nothing changes.
     private func took(_ r: NoticeReader.Reading?, from: pid_t) {
         reading = false
-        guard pid == from else { return }
+        guard pid == from else {
+            if dirty { dirty = false; read() }
+            return
+        }
         if let r {
+            misses = 0
             var next = shelf
             let came = next.take(r, at: Date())
             if next != shelf { shelf = next }
-            for n in came where quiet[n.key] != nil { close(n) }
-        }
-        if dirty { dirty = false; read(); return }
-        // A banner that changes or goes without an event: looked at again each second while one is up.
+            polls = came.isEmpty ? polls + 1 : 0
+            closeQuiet()
+        } else { misses += 1 }
+        if dirty { dirty = false; soon(); return }
+        // A banner that changes or goes without an event is looked at again each second, and each 5 once it has stayed
+        // up for 30. A read that missed is tried again, each time twice as long after, up to 15 seconds.
         again?.invalidate()
-        guard shelf.notices.contains(where: \.live) else { return }
-        let t = Timer(timeInterval: 1, repeats: false) { [weak self] _ in self?.read() }
+        guard misses > 0 || shelf.watching else { return }
+        let wait = misses > 0 ? min(15, Double(1 << min(misses - 1, 4))) : polls < 30 ? 1 : 5
+        let t = Timer(timeInterval: wait, repeats: false) { [weak self] _ in self?.read() }
         RunLoop.main.add(t, forMode: .common)
         again = t
+    }
+
+    /// Closes the banners of quiet apps that are up, each asked at most three times.
+    private func closeQuiet() {
+        let up = shelf.notices.filter { $0.live && quiet[$0.key] != nil }
+        closing = closing.filter { c in up.contains { $0.id == c.key } }
+        for n in up where closing[n.id, default: 0] < 3 {
+            closing[n.id, default: 0] += 1
+            close(n)
+        }
     }
 
     // MARK: What you do with them
@@ -111,8 +154,9 @@ final class NoticeWatcher: ObservableObject {
 
     /// Opens a notification: pressed while its banner is up, so its app shows what it is about; its app after that.
     func open(_ n: NoticeShelf.Notice) {
-        if n.live { press(n) { _ in kAXPressAction } } else { openApp(n) }
         shelf.dismiss(n.id)
+        guard n.live else { return openApp(n) }
+        press(n) { _ in kAXPressAction } missed: { [weak self] in self?.openApp(n) }
     }
 
     func dismiss(_ n: NoticeShelf.Notice) {
@@ -135,21 +179,24 @@ final class NoticeWatcher: ObservableObject {
         quiet[key] = on ? name : nil
         shelf.quiet = Set(quiet.keys)
         UserDefaults.standard.set(quiet, forKey: Self.quietKey)
-        if on { shelf.notices.filter { $0.key == key }.forEach(close) }
+        if on { closeQuiet() }
     }
 
     private func close(_ n: NoticeShelf.Notice) {
         if n.live, n.banner.close != nil { press(n) { $0.close } }
     }
 
-    /// Presses a banner only while the element there still says the same thing: banners move up as others go.
-    private func press(_ n: NoticeShelf.Notice, _ action: @escaping (NoticeBanner) -> String?) {
+    /// Presses the very element whose words still say the same, found by a read of its own: banners move up as others go.
+    /// `missed` is called on main when there is none. The press itself waits elsewhere: an app can hold it.
+    private func press(_ n: NoticeShelf.Notice, _ action: @escaping (NoticeBanner) -> String?, missed: @escaping () -> Void = {}) {
         let from = pid
-        guard from > 0 else { return }
+        guard from > 0 else { return missed() }
         queue.async {
-            guard let b = NoticeTree.read(from)?.banners.first(where: { $0.matches(n.banner) }), let name = action(b),
-                  let el = NoticeTree.element(b.path, of: from) else { return }
-            AXUIElementPerformAction(el, name as CFString)
+            guard let tree = NoticeTree.read(from), let b = tree.reading.banners.first(where: { $0.matches(n.banner) }),
+                  let name = action(b), let el = tree.elements[b.path] else { return DispatchQueue.main.async(execute: missed) }
+            DispatchQueue.global(qos: .userInitiated).async {
+                if AXUIElementPerformAction(el, name as CFString) == .invalidUIElement { DispatchQueue.main.async(execute: missed) }
+            }
         }
     }
 
@@ -173,8 +220,7 @@ final class NoticeWatcher: ObservableObject {
                 var ask = BarReader.Quiet()
                 let items = BarReader.status(of: app.pid, bundle: app.bundle, ask: &ask)
                 guard let clock = items.first(where: { ($0.item.identifier ?? "").hasSuffix("menuextra.clock") }) else { continue }
-                AXUIElementPerformAction(clock.element, kAXPressAction as CFString)
-                return
+                return BarReader.press(clock.element)
             }
         }
     }
@@ -185,43 +231,49 @@ final class NoticeWatcher: ObservableObject {
 }
 
 /// Notification Center's elements as `NoticeNode`s, read without benching its process (`BarReader.Quiet`). Any thread.
-private enum NoticeTree {
+private struct NoticeTree {
+    var reading: NoticeReader.Reading
+    /// The notifications' elements by their path.
+    var elements: [[Int]: AXUIElement]
+
     /// Nil when it didn't answer in full.
-    static func read(_ pid: pid_t) -> NoticeReader.Reading? {
-        var ask = BarReader.Quiet()
-        let nodes = windows(of: pid, &ask).map { w -> NoticeNode in
+    static func read(_ pid: pid_t) -> NoticeTree? {
+        var ask = BarReader.Quiet(strict: true), elements: [[Int]: AXUIElement] = [:]
+        let windows: [AXUIElement] = ask.value(AX.app(pid), kAXWindowsAttribute) ?? []
+        let nodes = windows.enumerated().map { i, w -> NoticeNode in
             // A window past this is cut, which the reader takes as Notification Center open.
             var left = NoticeReader.maxNodes
-            return node(w, depth: 0, left: &left, &ask)
+            return node(w, [i], &left, &ask, &elements)
         }
-        return ask.missed ? nil : NoticeReader.read(nodes)
+        return ask.missed ? nil : NoticeTree(reading: NoticeReader.read(nodes, close: closeNames), elements: elements)
     }
 
-    private static func windows(of pid: pid_t, _ ask: inout BarReader.Quiet) -> [AXUIElement] { ask.value(AX.app(pid), kAXWindowsAttribute) ?? [] }
-    private static func children(_ el: AXUIElement, _ ask: inout BarReader.Quiet) -> [AXUIElement] { ask.value(el, kAXChildrenAttribute) ?? [] }
-
-    private static func node(_ el: AXUIElement, depth: Int, left: inout Int, _ ask: inout BarReader.Quiet) -> NoticeNode {
+    private static func node(_ el: AXUIElement, _ path: [Int], _ left: inout Int, _ ask: inout BarReader.Quiet, _ elements: inout [[Int]: AXUIElement]) -> NoticeNode {
         left -= 1
+        AXUIElementSetMessagingTimeout(el, 0.25)
         let subrole = ask.string(el, kAXSubroleAttribute) ?? ""
         var actions: CFArray?
-        if subrole.hasPrefix("AXNotificationCenter") { AXUIElementCopyActionNames(el, &actions) }
+        if subrole.hasPrefix("AXNotificationCenter") {
+            elements[path] = el
+            if !ask.missed, BarReader.Quiet.gone(AXUIElementCopyActionNames(el, &actions)) { ask.missed = true }
+        }
         var n = NoticeNode(subrole: subrole, identifier: ask.string(el, kAXIdentifierAttribute) ?? "", text: ask.string(el, kAXValueAttribute) ?? "",
                            label: ask.string(el, kAXDescriptionAttribute) ?? "", stacking: ask.string(el, "AXStackingIdentifier") ?? "",
                            actions: actions as? [String] ?? [])
         // The widgets are only a sign that Notification Center is open, so nothing under one is read.
-        guard depth < NoticeReader.maxDepth, !NoticeReader.isWidget(n) else { return n }
-        for c in children(el, &ask) where left > 0 { n.children.append(node(c, depth: depth + 1, left: &left, &ask)) }
+        guard path.count <= NoticeReader.maxDepth, !NoticeReader.isWidget(n) else { return n }
+        let children: [AXUIElement] = ask.value(el, kAXChildrenAttribute) ?? []
+        for (i, c) in children.enumerated() where left > 0 { n.children.append(node(c, path + [i], &left, &ask, &elements)) }
         return n
     }
 
-    static func element(_ path: [Int], of pid: pid_t) -> AXUIElement? {
-        var ask = BarReader.Quiet()
-        var list = windows(of: pid, &ask), at: AXUIElement?
-        for i in path {
-            guard list.indices.contains(i) else { return nil }
-            at = list[i]
-            list = children(list[i], &ask)
-        }
-        return at
-    }
+    /// "Close" in English and, from Notification Center's own strings, in this Mac's language.
+    private static let closeNames: Set<String> = {
+        let path = "/System/Library/CoreServices/NotificationCenter.app/Contents/Resources/Localizable.loctable"
+        guard let data = FileManager.default.contents(atPath: path),
+              let table = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let language = Bundle.preferredLocalizations(from: Array(table.keys), forPreferences: Locale.preferredLanguages).first,
+              let name = (table[language] as? [String: String])?["Close"] else { return ["Close"] }
+        return ["Close", name]
+    }()
 }

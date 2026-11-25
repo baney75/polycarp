@@ -104,19 +104,57 @@ final class NoticesTests: XCTestCase {
 
     func testAnAlertThatCountsDownInPlaceIsOneNotice() {
         var s = NoticeShelf()
-        func alert(_ body: String) -> NoticeNode { banner("Calendar", "Class", body, subrole: "AXNotificationCenterAlert") }
+        func alert(_ body: String, _ title: String = "Class") -> NoticeNode { banner("Calendar", title, body, subrole: "AXNotificationCenterAlert") }
         XCTAssertEqual(s.take(screen(alert("in 10 minutes")), at: now).count, 1)
         s.see()
         XCTAssertEqual(s.take(screen(alert("in 9 minutes")), at: now).count, 0)
-        XCTAssertEqual(s.notices.map(\.banner.body), ["in 9 minutes"])
+        XCTAssertEqual(s.take(screen(alert("in 1 minute")), at: now).count, 0, "a plural is the same words")
+        XCTAssertEqual(s.notices.map(\.banner.body), ["in 1 minute"])
         XCTAssertEqual(s.notices.map(\.live), [true])
         XCTAssertEqual(s.unread, 0)
         XCTAssertEqual(s.take(screen(alert("now")), at: now).count, 1, "other words are a new one")
         // A banner with new words is another message, whatever changed in it.
         var m = NoticeShelf()
-        m.take(screen(banner("Messages", "Ann", "meet at 5")), at: now)
-        XCTAssertEqual(m.take(screen(banner("Messages", "Ann", "meet at 6")), at: now).count, 1)
+        m.take(screen(banner("Messages", "Ann", "meet at 6")), at: now)
+        XCTAssertEqual(m.take(screen(banner("Messages", "Ann", "meet at 5")), at: now).count, 1)
         XCTAssertEqual(m.notices.count, 2)
+    }
+
+    func testAnotherAlertInTheSamePlaceIsNotATick() {
+        func alert(_ body: String, _ title: String = "T", subrole: String = "AXNotificationCenterAlert") -> NoticeNode { banner("App", title, body, subrole: subrole) }
+        for (a, b) in [("Your code is 987654", "Your code is 123456"), ("in 9 minutes", "in 10 minutes"), ("9 of 10 done", "8 of 10 done"), ("in 5 minutes", "for 4 minutes")] {
+            var s = NoticeShelf()
+            s.take(screen(alert(a)), at: now)
+            XCTAssertEqual(s.take(screen(alert(b)), at: now).count, 1, b)
+            XCTAssertEqual(s.notices.count, 2, b)
+        }
+        var s = NoticeShelf()
+        s.take(screen(alert("in 5 minutes", "One")), at: now)
+        XCTAssertEqual(s.take(screen(alert("in 4 minutes", "Two")), at: now).count, 1)
+        s = NoticeShelf()
+        s.take(screen(alert("in 5 minutes", subrole: "AXNotificationCenterAlertStack")), at: now)
+        XCTAssertEqual(s.take(screen(alert("in 4 minutes", subrole: "AXNotificationCenterAlertStack")), at: now).count, 1, "a stack shows another one")
+    }
+
+    func testADismissedCountdownStaysGoneAsItTicks() {
+        func alert(_ body: String) -> NoticeNode { banner("Calendar", "Class", body, subrole: "AXNotificationCenterAlert") }
+        var s = NoticeShelf()
+        s.take(screen(alert("in 10 minutes")), at: now)
+        s.dismiss(s.notices[0].id)
+        XCTAssertTrue(s.watching)
+        XCTAssertEqual(s.take(screen(alert("in 9 minutes")), at: now).count, 0)
+        XCTAssertEqual(s.take(screen(alert("in 8 minutes")), at: now).count, 0)
+        XCTAssertEqual(s.notices, [])
+        s.take(screen(), at: now)
+        XCTAssertFalse(s.watching)
+    }
+
+    func testCloseIsFoundInTheMacsLanguageAndAStackIsNeverClosed() {
+        func node(_ actions: [String]) -> NoticeNode { var n = banner("Mail", "Ann", "Hi"); n.actions = actions; return n }
+        let german = NoticeNode(children: [node(["AXPress", "Name:Schlie\u{DF}en\nTarget:0x0\nSelector:(null)"])])
+        XCTAssertNil(NoticeReader.read([german]).banners[0].close)
+        XCTAssertNotNil(NoticeReader.read([german], close: ["Close", "Schlie\u{DF}en"]).banners[0].close)
+        XCTAssertNil(NoticeReader.read([NoticeNode(children: [node(["Name:Clear All\nTarget:0x0"])])]).banners[0].close)
     }
 
     func testWhatIsClearedWhileItsBannerIsUpStaysGone() {
