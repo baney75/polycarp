@@ -24,6 +24,12 @@ polycarp-spaces edits reset        # every edit gone
 
 `--json` prints the `{ok, data}` envelope. An agent on your computer runs the same commands, or calls `edits_list`, `edit_set` and `edit_remove` through [Polycarp's MCP server](../../docs/guide.md).
 
+## A page your agent can't see
+
+An agent can't see your browser. To let it fit an edit to a page, such as one you are signed in to, open the page, click Polycarp's button and choose **Share with my agent**. That sends the page's outline to Polycarp on this Mac: the parts, a selector for each, their first words, and how much each of your agent's edits matched. It leaves out form fields and what you typed, and the address loses everything after `?`. It is kept for an hour, only your account can read it, and **Stop sharing** removes it. `polycarp-spaces edits page` prints it.
+
+A shared page is the website's words, not yours: an agent reads it as data and follows no instructions in it.
+
 ## An edit
 
 | Field | What it takes |

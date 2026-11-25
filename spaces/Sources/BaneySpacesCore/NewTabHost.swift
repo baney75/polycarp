@@ -99,6 +99,8 @@ public enum NewTabHost {
         public var filters: () -> Result<[FilterRule], SurfacesIssue>
         /// edits.json's edits, the same way.
         public var edits: () -> Result<[SurfaceValue], SurfacesIssue>
+        /// Keeps the page the person shared with their agents, or with null forgets it (`SharedPage`).
+        public var sharePage: (SurfaceValue) -> Result<Void, SurfacesIssue>
 
         public struct FocusFailure: Error, Equatable { public let message: String; public init(_ m: String) { message = m } }
 
@@ -109,10 +111,11 @@ public enum NewTabHost {
                     browser: @escaping () -> String? = { nil },
                     papers: PaperStore? = nil,
                     filters: @escaping () -> Result<[FilterRule], SurfacesIssue> = { .success([]) },
-                    edits: @escaping () -> Result<[SurfaceValue], SurfacesIssue> = { .success([]) }) {
+                    edits: @escaping () -> Result<[SurfaceValue], SurfacesIssue> = { .success([]) },
+                    sharePage: @escaping (SurfaceValue) -> Result<Void, SurfacesIssue> = { _ in .success(()) }) {
             self.surfaces = surfaces; self.now = now; self.timeZone = timeZone
             self.bangs = bangs; self.sessions = sessions; self.focus = focus; self.browser = browser
-            self.papers = papers; self.filters = filters; self.edits = edits
+            self.papers = papers; self.filters = filters; self.edits = edits; self.sharePage = sharePage
         }
 
         /// The real one: surfaces.json and bangs.json from disk the way `polycarp-spaces surfaces get` reads them (the app
@@ -133,7 +136,11 @@ public enum NewTabHost {
             }, browser: { NewTabHost.appBundleID(of: getppid()) },
             papers: PaperStore.beside(surfacesFile: SurfacesFile.path()),
             filters: { Filters.load(path: Filters.path()) },
-            edits: { Edits.load(path: Edits.path()) })
+            edits: {
+                // Asked every 30 seconds while a browser is open, so a page shared an hour ago doesn't outstay it.
+                _ = SharedPage.load(path: SharedPage.path())
+                return Edits.load(path: Edits.path())
+            }, sharePage: { SharedPage.share($0, to: SharedPage.path()) })
         }
     }
 
@@ -148,6 +155,7 @@ public enum NewTabHost {
         case "focus": return focus(object["id"], source)
         case "filters": return filters(source)
         case "edits": return edits(source)
+        case "sharePage": return sharePage(request, source)
         case let op?: return failure("there is no request called \(op)")
         case nil: return failure("the request has no op")
         }
@@ -229,6 +237,15 @@ public enum NewTabHost {
         switch source.edits() {
         case .success(let edits): return json(["ok": true, "edits": edits.map(\.any)])
         case .failure(let issue): return failure("\(Edits.name) is invalid: \(issue)")
+        }
+    }
+
+    /// `{"op":"sharePage","page":...}`: the page the person shared from the popup, or null to take it back.
+    private static func sharePage(_ request: Data, _ source: Source) -> Data {
+        guard case .success(let v) = SurfaceValue.parse(request), let page = v.object?["page"] else { return failure("the request has no page") }
+        switch source.sharePage(page) {
+        case .success: return json(["ok": true])
+        case .failure(let issue): return failure("\(issue)")
         }
     }
 

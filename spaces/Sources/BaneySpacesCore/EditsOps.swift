@@ -79,6 +79,12 @@ public enum EditsOps {
         }
     }
 
+    /// `page`: the page the person shared with their agents from the extension, in the last hour.
+    public static func page(file: String, now: Date = Date()) -> SurfacesOps.Result {
+        if let page = SharedPage.load(path: file, now: now) { return .success(page) }
+        return .failure(SurfacesFailure("not_shared", "no page was shared in the last hour", suggestion: "Ask the person to open the page, click Polycarp's button in the browser and choose Share with my agent."))
+    }
+
     /// `reset`: no edits. Removes the file, even one that doesn't read.
     public static func reset(file: String) -> SurfacesOps.Result {
         if unlink(file) != 0 && errno != ENOENT {

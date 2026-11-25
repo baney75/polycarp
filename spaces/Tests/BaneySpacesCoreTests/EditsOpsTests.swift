@@ -48,6 +48,47 @@ final class EditsOpsTests: XCTestCase {
         XCTAssertEqual(try String(contentsOfFile: file, encoding: .utf8), "{oops")
     }
 
+    // MARK: The page a person shares
+
+    private var shared: String { dir.appendingPathComponent(SharedPage.name).path }
+    private let page = #"{"url":"https://example.com/inbox?token=s3cret#t","title":"In\u001bbox","parts":[{"at":"main > h1","is":"Heading","words":"Hello\nthere"},{"at":"li.row","is":"List item","count":12}],"edits":[{"id":"one","hits":[3,0]}]}"#
+
+    private func share(_ page: String) throws -> [String: Any] {
+        let source = NewTabHost.Source(surfaces: { .defaults }, sharePage: { SharedPage.share($0, to: self.shared) })
+        let reply = NewTabHost.answer(Data(#"{"op":"sharePage","page":\#(page)}"#.utf8), source: source)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: reply) as? [String: Any])
+    }
+
+    func testASharedPageIsReadForAnHourAndHoldsNoQuery() throws {
+        XCTAssertEqual(code(EditsOps.page(file: shared)), "not_shared")
+        XCTAssertEqual(try share(page)["ok"] as? Bool, true)
+        let got = try EditsOps.page(file: shared).get().object?["page"]?.object
+        XCTAssertEqual(got?["url"], .string("https://example.com/inbox"), "a query can hold a secret")
+        XCTAssertEqual(got?["title"], .string("In box"), "no control character reaches a terminal")
+        XCTAssertEqual(got?["parts"]?.array?.first?.object?["words"], .string("Hello there"))
+        XCTAssertEqual(got?["parts"]?.array?.last?.object?["count"], .number(12))
+        XCTAssertEqual(got?["edits"]?.array?.first?.object?["hits"], .array([.number(3), .number(0)]))
+        let mode = try FileManager.default.attributesOfItem(atPath: shared)[.posixPermissions] as? Int
+        XCTAssertEqual(mode, 0o600, "only this account reads it")
+        XCTAssertNotNil(SharedPage.load(path: shared, now: Date() + 3500))
+        XCTAssertEqual(code(EditsOps.page(file: shared, now: Date() + 3700)), "not_shared")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: shared), "an old one is removed")
+        _ = try share(page)
+        XCTAssertNil(SharedPage.load(path: shared, now: Date() - 7200), "nor does a clock set back keep it")
+    }
+
+    func testStopSharingRemovesThePageAndABadOneLeavesIt() throws {
+        _ = try share(page)
+        for bad in [#"{"url":"file:///etc/passwd","title":"","parts":[]}"#, #"{"url":"https://a.com","title":"","parts":[{"at":""}]}"#, "3",
+                    #"{"url":"https://a.com","title":"","parts":[\#((0...SharedPage.maxParts).map { _ in #"{"at":"a","is":"b"}"# }.joined(separator: ","))]}"#] {
+            XCTAssertEqual(try share(bad)["ok"] as? Bool, false, bad)
+        }
+        XCTAssertNotNil(SharedPage.load(path: shared), "a refused page changes nothing")
+        XCTAssertEqual(try share("null")["ok"] as? Bool, true)
+        XCTAssertEqual(code(EditsOps.page(file: shared)), "not_shared")
+        XCTAssertEqual(try share("null")["ok"] as? Bool, true, "twice is fine")
+    }
+
     func testTheHostAnswersTheEditsOrSaysWhyNot() throws {
         func ask() throws -> [String: Any] {
             let reply = NewTabHost.answer(Data(#"{"op":"edits"}"#.utf8), source: .init(surfaces: { .defaults }, edits: { Edits.load(path: self.file) }))

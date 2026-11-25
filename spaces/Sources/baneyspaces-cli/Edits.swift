@@ -14,6 +14,8 @@ enum EditsCommand {
       on <id> | off <id>  turn one on or off and keep it
       rm <id>             remove one
       reset               remove every edit
+      page                the page the person shared with their agents (Share with my agent, in the extension's popup):
+                          each part's selector and first words, and what your edits matched; kept for an hour
 
     An edit: {"id": "quiet-news", "name": "Quiet news", "enabled": true, "sites": ["news.example.com"],
     "paths": ["/story/*"], "changes": [...], "css": "..."}. id is 1 to 64 of a-z, 0-9 and -; sites names at least one
@@ -46,9 +48,10 @@ enum EditsCommand {
         case ("set", 1): finish(EditsOps.set(rest[0] == "-" ? standardInput() : rest[0], file: file), json: json)
         case ("on", 1), ("off", 1): finish(EditsOps.turn(rest[0], on: sub == "on", file: file), json: json)
         case ("rm", 1), ("remove", 1): finish(EditsOps.remove(rest[0], file: file), json: json)
+        case ("page", 0): finish(EditsOps.page(file: SharedPage.path()), json: json)
         case ("reset", 0): finish(EditsOps.reset(file: file), json: json)
         case ("help", _), ("-h", _), ("--help", _): print(usage); exit(0)
-        default: finish(.failure(failure("usage: polycarp-spaces edits ls | set '<json edit>' | on <id> | off <id> | rm <id> | reset [--json]")), json: json)
+        default: finish(.failure(failure("usage: polycarp-spaces edits ls | set '<json edit>' | on <id> | off <id> | rm <id> | reset | page [--json]")), json: json)
         }
     }
 
@@ -75,6 +78,12 @@ enum EditsCommand {
 
     private static func text(_ d: SurfaceValue) -> String {
         if let edit = d.object?["edit"] { return (d.object?["replaced"] == .bool(true) ? "replaced " : "added ") + line(edit) }
+        if let page = d.object?["page"]?.object {
+            let parts = (page["parts"]?.array ?? []).compactMap(\.object).map { p in
+                "\(p["is"]?.string ?? "")\((p["count"]?.integer).map { " x\($0)" } ?? "")  \(p["at"]?.string ?? "")  \(p["words"]?.string ?? "")"
+            }
+            return ([page["url"]?.string ?? "", page["title"]?.string ?? ""] + parts).joined(separator: "\n")
+        }
         let edits = d.object?["edits"]?.array ?? []
         return edits.isEmpty ? "no edits" : edits.map(line).joined(separator: "\n")
     }
