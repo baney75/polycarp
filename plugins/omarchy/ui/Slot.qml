@@ -48,7 +48,7 @@ Item {
     color: root.plain ? Util.alpha(root.ink, 0)
       : area.pressed ? Style.pressedFillFor(root.ink, root.accent)
       : root.held ? Style.selectedFillFor(root.ink, root.accent)
-      : area.containsMouse && !root.plain ? Style.hoverFillFor(root.ink, root.accent)
+      : area.containsMouse ? Style.hoverFillFor(root.ink, root.accent)
       : Util.alpha(root.ink, 0)
 
     Behavior on color {

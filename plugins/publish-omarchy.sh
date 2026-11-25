@@ -31,13 +31,20 @@ links=$(git ls-tree -r "$tree" | awk '$1 != "100644" && $1 != "100755"')
 [[ -z $links ]] || fail "only plain files can be published: $links"
 size=$(git ls-tree -r -l "$tree" | awk '{ n += $4 } END { print n + 0 }')
 ((size < 2 * 1024 * 1024)) || fail "$size bytes is over 2 MB"
-version=$(git cat-file blob "$tree:manifest.json" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("version", ""))' 2>/dev/null) ||
-  fail "manifest.json is not JSON"
-[[ $version ]] || fail "manifest.json has no version"
+command -v node >/dev/null || fail "needs node"
+# The manifest's version, or nothing when it is not JSON or has no version that is text.
+versionOf() {
+  git cat-file blob "$1:manifest.json" | node -e '
+    let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
+      try { const v = JSON.parse(s).version; if (v.trim()) console.log(v) } catch {}
+    })'
+}
+version=$(versionOf "$tree")
+[[ $version ]] || fail "manifest.json has no version, or is not JSON"
 
 heads=$(git ls-remote "$to") || fail "could not reach $to"
 parent=
-if [[ $heads == *$'\trefs/heads/main'* ]]; then
+if awk '$2 == "refs/heads/main" { found = 1 } END { exit !found }' <<<"$heads"; then
   git fetch --quiet "$to" main || fail "could not fetch main from $to"
   parent=$(git rev-parse FETCH_HEAD)
   # Each publish names its source, so a run from an older checkout cannot quietly undo a newer one.
@@ -52,6 +59,8 @@ if [[ $parent ]] && [[ $(git rev-parse "$parent^{tree}") == "$tree" ]]; then
   echo "publish-omarchy: $to already has this ($version)"
   exit 0
 fi
+# Omarchy shows the version, so new content under an old one would look like no update.
+[[ -z $parent || $(versionOf "$parent") != "$version" ]] || fail "manifest.json still says $version; raise it"
 
 message="Polycarp for Omarchy $version
 

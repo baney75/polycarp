@@ -24,13 +24,15 @@ const padded = (m) => {
   assert.deepEqual(ids(m.shown([ws(1), ws(2)], 'A', 1, 3)), [1, 2, 3])
   assert.deepEqual(ids(m.shown([ws(11), ws(-1337, { name: 'chat' })], 'A', -1337, 3)), [11, 12, 13, -1337])
   assert.equal(ids(m.shown([ws(1)], 'A', 1, 12)).length, 10)
+  assert.deepEqual(ids(m.shown([ws(1), ws(2), ws(-1337, { name: 'chat', monitor: 'B' })], 'B', -1337, 5)), [-1337])
 }
 test('empty ones fill the first numbers of the monitor, not the ones another holds', (t) => {
   padded(W)
   control(t, 'Workspaces.js', 'if (seen[id] !== undefined) continue', '', padded)
-  control(t, 'Workspaces.js', 'Math.floor((id - 1) / 10) * 10 + 1 : 1', '1 : 1', padded)
+  control(t, 'Workspaces.js', 'Math.floor((id - 1) / 10) * 10 + 1 : 0', '1 : 0', padded)
   control(t, 'Workspaces.js', ') id = w.id', ') id = id', padded)
   control(t, 'Workspaces.js', 'Math.min(empty, 10)', 'empty', padded)
+  control(t, 'Workspaces.js', 'i < empty && first > 0', 'i < empty', padded)
 })
 
 const named = (m) => {
@@ -51,6 +53,7 @@ const labels = (m) => {
   assert.equal(m.label(ws(11), 'numbers', 1), '11')
   assert.equal(m.label(ws(1), 'numbers', 11), '1')
   assert.equal(m.label(ws(21), 'numbers', 11), '21')
+  assert.equal(m.label(ws(3), 'numbers', 0), '3')
   assert.equal(m.label(ws(4, { name: 'web' }), 'numbers', 1), '4')
   assert.equal(m.label(ws(4, { name: 'web' }), 'names', 1), 'web')
   assert.equal(m.label(ws(4), 'names', 1), '4')
@@ -59,6 +62,7 @@ test('a number is its place in the monitor\'s ten, and one from another ten keep
   labels(W)
   control(t, 'Workspaces.js', 'workspace.id >= first && ', '', labels)
   control(t, 'Workspaces.js', 'workspace.id < first + 10', 'true', labels)
+  control(t, 'Workspaces.js', 'first > 0 && workspace.id', 'workspace.id', labels)
   control(t, 'Workspaces.js', 'style === "names" && named', 'named', labels)
 })
 

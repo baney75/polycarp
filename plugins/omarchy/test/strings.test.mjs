@@ -11,11 +11,13 @@ const filled = (m) => {
   assert.equal(m.fill('%1 and %2', '%2', 'b'), '%2 and b')
   assert.equal(m.fill('Workspace %1', 'a$&b'), 'Workspace a$&b')
   assert.equal(m.fill('%1 left', undefined), ' left')
+  assert.equal(m.fill('%0 x', 'a'), '%0 x')
 }
 test('fill puts every value in its place, in one pass, as it is', (t) => {
   filled(S)
   control(t, 'Strings.js', 'values[n] === undefined ? "" : ', '', filled)
-  control(t, 'Strings.js', '/%(\\d)/g', '/%(\\d)/', filled)
+  control(t, 'Strings.js', '/%([1-9])/g', '/%([1-9])/', filled)
+  control(t, 'Strings.js', '/%([1-9])/g', '/%(\\d)/g', filled)
 })
 
 const translated = (m) => {
