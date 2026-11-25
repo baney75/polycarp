@@ -14,20 +14,21 @@ enum BarWords {
 
 /// Every app's status items, as many as fit from the right: macOS's as symbols in the bar's ink, an app's own as its icon.
 struct StatusRow: View {
+    @Environment(\.barBoxed) private var boxed
     @ObservedObject var model: TopBarModel
     let style: ComputedStyle
 
     private var ink: Color { style.ink(Chrome.wash(0.88)) }
 
     var body: some View {
-        FitRow(spacing: style.gap.map { CGFloat($0) } ?? 0, fromEnd: true) {
+        FitRow(spacing: style.gap.map { CGFloat($0) } ?? 0, fromEnd: true, fills: !boxed) {
             ForEach(model.status.indices, id: \.self) { item($0) }
         }
     }
 
     private func item(_ i: Int) -> some View {
         let item = model.status.indices.contains(i) ? model.status[i] : BarStatus.Item(owner: "")
-        return BarButton(label: item.name, action: { model.onStatus(i) }) { glyph(item) }
+        return BarButton(label: item.name, help: item.name, action: { model.onStatus(i) }) { glyph(item) }
     }
 
     /// macOS's items as symbols and a template icon in the bar's ink; any other app's icon in its own colors, since a
@@ -37,7 +38,6 @@ struct StatusRow: View {
         if BarStatus.isBattery(item), let c = model.charge {
             BatteryGlyph(look: BarStatus.batteryLook(percent: c.percent, charging: c.charging, onPower: c.onPower, lowPower: c.lowPower),
                          ink: ink)
-                .padding(.horizontal, 4)
         } else if let symbol = BarStatus.symbol(item, percent: model.charge?.percent, charging: model.charge?.charging ?? false) {
             BarSymbol(name: symbol).foregroundStyle(ink)
         } else if let icon = model.icons[item.owner], icon.isTemplate {
@@ -62,14 +62,17 @@ struct BarSymbol: View {
 /// The front app's menus: the Apple logo, its name in semibold, then its menus a step quieter, as many as fit. Click
 /// one to open it.
 struct MenuRow: View {
+    @Environment(\.barBoxed) private var boxed
     let items: [BarMenus.Item]
     let style: ComputedStyle
     let open: (Int) -> Void
 
     var body: some View {
-        FitRow(spacing: style.gap.map { CGFloat($0) } ?? 0) {
+        FitRow(spacing: style.gap.map { CGFloat($0) } ?? 0, fills: !boxed) {
             ForEach(items, id: \.index) { item in
-                BarButton(width: 0, inset: CGFloat(BarGeometry.textInset), label: item.title, action: { open(item.index) }) {
+                BarButton(width: item.role == .apple ? CGFloat(BarGeometry.slot) : 0,
+                          inset: item.role == .apple ? 0 : CGFloat(BarGeometry.textInset), label: item.title,
+                          action: { open(item.index) }) {
                     switch item.role {
                     case .apple: BarSymbol(name: "apple.logo").foregroundStyle(style.ink(Chrome.wash(0.95)))
                     case .app: BarWords.text(item.title, style, .semibold).foregroundStyle(style.ink(Chrome.wash()))

@@ -398,7 +398,8 @@ struct TopBarView: View {
         styles.book.bar.padding.map(Styled.insets)
             ?? EdgeInsets(top: 0, leading: CGFloat(BarGeometry.edge), bottom: 0, trailing: CGFloat(BarGeometry.edge))
     }
-    /// Between modules: each slot carries its own room, so nothing more. The sheet's `gap` for the bar or a region adds it.
+    /// Between modules, and added to the room between groups: each slot carries its own, so nothing more until the sheet's
+    /// `gap` for the bar or a region adds it.
     private var spacing: CGFloat { CGFloat(styles.book.bar.gap ?? 0) }
 
     var body: some View {
@@ -417,6 +418,7 @@ struct TopBarView: View {
                             row(model.bar.center, .center)
                             row(model.bar.right, .right)
                         }
+                        .padding(.leading, CGFloat(BarGeometry.group))
                         .frame(width: right)
                     }
                 } else {
@@ -471,7 +473,11 @@ struct TopBarView: View {
     /// gap. With `bar.style` islands each group floats in its own island; otherwise a little room parts them.
     @ViewBuilder private func row(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region) -> some View {
         let r = styles.book.region(region)
-        if !r.isHidden {
+        if r.isHidden {
+            // A hidden region keeps its place in the layout, with nothing in it.
+            Color.clear.frame(width: 0, height: 0)
+        } else {
+            let gap = r.gap.map { CGFloat($0) } ?? spacing
             let groups = BarLayout.islands(modules).map { $0.filter { draws($0, region) } }.filter { !$0.isEmpty }
             Group {
                 if model.bar.style == .islands {
@@ -480,9 +486,9 @@ struct TopBarView: View {
                         ForEach(Array(groups.enumerated()), id: \.offset) { _, group in island(group, region, gap: r.gap) }
                     }
                 } else {
-                    HStack(spacing: CGFloat(BarGeometry.group)) {
+                    HStack(spacing: CGFloat(BarGeometry.group) + gap) {
                         ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                            HStack(spacing: r.gap.map { CGFloat($0) } ?? spacing) {
+                            HStack(spacing: gap) {
                                 ForEach(group, id: \.id) { styled($0, region) }
                             }
                         }
@@ -490,11 +496,13 @@ struct TopBarView: View {
                 }
             }
             .lineLimit(1)
+            .environment(\.barBoxed, r.hasBox)
             .modifier(StyledBox(style: r))
         }
     }
 
-    /// One island: its modules on a rounded face, inset from the bar's top and bottom so it floats. The sheet's
+    /// One island: its modules on a rounded face, inset from the bar's top and bottom so it floats. Only the face is inset:
+    /// what is on it reaches the screen's edge. The sheet's
     /// `bar .island` sets its background, corners, line, shadow, padding and gap; what it leaves unset keeps the face.
     @ViewBuilder private func island(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region, gap: Double?) -> some View {
         let s = styles.book.island(in: region)
@@ -504,8 +512,7 @@ struct TopBarView: View {
             }
             .padding(s.padding.map(Styled.insets) ?? EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
             .frame(maxHeight: .infinity)
-            .background { IslandFace(style: s, barFill: styles.book.bar.background) }
-            .padding(.vertical, 3)
+            .background { IslandFace(style: s, barFill: styles.book.bar.background).padding(.vertical, 3) }
             .opacity(s.opacity ?? 1)
         }
     }
@@ -516,6 +523,7 @@ struct TopBarView: View {
         if !s.isHidden {
             module(m, s, region)
                 .modifier(StyledText(style: s))
+                .modifier(BarBoxed(on: s.hasBox))
                 .modifier(StyledBox(style: s))
                 .background { PointerArea { on in if on { hovered = m.id } else if hovered == m.id { hovered = nil } } }
         }
@@ -627,6 +635,12 @@ struct TopBarView: View {
             }
         }
     }
+}
+
+/// Tells the buttons of a module the sheet draws a box round to keep the box's own height.
+private struct BarBoxed: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View { content.transformEnvironment(\.barBoxed) { $0 = $0 || on } }
 }
 
 /// The room either side of a module that is only words, the same as a title's.

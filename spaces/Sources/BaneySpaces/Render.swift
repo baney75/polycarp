@@ -162,7 +162,7 @@ enum Render {
             guard save(SwitcherView(model: appSwitcher).padding(30), frame.name, CGSize(width: 820, height: 0)) else { return 1 }
         }
 
-        // The Ledger top bar, on a screen without a notch and on one with it (the middle folds left).
+        // The Ledger top bar, on a screen without a notch and on one with it (the middle sits on the camera's right).
         let topBar = TopBarModel()
         topBar.occupied = [1, 2, 4]
         topBar.now = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 9, minute: 12)) ?? Date()
@@ -173,7 +173,6 @@ enum Render {
             topBar.notices = "3"
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar-notices.png", CGSize(width: 1512, height: 26)) else { return 1 }
             // The bar as a working Mac has it: the front app's menus, its status items, the battery and a strip of workspaces.
-            topBar.bar.style = .solid
             topBar.bar.left = [.mark, .workspaces, .split, .appMenus]
             topBar.bar.center = [.clock]
             topBar.bar.right = [.status, .split, .notifications]
@@ -189,6 +188,9 @@ enum Render {
                 .map { BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra." + $0.0, label: $0.1) }
             for (name, sides, height) in [("topbar-full.png", nil, 26.0), ("topbar-full-notch.png", (left: 656.0, right: 656.0), 37.0)]
                 as [(String, (left: CGFloat, right: CGFloat)?, CGFloat)] {
+                topBar.bar.style = .islands
+                guard save(TopBarView(model: topBar, display: id, screen: screen, sides: sides).background(Color(white: 0.35)), name.replacingOccurrences(of: "full", with: "islands"), CGSize(width: 1512, height: height)) else { return 1 }
+                topBar.bar.style = .solid
                 guard save(TopBarView(model: topBar, display: id, screen: screen, sides: sides).background(Color(white: 0.35)), name, CGSize(width: 1512, height: height)) else { return 1 }
             }
         }

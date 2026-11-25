@@ -13,6 +13,7 @@ struct BarButton<Content: View>: View {
     /// Held down by what it opened (a drawer, a list).
     var held = false
     let label: String
+    /// A tooltip, where the button doesn't say what it is.
     var help: String?
     let action: () -> Void
     @ViewBuilder let content: Content
@@ -26,7 +27,7 @@ struct BarButton<Content: View>: View {
         }
         .buttonStyle(BarPress(over: over, held: held))
         .background { PointerArea { over = $0 } }
-        .help(help ?? label)
+        .modifier(BarHelp(text: help))
         .accessibilityLabel(label)
     }
 }
@@ -36,6 +37,7 @@ private struct BarPress: ButtonStyle {
     let over: Bool
     let held: Bool
     @Environment(\.barFace) private var face
+    @Environment(\.barBoxed) private var boxed
 
     func makeBody(configuration: Configuration) -> some View {
         let strength = configuration.isPressed ? 0.16 : held ? 0.12 : over ? 0.08 : 0
@@ -46,9 +48,18 @@ private struct BarPress: ButtonStyle {
                 BarShape.face.fill(Chrome.wash(strength)).frame(height: face)
                     .animation(Chrome.ease(over ? 0.09 : 0.16, .row), value: strength)
             }
-            // The whole height of the bar takes the click, so the pointer can rest on the screen's edge.
-            .frame(maxHeight: .infinity)
+            // The whole height of the bar takes the click, so the pointer can rest on the screen's edge. Inside a box the
+            // sheet draws, the box is the button, at its own height.
+            .frame(maxHeight: boxed ? face : .infinity)
             .contentShape(Rectangle())
+    }
+}
+
+/// A tooltip on what has one.
+private struct BarHelp: ViewModifier {
+    let text: String?
+    func body(content: Content) -> some View {
+        if let text { content.help(text) } else { content }
     }
 }
 
@@ -59,12 +70,18 @@ enum BarShape {
 }
 
 private struct BarFaceKey: EnvironmentKey { static let defaultValue: CGFloat = 22 }
+private struct BarBoxedKey: EnvironmentKey { static let defaultValue = false }
 
 extension EnvironmentValues {
     /// The height of the face behind a bar button (`BarGeometry.face`).
     var barFace: CGFloat {
         get { self[BarFaceKey.self] }
         set { self[BarFaceKey.self] = newValue }
+    }
+    /// Inside a module or region the sheet draws a box round.
+    var barBoxed: Bool {
+        get { self[BarBoxedKey.self] }
+        set { self[BarBoxedKey.self] = newValue }
     }
 }
 
@@ -89,6 +106,11 @@ struct PointerArea: NSViewRepresentable {
             let new = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
             addTrackingArea(new)
             area = new
+            // A button that moved out from under a pointer at rest, or in under one, gets no enter or exit from AppKit.
+            if let window {
+                let here = visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+                DispatchQueue.main.async { [weak self] in self?.set(here) }
+            }
         }
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
