@@ -188,7 +188,7 @@ fn request(mut a: Vec<String>) -> Result<Value, Envelope> {
     }
 }
 
-/// Computer use, removed from Polycarp (Donovan, 2026-11-24): each verb answers one line and the daemon hears nothing.
+/// Computer use, removed from Polycarp: each verb answers one line and the daemon hears nothing.
 const REMOVED: &[&str] = &[
     "snapshot", "find", "get", "click", "set-value", "type", "toggle", "select", "scroll", "shot", "press", "key", "pointer", "click-at", "mouse",
     "lend", "return",
