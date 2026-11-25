@@ -166,10 +166,22 @@ public enum StyleTarget: String, CaseIterable, Sendable {
          launcherIcon = "launcher icon", launcherFooter = "launcher footer"
 
     /// The first word of its name.
-    public var surface: StyleSurface { StyleSurface(rawValue: String(rawValue.prefix { $0 != " " }))! }
+    public var surface: StyleSurface { Self.names[self]!.surface }
 
     /// The class names it takes after its surface; empty for the surface itself.
-    public var parts: [String] {
+    public var parts: [String] { Self.names[self]!.parts }
+
+    /// Read off the raw values once: the cascade asks on every step.
+    private static let names: [StyleTarget: (surface: StyleSurface, parts: [String])] = {
+        Dictionary(uniqueKeysWithValues: allCases.map { t in (t, (StyleSurface(rawValue: String(t.rawValue.prefix { $0 != " " }))!, t.classes)) })
+    }()
+    private static let byName: [StyleSurface: [String: StyleTarget]] = {
+        var all: [StyleSurface: [String: StyleTarget]] = [:]
+        for t in allCases { for part in t.parts.isEmpty ? [""] : t.parts { all[t.surface, default: [:]][part] = t } }
+        return all
+    }()
+
+    private var classes: [String] {
         switch self {
         case .barRegion: ["left", "center", "right"]
         case .barModule: Surfaces.BarModule.builtIn.map(\.id)
@@ -230,7 +242,7 @@ public enum StyleTarget: String, CaseIterable, Sendable {
     }
 
     static func of(_ surface: StyleSurface, part: String?) -> StyleTarget? {
-        allCases.first { t in t.surface == surface && (part == nil ? t.parts.isEmpty : t.parts.contains(part!)) }
+        byName[surface]?[part ?? ""]
     }
 }
 
@@ -304,6 +316,11 @@ public struct StyleProperty: Sendable {
     }
 
     public func applies(to target: StyleTarget) -> Bool { targets.contains(target) }
+
+    /// What a part takes, and the inherited properties it only passes on, worked out once: the cascade asks on every step.
+    static let of: [StyleTarget: (taken: [StyleProperty], passed: [StyleProperty])] = Dictionary(uniqueKeysWithValues: StyleTarget.allCases.map { t in
+        (t, (all.filter { $0.applies(to: t) }, all.filter { $0.inherited && !$0.applies(to: t) }))
+    })
 
     /// Everything that draws text, with letters the view spaces and cases itself.
     static let texts: [StyleTarget] = [.bar, .barRegion, .barModule, .barWorkspace,
