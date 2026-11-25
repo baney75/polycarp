@@ -69,6 +69,19 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(BarText.battery(percent: 40, charging: true, onPower: true), "40% charging")
     }
 
+    func testTheClocksPartsMakeItsText() {
+        for format in Surfaces.ClockFormat.allCases {
+            let p = BarText.clockParts(at(21, 21, 4), calendar: cal, format: format)
+            XCTAssertEqual([p.day, p.time, p.half].compactMap { $0 }.joined(separator: " "), BarText.clock(at(21, 21, 4), calendar: cal, format: format))
+        }
+        let full = BarText.clockParts(at(21, 21, 4), calendar: cal, format: .dayTwelveHour)
+        XCTAssertEqual(full.day, "Saturday")
+        XCTAssertEqual(full.time, "9:04")
+        XCTAssertNotNil(full.half)
+        XCTAssertNil(BarText.clockParts(at(21, 21, 4), calendar: cal, format: .dayTwentyFourHour).half)
+        XCTAssertNil(BarText.clockParts(at(21, 21, 4), calendar: cal, format: .twelveHour).day)
+    }
+
     /// On a screen without a notch the sides get what the middle doesn't need: the menus once lost a title to the clock's
     /// unused share.
     func testTheMiddleTakesOnlyTheWidthItNeeds() {
@@ -117,6 +130,25 @@ final class TopBarTests: XCTestCase {
         XCTAssertTrue(parts.contains("override func hitTest(_ point: NSPoint) -> NSView? { nil }"), "the hover area takes no clicks")
     }
 
+    func testTheWheelStepsOneWorkspaceAtATime() {
+        var wheel = BarScroll()
+        XCTAssertEqual(wheel.step(-1, precise: false, at: 0), 1, "a click down is the next")
+        XCTAssertEqual(wheel.step(-1, precise: false, at: 0.05), 0, "one flick is one workspace")
+        XCTAssertEqual(wheel.step(1, precise: false, at: 1), -1, "up is the one before")
+        var pad = BarScroll()
+        XCTAssertEqual(pad.step(-10, precise: true, at: 0), 0)
+        XCTAssertEqual(pad.step(-10, precise: true, at: 0.02), 0)
+        XCTAssertEqual(pad.step(-10, precise: true, at: 0.04), 1, "a trackpad's points add up")
+        XCTAssertEqual(pad.step(-400, precise: true, momentum: true, at: 2), 0, "the glide after the fingers lift")
+        XCTAssertEqual(pad.step(-20, precise: true, at: 3), 0)
+        XCTAssertEqual(pad.step(20, precise: true, at: 3.1), 0, "turning back starts over")
+        XCTAssertEqual(pad.step(0, precise: true, at: 4), 0)
+        XCTAssertEqual(BarScroll.target(from: 2, way: 1, shown: [1, 2, 5]), 5)
+        XCTAssertNil(BarScroll.target(from: 5, way: 1, shown: [1, 2, 5]), "it stops at the end")
+        XCTAssertNil(BarScroll.target(from: 1, way: -1, shown: [1, 2, 5]))
+        XCTAssertNil(BarScroll.target(from: 2, way: 0, shown: [1, 2, 5]))
+    }
+
     func testTheLedgerDefaults() {
         let bar = Surfaces.defaults.bar
         XCTAssertEqual(bar.left, [.mark, .workspaces, .split, .appMenus])
@@ -137,9 +169,8 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(BarWorkspaces.shown(occupied: [0, 12, 4], current: 4), [4], "only workspaces 1 to 9")
     }
 
-    /// The built-in themes (dot, bar) underline the workspace you're on; a number-block theme draws it on a block.
     func testTheCurrentNumbersMarkerFollowsTheTheme() {
-        XCTAssertEqual(BarWorkspaces.marker(.dot), .underline)
+        XCTAssertEqual(BarWorkspaces.marker(.dot), .pill)
         XCTAssertEqual(BarWorkspaces.marker(.bar), .underline)
         XCTAssertEqual(BarWorkspaces.marker(.numberBlock), .block)
     }
