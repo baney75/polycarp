@@ -14,6 +14,7 @@ public struct TilingSaved: Codable, Equatable, Sendable {
         var focused: WindowID?
         /// The windows of each group, in tab order. Nil in a file from before there were any.
         var groups: [[WindowID]]?
+        var zoomed: [WindowID: TilingZoom]?
     }
 
     struct Window: Codable, Equatable, Sendable {
@@ -70,7 +71,8 @@ extension TilingEngine {
             s.ungroup(unknown)
             for id in unknown { s.layout.remove(id, area: s.area) }
             if !s.layout.windows.isEmpty {
-                out.slots.append(.init(key: key, layout: s.layout, focused: s.focused, groups: s.groups.isEmpty ? nil : s.groups.map(\.members)))
+                out.slots.append(.init(key: key, layout: s.layout, focused: s.focused, groups: s.groups.isEmpty ? nil : s.groups.map(\.members),
+                                       zoomed: Self.kept(s.zoomed, s)))
             }
         }
         // A saved window still away is kept too, in a layout or not: one owed a frame or a float waits for the next run.
@@ -103,6 +105,7 @@ extension TilingEngine {
             guard !layout.windows.isEmpty else { continue }
             var slot = Slot(layout: layout, focused: s.focused.flatMap { phantom[$0] })
             slot.restore((s.groups ?? []).map { $0.compactMap { phantom[$0] } })
+            for (id, z) in s.zoomed ?? [:] { if let p = phantom[id], slot.holds(p) { slot.zoomed[p] = z } }
             slots[s.key] = slot
             lastDisplay[s.key.workspace] = s.key.display
         }

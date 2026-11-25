@@ -136,6 +136,7 @@ public struct TilingEngine: Equatable, Sendable {
         var away: [WindowID: Away] = [:]
         var focused: WindowID?
         var groups: [TilingGroup] = []
+        var zoomed: [WindowID: TilingZoom] = [:]
     }
 
     /// What was last asked of a window.
@@ -332,6 +333,7 @@ public struct TilingEngine: Equatable, Sendable {
         }
         // In `floating` a window stays where it is put, so there is no frame to go back to.
         for w in tiling where !w.away && before[w.id] == nil && slot.layout.style != .floating { before[w.id] = w.frame }
+        if !slot.zoomed.isEmpty { slot.zoomed = slot.zoomed.filter { slot.holds($0.key) || slot.away[$0.key]?.floating == false } }
         slot.layout.sync(slot.layout.windows, focused: nil, area: place.area)
         if let f = focused, slot.holds(f) {
             slot.show(f)
@@ -422,7 +424,7 @@ public struct TilingEngine: Equatable, Sendable {
             out[id] = f
         }
         for g in slot.groups { if let f = slot.front(of: g).flatMap({ out[$0] }) { for m in g.members { out[m] = f } } }
-        return out
+        return slot.zoomed.isEmpty ? out : zoomed(out, slot)
     }
 
     /// The tiles of the windows that have one of their own, and the windows that share another's.
@@ -538,6 +540,7 @@ public struct TilingEngine: Equatable, Sendable {
             slots[key]!.layout.replace(old, with: new)
             for i in slots[key]!.groups.indices { slots[key]!.groups[i].members = slots[key]!.groups[i].members.map { $0 == old ? new : $0 } }
             if slots[key]!.focused == old { slots[key]!.focused = new }
+            if let z = slots[key]!.zoomed.removeValue(forKey: old) { slots[key]!.zoomed[new] = z }
             if let a = slots[key]!.away.removeValue(forKey: old) {
                 var whole = a.whole
                 whole.replace(old, with: new)
@@ -567,7 +570,10 @@ public struct TilingEngine: Equatable, Sendable {
         for key in slots.keys {
             let left = Set(slots[key]!.all.filter { now[$0]?.workspace != key.workspace && waiting[$0] == nil })
             if !left.isEmpty { slots[key]!.ungroup(left) }
-            for id in left { slots[key]!.layout.remove(id, area: slots[key]!.area) }
+            for id in left {
+                slots[key]!.layout.remove(id, area: slots[key]!.area)
+                slots[key]!.zoomed[id] = nil
+            }
             slots[key]!.away = slots[key]!.away.filter { $0.value.floating ? now[$0.key] != nil : now[$0.key]?.workspace == key.workspace || waiting[$0.key] != nil }
         }
     }

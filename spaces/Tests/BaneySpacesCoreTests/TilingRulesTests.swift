@@ -13,7 +13,7 @@ final class TilingEnginePropertyTests: XCTestCase {
     private func step(_ f: inout FakeWindows, _ r: inout TileRandom, _ next: inout WindowID) {
         let ids = f.wins.keys.sorted()
         let id = ids.isEmpty ? 0 : ids[r.below(ids.count)]
-        switch r.below(19) {
+        switch r.below(20) {
         case 0, 1, 2:
             guard ids.count < 12 else { return }
             next += 1
@@ -71,6 +71,9 @@ final class TilingEnginePropertyTests: XCTestCase {
             guard let w = f.wins[id]?.w else { return }
             if w.over == nil { f.engine.popOut(id, sized: r.below(2) == 0) } else if r.below(3) == 0 { f.wins[id]!.w.workspace = 1 + r.below(3) }
             f.wins[id]!.w.over = w.over == nil ? .pinned : nil
+        case 19:
+            guard let w = f.wins[id]?.w else { return }
+            _ = f.engine.run(.zoom(r.below(2) == 0 ? .screen : .width), on: w.workspace, focused: id)
         case 14: if f.wins[id] != nil { f.engine.choice[id] = r.below(2) == 0 }
         default:
             guard f.wins[id] != nil else { return }
@@ -105,11 +108,13 @@ final class TilingEnginePropertyTests: XCTestCase {
             }
             for strip in f.engine.tabs(n) {
                 XCTAssertTrue(place.area.contains(strip.frame), "\(where_): a strip outside")
-                for (id, t) in targets { XCTAssertFalse(strip.frame.intersects(t), "\(where_): \(id) over a strip") }
+                for (id, t) in targets where slot.front(of: id) != strip.front || TilingEngine.zoom(of: id, slot) == nil { XCTAssertFalse(strip.frame.intersects(t), "\(where_): \(id) over a strip") }
             }
             for (id, t) in targets {
                 XCTAssertTrue(place.area.contains(t), "\(where_): \(id) at \(t) outside \(place.area)")
-                for (other, o) in targets where other > id && o != t && !shared.contains(id) && !shared.contains(other) {
+                // A zoomed window lies over the tiles, which keep theirs; one too big for its tile shares the next.
+                for (other, o) in targets where other > id && o != t && !shared.contains(id) && !shared.contains(other)
+                    && TilingEngine.zoom(of: id, slot) == nil && TilingEngine.zoom(of: other, slot) == nil {
                     XCTAssertFalse(t.intersects(o), "\(where_): \(id) \(t) over \(other) \(o)")
                 }
             }
