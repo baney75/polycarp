@@ -39,6 +39,13 @@ pub fn inside(dir: &Path) -> io::Result<Vec<i32>> {
     }
 }
 
+/// A process with this number exists.
+pub fn is_there(pid: i32) -> bool {
+    // SAFETY: signal 0 is only a question.
+    let asked = pid > 0 && unsafe { libc::kill(pid, 0) } == 0;
+    asked || (pid > 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
+}
+
 /// Stops what runs from inside a build that was never installed. A list that can't be read stops nothing.
 pub fn stop_inside(dir: &Path) {
     let Ok(dir) = dir.canonicalize() else {

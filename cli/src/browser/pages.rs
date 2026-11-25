@@ -56,6 +56,21 @@ fn copy(from: &Path, to: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn first_prefs() -> String {
+    json!({ "helium": { "completed_onboarding": true } }).to_string()
+}
+
+/// No one has used the first profile: it isn't there, or holds only what `first_run` wrote.
+pub fn untouched(data: &Path) -> bool {
+    let first = data.join("Default");
+    let Ok(files) = fs::read_dir(&first) else {
+        return fs::symlink_metadata(first).is_err();
+    };
+    let only = |f: io::Result<fs::DirEntry>| f.is_ok_and(|f| f.file_name() == "Preferences");
+    let prefs = fs::read_to_string(first.join("Preferences"));
+    files.into_iter().all(only) && prefs.is_ok_and(|p| p == first_prefs())
+}
+
 /// The settings a new profile begins with: no welcome tour and no question about the default browser. Helium's own
 /// online services are the person's choice, so they stay off until chosen. A profile that exists is never changed.
 pub fn first_run(data: &Path) -> io::Result<bool> {
@@ -65,8 +80,7 @@ pub fn first_run(data: &Path) -> io::Result<bool> {
     fs::create_dir_all(data.join("Default"))?;
     fs::set_permissions(data, fs::Permissions::from_mode(0o700))?;
     let local = json!({ "helium": { "browser": { "default_browser_infobar_rejected": true } } });
-    let prefs = json!({ "helium": { "completed_onboarding": true } });
-    fs::write(data.join("Default/Preferences"), prefs.to_string())?;
+    fs::write(data.join("Default/Preferences"), first_prefs())?;
     fs::write(data.join("First Run"), "")?;
     // Last: it is what says the profile exists.
     fs::write(data.join("Local State"), local.to_string())?;
