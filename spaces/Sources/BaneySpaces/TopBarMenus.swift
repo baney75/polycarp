@@ -11,11 +11,12 @@ import SwiftUI
 /// 2026-11-24 one did: an idle Excel or Ghostty takes over the 0.1 s the status read allows (105 ms, measured), every
 /// 15 s, and while an app is benched its new window gets no workspace and its parked ones aren't brought back.
 enum BarReader {
-    /// One app's reads. A timeout is kept here (`missed`) and nowhere else.
+    /// One app's reads. A timeout is kept here (`missed`) and nowhere else; after one, nothing more is asked of the app.
     private struct Quiet {
         var missed = false
 
         mutating func value<T>(_ element: AXUIElement, _ attribute: String) -> T? {
+            guard !missed else { return nil }
             var raw: CFTypeRef?
             let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &raw)
             if error == .cannotComplete { missed = true }
@@ -92,27 +93,29 @@ enum BarReader {
 
     /// The bar's own waits for apps that didn't answer it, and what each showed last. Read one at a time
     /// (`TopBar.readingStatus`), so nothing guards them.
-    private static var statusBench = AXBench()
+    private static var statusBench = AXBench(waits: [5, 30, 60])
     private static var lastStatus: [pid_t: [Status]] = [:]
 
-    /// Every other app's status items (`AXExtrasMenuBar`), in the order read. An app that doesn't answer keeps the items
-    /// it had and is asked again later each time, so a frozen one doesn't cost its timeout at every read. One read at a
-    /// time, any thread.
-    static func status(of apps: [(pid: pid_t, bundle: String, launched: Date?)]) -> [Status] {
-        let running = Set(apps.map(\.pid))
+    /// Every other app's status items (`AXExtrasMenuBar`), in the order read. An app that doesn't answer in full keeps the
+    /// items it had (or, with none, those it gave) and is asked again within a minute, so a frozen one doesn't cost its
+    /// timeout at every read. One read at a time, off the main thread: launch dates are fetched anew on every read.
+    static func status(of apps: [NSRunningApplication]) -> [Status] {
+        let pids = apps.map(\.processIdentifier)
+        let running = Set(pids)
         statusBench.keep(running)
         lastStatus = lastStatus.filter { running.contains($0.key) }
-        for app in apps where !statusBench.isBenched(app.pid, now: Date()) {
+        for (app, pid) in zip(apps, pids) where !statusBench.isBenched(pid, now: Date()) {
             var ask = Quiet()
-            let items = status(of: app.pid, bundle: app.bundle, ask: &ask)
+            let items = status(of: pid, bundle: app.bundleIdentifier ?? "", ask: &ask)
             if ask.missed {
-                statusBench.missed(app.pid, age: app.launched.map { -$0.timeIntervalSinceNow }, now: Date())
+                statusBench.missed(pid, age: app.launchDate.map { -$0.timeIntervalSinceNow }, now: Date())
+                if lastStatus[pid]?.isEmpty ?? true { lastStatus[pid] = items }
             } else {
-                statusBench.answered(app.pid)
-                lastStatus[app.pid] = items
+                statusBench.answered(pid)
+                lastStatus[pid] = items
             }
         }
-        return apps.flatMap { lastStatus[$0.pid] ?? [] }
+        return pids.flatMap { lastStatus[$0] ?? [] }
     }
 
     private static func status(of pid: pid_t, bundle: String, ask: inout Quiet) -> [Status] {
@@ -120,6 +123,7 @@ enum BarReader {
         let children: [AXUIElement] = ask.value(bar, kAXChildrenAttribute) ?? []
         var out: [Status] = []
         for read in children {
+            AXUIElementSetMessagingTimeout(read, 0.1)
             let role = ask.string(read, kAXRoleAttribute)
             let kids: [AXUIElement] = role == "AXGroup" ? ask.value(read, kAXChildrenAttribute) ?? [] : []
             var roles: [String?] = []
@@ -135,7 +139,10 @@ enum BarReader {
                 if let text = ask.string(el, attribute), !text.isEmpty { label = text }
             }
             let at = ask.point(el) ?? ask.point(read)
-            out.append(Status(item: BarStatus.Item(owner: bundle, identifier: ask.string(el, kAXIdentifierAttribute),
+            let id = ask.string(el, kAXIdentifierAttribute)
+            // Read whole or not at all.
+            guard !ask.missed else { break }
+            out.append(Status(item: BarStatus.Item(owner: bundle, identifier: id,
                                                    label: label, x: at.map { Double($0.x) }, y: at.map { Double($0.y) }),
                               element: el))
         }

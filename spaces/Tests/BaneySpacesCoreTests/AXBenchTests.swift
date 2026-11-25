@@ -16,16 +16,26 @@ final class AXBenchTests: XCTestCase {
         XCTAssertEqual(bench.missed(7, age: nil, now: at(6)), 30, "the second miss in a row, not the tenth")
     }
 
-    /// What the bar did: a miss every 15 s, for ever.
-    func testReadsThatIgnoreTheBenchCantKeepAnAppOnIt() {
+    /// What the bar did: a miss every 15 s, for ever. Each wait ends when it said it would, so a scan gets its turn.
+    func testMissesDuringAWaitDontMoveItsEnd() {
         var bench = AXBench()
         bench.missed(7, age: nil, now: at(0))
-        var free = 0.0
+        var freeAt: [Double] = []
         for t in stride(from: 1.0, through: 600, by: 1) {
-            if !bench.isBenched(7, now: at(t)) { free += 1 }
+            if !bench.isBenched(7, now: at(t)), freeAt.last.map({ t - $0 > 12 }) ?? true { freeAt.append(t) }
             if t.truncatingRemainder(dividingBy: 15) == 2 { bench.missed(7, age: nil, now: at(t)) }
         }
-        XCTAssertGreaterThan(free, 10, "a scan gets its turn between waits")
+        XCTAssertEqual(freeAt, [5, 47, 167])
+    }
+
+    /// The bar's bench: cheap reads off the main thread, so no app waits over a minute to show its items again.
+    func testABenchCanAskSooner() {
+        var bench = AXBench(waits: [5, 30, 60])
+        var t = 0.0
+        for delay in [5.0, 30, 60, 60] {
+            XCTAssertEqual(bench.missed(7, age: nil, now: at(t)), delay)
+            t += delay
+        }
     }
 
     func testAMissInTheFirstMinuteWaitsFiveSecondsAndDoesntAddUp() {
@@ -52,9 +62,12 @@ final class AXBenchTests: XCTestCase {
     func testTheBarNeverBenchesAnAppForWindowTracking() throws {
         let bar = try Repo.code("Sources/BaneySpaces/TopBarMenus.swift")
         let reader = try XCTUnwrap(SourceText.block(after: "enum BarReader", in: bar))
-        for call in [".checked(", ".bool(", "markUnresponsive", ").value(", "?.value(", "el.string(", "read.string(", "$0.string("] {
-            XCTAssertFalse(reader.contains(call), "\(call) benches the app when it times out")
-        }
+        // Every attribute read is Quiet's own (`ask.value(...)`).
+        let loose = try NSRegularExpression(pattern: #"(?<!\bask)\.(value|string|bool|checked|windowID)\b\s*\("#)
+        let found = loose.matches(in: reader, range: NSRange(reader.startIndex..., in: reader)).map { String(reader[Range($0.range, in: reader)!]) }
+        XCTAssertEqual(found, [], "benches the app when it times out")
+        XCTAssertFalse(reader.contains("markUnresponsive"))
+        XCTAssertTrue(reader.contains("AXUIElementCopyAttributeValue("), "the reads are in the block checked here")
         XCTAssertTrue(reader.contains("statusBench.missed("), "a status miss goes on the bar's own bench")
     }
 }

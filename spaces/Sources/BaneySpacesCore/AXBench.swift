@@ -17,10 +17,12 @@ public struct AXBench: Equatable, Sendable {
     /// How long after its launch an app counts as still starting.
     public static let starting: TimeInterval = 60
 
+    /// This bench's waits (`hung` unless its reads are cheap enough to ask sooner).
+    private let waits: [TimeInterval]
     private var strikes: [Int32: Int] = [:]
     private var until: [Int32: Date] = [:]
 
-    public init() {}
+    public init(waits: [TimeInterval] = Self.hung) { self.waits = waits }
 
     /// Records a miss. `age` is the seconds since the app launched, nil when unknown (it counts as an old app). Returns
     /// how long it is benched from `now`.
@@ -30,7 +32,7 @@ public struct AXBench: Equatable, Sendable {
         let young = age.map { $0 >= 0 && $0 < Self.starting } ?? false
         let n = young ? 0 : strikes[pid, default: 0]
         if !young { strikes[pid] = n + 1 }
-        let delay = Self.hung[min(n, Self.hung.count - 1)]
+        let delay = waits[min(n, waits.count - 1)]
         until[pid] = now.addingTimeInterval(delay)
         return delay
     }
