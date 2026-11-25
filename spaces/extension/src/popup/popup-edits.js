@@ -21,7 +21,7 @@
       const li = document.createElement("li"), label = document.createElement("label"), words = document.createElement("span");
       const name = document.createElement("b"), small = document.createElement("small"), sw = document.createElement("span"), input = document.createElement("input");
       name.textContent = e.name || E.summary(e);
-      const idle = r && !r.css && r.changes.every((c) => !c.hits) && r.changes.find((c) => c.note);
+      const idle = r && !r.css && r.changes.every((c) => !c.did) && (r.changes.find((c) => c.note) || { note: "nothing here to change" });
       const why = e.appOff ? "off in the Polycarp app" : away ? "Polycarp is off here" : idle ? idle.note : "";
       small.textContent = (e.source === "app" ? "By your agent" : "By you") + (e.name ? " · " + E.summary(e) : "") + (why ? " · " + why : "");
       sw.className = "switch";

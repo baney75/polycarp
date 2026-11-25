@@ -33,11 +33,11 @@
     h2{font-size:17px;line-height:1.3;margin:0 0 4px;color:var(--pc-strong)} p,ul{margin:0 0 6px} ul{padding-inline-start:20px}
     a{color:var(--pc-accent)} a:focus-visible{outline:2px solid var(--pc-strong);outline-offset:2px} :last-child{margin-bottom:0}`;
 
-  function create(doc, passed) {
+  function create(doc) {
     const win = doc.defaultView;
     let edits = [], sheets = [], undo = [], notes = [];
     let room = KEPT, observer = null, timer = 0, frame = 0, lastMs = 0, themeCss = null, inert = null, more = false;
-    let state = new Map(); // a change -> { tries: WeakMap, last: WeakMap, count, note, host, at, el, html }
+    let state = new Map(); // a change -> { tries: WeakMap, last: WeakMap, count, did, note, host, at, el, html }
     let wrote = new WeakMap(); // a text node -> { orig, now }: the page's words, and ours
 
     const tagIs = (el, sel) => { try { return el.matches(sel); } catch (e) { return false; } };
@@ -46,7 +46,7 @@
     const ok = (sel) => { try { doc.querySelector(sel); return true; } catch (e) { return false; } };
     const all = (sel) => { try { return [...doc.querySelectorAll(sel)]; } catch (e) { return []; } };
     const first = (sel, not) => all(sel).find((el) => !el.closest(E.OURS) && !(not && not(el))) || null;
-    const st = (c) => { let s = state.get(c); if (!s) state.set(c, s = { tries: new WeakMap(), last: new WeakMap(), count: 0, note: "", host: null, at: null, el: null, html: "" }); return s; };
+    const st = (c) => { let s = state.get(c); if (!s) state.set(c, s = { tries: new WeakMap(), last: new WeakMap(), count: 0, did: false, note: "", host: null, at: null, el: null, html: "" }); return s; };
     // Whether a change may act on this part again. New words each time (a price, a counter) aren't a page fighting back.
     function again(s, el, was = "") {
       const t = s.tries.get(el), now = win.performance.now();
@@ -129,7 +129,7 @@
           reword(t, was, now);
           did = true;
         });
-        if (did) work++;
+        if (did) { work++; s.did = true; }
         if (!end) s.last.set(el, el.textContent);
       }
     }
@@ -145,6 +145,7 @@
         if (work >= MOST) { more = true; continue; }
         if (!again(s, el)) continue;
         work++;
+        s.did = true;
         const set = (v) => (v === null ? el.removeAttribute(c.name) : el.setAttribute(c.name, v));
         set(c.value);
         keep(el, () => { if (el.getAttribute(c.name) === c.value) set(had); });
@@ -289,7 +290,6 @@
       dress();
       if (observer) observer.takeRecords(); // our own changes
       lastMs = win.performance.now() - t0;
-      passed();
       if (more) schedule();
     }
     // Before the next frame is drawn; a pass that took long waits ten times as long, so it costs a tenth of the time at most.
@@ -352,11 +352,12 @@
       for (const u of undo.reverse()) { try { u.back(); } catch (e) { /* the page took that part away */ } }
       edits = []; sheets = []; undo = []; notes = []; state = new Map(); wrote = new WeakMap(); room = KEPT;
     }
-    // What each edit in force did here: how many parts each change found, and why one didn't.
+    // What each edit in force did here: how many parts each change found, whether it changed any, and why one didn't.
     function report() {
       return edits.map((e) => ({ id: e.id, source: e.source, name: e.name, css: !!e.css, changes: e.changes.map((c) => {
         const s = state.get(c);
-        const out = { do: c.do, hits: s ? s.count : all(c.at).length, note: s ? s.note : "" };
+        const out = { do: c.do, hits: s ? s.count : all(c.at).length, did: false, note: s ? s.note : "" };
+        out.did = c.do === "hide" ? all(c.at).some((el) => !isRoot(el) && !tagIs(el, E.OURS)) : c.do === "text" || c.do === "attr" ? !!s && s.did : out.hits > 0;
         if (!ok(c.at) || (c.to && !ok(c.to))) out.note = "this browser can't read that selector";
         else if (!out.hits && !out.note) out.note = "nothing on this page matches";
         return out;
@@ -368,9 +369,9 @@
   // ---------------------------------------------------------------- wiring
   // Settings and edits come from storage: the app's (kept fresh by the service worker) and this browser's own. A change
   // there, or a new address on a page that doesn't reload, reaches this page at once.
-  const page = create(document, () => { for (const f of onpass) f(); });
+  const page = create(document);
   const alive = () => { try { return !!chrome.runtime.id; } catch (e) { return false; } };
-  let applied = "", turn = 0, watching = true, here = [], onapply = [], onpass = [];
+  let applied = "", turn = 0, watching = true, here = [], onapply = [];
 
   async function apply() {
     if (!alive()) return end();
@@ -407,7 +408,7 @@
     document.removeEventListener("DOMContentLoaded", page.flush);
     removeEventListener("load", page.flush);
   }
-  P.pageEdits = { apply, report: page.report, watch: (f, passed) => { onapply.push(f); if (passed) onpass.push(passed); f(here); } };
+  P.pageEdits = { apply, report: page.report, watch: (f) => { onapply.push(f); f(here); } };
 
   // A copy from before an extension update is still on the page with its edits made: it takes them back first, so this
   // copy starts from the page as the site made it. All a page could do with this is ask for itself unedited.
