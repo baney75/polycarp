@@ -1,8 +1,7 @@
-# Style sheet: restyle the bar and the dock with CSS
+# Style sheet: restyle the top bar with CSS
 
-`style.css` restyles two Polycarp surfaces, the top bar and the Workspace Dock, with a small, strict subset of CSS. The
-theme (`polycarp theme`) sets colors, shape, type and motion everywhere; a rule in the sheet changes them for one surface
-or one part of it, and anything the sheet leaves out is drawn as before. What each surface shows (which modules, which
+`style.css` restyles Polycarp's top bar with a small, strict subset of CSS. The theme (`polycarp theme`) sets colors,
+shape, type and motion everywhere; a rule in the sheet changes them for the bar or one part of it, and anything the sheet leaves out is drawn as before. What each surface shows (which modules, which
 labels) stays in [surfaces.json](surfaces.md).
 
 - File: `<config>/style.css`, in the folder `polycarp theme current` prints: `$POLYCARP_CONFIG_DIR`, else
@@ -10,11 +9,12 @@ labels) stays in [surfaces.json](surfaces.md).
 - At most 64 KB, a regular file, UTF-8. A file that breaks these is ignored, with one line in `trace.log`.
 - No file means no sheet, and nothing is logged.
 - Edits apply live: a running Polycarp picks up a change within 200 ms, logs `style.css: applied, N rules, M problems`
-  (or `style.css: removed`) and redraws the bar and the dock. A new bar `height` moves the bar's panels and a new dock
-  `gap` or `padding` re-frames the dock. Nothing restarts.
+  (or `style.css: removed`) and redraws the bar. A new bar `height` moves the bar's panels. Nothing restarts.
 - `polycarp-spaces style example` prints a starter sheet that names every selector and property, all commented out.
 - `polycarp-spaces style preset omarchy` writes a whole look in one command (see [Presets](#presets)).
 - Every selector and property below changes something on screen; nothing in the table is parsed and then ignored.
+- The Workspace Dock was removed on 2026-11-23, and its `dock` selectors with it. An older sheet that still has `dock`
+  rules loads: each such selector is a warning and is ignored, and the rest of the sheet applies.
 
 ## Precedence
 
@@ -52,8 +52,7 @@ A warning (low contrast) still applies; `check` passes when there are only warni
   `white` `maroon` `red` `purple` `fuchsia` `green` `lime` `olive` `yellow` `navy` `blue` `teal` `aqua`) and `var(--role)`.
 - Specificity: the surface counts as a type; each part, `.current` and `:hover` counts as a class.
 - Inheritance: `color`, `font-*`, `letter-spacing` and `text-transform` pass from a surface to its region and from a
-  region to its modules (on the dock, from the dock to a tile and from a tile to its label, badge and icon). Nothing
-  else inherits.
+  region to its modules. Nothing else inherits.
 - `*`, ids, attribute selectors, combinators other than the space, and pseudo-elements aren't supported. A selector with
   any of them is a problem that says why and names the selectors that work.
 - Low contrast: text whose color is under 3:1 against what it's drawn on is a warning.
@@ -67,39 +66,33 @@ A warning (low contrast) still applies; `check` passes when there are only warni
 | `bar .island` | none | One island of modules when bar.style is islands: its background, corners, line, shadow, padding and gap. Text inside takes its region's and module's styles. |
 | `bar .mark` `bar .workspaces` `bar .app-menus` `bar .status` `bar .hour` `bar .clock` `bar .date` `bar .verse` `bar .battery` `bar .network` `bar .notifications` | `:hover` | One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it. |
 | `bar .workspace` | `.current` `:hover` | One number in the workspaces module; .current is the workspace you're on, :hover the one under the pointer. |
-| `dock` | none | The Workspace Dock's bar. |
-| `dock .tile` | `.current` `:hover` | A workspace tile; .current is the workspace you're on, :hover the one under the pointer. |
-| `dock .label` | `.current` `:hover` | The tile's label (its number, surfaces.json dock.tileLabel). |
-| `dock .badge` | `.current` `:hover` | The tile's badge (a count or an attention dot). |
-| `dock .icon` | `.current` `:hover` | An app icon on a tile. |
 
-States join with no space: `dock .tile.current`, `dock .tile:hover`, `dock .tile.current:hover`. On a label, badge or
-icon they mean the state of its tile: `dock .label.current` is the label on the current tile. A `custom:<name>` bar
-module has no class yet.
+States join with no space: `bar .workspace.current`, `bar .workspace:hover`, `bar .workspace.current:hover`. A
+`custom:<name>` bar module has no class yet.
 
 ## Properties
 
 | Property | Takes | Applies to | Inherited | What it does |
 | --- | --- | --- | --- | --- |
-| `color` | a color | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Text and symbol color. |
-| `background` | a color, `none`, `glass` (the platform's blur) or `linear-gradient(<color>, <color>)`, optionally starting `to bottom,` or `to right,` | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge, bar island | no | What is drawn behind it. |
+| `color` | a color | bar, bar region, bar module, bar workspace | yes | Text and symbol color. |
+| `background` | a color, `none`, `glass` (the platform's blur) or `linear-gradient(<color>, <color>)`, optionally starting `to bottom,` or `to right,` | everything | no | What is drawn behind it. |
 | `opacity` | a number from 0 to 1, or a percentage | everything | no | How opaque the whole thing is. |
-| `font-family` | a font stack, as the theme's `type.ui`: names separated by commas, quoted when they hold other characters | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | The font, first installed name wins; `monospace` and `serif` are the system's. |
-| `font-size` | a length from 6 to 40 (`px` or `pt`) | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Text size in points. |
-| `font-weight` | 100 to 900, `normal` (400) or `bold` (700) | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Text weight. |
-| `font-style` | `normal` or `italic` | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Upright or italic text. |
-| `letter-spacing` | `normal` or a length from -2 to 10 (`px` or `pt`) | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Extra space between letters. |
-| `text-transform` | `none`, `uppercase`, `lowercase` or `capitalize` | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | Letter case, whatever the text says. |
-| `font-variant-numeric` | `normal` or `tabular-nums` | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge | yes | `tabular-nums` gives every digit the same width, so a clock doesn't jiggle. |
+| `font-family` | a font stack, as the theme's `type.ui`: names separated by commas, quoted when they hold other characters | bar, bar region, bar module, bar workspace | yes | The font, first installed name wins; `monospace` and `serif` are the system's. |
+| `font-size` | a length from 6 to 40 (`px` or `pt`) | bar, bar region, bar module, bar workspace | yes | Text size in points. |
+| `font-weight` | 100 to 900, `normal` (400) or `bold` (700) | bar, bar region, bar module, bar workspace | yes | Text weight. |
+| `font-style` | `normal` or `italic` | bar, bar region, bar module, bar workspace | yes | Upright or italic text. |
+| `letter-spacing` | `normal` or a length from -2 to 10 (`px` or `pt`) | bar, bar region, bar module, bar workspace | yes | Extra space between letters. |
+| `text-transform` | `none`, `uppercase`, `lowercase` or `capitalize` | bar, bar region, bar module, bar workspace | yes | Letter case, whatever the text says. |
+| `font-variant-numeric` | `normal` or `tabular-nums` | bar, bar region, bar module, bar workspace | yes | `tabular-nums` gives every digit the same width, so a clock doesn't jiggle. |
 | `height` | a length from 18 to 64 (`px` or `pt`) | bar | no | The bar's height (on a screen with a notch the bar fills the strip beside it). |
-| `padding` | 1 to 4 lengths from 0 to 40, in CSS order (top, right, bottom, left) | bar, bar region, bar island, bar module, bar workspace, dock, dock label | no | Space inside the edge. |
-| `gap` | a length from 0 to 40 (`px` or `pt`) | bar, bar region, bar island, bar module, dock | no | Space between modules (bar, a region), between a module's items (workspace numbers, menus, status items) or between tiles (dock). |
-| `border-radius` | a length from 0 to 40 (`px` or `pt`) | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge, bar island | no | Corner radius. |
-| `border` | `none` or `<width 0 to 8> solid <color>` | bar, bar region, bar module, bar workspace, dock, dock tile, dock label, dock badge, bar island | no | A line all around. |
-| `border-bottom` | `none` or `<width 0 to 8> solid <color>` | bar, bar region, bar module, bar workspace, dock, dock tile | no | A line along the bottom edge only. |
-| `box-shadow` | `none` or `<x> <y> <blur> <color>` (x and y -40 to 40, blur 0 to 64) | bar island, dock, dock tile, dock badge | no | A drop shadow. |
-| `display` | `flex` or `none` | bar region, bar island, bar module, bar workspace, dock label, dock badge, dock icon | no | `none` hides it; `flex` (the default) shows it. |
-| `transition-duration` | 0 to 2000 `ms`, or the same in `s` | bar module, bar workspace, dock tile | no | How long a change of state (hover, current) fades its colors and lines. |
+| `padding` | 1 to 4 lengths from 0 to 40, in CSS order (top, right, bottom, left) | everything | no | Space inside the edge. |
+| `gap` | a length from 0 to 40 (`px` or `pt`) | bar, bar region, bar island, bar module | no | Space between modules (bar, a region, an island) or between a module's items (workspace numbers, menus, status items). |
+| `border-radius` | a length from 0 to 40 (`px` or `pt`) | everything | no | Corner radius. |
+| `border` | `none` or `<width 0 to 8> solid <color>` | everything | no | A line all around. |
+| `border-bottom` | `none` or `<width 0 to 8> solid <color>` | bar, bar region, bar module, bar workspace | no | A line along the bottom edge only. |
+| `box-shadow` | `none` or `<x> <y> <blur> <color>` (x and y -40 to 40, blur 0 to 64) | bar island | no | A drop shadow. |
+| `display` | `flex` or `none` | bar region, bar island, bar module, bar workspace | no | `none` hides it; `flex` (the default) shows it. |
+| `transition-duration` | 0 to 2000 `ms`, or the same in `s` | bar module, bar workspace | no | How long a change of state (hover, current) fades its colors and lines. |
 
 A property used on a selector it doesn't apply to is a problem, not silently ignored. To turn the whole bar off, use
 `bar.enabled` in surfaces.json.
@@ -139,16 +132,6 @@ Quiet workspace numbers with an accent line under the one you're on:
 bar .workspace { color: var(--muted); padding: 0 5px 3px; }
 bar .workspace:hover { color: var(--foreground); }
 bar .workspace.current { color: var(--foreground); border-bottom: 2px solid var(--accent); }
-```
-
-A dock with square tiles:
-
-```css
-dock { gap: 4px; border-radius: 0; }
-dock .tile { border-radius: 0; border: 1px solid var(--border); transition-duration: 120ms; }
-dock .tile.current { border: 2px solid var(--accent); }
-dock .tile:hover { border: 1px solid var(--accent); }
-dock .label { font-variant-numeric: tabular-nums; }
 ```
 
 ## Presets

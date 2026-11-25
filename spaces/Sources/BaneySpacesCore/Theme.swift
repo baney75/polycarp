@@ -64,9 +64,6 @@ public struct ThemeSpec: Decodable, Equatable, Sendable {
 }
 
 public struct ThemeCatalog: Sendable {
-    /// `settings.dock.enabled.default`, a plain bool, and the platforms that differ (`default_by_platform`).
-    public let dockEnabledDefault: Bool
-    public let dockEnabledByPlatform: [String: Bool]
     public let themes: [String: ThemeSpec]
     /// font key -> platform -> families, in order of preference.
     public let fonts: [String: [String: [String]]]
@@ -83,16 +80,8 @@ public struct ThemeCatalog: Sendable {
         d.keyDecodingStrategy = .convertFromSnakeCase
         guard let f = try? d.decode(File.self, from: Data(text.utf8)), f.version == 1,
               ThemeID.allCases.allSatisfy({ f.themes[$0.rawValue] != nil }) else { return nil }
-        // The dock switch's default is a bool; a platform that differs is listed beside it.
-        let root = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
-        let dock = (root?["settings"] as? [String: Any])?["dock.enabled"] as? [String: Any]
-        guard let base = dock?["default"] as? Bool else { return nil }
-        let byPlatform = (dock?["default_by_platform"] as? [String: Bool]) ?? [:]
-        return ThemeCatalog(dockEnabledDefault: base, dockEnabledByPlatform: byPlatform, themes: f.themes, fonts: f.fonts)
+        return ThemeCatalog(themes: f.themes, fonts: f.fonts)
     }
-
-    /// Whether the dock starts on, where nobody has chosen: macOS's is off (the Workspace Dock replaces the macOS Dock).
-    public func dockEnabled(platform: String = "macos") -> Bool { dockEnabledByPlatform[platform] ?? dockEnabledDefault }
 
     public static let shared: ThemeCatalog = {
         guard let c = parse(ThemeData.themesJSON) else { fatalError("the embedded themes.json is unreadable") }
@@ -274,7 +263,7 @@ extension Look {
 
 // MARK: The theme in use
 
-/// The theme drawn right now, for code (like `DockMotion`) that has no view to ask. The app sets it
+/// The theme drawn right now, for code that has no view to ask. The app sets it
 /// when Settings, the CLI or a saved setting changes the theme; it is the BaneySpaces theme until
 /// then, so everything that reads it matches what shipped.
 public enum ThemeCenter {

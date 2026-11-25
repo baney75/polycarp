@@ -178,19 +178,26 @@ public enum StyleOps {
     /// `unset <selector> [property]`: removes that declaration, or the whole rule, wherever the selector stands alone.
     public static func unset(_ selectorText: String, _ property: String?, media mediaText: String? = nil, file: String?) -> Result {
         guard let file else { return .failure(noFolder) }
-        let sel: StyleSelector
-        switch selector(selectorText) { case .failure(let f): return .failure(f); case .success(let s): sel = s }
+        // A retired surface (an older build's `dock .tile`) has no selector, but its rules still come out by their text,
+        // so the warning `style check` gives for one can be cleared with this command.
+        let target: StyleEdit.Target
+        switch StyleSyntax.selector(selectorText) {
+        case .success(let s): target = .selector(s)
+        case .failure(let e) where e.retired: target = .retired(StyleSyntax.plain(selectorText))
+        case .failure:
+            switch selector(selectorText) { case .failure(let f): return .failure(f); case .success(let s): target = .selector(s) }
+        }
         let media: StyleMedia?
         switch Self.media(mediaText) { case .failure(let f): return .failure(f); case .success(let m): media = m }
         let old: String
         let exists: Bool
         switch read(file) { case .failure(let f): return .failure(f); case .success(let r): old = r.text; exists = r.exists }
         let name = property.map { $0.hasPrefix("--") ? $0 : $0.lowercased() }
-        let (new, removed) = StyleEdit.unset(old, selector: sel, property: name, media: media)
+        let (new, removed) = StyleEdit.unset(old, target: target, property: name, media: media)
         if removed > 0, exists {
             do { try StyleSheetFile.write(new, to: file) } catch { return .failure(StyleFailure("io_error", "\(error)")) }
         }
-        var data: [String: SurfaceValue] = ["file": .string(StyleSheetFile.display(file)), "selector": .string(sel.description),
+        var data: [String: SurfaceValue] = ["file": .string(StyleSheetFile.display(file)), "selector": .string(target.description),
                                             "removed": .number(Double(removed))]
         if let name { data["property"] = .string(name) }
         if let media { data["media"] = .string(media.rawValue) }
@@ -363,7 +370,31 @@ enum StyleEdit {
 
     /// The rules `set` and `unset` touch: the selector alone (not in a list), at the top level or in that mode's `@media`.
     static func rules(_ syntax: StyleSyntax, _ selector: StyleSelector, _ media: StyleMedia?) -> [StyleRawRule] {
-        syntax.rules.filter { r in r.selectors == [selector] && r.media == media }
+        rules(syntax, .selector(selector), media)
+    }
+
+    /// What `unset` removes: the rules for a selector, or a retired surface's selector by its text, from a list too.
+    enum Target: CustomStringConvertible {
+        case selector(StyleSelector)
+        /// `StyleSyntax.plain` text, such as `dock .tile`.
+        case retired(String)
+
+        var description: String {
+            switch self {
+            case .selector(let s): s.description
+            case .retired(let t): t
+            }
+        }
+    }
+
+    static func rules(_ syntax: StyleSyntax, _ target: Target, _ media: StyleMedia?) -> [StyleRawRule] {
+        syntax.rules.filter { r in
+            guard r.media == media else { return false }
+            switch target {
+            case .selector(let s): return r.selectors == [s]
+            case .retired(let t): return !r.items.isEmpty && r.items.allSatisfy { $0.key == StyleSyntax.key(t) }
+            }
+        }
     }
 
     static func string(_ s: ArraySlice<Unicode.Scalar>) -> String {
@@ -454,11 +485,26 @@ enum StyleEdit {
     }
 
     static func unset(_ text: String, selector: StyleSelector, property: String?, media: StyleMedia?) -> (String, Int) {
+        unset(text, target: .selector(selector), property: property, media: media)
+    }
+
+    static func unset(_ text: String, target: Target, property: String?, media: StyleMedia?) -> (String, Int) {
         let syntax = StyleSyntax(text)
         var s = syntax.scalars
         var cuts: [Range<Int>] = []
         var removed = 0
-        for rule in rules(syntax, selector, media) {
+        // Out of a list, one at a time, with the comma on its right (its left when it is last): the rest of the rule stays.
+        if case .retired(let t) = target, property == nil {
+            let key = StyleSyntax.key(t)
+            for rule in syntax.rules where rule.media == media && rule.items.contains(where: { $0.key != key }) {
+                guard let k = rule.items.firstIndex(where: { $0.key == key }) else { continue }
+                let last = k == rule.items.count - 1
+                s.removeSubrange(last ? rule.items[k - 1].end..<rule.items[k].end : rule.items[k].start..<rule.items[k + 1].start)
+                let more = unset(string(s[...]), target: target, property: nil, media: media)
+                return (more.0, more.1 + 1)
+            }
+        }
+        for rule in rules(syntax, target, media) {
             let ruleEnd = rule.close.map { $0 + 1 } ?? s.count
             guard let property else {
                 cuts.append(cutBlock(s, rule.start, ruleEnd)); removed += 1
@@ -552,7 +598,7 @@ extension StyleSheet {
     public static var example: String {
         var out = """
         /* Polycarp style sheet: <config>/style.css (the folder `polycarp theme current` prints).
-           It restyles the top bar and the Workspace Dock on top of the theme: the theme sets colors, shape, type and
+           It restyles the top bar on top of the theme: the theme sets colors, shape, type and
            motion everywhere; a rule here sets them for one surface or part, and anything left out is drawn as before.
            Edits apply live. Change it with `polycarp-spaces style set '<selector>' <property> <value>`, then run
            `polycarp-spaces style check`. A bad line is dropped and listed with its line and column; the rest applies.

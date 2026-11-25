@@ -12,8 +12,8 @@ you, into five folders under one root:
 | `4 Let Go` | Let Go | `x` | Everything else, held until you empty it. |
 
 Polycarp reads the same folders and files into them the way the `bes` command does. It never makes the rooms, never
-asks you anything about them, and never deletes: it offers the rooms where you already look (the launcher, the menu
-bar menu, and soon the dock) and does what you pick.
+asks you anything about them, and never deletes: it offers the rooms where you already look (the launcher and the menu
+bar menu) and does what you pick.
 
 ## Setting it up
 
@@ -50,14 +50,15 @@ Finder. An empty Inbox shows no count. The section is there only while the root 
 
 ## Filing, and undo
 
-`Rooms.file(_:into:)` (`Sources/BaneySpacesCore/Rooms.swift`) moves files or folders into a room, the way `bes` moves:
+Nothing in the app files into a room since the Dock, whose tiles took drops, was removed. The code it used,
+`Rooms.file(_:into:)` (`Sources/BaneySpacesCore/Rooms.swift`), moves files or folders into a room, the way `bes` moves:
 
 - The name stays. A name the room already holds gets ` (2)`, ` (3)` and so on before its last extension, exactly as
   bes's `unique_path` does (`Paper.pdf` becomes `Paper (2).pdf`, a folder `Project` becomes `Project (2)`). Nothing is
   overwritten; nothing is deleted.
 - A room folder that isn't there is made, and recorded so an undo removes it again once it is empty.
 - What is already at the top of that room is left alone. A room itself, or the root, is never moved.
-- Every move is appended to `ROOT/.bes/journal.jsonl` in bes's own format, one batch per drop:
+- Every move is appended to `ROOT/.bes/journal.jsonl` in bes's own format, one batch a call:
 
   ```json
   {"id": "3f9c2a1b7e40", "batch": "a81d0c55e2f9", "ts": "2026-11-22T21:04:05-06:00", "op": "move", "from": "/Users/you/Downloads/Paper.pdf", "to": "3 Know/Paper.pdf", "rule": "polycarp:know", "made_dirs": []}
@@ -66,25 +67,9 @@ Finder. An empty Inbox shows no count. The section is there only while the root 
   Paths inside the root are relative to it and paths outside it are absolute, so a drive keeps a working journal
   wherever it mounts. If the journal can't be written, nothing moves.
 
-So `bes undo ~/BES` reverses the last drop, and `bes undo ~/BES --last N` the last N moves, Polycarp's and bes's alike.
+So `bes undo ~/BES` reverses the last batch, and `bes undo ~/BES --last N` the last N moves, Polycarp's and bes's alike.
 `RoomsTests.testBesUndoReversesAPolycarpDrop` runs the real `bes undo` against a temp root to prove it; point it at a
 bes checkout with `BES_REPO` (it looks in `~/Projects/baney-extended-system` otherwise, and is skipped without one).
 
 Polycarp does not rename what you file. Renaming to `YYYY-MM-DD Title (People).ext` stays with `bes sort`, which
 works the Inbox; a file you put in a room yourself is your correction, and keeps the name you gave it.
-
-## Dock tiles (ready, not yet wired)
-
-`Rooms.dropHandler(_:)` is the drop action for a room tile:
-
-```swift
-let fileIntoKnow = Rooms.dropHandler(.know)   // ([URL]) -> Rooms.Filing, root read from surfaces.json at drop time
-let filing = fileIntoKnow(urls)
-Toast.show(filing.summary(.know), symbol: Room.know.symbol)   // "Filed 3 in Know", "Filed 2 in Keep, 1 could not move"
-Trace.log("rooms: \(filing.summary(.know)) by dock drop")
-```
-
-Non-file URLs (a link dragged from a browser) are left out. A drop of local files takes milliseconds; one from another
-drive copies first, so a drop handler that may see big drops calls it off the main thread and shows the toast on main.
-The dock's generic drop support is being built separately; once a tile can take a drop with a closure of URLs, a room
-tile passes this handler and draws `Room.symbol`, `Room.name` and, for the Inbox, `Rooms.count(.inbox)`.

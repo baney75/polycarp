@@ -24,7 +24,7 @@ public struct WindowBorderStyle: Equatable, Sendable {
     }
 
     /// The theme's focused role and width (`shape.border_width` times 1.5 in a Polycarp theme), its border role, and
-    /// its large radius (`shape.radius_large`, the dock bar's). No new theme fields.
+    /// its large radius (`shape.radius_large`, the panels'). No new theme fields.
     public init(_ look: Look) {
         let b = look.spec.border
         let w = b.focusedWidth > 0 ? b.focusedWidth : (b.width > 0 ? b.width : WindowBorderStyle.defaultWidth)

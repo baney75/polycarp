@@ -13,7 +13,6 @@ final class AppearanceTests: XCTestCase {
         XCTAssertEqual(s.accent, .preset(.red))
         XCTAssertEqual(s.palette, .accent)
         XCTAssertEqual(s.panelStyle, .glass)
-        XCTAssertEqual(s.dockSize, .medium)
         XCTAssertEqual(s.panelOpacity, 0.88)
         XCTAssertTrue(s.overrides.isEmpty)
     }
@@ -25,7 +24,6 @@ final class AppearanceTests: XCTestCase {
         s.overrides = [2: RGB(hex: "#112233")!, 9: RGB(hex: "#FFAA00")!]
         s.panelStyle = .tinted
         s.panelOpacity = 0.7
-        s.dockSize = .large
         XCTAssertEqual(AppearanceSettings.decoded(s.encoded()), s)
         s.accent = .system
         XCTAssertEqual(AppearanceSettings.decoded(s.encoded()), s)
@@ -44,10 +42,9 @@ final class AppearanceTests: XCTestCase {
         s.palette = .calm
         s.panelStyle = .tinted
         s.panelOpacity = 0.7
-        s.dockSize = .large
         s.overrides = [3: RGB(r: 0.2, g: 0.3, b: 0.4)]
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(s.encoded())) as? [String: Any])
-        for key in ["accent", "palette", "overrides", "panelStyle", "panelOpacity", "dockSize"] {
+        for key in ["accent", "palette", "overrides", "panelStyle", "panelOpacity"] {
             var partial = object
             partial.removeValue(forKey: key)
             let back = AppearanceSettings.decoded(try JSONSerialization.data(withJSONObject: partial))
@@ -57,8 +54,7 @@ final class AppearanceTests: XCTestCase {
             case "palette": want.palette = AppearanceSettings().palette
             case "overrides": want.overrides = [:]
             case "panelStyle": want.panelStyle = AppearanceSettings().panelStyle
-            case "panelOpacity": want.panelOpacity = AppearanceSettings().panelOpacity
-            default: want.dockSize = AppearanceSettings().dockSize
+            default: want.panelOpacity = AppearanceSettings().panelOpacity
             }
             XCTAssertEqual(back, want, "without \(key)")
         }
@@ -69,13 +65,11 @@ final class AppearanceTests: XCTestCase {
     func testAnUnknownRawValueFallsBackForThatFieldOnly() throws {
         var s = AppearanceSettings()
         s.palette = .mono
-        s.dockSize = .small
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(s.encoded())) as? [String: Any])
         object["panelStyle"] = "neon"
         let back = AppearanceSettings.decoded(try JSONSerialization.data(withJSONObject: object))
         XCTAssertEqual(back.panelStyle, .glass)
         XCTAssertEqual(back.palette, .mono)
-        XCTAssertEqual(back.dockSize, .small)
     }
 
     func testAColorOutsideZeroToOneIsBroughtBackOnDecode() throws {
@@ -257,10 +251,12 @@ final class AppearanceTests: XCTestCase {
         XCTAssertLessThan(loose.overviewDim, s.overviewDim)
     }
 
-    func testDockSizeScales() {
-        XCTAssertEqual(DockSize.medium.scale, 1, "Medium is the size the dock has always had")
-        XCTAssertLessThan(DockSize.small.scale, 1)
-        XCTAssertGreaterThan(DockSize.large.scale, 1)
+    /// The Workspace Dock and its size went on 2026-11-23: a saved look that still has `dockSize` keeps everything else.
+    func testASavedDockSizeIsIgnored() throws {
+        let back = AppearanceSettings.decoded(Data(#"{"panelStyle":"tinted","dockSize":"large"}"#.utf8))
+        XCTAssertEqual(back.panelStyle, .tinted)
+        let saved = try XCTUnwrap(String(data: XCTUnwrap(back.encoded()), encoding: .utf8))
+        XCTAssertFalse(saved.contains("dockSize"), "it isn't written back")
     }
 
     // MARK: Wiring

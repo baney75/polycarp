@@ -88,14 +88,6 @@ final class AppSwitchListTests: XCTestCase {
         let list = AppSwitchList.make(windows: [(1, 9), (1, 3), (1, 6)], appOrder: [1], workspaceOrder: [], lastWorkspace: [:])
         XCTAssertEqual(list.map(\.workspace), [3, 6, 9])
     }
-
-    func testCycleStepsAndWraps() {
-        XCTAssertEqual(WindowCycle.next([10, 11, 12], after: 11), 12)
-        XCTAssertEqual(WindowCycle.next([10, 11, 12], after: 12), 10)
-        XCTAssertEqual(WindowCycle.next([10, 11, 12], after: 99), 10)
-        XCTAssertEqual(WindowCycle.next([10, 11], after: nil), 10)
-        XCTAssertNil(WindowCycle.next([Int](), after: nil))
-    }
 }
 
 final class TabHoldTests: XCTestCase {

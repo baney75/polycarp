@@ -2,7 +2,7 @@ import AppKit
 import BaneySpacesCore
 
 /// The macOS Dock settings an older Polycarp changed. Builds up to 2026-11-23 had a Workspace Dock that hid the macOS
-/// Dock while it was on, saving the Dock's own settings first (`SystemDockSettings.record`). The Workspace Dock is gone,
+/// Dock while it was on, saving the Dock's own settings first. The Workspace Dock is gone,
 /// so nothing hides the macOS Dock any more: a launch puts back what an older build saved, once, and so do
 /// `--restore-dock`, the crash-loop guard and the uninstaller. Saved values survive a crash, so a later launch still
 /// restores the right ones.

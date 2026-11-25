@@ -1,7 +1,7 @@
 import Foundation
 
 // Polycarp's style sheet (docs/style.md): `<config>/style.css`, a strict, documented subset of CSS that restyles the top
-// bar and the Workspace Dock on top of the theme. The theme sets colors, shape, type and motion everywhere; the sheet
+// bar on top of the theme. The theme sets colors, shape, type and motion everywhere; the sheet
 // targets one surface or one part of it, and anything it doesn't set is the look the views draw today. Parsing is
 // forgiving like CSS: a bad rule or declaration is dropped and reported with its line and column, and the rest applies.
 // `StyleProperty.all` is the one table of properties: validation, the docs table and `style example` all read it.
@@ -143,7 +143,11 @@ public struct StyleProblem: Equatable, Hashable, Sendable, CustomStringConvertib
 
 // MARK: What a selector can name
 
-public enum StyleSurface: String, CaseIterable, Sendable { case bar, dock }
+public enum StyleSurface: String, CaseIterable, Sendable {
+    case bar
+    /// Surfaces an older build had. A rule that names one reads with a warning and is ignored.
+    static let retired: [String: String] = ["dock": "went with the Workspace Dock (removed 2026-11-23)"]
+}
 
 /// A state a part can be in: the workspace you're on (`.current`) and the pointer over it (`:hover`).
 public enum StyleState: String, CaseIterable, Sendable {
@@ -155,36 +159,29 @@ public enum StyleState: String, CaseIterable, Sendable {
 /// One kind of thing a selector names. Properties say which of these they apply to.
 public enum StyleTarget: String, CaseIterable, Sendable {
     case bar, barRegion = "bar region", barIsland = "bar island", barModule = "bar module", barWorkspace = "bar workspace"
-    case dock, dockTile = "dock tile", dockLabel = "dock label", dockBadge = "dock badge", dockIcon = "dock icon"
 
     public var surface: StyleSurface {
         switch self {
         case .bar, .barRegion, .barIsland, .barModule, .barWorkspace: .bar
-        default: .dock
         }
     }
 
     /// The class names it takes after its surface; empty for the surface itself.
     public var parts: [String] {
         switch self {
-        case .bar, .dock: []
+        case .bar: []
         case .barRegion: ["left", "center", "right"]
         case .barIsland: ["island"]
         case .barModule: Surfaces.BarModule.builtIn.map(\.id)
         case .barWorkspace: ["workspace"]
-        case .dockTile: ["tile"]
-        case .dockLabel: ["label"]
-        case .dockBadge: ["badge"]
-        case .dockIcon: ["icon"]
         }
     }
 
     public var states: [StyleState] {
         switch self {
-        case .bar, .barRegion, .barIsland, .dock: []
+        case .bar, .barRegion, .barIsland: []
         case .barModule: [.hover]
         case .barWorkspace: [.current, .hover]
-        case .dockTile, .dockLabel, .dockBadge, .dockIcon: [.current, .hover]
         }
     }
 
@@ -192,12 +189,10 @@ public enum StyleTarget: String, CaseIterable, Sendable {
     /// workspace number from the workspaces module.
     var parent: StyleTarget? {
         switch self {
-        case .bar, .dock: nil
+        case .bar: nil
         case .barRegion, .barModule: .bar
         case .barIsland: .barRegion
         case .barWorkspace: .barModule
-        case .dockTile: .dock
-        case .dockLabel, .dockBadge, .dockIcon: .dockTile
         }
     }
 
@@ -209,11 +204,6 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .barIsland: "One island of modules when bar.style is islands: its background, corners, line, shadow, padding and gap. Text inside takes its region's and module's styles."
         case .barModule: "One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it."
         case .barWorkspace: "One number in the workspaces module; .current is the workspace you're on, :hover the one under the pointer."
-        case .dock: "The Workspace Dock's bar."
-        case .dockTile: "A workspace tile; .current is the workspace you're on, :hover the one under the pointer."
-        case .dockLabel: "The tile's label (its number, surfaces.json dock.tileLabel)."
-        case .dockBadge: "The tile's badge (a count or an attention dot)."
-        case .dockIcon: "An app icon on a tile."
         }
     }
 
@@ -245,7 +235,7 @@ public struct StyleSelector: Hashable, Sendable, CustomStringConvertible {
     var specificity: Int { (part == nil ? 0 : 1) + states.count }
     var target: StyleTarget? { surface.flatMap { StyleTarget.of($0, part: part) } }
 
-    /// The canonical form: `dock .tile.current:hover`.
+    /// The canonical form: `bar .workspace.current:hover`.
     public var description: String {
         guard let surface else { return ":root" }
         guard let part else { return surface.rawValue }
@@ -299,8 +289,8 @@ public struct StyleProperty: Sendable {
 
     public func applies(to target: StyleTarget) -> Bool { targets.contains(target) }
 
-    /// Everything that draws text or a fill: every target but the dock's app icons.
-    static let boxes: [StyleTarget] = [.bar, .barRegion, .barModule, .barWorkspace, .dock, .dockTile, .dockLabel, .dockBadge]
+    /// Everything that draws text or a fill.
+    static let boxes: [StyleTarget] = [.bar, .barRegion, .barModule, .barWorkspace]
 
     public static let all: [StyleProperty] = [
         StyleProperty("color", .color, boxes, inherited: true, "Text and symbol color.", example: "var(--foreground)"),
@@ -317,18 +307,18 @@ public struct StyleProperty: Sendable {
         StyleProperty("font-variant-numeric", .keywords(StyleNumerals.allCases.map(\.rawValue)), boxes, inherited: true,
                       "`tabular-nums` gives every digit the same width, so a clock doesn't jiggle.", example: "tabular-nums"),
         StyleProperty("height", .length(18...64), [.bar], "The bar's height (on a screen with a notch the bar fills the strip beside it).", example: "28px"),
-        StyleProperty("padding", .padding, [.bar, .barRegion, .barIsland, .barModule, .barWorkspace, .dock, .dockLabel], "Space inside the edge.", example: "0 8px"),
-        StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule, .dock],
-                      "Space between modules (bar, a region), between a module's items (workspace numbers, menus, status items) or between tiles (dock).",
+        StyleProperty("padding", .padding, [.bar, .barRegion, .barIsland, .barModule, .barWorkspace], "Space inside the edge.", example: "0 8px"),
+        StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule],
+                      "Space between modules (bar, a region, an island) or between a module's items (workspace numbers, menus, status items).",
                       example: "8px"),
         StyleProperty("border-radius", .length(0...40), boxes + [.barIsland], "Corner radius.", example: "6px"),
         StyleProperty("border", .line, boxes + [.barIsland], "A line all around.", example: "1px solid var(--border)"),
-        StyleProperty("border-bottom", .line, [.bar, .barRegion, .barModule, .barWorkspace, .dock, .dockTile], "A line along the bottom edge only.",
+        StyleProperty("border-bottom", .line, [.bar, .barRegion, .barModule, .barWorkspace], "A line along the bottom edge only.",
                       example: "1px solid var(--border)"),
-        StyleProperty("box-shadow", .shadow, [.barIsland, .dock, .dockTile, .dockBadge], "A drop shadow.", example: "0 4px 12px rgba(0, 0, 0, 0.3)"),
-        StyleProperty("display", .keywords(StyleDisplay.allCases.map(\.rawValue)), [.barRegion, .barIsland, .barModule, .barWorkspace, .dockLabel, .dockBadge, .dockIcon],
+        StyleProperty("box-shadow", .shadow, [.barIsland], "A drop shadow.", example: "0 4px 12px rgba(0, 0, 0, 0.3)"),
+        StyleProperty("display", .keywords(StyleDisplay.allCases.map(\.rawValue)), [.barRegion, .barIsland, .barModule, .barWorkspace],
                       "`none` hides it; `flex` (the default) shows it.", example: "flex"),
-        StyleProperty("transition-duration", .time, [.barModule, .barWorkspace, .dockTile],
+        StyleProperty("transition-duration", .time, [.barModule, .barWorkspace],
                       "How long a change of state (hover, current) fades its colors and lines.", example: "150ms"),
     ]
 
@@ -400,7 +390,7 @@ public struct StyleSheet: Equatable, Sendable {
     }
 
     /// The style for one surface (`part` nil), one region (`part` "left", "center" or "right") or one part (`part` a bar
-    /// module id or "tile", "label", "badge", "icon") in `states`, for dark or light mode, with `roles` (keys as
+    /// module id, "workspace" or "island") in `states`, for dark or light mode, with `roles` (keys as
     /// `StyleProperty.roles`: "accent", "on-accent") standing for the theme in force. A bar module inherits from its
     /// `region` when given. A part this build doesn't know is the empty style.
     public func computed(surface: StyleSurface, part: String? = nil, region: String? = nil, states: Set<StyleState> = [],

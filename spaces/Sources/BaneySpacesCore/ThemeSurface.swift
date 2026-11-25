@@ -10,7 +10,8 @@ public enum RadiusKind: Sendable { case bar, tile, row, list }
 
 /// Every surface that draws a corner, a border or text from the theme.
 public enum Surface: String, CaseIterable, Sendable {
-    // The Workspace Dock and its "+N" list and window strip.
+    // The old Workspace Dock's. The bar and tile still draw the top bar's hairline, the workspace marks and the theme
+    // cards; the rest draw nothing and stay for `NoPolycarpThemeTests`' golden, which hashes every surface.
     case dockBar, dockList, dockTile, dockButton, dockChip, dockRow
     // The ⌘Tab window bar.
     case switcherPanel, switcherTile, switcherWindow
@@ -83,15 +84,13 @@ public extension ThemeSpec.Radius {
 }
 
 /// How a motion's length is named in the theme.
-public enum MotionKind: Sendable { case panelIn, panelOut, listIn, listOut, row }
+public enum MotionKind: Sendable { case panelIn, panelOut, row }
 
 public extension ThemeSpec.Motion {
     func milliseconds(_ k: MotionKind) -> Double {
         switch k {
         case .panelIn: inMs
         case .panelOut: outMs
-        case .listIn: listInMs
-        case .listOut: listOutMs
         case .row: rowMs
         }
     }
@@ -102,9 +101,6 @@ public extension ThemeSpec.Motion {
         let base = ThemeCatalog.shared.spec(.baneyspaces).motion.milliseconds(k)
         return shipped * (milliseconds(k) / base)
     }
-
-    /// Whether the dock moves as it comes and goes (it only fades when nothing scales).
-    var slides: Bool { scaleFrom < 1 }
 }
 
 /// A weight, as the views ask for it.

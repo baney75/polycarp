@@ -153,6 +153,11 @@ public enum SurfacesOps {
         let keys = path.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
         if keys.contains(where: \.isEmpty) { return .failure(.usage("\"\(path)\" is not a path: keys joined with dots, like bar.height")) }
         if SurfaceField.isKnown(path) || (tree.flatMap { $0.at(keys) } != nil) { return .success(keys) }
+        if let why = SurfaceCheck.retiredGroups[keys[0]] {
+            return .failure(SurfacesFailure("unknown_path", "no field \(path): \(keys[0]) \(why)",
+                                            suggestion: "run `surfaces schema` for every path",
+                                            issues: [SurfacesIssue(path, "\(keys[0]) \(why)")]))
+        }
         let near = SurfaceField.nearest(path)
         return .failure(SurfacesFailure("unknown_path", "no field \(path)",
                                         suggestion: near.isEmpty ? "run `surfaces schema` for every path" : "did you mean \(near.joined(separator: " or "))?",
@@ -188,9 +193,12 @@ public enum SurfacesOps {
         switch keys(path, allowUnknownIn: tree) {
         case .failure(let f): return .failure(f)
         case .success(let k):
-            let value = SurfaceField.defaultTree.merged(with: tree).at(k) ?? .null
+            // What the app reads: a retired value or group the file still holds isn't in force.
+            var gone: [SurfacesIssue] = []
+            let live = SurfaceCheck.retire(tree, warnings: &gone)
+            let value = SurfaceField.defaultTree.merged(with: live).at(k) ?? .null
             return .success(.object(["path": .string(k.isEmpty ? "$" : k.joined(separator: ".")), "value": value,
-                                     "set": .bool(!k.isEmpty && tree.at(k) != nil), "file": .string(display(file))]))
+                                     "set": .bool(!k.isEmpty && live.at(k) != nil), "file": .string(display(file))]))
         }
     }
 

@@ -92,7 +92,6 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertNil(s.shadow)
         XCTAssertEqual(s.motion.scaleFrom, 1)
         XCTAssertEqual(s.motion.lift, 1)
-        XCTAssertFalse(s.motion.slides)
     }
 
     func testModeDecidesWhichPaletteDraws() throws {

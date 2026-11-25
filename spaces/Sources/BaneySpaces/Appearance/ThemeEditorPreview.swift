@@ -2,7 +2,7 @@ import AppKit
 import BaneySpacesCore
 import SwiftUI
 
-/// The draft drawn the way the Mac app draws it, in one mode: a dock with its workspace marks, a panel with a selected row,
+/// The draft drawn the way the Mac app draws it, in one mode: the top bar's workspace numbers, a panel with a selected row,
 /// buttons, a settings row and status colors. Every color, corner, border and size comes from the draft,
 /// not from the theme the app is using now.
 struct ThemeEditorPreview: View {
@@ -28,7 +28,7 @@ struct ThemeEditorPreview: View {
     var body: some View {
         let page = style(.settingsCallout)
         VStack(alignment: .leading, spacing: 12) {
-            dock
+            topBar
             panel
             HStack(spacing: 8) { buttons; Spacer(minLength: 0) }
             settingsRow
@@ -47,60 +47,32 @@ struct ThemeEditorPreview: View {
 
     // MARK: Surfaces
 
-    /// Four workspaces, the second current, each with its mark in the theme's indicator.
-    private var dock: some View {
-        let bar = style(.dockBar), tile = style(.dockTile)
-        let s: CGFloat = 0.62
-        let side = CGFloat(tile.tile) * s
-        return HStack(spacing: CGFloat(bar.gap) * s) {
-            ForEach(1...4, id: \.self) { n in
-                let current = n == 2
-                let tint = n == 2 ? look.color("accent") : look.color(["done", "working", "accent", "urgent"][n - 1])
-                let shape = RoundedRectangle(cornerRadius: CGFloat(tile.radius) * s, style: .continuous)
-                VStack(spacing: 3) {
-                    shape.fill(current ? Appearance.color(tint).opacity(0.3) : c("foreground").opacity(0.08))
-                        .overlay(shape.strokeBorder(Appearance.color(look.color(current ? tile.focusedBorderRole : tile.borderRole))
-                            .opacity(current ? 1 : (tile.borderOpacity ?? 0.25)),
-                                                    lineWidth: CGFloat(current ? tile.focusedBorderWidth : tile.borderWidth)))
-                        .overlay(windows(n).padding(side * 0.18))
-                        .frame(width: side, height: side)
-                    mark(n, tint: Appearance.color(tint), current: current)
+    /// The top bar's workspaces (`TopBarView.numbers`), in the theme's own font: workspaces 1, 2 and 4 with windows, 2 the one you're
+    /// on, marked as the theme marks it (`BarWorkspaces.marker`: an accent line, or an accent block for `number-block`),
+    /// the others muted, and the hour on the right, over the theme's background with its edge below.
+    private var topBar: some View {
+        let accent = c("accent")
+        let marker = BarWorkspaces.marker(look.spec.indicator)
+        return HStack(spacing: 10) {
+            ForEach(BarWorkspaces.shown(occupied: [1, 4], current: 2), id: \.self) { n in
+                let on = n == 2
+                if on, marker == .block {
+                    Text("\(n)").font(font(11, bold: true)).foregroundStyle(Appearance.color(look.text(onAccent: look.color("accent"))))
+                        .padding(.horizontal, 4)
+                        .background(Rectangle().fill(accent))
+                } else {
+                    Text("\(n)").font(font(11, bold: on)).foregroundStyle(c("foreground").opacity(on ? 1 : 0.5))
+                        .overlay(alignment: .bottom) {
+                            if on { Rectangle().fill(accent).frame(height: 2).offset(y: 3) }
+                        }
                 }
             }
-        }
-        .padding(CGFloat(bar.padding) * s)
-        .background(PanelBackground(surface: .dockBar, look: look, scale: s))
-        .frame(maxWidth: .infinity)
-    }
-
-    private func windows(_ n: Int) -> some View {
-        let r = CGFloat(style(.dockChip).radius) * 0.5
-        return VStack(spacing: 2) {
-            ForEach(0..<(n % 3 + 1), id: \.self) { _ in
-                RoundedRectangle(cornerRadius: r, style: .continuous).fill(c("surface")).frame(height: 5)
-            }
             Spacer(minLength: 0)
+            Text("9:12").font(font(11)).foregroundStyle(c("foreground"))
         }
-    }
-
-    @ViewBuilder private func mark(_ n: Int, tint: Color, current: Bool) -> some View {
-        let w = max(1, CGFloat(theme.borderWidth))
-        switch look.spec.indicator {
-        case .dot:
-            Text("\(n)").font(font(9, bold: true)).foregroundStyle(current ? Appearance.color(look.text(onAccent: look.color("accent"))) : c("muted"))
-                .frame(minWidth: 15, minHeight: 12)
-                .background(Capsule().fill(current ? tint : Color.clear))
-        case .numberBlock:
-            Text("\(n)").font(font(9, bold: true)).foregroundStyle(current ? c("background") : tint)
-                .frame(minWidth: 15, minHeight: 12)
-                .background(Rectangle().fill(current ? tint : Color.clear))
-                .overlay(Rectangle().strokeBorder(tint, lineWidth: w))
-        case .bar:
-            VStack(spacing: 1) {
-                Text("\(n)").font(font(9, bold: true)).foregroundStyle(current ? c("foreground") : tint)
-                Rectangle().fill(current ? tint : Color.clear).frame(width: 12, height: max(2, w))
-            }
-        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(c("background"))
+        .overlay(alignment: .bottom) { Rectangle().fill(c("border")).frame(height: max(1, CGFloat(theme.borderWidth))) }
     }
 
     /// The launcher: a search line and three results, the second selected.
@@ -154,8 +126,8 @@ struct ThemeEditorPreview: View {
         let shape = RoundedRectangle(cornerRadius: CGFloat(box.radius), style: .continuous)
         return HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
-                Text("Show the Workspace Dock").font(font(11)).foregroundStyle(c("foreground"))
-                Text("At the bottom of every screen").font(font(9)).foregroundStyle(c("muted"))
+                Text("Show the Top Bar").font(font(11)).foregroundStyle(c("foreground"))
+                Text("Across the top of every screen").font(font(9)).foregroundStyle(c("muted"))
             }
             Spacer(minLength: 0)
             ZStack(alignment: .trailing) {

@@ -81,12 +81,6 @@ final class BackgroundAppsTests: XCTestCase {
         XCTAssertEqual(list([]), [])
     }
 
-    func testTheRowWordsAreShortAndLowercase() {
-        XCTAssertEqual(BackgroundApps.State.hidden.label, "hidden")
-        XCTAssertEqual(BackgroundApps.State.minimized.label, "minimized")
-        XCTAssertEqual(BackgroundApps.State.noWindow.label, "no window")
-    }
-
     /// Review 11-01 (second-F6): every launch flashed the tile, since a new app has no window yet.
     func testAJustLaunchedAppWaitsOutItsGrace() {
         let now = Date(timeIntervalSince1970: 1000)
@@ -100,15 +94,6 @@ final class BackgroundAppsTests: XCTestCase {
     func testAnAppShowingAnUntrackedWindowIsNotListed() {
         let dialog = BackgroundApps.Running(pid: 10, name: "Updater", hasUntrackedWindow: true)
         XCTAssertEqual(list([dialog, app(11, "Notes")]).map(\.pid), [11])
-    }
-
-    /// Review 11-01 (second-F7): a launch while the list is open re-sorts it under the pointer.
-    func testHeldRowsKeepTheirPlacesAndNewOnesGoLast() {
-        let shown: [BackgroundApps.Entry] = [.init(pid: 1, name: "Mail", state: .hidden), .init(pid: 2, name: "Notes", state: .noWindow)]
-        let fresh: [BackgroundApps.Entry] = [.init(pid: 3, name: "Calendar", state: .noWindow), .init(pid: 2, name: "Notes", state: .minimized)]
-        XCTAssertEqual(BackgroundApps.held(shown, now: fresh),
-                       [.init(pid: 2, name: "Notes", state: .minimized), .init(pid: 3, name: "Calendar", state: .noWindow)],
-                       "Mail left, Notes keeps its place and new state, Calendar goes last")
     }
 
     /// A tripwire on the source text, not a test of the behavior (pruning lives in AppKit-bound `refresh()`).

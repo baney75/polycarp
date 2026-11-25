@@ -2,7 +2,7 @@ import AppKit
 import BaneySpacesCore
 import SwiftUI
 
-/// The style sheet in force (`StyleSheetStore`, docs/style.md) as the top bar and the Workspace Dock draw it: one
+/// The style sheet in force (`StyleSheetStore`, docs/style.md) as the top bar draws it: one
 /// `StyleBook` for the sheet, the mode and the theme's roles, rebuilt only when one of them changes. Every value the
 /// sheet leaves out falls back to what the view drew before (through `Chrome`), so with no sheet nothing changes. This
 /// file is where sheet values become SwiftUI colors, fonts and shapes; the surface files ask it as they ask `Chrome`.
@@ -39,13 +39,6 @@ extension ComputedStyle {
     /// The sheet's text color, else `fallback`. `dim` is how much of the sheet's color a secondary text (a verse's
     /// reference, the timer) keeps.
     func ink(_ fallback: Color, dim: Double = 1) -> Color { color.map { $0.swiftUI.opacity(dim) } ?? fallback }
-
-    /// Only the bottom line: for a part that draws its own `border` (a dock tile's stroke).
-    var bottomLineOnly: ComputedStyle {
-        var c = ComputedStyle()
-        c.borderBottom = borderBottom
-        return c
-    }
 }
 
 enum Styled {
@@ -171,9 +164,9 @@ struct StyledText: ViewModifier {
     }
 }
 
-/// The sheet's box around a part: its padding, then behind it the background, the border lines, the corners and the
-/// shadow, and its opacity. `transition-duration` fades the box's own layers alone, never the part's layout (the dock
-/// tiles that slid sideways, 2026-10-19). A part whose style sets none of it is drawn exactly as before.
+/// The sheet's box around a part: its padding, then behind it the background, the border lines and the corners, and
+/// its opacity. `transition-duration` fades the box's own layers alone, never the part's layout (parts that slid
+/// sideways, 2026-10-19). A part whose style sets none of it is drawn exactly as before.
 struct StyledBox: ViewModifier {
     let style: ComputedStyle
     func body(content: Content) -> some View {
@@ -189,7 +182,7 @@ struct StyledBox: ViewModifier {
     }
 }
 
-/// The layers of a box: fill, lines and shadow, faded on their own.
+/// The layers of a box: fill and lines, faded on their own.
 struct StyledFace: View {
     let style: ComputedStyle
     let shape: RoundedRectangle
@@ -199,7 +192,6 @@ struct StyledFace: View {
             if let fill = Styled.fill(style.background) { shape.fill(fill) }
             StyledLines(style: style, shape: shape)
         }
-        .modifier(StyledShadow(shadow: style.boxShadow))
         .modifier(StyledFade(style: style))
     }
 }
@@ -236,25 +228,5 @@ struct StyledFade: ViewModifier {
     let style: ComputedStyle
     func body(content: Content) -> some View {
         if let a = Styled.fade(style) { content.animation(a, value: style) } else { content }
-    }
-}
-
-/// A panel (the dock's bar) with the sheet's background, lines, corners and shadow over the theme's `PanelBackground`;
-/// the theme's panel alone when the sheet sets none of them.
-struct StyledPanel: View {
-    let surface: Surface
-    let style: ComputedStyle
-
-    var body: some View {
-        if style.background == nil, style.border == nil, style.borderBottom == nil, style.borderRadius == nil, style.boxShadow == nil {
-            PanelBackground(surface: surface)
-        } else {
-            let shape = Styled.shape(style, else: Chrome.radius(surface))
-            ZStack {
-                if let fill = Styled.fill(style.background) { shape.fill(fill) } else { PanelBackground(surface: surface).clipShape(shape) }
-                StyledLines(style: style, shape: shape)
-            }
-            .modifier(StyledShadow(shadow: style.boxShadow))
-        }
     }
 }

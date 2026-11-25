@@ -62,15 +62,6 @@ public enum BackgroundApps {
         case minimized
         /// Running with no window at all.
         case noWindow
-
-        /// The short word for the app's state.
-        public var label: String {
-            switch self {
-            case .hidden: "hidden"
-            case .minimized: "minimized"
-            case .noWindow: "no window"
-            }
-        }
     }
 
     public struct Entry: Equatable, Identifiable {
@@ -113,16 +104,6 @@ public enum BackgroundApps {
             let order = $0.name.localizedCaseInsensitiveCompare($1.name)
             return order == .orderedSame ? $0.pid < $1.pid : order == .orderedAscending
         }
-    }
-
-    /// The list as shown while the pointer is on it: rows already there keep their places, so a row
-    /// doesn't move under the pointer between aiming and clicking. Apps that left the background
-    /// drop out; new ones go at the end. The sorted order comes back once the pointer leaves.
-    public static func held(_ shown: [Entry], now fresh: [Entry]) -> [Entry] {
-        let byPid = Dictionary(fresh.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })
-        let kept = shown.compactMap { byPid[$0.pid] }
-        let keptPids = Set(kept.map(\.pid))
-        return kept + fresh.filter { !keptPids.contains($0.pid) }
     }
 
     public enum LauncherRow: Equatable, Sendable { case app, quit }
