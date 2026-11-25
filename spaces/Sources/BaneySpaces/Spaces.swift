@@ -1840,7 +1840,10 @@ final class Spaces {
         windowOrder.pick(id, at: ProcessInfo.processInfo.systemUptime)
         if switching { return enqueue { [weak self] in self?.focusWindow(id, pid: pid) } }
         holdUntilFresh(asking: askIfHidden(pid)) { [self] in
-            if let n = model.workspace(of: id) { return focus(id, on: n) }
+            if let n = model.workspace(of: id) {
+                windowOrder.raised(id, at: ProcessInfo.processInfo.systemUptime)
+                return focus(id, on: n)
+            }
             Trace.log("cmdTab commit window gone")
             pickApp(pid, on: nil, announce: true)
         }
@@ -1939,7 +1942,8 @@ final class Spaces {
     /// you're in. The stacking order is the window server's, so nothing here asks an app.
     func switcherWindows() -> (cards: [(entry: Entry, workspace: Int)], inFront: Bool) {
         refresh()
-        let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        // Right after a switch macOS still reports the app you left (see `apply`).
+        let pid = Date() < settleUntil ? expectedFront : NSWorkspace.shared.frontmostApplication?.processIdentifier
         // A window parked in the corner is on screen to the window server, not to you.
         let inSight = Windows.stacking(of: windows).filter { saved.frames[$0.id] == nil && model.workspace(of: $0.id).map(model.isShown) == true }
         let here = inSight.filter { model.workspace(of: $0.id) == model.current }

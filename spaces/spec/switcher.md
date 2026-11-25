@@ -34,5 +34,6 @@ among apps and workspaces, they step like left and right.
 Among apps, holding Tab on an app with more than one window opens its window bar; holding it again goes back. Among
 windows and workspaces a held Tab does nothing more.
 
-### R-W7 A pick never waits on an app
+### R-W7 Looking a pick up never waits on an app
 The window is looked up in a fresh window list without holding the main thread. Closed meanwhile, its app is gone to.
+Raising it then makes the same bounded calls to its app that any other focus does.

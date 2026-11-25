@@ -123,7 +123,7 @@ public enum Keymap {
                    note: "Unless Settings leaves ⌘Tab to macOS"),
         KeyBinding(id: "switcher.back", keys: ["cmd", "shift", "Tab"], title: "Step back in the ⌘Tab switcher", group: .windows, scope: .global,
                    note: "Unless Settings leaves ⌘Tab to macOS"),
-        KeyBinding(id: "switcher.arrows", keys: ["←→↑↓"], title: "Step through the switcher: → and ↓ forward, ← and ↑ back; among windows, ↑ and ↓ move by a row",
+        KeyBinding(id: "switcher.arrows", keys: ["←→↑↓"], title: "Step through the switcher (among windows ↑ ↓ go by row)",
                    group: .windows, scope: .switcher),
         KeyBinding(id: "switcher.cancel", keys: ["Esc"], title: "Close the switcher without switching", group: .windows, scope: .switcher),
         // Terminal

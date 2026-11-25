@@ -57,6 +57,8 @@ final class WindowSwitchOrderTests: XCTestCase {
         XCTAssertEqual(list(noted(21, 11, 10), [10], windows), [10, 20, 11, 21])
         // The one in front is on screen, whatever the last scan said.
         XCTAssertEqual(list(noted(10), [11, 10], windows).first, 11)
+        // One restored since that scan, behind the one in front, is one tap away.
+        XCTAssertEqual(list(noted(11, 10), [10, 11], windows), [10, 11, 20, 21])
     }
 
     func testNothingTwiceAndTheSameInputGivesTheSameList() {
@@ -76,9 +78,13 @@ final class WindowSwitchOrderTests: XCTestCase {
 
     func testASecondTapGoesBackWhileTheFirstPickIsStillComingForward() {
         var order = noted(20, 10)
-        order.pick(20, at: 100)
-        XCTAssertEqual(list(order, [10], on(1, 10) + on(2, 20), at: 100.2), [20, 10])
-        XCTAssertEqual(list(order, [10], on(1, 10) + on(2, 20), at: 100.6), [10, 20], "it never came forward")
+        let windows = on(1, 10) + on(2, 20)
+        order.pick(20, at: 99)
+        XCTAssertEqual(list(order, [10], windows, at: 99.9), [20, 10], "still waiting for its window list")
+        XCTAssertEqual(list(order, [10], windows, at: 101.1), [10, 20], "it was never raised")
+        order.raised(20, at: 100)
+        XCTAssertEqual(list(order, [10], windows, at: 100.2), [20, 10])
+        XCTAssertEqual(list(order, [10], windows, at: 100.6), [10, 20], "it never came forward")
         order.forget(except: [10])
         XCTAssertEqual(list(order, [10], on(1, 10), at: 100.2), [10])
     }

@@ -42,6 +42,9 @@ final class MainThreadScanTests: XCTestCase {
         let focus = try XCTUnwrap(SourceText.block(after: "func focusWindow(", in: try SourceText.code("Sources/BaneySpaces/Spaces.swift")))
         let held = try XCTUnwrap(SourceText.block(after: "holdUntilFresh(asking: askIfHidden(pid))", in: focus))
         XCTAssertTrue(held.contains("focus(id, on: n)"))
+        XCTAssertTrue(held.contains("windowOrder.raised(id"), "the landing time starts at the raise, not at the key")
+        let cards = try XCTUnwrap(SourceText.block(after: "func switcherWindows()", in: try SourceText.code("Sources/BaneySpaces/Spaces.swift")))
+        XCTAssertTrue(cards.contains("Date() < settleUntil ? expectedFront"), "right after a switch macOS still names the app you left")
         XCTAssertTrue(held.contains("pickApp(pid, on: nil"), "a window closed meanwhile goes to its app")
     }
 

@@ -52,10 +52,12 @@ public struct WindowSwitchOrder: Sendable {
     /// How long a window ⌘Tab picked counts as in front while its app is still coming forward, so a second tap goes
     /// back to the window the first one left.
     public static let landing: Double = 0.5
+    /// The same while the pick is still waiting for its window list, before anything was raised.
+    public static let waiting: Double = 2
 
     /// Windows as they were last focused, most recent first.
     private var focused: [WindowID] = []
-    private var picked: (id: WindowID, at: Double)?
+    private var picked: (id: WindowID, until: Double)?
 
     public init() {}
 
@@ -64,10 +66,15 @@ public struct WindowSwitchOrder: Sendable {
         focused.insert(id, at: 0)
     }
 
-    /// ⌘Tab chose this window at `time` (system uptime).
+    /// ⌘Tab chose this window at `time` (system uptime), and raises it once the window list is fresh.
     public mutating func pick(_ id: WindowID, at time: Double) {
         note(id)
-        picked = (id, time)
+        picked = (id, time + Self.waiting)
+    }
+
+    /// The window ⌘Tab picked is being raised now.
+    public mutating func raised(_ id: WindowID, at time: Double) {
+        picked = (id, time + Self.landing)
     }
 
     /// Windows not in `alive` closed: their numbers may come back as other windows.
@@ -81,7 +88,7 @@ public struct WindowSwitchOrder: Sendable {
     public func list(front drawn: WindowID?, stacking: [WindowID], windows: [Window], current: Int, recent: [Int], at time: Double) -> List {
         let known = Dictionary(windows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let depth = Dictionary(stacking.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
-        let landed = picked.flatMap { time - $0.at < Self.landing && known[$0.id] != nil ? $0.id : nil }
+        let landed = picked.flatMap { time < $0.until && known[$0.id] != nil ? $0.id : nil }
         let front = landed ?? drawn.flatMap { known[$0] != nil ? $0 : nil }
         func rank(_ w: Window) -> (Int, Int, WindowID) {
             let place = w.workspace == current ? -1 : recent.firstIndex(of: w.workspace) ?? recent.count + w.workspace
@@ -91,7 +98,7 @@ public struct WindowSwitchOrder: Sendable {
         var seen = Set<WindowID>()
         let order = ([front].compactMap { $0 } + focused + rest).filter { known[$0] != nil && seen.insert($0).inserted }
         // One on screen isn't minimized, whatever the last scan said of it.
-        func last(_ id: WindowID) -> Bool { id != front && known[id]?.minimized == true }
+        func last(_ id: WindowID) -> Bool { id != front && depth[id] == nil && known[id]?.minimized == true }
         return List(ids: order.filter { !last($0) } + order.filter(last), front: front)
     }
 }
