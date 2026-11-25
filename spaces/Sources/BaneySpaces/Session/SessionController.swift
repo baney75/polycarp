@@ -279,7 +279,7 @@ final class SessionController {
         let unseen = engine.attention.unseen
         let rows = q.isEmpty
             ? unseen.compactMap { engine.item($0) }
-            : SessionRank.rank(q, engine.items) { [$0.label, "\($0.appName) \($0.label)", $0.detail] }
+            : SessionRank.rank(q, BrowserListing.sessionItems(engine.items, on: BrowserHub.shared.book.allowed)) { [$0.label, "\($0.appName) \($0.label)", $0.detail] }
         return rows.map { item in
             let done = unseen.contains(item.id)
             var sub = [item.appName]

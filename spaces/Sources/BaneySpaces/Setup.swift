@@ -900,6 +900,14 @@ struct SetupView: View {
                     .labelsHidden()
             }
         }
+        SettingsGroup("Browsers in the launcher") {
+            ForEach(BrowserSource.allCases, id: \.self) { s in
+                SettingsRow(BrowserListing.setting(s).title, help: BrowserListing.setting(s).help) {
+                    Toggle(BrowserListing.setting(s).title, isOn: binding({ BrowserHub.shared.isOn(s) }, { BrowserHub.shared.set(s, $0); model.objectWillChange.send() })).labelsHidden()
+                }
+            }
+            LearnMore("From browsers running the Polycarp extension, where each is switched on too (its Settings, In the Polycarp app). Kept in memory on this Mac, never from a private window, and gone when the browser quits. Off drops what is held at once.")
+        }
         SettingsGroup("Your bangs\(model.customBangs.isEmpty ? "" : " (\(model.customBangs.count))")") {
             bangEditor
             LearnMore("Agents and scripts can add bangs too: ~/Applications/Polycarp.app/Contents/MacOS/Polycarp --bangs add jira Jira 'https://acme.atlassian.net/browse/{q}'")
