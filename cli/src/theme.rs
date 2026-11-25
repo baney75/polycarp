@@ -1873,6 +1873,10 @@ impl Out {
         self.warnings.push(w);
         self
     }
+    pub(crate) fn noting(mut self, notes: Vec<String>) -> Out {
+        self.notes.extend(notes);
+        self
+    }
     fn with(mut self, extra: Json) -> Out {
         if let (Some(d), Some(e)) = (self.data.as_object_mut(), extra.as_object()) {
             for (k, v) in e {

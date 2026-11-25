@@ -2,6 +2,7 @@
 //!
 //! The same operations serve the command line and `polycarp mcp`.
 
+mod fields;
 mod format;
 mod store;
 
@@ -22,7 +23,8 @@ usage: polycarp look <command> [--json]
   export <name> <file|-> [--force]      write a look to one file to share (<name>.polycarp-look)
   import <file|-> [--name N] [--force]  check someone's look and save it; nothing on screen changes
 
-A look is the theme, its mode and its accents. A look you were sent can change only how things look. Yours are in <config>/looks/. Docs: docs/looks.md in the Polycarp repo.
+A look is the theme, mode, accents, style.css, the bar and other surfaces' looks, and the paper. A look you were
+sent can change only how things look. Yours are in <config>/looks/. Docs: docs/looks.md in the Polycarp repo.
 ";
 
 pub fn run(args: &[OsString]) -> i32 {
@@ -69,21 +71,21 @@ pub(crate) fn input(arg: &str) -> Result<Vec<u8>, ApiErr> {
 }
 
 /// A name is a saved look's, `-` is standard input, and anything else is a file's path.
-fn find(c: &Ctx, arg: &str) -> Result<Look, ApiErr> {
-    let look = match arg {
+fn find(c: &Ctx, arg: &str) -> Result<(Look, Vec<String>), ApiErr> {
+    let (mut look, notes) = match arg {
         "-" => parse(&input(arg)?)?,
-        // The file's name is the look's: a file renamed by hand is called what it is listed as.
-        n if theme::valid_name(n) => Look {
-            name: n.into(),
-            ..store::load(c, n)?
-        },
+        n if theme::valid_name(n) => store::load(c, n)?,
         file => store::read_look(Path::new(file))?,
     };
+    if theme::valid_name(arg) {
+        // The file's name is the look's: a file renamed by hand is called what it is listed as.
+        look.name = arg.into();
+    }
     look.theme.check(c)?;
-    Ok(look)
+    Ok((look, notes))
 }
 
-fn parse(bytes: &[u8]) -> Result<Look, ApiErr> {
+fn parse(bytes: &[u8]) -> Result<(Look, Vec<String>), ApiErr> {
     Look::parse(bytes).map_err(|ps| store::refused("the look is refused", &ps))
 }
 
@@ -164,7 +166,7 @@ pub(crate) fn op_list(c: &Ctx) -> Res {
     let mut text = String::new();
     for name in std::iter::once(format::SHIPPED.to_string()).chain(store::names(c)) {
         match find(c, &name) {
-            Ok(look) => {
+            Ok((look, _)) => {
                 text.push_str(&format!("  {:<20} {}\n", look.name, look.title));
                 rows.push(about(c, &look, &name));
             }
@@ -189,17 +191,22 @@ pub(crate) fn op_list(c: &Ctx) -> Res {
 }
 
 pub(crate) fn op_show(c: &Ctx, arg: &str) -> Res {
-    let look = find(c, arg)?;
+    let (look, notes) = find(c, arg)?;
     let mut text = format!("{} ({})\n", look.title, look.name);
     if let Some(d) = &look.description {
         text.push_str(&format!("{d}\n"));
     }
-    let data = about(c, &look, arg);
+    let alone = leaves_alone(&look);
+    let mut data = about(c, &look, arg);
     text.push_str(&holds(&data));
-    Ok(Out::new(data, text))
+    if !alone.is_empty() {
+        text.push_str(&format!("it leaves alone: {}\n", alone.join(", ")));
+    }
+    data["leaves_alone"] = json!(alone);
+    Ok(Out::new(data, text).noting(notes))
 }
 
-/// A look's theme, mode and accents as a line.
+/// A look's theme, mode and accents, and where it was read, as lines.
 fn holds(about: &Json) -> String {
     let word = |v: &Json| v.as_str().map(str::to_string);
     let mut line = format!(
@@ -212,11 +219,25 @@ fn holds(about: &Json) -> String {
             line.push_str(&format!(", {m} accent: {a}"));
         }
     }
-    line + "\n"
+    let from = match (about["source"].as_str(), about["file"].as_str()) {
+        (Some("shipped"), _) => "the look Polycarp ships with".to_string(),
+        (_, Some(f)) => format!("read from {f}"),
+        _ => "read from standard input".to_string(),
+    };
+    format!("{line}\n{from}\n")
+}
+
+/// The parts a look doesn't have, which applying it leaves as they are.
+fn leaves_alone(look: &Look) -> Vec<&'static str> {
+    let has = [
+        (look.style.is_some(), "style"),
+        (look.surfaces.is_some(), "surfaces"),
+    ];
+    has.iter().filter(|(h, _)| !h).map(|(_, n)| *n).collect()
 }
 
 /// Writes a look to the looks folder, read back first as anyone else would read it.
-fn keep(c: &Ctx, look: &Look, did: &str) -> Res {
+fn keep(c: &Ctx, look: &Look, did: &str, notes: Vec<String>) -> Res {
     let text = look.to_text();
     Look::parse(text.as_bytes()).map_err(|ps| store::refused("the look can't be saved", &ps))?;
     store::ensure(&store::dir(c))?;
@@ -226,20 +247,21 @@ fn keep(c: &Ctx, look: &Look, did: &str) -> Res {
     let mut data = about(c, look, &look.name);
     data["replaced"] = json!(replaced);
     let line = format!("{did} the look {} in {}\n", look.name, p.display());
-    Ok(Out::new(data, line))
+    Ok(Out::new(data, line).noting(notes))
 }
 
 /// The look's file as text, for `export -`.
 pub(crate) fn op_text(c: &Ctx, name: &str) -> Res {
-    let look = find(c, name)?;
+    let (look, notes) = find(c, name)?;
     Ok(Out::new(
         json!({"name": look.name, "look": look.to_json()}),
         look.to_text(),
-    ))
+    )
+    .noting(notes))
 }
 
 pub(crate) fn op_export(c: &Ctx, name: &str, file: &Path, force: bool) -> Res {
-    let look = find(c, name)?;
+    let (look, notes) = find(c, name)?;
     if file.extension().and_then(|e| e.to_str()) != Some(format::EXT) {
         return Err(ApiErr::usage(format!(
             "the file's name must end in .{}, such as {}.{}",
@@ -262,11 +284,12 @@ pub(crate) fn op_export(c: &Ctx, name: &str, file: &Path, force: bool) -> Res {
     Ok(Out::new(
         data,
         format!("exported {} to {}\n", look.name, full.display()),
-    ))
+    )
+    .noting(notes))
 }
 
 pub(crate) fn op_import(c: &Ctx, bytes: &[u8], name: Option<&str>, force: bool) -> Res {
-    let mut look = parse(bytes)?;
+    let (mut look, notes) = parse(bytes)?;
     if let Some(n) = name {
         look.name = n.into();
     }
@@ -274,5 +297,5 @@ pub(crate) fn op_import(c: &Ctx, bytes: &[u8], name: Option<&str>, force: bool) 
     look.theme.check(c)?;
     let _held = theme::hold(c)?;
     refuse_taken(c, &look.name, force)?;
-    keep(c, &look, "imported")
+    keep(c, &look, "imported", notes)
 }
