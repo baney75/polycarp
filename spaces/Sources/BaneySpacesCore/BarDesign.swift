@@ -1,0 +1,42 @@
+import Foundation
+
+/// The bar's one geometry. Every icon sits in the same slot whatever its own shape, so the row keeps one rhythm, and
+/// everything you can click has the same face behind it.
+public enum BarGeometry {
+    /// An icon's slot, across.
+    public static let slot = 27.0
+    /// An app's own icon.
+    public static let canvas = 16.0
+    /// A symbol's point size: about 13 of ink in the slot.
+    public static let symbol = 13.0
+    /// A title's room either side, inside its face.
+    public static let textInset = 6.0
+    /// Between two groups (`|` in a module list) of a bar with no islands.
+    public static let group = 8.0
+    /// From the screen's edge to the first slot.
+    public static let edge = 7.0
+
+    /// The height of the face behind what the pointer is on, in a bar this tall: inside the bar's own height, and no
+    /// taller than a button in the strip beside a notch.
+    public static func face(bar height: Double) -> Double { min(24, max(14, height - 4)) }
+}
+
+/// How the bar's rows share a width.
+public enum BarSides {
+    /// A screen without a notch: the middle's width, what it needs up to `BarLayout.middleShare`, and each side's.
+    public static func middle(ideal: Double, gap: Double, room: Double) -> (middle: Double, side: Double) {
+        let middle = min(ideal, room * BarLayout.middleShare)
+        return (middle, max(0, (room - middle) / 2 - (middle > 0 ? gap : gap / 2)))
+    }
+
+    /// Beside a notch: the middle's modules (the clock) at the notch, the side's own at the screen's edge. The widths of both rows in `room`: the side's own row is whole while it fits, and the middle's gives way to it
+    /// down to `BarLayout.middleShare` of the room, so a long verse shortens instead of pushing icons off.
+    public static func widths(lead: Double, trail: Double, gap: Double, room: Double) -> (lead: Double, trail: Double) {
+        guard lead > 0 else { return (0, min(trail, room)) }
+        guard trail > 0 else { return (min(lead, room), 0) }
+        let space = max(0, room - gap)
+        if lead + trail <= space { return (lead, trail) }
+        let kept = min(lead, max(space * BarLayout.middleShare, space - trail))
+        return (kept, max(0, space - kept))
+    }
+}
