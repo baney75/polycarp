@@ -820,6 +820,7 @@ extension StyleSheet {
         if applies("text-transform") { s.textTransform = keyword("text-transform").flatMap(StyleTextTransform.init(rawValue:)) }
         if applies("font-variant-numeric") { s.fontVariantNumeric = keyword("font-variant-numeric").flatMap(StyleNumerals.init(rawValue:)) }
         s.height = number("height")
+        s.width = number("width")
         if case .insets(let p)? = v["padding"] { s.padding = p }
         s.gap = number("gap")
         s.borderRadius = number("border-radius")
