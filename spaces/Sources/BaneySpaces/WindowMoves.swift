@@ -2,12 +2,13 @@ import AppKit
 import BaneySpacesCore
 
 /// The window reads and moves of a switch, apart from its state (`Spaces.bringHome`, `Spaces.park`), so `MoveTiming` times
-/// the same code on windows of its own. Main thread.
+/// the same code on windows of its own. Main thread, which waits for the answers: apps are asked side by side (`Lanes`).
 enum WindowMoves {
-    /// A parked window and where it goes back to.
+    /// A parked window, where it goes back to, and its size now.
     struct Homing {
         let window: Window
         let to: CGRect
+        let size: CGSize
     }
 
     /// What parking needs to know of a window. `frame` is nil for a minimized window, or one whose app doesn't answer.
@@ -23,26 +24,25 @@ enum WindowMoves {
 
     /// Where each parked window goes back to. A window whose app doesn't answer can't move now; it isn't in the answer.
     static func targets(_ moves: [(Window, CGRect)], screens: [CGRect]) -> [Homing] {
-        moves.compactMap { w, frame in
-            w.frame.map { Homing(window: w, to: Geometry.restoreFrame(saved: frame, size: $0.size, screens: screens)) }
-        }
+        Lanes.map(moves, by: \.0.pid) { w, frame in
+            w.frame.map { Homing(window: w, to: Geometry.restoreFrame(saved: frame, size: $0.size, screens: screens), size: $0.size) }
+        }.compactMap { $0 }
     }
 
     static func place(_ list: [Homing], file: String = #fileID, line: Int = #line) {
-        for m in list { m.window.place(m.to, currentSize: m.window.frame?.size ?? m.to.size, file: file, line: line) }
+        _ = Lanes.map(list, by: \.window.pid) { $0.window.place($0.to, currentSize: $0.size, file: file, line: line) }
     }
 
     static func states(of windows: [Window]) -> [WindowID: State] {
-        var out: [WindowID: State] = [:]
-        for w in windows {
+        let read = Lanes.map(windows, by: \.pid) { w in
             let minimized = w.isMinimized
-            out[w.id] = State(minimized: minimized, frame: minimized ? nil : w.frame)
+            return (w.id, State(minimized: minimized, frame: minimized ? nil : w.frame))
         }
-        return out
+        return Dictionary(read) { $1 }
     }
 
     static func move(_ windows: [Window], to p: CGPoint, file: String = #fileID, line: Int = #line) {
-        for w in windows { w.setOrigin(p, file: file, line: line) }
+        _ = Lanes.map(windows, by: \.pid) { $0.setOrigin(p, file: file, line: line) }
     }
 
     /// Looks every 10 ms until each window has stopped (`Settling`), then says which animated their move. Gives up after
