@@ -445,7 +445,8 @@ async function refreshBadge() {
   const M = globalThis.PolycarpMemory;
   let due = 0;
   try { if (M && M.load) due = M.counts(await M.load(), Date.now()).due; } catch (e) {}
-  const v = P.themeVars(await P.themeCss(), "light");
+  const css = await P.themeCss();
+  const v = P.themeVars(css, P.themeMode(css) || "light");
   if (v.accent) chrome.action.setBadgeBackgroundColor({ color: v.accent });
   if (v["on-accent"] && chrome.action.setBadgeTextColor) chrome.action.setBadgeTextColor({ color: v["on-accent"] });
   chrome.action.setBadgeText({ text: due > 0 ? String(Math.min(due, 99)) : "" });
@@ -464,7 +465,7 @@ chrome.alarms.onAlarm.addListener((a) => {
 // Asked at browser start, every 30 seconds, when the app connection is granted, and when a page starts with an answer
 // older than 5 seconds. Storage is written only when the answer changes, so open pages hear only real changes. With no
 // app (the host missing, or the nativeMessaging permission not granted) there are none from it and nothing to report:
-// the extension's own still work.
+// the extension's own still work. The theme in force is asked for with them (core.js, askTheme).
 const FILTERS_HOST = "com.polycarp.newtab";
 const FILTERS_ALARM = "polycarp-filters";
 const FILTERS_AT = "polycarp.filters.appAt"; // session storage: when the app was last asked
@@ -503,6 +504,7 @@ async function keepAppList(op, key, field, most) {
 function refreshAppFilters() {
   const F = globalThis.PolycarpFilters, E = globalThis.PolycarpEdits;
   if (filtersAsking) return filtersAsking;
+  P.askTheme().catch(() => {}); // no page waits for it
   filtersAsking = Promise.allSettled([
     F ? keepAppList("filters", F.APP_KEY, "rules", 500) : null,
     E ? keepAppList("edits", E.APP_KEY, "edits", E.MAX.edits) : null
@@ -536,5 +538,9 @@ if (chrome.omnibox) {
   chrome.omnibox.onInputEntered.addListener((text) => openSearch(text.trim()));
 }
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes["polycarp.memory"]) refreshBadge();
+  if (area !== "local") return;
+  const set = changes[P.SETTINGS_KEY];
+  // Switched on again: the app's theme may have changed meanwhile.
+  if (set && set.oldValue && set.oldValue.matchTheme === false && set.newValue && set.newValue.matchTheme !== false) P.askTheme().catch(() => {});
+  if (changes["polycarp.memory"] || changes[P.THEME_KEY] || (set && (set.oldValue || {}).matchTheme !== (set.newValue || {}).matchTheme)) refreshBadge();
 });

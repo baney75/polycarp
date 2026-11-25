@@ -33,6 +33,12 @@ test("every page loads the theme before its own styles", () => {
     const links = [...read(f).matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
     assert.ok(links.length && /(^|\/)shared\/theme\.css$/.test(links[0]), `${f}: theme.css first (${links.join(", ")})`);
   }
+  for (const f of ours.filter((f) => f.endsWith(".html"))) {
+    // In <head>, with nothing that would let the page paint or run before it: no defer, async or module.
+    const m = read(f).match(/<link rel="stylesheet" href="([^"]*)theme\.css">\n<script src="([^"]*)theme-live\.js"( data-ask="page")?><\/script>\n[\s\S]*<\/head>/);
+    assert.ok(m && m[1] === m[2], `${f}: theme-live.js right after theme.css`);
+    assert.match(read(f), /<script src="[^"]*shared\/core\.js"><\/script>/, `${f}: theme-live.js needs core.js`);
+  }
   const war = JSON.parse(read("manifest.json")).web_accessible_resources.flatMap((w) => w.resources);
   assert.ok(war.includes("src/shared/theme.css"), "the content script can read the theme");
 });
