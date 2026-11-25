@@ -51,7 +51,7 @@ final class EditsOpsTests: XCTestCase {
     // MARK: The page a person shares
 
     private var shared: String { dir.appendingPathComponent(SharedPage.name).path }
-    private let page = #"{"url":"https://example.com/inbox?token=s3cret#t","title":"In\u001bbox","parts":[{"at":"main > h1","is":"Heading","words":"Hello\nthere"},{"at":"#a\u200db","is":"Part"},{"at":"li.row","is":"List item","count":12}],"edits":[{"id":"one","hits":[3,0]}]}"#
+    private let page = #"{"url":"https://example.com/inbox?token=s3cret#t","title":"In\u001bbox","parts":[{"at":"main > h1","is":"Heading","words":"Hello\nthere"},{"at":"p.a\u200db","is":"Part"},{"at":"li.row","is":"List item","count":12}],"edits":[{"id":"one","hits":[3,0]}]}"#
 
     private func share(_ page: String) throws -> [String: Any] {
         let source = NewTabHost.Source(surfaces: { .defaults }, sharePage: { SharedPage.share($0, to: self.shared) })
