@@ -19,6 +19,7 @@ final class TopBar {
     private let noticePanel = BarPanel("Notifications", anchor: .right, width: NoticeList.width)
     private let calendarPanel = BarPanel("Calendar", anchor: .middle, width: BarCalendar.width)
     private let calendar = CalendarModel()
+    private let agentsPanel = BarPanel("Agents", anchor: .right, width: AgentsList.width)
     private var noticeCount: AnyCancellable?
     private var panels: [CGDirectDisplayID: NSPanel] = [:]
     private var tick: Timer?
@@ -74,6 +75,14 @@ final class TopBar {
                 BarCalendar(model: self.calendar, close: close)
             }
         }
+        model.onAgents = { [weak self] screen, x in
+            guard let self, let bar = screen.displayID.flatMap({ self.panels[$0] }) else { return }
+            self.agentsPanel.toggle(on: screen, x: x + AgentsList.width / 2, below: bar.frame.minY,
+                                    changes: self.model.$agents.map { _ in }.eraseToAnyPublisher()) { room, close in
+                AgentsList(model: self.model, room: room, open: { [weak self] in self?.model.onAgent($0) }, close: close)
+            }
+        }
+        agentsPanel.onShow = { [weak self] in self?.model.opened(.agents, on: $0) }
         calendarPanel.onKey = { [weak self] in self?.calendar.key($0) ?? false }
         calendarPanel.onShow = { [weak self] in self?.model.opened(.clock, on: $0) }
         noticeCount = notices.$shelf.map(\.count).removeDuplicates().sink { [weak self] in self?.model.notices = $0 }
@@ -187,6 +196,7 @@ final class TopBar {
         notices.set(on: wants(.notifications))
         if !wants(.notifications) { noticePanel.hide() }
         if !wants(.clock), !wants(.date) { calendarPanel.hide() }
+        if !wants(.agents) { agentsPanel.hide() }
         refreshTime()
     }
 
@@ -233,6 +243,7 @@ final class TopBar {
         show(BarReader.Menus())
         noticePanel.hide()
         calendarPanel.hide()
+        agentsPanel.hide()
         notices.set(on: false)
     }
 
@@ -388,6 +399,8 @@ final class TopBarModel: ObservableObject {
     func opened(_ module: Surfaces.BarModule, on display: CGDirectDisplayID?) {
         if let display { open = (module, display) } else if open?.module == module { open = nil }
     }
+    /// The agents at work or asking for you.
+    @Published var agents = BarAgents()
     /// How many notifications are new, as the bell shows it (`NoticeShelf.count`).
     @Published var notices = ""
 
@@ -406,6 +419,10 @@ final class TopBarModel: ObservableObject {
     var onStatus: (Int) -> Void = { _ in }
     /// Opens the list of notifications near a place across the screen, or closes it.
     var onNotices: (NSScreen, CGFloat) -> Void = { _, _ in }
+    /// Opens the list of agents there, or closes it.
+    var onAgents: (NSScreen, CGFloat) -> Void = { _, _ in }
+    /// Goes to an agent, by its row's id.
+    var onAgent: (String) -> Void = { _ in }
     /// Opens the calendar there, or closes it.
     var onCalendar: (NSScreen, CGFloat) -> Void = { _, _ in }
 }
@@ -566,6 +583,8 @@ struct TopBarView: View {
         switch m {
         case .battery: return model.battery != nil
         case .network: return model.offline
+        // With its list open it stays, so the list keeps the button it hangs from.
+        case .agents: return !model.agents.rows.isEmpty || isOpen(.agents)
         case .verse: return model.verse != nil
         case .appMenus: return !model.menus.isEmpty
         case .status: return !model.status.isEmpty
@@ -628,6 +647,11 @@ struct TopBarView: View {
             MenuRow(items: model.menus, style: s) { model.onMenu($0) }
         case .status:
             StatusRow(model: model, style: s, room: room)
+        case .agents:
+            BarButton(inset: CGFloat(BarGeometry.textInset), held: isOpen(.agents), label: model.agents.label, help: model.agents.label,
+                      under: { model.onAgents(screen, $0) }) {
+                AgentsFace(agents: model.agents, style: s)
+            }
         case .notifications:
             BarButton(inset: model.notices.isEmpty ? 0 : CGFloat(BarGeometry.textInset), held: isOpen(.notifications),
                       label: model.notices.isEmpty ? "Notifications" : "Notifications, \(model.notices) new", help: "Notifications",

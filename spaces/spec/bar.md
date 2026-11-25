@@ -57,6 +57,8 @@ On Windows the current workspace's number is drawn in `foreground` with a 2 px `
   (`bar.tray`; `BarTray`). Windows has no tray yet.
 - macOS: the clock and the date open a calendar under the bar: today, then one month in six weeks from the calendar's
   first day of the week (`MonthGrid`). It goes as the bell's list does (`BarPanel`). Windows has none yet.
+- macOS: `agents` counts the coding agents that need you (`Attention`, what ⌘⇧U steps through) and the ones at work
+  (`BarAgents`); with neither it isn't drawn. Its list goes to the one you choose. Windows has none yet.
 
 ## Colors and type
 

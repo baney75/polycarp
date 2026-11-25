@@ -905,6 +905,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func startSession() {
         session.onUnseenChange = { [weak self] _ in self?.updateIcon() }
+        session.onAgentsChange = { [weak self] in self?.topBar.model.agents = $0 }
+        topBar.model.onAgent = { [weak self] in self?.session.focusFinished($0) }
         var h = AgentHost()
         h.workspace = { Spaces.agentWorkspace }
         h.setWorkspace = { [weak self] n in Spaces.agentWorkspace = n; self?.run { $0.reapply() } }

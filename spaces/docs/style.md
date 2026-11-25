@@ -66,7 +66,7 @@ A warning (low contrast) still applies; `check` passes when there are only warni
 | `bar` | none | The top bar itself. |
 | `bar .left` `bar .center` `bar .right` | none | The bar's three regions; modules inherit text properties from their region. |
 | `bar .island` | none | One island of modules when bar.style is islands: its background, corners, line, shadow, padding and gap. Text inside takes its region's and module's styles. |
-| `bar .mark` `bar .workspaces` `bar .app-menus` `bar .status` `bar .hour` `bar .clock` `bar .date` `bar .verse` `bar .battery` `bar .network` `bar .notifications` | `:hover` | One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it. |
+| `bar .mark` `bar .workspaces` `bar .app-menus` `bar .status` `bar .hour` `bar .clock` `bar .date` `bar .verse` `bar .battery` `bar .network` `bar .agents` `bar .notifications` | `:hover` | One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it. |
 | `bar .workspace` | `.current` `:hover` | One number in the workspaces module; .current is the workspace you're on, :hover the one under the pointer. |
 | `launcher` | none | The launcher's panel. gap is the space between rows. |
 | `launcher .field` | none | The search field across the top, with the magnifying glass beside it. border-bottom takes the place of the line under it. |

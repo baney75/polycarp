@@ -58,6 +58,9 @@ final class SessionController {
     /// Until the app wires them (it does at launch, before the socket listens) a write is refused, never dropped.
     var readSetting: (SettingKey) -> String? = { _ in nil }
     var writeSetting: (SettingKey, String) -> Bool = { _, _ in false }
+    /// The agents at work or asking for you changed (the bar's `agents` module).
+    var onAgentsChange: (BarAgents) -> Void = { _ in }
+    private var lastAgents = BarAgents()
     /// Agents that finished unseen and still have a row to go to; the menu bar badge counts these,
     /// so it never counts one the menu's list can't show (a session that closed before you looked).
     var unseenCount: Int { finishedRows().count }
@@ -105,6 +108,7 @@ final class SessionController {
         remoteRetry?.invalidate()
         lastUnseen = []
         onUnseenChange(0)
+        tellAgents(BarAgents())
     }
 
     // MARK: engine
@@ -121,8 +125,15 @@ final class SessionController {
         }
         if unseen != lastUnseen { onUnseenChange(unseen.count) }
         lastUnseen = unseen
+        tellAgents(BarAgents(items: engine.items, unseen: unseen))
         if engine.items != lastItems { lastItems = engine.items; onItemsChange() }
         writeState()
+    }
+
+    private func tellAgents(_ now: BarAgents) {
+        guard now != lastAgents else { return }
+        lastAgents = now
+        onAgentsChange(now)
     }
 
     /// What the session engine believes, for checks, agents and bug reports:

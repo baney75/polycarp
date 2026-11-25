@@ -74,14 +74,14 @@ public struct Surfaces: Equatable, Sendable {
 
     /// A top bar module. `custom` carries the name after `custom:`.
     public enum BarModule: Hashable, Sendable {
-        case mark, workspaces, appMenus, status, hour, clock, date, verse, battery, network, notifications
+        case mark, workspaces, appMenus, status, hour, clock, date, verse, battery, network, agents, notifications
         case custom(String)
         /// `|` in a module list: where one island ends and the next begins (`BarLayout.islands`). It may appear any
         /// number of times, in any place.
         case split
 
         public static let builtIn: [BarModule] = [.mark, .workspaces, .appMenus, .status, .hour, .clock, .date, .verse, .battery,
-                                                  .network, .notifications]
+                                                  .network, .agents, .notifications]
 
         public var id: String {
             switch self {
@@ -95,6 +95,7 @@ public struct Surfaces: Equatable, Sendable {
             case .verse: "verse"
             case .battery: "battery"
             case .network: "network"
+            case .agents: "agents"
             case .notifications: "notifications"
             case let .custom(name): "custom:" + name
             case .split: "|"
@@ -337,7 +338,7 @@ extension SurfaceField {
         SurfaceField("bar.modules.center", .ids(known: Surfaces.BarModule.listIds, custom: true),
                      ids(["clock"]), "Modules in the middle, in order; \"|\" starts a new island."),
         SurfaceField("bar.modules.right", .ids(known: Surfaces.BarModule.listIds, custom: true),
-                     ids(["status", "|", "notifications"]), "Modules at the right, in order; \"|\" starts a new island."),
+                     ids(["agents", "status", "|", "notifications"]), "Modules at the right, in order; \"|\" starts a new island."),
         SurfaceField("bar.clockFormat", .choice(Surfaces.ClockFormat.allCases.map(\.rawValue)), .string("day-12h"),
                      "The clock module: day-12h (Saturday 10:04 PM), day-24h (Saturday 22:04), 12h (3:05) or 24h (15:05)."),
         SurfaceField("bar.hourNames", .bool, .bool(true), "The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning)."),
