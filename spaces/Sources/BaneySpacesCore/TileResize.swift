@@ -11,7 +11,7 @@ extension TileLayout {
 
     /// The pointer dragged a window's edge or corner from `start` and left it at `frame`. Each edge moves the cut line on
     /// its own side: the window there pays, then the one past it once the first is at its minimum, so the opposite edge
-    /// and the rest stay put. A window that only moved is left alone, and so is an edge on the area's own. `start` is the
+    /// and the rest of its row stay put. Windows inside a part that pays share what it lost. A window that only moved is left alone, and so is an edge on the area's own. `start` is the
     /// frame it had, which an app may have made smaller than its tile; nil is its tile.
     @discardableResult
     public mutating func resize(_ id: WindowID, to frame: CGRect, from start: CGRect? = nil, area: CGRect, gaps: TileGaps,

@@ -63,13 +63,16 @@ extension TileLayout {
 
     /// Moves a window one step. Along its split it trades places with the next window, or joins the split standing there
     /// the other way; from a split across the direction it steps out, to sit beside that split. So every step shows, and
-    /// enough of them reach the edge, where this is false and the app can send the window to the next display.
-    /// In `main` a step is a trade, so there is always one main window and one stack.
+    /// enough of them reach the edge, where this is false and the app can send the window to the next display. It is
+    /// false for a window it hasn't and with `full` too, which no step shows in.
+    /// In `main` a step is a trade, so there is always one main window and one stack; the gaps and minimums say who stands
+    /// there on screen.
     @discardableResult
-    public mutating func move(_ id: WindowID, toward d: TileDirection, area: CGRect) -> Bool {
+    public mutating func move(_ id: WindowID, toward d: TileDirection, area: CGRect, gaps: TileGaps = TileGaps(),
+                              minimums: [WindowID: CGSize] = [:]) -> Bool {
         guard !full, let tree = root, let path = tree.path(of: id) else { return false }
         if style == .main {
-            guard let other = neighbor(of: id, toward: d, in: area, gaps: TileGaps()) else { return false }
+            guard let other = neighbor(of: id, toward: d, in: area, gaps: gaps, minimums: minimums) else { return false }
             swap(id, other)
             return true
         }
