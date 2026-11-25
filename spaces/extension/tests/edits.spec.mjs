@@ -36,7 +36,8 @@ const manifestFile = path.join(manifestDir, 'com.polycarp.newtab.json');
 fs.mkdirSync(manifestDir, { recursive: true });
 fs.writeFileSync(manifestFile, JSON.stringify({ name: 'com.polycarp.newtab', description: 'test', path: wrapper, type: 'stdio', allowed_origins: [`chrome-extension://${ID}/`] }));
 const OLD_APP = { ok: false, error: 'there is no request called edits' };
-const setAnswer = (edits) => fs.writeFileSync(answer, JSON.stringify({ filters: { ok: true, filters: [] }, edits: Array.isArray(edits) ? { ok: true, edits } : edits }));
+let shareAnswer; // what it answers to {op:"sharePage"}
+const setAnswer = (edits) => fs.writeFileSync(answer, JSON.stringify({ filters: { ok: true, filters: [] }, edits: Array.isArray(edits) ? { ok: true, edits } : edits, sharePage: shareAnswer }));
 setAnswer(OLD_APP);
 
 const PAGE = `<!doctype html><html lang="en"><head><title>Shop</title><style>body{font:16px sans-serif} .ad{height:40px}</style></head><body>
@@ -209,8 +210,69 @@ try {
   await pop.keyboard.press('Space');
   ok(await until(async () => (await text('#title')) === 'New title'), 'popup: the switch brings the edit back on the open page');
   ok(await until(() => pop.evaluate(() => document.activeElement && document.activeElement.matches('#editsList input'))), 'popup: the switch keeps the focus');
+
+  // ---------- Sharing the page with an agent ----------
+  const sent = () => fs.readFileSync(asked, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((m) => m.op === 'sharePage');
+  const note2 = () => pop.textContent('#shareNote');
+  const share = async (answerTo, button = '#shareGo') => {
+    shareAnswer = answerTo;
+    setAnswer([{ ...EDIT, name: 'Shop, calmer', css: '#foot{letter-spacing:4px}' }]);
+    const n = sent().length;
+    await pop.click(button);
+    await until(async () => sent().length > n && !(await pop.isDisabled('#shareGo')));
+    return sent().at(-1);
+  };
+  ok(sent().length === 0 && /web assistants too/.test(await note2()) && !(await pop.isVisible('#shareStop')), 'share: nothing is sent before the button is pressed');
+  await page.evaluate(() => {
+    history.replaceState(null, '', '/a?token=secret#secret');
+    document.querySelector('#main').insertAdjacentHTML('beforeend', '<ul id="posts"><li class="post">One</li><li class="post">Two</li><li class="post">Three</li></ul><p id="gone" style="display:none">unseen words</p><div id="code" class="cm-editor"><div>typed code</div></div><h2 id="odd">a' + '\u{1F600}'.repeat(300) + '</h2>'
+      + '<section id="apart"><div id="north"><b>North</b></div><div id="south"><b>South</b></div><div id="west"><b>West</b></div></section>'
+      + '<div style="display:contents"><p id="inside">Held</p></div><form id="ask"><input name="children"><p id="asked">Asked</p></form>'
+      + '<p id="shut" style="height:0;overflow:hidden">unseen</p><p id="off" style="position:absolute;left:-9999px">unseen</p><p id="sr" style="position:absolute;width:1px;height:1px;overflow:hidden">unseen</p>'
+      + '<header id="bare" style="position:absolute;top:0;left:0"><nav id="pinned" style="position:fixed;top:0">Pinned</nav></header>'
+      + '<div id="pane" style="height:60px;overflow:auto"><h2 id="past">Past</h2><div style="height:4000px"></div></div>'
+      + '<aside id="drawer" style="position:fixed;top:0;right:0;width:200px;height:50px;transform:translateX(100%)">unseen</aside>'
+      + '<section id="plain"><div><b id="p1">First</b></div><div><b id="p2">Second</b></div><div><b id="p3">Third</b></div></section>'
+      + '<div><textarea id="mirrored"></textarea><div id="drawn">typed mirror</div></div>');
+    document.querySelector('#mirrored').value = 'typed mirror';
+    document.querySelector('#pane').scrollTop = 3000;
+    document.querySelector('#name').value = 'typed name';
+  });
+  await share({ ok: false, error: 'there is no request called sharePage' });
+  ok(/Update Polycarp/.test(await note2()) && !(await pop.isVisible('#shareStop')), `share: an older app says to update (${await note2()})`);
+  await share(undefined);
+  ok(/didn't answer/.test(await note2()) && await pop.isVisible('#shareStop'), `share: no answer is said, and can be stopped, since the app may have taken it (${await note2()})`);
+  ok(await sw.evaluate(async () => { const a = await chrome.alarms.get('polycarp-shared'); return !!a && Math.abs(a.scheduledTime - Date.now() - 3600e3) < 60e3; }), 'share: what the browser keeps of it goes after the hour');
+  const got = (await share({ ok: true })).page, all = JSON.stringify(got), part = (at) => got.parts.find((x) => x.at === at);
+  ok(got.url === 'https://shop.test/a' && got.title === 'Shop', `share: the address without its query (${got.url})`);
+  ok(!/typed|my words|my draft|mine|unseen|secret|polycarp-/.test(all), 'share: nothing typed, hidden or in the query is sent');
+  ok(part('#title').is === 'Heading' && part('#title').words === 'New title' && part('#foot').words === 'End', `share: parts with their selector and words (${all})`);
+  ok(part('li.post') && part('li.post').count === 3 && part('li.post').words === 'One' && !/Two/.test(JSON.stringify(got.parts.filter((x) => x.is === 'List item'))), 'share: parts alike are one, with how many');
+  ok(await page.evaluate((list) => list.every((x) => document.querySelectorAll(x.at).length === (x.count || 1)), got.parts), 'share: every selector finds what it says');
+  ok(got.parts.every((x) => x.at.length <= 500 && x.is.length <= 30 && (x.words || '').length <= 160) && part('#odd').words.length === 159 && !/[\uD800-\uDFFF]$/.test(part('#odd').words.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')), 'share: within what the app takes, cut between characters');
+  ok(['north', 'south', 'west', 'inside', 'asked'].every((id) => /^(North|South|West|Held|Asked)$/.test((got.parts.find((x) => x.at.includes('#' + id)) || {}).words)), `share: parts with names of their own, in a wrapper with no box and in a form with a field named children (${all})`);
+  ok(['pinned', 'past', 'p1', 'p2', 'p3'].every((id) => part('#' + id)), `share: parts held by a wrapper with no size, scrolled past in a pane, and in plain neighbours (${all})`);
+  ok(got.edits.length === 1 && got.edits[0].id === 'shop' && got.edits[0].hits.length === EDIT.changes.length && got.edits[0].hits[1] === 1, `share: what the agent's edit matched here (${JSON.stringify(got.edits)})`);
+  ok(/^Shared until .*this page$/.test(await note2()) && (await pop.textContent('#shareGo')) === 'Share again', `share: says until when (${await note2()})`);
   await pop.screenshot({ path: path.join(here, 'out', 'edits-popup.png') });
+  await page.evaluate(() => history.replaceState(null, '', '/a?q=2'));
+  await pop.reload();
+  ok(await until(async () => /^Shared until .*: Shop$/.test(await note2())), `share: another query is another page (${await note2()})`);
+  await page.evaluate(() => history.replaceState(null, '', '/a?token=secret#secret'));
+  await sw.evaluate(() => chrome.storage.session.clear());
+  await pop.reload();
+  ok(await until(() => pop.isVisible('#shareStop')) && /^Shared until .*: Shop$/.test(await note2()), `share: a browser restarted can still stop it, and doesn't claim this page (${await note2()})`);
+  const stop = await share({ ok: true }, '#shareStop');
+  ok(stop.page === null && /web assistants too/.test(await note2()) && !(await pop.isVisible('#shareStop')), 'share: Stop sharing takes it back');
+  await page.evaluate(() => { document.body.contentEditable = 'true'; });
+  await pop.click('#shareGo');
+  ok(await until(async () => /Nothing on this page/.test(await note2())), 'share: a page that is one editor is not sent');
+  const asks = sent().length;
+  await sw.evaluate(async () => { const [t] = await chrome.tabs.query({ url: 'https://shop.test/*' }); await chrome.scripting.executeScript({ target: { tabId: t.id }, func: (id) => { chrome.runtime.sendMessage({ type: 'polycarp:sharePage', tabId: id }); }, args: [t.id] }); });
+  await sleep(600);
+  ok(sent().length === asks && asks === 4, `share: only the popup may ask (${asks})`);
   await pop.close();
+  await page.goto('https://shop.test/a');
   const set = await ctx.newPage();
   set.on('pageerror', (e) => errors.push('settings: ' + e));
   await set.goto(`chrome-extension://${ID}/src/pages/settings.html`);

@@ -4,11 +4,12 @@
   const P = globalThis.Polycarp, E = globalThis.PolycarpEdits, S = globalThis.PolycarpEditsStore;
   const box = document.getElementById("edits"), ul = document.getElementById("editsList");
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  let at;
-  try { at = new URL(tab.url); } catch (e) { return; }
-  if (!/^https?:$/.test(at.protocol)) return;
+  let at = null;
+  try { at = new URL(tab.url); } catch (e) { /* no address */ }
+  if (at && !/^https?:$/.test(at.protocol)) at = null; // not a page: nothing to edit or share, though a share elsewhere can be stopped
 
   async function render() {
+    if (!at) return;
     const [{ edits }, settings] = await Promise.all([S.load(), P.getSettings()]);
     const away = !settings.enabled || P.paused(settings) || settings.sites[P.hostOf(tab.url)] === "off";
     const here = edits.filter((e) => E.onSite(e, at.hostname) && E.onPath(e, at.pathname));
@@ -45,6 +46,33 @@
     if (r && r.ok) window.close();
     else document.getElementById("editPage").textContent = "This page can't be edited";
   });
-  box.hidden = false;
+
+  // Sharing this page with the person's agents, through the app on this computer: shown only when there is one.
+  const row = document.getElementById("share"), note = document.getElementById("shareNote"), go = document.getElementById("shareGo"), halt = document.getElementById("shareStop");
+  const HOUR = 3600e3, KEY = "polycarp.shared";
+  async function share(error) {
+    const got = (await chrome.storage.local.get(KEY))[KEY], on = got && Date.now() - got.at < HOUR ? got : null;
+    if (got && !on) chrome.storage.local.remove(KEY);
+    row.hidden = !on && !(await S.load()).app.connected;
+    box.hidden = !at && !on;
+    box.querySelector(".ehead").hidden = go.hidden = !at;
+    const until = on && new Date(on.at + HOUR).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const same = on && (await chrome.storage.session.get(KEY))[KEY] === (await chrome.tabs.get(tab.id)).url;
+    note.textContent = error || (on ? "Shared until " + until + ": " + (same ? "this page" : on.title || on.url) : "Any agent you let use files, web assistants too, can read this page's title and words for an hour, messages you sent on it included. What is in its boxes is left out.");
+    go.textContent = same ? "Share again" : "Share with my agent";
+    halt.hidden = !on;
+  }
+  async function send(tabId) {
+    go.disabled = halt.disabled = true;
+    const r = await chrome.runtime.sendMessage({ type: "polycarp:sharePage", tabId }).catch(() => null);
+    go.disabled = halt.disabled = false;
+    await share(r && r.ok ? "" : (r && r.error) || "That didn't work. Try again");
+    go.focus();
+  }
+  go.addEventListener("click", () => send(tab.id));
+  halt.addEventListener("click", () => send(null));
+  chrome.storage.onChanged.addListener((ch, area) => { if (S.changed(ch, area)) share(); });
+
   render();
+  share();
 })();
