@@ -84,9 +84,16 @@ final class TilePropertyTests: XCTestCase {
             var l = TileLayout(), there: Set<WindowID> = []
             for _ in 0..<40 { randomTileCall(&l, &there, &r, area: area, gaps: gaps, minimums: [:]) }
             l.full = false
-            guard there.count > 1 else { continue }
+            guard there.count > 1, let root = l.root, let box = gaps.inset(area) else { continue }
+            // Every other run some windows have a minimum, as long as all fit: the edge lands there all the same.
+            var minimums: [WindowID: CGSize] = [:]
+            if seed % 2 == 1 {
+                for w in there.sorted() where r.below(3) == 0 { minimums[w] = CGSize(width: r.between(50, 500), height: r.between(50, 400)) }
+                let solver = TileSolver(root, in: box, gap: gaps.inner, minimums: minimums), grown = solver.grown(box)
+                if !TileAxis.allCases.allSatisfy({ solver.need(root, $0) <= grown.length($0) }) { minimums = [:] }
+            }
             let id = l.windows[r.below(there.count)], d = TileDirection.allCases[r.below(4)]
-            let was = TileBox(l.frames(in: area, gaps: gaps)[id]!)
+            let was = TileBox(l.frames(in: area, gaps: gaps, minimums: minimums)[id]!)
             var to = was
             let by = r.between(-80, 80).rounded()
             switch d {
@@ -96,14 +103,29 @@ final class TilePropertyTests: XCTestCase {
             case .down: to.y1 += by
             }
             let edge = { (b: TileBox, d: TileDirection) in d.back ? b.lo(d.axis) : b.hi(d.axis) }
-            if to.width >= 1, to.height >= 1, l.resize(id, to: CGRect(to.x0, to.y0, to.x1, to.y1), area: area, gaps: gaps) {
+            if to.width >= 1, to.height >= 1, l.resize(id, to: CGRect(to.x0, to.y0, to.x1, to.y1), area: area, gaps: gaps, minimums: minimums) {
                 dragged += 1
-                let now = TileBox(l.frames(in: area, gaps: gaps)[id]!)
+                let now = TileBox(l.frames(in: area, gaps: gaps, minimums: minimums)[id]!)
                 for e in TileDirection.allCases where e != d {
                     XCTAssertEqual(edge(now, e), edge(was, e), accuracy: 1, "seed \(seed): the \(e) edge moved with the \(d) one")
                 }
                 let moved = (edge(now, d) - edge(was, d)) * (d.back ? -1 : 1)
                 XCTAssertTrue(moved * by >= 0 && abs(moved) <= abs(by) + 1, "seed \(seed): \(moved) for \(by)")
+                if by > 0, abs(moved) < by - 1 {
+                    let frames = l.frames(in: area, gaps: gaps, minimums: minimums)
+                    let solver = TileSolver(l.root!, in: box, gap: gaps.inner, minimums: minimums)
+                    let cells = solver.cells(l.root!, in: solver.grown(box)), here = cells[id]!
+                    let touching = cells.filter { w, c in
+                        w != id && (d.back ? c.hi(d.axis) <= here.lo(d.axis) + 0.01 : c.lo(d.axis) >= here.hi(d.axis) - 0.01)
+                            && c.hi(d.axis.other) > here.lo(d.axis.other) && c.lo(d.axis.other) < here.hi(d.axis.other)
+                    }.keys
+                    let atLeast = touching.contains { w in
+                        let side = d.axis == .horizontal ? frames[w]!.width : frames[w]!.height
+                        let m = minimums[w].map { d.axis == .horizontal ? $0.width : $0.height } ?? 1
+                        return side <= max(1, m.rounded(.up)) + 1
+                    }
+                    XCTAssertTrue(atLeast, "seed \(seed): stopped at \(moved) of \(by) with nothing at its minimum")
+                }
             }
             var steps = 0
             while l.move(id, toward: d, area: area) {

@@ -34,6 +34,10 @@ final class TileMoveTests: XCTestCase {
         }
         let uneven = tree(split(.horizontal, .window(1), split(.vertical, .window(2), .window(3), weights: [1, 2])))
         XCTAssertEqual(uneven.neighbor(of: 1, toward: .right, in: wide, gaps: none), 3, "the most of the edge")
+        // What a minimum pushed is judged where it is on screen.
+        let rows = tree(split(.horizontal, split(.vertical, .window(1), .window(2), .window(3)), split(.vertical, .window(4), .window(5))))
+        let tall: [WindowID: CGSize] = [5: CGSize(width: 0, height: 700)]
+        XCTAssertEqual(rows.neighbor(of: 2, toward: .right, in: wide, gaps: none, minimums: tall, recent: [4]), 5)
     }
 
     func testATileShorterThanTheGapStillHasANeighbor() {
@@ -142,6 +146,49 @@ final class TileMoveTests: XCTestCase {
         XCTAssertEqual(l, before)
     }
 
+    func testARowNestedInARowResizesAsOneRow() {
+        let area = CGRect(x: 0, y: 0, width: 3440, height: 1440)
+        var start = TileLayout(style: .dwindle)  // 1 | (2 | 3)
+        start.sync([1, 2, 3], focused: nil, area: area)
+        func widths(_ l: TileLayout, _ minimums: [WindowID: CGSize]) -> [Double] {
+            [1, 2, 3].map { Double(l.frames(in: area, gaps: none, minimums: minimums)[$0]!.width) }
+        }
+        XCTAssertEqual(widths(start, [:]), [1720, 860, 860])
+        let minimums: [WindowID: CGSize] = [2: CGSize(width: 700, height: 0)]
+        var l = start
+        XCTAssertTrue(l.resize(1, to: CGRect(0, 0, 2120, 1440), area: area, gaps: none, minimums: minimums))
+        XCTAssertEqual(widths(l, minimums), [2120, 700, 620], "past its minimum the next one pays, and the edge lands where it was let go")
+        var pushed = start
+        let fixed: [WindowID: CGSize] = [2: CGSize(width: 860, height: 0)]
+        XCTAssertTrue(pushed.resize(3, to: CGRect(2480, 0, 3440, 1440), area: area, gaps: none, minimums: fixed))
+        XCTAssertEqual(widths(pushed, fixed), [1620, 860, 960], "pushed along, as in a flat row")
+        var key = start
+        XCTAssertTrue(key.resize(3, axis: .horizontal, by: 100, area: area, gaps: none, minimums: fixed))
+        XCTAssertEqual(widths(key, fixed), [1620, 860, 960])
+    }
+
+    func testTheWindowAtTheEdgePaysAndTheRestStay() {
+        var l = layout(.columns, 4)
+        let widths = { (l: TileLayout) in (WindowID(1)...4).map { Double(l.frames(in: self.wide, gaps: self.none)[$0]!.width) } }
+        XCTAssertTrue(l.resize(1, to: CGRect(0, 0, 490, 1000), area: wide, gaps: none))
+        XCTAssertEqual(widths(l), [490, 310, 400, 400])
+        XCTAssertTrue(l.resize(1, to: CGRect(0, 0, 400, 1000), area: wide, gaps: none))
+        XCTAssertEqual(widths(l), [400, 400, 400, 400])
+        XCTAssertTrue(l.resize(4, to: CGRect(700, 0, 1600, 1000), area: wide, gaps: none, minimums: [3: CGSize(width: 150, height: 0)]))
+        XCTAssertEqual(widths(l), [400, 150, 150, 900], "the one past it once the first is at its minimum")
+    }
+
+    func testAWindowSmallerThanItsTileOnlyMovesTheEdgeThatWasPulled() {
+        // A terminal that snapped to its rows and columns: 793 of 800 points.
+        var l = layout(.columns, 2)
+        let start = CGRect(x: 0, y: 0, width: 793, height: 1000), before = l
+        XCTAssertFalse(l.resize(1, to: start.offsetBy(dx: 300, dy: 0), from: start, area: wide, gaps: none), "only moved")
+        XCTAssertFalse(l.resize(1, to: CGRect(0, 0, 793, 900), from: start, area: wide, gaps: none), "the other axis")
+        XCTAssertEqual(l, before)
+        XCTAssertTrue(l.resize(1, to: CGRect(0, 0, 893, 1000), from: start, area: wide, gaps: none))
+        XCTAssertEqual(l.frames(in: wide, gaps: none)[1]!.width, 900, "by as much as it was pulled")
+    }
+
     func testBalanceEvensOneSplitOrAll() {
         let start = tree(split(.horizontal, .window(1), split(.horizontal, .window(2), split(.vertical, .window(3), .window(4), weights: [9, 1]),
                                                               weights: [5, 1]), weights: [1, 7]))
@@ -151,6 +198,12 @@ final class TileMoveTests: XCTestCase {
         XCTAssertEqual(l.frames(in: wide, gaps: none)[1], start.frames(in: wide, gaps: none)[1])
         l.balance(nil)
         XCTAssertEqual([1, 2, 3].map { l.frames(in: wide, gaps: none)[$0]!.width }, [533, 534, 533], "a nested row comes out even")
+        for id in [WindowID(1), 2] {
+            var row = start
+            row.balance(id)
+            XCTAssertEqual([1, 2, 3].map { row.frames(in: wide, gaps: none)[$0]!.width }, [533, 534, 533], "its whole row, from \(id)")
+            XCTAssertEqual(row.frames(in: wide, gaps: none)[4]!.height, 100, "and nothing else")
+        }
         var m = layout(.main, 4)
         m.resize(1, axis: .horizontal, by: 200, area: wide, gaps: none)
         m.resize(2, axis: .vertical, by: 100, area: wide, gaps: none)
@@ -186,6 +239,8 @@ final class TileMoveTests: XCTestCase {
 
     func testFullGivesEveryTileTheAreaAndKeepsTheTree() {
         var l = layout(.dwindle, 3)
+        l.resize(1, axis: .horizontal, by: 90, area: wide, gaps: none)
+        let before = l
         l.full = true
         let gaps = TileGaps(inner: 10, outer: 20)
         let whole = wide.insetBy(dx: 20, dy: 20)
@@ -194,11 +249,13 @@ final class TileMoveTests: XCTestCase {
         XCTAssertFalse(l.resize(1, axis: .horizontal, by: 50, area: wide, gaps: gaps))
         XCTAssertFalse(l.resize(1, to: CGRect(x: 0, y: 0, width: 400, height: 400), area: wide, gaps: gaps))
         l.flip(nil, area: wide)
+        l.balance(nil)
+        l.swap(1, 2)
         for (d, e) in [(TileDirection.right, TileDirection.left), (.down, .up)] {
             XCTAssertEqual([1, 2, 3].map { l.neighbor(of: $0, toward: d, in: wide, gaps: gaps) }, [2, 3, nil])
             XCTAssertEqual([1, 2, 3].map { l.neighbor(of: $0, toward: e, in: wide, gaps: gaps) }, [nil, 1, 2])
         }
         l.full = false
-        XCTAssertEqual(l, layout(.dwindle, 3))
+        XCTAssertEqual(l, before)
     }
 }

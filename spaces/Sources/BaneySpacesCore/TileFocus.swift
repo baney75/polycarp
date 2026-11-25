@@ -14,7 +14,7 @@ extension TileLayout {
     /// back lands where you were; else the one sharing the most of the edge, then the one nearest its middle. Nil at the
     /// area's edge, where the app can cross to the next display. With `full` the windows are a row to step through.
     public func neighbor(of id: WindowID, toward d: TileDirection, in area: CGRect, gaps: TileGaps,
-                         recent: [WindowID] = []) -> WindowID? {
+                         minimums: [WindowID: CGSize] = [:], recent: [WindowID] = []) -> WindowID? {
         if full {
             let row = windows
             guard let at = row.firstIndex(of: id) else { return nil }
@@ -23,7 +23,7 @@ extension TileLayout {
         }
         guard let root, let box = gaps.inset(area) else { return nil }
         // Cells and not tiles: a tile shorter than a gap can face only the gap, but every cell borders another.
-        let solver = TileSolver(root, in: box, gap: gaps.inner, minimums: [:])
+        let solver = TileSolver(root, in: box, gap: gaps.inner, minimums: minimums)
         let cells = solver.cells(root, in: solver.grown(box)).mapValues(solver.rounded)
         guard let from = cells[id] else { return nil }
         let across = d.axis.other, middle = from.lo(across) + from.hi(across)
@@ -51,7 +51,7 @@ extension TileLayout {
 
     /// Two windows trade slots; each slot keeps its size and nesting.
     public mutating func swap(_ a: WindowID, _ b: WindowID) {
-        guard a != b, contains(a), contains(b) else { return }
+        guard !full, a != b, contains(a), contains(b) else { return }
         root?.relabel { $0 == a ? b : $0 == b ? a : $0 }
     }
 
