@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod agent;
+#[cfg(target_os = "macos")]
+mod browser;
 mod features;
 mod files;
 mod local_studio;
@@ -109,11 +111,7 @@ fn main() {
     let rest: Vec<OsString> = args.collect();
     let code = match first.to_str() {
         Some("spaces") => handoff(&SPACES, &rest),
-        // Gone from Polycarp: say where it went, with the exit code for a command used wrong.
-        Some("browser") => {
-            eprintln!("{BROWSER_MOVED}");
-            2
-        }
+        Some("browser") => browser(&rest),
         Some("voice") => voice(),
         Some("theme") => theme::run(&rest),
         Some("features") => features::run(&rest),
@@ -148,6 +146,18 @@ fn main() {
         }
     };
     std::process::exit(code);
+}
+
+/// Polycarp Browser is being built a part at a time, and only on a Mac. Anything it does not answer yet is the old agent
+/// browser's command: say where that went, with the exit code for a command used wrong.
+fn browser(args: &[OsString]) -> i32 {
+    #[cfg(target_os = "macos")]
+    if let Some(code) = browser::run(args, home().map(|h| update::cache_dir(&h))) {
+        return code;
+    }
+    let _ = args;
+    eprintln!("{BROWSER_MOVED}");
+    2
 }
 
 fn home() -> Option<PathBuf> {
