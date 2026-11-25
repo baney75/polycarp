@@ -129,7 +129,12 @@ impl Gateway {
                 name: t.name.into(),
                 description: t.description.into(),
                 annotations: crate::mcp::annotations(&t),
-                scope: if t.read_only { "read" } else { "act" },
+                // A page's words are as private as a file's, so a client far away needs that scope for them.
+                scope: match t.name {
+                    "edits_page" => "files",
+                    _ if t.read_only => "read",
+                    _ => "act",
+                },
                 schema: t.schema,
                 from: From::Theme,
             });
@@ -410,6 +415,16 @@ mod tests {
         assert!(!seen.iter().any(|n| n.starts_with("files_")));
         assert!(!seen.contains(&"app_setting_set".to_string()));
         assert!(!seen.contains(&"theme_change".to_string()));
+        assert!(seen.contains(&"edits_list".to_string()));
+        assert!(!seen.contains(&"edits_page".to_string()));
+        assert!(names(&gw, &caller(&["files"])).contains(&"edits_page".to_string()));
+        for t in ["edit_set", "edit_remove", "filter_set"] {
+            assert!(!seen.contains(&t.to_string()), "{t}");
+            assert!(
+                names(&gw, &caller(&["read", "act"])).contains(&t.to_string()),
+                "{t}"
+            );
+        }
         let mut s = Session::default();
         let (code, m) = gw
             .call(
