@@ -140,6 +140,18 @@ enum RunningApps {
         return set
     }
 
+    /// The workspaces each running app has windows on, by bundle path. `pids` gives a workspace's windows' apps.
+    static func workspacesByPath(_ pids: (Int) -> [pid_t]) -> [String: [Int]] {
+        var out: [String: [Int]] = [:]
+        for n in Workspaces.range {
+            for pid in pids(n) {
+                guard let path = NSRunningApplication(processIdentifier: pid)?.bundleURL?.path else { continue }
+                if out[path]?.contains(n) != true { out[path, default: []].append(n) }
+            }
+        }
+        return out
+    }
+
     /// Which of `pids` are hidden (⌘H). Main thread.
     static func hidden(among pids: Set<pid_t>) -> Set<pid_t> {
         let facts = facts()

@@ -72,6 +72,9 @@ enum Render {
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_MOVE_TIMING"].flatMap(Int.init) {
             return MoveTiming.run(rounds: r)
         }
+        if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_LAUNCHER_TIMING"].flatMap(Int.init) {
+            return LauncherTiming.run(rounds: r)
+        }
         // BANEYSPACES_RENDER_SWATCHES=1 checks only what the workspace colors sit on in dark mode (scripts/swatch-check.sh).
         if ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SWATCHES"] == "1" { return SwatchCheck.run(into: folder) }
         // BANEYSPACES_RENDER_THEME_EDITOR=<user theme> draws only the theme editor and the Appearance tab, light and dark.
