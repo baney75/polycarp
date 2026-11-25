@@ -238,14 +238,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 MissionControlKeys.inGesture = false
                 return
             }
-            // Titles change with every tab: read them again in the background, ready for the window bar the hold opens.
+            // Titles change with every tab: read them again in the background, ready for its cards and the window bar.
             if !isRepeat { self.spaces.refreshDetails() }
             self.switcher.step(forward: forward, isRepeat: isRepeat, at: time)
         }
         keys.onTabUp = { [weak self] in self?.switcher.tabReleased() }
         keys.onCmdReleased = { [weak self] in self?.switcher.commit() }
         keys.onCancel = { [weak self] in self?.switcher.cancel() }
-        keys.onArrow = { [weak self] forward in self?.switcher.arrow(forward: forward) }
+        keys.onArrow = { [weak self] forward, byRow in self?.switcher.arrow(forward: forward, byRow: byRow) }
         return keys
     }()
     /// Whether the Settings window was built yet: its first open pays for that, timed apart (`showSettings`).
@@ -497,6 +497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             self.updateIcon()
             self.topBar.workspacesChanged()
+            self.switcher.titlesChanged()
         }
         // It reads surfaces.json and stays away while `bar.enabled` is off.
         topBar.start()

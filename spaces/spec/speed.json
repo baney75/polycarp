@@ -87,6 +87,20 @@
         "measured": null,
         "target": "first open builds the panel"
       },
+      "switcher": {
+        "p50": 30,
+        "p90": 60,
+        "p99": 100,
+        "measured": null,
+        "target": "the ⌘Tab panel, from when it is asked to show"
+      },
+      "switcher-first": {
+        "p50": 100,
+        "p90": 150,
+        "p99": 250,
+        "measured": null,
+        "target": "first open builds the panel"
+      },
       "settings": {
         "p50": 60,
         "p90": 100,

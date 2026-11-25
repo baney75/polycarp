@@ -13,6 +13,7 @@ not written here does not ship on one platform alone.
 | [cli.md](cli.md) | The command family and which commands exist on which platform |
 | [mcp-tools.json](mcp-tools.json) | The MCP tools, as `tools/list` returns them (generated from the Rust core) |
 | [shell.md](shell.md) | The shell's feed: what a bar or launcher hears from the daemon, and who may subscribe |
+| [switcher.md](switcher.md) | The ⌘Tab switcher: what it lists, in what order, when its panel comes up (`R-W1`, ...) |
 | [bar.md](bar.md) | The top bar: its switch, which workspaces it shows, the clock's words, its height and colors |
 | [conformance/](conformance/) | Cases as JSON: inputs, the effects they must produce, the state they must leave |
 

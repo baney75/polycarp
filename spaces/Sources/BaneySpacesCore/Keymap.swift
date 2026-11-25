@@ -119,11 +119,11 @@ public enum Keymap {
         // Windows
         KeyBinding(id: "window.move", keys: ["mod", "shift", "1...9"], title: "Move the window in front to workspace 1 to 9",
                    group: .windows, scope: .global),
-        KeyBinding(id: "switcher.next", keys: ["cmd", "Tab"], title: "Switch apps or workspaces", group: .windows, scope: .global,
-                   note: "When Settings has ⌘Tab switch apps or workspaces"),
+        KeyBinding(id: "switcher.next", keys: ["cmd", "Tab"], title: "Switch windows, apps or workspaces", group: .windows, scope: .global,
+                   note: "Unless Settings leaves ⌘Tab to macOS"),
         KeyBinding(id: "switcher.back", keys: ["cmd", "shift", "Tab"], title: "Step back in the ⌘Tab switcher", group: .windows, scope: .global,
-                   note: "When Settings has ⌘Tab switch apps or workspaces"),
-        KeyBinding(id: "switcher.arrows", keys: ["←→↑↓"], title: "Step through the switcher: → and ↓ forward, ← and ↑ back",
+                   note: "Unless Settings leaves ⌘Tab to macOS"),
+        KeyBinding(id: "switcher.arrows", keys: ["←→↑↓"], title: "Step through the switcher (among windows ↑ ↓ go by row)",
                    group: .windows, scope: .switcher),
         KeyBinding(id: "switcher.cancel", keys: ["Esc"], title: "Close the switcher without switching", group: .windows, scope: .switcher),
         // Terminal

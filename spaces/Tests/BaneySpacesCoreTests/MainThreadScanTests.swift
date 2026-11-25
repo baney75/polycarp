@@ -27,7 +27,25 @@ final class MainThreadScanTests: XCTestCase {
             "func switchTo(_ n: Int, takeFocus", "private func plan(_ n: Int, moveFocus", "private func refresh(full: Bool, asking",
             "private func scanStart(full", "private func scanLanded(", "private func applyScan(", "func finish()",
         ])
-        try assertAsksNoApp("Sources/BaneySpaces/WorkspaceSwitcher.swift", ["func commit("])
+        try assertAsksNoApp("Sources/BaneySpaces/WorkspaceSwitcher.swift", ["func commit(", "private func go(to w"])
+        try assertAsksNoApp("Sources/BaneySpaces/Spaces.swift", ["func switcherWindows()", "func focusWindow("])
+        try assertAsksNoApp("Sources/BaneySpaces/Windows.swift", ["static func stacking("])
+    }
+
+    /// ⌘Tab's pick waits for a fresh list in the background, never with `refresh()` in the key's own turn.
+    func testACommitWaitsForTheWindowListOffMain() throws {
+        let s = try SourceText.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
+        for m in ["func commit(", "private func go(to w"] {
+            XCTAssertFalse(try XCTUnwrap(SourceText.block(after: m, in: s)).contains("refresh("), "\(m) refreshes on main")
+        }
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "private func go(to w", in: s)).contains("spaces.focusWindow(w.id, pid: pid)"))
+        let focus = try XCTUnwrap(SourceText.block(after: "func focusWindow(", in: try SourceText.code("Sources/BaneySpaces/Spaces.swift")))
+        let held = try XCTUnwrap(SourceText.block(after: "holdUntilFresh(asking: askIfHidden(pid))", in: focus))
+        XCTAssertTrue(held.contains("focus(id, on: n)"))
+        XCTAssertTrue(held.contains("windowOrder.raised(id"), "the landing time starts at the raise, not at the key")
+        let cards = try XCTUnwrap(SourceText.block(after: "func switcherWindows()", in: try SourceText.code("Sources/BaneySpaces/Spaces.swift")))
+        XCTAssertTrue(cards.contains("Date() < settleUntil ? expectedFront"), "right after a switch macOS still names the app you left")
+        XCTAssertTrue(held.contains("pickApp(pid, on: nil"), "a window closed meanwhile goes to its app")
     }
 
     func testTheOverviewOpenAsksNoAppOnMain() throws {
