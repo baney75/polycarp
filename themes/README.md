@@ -50,6 +50,9 @@ copy of a built-in (what `polycarp theme create <name> --extends <base>` does) a
 - Drop a picture on the tab or the editor to take its colors: an accent, the text on it, a selection
   and a border, fitted so every pair still reads. Nothing changes until you use them.
 
+To keep or share the whole look (theme, `style.css`, the surfaces and the paper) as one thing, see
+[looks](../docs/looks.md): `polycarp look`, and **Looks** at the top of the same page.
+
 ## The format
 
 ```toml

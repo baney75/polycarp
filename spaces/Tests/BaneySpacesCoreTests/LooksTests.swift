@@ -1,8 +1,8 @@
 import XCTest
 @testable import BaneySpacesCore
 
-/// Settings > Appearance > Looks: the commands it runs and how it reads their answers. The last test
-/// runs the real `polycarp` and skips where it isn't built.
+/// Settings > Appearance > Looks: the commands it runs, how it reads their answers, and what the group may do. The last
+/// test runs the real `polycarp` and skips where it isn't built.
 final class LooksTests: XCTestCase {
     func testEachButtonIsOneCommandAPersonCouldRun() {
         XCTAssertEqual(LookCommands.list, ["look", "list", "--json"])
@@ -48,6 +48,45 @@ final class LooksTests: XCTestCase {
         XCTAssertTrue(refused.looks.isEmpty)
         XCTAssertFalse(refused.canUndoLook)
         XCTAssertEqual(refused.notes, [])
+    }
+
+    func testALookFileCanBeDroppedOnTheTab() {
+        XCTAssertEqual(ThemeImport.kind("/tmp/Desk.polycarp-look"), .look)
+        XCTAssertEqual(ThemeImport.kind("/tmp/desk.toml"), .theme)
+        XCTAssertEqual(ThemeImport.kind("/tmp/desk.json"), .other)
+    }
+
+    // MARK: The group (the app target can't be imported, so these read it)
+
+    func testTheLooksGroupIsFirstAndOnlyWithTheCommand() throws {
+        let setup = try Repo.code("Sources/BaneySpaces/Setup.swift")
+        let start = try XCTUnwrap(setup.range(of: "private var appearanceSections: some View {"))
+        let body = setup[start.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertTrue(body.hasPrefix("if ThemeCommand.shared.available { LooksGroup() }"), "Looks comes first in Appearance")
+    }
+
+    /// A look of the person's is replaced only from `replace(_:)`, which only the Replace button calls; and one change at a time.
+    func testNothingIsReplacedWithoutAYes() throws {
+        let library = try Repo.code("Sources/BaneySpaces/Appearance/LookLibrary.swift")
+        XCTAssertEqual(library.components(separatedBy: "replace: true").count - 1, 2)
+        let yes = try XCTUnwrap(library.range(of: "func replace(_ r: Replace) {"))
+        XCTAssertTrue(library[yes.upperBound...].prefix(300).contains("save(title, replace: true)"))
+        XCTAssertTrue(library[yes.upperBound...].prefix(300).contains("importFile(url, replace: true)"))
+        let group = try Repo.code("Sources/BaneySpaces/Appearance/LooksGroup.swift")
+        XCTAssertEqual(group.components(separatedBy: "library.replace(").count - 1, 1)
+        XCTAssertTrue(group.contains(#"Button("Replace") { library.replace(r) }"#))
+        XCTAssertTrue(library.contains("guard busy == nil else { return }"))
+        XCTAssertTrue(group.contains(".disabled(library.busy != nil)"))
+    }
+
+    /// The main thread never waits on the command, and an older list never lands on a newer one.
+    func testTheCommandRunsOffTheMainThread() throws {
+        let library = try Repo.code("Sources/BaneySpaces/Appearance/LookLibrary.swift")
+        XCTAssertEqual(library.components(separatedBy: "command.run(").count - 1, 2)
+        XCTAssertEqual(library.components(separatedBy: "ThemeCommand.background({ command.run(").count - 1, 2)
+        XCTAssertTrue(library.contains("guard let self, read == self.reads, r.ok else { return }"))
+        let group = try Repo.code("Sources/BaneySpaces/Appearance/LooksGroup.swift")
+        XCTAssertTrue(group.contains("private var appearance = Appearance.shared"), "the group redraws when the look changes")
     }
 
     // MARK: The real command

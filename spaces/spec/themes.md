@@ -148,6 +148,12 @@ ease out), and the panel opacity setting (a Polycarp panel is not adjustable).
 `baneyspaces doctor` prints `polycarp_theme:` as `none ...` or `in force: <title> (<name>, mode <m>)`.
 Settings > Appearance names the theme in force and how to change it.
 
+**Looks** (Settings > Appearance, first group; `docs/looks.md`). A row of the shipped look and the saved ones, each with its
+light and dark colors, its name and a check on the one in force. A click picks one and changes nothing; Apply, Save
+Current Look, Import, Export and Undo each run one `polycarp look` command off the main thread, one at a time, and show
+its own words. One of the person's looks is replaced only after they say so. Import saves and doesn't apply. The group is
+absent where the app has no `polycarp` command.
+
 **Desktop picture** (macOS, opt-in: Settings > Appearance > "Theme sets the desktop picture", off by default).
 While it is on and a Polycarp theme is in force, every display shows the theme's picture: `surfaces.spaces.wallpaper`
 when the theme names one (`solid:<role>`, `gradient:<role>,<role>` top to bottom, or `image:<file>` for a picture that
