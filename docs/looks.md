@@ -66,7 +66,7 @@ A look from a stranger may change only how things look. The list of settings it 
 | | `menu.*`, which could hide a control; `dock.*`, which went with the Workspace Dock |
 | `newtab.verse` | `newtab.question`, `newtab.searchURL`, `search.engine` |
 | `idle.style`, `idle.effects`, `idle.showVerse`, `idle.showKierkegaard` | `idle.enabled`, `idle.showMachineName`, `idle.startAfterMinutes` |
-| | `text.*`, `rooms.*` |
+| | `text.*`, `rooms.*`, `tiling.*` |
 
 Any key Polycarp doesn't know is refused with its path, as is a value that names a URL, a path or a command. Names are
 lowercase letters, digits and hyphens, so none leaves the folder, and nothing is read or written through a symbolic link.

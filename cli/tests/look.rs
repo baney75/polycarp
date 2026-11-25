@@ -271,6 +271,7 @@ fn settings_that_are_not_looks_are_dropped_with_a_note() {
         "menu": {"hidden": ["update"]}, "rooms": {"root": "/"}, "text": {"verseSource": "/etc/passwd"},
         "desktop": {"scene": "image:/etc/passwd"}, "idle": {"enabled": true, "showMachineName": true},
         "dock": {"tileLabel": "purpose", "restTile": false},
+        "tiling": {"enabled": true, "keys": {"toggle": "ctrl+opt+T"}},
     });
     let v = sb.json_in(&["look", "import", "-"], &with("surfaces", s));
     assert_eq!(v["ok"], true, "{v}");
@@ -289,6 +290,7 @@ fn settings_that_are_not_looks_are_dropped_with_a_note() {
         "idle.showMachineName",
         "dock.tileLabel",
         "dock.restTile",
+        "left out tiling:",
     ] {
         assert!(notes.contains(left), "{left} in {notes}");
     }
@@ -644,8 +646,12 @@ fn the_fields_table_covers_the_surfaces_page() {
             continue;
         }
         seen += 1;
+        // Its own row, or a group's left out whole.
+        let tight: String = table.split_whitespace().collect();
+        let mut groups = path.match_indices('.').map(|(i, _)| &path[..i]);
         assert!(
-            table.contains(&format!("\"{path}\"")),
+            tight.contains(&format!("(\"{path}\","))
+                || groups.any(|g| tight.contains(&format!("(\"{g}\",false,"))),
             "{path} is not in look/fields.rs: say whether a look holds it"
         );
     }

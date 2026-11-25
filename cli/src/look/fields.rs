@@ -6,7 +6,8 @@ use serde_json::{json, Map, Value as Json};
 use std::collections::BTreeMap;
 
 /// Every field of surfaces.json (spaces/docs/surfaces.md): whether a look holds it, and why. A test keeps this and
-/// that page the same, so a new field is decided here. `paper` and each place's are the look's own `paper` part.
+/// that page the same, so a new field is decided here. A group left out whole is one row. `paper` and each place's
+/// are the look's own `paper` part.
 pub const FIELDS: &[(&str, bool, &str)] = &[
     (
         "bar.enabled",
@@ -72,6 +73,11 @@ pub const FIELDS: &[(&str, bool, &str)] = &[
     ("text.verseSource", false, "names a file"),
     ("rooms.root", false, "a folder"),
     ("rooms.menu", false, "what the menu lists"),
+    (
+        "tiling",
+        false,
+        "how windows are arranged and the keys that do it: what Polycarp does, not how it looks",
+    ),
 ];
 
 /// The bar's module lists, set as one so a module can move from one place to another.
