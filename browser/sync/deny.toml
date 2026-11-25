@@ -1,0 +1,25 @@
+# GPL-3.0-or-later may carry code under each license here. MPL-2.0 is allowed by its own section 3.3 (no crate in the
+# tree uses Exhibit B, "Incompatible With Secondary Licenses").
+[licenses]
+allow = [
+    "MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unlicense", "MPL-2.0", "Unicode-3.0",
+    "GPL-3.0-or-later",
+]
+# A license for data: the list of certificate authorities.
+exceptions = [
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots" },
+]
+
+[advisories]
+yanked = "deny"
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+# The TLS here is rustls over ring; a second one would be a second thing to keep patched.
+deny = [{ crate = "openssl" }, { crate = "openssl-sys" }, { crate = "native-tls" }]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
