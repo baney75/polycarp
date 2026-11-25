@@ -57,6 +57,12 @@ of yours: a job with one has no default key, and `none` on a chord leaves it alo
 Polycarp key's, another binding's of yours or another app's is left to it and said; it is never taken. The keys change
 when the file does, with no restart, and `polycarp-spaces keys`, the launcher and the shortcut sheet list the ones you have.
 
+### R-D13 Settings
+Settings › Default apps has a row for every job: its app, who decided, and the choices, with the system's own first and any
+other app last. A browser or a mail app that isn't macOS's yet asks whether it is for Polycarp only or for the whole Mac;
+when macOS is told no, nothing changes, here too. What is installed is read off the main thread, a row keeps its height
+while that is read, and opening the group costs the main thread less than a frame (16 ms) beyond an empty one.
+
 ### R-D15 Video
 `video` plays movies and clips. macOS keeps no one default for movies, only one per file type, so with no choice the
 first installed app of the catalog does it: Flick, IINA, VLC, then QuickTime Player, which comes with macOS, so the job

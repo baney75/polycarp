@@ -38,6 +38,7 @@ struct DefaultAppsPane: View {
         }
     }
 
+    private static let terminal = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
     private static let file = (DefaultAppsFile.path() as NSString).abbreviatingWithTildeInPath
 
     private var question: String {
@@ -69,23 +70,33 @@ struct DefaultAppsPane: View {
     }
 
     private func picker(_ role: AppRole, _ r: ResolvedDefault?) -> some View {
-        Picker(role.title, selection: Binding(get: { picked(r) }, set: { pick(role, r, $0) })) {
-            let auto = store.now.system[role] ?? (r?.source == .you ? nil : r?.app)
-            Label { Text(DefaultAppsText.automatic(role, r, system: store.now.system[role])) } icon: { if auto != nil { icon(auto, size: 16) } }
-                .tag(Pick.automatic)
-            Divider()
-            ForEach(r?.candidates ?? [], id: \.app.id) { c in
-                Label { Text(DefaultAppsText.item(c)) } icon: { icon(c, size: 16) }.tag(Pick.app(c.app))
-            }
-            if let gone = r?.gone {
-                Text("\(DefaultAppCatalog.name(gone, for: role)) (not installed)").tag(Pick.app(gone))
-            }
-            Divider()
-            Text("Other app…").tag(Pick.other)
+        let on = picked(r)
+        return LazyPopUp(label: role.title, shown: item(role, r, on)) {
+            let first = [item(role, r, .automatic), nil], last = [nil, item(role, r, .other)]
+            let apps: [LazyPopUp.Item?] = (r?.candidates ?? []).map { item(role, r, .app($0.app)) }
+            let gone: [LazyPopUp.Item?] = r?.gone.map { [item(role, r, .app($0))] } ?? []
+            return first + apps + gone + last
         }
-        .labelsHidden()
         .frame(width: 215)
-        .accessibilityLabel(role.title)
+    }
+
+    /// One line of a job's list, as a menu shows it.
+    private func item(_ role: AppRole, _ r: ResolvedDefault?, _ p: Pick) -> LazyPopUp.Item {
+        func line(_ title: String, _ c: DefaultCandidate?) -> LazyPopUp.Item {
+            let image = c.flatMap { store.icons[$0.app] ?? Self.terminal }
+            return LazyPopUp.Item(title: title, image: image, on: p == picked(r)) { pick(role, r, p) }
+        }
+        switch p {
+        case .automatic:
+            let system = store.now.system[role]
+            return line(DefaultAppsText.automatic(role, r, system: system), system ?? (r?.source == .you ? nil : r?.app))
+        case .other: return line("Other app…", nil)
+        case .app(let app):
+            guard let c = r?.candidates.first(where: { $0.app == app }) else {
+                return line("\(DefaultAppCatalog.name(app, for: role)) (not installed)", nil)
+            }
+            return line(DefaultAppsText.item(c), c)
+        }
     }
 
     private func picked(_ r: ResolvedDefault?) -> Pick {
