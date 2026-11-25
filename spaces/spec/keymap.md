@@ -68,6 +68,29 @@ and `switch` and `move` need a workspace 1 to 9. Words split at spaces; double q
 So `config.toml` is yours to trust, like your shell profile: any program running as you, an agent's included, can
 write it. Agents should never edit it.
 
+## Dragging
+
+Hold Win and drag anywhere in a window, not only its title bar:
+
+- **Win + left drag** moves it. A window that was filled comes out at its normal size under the pointer.
+- **Win + right drag** resizes it from the corner nearest the press; the opposite corner stays put, never under
+  100 x 100.
+- **Snaps.** Let a move go with the pointer within 12 px of a display's work area edge: left or right edge, that half;
+  top edge, the whole work area; bottom edge, the lower half; within 96 px of a corner along both edges, that quarter.
+  The pointer over the taskbar counts as the bottom edge. While a snap is due, a see-through preview shows where the
+  window will go.
+- **Escape**, while still holding the button, puts the window back where the drag began.
+
+The press and its release never reach the app; the moves in between do, so the pointer moves as usual. Letting go of
+Win after a drag doesn't open Start. Left alone: the desktop, the taskbar, a window with neither a title bar nor a
+sizing border (a full-screen game), and an elevated app's window while the daemon is not elevated (Windows would ignore
+the moves; the press goes to the app as usual). Win+drag is always on and its modifier is always Win: `keys.mod`
+doesn't change it, and there is no setting to turn it off yet.
+
+CI (`tests/ci/drag.ps1`) runs 50 drags each on a Win32 window, File Explorer and a WebView2 host: every one must end
+within 2 px of the expected frame and show the preview exactly when a snap is due. Untested live on Windows: a filled
+window, a second display, an elevated app, and a person's own mouse (CI types marked input).
+
 ## Reload
 
 The daemon watches the folder. A saved file is in force within 1 s (CI measures it, `tests/ci/keymap.ps1`), and the
