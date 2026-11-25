@@ -350,8 +350,62 @@ fn a_damaged_look_is_listed_and_not_used() {
             .collect::<Vec<_>>(),
         ["polycarp", "bad", "one"]
     );
-    assert!(!rows[1]["problems"].as_array().unwrap().is_empty());
+    let why = rows[1]["problems"][0].as_str().unwrap();
+    let o = sb.run(&["look", "list"], "");
+    let text = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        text.contains("can't be used") && text.contains(why),
+        "{text}"
+    );
     assert_eq!(sb.no(&["look", "show", "bad"]), "invalid_look");
+}
+
+#[test]
+fn show_says_what_a_look_holds_and_where_it_was_read() {
+    let sb = Sandbox::new();
+    let mut l = hostile();
+    l["mode"] = json!("dark");
+    l["accent"] = json!({"dark": "#a9bb8a"});
+    let f = sb.at("sent.polycarp-look");
+    fs::write(&f, l.to_string()).unwrap();
+    let path = f.display().to_string();
+    let here = |d: &Value, source: &str, file: Option<&Path>| {
+        assert_eq!(d["source"], source, "{d}");
+        assert_eq!(d["file"].as_str().map(Path::new), file, "{d}");
+        assert_eq!(
+            (&d["theme"], &d["mode"]),
+            (&json!("Evening"), &json!("dark"))
+        );
+        assert_eq!(d["accent"], json!({"light": null, "dark": "#a9bb8a"}));
+    };
+    // A file that was sent is a file, whatever it calls itself.
+    here(&sb.ok(&["look", "show", &path]), "file", Some(&f));
+    let saved = sb.at("cfg/looks/hostile.polycarp-look");
+    sb.ok(&["look", "import", &path]);
+    here(&sb.ok(&["look", "show", &path]), "file", Some(&f));
+    here(&sb.ok(&["look", "show", "hostile"]), "saved", Some(&saved));
+    let v = sb.json_in(&["look", "show", "-"], &l.to_string());
+    here(&v["data"], "stdin", None);
+    l["name"] = json!("polycarp");
+    fs::write(&f, l.to_string()).unwrap();
+    here(&sb.ok(&["look", "show", &path]), "file", Some(&f));
+    let d = sb.ok(&["look", "show", "polycarp"]);
+    assert_eq!(
+        (&d["source"], &d["file"]),
+        (&json!("shipped"), &json!(null))
+    );
+    let o = sb.run(&["look", "show", "hostile"], "");
+    let text = String::from_utf8(o.stdout).unwrap();
+    assert!(
+        text.contains("theme: Evening, mode: dark, dark accent: #a9bb8a"),
+        "{text}"
+    );
+    // A file renamed by hand is called what it is listed as.
+    let two = sb.at("cfg/looks/two.polycarp-look");
+    fs::rename(saved, &two).unwrap();
+    let d = sb.ok(&["look", "show", "two"]);
+    assert_eq!(d["name"], "two");
+    here(&d, "saved", Some(&two));
 }
 
 #[cfg(unix)]

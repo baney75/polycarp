@@ -15,7 +15,7 @@ Every command takes `--json` and answers as `polycarp theme` does (the same enve
 | Command | What it does |
 | --- | --- |
 | `list` | The shipped look and yours |
-| `show <name\|file>` | What a look holds |
+| `show <name\|file\|->` | What a look holds |
 | `export <name> <file\|-> [--force]` | Writes one file to share. `-` prints it |
 | `import <file\|-> [--name N] [--force]` | Checks someone's look and saves it |
 

@@ -18,7 +18,7 @@ pub const USAGE: &str = "\
 usage: polycarp look <command> [--json]
 
   list                                  the shipped look and yours
-  show <name|file>                      what a look holds
+  show <name|file|->                    what a look holds
   export <name> <file|-> [--force]      write a look to one file to share (<name>.polycarp-look)
   import <file|-> [--name N] [--force]  check someone's look and save it; nothing on screen changes
 
@@ -68,14 +68,36 @@ pub(crate) fn input(arg: &str) -> Result<Vec<u8>, ApiErr> {
     Ok(out)
 }
 
-/// A name is a saved look's; anything else is a file's path.
+/// A name is a saved look's, `-` is standard input, and anything else is a file's path.
 fn find(c: &Ctx, arg: &str) -> Result<Look, ApiErr> {
-    let look = match theme::valid_name(arg) {
-        true => store::load(c, arg)?,
-        false => store::read_look(Path::new(arg))?,
+    let look = match arg {
+        "-" => parse(&input(arg)?)?,
+        // The file's name is the look's: a file renamed by hand is called what it is listed as.
+        n if theme::valid_name(n) => Look {
+            name: n.into(),
+            ..store::load(c, n)?
+        },
+        file => store::read_look(Path::new(file))?,
     };
     look.theme.check(c)?;
     Ok(look)
+}
+
+fn parse(bytes: &[u8]) -> Result<Look, ApiErr> {
+    Look::parse(bytes).map_err(|ps| store::refused("the look is refused", &ps))
+}
+
+/// Where `find` read a look. What a look calls itself never says where it is.
+fn place(c: &Ctx, arg: &str) -> (&'static str, Option<PathBuf>) {
+    match arg {
+        "-" => ("stdin", None),
+        format::SHIPPED => ("shipped", None),
+        n if theme::valid_name(n) => ("saved", Some(store::path(c, n))),
+        file => (
+            "file",
+            Some(std::path::absolute(file).unwrap_or_else(|_| file.into())),
+        ),
+    }
 }
 
 /// The name of a look of the person's, which the shipped one's is not.
@@ -118,16 +140,21 @@ fn refuse_taken(c: &Ctx, name: &str, force: bool) -> Result<(), ApiErr> {
     Ok(())
 }
 
-/// What `list` and `show` say of a look.
-fn about(c: &Ctx, look: &Look) -> Json {
-    let saved = store::path(c, &look.name);
+/// What `list` and `show` say of the look `find` read for `arg`.
+fn about(c: &Ctx, look: &Look, arg: &str) -> Json {
+    let (source, file) = place(c, arg);
+    let t = &look.theme;
+    let (theme, colors) = t.swatches(c).unzip();
     json!({
         "name": look.name,
         "title": look.title,
         "description": look.description,
-        "source": if look.name == format::SHIPPED { "shipped" } else { "saved" },
-        "file": (look.name != format::SHIPPED).then(|| saved.display().to_string()),
-        "colors": look.theme.swatches(c).map(|(_, j)| j),
+        "source": source,
+        "file": file.map(|f| f.display().to_string()),
+        "theme": theme,
+        "mode": t.mode,
+        "accent": {"light": t.accent_light, "dark": t.accent_dark},
+        "colors": colors,
         "problems": [],
     })
 }
@@ -137,18 +164,20 @@ pub(crate) fn op_list(c: &Ctx) -> Res {
     let mut text = String::new();
     for name in std::iter::once(format::SHIPPED.to_string()).chain(store::names(c)) {
         match find(c, &name) {
-            Ok(mut look) => {
-                // The file's name is the look's: a file renamed by hand still lists and applies.
-                look.name = name;
+            Ok(look) => {
                 text.push_str(&format!("  {:<20} {}\n", look.name, look.title));
-                rows.push(about(c, &look));
+                rows.push(about(c, &look, &name));
             }
             Err(e) => {
+                let problems = e.problem_list();
                 text.push_str(&format!("  {name:<20} can't be used: {}\n", e.message()));
+                for m in &problems {
+                    text.push_str(&format!("    {m}\n"));
+                }
                 rows.push(json!({
                     "name": name, "title": theme::title_case(&name), "description": null, "source": "saved",
                     "file": store::path(c, &name).display().to_string(), "colors": null,
-                    "problems": e.problem_list(),
+                    "problems": problems,
                 }));
             }
         }
@@ -165,7 +194,25 @@ pub(crate) fn op_show(c: &Ctx, arg: &str) -> Res {
     if let Some(d) = &look.description {
         text.push_str(&format!("{d}\n"));
     }
-    Ok(Out::new(about(c, &look), text))
+    let data = about(c, &look, arg);
+    text.push_str(&holds(&data));
+    Ok(Out::new(data, text))
+}
+
+/// A look's theme, mode and accents as a line.
+fn holds(about: &Json) -> String {
+    let word = |v: &Json| v.as_str().map(str::to_string);
+    let mut line = format!(
+        "theme: {}, mode: {}",
+        word(&about["theme"]).unwrap_or_default(),
+        word(&about["mode"]).unwrap_or_default()
+    );
+    for m in ["light", "dark"] {
+        if let Some(a) = word(&about["accent"][m]) {
+            line.push_str(&format!(", {m} accent: {a}"));
+        }
+    }
+    line + "\n"
 }
 
 /// Writes a look to the looks folder, read back first as anyone else would read it.
@@ -176,7 +223,7 @@ fn keep(c: &Ctx, look: &Look, did: &str) -> Res {
     let p = store::path(c, &look.name);
     let replaced = exists(c, &look.name);
     store::write_plain(&p, text.as_bytes())?;
-    let mut data = about(c, look);
+    let mut data = about(c, look, &look.name);
     data["replaced"] = json!(replaced);
     let line = format!("{did} the look {} in {}\n", look.name, p.display());
     Ok(Out::new(data, line))
@@ -219,7 +266,7 @@ pub(crate) fn op_export(c: &Ctx, name: &str, file: &Path, force: bool) -> Res {
 }
 
 pub(crate) fn op_import(c: &Ctx, bytes: &[u8], name: Option<&str>, force: bool) -> Res {
-    let mut look = Look::parse(bytes).map_err(|ps| store::refused("the look is refused", &ps))?;
+    let mut look = parse(bytes)?;
     if let Some(n) = name {
         look.name = n.into();
     }
