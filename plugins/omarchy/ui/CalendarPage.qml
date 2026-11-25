@@ -17,13 +17,27 @@ Item {
   readonly property string family: host.bar ? host.bar.fontFamily : Style.font.family
   readonly property var locale: Qt.locale()
   readonly property var today: ({ year: clock.date.getFullYear(), month: clock.date.getMonth(), day: clock.date.getDate() })
-  property var shown: ({ year: clock.date.getFullYear(), month: clock.date.getMonth() })
-  readonly property bool here: shown.year === today.year && shown.month === today.month
+  // Months from today, so the page follows today past midnight.
+  property int offset: 0
+  readonly property var shown: Calendar.step(today.year, today.month, offset)
+  readonly property bool here: offset === 0
+  readonly property var weekdays: Calendar.weekdays(locale.firstDayOfWeek % 7)
+  // Two letters where those still tell the days apart, the region's short names where they do not ("Th 2", "Th 3").
+  readonly property var dayNames: {
+    var short = weekdays.map(function(d) { return locale.dayName(d, Locale.ShortFormat) })
+    var cut = short.map(function(name) { return name.slice(0, 2) })
+    var seen = {}
+    for (var i = 0; i < cut.length; i++) {
+      if (seen[cut[i]]) return short
+      seen[cut[i]] = true
+    }
+    return cut
+  }
   readonly property int cell: Style.space(36)
   property real rest: 0
 
   function go(months) {
-    shown = Calendar.step(shown.year, shown.month, months)
+    offset += months
   }
 
   function back() {
@@ -33,7 +47,7 @@ Item {
   }
 
   function home() {
-    shown = { year: today.year, month: today.month }
+    offset = 0
   }
 
   function move(dx, dy) {
@@ -152,16 +166,16 @@ Item {
         columns: 7
 
         Repeater {
-          model: Calendar.weekdays(root.locale.firstDayOfWeek % 7)
+          model: root.dayNames
 
           Text {
-            required property int modelData
+            required property string modelData
             width: root.cell
             height: Style.space(22)
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             textFormat: Text.PlainText
-            text: root.locale.dayName(modelData, Locale.ShortFormat).slice(0, 2)
+            text: modelData
             color: root.quiet
             font.family: root.family
             font.pixelSize: Style.font.bodySmall
@@ -196,7 +210,8 @@ Item {
               font.pixelSize: Style.font.body
               font.weight: day.modelData.today ? Font.DemiBold : Font.Normal
               font.features: ({ "tnum": 1 })
-              Accessible.name: root.locale.toString(new Date(day.modelData.year, day.modelData.month, day.modelData.day), Locale.LongFormat)
+              Accessible.name: new Date(day.modelData.year, day.modelData.month, day.modelData.day).toLocaleDateString(root.locale, Locale.LongFormat)
+                + (day.modelData.today ? ", " + root.strings.today : "")
             }
           }
         }
