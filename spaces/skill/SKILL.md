@@ -1,6 +1,6 @@
 ---
 name: polycarp-spaces
-description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on), the agent workspace (list its windows, move a window there) and his Contacts (find a person, open a call, FaceTime, a Messages draft or an email to them). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, keep an agent's windows off his workspaces, or set up a call or message he asked for. Faster and safer than screenshots. Also use it to change what Polycarp's surfaces show (top bar, desktop scene and verse, dock tiles, status menu, new tab page, idle screen) through `surfaces get|set|reset`, and to set the wallpaper, new tab background or idle background (a picture, URL, color or scene) through `paper set|get|reset`. It does not click or type into apps.
+description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on), the agent workspace (list its windows, move a window there) and his Contacts (find a person, open a call, FaceTime, a Messages draft or an email to them). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, keep an agent's windows off his workspaces, or set up a call or message he asked for. Faster and safer than screenshots. Also use it to change what Polycarp's surfaces show (top bar, desktop scene and verse, status menu, new tab page, idle screen) through `surfaces get|set|reset`, and to set the wallpaper, new tab background or idle background (a picture, URL, color or scene) through `paper set|get|reset`. It does not click or type into apps.
 ---
 
 # BaneySpaces
@@ -45,7 +45,7 @@ BaneySpaces workspace.
 - Claude Code sessions report their own state through hooks (`baneyspaces hooks status`). Don't
   call `notify` for an ordinary end of turn; the hook already marks it.
 
-## Surfaces: what the bar, desktop, dock, menu, new tab and idle screen show
+## Surfaces: what the bar, desktop, menu, new tab and idle screen show
 
 One file, `~/Library/Application Support/Polycarp/surfaces.json`, says what every Polycarp surface shows. Change it
 only when Donovan asks for a change to how a surface looks or behaves; a running Polycarp shows it within 150 ms.
