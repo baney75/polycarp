@@ -26,8 +26,9 @@ empty workspace nobody shows; else the first nobody shows. The other displays do
 
 ### R-M3 A display you unplug lets go of its workspace
 The workspace goes out of sight with its windows in it, until you go to it. Nothing is moved. If
-you were on that display, you are on the first one left. With no display left the windows wait, and
-a display that comes back shows what it showed.
+you were on that display, you are on the first one left. With no display left the windows wait. The
+first display to arrive after that, new or seen before, shows the workspace you were on; any display
+after it shows what it showed last, if that workspace isn't already shown.
 
 ## Switching
 
