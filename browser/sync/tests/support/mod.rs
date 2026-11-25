@@ -3,6 +3,7 @@
 
 pub mod chrome;
 pub mod http;
+pub mod nodes;
 pub mod vaults;
 
 use polycarp_sync::passkey::{self, Passkey, Proof};

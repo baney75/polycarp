@@ -4,6 +4,7 @@ pub mod ceremony;
 pub mod group;
 pub mod hlc;
 pub mod keys;
+pub mod net;
 pub mod passkey;
 pub mod policy;
 pub mod record;
@@ -11,6 +12,7 @@ pub mod seal;
 pub mod secret;
 pub mod store;
 pub mod vault;
+pub mod wire;
 
 #[cfg(test)]
 extern crate self as polycarp_sync;
