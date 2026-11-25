@@ -333,7 +333,10 @@ mod tests {
     fn the_real_codesign_refuses_another_signer_and_a_tampered_app() {
         let t = Fake::new();
         let app = t.fixture_app();
-        let sign = Call::new("/usr/bin/codesign", &[&"--force", &"--sign", &"-", &app]);
+        let sign = Call::new(
+            "/usr/bin/codesign",
+            &[&"--force", &"--deep", &"--sign", &"-", &app],
+        );
         must(&System, "sign", &sign).unwrap();
         let check = |app: &Path| verify(&System, app, VERSION).unwrap_err().check;
         assert_eq!(check(&app), "Team ID");

@@ -2,6 +2,7 @@
 //! Nothing from a release is changed or run before its signature, team and Gatekeeper checks pass, and a check
 //! that can't run is a refusal.
 
+mod change;
 mod release;
 mod source;
 #[cfg(test)]
@@ -48,6 +49,8 @@ pub fn refuse<'a>(check: &'static str, doing: &'a str) -> impl FnOnce(io::Error)
 pub struct Place {
     /// Downloads and half-made builds: this person's only, mode 700.
     pub cache: PathBuf,
+    /// What ships beside this command in Polycarp.app: the list of changes, icons, the launcher.
+    pub parts: PathBuf,
 }
 
 impl Place {
@@ -104,18 +107,32 @@ fn dry_run(tools: &dyn Tools, place: &Place, arch: &str) -> Result<String, Refus
     let release = release::newest(tools, arch)?;
     let dmg = source::fetch(tools, &release, &place.cache)?;
     let work = place.work(tools)?;
-    let checked = source::unpack(tools, &dmg, &work, &release.version);
+    let built = build(tools, place, &dmg, &work, &release.version);
     let cleared = clear(&work).map_err(refuse("work folder", "clearing it"));
-    checked?;
+    built?;
     cleared?;
     Ok(format!(
-        "Helium {} was downloaded and passed its checks. Nothing was installed.",
+        "Helium {} was downloaded, passed its checks and was made into Polycarp Browser. Nothing was installed.",
         release.version
     ))
 }
 
+/// The finished app, in `work`: checked first, then changed.
+fn build(
+    tools: &dyn Tools,
+    place: &Place,
+    dmg: &Path,
+    work: &Path,
+    version: &str,
+) -> Result<PathBuf, Refused> {
+    let changes = change::Changes::read(&place.parts)?;
+    let app = source::unpack(tools, dmg, work, version)?;
+    change::apply(tools, &app, &place.parts, &changes)?;
+    Ok(app)
+}
+
 /// None when these arguments are not a browser command yet.
-pub fn run(args: &[OsString], cache: Option<PathBuf>) -> Option<i32> {
+pub fn run(args: &[OsString], cache: Option<PathBuf>, app: Option<PathBuf>) -> Option<i32> {
     let words: Vec<&str> = args.iter().filter_map(|a| a.to_str()).collect();
     if words.len() != args.len() || words != ["install", "--dry-run"] {
         return None;
@@ -124,8 +141,15 @@ pub fn run(args: &[OsString], cache: Option<PathBuf>) -> Option<i32> {
         eprintln!("polycarp browser: no home folder");
         return Some(1);
     };
+    // For tests and for building from a checkout: a folder laid out as Polycarp.app's Resources.
+    let resources = std::env::var_os("POLYCARP_BROWSER_RESOURCES").map(PathBuf::from);
+    let Some(resources) = resources.or_else(|| app.map(|a| a.join("Contents/Resources"))) else {
+        eprintln!("polycarp browser: Polycarp.app was not found, and the browser is built from parts inside it");
+        return Some(1);
+    };
     let place = Place {
         cache: cache.join("browser"),
+        parts: resources.join("browser"),
     };
     Some(match dry_run(&System, &place, release::this_arch()) {
         Ok(line) => {
@@ -176,7 +200,7 @@ mod tests {
     fn anything_else_is_not_a_browser_command_yet() {
         for args in [&["install"][..], &[], &["install", "--dry-run", "x"]] {
             let args: Vec<OsString> = args.iter().map(OsString::from).collect();
-            assert_eq!(run(&args, None), None);
+            assert_eq!(run(&args, None, None), None);
         }
     }
 }

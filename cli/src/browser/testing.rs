@@ -11,6 +11,9 @@ use super::tools::{Call, Ran, System, Tools};
 use super::Place;
 
 pub const VERSION: &str = "0.22.4.1";
+pub const FRAMEWORK: &str = "Contents/Frameworks/Helium Framework.framework/Versions/158.0";
+/// `{ CFBundleDisplayName = "Helium"; }` as a binary property list.
+const BINARY_STRINGS: &[u8] = b"bplist00\xd1\x01\x02_\x10\x13CFBundleDisplayNameVHelium\x08\x0b!\x00\x00\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00(";
 const IMAGE: &str = "a made-up disk image";
 
 #[derive(Clone, Copy, Debug)]
@@ -64,6 +67,7 @@ impl Fake {
     pub fn place(&self) -> Place {
         Place {
             cache: self.root.join("cache"),
+            parts: self.parts(),
         }
     }
 
@@ -74,6 +78,18 @@ impl Fake {
 
     pub fn mounted(&self) -> bool {
         self.mounted.get()
+    }
+
+    /// What ships beside the command: the repo's own changes.toml, and made-up icons.
+    pub fn parts(&self) -> PathBuf {
+        let parts = self.root.join("parts");
+        fs::create_dir_all(&parts).unwrap();
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../browser/changes.toml");
+        fs::copy(repo, parts.join("changes.toml")).unwrap();
+        for icon in ["icon.icns", "icon-32.png"] {
+            fs::write(parts.join(icon), icon).unwrap();
+        }
+        parts
     }
 
     /// A small real app bundle, signed by nobody.
@@ -106,20 +122,103 @@ pub fn feed(digest: &str) -> String {
     )
 }
 
+/// Upstream's layout in small: a helper, a framework with a library of its own, icons and two languages.
 fn make_app(app: &Path) {
-    for dir in ["MacOS", "Resources"] {
-        fs::create_dir_all(app.join("Contents").join(dir)).unwrap();
-    }
-    fs::copy("/usr/bin/true", app.join("Contents/MacOS/Helium")).unwrap();
-    fs::write(app.join("Contents/Resources/page.txt"), "a page").unwrap();
-    let plist = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict>\
-         <key>CFBundleExecutable</key><string>Helium</string>\
-         <key>CFBundleIdentifier</key><string>net.imput.helium</string>\
-         <key>CFBundlePackageType</key><string>APPL</string>\
-         <key>CFBundleShortVersionString</key><string>{VERSION}</string></dict></plist>"
+    let put = |path: &str, bytes: &[u8]| {
+        let path = app.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    };
+    let program = fs::read("/usr/bin/true").unwrap();
+    let plist = |id: &str, name: &str, kind: &str, more: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict>\
+             <key>CFBundleExecutable</key><string>{name}</string>\
+             <key>CFBundleName</key><string>{name}</string>\
+             <key>CFBundleIdentifier</key><string>{id}</string>\
+             <key>CFBundlePackageType</key><string>{kind}</string>\
+             <key>CFBundleShortVersionString</key><string>{VERSION}</string>{more}</dict></plist>"
+        )
+    };
+    let sparkle_keys = "<key>CFBundleIconName</key><string>AppIcon</string>\
+         <key>SUPublicEDKey</key><string>key</string>\
+         <key>SUFeedURL</key><string>https://example.invalid</string>\
+         <key>SUScheduledCheckInterval</key><integer>3600</integer>\
+         <key>SUEnableAutomaticChecks</key><true/><key>SUAutomaticallyUpdate</key><true/>\
+         <key>SUVerifyUpdateBeforeExtraction</key><true/>";
+    let info = plist("net.imput.helium", "Helium", "APPL", sparkle_keys);
+    put("Contents/Info.plist", info.as_bytes());
+    put("Contents/MacOS/Helium", &program);
+    put("Contents/embedded.provisionprofile", b"a grant");
+    put("Contents/CodeResources", b"a ticket");
+    put("Contents/Resources/page.txt", b"a page");
+    put("Contents/Resources/app.icns", b"an icon");
+    put("Contents/Resources/Assets.car", b"an icon");
+    let manifest = "Contents/Resources/net.imput.helium.manifest/Contents/list";
+    put(manifest, b"policies");
+    let strings = "CFBundleGetInfoString = \"Helium 158, Copyright The Helium Authors.\";\n\
+         NSCameraUsageDescription = \"Once Helium has access, websites will be able to ask.\";\n";
+    put(
+        "Contents/Resources/en.lproj/InfoPlist.strings",
+        strings.as_bytes(),
     );
-    fs::write(app.join("Contents/Info.plist"), plist).unwrap();
+
+    for name in ["Helium Helper (Alerts)", "Helium Helper (Aperitif Alerts)"] {
+        let at = format!("{FRAMEWORK}/Helpers/{name}.app/Contents");
+        let id = "net.imput.helium.framework.AlertNotificationService";
+        put(
+            &format!("{at}/Info.plist"),
+            plist(id, name, "APPL", "").as_bytes(),
+        );
+        put(&format!("{at}/MacOS/{name}"), &program);
+        put(&format!("{at}/Resources/app.icns"), b"an icon");
+        put(&format!("{at}/Resources/Assets.car"), b"an icon");
+        let strings = format!("{at}/Resources/base.lproj/InfoPlist.strings");
+        put(&strings, BINARY_STRINGS);
+    }
+    put(
+        &format!("{FRAMEWORK}/Helpers/chrome_crashpad_handler"),
+        &program,
+    );
+    put(&format!("{FRAMEWORK}/Helium Framework"), &program);
+    let info = plist("net.imput.helium.framework", "Helium Framework", "FMWK", "");
+    put(
+        &format!("{FRAMEWORK}/Resources/Info.plist"),
+        info.as_bytes(),
+    );
+    put(
+        &format!("{FRAMEWORK}/Resources/product_logo_32.png"),
+        b"an icon",
+    );
+    let sparkle = format!("{FRAMEWORK}/Frameworks/Sparkle.framework");
+    let info = plist("org.sparkle-project.Sparkle", "Sparkle", "FMWK", "");
+    put(
+        &format!("{sparkle}/Versions/B/Resources/Info.plist"),
+        info.as_bytes(),
+    );
+    put(&format!("{sparkle}/Versions/B/Sparkle"), &program);
+    put(&format!("{sparkle}/Versions/B/Autoupdate"), &program);
+    let info = plist("org.sparkle-project.Updater", "Updater", "APPL", "");
+    let updater = format!("{sparkle}/Versions/B/Updater.app/Contents");
+    put(&format!("{updater}/Info.plist"), info.as_bytes());
+    put(&format!("{updater}/MacOS/Updater"), &program);
+
+    let link = |to: &str, at: &str| std::os::unix::fs::symlink(to, app.join(at)).unwrap();
+    let framework = "Contents/Frameworks/Helium Framework.framework";
+    link("158.0", &format!("{framework}/Versions/Current"));
+    for name in ["Helium Framework", "Resources", "Helpers"] {
+        link(
+            &format!("Versions/Current/{name}"),
+            &format!("{framework}/{name}"),
+        );
+    }
+    link("B", &format!("{sparkle}/Versions/Current"));
+    for name in ["Sparkle", "Resources", "Autoupdate", "Updater.app"] {
+        link(
+            &format!("Versions/Current/{name}"),
+            &format!("{sparkle}/{name}"),
+        );
+    }
 }
 
 fn said(out: &str) -> io::Result<Ran> {
@@ -170,9 +269,12 @@ impl Tools for Fake {
             // The real copy of a made-up app.
             "ditto" => return System.run(call),
             "spctl" => return said(scene.gatekeeper),
-            "plutil" => return said(scene.version_inside),
+            "plutil" if line.contains("CFBundleShortVersionString") => {
+                return said(scene.version_inside);
+            }
             "hdiutil" => self.mounted.set(false),
             "codesign" => {}
+            "plutil" => return System.run(call),
             other => panic!("no fake for {other}"),
         }
         said("")

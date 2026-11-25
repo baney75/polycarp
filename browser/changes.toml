@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# What makes Helium's app into Polycarp Browser. `polycarp browser install` reads this file beside the launcher and the
+# icon; `browser/` holds no Helium code. Executable, helper and framework file names stay Helium's: the app finds its
+# framework and helpers by names compiled into it.
+
+[from]
+name = "Helium"
+identifier = "net.imput.helium"
+
+[to]
+name = "Polycarp Browser"
+identifier = "com.baney.polycarp.browser"
+# The profile's folder in Application Support (Chromium reads it as CrProductDirName).
+data_folder = "Polycarp/Browser"
+
+# Contents/Info.plist. Helium's updater is Sparkle. Without a key, and told to verify with one, it refuses to start: it
+# logs one line, shows nothing and never calls home. Removing SUVerifyUpdateBeforeExtraction as well would let it start.
+[info]
+remove = ["SUPublicEDKey", "SUPublicDSAKeyFile", "SUFeedURL", "SUScheduledCheckInterval", "CFBundleIconName"]
+no = ["SUEnableAutomaticChecks", "SUAutomaticallyUpdate"]
+yes = ["SUVerifyUpdateBeforeExtraction"]
+
+# `{framework}` is the framework's version folder.
+[files]
+remove = [
+    # An entitlement grant and a notarization ticket, both good only with Helium's own signature.
+    "Contents/embedded.provisionprofile",
+    "Contents/CodeResources",
+    # A list of policies for Helium's identifier, read only by admin tools.
+    "Contents/Resources/net.imput.helium.manifest",
+    # Helium's icon, in the compiled form that wins over app.icns.
+    "Contents/Resources/Assets.car",
+    "{framework}/Helpers/Helium Helper (Alerts).app/Contents/Resources/Assets.car",
+    "{framework}/Helpers/Helium Helper (Aperitif Alerts).app/Contents/Resources/Assets.car",
+    # Sparkle's installers. Nothing starts them; without them an update can't be put in place even if something did.
+    "{framework}/Frameworks/Sparkle.framework/Autoupdate",
+    "{framework}/Frameworks/Sparkle.framework/Updater.app",
+    "{framework}/Frameworks/Sparkle.framework/Versions/B/Autoupdate",
+    "{framework}/Frameworks/Sparkle.framework/Versions/B/Updater.app",
+]
+
+[icons]
+icns = [
+    "Contents/Resources/app.icns",
+    "{framework}/Helpers/Helium Helper (Alerts).app/Contents/Resources/app.icns",
+    "{framework}/Helpers/Helium Helper (Aperitif Alerts).app/Contents/Resources/app.icns",
+]
+png32 = ["{framework}/Resources/product_logo_32.png"]
+
+[strings]
+# Text that still names Helium: its credits and license lines, and its own online services, which are not Polycarp's.
+keep = ["Helium Authors", "Helium services", "Helium is made possible by"]
