@@ -18,6 +18,15 @@ public enum RoleSearch {
         public let subtitle: String
         public let action: Action
         public let app: DefaultCandidate?
+
+        /// The job the row is about.
+        public var role: AppRole {
+            switch action {
+            case .open(let r), .choose(let r): r
+            case .terminalHere: .terminal
+            case .ask: .agent
+            }
+        }
     }
 
     /// What people call a job, beside its own name.

@@ -1113,10 +1113,10 @@ final class LauncherModel: ObservableObject {
     }
 
     private func roleItem(_ r: RoleSearch.Row) -> LauncherItem {
-        var icon = LauncherItem.Icon.symbol("terminal")
+        var icon = LauncherItem.Icon.symbol(Self.symbols[r.role] ?? "app")
         if let c = r.app, case .app = c.app, let path = c.path { icon = .file(path) }
         if case .choose = r.action { icon = .symbol("star") }
-        return LauncherItem(id: r.id, section: "Default apps", title: r.title, subtitle: r.subtitle, icon: icon, run: { [weak self] in
+        var item = LauncherItem(id: r.id, section: "Default apps", title: r.title, subtitle: r.subtitle, icon: icon, run: { [weak self] in
             guard let self else { return }
             self.close()
             // After the launcher is gone: what opens takes its place in front.
@@ -1129,7 +1129,23 @@ final class LauncherModel: ObservableObject {
                 }
             }
         })
+        if case .open(let role) = r.action {
+            // ⌘Return: a new window, as Option does with the job's key.
+            item.alternate = { [weak self] in
+                self?.close()
+                DispatchQueue.main.async { RoleOpener.key(role, new: true) }
+            }
+            item.alternateTitle = "New Window"
+        }
+        return item
     }
+
+    /// A job's mark when its app has no icon to show: a terminal program, or none chosen yet.
+    private static let symbols: [AppRole: String] = [
+        .agent: "sparkle", .browser: "globe", .terminal: "terminal", .editor: "chevron.left.forwardslash.chevron.right",
+        .files: "folder", .mail: "envelope", .messages: "message", .calendar: "calendar", .notes: "note.text",
+        .music: "music.note", .passwords: "key",
+    ]
 
     /// "claude" or "codex": that agent, started in your terminal.
     private func agentItems(_ q: String) -> [LauncherItem] {
