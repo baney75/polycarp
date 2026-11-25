@@ -91,6 +91,8 @@ enum Render {
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_TILE_TIMING"].flatMap(Int.init) {
             return TilingTiming.run(rounds: r)
         }
+        // BANEYSPACES_RENDER_STYLE_PROOF=1 draws every style sheet selector and property instead, and fails on one that shows nothing.
+        if ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_STYLE_PROOF"] == "1" { return StyleProof.run() }
         // BANEYSPACES_RENDER_SWATCHES=1 checks only what the workspace colors sit on in dark mode (scripts/swatch-check.sh).
         if ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SWATCHES"] == "1" { return SwatchCheck.run(into: folder) }
         // BANEYSPACES_RENDER_THEME_EDITOR=<user theme> draws only the theme editor and the Appearance tab, light and dark.
@@ -260,26 +262,27 @@ enum Render {
         // The launcher: the opening menu, then a search.
         let launcher = LauncherModel(actions: LauncherActions())
         launcher.prepare(scope: .root)
-        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher.png", CGSize(width: 760, height: 0)) else { return 1 }
+        let launcherShot = CGSize(width: LauncherView.size(Styles.shared.book.launcher.panel, within: 1512).width + 60, height: 0)
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher.png", launcherShot) else { return 1 }
         launcher.query = "ma"
-        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-search.png", CGSize(width: 760, height: 0)) else { return 1 }
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-search.png", launcherShot) else { return 1 }
         // What the browsers running the Polycarp extension have open, beside the apps: a better match goes above them.
         let pages = LauncherModel(actions: BrowserRender.actions())
         pages.prepare(scope: .root)
         for (typed, name) in [("orchard", "launcher-browser.png"), ("map", "launcher-browser-below.png")] {
             pages.query = typed
-            guard save(LauncherView(model: pages).frame(height: 512).padding(30).background(Color(white: 0.3)), name, CGSize(width: 760, height: 0)) else { return 1 }
+            guard save(LauncherView(model: pages).frame(height: 512).padding(30).background(Color(white: 0.3)), name, launcherShot) else { return 1 }
         }
         // A coding agent by name, offered in your terminal.
         launcher.agents = ["claude": "/usr/local/bin/claude", "codex": "/usr/local/bin/codex"]
         launcher.query = "claude"
-        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-agents.png", CGSize(width: 760, height: 0)) else { return 1 }
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-agents.png", launcherShot) else { return 1 }
 
         // Bangs: typing "!", then a question for the default agent.
         launcher.query = "!y"
-        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-bangs.png", CGSize(width: 760, height: 0)) else { return 1 }
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-bangs.png", launcherShot) else { return 1 }
         launcher.query = "sunset photos"
-        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-web.png", CGSize(width: 760, height: 0)) else { return 1 }
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-web.png", launcherShot) else { return 1 }
 
         // The first thing a new person sees: permission not granted yet.
         let fresh = SetupModel()

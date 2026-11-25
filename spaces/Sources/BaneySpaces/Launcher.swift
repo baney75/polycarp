@@ -240,7 +240,14 @@ final class LauncherController: NSObject, NSWindowDelegate {
         model = LauncherModel(actions: actions)
         super.init()
         model.close = { [weak self] in self?.hide() }
+        // The sheet can change the panel's width while it is open.
+        restyle = NotificationCenter.default.addObserver(forName: StyleSheetStore.didChange, object: nil, queue: .main) { [weak self] _ in
+            Styles.shared.sync()
+            if let p = self?.panel, p.isVisible { self?.place(p, on: p.screen) }
+        }
     }
+
+    private var restyle: NSObjectProtocol?
 
     var isShown: Bool { panel?.isVisible == true }
 
@@ -256,18 +263,22 @@ final class LauncherController: NSObject, NSWindowDelegate {
         let p = panel ?? makePanel()
         panel = p
         model.prepare(scope: scope)
-        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main ?? NSScreen.screens[0]
-        let size = NSSize(width: 700, height: 512)
-        // A little above center, where Spotlight sits.
-        let origin = NSPoint(x: screen.visibleFrame.midX - size.width / 2,
-                             y: screen.visibleFrame.minY + screen.visibleFrame.height * 0.62 - size.height / 2)
-        p.setFrame(NSRect(origin: origin, size: size), display: false)
+        place(p, on: NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) })
         // Drawn with the new list before it appears, never with the last one's.
         p.contentView?.layoutSubtreeIfNeeded()
         p.alphaValue = 1
         if takeKeys { p.makeKeyAndOrderFront(nil) } else { p.orderFrontRegardless(); watchClicksElsewhere() }
         p.displayIfNeeded()
         if let field = model.field { p.makeFirstResponder(field) }
+    }
+
+    private func place(_ p: LauncherPanel, on screen: NSScreen?) {
+        let screen = screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let size = LauncherView.size(Styles.shared.book.launcher.panel, within: screen.visibleFrame.width)
+        // A little above center, where Spotlight sits.
+        let origin = NSPoint(x: screen.visibleFrame.midX - size.width / 2,
+                             y: screen.visibleFrame.minY + screen.visibleFrame.height * 0.62 - size.height / 2)
+        p.setFrame(NSRect(origin: origin, size: size), display: false)
     }
 
     func hide() {
@@ -429,6 +440,8 @@ final class LauncherModel: ObservableObject {
     }
     @Published private(set) var scope = Scope.root
     @Published private(set) var items: [LauncherItem] = []
+    /// A list no search made, for the renders.
+    func sample(_ list: [LauncherItem]) { items = list; selected = 0 }
     @Published var selected = 0
     @Published private(set) var jobs: [String: Job] = [:]
     @Published private(set) var storeResults: [StoreApp] = []
@@ -1914,28 +1927,52 @@ struct LauncherView: View {
     @ObservedObject var model: LauncherModel
     /// Redraws when Settings › Appearance changes.
     @ObservedObject private var appearance = Appearance.shared
+    @ObservedObject private var styles = Styles.shared
+    /// The row under the pointer, while a rule changes something there.
+    @State private var hovered: String?
+
+    /// The panel's size: the sheet's width, on a screen this wide.
+    static func size(_ c: ComputedStyle, within width: CGFloat) -> NSSize {
+        NSSize(width: c.width.map { min(CGFloat($0), width) } ?? 700, height: 512)
+    }
+
+    /// Every part's style, worked out once for the sheet in force (`StyleBook.launcher`).
+    private var sheet: LauncherStyles { styles.book.launcher }
 
     var body: some View {
+        let sheet = sheet
         VStack(spacing: 0) {
             searchBar
-            Rectangle().fill(Chrome.edge(0.08)).frame(height: Chrome.width(.launcherPanel))
-            // A row running under the footer fades out, so it reads as more below and not as a cut.
-            results.mask(VStack(spacing: 0) {
-                Chrome.wash(1)
-                LinearGradient(colors: [Chrome.wash(1), Chrome.wash(1).opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 18)
-            })
-            Rectangle().fill(Chrome.edge(0.08)).frame(height: Chrome.width(.launcherPanel))
-            footer
+            if sheet.field.borderBottom == nil { Rectangle().fill(Chrome.edge(0.08)).frame(height: Chrome.width(.launcherPanel)) }
+            // The search field stays outside the choice: a sheet that names the launcher for the first time doesn't take
+            // the keyboard from it.
+            if sheet.plain { list(Bare.self) } else { list(Dressed.self) }
         }
-        .background(Chrome.panelBackground(.launcherPanel))
-        .clipShape(Chrome.shape(.launcherPanel))
+        .padding(sheet.panel, else: EdgeInsets())
+        .background(Chrome.panelBackground(.launcherPanel, style: sheet.panel))
+        .clipShape(Styled.shape(sheet.panel, else: Chrome.radius(.launcherPanel)))
+        .opacity(sheet.panel.opacity ?? 1)
         .environment(\.colorScheme, Chrome.scheme)
         .padding(1)
     }
 
+    @ViewBuilder private func list<D: Dress>(_ d: D.Type) -> some View {
+        let footer = sheet.footer
+        // A row running under the footer fades out, so it reads as more below and not as a cut.
+        results(d).mask(VStack(spacing: 0) {
+            Chrome.wash(1)
+            LinearGradient(colors: [Chrome.wash(1), Chrome.wash(1).opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 18)
+        })
+        if !footer.isHidden, footer.border == nil { Rectangle().fill(Chrome.edge(0.08)).frame(height: Chrome.width(.launcherPanel)) }
+        self.footer(d, footer)
+    }
+
     private var searchBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: model.scope.symbol).font(Chrome.font(18, .medium)).foregroundStyle(Chrome.wash(0.6))
+        let field = sheet.field
+        // The field and the strip it sits in grow with the sheet's text.
+        let line = max(30, (field.fontSize.map { CGFloat($0) } ?? 0) * 1.4)
+        return HStack(spacing: 10) {
+            Image(systemName: model.scope.symbol).font(Chrome.font(18, .medium)).foregroundStyle(field.ink(Chrome.wash(0.6), dim: 0.6))
                 .frame(width: 24)
             if model.scope != .root {
                 HStack(spacing: 4) {
@@ -1949,32 +1986,40 @@ struct LauncherView: View {
                 .onTapGesture { model.back() }
                 .accessibilityLabel("\(model.scope.title) menu. Press Delete to go back.")
             }
-            SearchField(model: model, placeholder: model.scope.placeholder)
-                .frame(height: 30)
+            SearchField(model: model, placeholder: model.scope.placeholder, style: field)
+                .frame(height: line)
         }
-        .padding(.horizontal, 18)
-        .frame(height: 62)
+        .padding(field, else: EdgeInsets(top: 0, leading: 18, bottom: 0, trailing: 18))
+        .frame(height: field.padding == nil ? 32 + line : nil)
+        .background { StyledBack(field) }
+        .opacity(field.opacity ?? 1)
     }
 
-    private var results: some View {
-        ScrollViewReader { proxy in
+    private func results<D: Dress>(_ d: D.Type) -> some View {
+        let sheet = sheet, section = sheet.section, gap = sheet.panel.gap.map { CGFloat($0) } ?? 2
+        return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
+                LazyVStack(alignment: .leading, spacing: gap) {
                     // One view per item, header included, so the list never mixes old and new rows.
                     ForEach(Array(model.items.enumerated()), id: \.element.id) { i, item in
-                        VStack(alignment: .leading, spacing: 2) {
-                            if i == 0 || model.items[i - 1].section != item.section {
-                                Text(item.section.uppercased())
-                                    .font(Chrome.font(10, .bold)).tracking(0.8)
-                                    .foregroundStyle(Chrome.muted)
-                                    .padding(.leading, 12).padding(.top, i == 0 ? 4 : 10).padding(.bottom, 2)
+                        VStack(alignment: .leading, spacing: gap) {
+                            if !section.isHidden, i == 0 || model.items[i - 1].section != item.section {
+                                Text(section.textTransform == nil ? item.section.uppercased() : section.cased(item.section))
+                                    .spaced(section, tracking: 0.8).font(Styled.font(section, .ui, 10, .bold))
+                                    .foregroundStyle(section.ink(Chrome.muted))
+                                    .padding(section, else: EdgeInsets(top: i == 0 ? 4 : 10, leading: 12, bottom: 2, trailing: 0))
+                                    .modifier(D.plate(section))
                             }
-                            row(item, selected: i == model.selected)
+                            row(d, item, sheet.row(selected: i == model.selected, hover: hovered == item.id), selected: i == model.selected)
+                                .modifier(D.hover(on: sheet.hovers) { over in
+                                    if over { hovered = item.id } else if hovered == item.id { hovered = nil }
+                                })
                         }
                         .id(item.id)
                     }
                     if model.items.isEmpty {
-                        Text("Nothing matches “\(model.query)”").foregroundStyle(Chrome.wash(0.5))
+                        Text("Nothing matches “\(model.query)”").font(Styled.font(sheet.panel, orNone: 13))
+                            .foregroundStyle(sheet.panel.ink(Chrome.wash(0.5), dim: 0.5))
                             .frame(maxWidth: .infinity).padding(.top, 40)
                     }
                 }
@@ -1987,77 +2032,93 @@ struct LauncherView: View {
         }
     }
 
-    private func row(_ item: LauncherItem, selected: Bool) -> some View {
-        HStack(spacing: 12) {
-            iconView(item.icon).frame(width: 30, height: 30)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(item.title).font(Chrome.font(14, .semibold)).foregroundStyle(Chrome.wash()).lineLimit(1)
-                if !item.subtitle.isEmpty {
-                    Text(item.subtitle).font(Chrome.font(11.5))
-                        .foregroundStyle(item.state == .failed ? Chrome.role(selected ? Chrome.look.roleOnSelection("urgent") : "urgent") : Chrome.muted).lineLimit(1)
-                }
-            }
+    private func row<D: Dress>(_ d: D.Type, _ item: LauncherItem, _ c: LauncherStyles.Row, selected: Bool) -> some View {
+        // A row as short as the sheet makes it still holds its icon.
+        let icon = c.box.height.map { min(30, CGFloat($0) - 4) } ?? 30
+        return HStack(spacing: c.box.gap.map { CGFloat($0) } ?? 12) {
+            iconView(item.icon, c.icon).modifier(D.cut(c.icon)).frame(width: icon, height: icon).modifier(D.part(c.icon))
+            names(d, item, c, subtitle: true, selected: selected).modifier(D.fit(c.box) { AnyView(names(d, item, c, subtitle: false, selected: selected)) })
             Spacer(minLength: 8)
             if item.state == .working { ProgressView().controlSize(.small).scaleEffect(0.8) }
             // The Tab hint only where Tab would act; a status such as "Installing…" always shows.
-            if !item.badge.isEmpty, selected || item.badge != "⇥" { badge(item.badge, strong: selected) }
+            if !c.badge.isHidden, !item.badge.isEmpty, selected || item.badge != "⇥" { badge(d, item.badge, c.badge, strong: selected) }
             HStack(spacing: 3) { ForEach(item.workspaces.prefix(5), id: \.self) { WorkspaceBadge(n: $0, size: 18) } }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 46)
-        .background(Chrome.shape(.launcherRow).fill(selected ? Chrome.lit(Chrome.accent, 0.22) : .clear))
+        .padding(c.box, else: EdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 10))
+        .frame(height: c.box.height.map { CGFloat($0) } ?? 46)
+        .background(D.back(c.box, .launcherRow).fill(selected ? Chrome.lit(Chrome.accent, 0.22) : .clear).marking(selected && !c.marked))
         .overlay(alignment: .leading) {
-            if selected { Chrome.pill().fill(Chrome.accent).frame(width: 3, height: 22).offset(x: 1) }
+            if selected, !c.marked || (c.box.border == nil && c.box.borderBottom == nil) {
+                Chrome.pill().fill(Chrome.accent).frame(width: 3, height: 22).offset(x: 1)
+            }
         }
+        .modifier(D.part(c.box))
         .contentShape(Rectangle())
         .onTapGesture { model.run(item) }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
-    private func badge(_ text: String, strong: Bool) -> some View {
-        Text(text)
-            .font(Chrome.font(11, .semibold, rounded: text.count <= 5))
-            .foregroundStyle(text == "Install" && strong ? Chrome.onAccent : Chrome.wash(strong ? 0.95 : 0.6))
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Chrome.pill().fill(text == "Install" && strong ? Chrome.accent : Chrome.wash(0.1)))
+    /// A row's title, and the line under it.
+    private func names<D: Dress>(_ d: D.Type, _ item: LauncherItem, _ c: LauncherStyles.Row, subtitle: Bool, selected: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(c.title.cased(item.title)).spaced(c.title).font(Styled.font(c.title, .ui, 14, .semibold))
+                .foregroundStyle(c.title.ink(Chrome.wash())).lineLimit(1).modifier(D.part(c.title))
+            if subtitle, !item.subtitle.isEmpty, !c.subtitle.isHidden {
+                Text(c.subtitle.cased(item.subtitle)).spaced(c.subtitle).font(Styled.font(c.subtitle, .ui, 11.5))
+                    .foregroundStyle(item.state == .failed ? Chrome.role(selected ? Chrome.look.roleOnSelection("urgent") : "urgent") : c.subtitle.ink(Chrome.muted)).lineLimit(1)
+                    .modifier(D.part(c.subtitle))
+            }
+        }
     }
 
-    @ViewBuilder private func iconView(_ icon: LauncherItem.Icon) -> some View {
+    private func badge<D: Dress>(_ d: D.Type, _ text: String, _ c: ComputedStyle, strong: Bool) -> some View {
+        // The one filled with the accent keeps the text that reads on it, unless the sheet fills it.
+        let filled = text == "Install" && strong
+        return Text(c.cased(text)).spaced(c)
+            .font(Styled.font(c, .ui, 11, .semibold, rounded: text.count <= 5))
+            .foregroundStyle(filled && c.background == nil ? Chrome.onAccent : c.ink(filled ? Chrome.onAccent : Chrome.wash(strong ? 0.95 : 0.6)))
+            .padding(c, else: EdgeInsets(top: 3, leading: 8, bottom: 3, trailing: 8))
+            .background(D.pill(c, .launcherRow, filled ? Chrome.accent : c.ink(Chrome.wash(0.1), dim: 0.1)))
+            .modifier(D.part(c))
+    }
+
+    @ViewBuilder private func iconView(_ icon: LauncherItem.Icon, _ c: ComputedStyle) -> some View {
         switch icon {
         case .file(let path): Image(nsImage: model.icon(for: path)).resizable().interpolation(.high)
         case .image(let img): Image(nsImage: img).resizable()
         case .symbol(let name):
-            Chrome.shape(.launcherThumb).fill(Chrome.wash(0.09))
-                .overlay(Image(systemName: name).font(Chrome.font(14, .medium)).foregroundStyle(Chrome.wash(0.85)))
+            Chrome.shape(.launcherThumb).fill(c.ink(Chrome.wash(0.09), dim: 0.09))
+                .overlay(Image(systemName: name).font(Chrome.font(14, .medium)).foregroundStyle(c.ink(Chrome.wash(0.85))))
         case .remote(let url):
             AsyncImage(url: url) { $0.resizable() } placeholder: { Chrome.shape(.launcherImage, continuous: false).fill(Chrome.wash(0.08)) }
                 .clipShape(Chrome.shape(.launcherImage))
         }
     }
 
-    private var footer: some View {
+    private func footer<D: Dress>(_ d: D.Type, _ c: ComputedStyle) -> some View {
         HStack(spacing: 16) {
-            hint("↩", "Open")
+            hint("↩", "Open", c)
             hint("⌘↩", model.items.indices.contains(model.selected) && !model.items[model.selected].alternateTitle.isEmpty
-                 ? model.items[model.selected].alternateTitle : "Show in Finder")
-            hint("⇥", "Open menu")
-            if model.scope != .root { hint("⌫", "Back") }
+                 ? model.items[model.selected].alternateTitle : "Show in Finder", c)
+            hint("⇥", "Open menu", c)
+            if model.scope != .root { hint("⌫", "Back", c) }
             Spacer()
-            hint("esc", "Close")
+            hint("esc", "Close", c)
         }
-        .padding(.horizontal, 18)
-        .frame(height: 34)
+        .padding(c, else: EdgeInsets(top: 0, leading: 18, bottom: 0, trailing: 18))
+        .frame(minHeight: c.padding == nil ? 34 : nil, maxHeight: c.padding == nil && c.fontSize == nil ? 34 : nil)
+        .modifier(D.plate(c))
     }
 
-    private func hint(_ key: String, _ what: String) -> some View {
+    private func hint(_ key: String, _ what: String, _ c: ComputedStyle) -> some View {
         HStack(spacing: 5) {
-            Text(key).font(Chrome.font(10.5, .semibold, rounded: true))
+            Text(key).spaced(c).font(Styled.font(c, .ui, 10.5, .semibold, rounded: true))
                 .padding(.horizontal, 5).padding(.vertical, 1.5)
-                .background(Chrome.shape(.launcherKey, continuous: false).fill(Chrome.wash(0.1)))
-            Text(what).font(Chrome.font(11))
+                .background(Chrome.shape(.launcherKey, continuous: false).fill(c.ink(Chrome.wash(0.1), dim: 0.1)))
+            Text(c.cased(what)).spaced(c).font(Styled.font(c, .ui, 11)).lineLimit(1)
         }
-        .foregroundStyle(Chrome.muted)
+        .foregroundStyle(c.ink(Chrome.muted))
     }
 }
 
@@ -2065,14 +2126,20 @@ struct LauncherView: View {
 private struct SearchField: NSViewRepresentable {
     @ObservedObject var model: LauncherModel
     var placeholder: String
+    let style: ComputedStyle
+
+    private var font: NSFont { Styled.nsFont(style, 21) }
+    private var ink: NSColor { style.color?.nsColor ?? Chrome.nsWash() }
+    /// What the field says while it is empty: a third of the text's color.
+    private var faint: NSColor { style.color.map { $0.nsColor.withAlphaComponent(CGFloat($0.alpha) * 0.35) } ?? Chrome.nsWash(0.35) }
 
     func makeNSView(context: Context) -> NSTextField {
         let f = NSTextField()
         f.isBordered = false
         f.drawsBackground = false
         f.focusRingType = .none
-        f.font = Chrome.nsFont(21)
-        f.textColor = Chrome.nsWash()
+        f.font = font
+        f.textColor = ink
         f.delegate = context.coordinator
         f.cell?.lineBreakMode = .byTruncatingTail
         model.field = f
@@ -2081,10 +2148,10 @@ private struct SearchField: NSViewRepresentable {
 
     func updateNSView(_ f: NSTextField, context: Context) {
         f.placeholderAttributedString = NSAttributedString(string: placeholder, attributes: [
-            .foregroundColor: Chrome.nsWash(0.35), .font: Chrome.nsFont(21),
+            .foregroundColor: faint, .font: font,
         ])
-        f.font = Chrome.nsFont(21)
-        f.textColor = Chrome.nsWash()
+        f.font = font
+        f.textColor = ink
         if f.stringValue != model.query { f.stringValue = model.query }
     }
 
