@@ -84,7 +84,7 @@ polycarp: one command for Polycarp Spaces and themes
 Usage:
   polycarp spaces [args...]    run the Spaces command
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
-  polycarp look <command>      check, keep and share looks (how Polycarp looks) (polycarp look --help)
+  polycarp look <command>      check, keep and share looks (how all of Polycarp looks) (polycarp look --help)
   polycarp mcp                 serve the theme and surfaces commands to an agent over MCP (stdio)
   polycarp files <command>     search, open and send your files across your devices (polycarp files --help)
   polycarp agent <command>     one MCP gateway for Claude, Codex, Grok Bot and web assistants (polycarp agent --help)

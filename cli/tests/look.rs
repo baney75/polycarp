@@ -154,6 +154,14 @@ fn unknown_keys_are_refused_with_their_path() {
         sb.refused(&with("accent", json!({"sepia": "#111111"}))),
         ["accent.sepia"]
     );
+    assert_eq!(
+        sb.refused(&with("surfaces", json!({"bar": {"launch": "x"}}))),
+        ["surfaces.bar.launch"]
+    );
+    assert_eq!(
+        sb.refused(&with("surfaces", json!({"plugins": true}))),
+        ["surfaces.plugins"]
+    );
     let doc = json!({"document": {"name": "x", "extends": "evening", "surprise": 1}});
     assert_eq!(sb.refused(&with("theme", doc)), ["theme.document.extends"]);
     let doc = json!({"document": {"name": "x", "surprise": 1}});
@@ -219,10 +227,76 @@ fn names_that_could_leave_the_folder_are_refused() {
 }
 
 #[test]
-fn values_that_are_not_values_are_refused() {
+fn settings_that_are_not_looks_are_dropped_with_a_note() {
     let sb = Sandbox::new();
+    let s = json!({
+        "bar": {"height": 30, "enabled": true, "modules": {"left": ["mark", "custom:steal"]}},
+        "search": {"engine": "https://evil.example/?q=%s"}, "newtab": {"searchURL": "https://evil.example", "question": "Password?"},
+        "menu": {"hidden": ["update"]}, "rooms": {"root": "/"}, "text": {"verseSource": "/etc/passwd"},
+        "desktop": {"scene": "image:/etc/passwd"}, "idle": {"enabled": true, "showMachineName": true},
+    });
+    let v = sb.json_in(&["look", "import", "-"], &with("surfaces", s));
+    assert_eq!(v["ok"], true, "{v}");
+    let notes = v["data"]["notes"].to_string();
+    for left in [
+        "bar.enabled",
+        "custom:steal",
+        "search.engine",
+        "newtab.searchURL",
+        "newtab.question",
+        "menu.hidden",
+        "rooms.root",
+        "text.verseSource",
+        "desktop.scene",
+        "idle.enabled",
+        "idle.showMachineName",
+    ] {
+        assert!(notes.contains(left), "{left} in {notes}");
+    }
+    let saved: Value =
+        serde_json::from_str(&sb.text("cfg/looks/hostile.polycarp-look").unwrap()).unwrap();
+    assert_eq!(
+        saved["surfaces"],
+        json!({"bar": {"height": 30, "modules": {"left": ["mark"]}}})
+    );
+}
+
+#[test]
+fn values_that_name_a_place_or_are_not_values_are_refused() {
+    let sb = Sandbox::new();
+    for v in [
+        "https://evil.example",
+        "/etc/passwd",
+        "~/x",
+        "a/../../b",
+        "two\nlines",
+        &"x".repeat(200),
+    ] {
+        let s = json!({"idle": {"style": v}});
+        assert_eq!(
+            sb.refused(&with("surfaces", s)),
+            ["surfaces.idle.style"],
+            "{v:?}"
+        );
+        let s = json!({"bar": {"modules": {"left": [v]}}});
+        assert_eq!(
+            sb.refused(&with("surfaces", s)),
+            ["surfaces.bar.modules.left"],
+            "{v:?}"
+        );
+    }
+    assert_eq!(
+        sb.refused(&with("surfaces", json!({"bar": {"height": {"a": 1}}}))),
+        ["surfaces.bar.height"]
+    );
+    assert_eq!(sb.refused(&with("surfaces", json!("x"))), ["surfaces"]);
     assert_eq!(sb.refused(&with("mode", json!("sepia"))), ["mode"]);
     assert_eq!(sb.refused(&with("title", json!("a\u{1b}[2J"))), ["title"]);
+    assert_eq!(sb.refused(&with("style", json!(7))), ["style"]);
+    assert_eq!(
+        sb.refused(&with("style", json!("x".repeat(64 * 1024 + 1)))),
+        ["style"]
+    );
     assert_eq!(sb.refused(&with("schema", json!(2))), ["schema"]);
     assert_eq!(sb.refused("[]"), ["$"]);
     assert_eq!(sb.refused("not json"), ["$"]);
@@ -400,6 +474,15 @@ fn show_says_what_a_look_holds_and_where_it_was_read() {
         text.contains("theme: Evening, mode: dark, dark accent: #a9bb8a"),
         "{text}"
     );
+    assert!(text.contains("read from "), "{text}");
+    // A stranger's look that calls itself the shipped one is told apart in words too.
+    let said = |arg: &str| String::from_utf8(sb.run(&["look", "show", arg], "").stdout).unwrap();
+    assert!(
+        said(&path).contains(&format!("read from {path}")),
+        "{}",
+        said(&path)
+    );
+    assert!(said("polycarp").contains("the look Polycarp ships with"));
     // A file renamed by hand is called what it is listed as.
     let two = sb.at("cfg/looks/two.polycarp-look");
     fs::rename(saved, &two).unwrap();
@@ -421,4 +504,31 @@ fn a_pipe_or_a_folder_is_not_waited_on() {
             "io_error"
         );
     }
+}
+
+#[test]
+fn the_fields_table_covers_the_surfaces_page() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let page = fs::read_to_string(root.join("spaces/docs/surfaces.md")).unwrap();
+    let table = fs::read_to_string(root.join("cli/src/look/fields.rs")).unwrap();
+    // Rows of the field tables: | `bar.height` | ...
+    let mut seen = 0;
+    for line in page.lines() {
+        let Some(path) = line.strip_prefix("| `").and_then(|l| l.split('`').next()) else {
+            continue;
+        };
+        if !path.contains('.')
+            || path.contains(' ')
+            || path.contains('<')
+            || path.ends_with(".paper")
+        {
+            continue;
+        }
+        seen += 1;
+        assert!(
+            table.contains(&format!("\"{path}\"")),
+            "{path} is not in look/fields.rs: say whether a look holds it"
+        );
+    }
+    assert!(seen > 25, "the page's tables were not read: {seen}");
 }

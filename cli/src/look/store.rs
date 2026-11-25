@@ -97,9 +97,9 @@ pub fn names(c: &Ctx) -> Vec<String> {
 }
 
 /// A saved look, or the shipped one.
-pub fn load(c: &Ctx, name: &str) -> Result<Look, ApiErr> {
+pub fn load(c: &Ctx, name: &str) -> Result<(Look, Vec<String>), ApiErr> {
     if name == format::SHIPPED {
-        return Ok(Look::shipped());
+        return Ok((Look::shipped(), Vec::new()));
     }
     if !names(c).iter().any(|n| n == name) {
         return Err(ApiErr::at("unknown_look", "name", format!("no look named {name:?}"))
@@ -108,7 +108,7 @@ pub fn load(c: &Ctx, name: &str) -> Result<Look, ApiErr> {
     read_look(&path(c, name))
 }
 
-pub fn read_look(p: &Path) -> Result<Look, ApiErr> {
+pub fn read_look(p: &Path) -> Result<(Look, Vec<String>), ApiErr> {
     let bytes = read_plain(p, format::MAX_BYTES)?;
     Look::parse(&bytes).map_err(|ps| refused(&format!("{} is refused", p.display()), &ps))
 }
