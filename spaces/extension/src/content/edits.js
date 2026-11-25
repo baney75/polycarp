@@ -232,6 +232,7 @@
       s.count = 0; s.note = "";
       if (el !== s.el) drop(s);
       if (!el) return;
+      if ([...state.values()].some((o) => o !== s && o.el === el)) { s.note = "another change moves it"; return drop(s); }
       if (isRoot(el) || offLimits(el) || held(el)) { s.note = "holds a form field, a button, media or the page's own element; name a smaller part"; return drop(s); }
       if (!place(s, c.to, c.where, (x) => el.contains(x) || away(x), () => doc.createElement(MOVED))) { const why = s.note || "there is nowhere to move it to on this page"; drop(s); s.note = why; return; }
       s.el = el; s.count = 1;
@@ -363,7 +364,10 @@
         return out;
       }) }));
     }
-    return { update, stop, report, flush: () => { dress(); if (observer) { observer.takeRecords(); pass(); } } };
+    // Where a moved part shows, and the moved part a piece of its copy belongs to: what a person points at is the copy.
+    const shown = (el) => { for (const s of state.values()) if (s.el === el) return s.host; return null; };
+    const part = (n) => { for (const s of state.values()) if (s.el && s.host.contains(n)) return s.el; return null; };
+    return { update, stop, report, shown, part, flush: () => { dress(); if (observer) { observer.takeRecords(); pass(); } } };
   }
 
   // ---------------------------------------------------------------- wiring
@@ -408,7 +412,7 @@
     document.removeEventListener("DOMContentLoaded", page.flush);
     removeEventListener("load", page.flush);
   }
-  P.pageEdits = { apply, report: page.report, watch: (f) => { onapply.push(f); f(here); } };
+  P.pageEdits = { apply, report: page.report, shown: page.shown, part: page.part, watch: (f) => { onapply.push(f); f(here); } };
 
   // A copy from before an extension update is still on the page with its edits made: it takes them back first, so this
   // copy starts from the page as the site made it. All a page could do with this is ask for itself unedited.

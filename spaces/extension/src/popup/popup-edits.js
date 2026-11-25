@@ -36,10 +36,15 @@
       li.append(label);
       ul.append(li);
     }
-    box.hidden = !here.length;
     const again = held && [...ul.querySelectorAll("input")].find((x) => x.dataset.key === held);
     if (again) again.focus();
   }
   chrome.storage.onChanged.addListener((ch, area) => { if (S.changed(ch, area) || (area === "local" && ch[P.SETTINGS_KEY])) setTimeout(render, 80); });
+  document.getElementById("editPage").addEventListener("click", async () => {
+    const r = await chrome.runtime.sendMessage({ type: "polycarp:editPage", tabId: tab.id }).catch(() => null);
+    if (r && r.ok) window.close();
+    else document.getElementById("editPage").textContent = "This page can't be edited";
+  });
+  box.hidden = false;
   render();
 })();
