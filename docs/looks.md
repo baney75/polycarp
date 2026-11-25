@@ -25,6 +25,7 @@ Every command takes `--json` and answers as `polycarp theme` does (the same enve
 | `save <name> [--title T] [--force]` | Keeps how everything looks now. `--force` replaces one of yours |
 | `apply <name\|file\|-> [--dry-run]` | Puts a look on, all of it or none |
 | `undo` | Back to how it was before the last apply. Undo again to come forward |
+| `delete <name> [--force]` | Removes a saved look. The one in force needs `--force`; how things look doesn't change |
 | `export <name> <file\|-> [--force]` | Writes one file to share. `-` prints it |
 | `import <file\|-> [--name N] [--force]` | Checks someone's look and saves it |
 
@@ -44,7 +45,7 @@ undo takes it away again unless you have edited it. Bar modules of your own (`cu
 sheet you wrote by hand is also kept in `style.css.bak`.
 
 Error codes, beside the theme's: `invalid_look`, `unknown_look`, `exists`, `builtin_read_only` (the name `polycarp`),
-`nothing_to_undo`, `step_failed`, `stuck`.
+`current_look`, `nothing_to_undo`, `step_failed`, `stuck`.
 
 Without Polycarp Spaces (Linux, Windows) the theme part still works, and the output says the rest waits for it.
 

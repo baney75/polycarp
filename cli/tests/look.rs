@@ -1234,3 +1234,18 @@ fn what_no_look_holds_stays_as_the_person_has_it() {
         "the look's own settings still apply"
     );
 }
+
+#[test]
+fn delete_removes_a_saved_look_and_asks_for_the_one_in_force() {
+    let sb = Sandbox::new();
+    sb.ok(&["look", "save", "one"]);
+    assert_eq!(sb.no(&["look", "delete", "one"]), "current_look");
+    sb.ok(&["theme", "set", "evening"]);
+    sb.ok(&["look", "delete", "one"]);
+    assert_eq!(sb.no(&["look", "delete", "one"]), "unknown_look");
+    assert_eq!(sb.no(&["look", "delete", "polycarp"]), "builtin_read_only");
+    sb.ok(&["look", "save", "two"]);
+    sb.ok(&["look", "delete", "two", "--force"]);
+    fs::write(sb.at("cfg/looks/bad.polycarp-look"), "{").unwrap();
+    sb.ok(&["look", "delete", "bad"]);
+}

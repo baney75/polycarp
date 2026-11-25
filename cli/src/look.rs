@@ -26,6 +26,7 @@ usage: polycarp look <command> [--json]
   save <name> [--title T] [--force]     keep how everything looks now under a name
   apply <name|file|-> [--dry-run]       put a look on, all of it or none (--dry-run only says what would change)
   undo                                  go back to how it was before the last apply (again to come forward)
+  delete <name> [--force]               remove a saved look; the one in force only with --force
   export <name> <file|-> [--force]      write a look to one file to share (<name>.polycarp-look)
   import <file|-> [--name N] [--force]  check someone's look and save it; nothing on screen changes
 
@@ -54,6 +55,10 @@ pub fn run(args: &[OsString]) -> i32 {
         "undo" => theme::cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;
             op_undo(c)
+        }),
+        "delete" => theme::cmd(rest, &[], &["force"], |c, p| {
+            exactly(p, 1, "one look name")?;
+            op_delete(c, &p.pos[0], p.flag("force"))
         }),
         "export" => theme::cmd(rest, &[], &["force"], |c, p| {
             exactly(p, 2, "a look name, and a file or -")?;
@@ -570,4 +575,29 @@ pub(crate) fn op_undo(c: &Ctx) -> Res {
         back.action, back.by, back.time
     );
     Ok(Out::new(data, text).noting(notes))
+}
+
+pub(crate) fn op_delete(c: &Ctx, name: &str, force: bool) -> Res {
+    own_name(name)?;
+    let _held = theme::hold(c)?;
+    if !store::names(c).iter().any(|n| n == name) {
+        store::load(c, name)?;
+    }
+    let in_force = || {
+        let Ok((look, _)) = store::load(c, name) else {
+            return false;
+        };
+        state::now(c).is_ok_and(|n| n.same_as(&look))
+    };
+    if !force && in_force() {
+        return Err(ApiErr::at("current_look", "name", format!("{name:?} is the look in force, so it was not deleted"))
+            .suggest("Apply another look first, or pass --force. Deleting it doesn't change how things look."));
+    }
+    let p = store::path(c, name);
+    std::fs::remove_file(&p)
+        .map_err(|e| theme::io_err(format!("could not delete {}: {e}", p.display())))?;
+    Ok(Out::new(
+        json!({"deleted": name}),
+        format!("deleted the look {name}\n"),
+    ))
 }
