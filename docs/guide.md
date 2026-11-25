@@ -269,6 +269,7 @@ CSS variables start with `--pc-`: colors and shape use the field name, such as `
 | Your themes | `themes/<name>.toml` in that folder |
 | Past versions | `history/` in that folder |
 | What the apps read | `current/theme.json` and `current/<product>.css` in that folder. They are gone while the theme is off |
+| What Polycarp Browser reads when it starts | `~/Library/Application Support/Polycarp/browser-theme/`, the theme as a browser theme. It is gone while the theme is off |
 
 `POLYCARP_CONFIG_DIR` moves the folder on any system, and must be an absolute path. `XDG_CONFIG_HOME` also moves it on Mac and Linux.
 

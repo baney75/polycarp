@@ -57,3 +57,11 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   app's until the browser quits. A window with no tab strip never takes a new tab. The launcher lists apps by name above
   the pages and opens one on the workspace the person is on, starting its browser if it has to; without the extension it opens
   as any page does. Cmd-Tab shows an app's window with the site's icon in place of the browser's.
+- **R-B16 The browser's theme.** While a Polycarp theme is in force, `browser-theme/` in Polycarp's folder holds a theme
+  extension in its colors, rewritten when the theme or, for an `auto` theme, Dark Mode changes, and removed while there is
+  none, so the browser draws its own look. The frame is `sunken`, the toolbar and the tab in front `surface`, the address bar
+  and new tab `background`, text `foreground`, the tabs behind `muted`, links `accent`. Text under 4.5 to 1 on its color takes
+  `foreground`, then `strong`, then black or white, whichever reads better; Chromium draws any color the theme leaves out in
+  its own way, so every one is written. Polycarp Browser loads the folder beside its built-in pages when it starts, and takes
+  a change at its next start: Chromium has no way to change a theme while it runs that Polycarp may use. The new tab and the
+  extension's pages change at once.
