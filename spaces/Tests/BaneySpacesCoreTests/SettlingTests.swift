@@ -33,12 +33,20 @@ final class SettlingTests: XCTestCase {
         XCTAssertEqual(ended(&s, [[1: at(100, 50)], [1: at(1511, 981)], [1: at(1511, 981)]]), 20)
     }
 
-    /// macOS keeps a title bar on screen: most windows sent to the spot stop a bar's height above it, so they still have to
-    /// hold still. One short of the spot may be on its way.
-    func testAWindowBesideTheHidingSpotIsNotYetThere() {
-        for beside in [at(1511, 954), at(1510, 981), at(1511, 980)] {
+    /// macOS keeps a title bar on screen: a window sent to the spot stops a bar's height above it (28 points, 65 with a
+    /// toolbar), and that is where it stays.
+    func testAWindowUnderItsTitleBarAboveTheSpotIsParkedAtTheNextLook() {
+        for y in [953, 916] as [CGFloat] {
             var s = Settling([1], goal: .parked(at: spot), screens: screens, start: 100)
-            XCTAssertEqual(ended(&s, Array(repeating: [1: beside], count: 20)), 60, "\(beside.origin)")
+            XCTAssertEqual(ended(&s, [[1: at(100, 50)], [1: at(1511, y)]]), 20, "\(y)")
+        }
+    }
+
+    /// Beside the strip, or higher up it than any title bar, a window may be on its way.
+    func testAWindowBesideTheHidingSpotMustHoldStill() {
+        for beside in [at(1509, 981), at(1511, 901), at(1511, 983)] {
+            var s = Settling([1], goal: .parked(at: spot), screens: screens, start: 100)
+            XCTAssertNotEqual(ended(&s, [[1: beside]]), 10, "\(beside.origin)")
         }
     }
 

@@ -51,9 +51,16 @@ public struct Settling {
             case .home(let targets):
                 if let to = targets[id], Self.at(b, to) { return true }
                 return still && !away
-            case .parked(let spot): return Self.at(b, spot) || still && away
+            case .parked(let spot): return Self.parked(b, spot) || still && away
             }
         }
+    }
+
+    /// macOS keeps a title bar (and a toolbar under it) on screen, so most windows sent to the spot stop that far above it.
+    /// No window passes through this strip on its way: it is one point wide, at the screen's edge.
+    static let bar: CGFloat = 80
+    private static func parked(_ b: CGRect, _ spot: CGPoint) -> Bool {
+        abs(b.minX - spot.x) < 1 && b.minY > spot.y - bar && b.minY < spot.y + 1
     }
 
     private static func at(_ b: CGRect, _ p: CGPoint) -> Bool { abs(b.minX - p.x) < 1 && abs(b.minY - p.y) < 1 }
