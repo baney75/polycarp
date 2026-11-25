@@ -1,5 +1,6 @@
 import AppKit
 import BaneySpacesCore
+import Combine
 import IOKit.ps
 import Network
 import SwiftUI
@@ -14,6 +15,9 @@ import SwiftUI
 final class TopBar {
     let model = TopBarModel()
     private let spaces: Spaces
+    private let notices = NoticeWatcher()
+    private lazy var noticePanel = NoticePanel(notices)
+    private var noticeCount: AnyCancellable?
     private var panels: [CGDirectDisplayID: NSPanel] = [:]
     private var tick: Timer?
     private let network = NWPathMonitor()
@@ -48,6 +52,11 @@ final class TopBar {
             guard let self, self.statusElements.indices.contains(i) else { return }
             BarReader.press(self.statusElements[i])
         }
+        model.onNotices = { [weak self] screen in
+            guard let self, let bar = screen.displayID.flatMap({ self.panels[$0] }) else { return }
+            self.noticePanel.toggle(on: screen, x: NSEvent.mouseLocation.x + 24, below: bar.frame.minY)
+        }
+        noticeCount = notices.$shelf.map(\.count).removeDuplicates().sink { [weak self] in self?.model.notices = $0 }
     }
 
     func start() {
@@ -155,6 +164,8 @@ final class TopBar {
         readBattery()
         readMenus()
         readStatus()
+        notices.set(on: wants(.notifications))
+        if !wants(.notifications) { noticePanel.hide() }
         refreshTime()
     }
 
@@ -199,6 +210,8 @@ final class TopBar {
         if !model.status.isEmpty { model.status = [] }
         menuPid = 0
         show(BarReader.Menus())
+        noticePanel.hide()
+        notices.set(on: false)
     }
 
     private func wants(_ m: Surfaces.BarModule) -> Bool {
@@ -346,6 +359,8 @@ final class TopBarModel: ObservableObject {
     @Published var icons: [String: NSImage] = [:]
     /// The battery's charge for the macOS battery item in `status`.
     @Published var charge: Charge?
+    /// How many notifications are new, as the bell shows it (`NoticeShelf.count`).
+    @Published var notices = ""
 
     struct Charge: Equatable {
         var percent: Int
@@ -360,6 +375,8 @@ final class TopBarModel: ObservableObject {
     var onMark: () -> Void = {}
     /// Presses the status item at an index of `status`.
     var onStatus: (Int) -> Void = { _ in }
+    /// Opens the list of notifications, or closes it.
+    var onNotices: (NSScreen) -> Void = { _ in }
 }
 
 /// One screen's bar. `sides` is the width beside the notch on each side, or nil on a screen without one.
@@ -566,6 +583,20 @@ struct TopBarView: View {
             menus(s)
         case .status:
             statusItems(s)
+        case .notifications:
+            HStack(spacing: 4) {
+                Image(systemName: model.notices.isEmpty ? "bell" : "bell.fill").font(.system(size: 12, weight: .medium))
+                if !model.notices.isEmpty { words(model.notices, s, .semibold) }
+            }
+            .foregroundStyle(s.ink(Chrome.wash(0.85)))
+            .frame(minWidth: 16, minHeight: 16)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+            .onTapGesture { model.onNotices(screen) }
+            .help("Notifications")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(model.notices.isEmpty ? "Notifications" : "Notifications, \(model.notices) new")
+            .accessibilityAddTraits(.isButton)
         case .custom, .split:
             EmptyView()
         }

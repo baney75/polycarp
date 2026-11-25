@@ -217,7 +217,7 @@ final class StyleSheetTests: XCTestCase {
             XCTAssertEqual(problems("bar .\(m.id) { color: red }"), [], "every bar module has its class: \(m.id)")
         }
         XCTAssertEqual(StyleTarget.barModule.parts, ["mark", "workspaces", "app-menus", "status", "hour", "clock", "date", "verse",
-                                                     "battery", "network"])
+                                                     "battery", "network", "notifications"])
         XCTAssertEqual(problems("dock .tile.current:hover { color: red } dock .label:hover.current { color: red } :root { --x: 1px }"), [])
         XCTAssertEqual(problems("BAR { color: red }"), [], "a type selector is case-insensitive")
     }
