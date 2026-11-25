@@ -12,7 +12,7 @@ import SwiftUI
 /// 15 s, and while an app is benched its new window gets no workspace and its parked ones aren't brought back.
 enum BarReader {
     /// One app's reads. A timeout is kept here (`missed`) and nowhere else; after one, nothing more is asked of the app.
-    private struct Quiet {
+    struct Quiet {
         var missed = false
 
         mutating func value<T>(_ element: AXUIElement, _ attribute: String) -> T? {
@@ -118,7 +118,7 @@ enum BarReader {
         return pids.flatMap { lastStatus[$0] ?? [] }
     }
 
-    private static func status(of pid: pid_t, bundle: String, ask: inout Quiet) -> [Status] {
+    static func status(of pid: pid_t, bundle: String, ask: inout Quiet) -> [Status] {
         guard let bar: AXUIElement = ask.value(AX.app(pid, timeout: 0.1), "AXExtrasMenuBar") else { return [] }
         let children: [AXUIElement] = ask.value(bar, kAXChildrenAttribute) ?? []
         var out: [Status] = []

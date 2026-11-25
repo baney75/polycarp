@@ -22,10 +22,14 @@ public struct NoticeBanner: Equatable, Sendable {
     /// The child indexes from the windows down to its element, and the action that closes it, for pressing.
     public var path: [Int]
     public var close: String?
+    /// An alert stays until you answer it, and can count down in place.
+    public var alert = false
 
     /// What makes two reads the same notification: who sent it and every word of it.
     var same: [String] { [bundle ?? app, title, subtitle, body] }
     public func matches(_ other: NoticeBanner) -> Bool { same == other.same }
+    /// Its words with each run of digits as one: what stays the same in an alert that counts down.
+    var still: [String] { same.map { $0.split(whereSeparator: \.isNumber).joined(separator: "#") } }
 }
 
 public enum NoticeReader {
@@ -44,14 +48,16 @@ public enum NoticeReader {
     /// so nothing under one is a second banner. Its process also draws the desktop's widgets, in windows that hold no
     /// banner: only a window with both, or with a header over its notifications, is Notification Center open.
     public static func read(_ windows: [NoticeNode]) -> Reading {
-        var out: [NoticeBanner] = [], open = false, left = maxNodes
+        var out: [NoticeBanner] = [], open = false
         for (i, w) in windows.enumerated() {
+            // Each window has its own limit, so one full of widgets doesn't hide the banners in the next.
             let before = out.count
-            var marked = false
+            var marked = false, left = maxNodes
             func walk(_ n: NoticeNode, _ path: [Int]) {
                 guard left > 0 else { return }
                 left -= 1
-                if n.identifier.hasPrefix("widget") || n.identifier == "header" { marked = true }
+                if n.identifier == "header" { marked = true }
+                if isWidget(n) { marked = true; return }
                 guard path.count <= maxDepth else { return }
                 if subroles.contains(n.subrole) {
                     if let b = banner(n, path, &left) { out.append(b) }
@@ -60,10 +66,13 @@ public enum NoticeReader {
                 for (j, c) in n.children.enumerated() { walk(c, path + [j]) }
             }
             walk(w, [i])
-            if marked, out.count > before { open = true }
+            if out.count > before ? marked || left <= 0 : !marked && left <= 0 { open = true }
         }
-        return Reading(centerOpen: open || left <= 0, banners: out)
+        return Reading(centerOpen: open, banners: out)
     }
+
+    /// A widget, under which nothing is read.
+    public static func isWidget(_ n: NoticeNode) -> Bool { n.identifier.hasPrefix("widget") }
 
     private static func banner(_ n: NoticeNode, _ path: [Int], _ left: inout Int) -> NoticeBanner? {
         var words: [String: String] = [:]
@@ -93,7 +102,7 @@ public enum NoticeReader {
         if app.isEmpty { app = bundle ?? "Notification" }
         guard !title.isEmpty || !body.isEmpty else { return nil }
         return NoticeBanner(app: app, bundle: bundle, title: title, subtitle: words["subtitle"] ?? "", body: body, path: path,
-                            close: n.actions.first { actionName($0) == "Close" })
+                            close: n.actions.first { actionName($0) == "Close" }, alert: n.subrole.hasPrefix("AXNotificationCenterAlert"))
     }
 
     /// `bundleIdentifier=com.apple.mail,threadIdentifier=...` gives `com.apple.mail`.
@@ -162,6 +171,13 @@ public struct NoticeShelf: Equatable, Sendable {
     public mutating func take(_ r: NoticeReader.Reading, at now: Date) -> [Notice] {
         var up: [[String]: Int] = [:]
         for b in r.banners { up[b.same, default: 0] += 1 }
+        // An alert in the same place whose numbers changed ("in 5 minutes", "in 4 minutes") is still that notice.
+        for b in r.banners where b.alert && onScreen[b.same] == nil {
+            guard let i = notices.firstIndex(where: { $0.live && $0.banner.alert && up[$0.banner.same] == nil
+                && $0.banner.path == b.path && $0.banner.still == b.still }) else { continue }
+            onScreen[b.same] = onScreen.removeValue(forKey: notices[i].banner.same)
+            notices[i].banner = b
+        }
         for i in notices.indices { notices[i].live = false }
         if r.centerOpen {
             see()

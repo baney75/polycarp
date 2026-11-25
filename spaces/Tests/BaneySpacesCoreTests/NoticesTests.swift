@@ -94,6 +94,31 @@ final class NoticesTests: XCTestCase {
         XCTAssertEqual(r.banners.map(\.path), [[1, 0]])
     }
 
+    func testAWindowFullOfWidgetsDoesNotHideTheNextWindowsBanner() {
+        let widgets = NoticeNode(children: (0..<2_000).map { _ in NoticeNode(children: [NoticeNode(identifier: "widget-x", children: [NoticeNode(), NoticeNode()])]) })
+        let r = NoticeReader.read([widgets, NoticeNode(children: [banner("Mail", "Ann", "Lunch")])])
+        XCTAssertEqual(r.banners.map(\.title), ["Ann"])
+        XCTAssertFalse(r.centerOpen)
+        XCTAssertEqual(r.banners.first?.path, [1, 0])
+    }
+
+    func testAnAlertThatCountsDownInPlaceIsOneNotice() {
+        var s = NoticeShelf()
+        func alert(_ body: String) -> NoticeNode { banner("Calendar", "Class", body, subrole: "AXNotificationCenterAlert") }
+        XCTAssertEqual(s.take(screen(alert("in 10 minutes")), at: now).count, 1)
+        s.see()
+        XCTAssertEqual(s.take(screen(alert("in 9 minutes")), at: now).count, 0)
+        XCTAssertEqual(s.notices.map(\.banner.body), ["in 9 minutes"])
+        XCTAssertEqual(s.notices.map(\.live), [true])
+        XCTAssertEqual(s.unread, 0)
+        XCTAssertEqual(s.take(screen(alert("now")), at: now).count, 1, "other words are a new one")
+        // A banner with new words is another message, whatever changed in it.
+        var m = NoticeShelf()
+        m.take(screen(banner("Messages", "Ann", "meet at 5")), at: now)
+        XCTAssertEqual(m.take(screen(banner("Messages", "Ann", "meet at 6")), at: now).count, 1)
+        XCTAssertEqual(m.notices.count, 2)
+    }
+
     func testWhatIsClearedWhileItsBannerIsUpStaysGone() {
         let up = screen(banner("Mail", "Ann", "Hi", bundle: "m"))
         for clear: (inout NoticeShelf) -> Void in [{ $0.dismiss($0.notices[0].id) }, { $0.clear(key: "m") }, { $0.clearAll() }] {

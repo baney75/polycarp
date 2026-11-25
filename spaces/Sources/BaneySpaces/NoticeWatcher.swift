@@ -81,18 +81,21 @@ final class NoticeWatcher: ObservableObject {
         reading = true
         let from = pid
         queue.async { [weak self] in
-            let reading = NoticeReader.read(NoticeTree.windows(of: from).map { NoticeTree.node($0) })
+            let reading = NoticeTree.read(from)
             DispatchQueue.main.async { self?.took(reading, from: from) }
         }
     }
 
-    private func took(_ r: NoticeReader.Reading, from: pid_t) {
+    /// `r` is nil when Notification Center didn't answer in full: that says nothing about what is up, so nothing changes.
+    private func took(_ r: NoticeReader.Reading?, from: pid_t) {
         reading = false
         guard pid == from else { return }
-        var next = shelf
-        let came = next.take(r, at: Date())
-        if next != shelf { shelf = next }
-        for n in came where quiet[n.key] != nil { close(n) }
+        if let r {
+            var next = shelf
+            let came = next.take(r, at: Date())
+            if next != shelf { shelf = next }
+            for n in came where quiet[n.key] != nil { close(n) }
+        }
         if dirty { dirty = false; read(); return }
         // A banner that changes or goes without an event: looked at again each second while one is up.
         again?.invalidate()
@@ -144,13 +147,9 @@ final class NoticeWatcher: ObservableObject {
         let from = pid
         guard from > 0 else { return }
         queue.async {
-            for (i, w) in NoticeTree.windows(of: from).enumerated() {
-                for b in NoticeReader.read([NoticeTree.node(w)]).banners where b.matches(n.banner) {
-                    guard let el = NoticeTree.element([i] + b.path.dropFirst(), of: from), let name = action(b) else { return }
-                    AXUIElementPerformAction(el, name as CFString)
-                    return
-                }
-            }
+            guard let b = NoticeTree.read(from)?.banners.first(where: { $0.matches(n.banner) }), let name = action(b),
+                  let el = NoticeTree.element(b.path, of: from) else { return }
+            AXUIElementPerformAction(el, name as CFString)
         }
     }
 
@@ -170,8 +169,13 @@ final class NoticeWatcher: ObservableObject {
             NSRunningApplication.runningApplications(withBundleIdentifier: id).map { (pid: $0.processIdentifier, bundle: id) }
         }
         queue.async {
-            guard let clock = BarReader.status(of: apps).first(where: { ($0.item.identifier ?? "").hasSuffix("menuextra.clock") }) else { return }
-            AXUIElementPerformAction(clock.element, kAXPressAction as CFString)
+            for app in apps {
+                var ask = BarReader.Quiet()
+                let items = BarReader.status(of: app.pid, bundle: app.bundle, ask: &ask)
+                guard let clock = items.first(where: { ($0.item.identifier ?? "").hasSuffix("menuextra.clock") }) else { continue }
+                AXUIElementPerformAction(clock.element, kAXPressAction as CFString)
+                return
+            }
         }
     }
 
@@ -180,39 +184,44 @@ final class NoticeWatcher: ObservableObject {
     }
 }
 
-/// Notification Center's elements as `NoticeNode`s. Any thread.
+/// Notification Center's elements as `NoticeNode`s, read without benching its process (`BarReader.Quiet`). Any thread.
 private enum NoticeTree {
-    static func windows(of pid: pid_t) -> [AXUIElement] { AX.app(pid).value(kAXWindowsAttribute) ?? [] }
-
-    static func node(_ el: AXUIElement) -> NoticeNode {
-        // A tree past this is cut, which the reader takes as Notification Center open.
-        var left = NoticeReader.maxNodes
-        return node(el, depth: 0, left: &left)
+    /// Nil when it didn't answer in full.
+    static func read(_ pid: pid_t) -> NoticeReader.Reading? {
+        var ask = BarReader.Quiet()
+        let nodes = windows(of: pid, &ask).map { w -> NoticeNode in
+            // A window past this is cut, which the reader takes as Notification Center open.
+            var left = NoticeReader.maxNodes
+            return node(w, depth: 0, left: &left, &ask)
+        }
+        return ask.missed ? nil : NoticeReader.read(nodes)
     }
 
-    private static func node(_ el: AXUIElement, depth: Int, left: inout Int) -> NoticeNode {
+    private static func windows(of pid: pid_t, _ ask: inout BarReader.Quiet) -> [AXUIElement] { ask.value(AX.app(pid), kAXWindowsAttribute) ?? [] }
+    private static func children(_ el: AXUIElement, _ ask: inout BarReader.Quiet) -> [AXUIElement] { ask.value(el, kAXChildrenAttribute) ?? [] }
+
+    private static func node(_ el: AXUIElement, depth: Int, left: inout Int, _ ask: inout BarReader.Quiet) -> NoticeNode {
         left -= 1
-        let subrole = el.string(kAXSubroleAttribute) ?? ""
+        let subrole = ask.string(el, kAXSubroleAttribute) ?? ""
         var actions: CFArray?
         if subrole.hasPrefix("AXNotificationCenter") { AXUIElementCopyActionNames(el, &actions) }
-        var n = NoticeNode(subrole: subrole, identifier: el.string(kAXIdentifierAttribute) ?? "", text: el.string(kAXValueAttribute) ?? "",
-                           label: el.string(kAXDescriptionAttribute) ?? "", stacking: el.string("AXStackingIdentifier") ?? "",
+        var n = NoticeNode(subrole: subrole, identifier: ask.string(el, kAXIdentifierAttribute) ?? "", text: ask.string(el, kAXValueAttribute) ?? "",
+                           label: ask.string(el, kAXDescriptionAttribute) ?? "", stacking: ask.string(el, "AXStackingIdentifier") ?? "",
                            actions: actions as? [String] ?? [])
         // The widgets are only a sign that Notification Center is open, so nothing under one is read.
-        guard depth < NoticeReader.maxDepth, !n.identifier.hasPrefix("widget") else { return n }
-        for c in children(el) where left > 0 { n.children.append(node(c, depth: depth + 1, left: &left)) }
+        guard depth < NoticeReader.maxDepth, !NoticeReader.isWidget(n) else { return n }
+        for c in children(el, &ask) where left > 0 { n.children.append(node(c, depth: depth + 1, left: &left, &ask)) }
         return n
     }
 
     static func element(_ path: [Int], of pid: pid_t) -> AXUIElement? {
-        var list = windows(of: pid), at: AXUIElement?
+        var ask = BarReader.Quiet()
+        var list = windows(of: pid, &ask), at: AXUIElement?
         for i in path {
             guard list.indices.contains(i) else { return nil }
             at = list[i]
-            list = children(list[i])
+            list = children(list[i], &ask)
         }
         return at
     }
-
-    private static func children(_ el: AXUIElement) -> [AXUIElement] { el.value(kAXChildrenAttribute) ?? [] }
 }
