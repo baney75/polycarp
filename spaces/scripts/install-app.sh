@@ -177,6 +177,11 @@ if { [ -z "$TEST" ] || [ "$IN_PLACE" = 1 ]; } && [ -x "$DEST/Contents/Resources/
    && [ ! -e "${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}/config.toml" ]; then
   "$DEST/Contents/Resources/bin/polycarp" theme set polycarp </dev/null >/dev/null 2>&1 || true
 fi
+# An installed agent skill is the app's, so it is brought up to this build before the check below compares it.
+if { [ -z "$TEST" ] || [ "$IN_PLACE" = 1 ]; } \
+   && { [ -f "$HOME/.claude/skills/polycarp-spaces/SKILL.md" ] || [ -f "$HOME/.claude/skills/baneyspaces/SKILL.md" ]; }; then
+  "$DEST/Contents/Resources/bin/$CLI_NAME" skill install </dev/null >/dev/null 2>&1 || true
+fi
 if [ "$IN_PLACE" = 0 ] && [ "${BANEYSPACES_NO_LAUNCH:-}" != 1 ]; then open "$DEST"; fi
 echo "installed $DEST and ~/.local/bin/$CLI_NAME"
 # Every part reports the commit this app was built from: the commands, the app, the browser helper and, once the app has
