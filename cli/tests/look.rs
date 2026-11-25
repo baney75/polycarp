@@ -543,6 +543,11 @@ fn without_spaces_a_look_holds_the_theme() {
         (&json!("dark"), &Value::Null, &Value::Null)
     );
     assert_eq!(sb.current(), ["evening-mine"]);
+    let row = &sb.ok(&["look", "list"])["looks"][1];
+    assert_eq!(
+        (&row["name"], &row["problems"]),
+        (&json!("evening-mine"), &json!([]))
+    );
     let d = sb.ok(&["look", "show", "evening-mine"]);
     assert_eq!(d["changes"], json!([]));
     assert_eq!(d["leaves_alone"], json!(["style", "surfaces", "paper"]));
@@ -902,4 +907,16 @@ fn a_look_is_in_force_only_when_every_part_of_it_is() {
     }
     sb.ok(&["theme", "set", "mine", "--mode", "light"]);
     assert!(sb.current().is_empty(), "the mode differs");
+    // What a look holds can still be shown when the present can't be read.
+    fs::write(sb.at("fail"), "style show").unwrap();
+    let v = sb.json(&["look", "show", "mine"]);
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(
+        (&v["data"]["changes"], &v["data"]["current"]),
+        (&Value::Null, &json!(false))
+    );
+    assert!(
+        v["data"]["warnings"].to_string().contains("can't be read"),
+        "{v}"
+    );
 }

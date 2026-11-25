@@ -212,29 +212,43 @@ pub(crate) fn op_list(c: &Ctx) -> Res {
 
 pub(crate) fn op_show(c: &Ctx, arg: &str) -> Res {
     let (look, mut notes) = find(c, arg)?;
-    let now = state::now(c)?;
-    let changes = now.changes(c, &look);
+    // What a look holds needs only the look; what it would change needs the present, which may not be readable.
+    let (now, warnings) = match state::now(c) {
+        Ok(n) => (Some(n), Vec::new()),
+        Err(e) => (
+            None,
+            vec![format!("what is in force can't be read: {}", e.message())],
+        ),
+    };
+    let changes = now.as_ref().map(|n| n.changes(c, &look));
     let mut text = format!("{} ({})\n", look.title, look.name);
     if let Some(d) = &look.description {
         text.push_str(&format!("{d}\n"));
     }
     let alone = leaves_alone(&look);
-    let mut data = about(c, &look, arg, changes.is_empty() && now.same_as(&look));
+    let current = match (&now, &changes) {
+        (Some(n), Some(ch)) => ch.is_empty() && n.same_as(&look),
+        _ => false,
+    };
+    let mut data = about(c, &look, arg, current);
     text.push_str(&holds(&data));
-    match changes.is_empty() {
-        true => text.push_str("this is how everything looks now\n"),
-        false => text.push_str(&format!(
+    match &changes {
+        None => text.push_str("what applying it would change can't be said now\n"),
+        Some(ch) if ch.is_empty() => text.push_str("this is how everything looks now\n"),
+        Some(ch) => text.push_str(&format!(
             "applying it would change:\n  {}\n",
-            changes.join("\n  ")
+            ch.join("\n  ")
         )),
     }
     if !alone.is_empty() {
         text.push_str(&format!("it leaves alone: {}\n", alone.join(", ")));
     }
-    notes.extend(left_for_spaces(&now));
+    notes.extend(now.as_ref().and_then(left_for_spaces));
     data["changes"] = json!(changes);
     data["leaves_alone"] = json!(alone);
-    Ok(Out::new(data, text).noting(notes))
+    Ok(warnings
+        .into_iter()
+        .fold(Out::new(data, text).noting(notes), Out::caution))
 }
 
 /// A look's theme, mode and accents, and where it was read, as lines.
@@ -310,6 +324,8 @@ pub(crate) fn op_save(c: &Ctx, name: &str, title: Option<&str>, force: bool) -> 
         None => notes
             .push("Polycarp Spaces isn't installed here, so the look holds the theme alone".into()),
     }
+    // Checked as `find` checks it, so what is saved can be read back.
+    look.theme.check(c)?;
     keep(c, &look, "saved", notes)
 }
 
