@@ -32,6 +32,9 @@ public struct BrowserRow: Equatable, Sendable, CustomStringConvertible, CustomDe
     public let pinned: Bool
     /// The front tab of its window.
     public let front: Bool
+    /// Tabs: alone in a window with no tab strip, and the web app (`WebApp.id`) that window was opened for.
+    public let popup: Bool
+    public let app: String?
     /// Downloads: done of total bytes while one is on its way.
     public let progress: Progress?
     /// Downloads: when it finished, whole.
@@ -123,7 +126,8 @@ public struct BrowserMessage: Sendable, CustomStringConvertible, CustomDebugStri
         guard !title.isEmpty || !url.isEmpty else { return nil }
         return BrowserRow(source: source, key: name, title: title.isEmpty ? String(shown(url).prefix(titleMost)) : title, url: url, window: window,
                           group: (o["group"] as? Int).flatMap { $0 >= 0 ? $0 : nil }, audible: o["audible"] as? Bool ?? false,
-                          pinned: o["pinned"] as? Bool ?? false, front: o["front"] as? Bool ?? false, progress: progress, ended: ended, weight: weight)
+                          pinned: o["pinned"] as? Bool ?? false, front: o["front"] as? Bool ?? false,
+                          popup: o["popup"] as? Bool ?? false, app: (o["app"] as? String).flatMap { WebApps.isID($0) ? $0 : nil }, progress: progress, ended: ended, weight: weight)
     }
 
     /// A JSON true or false, and nothing else: `0` and `1` come out of `JSONSerialization` as numbers that cast to `Bool`.

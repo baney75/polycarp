@@ -9,7 +9,7 @@ const event = () => { const fns = new Set(); return { addListener: (f) => fns.ad
 const tab = (id, title, more = {}) => ({ id, windowId: 1, title, url: `https://site${id}.example/`, incognito: false, active: false, groupId: -1, ...more });
 
 function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [], downloads = [], marks = [], windows = [], groups = [], fails = '' } = {}) {
-  const ports = [], timers = [], did = [];
+  const ports = [], timers = [], did = [], kept = {};
   const granted = new Set(perms);
   const chrome = {
     runtime: { lastError: null, getURL: (p) => 'chrome-extension://x' + p, connectNative: (name) => {
@@ -19,7 +19,7 @@ function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [
       return port;
     } },
     permissions: { contains: async ({ permissions }) => permissions.every((p) => granted.has(p)) },
-    storage: { local: { get: async (k) => ({ [k]: set }) } },
+    storage: { local: { get: async (k) => ({ [k]: set }) }, session: { get: async (k) => ({ [k]: kept[k] }), set: async (o) => { Object.assign(kept, structuredClone(o)); } } },
     tabs: { query: async (q) => tabs.filter((t) => (q.windowId === undefined || t.windowId === q.windowId) && (q.groupId === undefined || t.groupId === q.groupId)), get: async (id) => { const t = tabs.find((x) => x.id === id); if (!t) throw new Error('no tab'); return t; },
       create: async (o) => { did.push(['newTab', o]); return { id: 400 }; },
       remove: async (id) => { did.push(['closeTab', id]); },
@@ -28,7 +28,7 @@ function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [
     tabGroups: { query: async () => groups, get: async (id) => groups.find((g) => g.id === id), move: async (id, o) => { did.push(['moveGroup', id, o]); },
       onCreated: event(), onUpdated: event(), onMoved: event(), onRemoved: event() },
     search: { query: async (o) => did.push(['search', o]) },
-    windows: { getAll: async () => windows, create: async (o) => { did.push(['newWindow', o]); return { id: 50, tabs: [{ id: 500 }] }; }, update: async (id, o) => did.push(['window', id, o]) },
+    windows: { getAll: async (q) => windows.filter((w) => q.windowTypes.includes(w.type || 'normal')), create: async (o) => { did.push(['newWindow', o]); return { id: 50, tabs: [{ id: 500 }] }; }, update: async (id, o) => did.push(['window', id, o]) },
     bookmarks: { getTree: async () => marks, onCreated: event(), onRemoved: event(), onChanged: event(), onMoved: event() },
     history: { search: async () => history, onVisited: event(), onVisitRemoved: event() },
     downloads: { show: (id) => did.push(['show', id]), search: async (q) => (q.id === undefined ? downloads : downloads.filter((d) => d.id === q.id)), onCreated: event(), onChanged: event(), onErased: event() },
@@ -36,7 +36,7 @@ function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [
   const b = B.make(chrome, { later: (f) => timers.push(f), now: () => 1e12 });
   b.listenTabs();
   const settle = async () => { for (let i = 0; i < 12; i++) { await new Promise((r) => setImmediate(r)); for (const f of timers.splice(0)) f(); } };
-  return { b, chrome, ports, did, tabs, downloads, granted, set, settle, port: () => ports[ports.length - 1],
+  return { b, chrome, ports, did, windows, kept, tabs, downloads, granted, set, settle, port: () => ports[ports.length - 1],
     async open(sources) { await b.start(); ports[ports.length - 1].onMessage.fire({ op: 'browser.want', sources }); await settle(); },
     sent: (op, source) => ports[ports.length - 1].sent.filter((m) => m.op === op && (!source || m.source === source)) };
 }
@@ -336,4 +336,47 @@ test('tab groups: named, never a private one, and moved whole to a window or one
   x.port().onMessage.fire({ op: 'browser.go', group: 11 });
   await x.settle();
   assert.deepEqual(structuredClone(x.did), [], 'switched off: a group is no longer gone to');
+});
+
+test('a web app opens in a window of its own, once, and its tab says whose it is', async () => {
+  const x = browser({ tabs: [tab(1, 'One'), tab(2, 'Sign in', { windowId: 3 })], windows: [{ id: 1, incognito: false }, { id: 3, incognito: false, type: 'popup' }] });
+  await x.open(['tabs']);
+  assert.deepEqual(x.sent('browser.rows')[0].rows.map((r) => [r.popup, r.app]), [[undefined, undefined], [true, undefined]], "a site's own popup is nobody's app");
+  const ask = async (m) => { x.port().onMessage.fire({ op: 'browser.app', id: 'mail-1', url: 'https://mail.example/', ...m }); await x.settle(); };
+  for (const bad of [{ id: 'A B' }, { id: 5 }, { id: '' }, { id: 'a'.repeat(41) }, { url: 'javascript:alert(1)' }, { url: 'chrome://settings' }, { url: undefined }]) await ask(bad);
+  assert.deepEqual(x.did, []);
+  x.chrome.windows.create = async (o) => { x.did.push(['newWindow', o]); x.windows.push({ id: 50, incognito: false, type: 'popup' }); return { id: 50 }; };
+  x.port().onMessage.fire({ op: 'browser.app', id: 'mail-1', url: 'https://mail.example/' });
+  await ask();
+  assert.deepEqual(x.did.splice(0), [['newWindow', { type: 'popup', url: 'https://mail.example/', focused: true, width: 1200, height: 800 }], ['window', 50, { focused: true }]], 'asked for twice at once');
+  x.tabs.push(tab(500, 'Inbox', { windowId: 50, active: true }));
+  x.chrome.tabs.onUpdated.fire(500, { title: 'Inbox' });
+  await x.settle();
+  assert.deepEqual(x.sent('browser.change').at(-1).rows.map((r) => [r.id, r.popup, r.app]), [[500, true, 'mail-1']]);
+  await ask();
+  assert.deepEqual(x.did.splice(0), [['window', 50, { focused: true }]], 'open already');
+  x.windows.splice(2, 1);
+  x.windows.push({ id: 50, incognito: true, type: 'popup' });
+  await ask();
+  assert.equal(x.did.splice(0)[0][0], 'newWindow', 'never a private window, nor one that closed');
+  x.windows.length = 0;
+  await ask({ id: 'map-2', url: 'https://map.example/' });
+  assert.deepEqual(x.kept['polycarp.apps'], { 50: 'map-2' }, 'a window that is gone is forgotten');
+});
+
+test("a new app window's tab is said again once it is known whose it is", async () => {
+  const x = browser({ tabs: [tab(500, 'Inbox', { windowId: 50 })], windows: [{ id: 50, incognito: false, type: 'popup' }] });
+  await x.open(['tabs']);
+  x.port().onMessage.fire({ op: 'browser.app', id: 'mail-1', url: 'https://mail.example/' });
+  await x.settle();
+  assert.deepEqual(x.sent('browser.change').map((m) => m.rows.map((r) => r.app)), [['mail-1']]);
+});
+
+test('the app windows of one browser are all kept', async () => {
+  const x = browser({ windows: [{ id: 3, incognito: false, type: 'popup' }] });
+  x.kept['polycarp.apps'] = { 3: 'map-2', 4: 'gone-3' };
+  await x.open(['tabs']);
+  x.port().onMessage.fire({ op: 'browser.app', id: 'mail-1', url: 'https://mail.example/' });
+  await x.settle();
+  assert.deepEqual(x.kept['polycarp.apps'], { 3: 'map-2', 50: 'mail-1' });
 });
