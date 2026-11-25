@@ -106,6 +106,25 @@ unsigned length, then that many bytes of UTF-8 JSON, on stdin and on stdout. A r
   a JPEG at most 1920 pixels wide and under 700 KB, lower in quality and then smaller until it fits, so the reply stays
   under Chrome's 1 MB limit for a native message. The host makes that copy once, in `Papers/.newtab/`, and reads it
   after. A picture that is gone or won't decode is sent as no paper.
+- `theme` and `stamp`, only while a Polycarp theme is in force: the same two keys as `theme` below, so a new tab needs
+  one request.
+
+### `{"op":"theme"}`
+
+```json
+{"ok": true, "stamp": "3f9c2a1b07d4e568",
+ "theme": {"mode": "auto",
+           "shared": {"--pc-radius": "10px", "--pc-font-ui": "system-ui, sans-serif", "--pc-motion-fast": "120ms"},
+           "light": {"--pc-background": "#f6f3e8", "--pc-on-accent": "#f6f3e8"},
+           "dark": {"--pc-background": "#2b2e26", "--pc-on-accent": "#20231a"}}}
+```
+
+- The Polycarp theme in force, `surfaces.browser` of `<config>/current/theme.json`: the values `polycarp theme` writes
+  into `browser.css`. The example is shortened; `shared` has all 19 names and each mode all 13 colors, exactly the names in
+  `extension/src/shared/theme.css`. `mode` is `auto`, or `light` or `dark` for a theme that is always that one.
+- `stamp` changes when a value does, and only then.
+- No theme file, a file that is a symbolic link, one over 256 KB, and one the app would refuse (spec/themes.md, Reading) all
+  leave both keys out. `ok` stays true.
 
 ### `{"op":"find","q":"..."}`
 
