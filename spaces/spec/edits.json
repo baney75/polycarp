@@ -13,6 +13,9 @@
   {"case": "insert", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "main", "where": "first", "blocks": [{"kind": "heading", "text": "Today"}, {"kind": "text", "text": "Read this first"}, {"kind": "list", "items": ["One", "Two"]}, {"kind": "link", "text": "More", "url": "https://example.org/a?b=c#d"}]}]}},
   {"case": "css", "edit": {"id": "a", "sites": ["example.com"], "css": "/* wide */ @media (width < 600px) { main { width: 100% } }"}},
   {"case": "paths and name", "edit": {"id": "a", "sites": ["example.com"], "name": "Calm", "paths": ["/home", "/watch/*"], "css": "a{color:red}"}},
+  {"case": "pseudo-classes, and colons in a string", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "a:first-child:hover, [title='a::before']"}]}},
+  {"case": "a function as a variable's fallback", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"width": "var(--w,calc(100% - 2rem))"}}], "css": "a{color:var(--a,var(--b,rgb(0,0,0)))}"}},
+  {"case": "two dashes that call nothing", "edit": {"id": "a", "sites": ["example.com"], "css": ".btn--big:not(.x){width:calc(var(--w) * 2);--y:calc(1px)}"}},
   {"case": "off", "edit": {"id": "a", "sites": ["example.com"], "enabled": false, "css": "a{color:red}"}},
   {"case": "site as a link", "edit": {"id": "a", "sites": ["https://www.Example.com/path"], "css": "a{color:red}"}},
   {"case": "vendor and custom properties", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"-webkit-line-clamp": "2", "--Gap_x": "4px", "scroll-behavior": "smooth"}}]}},
@@ -94,6 +97,13 @@
   {"case": "a link that ends in a line separator", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "p", "where": "after", "blocks": [{"kind": "link", "text": "x", "url": "https://example.org/\u2028"}]}]}, "path": "changes[0].blocks[0].url"},
   {"case": "move a stylesheet", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "move", "at": "link[rel=stylesheet]", "to": "body", "where": "last"}]}, "path": "changes[0].at"},
   {"case": "css filter that fetches", "edit": {"id": "a", "sites": ["example.com"], "css": "a{background:filter('https://evil.example/a', blur(0))}"}, "path": "css"},
-  {"case": "a link with a port there isn't", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "p", "where": "after", "blocks": [{"kind": "link", "text": "x", "url": "https://example.org:99999/"}]}]}, "path": "changes[0].blocks[0].url"}
+  {"case": "a link with a port there isn't", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "p", "where": "after", "blocks": [{"kind": "link", "text": "x", "url": "https://example.org:99999/"}]}]}, "path": "changes[0].blocks[0].url"},
+  {"case": "a selector that ends its rule after url(", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "url(x\")), html, q:is(url(y\")"}]}, "path": "changes[0].at"},
+  {"case": "a pseudo-element", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "input::placeholder", "style": {"color": "red"}}]}, "path": "changes[0].at"},
+  {"case": "a pseudo-element with one colon", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "p:Before, a"}]}, "path": "changes[0].at"},
+  {"case": "css that calls the page's function", "edit": {"id": "a", "sites": ["example.com"], "css": "input{background:--bg('https://evil.example/a')}"}, "path": "css"},
+  {"case": "css that calls the page's function after a comma", "edit": {"id": "a", "sites": ["example.com"], "css": "a{color:var(--a,--Zü('https://evil.example/a'))}"}, "path": "css"},
+  {"case": "a style that calls the page's function", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"background": "--Bg('https://evil.example/a')"}}]}, "path": "changes[0].style.background"},
+  {"case": "a verb in a list", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": ["hide"], "at": "a"}]}, "path": "changes[0].do"}
  ]
 }

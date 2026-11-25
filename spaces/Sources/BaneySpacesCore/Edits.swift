@@ -195,7 +195,15 @@ public enum Edits {
 
     private static func selector(_ o: [String: SurfaceValue], _ key: String, _ p: String) throws -> String {
         let s = try string(o, key, p, maxSelector)
-        switch Filters.selector(s) { case .success(let t): return t; case .failure(let w): throw SurfacesIssue(p + key, w.message) }
+        let t: String
+        switch Filters.selector(s) { case .success(let ok): t = ok; case .failure(let w): throw SurfacesIssue(p + key, w.message) }
+        let low = t.lowercased()
+        // CSS reads what follows url( by other quote rules than `Filters.unbalanced`, so a selector could end its rule there.
+        if low.holds("url(") { throw SurfacesIssue(p + key, "may not hold url(") }
+        if bare(low).range(of: "::|:(before|after|first-line|first-letter)(?![a-z0-9_-])", options: .regularExpression) != nil {
+            throw SurfacesIssue(p + key, "names a pseudo-element; use css for that")
+        }
+        return t
     }
 
     /// The element names a selector list plainly ends at: `div > style.x, a` is style and a.
@@ -262,6 +270,8 @@ public enum Edits {
         if stringInCustomProperty(prop.hasPrefix("--") ? prop + ":" + plain : plain) {
             return "may not keep a quoted string in a custom property"
         }
+        // A page's own function could load the string it is given.
+        if plain.range(of: #"--[-A-Za-z0-9_\x{80}-\x{10ffff}]*\("#, options: .regularExpression) != nil { return "may not call a function the page defines (--name(...))" }
         let allowed: Set = ["media", "supports", "container", "keyframes", "layer", "starting-style"]
         for part in plain.unicodeScalars.split(separator: "@", omittingEmptySubsequences: false).dropFirst() {
             let word = String(String.UnicodeScalarView(part.prefix { ("a"..."z").contains($0) || $0 == "-" }))
