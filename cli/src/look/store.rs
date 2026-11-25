@@ -121,3 +121,48 @@ pub fn refused(what: &str, problems: &[String]) -> ApiErr {
         "Fix each path in `errors`. docs/looks.md in the Polycarp repo lists what a look may hold.",
     )
 }
+
+// Snapshots: what everything was before each apply and undo, newest last by number.
+
+const KEEP: usize = 10;
+
+fn history(c: &Ctx) -> PathBuf {
+    dir(c).join(".history")
+}
+
+/// The kept snapshots, oldest first.
+pub fn snapshots(c: &Ctx) -> Vec<PathBuf> {
+    let d = history(c);
+    if is_link(&dir(c)) || is_link(&d) {
+        return Vec::new();
+    }
+    let mut out: Vec<PathBuf> = fs::read_dir(d)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .and_then(|n| n.strip_suffix(".json"))
+                .is_some_and(|n| n.len() == 8 && n.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .map(|e| e.path())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Keeps a snapshot as the newest, and drops all but the newest ten.
+pub fn push(c: &Ctx, text: &str) -> Result<PathBuf, ApiErr> {
+    ensure(&dir(c))?;
+    ensure(&history(c))?;
+    let number = |p: &PathBuf| p.file_stem()?.to_str()?.parse::<u32>().ok();
+    let next = snapshots(c).last().and_then(number).unwrap_or(0) + 1;
+    let p = history(c).join(format!("{next:08}.json"));
+    write_plain(&p, text.as_bytes())?;
+    let all = snapshots(c);
+    for old in all.iter().take(all.len().saturating_sub(KEEP)) {
+        let _ = fs::remove_file(old);
+    }
+    Ok(p)
+}

@@ -65,7 +65,8 @@ left, center and right, defaults included, so set `bar.modules` whole to move on
 hidden from the menu. Note the old value with `get` before a `set`, so you can put it back. Over MCP, `polycarp mcp`
 serves the same as `surfaces_schema`, `surfaces_get` and `surfaces_set`, and `search` as `search` (read-only) and
 `search_open`. `search.engine` is the one web engine for the launcher, the new tab and `search`. Colors and fonts are the theme's
-(`polycarp theme`), not this file's. Every field: spaces/docs/surfaces.md.
+(`polycarp theme`), not this file's. `polycarp look save|apply|undo|export|import` keeps and changes all of it at once
+(theme, style.css, these settings' looks and the paper; docs/looks.md). Every field: spaces/docs/surfaces.md.
 
 ## Paper: the wallpaper, the new tab and the idle screen
 

@@ -511,4 +511,31 @@ impl Live {
         }
         to
     }
+
+    /// As a snapshot keeps it.
+    pub fn to_json(&self) -> Json {
+        json!({
+            "style": self.style,
+            "surfaces": self.surfaces,
+            "paper": paper::to_json(&self.paper),
+            "pictures": paper::pictures_json(&self.pictures),
+        })
+    }
+
+    pub fn from_json(v: &Json) -> Result<Live, ApiErr> {
+        let mut bad = Vec::new();
+        let pictures = paper::pictures(Some(&v["pictures"]), &mut bad);
+        let paper = paper::read(&v["paper"], &pictures, &mut bad);
+        if !bad.is_empty() {
+            return Err(store::refused("the kept look is damaged", &bad));
+        }
+        let o = v["surfaces"].as_object().cloned().unwrap_or_default();
+        Ok(Live {
+            style: v["style"].as_str().map(str::to_string),
+            surfaces: o.into_iter().collect(),
+            paper,
+            pictures,
+            defaults: BTreeMap::new(),
+        })
+    }
 }

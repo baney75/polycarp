@@ -25,6 +25,7 @@ usage: polycarp look <command> [--json]
   show <name|file|->                    what a look holds, and what it would change
   save <name> [--title T] [--force]     keep how everything looks now under a name
   apply <name|file|-> [--dry-run]       put a look on, all of it or none (--dry-run only says what would change)
+  undo                                  go back to how it was before the last apply (again to come forward)
   export <name> <file|-> [--force]      write a look to one file to share (<name>.polycarp-look)
   import <file|-> [--name N] [--force]  check someone's look and save it; nothing on screen changes
 
@@ -49,6 +50,10 @@ pub fn run(args: &[OsString]) -> i32 {
         "apply" => theme::cmd(rest, &[], &["dry-run"], |c, p| {
             exactly(p, 1, "one look name or file")?;
             op_apply(c, &p.pos[0], p.flag("dry-run"))
+        }),
+        "undo" => theme::cmd(rest, &[], &[], |c, p| {
+            exactly(p, 0, "no arguments")?;
+            op_undo(c)
         }),
         "export" => theme::cmd(rest, &[], &["force"], |c, p| {
             exactly(p, 2, "a look name, and a file or -")?;
@@ -209,7 +214,7 @@ pub(crate) fn op_list(c: &Ctx) -> Res {
         }
     }
     let data = json!({
-        "looks": rows, "folder": store::dir(c).display().to_string(),
+        "looks": rows, "folder": store::dir(c).display().to_string(), "can_undo": !store::snapshots(c).is_empty(),
     });
     Ok(warnings
         .into_iter()
@@ -409,15 +414,65 @@ pub(crate) fn op_import(c: &Ctx, bytes: &[u8], name: Option<&str>, force: bool) 
     keep(c, &look, "imported", notes)
 }
 
+/// The present state, kept before a change so it can be put back.
+struct Snap {
+    action: String,
+    time: String,
+    by: String,
+    theme: theme::Before,
+    live: Option<Live>,
+}
+
+impl Snap {
+    fn take(c: &Ctx, action: String, live: Option<Live>) -> Result<Snap, ApiErr> {
+        let (_, time) = theme::stamps();
+        Ok(Snap {
+            action,
+            time,
+            by: c.caller().into(),
+            theme: theme::before(c)?,
+            live,
+        })
+    }
+    fn text(&self) -> String {
+        theme::pretty(&json!({
+            "schema": format::SCHEMA, "action": self.action, "time": self.time, "by": self.by,
+            "theme": self.theme, "live": self.live.as_ref().map(Live::to_json),
+        }))
+    }
+    fn read(p: &Path) -> Result<Snap, ApiErr> {
+        // Three pictures at most, and base64 is a third larger than they are.
+        let bytes = store::read_plain(p, 4 * format::MAX_BYTES)?;
+        let damaged = || {
+            theme::io_err(format!(
+                "the newest kept state {} is damaged, so nothing was undone. Delete that file to go back further",
+                p.display()
+            ))
+        };
+        let v: Json = serde_json::from_slice(&bytes).map_err(|_| damaged())?;
+        let text = |k: &str| v[k].as_str().unwrap_or_default().to_string();
+        Ok(Snap {
+            action: text("action"),
+            time: text("time"),
+            by: text("by"),
+            theme: serde_json::from_value(v["theme"].clone()).map_err(|_| damaged())?,
+            live: match &v["live"] {
+                Json::Null => None,
+                l => Some(Live::from_json(l).map_err(|_| damaged())?),
+            },
+        })
+    }
+}
+
 /// Runs the theme step, then the surfaces. A step that fails puts back what came before it, and is named.
 fn change(
     c: &Ctx,
-    was: Option<&Live>,
+    was: &Snap,
     theme_step: impl FnOnce() -> Result<theme::Did, ApiErr>,
     to: Option<&Live>,
 ) -> Result<theme::Did, ApiErr> {
     let did = theme_step().map_err(|e| e.step("theme", Ok(())))?;
-    let (Some(now), Some(to)) = (was, to) else {
+    let (Some(now), Some(to)) = (&was.live, to) else {
         return Ok(did);
     };
     let saved: Vec<Look> = store::names(c)
@@ -467,9 +522,52 @@ pub(crate) fn op_apply(c: &Ctx, arg: &str, dry_run: bool) -> Res {
         return Ok(Out::new(data, format!("{lead}{list}")).noting(notes));
     }
     let to = now.live.as_ref().map(|l| l.with(&look));
+    let mut was = Snap::take(c, format!("apply {}", look.name), now.live)?;
+    let kept = store::push(c, &was.text())?;
     let step = || theme::apply(c, &look.theme, &format!("look apply {}", look.name));
-    let did = change(c, now.live.as_ref(), step, to.as_ref())?;
+    let did = change(c, &was, step, to.as_ref()).inspect_err(|e| {
+        // Everything is as it was, so there is nothing to undo. If it isn't, the snapshot is the way back.
+        if !e.stuck() {
+            let _ = std::fs::remove_file(&kept);
+        }
+    })?;
+    if did.made.is_some() {
+        was.theme.made(did.made);
+        store::write_plain(&kept, was.text().as_bytes())?;
+    }
     notes.extend(did.notes);
-    let text = format!("applied {}\n{list}", look.name);
+    let text = format!("applied {} (undo: polycarp look undo)\n{list}", look.name);
+    Ok(Out::new(data, text).noting(notes))
+}
+
+pub(crate) fn op_undo(c: &Ctx) -> Res {
+    let _held = theme::hold(c)?;
+    let Some(kept) = store::snapshots(c).pop() else {
+        return Err(ApiErr::new(
+            "nothing_to_undo",
+            "no look has been applied, so there is nothing to undo",
+        )
+        .suggest("`polycarp look apply polycarp` puts on the shipped look."));
+    };
+    let back = Snap::read(&kept)?;
+    let mut now = Snap::take(c, format!("undo {}", back.action), state::read()?)?;
+    let step = || theme::restore(c, &back.theme, &format!("look undo ({})", back.action));
+    let did = change(c, &now, step, back.live.as_ref())?;
+    // What was undone takes its place as the newest, so undo again comes forward.
+    now.action = match back.action.strip_prefix("undo ") {
+        Some(a) => a.to_string(),
+        None => now.action,
+    };
+    now.theme.made(did.made);
+    store::write_plain(&kept, now.text().as_bytes())?;
+    let mut notes = did.notes;
+    if back.live.is_some() && now.live.is_none() {
+        notes.push("Polycarp Spaces isn't installed here, so only the theme went back".into());
+    }
+    let data = json!({"undid": {"action": back.action, "time": back.time, "by": back.by}});
+    let text = format!(
+        "undid: {} (made by {}, {}); undo again to come forward\n",
+        back.action, back.by, back.time
+    );
     Ok(Out::new(data, text).noting(notes))
 }

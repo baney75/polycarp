@@ -989,8 +989,25 @@ fn someone_elses_look_brings_its_theme_and_never_replaces_yours() {
     let file = a.at("cfg/looks/mine.polycarp-look").display().to_string();
     b.ok(&["look", "apply", &file]);
     assert_eq!(b.ok(&["theme", "current"])["theme"], "mine");
+    b.ok(&["look", "undo"]);
+    assert!(
+        !b.at("cfg/themes/mine.toml").exists(),
+        "undo takes the theme it brought away"
+    );
+    // Unless it was edited, or another theme is built on it.
+    b.ok(&["look", "apply", &file]);
+    let edited = format!("{}# my edit\n", b.text("cfg/themes/mine.toml").unwrap());
+    fs::write(b.at("cfg/themes/mine.toml"), &edited).unwrap();
+    b.ok(&["look", "undo"]);
+    assert_eq!(b.text("cfg/themes/mine.toml"), Some(edited));
+    fs::remove_file(b.at("cfg/themes/mine.toml")).unwrap();
+    b.ok(&["look", "apply", &file]);
+    b.ok(&["theme", "create", "child", "--extends", "mine"]);
+    b.ok(&["look", "undo"]);
+    assert!(b.at("cfg/themes/mine.toml").exists(), "child extends it");
+    b.ok(&["theme", "delete", "child"]);
+    b.ok(&["theme", "delete", "mine"]);
     // Their own theme of that name stays as it is.
-    let b = with_spaces();
     b.ok(&["theme", "create", "mine", "--extends", "parchment"]);
     let own = b.text("cfg/themes/mine.toml");
     let d = b.ok(&["look", "apply", &file]);
@@ -1001,6 +1018,71 @@ fn someone_elses_look_brings_its_theme_and_never_replaces_yours() {
     b.ok(&["theme", "set", "evening"]);
     b.ok(&["look", "apply", &file]);
     assert!(!b.at("cfg/themes/mine-look-2.toml").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn undo_goes_back_and_undo_again_comes_forward() {
+    let sb = with_spaces();
+    assert_eq!(sb.no(&["look", "undo"]), "nothing_to_undo");
+    assert_eq!(sb.ok(&["look", "list"])["can_undo"], false);
+    let fresh = whole(&sb);
+    sb.ok(&["theme", "current"]);
+    dress(&sb);
+    let was = whole(&sb);
+    sb.json_in(&["look", "import", "-"], &json!({"schema": 1, "name": "plain", "theme": {"builtin": "parchment"}, "mode": "light",
+        "style": "bar { color: #ffffff; }\n", "surfaces": {"bar": {"height": 24}}, "paper": {"desktop": "#112233"}}).to_string());
+    sb.ok(&["look", "apply", "plain"]);
+    assert_eq!(sb.ok(&["look", "list"])["can_undo"], true);
+    let then = whole(&sb);
+    assert_eq!(sb.text("live/paper.desktop").unwrap(), "#112233");
+    for _ in 0..2 {
+        let d = sb.ok(&["look", "undo"]);
+        assert_eq!(whole(&sb), was, "{d}");
+        sb.ok(&["look", "undo"]);
+        assert_eq!(whole(&sb), then);
+    }
+    assert_eq!(
+        fs::read_dir(sb.at("cfg/looks/.history")).unwrap().count(),
+        1
+    );
+    // The shipped look is undoable too, and the sheet written by hand is in a backup besides.
+    sb.ok(&["look", "undo"]);
+    sb.ok(&["look", "apply", "polycarp"]);
+    assert_eq!(
+        sb.text("cfg/style.css.bak").unwrap(),
+        "/* \"mine\" */\nbar { border-radius: 6px; }\n"
+    );
+    sb.ok(&["look", "undo"]);
+    assert_eq!(whole(&sb), was);
+    // What was never there is not there again.
+    let sb = with_spaces();
+    sb.ok(&["theme", "current"]);
+    sb.json_in(&["look", "import", "-"], &hostile().to_string());
+    sb.ok(&["look", "apply", "hostile"]);
+    sb.ok(&["look", "undo"]);
+    assert!(!sb.at("cfg/config.toml").exists());
+    assert_eq!(fresh.iter().filter(|(_, b)| !b.is_empty()).count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_undone_theme_that_was_off_is_off_again_and_edits_are_kept() {
+    let sb = with_spaces();
+    dress(&sb);
+    sb.ok(&["theme", "off"]);
+    let d = sb.ok(&["look", "apply", "polycarp"]);
+    assert!(d["notes"].to_string().contains("the theme was off"), "{d}");
+    assert!(sb.at("cfg/current/theme.json").exists());
+    sb.ok(&["look", "undo"]);
+    assert!(!sb.at("cfg/current/theme.json").exists());
+    sb.ok(&["theme", "on"]);
+    sb.ok(&["look", "apply", "polycarp"]);
+    let edited = format!("{}# my edit\n", sb.text("cfg/themes/mine.toml").unwrap());
+    fs::write(sb.at("cfg/themes/mine.toml"), &edited).unwrap();
+    let d = sb.ok(&["look", "undo"]);
+    assert!(d["notes"].to_string().contains("edited since"), "{d}");
+    assert_eq!(sb.text("cfg/themes/mine.toml"), Some(edited));
 }
 
 #[cfg(unix)]
@@ -1031,6 +1113,11 @@ fn a_step_that_fails_puts_everything_back() {
             history,
             "the theme change is not in history"
         );
+        assert_eq!(
+            sb.no(&["look", "undo"]),
+            "nothing_to_undo",
+            "nothing happened, so there is nothing to undo"
+        );
     }
     // A sheet that is a link, such as into a person's dotfiles, is neither replaced nor followed.
     fs::rename(sb.at("cfg/style.css"), sb.at("sheet.css")).unwrap();
@@ -1040,6 +1127,14 @@ fn a_step_that_fails_puts_everything_back() {
     assert_eq!(whole(&sb), was);
     fs::remove_file(sb.at("cfg/style.css")).unwrap();
     fs::rename(sb.at("sheet.css"), sb.at("cfg/style.css")).unwrap();
+    // The same when undoing: what was there stays there.
+    sb.ok(&["look", "apply", "polycarp"]);
+    let then = whole(&sb);
+    fs::write(sb.at("fail"), "paper set").unwrap();
+    assert_eq!(sb.no(&["look", "undo"]), "step_failed");
+    assert_eq!(whole(&sb), then);
+    sb.ok(&["look", "undo"]);
+    assert_eq!(whole(&sb), was);
 }
 
 #[cfg(unix)]
@@ -1073,9 +1168,37 @@ fn a_look_is_checked_whole_before_anything_changes() {
         "{d}"
     );
     assert_eq!(whole(&sb), was);
-    // What is already in force is left alone.
+    assert_eq!(sb.no(&["look", "undo"]), "nothing_to_undo");
+    // What is already in force is left alone, and is no step to undo.
     sb.ok(&["look", "save", "mine"]);
     assert_eq!(sb.ok(&["look", "apply", "mine"])["changed"], false);
+    assert_eq!(sb.no(&["look", "undo"]), "nothing_to_undo");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_newest_ten_are_kept() {
+    let sb = with_spaces();
+    sb.json_in(&["look", "import", "-"], &hostile().to_string());
+    for i in 0..12 {
+        sb.ok(&[
+            "look",
+            "apply",
+            if i % 2 == 0 { "hostile" } else { "polycarp" },
+        ]);
+    }
+    let mut names: Vec<_> = fs::read_dir(sb.at("cfg/looks/.history"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(
+        (names.len(), names[0].as_str(), names[9].as_str()),
+        (10, "00000003.json", "00000012.json")
+    );
+    fs::write(sb.at("cfg/looks/.history/00000012.json"), "{").unwrap();
+    assert_eq!(sb.no(&["look", "undo"]), "io_error");
 }
 
 #[test]
@@ -1091,6 +1214,8 @@ fn without_spaces_the_theme_part_still_applies() {
     let d = sb.ok(&["look", "apply", "full"]);
     assert!(d["notes"].to_string().contains("wait for it"), "{d}");
     assert_eq!(sb.ok(&["theme", "current"])["theme"], "evening");
+    sb.ok(&["look", "undo"]);
+    assert_eq!(sb.ok(&["theme", "current"])["theme"], "polycarp");
 }
 
 #[cfg(unix)]

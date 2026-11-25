@@ -197,6 +197,9 @@ impl Ctx {
     pub(crate) fn dir(&self) -> &Path {
         &self.cfg.dir
     }
+    pub(crate) fn caller(&self) -> &str {
+        &self.caller
+    }
 }
 
 /// The lock every theme change takes, held for a whole look.
@@ -301,6 +304,10 @@ impl ApiErr {
                 format!("the {step} step failed ({why}), and putting things back failed too ({e})"),
             ),
         };
+        if self.code == "stuck" {
+            self.suggestion =
+                Some("Run `polycarp look undo` to try again: what was there is kept.".into());
+        }
         for i in self
             .items
             .iter_mut()
@@ -309,6 +316,10 @@ impl ApiErr {
             i["path"] = json!(step);
         }
         self
+    }
+
+    pub(crate) fn stuck(&self) -> bool {
+        self.code == "stuck"
     }
 
     /// The refusal of one part of a look: its paths start with the part's name.
@@ -340,17 +351,77 @@ impl ApiErr {
     }
 }
 
-/// What a theme step did: whether it is in history, and what to tell the person.
+/// What the theme was before a look changed it, whole enough to put back.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Before {
+    theme: String,
+    mode: String,
+    accent_light: Option<String>,
+    accent_dark: Option<String>,
+    enabled: bool,
+    /// There was no config.toml.
+    absent: bool,
+    /// A user theme's own file.
+    text: Option<String>,
+    /// A theme file the change made, with a hash of it: undoing the change takes it away again.
+    made: Option<(String, String)>,
+}
+
+impl Before {
+    fn state(&self) -> State {
+        State {
+            theme: self.theme.clone(),
+            mode: self.mode.clone(),
+            accent_light: self.accent_light.clone(),
+            accent_dark: self.accent_dark.clone(),
+            enabled: self.enabled,
+        }
+    }
+    pub(crate) fn made(&mut self, made: Option<(String, String)>) {
+        self.made = made;
+    }
+}
+
+pub(crate) fn before(c: &Ctx) -> Result<Before, ApiErr> {
+    let eff = effective(&c.cfg);
+    require_healthy(&eff)?;
+    let st = eff.state;
+    let text = match is_builtin(&st.theme) {
+        true => None,
+        false => read_or_absent(&c.cfg.theme_path(&st.theme))
+            .map_err(io_err)?
+            .map(|b| String::from_utf8_lossy(&b).into_owned()),
+    };
+    Ok(Before {
+        absent: !c.cfg.file().exists(),
+        theme: st.theme,
+        mode: st.mode,
+        accent_light: st.accent_light,
+        accent_dark: st.accent_dark,
+        enabled: st.enabled,
+        text,
+        made: None,
+    })
+}
+
+/// What a theme step did: whether it is in history, the theme file it made, and what to tell the person.
 pub(crate) struct Did {
     pub(crate) changed: bool,
+    pub(crate) made: Option<(String, String)>,
     pub(crate) notes: Vec<String>,
 }
 
-fn did(out: Out, mut notes: Vec<String>) -> Did {
+fn did(out: Out, made: Option<(String, &str)>, mut notes: Vec<String>) -> Did {
     let changed = out.data["changed"] != json!(false);
     notes.extend(out.warnings);
     notes.extend(out.notes.into_iter().filter(|_| changed));
-    Did { changed, notes }
+    Did {
+        changed,
+        made: made
+            .filter(|_| changed)
+            .map(|(n, t)| (n, text_hash(t.as_bytes()))),
+        notes,
+    }
 }
 
 /// A user theme with the document's contents, or the name a new file for it takes.
@@ -415,7 +486,63 @@ pub(crate) fn apply(c: &Ctx, look: &ThemeLook, action: &str) -> Result<Did, ApiE
     st.accent_dark = look.accent_dark.clone();
     let file = text.as_deref().map(|t| (name.as_str(), Some(t)));
     let out = commit(c, Some(&st), action, file)?;
-    Ok(did(out, notes))
+    Ok(did(out, text.as_deref().map(|t| (name.clone(), t)), notes))
+}
+
+/// Puts back what `before` kept. A theme file that was edited or is gone is left or made again, never written over.
+pub(crate) fn restore(c: &Ctx, was: &Before, action: &str) -> Result<Did, ApiErr> {
+    let mut notes = Vec::new();
+    let path = c.cfg.theme_path(&was.theme);
+    let now = read_or_absent(&path).map_err(io_err)?;
+    let again = match (&was.text, &now) {
+        (Some(t), None) if valid_name(&was.theme) && !is_builtin(&was.theme) => Some(t.as_str()),
+        (Some(t), Some(b)) if b != t.as_bytes() => {
+            notes.push(format!(
+                "the theme {:?} was edited since, and the edits are kept",
+                was.theme
+            ));
+            None
+        }
+        _ => None,
+    };
+    let cfg = match again {
+        Some(t) => c.cfg.with_overlay(&was.theme, t),
+        None => c.cfg.clone(),
+    };
+    let st = was.state();
+    build_full(&cfg, &st).map_err(|ps| {
+        bad_theme(
+            "the theme from before can't be used now, so nothing was undone",
+            &ps,
+        )
+    })?;
+    let gone = was.made.as_ref().filter(|(n, hash)| {
+        *n != was.theme
+            && valid_name(n)
+            && read_or_absent(&c.cfg.theme_path(n))
+                .is_ok_and(|b| b.is_some_and(|b| text_hash(&b) == *hash))
+            && dependents_of(&c.cfg, n).is_ok_and(|(on, _)| on.is_empty())
+    });
+    let file = match (again, gone) {
+        (Some(t), _) => Some((was.theme.as_str(), Some(t))),
+        (None, Some((n, _))) => Some((n.as_str(), None)),
+        _ => None,
+    };
+    let out = commit(c, Some(&st), action, file)?;
+    if was.absent && state_is_default(c) {
+        let _ = fs::remove_file(c.cfg.file());
+    }
+    Ok(did(out, again.map(|t| (was.theme.clone(), t)), notes))
+}
+
+/// The settings file says nothing but the defaults, as no file does.
+fn state_is_default(c: &Ctx) -> bool {
+    let text = fs::read_to_string(c.cfg.file()).unwrap_or_default();
+    let empty = Cfg {
+        dir: c.cfg.dir.join("none"),
+        ..c.cfg.clone()
+    };
+    text == state_table(&empty, &State::default_state())
 }
 
 /// Takes back the newest theme change, which the caller made under the lock it still holds.
