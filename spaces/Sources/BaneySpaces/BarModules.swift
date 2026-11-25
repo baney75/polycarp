@@ -140,7 +140,7 @@ struct StatusRow: View {
                     .rotationEffect(.degrees(out ? 180 : 0))
             }
         }
-        .animation(Chrome.ease(out ? 0.2 : 0.135, out ? .listIn : .listOut), value: out)
+        .animation(Chrome.ease(out ? 0.2 : 0.135, out ? .panelIn : .panelOut), value: out)
         .background { PointerArea { pointer($0) } }
     }
 
