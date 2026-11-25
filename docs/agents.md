@@ -9,6 +9,7 @@ Behind it are the same tools Polycarp already has:
 | `theme_*` | read to look, act to change | Everything `polycarp mcp` does |
 | `keys_list` | read | Every Polycarp keyboard shortcut, from the same table as [keys.md](keys.md) |
 | `files_*` | files | Everything `polycarp files mcp` does |
+| `edits_page` | files | Read the page you shared from the browser's Page edits |
 | `app_status`, `app_items`, `app_settings`, `workspace_agent_status` | read | Ask the running app what it tracks and how it is set |
 | `app_setting_set`, `app_focus`, `workspace_agent_set`, `workspace_agent_move`, `workspace_switch`, `launcher_open` | act | Change a setting, bring a window forward, run the agent workspace, switch workspaces, open the launcher |
 
@@ -60,7 +61,7 @@ To make a local model the default, set Eukhe's `defaultProvider` and `defaultMod
 | Scope | Lets a client |
 | --- | --- |
 | read | List tools, read themes, ask the app what it tracks and how it is set |
-| files | Search, fetch and send your files across your devices |
+| files | Search, fetch and send your files across your devices, and read a page you share from the browser |
 | act | Change themes and settings, move windows to the agent workspace, switch workspaces, open the launcher |
 | contacts | Reserved for the contacts feature; no tool uses it yet |
 
@@ -131,7 +132,7 @@ Surfaces and contacts add their tools by implementing `Provider` in `cli/src/age
 
 ### What a stolen token can do
 
-- **An access token** (from a web connector) can call the tools its scopes allow, through any route, for at most an hour. It can't mint new tokens. With read only, it can read themes, app settings, and the titles of your windows and terminals. With files, it can search your files on every device and fetch or send one. With act, it can change settings and themes and move windows to the agent workspace.
+- **An access token** (from a web connector) can call the tools its scopes allow, through any route, for at most an hour. It can't mint new tokens. With read only, it can read themes, app settings, and the titles of your windows and terminals. With files, it can search your files on every device, fetch or send one, and read a page you share from the browser. With act, it can change settings and themes and move windows to the agent workspace.
 - **A refresh token** can get new access tokens with the same or fewer scopes for up to 30 days. The first time it is used, the old one is spent. If the thief and the real client both use it, the second use ends the whole grant for both, and the client must be approved again.
 - **A local token** can do what its scopes allow, until you revoke it. Unless it was made with `--remote`, it works only on loopback and the tailnet, so a copy that leaks off your devices is useless through a tunnel.
 - **An authorization code** is useless without the PKCE verifier, which never leaves the client. One wrong verifier burns the code, and a code used twice ends the grant it made.
