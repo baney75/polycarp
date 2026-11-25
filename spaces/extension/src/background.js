@@ -119,16 +119,28 @@ async function sharePage(tabId) {
     if (!page) return { ok: false, error: "This page can't be shared" };
     if (!page.parts.length) return { ok: false, error: "Nothing on this page to share" };
   }
+  // Kept first: an app that takes the page and then doesn't answer leaves a share the person can still stop.
+  const before = (await chrome.storage.local.get(SHARED_KEY))[SHARED_KEY];
+  if (page) await keepShared({ url: page.url, title: page.title, at: Date.now() }, href);
   const r = await askFiltersHost({ op: "sharePage", page });
   if (!r || r.ok !== true) {
     const why = String((r && (r.error || r.failed)) || "");
-    return { ok: false, error: why === "there is no request called sharePage" ? "Update Polycarp on this computer to share pages" : r && r.failed ? "Polycarp on this computer didn't answer" : "Polycarp refused it: " + (why || "no reason given").slice(0, 200) };
+    if (page && r && !r.failed) await keepShared(before, ""); // it refused, so what it held before is still what it holds
+    return { ok: false, error: why === "there is no request called sharePage" ? "Update Polycarp on this computer to share pages" : !r || r.failed ? "Polycarp on this computer didn't answer" : "Polycarp refused it: " + (why || "no reason given").slice(0, 200) };
   }
-  if (page) {
-    await chrome.storage.local.set({ [SHARED_KEY]: { url: page.url, title: page.title, at: Date.now() } });
-    await chrome.storage.session.set({ [SHARED_KEY]: href });
-  } else await Promise.all([chrome.storage.local.remove(SHARED_KEY), chrome.storage.session.remove(SHARED_KEY)]);
+  if (!page) await keepShared(null, "");
   return { ok: true };
+}
+const SHARED_ALARM = "polycarp-shared";
+async function keepShared(shared, href) {
+  if (!shared) {
+    chrome.alarms.clear(SHARED_ALARM);
+    await Promise.all([chrome.storage.local.remove(SHARED_KEY), chrome.storage.session.remove(SHARED_KEY)]);
+    return;
+  }
+  await chrome.storage.local.set({ [SHARED_KEY]: shared });
+  await chrome.storage.session.set({ [SHARED_KEY]: href });
+  chrome.alarms.create(SHARED_ALARM, { when: shared.at + 3600e3 });
 }
 
 // ---------- Menus ----------
@@ -442,6 +454,7 @@ async function refreshBadge() {
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "polycarp-badge") refreshBadge();
   else if (a.name === "polycarp-resume") resume();
+  else if (a.name === SHARED_ALARM) keepShared(null, "");
   else if (globalThis.PolycarpNAS && a.name === globalThis.PolycarpNAS.ALARM) globalThis.PolycarpNAS.onAlarm(a).catch(() => {});
 });
 

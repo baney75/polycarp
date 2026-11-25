@@ -229,14 +229,20 @@ try {
       + '<section id="apart"><div id="north"><b>North</b></div><div id="south"><b>South</b></div><div id="west"><b>West</b></div></section>'
       + '<div style="display:contents"><p id="inside">Held</p></div><form id="ask"><input name="children"><p id="asked">Asked</p></form>'
       + '<p id="shut" style="height:0;overflow:hidden">unseen</p><p id="off" style="position:absolute;left:-9999px">unseen</p><p id="sr" style="position:absolute;width:1px;height:1px;overflow:hidden">unseen</p>'
+      + '<header id="bare" style="position:absolute;top:0;left:0"><nav id="pinned" style="position:fixed;top:0">Pinned</nav></header>'
+      + '<div id="pane" style="height:60px;overflow:auto"><h2 id="past">Past</h2><div style="height:4000px"></div></div>'
+      + '<aside id="drawer" style="position:fixed;top:0;right:0;width:200px;height:50px;transform:translateX(100%)">unseen</aside>'
+      + '<section id="plain"><div><b id="p1">First</b></div><div><b id="p2">Second</b></div><div><b id="p3">Third</b></div></section>'
       + '<div><textarea id="mirrored"></textarea><div id="drawn">typed mirror</div></div>');
     document.querySelector('#mirrored').value = 'typed mirror';
+    document.querySelector('#pane').scrollTop = 3000;
     document.querySelector('#name').value = 'typed name';
   });
   await share({ ok: false, error: 'there is no request called sharePage' });
   ok(/Update Polycarp/.test(await note2()) && !(await pop.isVisible('#shareStop')), `share: an older app says to update (${await note2()})`);
   await share(undefined);
-  ok(/didn't answer/.test(await note2()), `share: no answer is said (${await note2()})`);
+  ok(/didn't answer/.test(await note2()) && await pop.isVisible('#shareStop'), `share: no answer is said, and can be stopped, since the app may have taken it (${await note2()})`);
+  ok(await sw.evaluate(async () => { const a = await chrome.alarms.get('polycarp-shared'); return !!a && Math.abs(a.scheduledTime - Date.now() - 3600e3) < 60e3; }), 'share: what the browser keeps of it goes after the hour');
   const got = (await share({ ok: true })).page, all = JSON.stringify(got), part = (at) => got.parts.find((x) => x.at === at);
   ok(got.url === 'https://shop.test/a' && got.title === 'Shop', `share: the address without its query (${got.url})`);
   ok(!/typed|my words|my draft|mine|unseen|secret|polycarp-/.test(all), 'share: nothing typed, hidden or in the query is sent');
@@ -245,6 +251,7 @@ try {
   ok(await page.evaluate((list) => list.every((x) => document.querySelectorAll(x.at).length === (x.count || 1)), got.parts), 'share: every selector finds what it says');
   ok(got.parts.every((x) => x.at.length <= 500 && x.is.length <= 30 && (x.words || '').length <= 160) && part('#odd').words.length === 159 && !/[\uD800-\uDFFF]$/.test(part('#odd').words.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')), 'share: within what the app takes, cut between characters');
   ok(['north', 'south', 'west', 'inside', 'asked'].every((id) => /^(North|South|West|Held|Asked)$/.test((got.parts.find((x) => x.at.includes('#' + id)) || {}).words)), `share: parts with names of their own, in a wrapper with no box and in a form with a field named children (${all})`);
+  ok(['pinned', 'past', 'p1', 'p2', 'p3'].every((id) => part('#' + id)), `share: parts held by a wrapper with no size, scrolled past in a pane, and in plain neighbours (${all})`);
   ok(got.edits.length === 1 && got.edits[0].id === 'shop' && got.edits[0].hits.length === EDIT.changes.length && got.edits[0].hits[1] === 1, `share: what the agent's edit matched here (${JSON.stringify(got.edits)})`);
   ok(/^Shared until .*this page$/.test(await note2()) && (await pop.textContent('#shareGo')) === 'Share again', `share: says until when (${await note2()})`);
   await pop.screenshot({ path: path.join(here, 'out', 'edits-popup.png') });

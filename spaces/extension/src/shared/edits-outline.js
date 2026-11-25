@@ -19,8 +19,18 @@
     const s = getComputedStyle(el);
     if (hollow(s)) return true;
     if (!el.getClientRects().length || !el.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return false;
-    const b = el.getBoundingClientRect(), shut = /hidden|clip/.test(s.overflow) && (b.width <= 1 || b.height <= 1);
-    return !shut && b.right + scrollX > 0 && b.bottom + scrollY > 0; // drawn, but shut or off the page, where no one sees it
+    const b = el.getBoundingClientRect(), shut = /hidden|clip/.test(s.overflow), flat = !b.width || !b.height;
+    if (shut && (b.width <= 1 || b.height <= 1)) return false;
+    if (flat && !holds(el)) return true; // no size of its own, though what is in it may have some: each part says for itself
+    if (s.position === "fixed") return b.right > 0 && b.bottom > 0 && b.left < innerWidth && b.top < innerHeight;
+    // Off the page, where scrolling never brings it.
+    let right = b.right, bottom = b.bottom;
+    if (right > 0 && bottom > 0) return true;
+    for (let up = el.parentElement; up && getComputedStyle(up).position !== "fixed"; up = up.parentElement) {
+      right += up.scrollLeft;
+      bottom += up.scrollTop;
+    }
+    return right > 0 && bottom > 0;
   }
   // Parts with a name of their own aren't alike. One with digits is likely a number in a list.
   const own = (el) => (el.id && !/\d/.test(el.id) ? "#" + el.id : "") + (el.matches("section,nav,aside,form") ? el.getAttribute("aria-label") || "" : "");
@@ -71,7 +81,7 @@
         if (shown.has(kind) && el.matches(shown.get(kind))) continue; // the first of them stands for the rest
         queue.push(el);
         if (hollow(getComputedStyle(el))) continue;
-        const like = alike.get(kind) >= ALIKE ? K.like(el) : "";
+        const like = alike.get(kind) >= ALIKE && (el.classList.length || !/^(div|section|article|aside|nav|form)$/.test(el.localName)) ? K.like(el) : "";
         if (like) shown.set(kind, like);
         else if (!el.matches(NAMED) && !holds(el)) continue;
         const at = like || K.one(el);
