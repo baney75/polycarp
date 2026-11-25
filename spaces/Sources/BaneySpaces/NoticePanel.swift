@@ -1,88 +1,6 @@
 import AppKit
 import BaneySpacesCore
-import Combine
 import SwiftUI
-
-/// The list the bar's `notifications` module opens, under the bar at the right. It takes the keyboard without bringing
-/// Polycarp forward, and goes on Esc, a click elsewhere or a second click on the bell. Main thread only.
-final class NoticePanel: NSObject, NSWindowDelegate {
-    private final class Panel: NSPanel {
-        override var canBecomeKey: Bool { true }
-        override func cancelOperation(_ sender: Any?) { orderOut(nil) }
-    }
-
-    private let watcher: NoticeWatcher
-    private var panel: Panel?
-    private var corner = NSPoint.zero
-    private var room: CGFloat = 0
-    private var screen: CGDirectDisplayID?
-    private var closedOn: CGDirectDisplayID?
-    private var sizing: AnyCancellable?
-    private var clicks: Any?
-
-    init(_ watcher: NoticeWatcher) { self.watcher = watcher }
-
-    /// Shows it with its right edge near `x`, or hides it. The bell acts as the button comes up: when that press already
-    /// closed the list on this screen as it went down, it is done.
-    func toggle(on screen: NSScreen, x: CGFloat, below: CGFloat) {
-        if panel?.isVisible == true { panel?.orderOut(nil); return }
-        if let closedOn, closedOn == screen.displayID, NSApp.currentEvent?.type == .leftMouseUp { return }
-        let p = panel ?? make()
-        panel = p
-        self.screen = screen.displayID
-        corner = NSPoint(x: min(max(x, screen.visibleFrame.minX + NoticeList.width + 8), screen.visibleFrame.maxX - 8), y: below - 6)
-        room = min(620, corner.y - screen.visibleFrame.minY - 16)
-        let host = NSHostingView(rootView: NoticeList(watcher: watcher, room: room) { [weak p] in p?.orderOut(nil) })
-        p.contentView = host
-        fit()
-        // The list changes size as notices come and go; its top right corner stays.
-        sizing = watcher.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.fit() } }
-        // A press on Polycarp's own bar doesn't take the keyboard from the panel, so it is watched for.
-        clicks = clicks ?? NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] e in
-            guard let self else { return e }
-            let closes = self.panel?.isVisible == true && e.window !== self.panel
-            self.closedOn = closes ? self.screen : nil
-            if closes { self.panel?.orderOut(nil) }
-            return e
-        }
-        p.alphaValue = 0
-        p.makeKeyAndOrderFront(nil)
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = Chrome.duration(0.12, .panelIn)
-            p.animator().alphaValue = 1
-        }
-    }
-
-    func hide() { panel?.orderOut(nil) }
-
-    private func fit() {
-        guard let p = panel, let host = p.contentView else { return }
-        host.layoutSubtreeIfNeeded()
-        let size = host.fittingSize
-        p.setFrame(NSRect(x: corner.x - size.width, y: corner.y - size.height, width: size.width, height: size.height), display: true)
-    }
-
-    func windowDidResignKey(_ notification: Notification) {
-        panel?.orderOut(nil)
-        // Seen once closed, so what was new stays marked while you look at it.
-        watcher.see()
-        sizing = nil
-    }
-
-    private func make() -> Panel {
-        let p = Panel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        p.isOpaque = false
-        p.backgroundColor = .clear
-        p.hasShadow = false
-        p.level = .statusBar
-        p.hidesOnDeactivate = false
-        p.isReleasedWhenClosed = false
-        p.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle, .fullScreenAuxiliary]
-        p.delegate = self
-        p.setAccessibilityLabel("Notifications")
-        return p
-    }
-}
 
 /// Notifications by app, newest first, in the theme's panel.
 struct NoticeList: View {
@@ -117,7 +35,7 @@ struct NoticeList: View {
         HStack(spacing: 8) {
             Text("Notifications").font(Chrome.font(14, .semibold)).foregroundStyle(Chrome.wash())
             Spacer(minLength: 8)
-            if !groups.isEmpty { NoticeButton("Clear all") { watcher.clearAll() } }
+            if !groups.isEmpty { BarPanelButton("Clear all") { watcher.clearAll() } }
         }
         .padding(.leading, 16).padding(.trailing, 10).padding(.top, 12).padding(.bottom, 8)
     }
@@ -146,11 +64,11 @@ struct NoticeList: View {
             Text(g.app).font(Chrome.font(12, .semibold)).foregroundStyle(Chrome.wash(0.8)).lineLimit(1)
             Spacer(minLength: 8)
             if g.notices.allSatisfy(\.named) {
-                NoticeButton(symbol: isQuiet ? "bell.slash.fill" : "bell.slash", isQuiet ? "Show \(g.app)'s banners again" : "Keep \(g.app) quiet") {
+                BarPanelButton(symbol: isQuiet ? "bell.slash.fill" : "bell.slash", isQuiet ? "Show \(g.app)'s banners again" : "Keep \(g.app) quiet") {
                     watcher.setQuiet(g.id, name: g.app, !isQuiet)
                 }
             }
-            NoticeButton(symbol: "xmark", "Clear \(g.app)") { watcher.clear(g) }
+            BarPanelButton(symbol: "xmark", "Clear \(g.app)") { watcher.clear(g) }
         }
         .padding(.leading, 8)
     }
@@ -176,7 +94,7 @@ struct NoticeList: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 2) {
                             ForEach(watcher.quiet.sorted { $0.value < $1.value }, id: \.key) { key, name in
-                                NoticeButton(name, help: "Show \(name)'s banners again") { watcher.setQuiet(key, name: name, false) }
+                                BarPanelButton(name, help: "Show \(name)'s banners again") { watcher.setQuiet(key, name: name, false) }
                             }
                         }
                     }
@@ -184,9 +102,9 @@ struct NoticeList: View {
                 .padding(.horizontal, 16)
             }
             HStack(spacing: 2) {
-                NoticeButton("Notification Center") { close(); watcher.openCenter() }
+                BarPanelButton("Notification Center") { close(); watcher.openCenter() }
                 Spacer(minLength: 8)
-                NoticeButton("Settings") { close(); watcher.openSettings() }
+                BarPanelButton("Settings") { close(); watcher.openSettings() }
             }
             .padding(.horizontal, 10).padding(.bottom, 8)
         }
@@ -226,14 +144,14 @@ private struct NoticeRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel([notice.seen ? "" : "New", b.app, b.title, b.subtitle, b.body, when].filter { !$0.isEmpty }.joined(separator: ", "))
             .accessibilityAction(named: "Dismiss", dismiss)
-            NoticeButton(symbol: "xmark", "Dismiss", action: dismiss).opacity(over ? 1 : 0).padding(3)
+            BarPanelButton(symbol: "xmark", "Dismiss", action: dismiss).opacity(over ? 1 : 0).padding(3)
         }
         .onHover { over = $0 }
     }
 }
 
-/// A quiet text or symbol button, lit under the pointer.
-private struct NoticeButton: View {
+/// A quiet text or symbol button of a bar panel, lit under the pointer.
+struct BarPanelButton: View {
     let symbol: String?
     let label: String
     let help: String

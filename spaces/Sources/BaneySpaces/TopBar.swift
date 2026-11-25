@@ -16,7 +16,9 @@ final class TopBar {
     let model = TopBarModel()
     private let spaces: Spaces
     private let notices = NoticeWatcher()
-    private lazy var noticePanel = NoticePanel(notices)
+    private let noticePanel = BarPanel("Notifications", anchor: .right, width: NoticeList.width)
+    private let calendarPanel = BarPanel("Calendar", anchor: .middle, width: BarCalendar.width)
+    private let calendar = CalendarModel()
     private var noticeCount: AnyCancellable?
     private var panels: [CGDirectDisplayID: NSPanel] = [:]
     private var tick: Timer?
@@ -52,10 +54,28 @@ final class TopBar {
             guard let self, self.statusElements.indices.contains(i) else { return }
             BarReader.press(self.statusElements[i])
         }
-        model.onNotices = { [weak self] screen in
+        model.onNotices = { [weak self] screen, x in
             guard let self, let bar = screen.displayID.flatMap({ self.panels[$0] }) else { return }
-            self.noticePanel.toggle(on: screen, x: NSEvent.mouseLocation.x + 24, below: bar.frame.minY)
+            self.noticePanel.toggle(on: screen, x: x + 24, below: bar.frame.minY,
+                                    changes: self.notices.objectWillChange.map { _ in }.eraseToAnyPublisher()) { room, close in
+                NoticeList(watcher: self.notices, room: room, close: close)
+            }
         }
+        // Seen once closed, so what was new stays marked while you look at it.
+        noticePanel.onShow = { [weak self] in
+            if $0 == nil { self?.notices.see() }
+            self?.model.opened(.notifications, on: $0)
+        }
+        model.onCalendar = { [weak self] screen, x in
+            guard let self, let bar = screen.displayID.flatMap({ self.panels[$0] }) else { return }
+            self.calendar.open()
+            self.calendarPanel.toggle(on: screen, x: x, below: bar.frame.minY,
+                                      changes: self.calendar.objectWillChange.map { _ in }.eraseToAnyPublisher()) { _, close in
+                BarCalendar(model: self.calendar, close: close)
+            }
+        }
+        calendarPanel.onKey = { [weak self] in self?.calendar.key($0) ?? false }
+        calendarPanel.onShow = { [weak self] in self?.model.opened(.clock, on: $0) }
         noticeCount = notices.$shelf.map(\.count).removeDuplicates().sink { [weak self] in self?.model.notices = $0 }
     }
 
@@ -166,6 +186,7 @@ final class TopBar {
         readStatus()
         notices.set(on: wants(.notifications))
         if !wants(.notifications) { noticePanel.hide() }
+        if !wants(.clock), !wants(.date) { calendarPanel.hide() }
         refreshTime()
     }
 
@@ -211,6 +232,7 @@ final class TopBar {
         menuPid = 0
         show(BarReader.Menus())
         noticePanel.hide()
+        calendarPanel.hide()
         notices.set(on: false)
     }
 
@@ -361,6 +383,11 @@ final class TopBarModel: ObservableObject {
     @Published var charge: Charge?
     /// The status row's drawer was clicked open, so it stays open with the pointer away.
     @Published var trayHeld = false
+    /// The panel open under the bar (the bell's list, the clock's calendar), and the screen it is on.
+    @Published private(set) var open: (module: Surfaces.BarModule, display: CGDirectDisplayID)?
+    func opened(_ module: Surfaces.BarModule, on display: CGDirectDisplayID?) {
+        if let display { open = (module, display) } else if open?.module == module { open = nil }
+    }
     /// How many notifications are new, as the bell shows it (`NoticeShelf.count`).
     @Published var notices = ""
 
@@ -377,8 +404,10 @@ final class TopBarModel: ObservableObject {
     var onMark: () -> Void = {}
     /// Presses the status item at an index of `status`.
     var onStatus: (Int) -> Void = { _ in }
-    /// Opens the list of notifications, or closes it.
-    var onNotices: (NSScreen) -> Void = { _ in }
+    /// Opens the list of notifications near a place across the screen, or closes it.
+    var onNotices: (NSScreen, CGFloat) -> Void = { _, _ in }
+    /// Opens the calendar there, or closes it.
+    var onCalendar: (NSScreen, CGFloat) -> Void = { _, _ in }
 }
 
 /// One screen's bar. `sides` is the width beside the notch on each side, or nil on a screen without one.
@@ -545,6 +574,14 @@ struct TopBarView: View {
         }
     }
 
+    private func isOpen(_ m: Surfaces.BarModule) -> Bool { model.open?.module == m && model.open?.display == display }
+
+    /// The clock and the date, which open the calendar.
+    private func calendar(_ label: String, @ViewBuilder content: () -> some View) -> some View {
+        BarButton(width: 0, inset: CGFloat(BarGeometry.textInset), held: isOpen(.clock), label: label, help: "Calendar",
+                  under: { model.onCalendar(screen, $0) }, content: content)
+    }
+
     private func words(_ text: String, _ s: ComputedStyle, _ weight: TextWeight = .regular) -> Text { BarWords.text(text, s, weight) }
 
     @ViewBuilder private func module(_ m: Surfaces.BarModule, _ s: ComputedStyle, _ region: StyleBook.Region, room: Double) -> some View {
@@ -560,9 +597,11 @@ struct TopBarView: View {
         case .hour:
             words(BarText.hour(model.now, names: model.bar.hourNames), s).foregroundStyle(quiet).modifier(BarInset())
         case .clock:
-            ClockFace(now: model.now, format: model.bar.clockFormat, style: s).modifier(BarInset())
+            calendar(BarText.clock(model.now, format: model.bar.clockFormat)) {
+                ClockFace(now: model.now, format: model.bar.clockFormat, style: s)
+            }
         case .date:
-            words(BarText.date(model.now), s).foregroundStyle(quiet).modifier(BarInset())
+            calendar(BarText.date(model.now)) { words(BarText.date(model.now), s).foregroundStyle(quiet) }
         case .verse:
             if let v = model.verse {
                 HStack(spacing: 8) {
@@ -590,9 +629,9 @@ struct TopBarView: View {
         case .status:
             StatusRow(model: model, style: s, room: room)
         case .notifications:
-            BarButton(inset: model.notices.isEmpty ? 0 : CGFloat(BarGeometry.textInset),
+            BarButton(inset: model.notices.isEmpty ? 0 : CGFloat(BarGeometry.textInset), held: isOpen(.notifications),
                       label: model.notices.isEmpty ? "Notifications" : "Notifications, \(model.notices) new", help: "Notifications",
-                      action: { model.onNotices(screen) }) {
+                      under: { model.onNotices(screen, $0) }) {
                 HStack(spacing: 4) {
                     BarSymbol(name: model.notices.isEmpty ? "bell" : "bell.fill")
                     if !model.notices.isEmpty { words(model.notices, s, .semibold).monospacedDigit() }

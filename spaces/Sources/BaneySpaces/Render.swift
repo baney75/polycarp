@@ -218,6 +218,7 @@ enum Render {
             shelf.take(NoticeReader.read([node]), at: topBar.now)
         }
         notices.sample(shelf, quiet: ["com.apple.Music": "Music"])
+        guard save(BarCalendar(model: CalendarModel(now: topBar.now)) {}.padding(20), "calendar.png", CGSize(width: 316, height: 0)) else { return 1 }
         guard save(NoticeList(watcher: notices, room: 620) {}.padding(20), "notices.png", CGSize(width: 412, height: 0)) else { return 1 }
         notices.sample(NoticeShelf())
         guard save(NoticeList(watcher: notices, room: 620, trusted: true) {}.padding(20), "notices-empty.png", CGSize(width: 412, height: 0)) else { return 1 }
