@@ -82,9 +82,12 @@ enum LauncherTiming {
     private static func actions(_ spaces: Spaces, _ pids: @escaping (Int) -> [pid_t]) -> LauncherActions {
         var a = LauncherActions()
         a.willShow = { _ = NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
-        a.workspacesByApp = {
-            spaces.refresh()
-            return RunningApps.workspacesByPath(pids)
+        a.workspacesByApp = { RunningApps.workspacesByPath(pids) }
+        a.lookAgain = { done in
+            RunningApps.prepare {
+                spaces.refresh()
+                done()
+            }
         }
         a.restingApps = { done in
             RunningApps.prepare {

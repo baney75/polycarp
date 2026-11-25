@@ -104,6 +104,41 @@ final class MainThreadScanTests: XCTestCase {
         XCTAssertTrue(prep.contains("DispatchQueue.main.async(execute: then)"), "a fresh read still answers after the open draws")
     }
 
+    /// 2026-11-25: an open took 57 ms, 31 of them asking macOS whether Contacts access is on, 8 walking every running app for
+    /// its path and 5 reading the window list. None of the three may hold the open: it draws from the last answers, and new
+    /// ones join a moment later with the row you're on kept.
+    func testTheOpenDrawsFromTheLastAnswersAndCatchesUpAfter() throws {
+        let l = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        let prepare = try XCTUnwrap(SourceText.block(after: "func prepare(scope: Scope)", in: l))
+        for call in ["runningApplications", "bundleURL", "refreshAccess(", "RunningApps.facts("] {
+            XCTAssertFalse(prepare.contains(call), "the open waits on \(call)")
+        }
+        let draw = try XCTUnwrap(prepare.range(of: "rebuild()")), again = try XCTUnwrap(prepare.range(of: "actions.lookAgain {"))
+        XCTAssertLessThan(draw.lowerBound, again.lowerBound, "the launcher draws before it looks again")
+        let answer = try XCTUnwrap(SourceText.block(after: "actions.lookAgain ", in: prepare))
+        XCTAssertTrue(answer.contains("ask == self.restingAsk"), "an answer for an earlier open is dropped")
+        XCTAssertTrue(answer.contains("self.catchUp()") && answer.contains("rebuildKeepingSelection()"))
+        let resting = try XCTUnwrap(SourceText.block(after: "actions.restingApps ", in: prepare))
+        XCTAssertTrue(resting.contains("self.catchUp()"), "a scan that landed after the open doesn't show")
+        let run = try XCTUnwrap(SourceText.block(after: "private func runningApp(", in: l))
+        XCTAssertTrue(run.contains("app.bundleURL?.path == a.path"), "a pid from an earlier read can be another app's by now")
+        XCTAssertTrue(run.contains("NSWorkspace.shared.runningApplications.first"), "Return on an app the last read missed still finds it")
+
+        let d = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
+        let byApp = try XCTUnwrap(SourceText.block(after: "a.workspacesByApp =", in: d))
+        XCTAssertFalse(byApp.contains("refresh()"), "the open reads the window list on main")
+        let look = try XCTUnwrap(SourceText.block(after: "a.lookAgain =", in: d))
+        let off = try XCTUnwrap(look.range(of: "RunningApps.prepare {")), refresh = try XCTUnwrap(look.range(of: "spaces.refresh()"))
+        XCTAssertLessThan(off.lowerBound, refresh.lowerBound, "the window list is read before the open has drawn")
+
+        let c = try SourceText.code("Sources/BaneySpaces/ContactsLibrary.swift")
+        let opened = try XCTUnwrap(SourceText.block(after: "func launcherOpened()", in: c))
+        let queued = try XCTUnwrap(SourceText.block(after: "accessQueue.async", in: opened), "Contacts access is read on main")
+        XCTAssertEqual(count("state", in: opened), count("state", in: queued), "Contacts access is read on main")
+        XCTAssertTrue(queued.contains("look == self.looks"), "an older answer lands over a newer one")
+        XCTAssertFalse(opened.contains("refreshAccess("))
+    }
+
     /// The app list is read from disk off the main thread, and a key press compares precomputed keys.
     func testTheAppListIsAnIndexBuiltOffMain() throws {
         let s = try SourceText.code("Sources/BaneySpaces/Launcher.swift")

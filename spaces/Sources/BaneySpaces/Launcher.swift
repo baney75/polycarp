@@ -195,8 +195,11 @@ struct LauncherActions {
     var current: () -> Int = { 1 }
     var switchTo: (Int) -> Void = { _ in }
     var appsOn: (Int) -> [String] = { _ in [] }
-    /// Workspaces each running app (by bundle path) has windows on.
+    /// Workspaces each running app (by bundle path) has windows on, as Polycarp last knew them: it reads nothing.
     var workspacesByApp: () -> [String: [Int]] = { [:] }
+    /// Brings what the open drew from up to date (the running apps, the windows that are gone) and says when: the running
+    /// apps are read off the main thread, so the open draws first.
+    var lookAgain: (@escaping () -> Void) -> Void = { $0() }
     var showOverview: () -> Void = {}
     var bringBack: () -> Void = {}
     /// Apps running with no window to see (`BackgroundApps`), read once when the launcher opens. The answer comes
@@ -431,7 +434,8 @@ final class LauncherModel: ObservableObject {
     /// Every app, with its search key folded once, so a keystroke scores names without folding them again.
     private var apps: [AppEntry] = []
     private var running: [String: [Int]] = [:]
-    /// Running apps by bundle path, read when the launcher opens, so rows don't walk the running apps on every keystroke.
+    /// Running apps by bundle path, so rows don't walk them on every keystroke: the last read's when the launcher opens, and
+    /// a new read's a moment later (`catchUp`).
     private var runningPids: [String: pid_t] = [:]
     /// Apps running with no window to see, read when the launcher opens (`LauncherActions.restingApps`).
     private var resting: [BackgroundApps.Entry] = []
@@ -467,6 +471,8 @@ final class LauncherModel: ObservableObject {
 
     init(actions: LauncherActions) {
         self.actions = actions
+        // The first open draws from a read of the running apps, as every later one does.
+        RunningApps.prepare {}
         // The disk scan runs off the main thread; `prepare` keeps the list fresh after that.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let fresh = AppEntry.scan()
@@ -510,18 +516,14 @@ final class LauncherModel: ObservableObject {
         selected = 0
         pendingReturn = nil
         running = actions.workspacesByApp()
-        runningPids = [:]
-        for app in NSWorkspace.shared.runningApplications {
-            guard let path = app.bundleURL?.path, runningPids[path] == nil else { continue }
-            runningPids[path] = app.processIdentifier
-        }
+        runningPids = RunningApps.byPath
         resting = []
         quitting = []
         restingAsk += 1
         storeResults = []
         fileResults = []
         bangs = Launcher.loadBangs()
-        // Contacts access turned on or off in System Settings counts at once. It reads macOS's answer; it never asks.
+        // Contacts access turned on or off in System Settings counts a moment later. It reads macOS's answer; it never asks.
         ContactsLibrary.shared.launcherOpened()
         // The BES root and its Inbox count, read once here so a keystroke never touches the disk for them.
         RoomsProvider.shared.refresh()
@@ -529,8 +531,15 @@ final class LauncherModel: ObservableObject {
         // The "Running, no window" rows join once the running apps are read off the main thread, as files and agents do.
         // Asked in every scope, since Esc goes back to the root from any of them.
         let ask = restingAsk
+        actions.lookAgain { [weak self] in
+            guard let self, ask == self.restingAsk, self.catchUp() else { return }
+            self.rebuildKeepingSelection()
+        }
         actions.restingApps { [weak self] list in
-            guard let self, ask == self.restingAsk, !list.isEmpty else { return }
+            guard let self, ask == self.restingAsk else { return }
+            // A scan may have landed since: its windows count too.
+            let moved = self.catchUp()
+            guard moved || !list.isEmpty else { return }
             self.resting = list
             self.rebuildKeepingSelection()
         }
@@ -542,6 +551,15 @@ final class LauncherModel: ObservableObject {
             self.rebuild()
         }
         if scope == .install || scope == .remove { loadCatalog() }
+    }
+
+    /// Takes where the running apps are now; whether that changed.
+    private func catchUp() -> Bool {
+        let on = actions.workspacesByApp(), pids = RunningApps.byPath
+        guard on != running || pids != runningPids else { return false }
+        running = on
+        runningPids = pids
+        return true
     }
 
     func enter(_ s: Scope) {
@@ -956,7 +974,9 @@ final class LauncherModel: ObservableObject {
     }
 
     private func runningApp(_ a: AppEntry) -> NSRunningApplication? {
-        if let pid = runningPids[a.path], let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated { return app }
+        // The pid may be from a read before this open: it counts only while it is still this app's.
+        if let pid = runningPids[a.path], let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated,
+           app.bundleURL?.path == a.path { return app }
         return NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == a.path }
     }
 
