@@ -223,6 +223,13 @@ extension Look {
         theme == .baneyspaces ? (tint, shipped) : (color("selection"), 1)
     }
 
+    /// The role a selected row draws `role` text in: that role where it reads on the row's fill, else `foreground`, the
+    /// one role a theme is checked for there. `urgent` on `selection` is as low as 3.7 in a shipped theme.
+    public func roleOnSelection(_ role: String) -> String {
+        guard theme != .baneyspaces else { return role }
+        return color(role).contrast(with: color("selection")) >= PolycarpTheme.minContrast ? role : "foreground"
+    }
+
     /// The overview's tile, and the one a window is dropping on.
     public func tileFill(target: Bool) -> RGB {
         isShipped ? gray(target ? 0.19 : 0.13) : color(target ? "selection" : "surface")
