@@ -171,6 +171,37 @@ final class TilingSavedTests: XCTestCase {
         XCTAssertFalse(g.engine.wanted(on: [1]))
     }
 
+    /// Turned off, then restarted again before the windows turned up: the frames are still owed.
+    func testTurnedOffAndRestartedTwiceFramesStillComeBack() {
+        let f = three()
+        var g = restart(f)
+        g.engine.apply(TilingOptions())
+        g.look()
+        XCTAssertTrue(g.engine.slots.isEmpty, "no layout holds them now")
+        var h = restart(g)
+        h.engine.claim(titles.map { live($0.key, $0.value) })
+        h.rest()
+        XCTAssertEqual(h.wins.mapValues(\.w.frame), f.engine.before)
+        XCTAssertFalse(h.engine.awaits)
+    }
+
+    /// A window floated by choice and away across two restarts still floats when it comes back.
+    func testAFloatedWindowAwayAcrossTwoRestartsStillFloats() {
+        var f = three()
+        f.engine.choice[2] = true
+        f.rest()
+        var g = restart(f)
+        g.wins[2] = nil
+        g.engine.claim([live(1, "Notes"), live(3, "Draft")])
+        g.rest()
+        var h = restart(g)
+        h.wins[2] = f.wins[2]
+        h.engine.claim(titles.map { live($0.key, $0.value) })
+        h.rest()
+        XCTAssertEqual(h.engine.choice[2], true)
+        XCTAssertFalse(h.engine.slots.values.contains { $0.layout.windows.contains(2) }, "it isn't tiled")
+    }
+
     /// With nothing owed and no place kept, a saved window isn't waited for.
     func testTurnedOffNothingElseIsWaitedFor() {
         var g = restart(three())

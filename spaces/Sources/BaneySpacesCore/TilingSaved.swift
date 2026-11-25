@@ -67,7 +67,8 @@ extension TilingEngine {
             for id in s.layout.windows where know(id) == nil { s.layout.remove(id, area: s.area) }
             if !s.layout.windows.isEmpty { out.slots.append(.init(key: key, layout: s.layout, focused: s.focused)) }
         }
-        for id in Set(before.keys).union(choice.keys) { _ = know(id) }
+        // A saved window still away is kept too, in a layout or not: one owed a frame or a float waits for the next run.
+        for id in Set(before.keys).union(choice.keys).union(waiting.keys) { _ = know(id) }
         out.windows = known.sorted { $0.key < $1.key }.map { id, r in
             var r = r
             r.window = id
