@@ -123,6 +123,9 @@ unsigned length, then that many bytes of UTF-8 JSON, on stdin and on stdout. A r
   into `browser.css`. The example is shortened; `shared` has all 19 names and each mode all 13 colors, exactly the names in
   `extension/src/shared/theme.css`. `mode` is `auto`, or `light` or `dark` for a theme that is always that one.
 - `stamp` changes when a value does, and only then.
+- The extension checks every value again and builds its own stylesheet (`extension/src/shared/core.js`); its pages draw it
+  before their first paint from the last one kept, and ask on opening and on coming back into view
+  (`extension/src/shared/theme-live.js`). The service worker asks with the filters, every 30 seconds.
 - No theme file, a file that is a symbolic link, one over 256 KB, and one the app would refuse (spec/themes.md, Reading) all
   leave both keys out. `ok` stays true.
 

@@ -1,6 +1,6 @@
 # Polycarp
 
-Polycarp's browser extension makes any page easier to read and helps you remember what you read. It works on its own in Helium, Chrome and other Chromium browsers, with or without the Polycarp app. When Polycarp is installed on the same computer, the extension also joins it: the new tab (`newtab/`, see `../docs/newtab.md`) gets the day's verse and Polycarp's search settings, and the extension updates with the app. It takes every color, face, radius and duration from the Polycarp theme (`src/shared/theme.css`, written by `polycarp theme export css polycarp --surface browser`).
+Polycarp's browser extension makes any page easier to read and helps you remember what you read. It works on its own in Helium, Chrome and other Chromium browsers, with or without the Polycarp app. When Polycarp is installed on the same computer, the extension also joins it: the new tab (`newtab/`, see `../docs/newtab.md`) gets the day's verse and Polycarp's search settings, and the extension updates with the app. It takes every color, face, radius and duration from the Polycarp theme (`src/shared/theme.css`, written by `polycarp theme export css polycarp --surface browser`). With the app, the theme in force goes over it: `src/shared/core.js` checks the values the app sends and builds the rules, and `src/shared/theme-live.js` draws them on every page.
 
 - **Read:** bold word anchors, reading fonts (Lexend, Atkinson Hyperlegible, OpenDyslexic), spacing, tints and a focus ruler on every site.
 - **Reader:** web pages, PDF, EPUB, DOCX, Markdown, HTML, FB2 and text in a clean reader, with read-aloud and word highlighting, sprint mode and printing.
@@ -67,6 +67,7 @@ node tests/store.spec.mjs        # the Chrome Web Store copy: no key, no new tab
 node tests/sites.spec.mjs        # YouTube, X, Audible and feed fixtures, finder and pause
 node tests/filters.spec.mjs      # feed filters on X, YouTube, Reddit and Mastodon fixtures
 node tests/filters-sync.spec.mjs # filters from the Polycarp app through a fake native host, and Settings
+node tests/theme-live.spec.mjs   # the person's Polycarp theme on every page, through a fake native host
 node tests/sources.spec.mjs      # Search sources against saved fixtures
 node tests/nas.spec.mjs          # NAS against a local WebDAV fake
 node tests/contact.mjs [piece]   # screenshots of every surface to tests/out/contact

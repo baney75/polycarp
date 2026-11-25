@@ -50,7 +50,13 @@
 	try { render(JSON.parse(localStorage.getItem(cacheKey) || "null")); } catch (e) { /* a private window: no cache */ }
 
 	ask({ op: "page" }).then(function (p) {
-		if (!p || !p.ok) return;
+		if (!p || !p.ok) {
+			Polycarp.askTheme().catch(function () { /* the theme it has stays */ });
+			return;
+		}
+		Polycarp.keepTheme(p).catch(function () { /* the theme it has stays */ });
+		delete p.theme;
+		delete p.stamp;
 		p = PolycarpPaper.took(p);
 		render(p);
 		try { localStorage.setItem(cacheKey, JSON.stringify(p)); } catch (e) { /* no cache, still fine */ }
