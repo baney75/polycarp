@@ -1,3 +1,4 @@
+import CoreText
 import Foundation
 
 // A Polycarp theme (`polycarp theme set ...`) as BaneySpaces reads it. The command writes
@@ -31,6 +32,8 @@ public struct PolycarpTheme: Equatable, Sendable {
     public let ui: String
     /// The monospace stack (`type.mono`), checked like `ui`. The built-in terminal draws with it (`GhosttyTheme`).
     public private(set) var mono = "ui-monospace, monospace"
+    /// The display stack (`type.display`), checked like `ui`. The idle screen's `theme` style draws its words with it.
+    public private(set) var display = "serif"
     public let fontSize: Double
     public let fontWeight: Double
     // motion
@@ -89,6 +92,28 @@ public struct PolycarpTheme: Equatable, Sendable {
         }
         if !out.contains(FontFace.systemMonospace) { out.append(FontFace.systemMonospace) }
         return out
+    }
+
+    /// The font names to try, in order, for the display stack: its named fonts up to the first generic name. `serif` is
+    /// the system serif; any other generic name ends the list, and the system's own font draws when nothing before it is
+    /// installed.
+    public var displayFamilies: [String] {
+        var out: [String] = []
+        for name in PolycarpTheme.parseStack(display) ?? [] {
+            switch name.lowercased() {
+            case "serif", "ui-serif": return out + [FontFace.systemSerif]
+            case "monospace", "ui-monospace": return out + [FontFace.systemMonospace]
+            case "system-ui", "-apple-system", "blinkmacsystemfont", "ui-sans-serif", "sans-serif", "ui-rounded", "cursive", "fantasy": return out
+            default: if !out.contains(name) { out.append(name) }
+            }
+        }
+        return out
+    }
+
+    /// The display stack as one face: the system's own font when the stack asks for it or nothing in it is installed.
+    public func displayFace(_ size: Double) -> CTFont {
+        FontFace.resolve(families: displayFamilies, weight: .regular, size: size)
+            ?? CTFontCreateUIFontForLanguage(.system, CGFloat(size), nil)!
     }
 
     public func look(systemDark: Bool) -> Look {
@@ -269,7 +294,7 @@ public struct PolycarpTheme: Equatable, Sendable {
         guard let reduced = motion["reduced"] as? NSNumber, CFGetTypeID(reduced) == CFBooleanGetTypeID() else {
             throw PolycarpThemeError("reduced is missing or not true or false")
         }
-        _ = try stack(type, "display")
+        let display = try stack(type, "display")
         let mono = try stack(type, "mono")
         let name = printable(root["name"], limit: 48) ?? ""
         let title = printable(root["title"], limit: 48) ?? (name.isEmpty ? "Polycarp" : name)
@@ -284,6 +309,7 @@ public struct PolycarpTheme: Equatable, Sendable {
             fast: try number(motion, "fast", 0, 1000), normal: try number(motion, "normal", 0, 1000), slow: try number(motion, "slow", 0, 1000),
             scaleFrom: try number(motion, "scale_from", 0.5, 1), reduced: reduced.boolValue)
         built.mono = mono
+        built.display = display
         // The extension draws none of Spaces' own pairs.
         if checkContrast, surface == "spaces" { try built.checkDrawnPairs() }
         return built

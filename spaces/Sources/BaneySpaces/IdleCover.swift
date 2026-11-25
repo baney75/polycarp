@@ -232,9 +232,7 @@ private final class CoverWindow: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
-private func color(_ hex: UInt32, _ opacity: Double = 1) -> Color {
-    Color(.sRGB, red: Double(hex >> 16 & 0xFF) / 255, green: Double(hex >> 8 & 0xFF) / 255, blue: Double(hex & 0xFF) / 255, opacity: opacity)
-}
+private func color(_ c: RGB, _ opacity: Double = 1) -> Color { Color(nsColor: c.nsColor).opacity(opacity) }
 
 /// One screen of the idle screen. Sizes follow the screen's height, so it reads the same on a laptop and a large display.
 struct IdleView: View {
@@ -244,8 +242,16 @@ struct IdleView: View {
     let backdrop: CGImage?
     /// A fixed time for renders; nil follows the clock.
     var at: Date?
+    /// Taken once, when the cover comes up, so the sky and the words never draw in two looks.
+    private let colors: IdleScreen.Colors
 
-    private var moving: Bool { settings.effects && settings.style == .martyrNight && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && at == nil }
+    init(settings: Surfaces.Idle, machine: String, size: CGSize, backdrop: CGImage?, at: Date? = nil) {
+        (self.settings, self.machine, self.size, self.backdrop, self.at) = (settings, machine, size, backdrop, at)
+        colors = .of(settings.style, look: Chrome.look, overPicture: backdrop != nil)
+    }
+
+    private var embers: Bool { settings.effects && [.martyrNight, .theme].contains(settings.style) }
+    private var moving: Bool { embers && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && at == nil }
 
     var body: some View {
         ZStack {
@@ -260,21 +266,26 @@ struct IdleView: View {
 
     @ViewBuilder private var background: some View {
         if let backdrop {
-            Image(decorative: backdrop, scale: 1).resizable().scaledToFill().overlay(color(IdleScreen.Night.skyTop, 0.62))
+            Image(decorative: backdrop, scale: 1).resizable().scaledToFill().overlay(color(colors.skyTop, 0.62))
         } else if settings.style == .verse {
-            color(IdleScreen.Night.skyTop)
+            color(colors.skyTop)
         } else {
             ZStack {
-                LinearGradient(colors: [color(IdleScreen.Night.skyTop), color(IdleScreen.Night.skyFoot)], startPoint: .top, endPoint: .bottom)
+                LinearGradient(colors: [color(colors.skyTop), color(colors.skyFoot)], startPoint: .top, endPoint: .bottom)
                 if moving {
                     TimelineView(.animation(minimumInterval: 1 / IdleSky.framesPerSecond)) { ctx in
                         sky(t: ctx.date.timeIntervalSinceReferenceDate)
                     }
                 } else {
-                    sky(t: 0, embers: settings.style == .martyrNight && at != nil && settings.effects)
+                    sky(t: 0, embers: embers && at != nil)
                 }
             }
         }
+    }
+
+    /// The words' face: the theme's display font in the `theme` style, else the system serif.
+    private func serif(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        (settings.style == .theme ? Chrome.display(size) : nil) ?? .system(size: size, weight: weight, design: .serif)
     }
 
     private static let stars = IdleSky.stars()
@@ -282,17 +293,17 @@ struct IdleView: View {
 
     private func sky(t: Double, embers: Bool = true) -> some View {
         Canvas { g, s in
-            for star in Self.stars {
+            for star in Self.stars where colors.stars {
                 let r = star.size
                 g.fill(Path(ellipseIn: CGRect(x: star.x * s.width - r / 2, y: star.y * s.height - r / 2, width: r, height: r)),
-                       with: .color(color(IdleScreen.Night.text, IdleSky.twinkle(star, at: t))))
+                       with: .color(color(colors.text, IdleSky.twinkle(star, at: t))))
             }
             guard embers else { return }
             for e in Self.embers {
                 let p = IdleSky.place(e, at: t)
                 let r = e.size
                 g.fill(Path(ellipseIn: CGRect(x: p.x * s.width - r / 2, y: p.y * s.height - r / 2, width: r, height: r)),
-                       with: .color(color(IdleScreen.Night.ember, p.alpha)))
+                       with: .color(color(colors.ember, p.alpha)))
             }
         }
     }
@@ -305,18 +316,18 @@ struct IdleView: View {
             VStack(spacing: h * 0.018) {
                 if let name = c.name {
                     Text(name).font(.system(size: h * 0.016, weight: .medium, design: .monospaced))
-                        .foregroundStyle(color(IdleScreen.Night.gold)).lineLimit(1)
+                        .foregroundStyle(color(colors.name)).lineLimit(1)
                 }
                 if let time = c.time {
-                    Text(time).font(.system(size: h * 0.15, weight: .light, design: .serif)).monospacedDigit()
-                        .foregroundStyle(color(IdleScreen.Night.text)).lineLimit(1)
+                    Text(time).font(serif(h * 0.15, .light)).monospacedDigit()
+                        .foregroundStyle(color(colors.text)).lineLimit(1)
                 }
                 if let verse = c.verse {
                     VStack(spacing: h * 0.01) {
-                        Text("\u{201C}\(verse.text)\u{201D}").font(.system(size: h * (c.time == nil ? 0.034 : 0.024), design: .serif).italic())
-                            .foregroundStyle(color(IdleScreen.Night.muted)).multilineTextAlignment(.center).lineSpacing(h * 0.006)
+                        Text("\u{201C}\(verse.text)\u{201D}").font(serif(h * (c.time == nil ? 0.034 : 0.024)).italic())
+                            .foregroundStyle(color(colors.muted)).multilineTextAlignment(.center).lineSpacing(h * 0.006)
                         Text("\(verse.ref.uppercased())  \u{00B7}  BSB").font(.system(size: h * 0.011, weight: .semibold)).tracking(h * 0.0012)
-                            .foregroundStyle(color(IdleScreen.Night.faint))
+                            .foregroundStyle(color(colors.faint))
                     }
                     .frame(maxWidth: size.width * (c.time == nil ? 0.56 : 0.46))
                     .padding(.top, h * 0.01)
@@ -324,8 +335,8 @@ struct IdleView: View {
             }
             .offset(x: shift.x, y: shift.y - h * 0.02)
             if let line = c.line {
-                Text(line.text + " (Kierkegaard)").font(.system(size: h * 0.015, design: .serif).italic())
-                    .foregroundStyle(color(IdleScreen.Night.faint)).lineLimit(2)
+                Text(line.text + " (Kierkegaard)").font(serif(h * 0.015).italic())
+                    .foregroundStyle(color(colors.faint)).lineLimit(2)
                     .frame(maxWidth: size.width * 0.6, alignment: .leading)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .padding(.horizontal, h * 0.04).padding(.bottom, h * 0.035)

@@ -222,7 +222,7 @@ public struct Surfaces: Equatable, Sendable {
         public var engine: String
     }
 
-    public enum IdleStyle: String, CaseIterable, Sendable { case martyrNight = "martyr-night", field, verse }
+    public enum IdleStyle: String, CaseIterable, Sendable { case martyrNight = "martyr-night", theme, field, verse }
 
     public struct Idle: Equatable, Sendable {
         /// Off until you turn it on, like the bar: it covers every screen.
@@ -350,7 +350,7 @@ extension SurfaceField {
 
         SurfaceField("idle.enabled", .bool, .bool(false), "Show Polycarp's idle screen. Off until you turn it on."),
         SurfaceField("idle.style", .choice(Surfaces.IdleStyle.allCases.map(\.rawValue)), .string("martyr-night"),
-                     "martyr-night (night sky and embers), field (the desktop scene, dimmed) or verse (one verse on black)."),
+                     "martyr-night (night sky and embers), theme (the same sky in your theme's colors and display font), field (the desktop scene, dimmed) or verse (one verse on black)."),
         SurfaceField("idle.effects", .bool, .bool(true), "Motion on the idle screen. Reduce Motion turns it off regardless."),
         SurfaceField("idle.showMachineName", .bool, .bool(true), "The Mac's name on the idle screen."),
         SurfaceField("idle.showVerse", .bool, .bool(true), "A verse on the idle screen."),

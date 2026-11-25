@@ -1,4 +1,4 @@
-import BaneySpacesCore
+@testable import BaneySpacesCore
 import XCTest
 
 final class IdleScreenTests: XCTestCase {
@@ -114,5 +114,41 @@ final class IdleScreenTests: XCTestCase {
             }
         }
         for s in IdleSky.stars() { XCTAssertLessThanOrEqual(s.y, 0.55, "stars stay above the words") }
+    }
+
+    /// Every palette Polycarp ships reads on the idle screen's sky, at its top and its foot.
+    func testTheThemeStyleReadsInEveryShippedTheme() throws {
+        var seen = 0
+        for palette in PaletteCatalog.shared.palettes.map(\.name) + ["auto"] {
+            let c = IdleScreen.Colors.of(.theme, look: Look(theme: .omarchy, palette: palette, accent: AccentPreset.red.rgb), overPicture: false)
+            for (what, color) in [("text", c.text), ("muted", c.muted), ("faint", c.faint), ("name", c.name)] {
+                for sky in [c.skyTop, c.skyFoot] { XCTAssertGreaterThanOrEqual(color.contrast(with: sky), 4.5, "\(palette) \(what)") }
+            }
+            seen += 1
+        }
+        XCTAssertGreaterThan(seen, 20)
+    }
+
+    func testOnlyTheThemeStyleTakesTheThemeAndNeverOverAPicture() throws {
+        var look = Look(theme: .omarchy, palette: "auto", accent: RGB(r: 0.2, g: 0.4, b: 0.9))
+        look.palette = Palette(name: "t", isDark: false, colors: ["sunken": RGB(r: 0.9, g: 0.9, b: 0.9), "background": RGB(r: 1, g: 1, b: 1),
+                                                                  "foreground": RGB(r: 0, g: 0, b: 0), "muted": RGB(r: 0.3, g: 0.3, b: 0.3),
+                                                                  "accent": RGB(r: 1, g: 0.9, b: 0.3)])
+        let c = IdleScreen.Colors.of(.theme, look: look, overPicture: false)
+        XCTAssertEqual(c.skyTop, look.color("sunken"))
+        XCTAssertEqual(c.skyFoot, look.color("background"))
+        XCTAssertEqual(c.ember, look.color("accent"))
+        XCTAssertEqual(c.name, look.color("foreground"), "an accent that doesn't read there is not the name's color")
+        XCTAssertFalse(c.stars, "a light theme has no stars")
+        XCTAssertEqual(IdleScreen.Colors.of(.theme, look: look, overPicture: true), .night)
+        for style in Surfaces.IdleStyle.allCases where style != .theme {
+            XCTAssertEqual(IdleScreen.Colors.of(style, look: look, overPicture: false), .night)
+        }
+    }
+
+    func testTheNightKeepsItsColors() {
+        XCTAssertEqual(IdleScreen.Colors.night.skyTop, RGB(hex: "#140F12"))
+        XCTAssertEqual(IdleScreen.Colors.night.name, RGB(hex: "#D5B66F"))
+        XCTAssertTrue(IdleScreen.Colors.night.stars)
     }
 }

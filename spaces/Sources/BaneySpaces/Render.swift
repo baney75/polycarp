@@ -263,6 +263,8 @@ enum Render {
         guard save(IdleView(settings: idle, machine: "Rectory1", size: idleSize, backdrop: nil, at: idleAt), "idle-night.png", idleSize) else { return 1 }
         idle.style = .verse
         guard save(IdleView(settings: idle, machine: "Rectory1", size: idleSize, backdrop: nil, at: idleAt), "idle-verse.png", idleSize) else { return 1 }
+        idle.style = .theme
+        guard save(IdleView(settings: idle, machine: "Rectory1", size: idleSize, backdrop: nil, at: idleAt), "idle-theme.png", idleSize) else { return 1 }
         return 0
     }
 }
