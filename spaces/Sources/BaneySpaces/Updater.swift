@@ -70,9 +70,26 @@ final class Updater: NSObject {
     }
 
     private func checkIfDue() {
+        updateBrowserIfDue()
         guard checksAutomatically, installing == nil else { return }
         if let last = lastCheck, Date().timeIntervalSince(last) < 23 * 3600, available == nil { return }
         check(manual: false)
+    }
+
+    /// In the background and quietly: `polycarp browser status` and `polycarp doctor` say where it stands.
+    private func updateBrowserIfDue() {
+        let last = UserDefaults.standard.object(forKey: "lastBrowserUpdate") as? Date
+        guard installing == nil, BrowserUpdate.due(last: last, now: Date(), automatic: checksAutomatically),
+              let resources = Bundle.main.resourceURL else { return }
+        UserDefaults.standard.set(Date(), forKey: "lastBrowserUpdate")
+        let update = Process()
+        update.executableURL = BrowserUpdate.command(resources: resources)
+        update.arguments = BrowserUpdate.arguments
+        update.qualityOfService = .utility
+        update.standardInput = FileHandle.nullDevice
+        update.standardOutput = FileHandle.nullDevice
+        update.standardError = FileHandle.nullDevice
+        try? update.run()
     }
 
     /// Reads the feed's latest.json. A manual check always answers, even "you're up to date".
