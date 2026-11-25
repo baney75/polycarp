@@ -1,18 +1,27 @@
 {
  "about": "Page edits: what Edits.swift and the extension's src/shared/edits.js both take and both refuse. Each refused case names the field the refusal must point at.",
+ "rules": {"about": "What any code that applies an edit must keep to, whatever a selector matches. text, attr, insert and move leave an element in never, or inside one, as it is. move also leaves one that is or holds an element in never or in carry, so no field or button lands in another form.",
+  "never": ["embed", "iframe", "input", "noscript", "object", "option", "script", "select", "style", "template", "textarea"], "carry": ["button"]},
  "accept": [
   {"case": "hide", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "#ads, .promo"}]}},
   {"case": "style", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "article", "style": {"font-size": "18px", "max-width": "calc(100% - 2rem)", "--gap": "4px"}}]}},
   {"case": "text", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "h1", "text": "Home", "find": "Welcome"}]}},
   {"case": "text to nothing", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "h1", "text": ""}]}},
   {"case": "attr", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "attr", "at": "img.map", "name": "alt", "value": "A map"}]}},
-  {"case": "attr taken away", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "attr", "at": "details", "name": "open", "value": null}]}},
+  {"case": "attr taken away", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "attr", "at": "img", "name": "title", "value": null}]}},
   {"case": "move", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "move", "at": "#nav", "to": "main", "where": "first"}]}},
   {"case": "insert", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "main", "where": "first", "blocks": [{"kind": "heading", "text": "Today"}, {"kind": "text", "text": "Read this first"}, {"kind": "list", "items": ["One", "Two"]}, {"kind": "link", "text": "More", "url": "https://example.org/a?b=c#d"}]}]}},
   {"case": "css", "edit": {"id": "a", "sites": ["example.com"], "css": "/* wide */ @media (width < 600px) { main { width: 100% } }"}},
   {"case": "paths and name", "edit": {"id": "a", "sites": ["example.com"], "name": "Calm", "paths": ["/home", "/watch/*"], "css": "a{color:red}"}},
   {"case": "off", "edit": {"id": "a", "sites": ["example.com"], "enabled": false, "css": "a{color:red}"}},
   {"case": "site as a link", "edit": {"id": "a", "sites": ["https://www.Example.com/path"], "css": "a{color:red}"}},
+  {"case": "vendor and custom properties", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"-webkit-line-clamp": "2", "--Gap_x": "4px", "scroll-behavior": "smooth"}}]}},
+  {"case": "css that only scrolls smoothly", "edit": {"id": "a", "sites": ["example.com"], "css": "html{scroll-behavior:smooth} .card--big:hover::before{content:\"@home\"} /* me@example.com */"}},
+  {"case": "a list that says a thing twice", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "p", "where": "after", "blocks": [{"kind": "list", "items": ["Eggs", "Eggs"]}]}]}},
+  {"case": "localhost", "edit": {"id": "a", "sites": ["localhost:3000"], "css": "a{}"}},
+  {"case": "a www host stays one", "edit": {"id": "a", "sites": ["www.gov.uk"], "css": "a{}"}},
+  {"case": "hide what only hide and style may name", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "div > iframe.ad"}]}},
+  {"case": "text in a class named like a tag", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "style-guide .style, #textarea", "text": "x"}]}},
   {"case": "data in a word, not a fetch", "edit": {"id": "a", "sites": ["example.com"], "css": ".curl-up{color:red}"}}
  ],
  "refuse": [
@@ -62,6 +71,20 @@
   {"case": "a brace with an accent after it in a value", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"color": "red}\u0301 b{"}}]}, "path": "changes[0].style.color"},
   {"case": "a comment mark with an accent after it in a selector", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "a/*\u0301"}]}, "path": "changes[0].at"},
   {"case": "a question mark with an accent after it in a path", "edit": {"id": "a", "sites": ["example.com"], "paths": ["/a?\u0301"], "css": "a{}"}, "path": "paths[0]"},
-  {"case": "an attribute of a form field", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "attr", "at": "input", "name": "placeholder", "value": "Password"}]}, "path": "changes[0].name"}
+  {"case": "an attribute of a form field", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "attr", "at": "input", "name": "placeholder", "value": "Password"}]}, "path": "changes[0].name"},
+  {"case": "a top-level domain", "edit": {"id": "a", "sites": ["com"], "css": "a{}"}, "path": "sites[0]"},
+  {"case": "a control character in a path", "edit": {"id": "a", "sites": ["example.com"], "paths": ["/a\tb"], "css": "a{}"}, "path": "paths[0]"},
+  {"case": "text in a stylesheet", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "head > style", "text": "x"}]}, "path": "changes[0].at"},
+  {"case": "text in a script named with a namespace", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "p, *|script[src=\"a\"]:not(.b, .c)", "text": "x"}]}, "path": "changes[0].at"},
+  {"case": "insert in a field", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "form textarea.big", "where": "last", "blocks": [{"kind": "text", "text": "x"}]}]}, "path": "changes[0].at"},
+  {"case": "move into a field", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "move", "at": "p", "to": "select", "where": "last"}]}, "path": "changes[0].to"},
+  {"case": "an attribute an edit may not set", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "attr", "at": "details", "name": "open", "value": ""}]}, "path": "changes[0].name"},
+  {"case": "style property twice", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"Color": "red", "color": "blue"}}]}, "path": "changes[0].style.color"},
+  {"case": "style name that ends in a line break", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"color\n": "red"}}]}, "path": "changes[0].style.color\n"},
+  {"case": "style value with a comment mark", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"color": "red /*"}}]}, "path": "changes[0].style.color"},
+  {"case": "style value left open", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"width": "calc(1px"}}]}, "path": "changes[0].style.width"},
+  {"case": "a string in a custom property", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "a", "style": {"--x": "'https://evil.example/a'"}}]}, "path": "changes[0].style.--x"},
+  {"case": "css with a string in a custom property", "edit": {"id": "a", "sites": ["example.com"], "css": "a{--x /*;*/ : /*;*/ \"https://evil.example/a\" 1x}"}, "path": "css"},
+  {"case": "css at-rule after a string that a line break ends", "edit": {"id": "a", "sites": ["example.com"], "css": "a{content:\"\n} @import 'x';\""}, "path": "css"}
  ]
 }

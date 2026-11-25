@@ -1,10 +1,11 @@
 import Foundation
 
-// Page edits for Polycarp's browser extension (docs/edits.md). edits.json, beside filters.json, holds edits: what to
-// hide, restyle, reword, move or add on the pages of named sites. An agent or a person sets them through
-// `polycarp-spaces edits` and the MCP tools; the extension asks the new tab host for them and applies them. An edit only
-// changes how a page looks and reads in this browser. It cannot click, type, submit, load anything from the network or
-// run a script. The extension checks every edit again by the same rules: spec/edits.json holds the cases both must pass.
+// Page edits for Polycarp's browser extension. edits.json, beside filters.json, holds edits: what to hide, restyle,
+// reword, move or add on the pages of named sites. An edit only changes how a page looks and reads in this browser. It
+// cannot click, type, submit, load anything from the network or run a script. Checking the JSON is half of that rule.
+// A selector can match anything, so whatever applies an edit must also keep to spec/edits.json's `rules`: never reword,
+// relabel, add to or move an element in `never` or inside one (new words in a <style> are a stylesheet nobody checked),
+// and never move an element that is or holds one, or a button.
 
 extension String {
     /// Whether these exact characters are in it. `contains` compares whole letters with their accents, so it misses
@@ -30,7 +31,9 @@ public enum Edits {
     public static let maxName = 80
     public static let wheres = ["before", "after", "first", "last"]
     /// Attributes an edit may set: words a person reads, never a target, a source, a handler or a form's value.
-    public static let attributes = ["alt", "aria-label", "dir", "lang", "open", "title"]
+    public static let attributes = ["alt", "aria-label", "dir", "lang", "title"]
+    /// Elements only hide and style may act on.
+    public static let never = ["embed", "iframe", "input", "noscript", "object", "option", "script", "select", "style", "template", "textarea"]
 
     public static func path(surfacesFile: String = SurfacesFile.path()) -> String {
         URL(fileURLWithPath: surfacesFile).deletingLastPathComponent().appendingPathComponent(name).path
@@ -56,12 +59,16 @@ public enum Edits {
         let name = o["name"] == nil ? "" : try string(o, "name", prefix, maxName)
         if let e = o["enabled"], e.bool == nil { throw SurfacesIssue(prefix + "enabled", "must be true or false, not \(e.kind)") }
         let sites = try strings(o, "sites", prefix, maxSites, 200) { s in
-            switch Filters.site(s) { case .success(let t): return t; case .failure(let w): throw Why(w.message) }
+            switch Filters.host(s) {
+            case .success(let t) where t == "localhost" || t.holds("."): return t
+            case .success(let t): throw Why("\"\(t)\" is not a whole host such as x.com")
+            case .failure(let w): throw Why(w.message)
+            }
         }
         guard !sites.isEmpty else { throw SurfacesIssue(prefix + "sites", "names at least one site, as [\"example.com\"]") }
         let paths = try strings(o, "paths", prefix, maxPaths, 200) { s in
             let t = s.trimmingCharacters(in: .whitespaces)
-            guard t.hasPrefix("/"), !t.unicodeScalars.contains(where: "?# ".unicodeScalars.contains) else { throw Why("\"\(s)\" is not a path such as /home or /watch/*") }
+            guard t.hasPrefix("/"), !control(t), !t.unicodeScalars.contains(where: "?# ".unicodeScalars.contains) else { throw Why("\"\(s)\" is not a path such as /home or /watch/*") }
             return t
         }
         guard let rawChanges = (o["changes"] ?? .array([])).array else { throw SurfacesIssue(prefix + "changes", "must be a list of changes") }
@@ -91,11 +98,13 @@ public enum Edits {
             guard let s = o["style"]?.object, !s.isEmpty, s.count <= 40 else { throw SurfacesIssue(p + "style", "is 1 to 40 CSS properties, as {\"font-size\": \"18px\"}") }
             var style: [String: SurfaceValue] = [:]
             for (k, raw) in s.sorted(by: { $0.key < $1.key }) {
-                let prop = k.lowercased()
-                guard prop.count <= 60, prop.range(of: "^(--)?[a-z][a-z0-9-]*$", options: .regularExpression) != nil else { throw SurfacesIssue(p + "style.\(k)", "is not a CSS property") }
-                guard let value = raw.string?.trimmingCharacters(in: .whitespaces), !value.isEmpty, value.count <= 300 else { throw SurfacesIssue(p + "style.\(k)", "must be a string of 1 to 300 characters") }
+                let prop = k.hasPrefix("--") ? k : k.lowercased()
+                guard prop.utf16.count <= 60, prop.range(of: "^(--[A-Za-z0-9_-]+|-?[a-z][a-z0-9-]*)\\z", options: .regularExpression) != nil else { throw SurfacesIssue(p + "style.\(k)", "is not a CSS property") }
+                guard style[prop] == nil else { throw SurfacesIssue(p + "style.\(k)", "is there twice") }
+                guard let value = raw.string?.trimmingCharacters(in: .whitespaces), !value.isEmpty, value.utf16.count <= 300 else { throw SurfacesIssue(p + "style.\(k)", "must be a string of 1 to 300 characters") }
                 if value.unicodeScalars.contains(where: "{};!@<".unicodeScalars.contains) || control(value) { throw SurfacesIssue(p + "style.\(k)", "may not hold { } ; ! @ < or a line break") }
-                if let why = cssProblem(value) { throw SurfacesIssue(p + "style.\(k)", why) }
+                if value.holds("/*") || value.holds("*/") { throw SurfacesIssue(p + "style.\(k)", "may not hold a comment mark") }
+                if let why = Filters.unbalanced(value) ?? cssProblem(value, for: prop) { throw SurfacesIssue(p + "style.\(k)", why) }
                 style[prop] = .string(value)
             }
             out["style"] = .object(style)
@@ -107,7 +116,7 @@ public enum Edits {
             let attr = try string(o, "name", p, 40).lowercased()
             guard attributes.contains(attr) else { throw SurfacesIssue(p + "name", "must be one of \(attributes.joined(separator: ", "))") }
             out["name"] = .string(attr)
-            guard let value = o["value"], value == .null || value.string.map({ $0.count <= maxText }) == true else {
+            guard let value = o["value"], value == .null || value.string.map({ $0.utf16.count <= maxText }) == true else {
                 throw SurfacesIssue(p + "value", "must be a string of at most \(maxText) characters, or null to take the attribute away")
             }
             out["value"] = value
@@ -119,6 +128,9 @@ public enum Edits {
             guard let blocks = o["blocks"]?.array, (1...maxBlocks).contains(blocks.count) else { throw SurfacesIssue(p + "blocks", "is a list of 1 to \(maxBlocks) blocks") }
             out["blocks"] = .array(try blocks.enumerated().map { try block($1, "\(p)blocks[\($0)].") })
         default: break
+        }
+        if verb != "hide", verb != "style" {
+            for key in ["at", "to"] { if let s = out[key]?.string, let el = subjects(s).first(where: never.contains) { throw SurfacesIssue(p + key, "names a <\(el)>; only hide and style may") } }
         }
         return .object(out)
     }
@@ -133,7 +145,7 @@ public enum Edits {
             return .object(["kind": .string(kind), "text": .string(try filled(o, "text", p))])
         case "list":
             try known(o, ["kind", "items"], p, "a list block")
-            let items = try strings(o, "items", p, maxItems, maxText) { $0 }
+            let items = try strings(o, "items", p, maxItems, maxText, unique: false) { $0 }
             guard !items.isEmpty else { throw SurfacesIssue(p + "items", "holds at least one item") }
             return .object(["kind": .string(kind), "items": .array(items.map(SurfaceValue.string))])
         case "link":
@@ -163,7 +175,7 @@ public enum Edits {
         return s
     }
 
-    private static func strings(_ o: [String: SurfaceValue], _ key: String, _ p: String, _ most: Int, _ chars: Int, _ norm: (String) throws -> String) throws -> [String] {
+    private static func strings(_ o: [String: SurfaceValue], _ key: String, _ p: String, _ most: Int, _ chars: Int, unique: Bool = true, _ norm: (String) throws -> String) throws -> [String] {
         guard let raw = o[key] else { return [] }
         guard let list = raw.array else { throw SurfacesIssue(p + key, "must be a list of strings, not \(raw.kind)") }
         guard list.count <= most else { throw SurfacesIssue(p + key, "has \(list.count) entries; at most \(most)") }
@@ -171,7 +183,7 @@ public enum Edits {
         for (i, item) in list.enumerated() {
             let at = "\(p)\(key)[\(i)]"
             guard let s = item.string, s.utf16.count <= chars, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SurfacesIssue(at, "must be a string of 1 to \(chars) characters") }
-            do { let n = try norm(s); if !out.contains(n) { out.append(n) } } catch let w as Why { throw SurfacesIssue(at, w.message) }
+            do { let n = try norm(s); if !unique || !out.contains(n) { out.append(n) } } catch let w as Why { throw SurfacesIssue(at, w.message) }
         }
         return out
     }
@@ -179,6 +191,21 @@ public enum Edits {
     private static func selector(_ o: [String: SurfaceValue], _ key: String, _ p: String) throws -> String {
         let s = try string(o, key, p, maxSelector)
         switch Filters.selector(s) { case .success(let t): return t; case .failure(let w): throw SurfacesIssue(p + key, w.message) }
+    }
+
+    /// The element names a selector list plainly ends at: `div > style.x, a` is style and a.
+    private static func subjects(_ s: String) -> [String] {
+        var t = bare(s.lowercased()), was = ""
+        while t != was { was = t; t = t.replacingOccurrences(of: "\\([^()\\[\\]]*\\)|\\[[^()\\[\\]]*\\]", with: "", options: .regularExpression) }
+        return t.components(separatedBy: ",").map { part in
+            let last = part.unicodeScalars.split(whereSeparator: { " \t>+~|".unicodeScalars.contains($0) }).last ?? []
+            return String(String.UnicodeScalarView(last.prefix { ("a"..."z").contains($0) }))
+        }
+    }
+
+    /// CSS with each string cut to its quote mark and each comment to a space. It holds no backslash to mind.
+    private static func bare(_ css: String) -> String {
+        css.replacingOccurrences(of: #"(")[^"\n\r\f]*"?|(')[^'\n\r\f]*'?|/\*[\s\S]*?(?:\*/|\z)"#, with: "$1$2 ", options: .regularExpression)
     }
 
     private static func place(_ o: [String: SurfaceValue], _ p: String) throws -> String {
@@ -196,16 +223,21 @@ public enum Edits {
     /// Why a stylesheet or a value is refused, or nil. A stylesheet that can load something from the network can tell
     /// another site what is on the page (`input[value^=a]{background:url(...)}`), so nothing here may load: no backslash,
     /// which could spell `url(` another way, no function that fetches, and only at-rules that don't.
-    static func cssProblem(_ css: String) -> String? {
+    /// A string kept in a custom property is refused too: a page's own `image-set(var(--x))` would load it.
+    static func cssProblem(_ css: String, for prop: String = "") -> String? {
         if css.holds("\\") { return "may not hold a backslash" }
         if css.holds("\0") { return "may not hold a null character" }
         let low = css.lowercased()
         for f in ["url(", "src(", "image(", "image-set(", "cross-fade(", "element(", "paint(", "expression("] where low.holds(f) {
             return "may not use \(f)...): an edit loads nothing from the network"
         }
-        for word in ["-moz-binding", "behavior:", "</"] where low.holds(word) { return "may not hold \(word)" }
+        if low.holds("</") { return "may not hold </" }
+        let plain = bare(low)
+        if plain.range(of: #"(^|[;{}\s])--[^\s:;{}]*\s*:[^;{}]*["']"#, options: .regularExpression) != nil || (prop.hasPrefix("--") && plain.range(of: "[\"']", options: .regularExpression) != nil) {
+            return "may not keep a quoted string in a custom property"
+        }
         let allowed: Set = ["media", "supports", "container", "keyframes", "layer", "starting-style"]
-        for part in low.unicodeScalars.split(separator: "@", omittingEmptySubsequences: false).dropFirst() {
+        for part in plain.unicodeScalars.split(separator: "@", omittingEmptySubsequences: false).dropFirst() {
             let word = String(String.UnicodeScalarView(part.prefix { ("a"..."z").contains($0) || $0 == "-" }))
             guard allowed.contains(word) else { return "may not use @\(word); only \(allowed.sorted().map { "@" + $0 }.joined(separator: ", "))" }
         }

@@ -23,6 +23,7 @@ final class EditsTests: XCTestCase {
     func testTheSharedCases() throws {
         let cases = try XCTUnwrap(json(Repo.text("spec/edits.json")).object)
         let accept = try XCTUnwrap(cases["accept"]?.array), refuse = try XCTUnwrap(cases["refuse"]?.array)
+        XCTAssertEqual(cases["rules"]?.object?["never"]?.array?.compactMap(\.string), Edits.never)
         XCTAssertGreaterThan(accept.count, 10)
         XCTAssertGreaterThan(refuse.count, 35)
         for c in accept.compactMap(\.object) {
@@ -43,7 +44,7 @@ final class EditsTests: XCTestCase {
     }
 
     func testAnEditIsNormalizedWithEveryKey() throws {
-        let e = try Edits.edit(json(#"{"id":"a","sites":["https://www.X.com/home","x.com"],"changes":[{"do":"hide","at":" #a "}]}"#)).get()
+        let e = try Edits.edit(json(#"{"id":"a","sites":["https://X.com/home","x.com"],"changes":[{"do":"hide","at":" #a "}]}"#)).get()
         XCTAssertEqual(e, json(##"{"id":"a","name":"","enabled":true,"sites":["x.com"],"paths":[],"css":"","changes":[{"do":"hide","at":"#a"}]}"##))
     }
 
