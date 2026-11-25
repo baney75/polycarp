@@ -12,6 +12,8 @@ struct FakeWindows {
         var stuck = false
         /// Writes it misses before it answers again.
         var busy = 0
+        /// Writes of which it takes the place and not the size.
+        var slow = 0
         /// Its app puts it back at once, whatever it is told.
         var stubborn: CGRect?
     }
@@ -59,7 +61,8 @@ struct FakeWindows {
                 let g = win.grid, how: FloatingPointRoundingRule = win.roundsUp ? .up : .down
                 let size = CGSize(width: max(win.least.width, (m.to.width / g).rounded(how) * g),
                                   height: max(win.least.height, (m.to.height / g).rounded(how) * g))
-                win.w.frame = CGRect(origin: m.to.origin, size: size)
+                win.w.frame = CGRect(origin: m.to.origin, size: win.slow > 0 ? win.w.frame.size : size)
+                win.slow = max(0, win.slow - 1)
             }
             wins[m.id] = win
             out[m.id] = win.w.frame
@@ -67,11 +70,13 @@ struct FakeWindows {
         return out
     }
 
-    /// What the app does after a scan: write the plan, read back, solve once more when a minimum was learned.
+    /// What the app does after a scan: write the plan, read back, and look again when something was learned.
     mutating func look() {
-        let moves = engine.plan(shot)
-        guard !moves.isEmpty, engine.landed(write(moves)) else { return }
-        _ = engine.landed(write(engine.plan(shot)))
+        for _ in 0..<20 {
+            let moves = engine.plan(shot)
+            guard !moves.isEmpty, engine.landed(write(moves)) else { return }
+        }
+        XCTFail("it never stops asking")
     }
 
     /// Looks until a look writes nothing; the number of looks that wrote.
@@ -334,6 +339,31 @@ final class TilingEngineTests: XCTestCase {
         f.open(9, frame: f.wins[1]!.w.frame); f.wins[1] = nil; f.rest()
         XCTAssertEqual(f.engine.before[9], first)
         XCTAssertNil(f.engine.before[1])
+    }
+
+    func testATabOfAWindowBackInItsPlaceStaysWhereTheWindowIs() {
+        for floated in [false, true] {
+            var f = FakeWindows()
+            f.open(1); f.open(2)
+            f.rest()
+            // 2 has another tab in front.
+            f.open(3, frame: f.wins[2]!.w.frame)
+            f.wins[2]!.w.away = true
+            f.rest()
+            XCTAssertNotNil(f.engine.before[2])
+            if floated { f.engine.choice[3] = true } else { f.engine.apply(TilingOptions()) }
+            f.rest()
+            XCTAssertNil(f.engine.before[3])
+            f.wins[3]!.w.frame = CGRect(x: 600, y: 400, width: 500, height: 300)
+            f.engine.touched(3)
+            f.rest()
+            f.wins[2]!.w.frame = f.wins[3]!.w.frame
+            f.wins[2]!.w.away = false
+            f.wins[3]!.w.away = true
+            f.log = []
+            f.rest()
+            XCTAssertTrue(f.log.filter { $0.0.id == 2 }.isEmpty, "floated: \(floated)")
+        }
     }
 
     func testATabFloatsAsTheWindowItIsIn() {

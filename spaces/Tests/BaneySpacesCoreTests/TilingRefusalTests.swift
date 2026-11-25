@@ -16,6 +16,7 @@ final class TilingRefusalTests: XCTestCase {
         f.open(1, least: CGSize(width: 1100, height: 200)); f.open(2)
         f.look()
         XCTAssertEqual(f.engine.minimums[1]?.width, 1100)
+        XCTAssertEqual(f.log.filter { $0.0.id == 1 }.count, 1, "it took another size, so that is its answer")
         XCTAssertEqual(f.wins[2]!.w.frame, CGRect(x: 1116, y: 33, width: 604, height: 1034))
         f.writes = 0
         f.rest()
@@ -108,6 +109,82 @@ final class TilingRefusalTests: XCTestCase {
         f.wins[1]!.w.frame.size.width = 500
         f.engine.touched(1)
         XCTAssertEqual(f.engine.plan(f.shot).first { $0.id == 1 }?.to.width, 852)
+    }
+
+    func testASizeThatComesLateIsNoMinimum() {
+        var f = FakeWindows()
+        f.open(1, frame: CGRect(x: 100, y: 100, width: 1300, height: 900)); f.open(2)
+        f.wins[1]!.slow = 1
+        f.look()
+        XCTAssertNil(f.engine.minimums[1])
+        XCTAssertEqual(f.wins[1]!.w.frame, CGRect(x: 868, y: 33, width: 852, height: 1034))
+        // Its height alone.
+        f = FakeWindows()
+        f.engine.apply(FakeWindows.options { $0.style = .main })
+        f.open(1, frame: CGRect(x: 0, y: 100, width: 700, height: 900))
+        f.open(2, frame: CGRect(x: 10, y: 100, width: 700, height: 900)); f.open(3, frame: CGRect(x: 20, y: 100, width: 700, height: 900))
+        f.wins[3]!.slow = 1
+        f.look()
+        XCTAssertNil(f.engine.minimums[3])
+        // One that keeps its size when asked twice has that minimum, in the same look.
+        f = FakeWindows()
+        f.open(1, frame: CGRect(x: 100, y: 100, width: 1300, height: 900)); f.open(2)
+        f.wins[1]!.slow = 9
+        f.look()
+        XCTAssertEqual(f.engine.minimums[1]?.width, 1300)
+        XCTAssertEqual(f.log.filter { $0.0.id == 1 }.count, 3, "twice for the first tile, once for the one that fits")
+    }
+
+    func testAFrameFromBeforeIsOwedUntilTheWindowHasItsSizeToo() {
+        var f = two()
+        let was = f.engine.before[1]!
+        f.wins[1]!.slow = 1
+        f.engine.apply(TilingOptions())
+        f.look()
+        XCTAssertEqual(f.wins[1]!.w.frame, was)
+        XCTAssertNil(f.engine.before[1])
+        // Asked three times at most.
+        f = two()
+        f.wins[1]!.slow = 99
+        f.log = []
+        f.engine.apply(TilingOptions())
+        for _ in 0..<9 { f.look() }
+        XCTAssertEqual(f.log.filter { $0.0.id == 1 }.count, TilingEngine.mostTries)
+        XCTAssertNil(f.engine.before[1])
+    }
+
+    func testTiledAgainBeforeItWasBackItsFrameFromBeforeIsKept() {
+        var f = two()
+        let was = f.engine.before[1]!
+        f.wins[1]!.busy = 1
+        f.engine.apply(TilingOptions())
+        _ = f.engine.landed(Dictionary(uniqueKeysWithValues: f.engine.plan(f.shot).map { ($0.id, f.wins[$0.id]!.w.frame) }))
+        XCTAssertEqual(f.engine.asked[1]?.back, true)
+        f.engine.apply(FakeWindows.options())
+        f.rest()
+        f.engine.touched(1)
+        f.rest()
+        XCTAssertEqual(f.engine.before[1], was)
+    }
+
+    func testAWindowThatSharesATileStaysOnTheDisplay() {
+        var f = FakeWindows()
+        f.engine.apply(FakeWindows.options { $0.style = .columns })
+        for (id, w) in [(WindowID(1), 1000.0), (2, 400), (3, 1200)] { f.open(id, least: CGSize(width: w, height: 200)) }
+        f.rest()
+        for id in [WindowID(3), 2, 1] { f.focused = id; f.rest() }
+        let t = f.engine.frames(1)
+        XCTAssertEqual(t[3], CGRect(x: 520, y: 33, width: 1200, height: 1034))
+        XCTAssertEqual(f.wins[3]!.w.frame, t[3])
+        // Its height too.
+        f = FakeWindows(area: CGRect(x: 0, y: 25, width: 900, height: 700))
+        f.engine.apply(FakeWindows.options { $0.style = .main })
+        for (id, h) in [(WindowID(1), 200.0), (2, 200), (3, 200), (4, 600)] { f.open(id, least: CGSize(width: 100, height: h)) }
+        f.rest()
+        for id in [WindowID(4), 3, 2, 1] { f.focused = id; f.rest() }
+        XCTAssertEqual(f.engine.frames(1)[3]?.minY, 379)
+        XCTAssertEqual(f.engine.frames(1)[4]?.minY, 117)
+        XCTAssertEqual(f.engine.frames(1)[4]?.height, 600)
     }
 
     func testAnAppBusyForOneWriteTeachesNothing() {

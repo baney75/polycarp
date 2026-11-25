@@ -131,6 +131,8 @@ public struct TilingEngine: Equatable, Sendable {
         var target: CGRect
         var landed: CGRect?
         var tries: Int
+        /// Its app moved it when asked, so it isn't busy.
+        var answered: Bool
         /// It is on its way back to its frame from before tiling.
         var back: Bool
     }
@@ -225,7 +227,14 @@ public struct TilingEngine: Equatable, Sendable {
         var learned = false
         for (id, now) in frames {
             guard var a = asked[id] else { continue }
-            if Self.near(now, a.from), !Self.near(now, a.target), a.tries < Self.mostTries {
+            let there = Self.near(now, a.target)
+            let over = CGSize(width: now.width - a.target.width, height: now.height - a.target.height)
+            // An app takes a place and a size one after the other: a side it left as it was may only be late.
+            let late = Self.near(now, a.from) || over.width > Self.grid && abs(now.width - a.from.width) <= Self.close
+                || over.height > Self.grid && abs(now.height - a.from.height) <= Self.close
+            a.answered = a.answered || !Self.near(now, a.from)
+            asked[id] = a
+            if !there, a.tries < Self.mostTries, a.back || late && (a.tries < 2 || !a.answered) {
                 if a.tries < 2 { learned = true }
                 continue
             }
@@ -236,7 +245,6 @@ public struct TilingEngine: Equatable, Sendable {
             }
             a.landed = now
             asked[id] = a
-            let over = CGSize(width: now.width - a.target.width, height: now.height - a.target.height)
             var least = minimums[id] ?? .zero, round = rounded[id] ?? .zero
             let was = (least, round)
             if over.width > Self.grid { least.width = max(least.width, now.width) } else if over.width > Self.close { round.width = now.width }
@@ -367,7 +375,13 @@ public struct TilingEngine: Equatable, Sendable {
         for id in stacked {
             let i = order.firstIndex(of: id)!
             let host = order[..<i].last { room.contains($0) } ?? order[i...].first { room.contains($0) }
-            if let host, let f = frames[host] { frames[id] = f }
+            guard let host, var f = frames[host] else { continue }
+            // One wider or higher than that tile lies over the next, and not off the display.
+            if let m = minimums[id], let box = options.gaps.inset(slot.area) {
+                f.size = CGSize(width: max(f.width, min(m.width, box.width)), height: max(f.height, min(m.height, box.height)))
+                f.origin = CGPoint(x: min(f.minX, box.x0 + box.width - f.width), y: min(f.minY, box.y0 + box.height - f.height))
+            }
+            frames[id] = f
         }
         return frames
     }
@@ -403,12 +417,14 @@ public struct TilingEngine: Equatable, Sendable {
     /// The write that puts a window on its tile, or nil when it is there, stays where it landed when asked, or has been
     /// asked often enough.
     private mutating func move(_ w: TilingWindow, to target: CGRect, back: Bool = false) -> TilingMove? {
+        // Tiled again before it was back: its frame from before is owed as any tile's is.
+        if !back, asked[w.id]?.back == true { asked[w.id] = nil }
         let a = asked[w.id].flatMap { Self.near($0.target, target) ? $0 : nil }
         if Self.near(w.frame, target) { return nil }
         if let a, let landed = a.landed, Self.near(w.frame, landed) { return nil }
         let tries = a?.tries ?? 0
         guard tries < Self.mostTries else { return nil }
-        asked[w.id] = Asked(from: w.frame, target: target, landed: nil, tries: tries + 1, back: back)
+        asked[w.id] = Asked(from: w.frame, target: target, landed: nil, tries: tries + 1, answered: a?.answered ?? false, back: back)
         return TilingMove(id: w.id, pid: w.pid, from: w.frame, to: target)
     }
 
@@ -453,6 +469,8 @@ public struct TilingEngine: Equatable, Sendable {
         }
         func carry<T>(_ d: inout [WindowID: T]) { if d[new] == nil, let v = d[old] { d[new] = v } }
         choice[new] = choice[old]
+        // A window owed nothing is where the person has it, its other tabs too.
+        if before[old] == nil { before[new] = nil }
         carry(&before); carry(&minimums); carry(&rounded); carry(&lessons); carry(&asked); carry(&landing)
         recent = recent.map { $0 == old ? new : $0 }
     }
