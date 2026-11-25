@@ -7,10 +7,7 @@ cd "$(dirname "$0")/.."
 source scripts/product.env
 VERSION=$(cat VERSION)
 APP=build/$PRODUCT_NAME.app
-rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources/bin" "$APP/Contents/Resources/skill" "$APP/Contents/Resources/licenses"
-
-# The hands engine (agent-desktop's library), built from the pinned commit; Polycarp links it.
-scripts/build-engine.sh
+rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin" "$APP/Contents/Resources/skill" "$APP/Contents/Resources/licenses"
 
 # The built-in terminal (libghostty, from scripts/build-ghostty.sh) links only into an Apple silicon build that has the
 # library. Any other build compiles the terminal out and says so once. SwiftPM caches the manifest on its environment,
@@ -31,12 +28,6 @@ if xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 && [ "${BANEYSPACES_ARM64_
 swift build -c release "${ARCHS[@]}"
 BIN=$(swift build -c release "${ARCHS[@]}" --show-bin-path)/BaneySpaces
 cp "$BIN" "$APP/Contents/MacOS/$EXECUTABLE"
-# swift build points a dev binary at engine/lib; the bundle finds its library in Contents/Frameworks. The path is
-# the package's real path, which isn't always $PWD: under mktemp (install.sh's updates) $PWD is /var/folders/… and
-# the rpath /private/var/folders/…. So delete the engine/lib rpaths the binary has, as otool reads them.
-for rp in $(otool -l "$APP/Contents/MacOS/$EXECUTABLE" | awk '/cmd LC_RPATH/ { r = 1 } r && $1 == "path" { print $2; r = 0 }' | grep '/engine/lib$' | sort -u); do
-  install_name_tool -delete_rpath "$rp" "$APP/Contents/MacOS/$EXECUTABLE"
-done
 # The session engine's command, polycarp-spaces (baneyspaces and ghostdeck are links to it, made at install).
 # It lives in Resources, not MacOS, so it is never mistaken for the app's own executable.
 cp "$(dirname "$BIN")/baneyspaces-cli" "$APP/Contents/Resources/bin/$CLI_NAME"
@@ -46,13 +37,13 @@ if [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ]; then
   cp build/cli-target/release/polycarp "$APP/Contents/Resources/bin/polycarp"
 else
   for t in aarch64-apple-darwin x86_64-apple-darwin; do
+    ! command -v rustup >/dev/null || rustup --quiet target add "$t"
     cargo build --quiet --release --locked --target "$t" --manifest-path ../cli/Cargo.toml --target-dir build/cli-target
   done
   lipo -create build/cli-target/aarch64-apple-darwin/release/polycarp build/cli-target/x86_64-apple-darwin/release/polycarp \
     -output "$APP/Contents/Resources/bin/polycarp"
 fi
 cp skill/SKILL.md "$APP/Contents/Resources/skill/SKILL.md"
-cp engine/lib/libagent_desktop_ffi.dylib "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
 cp NOTICE "$APP/Contents/Resources/NOTICE"
 cp LICENSES/* "$APP/Contents/Resources/licenses/"
 # libghostty finds its themes, shell integration and terminfo in Contents/Resources.
@@ -60,10 +51,9 @@ if [ "$POLYCARP_TERMINAL" = 1 ]; then
   cp -R ghostty/lib/share/ghostty "$APP/Contents/Resources/ghostty"
   cp -R ghostty/lib/share/terminfo "$APP/Contents/Resources/terminfo"
 fi
-# The Rust crates the polycarp command and the engine link, from cargo's own record of them.
+# The Rust crates the polycarp command links, from cargo's own record of them.
 RUST_TARGETS=(--target aarch64-apple-darwin); [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ] || RUST_TARGETS+=(--target x86_64-apple-darwin)
-python3 scripts/rust-licenses.py --out "$APP/Contents/Resources/licenses/polycarp-rust-crates.txt" --own "$PWD/.." "${RUST_TARGETS[@]}" \
-  ../cli/Cargo.toml:polycarp engine/.src/Cargo.toml:agent-desktop-ffi
+python3 scripts/rust-licenses.py --out "$APP/Contents/Resources/licenses/polycarp-rust-crates.txt" --own "$PWD/.." "${RUST_TARGETS[@]}" ../cli/Cargo.toml:polycarp
 # Settings' Uninstall runs the same script as the README.
 cp uninstall.sh "$APP/Contents/Resources/uninstall.sh"
 # install.sh runs this copy on the prebuilt release, so the installer that fetched the app and the
@@ -104,8 +94,7 @@ sed -e "s/@VERSION@/$VERSION/g" -e "s/@FULL_VERSION@/$FULL_VERSION/g" -e "s/@CHA
 # Ad-hoc is for local builds and CI checks only and never ships as an update: install-app.sh refuses
 # it over an installed copy, and release.sh and install.sh require scripts/release-requirement.txt.
 if [ "${BANEYSPACES_ADHOC:-}" != 1 ] && IDENT=$(scripts/signing-identity.sh 2>/dev/null); then
-  # Inside out: the engine's library, then the command, then the app that holds both.
-  codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.engine" "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
+  # Inside out: the commands, then the app that holds them.
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.command" "$APP/Contents/Resources/bin/polycarp"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
@@ -114,21 +103,14 @@ else
   [ -z "${POLYCARP_SIGNING_IDENTITY:-}" ] || { echo "bundle: the signing identity \"$POLYCARP_SIGNING_IDENTITY\" can't be used" >&2; exit 1; }
   ADHOC_NOTE="note: signed ad-hoc, so macOS will ask for Accessibility again after each update"
   echo "$ADHOC_NOTE" >&2
-  codesign --force --sign - --identifier "$BUNDLE_ID.engine" "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
   codesign --force --sign - --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
   codesign --force --sign - --identifier "$BUNDLE_ID.command" "$APP/Contents/Resources/bin/polycarp"
   codesign --force --sign - --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
 fi
 codesign --verify --deep --strict "$APP"
-# The licence of ported code ships with the app.
-[ -s "$APP/Contents/Resources/licenses/cua-driver-MIT.txt" ] || { echo "bundle: the cua-driver licence is missing from the bundle" >&2; exit 1; }
 [ -s "$APP/Contents/Resources/licenses/polycarp-rust-crates.txt" ] || { echo "bundle: the Rust crates' licences are missing from the bundle" >&2; exit 1; }
-# The app must find its library next to itself, not where it was built.
-otool -L "$APP/Contents/MacOS/$EXECUTABLE" | grep -q '@rpath/libagent_desktop_ffi.dylib' || { echo "bundle: Polycarp doesn't link the engine through @rpath" >&2; exit 1; }
-otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q '@executable_path/../Frameworks' || { echo "bundle: no @executable_path/../Frameworks rpath" >&2; exit 1; }
-! otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q '/engine/lib ' || { echo "bundle: the build folder's engine/lib rpath is still in the app" >&2; exit 1; }
-[ "$(otool -D "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib" | grep -c '^@rpath/libagent_desktop_ffi.dylib$')" -ge 1 ] || { echo "bundle: the engine's install name isn't @rpath" >&2; exit 1; }
-if otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q "$PWD/engine/lib"; then echo "bundle: the app still points at the build folder" >&2; exit 1; fi
+# A library the bundle doesn't carry, or a path on the machine that built it, is an app that won't start elsewhere.
+if otool -arch all -L "$APP/Contents/MacOS/$EXECUTABLE" | grep '^	' | grep -Ev '^	(/usr/lib/|/System/Library/)'; then echo "bundle: Polycarp links the library above, which the bundle doesn't carry" >&2; exit 1; fi
 if [ "$POLYCARP_TERMINAL" = 1 ]; then
   [ -s "$APP/Contents/Resources/licenses/ghostty-MIT.txt" ] || { echo "bundle: Ghostty's licence is missing from the bundle" >&2; exit 1; }
   [ -f "$APP/Contents/Resources/terminfo/78/xterm-ghostty" ] || { echo "bundle: the terminal's terminfo is missing from the bundle" >&2; exit 1; }

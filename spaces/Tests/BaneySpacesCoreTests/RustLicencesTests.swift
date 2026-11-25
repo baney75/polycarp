@@ -1,15 +1,13 @@
 import Foundation
 import XCTest
 
-/// The app links Rust crates (the polycarp command, the hands engine) and must carry their licences.
+/// The app links Rust crates (the polycarp command) and must carry their licences.
 /// Before scripts/rust-licenses.py, the licenses folder named none of them.
 final class RustLicencesTests: XCTestCase {
     func testBundleWritesAndRequiresTheRustCratesLicences() throws {
         let bundle = try String(contentsOf: SourceText.root.appendingPathComponent("scripts/bundle.sh"), encoding: .utf8)
         XCTAssertTrue(bundle.contains("scripts/rust-licenses.py --out \"$APP/Contents/Resources/licenses/polycarp-rust-crates.txt\""), "bundle.sh writes it")
-        for root in ["../cli/Cargo.toml:polycarp", "engine/.src/Cargo.toml:agent-desktop-ffi"] {
-            XCTAssertTrue(bundle.contains(root), "every Rust piece the app ships: \(root)")
-        }
+        XCTAssertTrue(bundle.contains("../cli/Cargo.toml:polycarp"), "every Rust piece the app ships")
         XCTAssertTrue(bundle.contains("[ -s \"$APP/Contents/Resources/licenses/polycarp-rust-crates.txt\" ] ||"), "bundle.sh refuses an app without them")
     }
 

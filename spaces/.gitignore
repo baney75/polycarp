@@ -4,11 +4,6 @@ build/
 
 # Rust (platforms/windows, crates/)
 /target/
-# The hands engine: fetched, patched and built by scripts/build-engine.sh
-engine/.cache/
-engine/.src/
-# No trailing slash: a local symlink to a built copy is ignored too.
-engine/lib
 *.pyc
 __pycache__/
 .tools/

@@ -1,10 +1,7 @@
-.PHONY: build test app install release clean bench brand shots engine
-# agent-desktop's library must exist before swift build or swift test link it (Package.swift says why it stays).
-engine:
-	scripts/build-engine.sh
-build: engine
+.PHONY: build test app install release clean bench brand shots
+build:
 	swift build
-test: engine
+test:
 	swift test
 app:
 	scripts/bundle.sh

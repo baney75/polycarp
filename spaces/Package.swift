@@ -2,8 +2,6 @@
 import Foundation
 import PackageDescription
 
-// agent-desktop's C library, built by scripts/build-engine.sh into engine/lib. Nothing calls it since computer use was
-// removed; it stays linked until the engine wiring (build, bundle, release, update) is taken out on its own.
 // An absolute path, because the linker's working directory isn't always the package's.
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 
@@ -37,24 +35,17 @@ let package = Package(
         .target(name: "ContactsMatch", swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]),
         // Which window lives where, and where hidden windows go: no AppKit, fully unit-tested.
         .target(name: "BaneySpacesCore", dependencies: ["ContactsMatch"]),
-        // agent-desktop's C header (see the note at the top).
-        .systemLibrary(name: "CAgentDesktop", path: "Sources/CAgentDesktop"),
         // libghostty's C header, as upstream ships it at the pin (build-ghostty.sh checks it is the same).
         .systemLibrary(name: "CGhostty", path: "Sources/CGhostty"),
         // The menu bar app: hotkeys, Accessibility and moving real windows.
-        // The engine's library sits in Contents/Frameworks in the bundle; `engine/lib` is where a
-        // `swift build` finds it.
         .executableTarget(
             name: "BaneySpaces",
-            dependencies: ["BaneySpacesCore", "CAgentDesktop"] + (terminal ? ["CGhostty"] : []),
+            dependencies: ["BaneySpacesCore"] + (terminal ? ["CGhostty"] : []),
             swiftSettings: terminal ? [.define("POLYCARP_TERMINAL")] : [],
-            linkerSettings: [
-                .unsafeFlags([
-                    "-L\(root)/engine/lib", "-lagent_desktop_ffi",
-                    "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
-                    "-Xlinker", "-rpath", "-Xlinker", "\(root)/engine/lib",
-                ] + (terminal ? ["-L\(ghosttyLib)", "-lghostty", "-lc++"] : [])),
-            ] + (terminal ? ["Carbon", "CoreText", "CoreVideo", "IOSurface", "Metal", "QuartzCore"].map { .linkedFramework($0) } : [])),
+            linkerSettings: terminal
+                ? [.unsafeFlags(["-L\(ghosttyLib)", "-lghostty", "-lc++"])]
+                    + ["Carbon", "CoreText", "CoreVideo", "IOSurface", "Metal", "QuartzCore"].map { .linkedFramework($0) }
+                : []),
         // `baneyspaces`, the command for hooks, agents and you. Foundation only, so it starts in milliseconds.
         .executableTarget(name: "baneyspaces-cli", dependencies: ["BaneySpacesCore"]),
         .testTarget(name: "BaneySpacesCoreTests", dependencies: ["BaneySpacesCore"]),
