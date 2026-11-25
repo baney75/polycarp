@@ -48,7 +48,7 @@ public enum BrowserListing {
     /// A source's switch in Settings.
     public static func setting(_ s: BrowserSource) -> (title: String, help: String) {
         switch s {
-        case .tabs: return ("Open tabs", "Return goes to the exact tab. Off, the extension sends none; the tabs Polycarp reads from your default browser itself still show.")
+        case .tabs: return ("Open tabs", "Return goes to the exact tab. Off, the extension sends none and the bar shows no page; the tabs Polycarp reads from your default browser itself still show in the launcher.")
         case .groups: return ("Tab groups", "Return goes to the group; its name and a workspace's number sends it there.")
         case .bookmarks: return ("Bookmarks", "Opens in the browser that has it.")
         case .history: return ("Recent history", "The pages visited in the last 90 days.")

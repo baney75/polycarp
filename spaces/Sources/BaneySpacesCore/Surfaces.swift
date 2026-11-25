@@ -74,14 +74,14 @@ public struct Surfaces: Equatable, Sendable {
 
     /// A top bar module. `custom` carries the name after `custom:`.
     public enum BarModule: Hashable, Sendable {
-        case mark, workspaces, appMenus, status, hour, clock, date, verse, battery, network, agents, notifications
+        case mark, workspaces, appMenus, status, hour, clock, date, verse, battery, network, agents, page, notifications
         case custom(String)
         /// `|` in a module list: where one island ends and the next begins (`BarLayout.islands`). It may appear any
         /// number of times, in any place.
         case split
 
         public static let builtIn: [BarModule] = [.mark, .workspaces, .appMenus, .status, .hour, .clock, .date, .verse, .battery,
-                                                  .network, .agents, .notifications]
+                                                  .network, .agents, .page, .notifications]
 
         public var id: String {
             switch self {
@@ -96,6 +96,7 @@ public struct Surfaces: Equatable, Sendable {
             case .battery: "battery"
             case .network: "network"
             case .agents: "agents"
+            case .page: "page"
             case .notifications: "notifications"
             case let .custom(name): "custom:" + name
             case .split: "|"

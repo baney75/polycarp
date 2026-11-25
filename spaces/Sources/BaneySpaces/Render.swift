@@ -217,6 +217,14 @@ enum Render {
             }
         }
 
+        // The bar's `page` module: a page with its icon, one playing elsewhere and a download.
+        if let screen = NSScreen.main, let id = screen.displayID {
+            topBar.bar.style = .islands
+            topBar.bar.left = [.mark, .workspaces, .split, .page]
+            topBar.pages = [id: BrowserRender.page()]
+            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar-page.png", CGSize(width: 1512, height: 26)) else { return 1 }
+        }
+
         // The bell's list: two apps with one quiet, then nothing new.
         let notices = NoticeWatcher()
         var shelf = NoticeShelf()

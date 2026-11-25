@@ -15,6 +15,7 @@
   const PIECE = 500; // rows in a message, which the host caps at 1 MB
   const PIECE_BYTES = 700000;
   const CHANGED = 300; // changed rows in a message: an address of 2,048 and a title of 300 three-byte letters each still fit
+  const SECOND = 1000;
   const WAIT = 250; // changes are gathered this long
   const cut = (s, n) => String(s || "").slice(0, n);
   const address = (u) => (String(u || "").length <= 2048 ? String(u || "") : "");
@@ -97,7 +98,9 @@
         const got = await chrome.history.search({ text: "", startTime: now() - HISTORY_DAYS * 86400000, maxResults: MOST.history });
         return got.map(historyRow);
       }
-      return (await chrome.downloads.search({ orderBy: ["-startTime"], limit: MOST.downloads })).map(downloadRow);
+      const got = await chrome.downloads.search({ orderBy: ["-startTime"], limit: MOST.downloads });
+      watch(got);
+      return got.map(downloadRow);
     }
     async function send(source) {
       const rows = (await all(source)).filter(Boolean);
@@ -266,11 +269,24 @@
           const [d] = await chrome.downloads.search({ id }).catch(() => []);
           if (d && d.incognito !== false) return;
           mark("downloads", id, d ? downloadRow(d) : null);
+          if (d) watch([d]);
         };
         chrome.downloads.onCreated.addListener((d) => one(d.id));
         chrome.downloads.onChanged.addListener((d) => one(d.id));
         chrome.downloads.onErased.addListener((id) => mark("downloads", id, null));
       });
+    }
+    // The browser doesn't say as a download's bytes come in, so it is asked once a second while one is on its way.
+    let watching = false;
+    function watch(ds) {
+      if (watching || !sending.includes("downloads") || !ds.some((d) => d.state === "in_progress" && !d.paused && downloadRow(d))) return;
+      watching = true;
+      later(async () => {
+        const now = await chrome.downloads.search({ state: "in_progress" }).catch(() => []);
+        watching = false;
+        for (const d of now) { const r = downloadRow(d); if (r) mark("downloads", d.id, r); }
+        watch(now);
+      }, SECOND);
     }
     // Added when the worker starts, as a worker's listeners must be; they do nothing until the app wants tabs.
     function listenTabs() {
