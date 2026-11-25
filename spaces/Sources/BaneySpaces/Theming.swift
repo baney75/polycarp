@@ -12,6 +12,16 @@ extension TextWeight {
         case .heavy: .heavy
         }
     }
+
+    var nsFont: NSFont.Weight {
+        switch self {
+        case .regular: .regular
+        case .medium: .medium
+        case .semibold: .semibold
+        case .bold: .bold
+        case .heavy: .heavy
+        }
+    }
 }
 
 /// The look shared by the dock, the switcher, the launcher, the overview, the HUD and Settings.
@@ -27,7 +37,9 @@ enum Chrome {
     /// alike. White text reads on all of them.
     static func workspace(_ n: Int) -> Color { Appearance.shared.workspace(n) }
 
-    static func panelBackground(_ surface: Surface) -> PanelBackground { PanelBackground(surface: surface) }
+    static func panelBackground(_ surface: Surface, style: ComputedStyle = .empty) -> PanelBackground {
+        PanelBackground(surface: surface, style: style)
+    }
 
     // MARK: The theme in use
 
@@ -138,13 +150,7 @@ enum Chrome {
     static func nsFont(_ size: Double, _ weight: TextWeight = .regular) -> NSFont {
         let f = look.spec.font
         let pt = CGFloat(f.size(size))
-        let w: NSFont.Weight = switch f.weight(weight) {
-        case .regular: .regular
-        case .medium: .medium
-        case .semibold: .semibold
-        case .bold: .bold
-        case .heavy: .heavy
-        }
+        let w = f.weight(weight).nsFont
         if let face = face(size, weight) { return face as NSFont }
         return FontFallback.forFamily(f.family) == .monospaced ? .monospacedSystemFont(ofSize: pt, weight: w) : .systemFont(ofSize: pt, weight: w)
     }

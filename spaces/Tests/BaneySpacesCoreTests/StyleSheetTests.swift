@@ -227,6 +227,8 @@ final class StyleSheetTests: XCTestCase {
             ("bar .clok { color: red }", "`.clock`"),
             ("bar .clok { color: red }", "`.hour`"),
             ("bar .workspace.active { color: red }", "takes `.current` and `:hover`"),
+            ("bar .workspace.selected { color: red }", "takes `.current` and `:hover`"),
+            ("bar .workspace.hover { color: red }", "takes `.current` and `:hover`"),
             ("bar .left:hover { color: red }", "takes no states"),
             ("bar:hover { color: red }", "takes no states"),
             ("* { color: red }", "`*` isn't supported"),
@@ -455,6 +457,20 @@ final class StyleSheetTests: XCTestCase {
         try css.write(toFile: file, atomically: true, encoding: .utf8)
         guard case .success(let d) = StyleOps.check(file: file, roles: Self.roles) else { return XCTFail("warnings alone pass") }
         XCTAssertFalse(d.object?["warnings"]?.array?.isEmpty ?? true)
+    }
+
+    /// The bar's text in every region and state, each once: what the warnings look at.
+    func testContrastLooksAtEveryTextPartInEveryState() {
+        let bar = StyleSheet.textNodes.filter { $0.0 == .bar }
+        // The bar, 3 regions, 11 modules in no region or one of 3, hovered or not, and a number in 4 places and 4 states.
+        XCTAssertEqual(bar.count, 1 + 3 + 11 * 4 * 2 + 4 * 4)
+        XCTAssertEqual(Set(bar.map { "\($0.1 ?? "")|\($0.2 ?? "")|\($0.3.map(\.rawValue).sorted())" }).count, bar.count)
+        XCTAssertFalse(bar.contains { $0.1 == "island" }, "an island draws no text of its own")
+        for t in StyleTarget.allCases where StyleProperty.byName["color"]!.applies(to: t) {
+            for st in t.states {
+                XCTAssertTrue(StyleSheet.textNodes.contains { $0.0 == t.surface && $0.1 == t.parts.first && $0.3 == [st] }, "\(t.rawValue) \(st)")
+            }
+        }
     }
 
     // MARK: What the bar reads

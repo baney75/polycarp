@@ -23,11 +23,6 @@ enum Render {
            case .theme(let theme) = PolycarpThemeFile.load(path: path) {
             Appearance.shared.usePolycarp(theme)
         }
-        // BANEYSPACES_RENDER_STYLE=<style.css> draws the bar and the dock with that sheet.
-        if let path = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_STYLE"] {
-            StyleSheetStore.shared.start(path: path, firstLookWithin: 2)
-            Styles.shared.sync()
-        }
         PermissionsModel.shared.useRenderSample()
         // BANEYSPACES_RENDER_THEME=omarchy|minimal draws the same shots in that theme (a check, saved nowhere).
         if let t = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME"], let id = ThemeID(rawValue: t) {
@@ -37,6 +32,11 @@ enum Render {
         if let p = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_PALETTE"], PaletteCatalog.shared.named(p) != nil {
             Appearance.shared.settings.colorPalette = p
         }
+        // BANEYSPACES_RENDER_STYLE=<style.css> draws the same shots with that sheet in force. Without it no sheet is read.
+        if let path = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_STYLE"] {
+            StyleSheetStore.shared.start(path: path, firstLookWithin: 2, log: { print($0) })
+        }
+        Styles.shared.sync()
         let model = ViewerModel()
         model.current = 1
         var id: WindowID = 100
@@ -82,6 +82,10 @@ enum Render {
         }
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_LAUNCHER_TIMING"].flatMap(Int.init) {
             return LauncherTiming.run(rounds: r)
+        }
+        // BANEYSPACES_RENDER_OPEN_TIMING=<rounds> times opening the launcher and the switcher instead.
+        if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_OPEN_TIMING"].flatMap(Int.init) {
+            return OpenTiming.run(rounds: max(r, 1))
         }
         // BANEYSPACES_RENDER_SWATCHES=1 checks only what the workspace colors sit on in dark mode (scripts/swatch-check.sh).
         if ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SWATCHES"] == "1" { return SwatchCheck.run(into: folder) }
@@ -218,6 +222,11 @@ enum Render {
         hud.occupied = [1, 2, 3, 4, 5, 7]
         hud.icons = [icon("/System/Applications/Mail.app"), icon("/System/Applications/Utilities/Terminal.app"), icon("/System/Applications/Messages.app")]
         guard save(HUDView(model: hud).background(Color(white: 0.35)), "hud.png", CGSize(width: 260, height: 0)) else { return 1 }
+        // The two toasts: work that finished after the launcher closed, and an agent that finished or needs you.
+        guard save(Toast.Message(text: "Tea is installed", symbol: "checkmark.circle.fill").background(Color(white: 0.35)),
+                   "toast.png", CGSize(width: 260, height: 0)) else { return 1 }
+        guard save(ToastView(title: "Claude: finished", detail: "polycarp", bundleID: "com.apple.Terminal").background(Color(white: 0.2)),
+                   "agent-notice.png", CGSize(width: 320, height: 64)) else { return 1 }
 
         // The ⌘Tab window bar: Tab held on Helium.
         let bar = SwitcherModel()

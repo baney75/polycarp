@@ -2,7 +2,7 @@ import AppKit
 import BaneySpacesCore
 import SwiftUI
 
-/// The style sheet in force (`StyleSheetStore`, docs/style.md) as the top bar draws it: one
+/// The style sheet in force (`StyleSheetStore`, docs/style.md) as the surfaces draw it: one
 /// `StyleBook` for the sheet, the mode and the theme's roles, rebuilt only when one of them changes. Every value the
 /// sheet leaves out falls back to what the view drew before (through `Chrome`), so with no sheet nothing changes. This
 /// file is where sheet values become SwiftUI colors, fonts and shapes; the surface files ask it as they ask `Chrome`.
@@ -21,9 +21,11 @@ final class Styles: ObservableObject {
 
     /// Builds a new book when the sheet, the mode or the roles changed, and does nothing otherwise, so any observer of
     /// those changes may call it first and read the new one.
-    func sync() {
+    func sync() { show(StyleSheetStore.shared.current) }
+
+    /// `sync` with this sheet (the renders draw sheets no file holds).
+    func show(_ sheet: StyleSheet) {
         let look = Chrome.look
-        let sheet = StyleSheetStore.shared.current
         let dark = look.palette.isDark
         let roles = StyleSheet.roles(look.palette.colors, onAccent: look.text(onAccent: Appearance.shared.accentRGB))
         guard sheet != book.sheet || dark != book.dark || roles != book.roles else { return }
@@ -33,6 +35,7 @@ final class Styles: ObservableObject {
 
 extension StyleColor {
     var swiftUI: Color { Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha) }
+    var nsColor: NSColor { NSColor(srgbRed: red, green: green, blue: blue, alpha: alpha) }
 }
 
 extension ComputedStyle {
@@ -70,6 +73,21 @@ enum Styled {
             font = .system(size: CGFloat(pt), weight: w.swiftUI, design: stack.design ?? (rounded ? .rounded : .default))
         }
         return italic ? font.italic() : font
+    }
+
+    /// `font` for a part whose text has no font of its own in the theme: nil (the system's) when the sheet sets none.
+    static func font(_ c: ComputedStyle, orNone size: Double) -> Font? { c.hasFont ? font(c, .ui, size) : nil }
+
+    /// `font` in the theme's UI face, for the text AppKit draws.
+    static func nsFont(_ c: ComputedStyle, _ size: Double, _ weight: TextWeight = .regular) -> NSFont {
+        guard c.hasFont else { return Chrome.nsFont(size, weight) }
+        let f = Chrome.spec.font
+        let pt = c.fontSize ?? f.size(size)
+        let w = c.fontWeight.map(textWeight) ?? f.weight(weight)
+        let stack = families(c.fontFamily, .ui)
+        // `resolved` is the base weight when the theme's own system face draws: the system's at the sheet's weight.
+        let font = resolved(stack.named, w, pt).map { $0 as NSFont } ?? .systemFont(ofSize: CGFloat(pt), weight: w.nsFont)
+        return c.fontStyle == .italic ? NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) : font
     }
 
     /// 100 to 900 to the weights the theme's fonts come in.
@@ -153,6 +171,51 @@ enum Styled {
     static func shape(_ c: ComputedStyle, else fallback: CGFloat = 0) -> RoundedRectangle {
         RoundedRectangle(cornerRadius: c.borderRadius.map { CGFloat($0) } ?? fallback, style: .continuous)
     }
+}
+
+extension Text {
+    /// The sheet's letter spacing over the view's own, and its numerals: the same text when the sheet sets neither.
+    func spaced(_ c: ComputedStyle, tracking own: CGFloat = 0) -> Text {
+        let spacing = c.letterSpacing.map { CGFloat($0) } ?? own
+        let text = spacing == 0 ? self : tracking(spacing)
+        return c.fontVariantNumeric == .tabularNums ? text.monospacedDigit() : text
+    }
+}
+
+extension View {
+    /// The sheet's padding in place of the view's own.
+    func padding(_ c: ComputedStyle, else own: EdgeInsets) -> some View { padding(c.padding.map(Styled.insets) ?? own) }
+}
+
+/// The face behind a part that has one of its own: the view's fill and corners, each replaced by the sheet's, and the
+/// sheet's lines. With neither it is the view's own shape and nothing else.
+struct StyledBack: View {
+    let style: ComputedStyle
+    /// Whose corners it has when the sheet sets none; square without one.
+    let surface: Surface?
+    var own = AnyShapeStyle(Color.clear)
+
+    init(_ style: ComputedStyle, _ surface: Surface? = nil) { self.style = style; self.surface = surface }
+
+    func fill(_ color: Color) -> StyledBack { var b = self; b.own = AnyShapeStyle(color); return b }
+
+    var body: some View {
+        let shape = Styled.shape(style, else: surface.map(Chrome.radius) ?? 0)
+        if style.isEmpty {
+            shape.fill(own)
+        } else {
+            shape.fill(Styled.fill(style.background) ?? own)
+                .overlay { StyledLines(style: style, shape: shape) }
+                .modifier(StyledFade(style: style))
+        }
+    }
+}
+
+/// Tells the view when the pointer comes and goes, only while a rule changes something under it.
+struct StyledHover: ViewModifier {
+    let on: Bool
+    let changed: (Bool) -> Void
+    func body(content: Content) -> some View { if on { content.onHover(perform: changed) } else { content } }
 }
 
 /// The sheet's letter spacing and numerals (the font and the case are set where the text is made).

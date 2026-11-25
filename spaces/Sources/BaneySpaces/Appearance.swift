@@ -158,23 +158,32 @@ struct PanelBackground: View {
     /// Another theme's look and a smaller scale: Settings' previews of each theme.
     var look: Look?
     var scale: CGFloat = 1
+    /// What the sheet says for this panel; each thing it leaves out is the theme's.
+    var style = ComputedStyle.empty
     @ObservedObject private var appearance = Appearance.shared
 
     var body: some View {
         let l = look ?? appearance.look
         let p = PanelLook.make(surface, look: l, settings: appearance.settings, accent: appearance.accentRGB)
-        let shape = RoundedRectangle(cornerRadius: CGFloat(p.radius) * scale, style: .continuous)
+        let shape = Styled.shape(style, else: CGFloat(p.radius) * scale)
         let border = Appearance.color(p.border.color)
         let shadow = Appearance.color(l.color("dark")).opacity(p.shadow?.opacity ?? 0)
-        shape.fill(p.blur ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(Color.clear))
+        let fill = Styled.fill(style.background)
+        shape.fill(fill ?? (p.blur ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(Color.clear)))
             // Dark enough that text in the windows behind never reads through (Omarchy: fully opaque).
-            .overlay(shape.fill(Appearance.color(p.fill).opacity(p.fillOpacity)))
+            .overlay { if fill == nil { shape.fill(Appearance.color(p.fill).opacity(p.fillOpacity)) } }
             .overlay {
-                if let wash = p.wash { shape.fill(Appearance.color(wash).opacity(p.washOpacity)) }
+                if fill == nil, let wash = p.wash { shape.fill(Appearance.color(wash).opacity(p.washOpacity)) }
             }
             // BaneySpaces: a light top edge and a faint outline, like glass catching light. Others: one solid line.
-            .overlay(shape.strokeBorder(LinearGradient(colors: [border.opacity(p.border.top), border.opacity(p.border.bottom)],
-                                                       startPoint: .top, endPoint: .bottom), lineWidth: CGFloat(p.border.width) * scale))
+            .overlay {
+                if style.border == nil {
+                    shape.strokeBorder(LinearGradient(colors: [border.opacity(p.border.top), border.opacity(p.border.bottom)],
+                                                      startPoint: .top, endPoint: .bottom), lineWidth: CGFloat(p.border.width) * scale)
+                }
+            }
             .shadow(color: shadow, radius: CGFloat(p.shadow?.radius ?? 0) * scale, y: CGFloat(p.shadow?.y ?? 0) * scale)
+            // Over the shadow, so the sheet's lines cast none on the fill.
+            .overlay { if style.border != nil || style.borderBottom != nil { StyledLines(style: style, shape: shape) } }
     }
 }

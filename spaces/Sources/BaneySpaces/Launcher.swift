@@ -1815,16 +1815,25 @@ enum Toast {
     private static var panel: NSPanel?
     private static var work: DispatchWorkItem?
 
-    static func show(_ text: String, symbol: String) {
-        let view = HStack(spacing: 10) {
-            Image(systemName: symbol).font(Chrome.font(16, .semibold)).foregroundStyle(Chrome.accent)
-            Text(text).font(Chrome.font(13, .semibold)).foregroundStyle(Chrome.wash())
+    /// What it draws, with room around it for the shadow.
+    struct Message: View {
+        let text: String
+        let symbol: String
+
+        var body: some View {
+            HStack(spacing: 10) {
+                Image(systemName: symbol).font(Chrome.font(16, .semibold)).foregroundStyle(Chrome.accent)
+                Text(text).font(Chrome.font(13, .semibold)).foregroundStyle(Chrome.wash())
+            }
+            .padding(.horizontal, 16).padding(.vertical, 11)
+            .background(Chrome.panelBackground(.launcherMini))
+            .padding(24)
+            .environment(\.colorScheme, Chrome.scheme)
         }
-        .padding(.horizontal, 16).padding(.vertical, 11)
-        .background(Chrome.panelBackground(.launcherMini))
-        .padding(24)
-        .environment(\.colorScheme, Chrome.scheme)
-        let host = NSHostingView(rootView: view)
+    }
+
+    static func show(_ text: String, symbol: String) {
+        let host = NSHostingView(rootView: Message(text: text, symbol: symbol))
         let size = host.fittingSize
         let p = panel ?? {
             let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
