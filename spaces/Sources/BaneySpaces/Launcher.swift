@@ -49,20 +49,25 @@ enum Launcher {
         }
     }
 
-    /// Opens a web address in the main browser on the workspace the person is on, when that can be done; the closure is
-    /// the caller's own way, run if it turns out it can't.
+    /// Opens a web address in your browser on the workspace the person is on, when that can be done; the closure is the
+    /// caller's own way, run if it turns out it can't.
     static var openHere: (URL, @escaping () -> Void) -> Bool = { _, _ in false }
 
-    /// A web address in the main browser (the default, usually Helium), never an app that claims the link; Apple Maps
-    /// and anything else go where macOS sends them.
+    /// Your browser (Settings › Default apps), else macOS's.
+    static var browser: URL? {
+        DefaultAppsStore.shared.now.resolved[.browser]?.app?.path.map { URL(fileURLWithPath: $0) }
+            ?? NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!)
+    }
+
+    /// A web address in your browser, never an app that claims the link; Apple Maps and anything else go where macOS
+    /// sends them.
     static func openInBrowser(_ url: URL) {
         if ["http", "https"].contains(url.scheme?.lowercased() ?? ""), openHere(url, { openAnyway(url) }) { return }
         openAnyway(url)
     }
 
     private static func openAnyway(_ url: URL) {
-        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-              let browser = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!) else {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), let browser else {
             NSWorkspace.shared.open(url)
             return
         }
@@ -74,9 +79,13 @@ enum Launcher {
         }
     }
 
-    /// The agent a "?" question goes to: Claude unless chosen.
+    /// The agent a "?" question goes to: the one picked for it, else your default agent where it has a page that takes
+    /// a question, else Claude.
     static var agent: String {
-        get { UserDefaults.standard.string(forKey: "launcherAgent") ?? "claude" }
+        get {
+            UserDefaults.standard.string(forKey: "launcherAgent")
+                ?? RoleSearch.webAgent(DefaultAppsStore.shared.now.resolved[.agent]?.app?.app) ?? "claude"
+        }
         set { UserDefaults.standard.set(newValue, forKey: "launcherAgent") }
     }
 
@@ -222,8 +231,14 @@ struct LauncherActions {
     var showSetup: () -> Void = {}
     /// Another Claude Code session beside the ones running, in Ghostty.
     var newClaude: () -> Void = {}
-    /// A new terminal window.
+    /// A new window of your terminal, where you were working.
     var newTerminal: () -> Void = {}
+    /// Your agent, there too, with this as its first message.
+    var askAgent: (String) -> Void = { _ in }
+    /// Where you were working when the launcher opened.
+    var folder: () -> String? = { nil }
+    /// Settings › Default apps.
+    var showDefaultApps: () -> Void = {}
     /// The session rows (terminal splits, browser tabs, agents) that answer a query; with nothing
     /// typed, only the agents that finished or need you.
     var sessionItems: (String) -> [LauncherItem] = { _ in [] }
@@ -705,6 +720,9 @@ final class LauncherModel: ObservableObject {
                 // "room:know tax": the room, then the files in it, and nothing else, since the filter says it's files.
                 out += RoomsProvider.shared.results(for: q).map(providedItem)
                 out += fileItems()
+            } else if let prompt = RoleSearch.prompt(q) {
+                // "> fix the build" is for your agent and nothing else. Nothing happens before Return.
+                out.append(roleItem(RoleSearch.ask(prompt, DefaultAppsStore.shared.now.resolved[.agent])))
             } else {
                 let provided = LauncherProviders.results(providers, for: q)
                 // "x.com" is a website: it opens in the main browser before any app or file that happens to match.
@@ -720,7 +738,10 @@ final class LauncherModel: ObservableObject {
                 let pages = browserItems(hits, listed: listed)
                 // Apps that answer better than the best page shown go above the pages; the rest go below.
                 let above = BrowserListing.above(hits, listed: listed, apps: ranked.map(\.score))
-                out += appItems(ranked.prefix(above).map(\.app), q, limit: 8)
+                let apps = appItems(ranked.prefix(above).map(\.app), q, limit: 8)
+                let jobs = roleItems(q, beside: ranked.map(\.app))
+                // "browser" is the job; "mail" is the app of that name first.
+                out += apps.contains { $0.title.lowercased().hasPrefix(q.lowercased()) } ? apps + jobs : jobs + apps
                 out += webAppItems(q)
                 if above < ranked.count {
                     out += pages
@@ -871,7 +892,7 @@ final class LauncherModel: ObservableObject {
     /// the browser, so it is plain where Return goes.
     private func siteItems(_ q: String) -> [LauncherItem] {
         guard let site = OneSearch.typedSite(q) else { return [] }
-        let browser = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!)
+        let browser = Launcher.browser
         let name = browser.map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? "your browser"
         let shown = q.trimmingCharacters(in: .whitespacesAndNewlines)
         return [LauncherItem(id: "site:\(site.url.absoluteString)", section: "Web", title: "Open \(shown)",
@@ -1082,16 +1103,43 @@ final class LauncherModel: ObservableObject {
         }
     }
 
+    /// The job by its name ("browser"), "open terminal here", "set default mail". Not a job whose app is listed anyway.
+    private func roleItems(_ q: String, beside apps: [AppEntry]) -> [LauncherItem] {
+        let listed = Set(apps.map { "app:\($0.path)" }), folder = actions.folder().map { ($0 as NSString).abbreviatingWithTildeInPath }
+        return RoleSearch.rows(q, DefaultAppsStore.shared.now.resolved, folder: folder).filter { r in
+            guard case .open = r.action, let path = r.app?.path else { return true }
+            return !listed.contains("app:\(path)")
+        }.map(roleItem)
+    }
+
+    private func roleItem(_ r: RoleSearch.Row) -> LauncherItem {
+        var icon = LauncherItem.Icon.symbol("terminal")
+        if let c = r.app, case .app = c.app, let path = c.path { icon = .file(path) }
+        if case .choose = r.action { icon = .symbol("star") }
+        return LauncherItem(id: r.id, section: "Default apps", title: r.title, subtitle: r.subtitle, icon: icon, run: { [weak self] in
+            guard let self else { return }
+            self.close()
+            // After the launcher is gone: what opens takes its place in front.
+            DispatchQueue.main.async {
+                switch r.action {
+                case .open(let role): RoleOpener.key(role, new: false)
+                case .terminalHere: self.actions.newTerminal()
+                case .choose: self.actions.showDefaultApps()
+                case .ask(let prompt): self.actions.askAgent(prompt)
+                }
+            }
+        })
+    }
+
     /// "claude" or "codex": that agent, started in your terminal.
     private func agentItems(_ q: String) -> [LauncherItem] {
         let matches = TerminalAgent.matches(q, installed: agents.keys)
-        guard !matches.isEmpty, let terminal = Terminals.app() else { return [] }
-        let name = FileManager.default.displayName(atPath: terminal.path).replacingOccurrences(of: ".app", with: "")
+        guard !matches.isEmpty, let terminal = DefaultAppsStore.shared.now.programs else { return [] }
         return matches.map { a in
-            LauncherItem(id: "agent:\(a.command)", section: "Terminal", title: a.name, subtitle: "Opens in \(name) · runs \(a.command)",
-                         icon: .file(terminal.path), run: { [weak self] in
+            LauncherItem(id: "agent:\(a.command)", section: "Terminal", title: a.name, subtitle: "Opens in \(terminal.name) · runs \(a.command)",
+                         icon: terminal.path.map { .file($0) } ?? .symbol("terminal"), run: { [weak self] in
                              self?.close()
-                             if let path = self?.agents[a.command] { Terminals.open(a, at: path, in: terminal) }
+                             if let path = self?.agents[a.command] { RoleOpener.start(a.command, at: path, in: NSHomeDirectory()) }
                          })
         }
     }
@@ -1283,7 +1331,7 @@ final class LauncherModel: ObservableObject {
             ("Toggle Dark Mode", "circle.lefthalf.filled", "Asks once to let Polycarp change appearance", { System.toggleDarkMode() }),
             ("Take a Screenshot", "camera.viewfinder", "Choose an area, a window or the screen", { System.run("/usr/bin/open", ["-a", "Screenshot"]) }),
             ("New Claude Session", "sparkle", "Another Claude Code session in Ghostty", { [weak self] in self?.actions.newClaude() }),
-            ("New Terminal", "plus", "A new Ghostty window", { [weak self] in self?.actions.newTerminal() }),
+            ("New Terminal", "plus", "A new \(DefaultAppsStore.shared.now.resolved[.terminal]?.app?.name ?? "terminal") window", { [weak self] in self?.actions.newTerminal() }),
             ("New Tab Here", "plus.square.on.square", actions.searcher().map { "In \(Self.appName($0.bundleID)), on this workspace" } ?? "",
              { [weak self] in if let peer = self?.actions.searcher() { self?.actions.newTab(peer) } }),
             ("Make This Page an App", "macwindow.badge.plus", "The page in front on this workspace, in a window of its own",
@@ -1864,43 +1912,6 @@ enum Terminals {
     /// The app that opens .command files now.
     static func handler() -> URL? {
         UTType("com.apple.terminal.shell-script").flatMap { NSWorkspace.shared.urlForApplication(toOpen: $0) }
-    }
-
-    /// The terminal agents open in: see `TerminalChoice`.
-    static func app() -> URL? {
-        guard let type = UTType("com.apple.terminal.shell-script") else { return nil }
-        let ws = NSWorkspace.shared
-        let capable = ws.urlsForApplications(toOpen: type)
-        var byID: [String: URL] = [:]
-        for url in capable { if let id = Bundle(url: url)?.bundleIdentifier, byID[id] == nil { byID[id] = url } }
-        let handler = ws.urlForApplication(toOpen: type)
-        let pick = TerminalChoice.pick(handler: handler.flatMap { Bundle(url: $0)?.bundleIdentifier }, capable: Set(byID.keys))
-        return byID[pick] ?? handler ?? ws.urlForApplication(withBundleIdentifier: TerminalChoice.terminal)
-    }
-
-    /// Writes the agent's script and starts it in a new window of the terminal. Ghostty runs it as the window's command,
-    /// since a script file handed to it asks "Allow Ghostty to execute …?" every time; other terminals open the file.
-    static func open(_ agent: TerminalAgent, at path: String, in terminal: URL) {
-        let url = Spaces.folder.appendingPathComponent("agent-\(agent.command).command")
-        guard let script = agent.script(at: path) else {
-            return Toast.show("Couldn’t start \(agent.name) from \(path)", symbol: "exclamationmark.triangle.fill")
-        }
-        do {
-            try FileManager.default.createDirectory(at: Spaces.folder, withIntermediateDirectories: true)
-            try script.write(to: url, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
-        } catch {
-            return Toast.show("Couldn’t start \(agent.name): \(error.localizedDescription)", symbol: "exclamationmark.triangle.fill")
-        }
-        let openFile = {
-            let config = NSWorkspace.OpenConfiguration()
-            config.activates = true
-            NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: config) { _, error in
-                if let error { DispatchQueue.main.async { Toast.show("Couldn’t start \(agent.name): \(error.localizedDescription)", symbol: "exclamationmark.triangle.fill") } }
-            }
-        }
-        if isGhostty(terminal), let ghostty { return ghostty(NSHomeDirectory(), url, openFile) }
-        openFile()
     }
 
     private static var found: (at: Date, agents: [String: String])?
